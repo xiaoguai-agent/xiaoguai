@@ -619,7 +619,88 @@ Integration:
 
 ---
 
-## 10. Plan additions (consolidated from §9 + §9bis)
+## 9ter. Research wave #2 — 5 important gaps (I1/I9, I3/I4, I7)
+
+### I1 multi-user collab + I9 mobile/IM-only UX
+
+**飞书 hard limits (locked design constraints)**:
+- Card payload ≤ **30 KB**; chunk to ≤ 28 KB + "View full →" deep link
+- Card v2.0 (collapsible_panel) requires 飞书 app ≥ 6.0 → version-detect + v1.x fallback
+- **Hermes-Agent #6893** approval error 200340 → HMAC `action_token` + idempotency key + server-side reconciliation; **never trust card state**
+
+Two-tier collab model:
+- **v0.5**: workspace (shared MCP + memory + RBAC) → conversation (single owner + `@mention` fan-out + read-only share JWT 24h + handoff API with audit row)
+- **v1.0**: CRDT (automerge-rs) on prompt buffer **only**; assistant stream append-only no conflict; pair-mode ≤2 humans + 1 agent; broadcast for 3+; two-person rule for `severity=high` ops
+
+5 mobile UX patterns: streamed `chat.update` debounce 500-800ms / step-block collapsible / inline approval buttons / "View full" deep link / voice+screenshot via 飞书 native ASR/OCR (we don't build own ASR).
+
+### I3 telemetry — competitor matrix
+
+| Tool | Default | Notes |
+|---|---|---|
+| VS Code | opt-out | "You can opt out but not *fully*" — extensions bypass |
+| Cursor | opt-out | Privacy Mode OFF default; enterprise NDA risk |
+| Claude Code | hybrid | telemetry opt-out, training opt-in; commercial never trained |
+| **aider** | **opt-in (gold standard)** | First-run agreement, all collection points grep-able |
+| Copilot | opt-out (2026-04 flip) | Triggered "trust reset" backlash |
+
+**Xiaoguai stance**: **explicit opt-in for ALL phone-home, default zero**. 3-tier: (1) zero (default), (2) operator-aggregated opt-in (hourly counters, never prompts/IDs), (3) per-incident diagnostic dump opt-in.
+
+Data minimization: regex strip secrets/IPs/emails/JWT **at source** SpanProcessor + OTel Collector `redaction` processor as second line. Crypto-shredding (per-tenant key, destroy on erasure) resolves GDPR Art 17 ↔ AI Act Art 12 retention conflict.
+
+### I4 observability — 10 metrics + stack
+
+| # | Metric | Alert |
+|---|---|---|
+| 1 | `xiaoguai_request_duration_seconds` p99/model | > 8s for 5m |
+| 2 | `xiaoguai_request_total{status="error"}` rate | > 2% for 5m page |
+| 3 | `xiaoguai_tokens_total{direction,model,tenant}` | > 150% rolling avg |
+| 4 | `xiaoguai_queue_depth{worker_pool}` | > 50 for 2m |
+| 5 | `xiaoguai_mcp_tool_duration_seconds` p99/tool | > 30s |
+| 6 | `xiaoguai_llm_upstream_5xx_total` | any in 1m |
+| 7 | `xiaoguai_active_sessions{tenant}` | > license × 1.0 |
+| 8 | `xiaoguai_cost_usd_total{tenant}` | > daily cap auto rate-limit + page |
+| 9 | DB pool wait p95 + Valkey RTT | pool wait > 100ms p95 |
+| 10 | `xiaoguai_audit_write_failures_total` | any > 0 in 5m |
+
+**Stack**: Prometheus + Grafana + OTel Collector + Loki + Tempo. Avoid Langfuse/LangSmith/Helicone as **primary** (ClickHouse or paid SH).
+
+**Critical Rust crate facts**:
+- `opentelemetry-prometheus` **discontinued** — don't try to unify metrics+traces on it
+- Ship `/metrics` Prometheus pull via `metrics-exporter-prometheus 0.16` + OTLP gRPC for traces via `tracing-opentelemetry 0.28`
+- `tenant.id` as **resource attribute** (not span) for auto-propagation
+- 3 reference Grafana dashboard JSONs ship in repo: Platform Health / Per-Tenant / LLM Inference Backend
+
+### I7 multi-modal — image + PDF + audio
+
+| Modality | Local default | Rust ecosystem | Cloud fallback |
+|---|---|---|---|
+| Image | **Qwen2.5-VL-7B** via Ollama (Apache-2.0) | n/a — Ollama HTTP | gpt-4o-mini / Claude / Gemini |
+| PDF text | **pdfium-render** (Apache-2.0) — 0.8ms/page, 5× pdf-extract, 17× oxidize_pdf | ✓✓ mature | n/a |
+| PDF scanned | Qwen2.5-VL via vision-mcp; **NOT Tesseract** (34% OCR-Bench vs 73% VLM) | rasterize via pdfium → POST | Mistral OCR ($1/1k pg) |
+| Audio (Mandarin) | **whisper-cpp-plus** + Silero VAD + Whisper large-v3-q5 GGUF (MIT) | ✓ stable, Metal/CUDA | Volcengine ASR |
+
+**⚠️ Critical pitfalls**:
+- **vLLM Whisper 0.14.1 WER regression** (134% loop on L40S) → pin 0.12.0 or use whisper.cpp
+- 1080p screenshot at default Qwen tile-grid = ~1.5k tokens → downsample to ≤1280px max edge (Ollama doesn't auto-do; text-too-small = #1 failure)
+- Ollama vision detection flaky → declare `multimodal: true` in our model registry
+
+**Architecture: process-isolated modality MCP servers**:
+- `xiaoguai-vision-mcp` (v1.0)
+- `xiaoguai-pdf-mcp` (v1.0)
+- `xiaoguai-asr-mcp` (v1.1)
+
+Why isolated: Pdfium = C++, Whisper = GGML, VLMs = Ollama HTTP — forcing into Rust binary explodes build. MCP shim keeps core pure-Rust.
+
+**Annotation format** (locked): `[image-summary k=v ...]` not raw JSON in user turn (pollutes context).
+
+**Cache key**: `sha256(bytes) + model_id + prompt_template_version`. 30-50% hit rate on forwarded screenshots in group chats.
+
+**v2.0 deferred**: TTS (`piper`), video frame-sample, realtime streaming ASR.
+
+---
+
+## 10. Plan additions (consolidated from §9 + §9bis + §9ter)
 
 ### v0.5.1 additions
 - Task 5b: SQLite WAL session persistence (from §3.11)
