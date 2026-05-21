@@ -52,6 +52,7 @@ async fn explicit_provider_wins() {
     let ctx = ResolveCtx {
         tenant_id: None,
         explicit_provider: Some(&p_b),
+        ..Default::default()
     };
     let stream = router
         .chat_stream(ctx, make_req("anything"))
@@ -90,6 +91,7 @@ async fn tenant_default_used_when_no_explicit() {
     let ctx = ResolveCtx {
         tenant_id: Some(&tenant),
         explicit_provider: None,
+        ..Default::default()
     };
     let stream = router.chat_stream(ctx, make_req("qwen")).await.expect("ok");
     assert_eq!(collect(stream).await, "tenant-resp");
@@ -114,6 +116,7 @@ async fn system_default_used_when_no_tenant_default() {
     let ctx = ResolveCtx {
         tenant_id: Some(&tenant),
         explicit_provider: None,
+        ..Default::default()
     };
     let stream = router.chat_stream(ctx, make_req("qwen")).await.expect("ok");
     assert_eq!(collect(stream).await, "global-resp");
@@ -153,6 +156,7 @@ async fn fallback_chain_walks_to_next_on_failure() {
     let ctx = ResolveCtx {
         tenant_id: None,
         explicit_provider: None,
+        ..Default::default()
     };
     let stream = router
         .chat_stream(ctx, make_req("anything"))
@@ -180,6 +184,7 @@ async fn no_provider_when_all_fail() {
     let ctx = ResolveCtx {
         tenant_id: None,
         explicit_provider: None,
+        ..Default::default()
     };
     let err = match router.chat_stream(ctx, make_req("anything")).await {
         Ok(_) => panic!("expected NoProvider"),
@@ -196,6 +201,7 @@ async fn explicit_provider_missing_is_error() {
     let ctx = ResolveCtx {
         tenant_id: None,
         explicit_provider: Some(&unknown),
+        ..Default::default()
     };
     let err = match router.chat_stream(ctx, make_req("anything")).await {
         Ok(_) => panic!("expected NoProvider"),

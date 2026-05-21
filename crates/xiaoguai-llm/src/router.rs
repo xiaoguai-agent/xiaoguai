@@ -16,11 +16,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use chrono::Utc;
 use tracing::warn;
-use xiaoguai_types::{ProviderId, TenantId};
+use xiaoguai_types::{ProviderId, SessionId, TenantId, UserId};
 
 use crate::backend::{ChatStream, LlmBackend, LlmError};
 use crate::types::ChatRequest;
+use crate::usage::{record_on_done, UsageRecord, UsageSink};
 
 /// Static routing configuration. Mutating the router at runtime (e.g. after
 /// `xiaoguai provider register`) currently means rebuilding it; refresh
@@ -36,16 +38,20 @@ pub struct RouterConfig {
     pub fallback_order: Vec<ProviderId>,
 }
 
-/// Per-request context controlling routing resolution.
-#[derive(Debug, Clone, Copy)]
+/// Per-request context controlling routing resolution and usage attribution.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ResolveCtx<'a> {
     pub tenant_id: Option<&'a TenantId>,
     pub explicit_provider: Option<&'a ProviderId>,
+    pub user_id: Option<&'a UserId>,
+    pub session_id: Option<&'a SessionId>,
+    pub request_id: Option<&'a str>,
 }
 
 pub struct LlmRouter {
     backends: HashMap<ProviderId, Arc<dyn LlmBackend>>,
     config: RouterConfig,
+    usage_sink: Option<Arc<dyn UsageSink>>,
 }
 
 impl std::fmt::Debug for LlmRouter {
@@ -53,6 +59,7 @@ impl std::fmt::Debug for LlmRouter {
         f.debug_struct("LlmRouter")
             .field("backends", &self.backends.keys().collect::<Vec<_>>())
             .field("config", &self.config)
+            .field("usage_sink", &self.usage_sink.is_some())
             .finish()
     }
 }
@@ -60,7 +67,19 @@ impl std::fmt::Debug for LlmRouter {
 impl LlmRouter {
     #[must_use]
     pub fn new(backends: HashMap<ProviderId, Arc<dyn LlmBackend>>, config: RouterConfig) -> Self {
-        Self { backends, config }
+        Self {
+            backends,
+            config,
+            usage_sink: None,
+        }
+    }
+
+    /// Attach a usage sink. The router will emit one record per successful
+    /// stream (on `done: true`). Returns `self` for builder-style chaining.
+    #[must_use]
+    pub fn with_usage_sink(mut self, sink: Arc<dyn UsageSink>) -> Self {
+        self.usage_sink = Some(sink);
+        self
     }
 
     /// Stream a chat completion. Walks the candidate list returned by
@@ -84,7 +103,27 @@ impl LlmRouter {
                 continue;
             };
             match backend.chat_stream(req.clone()).await {
-                Ok(stream) => return Ok(stream),
+                Ok(stream) => {
+                    let final_stream = match &self.usage_sink {
+                        Some(sink) => {
+                            let template = UsageRecord {
+                                ts: Utc::now(),
+                                tenant_id: ctx.tenant_id.cloned(),
+                                user_id: ctx.user_id.cloned(),
+                                session_id: ctx.session_id.cloned(),
+                                provider_id: provider_id.clone(),
+                                model: req.model.clone(),
+                                prompt_tokens: None,
+                                completion_tokens: None,
+                                total_tokens: None,
+                                request_id: ctx.request_id.map(str::to_string),
+                            };
+                            record_on_done(stream, Arc::clone(sink), template)
+                        }
+                        None => stream,
+                    };
+                    return Ok(final_stream);
+                }
                 Err(e) => {
                     warn!(provider = %provider_id, error = %e, "backend failed; trying next");
                     last_err = Some(e);
