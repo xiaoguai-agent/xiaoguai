@@ -50,7 +50,10 @@ impl OllamaBackend {
 fn role_str(r: Role) -> &'static str {
     match r {
         Role::System => "system",
-        Role::User => "user",
+        // Ollama doesn't have a first-class `tool` role yet; render as `user`
+        // so the model at least sees the result text. Full tool-calling support
+        // for Ollama is tracked in v0.5.4.1.
+        Role::User | Role::Tool => "user",
         Role::Assistant => "assistant",
     }
 }
@@ -105,6 +108,7 @@ impl LlmBackend for OllamaBackend {
                 Ok(ChatChunk {
                     delta,
                     done: parsed.done,
+                    ..Default::default()
                 })
             });
 

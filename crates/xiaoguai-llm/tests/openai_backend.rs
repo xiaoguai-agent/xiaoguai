@@ -3,7 +3,7 @@
 //! `DeepSeek`, 通义, 智谱, etc.
 
 use futures::StreamExt;
-use xiaoguai_llm::{ChatRequest, LlmBackend, Message, OpenAiCompatBackend, Role};
+use xiaoguai_llm::{ChatRequest, LlmBackend, Message, OpenAiCompatBackend};
 
 #[tokio::test]
 async fn openai_backend_parses_streamed_sse() {
@@ -22,15 +22,7 @@ data: [DONE]\n\n";
         .await;
 
     let backend = OpenAiCompatBackend::new(server.url(), Some("test-key".to_string()));
-    let req = ChatRequest {
-        model: "deepseek-chat".into(),
-        messages: vec![Message {
-            role: Role::User,
-            content: "hi".into(),
-        }],
-        temperature: None,
-        max_tokens: None,
-    };
+    let req = ChatRequest::new("deepseek-chat", vec![Message::user("hi")]);
 
     let mut stream = backend.chat_stream(req).await.expect("stream");
     let mut collected = String::new();
@@ -61,15 +53,7 @@ async fn openai_backend_omits_auth_header_when_no_key() {
         .await;
 
     let backend = OpenAiCompatBackend::new(server.url(), None);
-    let req = ChatRequest {
-        model: "qwen".into(),
-        messages: vec![Message {
-            role: Role::User,
-            content: "hi".into(),
-        }],
-        temperature: None,
-        max_tokens: None,
-    };
+    let req = ChatRequest::new("qwen", vec![Message::user("hi")]);
     let mut stream = backend.chat_stream(req).await.expect("stream");
     while let Some(c) = stream.next().await {
         let _ = c.expect("chunk");
@@ -88,12 +72,7 @@ async fn openai_backend_reports_provider_error_on_non_2xx() {
         .await;
 
     let backend = OpenAiCompatBackend::new(server.url(), None);
-    let req = ChatRequest {
-        model: "x".into(),
-        messages: vec![],
-        temperature: None,
-        max_tokens: None,
-    };
+    let req = ChatRequest::new("x", vec![]);
     let err = match backend.chat_stream(req).await {
         Ok(_) => panic!("expected error, got Ok"),
         Err(e) => e,
@@ -120,15 +99,7 @@ data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n";
         .await;
 
     let backend = OpenAiCompatBackend::new(server.url(), None);
-    let req = ChatRequest {
-        model: "qwen2.5".into(),
-        messages: vec![Message {
-            role: Role::User,
-            content: "hi".into(),
-        }],
-        temperature: None,
-        max_tokens: None,
-    };
+    let req = ChatRequest::new("qwen2.5", vec![Message::user("hi")]);
     let mut stream = backend.chat_stream(req).await.expect("stream");
 
     let mut collected = String::new();

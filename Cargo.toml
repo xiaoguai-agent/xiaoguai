@@ -34,6 +34,7 @@ readme = "README.md"
 # async runtime
 tokio = { version = "1.40", features = ["full"] }
 tokio-stream = "0.1"
+tokio-util = { version = "0.7", default-features = false }
 futures = "0.3"
 async-trait = "0.1"
 

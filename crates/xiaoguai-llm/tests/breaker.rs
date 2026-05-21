@@ -8,7 +8,7 @@ use futures::StreamExt;
 use parking_lot::Mutex;
 use xiaoguai_llm::{
     BreakerConfig, BreakerState, Breakers, ChatRequest, Clock, LlmBackend, LlmError, LlmRouter,
-    Message, MockBackend, ResolveCtx, Role, RouterConfig,
+    Message, MockBackend, ResolveCtx, RouterConfig,
 };
 use xiaoguai_types::ProviderId;
 
@@ -30,15 +30,7 @@ impl Clock for FakeClock {
 }
 
 fn make_req() -> ChatRequest {
-    ChatRequest {
-        model: "any".into(),
-        messages: vec![Message {
-            role: Role::User,
-            content: "hi".into(),
-        }],
-        temperature: None,
-        max_tokens: None,
-    }
+    ChatRequest::new("any", vec![Message::user("hi")])
 }
 
 async fn drain(mut s: xiaoguai_llm::ChatStream) -> String {

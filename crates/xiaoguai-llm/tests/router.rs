@@ -7,21 +7,12 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use xiaoguai_llm::{
-    ChatRequest, LlmBackend, LlmError, LlmRouter, Message, MockBackend, ResolveCtx, Role,
-    RouterConfig,
+    ChatRequest, LlmBackend, LlmError, LlmRouter, Message, MockBackend, ResolveCtx, RouterConfig,
 };
 use xiaoguai_types::{ProviderId, TenantId};
 
 fn make_req(model: &str) -> ChatRequest {
-    ChatRequest {
-        model: model.into(),
-        messages: vec![Message {
-            role: Role::User,
-            content: "hi".into(),
-        }],
-        temperature: None,
-        max_tokens: None,
-    }
+    ChatRequest::new(model, vec![Message::user("hi")])
 }
 
 async fn collect(mut s: xiaoguai_llm::ChatStream) -> String {

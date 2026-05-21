@@ -2,7 +2,7 @@
 //! These tests mock the HTTP layer with mockito — no real Ollama needed.
 
 use futures::StreamExt;
-use xiaoguai_llm::{ChatRequest, LlmBackend, Message, OllamaBackend, Role};
+use xiaoguai_llm::{ChatRequest, LlmBackend, Message, OllamaBackend};
 
 #[tokio::test]
 async fn ollama_backend_parses_streamed_response() {
@@ -21,15 +21,7 @@ async fn ollama_backend_parses_streamed_response() {
         .await;
 
     let backend = OllamaBackend::new(server.url());
-    let req = ChatRequest {
-        model: "qwen2.5".into(),
-        messages: vec![Message {
-            role: Role::User,
-            content: "hi".into(),
-        }],
-        temperature: None,
-        max_tokens: None,
-    };
+    let req = ChatRequest::new("qwen2.5", vec![Message::user("hi")]);
 
     let mut stream = backend.chat_stream(req).await.expect("stream");
     let mut collected = String::new();
