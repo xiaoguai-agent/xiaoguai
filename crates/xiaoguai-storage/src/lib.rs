@@ -8,5 +8,8 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::module_name_repetitions, clippy::missing_errors_doc)]
 
+pub mod db;
 pub mod migrations;
 pub mod repositories;
+
+pub use db::{connect, migrate};
