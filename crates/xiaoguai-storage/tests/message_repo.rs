@@ -1,0 +1,321 @@
+//! Integration tests for [`PgMessageRepository`].
+//!
+//! Marked `#[ignore]` — requires Docker (testcontainers Postgres).
+//!
+//! ## RLS caveat
+//!
+//! The testcontainer superuser bypasses non-FORCE RLS, so tenant-isolation
+//! policies are not exercised here. A separate end-to-end suite (out of scope
+//! for this sub-agent) covers that path against a non-superuser app role.
+
+#![cfg(test)]
+
+use chrono::{Duration, Utc};
+use serde_json::json;
+use sqlx::PgPool;
+use testcontainers_modules::{
+    postgres::Postgres,
+    testcontainers::{runners::AsyncRunner, ContainerAsync},
+};
+use xiaoguai_storage::{
+    db,
+    repositories::{
+        MessageRepository, PgMessageRepository, PgSessionRepository, SessionRepository,
+    },
+};
+use xiaoguai_types::{
+    ContentBlock, Message, MessageId, MessageRole, Session, SessionId, SessionStatus, TenantId,
+    UserId,
+};
+
+async fn test_setup() -> (PgPool, ContainerAsync<Postgres>) {
+    let pg = Postgres::default().start().await.expect("start pg");
+    let port = pg.get_host_port_ipv4(5432).await.expect("port");
+    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    let pool = db::connect(&url, 5).await.expect("connect");
+    db::migrate(&pool).await.expect("migrate");
+    (pool, pg)
+}
+
+async fn seed_tenant_user(pool: &PgPool) -> (TenantId, UserId) {
+    let tenant_id = TenantId::new();
+    let user_id = UserId::new();
+    sqlx::query("INSERT INTO tenants (id, name, display_name) VALUES ($1, $2, $3)")
+        .bind(tenant_id.as_str())
+        .bind(format!("tenant-{}", tenant_id.as_str()))
+        .bind("Test Tenant")
+        .execute(pool)
+        .await
+        .expect("insert tenant");
+    sqlx::query(
+        "INSERT INTO users (id, tenant_id, email, display_name)
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(user_id.as_str())
+    .bind(tenant_id.as_str())
+    .bind(format!("u-{}@example.com", user_id.as_str()))
+    .bind("Test User")
+    .execute(pool)
+    .await
+    .expect("insert user");
+    (tenant_id, user_id)
+}
+
+async fn seed_session(pool: &PgPool, tenant: &TenantId, user: &UserId) -> SessionId {
+    let now = Utc::now();
+    let s = Session {
+        id: SessionId::new(),
+        tenant_id: tenant.clone(),
+        user_id: user.clone(),
+        title: None,
+        created_at: now,
+        updated_at: now,
+        model: "gpt-4o-mini".to_string(),
+        status: SessionStatus::Active,
+    };
+    let id = s.id.clone();
+    PgSessionRepository::new(pool.clone())
+        .create(&s)
+        .await
+        .expect("create session");
+    id
+}
+
+fn fixture_message(
+    session_id: &SessionId,
+    role: MessageRole,
+    content: Vec<ContentBlock>,
+) -> Message {
+    Message {
+        id: MessageId::new(),
+        session_id: session_id.clone(),
+        role,
+        content,
+        created_at: Utc::now(),
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn append_and_list_roundtrip_text_content() {
+    let (pool, _pg) = test_setup().await;
+    let (tenant, user) = seed_tenant_user(&pool).await;
+    let session_id = seed_session(&pool, &tenant, &user).await;
+    let repo = PgMessageRepository::new(pool.clone());
+
+    let msg = fixture_message(
+        &session_id,
+        MessageRole::User,
+        vec![ContentBlock::Text {
+            text: "Hello, 世界 🚀".to_string(),
+        }],
+    );
+    repo.append(&msg).await.expect("append");
+
+    let list = repo
+        .list_by_session(session_id.as_str(), 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id.as_str(), msg.id.as_str());
+    assert_eq!(list[0].role, MessageRole::User);
+    match &list[0].content[0] {
+        ContentBlock::Text { text } => assert_eq!(text, "Hello, 世界 🚀"),
+        other => panic!("expected text, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn append_jsonb_tool_call_and_tool_result_roundtrip() {
+    let (pool, _pg) = test_setup().await;
+    let (tenant, user) = seed_tenant_user(&pool).await;
+    let session_id = seed_session(&pool, &tenant, &user).await;
+    let repo = PgMessageRepository::new(pool.clone());
+
+    let assistant_msg = fixture_message(
+        &session_id,
+        MessageRole::Assistant,
+        vec![
+            ContentBlock::Text {
+                text: "Calling tool...".to_string(),
+            },
+            ContentBlock::ToolCall {
+                tool_call_id: "tc_1".to_string(),
+                name: "search".to_string(),
+                arguments: json!({"query": "rust async", "limit": 5}),
+            },
+        ],
+    );
+    repo.append(&assistant_msg).await.expect("append assistant");
+
+    let tool_msg = fixture_message(
+        &session_id,
+        MessageRole::Tool,
+        vec![ContentBlock::ToolResult {
+            tool_call_id: "tc_1".to_string(),
+            output: json!({"hits": [{"title": "tokio"}]}),
+            is_error: false,
+        }],
+    );
+    repo.append(&tool_msg).await.expect("append tool");
+
+    let list = repo
+        .list_by_session(session_id.as_str(), 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(list.len(), 2);
+    // Round-trip preserved the JSONB content discriminator + payload.
+    match &list[0].content[1] {
+        ContentBlock::ToolCall {
+            tool_call_id,
+            name,
+            arguments,
+        } => {
+            assert_eq!(tool_call_id, "tc_1");
+            assert_eq!(name, "search");
+            assert_eq!(arguments["query"], "rust async");
+            assert_eq!(arguments["limit"], 5);
+        }
+        other => panic!("expected tool_call, got {other:?}"),
+    }
+    match &list[1].content[0] {
+        ContentBlock::ToolResult {
+            tool_call_id,
+            output,
+            is_error,
+        } => {
+            assert_eq!(tool_call_id, "tc_1");
+            assert!(!is_error);
+            assert_eq!(output["hits"][0]["title"], "tokio");
+        }
+        other => panic!("expected tool_result, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn list_orders_by_created_at_ascending_with_pagination() {
+    let (pool, _pg) = test_setup().await;
+    let (tenant, user) = seed_tenant_user(&pool).await;
+    let session_id = seed_session(&pool, &tenant, &user).await;
+    let repo = PgMessageRepository::new(pool.clone());
+
+    let base = Utc::now() - Duration::minutes(30);
+    let mut ids = Vec::with_capacity(4);
+    for i in 0..4_i64 {
+        let mut m = fixture_message(
+            &session_id,
+            MessageRole::User,
+            vec![ContentBlock::Text {
+                text: format!("msg {i}"),
+            }],
+        );
+        m.created_at = base + Duration::minutes(i);
+        repo.append(&m).await.expect("append");
+        ids.push(m.id);
+    }
+
+    let page1 = repo
+        .list_by_session(session_id.as_str(), 2, 0)
+        .await
+        .expect("page1");
+    assert_eq!(page1.len(), 2);
+    assert_eq!(page1[0].id.as_str(), ids[0].as_str());
+    assert_eq!(page1[1].id.as_str(), ids[1].as_str());
+
+    let page2 = repo
+        .list_by_session(session_id.as_str(), 2, 2)
+        .await
+        .expect("page2");
+    assert_eq!(page2.len(), 2);
+    assert_eq!(page2[0].id.as_str(), ids[2].as_str());
+    assert_eq!(page2[1].id.as_str(), ids[3].as_str());
+
+    let count = repo
+        .count_by_session(session_id.as_str())
+        .await
+        .expect("count");
+    assert_eq!(count, 4);
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn cascading_delete_when_session_dropped() {
+    let (pool, _pg) = test_setup().await;
+    let (tenant, user) = seed_tenant_user(&pool).await;
+    let session_id = seed_session(&pool, &tenant, &user).await;
+    let msg_repo = PgMessageRepository::new(pool.clone());
+    let sess_repo = PgSessionRepository::new(pool.clone());
+
+    for _ in 0..3 {
+        let m = fixture_message(
+            &session_id,
+            MessageRole::User,
+            vec![ContentBlock::Text {
+                text: "hi".to_string(),
+            }],
+        );
+        msg_repo.append(&m).await.expect("append");
+    }
+    assert_eq!(
+        msg_repo
+            .count_by_session(session_id.as_str())
+            .await
+            .expect("count"),
+        3
+    );
+
+    // Drop the parent session — FK ON DELETE CASCADE should wipe messages.
+    sess_repo
+        .delete(session_id.as_str())
+        .await
+        .expect("delete session");
+    assert_eq!(
+        msg_repo
+            .count_by_session(session_id.as_str())
+            .await
+            .expect("count after cascade"),
+        0
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn delete_by_session_returns_rowcount_and_is_idempotent() {
+    let (pool, _pg) = test_setup().await;
+    let (tenant, user) = seed_tenant_user(&pool).await;
+    let session_id = seed_session(&pool, &tenant, &user).await;
+    let repo = PgMessageRepository::new(pool.clone());
+
+    for _ in 0..2 {
+        let m = fixture_message(
+            &session_id,
+            MessageRole::User,
+            vec![ContentBlock::Text {
+                text: "x".to_string(),
+            }],
+        );
+        repo.append(&m).await.expect("append");
+    }
+
+    let deleted = repo
+        .delete_by_session(session_id.as_str())
+        .await
+        .expect("delete");
+    assert_eq!(deleted, 2);
+
+    // Idempotent — second call returns 0, no error.
+    let again = repo
+        .delete_by_session(session_id.as_str())
+        .await
+        .expect("delete again");
+    assert_eq!(again, 0);
+
+    assert_eq!(
+        repo.count_by_session(session_id.as_str())
+            .await
+            .expect("count"),
+        0
+    );
+}

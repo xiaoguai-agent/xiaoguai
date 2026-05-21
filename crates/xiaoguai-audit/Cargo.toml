@@ -10,9 +10,21 @@ description = "Append-only audit log with hmac chain + S3 sync (skeleton)."
 
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+sqlx = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

@@ -1,3 +1,11 @@
-//! OIDC + Casbin RBAC (skeleton).
-//!
-//! Implementation lands in v0.5. See `docs/architecture/2026-05-21-design.md` §8.1.
+//! OIDC JWT validation + Casbin RBAC.
+
+#![forbid(unsafe_code)]
+#![warn(clippy::pedantic)]
+#![allow(clippy::module_name_repetitions, clippy::missing_errors_doc)]
+
+pub mod jwt;
+pub mod rbac;
+
+pub use jwt::{Claims, JwtError, JwtValidator};
+pub use rbac::{Authz, RbacError};
