@@ -13,9 +13,11 @@
 pub mod client;
 pub mod error;
 pub mod stdio;
+pub mod supervisor;
 pub mod types;
 
 pub use client::McpClient;
 pub use error::{McpError, McpResult};
 pub use stdio::StdioMcpClient;
+pub use supervisor::{McpKey, McpSupervisor};
 pub use types::{ContentBlock, ServerInfo, ToolDescriptor, ToolResult};
