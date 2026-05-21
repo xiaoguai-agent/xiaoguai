@@ -26,6 +26,8 @@ license = "BUSL-1.1"
 authors = ["Xiaoguai Maintainers"]
 repository = "https://github.com/xiaoguai-agent/xiaoguai"
 homepage = "https://github.com/xiaoguai-agent/xiaoguai"
+
+# (LICENSE Licensor + README URLs already point to xiaoguai-agent.)
 readme = "README.md"
 
 [workspace.dependencies]
