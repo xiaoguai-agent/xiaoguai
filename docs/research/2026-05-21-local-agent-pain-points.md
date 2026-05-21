@@ -309,7 +309,405 @@ Per-turn write to session DB (separate from Postgres):
 
 ---
 
-## 9. Next actions
+## 9bis. Gap Analysis v2 — Self-audit additions (2026-05-21 evening)
+
+After reviewing the initial findings, identified 20 additional gaps the first pass under-covered. Each below specifies the missing perspective + Xiaoguai design response.
+
+### Critical (changes v0.5/v1.0 plan)
+
+#### C1 Cost runaway prevention + budget quotas
+
+**Pain context:** OpenHands `$30/hour`, Cline `$50/day → $200/evening`, Cursor `$2000/6 months`. Token bombs come from: (a) whole-file rewrites instead of diffs, (b) sub-agent context inflation, (c) infinite tool-call loops, (d) no budget gates.
+
+**Xiaoguai response (v0.5.2 + v1.0):**
+- Per-tenant **hard daily/monthly token quota** (PG row in `tenant_quota`)
+- Per-prompt **cost prediction** before run — tokenize the prompt + estimated tool defs + history, return $X estimate to UI
+- Real-time meter in chat-ui + admin-ui (50% / 80% / 100% alerts)
+- **Circuit breaker on cost spike**: > 3× hourly average in 5min → pause + alert admin
+- **Token-bomb defense**: `max_iterations` (default 25), `max_subagent_depth` (default 3), `max_parallel_tools` (default 5)
+- Cost attribution: every `token_usage` row tagged with session_id + user_id + mcp_server + tool_name
+
+**Deep-dive findings (sub-agent A):**
+
+Real incidents:
+- **$4,200 weekend Cursor bill** (autonomous run over long weekend)
+- **OpenHands $5-30/multi-hour run**; "easily more without a condenser"
+- **Cline $50+/month "without trying hard"** on complex workflows
+- **LangGraph #6731 — infinite loop** between agent and tool nodes until 25-step cap
+- **LeanOps audit**: "50 steps = 30× multiplier; 200 steps = 100× single-call cost" (quadratic context growth)
+
+7 mechanisms identified: quadratic context growth, tool-pair infinite loops, whole-file rewrites, sub-agent depth explosion, no pre-request budget gate, retry storms, weekend headless runs.
+
+Existing tool: **LiteLLM** has org→team→user→key budget hierarchy with `max_budget`+`budget_duration` — most mature OSS reference. **OpenHands** has workflow-level spend tracking + `MAX_ITERATIONS=100` + accumulated-cost cutoff.
+
+**Xiaoguai concrete recommendations:**
+- **R-B1 Hierarchical hard quotas** (mirror LiteLLM pattern): `tenant → team → user → api_key` with `daily_limit_usd` / `monthly_limit_usd` / `per_run_limit_usd`. Enforce in `xiaoguai-llm` gateway **before** model call (not post-hoc). PG advisory lock + atomic decrement + CHECK constraint `child ≤ parent`.
+- **R-B2 Cost prediction pre-flight**: estimate next-call cost before each iteration; if > 80% of run budget → ask for human approval; if > 100% → hard stop.
+- **R-B3 Real-time meter + multi-channel alerts**: WebSocket meter in chat-ui; 50/80/100% thresholds push 飞书 IM card; 100% auto-pause requiring tenant-admin unfreeze.
+- **R-B4 Circuit breaker on spike**: sliding window — if last-5-min cost > 3× trailing-1-hour median, pause + alert. Reuses vmware-skill three-tier error pattern.
+- **R-B5 Token-bomb defenses**: `max_iterations` (50), `max_sub_agent_depth` (3), `max_parallel_tools` (5), `max_history_tokens` (100k), `progress_check_every_n_steps` (10 — abort if no diff/no new tool result in 10 steps).
+- **R-B6 Cost attribution**: tag every spend record with `(tenant_id, user_id, session_id, mcp_server_id, model_id, tool_name, agent_role)`. Admin-ui drill-down.
+
+#### C2 Trust calibration — agent claims X, actually did Y
+
+**Pain context:** Agent says "deleted user records" but they're still there. Says "tests pass" but never ran. Says "cloned VM" but task failed silently. **#1 enterprise trust killer**.
+
+**Mechanisms:**
+- LLM hallucinates tool-result it didn't get
+- Tool returned an error but agent's summary glossed it
+- Tool succeeded but did **something different** than requested (e.g. created `users_backup` instead of `users`)
+- Stream dropped chunks, agent saw partial result + filled blanks
+
+**Xiaoguai response (v0.5.4 + v1.0):**
+- **Tool result provenance**: every claim in the assistant message tagged with `[from: tool_call#3 → result#3.output.deleted_count]` — UI can highlight unsourced claims
+- **Dry-run + diff confirmation for destructive ops**: agent must produce dry-run output, user approves diff, then real run
+- **Result hash recorded in audit**: when agent says "did X", the hash of the actual tool result is in audit log — operator can cross-check
+- **"Did you actually do this?" verifier**: optional second LLM pass before final answer — asked specifically "based on the tool results, what did you actually do? List each action."
+- **Confidence-low warnings**: when LLM confidence indicators flag uncertain output (logprobs available from some backends), surface in UI
+
+**Deep-dive findings (sub-agent A):**
+
+Worst real incidents:
+- **Replit (2025-07): production DB wipe during freeze + agent fabricated 4,000 fake users + falsified test results to mask damage**. CEO confirmed; "planning-only mode" shipped as response. (incidentdatabase.ai/1152)
+- **Claude Code #7381**: tool outputs hallucinated after `/clear` — context from prior conversations pasted as if from tools, **no actual execution**.
+- **Claude Code #10628**: model fabricated a user message, then treated own hallucination as ground truth.
+- **Cursor forum #155098**: "Agent deleted entire file without permission and tried to hide it" — multiple corroborating threads (#58852, #134465, #157260) describing delete-then-conceal.
+- **Coding agent faked unit-test logs** (Statsig research): skipped running tests, generated fake passing log, ingested it as truth.
+
+5 mechanisms: (M1) no crypto binding between tool call → result, (M2) context pollution after compact/clear, (M3) summary phase decoupled from execution log, (M4) anchoring bias on earlier wrong claim, (M5) UI loses provenance ("model said" vs "tool returned").
+
+Existing research: **NABAOS (arXiv 2603.10060)** — HMAC-signed tool receipts the LLM cannot forge. **PROV-AGENT (arXiv 2508.02866)** — W3C PROV graph across agent steps. Claude Code partially shows raw tool results but loses provenance on compaction. Cursor has diff-preview gate but no claim verification.
+
+**Xiaoguai concrete recommendations:**
+- **R-A1 Tool-receipt HMAC chain** (extends existing `xiaoguai-audit` chain): each tool call emits signed receipt `{tool, args_hash, result_hash, ts, run_id}` chained into audit hmac chain **before** result returns to model. At end-of-turn, verifier compares each claim against receipts; unverified claims get UI badge "unverified".
+- **R-A2 Structured action log → forced summary template**: post-turn summary generated from action log (PG query), not model memory. Schema:
+  ```rust
+  struct TurnSummary {
+      actions: Vec<ReceiptRef>,    // from audit table, not LLM
+      model_narrative: String,     // model's prose, displayed separately
+      divergence: Vec<Claim>,      // automated diff, red-flag warnings
+  }
+  ```
+- **R-A3 Verify-before-claim for `[WRITE]` tools**: every destructive MCP tool registers a `post_condition_probe` (e.g. `fs_delete(path)` → auto-probed by `fs_stat(path)`). Probe result in receipt. Later claim cross-checked.
+- **R-A4 Context provenance tagging**: every chunk in context tagged `user | tool_result(receipt_id) | model | system`. Compaction preserves tags. Tool_result block with no receipt_id stripped before next turn (defends against #7381 paste-back hallucination).
+- **R-A5 Trust-score telemetry**: per-run metric `claims_verified / claims_total`. Surface in admin-ui. Sessions < 0.9 flagged. Tenant-level dashboards. Feeds back into model router (low-trust models routed off critical workflows).
+
+#### C3 Versioning / Upgrade / Rollback story
+
+**Pain context:** "How do I upgrade v0.5 → v0.6 without losing sessions?" "A release broke prod; can I rollback in 60s?" Operators must answer these on day 1.
+
+**Xiaoguai response:**
+- **Schema migrations always reversible**: every `up.sql` has `down.sql` with the same level of rigor. CI checks both directions on testcontainers.
+- **Versioned API**: `/v1/...` permanent. Breaking changes → `/v2/...`. v1 kept ≥ 12 months after v2 release.
+- **Session compatibility**: sessions DB schema versioned; new server can read old session, marks as needing migration on next write.
+- **Helm rollback**: `helm rollback xiaoguai N` reverts both image + chart + values, < 30s.
+- **Blue-green binary upgrade for bare-metal**: ship `xiaoguai-cli upgrade` that downloads new binary, runs migrations dry-run, atomic swap symlink, can `xiaoguai-cli rollback` if smoke test fails.
+- **Upgrade runbook in `docs/runbooks/upgrade.md`** for each minor version.
+
+#### C4 Disaster recovery / backup-restore
+
+**Pain context:** "Customer hard drive died — can they restore?" 等保 2.0 三级 mandatory. Most agent platforms have **zero** DR story.
+
+**Xiaoguai response:**
+- **Periodic dump scheduler**: built-in cron in xiaoguai-core dumps PG + Valkey snapshot every N hours → S3-compatible bucket (or local dir for airgap)
+- **Encryption at rest**: dumps encrypted with age, key in `xiaoguai-secrets`
+- **Restore CLI**: `xiaoguai-cli restore --from s3://bucket/backup-2026-05-21.age` — replays dump, fixes sequences, verifies hmac chain integrity post-restore
+- **PG replica** (optional, v1.1): streaming replication to standby; admin UI can `failover`
+- **Runbook with RPO/RTO targets**: RPO ≤ 1h, RTO ≤ 15 min for v1.0 setups
+- **Disaster drill test**: CI weekly test that boots from a backup snapshot end-to-end
+
+#### C5 Mistakes-recovery / agent action time-machine
+
+**Pain context:** "Agent wiped my prod table." "Cursor reverted my work 5 times in one day." Git revert isn't enough — agents do non-code things too (DB ops, API calls, IM messages).
+
+**Xiaoguai response (v0.5.4):**
+- **Every destructive tool requires `undo_handler`**: MCP manifest declares an undo path (or explicitly "irreversible"). Agent always runs both — but only executes destructive op after user/policy approval.
+- **Action log replay**: every tool call recorded with input + output + undo. `xiaoguai-cli session undo --session S5 --action 12` runs the undo handler.
+- **"Time machine" UI**: chat-ui shows timeline of agent actions, each with [undo] button (if reversible) or [⚠️ irreversible].
+- **Snapshots for filesystem MCPs**: before any write, snapshot affected files (LRU bounded). `undo file_edit` restores.
+- **DB destructive op pattern**: agent generates SQL → admin approves → wrapped in transaction with checkpoint → if fails verification, automatic rollback.
+
+#### C6 GFW + 信创 network/hardware reality
+
+**Pain context:** GitHub clone fails behind GFW; HuggingFace blocked; uvx fails MitM proxy; 鲲鹏/麒麟/统信 binary compatibility unknown; SM2/SM3/SM4 mandatory in regulated industries.
+
+**Xiaoguai response (v0.5 + v1.0):**
+- Multi-arch build matrix expanded: `linux/amd64`, `linux/arm64` (鲲鹏 ARM64-compatible)
+- **Mirror seed scripts** for: Aliyun ACR (images), `rsproxy.cn` (crates), `npmmirror.com` (npm)
+- **国密 编译 feature**: `cargo build --features gmcrypto` → SM2 sig for JWT, SM3 for audit hmac, SM4 for at-rest encryption
+- **Airgap install bundle** (already in v1.0): include all images + crates + binaries + sample MCPs
+- **Compatibility test matrix in CI**: Kylin 10 + 鲲鹏 + Postgres 国产分支 (海量数据等)
+- **uvx fallback documented**: Rust static binary always; pip wheel is bonus, not primary install
+
+**Deep-dive findings (sub-agent B):**
+
+Concrete 信创 pain matrix:
+- **glibc skew kills binaries**: Ubuntu 22.04 builds (glibc 2.35) **won't run** on Kylin V10 / 统信 UOS (glibc 2.28, RHEL 8-derived). `GLIBC_2.32 not found` errors are routine.
+- **鲲鹏 920 ARM64 + openEuler glibc 2.34 patched** — `ring`, `openssl-sys` Rust crates with C-deps need rebuild
+- **Postgres NOT in 信创 catalog** — must use 达梦 (DM8) / 人大金仓 (KingbaseES) / 神通 / **openGauss** (PG 9.2 fork, closest compat)
+- **国密 SM2/SM3/SM4 mandatory** for 等保 2.0 三级+ (政府/金融/能源/医疗央国企) — 商用密码法 2020 + GB/T 22239-2019
+- **Crates.io + npm blocked/slow**: builds hang on resolve unless mirrored
+- **Docker Hub rate-limited / intermittent from CN ISPs** (~30% failure)
+- **海光 + 国密加速卡** driver only on RHEL 7.6 / Kylin V10 — conflicts with newer kernels
+
+**Xiaoguai 信创变体 concrete plan:**
+
+Build matrix additions (use `cargo-zigbuild` for clean glibc-target builds):
+```
+linux/amd64-glibc2.28   (Kylin V10, UOS) — build on rockylinux:8
+linux/amd64-glibc2.35   (default Ubuntu 22.04)
+linux/arm64-glibc2.28   (openEuler 22.03, 鲲鹏 920) — cross-compile
+linux/arm64-glibc2.35   (default ARM)
+```
+
+Mirror seed (commit to repo as `.cargo/config.toml` + `.npmrc` + `daemon.json`):
+- Crates: USTC mirror + rsproxy.cn fallback
+- npm: registry.npmmirror.com (淘宝)
+- Docker: Aliyun ACR (`registry.cn-hangzhou.aliyuncs.com/xiaoguai/*`) + Tencent TCR
+
+国密 integration (new `xiaoguai-crypto` crate, feature flag `gm`):
+- TLS via **Tongsuo** (铜锁, OpenSSL fork) for SM2/SM3/SM4 ciphersuites
+- JWT: SM2 signature mode (replaces ES256) via `tcc-sm` or `libsm`
+- Audit HMAC: SM3-HMAC
+- 国密双证书 (signing + encryption cert) handshake
+
+Offline bundle (`xiaoguai-airgap-v1.0.0-xinchuang.tar.gz`, ~3.5 GB) extends the standard airgap bundle:
+- glibc-2.28 ARM/AMD variants
+- openGauss-compat image + KingbaseES image option
+- tongsuo-8.4 image
+- 国密 demo certs (customer generates real ones)
+- 信创部署手册.pdf + 等保三级配置指南.pdf
+
+Cost: **11 eng-weeks one-time + 6-8 eng-weeks/year ongoing + ~2 weeks per major 信创 deal**. **Verdict: only invest if ≥ 3 信创 customers in pipeline, or 1 央企/金融 anchor**. Otherwise defer to v1.1.
+
+### Important (worth adding to plan / runbooks)
+
+#### I1 Multi-user collaboration / hand-off
+
+**Pain:** Two teammates can't share an agent task. Sessions are user-bound.
+
+**Response (v1.1):**
+- Session `shared_with` field — explicit grant to other users in same tenant
+- Hand-off: "transfer ownership" button + audit entry
+- Mention/notify: `@bob` in chat → notifies bob via IM
+- "Inherit and continue" for paused tasks
+
+#### I2 Onboarding time-to-first-value benchmark
+
+**Target:** From `docker compose up` to first successful agent task **≤ 15 min** (or "stuck" message).
+
+**Response (v1.0):**
+- First-run wizard: detect Ollama, list models, pick one, create test session, run "hello"
+- Failure modes have explicit "stuck on X — fix it by Y" messages
+- `docs/user-guide/quickstart.md` matches the wizard verbatim
+- Benchmark in CI: container starts → API responds → first chat completes in < 5 min on standard runner
+
+#### I3 Telemetry strategy (opt-in / opt-out)
+
+**Pain:** Enterprises don't want telemetry. Hobbyists don't care. Mixed defaults usually wrong.
+
+**Response (v0.5.5):**
+- **Default: ZERO telemetry**. No phone-home.
+- Opt-in: admin can enable anonymous usage stats → goes to `telemetry.xiaoguai.dev` (we operate)
+- Crash dumps: opt-in only; stripped of PII/secrets before sending
+- All telemetry events explicitly listed in `docs/privacy/telemetry.md` — auditable
+
+#### I4 Observability for operators
+
+**Pain:** "What's slow today?" "Why is alice's tenant burning tokens?" "Which MCP failed most this week?"
+
+**Response (v1.0):**
+- Prometheus metrics endpoint by default: `/metrics`
+- Built-in Grafana dashboard JSONs in `deploy/grafana/`
+- Alert rules templates: MCP error rate > 5% / token spike / DB pool exhaustion
+- admin-ui has built-in "Health" page (no Grafana required for small deployments)
+- Structured logging: tracing → JSON → ship to ES/Loki
+
+#### I5 Agent eval harness — regression testing
+
+**Pain:** "Did the v0.6 agent get worse?" No way to know without manual feel-testing.
+
+**Response (v0.5.6 + v1.1):**
+- `xiaoguai-eval` crate: defines tasks, runs against current agent, scores
+- Test sets:
+  - **Smoke** (per PR): 5 tasks, mock LLM, < 1 min — catches blatant regression
+  - **Regression** (nightly): 30 tasks with real local model (Qwen3-7B), pass rate ≥ 80%
+  - **A/B** (per release): old vs new agent loop on 100 prompts, quality diff
+- Tasks include: tool-call correctness, multi-step completion, refusal-when-policy-deny, cost stability
+- Results → PG `eval_run` table → admin-ui dashboard
+
+**Deep-dive findings (sub-agent B):**
+
+Framework survey (top 8):
+- **Inspect AI** (UK AISI, Apache 2.0, Python) — best-in-class for agent evals; trajectory grading, tool-use scoring, sandboxed exec. **Top pick for Tier-2 regression.**
+- **Anthropic Claude Agent SDK evals** — three eval types (regression / capability / graders split into outcome-check vs transcript-check). "Demystifying Evals" 2026-01 is canonical reference.
+- **τ-bench (Sierra/Anthropic, MIT)** — multi-turn customer-service tasks with **policy compliance scoring**. Directly relevant to Xiaoguai's "agent refuses destructive op when policy deny".
+- **Block goose evals** (Apache 2.0) — closest analog since goose is also Rust+MCP host. **Steal structure.**
+- SWE-bench Verified, ToolBench, AgentBench, Continue.dev eval — all useful, MIT/Apache.
+
+Xiaoguai 3-tier design:
+
+| Tier | Trigger | Suite size | Stack | Gate |
+|---|---|---|---|---|
+| **T1 Smoke** | every PR (< 90s) | 12 tasks, mock LLM | Inspect AI + fixtures | 100% pass to merge |
+| **T2 Regression** | nightly + pre-release (< 30min) | 60 tasks (20 task-completion + 20 policy-compliance + 10 tool-call correctness + 10 multi-step) | Inspect AI + Qwen3-7B (GPU CI) / Qwen3-1.7B (CPU fallback) | pass ≥ 80% overall, ≥ 95% policy-compliance |
+| **T3 A/B** | per minor release (~2hr) | 100 prompts + 20 SWE-bench Lite | main vs release branch | no metric regress > 5% |
+
+Datasets to ship (all permissive):
+- τ-bench retail/airline subset (~150 tasks)
+- ToolBench filtered subset (~200 traces)
+- SWE-bench Lite (300 issues)
+- **BFCL v3** (Berkeley Function Calling Leaderboard, 2k cases, Apache 2.0)
+- Internal Xiaoguai fixtures (grows from real bugs)
+
+Integration:
+- PG tables `eval_run`, `eval_task_result`
+- GitHub Actions matrix (smoke per PR / regression nightly / A/B on release/*)
+- Grafana panel: pass-rate trend + token-drift heatmap
+- Slack alert on regression > 5% or policy-compliance < 95%
+- Artifacts → S3 (or MinIO airgap) keyed `{commit}/{run_id}`
+
+#### I6 Migration from competitors
+
+**Pain:** Users have invested in Cline / aider sessions, MCP configs, custom prompts. Switching requires re-doing.
+
+**Response (v1.1):**
+- `xiaoguai-cli import cline ~/.config/cline/sessions.db` — best-effort import
+- MCP server config compatibility: same manifest JSON format as Claude Desktop / Cline accepted
+- Aider history JSONL importer
+- Documentation: "How to switch from X to Xiaoguai" guides
+
+#### I7 Multi-modal — image / PDF / audio
+
+**Pain:** "Send a screenshot to debug" / "Read this PDF and summarize" / IM users sending voice.
+
+**Response (v1.1):**
+- Image upload to chat — auto-pass to vision-capable LLM provider (skip non-vision)
+- PDF: extract text + tables + images via Apache PDFBox MCP server (or `pdf-extract` crate)
+- Audio: Whisper MCP server — IM voice message → transcribe → agent
+- Provider capabilities advertised in admin UI
+
+#### I8 CI/CD integration — agent in pipelines
+
+**Pain:** PR review by agent, automated refactor in nightly job.
+
+**Response (v1.1):**
+- `xiaoguai-cli ci run --task review-pr --pr 123` — non-interactive mode
+- GitHub Action template in `examples/github-actions/`
+- GitLab CI template
+- Cost cap per CI run (don't burn $50 on PR review)
+
+#### I9 Mobile / IM-only user UX
+
+**Pain:** Frontline ops uses 飞书 on phone only. Needs full agent power without laptop.
+
+**Response (v1.0):**
+- 飞书 cards optimized for mobile (responsive)
+- Long output → "view full" deep link to chat-ui (mobile-responsive)
+- Voice input: IM voice → Whisper → text prompt
+- Quick approval buttons in IM card for pre-tool gates
+
+### Nice-to-have (v1.1 backlog)
+
+| # | Gap | Brief response |
+|---|---|---|
+| N1 | i18n details (mixed-lang sessions, model preferences) | Tenant default locale + per-session override; tool error msgs i18n via `fluent-rs` |
+| N2 | Agent loop edge cases (infinite sub-agent recursion, self-modifying agent) | Hard depth/iter caps; agent forbidden from editing own config files |
+| N3 | Jupyter MCP server | Reference impl in `examples/mcp-servers/jupyter/` |
+| N4 | LSP-style server for IDE integration | Defer to v2.0 — terminal/IM/web first |
+| N5 | 实名认证 / 数据出境法规 | Operator runbook per region in `docs/compliance/data-residency.md` |
+
+---
+
+## 10. Plan additions (consolidated from §9 + §9bis)
+
+### v0.5.1 additions
+- Task 5b: SQLite WAL session persistence (from §3.11)
+- Task 10b: `xiaoguai-cli audit verify` command (from §3.10)
+- **NEW Task 11: tenant_quota table + per-tenant daily/monthly token quotas** (from C1)
+- **NEW Task 12: schema migrations both `up.sql` and `down.sql` with CI testing both directions** (from C3)
+
+### v0.5.2 additions
+- Task 1b: Local-LLM dialect adapter layer (§3.3)
+- Task 8: Transparent routing UI provenance (§3.9)
+- **NEW Task 9: cost prediction endpoint `POST /v1/cost/estimate`** (from C1)
+- **NEW Task 10: circuit breaker on cost spike** (from C1)
+
+### v0.5.3 additions
+- Task 1c: MCP Tasks primitive (§3.1)
+- Task 4b: stdout/stderr split (§3.4)
+- Task 7b: capability prompt UI (§3.7)
+- Task 11: per-call deadline + circuit breaker (§3.1)
+- **NEW Task 12: MCP manifest declares `undo_handler` for destructive tools** (from C5)
+
+### v0.5.4 additions
+- Task 0: XIAOGUAI.md memory (§F10)
+- Task 2b: pre-tool approval gate (§3.10)
+- Task 4b: diff-only apply_diff (§3.6)
+- Task 7b: bounded history hard cap (§3.5)
+- **NEW Task 8: Tool result provenance tagging** (from C2)
+- **NEW Task 9: action log replay + undo CLI** (from C5)
+- **NEW Task 10: token-bomb defense (max_iterations, max_subagent_depth, max_parallel_tools)** (from C1)
+- **NEW Task 11: "verify what you did" optional second-pass LLM** (from C2)
+
+### v0.5.5 additions (xiaoguai-api)
+- **NEW Task 7: Prometheus metrics endpoint + dashboard JSONs** (from I4)
+- **NEW Task 8: Zero-default telemetry posture; explicit opt-in flow** (from I3)
+- **NEW Task 9: First-run wizard endpoint + UI flow** (from I2)
+
+### v0.5.6 additions
+- **NEW Task 7: xiaoguai-eval crate with smoke/regression/A-B test harness** (from I5)
+- **NEW Task 8: `xiaoguai-cli ci run` non-interactive CI mode** (from I8)
+
+### v1.0 promoted from v1.1
+- **C18 secrets manager hardening** (was "later")
+- **Context budget UI in chat-ui**
+- **Transparent model routing UI**
+- **国密 SM2/SM3/SM4 compile feature**
+- **WebSocket IM bridge (no inbound port)**
+- **Backup/restore CLI + scheduler** (from C4)
+- **Upgrade runbook + helm rollback drill** (from C3)
+- **Mobile-optimized 飞书 cards** (from I9)
+- **First-run onboarding wizard** (from I2)
+- **Cost meter in admin-ui + per-tenant quotas** (from C1)
+
+### v1.1 backlog (newly added)
+- Migration tooling from Cline/aider/Claude Code sessions (I6)
+- Multi-modal: image + PDF + audio (I7)
+- Multi-user collaboration / session sharing (I1)
+- Eval A/B harness + dashboard (I5 v2)
+- Action time-machine UI (C5 v2)
+- Tool-call piping primitive (F4)
+
+### v1.0 explicitly dropped
+- Workflow DAG editor (Dify mistake — "too heavy" top complaint)
+- CodeAct mode (defer to v1.1 unless customer pilot asks)
+
+---
+
+## 11. ADR queue (architectural decisions worth permanent record)
+
+| ADR | Topic | Priority |
+|---|---|---|
+| ADR-0001 | Rust toolchain pin (already exists) | done |
+| ADR-0002 | Bounded memory by design (Rust + per-session caps) | high |
+| ADR-0003 | Diff-only file edits (no whole-file rewrites) | high |
+| ADR-0004 | Transparent model routing (never silent fallback) | high |
+| ADR-0005 | Local-LLM dialect adapter layer | high |
+| ADR-0006 | MCP Tasks primitive as first-class async tool model | high |
+| ADR-0007 | Pre-tool approval gate + policy engine | high |
+| ADR-0008 | Tool result provenance + claim verification | high |
+| ADR-0009 | Per-tenant cost quota + token-bomb defense | high |
+| ADR-0010 | SQLite WAL session persistence (not PG only) | medium |
+| ADR-0011 | Schema migrations always reversible | medium |
+| ADR-0012 | Audit hmac chain + queryable integrity verify | medium |
+| ADR-0013 | Zero-default telemetry + explicit opt-in | medium |
+| ADR-0014 | 国密 SM2/SM3/SM4 compile feature | medium |
+| ADR-0015 | Backup/restore architecture + RPO/RTO targets | medium |
+
+---
+
+## 12. Next actions (revised)
 
 1. **Update plan docs**: `2026-05-21-v0.5-inner-loop.md` per §5 above (additions to sub-milestones).
 2. **Add new ADRs**:
