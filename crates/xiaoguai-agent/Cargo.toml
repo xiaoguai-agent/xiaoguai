@@ -11,9 +11,14 @@ description = "Xiaoguai agent loop — ReAct default + optional planning."
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
+xiaoguai-mcp = { path = "../xiaoguai-mcp" }
 async-trait = { workspace = true }
 tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tokio-util = { workspace = true }
 futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
