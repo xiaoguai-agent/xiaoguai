@@ -5,4 +5,5 @@
 //! involving clap or `assert_cmd`.
 
 pub mod chat;
+pub mod mcp;
 pub mod provider;
