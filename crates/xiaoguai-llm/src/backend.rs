@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use crate::types::{ChatChunk, ChatRequest};
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum LlmError {
     #[error("network: {0}")]
     Network(String),
@@ -14,6 +14,8 @@ pub enum LlmError {
     Provider(String),
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+    #[error("no provider available: {0}")]
+    NoProvider(String),
 }
 
 pub type ChatStream = Pin<Box<dyn futures::Stream<Item = Result<ChatChunk, LlmError>> + Send>>;

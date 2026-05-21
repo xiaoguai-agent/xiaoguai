@@ -54,6 +54,7 @@ id_newtype!(SessionId, "sess");
 id_newtype!(MessageId, "msg");
 id_newtype!(ToolCallId, "tc");
 id_newtype!(McpServerInstanceId, "mcp");
+id_newtype!(ProviderId, "prov");
 
 #[cfg(test)]
 mod tests {

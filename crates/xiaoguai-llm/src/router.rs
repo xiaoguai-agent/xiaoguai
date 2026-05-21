@@ -1,0 +1,135 @@
+//! `LlmRouter` — picks one of N registered backends per request.
+//!
+//! Resolution order (first match wins):
+//!
+//!   1. `explicit_provider` set on the [`ResolveCtx`].
+//!   2. Tenant default for `req.model` (if `ctx.tenant_id` is set).
+//!   3. System default for `req.model`.
+//!   4. The `fallback_order` chain (used both as the default when no defaults
+//!      hit and as the chain to walk when an earlier candidate's *initial*
+//!      `chat_stream` call returns an error.
+//!
+//! Once a stream has yielded its first chunk we never failover: the caller has
+//! already started consuming output and re-issuing the request would produce
+//! duplicated content. Errors after that point propagate to the caller.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use tracing::warn;
+use xiaoguai_types::{ProviderId, TenantId};
+
+use crate::backend::{ChatStream, LlmBackend, LlmError};
+use crate::types::ChatRequest;
+
+/// Static routing configuration. Mutating the router at runtime (e.g. after
+/// `xiaoguai provider register`) currently means rebuilding it; refresh
+/// support lands with the API server in v0.5.5.
+#[derive(Debug, Clone, Default)]
+pub struct RouterConfig {
+    /// `model_name -> provider` used when no tenant default matches.
+    pub system_default_for_model: HashMap<String, ProviderId>,
+    /// `tenant -> { model_name -> provider }`.
+    pub tenant_default_for_model: HashMap<TenantId, HashMap<String, ProviderId>>,
+    /// Providers walked in order when nothing more specific resolves and when
+    /// an earlier candidate fails its initial call.
+    pub fallback_order: Vec<ProviderId>,
+}
+
+/// Per-request context controlling routing resolution.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolveCtx<'a> {
+    pub tenant_id: Option<&'a TenantId>,
+    pub explicit_provider: Option<&'a ProviderId>,
+}
+
+pub struct LlmRouter {
+    backends: HashMap<ProviderId, Arc<dyn LlmBackend>>,
+    config: RouterConfig,
+}
+
+impl std::fmt::Debug for LlmRouter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmRouter")
+            .field("backends", &self.backends.keys().collect::<Vec<_>>())
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
+impl LlmRouter {
+    #[must_use]
+    pub fn new(backends: HashMap<ProviderId, Arc<dyn LlmBackend>>, config: RouterConfig) -> Self {
+        Self { backends, config }
+    }
+
+    /// Stream a chat completion. Walks the candidate list returned by
+    /// [`Self::resolve`] until one backend's initial call succeeds.
+    pub async fn chat_stream(
+        &self,
+        ctx: ResolveCtx<'_>,
+        req: ChatRequest,
+    ) -> Result<ChatStream, LlmError> {
+        let candidates = self.resolve(ctx, &req);
+        if candidates.is_empty() {
+            return Err(LlmError::NoProvider(
+                "no backend matched explicit/default/fallback rules".into(),
+            ));
+        }
+
+        let mut last_err: Option<LlmError> = None;
+        for provider_id in candidates {
+            let Some(backend) = self.backends.get(&provider_id) else {
+                warn!(provider = %provider_id, "candidate in config but no backend instance registered");
+                continue;
+            };
+            match backend.chat_stream(req.clone()).await {
+                Ok(stream) => return Ok(stream),
+                Err(e) => {
+                    warn!(provider = %provider_id, error = %e, "backend failed; trying next");
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        Err(match last_err {
+            Some(e) => LlmError::NoProvider(format!("all candidates failed; last error: {e}")),
+            None => LlmError::NoProvider("no candidate backend was registered".into()),
+        })
+    }
+
+    /// Build the ordered list of provider candidates for this request. Pure
+    /// function of `(config, ctx, req.model)` — used both by `chat_stream`
+    /// and by tests.
+    #[must_use]
+    pub fn resolve(&self, ctx: ResolveCtx<'_>, req: &ChatRequest) -> Vec<ProviderId> {
+        let mut out: Vec<ProviderId> = Vec::new();
+        let push = |p: ProviderId, sink: &mut Vec<ProviderId>| {
+            if !sink.contains(&p) {
+                sink.push(p);
+            }
+        };
+
+        if let Some(p) = ctx.explicit_provider {
+            push(p.clone(), &mut out);
+        }
+
+        if let Some(t) = ctx.tenant_id {
+            if let Some(table) = self.config.tenant_default_for_model.get(t) {
+                if let Some(p) = table.get(&req.model) {
+                    push(p.clone(), &mut out);
+                }
+            }
+        }
+
+        if let Some(p) = self.config.system_default_for_model.get(&req.model) {
+            push(p.clone(), &mut out);
+        }
+
+        for p in &self.config.fallback_order {
+            push(p.clone(), &mut out);
+        }
+
+        out
+    }
+}
