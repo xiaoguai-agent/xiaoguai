@@ -1,0 +1,58 @@
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock.bak
+*.pdb
+
+# Cargo: keep workspace Cargo.lock, ignore per-crate
+crates/*/Cargo.lock
+
+# Node / pnpm
+node_modules/
+**/dist/
+**/build/
+.pnpm-store/
+*.tsbuildinfo
+.eslintcache
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.p12
+
+# Logs + temp
+*.log
+logs/
+tmp/
+.tmp/
+
+# DB
+*.db
+*.sqlite
+*.sqlite3
+
+# SBOM / signatures generated locally (release CI handles real ones)
+sbom-*.json
+*.sig
+*.bundle
+
+# Docs build
+docs/_build/
+docs/.docusaurus/
+
+# Local model files (huge)
+models/
+*.gguf
+*.safetensors
+*.bin

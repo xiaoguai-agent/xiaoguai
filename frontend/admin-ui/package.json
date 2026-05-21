@@ -1,0 +1,12 @@
+{
+  "name": "@xiaoguai/admin-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "echo 'no lint yet'",
+    "typecheck": "echo 'no typecheck yet'",
+    "dev": "echo 'v0.5 — implement'",
+    "build": "echo 'v0.5 — implement'"
+  }
+}

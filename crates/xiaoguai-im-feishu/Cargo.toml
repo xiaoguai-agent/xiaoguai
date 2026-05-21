@@ -1,0 +1,18 @@
+[package]
+name = "xiaoguai-im-feishu"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Feishu IM adapter (skeleton, v1.0 target)."
+
+[dependencies]
+xiaoguai-types = { path = "../xiaoguai-types" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

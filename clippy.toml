@@ -1,0 +1,10 @@
+doc-valid-idents = [
+    "XiaoGuai", "Xiaoguai",
+    "MCP", "JWT", "OIDC", "BSL", "RBAC", "RLS", "SSPL", "AGPL", "GPL",
+    "ReAct", "LLM", "Ollama", "OpenAI", "Anthropic",
+    "Postgres", "PostgreSQL", "Valkey", "Redis",
+    "DingTalk", "WeCom", "Feishu", "Lark",
+    "gRPC", "JsonRPC",
+    "..",
+]
+cognitive-complexity-threshold = 20

@@ -1,0 +1,25 @@
+[package]
+name = "xiaoguai-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Xiaoguai agent loop — ReAct default + optional planning."
+
+[dependencies]
+xiaoguai-types = { path = "../xiaoguai-types" }
+xiaoguai-llm = { path = "../xiaoguai-llm" }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
