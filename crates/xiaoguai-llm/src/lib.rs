@@ -8,6 +8,7 @@
 //! v0.5 adds: OpenAI-compatible backend, vLLM backend, provider routing.
 
 pub mod backend;
+pub mod breaker;
 pub mod mock;
 pub mod ollama;
 pub mod openai_compat;
@@ -16,6 +17,7 @@ pub mod types;
 pub mod usage;
 
 pub use backend::{ChatStream, LlmBackend, LlmError};
+pub use breaker::{Breaker, BreakerConfig, BreakerState, Breakers, Clock, SystemClock};
 pub use mock::MockBackend;
 pub use ollama::OllamaBackend;
 pub use openai_compat::OpenAiCompatBackend;

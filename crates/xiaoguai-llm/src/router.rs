@@ -21,6 +21,7 @@ use tracing::warn;
 use xiaoguai_types::{ProviderId, SessionId, TenantId, UserId};
 
 use crate::backend::{ChatStream, LlmBackend, LlmError};
+use crate::breaker::Breakers;
 use crate::types::ChatRequest;
 use crate::usage::{record_on_done, UsageRecord, UsageSink};
 
@@ -52,6 +53,7 @@ pub struct LlmRouter {
     backends: HashMap<ProviderId, Arc<dyn LlmBackend>>,
     config: RouterConfig,
     usage_sink: Option<Arc<dyn UsageSink>>,
+    breakers: Option<Breakers>,
 }
 
 impl std::fmt::Debug for LlmRouter {
@@ -60,6 +62,7 @@ impl std::fmt::Debug for LlmRouter {
             .field("backends", &self.backends.keys().collect::<Vec<_>>())
             .field("config", &self.config)
             .field("usage_sink", &self.usage_sink.is_some())
+            .field("breakers", &self.breakers.is_some())
             .finish()
     }
 }
@@ -71,6 +74,7 @@ impl LlmRouter {
             backends,
             config,
             usage_sink: None,
+            breakers: None,
         }
     }
 
@@ -79,6 +83,15 @@ impl LlmRouter {
     #[must_use]
     pub fn with_usage_sink(mut self, sink: Arc<dyn UsageSink>) -> Self {
         self.usage_sink = Some(sink);
+        self
+    }
+
+    /// Attach a circuit-breaker pool. Candidates whose breaker is `Open` are
+    /// skipped during fallback walking; their breaker is recorded on
+    /// success / initial-call failure.
+    #[must_use]
+    pub fn with_breakers(mut self, breakers: Breakers) -> Self {
+        self.breakers = Some(breakers);
         self
     }
 
@@ -98,12 +111,21 @@ impl LlmRouter {
 
         let mut last_err: Option<LlmError> = None;
         for provider_id in candidates {
+            if let Some(b) = &self.breakers {
+                if !b.allows_call(&provider_id) {
+                    warn!(provider = %provider_id, "circuit breaker open; skipping");
+                    continue;
+                }
+            }
             let Some(backend) = self.backends.get(&provider_id) else {
                 warn!(provider = %provider_id, "candidate in config but no backend instance registered");
                 continue;
             };
             match backend.chat_stream(req.clone()).await {
                 Ok(stream) => {
+                    if let Some(b) = &self.breakers {
+                        b.record_success(&provider_id);
+                    }
                     let final_stream = match &self.usage_sink {
                         Some(sink) => {
                             let template = UsageRecord {
@@ -125,6 +147,9 @@ impl LlmRouter {
                     return Ok(final_stream);
                 }
                 Err(e) => {
+                    if let Some(b) = &self.breakers {
+                        b.record_failure(&provider_id);
+                    }
                     warn!(provider = %provider_id, error = %e, "backend failed; trying next");
                     last_err = Some(e);
                 }
