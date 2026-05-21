@@ -22,5 +22,7 @@ pub use mock::MockBackend;
 pub use ollama::OllamaBackend;
 pub use openai_compat::OpenAiCompatBackend;
 pub use router::{LlmRouter, ResolveCtx, RouterConfig};
-pub use types::{ChatChunk, ChatRequest, Message, Role};
+pub use types::{
+    ChatChunk, ChatRequest, FinishReason, Message, Role, ToolCallSpec, ToolChoice, ToolSpec,
+};
 pub use usage::{BufferedUsageSink, MemoryUsageSink, UsageRecord, UsageSink};

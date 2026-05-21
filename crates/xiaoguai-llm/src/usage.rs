@@ -159,15 +159,16 @@ mod tests {
         let inner: ChatStream = Box::pin(stream::iter(vec![
             Ok(ChatChunk {
                 delta: "He".into(),
-                done: false,
+                ..Default::default()
             }),
             Ok(ChatChunk {
                 delta: "llo".into(),
-                done: false,
+                ..Default::default()
             }),
             Ok(ChatChunk {
                 delta: String::new(),
                 done: true,
+                ..Default::default()
             }),
         ]));
         let wrapped = record_on_done(inner, sink.clone(), dummy_record());
@@ -181,7 +182,7 @@ mod tests {
         let sink = Arc::new(MemoryUsageSink::new());
         let inner: ChatStream = Box::pin(stream::iter(vec![Ok(ChatChunk {
             delta: "He".into(),
-            done: false,
+            ..Default::default()
         })]));
         let wrapped = record_on_done(inner, sink.clone(), dummy_record());
         let _: Vec<_> = wrapped.collect().await;

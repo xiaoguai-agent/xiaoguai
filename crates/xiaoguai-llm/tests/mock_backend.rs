@@ -1,20 +1,12 @@
 //! `MockBackend` returns canned responses for deterministic tests.
 
 use futures::StreamExt;
-use xiaoguai_llm::{ChatRequest, LlmBackend, Message, MockBackend, Role};
+use xiaoguai_llm::{ChatRequest, LlmBackend, Message, MockBackend};
 
 #[tokio::test]
 async fn mock_backend_returns_canned_chunks() {
     let backend = MockBackend::with_response("Hello from Xiaoguai!");
-    let req = ChatRequest {
-        model: "mock".into(),
-        messages: vec![Message {
-            role: Role::User,
-            content: "hi".into(),
-        }],
-        temperature: None,
-        max_tokens: None,
-    };
+    let req = ChatRequest::new("mock", vec![Message::user("hi")]);
 
     let mut stream = backend.chat_stream(req).await.expect("stream");
     let mut collected = String::new();
