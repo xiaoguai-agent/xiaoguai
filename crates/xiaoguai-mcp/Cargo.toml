@@ -6,13 +6,23 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "MCP client + per-tenant supervisor pool (skeleton)."
+description = "MCP client + per-tenant supervisor."
 
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
+xiaoguai-storage = { path = "../xiaoguai-storage" }
+rmcp = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

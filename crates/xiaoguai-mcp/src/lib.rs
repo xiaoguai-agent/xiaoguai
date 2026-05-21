@@ -1,3 +1,19 @@
-//! MCP client + per-tenant supervisor pool (skeleton).
+//! MCP client + per-tenant supervisor.
 //!
-//! Implementation lands in v0.5. See `docs/architecture/2026-05-21-design.md` §9.
+//! v0.5.3 ships:
+//!   - `McpClient` trait + `StdioMcpClient` (stdio transport via rmcp)
+//!   - `McpServer` domain type + PG repository (in `xiaoguai-storage`)
+//!   - `McpSupervisor` minimal lifecycle (`start`/`get`/`stop`/`list_active`)
+//!
+//! Deferred to v0.5.3.1: SSE/HTTP transports, cgroup+seccomp+netns sandbox,
+//! ping-based health checks, default-deny network policy.
+
+#![forbid(unsafe_code)]
+
+pub mod client;
+pub mod error;
+pub mod types;
+
+pub use client::McpClient;
+pub use error::{McpError, McpResult};
+pub use types::{ContentBlock, ServerInfo, ToolDescriptor, ToolResult};
