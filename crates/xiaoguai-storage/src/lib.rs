@@ -8,6 +8,7 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::module_name_repetitions, clippy::missing_errors_doc)]
 
+pub mod cache;
 pub mod db;
 pub mod migrations;
 pub mod repositories;

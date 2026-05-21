@@ -1,3 +1,13 @@
-//! Append-only audit log with hmac chain + S3 sync (skeleton).
+//! Append-only audit log with hmac chain.
 //!
-//! Implementation lands in v0.5. See `docs/architecture/2026-05-21-design.md` §8.3.
+//! Every audit entry's hmac is computed over `prev_hmac || canonical_bytes(entry)`,
+//! so any tampering breaks the chain. Verified by `verify_chain()`.
+//! See ADR-0008 and ADR-0009 for the broader trust + cost-attribution model.
+
+#![forbid(unsafe_code)]
+#![warn(clippy::pedantic)]
+#![allow(clippy::module_name_repetitions, clippy::missing_errors_doc)]
+
+pub mod chain;
+
+pub use chain::{AuditEntry, ChainError, ChainedAudit, StoredEntry};
