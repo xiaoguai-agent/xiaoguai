@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use futures::StreamExt;
-use xiaoguai_llm::{ChatRequest, LlmBackend, Message, Role};
+use xiaoguai_llm::{ChatRequest, LlmBackend, Message};
 
 pub struct Agent {
     backend: Box<dyn LlmBackend>,
@@ -18,16 +18,12 @@ impl Agent {
     }
 
     /// One-shot: send the user's prompt, return the assistant's full reply.
+    ///
+    /// Preserved for v0.1 callers and smoke tests. The real ReAct loop lives
+    /// in [`crate::react`].
     pub async fn run_once(&self, user_prompt: &str) -> Result<String> {
-        let req = ChatRequest {
-            model: self.model.clone(),
-            messages: vec![Message {
-                role: Role::User,
-                content: user_prompt.to_string(),
-            }],
-            temperature: Some(0.2),
-            max_tokens: None,
-        };
+        let mut req = ChatRequest::new(self.model.clone(), vec![Message::user(user_prompt)]);
+        req.temperature = Some(0.2);
 
         let mut stream = self
             .backend
