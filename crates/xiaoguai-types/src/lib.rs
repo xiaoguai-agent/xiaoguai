@@ -13,7 +13,9 @@ pub mod session;
 pub mod tenant;
 pub mod tool_call;
 
-pub use ids::{McpServerInstanceId, MessageId, SessionId, TenantId, ToolCallId, UserId};
+pub use ids::{
+    McpServerInstanceId, MessageId, ProviderId, SessionId, TenantId, ToolCallId, UserId,
+};
 pub use session::{ContentBlock, Message, Role as MessageRole, Session, SessionStatus};
 pub use tenant::{Role as TenantRole, Tenant, TenantStatus, User};
 pub use tool_call::{ToolCall, ToolCallStatus};
