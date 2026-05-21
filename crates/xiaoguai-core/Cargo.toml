@@ -15,14 +15,21 @@ path = "src/main.rs"
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-config = { path = "../xiaoguai-config" }
+xiaoguai-storage = { path = "../xiaoguai-storage" }
+xiaoguai-auth = { path = "../xiaoguai-auth" }
+xiaoguai-audit = { path = "../xiaoguai-audit" }
 xiaoguai-agent = { path = "../xiaoguai-agent" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
 xiaoguai-api = { path = "../xiaoguai-api" }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+sqlx = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,13 +1,149 @@
-//! Xiaoguai core binary entry point.
+//! Xiaoguai core binary — v0.5.1 wiring.
+//!
+//! Loads configuration, connects to Postgres + Valkey, applies migrations,
+//! initializes JWT + RBAC + audit chain, then either runs the API server
+//! (default) or executes a single subcommand (e.g. `smoke`).
 
-use anyhow::Result;
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
+use xiaoguai_audit::{AuditEntry, ChainedAudit};
+use xiaoguai_auth::{Authz, JwtValidator};
+use xiaoguai_config::Settings;
+use xiaoguai_storage::{cache::Cache, db};
+
+#[derive(Parser, Debug)]
+#[command(name = "xiaoguai-core", version, about = "Xiaoguai core binary")]
+struct Cli {
+    /// Path to a YAML config file. If absent, defaults + env are used.
+    #[arg(long, env = "XIAOGUAI_CONFIG")]
+    config: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Option<Cmd>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Cmd {
+    /// Connect to every component, perform a round-trip, exit 0 on success.
+    Smoke,
+    /// Run the long-lived server (placeholder until v0.5.5 wires axum routes).
+    Serve,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,sqlx=warn")),
+        )
+        .init();
+
+    let cli = Cli::parse();
+    let settings = load_settings(cli.config.as_deref())?;
+
     tracing::info!(
-        "xiaoguai-core v{} — placeholder, not yet wired",
-        env!("CARGO_PKG_VERSION")
+        version = env!("CARGO_PKG_VERSION"),
+        cfg.db = %settings.database.url,
+        cfg.cache = %settings.cache.url,
+        cfg.jwks = %settings.auth.jwks_url,
+        "xiaoguai-core starting"
     );
+
+    match cli.command.unwrap_or(Cmd::Serve) {
+        Cmd::Smoke => run_smoke(&settings).await,
+        Cmd::Serve => run_serve(&settings).await,
+    }
+}
+
+fn load_settings(path: Option<&std::path::Path>) -> Result<Settings> {
+    if let Some(p) = path {
+        Settings::load_from_file(p)
+            .map_err(|e| anyhow::anyhow!("config: {e}"))
+            .with_context(|| format!("loading {}", p.display()))
+    } else {
+        Settings::load_from_env().map_err(|e| anyhow::anyhow!("config(env): {e}"))
+    }
+}
+
+/// Boot every subsystem, do a round-trip on each, exit.
+async fn run_smoke(settings: &Settings) -> Result<()> {
+    tracing::info!("smoke: connecting to Postgres");
+    let pool = db::connect(&settings.database.url, settings.database.max_connections)
+        .await
+        .context("pg connect")?;
+    db::migrate(&pool).await.context("pg migrate")?;
+    let row: (i32,) = sqlx::query_as("SELECT 1")
+        .fetch_one(&pool)
+        .await
+        .context("pg select 1")?;
+    anyhow::ensure!(row.0 == 1, "pg select 1 returned {}", row.0);
+    tracing::info!("smoke: pg ok");
+
+    tracing::info!("smoke: connecting to Valkey");
+    let cache = Cache::connect(&settings.cache.url, settings.cache.key_prefix.clone())
+        .await
+        .context("valkey connect")?;
+    let ts = chrono::Utc::now().to_rfc3339();
+    cache
+        .set(
+            "smoke/heartbeat",
+            &ts,
+            Some(std::time::Duration::from_secs(60)),
+        )
+        .await
+        .context("valkey set")?;
+    let got: Option<String> = cache.get("smoke/heartbeat").await.context("valkey get")?;
+    anyhow::ensure!(
+        got.as_deref() == Some(ts.as_str()),
+        "valkey round-trip mismatch"
+    );
+    tracing::info!("smoke: valkey ok");
+
+    tracing::info!("smoke: initializing JWT validator (no network call)");
+    let _jwt = JwtValidator::new(
+        settings.auth.issuer.clone(),
+        settings.auth.audience.clone(),
+        settings.auth.jwks_url.clone(),
+    );
+    tracing::info!("smoke: jwt validator ok");
+
+    tracing::info!("smoke: loading Casbin RBAC");
+    let authz = Authz::new_default().await.context("rbac load")?;
+    let allowed = authz
+        .check("system_admin", "smoke-tenant", "/sessions/anything", "read")
+        .await
+        .context("rbac check")?;
+    anyhow::ensure!(allowed, "system_admin should be allowed");
+    tracing::info!("smoke: rbac ok");
+
+    tracing::info!("smoke: audit chain round-trip");
+    let chain = ChainedAudit::new(settings.audit.hmac_key.as_bytes());
+    let prev = vec![0u8; 32];
+    let entry = AuditEntry {
+        ts: chrono::Utc::now(),
+        tenant_id: "smoke-tenant".into(),
+        actor: "system".into(),
+        action: "smoke.run".into(),
+        resource: None,
+        details: serde_json::json!({"phase": "boot"}),
+    };
+    let hmac = chain.compute_hmac(&prev, &entry).context("audit hmac")?;
+    anyhow::ensure!(hmac.len() == 32, "audit hmac length");
+    tracing::info!("smoke: audit ok");
+
+    tracing::info!("smoke: PASS");
+    Ok(())
+}
+
+async fn run_serve(_settings: &Settings) -> Result<()> {
+    // v0.5.5 will wire axum routes. v0.5.1 just boots subsystems + idles.
+    tracing::info!("serve: subsystems wired; API routes land in v0.5.5");
+    tokio::signal::ctrl_c()
+        .await
+        .context("waiting for ctrl-c")?;
+    tracing::info!("serve: shutdown");
     Ok(())
 }
