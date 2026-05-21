@@ -8,6 +8,10 @@ authors.workspace = true
 repository.workspace = true
 description = "Xiaoguai command-line client."
 
+[lib]
+name = "xiaoguai_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "xiaoguai"
 path = "src/main.rs"
@@ -16,6 +20,10 @@ path = "src/main.rs"
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-agent = { path = "../xiaoguai-agent" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
+xiaoguai-storage = { path = "../xiaoguai-storage" }
+xiaoguai-config = { path = "../xiaoguai-config" }
+async-trait = { workspace = true }
+chrono = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
@@ -25,6 +33,7 @@ tracing-subscriber = { workspace = true }
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
+parking_lot = { workspace = true }
 
 [lints]
 workspace = true
