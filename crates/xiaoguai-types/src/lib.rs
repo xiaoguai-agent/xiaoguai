@@ -9,6 +9,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 pub mod ids;
+pub mod provider;
 pub mod session;
 pub mod tenant;
 pub mod tool_call;
@@ -16,6 +17,7 @@ pub mod tool_call;
 pub use ids::{
     McpServerInstanceId, MessageId, ProviderId, SessionId, TenantId, ToolCallId, UserId,
 };
+pub use provider::{LlmProvider, ProviderKind};
 pub use session::{ContentBlock, Message, Role as MessageRole, Session, SessionStatus};
 pub use tenant::{Role as TenantRole, Tenant, TenantStatus, User};
 pub use tool_call::{ToolCall, ToolCallStatus};

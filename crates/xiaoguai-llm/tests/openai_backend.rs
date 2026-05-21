@@ -102,6 +102,48 @@ async fn openai_backend_reports_provider_error_on_non_2xx() {
     assert!(msg.contains("503"), "expected status in error, got: {msg}");
 }
 
+/// vLLM and some self-hosted gateways terminate the stream with `finish_reason`
+/// inside the last `data:` event and **omit** the `[DONE]` sentinel. We must
+/// still surface a single `done: true` chunk.
+#[tokio::test]
+async fn openai_backend_handles_finish_reason_without_done_sentinel() {
+    let mut server = mockito::Server::new_async().await;
+    let body = "\
+data: {\"choices\":[{\"delta\":{\"content\":\"vLLM\"}}]}\n\n\
+data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n";
+    let _mock = server
+        .mock("POST", "/chat/completions")
+        .with_status(200)
+        .with_header("content-type", "text/event-stream")
+        .with_body(body)
+        .create_async()
+        .await;
+
+    let backend = OpenAiCompatBackend::new(server.url(), None);
+    let req = ChatRequest {
+        model: "qwen2.5".into(),
+        messages: vec![Message {
+            role: Role::User,
+            content: "hi".into(),
+        }],
+        temperature: None,
+        max_tokens: None,
+    };
+    let mut stream = backend.chat_stream(req).await.expect("stream");
+
+    let mut collected = String::new();
+    let mut done_count = 0usize;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.expect("chunk");
+        collected.push_str(&chunk.delta);
+        if chunk.done {
+            done_count += 1;
+        }
+    }
+    assert_eq!(collected, "vLLM");
+    assert_eq!(done_count, 1, "exactly one done=true chunk expected");
+}
+
 #[test]
 fn openai_backend_name() {
     let backend = OpenAiCompatBackend::new("http://x", None);
