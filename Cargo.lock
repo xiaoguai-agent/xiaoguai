@@ -4291,13 +4291,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "async-trait",
+ "chrono",
  "clap",
+ "parking_lot",
  "predicates",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "xiaoguai-agent",
+ "xiaoguai-config",
  "xiaoguai-llm",
+ "xiaoguai-storage",
  "xiaoguai-types",
 ]
 
