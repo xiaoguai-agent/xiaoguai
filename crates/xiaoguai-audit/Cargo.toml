@@ -1,0 +1,18 @@
+[package]
+name = "xiaoguai-audit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Append-only audit log with hmac chain + S3 sync (skeleton)."
+
+[dependencies]
+xiaoguai-types = { path = "../xiaoguai-types" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

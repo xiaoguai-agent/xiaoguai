@@ -1,0 +1,974 @@
+# Xiaoguai (小怪) — Design Document
+
+> **Status**: Draft v1, derived from 2026-05-21 brainstorm session
+> **Owner**: zw
+> **Source**: Brainstorm session transcript (see `ai-workstation-platform` 2026-05-21 conversation)
+> **Decision authority**: This document is the canonical source for v1.0 architectural decisions. Anything not captured here is open and must be raised before implementation.
+
+---
+
+## 0. TL;DR
+
+**Xiaoguai (小怪)** is a standalone open-source AI agent platform targeting enterprise and private deployment. Lightweight (Rust), MCP-first, local-LLM-default, with native integrations for the three major Chinese IM platforms (飞书, 钉钉, 企微) and compliance-aware design (等保 2.0, GDPR).
+
+- **Brand**: Xiaoguai (小怪). Slogan: *Your Little Agent for Big Work / 小怪不小，能办大事*
+- **License**: BSL 1.1, Change Date = release date + 4 years, Change License = Apache 2.0
+- **Backend**: Rust workspace, `xiaoguai-*` crate prefix
+- **Cross-process**: gRPC (tonic)
+- **Storage**: PostgreSQL + Valkey (not Redis ≥7.4 due to SSPL)
+- **Frontend**: React 18 + TypeScript strict + Vite + shadcn/ui + Tailwind. Two SPAs: chat-ui and admin-ui.
+- **Delivery (v1.0)**: docker-compose + Helm chart + bare-metal tarball + pip wheel — **four paths same release**
+- **Repo**: `github.com/xiaoguai-agent/xiaoguai` (to be created)
+- **Timing**: v1.0 in 3–6 months, 2–3 person team
+
+---
+
+## 1. Goals & Non-Goals
+
+### 1.1 Goals (v1.0)
+
+| # | Goal |
+|---|---|
+| G1 | One Rust core + one IM gateway binary, single Helm chart, ≤200 MB image footprint |
+| G2 | First-class MCP support — install/run any MCP server per tenant with cgroup/seccomp sandbox |
+| G3 | Ollama / vLLM / OpenAI-compatible LLM router. Local model default, public cloud optional |
+| G4 | 飞书 IM 原生支持（@bot → agent → 回包），钉钉/企微 v1.1 加 |
+| G5 | OIDC SSO + Casbin RBAC + multi-tenant data isolation (Postgres RLS + app-layer filter) |
+| G6 | Append-only audit log with hmac chain, 等保 2.0 三级 self-check template |
+| G7 | Four simultaneous delivery paths at v1.0 (docker-compose / Helm / bare-metal tar / pip) |
+| G8 | Multi-arch binaries: linux/amd64 + linux/arm64 (信创 ready) |
+
+### 1.2 Non-Goals (v1.0)
+
+| # | Explicitly out of scope |
+|---|---|
+| N1 | High availability (single-instance is fine for v1.0; HA in v2.0) |
+| N2 | Multi-region replication (v2.0) |
+| N3 | Workflow editor / drag-drop pipeline (v2.0; opt-out vs Dify) |
+| N4 | Native RAG / vector store (v2.0; v1.0 can call MCP-based RAG tools) |
+| N5 | Multi-agent orchestration (v2.0) |
+| N6 | CodeAct execution model (deferred; ReAct only in v1.0) |
+| N7 | HIPAA / PCI compliance templates (等保 + GDPR only in v1.0) |
+| N8 | Mobile clients (web responsive only) |
+
+### 1.3 Anti-Goals (never)
+
+| # | Will not do |
+|---|---|
+| A1 | Force users to a hosted SaaS — self-hosted is first-class permanently |
+| A2 | Accept AGPL/SSPL/BSL/commercial dependencies (license firewall per BSL 1.1 commercial intent) |
+| A3 | Tie core functionality to any single LLM provider |
+| A4 | Build a Dify clone — we are MCP-first and ops-first, not workflow-editor-first |
+
+---
+
+## 2. Differentiation
+
+The new project is justified only because no existing competitor checks all four boxes:
+
+| Dimension | Dify | FastGPT | Bisheng | OpenHands | goose | **Xiaoguai** |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Lightweight (single binary) | ❌ | 🟡 | ❌ | ❌ | ✅ | **✅** |
+| MCP first-class | 🟡 (added) | 🟡 | ❌ | ✅ | ✅ | **✅** |
+| Local LLM default | 🟡 | ✅ | ✅ | ✅ | ✅ | **✅** |
+| 三大 IM 原生 | ✅ | ✅ | ✅ | ❌ | ❌ | **✅** |
+| Compliance templates (等保) | ❌ | 🟡 | 🟡 | ❌ | ❌ | **✅** |
+| Self-hosted-first license | 🟡 | 🟡 | ✅ | ✅ | ✅ (Apache) | **✅ (BSL)** |
+
+The thesis is not "be best at any one dimension" but **"be the only one that does all five together"** for enterprise + private deployment in China.
+
+---
+
+## 3. License
+
+**Business Source License 1.1** with:
+
+```
+Licensor:                [TBD — TestAny or new entity]
+Licensed Work:           Xiaoguai
+Additional Use Grant:    You may make production use of the Licensed Work,
+                         provided Your use does not include offering the
+                         Licensed Work to third parties on a hosted or
+                         embedded basis in order to compete with Licensor's
+                         paid version(s) of the Licensed Work.
+Change Date:             [Release date] + 4 years
+Change License:          Apache License 2.0
+```
+
+### Why BSL
+
+- **Self-hosting免费** — customers can install in their own environment, no fee
+- **SaaS 竞品被拦** — AWS / 阿里云 / 腾讯云 can't take xiaoguai and offer it as a managed service competing with us
+- **4-year auto-conversion to Apache** — community accepts "eventually open" model
+- **Avoids AGPL transitive infection** — downstream commercial users (enterprises embedding xiaoguai) don't get poisoned
+
+### Dependency policy
+
+Per the rule established in this brainstorm: **all dependencies must be permissive (MIT / Apache 2.0 / BSD-2/3 / ISC / Zlib)**. AGPL / SSPL / BSL / Commons Clause / "source-available" are **blocked** without exception.
+
+Specific landmines avoided:
+- ❌ **Redis ≥ 7.4** (SSPL/RSAL) → use **Valkey** (BSD-3)
+- ❌ **MongoDB** (SSPL) → use **PostgreSQL**
+- ❌ **Elasticsearch ≥ 8.x** (SSPL/Elastic v2) → use **OpenSearch** if needed
+- ❌ **MinIO** (AGPL 2025+) → use **SeaweedFS** or cloud S3
+- ❌ **LangBot** (AGPL) → don't use
+- ❌ **chatgpt-on-wechat** (unclear commercial terms) → don't use
+
+---
+
+## 4. Top-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Frontend (双 SPA)                                            │
+│  ┌─────────────────────┐  ┌─────────────────────────────┐    │
+│  │  Chat UI (web)       │  │  Admin Console (web)         │   │
+│  │  · 用户聊天界面       │  │  · 用户/租户/RBAC             │   │
+│  │  · MCP server 选择    │  │  · MCP server 编排           │   │
+│  │  · 会话历史           │  │  · 审计/计费/告警             │   │
+│  └─────────┬───────────┘  └─────────┬───────────────────┘    │
+└────────────┼───────────────────────┼─────────────────────────┘
+             │ REST + SSE/WS         │ REST
+             ▼                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│  xiaoguai-core (binary 1, Rust)                               │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ API server   │  │ Agent core   │  │ MCP supervisor   │   │
+│  │ (axum)       │◄─┤ (loop+tools) │◄─┤ (per-tenant pool)│   │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────────┘   │
+│         │                 │                 │               │
+│  ┌──────▼─────────────────▼─────────────────▼────────────┐  │
+│  │ Storage: PostgreSQL + Valkey + S3-compat (audit)      │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ LLM router   │  │ Auth (OIDC + │  │ Audit (hmac chain│   │
+│  │ (Ollama/etc) │  │ Casbin RBAC) │  │ + S3 sync)        │   │
+│  └──────────────┘  └──────────────┘  └──────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                              ▲ gRPC (tonic)
+                              │
+┌─────────────────────────────┼───────────────────────────────┐
+│  xiaoguai-im-gateway (binary 2, Rust)                         │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ 飞书 adapter  │  │ 钉钉 adapter  │  │ 企微 adapter      │   │
+│  │ (v1.0)       │  │ (v1.1)       │  │ (v1.1)           │   │
+│  └──────────────┘  └──────────────┘  └──────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key architectural principles
+
+1. **Two binaries only** (`xiaoguai-core`, `xiaoguai-im-gateway`). All other crates compile into one of the two. No microservice sprawl in v1.0.
+2. **gRPC for binary-to-binary**: strongly typed Proto contracts. Streaming support for long agent runs.
+3. **Frontend ↔ core** over REST + SSE/WS only. Frontend never talks gRPC (browser pain).
+4. **MCP supervisor is in-process** in `xiaoguai-core`. It spawns MCP servers as child processes with cgroup/seccomp isolation.
+5. **All persistence centralized** in `xiaoguai-storage` crate. No direct DB calls from other crates — only repository pattern.
+
+---
+
+## 5. Backend Module Layout (Rust Workspace)
+
+```
+xiaoguai/                          (repo root)
+├── Cargo.toml                     # workspace manifest
+├── README.md
+├── LICENSE                        # BSL 1.1 text
+├── crates/
+│   ├── xiaoguai-core/             # binary 1 entrypoint (api + agent + mcp + ...)
+│   ├── xiaoguai-api/              # axum HTTP server (REST + SSE/WS)
+│   ├── xiaoguai-agent/            # agent loop (ReAct + planning)
+│   ├── xiaoguai-mcp/              # MCP client + supervisor
+│   ├── xiaoguai-llm/              # LLM router (Ollama / OpenAI / vLLM)
+│   ├── xiaoguai-auth/             # OIDC + Casbin RBAC
+│   ├── xiaoguai-audit/            # append-only hmac chain + S3 sync
+│   ├── xiaoguai-storage/          # sqlx repositories (PG + Valkey)
+│   ├── xiaoguai-types/            # shared DTOs / domain types
+│   ├── xiaoguai-config/           # config loader (file + env + secrets)
+│   ├── xiaoguai-im-gateway/       # binary 2 entrypoint
+│   ├── xiaoguai-im-feishu/        # 飞书 adapter (lib, used by gateway)
+│   ├── xiaoguai-im-dingtalk/      # 钉钉 adapter (v1.1)
+│   └── xiaoguai-im-wecom/         # 企微 adapter (v1.1)
+├── proto/                         # protobuf definitions (gRPC contracts)
+│   ├── xiaoguai.v1.api.proto
+│   ├── xiaoguai.v1.agent.proto
+│   └── xiaoguai.v1.im.proto
+├── frontend/
+│   ├── package.json
+│   ├── pnpm-workspace.yaml
+│   ├── shared/                    # shared types + theme + api client
+│   ├── chat-ui/                   # user chat SPA
+│   └── admin-ui/                  # operator admin SPA
+├── docs/                          # all docs — see §15 conventions
+├── deploy/
+│   ├── helm/                      # Helm chart
+│   ├── compose/                   # docker-compose files
+│   └── tarball/                   # bare-metal install script + systemd units
+├── examples/                      # MCP server demos, config samples
+├── scripts/                       # release scripts, SBOM gen, etc.
+└── .github/workflows/             # CI: build / test / release / SBOM / cosign
+```
+
+### Crate dependency graph
+
+```
+              ┌──────────────────┐
+              │ xiaoguai-types   │  ← leaf, depended on by all
+              └────────┬─────────┘
+                       │
+   ┌───────────────────┼───────────────────────────┐
+   ▼                   ▼                           ▼
+xiaoguai-config   xiaoguai-storage          xiaoguai-audit
+                       ▲                           ▲
+                       │                           │
+   ┌───────────────────┼───────────────────────────┤
+   ▼                   ▼                           │
+xiaoguai-auth     xiaoguai-llm               xiaoguai-mcp
+                       ▲                           ▲
+                       └────────┬──────────────────┘
+                                ▼
+                        xiaoguai-agent
+                                ▲
+                                │
+                          xiaoguai-api
+                                ▲
+                                │
+                        xiaoguai-core (binary)
+
+                         (separately)
+
+   xiaoguai-im-feishu ──┐
+   xiaoguai-im-dingtalk─┼──► xiaoguai-im-gateway (binary)
+   xiaoguai-im-wecom ───┘            │
+                                     │ gRPC
+                                     ▼
+                              xiaoguai-core
+```
+
+`xiaoguai-types` has zero business dependencies — only `serde`, `chrono`, `uuid`. Avoids circular deps.
+
+---
+
+## 6. Frontend Design
+
+### 6.1 Stack
+
+| Tech | License | Why |
+|---|---|---|
+| React 18 | MIT | Team familiarity (matches ai-workstation-platform) |
+| TypeScript strict | Apache 2.0 | Type safety |
+| Vite | MIT | Fast dev server, modern bundler |
+| shadcn/ui | MIT (copy-in components) | Customizable, no Antd lock-in, brand-friendly |
+| Radix UI primitives | MIT | shadcn underlying primitives |
+| Tailwind CSS | MIT | Utility-first, easy theming |
+| TanStack Query | MIT | Server state + caching |
+| i18next | MIT | Chinese-first, English secondary |
+| react-markdown + Shiki | MIT | Markdown + syntax highlighting |
+| KaTeX | MIT | Math formulas (rare but useful) |
+| ECharts | Apache 2.0 | Admin dashboard charts |
+| Lucide icons | ISC | Icon system |
+| Inter font | SIL OFL | Default UI font |
+
+**All dependencies permissive — clean for BSL commercial.** Explicitly avoided: AG Grid Enterprise, MUI X Pro, Tailwind UI (paid), Material Icons (Google brand association).
+
+### 6.2 Chat UI structure
+
+```
+frontend/chat-ui/src/
+├── pages/
+│   ├── Chat.tsx                 # main chat (streaming SSE/WS)
+│   ├── Sessions.tsx             # session history + search + fork (v1.1)
+│   └── McpStudio.tsx            # per-session MCP server toggle
+├── components/
+│   ├── MessageBubble.tsx
+│   ├── ToolCallCard.tsx         # tool invocation card with params / result / timing
+│   ├── StreamingMd.tsx          # markdown + code highlight + streaming render
+│   ├── McpServerBadge.tsx
+│   └── ProvenanceFooter.tsx     # which model + which MCP servers + token cost
+├── api/
+│   ├── chat.ts                  # REST + WS client
+│   ├── auth.ts
+│   └── sse.ts
+└── store/                       # Zustand for client-side state
+```
+
+### 6.3 Admin UI structure
+
+```
+frontend/admin-ui/src/
+├── pages/
+│   ├── Tenants.tsx              # tenants + users + quota
+│   ├── Mcp.tsx                  # MCP server catalog: register / enable / version pin
+│   ├── Audit.tsx                # audit log timeline + filters + export
+│   ├── Billing.tsx              # token usage by provider/model/user/tenant
+│   ├── Im.tsx                   # IM gateway config (飞书 app secret, webhook URL, ...)
+│   ├── Llm.tsx                  # LLM provider management (Ollama endpoint, vLLM, ...)
+│   ├── Settings.tsx             # system config, OIDC, RBAC roles
+│   └── Compliance.tsx           # 等保/GDPR self-check + audit log integrity report
+└── ...
+```
+
+### 6.4 Key UX design points
+
+- **Tool call visualization**: every MCP tool invocation rendered as a collapsible card showing params + result + duration. Users can cancel mid-call.
+- **Streaming-first**: agent thinking visible as it streams. WebSocket reconnects survive transient drops.
+- **Conversation fork** (v1.1): users can branch a session from any message — product differentiator.
+- **MCP Studio inline**: power-users can enable/disable MCP servers without leaving the chat page.
+- **i18n**: Chinese is default, English toggle in user menu.
+
+---
+
+## 7. Agent Loop Design
+
+### 7.1 Loop architecture
+
+```
+       ┌───────────────────────────────────┐
+       │   User message (text + files)     │
+       └─────────────────┬─────────────────┘
+                         │
+              ┌──────────▼──────────┐
+              │  PreProcessor        │
+              │  · token estimation  │
+              │  · inject sys prompt │
+              │  · history (compact) │
+              └──────────┬──────────┘
+                         │
+                         ▼
+        ┌────────────────────────────────────┐
+        │  Agent Loop (ReAct + optional plan) │
+        │                                    │
+        │  ┌─────────────────────────────┐  │
+        │  │ LLM call (stream)            │  │
+        │  │  → text + tool_calls         │  │
+        │  └────────────┬────────────────┘  │
+        │               │                   │
+        │       ┌───────▼────────┐          │
+        │       │ tool_calls?    │          │
+        │       └─┬─────────┬───┘           │
+        │      yes│       no│               │
+        │         ▼         ▼               │
+        │  ┌──────────┐  ┌──────────┐      │
+        │  │ Tool     │  │ Final    │      │
+        │  │ Executor │  │ Output   │      │
+        │  │ (parallel)│ └──────────┘      │
+        │  └────┬─────┘                    │
+        │       │                          │
+        │   results back to LLM            │
+        │  (max 25 iterations, configurable)│
+        └────────────────────────────────────┘
+                         │
+                         ▼
+              ┌──────────────────────┐
+              │  PostProcessor        │
+              │  · token billing      │
+              │  · audit log          │
+              │  · stream to FE       │
+              └──────────────────────┘
+```
+
+### 7.2 Design decisions
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Loop type | **ReAct default + optional planning** | Simplest, proven. Planning mode for complex tasks via `/plan` directive or auto-detection |
+| Tool execution | **Parallel via `tokio::join_all`** | Modern LLMs emit multiple tool_calls per turn; serial would waste latency |
+| Context engineering | **Sliding window + LLM-driven summary at 70% threshold + manual `/compact`** | Multi-strategy, configurable |
+| Interruption | **Stream-based, WebSocket reconnect resumes** | Every tool_call is an idempotent unit in PG; restart resumes |
+| Tool sandbox | **MCP server child process + cgroup v2 + seccomp + userns + deny-all network** | Tools are untrusted code. Default-deny, explicit allow-list per MCP. |
+| Max iterations | **25 (configurable per tenant)** | Prevents runaway loops |
+| CodeAct mode | **NOT in v1.0** | Defer — would require Python sandbox + bigger architectural surface |
+
+### 7.3 Tool execution sandbox
+
+Every MCP server starts as a child process under `xiaoguai-core`:
+
+```
+core_process
+  └── tenant=A
+      ├── MCP-fs (pid 100)         cgroup: cpu=0.5, mem=256M, net=DENY
+      ├── MCP-postgres (pid 101)   cgroup: cpu=1.0, mem=512M, net=ALLOW pg-host:5432
+      └── MCP-feishu-docs (pid 102) cgroup: cpu=0.5, mem=256M, net=ALLOW *.feishu.cn
+```
+
+Limits enforced via:
+- **cgroup v2** for CPU / memory / IO
+- **seccomp BPF filter** to block syscalls outside an allowlist
+- **user namespace** to drop root
+- **netns + nftables** for network policy
+- **Linux only** in v1.0; macOS dev mode uses warnings only
+
+---
+
+## 8. Multi-tenancy + Security
+
+### 8.1 Auth flow
+
+```
+External IdP (OIDC / SAML / LDAP)
+  ↓
+xiaoguai-auth verifies token
+  ↓
+Mint JWT (RS256/ES256, TTL ≤15min) + refresh token (rotated, stored in Valkey)
+  ↓
+Every API call: middleware extracts (user_id, tenant_id, roles) into request context
+  ↓
+Casbin checks role + permission + scope (tenant > workspace > resource)
+```
+
+Supported IdPs in v1.0:
+- Keycloak
+- Authentik
+- Generic OIDC (Auth0, Okta, ...)
+- 飞书 / 钉钉 / 企微 OAuth (wrapped as OIDC adapters in `xiaoguai-auth`)
+
+### 8.2 Multi-tenant data isolation
+
+**Logical isolation, dual-layer**:
+
+1. **Postgres RLS policy** on every tenant-scoped table:
+   ```sql
+   CREATE POLICY tenant_isolation ON sessions
+     USING (tenant_id = current_setting('app.current_tenant_id'));
+   ```
+2. **Application-layer filter** in `xiaoguai-storage` repository: every query injects `WHERE tenant_id = ?` redundantly.
+
+Why double: defense-in-depth. App-layer prevents accidental SQL bugs; RLS prevents disaster if app-layer is bypassed.
+
+### 8.3 Audit log
+
+**Append-only with hmac chain**:
+
+```sql
+CREATE TABLE audit_log (
+  id        BIGSERIAL PRIMARY KEY,
+  ts        TIMESTAMPTZ NOT NULL,
+  tenant_id TEXT NOT NULL,
+  actor     TEXT NOT NULL,
+  action    TEXT NOT NULL,
+  resource  TEXT,
+  details   JSONB,
+  prev_hmac BYTEA,
+  hmac      BYTEA NOT NULL
+);
+
+-- hmac = HMAC(server_key, prev_hmac || ts || tenant_id || actor || action || resource || details)
+```
+
+Any tampering of a single row breaks the chain. `xiaoguai-audit` provides `verify_chain()` operation that admin UI exposes as a one-click "审计完整性自检" button (mandated by 等保 2.0 三级).
+
+Retention: 365 days default in PG; same rows mirrored to S3-compatible object storage (immutable bucket policy).
+
+### 8.4 Secret management
+
+**v1.0 default**: [age](https://github.com/FiloSottile/age) (BSD-3, Rust-friendly) for KEK + per-tenant DEK.
+- Secrets in PG stored as base64(age-encrypted).
+- KEK file on disk (chmod 600) or in env.
+- Optional: external HashiCorp Vault driver (`xiaoguai-secrets-vault` crate) for enterprises with Vault.
+
+### 8.5 Transport security
+
+- mTLS between `xiaoguai-core` and `xiaoguai-im-gateway` (auto-issued via internal CA at install)
+- mTLS optional between `xiaoguai-core` and MCP servers (toggle per MCP server)
+- HTTPS strict on external API; HSTS enabled in production builds
+
+### 8.6 Rate limiting
+
+Multi-layer (token bucket + sliding window):
+- Per-user RPM / TPM
+- Per-tenant quota (sessions / month, tokens / month, MCP server slots)
+- Per-LLM-model concurrent in-flight requests
+- Per-source-IP for brute-force protection
+
+### 8.7 Data redaction
+
+`xiaoguai-audit` and LLM `PostProcessor` pass content through a configurable redactor:
+- Regex patterns (default: credit cards, phone numbers, ID cards, IPs, emails — toggle per tenant)
+- Named-entity (post-v1.0)
+- Replacement token: `[REDACTED:<class>]`
+
+---
+
+## 9. MCP Supervisor
+
+### 9.1 Pool model
+
+```
+xiaoguai-core (1 process)
+    │
+    ├── Tenant A:
+    │     (alice, mcp-fs, v0.3)      → pid 100, idle since 12:34
+    │     (alice, mcp-pg, v0.2)      → pid 101, in-use by session S5
+    │     (bob,   mcp-fs, v0.3)      → pid 102, idle since 12:30
+    │
+    ├── Tenant B:
+    │     (carol, mcp-vmware, v1.5)  → pid 200, in-use by session S7
+    │     (carol, mcp-fs, v0.3)      → pid 201, in-use by session S7 (parallel)
+    │
+    └── ...
+```
+
+### 9.2 Lifecycle
+
+- **Spawn** when first request needs a (tenant, server, version) tuple
+- **Idle timeout** = 10 min default → SIGTERM, then SIGKILL after 5s
+- **LRU eviction** when tenant exceeds max 16 servers
+- **Crash auto-restart**: 5s backoff, max 3 consecutive crashes before blacklist (admin override required)
+- **Health check**: stdio MCP `ping` every 30s; SSE/streamable-HTTP have native ping
+
+### 9.3 Transport support
+
+| Transport | v1.0 | Notes |
+|---|:---:|---|
+| stdio (local subprocess) | ✅ | Primary mode, fully sandboxed |
+| SSE (remote HTTP) | ✅ | For shared corp MCP services |
+| streamable-HTTP | ✅ | Latest MCP spec |
+| WebSocket | 🟡 v1.1 | If demand emerges |
+
+### 9.4 Registry
+
+Admins upload MCP server manifests to `xiaoguai-mcp` registry (stored in PG):
+
+```yaml
+name: filesystem
+version: 0.3.1
+type: stdio
+launcher:
+  image: ghcr.io/xiaoguai-agent/mcp-fs:0.3.1
+  args: [--workspace, /workspace]
+permissions:
+  filesystem:
+    read: [/workspace]
+    write: [/workspace]
+  network:
+    allow: []   # deny by default
+  syscalls:
+    profile: default-restricted
+secrets_schema:
+  - name: WORKSPACE_KEY
+    required: false
+    description: "Optional encryption key for workspace files"
+```
+
+Users in chat-ui see only the MCP servers their tenant admin has enabled.
+
+---
+
+## 10. LLM Router
+
+### 10.1 Trait
+
+```rust
+#[async_trait]
+pub trait LlmBackend: Send + Sync {
+    async fn chat_stream(&self, req: ChatRequest)
+        -> Result<BoxStream<'static, ChatChunk>>;
+    fn tool_format(&self) -> ToolFormat;
+    fn count_tokens(&self, text: &str) -> Result<usize>;
+    fn supports_vision(&self) -> bool;
+    fn context_window(&self) -> usize;
+}
+```
+
+### 10.2 Backends in v1.0
+
+| Backend | Status | Notes |
+|---|:---:|---|
+| Ollama native | ✅ default | Custom protocol; primary local backend |
+| OpenAI-compatible (vLLM, LMDeploy, SGLang, LiteLLM, 通义/DeepSeek/智谱 APIs) | ✅ | Covers ~80% of providers |
+| Direct Anthropic Messages API | 🟡 v1.1 | If users want native Claude |
+| Direct Gemini API | 🟡 v1.1 | If users want native Gemini |
+
+### 10.3 Provider management
+
+Admin registers multiple `LlmProvider` rows in PG:
+
+```yaml
+name: internal-ollama-cluster
+type: ollama
+endpoint: http://ollama.internal:11434
+models: [qwen2.5-coder:32b, deepseek-coder:6.7b, llama3.3:70b]
+default_for: [Tenant A, Tenant B]
+
+name: backup-vllm
+type: openai-compatible
+endpoint: http://vllm.internal:8000/v1
+api_key: <env>
+models: [qwen2.5-coder-32b-instruct]
+fallback_for: [internal-ollama-cluster]
+```
+
+### 10.4 Routing
+
+Per-request resolution:
+1. Explicit `provider` in request → use it
+2. Else: look up tenant default
+3. Else: look up system default
+4. On call failure: try fallback chain
+
+Token usage logged for every call into `token_usage` table for billing.
+
+---
+
+## 11. IM Gateway Architecture
+
+### 11.1 飞书 adapter (v1.0)
+
+```
+Feishu Open Platform
+        │ webhook (event subscription)
+        │ + signature verification
+        ▼
+xiaoguai-im-gateway
+   │
+   ├─ event router
+   │     · message.received → forward to core
+   │     · @bot mention → forward
+   │     · interactive_card.action → forward
+   │
+   ├─ session mapper
+   │     · (open_id, chat_id) → (user_id, tenant_id, session_id)
+   │
+   ├─ reply formatter (markdown → Feishu interactive cards)
+   │
+   └─ gRPC client → xiaoguai-core
+                   · POST /v1/agent-runs (stream)
+                   · receives streaming agent output
+                   · throttles updates to Feishu (max 1 update/sec)
+```
+
+### 11.2 Long-running task UX
+
+- Webhook returns 200 within 1s (Feishu requirement)
+- Initial reply: `🤔 思考中…` interactive card with cancel button
+- As agent streams, gateway updates the same card (throttled)
+- On completion: final card with tool call provenance + cost info
+- On cancel: gracefully kill agent run via gRPC
+
+### 11.3 钉钉 / 企微 (v1.1)
+
+- 钉钉: outgoing webhook + signature; reply via webhook URL
+- 企微: callback URL (公网 required) + AES decryption; reply via 应用消息 API
+- Same internal contract as 飞书 (all 3 adapters → same gRPC schema to core)
+
+---
+
+## 12. Deployment & Delivery
+
+### 12.1 Four paths
+
+```
+                          ┌──────────────────────────┐
+                          │  CI/CD (GitHub Actions)  │
+                          │  · multi-arch build      │
+                          │  · cosign sign + SBOM    │
+                          └────────────┬─────────────┘
+                                       │
+        ┌──────────────────────────────┼──────────────────────────────┐
+        │                              │                              │
+        ▼                              ▼                              ▼
+┌──────────────────┐         ┌──────────────────┐          ┌──────────────────┐
+│ container image  │         │ helm chart       │          │ binary tarball   │
+│ ghcr.io          │         │ OCI artifact     │          │ + pip wheel      │
+│ + docker hub     │         │ + ghcr.io/charts │          │                  │
+│ multi-arch       │         │                  │          │                  │
+└──────────────────┘         └──────────────────┘          └──────────────────┘
+        │                              │                              │
+        ▼                              ▼                              ▼
+┌──────────────────┐         ┌──────────────────┐          ┌──────────────────┐
+│ docker-compose   │         │ K8s 1.28+        │          │ systemd / bare   │
+│ PoC / Eval       │         │ HA / production  │          │ + pip install    │
+│ 1-50 users       │         │ 50-1000+ users   │          │ offline / 信创    │
+└──────────────────┘         └──────────────────┘          └──────────────────┘
+```
+
+### 12.2 Airgapped install bundle
+
+```
+xiaoguai-airgap-v1.0.0.tgz  (~ 1.5–2 GB)
+├── images/
+│   ├── xiaoguai-core-v1.0.0.tar       # docker save
+│   ├── xiaoguai-im-gateway-v1.0.0.tar
+│   ├── postgres-15.tar
+│   ├── valkey-7.tar
+│   └── ollama-0.4.tar
+├── charts/
+│   └── xiaoguai-1.0.0.tgz
+├── binaries/
+│   ├── xiaoguai-core-linux-{amd64,arm64}
+│   ├── xiaoguai-im-gateway-linux-{amd64,arm64}
+│   └── xiaoguai-cli-linux-{amd64,arm64}
+├── wheels/
+│   ├── xiaoguai_cli-1.0.0-py3-none-any.whl
+│   └── xiaoguai_server-1.0.0-cp311-manylinux_2_28_x86_64.whl
+├── models/                              # optional, --with-models flag
+│   └── qwen2.5-coder-7b-q4.gguf
+├── docs/
+├── checksums.sha256
+├── cosign-signatures/
+└── install.sh
+```
+
+### 12.3 pip install
+
+Implemented via [**maturin**](https://github.com/PyO3/maturin) (BSD-3):
+
+```
+crates/xiaoguai-cli/
+├── Cargo.toml
+└── pyproject.toml      # maturin → multi-arch wheels
+```
+
+Distributed:
+- `pip install xiaoguai-cli` — small CLI client (~10 MB wheel per arch)
+- `pip install xiaoguai-server` — full server bundled as wheel (~80 MB per arch)
+
+Wheel matrix v1.0: `linux_x86_64 (manylinux2_28)`, `linux_aarch64`, `macos_universal2`, `win_amd64`.
+
+### 12.4 Multi-arch + signing
+
+- **Architectures**: `linux/amd64`, `linux/arm64` mandatory. (信创 readiness)
+- **Image signing**: every release signed with [cosign](https://github.com/sigstore/cosign) (Apache 2.0), public key published in repo.
+- **SBOM**: CycloneDX JSON generated per binary + per image, published to release artifacts.
+- **Provenance**: SLSA L3 attestations via GitHub Actions.
+
+### 12.5 Registries
+
+- **ghcr.io** (primary, free for public repos)
+- **Docker Hub mirror** (`xiaoguaiagent/xiaoguai`)
+- **Aliyun ACR mirror** for China users (network proximity)
+- Customer mirror seed scripts in `scripts/mirror-pull.sh`
+
+---
+
+## 13. Compliance
+
+### 13.1 等保 2.0 三级 self-check template
+
+Located at `docs/compliance/dengbao-2.0-l3/`:
+
+| Control area | What we provide |
+|---|---|
+| 身份鉴别 | OIDC + JWT short TTL + refresh rotation + login audit |
+| 访问控制 | Casbin RBAC + tenant isolation + RLS |
+| 安全审计 | Append-only audit + hmac chain + 365d retention + S3 sync + integrity verify endpoint |
+| 入侵防范 | Rate limit + brute-force lockout + WAF guidance |
+| 恶意代码防范 | MCP sandbox (seccomp+netns+cgroup) + signed binary verification |
+| 数据完整性 | hmac chain + cosign signature verify |
+| 数据保密性 | TLS in transit + age at rest + secret separate from data |
+| 数据备份恢复 | PG backup runbook + S3 immutable audit |
+| 个人信息保护 | Redactor + tenant-level retention policy |
+
+Self-check tool: `xiaoguai-cli compliance check --standard dengbao-l3`
+- Outputs PASS/FAIL/MANUAL per control
+- Manual items have remediation guidance
+
+### 13.2 GDPR DPIA template
+
+Located at `docs/compliance/gdpr/`:
+- DPIA template (Article 35)
+- Right-to-erasure SQL scripts
+- Data residency configuration guide
+- Lawful basis matrix template
+
+---
+
+## 14. Project Conventions
+
+### 14.1 Documentation
+
+**All documentation goes under `docs/` — only `README.md` at repo root.** Sub-tree:
+
+```
+docs/
+├── architecture/                  # design docs, ADRs, RFCs
+│   ├── 2026-05-21-design.md       # this file (post-init)
+│   └── adr/                       # architectural decision records
+├── api/                           # OpenAPI specs, gRPC docs
+├── runbooks/                      # operational guides
+├── user-guide/                    # end-user docs (chat-ui, admin-ui)
+├── developer-guide/               # contributor docs
+├── compliance/                    # 等保/GDPR templates
+└── decisions/                     # business + product decisions, naming, license
+```
+
+### 14.2 Rust conventions
+
+- Edition: 2021 (will move to 2024 when stable)
+- MSRV: latest stable - 2 versions
+- `rustfmt` enforced in CI
+- `clippy -D warnings` enforced in CI
+- `cargo deny` for license check (blocks AGPL/GPL/SSPL transitively)
+- `cargo audit` for vuln scan
+- Tests: unit (in-module) + integration (`tests/`) + e2e (in `tests/e2e/` with feature flag)
+- Coverage target: 70% lines, 60% branches in v1.0
+
+### 14.3 TypeScript conventions
+
+- Strict mode mandatory
+- ESLint + Prettier
+- TanStack Query for all server state
+- Zustand for client state
+- Vitest for unit, Playwright for e2e
+
+### 14.4 Git
+
+- Branch protection on `main`
+- Conventional Commits (`feat:`, `fix:`, `refactor:`, ...)
+- PR required, ≥1 review, CI must pass
+- DCO sign-off on all commits
+- License header in every source file (BSL 1.1 short notice)
+
+### 14.5 CI gates
+
+- `cargo fmt --check` (Rust format)
+- `cargo clippy -D warnings`
+- `cargo test --workspace`
+- `cargo deny check` (license + ban list)
+- `cargo audit`
+- `pnpm typecheck`, `pnpm lint`, `pnpm test`
+- Container build for all arches
+- SBOM gen + cosign sign
+
+---
+
+## 15. Roadmap
+
+```
+v0.1 ━━ Bootstrap ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ T+0 ~ 1 mo
+├─ workspace skeleton + CI + license headers
+├─ xiaoguai-types + xiaoguai-storage + xiaoguai-config
+├─ Postgres schema + migration framework
+└─ "hello world" agent loop (no MCP, hardcoded Ollama)
+
+v0.5 ━━ Inner loop ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ T+1 ~ 3 mo
+├─ Agent core (ReAct + streaming + cancel)
+├─ MCP client (stdio/SSE/streamable-HTTP)
+├─ MCP supervisor (per-tenant + cgroup + seccomp)
+├─ LLM router (Ollama + OpenAI-compat + vLLM)
+├─ Auth (OIDC + JWT) + Casbin RBAC + multi-tenant
+├─ Audit (hmac chain)
+└─ CLI (`xiaoguai`) — full kernel testable
+
+v1.0 ━━ Production-ready ━━━━━━━━━━━━━━━━━━━━━━━━━ T+3 ~ 6 mo
+├─ Chat UI (streaming + tool call viz + sessions + MCP studio)
+├─ Admin UI (tenant/RBAC/MCP/audit/billing/LLM provider)
+├─ IM gateway + 飞书 adapter (webhook + interactive cards + long task)
+├─ Helm chart + docker-compose + bare-metal tarball + pip wheel
+├─ 等保 2.0 三级 self-check + GDPR DPIA templates
+├─ SBOM + cosign + multi-arch
+└─ Full docs (architecture/api/runbooks/user-guide)
+
+v1.1 ━━ Coverage expansion ━━━━━━━━━━━━━━━━━━━━━━ T+6 ~ 9 mo
+├─ 钉钉 adapter
+├─ 企微 adapter
+├─ Public cloud LLM (Anthropic / Gemini / 通义 / DeepSeek / 智谱)
+├─ Self-read /usage endpoint
+├─ Conversation fork
+└─ MCP marketplace (community server registry)
+
+v2.0 ━━ Scale + advanced compliance ━━━━━━━━━━━━━━ T+9 ~ 12 mo
+├─ HA deployment (PG replica + Valkey cluster)
+├─ Multi-region
+├─ HIPAA / PCI templates
+├─ Workflow editor (drag-drop, Dify parity)
+├─ RAG module (vector store + doc ingestion pipeline)
+└─ Multi-agent orchestration
+```
+
+### 15.1 Team-size sensitivity
+
+| Team | v1.0 realistic timeline |
+|---|---|
+| 1 person | 9–12 months — recommend dropping pip + bare-metal to v1.1 |
+| 2 people | 6–9 months — feasible as designed |
+| 3 people | 4–6 months — original target |
+| 4+ people | 3–4 months but coordination overhead grows |
+
+---
+
+## 16. Open Questions
+
+Items intentionally deferred for resolution during implementation kickoff:
+
+| # | Question | Owner | Deadline |
+|---|---|---|---|
+| OQ-1 | Domain registration: which TLD first? (xiaoguai.ai / .io / .dev) | zw | Before code-init |
+| OQ-2 | Legal entity for License copyright holder | zw | Before first release |
+| OQ-3 | Whether to require DCO or CLA from contributors | zw | Before public repo |
+| OQ-4 | Telemetry: opt-in anonymous usage stats vs zero-telemetry default | TBD | v0.5 |
+| OQ-5 | Logo / visual identity for Xiaoguai | TBD | v0.5 |
+| OQ-6 | Commercial pricing tiers (if open-core add-ons emerge) | zw | v1.0 release |
+| OQ-7 | OIDC vs full SAML 2.0 — SAML is enterprise heavy, included in v1.0? | TBD | v0.5 |
+| OQ-8 | Documentation site framework (Docusaurus / mdBook / Astro Starlight) | TBD | v0.5 |
+
+---
+
+## 17. Appendix A — Naming History
+
+The naming search went through 5 iterations on 2026-05-21:
+
+| Candidate | Verdict | Reason |
+|---|:---:|---|
+| kunlun | ❌ | github user taken, npm + PyPI + domain `.ai/.io/.dev` all taken |
+| puzzle | ❌ | GitHub org Puzzle ITC active, crates.io taken, brand undifferentiated |
+| taiji | ❌ | npm + 2/3 domains taken |
+| lingxi-agent | ❌ | **Brand-poisoning collision**: China Unicom Lingxi, iFlytek Lingxi, Yonyou Lingxi, ByteDance Lingxi all major AI brands; github.com/lingxi-agent already a user with "Lingxi Agent for AI-native development" |
+| maven-agent | ❌ | Apache Maven brand collision — Java/JVM build tool occupies the term globally |
+| **xiaoguai** ✅ | **Selected** | All registries clean (only orphan github user xiaoguai 2016, 0 repos); no major Chinese AI brand using 小怪; brand-differentiating cute angle |
+
+## 18. Appendix B — Dependency License Allowlist (v1.0)
+
+| Crate / package | License | Used in |
+|---|---|---|
+| tokio | MIT | runtime everywhere |
+| axum | MIT | xiaoguai-api |
+| tonic | MIT | gRPC core ↔ im-gateway |
+| sqlx | MIT or Apache 2.0 | xiaoguai-storage |
+| serde | MIT or Apache 2.0 | everywhere |
+| anyhow / thiserror | MIT or Apache 2.0 | error handling |
+| clap | MIT or Apache 2.0 | CLI |
+| tracing / tracing-subscriber | MIT | observability |
+| reqwest | MIT or Apache 2.0 | LLM client |
+| modelcontextprotocol/rust-sdk | MIT | xiaoguai-mcp |
+| async-openai | MIT | OpenAI-compat backend |
+| ollama-rs | MIT | Ollama backend |
+| age | BSD-3 | secret management |
+| casbin-rs | Apache 2.0 | RBAC |
+| jsonwebtoken | MIT | JWT |
+| sea-orm (if chosen) | MIT or Apache 2.0 | ORM alternative |
+
+Frontend allowlist already enumerated in §6.1.
+
+---
+
+## 19. Appendix C — License Red List (never use)
+
+| Dep / pattern | License | Replacement |
+|---|---|---|
+| LangBot | AGPL-3.0 | self-written webhook adapters or skip |
+| Redis ≥ 7.4 | RSAL / SSPL | Valkey (BSD-3) |
+| MongoDB | SSPL | PostgreSQL |
+| Elasticsearch ≥ 8.x | SSPL / Elastic v2 | OpenSearch (Apache 2.0) |
+| MinIO (2025+) | AGPL-3.0 | SeaweedFS / cloud S3 |
+| AG Grid Enterprise | commercial | AG Grid Community + custom |
+| MUI X Pro | commercial | shadcn/ui Data Table |
+| Material Icons full set | Apache 2.0 (OK technically) | Lucide (ISC) — preferred to avoid Google brand |
+| Tailwind UI | commercial | shadcn/ui + Headless UI |
+
+---
+
+## 20. Sign-off
+
+Design document validated against brainstorm conversation 2026-05-21. Ready for:
+
+1. Create `github.com/xiaoguai-agent` org
+2. Create `github.com/xiaoguai-agent/xiaoguai` repo
+3. Copy this directory into repo root
+4. `git init` + first commit
+5. Set up CI / branch protection / DCO
+6. Begin v0.1 Bootstrap milestone
+
+End of document.

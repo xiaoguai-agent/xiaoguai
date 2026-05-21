@@ -1,0 +1,11 @@
+{
+  "name": "@xiaoguai/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "lint": "echo 'no lint yet'",
+    "typecheck": "echo 'no typecheck yet'"
+  }
+}

@@ -1,0 +1,28 @@
+[package]
+name = "xiaoguai-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Xiaoguai core binary — wires api + agent + mcp + llm + storage + auth + audit."
+
+[[bin]]
+name = "xiaoguai-core"
+path = "src/main.rs"
+
+[dependencies]
+xiaoguai-types = { path = "../xiaoguai-types" }
+xiaoguai-config = { path = "../xiaoguai-config" }
+xiaoguai-agent = { path = "../xiaoguai-agent" }
+xiaoguai-llm = { path = "../xiaoguai-llm" }
+xiaoguai-api = { path = "../xiaoguai-api" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+
+[lints]
+workspace = true

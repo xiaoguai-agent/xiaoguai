@@ -1,0 +1,23 @@
+[package]
+name = "xiaoguai-config"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Configuration loader for Xiaoguai (file + env + secrets)."
+
+[dependencies]
+xiaoguai-types = { path = "../xiaoguai-types" }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+config = { workspace = true }
+clap = { workspace = true }
+dotenvy = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

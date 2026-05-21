@@ -1,0 +1,26 @@
+[package]
+name = "xiaoguai-im-gateway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Xiaoguai IM gateway binary — translates Feishu/DingTalk/WeCom webhooks to core via gRPC."
+
+[[bin]]
+name = "xiaoguai-im-gateway"
+path = "src/main.rs"
+
+[dependencies]
+xiaoguai-types = { path = "../xiaoguai-types" }
+xiaoguai-im-feishu = { path = "../xiaoguai-im-feishu" }
+xiaoguai-im-dingtalk = { path = "../xiaoguai-im-dingtalk" }
+xiaoguai-im-wecom = { path = "../xiaoguai-im-wecom" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true
