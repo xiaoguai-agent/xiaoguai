@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use xiaoguai_cli::commands::{chat, mcp, provider};
+use xiaoguai_cli::commands::{chat, mcp, provider, remote};
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
     connect,
@@ -52,6 +52,45 @@ enum Cmd {
     Mcp {
         #[command(subcommand)]
         action: McpCmd,
+    },
+
+    /// Talk to a running `xiaoguai-api` over HTTP/SSE.
+    Remote {
+        /// Base URL of the API server, e.g. `http://localhost:8080`.
+        #[arg(long)]
+        server: String,
+        #[command(subcommand)]
+        action: RemoteCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum RemoteCmd {
+    /// Smoke test the remote server.
+    Healthz,
+    /// Send one prompt against a fresh session and print the streamed reply.
+    Chat {
+        #[arg(long)]
+        user_id: String,
+        #[arg(long)]
+        tenant_id: String,
+        #[arg(long, default_value = "qwen2.5-coder")]
+        model: String,
+        #[arg(long)]
+        prompt: String,
+        /// Optional title for the new session.
+        #[arg(long)]
+        title: Option<String>,
+    },
+    /// Fetch and print the message history of an existing session.
+    Messages {
+        #[arg(long)]
+        session: String,
+    },
+    /// Cancel an in-flight agent run.
+    Cancel {
+        #[arg(long)]
+        session: String,
     },
 }
 
@@ -264,6 +303,92 @@ async fn handle_mcp(config: Option<&str>, action: McpCmd) -> Result<()> {
     Ok(())
 }
 
+async fn handle_remote(server: String, action: RemoteCmd) -> Result<()> {
+    use std::io::Write;
+    let client = remote::RemoteClient::new(server);
+    match action {
+        RemoteCmd::Healthz => {
+            let body = client.healthz().await?;
+            println!("{body}");
+        }
+        RemoteCmd::Chat {
+            user_id,
+            tenant_id,
+            model,
+            prompt,
+            title,
+        } => {
+            let session = client
+                .create_session(&remote::CreateSessionRequest {
+                    user_id,
+                    tenant_id,
+                    model,
+                    title,
+                })
+                .await?;
+            eprintln!("session: {}", session.id);
+            client
+                .send_message(&session.id, &prompt, |ev| {
+                    match ev.name.as_str() {
+                        "text_delta" => {
+                            if let Some(delta) =
+                                ev.payload.get("delta").and_then(serde_json::Value::as_str)
+                            {
+                                print!("{delta}");
+                                std::io::stdout().flush().ok();
+                            }
+                        }
+                        "tool_call_started" => {
+                            let name = ev
+                                .payload
+                                .get("name")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("?");
+                            eprintln!("\n[tool start] {name}");
+                        }
+                        "tool_call_finished" => {
+                            let ok = ev
+                                .payload
+                                .get("ok")
+                                .and_then(serde_json::Value::as_bool)
+                                .unwrap_or(false);
+                            eprintln!("[tool finish] ok={ok}");
+                        }
+                        "done" => {
+                            println!();
+                            let reason = ev
+                                .payload
+                                .get("stop_reason")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("?");
+                            eprintln!("[done] {reason}");
+                        }
+                        "error" => {
+                            let msg = ev
+                                .payload
+                                .get("message")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("?");
+                            eprintln!("[error] {msg}");
+                        }
+                        _ => {}
+                    }
+                    Ok(())
+                })
+                .await?;
+        }
+        RemoteCmd::Messages { session } => {
+            let msgs = client.list_messages(&session).await?;
+            println!("{}", serde_json::to_string_pretty(&msgs)?);
+        }
+        RemoteCmd::Cancel { session } => {
+            let cancelled = client.cancel(&session).await?;
+            println!("cancelled={cancelled}");
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -278,5 +403,6 @@ async fn main() -> Result<()> {
         } => handle_chat(prompt, mock, ollama_url, model).await,
         Cmd::Provider { action } => handle_provider(cfg, action).await,
         Cmd::Mcp { action } => handle_mcp(cfg, action).await,
+        Cmd::Remote { server, action } => handle_remote(server, action).await,
     }
 }
