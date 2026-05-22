@@ -6,21 +6,36 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Xiaoguai IM gateway binary — translates Feishu/DingTalk/WeCom webhooks to core via gRPC."
+description = "IM gateway library — provider trait + axum mount."
 
-[[bin]]
-name = "xiaoguai-im-gateway"
-path = "src/main.rs"
+[lib]
+name = "xiaoguai_im_gateway"
+path = "src/lib.rs"
 
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
-xiaoguai-im-feishu = { path = "../xiaoguai-im-feishu" }
-xiaoguai-im-dingtalk = { path = "../xiaoguai-im-dingtalk" }
-xiaoguai-im-wecom = { path = "../xiaoguai-im-wecom" }
-tokio = { workspace = true }
+xiaoguai-api = { path = "../xiaoguai-api" }
+async-trait = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
 anyhow = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+xiaoguai-storage = { path = "../xiaoguai-storage" }
+xiaoguai-agent = { path = "../xiaoguai-agent" }
+xiaoguai-llm = { path = "../xiaoguai-llm" }
+xiaoguai-im-feishu = { path = "../xiaoguai-im-feishu" }
+tower = { workspace = true }
+parking_lot = { workspace = true }
+sha2 = { workspace = true }
+hex = "0.4"
+async-trait = { workspace = true }
 
 [lints]
 workspace = true
