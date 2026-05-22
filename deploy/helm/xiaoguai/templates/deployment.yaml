@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "xiaoguai.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "xiaoguai.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "xiaoguai.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: xiaoguai-core
+          image: {{ include "xiaoguai.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: XIAOGUAI_SERVER__HOST
+              value: "0.0.0.0"
+            - name: XIAOGUAI_SERVER__PORT
+              value: "8080"
+            - name: XIAOGUAI_DATABASE__URL
+              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.database }}, key: url } }
+            - name: XIAOGUAI_CACHE__URL
+              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.cache }}, key: url } }
+            - name: XIAOGUAI_AUTH__ISSUER
+              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.auth }}, key: issuer } }
+            - name: XIAOGUAI_AUTH__AUDIENCE
+              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.auth }}, key: audience } }
+            - name: XIAOGUAI_AUTH__JWKS_URL
+              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.auth }}, key: jwks_url } }
+            - name: XIAOGUAI_AUDIT__HMAC_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.audit }}, key: hmac_key } }
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

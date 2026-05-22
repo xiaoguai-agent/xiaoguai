@@ -1,0 +1,78 @@
+# Default Xiaoguai chart values.
+#
+# Postgres + Valkey are NOT bundled as sub-charts on purpose — production
+# operators almost always run managed instances or already-existing
+# clusters. Supply the connection URLs via secrets referenced below.
+
+image:
+  repository: ghcr.io/xiaoguai-agent/xiaoguai
+  tag: ""                  # empty = chart appVersion
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 2
+    memory: 2Gi
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: xiaoguai.example.com
+      paths: ["/"]
+  tls: []
+
+# Names of Kubernetes Secrets the operator pre-creates. Each must contain
+# the listed keys.
+secrets:
+  database: xiaoguai-database     # keys: url
+  cache:    xiaoguai-cache        # keys: url
+  auth:     xiaoguai-auth         # keys: issuer, audience, jwks_url
+  audit:    xiaoguai-audit        # keys: hmac_key
+
+env:
+  RUST_LOG: "info,sqlx=warn"
+
+# Pod security defaults. Distroless image already runs as uid 65532; we
+# tighten further with seccomp + read-only root fs.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+probes:
+  liveness:
+    httpGet:
+      path: /healthz
+      port: http
+    periodSeconds: 10
+  readiness:
+    httpGet:
+      path: /healthz
+      port: http
+    periodSeconds: 5
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
