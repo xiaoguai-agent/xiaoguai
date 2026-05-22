@@ -1,3 +1,18 @@
-//! axum HTTP server: REST + SSE/WS (skeleton).
+//! axum HTTP server: REST + SSE.
 //!
-//! Implementation lands in v0.5. See `docs/architecture/2026-05-21-design.md` §4.
+//! v0.5.5 ships the minimum useful slice — session lifecycle plus an
+//! SSE-streamed `POST .../messages` endpoint that drives `ReactAgent`. Auth,
+//! RBAC, RLS plumbing, WebSocket fallback, `OpenAPI` generation, the `/v1/mcp`
+//! and `/v1/admin` namespaces are tracked in `v0.5.5.1`.
+
+#![forbid(unsafe_code)]
+
+pub mod convert;
+pub mod error;
+pub mod routes;
+pub mod sse;
+pub mod state;
+
+pub use error::{ApiError, ApiResult};
+pub use routes::router;
+pub use state::{AppState, CancelRegistry};
