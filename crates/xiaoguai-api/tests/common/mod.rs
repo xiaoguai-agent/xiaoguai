@@ -90,6 +90,7 @@ impl InMemoryMessageRepo {
         Arc::new(Self::default())
     }
 
+    #[allow(dead_code)]
     pub fn snapshot(&self, session_id: &str) -> Vec<Message> {
         self.inner
             .lock()

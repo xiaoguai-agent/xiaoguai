@@ -32,6 +32,8 @@ fn build_state(steps: Vec<ScriptStep>) -> (AppState, Arc<InMemoryMessageRepo>) {
         toolbox,
         agent_defaults: AgentConfig::new("mock-model"),
         cancels: Arc::new(CancelRegistry::new()),
+        mcp_servers: None,
+        auth: None,
     };
     (state, messages)
 }

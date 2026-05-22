@@ -160,11 +160,18 @@ async fn run_serve(settings: &Settings) -> Result<()> {
     ));
     let state = AppState {
         sessions: Arc::new(PgSessionRepository::new(pool.clone())),
-        messages: Arc::new(PgMessageRepository::new(pool)),
+        messages: Arc::new(PgMessageRepository::new(pool.clone())),
         backend,
         toolbox: Arc::new(Toolbox::new()),
         agent_defaults: AgentConfig::new("mock"),
         cancels: Arc::new(CancelRegistry::new()),
+        mcp_servers: Some(Arc::new(
+            xiaoguai_storage::repositories::PgMcpServerRepository::new(pool),
+        )),
+        // v0.6 ships the validator trait; production wiring is gated on
+        // `XIAOGUAI_AUTH_REQUIRED=true` (config switch). Until that knob
+        // lands the binary keeps `auth: None` (dev mode).
+        auth: None,
     };
 
     let addr: SocketAddr = format!("{}:{}", settings.server.host, settings.server.port)

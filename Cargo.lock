@@ -4591,6 +4591,7 @@ dependencies = [
  "tracing",
  "uuid",
  "xiaoguai-agent",
+ "xiaoguai-auth",
  "xiaoguai-llm",
  "xiaoguai-mcp",
  "xiaoguai-storage",

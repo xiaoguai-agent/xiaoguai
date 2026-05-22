@@ -7,6 +7,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod auth;
 pub mod convert;
 pub mod error;
 pub mod routes;
@@ -14,6 +15,7 @@ pub mod serve;
 pub mod sse;
 pub mod state;
 
+pub use auth::{Claims, JwtTokenValidator, StubValidator, TokenValidator};
 pub use error::{ApiError, ApiResult};
 pub use routes::router;
 pub use serve::serve_with_state;

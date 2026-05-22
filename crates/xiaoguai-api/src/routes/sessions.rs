@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{KeepAlive, Sse};
 use axum::Json;
@@ -14,6 +14,7 @@ use xiaoguai_agent::{ReactAgent, StopReason};
 use xiaoguai_llm::Message as LlmMessage;
 use xiaoguai_types::{Session, SessionId, SessionStatus, TenantId, UserId};
 
+use crate::auth::Claims;
 use crate::convert::{domain_to_llm, llm_to_domain};
 use crate::error::{ApiError, ApiResult};
 use crate::sse::event_to_sse;
@@ -21,11 +22,13 @@ use crate::state::AppState;
 
 const DEFAULT_LIST_LIMIT: i64 = 100;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct CreateSessionRequest {
-    /// Required — eventually sourced from auth context, but the API is
-    /// available without auth in v0.5.5 so callers must pass it explicitly.
+    /// In auth-required mode, claims `sub`/`tenant_id` win. In unauthed
+    /// mode (v0.5.5 default for dev/test) the body must supply them.
+    #[serde(default)]
     pub user_id: String,
+    #[serde(default)]
     pub tenant_id: String,
     pub model: String,
     pub title: Option<String>,
@@ -56,9 +59,15 @@ impl From<Session> for SessionResponse {
 
 pub async fn create_session(
     State(state): State<AppState>,
+    claims: Option<Extension<Claims>>,
     Json(req): Json<CreateSessionRequest>,
 ) -> ApiResult<(StatusCode, Json<SessionResponse>)> {
-    if req.user_id.is_empty() || req.tenant_id.is_empty() || req.model.is_empty() {
+    // Claims override body identity when present (auth-required mode).
+    let (user_id, tenant_id) = match claims.as_ref() {
+        Some(Extension(c)) => (c.sub.clone(), c.tenant_id.clone()),
+        None => (req.user_id.clone(), req.tenant_id.clone()),
+    };
+    if user_id.is_empty() || tenant_id.is_empty() || req.model.is_empty() {
         return Err(ApiError::BadRequest(
             "user_id, tenant_id, and model are required".into(),
         ));
@@ -66,8 +75,8 @@ pub async fn create_session(
     let now = Utc::now();
     let session = Session {
         id: SessionId::new(),
-        tenant_id: TenantId::from(req.tenant_id),
-        user_id: UserId::from(req.user_id),
+        tenant_id: TenantId::from(tenant_id),
+        user_id: UserId::from(user_id),
         title: req.title,
         created_at: now,
         updated_at: now,
