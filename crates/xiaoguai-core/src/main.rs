@@ -138,12 +138,49 @@ async fn run_smoke(settings: &Settings) -> Result<()> {
     Ok(())
 }
 
-async fn run_serve(_settings: &Settings) -> Result<()> {
-    // v0.5.5 will wire axum routes. v0.5.1 just boots subsystems + idles.
-    tracing::info!("serve: subsystems wired; API routes land in v0.5.5");
-    tokio::signal::ctrl_c()
+async fn run_serve(settings: &Settings) -> Result<()> {
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use xiaoguai_agent::{AgentConfig, Toolbox};
+    use xiaoguai_api::{serve_with_state, AppState, CancelRegistry};
+    use xiaoguai_llm::{LlmBackend, MockBackend};
+    use xiaoguai_storage::repositories::{PgMessageRepository, PgSessionRepository};
+
+    tracing::info!("serve: connecting to Postgres");
+    let pool = db::connect(&settings.database.url, settings.database.max_connections)
         .await
-        .context("waiting for ctrl-c")?;
-    tracing::info!("serve: shutdown");
+        .context("pg connect")?;
+    db::migrate(&pool).await.context("pg migrate")?;
+
+    // v0.5.6 wires the minimum useful AppState. Real LLM provider routing
+    // (LlmRouter pulling from `llm_providers` repo) lands in v0.6 with the
+    // auth + tenant-context plumbing.
+    let backend: Arc<dyn LlmBackend> = Arc::new(MockBackend::with_response(
+        "MockBackend is the v0.5.6 default. Configure a real backend in v0.6.",
+    ));
+    let state = AppState {
+        sessions: Arc::new(PgSessionRepository::new(pool.clone())),
+        messages: Arc::new(PgMessageRepository::new(pool)),
+        backend,
+        toolbox: Arc::new(Toolbox::new()),
+        agent_defaults: AgentConfig::new("mock"),
+        cancels: Arc::new(CancelRegistry::new()),
+    };
+
+    let addr: SocketAddr = format!("{}:{}", settings.server.host, settings.server.port)
+        .parse()
+        .with_context(|| {
+            format!(
+                "parse bind addr {}:{}",
+                settings.server.host, settings.server.port
+            )
+        })?;
+    let (local, fut) = serve_with_state(addr, state).await.context("bind api")?;
+    tracing::info!(%local, "serve: api listening");
+
+    tokio::select! {
+        res = fut => res.context("axum serve")?,
+        _ = tokio::signal::ctrl_c() => tracing::info!("serve: shutdown via ctrl-c"),
+    }
     Ok(())
 }

@@ -10,9 +10,11 @@
 pub mod convert;
 pub mod error;
 pub mod routes;
+pub mod serve;
 pub mod sse;
 pub mod state;
 
 pub use error::{ApiError, ApiResult};
 pub use routes::router;
+pub use serve::serve_with_state;
 pub use state::{AppState, CancelRegistry};

@@ -21,6 +21,7 @@ xiaoguai-audit = { path = "../xiaoguai-audit" }
 xiaoguai-agent = { path = "../xiaoguai-agent" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
 xiaoguai-api = { path = "../xiaoguai-api" }
+xiaoguai-mcp = { path = "../xiaoguai-mcp" }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
