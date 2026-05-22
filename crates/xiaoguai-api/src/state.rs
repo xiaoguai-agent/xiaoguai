@@ -16,7 +16,9 @@ use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 use xiaoguai_agent::{AgentConfig, Toolbox};
 use xiaoguai_llm::LlmBackend;
-use xiaoguai_storage::repositories::{MessageRepository, SessionRepository};
+use xiaoguai_storage::repositories::{McpServerRepository, MessageRepository, SessionRepository};
+
+use crate::auth::TokenValidator;
 
 /// Registry of cancellation tokens keyed by `session_id`. A single token per
 /// session is enough — the API contract serialises message turns within a
@@ -71,6 +73,12 @@ pub struct AppState {
     pub toolbox: Arc<Toolbox>,
     pub agent_defaults: AgentConfig,
     pub cancels: Arc<CancelRegistry>,
+    /// Optional MCP registry — when `None` the `/v1/mcp/servers` endpoint
+    /// returns 503.
+    pub mcp_servers: Option<Arc<dyn McpServerRepository>>,
+    /// `None` = auth disabled (handlers fall back to body identity).
+    /// `Some(...)` = require Bearer token on `/v1/**`.
+    pub auth: Option<Arc<dyn TokenValidator>>,
 }
 
 impl std::fmt::Debug for AppState {
