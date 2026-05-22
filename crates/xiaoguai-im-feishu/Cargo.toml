@@ -6,13 +6,23 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Feishu IM adapter (skeleton, v1.0 target)."
+description = "Feishu IM adapter — webhook signature verification + parser."
 
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
+xiaoguai-im-gateway = { path = "../xiaoguai-im-gateway" }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = "0.4"
+parking_lot = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

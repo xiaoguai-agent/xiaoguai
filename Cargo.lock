@@ -4721,8 +4721,16 @@ name = "xiaoguai-im-feishu"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "hex",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "sha2",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
+ "xiaoguai-im-gateway",
  "xiaoguai-types",
 ]
 
@@ -4731,12 +4739,23 @@ name = "xiaoguai-im-gateway"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "axum",
+ "chrono",
+ "hex",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
  "tokio",
+ "tower",
  "tracing",
- "tracing-subscriber",
- "xiaoguai-im-dingtalk",
+ "xiaoguai-agent",
+ "xiaoguai-api",
  "xiaoguai-im-feishu",
- "xiaoguai-im-wecom",
+ "xiaoguai-llm",
+ "xiaoguai-storage",
  "xiaoguai-types",
 ]
 

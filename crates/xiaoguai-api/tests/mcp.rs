@@ -66,8 +66,7 @@ impl McpServerRepository for InMemoryMcpRepo {
             .lock()
             .iter()
             .filter(|s| {
-                s.tenant_id.is_none()
-                    || s.tenant_id.as_ref().map(AsRef::as_ref) == Some(tenant_id)
+                s.tenant_id.is_none() || s.tenant_id.as_ref().map(AsRef::as_ref) == Some(tenant_id)
             })
             .cloned()
             .collect())

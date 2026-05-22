@@ -1,0 +1,129 @@
+//! End-to-end coverage for `POST /v1/im/feishu/webhook` — verifies the
+//! signed-challenge handshake, signed-message routing, and 401 on missing
+//! signature.
+
+use std::sync::Arc;
+
+use axum::body::{to_bytes, Body};
+use axum::http::{header, Method, Request, StatusCode};
+use parking_lot::Mutex;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use tower::ServiceExt;
+use xiaoguai_agent::{AgentConfig, Toolbox};
+use xiaoguai_api::{AppState, CancelRegistry};
+use xiaoguai_im_feishu::FeishuProvider;
+use xiaoguai_im_gateway::{mount_feishu, ImProvider, OutgoingReply};
+use xiaoguai_llm::mock::ScriptStep;
+use xiaoguai_llm::{LlmBackend, MockBackend};
+
+mod common;
+use common::{InMemoryMessageRepo, InMemorySessionRepo};
+
+const KEY: &str = "test-encrypt-key";
+
+fn sign(body: &str, ts: &str, nonce: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(ts.as_bytes());
+    h.update(nonce.as_bytes());
+    h.update(KEY.as_bytes());
+    h.update(body.as_bytes());
+    hex::encode(h.finalize())
+}
+
+fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
+    let sessions = InMemorySessionRepo::arc();
+    let messages = InMemoryMessageRepo::arc();
+    let backend: Arc<dyn LlmBackend> =
+        Arc::new(MockBackend::with_script(vec![ScriptStep::text("noop")]));
+    let state = AppState {
+        sessions,
+        messages,
+        backend,
+        toolbox: Arc::new(Toolbox::new()),
+        agent_defaults: AgentConfig::new("mock"),
+        cancels: Arc::new(CancelRegistry::new()),
+        mcp_servers: None,
+        auth: None,
+    };
+    let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
+    mount_feishu(state, provider)
+}
+
+fn signed_request(body: &str) -> Request<Body> {
+    let ts = "1716355200";
+    let nonce = "abc123";
+    let sig = sign(body, ts, nonce);
+    Request::builder()
+        .method(Method::POST)
+        .uri("/v1/im/feishu/webhook")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-Lark-Request-Timestamp", ts)
+        .header("X-Lark-Request-Nonce", nonce)
+        .header("X-Lark-Signature", sig)
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+async fn body_json(body: Body) -> Value {
+    let bytes = to_bytes(body, 64 * 1024).await.unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn challenge_round_trips() {
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let app = build_app(sink);
+    let body = r#"{"challenge":"hello"}"#;
+    let resp = app.oneshot(signed_request(body)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_json(resp.into_body()).await;
+    assert_eq!(v["challenge"], "hello");
+}
+
+#[tokio::test]
+async fn message_event_is_accepted_and_reply_dispatched() {
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let app = build_app(sink.clone());
+    let body = json!({
+        "header": {"event_id": "evt-1", "tenant_key": "ten_x"},
+        "event": {
+            "sender": {"sender_id": {"open_id": "ou_alice"}, "tenant_key": "ten_x"},
+            "message": {"chat_id": "oc_chat", "content": "{\"text\":\"hi\"}"}
+        }
+    })
+    .to_string();
+    let resp = app.oneshot(signed_request(&body)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_json(resp.into_body()).await;
+    assert_eq!(v["status"], "accepted");
+
+    // Reply spawn races with our test; give it ~50ms.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let buf = sink.lock();
+    assert_eq!(buf.len(), 1);
+    assert_eq!(buf[0].conversation_id, "oc_chat");
+    assert!(buf[0].text.contains("hi"));
+}
+
+#[tokio::test]
+async fn missing_signature_yields_401() {
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let app = build_app(sink);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/im/feishu/webhook")
+        .body(Body::from("{}"))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn malformed_signed_body_yields_400() {
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let app = build_app(sink);
+    // Properly signed but garbage payload.
+    let resp = app.oneshot(signed_request("not-json")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
