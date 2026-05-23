@@ -623,6 +623,93 @@ html,
   overflow: hidden;
 }
 
+/* ---------------------------------------------------------- code blocks (v0.8.3) */
+
+/* Wraps every fenced code block; hosts the copy button overlay. The
+   PrismAsyncLight component renders its own <pre> inside, so this
+   wrapper only needs to establish a positioning context. */
+.codeblock {
+  position: relative;
+}
+
+.codeblock__plain {
+  margin: 0;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  font-family:
+    'JetBrains Mono',
+    'IBM Plex Mono',
+    'SFMono-Regular',
+    Menlo,
+    Monaco,
+    Consolas,
+    'Courier New',
+    monospace;
+}
+
+/* PrismAsyncLight renders inline styles, so the only theme work CSS
+   needs to do is keep the wrapper transparent. The element itself comes
+   in styled — we just defang any default padding. */
+.codeblock pre {
+  margin: 0;
+}
+
+/* Copy button — absolute corner overlay, fades in on hover/focus. Lives
+   inside any `.codeblock` (markdown fences) or `.copy-host` (tool
+   bubbles). */
+.copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface-elevated);
+  color: var(--fg-soft);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+  z-index: 1;
+}
+
+.codeblock:hover .copy-btn,
+.copy-host:hover .copy-btn,
+.copy-btn:focus-visible {
+  opacity: 1;
+}
+
+.copy-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.copy-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* Reserve a touch of padding on tool bubbles so the absolute copy
+   button doesn't sit on top of the first character of `→ name(...)`. */
+.bubble.tool.copy-host {
+  padding-right: calc(var(--space-4) + 56px);
+}
+
 /* ---------------------------------------------------------- dark theme */
 
 [data-theme='dark'] {

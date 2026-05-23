@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import type { AgentEvent, ContentBlock, Message } from '@xiaoguai/shared';
 import { client } from './client';
 import { CitationStrip } from './citations';
+import { CopyButton } from './codeblock';
 import { MarkdownBody } from './markdown';
 
 type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
@@ -216,15 +217,20 @@ export function ChatPage({ onSessionCreated }: Props) {
 function Bubble({ bubble }: { bubble: DisplayBubble }) {
   const className =
     bubble.kind === 'tool'
-      ? `bubble tool${bubble.toolError ? ' error' : ''}`
+      ? `bubble tool copy-host${bubble.toolError ? ' error' : ''}`
       : `bubble ${bubble.kind}`;
   const isEmptyStreaming = !bubble.text && bubble.streaming;
   // v0.8.2: assistant turns render through react-markdown so headings,
   // tables, fenced code blocks, etc. come out formatted. User + tool
   // turns stay as raw text — they're not authored as markdown.
   const renderMarkdown = bubble.kind === 'assistant' && !isEmptyStreaming && bubble.text;
+  // v0.8.3: tool bubbles are machine output and frequently copied verbatim
+  // into shells / issue trackers, so they get the same hover-to-copy
+  // affordance code blocks do. Empty / still-streaming bubbles skip it.
+  const showCopy = bubble.kind === 'tool' && bubble.text.length > 0;
   return (
     <div className={className}>
+      {showCopy && <CopyButton text={bubble.text} />}
       {renderMarkdown ? <MarkdownBody text={bubble.text} /> : bubble.text}
       {isEmptyStreaming && (
         <span className="streaming-dots" aria-label="thinking">
