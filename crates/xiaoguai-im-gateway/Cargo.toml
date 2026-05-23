@@ -15,6 +15,8 @@ path = "src/lib.rs"
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-api = { path = "../xiaoguai-api" }
+xiaoguai-agent = { path = "../xiaoguai-agent" }
+xiaoguai-llm = { path = "../xiaoguai-llm" }
 async-trait = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }
@@ -24,12 +26,11 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 xiaoguai-storage = { path = "../xiaoguai-storage" }
-xiaoguai-agent = { path = "../xiaoguai-agent" }
-xiaoguai-llm = { path = "../xiaoguai-llm" }
 xiaoguai-im-feishu = { path = "../xiaoguai-im-feishu" }
 tower = { workspace = true }
 parking_lot = { workspace = true }

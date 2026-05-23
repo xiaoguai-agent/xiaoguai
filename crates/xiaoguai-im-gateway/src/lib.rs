@@ -16,4 +16,4 @@ pub mod provider;
 pub mod router;
 
 pub use provider::{ImEvent, ImProvider, IncomingMessage, OutgoingReply, ProviderError, Webhook};
-pub use router::mount_feishu;
+pub use router::{mount_feishu, run_agent_and_reply, GatewayState};
