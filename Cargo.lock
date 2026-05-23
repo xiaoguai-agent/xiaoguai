@@ -5123,6 +5123,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "xiaoguai-rag"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "parking_lot",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+ "xiaoguai-mcp",
+ "xiaoguai-types",
+]
+
+[[package]]
 name = "xiaoguai-storage"
 version = "0.1.0"
 dependencies = [
