@@ -1,21 +1,81 @@
-/* Minimal styling — v0.8 focuses on shape, not polish. Real design system
-   lands in v1.0. */
+/* Xiaoguai chat-ui — v0.8.1 design pass.
+ *
+ * Goals:
+ *   - Generous whitespace, readable typography (Inter on the web, system
+ *     stack as fallback).
+ *   - Subtle shadows + 1-px borders rather than heavy outlines.
+ *   - Bubble shapes echo iMessage / Claude.ai: rounded, with an
+ *     intentional "tail" via asymmetric border-radius.
+ *   - Streaming indicator uses a 3-dot pulse animation instead of an
+ *     inert ellipsis.
+ *   - Code-style tool bubbles get their own JetBrains Mono / IBM Plex
+ *     Mono stack so monospace tool calls feel deliberate, not afterthought.
+ *
+ * Tokens are intentionally a small set; resist sprawl. If a future
+ * theme needs them, fork into light/dark CSS variables.
+ */
 
 :root {
-  --bg: #fafafa;
-  --fg: #1c1c1c;
-  --muted: #6b7280;
-  --accent: #2563eb;
-  --border: #e5e7eb;
-  --user-bg: #2563eb;
+  /* Color tokens — neutral first, accent second. */
+  --bg: #fafaf9;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --fg: #18181b;
+  --fg-soft: #3f3f46;
+  --muted: #71717a;
+  --border: #e4e4e7;
+  --border-soft: #f4f4f5;
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef2ff;
+  --user-bg: #4f46e5;
   --user-fg: #ffffff;
   --assistant-bg: #ffffff;
-  --tool-bg: #fef3c7;
-  --tool-error-bg: #fee2e2;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 14px;
+  --tool-bg: #fffbeb;
+  --tool-border: #fde68a;
+  --tool-fg: #78350f;
+  --tool-error-bg: #fef2f2;
+  --tool-error-border: #fecaca;
+  --tool-error-fg: #991b1b;
+  --status-bg: #f4f4f5;
+  --status-fg: #52525b;
+
+  /* Spacing scale (4-pt grid). */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* Radii. */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  /* Shadows — soft, layered. */
+  --shadow-sm: 0 1px 2px 0 rgba(24, 24, 27, 0.04);
+  --shadow-md: 0 4px 14px 0 rgba(24, 24, 27, 0.06);
+  --shadow-focus: 0 0 0 3px rgba(79, 70, 229, 0.18);
+
+  /* Typography. */
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  font-feature-settings: 'cv11', 'ss01';
   color: var(--fg);
   background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
@@ -30,139 +90,280 @@ html,
   height: 100%;
 }
 
+/* ------------------------------------------------------------------ layout */
+
 .layout {
   display: flex;
   height: 100vh;
+  background: var(--bg);
 }
+
+/* ------------------------------------------------------------------ sidebar */
 
 .sidebar {
   width: 280px;
   border-right: 1px solid var(--border);
-  padding: 16px;
+  background: var(--surface);
+  padding: var(--space-5) var(--space-4);
   overflow-y: auto;
-  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .sidebar h2 {
-  margin: 0 0 16px;
-  font-size: 16px;
-}
-
-.sidebar .session {
-  display: block;
-  padding: 8px 12px;
-  border-radius: 6px;
-  text-decoration: none;
-  color: var(--fg);
-  margin-bottom: 4px;
-}
-
-.sidebar .session:hover {
-  background: #f3f4f6;
-}
-
-.sidebar .session.active {
-  background: #eff6ff;
-  color: var(--accent);
+  margin: 0 0 var(--space-3);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .sidebar button {
   width: 100%;
-  padding: 8px;
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  background: transparent;
-  border-radius: 6px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg-soft);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  margin-bottom: 12px;
+  font: inherit;
+  font-weight: 500;
+  margin-bottom: var(--space-3);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
+
+.sidebar button:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sidebar .session {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: var(--fg-soft);
+  font-size: 14px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 120ms ease;
+}
+
+.sidebar .session:hover {
+  background: var(--border-soft);
+  color: var(--fg);
+}
+
+.sidebar .session.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* --------------------------------------------------------------- main pane */
 
 .main {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--bg);
 }
 
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 24px;
+  padding: var(--space-6) var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-3);
+  scroll-behavior: smooth;
 }
 
+/* Center the conversation column on wide screens so the eye doesn't have
+   to sweep across an entire monitor. */
+.messages > * {
+  max-width: 720px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ------------------------------------------------------------------ bubble */
+
 .bubble {
-  max-width: 70%;
-  padding: 10px 14px;
-  border-radius: 10px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-xl);
   white-space: pre-wrap;
   word-break: break-word;
+  font-size: 15px;
+  line-height: 1.55;
+  box-shadow: var(--shadow-sm);
+  max-width: 78%;
 }
 
 .bubble.user {
   align-self: flex-end;
   background: var(--user-bg);
   color: var(--user-fg);
+  /* Tail toward the right edge. */
+  border-bottom-right-radius: var(--radius-sm);
 }
 
 .bubble.assistant {
   align-self: flex-start;
   background: var(--assistant-bg);
   border: 1px solid var(--border);
+  /* Tail toward the left edge. */
+  border-bottom-left-radius: var(--radius-sm);
 }
 
+/* Tool bubbles read as "machine output" — monospace, slightly muted. */
 .bubble.tool {
   align-self: flex-start;
   background: var(--tool-bg);
-  border: 1px solid #facc15;
-  font-family: 'Monaco', 'Menlo', monospace;
-  font-size: 12px;
+  border: 1px solid var(--tool-border);
+  color: var(--tool-fg);
+  font-family:
+    'JetBrains Mono',
+    'IBM Plex Mono',
+    'SFMono-Regular',
+    Menlo,
+    Monaco,
+    Consolas,
+    'Courier New',
+    monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  border-radius: var(--radius-md);
+  max-width: 88%;
 }
 
 .bubble.tool.error {
   background: var(--tool-error-bg);
-  border-color: #ef4444;
+  border-color: var(--tool-error-border);
+  color: var(--tool-error-fg);
 }
 
 .tool-call-header {
   font-weight: 600;
-  margin-bottom: 4px;
-  font-family: 'Monaco', 'Menlo', monospace;
+  margin-bottom: var(--space-1);
+  font-family: inherit;
   font-size: 12px;
   color: var(--muted);
 }
 
+/* Streaming indicator — the React component renders `.streaming-dots`
+   into an empty assistant bubble, and we animate three dots so the
+   user knows the model is thinking. */
+.bubble .streaming-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 1em;
+}
+
+.bubble .streaming-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: pulse 1.2s infinite ease-in-out;
+}
+
+.bubble .streaming-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.bubble .streaming-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes pulse {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.9);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ------------------------------------------------------------------ composer */
+
 .composer {
   display: flex;
-  gap: 8px;
-  padding: 16px 24px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-7);
   border-top: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--surface);
+}
+
+.composer > * {
+  /* Match the conversation column so the input lines up with the bubbles. */
+  max-width: 720px;
 }
 
 .composer input {
   flex: 1;
-  padding: 10px 14px;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 14px;
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-size: 15px;
+  background: var(--surface);
+  color: var(--fg);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.composer input::placeholder {
+  color: var(--muted);
 }
 
 .composer input:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+
+.composer input:disabled {
+  background: var(--border-soft);
+  color: var(--muted);
+  cursor: not-allowed;
 }
 
 .composer button {
-  padding: 10px 18px;
+  padding: var(--space-3) var(--space-5);
   background: var(--accent);
-  color: white;
+  color: var(--user-fg);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  font-weight: 500;
+  font: inherit;
+  font-weight: 600;
+  transition:
+    background 120ms ease,
+    transform 80ms ease;
+}
+
+.composer button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.composer button:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .composer button:disabled {
@@ -170,10 +371,38 @@ html,
   cursor: not-allowed;
 }
 
+/* ------------------------------------------------------------------ status */
+
 .status {
-  padding: 8px 24px;
-  background: #fef3c7;
+  padding: var(--space-2) var(--space-7);
+  background: var(--status-bg);
   font-size: 12px;
-  color: #92400e;
-  border-top: 1px solid #fcd34d;
+  color: var(--status-fg);
+  border-top: 1px solid var(--border);
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ small screens */
+
+@media (max-width: 720px) {
+  .layout {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    height: auto;
+    max-height: 35vh;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .messages {
+    padding: var(--space-4);
+  }
+  .composer {
+    padding: var(--space-3) var(--space-4);
+  }
+  .bubble {
+    max-width: 92%;
+  }
 }

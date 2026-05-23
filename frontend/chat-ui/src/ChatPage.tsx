@@ -212,7 +212,19 @@ function Bubble({ bubble }: { bubble: DisplayBubble }) {
     bubble.kind === 'tool'
       ? `bubble tool${bubble.toolError ? ' error' : ''}`
       : `bubble ${bubble.kind}`;
-  return <div className={className}>{bubble.text || (bubble.streaming ? '…' : '')}</div>;
+  const isEmptyStreaming = !bubble.text && bubble.streaming;
+  return (
+    <div className={className}>
+      {bubble.text}
+      {isEmptyStreaming && (
+        <span className="streaming-dots" aria-label="thinking">
+          <span />
+          <span />
+          <span />
+        </span>
+      )}
+    </div>
+  );
 }
 
 function messageToBubbles(m: Message): DisplayBubble[] {
