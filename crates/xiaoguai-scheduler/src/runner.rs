@@ -28,11 +28,27 @@ use thiserror::Error;
 use xiaoguai_audit::AuditEntry;
 
 use crate::audit::AuditAppender;
+use crate::budget::{BudgetLedger, DEFAULT_PROACTIVE_BUDGET_PER_DAY};
 use crate::executor::{ExecutionOutcome, JobExecutor};
 use crate::job::{JobRun, JobRunStatus, ScheduledJob};
+use crate::proactive::{ProactiveChecker, ProactiveCtx};
 use crate::repository::{JobRepository, JobRunRepository, RepoError};
 use crate::sink::{PushPayload, PushSink};
+use crate::trigger::Trigger;
 use crate::trigger_source::{EventReceiver, TriggerEvent};
+
+/// Tenant id used for the "system" pseudo-tenant when a job has
+/// `tenant_id = None`. Mirrors the audit module's convention so the
+/// budget ledger and the audit log key on the same string.
+const SYSTEM_TENANT: &str = "system";
+
+/// Outcome of the proactive checker + budget gate. Internal to the
+/// runner — callers see only the side effects (audit row written when
+/// budget exhausted, schedule advanced either way).
+enum ProactiveDecision {
+    Fire(String),
+    Skip,
+}
 
 #[derive(Debug, Error)]
 pub enum RunnerError {
@@ -52,6 +68,15 @@ pub struct RunnerOptions {
     /// wiring sets a small non-zero value (≤30s); the test harness
     /// can leave it zero and consume backoffs by stubbing the clock.
     pub max_retry_sleep_secs: u64,
+    /// Per-user-per-day cap on proactive pushes. Roadmap §5.5 fixes
+    /// the default at **3**; operators raise via this field when the
+    /// `InMemoryBudgetLedger` is the only ledger wired. When the
+    /// runner is built with [`JobRunner::with_budget_ledger`] this
+    /// value is ignored in favour of the ledger's own limit — the
+    /// field is kept on `RunnerOptions` so single-call construction
+    /// (auto-build the in-memory ledger from this number) is still
+    /// possible in the operator binary.
+    pub budget_limit_per_user_per_day: u32,
 }
 
 impl Default for RunnerOptions {
@@ -59,6 +84,7 @@ impl Default for RunnerOptions {
         Self {
             max_jobs_per_tick: 32,
             max_retry_sleep_secs: 0,
+            budget_limit_per_user_per_day: DEFAULT_PROACTIVE_BUDGET_PER_DAY,
         }
     }
 }
@@ -70,6 +96,14 @@ pub struct JobRunner {
     audit: Arc<dyn AuditAppender>,
     sinks: Vec<Arc<dyn PushSink>>,
     options: RunnerOptions,
+    /// Optional cheap-model gate consulted before firing
+    /// [`Trigger::Proactive`] jobs. Absent ⇒ proactive triggers never
+    /// fire (fail-safe).
+    proactive_checker: Option<Arc<dyn ProactiveChecker>>,
+    /// Optional per-user-per-day budget ledger for proactive pushes.
+    /// Absent ⇒ proactive jobs whose checker says yes still won't
+    /// fire (fail-safe — roadmap §5.5 is non-negotiable).
+    budget: Option<Arc<dyn BudgetLedger>>,
 }
 
 impl JobRunner {
@@ -86,6 +120,8 @@ impl JobRunner {
             audit,
             sinks: Vec::new(),
             options: RunnerOptions::default(),
+            proactive_checker: None,
+            budget: None,
         }
     }
 
@@ -98,6 +134,25 @@ impl JobRunner {
     #[must_use]
     pub fn with_sink(mut self, sink: Arc<dyn PushSink>) -> Self {
         self.sinks.push(sink);
+        self
+    }
+
+    /// Install the cheap-model gate consulted before
+    /// [`Trigger::Proactive`] jobs run. Without it, proactive jobs
+    /// tick but never fire — a deliberate fail-safe so a misconfigured
+    /// deployment doesn't accidentally start pushing to users.
+    #[must_use]
+    pub fn with_proactive_checker(mut self, checker: Arc<dyn ProactiveChecker>) -> Self {
+        self.proactive_checker = Some(checker);
+        self
+    }
+
+    /// Install the per-user-per-day push budget ledger. Without it,
+    /// proactive jobs never fire — roadmap §5.5 makes the budget
+    /// non-negotiable.
+    #[must_use]
+    pub fn with_budget_ledger(mut self, ledger: Arc<dyn BudgetLedger>) -> Self {
+        self.budget = Some(ledger);
         self
     }
 
@@ -157,12 +212,35 @@ impl JobRunner {
     /// `Some`, is merged into every `audit_log.details` JSONB row
     /// written for this fire — reactive sources stash the changed
     /// path / webhook payload there.
+    ///
+    /// For [`Trigger::Proactive`] jobs the path forks before the
+    /// executor: the checker decides whether to bother firing, and if
+    /// it says yes, the budget ledger gates the push. Both must
+    /// succeed; the schedule is *always* advanced regardless so the
+    /// next interval tick is on the calendar even after a skip.
+    #[allow(clippy::too_many_lines)]
     async fn fire(
         &self,
         job: ScheduledJob,
         extra_audit_detail: Option<serde_json::Value>,
     ) -> Result<(), RunnerError> {
         let fired_at = Utc::now();
+
+        let proactive_reason = if let Trigger::Proactive { check_prompt, .. } = &job.trigger {
+            match self
+                .proactive_gate(&job, check_prompt, extra_audit_detail.as_ref())
+                .await?
+            {
+                ProactiveDecision::Fire(reason) => Some(reason),
+                ProactiveDecision::Skip => {
+                    self.advance_schedule(&job, fired_at).await?;
+                    return Ok(());
+                }
+            }
+        } else {
+            None
+        };
+
         let max_attempts = job.retry_policy.max_attempts.max(1);
 
         for attempt in 1..=max_attempts {
@@ -248,6 +326,7 @@ impl JobRunner {
                 final_status,
                 error_message.as_deref(),
                 extra_audit_detail.as_ref(),
+                proactive_reason.as_deref(),
             )
             .await?;
 
@@ -263,6 +342,7 @@ impl JobRunner {
                     final_status,
                     &outcome_for_push,
                     error_message.as_deref(),
+                    proactive_reason.as_deref(),
                 )
                 .await;
             }
@@ -273,14 +353,99 @@ impl JobRunner {
             // Failed; continue the retry loop unless we just exhausted attempts.
         }
 
-        // Advance the schedule. Reactive triggers have no next fire
-        // (`next_fire_after` returns None) but we still bump
-        // `last_fire_at` so the console can show "last triggered at".
+        self.advance_schedule(&job, fired_at).await?;
+        Ok(())
+    }
+
+    async fn advance_schedule(
+        &self,
+        job: &ScheduledJob,
+        fired_at: chrono::DateTime<Utc>,
+    ) -> Result<(), RunnerError> {
         let next = job
             .trigger
             .next_fire_after(fired_at)
             .map_err(|e| RunnerError::Audit(e.to_string()))?;
         self.jobs.record_fire(&job.id, fired_at, next).await?;
+        Ok(())
+    }
+
+    /// Proactive path: run the checker, then the budget. Returns
+    /// [`ProactiveDecision::Fire`] only when both gates pass; emits an
+    /// audit row for the budget-exhaustion case (roadmap §5.5: the
+    /// console needs to show *why* a tenant stopped getting pings).
+    /// Checker `None` / `Err` / missing-checker / missing-ledger all
+    /// resolve to [`ProactiveDecision::Skip`] without any audit row.
+    async fn proactive_gate(
+        &self,
+        job: &ScheduledJob,
+        prompt: &str,
+        extra_audit_detail: Option<&serde_json::Value>,
+    ) -> Result<ProactiveDecision, RunnerError> {
+        let Some(checker) = self.proactive_checker.as_ref() else {
+            tracing::debug!(job_id = %job.id, "proactive job has no checker installed; skipping");
+            return Ok(ProactiveDecision::Skip);
+        };
+        let ctx = ProactiveCtx::from_job(job);
+        let verdict = match checker.should_fire(prompt, ctx).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(job_id = %job.id, error = %e, "proactive checker errored; skipping tick");
+                return Ok(ProactiveDecision::Skip);
+            }
+        };
+        let Some(reason) = verdict else {
+            return Ok(ProactiveDecision::Skip);
+        };
+
+        let Some(budget) = self.budget.as_ref() else {
+            tracing::warn!(job_id = %job.id, "proactive checker said fire but no budget ledger installed; skipping");
+            return Ok(ProactiveDecision::Skip);
+        };
+        let user_key = job
+            .tenant_id
+            .clone()
+            .unwrap_or_else(|| SYSTEM_TENANT.into());
+        let today = Utc::now().date_naive();
+        let claimed = budget
+            .check_and_debit(&user_key, today)
+            .await
+            .map_err(|e| RunnerError::Audit(e.to_string()))?;
+        if !claimed {
+            self.write_budget_exhausted_audit(job, &reason, extra_audit_detail)
+                .await?;
+            return Ok(ProactiveDecision::Skip);
+        }
+        Ok(ProactiveDecision::Fire(reason))
+    }
+
+    async fn write_budget_exhausted_audit(
+        &self,
+        job: &ScheduledJob,
+        reason: &str,
+        extra_detail: Option<&serde_json::Value>,
+    ) -> Result<(), RunnerError> {
+        let mut details = serde_json::json!({
+            "outcome": "budget_exhausted",
+            "proactive_reason": reason,
+        });
+        if let Some(extra) = extra_detail {
+            if !extra.is_null() {
+                details["trigger"] = extra.clone();
+            }
+        }
+        let entry = AuditEntry {
+            ts: Utc::now(),
+            tenant_id: job
+                .tenant_id
+                .clone()
+                .unwrap_or_else(|| SYSTEM_TENANT.into()),
+            actor: format!("scheduler:{}", job.id),
+            action: "scheduler.proactive_denied".into(),
+            resource: Some(format!("job:{}", job.id)),
+            details,
+        };
+        self.audit.append(entry).await.map_err(RunnerError::Audit)?;
         Ok(())
     }
 
@@ -291,6 +456,7 @@ impl JobRunner {
         status: JobRunStatus,
         error_message: Option<&str>,
         extra_detail: Option<&serde_json::Value>,
+        proactive_reason: Option<&str>,
     ) -> Result<(), RunnerError> {
         let mut details = serde_json::json!({
             "run_id": run.id,
@@ -308,9 +474,17 @@ impl JobRunner {
                 details["trigger"] = extra.clone();
             }
         }
+        if let Some(reason) = proactive_reason {
+            // v0.11.1 audit-first console reads this key to render
+            // "why we pinged the user".
+            details["proactive_reason"] = serde_json::Value::String(reason.to_string());
+        }
         let entry = AuditEntry {
             ts: Utc::now(),
-            tenant_id: job.tenant_id.clone().unwrap_or_else(|| "system".into()),
+            tenant_id: job
+                .tenant_id
+                .clone()
+                .unwrap_or_else(|| SYSTEM_TENANT.into()),
             actor: format!("scheduler:{}", job.id),
             action: "scheduler.job_run".into(),
             resource: Some(format!("job:{}", job.id)),
@@ -327,6 +501,7 @@ impl JobRunner {
         status: JobRunStatus,
         outcome: &ExecutionOutcome,
         error_message: Option<&str>,
+        proactive_reason: Option<&str>,
     ) {
         if self.sinks.is_empty() || job.sinks.is_empty() {
             return;
@@ -343,6 +518,7 @@ impl JobRunner {
                 Some(outcome.output_preview.clone())
             },
             error_message: error_message.map(str::to_string),
+            reason: proactive_reason.unwrap_or("").to_string(),
         };
         for sink in &self.sinks {
             if !job.sinks.iter().any(|s| s == sink.id()) {
@@ -716,5 +892,175 @@ mod tests {
         let reactive_runs = runs_snap.iter().filter(|r| r.job_id == "reactive").count();
         assert!(scheduled_runs >= 1, "timer should fire scheduled job");
         assert_eq!(reactive_runs, 1, "event fires reactive job exactly once");
+    }
+
+    // --- v0.10.2 proactive tests ----------------------------------
+
+    use crate::budget::InMemoryBudgetLedger;
+    use crate::proactive::{AlwaysFireChecker, NeverFireChecker, ScriptedChecker};
+
+    fn proactive_job(id: &str) -> ScheduledJob {
+        let mut j = ScheduledJob::new(
+            id,
+            Some("user-alice".into()),
+            id,
+            Trigger::proactive("Is there anything in the inbox?", 60).unwrap(),
+            serde_json::json!({"prompt": "summarize inbox"}),
+        );
+        j.sinks = vec!["inbox".into()];
+        j
+    }
+
+    #[tokio::test]
+    async fn proactive_checker_says_no_skips_silently() {
+        let sink: Arc<LoggingSink> = Arc::new(LoggingSink::new("inbox"));
+        let (mut runner, jobs, runs, audit) = runner_with(Arc::new(EchoExecutor));
+        runner = runner
+            .with_sink(sink.clone())
+            .with_proactive_checker(Arc::new(NeverFireChecker))
+            .with_budget_ledger(Arc::new(InMemoryBudgetLedger::with_default_limit()));
+        jobs.upsert(&proactive_job("j1")).await.unwrap();
+
+        let fired = runner.tick().await.unwrap();
+        // tick() counts every due job picked up — schedule still advances.
+        assert_eq!(fired, 1);
+        assert!(runs.snapshot().is_empty(), "no run row on checker=no");
+        assert!(audit.snapshot().is_empty(), "no audit row on checker=no");
+        assert!(sink.captured().is_empty(), "no push on checker=no");
+
+        // Schedule advanced so the job doesn't loop hot.
+        let back = jobs.get("j1").await.unwrap();
+        assert!(back.last_fire_at.is_some());
+        assert!(back.next_fire_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn proactive_checker_yes_with_budget_fires_with_reason() {
+        let sink: Arc<LoggingSink> = Arc::new(LoggingSink::new("inbox"));
+        let (mut runner, jobs, runs, audit) = runner_with(Arc::new(EchoExecutor));
+        runner = runner
+            .with_sink(sink.clone())
+            .with_proactive_checker(Arc::new(AlwaysFireChecker::new("3 new emails since 9am")))
+            .with_budget_ledger(Arc::new(InMemoryBudgetLedger::with_default_limit()));
+        jobs.upsert(&proactive_job("j1")).await.unwrap();
+
+        runner.tick().await.unwrap();
+
+        let runs_snap = runs.snapshot();
+        assert_eq!(runs_snap.len(), 1);
+        assert_eq!(runs_snap[0].status, JobRunStatus::Succeeded);
+
+        let entries = audit.snapshot();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].action, "scheduler.job_run");
+        assert_eq!(
+            entries[0].details["proactive_reason"],
+            serde_json::json!("3 new emails since 9am"),
+            "audit row carries proactive_reason for the v0.11.1 console"
+        );
+
+        let captured = sink.captured();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].reason, "3 new emails since 9am");
+    }
+
+    #[tokio::test]
+    async fn proactive_checker_yes_but_budget_exhausted_records_denial() {
+        let sink: Arc<LoggingSink> = Arc::new(LoggingSink::new("inbox"));
+        // Limit of 1: first tick claims, second tick should be denied.
+        let ledger = Arc::new(InMemoryBudgetLedger::new(1));
+        let (mut runner, jobs, runs, audit) = runner_with(Arc::new(EchoExecutor));
+        runner = runner
+            .with_sink(sink.clone())
+            .with_proactive_checker(Arc::new(AlwaysFireChecker::new("still fresh")))
+            .with_budget_ledger(ledger);
+        jobs.upsert(&proactive_job("j1")).await.unwrap();
+
+        // First fire — claims the only budget slot.
+        runner.tick().await.unwrap();
+        // Second fire — denied.
+        // Force the next-fire timestamp into the past so list_due picks
+        // it up again on the same wall-clock instant.
+        let past = chrono::Utc::now() - chrono::Duration::seconds(1);
+        jobs.record_fire("j1", past, Some(past)).await.unwrap();
+        runner.tick().await.unwrap();
+
+        let runs_snap = runs.snapshot();
+        assert_eq!(runs_snap.len(), 1, "only the first fire produced a run row");
+
+        let entries = audit.snapshot();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].action, "scheduler.job_run");
+        assert_eq!(entries[1].action, "scheduler.proactive_denied");
+        assert_eq!(
+            entries[1].details["outcome"],
+            serde_json::json!("budget_exhausted")
+        );
+        assert_eq!(
+            entries[1].details["proactive_reason"],
+            serde_json::json!("still fresh"),
+            "denial audit row preserves the reason the checker wanted to surface"
+        );
+
+        let captured = sink.captured();
+        assert_eq!(captured.len(), 1, "no push on the denied fire");
+    }
+
+    #[tokio::test]
+    async fn proactive_without_checker_skips() {
+        let (runner, jobs, runs, audit) = runner_with(Arc::new(EchoExecutor));
+        jobs.upsert(&proactive_job("j1")).await.unwrap();
+        runner.tick().await.unwrap();
+        assert!(runs.snapshot().is_empty());
+        assert!(audit.snapshot().is_empty());
+    }
+
+    #[tokio::test]
+    async fn proactive_with_checker_but_no_budget_skips() {
+        let (mut runner, jobs, runs, audit) = runner_with(Arc::new(EchoExecutor));
+        runner = runner.with_proactive_checker(Arc::new(AlwaysFireChecker::new("yes")));
+        jobs.upsert(&proactive_job("j1")).await.unwrap();
+        runner.tick().await.unwrap();
+        assert!(runs.snapshot().is_empty());
+        assert!(audit.snapshot().is_empty(), "no ledger = fail-safe skip");
+    }
+
+    #[tokio::test]
+    async fn proactive_checker_error_skips_silently() {
+        use crate::proactive::ProactiveError;
+        let checker = ScriptedChecker::new();
+        checker.enqueue(Err(ProactiveError::Backend("model unreachable".into())));
+        let (mut runner, jobs, runs, audit) = runner_with(Arc::new(EchoExecutor));
+        runner = runner
+            .with_proactive_checker(Arc::new(checker))
+            .with_budget_ledger(Arc::new(InMemoryBudgetLedger::with_default_limit()));
+        jobs.upsert(&proactive_job("j1")).await.unwrap();
+        runner.tick().await.unwrap();
+        assert!(runs.snapshot().is_empty());
+        assert!(audit.snapshot().is_empty());
+    }
+
+    #[tokio::test]
+    async fn non_proactive_jobs_have_empty_reason_in_push() {
+        let sink: Arc<LoggingSink> = Arc::new(LoggingSink::new("inbox"));
+        let (mut runner, jobs, _runs, _audit) = runner_with(Arc::new(EchoExecutor));
+        runner = runner.with_sink(sink.clone());
+        let mut j = job("j1");
+        j.sinks = vec!["inbox".into()];
+        jobs.upsert(&j).await.unwrap();
+        runner.tick().await.unwrap();
+        let captured = sink.captured();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(
+            captured[0].reason, "",
+            "scheduled (non-proactive) fires leave reason empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn runner_options_default_carries_three_per_day() {
+        // Defends the roadmap §5.5 non-negotiable.
+        let opts = RunnerOptions::default();
+        assert_eq!(opts.budget_limit_per_user_per_day, 3);
     }
 }

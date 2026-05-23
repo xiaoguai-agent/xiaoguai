@@ -20,6 +20,16 @@
 //! the timer loop and only fires them when a matching event arrives
 //! on the [`crate::trigger_source::TriggerEvent`] channel.
 //!
+//! v0.10.2 adds the *proactive* third leg of the
+//! `passive → reactive → proactive` ladder (roadmap §3): a cheap-model
+//! check-prompt runs every `interval_secs`, and the executor only fires
+//! when the check returns a non-empty reason. Proactive triggers are
+//! [`Trigger::is_scheduled`] — they show up in `list_due` like Interval
+//! — but the runner routes them through a separate
+//! [`crate::proactive::ProactiveChecker`] seam before deciding whether
+//! to actually run the job. Per-user budgets and reason-required push
+//! payloads are non-negotiable per roadmap §5.5.
+//!
 //! Cron stays UTC by design; tenants who want local time offset in
 //! their expression (see roadmap §5.3).
 
@@ -43,6 +53,10 @@ pub enum TriggerError {
     EmptyRepoUrl,
     #[error("db poll query must be non-empty")]
     EmptyQuery,
+    #[error("proactive check prompt must be non-empty")]
+    EmptyCheckPrompt,
+    #[error("proactive interval must be > 0 seconds")]
+    InvalidProactiveInterval,
 }
 
 /// When a job should fire.
@@ -92,6 +106,16 @@ pub enum Trigger {
     /// v0.10.1.x alongside the PG repository impls.
     DbPoll {
         query: String,
+    },
+    /// Proactive: every `interval_secs` the runner asks a cheap model
+    /// (via [`crate::proactive::ProactiveChecker`]) whether the
+    /// `check_prompt` warrants firing the real executor. The job only
+    /// runs (and only consumes a push-budget slot) when the checker
+    /// returns `Some(reason)`. See roadmap §5.5 for the budget /
+    /// reason-required contract.
+    Proactive {
+        check_prompt: String,
+        interval_secs: u64,
     },
 }
 
@@ -151,12 +175,40 @@ impl Trigger {
         Ok(Self::DbPoll { query })
     }
 
+    /// Construct a [`Trigger::Proactive`] trigger. Both arguments must
+    /// be non-trivial: empty `check_prompt` or zero `interval_secs`
+    /// would make the trigger silently degenerate.
+    pub fn proactive(
+        check_prompt: impl Into<String>,
+        interval_secs: u64,
+    ) -> Result<Self, TriggerError> {
+        let check_prompt = check_prompt.into();
+        if check_prompt.is_empty() {
+            return Err(TriggerError::EmptyCheckPrompt);
+        }
+        if interval_secs == 0 {
+            return Err(TriggerError::InvalidProactiveInterval);
+        }
+        Ok(Self::Proactive {
+            check_prompt,
+            interval_secs,
+        })
+    }
+
     /// True iff the trigger has a wall-clock schedule. Scheduled
     /// triggers are visible to `JobRepository::list_due`; reactive
     /// triggers are only fired via the event channel.
+    ///
+    /// Proactive triggers count as scheduled — they tick on their own
+    /// `interval_secs` — but the runner routes them through the
+    /// [`crate::proactive::ProactiveChecker`] before deciding to fire
+    /// the executor.
     #[must_use]
     pub const fn is_scheduled(&self) -> bool {
-        matches!(self, Self::Cron { .. } | Self::Interval { .. })
+        matches!(
+            self,
+            Self::Cron { .. } | Self::Interval { .. } | Self::Proactive { .. }
+        )
     }
 
     /// True iff the trigger fires on external events rather than on a
@@ -164,6 +216,14 @@ impl Trigger {
     #[must_use]
     pub const fn is_reactive(&self) -> bool {
         !self.is_scheduled()
+    }
+
+    /// True iff the trigger needs to go through the proactive checker
+    /// before firing. The runner uses this to decide between the
+    /// straight-fire path and the check-first path.
+    #[must_use]
+    pub const fn is_proactive(&self) -> bool {
+        matches!(self, Self::Proactive { .. })
     }
 
     /// Compute the next fire time strictly after `after`.
@@ -184,6 +244,10 @@ impl Trigger {
             }
             Self::Interval { secs } => {
                 let d = Duration::seconds(i64::try_from(*secs).unwrap_or(i64::MAX));
+                Ok(Some(after + d))
+            }
+            Self::Proactive { interval_secs, .. } => {
+                let d = Duration::seconds(i64::try_from(*interval_secs).unwrap_or(i64::MAX));
                 Ok(Some(after + d))
             }
             Self::FileWatch { .. }
@@ -299,8 +363,48 @@ mod tests {
         for t in [&fw, &wh, &gp, &dp] {
             assert!(t.is_reactive());
             assert!(!t.is_scheduled());
+            assert!(!t.is_proactive());
             assert_eq!(t.next_fire_after(now).unwrap(), None);
         }
+    }
+
+    #[test]
+    fn proactive_rejects_empty_prompt() {
+        assert!(matches!(
+            Trigger::proactive("", 60).unwrap_err(),
+            TriggerError::EmptyCheckPrompt
+        ));
+    }
+
+    #[test]
+    fn proactive_rejects_zero_interval() {
+        assert!(matches!(
+            Trigger::proactive("any change in inbox?", 0).unwrap_err(),
+            TriggerError::InvalidProactiveInterval
+        ));
+    }
+
+    #[test]
+    fn proactive_is_scheduled_and_ticks_on_interval() {
+        let t = Trigger::proactive("Is there anything new?", 300).unwrap();
+        assert!(t.is_scheduled());
+        assert!(t.is_proactive());
+        assert!(!t.is_reactive());
+        let after = Utc.with_ymd_and_hms(2026, 5, 23, 10, 0, 0).unwrap();
+        let next = t.next_fire_after(after).unwrap().unwrap();
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 5, 23, 10, 5, 0).unwrap());
+    }
+
+    #[test]
+    fn serde_round_trip_proactive() {
+        let t = Trigger::proactive("Scan HN for new ML posts", 1800).unwrap();
+        let s = serde_json::to_string(&t).unwrap();
+        assert_eq!(
+            s,
+            r#"{"type":"proactive","check_prompt":"Scan HN for new ML posts","interval_secs":1800}"#
+        );
+        let back: Trigger = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, t);
     }
 
     #[test]
