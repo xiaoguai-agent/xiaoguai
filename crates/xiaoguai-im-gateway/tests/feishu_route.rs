@@ -139,3 +139,78 @@ async fn malformed_signed_body_yields_400() {
     let resp = app.oneshot(signed_request("not-json")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
+
+/// v0.7.2: prove that subsequent webhooks for the *same* conversation_id
+/// see the accumulated history, while a different conversation_id does
+/// not. Driven through `run_agent_and_reply` directly so the test does
+/// not have to race the background spawn.
+#[tokio::test]
+async fn conversation_history_accumulates_per_chat() {
+    use xiaoguai_im_feishu::FeishuProvider;
+    use xiaoguai_im_gateway::{
+        run_agent_and_reply, ConversationHistory, GatewayState, ImProvider, IncomingMessage,
+    };
+
+    // Script three distinct assistant outputs so each turn is
+    // distinguishable.
+    let backend: Arc<dyn LlmBackend> = Arc::new(MockBackend::with_script(vec![
+        ScriptStep::text("first"),
+        ScriptStep::text("second"),
+        ScriptStep::text("third"),
+    ]));
+    let sessions = InMemorySessionRepo::arc();
+    let messages = InMemoryMessageRepo::arc();
+    let app_state = AppState {
+        sessions,
+        messages,
+        backend,
+        toolbox: Arc::new(Toolbox::new()),
+        agent_defaults: AgentConfig::new("mock"),
+        cancels: Arc::new(CancelRegistry::new()),
+        mcp_servers: None,
+        auth: None,
+        authz: None,
+        tenants: None,
+        rate_limiter: None,
+    };
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
+    let history = Arc::new(ConversationHistory::new(10));
+    let state = GatewayState {
+        app: app_state,
+        feishu: provider,
+        history: history.clone(),
+    };
+
+    let mk_msg = |chat: &str, text: &str| IncomingMessage {
+        provider: "feishu".into(),
+        user_external_id: "ou_alice".into(),
+        tenant_external_id: "ten_x".into(),
+        conversation_id: chat.into(),
+        text: text.into(),
+        event_id: "evt".into(),
+    };
+
+    run_agent_and_reply(state.clone(), mk_msg("oc_a", "hello"))
+        .await
+        .expect("turn 1");
+    run_agent_and_reply(state.clone(), mk_msg("oc_a", "and again"))
+        .await
+        .expect("turn 2");
+    run_agent_and_reply(state.clone(), mk_msg("oc_b", "different chat"))
+        .await
+        .expect("turn 3");
+
+    // oc_a saw two user+assistant turns = 4 messages.
+    let a = history.snapshot("oc_a");
+    assert_eq!(a.len(), 4, "oc_a should have accumulated 2 turns");
+    assert_eq!(a[0].content, "hello");
+    assert_eq!(a[1].content, "first");
+    assert_eq!(a[2].content, "and again");
+    assert_eq!(a[3].content, "second");
+    // oc_b is isolated — only one turn.
+    let b = history.snapshot("oc_b");
+    assert_eq!(b.len(), 2);
+    assert_eq!(b[0].content, "different chat");
+    assert_eq!(b[1].content, "third");
+}

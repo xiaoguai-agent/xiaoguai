@@ -27,13 +27,13 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+parking_lot = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 xiaoguai-storage = { path = "../xiaoguai-storage" }
 xiaoguai-im-feishu = { path = "../xiaoguai-im-feishu" }
 tower = { workspace = true }
-parking_lot = { workspace = true }
 sha2 = { workspace = true }
 hex = "0.4"
 async-trait = { workspace = true }
