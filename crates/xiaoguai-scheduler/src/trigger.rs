@@ -1,17 +1,27 @@
 //! Triggers — when does a job fire.
 //!
-//! v0.10.0 ships two variants:
+//! v0.10.0 shipped two scheduled variants ([`Trigger::Cron`] and
+//! [`Trigger::Interval`]); v0.10.1 adds four reactive variants:
 //!
-//! * [`Trigger::Cron`] — a 6-field expression (sec min hour dom mon dow)
-//!   parsed by the `cron` crate. UTC by design; tenants who want local
-//!   time must offset in their expression (we deliberately don't carry
-//!   per-job timezones — see decision in v0.9–v0.12 roadmap §5.3).
-//! * [`Trigger::Interval`] — fire every `N` seconds after `last_fire`,
-//!   or after `created_at` if the job hasn't fired yet.
+//! * [`Trigger::FileWatch`] — fire when a path changes (via the
+//!   `notify` crate; production source lives in [`crate::sources`]).
+//! * [`Trigger::Webhook`] — fire when xiaoguai-api receives an
+//!   inbound HTTP call routed by `route_id`. v0.10.1 ships the
+//!   in-process source; the HTTP route wiring lands when the runtime
+//!   extraction in v0.12.0 brings axum into the same dependency band.
+//! * [`Trigger::GitPush`] — placeholder for v0.10.1.x; lets a job be
+//!   stored against a `(repo_url, branch)` pair so the data model is
+//!   stable. No concrete source ships yet.
+//! * [`Trigger::DbPoll`] — placeholder for v0.10.1.x once the PG
+//!   scheduler repos land in v0.12.0. Data only.
 //!
-//! Reactive triggers (file watcher, webhook, git push) and proactive
-//! triggers (LLM-initiated) are v0.10.1 / v0.10.2 — both will land as
-//! additional variants on this enum so the runner doesn't fork.
+//! Reactive variants return `None` from [`Trigger::next_fire_after`]
+//! — they don't have a wall-clock schedule. The runner skips them in
+//! the timer loop and only fires them when a matching event arrives
+//! on the [`crate::trigger_source::TriggerEvent`] channel.
+//!
+//! Cron stays UTC by design; tenants who want local time offset in
+//! their expression (see roadmap §5.3).
 
 use std::str::FromStr;
 
@@ -25,6 +35,14 @@ pub enum TriggerError {
     CronParse(String),
     #[error("interval must be > 0 seconds")]
     InvalidInterval,
+    #[error("file watch path must be non-empty")]
+    EmptyPath,
+    #[error("webhook route_id must be non-empty")]
+    EmptyRouteId,
+    #[error("git repo_url must be non-empty")]
+    EmptyRepoUrl,
+    #[error("db poll query must be non-empty")]
+    EmptyQuery,
 }
 
 /// When a job should fire.
@@ -35,12 +53,46 @@ pub enum TriggerError {
 /// ```json
 /// { "type": "cron", "expr": "0 0 * * * *" }
 /// { "type": "interval", "secs": 3600 }
+/// { "type": "file_watch", "path": "/var/notes" }
+/// { "type": "webhook", "route_id": "deploy-prod" }
+/// { "type": "git_push", "repo_url": "https://...", "branch": "main" }
+/// { "type": "db_poll", "query": "SELECT id FROM ..." }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Trigger {
-    Cron { expr: String },
-    Interval { secs: u64 },
+    Cron {
+        expr: String,
+    },
+    Interval {
+        secs: u64,
+    },
+    /// Fire when the file system path changes. The matching
+    /// `FileWatchSource` translates `notify` events into
+    /// `TriggerEvent`s targeted at every job whose `path` is an
+    /// ancestor of (or equal to) the changed path.
+    FileWatch {
+        path: String,
+    },
+    /// Fire when a webhook routed by `route_id` arrives. v0.10.1
+    /// ships the in-process producer; the HTTP route is wired in
+    /// `xiaoguai-api` in a later tag.
+    Webhook {
+        route_id: String,
+    },
+    /// Fire on a git push to `(repo_url, branch)`. v0.10.1 ships the
+    /// data variant only — concrete polling/webhook source lands in
+    /// v0.10.1.x.
+    GitPush {
+        repo_url: String,
+        branch: String,
+    },
+    /// Fire when a SQL query returns a non-empty row set. v0.10.1
+    /// ships the data variant only — concrete poller lands in
+    /// v0.10.1.x alongside the PG repository impls.
+    DbPoll {
+        query: String,
+    },
 }
 
 impl Trigger {
@@ -59,11 +111,67 @@ impl Trigger {
         Ok(Self::Interval { secs })
     }
 
+    /// Construct a [`Trigger::FileWatch`] trigger.
+    pub fn file_watch(path: impl Into<String>) -> Result<Self, TriggerError> {
+        let path = path.into();
+        if path.is_empty() {
+            return Err(TriggerError::EmptyPath);
+        }
+        Ok(Self::FileWatch { path })
+    }
+
+    /// Construct a [`Trigger::Webhook`] trigger.
+    pub fn webhook(route_id: impl Into<String>) -> Result<Self, TriggerError> {
+        let route_id = route_id.into();
+        if route_id.is_empty() {
+            return Err(TriggerError::EmptyRouteId);
+        }
+        Ok(Self::Webhook { route_id })
+    }
+
+    /// Construct a [`Trigger::GitPush`] trigger.
+    pub fn git_push(
+        repo_url: impl Into<String>,
+        branch: impl Into<String>,
+    ) -> Result<Self, TriggerError> {
+        let repo_url = repo_url.into();
+        let branch = branch.into();
+        if repo_url.is_empty() {
+            return Err(TriggerError::EmptyRepoUrl);
+        }
+        Ok(Self::GitPush { repo_url, branch })
+    }
+
+    /// Construct a [`Trigger::DbPoll`] trigger.
+    pub fn db_poll(query: impl Into<String>) -> Result<Self, TriggerError> {
+        let query = query.into();
+        if query.is_empty() {
+            return Err(TriggerError::EmptyQuery);
+        }
+        Ok(Self::DbPoll { query })
+    }
+
+    /// True iff the trigger has a wall-clock schedule. Scheduled
+    /// triggers are visible to `JobRepository::list_due`; reactive
+    /// triggers are only fired via the event channel.
+    #[must_use]
+    pub const fn is_scheduled(&self) -> bool {
+        matches!(self, Self::Cron { .. } | Self::Interval { .. })
+    }
+
+    /// True iff the trigger fires on external events rather than on a
+    /// schedule.
+    #[must_use]
+    pub const fn is_reactive(&self) -> bool {
+        !self.is_scheduled()
+    }
+
     /// Compute the next fire time strictly after `after`.
     ///
-    /// Returns `None` if the trigger has no future fire (e.g. a Cron
-    /// expression that only matches dates already in the past — the
-    /// `cron` crate can yield this for some hand-crafted exprs).
+    /// Returns `None` if the trigger has no future fire — either
+    /// because it's a reactive trigger (no wall-clock schedule) or
+    /// because the cron expression only matches dates already in the
+    /// past.
     pub fn next_fire_after(
         &self,
         after: DateTime<Utc>,
@@ -78,6 +186,10 @@ impl Trigger {
                 let d = Duration::seconds(i64::try_from(*secs).unwrap_or(i64::MAX));
                 Ok(Some(after + d))
             }
+            Self::FileWatch { .. }
+            | Self::Webhook { .. }
+            | Self::GitPush { .. }
+            | Self::DbPoll { .. } => Ok(None),
         }
     }
 }
@@ -143,5 +255,79 @@ mod tests {
         assert_eq!(s, r#"{"type":"interval","secs":3600}"#);
         let back: Trigger = serde_json::from_str(&s).unwrap();
         assert_eq!(back, t);
+    }
+
+    #[test]
+    fn file_watch_rejects_empty_path() {
+        assert!(matches!(
+            Trigger::file_watch("").unwrap_err(),
+            TriggerError::EmptyPath
+        ));
+    }
+
+    #[test]
+    fn webhook_rejects_empty_route_id() {
+        assert!(matches!(
+            Trigger::webhook("").unwrap_err(),
+            TriggerError::EmptyRouteId
+        ));
+    }
+
+    #[test]
+    fn git_push_rejects_empty_repo() {
+        assert!(matches!(
+            Trigger::git_push("", "main").unwrap_err(),
+            TriggerError::EmptyRepoUrl
+        ));
+    }
+
+    #[test]
+    fn db_poll_rejects_empty_query() {
+        assert!(matches!(
+            Trigger::db_poll("").unwrap_err(),
+            TriggerError::EmptyQuery
+        ));
+    }
+
+    #[test]
+    fn reactive_triggers_have_no_next_fire() {
+        let fw = Trigger::file_watch("/tmp").unwrap();
+        let wh = Trigger::webhook("deploy").unwrap();
+        let gp = Trigger::git_push("https://x", "main").unwrap();
+        let dp = Trigger::db_poll("SELECT 1").unwrap();
+        let now = Utc::now();
+        for t in [&fw, &wh, &gp, &dp] {
+            assert!(t.is_reactive());
+            assert!(!t.is_scheduled());
+            assert_eq!(t.next_fire_after(now).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn serde_round_trip_reactive_variants() {
+        let cases = [
+            (
+                Trigger::file_watch("/var/notes").unwrap(),
+                r#"{"type":"file_watch","path":"/var/notes"}"#,
+            ),
+            (
+                Trigger::webhook("deploy-prod").unwrap(),
+                r#"{"type":"webhook","route_id":"deploy-prod"}"#,
+            ),
+            (
+                Trigger::git_push("https://github.com/x/y", "main").unwrap(),
+                r#"{"type":"git_push","repo_url":"https://github.com/x/y","branch":"main"}"#,
+            ),
+            (
+                Trigger::db_poll("SELECT 1").unwrap(),
+                r#"{"type":"db_poll","query":"SELECT 1"}"#,
+            ),
+        ];
+        for (t, want) in cases {
+            let s = serde_json::to_string(&t).unwrap();
+            assert_eq!(s, want, "encode {t:?}");
+            let back: Trigger = serde_json::from_str(&s).unwrap();
+            assert_eq!(back, t, "decode {want}");
+        }
     }
 }

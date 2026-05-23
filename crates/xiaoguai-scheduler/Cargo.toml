@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Scheduler — ScheduledJob + JobRun, Cron/Interval triggers, retry policy, push-sink trait, audit-tracked runs."
+description = "Scheduler — ScheduledJob + JobRun, Cron/Interval/reactive triggers, retry policy, push-sink trait, audit-tracked runs."
 
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
@@ -16,14 +16,16 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 cron = { workspace = true }
+notify = { workspace = true }
 parking_lot = { workspace = true }
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "sync", "macros", "rt"] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }
 
 [lints]
 workspace = true
