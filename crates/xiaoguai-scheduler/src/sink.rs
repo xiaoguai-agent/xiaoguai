@@ -4,11 +4,13 @@
 //! payload to `tracing::info!`. Real sinks (Feishu / Telegram / Email
 //! / chat-ui inbox) land in v0.10.3 against the same trait.
 //!
-//! The payload schema is deliberately small. v0.10.2 will extend it
-//! with a `reason: String` field that proactive sinks render first
-//! (roadmap §5.5: "Sinks may refuse to deliver if `reason.is_empty()`").
-//! Adding that field later is non-breaking — sinks ignore unknown
-//! fields.
+//! v0.10.2 adds the `reason: String` field to [`PushPayload`]
+//! (roadmap §5.5). Scheduled / reactive fires populate it with empty
+//! string by default; proactive fires populate it with the
+//! checker-returned reason. Real sinks (v0.10.3) refuse delivery when
+//! the originating trigger is proactive *and* `reason.is_empty()` —
+//! the field uses `#[serde(default)]` so older persisted rows decode
+//! cleanly.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -33,6 +35,12 @@ pub struct PushPayload {
     pub fired_at: DateTime<Utc>,
     pub output_preview: Option<String>,
     pub error_message: Option<String>,
+    /// Reason this push exists. Empty for scheduled / reactive jobs;
+    /// populated with the [`crate::proactive::ProactiveChecker`]
+    /// verdict for proactive jobs. Sinks rendering proactive payloads
+    /// MUST surface this field — see roadmap §5.5.
+    #[serde(default)]
+    pub reason: String,
 }
 
 #[async_trait]
@@ -110,11 +118,29 @@ mod tests {
             fired_at: Utc::now(),
             output_preview: Some("done".into()),
             error_message: None,
+            reason: String::new(),
         };
         s.deliver(&p).await.unwrap();
         let cap = s.captured();
         assert_eq!(cap.len(), 1);
         assert_eq!(cap[0].run_id, 1);
         assert_eq!(s.id(), "inbox");
+    }
+
+    #[test]
+    fn payload_decodes_without_reason_field_for_back_compat() {
+        // Old persisted rows from v0.10.0/v0.10.1 don't have `reason`.
+        // Default must kick in so we can still parse them.
+        let raw = r#"{
+            "job_id": "j1",
+            "run_id": 1,
+            "tenant_id": null,
+            "status": "succeeded",
+            "fired_at": "2026-05-23T10:00:00Z",
+            "output_preview": null,
+            "error_message": null
+        }"#;
+        let p: PushPayload = serde_json::from_str(raw).unwrap();
+        assert_eq!(p.reason, "");
     }
 }

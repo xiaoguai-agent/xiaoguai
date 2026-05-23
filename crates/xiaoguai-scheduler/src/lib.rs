@@ -33,10 +33,20 @@
 //! [`sources::WebhookSource`] (in-process push handle ready to be
 //! fronted by an axum route in xiaoguai-api).
 //!
-//! Out of scope for v0.10.1: proactive triggers + per-user budget —
-//! deferred to v0.10.2. PG-backed repositories — the in-memory impls
-//! here remain the production-shaped contract; the PG sink lands
-//! together with the runtime extraction in v0.12.0.
+//! v0.10.2 adds the *proactive* third leg:
+//! [`Trigger::Proactive`] ticks on its own `interval_secs` but the
+//! runner routes each tick through a [`ProactiveChecker`] (cheap-model
+//! gate). Only when the checker returns `Some(reason)` does the runner
+//! consult the [`BudgetLedger`] for the tenant's per-day push budget;
+//! both checks must pass before the executor runs and the
+//! reason-carrying [`PushPayload`] reaches the sinks. Roadmap §5.5 is
+//! the contract.
+//!
+//! Out of scope for v0.10.2: real push sinks (Feishu / Telegram /
+//! Email / Inbox) — deferred to v0.10.3. PG-backed repositories +
+//! PG budget ledger — the in-memory impls here remain the
+//! production-shaped contract; the PG sinks land together with the
+//! runtime extraction in v0.12.0.
 
 #![forbid(unsafe_code)]
 #![warn(clippy::pedantic)]
@@ -47,8 +57,10 @@
 )]
 
 pub mod audit;
+pub mod budget;
 pub mod executor;
 pub mod job;
+pub mod proactive;
 pub mod repository;
 pub mod retry;
 pub mod runner;
@@ -58,8 +70,15 @@ pub mod trigger;
 pub mod trigger_source;
 
 pub use audit::{AuditAppender, NullAuditAppender, RecordingAuditAppender};
+pub use budget::{
+    BudgetError, BudgetLedger, InMemoryBudgetLedger, DEFAULT_PROACTIVE_BUDGET_PER_DAY,
+};
 pub use executor::{EchoExecutor, ExecutionOutcome, JobExecutor};
 pub use job::{JobRun, JobRunStatus, ScheduledJob};
+pub use proactive::{
+    AlwaysFireChecker, NeverFireChecker, ProactiveChecker, ProactiveCtx, ProactiveError,
+    ScriptedChecker,
+};
 pub use repository::{
     InMemoryJobRepository, InMemoryJobRunRepository, JobRepository, JobRunRepository, RepoError,
 };
