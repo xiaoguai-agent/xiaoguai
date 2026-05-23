@@ -17,6 +17,7 @@ xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-api = { path = "../xiaoguai-api" }
 xiaoguai-agent = { path = "../xiaoguai-agent" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
+xiaoguai-storage = { path = "../xiaoguai-storage" }
 async-trait = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }
@@ -31,7 +32,6 @@ parking_lot = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-xiaoguai-storage = { path = "../xiaoguai-storage" }
 xiaoguai-im-feishu = { path = "../xiaoguai-im-feishu" }
 tower = { workspace = true }
 sha2 = { workspace = true }

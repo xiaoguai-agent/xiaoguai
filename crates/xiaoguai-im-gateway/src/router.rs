@@ -1,14 +1,19 @@
 //! Mount IM provider webhooks onto an existing axum `Router`.
 //!
-//! v0.7.2 carries an in-memory conversation history keyed by
-//! `conversation_id` so subsequent webhook deliveries pick up where
-//! the previous turn left off. The flow for an inbound Feishu message:
+//! v0.7.2 carried an in-memory conversation history keyed by
+//! `conversation_id` so subsequent webhook deliveries pick up where the
+//! previous turn left off. v0.7.3 generalises the store behind the
+//! [`ImHistoryStore`] trait so production deployments can swap in the
+//! PG-backed implementation for multi-replica safety.
+//!
+//! Inbound message flow:
 //!
 //!   1. Verify signature + parse → `ImEvent::Message`.
 //!   2. Return HTTP 200 immediately (Feishu retries non-2xx within
 //!      seconds; we don't want to block the HTTP request on the LLM).
 //!   3. Spawn a background task that:
-//!      - Snapshots history for `msg.conversation_id`.
+//!      - Snapshots history for the conversation (the store may
+//!        auto-create tenant/user/session rows under the hood).
 //!      - Appends the inbound user message and runs
 //!        `ReactAgent::run_to_completion` with the full window.
 //!      - Picks the last assistant message's `content` as the reply
@@ -23,10 +28,6 @@
 //!   - 200 on challenge (echoes `{"challenge":"..."}`)
 //!   - 401 on signature failure
 //!   - 400 on malformed body
-//!
-//! History is held *in-process*. Multi-replica deployments will see
-//! split-brain (the chat lands on whichever replica receives the
-//! webhook); a Valkey-backed store is the next slice.
 
 use std::sync::Arc;
 
@@ -41,7 +42,7 @@ use xiaoguai_agent::ReactAgent;
 use xiaoguai_api::AppState;
 use xiaoguai_llm::{Message as LlmMessage, Role};
 
-use crate::history::ConversationHistory;
+use crate::history::{ConversationHistory, ConversationIdent, ImHistoryStore};
 use crate::provider::{
     ImEvent, ImProvider, IncomingMessage, OutgoingReply, ProviderError, Webhook,
 };
@@ -55,29 +56,31 @@ pub const DEFAULT_HISTORY_TURNS: usize = 20;
 pub struct GatewayState {
     pub app: AppState,
     pub feishu: Arc<dyn ImProvider>,
-    pub history: Arc<ConversationHistory>,
+    /// Conversation history store. Default is the in-process
+    /// [`ConversationHistory`]; production wires the PG-backed
+    /// `PgImHistoryStore`.
+    pub history: Arc<dyn ImHistoryStore>,
 }
 
 /// Helper that wires the canonical Feishu route. Accepts any provider
 /// implementing `ImProvider`; the wrapper keeps the gateway crate free
 /// of provider-specific deps. Uses [`DEFAULT_HISTORY_TURNS`] for the
 /// conversation history window; use [`mount_feishu_with_history`] to
-/// supply a tuned `ConversationHistory`.
+/// supply a tuned `ImHistoryStore`.
 pub fn mount_feishu(app: AppState, feishu: Arc<dyn ImProvider>) -> Router {
-    mount_feishu_with_history(
-        app,
-        feishu,
-        Arc::new(ConversationHistory::new(DEFAULT_HISTORY_TURNS)),
-    )
+    let history: Arc<dyn ImHistoryStore> =
+        Arc::new(ConversationHistory::new(DEFAULT_HISTORY_TURNS));
+    mount_feishu_with_history(app, feishu, history)
 }
 
-/// Like [`mount_feishu`] but lets the caller share a
-/// [`ConversationHistory`] across multiple mounts (e.g. when the same
-/// process serves Feishu + DingTalk + WeCom).
+/// Like [`mount_feishu`] but lets the caller share an [`ImHistoryStore`]
+/// across multiple mounts (e.g. when the same process serves Feishu +
+/// DingTalk + WeCom) or substitute a different backend (`PgImHistoryStore`
+/// for multi-replica deployments).
 pub fn mount_feishu_with_history(
     app: AppState,
     feishu: Arc<dyn ImProvider>,
-    history: Arc<ConversationHistory>,
+    history: Arc<dyn ImHistoryStore>,
 ) -> Router {
     let state = GatewayState {
         app,
@@ -125,19 +128,30 @@ async fn handle_webhook(
 /// await it directly without going through axum.
 ///
 /// Side effect: appends `(user, assistant)` turns to
-/// [`GatewayState::history`] for `msg.conversation_id`.
+/// [`GatewayState::history`] for the conversation's identity.
 pub async fn run_agent_and_reply(
     state: GatewayState,
     msg: IncomingMessage,
 ) -> Result<OutgoingReply, ProviderError> {
+    let ident = ConversationIdent::new(
+        msg.provider.clone(),
+        msg.tenant_external_id.clone(),
+        msg.user_external_id.clone(),
+        msg.conversation_id.clone(),
+    );
     let agent = ReactAgent::new(
         state.app.backend.clone(),
         (*state.app.toolbox).clone(),
         state.app.agent_defaults.clone(),
     );
-    // v0.7.2: include the prior turns. Snapshot once so the agent sees
-    // a stable view even if another concurrent webhook lands.
-    let mut history = state.history.snapshot(&msg.conversation_id);
+    // v0.7.3: include the prior turns from whichever store is wired.
+    // Snapshot once so the agent sees a stable view even if another
+    // concurrent webhook lands.
+    let mut history = state
+        .history
+        .snapshot(&ident)
+        .await
+        .map_err(|e| ProviderError::Transport(format!("history snapshot: {e}")))?;
     let inbound = LlmMessage::user(msg.text.clone());
     history.push(inbound.clone());
     let outcome = agent
@@ -154,10 +168,14 @@ pub async fn run_agent_and_reply(
         .find(|m| matches!(m.role, Role::Assistant) && !m.content.is_empty())
         .map_or_else(|| "(no reply produced)".to_string(), |m| m.content.clone());
     // Append both turns to history so the *next* webhook sees them.
-    state.history.extend(
-        &msg.conversation_id,
-        [inbound, LlmMessage::assistant(reply_text.clone())],
-    );
+    state
+        .history
+        .extend(
+            &ident,
+            vec![inbound, LlmMessage::assistant(reply_text.clone())],
+        )
+        .await
+        .map_err(|e| ProviderError::Transport(format!("history extend: {e}")))?;
     let out = OutgoingReply {
         conversation_id: msg.conversation_id.clone(),
         text: reply_text,
