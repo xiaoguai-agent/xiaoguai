@@ -12,8 +12,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod history;
 pub mod provider;
 pub mod router;
 
+pub use history::ConversationHistory;
 pub use provider::{ImEvent, ImProvider, IncomingMessage, OutgoingReply, ProviderError, Webhook};
 pub use router::{mount_feishu, run_agent_and_reply, GatewayState};
