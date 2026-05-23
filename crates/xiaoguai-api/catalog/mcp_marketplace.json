@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "slug": "filesystem",
+      "name": "filesystem",
+      "description": "Browse, read, and write local files. Official MCP reference server.",
+      "category": "files",
+      "transport": "stdio",
+      "version": "0.6.2",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/"],
+      "env_keys": [],
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem"
+    },
+    {
+      "slug": "github",
+      "name": "github",
+      "description": "Read/write GitHub issues, PRs, files. Requires GITHUB_TOKEN.",
+      "category": "code",
+      "transport": "stdio",
+      "version": "0.6.2",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env_keys": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/github"
+    },
+    {
+      "slug": "postgres",
+      "name": "postgres",
+      "description": "Query Postgres databases by URI. Read-only by default.",
+      "category": "data",
+      "transport": "stdio",
+      "version": "0.6.2",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env_keys": ["DATABASE_URL"],
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres"
+    },
+    {
+      "slug": "sqlite",
+      "name": "sqlite",
+      "description": "Query and modify SQLite databases. Includes schema introspection.",
+      "category": "data",
+      "transport": "stdio",
+      "version": "0.6.2",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sqlite"],
+      "env_keys": [],
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/sqlite"
+    },
+    {
+      "slug": "obsidian",
+      "name": "obsidian",
+      "description": "Read your Obsidian vault as a knowledge source. Community server.",
+      "category": "notes",
+      "transport": "stdio",
+      "version": "0.1.0",
+      "command": "npx",
+      "args": ["-y", "obsidian-mcp"],
+      "env_keys": ["OBSIDIAN_VAULT_PATH"],
+      "source_url": "https://github.com/StevenStavrakis/obsidian-mcp"
+    },
+    {
+      "slug": "slack",
+      "name": "slack",
+      "description": "Read channels and send messages. Requires Slack bot token.",
+      "category": "chat",
+      "transport": "stdio",
+      "version": "0.6.2",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-slack"],
+      "env_keys": ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"],
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/slack"
+    },
+    {
+      "slug": "fetch",
+      "name": "fetch",
+      "description": "Fetch web pages and return the cleaned content. Official.",
+      "category": "files",
+      "transport": "stdio",
+      "version": "0.6.2",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-fetch"],
+      "env_keys": [],
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch"
+    },
+    {
+      "slug": "memory",
+      "name": "memory",
+      "description": "Lightweight knowledge graph in-memory store. Useful for prototyping persistent agent memory.",
+      "category": "data",
+      "transport": "stdio",
+      "version": "0.6.2",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env_keys": [],
+      "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/memory"
+    }
+  ]
+}

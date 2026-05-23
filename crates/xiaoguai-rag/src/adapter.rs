@@ -36,7 +36,7 @@ impl std::fmt::Debug for RagMcpAdapter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RagMcpAdapter")
             .field("server_name", &self.server_name)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

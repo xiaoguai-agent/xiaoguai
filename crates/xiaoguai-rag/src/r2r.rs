@@ -32,7 +32,7 @@ impl std::fmt::Debug for R2RClient {
         f.debug_struct("R2RClient")
             .field("base_url", &self.base_url)
             .field("authenticated", &self.auth_header.is_some())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

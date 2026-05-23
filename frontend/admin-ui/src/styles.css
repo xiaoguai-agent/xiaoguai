@@ -75,3 +75,139 @@ tr:last-child td { border-bottom: none; }
   background: var(--row-hover);
   color: var(--muted);
 }
+
+/* ---------------------------------------------------------- marketplace (v0.9.4) */
+
+.hint {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+
+.hint code {
+  background: var(--row-hover);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.marketplace-section {
+  margin-bottom: 32px;
+}
+
+.marketplace-section h2 {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: var(--muted);
+  margin: 0 0 12px;
+  letter-spacing: 0.04em;
+}
+
+.marketplace-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.marketplace-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.marketplace-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.marketplace-card h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.marketplace-card p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-soft, var(--muted));
+  line-height: 1.45;
+}
+
+.marketplace-card .env-keys {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: baseline;
+}
+
+.marketplace-card .env-keys code {
+  background: var(--row-hover);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.marketplace-card footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.marketplace-card footer a {
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.marketplace-card footer a:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+.install-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.install-action button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.install-action button:hover:not(:disabled) {
+  background: var(--row-hover);
+  border-color: var(--muted);
+}
+
+.install-action button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.install-action .error-msg {
+  font-size: 11px;
+  color: #991b1b;
+}
