@@ -14,10 +14,15 @@ use axum::extract::{Query, State};
 use axum::Json;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use xiaoguai_eval::EvalReport;
 use xiaoguai_types::{Tenant, TenantStatus};
 
 use crate::audit::{AuditEntryView, VerifyReport};
 use crate::error::{ApiError, ApiResult};
+use crate::eval::{
+    CaseFromSessionRequest, CaseFromSessionResponse, EvalServiceError, EvalSuiteListItem,
+    RunEvalRequest,
+};
 use crate::state::AppState;
 use crate::today::{TodayItem, TodayKind, TodayQuery};
 
@@ -188,4 +193,62 @@ pub async fn list_audit(
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("audit list: {e}")))?;
     Ok(Json(rows))
+}
+
+// ----------------------------------------------------------------------
+// v0.11.2 — eval pane endpoints.
+// ----------------------------------------------------------------------
+
+/// `GET /v1/admin/eval/suites` — enumerate suites available on disk so
+/// the console can render a clickable left-hand list.
+pub async fn list_eval_suites(
+    State(state): State<AppState>,
+) -> ApiResult<Json<Vec<EvalSuiteListItem>>> {
+    let svc = state
+        .eval
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("eval service not wired".into()))?;
+    let items = svc.list_suites().map_err(eval_err_to_api)?;
+    Ok(Json(items))
+}
+
+/// `POST /v1/admin/eval/run` — execute a suite synchronously and
+/// return the full report. The per-request caps live in
+/// `eval::MAX_CASES_PER_RUN` + `eval::MAX_RUN_DURATION`.
+pub async fn run_eval_suite(
+    State(state): State<AppState>,
+    Json(req): Json<RunEvalRequest>,
+) -> ApiResult<Json<EvalReport>> {
+    let svc = state
+        .eval
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("eval service not wired".into()))?;
+    let report = svc.run_suite(&req).await.map_err(eval_err_to_api)?;
+    Ok(Json(report))
+}
+
+/// `POST /v1/admin/eval/case-from-session` — project a production
+/// `sessions.id` into a ready-to-edit `EvalCase` YAML the operator
+/// pastes into a new `.eval.yaml` file. Does **not** write to disk; the
+/// caller reviews + commits.
+pub async fn eval_case_from_session(
+    State(state): State<AppState>,
+    Json(req): Json<CaseFromSessionRequest>,
+) -> ApiResult<Json<CaseFromSessionResponse>> {
+    let svc = state
+        .eval
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("eval service not wired".into()))?;
+    let resp = svc.case_from_session(&req).await.map_err(eval_err_to_api)?;
+    Ok(Json(resp))
+}
+
+fn eval_err_to_api(e: EvalServiceError) -> ApiError {
+    match e {
+        EvalServiceError::NotFound(msg) => ApiError::BadRequest(msg),
+        EvalServiceError::InvalidArgument(msg) => ApiError::InvalidRequest(msg),
+        EvalServiceError::SuiteTooLarge { .. } => ApiError::PayloadTooLarge(e.to_string()),
+        EvalServiceError::SuiteTimedOut { .. } => ApiError::GatewayTimeout(e.to_string()),
+        EvalServiceError::Backend(_) => ApiError::Internal(anyhow::anyhow!("{e}")),
+    }
 }

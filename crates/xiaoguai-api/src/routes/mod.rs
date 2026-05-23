@@ -47,7 +47,13 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/admin/tenants", get(admin::list_tenants))
         .route("/v1/admin/audit", get(admin::list_audit))
         .route("/v1/admin/audit/verify", get(admin::verify_audit))
-        .route("/v1/admin/today", get(admin::list_today));
+        .route("/v1/admin/today", get(admin::list_today))
+        .route("/v1/admin/eval/suites", get(admin::list_eval_suites))
+        .route("/v1/admin/eval/run", post(admin::run_eval_suite))
+        .route(
+            "/v1/admin/eval/case-from-session",
+            post(admin::eval_case_from_session),
+        );
 
     // Layer order (inner → outer, since `route_layer` adds outward):
     //   handler → rate_limit → rbac → require_bearer

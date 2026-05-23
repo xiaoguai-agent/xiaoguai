@@ -24,6 +24,7 @@ use xiaoguai_storage::repositories::{
 
 use crate::audit::{AuditReader, AuditVerifier};
 use crate::auth::TokenValidator;
+use crate::eval::EvalService;
 use crate::today::TodayReader;
 
 /// Registry of cancellation tokens keyed by `session_id`. A single token per
@@ -118,6 +119,10 @@ pub struct AppState {
     /// `None` makes the endpoint return 503 — production wires a
     /// `PgTodayReader` adapter in `xiaoguai-core`.
     pub today: Option<Arc<dyn TodayReader>>,
+    /// v0.11.2: eval pane substrate — runner + case-from-session
+    /// source + suites directory. `None` makes every `/v1/admin/eval/*`
+    /// route return 503; production wires it from `[eval]` config.
+    pub eval: Option<Arc<EvalService>>,
 }
 
 impl std::fmt::Debug for AppState {

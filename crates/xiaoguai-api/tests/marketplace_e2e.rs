@@ -101,6 +101,7 @@ fn build_state(mcp: Option<Arc<dyn McpServerRepository>>) -> AppState {
         mcp_publish_enabled: false,
         mcp_supervisor: None,
         today: None,
+        eval: None,
     }
 }
 

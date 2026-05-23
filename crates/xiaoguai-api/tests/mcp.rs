@@ -114,6 +114,7 @@ fn build_state(auth: Option<Arc<dyn TokenValidator>>, mcp: Arc<InMemoryMcpRepo>)
         mcp_publish_enabled: false,
         mcp_supervisor: None,
         today: None,
+        eval: None,
     }
 }
 

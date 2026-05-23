@@ -22,6 +22,9 @@ xiaoguai-agent = { path = "../xiaoguai-agent" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
 xiaoguai-api = { path = "../xiaoguai-api" }
 xiaoguai-mcp = { path = "../xiaoguai-mcp" }
+# v0.11.2: assemble the EvalService (runner + suites dir) so the admin
+# console can drive `xiaoguai eval` flows via HTTP.
+xiaoguai-eval = { path = "../xiaoguai-eval" }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }

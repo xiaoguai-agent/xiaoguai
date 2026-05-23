@@ -73,6 +73,7 @@ fn build_state_with_toolbox(toolbox: Toolbox, publish: bool) -> AppState {
         mcp_publish_enabled: publish,
         mcp_supervisor: None,
         today: None,
+        eval: None,
     }
 }
 

@@ -31,6 +31,12 @@ pub struct Settings {
     /// v0.7.4: IM gateway runtime knobs.
     #[serde(default)]
     pub im: ImSettings,
+    /// v0.11.2: eval pane substrate. Optional so existing
+    /// config.yaml files still deserialize; defaults to disabled
+    /// (`suites_dir = "./eval-suites"`, endpoints return 503 when
+    /// the directory doesn't exist).
+    #[serde(default)]
+    pub eval: EvalSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +167,34 @@ const fn default_max_messages_per_conversation() -> usize {
     50
 }
 
+/// v0.11.2: eval pane substrate. `suites_dir` points at a directory of
+/// `*.eval.yaml` case files (or subdirectories holding them). When the
+/// directory doesn't exist the eval endpoints stay disabled — same
+/// trust model as `audit` (503 instead of silently making something up).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalSettings {
+    #[serde(default = "default_eval_suites_dir")]
+    pub suites_dir: String,
+    /// Hard cap on agent-loop iterations per case. Zero = use the
+    /// xiaoguai-agent default. Mirrors the `xiaoguai eval run
+    /// --max-iterations` CLI knob.
+    #[serde(default)]
+    pub max_iterations: u32,
+}
+
+impl Default for EvalSettings {
+    fn default() -> Self {
+        Self {
+            suites_dir: default_eval_suites_dir(),
+            max_iterations: 0,
+        }
+    }
+}
+
+fn default_eval_suites_dir() -> String {
+    "./eval-suites".into()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -188,6 +222,7 @@ impl Default for Settings {
             },
             scheduler: SchedulerSettings::default(),
             im: ImSettings::default(),
+            eval: EvalSettings::default(),
         }
     }
 }

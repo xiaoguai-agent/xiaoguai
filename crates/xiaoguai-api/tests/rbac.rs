@@ -45,6 +45,7 @@ async fn build_state(roles: Vec<&str>) -> AppState {
         mcp_publish_enabled: false,
         mcp_supervisor: None,
         today: None,
+        eval: None,
     }
 }
 
