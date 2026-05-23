@@ -65,8 +65,8 @@ pub enum ContentBlock {
     /// Hard rule: every RAG-emitted assistant turn that uses retrieved
     /// content MUST include at least one `Citation` block per source.
     /// Unsourced retrieved text is what every competing product
-    /// (OpenWebUI / AnythingLLM) gets wrong; the type system enforces
-    /// the contract here.
+    /// (`OpenWebUI` / `AnythingLLM`) gets wrong; the type system
+    /// enforces the contract here.
     Citation {
         /// `file://`, `https://`, or a custom scheme (e.g. `obsidian://`,
         /// `r2r://doc/<id>`).

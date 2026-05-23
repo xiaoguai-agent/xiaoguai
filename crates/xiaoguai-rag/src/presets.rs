@@ -54,17 +54,9 @@ impl ChunkingPreset {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IngestOptions {
     pub preset: ChunkingPreset,
-}
-
-impl Default for IngestOptions {
-    fn default() -> Self {
-        Self {
-            preset: ChunkingPreset::default(),
-        }
-    }
 }
 
 #[cfg(test)]

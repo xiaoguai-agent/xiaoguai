@@ -36,6 +36,14 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/sessions/:id/cancel", post(sessions::cancel_session))
         .route("/v1/mcp/servers", get(mcp::list_servers))
+        .route(
+            "/v1/mcp/marketplace",
+            get(crate::marketplace::list_marketplace),
+        )
+        .route(
+            "/v1/mcp/marketplace/install",
+            post(crate::marketplace::install_from_marketplace),
+        )
         .route("/v1/admin/tenants", get(admin::list_tenants))
         .route("/v1/admin/audit", get(admin::list_audit));
 

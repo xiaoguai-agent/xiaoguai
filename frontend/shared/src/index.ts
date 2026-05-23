@@ -107,6 +107,37 @@ export interface ListAuditQuery {
   until?: string;
 }
 
+/** v0.9.4 — curated MCP marketplace entry. */
+export interface MarketplaceEntry {
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  transport: 'stdio' | 'sse' | 'http';
+  version: string;
+  command?: string | null;
+  args?: string[];
+  endpoint?: string | null;
+  env_keys?: string[];
+  source_url?: string | null;
+}
+
+export interface MarketplaceResponse {
+  version: number;
+  entries: MarketplaceEntry[];
+}
+
+export interface InstallMarketplaceRequest {
+  slug: string;
+  tenant_id?: string;
+}
+
+export interface InstallMarketplaceResponse {
+  id: string;
+  slug: string;
+  name: string;
+}
+
 // ---- Agent event stream --------------------------------------------------
 
 export type AgentEvent =
@@ -224,6 +255,22 @@ export class XiaoguaiClient {
     if (q.since) params.set('since', q.since);
     if (q.until) params.set('until', q.until);
     return this.request<AuditEntryView[]>('GET', `/v1/admin/audit?${params.toString()}`);
+  }
+
+  /** v0.9.4 — curated MCP server catalog. */
+  listMarketplace(): Promise<MarketplaceResponse> {
+    return this.request<MarketplaceResponse>('GET', '/v1/mcp/marketplace');
+  }
+
+  /** v0.9.4 — one-click install of a marketplace entry. */
+  installMarketplace(
+    req: InstallMarketplaceRequest,
+  ): Promise<InstallMarketplaceResponse> {
+    return this.request<InstallMarketplaceResponse>(
+      'POST',
+      '/v1/mcp/marketplace/install',
+      req,
+    );
   }
 
   /**
