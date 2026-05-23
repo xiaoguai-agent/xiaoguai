@@ -20,6 +20,7 @@ path = "src/main.rs"
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-agent = { path = "../xiaoguai-agent" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
+xiaoguai-eval = { path = "../xiaoguai-eval" }
 xiaoguai-storage = { path = "../xiaoguai-storage" }
 xiaoguai-config = { path = "../xiaoguai-config" }
 async-trait = { workspace = true }
@@ -34,11 +35,13 @@ eventsource-stream = "0.2"
 futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
 parking_lot = { workspace = true }
+tempfile = { workspace = true }
 xiaoguai-api = { path = "../xiaoguai-api" }
 xiaoguai-mcp = { path = "../xiaoguai-mcp" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }

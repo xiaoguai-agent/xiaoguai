@@ -1,0 +1,18 @@
+id: greeting
+tags: [smoke, regression]
+input_messages:
+  - role: user
+    content: "Say hello to the user."
+mock_script:
+  turns:
+    - text: "Hello, world!"
+assertions:
+  - kind: final_message_contains
+    text: "Hello"
+  - kind: final_message_regex
+    pattern: "Hello,?\\s+world"
+  - kind: agent_event_sequence
+    expected:
+      - event_type: text_delta
+      - event_type: iteration_completed
+      - event_type: done

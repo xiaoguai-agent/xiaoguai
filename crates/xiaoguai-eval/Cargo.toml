@@ -1,0 +1,31 @@
+[package]
+name = "xiaoguai-eval"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Eval substrate — EvalCase / Assertion / EvalRunner over MockBackend + ReactAgent, no new DB tables."
+
+[dependencies]
+xiaoguai-agent = { path = "../xiaoguai-agent" }
+xiaoguai-audit = { path = "../xiaoguai-audit" }
+xiaoguai-llm = { path = "../xiaoguai-llm" }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "rt", "macros"] }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

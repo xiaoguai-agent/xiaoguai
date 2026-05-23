@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use xiaoguai_cli::commands::{chat, mcp, provider, remote};
+use xiaoguai_cli::commands::{chat, eval, mcp, provider, remote};
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
     connect,
@@ -61,6 +61,36 @@ enum Cmd {
         server: String,
         #[command(subcommand)]
         action: RemoteCmd,
+    },
+
+    /// Run an eval suite (`*.eval.yaml` cases) against the deterministic
+    /// `MockBackend` substrate and print pass/fail.
+    Eval {
+        #[command(subcommand)]
+        action: EvalCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum EvalCmd {
+    /// Walk a directory of `.eval.yaml` cases and grade them.
+    Run {
+        /// Suite name. Becomes `EvalReport.suite`; also the default
+        /// case directory under `./eval/<suite>` when `--cases-dir`
+        /// is omitted.
+        #[arg(long)]
+        suite: String,
+        /// Directory holding `*.eval.yaml` files. Flat (no recursion).
+        #[arg(long)]
+        cases_dir: Option<String>,
+        /// Optional path to write the JSON report to. Omit for
+        /// stdout-only output.
+        #[arg(long)]
+        out: Option<String>,
+        /// Override the agent loop's `max_iterations`. `0` = use
+        /// `AgentConfig::new`'s default (8).
+        #[arg(long, default_value_t = 0)]
+        max_iterations: u32,
     },
 }
 
@@ -389,6 +419,30 @@ async fn handle_remote(server: String, action: RemoteCmd) -> Result<()> {
     Ok(())
 }
 
+async fn handle_eval(action: EvalCmd) -> Result<()> {
+    match action {
+        EvalCmd::Run {
+            suite,
+            cases_dir,
+            out,
+            max_iterations,
+        } => {
+            let report = eval::run(eval::EvalArgs {
+                suite,
+                cases_dir: cases_dir.map(std::path::PathBuf::from),
+                out: out.map(std::path::PathBuf::from),
+                max_iterations,
+            })
+            .await?;
+            print!("{}", xiaoguai_eval::pretty_summary(&report));
+            if report.failed() > 0 {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -404,5 +458,6 @@ async fn main() -> Result<()> {
         Cmd::Provider { action } => handle_provider(cfg, action).await,
         Cmd::Mcp { action } => handle_mcp(cfg, action).await,
         Cmd::Remote { server, action } => handle_remote(server, action).await,
+        Cmd::Eval { action } => handle_eval(action).await,
     }
 }

@@ -1,0 +1,16 @@
+id: no_tool_call
+tags: [regression]
+input_messages:
+  - role: system
+    content: "You are a brief assistant. Answer in one sentence."
+  - role: user
+    content: "What is 2+2?"
+mock_script:
+  turns:
+    - text: "The answer is 4."
+assertions:
+  - kind: final_message_contains
+    text: "4"
+  - kind: tool_invocation_count
+    tool_name: search
+    expected: 0
