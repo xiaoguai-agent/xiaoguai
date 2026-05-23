@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { AgentEvent, Message } from '@xiaoguai/shared';
 import { client } from './client';
+import { MarkdownBody } from './markdown';
 
 interface Props {
   onSessionCreated: (s: { id: string; title: string }) => void;
@@ -213,9 +214,13 @@ function Bubble({ bubble }: { bubble: DisplayBubble }) {
       ? `bubble tool${bubble.toolError ? ' error' : ''}`
       : `bubble ${bubble.kind}`;
   const isEmptyStreaming = !bubble.text && bubble.streaming;
+  // v0.8.2: assistant turns render through react-markdown so headings,
+  // tables, fenced code blocks, etc. come out formatted. User + tool
+  // turns stay as raw text — they're not authored as markdown.
+  const renderMarkdown = bubble.kind === 'assistant' && !isEmptyStreaming && bubble.text;
   return (
     <div className={className}>
-      {bubble.text}
+      {renderMarkdown ? <MarkdownBody text={bubble.text} /> : bubble.text}
       {isEmptyStreaming && (
         <span className="streaming-dots" aria-label="thinking">
           <span />
