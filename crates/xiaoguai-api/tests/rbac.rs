@@ -38,6 +38,8 @@ async fn build_state(roles: Vec<&str>) -> AppState {
         mcp_servers: None,
         auth: Some(validator),
         authz: Some(Arc::new(authz)),
+        tenants: None,
+        rate_limiter: None,
     }
 }
 

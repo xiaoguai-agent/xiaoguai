@@ -142,10 +142,11 @@ async fn run_serve(settings: &Settings) -> Result<()> {
     use std::net::SocketAddr;
     use std::sync::Arc;
     use xiaoguai_agent::{AgentConfig, Toolbox};
-    use xiaoguai_api::{serve_with_state, AppState, CancelRegistry};
+    use xiaoguai_api::{serve_with_state, AppState, CancelRegistry, RateLimiter};
     use xiaoguai_llm::{build_router, LlmBackend, MockBackend, OsEnvResolver};
     use xiaoguai_storage::repositories::{
         LlmProviderRepository, PgLlmProviderRepository, PgMessageRepository, PgSessionRepository,
+        PgTenantRepository,
     };
 
     tracing::info!("serve: connecting to Postgres");
@@ -207,10 +208,15 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         agent_defaults: AgentConfig::new(default_model),
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: Some(Arc::new(
-            xiaoguai_storage::repositories::PgMcpServerRepository::new(pool),
+            xiaoguai_storage::repositories::PgMcpServerRepository::new(pool.clone()),
         )),
         auth,
         authz: build_authz(settings).await.context("build authz")?,
+        tenants: Some(Arc::new(PgTenantRepository::new(pool.clone()))),
+        // v0.6.3 default: sustain 20 req/s with a 40 token burst per
+        // tenant. Production should tune via config; the knob isn't
+        // exposed yet.
+        rate_limiter: Some(Arc::new(RateLimiter::new(20.0, 40.0))),
     };
 
     let addr: SocketAddr = format!("{}:{}", settings.server.host, settings.server.port)
