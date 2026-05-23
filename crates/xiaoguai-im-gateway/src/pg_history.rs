@@ -77,20 +77,19 @@ fn backend_err<E: std::fmt::Display>(e: E) -> HistoryError {
     HistoryError::Backend(e.to_string())
 }
 
-/// Map an `LlmMessage` to the persisted `DomainMessage` envelope. Text-only
-/// for now (matches the v0.7.2 history semantics); `tool_call` payloads on
-/// the assistant turn are flattened to an empty text content. Tool-result
-/// turns (`Role::Tool`) are skipped by the caller — they belong to the
-/// agent's internal loop, not the IM conversation transcript.
-fn llm_to_domain(session_id: &str, msg: &LlmMessage) -> Option<DomainMessage> {
+/// Map an `LlmMessage` to the persisted `DomainMessage` envelope. v0.7.4
+/// extends the v0.7.3 behaviour: `Role::Tool` turns are now persisted so
+/// the IM transcript survives restarts with full tool context. Replay
+/// (`domain_to_llm`) still skips them — that decision belongs to the
+/// reader, not the writer.
+fn llm_to_domain(session_id: &str, msg: &LlmMessage) -> DomainMessage {
     let role = match msg.role {
         LlmRole::User => MessageRole::User,
         LlmRole::Assistant => MessageRole::Assistant,
         LlmRole::System => MessageRole::System,
-        // Tool turns don't appear in the IM transcript.
-        LlmRole::Tool => return None,
+        LlmRole::Tool => MessageRole::Tool,
     };
-    Some(DomainMessage {
+    DomainMessage {
         id: MessageId::new(),
         session_id: SessionId::from(session_id.to_string()),
         role,
@@ -98,7 +97,7 @@ fn llm_to_domain(session_id: &str, msg: &LlmMessage) -> Option<DomainMessage> {
             text: msg.content.clone(),
         }],
         created_at: chrono::Utc::now(),
-    })
+    }
 }
 
 /// Map a persisted `DomainMessage` back into the `LlmMessage` shape the
@@ -225,9 +224,7 @@ impl ImHistoryStore for PgImHistoryStore {
             .map_err(backend_err)?;
 
         for msg in &msgs {
-            let Some(domain) = llm_to_domain(&conv.session_id, msg) else {
-                continue;
-            };
+            let domain = llm_to_domain(&conv.session_id, msg);
             self.messages
                 .append(Some(&identity.tenant_id), &domain)
                 .await
@@ -249,8 +246,27 @@ mod tests {
     use xiaoguai_llm::Message as Lm;
 
     #[test]
-    fn llm_to_domain_skips_tool_role() {
-        assert!(llm_to_domain("s", &Lm::tool("call_1", "out")).is_none());
+    fn llm_to_domain_persists_tool_role_v0_7_4() {
+        // v0.7.3 dropped Role::Tool on write. v0.7.4 persists it so the
+        // IM transcript survives restarts with tool context.
+        let domain = llm_to_domain("s", &Lm::tool("call_1", "out"));
+        assert!(matches!(domain.role, MessageRole::Tool));
+    }
+
+    #[test]
+    fn domain_to_llm_still_skips_tool_role_on_replay() {
+        // The IM gateway only replays text turns to the agent — the
+        // reader-side filter stays.
+        let msg = DomainMessage {
+            id: MessageId::new(),
+            session_id: SessionId::from("s".to_string()),
+            role: MessageRole::Tool,
+            content: vec![ContentBlock::Text {
+                text: "tool-out".into(),
+            }],
+            created_at: chrono::Utc::now(),
+        };
+        assert!(domain_to_llm(&msg).is_none());
     }
 
     #[test]

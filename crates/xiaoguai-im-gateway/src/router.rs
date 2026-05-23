@@ -181,13 +181,26 @@ pub async fn run_agent_and_reply(
         .rev()
         .find(|m| matches!(m.role, Role::Assistant) && !m.content.is_empty())
         .map_or_else(|| "(no reply produced)".to_string(), |m| m.content.clone());
-    // Append both turns to history so the *next* webhook sees them.
+    // v0.7.4: persist this turn — `[inbound, …agent-produced messages
+    // after inbound…]`. Walk outcome.messages from the end, find the
+    // most recent `user` turn whose content matches `msg.text` (this is
+    // `inbound`), and take everything from there. Any assistant
+    // tool_call + tool result messages produced by the loop land in the
+    // transcript so a restart can see them. If we can't find inbound
+    // (e.g. the slide window dropped it from a very long thread) we
+    // fall back to the v0.7.3 minimal pair.
+    let to_persist = outcome
+        .0
+        .messages
+        .iter()
+        .rposition(|m| matches!(m.role, Role::User) && m.content == msg.text)
+        .map_or_else(
+            || vec![inbound.clone(), LlmMessage::assistant(reply_text.clone())],
+            |idx| outcome.0.messages[idx..].to_vec(),
+        );
     state
         .history
-        .extend(
-            &ident,
-            vec![inbound, LlmMessage::assistant(reply_text.clone())],
-        )
+        .extend(&ident, to_persist)
         .await
         .map_err(|e| ProviderError::Transport(format!("history extend: {e}")))?;
     let out = OutgoingReply {
