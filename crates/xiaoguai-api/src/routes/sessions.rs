@@ -22,6 +22,13 @@ use crate::state::AppState;
 
 const DEFAULT_LIST_LIMIT: i64 = 100;
 
+/// Extract the request tenant from optional `Claims`. v0.6.1 threads this
+/// into every repo call so RLS policies bind to the caller's tenant; when
+/// `auth: None` (dev mode) `claims` is `None` and repos run without a GUC.
+fn tenant_from_claims(claims: Option<&Extension<Claims>>) -> Option<&str> {
+    claims.map(|Extension(c)| c.tenant_id.as_str())
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct CreateSessionRequest {
     /// In auth-required mode, claims `sub`/`tenant_id` win. In unauthed
@@ -75,7 +82,7 @@ pub async fn create_session(
     let now = Utc::now();
     let session = Session {
         id: SessionId::new(),
-        tenant_id: TenantId::from(tenant_id),
+        tenant_id: TenantId::from(tenant_id.clone()),
         user_id: UserId::from(user_id),
         title: req.title,
         created_at: now,
@@ -83,17 +90,19 @@ pub async fn create_session(
         model: req.model,
         status: SessionStatus::Active,
     };
-    state.sessions.create(&session).await?;
+    state.sessions.create(Some(&tenant_id), &session).await?;
     Ok((StatusCode::CREATED, Json(session.into())))
 }
 
 pub async fn get_session(
     State(state): State<AppState>,
+    claims: Option<Extension<Claims>>,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<SessionResponse>> {
+    let tenant = tenant_from_claims(claims.as_ref());
     let session = state
         .sessions
-        .find_by_id(&session_id)
+        .find_by_id(tenant, &session_id)
         .await?
         .ok_or(ApiError::NotFound)?;
     Ok(Json(session.into()))
@@ -107,20 +116,22 @@ pub struct ListMessagesQuery {
 
 pub async fn list_messages(
     State(state): State<AppState>,
+    claims: Option<Extension<Claims>>,
     Path(session_id): Path<String>,
     Query(q): Query<ListMessagesQuery>,
 ) -> ApiResult<Json<Vec<xiaoguai_types::Message>>> {
+    let tenant = tenant_from_claims(claims.as_ref());
     // Existence check so we return 404 instead of an empty list.
     let _session = state
         .sessions
-        .find_by_id(&session_id)
+        .find_by_id(tenant, &session_id)
         .await?
         .ok_or(ApiError::NotFound)?;
     let limit = q.limit.unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, 1000);
     let offset = q.offset.unwrap_or(0).max(0);
     let msgs = state
         .messages
-        .list_by_session(&session_id, limit, offset)
+        .list_by_session(tenant, &session_id, limit, offset)
         .await?;
     Ok(Json(msgs))
 }
@@ -144,27 +155,35 @@ pub struct SendMessageRequest {
 ///      persists any new messages, then drops the cancel registry entry.
 pub async fn send_message(
     State(state): State<AppState>,
+    claims: Option<Extension<Claims>>,
     Path(session_id_str): Path<String>,
     Json(req): Json<SendMessageRequest>,
 ) -> ApiResult<Sse<impl Stream<Item = Result<axum::response::sse::Event, axum::Error>>>> {
     if req.content.trim().is_empty() {
         return Err(ApiError::BadRequest("content must be non-empty".into()));
     }
+    let claims_tenant = tenant_from_claims(claims.as_ref());
     let session = state
         .sessions
-        .find_by_id(&session_id_str)
+        .find_by_id(claims_tenant, &session_id_str)
         .await?
         .ok_or(ApiError::NotFound)?;
     if !matches!(session.status, SessionStatus::Active) {
         return Err(ApiError::Conflict("session is not active".into()));
     }
     let session_id = SessionId::from(session_id_str.clone());
+    // Once the session is loaded, prefer its own tenant_id over claims —
+    // it was authoritative at session creation, and find_by_id already
+    // verified the caller has access (RLS or claims match) when both are
+    // set.
+    let session_tenant = session.tenant_id.as_str().to_string();
 
     // 1. Persist user message.
-    let user_domain = persist_user_message(&state, &session_id, &req.content).await?;
+    let user_domain =
+        persist_user_message(&state, &session_tenant, &session_id, &req.content).await?;
 
     // 2. Load history (oldest-first) and append the just-written user msg.
-    let history = load_llm_history(&state, &session_id_str).await?;
+    let history = load_llm_history(&state, &session_tenant, &session_id_str).await?;
     let initial_count = history.len();
     let mut messages = history;
     messages.push(domain_to_llm(&user_domain));
@@ -185,6 +204,7 @@ pub async fn send_message(
     //    handle resolves.
     spawn_finalize_task(
         state.clone(),
+        session_tenant,
         session_id_str.clone(),
         session_id,
         join,
@@ -197,6 +217,7 @@ pub async fn send_message(
 
 fn spawn_finalize_task(
     state: AppState,
+    tenant_id: String,
     session_id_str: String,
     session_id: SessionId,
     join: tokio::task::JoinHandle<Result<xiaoguai_agent::AgentOutcome, xiaoguai_agent::AgentError>>,
@@ -205,8 +226,14 @@ fn spawn_finalize_task(
     tokio::spawn(async move {
         match join.await {
             Ok(Ok(outcome)) => {
-                if let Err(err) =
-                    persist_loop_output(&state, &session_id, &outcome.messages, initial_count).await
+                if let Err(err) = persist_loop_output(
+                    &state,
+                    &tenant_id,
+                    &session_id,
+                    &outcome.messages,
+                    initial_count,
+                )
+                .await
                 {
                     tracing::error!(?err, "failed to persist agent output");
                 }
@@ -221,7 +248,11 @@ fn spawn_finalize_task(
             Err(err) => tracing::error!(?err, "agent task panicked"),
         }
         state.cancels.drop_entry(&session_id_str);
-        if let Err(err) = state.sessions.touch(&session_id_str).await {
+        if let Err(err) = state
+            .sessions
+            .touch(Some(&tenant_id), &session_id_str)
+            .await
+        {
             tracing::warn!(?err, "touch session failed");
         }
     });
@@ -244,28 +275,34 @@ pub async fn cancel_session(
 
 async fn persist_user_message(
     state: &AppState,
+    tenant_id: &str,
     session_id: &SessionId,
     text: &str,
 ) -> ApiResult<xiaoguai_types::Message> {
     let llm = LlmMessage::user(text);
     let domain = llm_to_domain(session_id, &llm);
-    state.messages.append(&domain).await?;
+    state.messages.append(Some(tenant_id), &domain).await?;
     Ok(domain)
 }
 
-async fn load_llm_history(state: &AppState, session_id: &str) -> ApiResult<Vec<LlmMessage>> {
+async fn load_llm_history(
+    state: &AppState,
+    tenant_id: &str,
+    session_id: &str,
+) -> ApiResult<Vec<LlmMessage>> {
     // We deliberately load *all* messages here; the agent loop applies its
     // own sliding window before each model call. Pagination at this layer
     // is a v0.5.5.1 concern.
     let domain = state
         .messages
-        .list_by_session(session_id, i64::from(i32::MAX), 0)
+        .list_by_session(Some(tenant_id), session_id, i64::from(i32::MAX), 0)
         .await?;
     Ok(domain.iter().map(domain_to_llm).collect())
 }
 
 async fn persist_loop_output(
     state: &AppState,
+    tenant_id: &str,
     session_id: &SessionId,
     messages: &[LlmMessage],
     initial_count: usize,
@@ -277,7 +314,7 @@ async fn persist_loop_output(
         .collect();
     let messages_repo = Arc::clone(&state.messages);
     for m in new_msgs {
-        messages_repo.append(&m).await?;
+        messages_repo.append(Some(tenant_id), &m).await?;
     }
     Ok(())
 }

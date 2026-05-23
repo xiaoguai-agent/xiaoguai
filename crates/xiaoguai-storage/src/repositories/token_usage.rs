@@ -4,12 +4,20 @@
 //! flusher can amortise round-trips. Reads are tenant-scoped and ordered by
 //! timestamp descending (most recent first) — typical "what did this tenant
 //! cost in the last hour?" queries.
+//!
+//! RLS policy `tenant_isolation_token_usage` (migration 0004) filters reads
+//! by `app.current_tenant_id`. `list_for_tenant` always sets the GUC;
+//! `record_batch` accepts an optional tenant for callers that already know
+//! they are batching for one tenant — the background flusher in the LLM
+//! router currently passes `None` since it batches across tenants, and
+//! Postgres' RLS USING clause does not gate INSERTs.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool, Postgres, QueryBuilder};
 
 use crate::repositories::error::{RepoError, RepoResult};
+use crate::repositories::tenant_ctx::begin_tenant_tx;
 
 #[derive(Debug, Clone)]
 pub struct TokenUsageEntry {
@@ -69,7 +77,13 @@ impl From<TokenUsageRow> for StoredTokenUsage {
 #[async_trait]
 pub trait TokenUsageRepository: Send + Sync {
     /// Insert a batch of records in a single query. Empty input is a no-op.
-    async fn record_batch(&self, entries: &[TokenUsageEntry]) -> RepoResult<()>;
+    /// `tenant` is only used to set the RLS GUC; the per-row `tenant_id`
+    /// column still comes from each `TokenUsageEntry`.
+    async fn record_batch(
+        &self,
+        tenant: Option<&str>,
+        entries: &[TokenUsageEntry],
+    ) -> RepoResult<()>;
 
     async fn list_for_tenant(
         &self,
@@ -92,10 +106,15 @@ impl PgTokenUsageRepository {
 
 #[async_trait]
 impl TokenUsageRepository for PgTokenUsageRepository {
-    async fn record_batch(&self, entries: &[TokenUsageEntry]) -> RepoResult<()> {
+    async fn record_batch(
+        &self,
+        tenant: Option<&str>,
+        entries: &[TokenUsageEntry],
+    ) -> RepoResult<()> {
         if entries.is_empty() {
             return Ok(());
         }
+        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
             "INSERT INTO token_usage \
              (ts, tenant_id, user_id, session_id, provider_id, model, \
@@ -114,9 +133,10 @@ impl TokenUsageRepository for PgTokenUsageRepository {
                 .push_bind(e.request_id.as_deref());
         });
         qb.build()
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         Ok(())
     }
 
@@ -130,6 +150,7 @@ impl TokenUsageRepository for PgTokenUsageRepository {
                 "limit must be non-negative".into(),
             ));
         }
+        let mut tx = begin_tenant_tx(&self.pool, Some(tenant_id)).await?;
         let rows = sqlx::query_as::<_, TokenUsageRow>(
             "SELECT id, ts, tenant_id, user_id, session_id, provider_id, model, \
              prompt_tokens, completion_tokens, total_tokens, request_id \
@@ -138,9 +159,10 @@ impl TokenUsageRepository for PgTokenUsageRepository {
         )
         .bind(tenant_id)
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
 }

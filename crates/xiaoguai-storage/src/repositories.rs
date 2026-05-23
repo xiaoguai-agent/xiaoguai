@@ -9,6 +9,7 @@ pub mod mcp_server;
 pub mod message;
 pub mod session;
 pub mod tenant;
+pub mod tenant_ctx;
 pub mod token_usage;
 pub mod user;
 
@@ -18,6 +19,7 @@ pub use mcp_server::{McpServerRepository, PgMcpServerRepository};
 pub use message::{MessageRepository, PgMessageRepository};
 pub use session::{PgSessionRepository, SessionRepository};
 pub use tenant::{PgTenantRepository, TenantRepository};
+pub use tenant_ctx::begin_tenant_tx;
 pub use token_usage::{
     PgTokenUsageRepository, StoredTokenUsage, TokenUsageEntry, TokenUsageRepository,
 };

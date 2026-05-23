@@ -39,11 +39,11 @@ impl InMemoryMcpRepo {
 
 #[async_trait]
 impl McpServerRepository for InMemoryMcpRepo {
-    async fn create(&self, s: &McpServer) -> RepoResult<()> {
+    async fn create(&self, _tenant: Option<&str>, s: &McpServer) -> RepoResult<()> {
         self.rows.lock().push(s.clone());
         Ok(())
     }
-    async fn find_by_id(&self, id: &str) -> RepoResult<Option<McpServer>> {
+    async fn find_by_id(&self, _tenant: Option<&str>, id: &str) -> RepoResult<Option<McpServer>> {
         Ok(self
             .rows
             .lock()
@@ -71,7 +71,7 @@ impl McpServerRepository for InMemoryMcpRepo {
             .cloned()
             .collect())
     }
-    async fn delete(&self, _id: &str) -> RepoResult<()> {
+    async fn delete(&self, _tenant: Option<&str>, _id: &str) -> RepoResult<()> {
         Ok(())
     }
 }

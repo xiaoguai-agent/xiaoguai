@@ -2,7 +2,9 @@
 //!
 //! Messages are tenant-scoped transitively through their parent session. RLS
 //! policy `tenant_isolation_messages` checks that the session belongs to the
-//! current tenant. The `content` column is JSONB carrying a serialized
+//! current tenant. Each method takes a `tenant: Option<&str>` and runs
+//! inside a transaction scoped via [`begin_tenant_tx`].
+//! The `content` column is JSONB carrying a serialized
 //! `Vec<ContentBlock>` (using `serde(tag = "type")` discrimination).
 
 use async_trait::async_trait;
@@ -11,18 +13,20 @@ use sqlx::{types::Json, FromRow, PgPool};
 use xiaoguai_types::{ContentBlock, Message, MessageId, MessageRole, SessionId};
 
 use crate::repositories::error::{RepoError, RepoResult};
+use crate::repositories::tenant_ctx::begin_tenant_tx;
 
 #[async_trait]
 pub trait MessageRepository: Send + Sync {
-    async fn append(&self, message: &Message) -> RepoResult<()>;
+    async fn append(&self, tenant: Option<&str>, message: &Message) -> RepoResult<()>;
     async fn list_by_session(
         &self,
+        tenant: Option<&str>,
         session_id: &str,
         limit: i64,
         offset: i64,
     ) -> RepoResult<Vec<Message>>;
-    async fn count_by_session(&self, session_id: &str) -> RepoResult<i64>;
-    async fn delete_by_session(&self, session_id: &str) -> RepoResult<u64>;
+    async fn count_by_session(&self, tenant: Option<&str>, session_id: &str) -> RepoResult<i64>;
+    async fn delete_by_session(&self, tenant: Option<&str>, session_id: &str) -> RepoResult<u64>;
 }
 
 #[derive(Debug, Clone)]
@@ -80,10 +84,9 @@ fn role_str(r: MessageRole) -> &'static str {
 
 #[async_trait]
 impl MessageRepository for PgMessageRepository {
-    async fn append(&self, message: &Message) -> RepoResult<()> {
-        // Serialize the Vec<ContentBlock> into JSONB. We use Json wrapper so
-        // sqlx routes through serde transparently.
+    async fn append(&self, tenant: Option<&str>, message: &Message) -> RepoResult<()> {
         let content = Json(&message.content);
+        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         sqlx::query(
             "INSERT INTO messages (id, session_id, role, content, created_at)
              VALUES ($1, $2, $3, $4, $5)",
@@ -93,14 +96,16 @@ impl MessageRepository for PgMessageRepository {
         .bind(role_str(message.role))
         .bind(content)
         .bind(message.created_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         Ok(())
     }
 
     async fn list_by_session(
         &self,
+        tenant: Option<&str>,
         session_id: &str,
         limit: i64,
         offset: i64,
@@ -110,6 +115,7 @@ impl MessageRepository for PgMessageRepository {
                 "limit/offset must be >= 0".to_string(),
             ));
         }
+        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         let rows: Vec<MessageRow> = sqlx::query_as(
             "SELECT id, session_id, role, content, created_at
              FROM messages
@@ -120,28 +126,33 @@ impl MessageRepository for PgMessageRepository {
         .bind(session_id)
         .bind(limit)
         .bind(offset)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         rows.into_iter().map(MessageRow::into_domain).collect()
     }
 
-    async fn count_by_session(&self, session_id: &str) -> RepoResult<i64> {
+    async fn count_by_session(&self, tenant: Option<&str>, session_id: &str) -> RepoResult<i64> {
+        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         let (count,): (i64,) =
             sqlx::query_as("SELECT count(*) FROM messages WHERE session_id = $1")
                 .bind(session_id)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         Ok(count)
     }
 
-    async fn delete_by_session(&self, session_id: &str) -> RepoResult<u64> {
+    async fn delete_by_session(&self, tenant: Option<&str>, session_id: &str) -> RepoResult<u64> {
+        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         let result = sqlx::query("DELETE FROM messages WHERE session_id = $1")
             .bind(session_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         Ok(result.rows_affected())
     }
 }

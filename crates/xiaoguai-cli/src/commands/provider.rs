@@ -44,6 +44,7 @@ pub async fn register(repo: &dyn LlmProviderRepository, args: RegisterArgs) -> R
     }
 
     let now = Utc::now();
+    let tenant_guc = args.tenant.clone();
     let prov = LlmProvider {
         id: ProviderId::new(),
         tenant_id: args.tenant.map(TenantId::from),
@@ -57,7 +58,7 @@ pub async fn register(repo: &dyn LlmProviderRepository, args: RegisterArgs) -> R
         created_at: now,
         updated_at: now,
     };
-    repo.create(&prov).await?;
+    repo.create(tenant_guc.as_deref(), &prov).await?;
     Ok(prov)
 }
 
@@ -85,7 +86,9 @@ pub async fn remove(repo: &dyn LlmProviderRepository, args: RemoveArgs) -> Resul
     if args.id.trim().is_empty() {
         return Err(anyhow!("--id must not be empty"));
     }
-    repo.delete(&args.id).await?;
+    // Admin CLI: caller may not know the tenant; rely on superuser/owner
+    // bypass for RLS. v0.6.2 should add a `--tenant` flag to scope deletes.
+    repo.delete(None, &args.id).await?;
     Ok(())
 }
 

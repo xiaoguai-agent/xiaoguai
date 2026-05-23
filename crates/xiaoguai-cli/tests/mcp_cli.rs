@@ -19,7 +19,7 @@ struct MemoryRepo {
 
 #[async_trait]
 impl McpServerRepository for MemoryRepo {
-    async fn create(&self, server: &McpServer) -> RepoResult<()> {
+    async fn create(&self, _tenant: Option<&str>, server: &McpServer) -> RepoResult<()> {
         let key_scope = server.tenant_id.as_ref().map(|t| t.as_str().to_string());
         let mut rows = self.rows.lock();
         if rows.values().any(|r| {
@@ -36,7 +36,7 @@ impl McpServerRepository for MemoryRepo {
         Ok(())
     }
 
-    async fn find_by_id(&self, id: &str) -> RepoResult<Option<McpServer>> {
+    async fn find_by_id(&self, _tenant: Option<&str>, id: &str) -> RepoResult<Option<McpServer>> {
         Ok(self.rows.lock().get(id).cloned())
     }
 
@@ -75,7 +75,7 @@ impl McpServerRepository for MemoryRepo {
         Ok(out)
     }
 
-    async fn delete(&self, id: &str) -> RepoResult<()> {
+    async fn delete(&self, _tenant: Option<&str>, id: &str) -> RepoResult<()> {
         self.rows.lock().remove(id);
         Ok(())
     }
