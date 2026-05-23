@@ -48,6 +48,7 @@ fn build_state_with_auth() -> AppState {
         audit_verifier: None,
         mcp_publish_enabled: false,
         mcp_supervisor: None,
+        today: None,
     }
 }
 

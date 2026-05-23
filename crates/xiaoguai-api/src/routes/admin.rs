@@ -19,9 +19,12 @@ use xiaoguai_types::{Tenant, TenantStatus};
 use crate::audit::{AuditEntryView, VerifyReport};
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
+use crate::today::{TodayItem, TodayKind, TodayQuery};
 
 const DEFAULT_LIMIT: i64 = 100;
 const MAX_LIMIT: i64 = 1000;
+const DEFAULT_TODAY_LIMIT: i64 = 50;
+const MAX_TODAY_LIMIT: i64 = 500;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListTenantsQuery {
@@ -126,6 +129,41 @@ pub async fn verify_audit(
         },
     };
     Ok(Json(body))
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ListTodayQuery {
+    pub limit: Option<i64>,
+    /// RFC 3339 timestamp; inclusive lower bound on item `ts`.
+    pub since: Option<DateTime<Utc>>,
+    /// `chat` / `im` / `scheduled` — filters to a single source.
+    pub kind: Option<TodayKind>,
+}
+
+/// v0.11.1 — audit-first console substrate. Merges the three most-recent
+/// streams (chat / IM / scheduled) into one timeline sorted by ts desc.
+/// Behind the same admin auth stack as the rest of `/v1/admin/*`.
+pub async fn list_today(
+    State(state): State<AppState>,
+    Query(q): Query<ListTodayQuery>,
+) -> ApiResult<Json<Vec<TodayItem>>> {
+    let reader = state
+        .today
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("today reader not wired".into()))?;
+    let limit = q
+        .limit
+        .unwrap_or(DEFAULT_TODAY_LIMIT)
+        .clamp(1, MAX_TODAY_LIMIT);
+    let items = reader
+        .list(TodayQuery {
+            limit,
+            since: q.since,
+            kind: q.kind,
+        })
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("today list: {e}")))?;
+    Ok(Json(items))
 }
 
 pub async fn list_audit(

@@ -5,6 +5,7 @@
 //! (default) or executes a single subcommand (e.g. `smoke`).
 
 mod audit_bridge;
+mod today_bridge;
 
 use std::path::PathBuf;
 
@@ -267,6 +268,10 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // v0.9.4.1: live supervisor so marketplace installs spawn the
         // new server immediately.
         mcp_supervisor: Some(Arc::new(McpSupervisor::new())),
+        // v0.11.1: audit-first console substrate. The PG adapter walks
+        // sessions / im_conversations / scheduled_job_runs and merges
+        // them client-side.
+        today: Some(crate::today_bridge::PgTodayReader::arc(pool.clone())),
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by
