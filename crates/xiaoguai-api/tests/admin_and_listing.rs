@@ -88,6 +88,7 @@ fn build_state(
         audit_verifier: None,
         mcp_publish_enabled: false,
         mcp_supervisor: None,
+        today: None,
     }
 }
 
@@ -441,4 +442,220 @@ async fn rate_limit_is_bypassed_without_claims() {
         // didn't 429.
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
+}
+
+// ----------------------------------------------------------------------
+// v0.11.1 — `/v1/admin/today` (audit-first console substrate).
+// ----------------------------------------------------------------------
+
+#[tokio::test]
+async fn admin_today_503s_when_reader_not_wired() {
+    let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/admin/today")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn admin_today_returns_merged_timeline_sorted_desc() {
+    use chrono::Utc;
+    use xiaoguai_api::{StaticTodayReader, TodayItem, TodayReader};
+
+    let t0 = Utc::now() - chrono::Duration::hours(2);
+    let t1 = Utc::now() - chrono::Duration::hours(1);
+    let t2 = Utc::now();
+    let reader: Arc<dyn TodayReader> = Arc::new(StaticTodayReader::with_items(vec![
+        TodayItem::Chat {
+            ts: t0,
+            session_id: "sess_chat".into(),
+            tenant_id: "ten_a".into(),
+            user_id: "u".into(),
+            started_at: t0,
+            last_message_preview: Some("hi".into()),
+            message_count: 2,
+            tool_count: 0,
+        },
+        TodayItem::Scheduled {
+            ts: t2,
+            job_id: "job_a".into(),
+            tenant_id: Some("ten_a".into()),
+            run_id: 7,
+            attempt: 1,
+            status: "succeeded".into(),
+            fired_at: t2,
+            output_preview: Some("done".into()),
+            error_message: None,
+            reason: Some("hourly summary".into()),
+        },
+        TodayItem::Im {
+            ts: t1,
+            session_id: "sess_im".into(),
+            tenant_id: "ten_a".into(),
+            provider: "feishu".into(),
+            chat_id: "oc_x".into(),
+            started_at: t1,
+            last_message_preview: None,
+            message_count: 5,
+        },
+    ]));
+
+    let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+    state.today = Some(reader);
+    let app = router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/admin/today")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_arr(resp.into_body()).await;
+    assert_eq!(v.len(), 3);
+    assert_eq!(v[0]["kind"], "scheduled");
+    assert_eq!(v[1]["kind"], "im");
+    assert_eq!(v[2]["kind"], "chat");
+    // Proactive reason rides through.
+    assert_eq!(v[0]["reason"], "hourly summary");
+    // Scheduled tenant_id is nullable but populated here.
+    assert_eq!(v[0]["tenant_id"], "ten_a");
+}
+
+#[tokio::test]
+async fn admin_today_filters_by_kind_and_caps_limit() {
+    use chrono::Utc;
+    use xiaoguai_api::{StaticTodayReader, TodayItem, TodayReader};
+
+    let t = Utc::now();
+    let mut items = Vec::new();
+    for i in 0i64..3 {
+        items.push(TodayItem::Chat {
+            ts: t - chrono::Duration::minutes(i),
+            session_id: format!("sess_c_{i}"),
+            tenant_id: "ten".into(),
+            user_id: "u".into(),
+            started_at: t,
+            last_message_preview: None,
+            message_count: 0,
+            tool_count: 0,
+        });
+        items.push(TodayItem::Scheduled {
+            ts: t - chrono::Duration::seconds(i),
+            job_id: "j".into(),
+            tenant_id: None,
+            run_id: i,
+            attempt: 1,
+            status: "succeeded".into(),
+            fired_at: t,
+            output_preview: None,
+            error_message: None,
+            reason: None,
+        });
+    }
+    let reader: Arc<dyn TodayReader> = Arc::new(StaticTodayReader::with_items(items));
+
+    let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+    state.today = Some(reader);
+    let app = router(state);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/admin/today?kind=scheduled&limit=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_arr(resp.into_body()).await;
+    assert_eq!(v.len(), 2);
+    for row in &v {
+        assert_eq!(row["kind"], "scheduled");
+    }
+
+    // No filter, default limit applies (50) — fewer items here, so all 6.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/admin/today")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_arr(resp.into_body()).await;
+    assert_eq!(v.len(), 6);
+}
+
+#[tokio::test]
+async fn admin_today_passes_since_filter_through() {
+    use chrono::Utc;
+    use xiaoguai_api::{StaticTodayReader, TodayItem, TodayReader};
+
+    let now = Utc::now();
+    let old = now - chrono::Duration::days(2);
+    let recent = now - chrono::Duration::minutes(5);
+    let reader: Arc<dyn TodayReader> = Arc::new(StaticTodayReader::with_items(vec![
+        TodayItem::Chat {
+            ts: old,
+            session_id: "old".into(),
+            tenant_id: "ten".into(),
+            user_id: "u".into(),
+            started_at: old,
+            last_message_preview: None,
+            message_count: 0,
+            tool_count: 0,
+        },
+        TodayItem::Chat {
+            ts: recent,
+            session_id: "new".into(),
+            tenant_id: "ten".into(),
+            user_id: "u".into(),
+            started_at: recent,
+            last_message_preview: None,
+            message_count: 0,
+            tool_count: 0,
+        },
+    ]));
+
+    let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+    state.today = Some(reader);
+    let app = router(state);
+
+    let since = (now - chrono::Duration::hours(1)).to_rfc3339();
+    let uri = format!("/v1/admin/today?since={}", urlencoding_simple(&since));
+    let resp = app
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_arr(resp.into_body()).await;
+    assert_eq!(v.len(), 1);
+    assert_eq!(v[0]["session_id"], "new");
+}
+
+/// Tiny RFC 3986 encoder for `:` and `+` since `chrono::to_rfc3339`
+/// already produces those and the query string would otherwise misread.
+fn urlencoding_simple(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for ch in s.chars() {
+        match ch {
+            ':' => out.push_str("%3A"),
+            '+' => out.push_str("%2B"),
+            other => out.push(other),
+        }
+    }
+    out
 }

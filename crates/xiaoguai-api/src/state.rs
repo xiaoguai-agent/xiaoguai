@@ -24,6 +24,7 @@ use xiaoguai_storage::repositories::{
 
 use crate::audit::{AuditReader, AuditVerifier};
 use crate::auth::TokenValidator;
+use crate::today::TodayReader;
 
 /// Registry of cancellation tokens keyed by `session_id`. A single token per
 /// session is enough — the API contract serialises message turns within a
@@ -112,6 +113,11 @@ pub struct AppState {
     /// behaviour for callers that haven't wired a supervisor yet (every
     /// existing test uses `None`).
     pub mcp_supervisor: Option<Arc<McpSupervisor>>,
+    /// v0.11.1: composite read across chat / IM / scheduled sources used
+    /// by `GET /v1/admin/today`, the audit-first console's landing pane.
+    /// `None` makes the endpoint return 503 — production wires a
+    /// `PgTodayReader` adapter in `xiaoguai-core`.
+    pub today: Option<Arc<dyn TodayReader>>,
 }
 
 impl std::fmt::Debug for AppState {

@@ -6,7 +6,7 @@
  * Rust crate adds a field, mirror it here.
  */
 
-export const PACKAGE_VERSION = '0.2.0';
+export const PACKAGE_VERSION = '0.3.0';
 
 // ---- Wire types ----------------------------------------------------------
 
@@ -105,6 +105,60 @@ export interface ListAuditQuery {
   since?: string;
   /** RFC 3339, inclusive upper bound. */
   until?: string;
+}
+
+// ---- v0.11.1 — audit-first console (Today endpoint) --------------------
+
+/**
+ * Discriminated union returned by `GET /v1/admin/today`. The console
+ * renders these as a single timeline (chat / IM / scheduled), sorted by
+ * `ts` desc server-side.
+ */
+export type TodayItem =
+  | {
+      kind: 'chat';
+      ts: string;
+      session_id: string;
+      tenant_id: string;
+      user_id: string;
+      started_at: string;
+      last_message_preview: string | null;
+      message_count: number;
+      tool_count: number;
+    }
+  | {
+      kind: 'im';
+      ts: string;
+      session_id: string;
+      tenant_id: string;
+      provider: string;
+      chat_id: string;
+      started_at: string;
+      last_message_preview: string | null;
+      message_count: number;
+    }
+  | {
+      kind: 'scheduled';
+      ts: string;
+      job_id: string;
+      tenant_id: string | null;
+      run_id: number;
+      attempt: number;
+      status: string;
+      fired_at: string;
+      output_preview: string | null;
+      error_message: string | null;
+      /** Populated only on proactive fires (v0.10.2). */
+      reason?: string;
+    };
+
+export type TodayKind = 'chat' | 'im' | 'scheduled';
+
+export interface ListTodayQuery {
+  limit?: number;
+  /** RFC 3339, inclusive lower bound on `ts`. */
+  since?: string;
+  kind?: TodayKind;
 }
 
 /** v0.9.4 — curated MCP marketplace entry. */
@@ -255,6 +309,19 @@ export class XiaoguaiClient {
     if (q.since) params.set('since', q.since);
     if (q.until) params.set('until', q.until);
     return this.request<AuditEntryView[]>('GET', `/v1/admin/audit?${params.toString()}`);
+  }
+
+  /**
+   * v0.11.1 — composite Today timeline. The console makes this the
+   * default landing pane (audit-first, not chat-first).
+   */
+  listToday(q?: ListTodayQuery): Promise<TodayItem[]> {
+    const params = new URLSearchParams();
+    if (q?.limit !== undefined) params.set('limit', String(q.limit));
+    if (q?.since) params.set('since', q.since);
+    if (q?.kind) params.set('kind', q.kind);
+    const qs = params.toString();
+    return this.request<TodayItem[]>('GET', `/v1/admin/today${qs ? `?${qs}` : ''}`);
   }
 
   /** v0.9.4 — curated MCP server catalog. */

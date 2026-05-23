@@ -41,6 +41,7 @@ fn build_state(steps: Vec<ScriptStep>) -> (AppState, Arc<InMemoryMessageRepo>) {
         audit_verifier: None,
         mcp_publish_enabled: false,
         mcp_supervisor: None,
+        today: None,
     };
     (state, messages)
 }
