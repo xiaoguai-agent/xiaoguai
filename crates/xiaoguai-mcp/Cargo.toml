@@ -20,9 +20,19 @@ parking_lot = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+# v0.9.0: HTTP transport uses `http::HeaderName/HeaderValue` for custom
+# request headers. Pin to rmcp's version range.
+http = "1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# v0.9.0: in-process MCP server for the HTTP transport integration test.
+# Server features only enabled for `cargo test`; production binary stays
+# slim.
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server", "transport-streamable-http-server-session"] }
+axum = { workspace = true }
+tower = { workspace = true }
+tokio-util = { workspace = true }
 
 [[bin]]
 name = "mock-mcp-server"
