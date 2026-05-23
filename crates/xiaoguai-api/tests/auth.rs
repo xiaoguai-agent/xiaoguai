@@ -45,6 +45,7 @@ fn build_state_with_auth() -> AppState {
         tenants: None,
         rate_limiter: None,
         audit: None,
+        mcp_publish_enabled: false,
     }
 }
 

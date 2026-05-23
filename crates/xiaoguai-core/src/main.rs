@@ -222,6 +222,13 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // `docs/plans/2026-05-23-v0.6.4.md` for the operator-side
         // bootstrap.
         audit: None,
+        // v0.9.1: opt-in publishing of the Toolbox as an MCP server at
+        // /v1/mcp/serve. Controlled by env var `XIAOGUAI_MCP__PUBLISH`
+        // — only flip in deployments that *want* external agents to
+        // call into us.
+        mcp_publish_enabled: std::env::var("XIAOGUAI_MCP__PUBLISH")
+            .map(|s| matches!(s.as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false),
     };
 
     let addr: SocketAddr = format!("{}:{}", settings.server.host, settings.server.port)

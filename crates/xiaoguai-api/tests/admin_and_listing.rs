@@ -85,6 +85,7 @@ fn build_state(
         tenants,
         rate_limiter: limiter,
         audit: None,
+        mcp_publish_enabled: false,
     }
 }
 
