@@ -71,11 +71,27 @@ pub fn router(state: AppState) -> Router {
         v1
     };
 
-    public
+    // v0.9.1: optionally publish xiaoguai's Toolbox as an MCP server at
+    // `/v1/mcp/serve`. Sits outside the v1 layer stack on purpose —
+    // bearer/Casbin/rate-limit are wrong defaults for an MCP server
+    // (external agents authenticate via the MCP transport's own auth
+    // header). When publishing isn't enabled, we don't mount anything.
+    let mcp_serve = if state.mcp_publish_enabled {
+        Some(crate::mcp_serve::build_router(state.toolbox.clone()))
+    } else {
+        None
+    };
+
+    let app = public
         .merge(v1)
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
-        .with_state(state)
+        .with_state(state);
+
+    match mcp_serve {
+        Some(m) => app.merge(m),
+        None => app,
+    }
 }
 
 async fn healthz() -> &'static str {

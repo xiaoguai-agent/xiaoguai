@@ -41,6 +41,7 @@ async fn build_state(roles: Vec<&str>) -> AppState {
         tenants: None,
         rate_limiter: None,
         audit: None,
+        mcp_publish_enabled: false,
     }
 }
 

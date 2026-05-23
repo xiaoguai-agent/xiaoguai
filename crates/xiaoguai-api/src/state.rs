@@ -96,6 +96,10 @@ pub struct AppState {
     /// HMAC-chained audit log; production wires the
     /// `xiaoguai-audit::PgAuditSink` reader.
     pub audit: Option<Arc<dyn AuditReader>>,
+    /// v0.9.1: when true, mount `/v1/mcp/serve` so external agents can
+    /// consume xiaoguai's `Toolbox` over Streamable HTTP. Default off —
+    /// publishing tools is an explicit operator decision.
+    pub mcp_publish_enabled: bool,
 }
 
 impl std::fmt::Debug for AppState {
