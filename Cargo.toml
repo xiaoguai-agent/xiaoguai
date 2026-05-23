@@ -8,6 +8,7 @@ members = [
     "crates/xiaoguai-auth",
     "crates/xiaoguai-llm",
     "crates/xiaoguai-mcp",
+    "crates/xiaoguai-rag",
     "crates/xiaoguai-agent",
     "crates/xiaoguai-api",
     "crates/xiaoguai-core",
