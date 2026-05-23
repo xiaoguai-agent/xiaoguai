@@ -519,6 +519,7 @@ impl JobRunner {
             },
             error_message: error_message.map(str::to_string),
             reason: proactive_reason.unwrap_or("").to_string(),
+            is_proactive: job.trigger.is_proactive(),
         };
         for sink in &self.sinks {
             if !job.sinks.iter().any(|s| s == sink.id()) {

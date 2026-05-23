@@ -42,11 +42,20 @@
 //! reason-carrying [`PushPayload`] reaches the sinks. Roadmap §5.5 is
 //! the contract.
 //!
-//! Out of scope for v0.10.2: real push sinks (Feishu / Telegram /
-//! Email / Inbox) — deferred to v0.10.3. PG-backed repositories +
-//! PG budget ledger — the in-memory impls here remain the
-//! production-shaped contract; the PG sinks land together with the
-//! runtime extraction in v0.12.0.
+//! v0.10.3 fills in real [`PushSink`] implementations under the
+//! [`sinks`] module: [`FeishuPushSink`] (reuses
+//! `xiaoguai-im-feishu`'s `FeishuClient` + `TokenCache`),
+//! [`TelegramPushSink`] (Bot API `sendMessage`),
+//! [`EmailPushSink`] (JSON webhook to a relay), and
+//! [`InboxPushSink`] (in-memory FIFO drained by the v0.11.1 console).
+//! Every real sink enforces the reason-required rule from §5.5
+//! through [`PushPayload::require_reason_when_proactive`].
+//!
+//! Out of scope for v0.10.3: SMTP-native email path (use the webhook
+//! relay pattern; see [`sinks::email`] for the rationale).
+//! PG-backed repositories + PG budget ledger + PG inbox storage —
+//! the in-memory impls here remain the production-shaped contract;
+//! the PG sinks land together with the runtime extraction in v0.12.0.
 
 #![forbid(unsafe_code)]
 #![warn(clippy::pedantic)]
@@ -65,6 +74,7 @@ pub mod repository;
 pub mod retry;
 pub mod runner;
 pub mod sink;
+pub mod sinks;
 pub mod sources;
 pub mod trigger;
 pub mod trigger_source;
@@ -85,6 +95,10 @@ pub use repository::{
 pub use retry::RetryPolicy;
 pub use runner::{JobRunner, RunnerError, RunnerOptions};
 pub use sink::{LoggingSink, PushPayload, PushSink, SinkError};
+pub use sinks::{
+    EmailPushSink, EmailSinkConfig, FeishuPushSink, FeishuSinkConfig, InboxMessage, InboxPushSink,
+    TelegramPushSink, TelegramSinkConfig,
+};
 pub use sources::{FileWatchRoute, FileWatchSource, WebhookRoute, WebhookSource};
 pub use trigger::{Trigger, TriggerError};
 pub use trigger_source::{
