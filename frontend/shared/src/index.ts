@@ -38,7 +38,21 @@ export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_call'; tool_call_id: string; name: string; arguments: unknown }
-  | { type: 'tool_result'; tool_call_id: string; output: unknown; is_error: boolean };
+  | { type: 'tool_result'; tool_call_id: string; output: unknown; is_error: boolean }
+  /**
+   * v0.9.3 — RAG citation. Renders as a click-to-source chip next to
+   * the assistant turn. `span` is 1-indexed `[start, end]` line
+   * numbers; `(0, 0)` means "no anchor known, link to whole document".
+   * `score` is in `[0, 1]` — used for chip opacity + sort order.
+   */
+  | {
+      type: 'citation';
+      source_uri: string;
+      span: [number, number];
+      score: number;
+      preview: string;
+      collection_id: string;
+    };
 
 export interface Message {
   id: string;

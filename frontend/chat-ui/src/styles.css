@@ -539,6 +539,90 @@ html,
   border-left: 1px solid var(--border);
 }
 
+/* ---------------------------------------------------------- citations (v0.9.3) */
+
+.citation-strip {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+  font-size: 12px;
+}
+
+.citation-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.citation-chip__link {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.citation-chip__link:hover {
+  background: var(--accent);
+  color: var(--user-fg);
+}
+
+/* Hover card. Positioned absolutely so the strip's flex layout stays
+   stable while the card pops out above the chip. */
+.citation-card {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 320px;
+  max-width: 92vw;
+  padding: var(--space-3);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+}
+
+.citation-card__source {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--fg);
+  word-break: break-all;
+}
+
+.citation-card__score {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.citation-card__preview {
+  font-size: 12px;
+  color: var(--fg-soft);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Limit to ~6 lines so a runaway chunk doesn't fill the screen. */
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* ---------------------------------------------------------- dark theme */
 
 [data-theme='dark'] {
