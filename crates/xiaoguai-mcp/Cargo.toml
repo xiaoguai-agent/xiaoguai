@@ -33,6 +33,8 @@ rmcp = { workspace = true, features = ["server", "transport-streamable-http-serv
 axum = { workspace = true }
 tower = { workspace = true }
 tokio-util = { workspace = true }
+# v0.9.4.1: reload_from_db integration test builds McpServer fixtures.
+chrono = { workspace = true }
 
 [[bin]]
 name = "mock-mcp-server"

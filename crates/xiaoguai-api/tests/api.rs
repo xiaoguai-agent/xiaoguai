@@ -40,6 +40,7 @@ fn build_state(steps: Vec<ScriptStep>) -> (AppState, Arc<InMemoryMessageRepo>) {
         audit: None,
         audit_verifier: None,
         mcp_publish_enabled: false,
+        mcp_supervisor: None,
     };
     (state, messages)
 }

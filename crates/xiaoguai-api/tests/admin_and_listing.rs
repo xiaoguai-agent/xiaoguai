@@ -87,6 +87,7 @@ fn build_state(
         audit: None,
         audit_verifier: None,
         mcp_publish_enabled: false,
+        mcp_supervisor: None,
     }
 }
 

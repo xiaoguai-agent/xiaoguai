@@ -146,6 +146,35 @@ pub async fn install_from_marketplace(
 
     repo.create(req.tenant_id.as_deref(), &server).await?;
 
+    // v0.9.4.1: live-pickup. If the operator wired a supervisor, ask it
+    // to reconcile against the row we just wrote so the newly installed
+    // server is reachable without a process restart. Best-effort: a
+    // spawn failure (missing binary on PATH, env var unset) is logged
+    // but doesn't fail the install — the DB row is the source of truth.
+    if let Some(sup) = state.mcp_supervisor.as_ref() {
+        match sup
+            .reload_from_db(repo.as_ref(), req.tenant_id.as_deref())
+            .await
+        {
+            Ok(started) => {
+                if !started.is_empty() {
+                    tracing::info!(
+                        slug = %req.slug,
+                        started = ?started,
+                        "mcp marketplace install: supervisor picked up new servers",
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    slug = %req.slug,
+                    error = %e,
+                    "mcp marketplace install: supervisor reload failed",
+                );
+            }
+        }
+    }
+
     Ok(Json(InstallResponse {
         id: server.id.to_string(),
         slug: entry.slug.clone(),
