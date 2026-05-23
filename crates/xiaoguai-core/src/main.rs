@@ -217,6 +217,11 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // tenant. Production should tune via config; the knob isn't
         // exposed yet.
         rate_limiter: Some(Arc::new(RateLimiter::new(20.0, 40.0))),
+        // v0.6.4: wire the audit reader once the audit log signing key
+        // is provisioned. Until then the endpoint stays at 503 — see
+        // `docs/plans/2026-05-23-v0.6.4.md` for the operator-side
+        // bootstrap.
+        audit: None,
     };
 
     let addr: SocketAddr = format!("{}:{}", settings.server.host, settings.server.port)

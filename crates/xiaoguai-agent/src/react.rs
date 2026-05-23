@@ -54,6 +54,10 @@ pub struct AgentConfig {
     /// Temperature passed through to every request. `None` = backend default.
     pub temperature: Option<f32>,
     pub model: String,
+    /// v0.6.4: tenant scope propagated onto every `ChatRequest` so an
+    /// `LlmRouter` underneath the backend can pick per-tenant defaults
+    /// + fallback chains. `None` = system default routing (legacy path).
+    pub tenant_id: Option<String>,
 }
 
 impl AgentConfig {
@@ -64,6 +68,7 @@ impl AgentConfig {
             history_window: 32,
             temperature: Some(0.2),
             model: model.into(),
+            tenant_id: None,
         }
     }
 }
@@ -215,6 +220,7 @@ fn build_request(
 ) -> ChatRequest {
     let mut req = ChatRequest::new(config.model.clone(), messages.to_vec());
     req.temperature = config.temperature;
+    req.tenant_id.clone_from(&config.tenant_id);
     if !tool_specs.is_empty() {
         req.tools = tool_specs.to_vec();
         req.tool_choice = ToolChoice::Auto;

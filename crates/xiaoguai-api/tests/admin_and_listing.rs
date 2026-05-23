@@ -84,6 +84,7 @@ fn build_state(
         authz: None,
         tenants,
         rate_limiter: limiter,
+        audit: None,
     }
 }
 
@@ -244,6 +245,84 @@ async fn rate_limit_returns_429_when_bucket_drained() {
     // Third: bucket empty → 429.
     let r3 = app.clone().oneshot(mk()).await.unwrap();
     assert_eq!(r3.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn admin_audit_returns_rows_for_tenant() {
+    use chrono::Utc;
+    use xiaoguai_api::{AuditEntryView, AuditReader, StaticAuditReader};
+
+    let now = Utc::now();
+    let mk = |id: i64, tenant: &str| AuditEntryView {
+        id,
+        ts: now,
+        tenant_id: tenant.into(),
+        actor: "system".into(),
+        action: "session.create".into(),
+        resource: Some(format!("sess_{id}")),
+        details: serde_json::json!({"model": "mock"}),
+        prev_hmac: "00".repeat(32),
+        hmac: "ab".repeat(32),
+    };
+    let reader: Arc<dyn AuditReader> = Arc::new(StaticAuditReader::with_rows(vec![
+        mk(1, "ten_a"),
+        mk(2, "ten_b"),
+        mk(3, "ten_a"),
+    ]));
+
+    let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+    state.audit = Some(reader);
+    let app = router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/admin/audit?tenant_id=ten_a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_arr(resp.into_body()).await;
+    assert_eq!(v.len(), 2);
+    for row in &v {
+        assert_eq!(row["tenant_id"], "ten_a");
+        assert!(row["hmac"].as_str().unwrap().len() == 64);
+    }
+}
+
+#[tokio::test]
+async fn admin_audit_503s_when_reader_not_wired() {
+    let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/admin/audit?tenant_id=ten_a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn admin_audit_400s_when_tenant_id_missing() {
+    use xiaoguai_api::{AuditReader, StaticAuditReader};
+    let reader: Arc<dyn AuditReader> = Arc::new(StaticAuditReader::default());
+    let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+    state.audit = Some(reader);
+    let app = router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/admin/audit")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

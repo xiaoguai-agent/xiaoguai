@@ -60,6 +60,39 @@ export interface McpServerResponse {
   tenant_id: string | null;
 }
 
+/** v0.6.3 — directory entry served by `GET /v1/admin/tenants`. */
+export interface TenantResponse {
+  id: string;
+  name: string;
+  display_name: string;
+  status: 'active' | 'suspended' | 'archived';
+}
+
+/** v0.6.4 — HMAC-chained audit row served by `GET /v1/admin/audit`. */
+export interface AuditEntryView {
+  id: number;
+  ts: string;
+  tenant_id: string;
+  actor: string;
+  action: string;
+  resource: string | null;
+  details: unknown;
+  /** Lowercase hex, 64 chars. */
+  prev_hmac: string;
+  /** Lowercase hex, 64 chars. */
+  hmac: string;
+}
+
+/** Query knobs accepted by `GET /v1/admin/audit`. */
+export interface ListAuditQuery {
+  tenant_id: string;
+  limit?: number;
+  /** RFC 3339, inclusive lower bound. */
+  since?: string;
+  /** RFC 3339, inclusive upper bound. */
+  until?: string;
+}
+
 // ---- Agent event stream --------------------------------------------------
 
 export type AgentEvent =
@@ -155,6 +188,28 @@ export class XiaoguaiClient {
 
   listMcpServers(): Promise<McpServerResponse[]> {
     return this.request<McpServerResponse[]>('GET', '/v1/mcp/servers');
+  }
+
+  /** v0.6.3 — admin directory of tenants. Requires `system_admin` when
+   *  RBAC is on. */
+  listTenants(opts?: { limit?: number; offset?: number }): Promise<TenantResponse[]> {
+    const params = new URLSearchParams();
+    if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+    if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
+    const qs = params.toString();
+    return this.request<TenantResponse[]>(
+      'GET',
+      `/v1/admin/tenants${qs ? `?${qs}` : ''}`,
+    );
+  }
+
+  /** v0.6.4 — HMAC-chained audit rows for a single tenant. */
+  listAudit(q: ListAuditQuery): Promise<AuditEntryView[]> {
+    const params = new URLSearchParams({ tenant_id: q.tenant_id });
+    if (q.limit !== undefined) params.set('limit', String(q.limit));
+    if (q.since) params.set('since', q.since);
+    if (q.until) params.set('until', q.until);
+    return this.request<AuditEntryView[]>('GET', `/v1/admin/audit?${params.toString()}`);
   }
 
   /**

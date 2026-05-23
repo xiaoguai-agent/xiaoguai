@@ -200,3 +200,82 @@ async fn explicit_provider_missing_is_error() {
     };
     assert!(matches!(err, LlmError::NoProvider { .. }));
 }
+
+/// v0.6.4: the `LlmBackend` impl on `LlmRouter` reads
+/// `ChatRequest::tenant_id` and builds a `ResolveCtx` from it. Two
+/// backends, two tenants each with a different default — the per-request
+/// tenant on the `ChatRequest` decides which backend wins.
+#[tokio::test]
+async fn llm_backend_impl_routes_by_request_tenant_id() {
+    let p_a = ProviderId::new();
+    let p_b = ProviderId::new();
+    let backends: Vec<(ProviderId, Arc<dyn LlmBackend>)> = vec![
+        (p_a.clone(), Arc::new(MockBackend::with_response("from A"))),
+        (p_b.clone(), Arc::new(MockBackend::with_response("from B"))),
+    ];
+
+    let mut alpha_table = HashMap::new();
+    alpha_table.insert("default-model".to_string(), p_a.clone());
+    let mut bravo_table = HashMap::new();
+    bravo_table.insert("default-model".to_string(), p_b.clone());
+
+    let mut tenant_defaults = HashMap::new();
+    tenant_defaults.insert(TenantId::from("ten_alpha".to_string()), alpha_table);
+    tenant_defaults.insert(TenantId::from("ten_bravo".to_string()), bravo_table);
+
+    let cfg = RouterConfig {
+        tenant_default_for_model: tenant_defaults,
+        ..RouterConfig::default()
+    };
+    let router: Arc<dyn LlmBackend> = Arc::new(router_with(backends, cfg));
+
+    // Alpha tenant → backend A.
+    let mut req = make_req("default-model");
+    req.tenant_id = Some("ten_alpha".into());
+    let stream_a = router.chat_stream(req).await.expect("a ok");
+    assert_eq!(collect(stream_a).await, "from A");
+
+    // Bravo tenant → backend B (proves the impl actually reads the field).
+    let mut req = make_req("default-model");
+    req.tenant_id = Some("ten_bravo".into());
+    let stream_b = router.chat_stream(req).await.expect("b ok");
+    assert_eq!(collect(stream_b).await, "from B");
+}
+
+/// v0.6.4: when `ChatRequest::tenant_id` is `None`, the `LlmBackend` impl
+/// falls back to system defaults — legacy v0.6.2 behaviour preserved.
+#[tokio::test]
+async fn llm_backend_impl_falls_back_to_system_default_without_tenant() {
+    let p_sys = ProviderId::new();
+    let p_tenant = ProviderId::new();
+    let backends: Vec<(ProviderId, Arc<dyn LlmBackend>)> = vec![
+        (
+            p_sys.clone(),
+            Arc::new(MockBackend::with_response("system")),
+        ),
+        (
+            p_tenant.clone(),
+            Arc::new(MockBackend::with_response("tenant")),
+        ),
+    ];
+
+    let mut sys_table = HashMap::new();
+    sys_table.insert("m".to_string(), p_sys.clone());
+    let mut alpha_table = HashMap::new();
+    alpha_table.insert("m".to_string(), p_tenant.clone());
+    let mut tenant_defaults = HashMap::new();
+    tenant_defaults.insert(TenantId::from("ten_alpha".to_string()), alpha_table);
+
+    let cfg = RouterConfig {
+        system_default_for_model: sys_table,
+        tenant_default_for_model: tenant_defaults,
+        ..RouterConfig::default()
+    };
+    let router: Arc<dyn LlmBackend> = Arc::new(router_with(backends, cfg));
+
+    // No tenant on the request → system default wins, not the tenant_a one.
+    let req = make_req("m");
+    assert!(req.tenant_id.is_none());
+    let stream = router.chat_stream(req).await.expect("ok");
+    assert_eq!(collect(stream).await, "system");
+}

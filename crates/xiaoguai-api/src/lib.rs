@@ -7,6 +7,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod audit;
 pub mod auth;
 pub mod convert;
 pub mod error;
@@ -17,6 +18,7 @@ pub mod serve;
 pub mod sse;
 pub mod state;
 
+pub use audit::{AuditEntryView, AuditError, AuditReader, StaticAuditReader};
 pub use auth::{Claims, JwtTokenValidator, StubValidator, TokenValidator};
 pub use error::{ApiError, ApiResult};
 pub use rate_limit::{rate_limit, RateLimiter};
