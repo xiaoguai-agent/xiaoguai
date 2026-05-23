@@ -106,6 +106,7 @@ fn build_state(auth: Option<Arc<dyn TokenValidator>>, mcp: Arc<InMemoryMcpRepo>)
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: Some(mcp),
         auth,
+        authz: None,
     }
 }
 

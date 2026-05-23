@@ -15,6 +15,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 use xiaoguai_agent::{AgentConfig, Toolbox};
+use xiaoguai_auth::Authz;
 use xiaoguai_llm::LlmBackend;
 use xiaoguai_storage::repositories::{McpServerRepository, MessageRepository, SessionRepository};
 
@@ -79,6 +80,10 @@ pub struct AppState {
     /// `None` = auth disabled (handlers fall back to body identity).
     /// `Some(...)` = require Bearer token on `/v1/**`.
     pub auth: Option<Arc<dyn TokenValidator>>,
+    /// `None` = per-route RBAC enforcement is disabled (dev / smoke
+    /// runs); `Some(...)` = the rbac middleware enforces the Casbin
+    /// policy after `require_bearer` has populated `Claims`.
+    pub authz: Option<Arc<Authz>>,
 }
 
 impl std::fmt::Debug for AppState {
