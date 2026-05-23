@@ -139,20 +139,34 @@ pub async fn run_agent_and_reply(
         msg.user_external_id.clone(),
         msg.conversation_id.clone(),
     );
+    // v0.6.5: ask the history store for the resolved internal tenant so
+    // the agent build picks up per-tenant LlmRouter defaults. PG stores
+    // return the synthetic tenant created on first sight; in-memory
+    // returns None and we fall back to agent_defaults verbatim.
+    let resolved_tenant = state
+        .history
+        .resolve_tenant(&ident)
+        .await
+        .map_err(|e| ProviderError::Transport(format!("history resolve tenant: {e}")))?;
+    let mut agent_cfg = state.app.agent_defaults.clone();
+    if let Some(t) = &resolved_tenant {
+        agent_cfg.tenant_id = Some(t.clone());
+    }
     let agent = ReactAgent::new(
         state.app.backend.clone(),
         (*state.app.toolbox).clone(),
-        state.app.agent_defaults.clone(),
+        agent_cfg,
     );
     // v0.7.3: include the prior turns from whichever store is wired.
     // Snapshot once so the agent sees a stable view even if another
     // concurrent webhook lands.
-    let mut history = state
+    let prior = state
         .history
         .snapshot(&ident)
         .await
         .map_err(|e| ProviderError::Transport(format!("history snapshot: {e}")))?;
     let inbound = LlmMessage::user(msg.text.clone());
+    let mut history = prior;
     history.push(inbound.clone());
     let outcome = agent
         .run_to_completion(history, tokio_util::sync::CancellationToken::new())

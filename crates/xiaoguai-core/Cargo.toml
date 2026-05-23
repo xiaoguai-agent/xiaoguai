@@ -31,6 +31,10 @@ clap = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 sqlx = { workspace = true }
+# v0.6.5: bridge `PgAuditSink` into `xiaoguai-api`'s `AuditReader` /
+# `AuditVerifier` traits inside this binary.
+async-trait = { workspace = true }
+hex = "0.4"
 
 [lints]
 workspace = true

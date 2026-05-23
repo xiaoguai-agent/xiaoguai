@@ -4,6 +4,8 @@
 //! initializes JWT + RBAC + audit chain, then either runs the API server
 //! (default) or executes a single subcommand (e.g. `smoke`).
 
+mod audit_bridge;
+
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -138,16 +140,23 @@ async fn run_smoke(settings: &Settings) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines, clippy::type_complexity)]
 async fn run_serve(settings: &Settings) -> Result<()> {
     use std::net::SocketAddr;
     use std::sync::Arc;
     use xiaoguai_agent::{AgentConfig, Toolbox};
-    use xiaoguai_api::{serve_with_state, AppState, CancelRegistry, RateLimiter};
+    use xiaoguai_api::{
+        audit::{AuditReader, AuditVerifier},
+        AppState, CancelRegistry, RateLimiter,
+    };
+    use xiaoguai_audit::chain::sink::PgAuditSink;
     use xiaoguai_llm::{build_router, LlmBackend, MockBackend, OsEnvResolver};
     use xiaoguai_storage::repositories::{
-        LlmProviderRepository, PgLlmProviderRepository, PgMessageRepository, PgSessionRepository,
-        PgTenantRepository,
+        LlmProviderRepository, PgLlmProviderRepository, PgMcpServerRepository, PgMessageRepository,
+        PgSessionRepository, PgTenantRepository,
     };
+
+    use crate::audit_bridge::PgAuditAdapter;
 
     tracing::info!("serve: connecting to Postgres");
     let pool = db::connect(&settings.database.url, settings.database.max_connections)
@@ -200,6 +209,36 @@ async fn run_serve(settings: &Settings) -> Result<()> {
 
     let auth = build_auth(settings);
 
+    // v0.6.5: try to assemble the production audit bridge. The signing
+    // key lives in the env var named by `settings.audit.signing_key_env`
+    // — empty / missing means audit endpoints stay at 503 in production
+    // rather than silently using `settings.audit.hmac_key` (which is the
+    // dev-only fallback wired into `smoke`).
+    let (audit_reader, audit_verifier): (
+        Option<Arc<dyn AuditReader>>,
+        Option<Arc<dyn AuditVerifier>>,
+    ) = match std::env::var(&settings.audit.signing_key_env) {
+        Ok(key) if !key.is_empty() => {
+            let sink = Arc::new(PgAuditSink::new(pool.clone(), key.into_bytes()));
+            let adapter = Arc::new(PgAuditAdapter::new(sink));
+            tracing::info!(
+                env = %settings.audit.signing_key_env,
+                "serve: audit reader+verifier wired (PgAuditSink)"
+            );
+            (Some(adapter.clone()), Some(adapter))
+        }
+        _ => {
+            tracing::warn!(
+                env = %settings.audit.signing_key_env,
+                "serve: audit signing key not set — /v1/admin/audit and /v1/admin/audit/verify will return 503"
+            );
+            (None, None)
+        }
+    };
+
+    let mcp_servers_repo: Arc<dyn xiaoguai_storage::repositories::McpServerRepository> =
+        Arc::new(PgMcpServerRepository::new(pool.clone()));
+
     let state = AppState {
         sessions: Arc::new(PgSessionRepository::new(pool.clone())),
         messages: Arc::new(PgMessageRepository::new(pool.clone())),
@@ -207,9 +246,7 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         toolbox: Arc::new(Toolbox::new()),
         agent_defaults: AgentConfig::new(default_model),
         cancels: Arc::new(CancelRegistry::new()),
-        mcp_servers: Some(Arc::new(
-            xiaoguai_storage::repositories::PgMcpServerRepository::new(pool.clone()),
-        )),
+        mcp_servers: Some(mcp_servers_repo),
         auth,
         authz: build_authz(settings).await.context("build authz")?,
         tenants: Some(Arc::new(PgTenantRepository::new(pool.clone()))),
@@ -217,11 +254,8 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // tenant. Production should tune via config; the knob isn't
         // exposed yet.
         rate_limiter: Some(Arc::new(RateLimiter::new(20.0, 40.0))),
-        // v0.6.4: wire the audit reader once the audit log signing key
-        // is provisioned. Until then the endpoint stays at 503 — see
-        // `docs/plans/2026-05-23-v0.6.4.md` for the operator-side
-        // bootstrap.
-        audit: None,
+        audit: audit_reader,
+        audit_verifier,
         // v0.9.1: opt-in publishing of the Toolbox as an MCP server at
         // /v1/mcp/serve. Controlled by env var `XIAOGUAI_MCP__PUBLISH`
         // — only flip in deployments that *want* external agents to
@@ -229,6 +263,8 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         mcp_publish_enabled: std::env::var("XIAOGUAI_MCP__PUBLISH")
             .map(|s| matches!(s.as_str(), "1" | "true" | "yes"))
             .unwrap_or(false),
+        // v0.9.4.1: wired in a later tag — leaves marketplace installs
+        // in their v0.9.4 "write-only" mode until then.
     };
 
     let addr: SocketAddr = format!("{}:{}", settings.server.host, settings.server.port)
@@ -239,7 +275,9 @@ async fn run_serve(settings: &Settings) -> Result<()> {
                 settings.server.host, settings.server.port
             )
         })?;
-    let (local, fut) = serve_with_state(addr, state).await.context("bind api")?;
+    let (local, fut) = xiaoguai_api::serve_with_state(addr, state)
+        .await
+        .context("bind api")?;
     tracing::info!(%local, "serve: api listening");
 
     tokio::select! {

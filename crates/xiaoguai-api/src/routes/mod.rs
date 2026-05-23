@@ -45,7 +45,8 @@ pub fn router(state: AppState) -> Router {
             post(crate::marketplace::install_from_marketplace),
         )
         .route("/v1/admin/tenants", get(admin::list_tenants))
-        .route("/v1/admin/audit", get(admin::list_audit));
+        .route("/v1/admin/audit", get(admin::list_audit))
+        .route("/v1/admin/audit/verify", get(admin::verify_audit));
 
     // Layer order (inner → outer, since `route_layer` adds outward):
     //   handler → rate_limit → rbac → require_bearer

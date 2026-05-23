@@ -20,7 +20,10 @@ pub mod serve;
 pub mod sse;
 pub mod state;
 
-pub use audit::{AuditEntryView, AuditError, AuditReader, StaticAuditReader};
+pub use audit::{
+    AuditEntryView, AuditError, AuditReader, AuditVerifier, StaticAuditReader, StaticAuditVerifier,
+    VerifyReport,
+};
 pub use auth::{Claims, JwtTokenValidator, StubValidator, TokenValidator};
 pub use error::{ApiError, ApiResult};
 pub use marketplace::{MarketplaceEntry, MarketplaceResponse};

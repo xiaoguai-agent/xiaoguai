@@ -5094,8 +5094,10 @@ name = "xiaoguai-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "clap",
+ "hex",
  "serde_json",
  "sqlx",
  "thiserror 2.0.18",
@@ -5151,6 +5153,7 @@ dependencies = [
  "async-trait",
  "axum",
  "chrono",
+ "futures",
  "hex",
  "parking_lot",
  "serde",

@@ -110,6 +110,7 @@ fn build_state(auth: Option<Arc<dyn TokenValidator>>, mcp: Arc<InMemoryMcpRepo>)
         tenants: None,
         rate_limiter: None,
         audit: None,
+        audit_verifier: None,
         mcp_publish_enabled: false,
     }
 }

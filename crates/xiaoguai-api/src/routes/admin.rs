@@ -16,7 +16,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use xiaoguai_types::{Tenant, TenantStatus};
 
-use crate::audit::AuditEntryView;
+use crate::audit::{AuditEntryView, VerifyReport};
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 
@@ -71,6 +71,61 @@ pub async fn list_tenants(
     let offset = q.offset.unwrap_or(0).max(0);
     let rows = repo.list(limit, offset).await?;
     Ok(Json(rows.into_iter().map(Into::into).collect()))
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct VerifyAuditQuery {
+    pub tenant_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VerifyAuditResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub broken_at: Option<i64>,
+}
+
+/// v0.6.5 — chain-integrity verification surfaced for admin / monitoring.
+/// 200 `{"ok": true, "verified_count": N}` on success;
+/// 200 `{"ok": false, "broken_at": rowid}` when the chain breaks (the
+/// response is HTTP 200 on purpose so dashboards can scrape it; the
+/// `ok` flag is the alerting signal).
+/// 503 when no verifier is wired; 400 when `tenant_id` is missing.
+pub async fn verify_audit(
+    State(state): State<AppState>,
+    Query(q): Query<VerifyAuditQuery>,
+) -> ApiResult<Json<VerifyAuditResponse>> {
+    let verifier = state
+        .audit_verifier
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("audit verifier not wired".into()))?;
+    let tenant_id = q
+        .tenant_id
+        .ok_or_else(|| ApiError::InvalidRequest("tenant_id is required".into()))?;
+    if tenant_id.is_empty() {
+        return Err(ApiError::InvalidRequest(
+            "tenant_id must not be empty".into(),
+        ));
+    }
+    let report = verifier
+        .verify_tenant(&tenant_id)
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("audit verify: {e}")))?;
+    let body = match report {
+        VerifyReport::Ok { verified_count } => VerifyAuditResponse {
+            ok: true,
+            verified_count: Some(verified_count),
+            broken_at: None,
+        },
+        VerifyReport::Broken { broken_at } => VerifyAuditResponse {
+            ok: false,
+            verified_count: None,
+            broken_at: Some(broken_at),
+        },
+    };
+    Ok(Json(body))
 }
 
 pub async fn list_audit(

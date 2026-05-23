@@ -69,6 +69,7 @@ fn build_state_with_toolbox(toolbox: Toolbox, publish: bool) -> AppState {
         tenants: None,
         rate_limiter: None,
         audit: None,
+        audit_verifier: None,
         mcp_publish_enabled: publish,
     }
 }

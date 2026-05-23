@@ -84,6 +84,21 @@ pub trait ImHistoryStore: Send + Sync {
         ident: &ConversationIdent,
         msgs: Vec<LlmMessage>,
     ) -> Result<(), HistoryError>;
+
+    /// v0.6.5: resolve the internal `tenant_id` this conversation belongs
+    /// to so the router can propagate it onto `AgentConfig.tenant_id`
+    /// (the IM path was the last hop still hardcoded to `agent_defaults`
+    /// — REST traffic already gets per-tenant routing via v0.6.4).
+    ///
+    /// Default impl returns `None`, which preserves the in-memory single-
+    /// tenant semantics. PG-backed stores override to return the synthetic
+    /// or real tenant they resolved during `snapshot` / `extend`.
+    async fn resolve_tenant(
+        &self,
+        _ident: &ConversationIdent,
+    ) -> Result<Option<String>, HistoryError> {
+        Ok(None)
+    }
 }
 
 /// Per-process conversation memory. Cheap to clone (`Arc`-ish via the

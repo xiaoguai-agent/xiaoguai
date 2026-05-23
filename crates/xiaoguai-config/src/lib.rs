@@ -81,6 +81,17 @@ pub struct AuditSettings {
     /// HMAC-SHA256 signing key for the audit chain. **NEVER** check in a real key.
     /// In production load via env or external secrets manager.
     pub hmac_key: String,
+    /// v0.6.5: env-var name to read the production audit signing key from
+    /// when wiring `PgAuditSink` in `xiaoguai-core`. The dev `hmac_key`
+    /// above is fine for `smoke` and tests but must NOT be used for the
+    /// production audit chain — operators set this knob and stash the
+    /// real key in the named env var.
+    #[serde(default = "default_signing_key_env")]
+    pub signing_key_env: String,
+}
+
+fn default_signing_key_env() -> String {
+    "XIAOGUAI_AUDIT_SIGNING_KEY".into()
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -137,6 +148,7 @@ impl Default for Settings {
             },
             audit: AuditSettings {
                 hmac_key: "dev-only-change-me-32-bytes-min".into(),
+                signing_key_env: default_signing_key_env(),
             },
             scheduler: SchedulerSettings::default(),
         }
