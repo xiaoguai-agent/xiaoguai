@@ -203,17 +203,21 @@ impl LlmRouter {
 /// `Arc<dyn LlmBackend>` (e.g. `AppState.backend` from xiaoguai-api,
 /// `ReactAgent::new`) can be handed a router transparently.
 ///
-/// Per-request tenant routing requires the caller to know the tenant —
-/// that path goes through `LlmRouter::chat_stream(ctx, req)` directly.
-/// This impl falls back to `ResolveCtx::default()` so the system default
-/// + fallback chain still apply. v0.6.2 ships the default-only path;
-/// threading `tenant_id` from the request all the way down to a custom
-/// `ResolveCtx` is a follow-up (would need a new `BackendForTenant`
-/// wrapper or a context-aware trait).
+/// v0.6.4: per-request tenant routing now flows through the optional
+/// `ChatRequest::tenant_id` field. When the caller sets it (the REST
+/// handler does this before invoking the agent), the impl builds a
+/// `ResolveCtx` with `tenant_id = Some(...)` so tenant-default + tenant
+/// fallback rules apply. When unset, behaviour is identical to v0.6.2:
+/// `ResolveCtx::default()` resolves system defaults + fallback only.
 #[async_trait]
 impl LlmBackend for LlmRouter {
     async fn chat_stream(&self, req: ChatRequest) -> Result<ChatStream, LlmError> {
-        self.chat_stream(ResolveCtx::default(), req).await
+        let tenant = req.tenant_id.as_ref().map(|s| TenantId::from(s.clone()));
+        let ctx = ResolveCtx {
+            tenant_id: tenant.as_ref(),
+            ..ResolveCtx::default()
+        };
+        self.chat_stream(ctx, req).await
     }
 
     fn name(&self) -> &'static str {

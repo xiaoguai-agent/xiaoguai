@@ -36,7 +36,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/sessions/:id/cancel", post(sessions::cancel_session))
         .route("/v1/mcp/servers", get(mcp::list_servers))
-        .route("/v1/admin/tenants", get(admin::list_tenants));
+        .route("/v1/admin/tenants", get(admin::list_tenants))
+        .route("/v1/admin/audit", get(admin::list_audit));
 
     // Layer order (inner → outer, since `route_layer` adds outward):
     //   handler → rate_limit → rbac → require_bearer

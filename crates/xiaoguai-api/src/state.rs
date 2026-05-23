@@ -21,6 +21,7 @@ use xiaoguai_storage::repositories::{
     McpServerRepository, MessageRepository, SessionRepository, TenantRepository,
 };
 
+use crate::audit::AuditReader;
 use crate::auth::TokenValidator;
 
 /// Registry of cancellation tokens keyed by `session_id`. A single token per
@@ -91,6 +92,10 @@ pub struct AppState {
     /// `None` = no rate-limit middleware. `Some(...)` is the token
     /// bucket store keyed by `tenant_id`.
     pub rate_limiter: Option<Arc<crate::rate_limit::RateLimiter>>,
+    /// `None` = `/v1/admin/audit` returns 503. `Some(...)` exposes the
+    /// HMAC-chained audit log; production wires the
+    /// `xiaoguai-audit::PgAuditSink` reader.
+    pub audit: Option<Arc<dyn AuditReader>>,
 }
 
 impl std::fmt::Debug for AppState {

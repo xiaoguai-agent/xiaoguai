@@ -44,6 +44,7 @@ fn build_state_with_auth() -> AppState {
         authz: None,
         tenants: None,
         rate_limiter: None,
+        audit: None,
     }
 }
 

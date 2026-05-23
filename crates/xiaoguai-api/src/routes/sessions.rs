@@ -219,10 +219,13 @@ pub async fn send_message(
     let mut messages = history;
     messages.push(domain_to_llm(&user_domain));
 
-    // 3. Build the agent and register a cancel token.
+    // 3. Build the agent and register a cancel token. v0.6.4 threads the
+    //    session's tenant down into the LlmRouter (when wired) so per-
+    //    tenant model defaults + fallback chains apply for this request.
     let model = req.model.unwrap_or(session.model);
     let mut cfg = state.agent_defaults.clone();
     cfg.model = model;
+    cfg.tenant_id = Some(session_tenant.clone());
     let agent = ReactAgent::new(state.backend.clone(), (*state.toolbox).clone(), cfg);
     let cancel = state.cancels.register(&session_id_str);
 

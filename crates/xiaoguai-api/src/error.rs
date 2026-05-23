@@ -20,8 +20,12 @@ pub enum ApiError {
     NotFound,
     #[error("bad request: {0}")]
     BadRequest(String),
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
     #[error("conflict: {0}")]
     Conflict(String),
+    #[error("service unavailable: {0}")]
+    ServiceUnavailable(String),
     #[error("internal: {0}")]
     Internal(#[from] anyhow::Error),
     #[error("storage: {0}")]
@@ -41,7 +45,15 @@ impl IntoResponse for ApiError {
         let (status, code, message) = match &self {
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found", self.to_string()),
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request", self.to_string()),
+            Self::InvalidRequest(_) => {
+                (StatusCode::BAD_REQUEST, "invalid_request", self.to_string())
+            }
             Self::Conflict(_) => (StatusCode::CONFLICT, "conflict", self.to_string()),
+            Self::ServiceUnavailable(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "service_unavailable",
+                self.to_string(),
+            ),
             Self::Internal(err) => {
                 tracing::error!(?err, "internal api error");
                 (

@@ -40,6 +40,7 @@ async fn build_state(roles: Vec<&str>) -> AppState {
         authz: Some(Arc::new(authz)),
         tenants: None,
         rate_limiter: None,
+        audit: None,
     }
 }
 

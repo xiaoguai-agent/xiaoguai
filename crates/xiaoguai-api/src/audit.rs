@@ -1,0 +1,134 @@
+//! v0.6.4 — audit log read surface for the admin endpoint.
+//!
+//! `GET /v1/admin/audit` lists tamper-evident audit rows for a tenant.
+//! To keep `xiaoguai-api` decoupled from the concrete persistence layer
+//! (`PgAuditSink` lives in `xiaoguai-audit`, which is *not* an api dep
+//! today), we define an `AuditReader` trait here and ship a thin bridge
+//! that wraps any `xiaoguai-audit::sink::PgAuditSink` once at boot time.
+//!
+//! Wire shape (`AuditEntryView`) is the JSON-friendly projection — `prev_hmac`
+//! and `hmac` are hex-encoded, `details` passes through as-is.
+
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde::Serialize;
+use thiserror::Error;
+
+#[derive(Debug, Clone, Error)]
+pub enum AuditError {
+    #[error("audit backend: {0}")]
+    Backend(String),
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
+}
+
+/// JSON-friendly audit row served by `GET /v1/admin/audit`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditEntryView {
+    pub id: i64,
+    pub ts: DateTime<Utc>,
+    pub tenant_id: String,
+    pub actor: String,
+    pub action: String,
+    pub resource: Option<String>,
+    pub details: serde_json::Value,
+    /// Lowercase hex.
+    pub prev_hmac: String,
+    /// Lowercase hex.
+    pub hmac: String,
+}
+
+#[async_trait]
+pub trait AuditReader: Send + Sync {
+    async fn list(
+        &self,
+        tenant_id: &str,
+        since: Option<DateTime<Utc>>,
+        until: Option<DateTime<Utc>>,
+        limit: i64,
+    ) -> Result<Vec<AuditEntryView>, AuditError>;
+}
+
+/// In-memory `AuditReader` used by route tests. Holds a fixed list and
+/// filters on read.
+#[derive(Debug, Default)]
+pub struct StaticAuditReader {
+    pub rows: Vec<AuditEntryView>,
+}
+
+impl StaticAuditReader {
+    #[must_use]
+    pub fn with_rows(rows: Vec<AuditEntryView>) -> Self {
+        Self { rows }
+    }
+}
+
+#[async_trait]
+impl AuditReader for StaticAuditReader {
+    async fn list(
+        &self,
+        tenant_id: &str,
+        since: Option<DateTime<Utc>>,
+        until: Option<DateTime<Utc>>,
+        limit: i64,
+    ) -> Result<Vec<AuditEntryView>, AuditError> {
+        if limit < 0 {
+            return Err(AuditError::InvalidArgument("limit must be >= 0".into()));
+        }
+        let take = usize::try_from(limit).unwrap_or(usize::MAX);
+        Ok(self
+            .rows
+            .iter()
+            .filter(|r| r.tenant_id == tenant_id)
+            .filter(|r| since.is_none_or(|s| r.ts >= s))
+            .filter(|r| until.is_none_or(|u| r.ts <= u))
+            .take(take)
+            .cloned()
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(id: i64, tenant: &str, ts: DateTime<Utc>) -> AuditEntryView {
+        AuditEntryView {
+            id,
+            ts,
+            tenant_id: tenant.into(),
+            actor: "system".into(),
+            action: "test".into(),
+            resource: None,
+            details: serde_json::json!({}),
+            prev_hmac: "00".repeat(32),
+            hmac: "ab".repeat(32),
+        }
+    }
+
+    #[tokio::test]
+    async fn static_reader_filters_by_tenant() {
+        let t0 = Utc::now();
+        let reader = StaticAuditReader::with_rows(vec![
+            row(1, "t-a", t0),
+            row(2, "t-b", t0),
+            row(3, "t-a", t0),
+        ]);
+        let got = reader.list("t-a", None, None, 100).await.unwrap();
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|r| r.tenant_id == "t-a"));
+    }
+
+    #[tokio::test]
+    async fn static_reader_respects_limit_and_time_bounds() {
+        let t0 = Utc::now();
+        let t1 = t0 + chrono::Duration::seconds(60);
+        let reader = StaticAuditReader::with_rows(vec![row(1, "t-a", t0), row(2, "t-a", t1)]);
+        let only_first = reader.list("t-a", None, Some(t0), 100).await.unwrap();
+        assert_eq!(only_first.len(), 1);
+        assert_eq!(only_first[0].id, 1);
+
+        let capped = reader.list("t-a", None, None, 1).await.unwrap();
+        assert_eq!(capped.len(), 1);
+    }
+}
