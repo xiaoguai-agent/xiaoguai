@@ -1,0 +1,57 @@
+//! Scheduler crate for xiaoguai (v0.10.0).
+//!
+//! Three things make this crate worth a separate module instead of
+//! living inside `xiaoguai-agent`:
+//!
+//! 1. **Trigger × Agent.** The community gap (per the v0.9–v0.12
+//!    roadmap §3) is platforms that have either strong triggers OR
+//!    strong agents but not both. We unify them: a [`Trigger`] is the
+//!    only thing the scheduler knows; what runs is a pluggable
+//!    [`JobExecutor`] (in v0.10.x the production wiring is the agent
+//!    loop, but the trait keeps tests fast and lets v0.11.x's eval
+//!    runner reuse the same machinery).
+//!
+//! 2. **Audit-first by construction.** Every [`JobRun`] writes an
+//!    [`xiaoguai_audit::AuditEntry`] via [`AuditAppender`] — `actor =
+//!    "scheduler:<job_id>"`. The audit-first console (v0.11.1) gets a
+//!    unified chat / IM / scheduled view by reading the `audit_log`,
+//!    so this contract is load-bearing.
+//!
+//! 3. **Retry + push-sink seams.** v0.10.0 ships the `RetryPolicy` +
+//!    `PushSink` traits with one stub sink ([`LoggingSink`]); the
+//!    real sinks (Feishu / Telegram / Email / chat-ui inbox) land
+//!    in v0.10.3 against the same trait.
+//!
+//! Out of scope for v0.10.0: reactive triggers (file watcher, webhook,
+//! git push) — deferred to v0.10.1. Proactive triggers + per-user
+//! budget — deferred to v0.10.2. PG-backed repositories — the
+//! in-memory impls here are the production-shaped contract; the PG
+//! sink lands together with the runtime extraction in v0.12.0.
+
+#![forbid(unsafe_code)]
+#![warn(clippy::pedantic)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc
+)]
+
+pub mod audit;
+pub mod executor;
+pub mod job;
+pub mod repository;
+pub mod retry;
+pub mod runner;
+pub mod sink;
+pub mod trigger;
+
+pub use audit::{AuditAppender, NullAuditAppender, RecordingAuditAppender};
+pub use executor::{ExecutionOutcome, JobExecutor};
+pub use job::{JobRun, JobRunStatus, ScheduledJob};
+pub use repository::{
+    InMemoryJobRepository, InMemoryJobRunRepository, JobRepository, JobRunRepository, RepoError,
+};
+pub use retry::RetryPolicy;
+pub use runner::{JobRunner, RunnerError, RunnerOptions};
+pub use sink::{LoggingSink, PushPayload, PushSink, SinkError};
+pub use trigger::{Trigger, TriggerError};
