@@ -35,6 +35,8 @@ fn build_state(steps: Vec<ScriptStep>) -> (AppState, Arc<InMemoryMessageRepo>) {
         mcp_servers: None,
         auth: None,
         authz: None,
+        tenants: None,
+        rate_limiter: None,
     };
     (state, messages)
 }

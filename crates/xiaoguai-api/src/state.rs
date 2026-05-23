@@ -17,7 +17,9 @@ use tokio_util::sync::CancellationToken;
 use xiaoguai_agent::{AgentConfig, Toolbox};
 use xiaoguai_auth::Authz;
 use xiaoguai_llm::LlmBackend;
-use xiaoguai_storage::repositories::{McpServerRepository, MessageRepository, SessionRepository};
+use xiaoguai_storage::repositories::{
+    McpServerRepository, MessageRepository, SessionRepository, TenantRepository,
+};
 
 use crate::auth::TokenValidator;
 
@@ -84,6 +86,11 @@ pub struct AppState {
     /// runs); `Some(...)` = the rbac middleware enforces the Casbin
     /// policy after `require_bearer` has populated `Claims`.
     pub authz: Option<Arc<Authz>>,
+    /// `None` = no `/v1/admin/tenants` endpoint; `Some(...)` exposes it.
+    pub tenants: Option<Arc<dyn TenantRepository>>,
+    /// `None` = no rate-limit middleware. `Some(...)` is the token
+    /// bucket store keyed by `tenant_id`.
+    pub rate_limiter: Option<Arc<crate::rate_limit::RateLimiter>>,
 }
 
 impl std::fmt::Debug for AppState {

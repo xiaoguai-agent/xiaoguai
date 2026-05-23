@@ -42,6 +42,8 @@ fn build_state_with_auth() -> AppState {
         mcp_servers: None,
         auth: Some(validator),
         authz: None,
+        tenants: None,
+        rate_limiter: None,
     }
 }
 

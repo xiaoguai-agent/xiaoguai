@@ -1,5 +1,6 @@
 //! HTTP route handlers.
 
+pub mod admin;
 pub mod mcp;
 pub mod sessions;
 
@@ -9,6 +10,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::require_bearer;
+use crate::rate_limit::rate_limit;
 use crate::rbac::require_authorized;
 use crate::state::AppState;
 
@@ -23,19 +25,33 @@ pub fn router(state: AppState) -> Router {
     let public = Router::new().route("/healthz", get(healthz));
 
     let v1 = Router::new()
-        .route("/v1/sessions", post(sessions::create_session))
+        .route(
+            "/v1/sessions",
+            get(sessions::list_sessions).post(sessions::create_session),
+        )
         .route("/v1/sessions/:id", get(sessions::get_session))
         .route(
             "/v1/sessions/:id/messages",
             get(sessions::list_messages).post(sessions::send_message),
         )
         .route("/v1/sessions/:id/cancel", post(sessions::cancel_session))
-        .route("/v1/mcp/servers", get(mcp::list_servers));
+        .route("/v1/mcp/servers", get(mcp::list_servers))
+        .route("/v1/admin/tenants", get(admin::list_tenants));
 
-    // Add the rbac layer *first* (innermost) so that the bearer-auth
-    // layer runs before it and populates `Claims`. `route_layer` mounts
-    // outer-to-inner in the order it's called → the layer added last
-    // here is the *outermost* one.
+    // Layer order (inner → outer, since `route_layer` adds outward):
+    //   handler → rate_limit → rbac → require_bearer
+    // so `require_bearer` runs first and populates Claims, then rbac
+    // checks the policy, then rate_limit consumes a token, then the
+    // handler runs.
+    let v1 = if let Some(limiter) = state.rate_limiter.clone() {
+        v1.route_layer(axum::middleware::from_fn(move |req, next| {
+            let l = limiter.clone();
+            async move { rate_limit(l, req, next).await }
+        }))
+    } else {
+        v1
+    };
+
     let v1 = if let Some(authz) = state.authz.clone() {
         v1.route_layer(axum::middleware::from_fn(move |req, next| {
             let a = authz.clone();

@@ -94,6 +94,37 @@ pub async fn create_session(
     Ok((StatusCode::CREATED, Json(session.into())))
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub struct ListSessionsQuery {
+    pub user_id: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+/// `GET /v1/sessions?user_id=...&limit=...&offset=...` — list a user's
+/// sessions ordered by most-recently-updated first.
+///
+/// `user_id` is required: in dev mode it comes from the query string;
+/// in authed mode it falls back to `Claims.sub` when missing.
+pub async fn list_sessions(
+    State(state): State<AppState>,
+    claims: Option<Extension<Claims>>,
+    Query(q): Query<ListSessionsQuery>,
+) -> ApiResult<Json<Vec<SessionResponse>>> {
+    let user_id = q
+        .user_id
+        .or_else(|| claims.as_ref().map(|Extension(c)| c.sub.clone()))
+        .ok_or_else(|| ApiError::BadRequest("user_id is required".into()))?;
+    let tenant = tenant_from_claims(claims.as_ref());
+    let limit = q.limit.unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, 1000);
+    let offset = q.offset.unwrap_or(0).max(0);
+    let rows = state
+        .sessions
+        .list_by_user(tenant, &user_id, limit, offset)
+        .await?;
+    Ok(Json(rows.into_iter().map(Into::into).collect()))
+}
+
 pub async fn get_session(
     State(state): State<AppState>,
     claims: Option<Extension<Claims>>,
