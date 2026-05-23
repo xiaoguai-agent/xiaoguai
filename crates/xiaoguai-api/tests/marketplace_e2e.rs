@@ -88,6 +88,7 @@ fn build_state(mcp: Option<Arc<dyn McpServerRepository>>) -> AppState {
         tenants: None,
         rate_limiter: None,
         audit: None,
+        audit_verifier: None,
         mcp_publish_enabled: false,
     }
 }

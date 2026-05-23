@@ -49,6 +49,7 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
         tenants: None,
         rate_limiter: None,
         audit: None,
+        audit_verifier: None,
         mcp_publish_enabled: false,
     };
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
@@ -142,6 +143,129 @@ async fn malformed_signed_body_yields_400() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// v0.6.5: the IM gateway must propagate the per-conversation tenant
+/// resolved by `ImHistoryStore::resolve_tenant` onto the agent build,
+/// so v0.6.4's per-tenant `LlmRouter` defaults apply to IM traffic too.
+/// Driven through `run_agent_and_reply` directly with a recording history
+/// store that returns a fixed tenant.
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn agent_inherits_tenant_resolved_by_history_store() {
+    use async_trait::async_trait;
+    use parking_lot::Mutex as PlMutex;
+    use std::sync::Arc;
+    use xiaoguai_im_feishu::FeishuProvider;
+    use xiaoguai_im_gateway::{
+        run_agent_and_reply, ConversationIdent, GatewayState, HistoryError, ImHistoryStore,
+        ImProvider, IncomingMessage,
+    };
+    use xiaoguai_llm::Message as LlmMessage;
+
+    /// Records the request's tenant_id so the test can assert routing
+    /// flowed through `AgentConfig.tenant_id` → `ChatRequest.tenant_id`.
+    struct CapturingBackend {
+        captured_tenant: Arc<PlMutex<Option<String>>>,
+    }
+
+    #[async_trait]
+    impl LlmBackend for CapturingBackend {
+        async fn chat_stream(
+            &self,
+            req: xiaoguai_llm::ChatRequest,
+        ) -> Result<xiaoguai_llm::ChatStream, xiaoguai_llm::LlmError> {
+            *self.captured_tenant.lock() = req.tenant_id.clone();
+            let chunks = vec![
+                Ok(xiaoguai_llm::ChatChunk {
+                    delta: "ok".into(),
+                    ..Default::default()
+                }),
+                Ok(xiaoguai_llm::ChatChunk {
+                    delta: String::new(),
+                    tool_calls: vec![],
+                    finish_reason: Some(xiaoguai_llm::FinishReason::Stop),
+                    done: true,
+                }),
+            ];
+            Ok(Box::pin(futures::stream::iter(chunks)))
+        }
+        fn name(&self) -> &'static str {
+            "capturing"
+        }
+    }
+
+    /// Tiny stub store that always reports "ten_fixed".
+    struct FixedTenantStore {
+        inner: PlMutex<Vec<LlmMessage>>,
+    }
+
+    #[async_trait]
+    impl ImHistoryStore for FixedTenantStore {
+        async fn snapshot(
+            &self,
+            _ident: &ConversationIdent,
+        ) -> Result<Vec<LlmMessage>, HistoryError> {
+            Ok(self.inner.lock().clone())
+        }
+        async fn extend(
+            &self,
+            _ident: &ConversationIdent,
+            msgs: Vec<LlmMessage>,
+        ) -> Result<(), HistoryError> {
+            self.inner.lock().extend(msgs);
+            Ok(())
+        }
+        async fn resolve_tenant(
+            &self,
+            _ident: &ConversationIdent,
+        ) -> Result<Option<String>, HistoryError> {
+            Ok(Some("ten_fixed".into()))
+        }
+    }
+
+    let captured = Arc::new(PlMutex::new(None));
+    let backend: Arc<dyn LlmBackend> = Arc::new(CapturingBackend {
+        captured_tenant: captured.clone(),
+    });
+    let sessions = InMemorySessionRepo::arc();
+    let messages = InMemoryMessageRepo::arc();
+    let app_state = AppState {
+        sessions,
+        messages,
+        backend,
+        toolbox: Arc::new(Toolbox::new()),
+        agent_defaults: AgentConfig::new("mock"),
+        cancels: Arc::new(CancelRegistry::new()),
+        mcp_servers: None,
+        auth: None,
+        authz: None,
+        tenants: None,
+        rate_limiter: None,
+        audit: None,
+        audit_verifier: None,
+        mcp_publish_enabled: false,
+    };
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
+    let history: Arc<dyn ImHistoryStore> = Arc::new(FixedTenantStore {
+        inner: PlMutex::new(Vec::new()),
+    });
+    let state = GatewayState {
+        app: app_state,
+        feishu: provider,
+        history,
+    };
+    let msg = IncomingMessage {
+        provider: "feishu".into(),
+        user_external_id: "ou".into(),
+        tenant_external_id: "tk".into(),
+        conversation_id: "oc".into(),
+        text: "hi".into(),
+        event_id: "evt".into(),
+    };
+    run_agent_and_reply(state, msg).await.expect("ok");
+    assert_eq!(captured.lock().as_deref(), Some("ten_fixed"));
+}
+
 /// v0.7.2/v0.7.3: prove that subsequent webhooks for the *same*
 /// conversation_id see the accumulated history, while a different
 /// conversation_id does not. Driven through `run_agent_and_reply`
@@ -178,6 +302,7 @@ async fn conversation_history_accumulates_per_chat() {
         tenants: None,
         rate_limiter: None,
         audit: None,
+        audit_verifier: None,
         mcp_publish_enabled: false,
     };
     let sink = Arc::new(Mutex::new(Vec::new()));

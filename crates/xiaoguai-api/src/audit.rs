@@ -49,6 +49,26 @@ pub trait AuditReader: Send + Sync {
     ) -> Result<Vec<AuditEntryView>, AuditError>;
 }
 
+/// v0.6.5 — chain-integrity verifier surfaced via
+/// `GET /v1/admin/audit/verify`. Reports the row id at which the chain
+/// breaks (`Err(VerifyReport::Broken { row_id })`) or the count of
+/// verified rows on success. Production wires the
+/// `xiaoguai-audit::PgAuditSink` implementation.
+#[async_trait]
+pub trait AuditVerifier: Send + Sync {
+    async fn verify_tenant(&self, tenant_id: &str) -> Result<VerifyReport, AuditError>;
+}
+
+/// Outcome of a chain-integrity walk for one tenant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifyReport {
+    /// All rows verified; `verified_count` rows were walked.
+    Ok { verified_count: u64 },
+    /// Chain broke at the given row id. The endpoint returns 200 with
+    /// `{"ok": false, "broken_at": rowid}` so monitoring can scrape it.
+    Broken { broken_at: i64 },
+}
+
 /// In-memory `AuditReader` used by route tests. Holds a fixed list and
 /// filters on read.
 #[derive(Debug, Default)]
@@ -85,6 +105,40 @@ impl AuditReader for StaticAuditReader {
             .take(take)
             .cloned()
             .collect())
+    }
+}
+
+/// In-memory `AuditVerifier` for tests. Holds a fixed verdict per tenant
+/// so route tests can exercise both the success and broken-chain branches
+/// without standing up Postgres.
+#[derive(Debug, Default, Clone)]
+pub struct StaticAuditVerifier {
+    pub verdicts: std::collections::HashMap<String, VerifyReport>,
+}
+
+impl StaticAuditVerifier {
+    #[must_use]
+    pub fn with_verdict(tenant_id: impl Into<String>, report: VerifyReport) -> Self {
+        let mut v = Self::default();
+        v.verdicts.insert(tenant_id.into(), report);
+        v
+    }
+
+    #[must_use]
+    pub fn add(mut self, tenant_id: impl Into<String>, report: VerifyReport) -> Self {
+        self.verdicts.insert(tenant_id.into(), report);
+        self
+    }
+}
+
+#[async_trait]
+impl AuditVerifier for StaticAuditVerifier {
+    async fn verify_tenant(&self, tenant_id: &str) -> Result<VerifyReport, AuditError> {
+        Ok(self
+            .verdicts
+            .get(tenant_id)
+            .cloned()
+            .unwrap_or(VerifyReport::Ok { verified_count: 0 }))
     }
 }
 

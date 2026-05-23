@@ -174,6 +174,25 @@ impl ImHistoryStore for PgImHistoryStore {
         Ok(rows.iter().filter_map(domain_to_llm).collect())
     }
 
+    async fn resolve_tenant(
+        &self,
+        ident: &ConversationIdent,
+    ) -> Result<Option<String>, HistoryError> {
+        let identity = self
+            .identities
+            .resolve_or_create_identity(
+                ExternalIdentity {
+                    provider: &ident.provider,
+                    tenant_external_id: &ident.tenant_external_id,
+                    user_external_id: &ident.user_external_id,
+                },
+                None,
+            )
+            .await
+            .map_err(backend_err)?;
+        Ok(Some(identity.tenant_id))
+    }
+
     async fn extend(
         &self,
         ident: &ConversationIdent,

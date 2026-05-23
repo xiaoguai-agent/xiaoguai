@@ -21,7 +21,7 @@ use xiaoguai_storage::repositories::{
     McpServerRepository, MessageRepository, SessionRepository, TenantRepository,
 };
 
-use crate::audit::AuditReader;
+use crate::audit::{AuditReader, AuditVerifier};
 use crate::auth::TokenValidator;
 
 /// Registry of cancellation tokens keyed by `session_id`. A single token per
@@ -96,6 +96,11 @@ pub struct AppState {
     /// HMAC-chained audit log; production wires the
     /// `xiaoguai-audit::PgAuditSink` reader.
     pub audit: Option<Arc<dyn AuditReader>>,
+    /// v0.6.5: `None` = `/v1/admin/audit/verify` returns 503.
+    /// `Some(...)` exposes per-tenant chain integrity verification;
+    /// production wires `PgAuditSink` (which implements both reader and
+    /// verifier behind the same sink).
+    pub audit_verifier: Option<Arc<dyn AuditVerifier>>,
     /// v0.9.1: when true, mount `/v1/mcp/serve` so external agents can
     /// consume xiaoguai's `Toolbox` over Streamable HTTP. Default off —
     /// publishing tools is an explicit operator decision.

@@ -85,6 +85,7 @@ fn build_state(
         tenants,
         rate_limiter: limiter,
         audit: None,
+        audit_verifier: None,
         mcp_publish_enabled: false,
     }
 }
@@ -305,6 +306,93 @@ async fn admin_audit_503s_when_reader_not_wired() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn admin_audit_verify_returns_ok_for_unbroken_chain() {
+    use xiaoguai_api::{AuditVerifier, StaticAuditVerifier, VerifyReport};
+    let v: Arc<dyn AuditVerifier> = Arc::new(StaticAuditVerifier::with_verdict(
+        "ten_a",
+        VerifyReport::Ok { verified_count: 7 },
+    ));
+    let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+    state.audit_verifier = Some(v);
+    let app = router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/admin/audit/verify?tenant_id=ten_a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), 1024).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["verified_count"], 7);
+    assert!(body.get("broken_at").is_none() || body["broken_at"].is_null());
+}
+
+#[tokio::test]
+async fn admin_audit_verify_reports_broken_chain() {
+    use xiaoguai_api::{AuditVerifier, StaticAuditVerifier, VerifyReport};
+    let v: Arc<dyn AuditVerifier> = Arc::new(StaticAuditVerifier::with_verdict(
+        "ten_a",
+        VerifyReport::Broken { broken_at: 42 },
+    ));
+    let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+    state.audit_verifier = Some(v);
+    let app = router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/admin/audit/verify?tenant_id=ten_a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), 1024).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["broken_at"], 42);
+}
+
+#[tokio::test]
+async fn admin_audit_verify_503s_when_verifier_not_wired() {
+    let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/admin/audit/verify?tenant_id=ten_a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn admin_audit_verify_400s_when_tenant_missing() {
+    use xiaoguai_api::{AuditVerifier, StaticAuditVerifier};
+    let v: Arc<dyn AuditVerifier> = Arc::new(StaticAuditVerifier::default());
+    let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+    state.audit_verifier = Some(v);
+    let app = router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/admin/audit/verify")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
