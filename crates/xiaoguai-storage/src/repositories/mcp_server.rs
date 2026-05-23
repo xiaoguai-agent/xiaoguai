@@ -2,8 +2,8 @@
 //!
 //! Pattern mirrors `llm_provider.rs`: `tenant_id IS NULL` = system-wide, RLS
 //! policy `tenant_or_global_isolation_mcp` enforces visibility at the DB
-//! layer. Tests connect as superuser and exercise scope filtering via the
-//! repo's own WHERE clauses.
+//! layer. Each method runs inside a transaction scoped via
+//! [`begin_tenant_tx`] so the GUC is set when the caller supplies a tenant.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -14,16 +14,18 @@ use xiaoguai_types::{
 };
 
 use crate::repositories::error::{RepoError, RepoResult};
+use crate::repositories::tenant_ctx::begin_tenant_tx;
 
 #[async_trait]
 pub trait McpServerRepository: Send + Sync {
-    async fn create(&self, server: &McpServer) -> RepoResult<()>;
-    async fn find_by_id(&self, id: &str) -> RepoResult<Option<McpServer>>;
+    async fn create(&self, tenant: Option<&str>, server: &McpServer) -> RepoResult<()>;
+    async fn find_by_id(&self, tenant: Option<&str>, id: &str) -> RepoResult<Option<McpServer>>;
     /// System-wide rows (tenant_id IS NULL), ordered by name + version.
     async fn list_global(&self) -> RepoResult<Vec<McpServer>>;
-    /// System-wide rows plus rows scoped to `tenant_id`.
+    /// System-wide rows plus rows scoped to `tenant_id`. The supplied
+    /// `tenant_id` doubles as the RLS GUC value.
     async fn list_for_tenant(&self, tenant_id: &str) -> RepoResult<Vec<McpServer>>;
-    async fn delete(&self, id: &str) -> RepoResult<()>;
+    async fn delete(&self, tenant: Option<&str>, id: &str) -> RepoResult<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -83,9 +85,10 @@ const SELECT_COLUMNS: &str = "id, tenant_id, name, version, transport, command, 
 
 #[async_trait]
 impl McpServerRepository for PgMcpServerRepository {
-    async fn create(&self, s: &McpServer) -> RepoResult<()> {
+    async fn create(&self, tenant: Option<&str>, s: &McpServer) -> RepoResult<()> {
         let args = serde_json::to_value(&s.args)?;
         let env_keys = serde_json::to_value(&s.env_keys)?;
+        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         sqlx::query(
             "INSERT INTO mcp_servers \
              (id, tenant_id, name, version, transport, command, args, env_keys, \
@@ -104,54 +107,63 @@ impl McpServerRepository for PgMcpServerRepository {
         .bind(s.enabled)
         .bind(s.created_at)
         .bind(s.updated_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         Ok(())
     }
 
-    async fn find_by_id(&self, id: &str) -> RepoResult<Option<McpServer>> {
+    async fn find_by_id(&self, tenant: Option<&str>, id: &str) -> RepoResult<Option<McpServer>> {
+        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         let row = sqlx::query_as::<_, McpServerRow>(&format!(
             "SELECT {SELECT_COLUMNS} FROM mcp_servers WHERE id = $1"
         ))
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         row.map(McpServerRow::into_domain).transpose()
     }
 
     async fn list_global(&self) -> RepoResult<Vec<McpServer>> {
+        let mut tx = begin_tenant_tx(&self.pool, None).await?;
         let rows = sqlx::query_as::<_, McpServerRow>(&format!(
             "SELECT {SELECT_COLUMNS} FROM mcp_servers \
              WHERE tenant_id IS NULL \
              ORDER BY name ASC, version ASC, created_at ASC"
         ))
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         rows.into_iter().map(McpServerRow::into_domain).collect()
     }
 
     async fn list_for_tenant(&self, tenant_id: &str) -> RepoResult<Vec<McpServer>> {
+        let mut tx = begin_tenant_tx(&self.pool, Some(tenant_id)).await?;
         let rows = sqlx::query_as::<_, McpServerRow>(&format!(
             "SELECT {SELECT_COLUMNS} FROM mcp_servers \
              WHERE tenant_id IS NULL OR tenant_id = $1 \
              ORDER BY (tenant_id IS NOT NULL) ASC, name ASC, version ASC, created_at ASC"
         ))
         .bind(tenant_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         rows.into_iter().map(McpServerRow::into_domain).collect()
     }
 
-    async fn delete(&self, id: &str) -> RepoResult<()> {
+    async fn delete(&self, tenant: Option<&str>, id: &str) -> RepoResult<()> {
+        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         sqlx::query("DELETE FROM mcp_servers WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         Ok(())
     }
 }

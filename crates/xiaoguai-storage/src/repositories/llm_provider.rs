@@ -2,8 +2,10 @@
 //!
 //! A row's `tenant_id` is `None` for system-wide providers visible to every
 //! tenant. RLS policy `tenant_or_global_isolation` enforces this at the DB
-//! layer; the repo also filters explicitly so that callers connected as
-//! superuser (tests) still see the intended scope.
+//! layer: rows with `tenant_id IS NULL` are always visible; tenant-scoped
+//! rows require the `app.current_tenant_id` GUC to match. Every method on
+//! this repo runs inside a tenant-scoped transaction via
+//! [`begin_tenant_tx`]; the GUC is set when the caller supplies a tenant.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -14,19 +16,20 @@ use xiaoguai_types::{
 };
 
 use crate::repositories::error::{RepoError, RepoResult};
+use crate::repositories::tenant_ctx::begin_tenant_tx;
 
 #[async_trait]
 pub trait LlmProviderRepository: Send + Sync {
-    async fn create(&self, prov: &LlmProvider) -> RepoResult<()>;
-    async fn find_by_id(&self, id: &str) -> RepoResult<Option<LlmProvider>>;
+    async fn create(&self, tenant: Option<&str>, prov: &LlmProvider) -> RepoResult<()>;
+    async fn find_by_id(&self, tenant: Option<&str>, id: &str) -> RepoResult<Option<LlmProvider>>;
     /// Return system-wide providers (rows with `tenant_id IS NULL`), ordered
-    /// by `fallback_order` ascending.
+    /// by `fallback_order` ascending. Admin/cross-tenant — no GUC is set.
     async fn list_global(&self) -> RepoResult<Vec<LlmProvider>>;
     /// Return system-wide providers plus rows scoped to `tenant_id`, ordered
     /// by `fallback_order` ascending. Tenant rows come after globals when
-    /// orders tie.
+    /// orders tie. The supplied `tenant_id` doubles as the RLS GUC value.
     async fn list_for_tenant(&self, tenant_id: &str) -> RepoResult<Vec<LlmProvider>>;
-    async fn delete(&self, id: &str) -> RepoResult<()>;
+    async fn delete(&self, tenant: Option<&str>, id: &str) -> RepoResult<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -84,9 +87,10 @@ const SELECT_COLUMNS: &str = "id, tenant_id, name, kind, endpoint, models, defau
 
 #[async_trait]
 impl LlmProviderRepository for PgLlmProviderRepository {
-    async fn create(&self, prov: &LlmProvider) -> RepoResult<()> {
+    async fn create(&self, tenant: Option<&str>, prov: &LlmProvider) -> RepoResult<()> {
         let models = serde_json::to_value(&prov.models)?;
         let defaults = serde_json::to_value(&prov.default_for_models)?;
+        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         sqlx::query(
             "INSERT INTO llm_providers \
              (id, tenant_id, name, kind, endpoint, models, default_for_models, \
@@ -104,36 +108,42 @@ impl LlmProviderRepository for PgLlmProviderRepository {
         .bind(prov.api_key_env.as_deref())
         .bind(prov.created_at)
         .bind(prov.updated_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         Ok(())
     }
 
-    async fn find_by_id(&self, id: &str) -> RepoResult<Option<LlmProvider>> {
+    async fn find_by_id(&self, tenant: Option<&str>, id: &str) -> RepoResult<Option<LlmProvider>> {
+        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         let row = sqlx::query_as::<_, LlmProviderRow>(&format!(
             "SELECT {SELECT_COLUMNS} FROM llm_providers WHERE id = $1"
         ))
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         row.map(LlmProviderRow::into_domain).transpose()
     }
 
     async fn list_global(&self) -> RepoResult<Vec<LlmProvider>> {
+        let mut tx = begin_tenant_tx(&self.pool, None).await?;
         let rows = sqlx::query_as::<_, LlmProviderRow>(&format!(
             "SELECT {SELECT_COLUMNS} FROM llm_providers \
              WHERE tenant_id IS NULL \
              ORDER BY fallback_order ASC, created_at ASC"
         ))
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         rows.into_iter().map(LlmProviderRow::into_domain).collect()
     }
 
     async fn list_for_tenant(&self, tenant_id: &str) -> RepoResult<Vec<LlmProvider>> {
+        let mut tx = begin_tenant_tx(&self.pool, Some(tenant_id)).await?;
         // Globals first (tenant_id IS NULL sorts NULLs LAST by default, so use a
         // computed key that puts globals before tenant rows when fallback_order ties).
         let rows = sqlx::query_as::<_, LlmProviderRow>(&format!(
@@ -142,18 +152,21 @@ impl LlmProviderRepository for PgLlmProviderRepository {
              ORDER BY fallback_order ASC, (tenant_id IS NOT NULL) ASC, created_at ASC"
         ))
         .bind(tenant_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         rows.into_iter().map(LlmProviderRow::into_domain).collect()
     }
 
-    async fn delete(&self, id: &str) -> RepoResult<()> {
+    async fn delete(&self, tenant: Option<&str>, id: &str) -> RepoResult<()> {
+        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         sqlx::query("DELETE FROM llm_providers WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
         Ok(())
     }
 }

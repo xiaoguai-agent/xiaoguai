@@ -46,9 +46,9 @@ async fn create_and_find_by_id_global_provider() {
     let repo = PgLlmProviderRepository::new(pool);
     let prov = sample_provider("deepseek-global", None);
 
-    repo.create(&prov).await.expect("create");
+    repo.create(None, &prov).await.expect("create");
     let found = repo
-        .find_by_id(prov.id.as_str())
+        .find_by_id(None, prov.id.as_str())
         .await
         .expect("query")
         .expect("present");
@@ -73,10 +73,10 @@ async fn create_tenant_scoped_provider() {
 
     let prov_repo = PgLlmProviderRepository::new(pool);
     let prov = sample_provider("alpha-deepseek", Some(tenant.id.clone()));
-    prov_repo.create(&prov).await.expect("create");
+    prov_repo.create(None, &prov).await.expect("create");
 
     let found = prov_repo
-        .find_by_id(prov.id.as_str())
+        .find_by_id(None, prov.id.as_str())
         .await
         .expect("query")
         .expect("present");
@@ -94,8 +94,11 @@ async fn duplicate_name_in_same_scope_is_rejected() {
     let p1 = sample_provider("dup", None);
     let p2 = sample_provider("dup", None);
 
-    repo.create(&p1).await.expect("first");
-    let err = repo.create(&p2).await.expect_err("second should fail");
+    repo.create(None, &p1).await.expect("first");
+    let err = repo
+        .create(None, &p2)
+        .await
+        .expect_err("second should fail");
     assert!(matches!(err, RepoError::DuplicateKey(_)), "got: {err:?}");
 }
 
@@ -114,9 +117,9 @@ async fn same_name_allowed_across_different_scopes() {
     let in_t1 = sample_provider("provider-a", Some(t1.id.clone()));
     let in_t2 = sample_provider("provider-a", Some(t2.id.clone()));
 
-    repo.create(&global).await.expect("global");
-    repo.create(&in_t1).await.expect("t1");
-    repo.create(&in_t2).await.expect("t2");
+    repo.create(None, &global).await.expect("global");
+    repo.create(None, &in_t1).await.expect("t1");
+    repo.create(None, &in_t2).await.expect("t2");
 }
 
 #[tokio::test]
@@ -130,13 +133,13 @@ async fn list_for_tenant_returns_globals_plus_tenant_rows() {
     tenant_repo.create(&t2).await.expect("t2");
 
     let repo = PgLlmProviderRepository::new(pool);
-    repo.create(&sample_provider("global-1", None))
+    repo.create(None, &sample_provider("global-1", None))
         .await
         .expect("g1");
-    repo.create(&sample_provider("t1-only", Some(t1.id.clone())))
+    repo.create(None, &sample_provider("t1-only", Some(t1.id.clone())))
         .await
         .expect("t1");
-    repo.create(&sample_provider("t2-only", Some(t2.id.clone())))
+    repo.create(None, &sample_provider("t2-only", Some(t2.id.clone())))
         .await
         .expect("t2");
 
@@ -156,13 +159,13 @@ async fn list_global_returns_only_global_rows() {
     tenant_repo.create(&t).await.expect("t");
 
     let repo = PgLlmProviderRepository::new(pool);
-    repo.create(&sample_provider("global-1", None))
+    repo.create(None, &sample_provider("global-1", None))
         .await
         .expect("g1");
-    repo.create(&sample_provider("global-2", None))
+    repo.create(None, &sample_provider("global-2", None))
         .await
         .expect("g2");
-    repo.create(&sample_provider("t-row", Some(t.id.clone())))
+    repo.create(None, &sample_provider("t-row", Some(t.id.clone())))
         .await
         .expect("t-row");
 
@@ -179,11 +182,15 @@ async fn delete_idempotent() {
     let (pool, _pg) = common::test_setup().await;
     let repo = PgLlmProviderRepository::new(pool);
     let prov = sample_provider("del-me", None);
-    repo.create(&prov).await.expect("create");
-    repo.delete(prov.id.as_str()).await.expect("first delete");
-    repo.delete(prov.id.as_str()).await.expect("second delete");
+    repo.create(None, &prov).await.expect("create");
+    repo.delete(None, prov.id.as_str())
+        .await
+        .expect("first delete");
+    repo.delete(None, prov.id.as_str())
+        .await
+        .expect("second delete");
     assert!(repo
-        .find_by_id(prov.id.as_str())
+        .find_by_id(None, prov.id.as_str())
         .await
         .expect("query")
         .is_none());

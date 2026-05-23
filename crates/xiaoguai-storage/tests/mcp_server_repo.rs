@@ -50,9 +50,9 @@ async fn create_and_find_by_id_global() {
     let (pool, _pg) = common::test_setup().await;
     let repo = PgMcpServerRepository::new(pool);
     let server = sample_stdio("fs", "1.0.0", None);
-    repo.create(&server).await.expect("create");
+    repo.create(None, &server).await.expect("create");
     let found = repo
-        .find_by_id(server.id.as_str())
+        .find_by_id(None, server.id.as_str())
         .await
         .expect("query")
         .expect("present");
@@ -74,13 +74,13 @@ async fn list_for_tenant_filters_correctly() {
     trepo.create(&t2).await.unwrap();
 
     let repo = PgMcpServerRepository::new(pool);
-    repo.create(&sample_stdio("global", "1.0", None))
+    repo.create(None, &sample_stdio("global", "1.0", None))
         .await
         .unwrap();
-    repo.create(&sample_stdio("t1-only", "1.0", Some(t1.id.clone())))
+    repo.create(None, &sample_stdio("t1-only", "1.0", Some(t1.id.clone())))
         .await
         .unwrap();
-    repo.create(&sample_stdio("t2-only", "1.0", Some(t2.id.clone())))
+    repo.create(None, &sample_stdio("t2-only", "1.0", Some(t2.id.clone())))
         .await
         .unwrap();
 
@@ -96,11 +96,11 @@ async fn list_for_tenant_filters_correctly() {
 async fn duplicate_name_version_in_scope_rejected() {
     let (pool, _pg) = common::test_setup().await;
     let repo = PgMcpServerRepository::new(pool);
-    repo.create(&sample_stdio("fs", "1.0.0", None))
+    repo.create(None, &sample_stdio("fs", "1.0.0", None))
         .await
         .unwrap();
     let err = repo
-        .create(&sample_stdio("fs", "1.0.0", None))
+        .create(None, &sample_stdio("fs", "1.0.0", None))
         .await
         .unwrap_err();
     assert!(matches!(err, RepoError::DuplicateKey(_)), "{err:?}");
@@ -111,10 +111,10 @@ async fn duplicate_name_version_in_scope_rejected() {
 async fn same_name_different_version_ok() {
     let (pool, _pg) = common::test_setup().await;
     let repo = PgMcpServerRepository::new(pool);
-    repo.create(&sample_stdio("fs", "1.0.0", None))
+    repo.create(None, &sample_stdio("fs", "1.0.0", None))
         .await
         .unwrap();
-    repo.create(&sample_stdio("fs", "1.1.0", None))
+    repo.create(None, &sample_stdio("fs", "1.1.0", None))
         .await
         .unwrap();
 }
@@ -125,8 +125,12 @@ async fn delete_idempotent() {
     let (pool, _pg) = common::test_setup().await;
     let repo = PgMcpServerRepository::new(pool);
     let s = sample_stdio("d", "1.0", None);
-    repo.create(&s).await.unwrap();
-    repo.delete(s.id.as_str()).await.unwrap();
-    repo.delete(s.id.as_str()).await.unwrap();
-    assert!(repo.find_by_id(s.id.as_str()).await.unwrap().is_none());
+    repo.create(None, &s).await.unwrap();
+    repo.delete(None, s.id.as_str()).await.unwrap();
+    repo.delete(None, s.id.as_str()).await.unwrap();
+    assert!(repo
+        .find_by_id(None, s.id.as_str())
+        .await
+        .unwrap()
+        .is_none());
 }

@@ -86,10 +86,10 @@ async fn create_then_find_roundtrip() {
     let repo = PgSessionRepository::new(pool.clone());
 
     let session = fixture_session(&tenant, &user, "gpt-4o-mini");
-    repo.create(&session).await.expect("create");
+    repo.create(None, &session).await.expect("create");
 
     let fetched = repo
-        .find_by_id(session.id.as_str())
+        .find_by_id(None, session.id.as_str())
         .await
         .expect("find")
         .expect("present");
@@ -98,7 +98,10 @@ async fn create_then_find_roundtrip() {
     assert_eq!(fetched.model, "gpt-4o-mini");
     assert_eq!(fetched.status, SessionStatus::Active);
 
-    let missing = repo.find_by_id("sess_doesnotexist").await.expect("find");
+    let missing = repo
+        .find_by_id(None, "sess_doesnotexist")
+        .await
+        .expect("find");
     assert!(missing.is_none());
 }
 
@@ -117,26 +120,35 @@ async fn list_by_user_orders_by_updated_at_desc_with_pagination() {
         let mut s = fixture_session(&tenant, &user, "gpt-4o-mini");
         s.created_at = base + Duration::hours(i);
         s.updated_at = base + Duration::hours(i);
-        repo.create(&s).await.expect("create");
+        repo.create(None, &s).await.expect("create");
         ids.push(s.id);
     }
 
-    let page1 = repo.list_by_user(user.as_str(), 2, 0).await.expect("page1");
+    let page1 = repo
+        .list_by_user(None, user.as_str(), 2, 0)
+        .await
+        .expect("page1");
     assert_eq!(page1.len(), 2);
     // Newest (highest updated_at, last inserted) first.
     assert_eq!(page1[0].id.as_str(), ids[4].as_str());
     assert_eq!(page1[1].id.as_str(), ids[3].as_str());
 
-    let page2 = repo.list_by_user(user.as_str(), 2, 2).await.expect("page2");
+    let page2 = repo
+        .list_by_user(None, user.as_str(), 2, 2)
+        .await
+        .expect("page2");
     assert_eq!(page2.len(), 2);
     assert_eq!(page2[0].id.as_str(), ids[2].as_str());
     assert_eq!(page2[1].id.as_str(), ids[1].as_str());
 
-    let page3 = repo.list_by_user(user.as_str(), 2, 4).await.expect("page3");
+    let page3 = repo
+        .list_by_user(None, user.as_str(), 2, 4)
+        .await
+        .expect("page3");
     assert_eq!(page3.len(), 1);
     assert_eq!(page3[0].id.as_str(), ids[0].as_str());
 
-    let neg = repo.list_by_user(user.as_str(), -1, 0).await;
+    let neg = repo.list_by_user(None, user.as_str(), -1, 0).await;
     assert!(matches!(neg, Err(RepoError::InvalidArgument(_))));
 }
 
@@ -150,18 +162,18 @@ async fn touch_bumps_updated_at_and_errors_on_missing() {
     let mut session = fixture_session(&tenant, &user, "gpt-4o-mini");
     session.updated_at = Utc::now() - Duration::hours(1);
     session.created_at = session.updated_at;
-    repo.create(&session).await.expect("create");
+    repo.create(None, &session).await.expect("create");
 
-    repo.touch(session.id.as_str()).await.expect("touch");
+    repo.touch(None, session.id.as_str()).await.expect("touch");
 
     let after = repo
-        .find_by_id(session.id.as_str())
+        .find_by_id(None, session.id.as_str())
         .await
         .expect("find")
         .expect("present");
     assert!(after.updated_at > session.updated_at);
 
-    let missing = repo.touch("sess_nope").await;
+    let missing = repo.touch(None, "sess_nope").await;
     assert!(matches!(missing, Err(RepoError::NotFound)));
 }
 
@@ -173,17 +185,19 @@ async fn archive_sets_status_and_errors_on_missing() {
     let repo = PgSessionRepository::new(pool.clone());
 
     let session = fixture_session(&tenant, &user, "gpt-4o-mini");
-    repo.create(&session).await.expect("create");
-    repo.archive(session.id.as_str()).await.expect("archive");
+    repo.create(None, &session).await.expect("create");
+    repo.archive(None, session.id.as_str())
+        .await
+        .expect("archive");
 
     let after = repo
-        .find_by_id(session.id.as_str())
+        .find_by_id(None, session.id.as_str())
         .await
         .expect("find")
         .expect("present");
     assert_eq!(after.status, SessionStatus::Archived);
 
-    let missing = repo.archive("sess_nope").await;
+    let missing = repo.archive(None, "sess_nope").await;
     assert!(matches!(missing, Err(RepoError::NotFound)));
 }
 
@@ -195,15 +209,22 @@ async fn delete_is_idempotent_and_cascades_via_fk() {
     let repo = PgSessionRepository::new(pool.clone());
 
     let session = fixture_session(&tenant, &user, "gpt-4o-mini");
-    repo.create(&session).await.expect("create");
+    repo.create(None, &session).await.expect("create");
 
     // First delete removes the row.
-    repo.delete(session.id.as_str()).await.expect("delete1");
-    let gone = repo.find_by_id(session.id.as_str()).await.expect("find");
+    repo.delete(None, session.id.as_str())
+        .await
+        .expect("delete1");
+    let gone = repo
+        .find_by_id(None, session.id.as_str())
+        .await
+        .expect("find");
     assert!(gone.is_none());
 
     // Second delete is a no-op (idempotent).
-    repo.delete(session.id.as_str()).await.expect("delete2");
+    repo.delete(None, session.id.as_str())
+        .await
+        .expect("delete2");
 }
 
 #[tokio::test]
@@ -214,7 +235,7 @@ async fn duplicate_create_returns_duplicate_key() {
     let repo = PgSessionRepository::new(pool.clone());
 
     let session = fixture_session(&tenant, &user, "gpt-4o-mini");
-    repo.create(&session).await.expect("first insert");
-    let err = repo.create(&session).await.expect_err("dup");
+    repo.create(None, &session).await.expect("first insert");
+    let err = repo.create(None, &session).await.expect_err("dup");
     assert!(matches!(err, RepoError::DuplicateKey(_)));
 }

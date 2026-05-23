@@ -22,7 +22,7 @@ struct MemoryRepo {
 
 #[async_trait]
 impl LlmProviderRepository for MemoryRepo {
-    async fn create(&self, prov: &LlmProvider) -> RepoResult<()> {
+    async fn create(&self, _tenant: Option<&str>, prov: &LlmProvider) -> RepoResult<()> {
         let key_scope = prov.tenant_id.as_ref().map(|t| t.as_str().to_string());
         let mut rows = self.rows.lock();
         // Reject duplicate (scope, name) to mirror the PG unique index.
@@ -38,7 +38,7 @@ impl LlmProviderRepository for MemoryRepo {
         Ok(())
     }
 
-    async fn find_by_id(&self, id: &str) -> RepoResult<Option<LlmProvider>> {
+    async fn find_by_id(&self, _tenant: Option<&str>, id: &str) -> RepoResult<Option<LlmProvider>> {
         Ok(self.rows.lock().get(id).cloned())
     }
 
@@ -71,7 +71,7 @@ impl LlmProviderRepository for MemoryRepo {
         Ok(out)
     }
 
-    async fn delete(&self, id: &str) -> RepoResult<()> {
+    async fn delete(&self, _tenant: Option<&str>, id: &str) -> RepoResult<()> {
         self.rows.lock().remove(id);
         Ok(())
     }

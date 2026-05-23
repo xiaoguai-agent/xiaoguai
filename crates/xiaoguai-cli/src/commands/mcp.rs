@@ -59,6 +59,7 @@ pub async fn register(repo: &dyn McpServerRepository, args: RegisterArgs) -> Res
     }
 
     let now = Utc::now();
+    let tenant_guc = args.tenant.clone();
     let server = McpServer {
         id: McpServerInstanceId::new(),
         tenant_id: args.tenant.map(TenantId::from),
@@ -73,7 +74,7 @@ pub async fn register(repo: &dyn McpServerRepository, args: RegisterArgs) -> Res
         created_at: now,
         updated_at: now,
     };
-    repo.create(&server).await?;
+    repo.create(tenant_guc.as_deref(), &server).await?;
     Ok(server)
 }
 
@@ -99,7 +100,9 @@ pub async fn remove(repo: &dyn McpServerRepository, args: RemoveArgs) -> Result<
     if args.id.trim().is_empty() {
         return Err(anyhow!("--id must not be empty"));
     }
-    repo.delete(&args.id).await?;
+    // Admin CLI: caller may not know the tenant; rely on superuser/owner
+    // bypass for RLS. v0.6.2 should add a `--tenant` flag to scope deletes.
+    repo.delete(None, &args.id).await?;
     Ok(())
 }
 

@@ -40,7 +40,7 @@ async fn batch_insert_and_list() {
         sample_entry("ten_a", 5, 15),
         sample_entry("ten_b", 100, 200),
     ];
-    repo.record_batch(&batch).await.expect("batch insert");
+    repo.record_batch(None, &batch).await.expect("batch insert");
 
     let listed_a = repo.list_for_tenant("ten_a", 10).await.expect("list a");
     assert_eq!(listed_a.len(), 2);
@@ -57,7 +57,7 @@ async fn batch_insert_and_list() {
 async fn empty_batch_is_noop() {
     let (pool, _pg) = common::test_setup().await;
     let repo = PgTokenUsageRepository::new(pool);
-    repo.record_batch(&[]).await.expect("empty batch");
+    repo.record_batch(None, &[]).await.expect("empty batch");
     let listed = repo.list_for_tenant("ten_any", 10).await.expect("list");
     assert!(listed.is_empty());
 }
@@ -80,7 +80,7 @@ async fn null_token_counts_are_stored() {
         total_tokens: None,
         request_id: None,
     };
-    repo.record_batch(&[entry]).await.expect("insert");
+    repo.record_batch(None, &[entry]).await.expect("insert");
     let listed = repo.list_for_tenant("ten_x", 1).await.expect("list");
     assert_eq!(listed.len(), 1);
     assert!(listed[0].entry.prompt_tokens.is_none());
@@ -94,7 +94,7 @@ async fn list_respects_limit() {
     let (pool, _pg) = common::test_setup().await;
     let repo = PgTokenUsageRepository::new(pool);
     let batch: Vec<_> = (0..5).map(|i| sample_entry("ten_l", i, i)).collect();
-    repo.record_batch(&batch).await.expect("batch");
+    repo.record_batch(None, &batch).await.expect("batch");
     let listed = repo.list_for_tenant("ten_l", 3).await.expect("list");
     assert_eq!(listed.len(), 3);
 }

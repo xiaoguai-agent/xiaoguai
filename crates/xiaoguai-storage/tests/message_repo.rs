@@ -75,7 +75,7 @@ async fn seed_session(pool: &PgPool, tenant: &TenantId, user: &UserId) -> Sessio
     };
     let id = s.id.clone();
     PgSessionRepository::new(pool.clone())
-        .create(&s)
+        .create(None, &s)
         .await
         .expect("create session");
     id
@@ -110,10 +110,10 @@ async fn append_and_list_roundtrip_text_content() {
             text: "Hello, 世界 🚀".to_string(),
         }],
     );
-    repo.append(&msg).await.expect("append");
+    repo.append(None, &msg).await.expect("append");
 
     let list = repo
-        .list_by_session(session_id.as_str(), 10, 0)
+        .list_by_session(None, session_id.as_str(), 10, 0)
         .await
         .expect("list");
     assert_eq!(list.len(), 1);
@@ -147,7 +147,9 @@ async fn append_jsonb_tool_call_and_tool_result_roundtrip() {
             },
         ],
     );
-    repo.append(&assistant_msg).await.expect("append assistant");
+    repo.append(None, &assistant_msg)
+        .await
+        .expect("append assistant");
 
     let tool_msg = fixture_message(
         &session_id,
@@ -158,10 +160,10 @@ async fn append_jsonb_tool_call_and_tool_result_roundtrip() {
             is_error: false,
         }],
     );
-    repo.append(&tool_msg).await.expect("append tool");
+    repo.append(None, &tool_msg).await.expect("append tool");
 
     let list = repo
-        .list_by_session(session_id.as_str(), 10, 0)
+        .list_by_session(None, session_id.as_str(), 10, 0)
         .await
         .expect("list");
     assert_eq!(list.len(), 2);
@@ -212,12 +214,12 @@ async fn list_orders_by_created_at_ascending_with_pagination() {
             }],
         );
         m.created_at = base + Duration::minutes(i);
-        repo.append(&m).await.expect("append");
+        repo.append(None, &m).await.expect("append");
         ids.push(m.id);
     }
 
     let page1 = repo
-        .list_by_session(session_id.as_str(), 2, 0)
+        .list_by_session(None, session_id.as_str(), 2, 0)
         .await
         .expect("page1");
     assert_eq!(page1.len(), 2);
@@ -225,7 +227,7 @@ async fn list_orders_by_created_at_ascending_with_pagination() {
     assert_eq!(page1[1].id.as_str(), ids[1].as_str());
 
     let page2 = repo
-        .list_by_session(session_id.as_str(), 2, 2)
+        .list_by_session(None, session_id.as_str(), 2, 2)
         .await
         .expect("page2");
     assert_eq!(page2.len(), 2);
@@ -233,7 +235,7 @@ async fn list_orders_by_created_at_ascending_with_pagination() {
     assert_eq!(page2[1].id.as_str(), ids[3].as_str());
 
     let count = repo
-        .count_by_session(session_id.as_str())
+        .count_by_session(None, session_id.as_str())
         .await
         .expect("count");
     assert_eq!(count, 4);
@@ -256,11 +258,11 @@ async fn cascading_delete_when_session_dropped() {
                 text: "hi".to_string(),
             }],
         );
-        msg_repo.append(&m).await.expect("append");
+        msg_repo.append(None, &m).await.expect("append");
     }
     assert_eq!(
         msg_repo
-            .count_by_session(session_id.as_str())
+            .count_by_session(None, session_id.as_str())
             .await
             .expect("count"),
         3
@@ -268,12 +270,12 @@ async fn cascading_delete_when_session_dropped() {
 
     // Drop the parent session — FK ON DELETE CASCADE should wipe messages.
     sess_repo
-        .delete(session_id.as_str())
+        .delete(None, session_id.as_str())
         .await
         .expect("delete session");
     assert_eq!(
         msg_repo
-            .count_by_session(session_id.as_str())
+            .count_by_session(None, session_id.as_str())
             .await
             .expect("count after cascade"),
         0
@@ -296,24 +298,24 @@ async fn delete_by_session_returns_rowcount_and_is_idempotent() {
                 text: "x".to_string(),
             }],
         );
-        repo.append(&m).await.expect("append");
+        repo.append(None, &m).await.expect("append");
     }
 
     let deleted = repo
-        .delete_by_session(session_id.as_str())
+        .delete_by_session(None, session_id.as_str())
         .await
         .expect("delete");
     assert_eq!(deleted, 2);
 
     // Idempotent — second call returns 0, no error.
     let again = repo
-        .delete_by_session(session_id.as_str())
+        .delete_by_session(None, session_id.as_str())
         .await
         .expect("delete again");
     assert_eq!(again, 0);
 
     assert_eq!(
-        repo.count_by_session(session_id.as_str())
+        repo.count_by_session(None, session_id.as_str())
             .await
             .expect("count"),
         0
