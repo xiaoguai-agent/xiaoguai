@@ -71,6 +71,7 @@ fn build_state_with_toolbox(toolbox: Toolbox, publish: bool) -> AppState {
         audit: None,
         audit_verifier: None,
         mcp_publish_enabled: publish,
+        mcp_supervisor: None,
     }
 }
 

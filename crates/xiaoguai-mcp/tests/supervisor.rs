@@ -60,3 +60,124 @@ async fn stop_unknown_key_is_noop() {
     let key = McpKey::new("ten_z", "missing", "9.9");
     sup.stop(&key).await.expect("noop");
 }
+
+/// v0.9.4.1: `reload_from_db` picks up newly inserted rows and stops rows
+/// that disappeared since the last reload. Uses an in-memory repository
+/// so the test stays Docker-free; spawn goes through the real
+/// `mock-mcp-server` fixture (same path `StdioMcpClient` takes in
+/// production).
+mod reload_from_db {
+    use super::*;
+    use async_trait::async_trait;
+    use parking_lot::Mutex;
+    use xiaoguai_storage::repositories::{McpServerRepository, RepoResult};
+    use xiaoguai_types::{ids::McpServerInstanceId, McpServer, McpTransport};
+
+    #[derive(Default)]
+    struct InMemRepo {
+        rows: Mutex<Vec<McpServer>>,
+    }
+
+    #[async_trait]
+    impl McpServerRepository for InMemRepo {
+        async fn create(&self, _t: Option<&str>, s: &McpServer) -> RepoResult<()> {
+            self.rows.lock().push(s.clone());
+            Ok(())
+        }
+        async fn find_by_id(&self, _t: Option<&str>, id: &str) -> RepoResult<Option<McpServer>> {
+            Ok(self
+                .rows
+                .lock()
+                .iter()
+                .find(|s| s.id.as_str() == id)
+                .cloned())
+        }
+        async fn list_global(&self) -> RepoResult<Vec<McpServer>> {
+            Ok(self
+                .rows
+                .lock()
+                .iter()
+                .filter(|s| s.tenant_id.is_none())
+                .cloned()
+                .collect())
+        }
+        async fn list_for_tenant(&self, _t: &str) -> RepoResult<Vec<McpServer>> {
+            // Tests in this module only exercise the global path.
+            self.list_global().await
+        }
+        async fn delete(&self, _t: Option<&str>, id: &str) -> RepoResult<()> {
+            self.rows.lock().retain(|s| s.id.as_str() != id);
+            Ok(())
+        }
+    }
+
+    fn fs_row(name: &str) -> McpServer {
+        let now = chrono::Utc::now();
+        McpServer {
+            id: McpServerInstanceId::new(),
+            tenant_id: None,
+            name: name.into(),
+            version: "1.0.0".into(),
+            transport: McpTransport::Stdio,
+            command: Some(fixture_bin().to_string()),
+            args: vec![],
+            env_keys: vec![],
+            endpoint: None,
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn picks_up_new_row_and_stops_removed_one() {
+        let repo = InMemRepo::default();
+        repo.create(None, &fs_row("fs-one")).await.unwrap();
+
+        let sup = McpSupervisor::new();
+        let started = sup.reload_from_db(&repo, None).await.unwrap();
+        assert_eq!(started.len(), 1, "first reload should start fs-one");
+        assert_eq!(sup.list_active().len(), 1);
+
+        // Add a second row, call reload — only fs-two should be newly
+        // started, fs-one already live.
+        repo.create(None, &fs_row("fs-two")).await.unwrap();
+        let started = sup.reload_from_db(&repo, None).await.unwrap();
+        assert_eq!(started.len(), 1);
+        assert_eq!(sup.list_active().len(), 2);
+
+        // Drop fs-one from the repo, reload again — supervisor should
+        // stop it but keep fs-two.
+        let ids: Vec<String> = repo
+            .rows
+            .lock()
+            .iter()
+            .filter(|s| s.name == "fs-one")
+            .map(|s| s.id.as_str().to_string())
+            .collect();
+        for id in ids {
+            repo.delete(None, &id).await.unwrap();
+        }
+        let started = sup.reload_from_db(&repo, None).await.unwrap();
+        assert!(started.is_empty(), "no new rows on third reload");
+        let live: Vec<_> = sup
+            .list_active()
+            .into_iter()
+            .map(|k| k.server_name)
+            .collect();
+        assert_eq!(live, vec!["fs-two".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn disabled_rows_are_not_started() {
+        let repo = InMemRepo::default();
+        let mut row = fs_row("fs-disabled");
+        row.enabled = false;
+        repo.create(None, &row).await.unwrap();
+
+        let sup = McpSupervisor::new();
+        let started = sup.reload_from_db(&repo, None).await.unwrap();
+        assert!(started.is_empty(), "disabled rows should be skipped");
+        assert_eq!(sup.list_active().len(), 0);
+    }
+}

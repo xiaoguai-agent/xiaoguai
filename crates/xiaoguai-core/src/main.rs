@@ -151,6 +151,7 @@ async fn run_serve(settings: &Settings) -> Result<()> {
     };
     use xiaoguai_audit::chain::sink::PgAuditSink;
     use xiaoguai_llm::{build_router, LlmBackend, MockBackend, OsEnvResolver};
+    use xiaoguai_mcp::McpSupervisor;
     use xiaoguai_storage::repositories::{
         LlmProviderRepository, PgLlmProviderRepository, PgMcpServerRepository, PgMessageRepository,
         PgSessionRepository, PgTenantRepository,
@@ -263,6 +264,9 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         mcp_publish_enabled: std::env::var("XIAOGUAI_MCP__PUBLISH")
             .map(|s| matches!(s.as_str(), "1" | "true" | "yes"))
             .unwrap_or(false),
+        // v0.9.4.1: live supervisor so marketplace installs spawn the
+        // new server immediately.
+        mcp_supervisor: Some(Arc::new(McpSupervisor::new())),
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

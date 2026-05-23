@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 use xiaoguai_agent::{AgentConfig, Toolbox};
 use xiaoguai_auth::Authz;
 use xiaoguai_llm::LlmBackend;
+use xiaoguai_mcp::McpSupervisor;
 use xiaoguai_storage::repositories::{
     McpServerRepository, MessageRepository, SessionRepository, TenantRepository,
 };
@@ -105,6 +106,12 @@ pub struct AppState {
     /// consume xiaoguai's `Toolbox` over Streamable HTTP. Default off —
     /// publishing tools is an explicit operator decision.
     pub mcp_publish_enabled: bool,
+    /// v0.9.4.1: live `McpSupervisor` so marketplace installs can spawn
+    /// the new server immediately (instead of waiting for the next
+    /// process restart). `None` keeps the historical write-only
+    /// behaviour for callers that haven't wired a supervisor yet (every
+    /// existing test uses `None`).
+    pub mcp_supervisor: Option<Arc<McpSupervisor>>,
 }
 
 impl std::fmt::Debug for AppState {
