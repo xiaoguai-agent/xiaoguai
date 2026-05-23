@@ -41,6 +41,34 @@ pub struct PushPayload {
     /// MUST surface this field — see roadmap §5.5.
     #[serde(default)]
     pub reason: String,
+    /// `true` iff the originating trigger was
+    /// [`crate::trigger::Trigger::Proactive`]. Real sinks (v0.10.3
+    /// Feishu / Telegram / Email / Inbox) refuse delivery when this
+    /// is `true` and `reason.is_empty()` — the reason-required rule
+    /// from roadmap §5.5 lives at the sink edge so a custom sink
+    /// outside this crate also gets the guarantee. `#[serde(default)]`
+    /// keeps back-compat with v0.10.0/v0.10.1 persisted rows (which
+    /// predate the field and therefore weren't proactive anyway).
+    #[serde(default)]
+    pub is_proactive: bool,
+}
+
+impl PushPayload {
+    /// Roadmap §5.5: proactive pushes without a non-empty reason MUST
+    /// NOT be delivered. Real sinks call this at the top of `deliver`;
+    /// `LoggingSink` is intentionally permissive (dev / capture) so
+    /// the rule lives in the concrete sinks under `crate::sinks` and
+    /// in this helper which they share.
+    ///
+    /// # Errors
+    /// [`SinkError::Invalid`] when the originating trigger is
+    /// proactive and `reason.is_empty()`.
+    pub fn require_reason_when_proactive(&self) -> Result<(), SinkError> {
+        if self.is_proactive && self.reason.trim().is_empty() {
+            return Err(SinkError::Invalid("reason required".into()));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -119,6 +147,7 @@ mod tests {
             output_preview: Some("done".into()),
             error_message: None,
             reason: String::new(),
+            is_proactive: false,
         };
         s.deliver(&p).await.unwrap();
         let cap = s.captured();
@@ -127,10 +156,44 @@ mod tests {
         assert_eq!(s.id(), "inbox");
     }
 
+    fn payload(reason: &str, is_proactive: bool) -> PushPayload {
+        PushPayload {
+            job_id: "j1".into(),
+            run_id: 1,
+            tenant_id: Some("t".into()),
+            status: "succeeded".into(),
+            fired_at: Utc::now(),
+            output_preview: Some("x".into()),
+            error_message: None,
+            reason: reason.into(),
+            is_proactive,
+        }
+    }
+
+    #[test]
+    fn require_reason_passes_when_not_proactive() {
+        payload("", false).require_reason_when_proactive().unwrap();
+    }
+
+    #[test]
+    fn require_reason_passes_when_proactive_with_reason() {
+        payload("new mail", true)
+            .require_reason_when_proactive()
+            .unwrap();
+    }
+
+    #[test]
+    fn require_reason_rejects_proactive_with_blank_reason() {
+        let err = payload("   ", true)
+            .require_reason_when_proactive()
+            .unwrap_err();
+        assert!(matches!(err, SinkError::Invalid(_)));
+    }
+
     #[test]
     fn payload_decodes_without_reason_field_for_back_compat() {
-        // Old persisted rows from v0.10.0/v0.10.1 don't have `reason`.
-        // Default must kick in so we can still parse them.
+        // Old persisted rows from v0.10.0/v0.10.1 don't have `reason`
+        // or `is_proactive`. Both defaults must kick in.
         let raw = r#"{
             "job_id": "j1",
             "run_id": 1,
@@ -142,5 +205,6 @@ mod tests {
         }"#;
         let p: PushPayload = serde_json::from_str(raw).unwrap();
         assert_eq!(p.reason, "");
+        assert!(!p.is_proactive);
     }
 }

@@ -5082,6 +5082,7 @@ dependencies = [
  "config",
  "dotenvy",
  "serde",
+ "serde_json",
  "serde_yaml",
  "thiserror 2.0.18",
  "tracing",
@@ -5246,8 +5247,10 @@ dependencies = [
  "async-trait",
  "chrono",
  "cron",
+ "mockito",
  "notify",
  "parking_lot",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tempfile",
@@ -5256,6 +5259,8 @@ dependencies = [
  "tracing",
  "uuid",
  "xiaoguai-audit",
+ "xiaoguai-im-feishu",
+ "xiaoguai-im-gateway",
  "xiaoguai-types",
 ]
 

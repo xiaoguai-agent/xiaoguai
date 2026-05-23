@@ -23,6 +23,11 @@ pub struct Settings {
     pub cache: CacheSettings,
     pub auth: AuthSettings,
     pub audit: AuditSettings,
+    /// Scheduler-side configuration. Optional so existing
+    /// config.yaml files from v0.10.0/v0.10.1 still deserialize.
+    /// v0.10.3 carries push-sink config under `scheduler.sinks.*`.
+    #[serde(default)]
+    pub scheduler: SchedulerSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +83,37 @@ pub struct AuditSettings {
     pub hmac_key: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SchedulerSettings {
+    /// Per-sink config blocks. Every field is `Option<_>` so an
+    /// operator wires only the sinks they actually deploy.
+    #[serde(default)]
+    pub sinks: SchedulerSinkSettings,
+}
+
+/// Container for the four real `PushSink` configs shipped in
+/// v0.10.3. Fields stay as opaque `serde_json::Value` so the
+/// scheduler crate (which owns the strongly-typed
+/// `FeishuSinkConfig` / `TelegramSinkConfig` / etc.) can deserialize
+/// them lazily without forcing this crate to depend on
+/// `xiaoguai-scheduler`. The operator binary calls
+/// `serde_json::from_value::<FeishuSinkConfig>(cfg.scheduler.sinks
+/// .feishu.clone().unwrap())` when constructing the sink.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SchedulerSinkSettings {
+    #[serde(default)]
+    pub feishu: Option<serde_json::Value>,
+    #[serde(default)]
+    pub telegram: Option<serde_json::Value>,
+    #[serde(default)]
+    pub email: Option<serde_json::Value>,
+    /// Inbox needs no config (in-process FIFO) but the toggle stays
+    /// here so an operator can disable it without touching the
+    /// binary's wiring code.
+    #[serde(default)]
+    pub inbox: Option<serde_json::Value>,
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -102,6 +138,7 @@ impl Default for Settings {
             audit: AuditSettings {
                 hmac_key: "dev-only-change-me-32-bytes-min".into(),
             },
+            scheduler: SchedulerSettings::default(),
         }
     }
 }

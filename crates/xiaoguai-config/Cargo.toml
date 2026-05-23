@@ -11,6 +11,7 @@ description = "Configuration loader for Xiaoguai (file + env + secrets)."
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 serde = { workspace = true }
+serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 config = { workspace = true }
 clap = { workspace = true }

@@ -11,6 +11,8 @@ description = "Scheduler — ScheduledJob + JobRun, Cron/Interval/reactive trigg
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-audit = { path = "../xiaoguai-audit" }
+xiaoguai-im-feishu = { path = "../xiaoguai-im-feishu" }
+xiaoguai-im-gateway = { path = "../xiaoguai-im-gateway" }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -18,12 +20,14 @@ chrono = { workspace = true }
 cron = { workspace = true }
 notify = { workspace = true }
 parking_lot = { workspace = true }
+reqwest = { workspace = true }
 tokio = { workspace = true, features = ["time", "sync", "macros", "rt"] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+mockito = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }
 
