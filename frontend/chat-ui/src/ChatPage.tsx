@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { AgentEvent, Message } from '@xiaoguai/shared';
+import type { AgentEvent, ContentBlock, Message } from '@xiaoguai/shared';
 import { client } from './client';
+import { CitationStrip } from './citations';
 import { MarkdownBody } from './markdown';
+
+type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
 
 interface Props {
   onSessionCreated: (s: { id: string; title: string }) => void;
@@ -15,6 +18,8 @@ interface DisplayBubble {
   toolError?: boolean;
   /** When true, a streaming assistant turn is currently appending to this bubble. */
   streaming?: boolean;
+  /** v0.9.3 — citation chips attached to an assistant turn. */
+  citations?: CitationBlock[];
 }
 
 const DEV_USER_ID = 'usr_dev';
@@ -228,18 +233,32 @@ function Bubble({ bubble }: { bubble: DisplayBubble }) {
           <span />
         </span>
       )}
+      {bubble.citations && bubble.citations.length > 0 && (
+        <CitationStrip citations={bubble.citations} />
+      )}
     </div>
   );
 }
 
 function messageToBubbles(m: Message): DisplayBubble[] {
   const out: DisplayBubble[] = [];
+  // v0.9.3: collect every citation in the message and attach the strip
+  // to the *last* assistant bubble produced — that's the turn whose
+  // text the citations annotate. Pre-extract so the loop body can
+  // ignore them.
+  const citations = m.content.filter(
+    (b): b is CitationBlock => b.type === 'citation',
+  );
+  let lastAssistantIdx: number | null = null;
+
   for (const block of m.content) {
     if (block.type === 'text') {
+      const idx = out.length;
       out.push({
         kind: m.role === 'user' ? 'user' : 'assistant',
         text: block.text,
       });
+      if (m.role !== 'user') lastAssistantIdx = idx;
     } else if (block.type === 'tool_call') {
       out.push({
         kind: 'tool',
@@ -253,6 +272,11 @@ function messageToBubbles(m: Message): DisplayBubble[] {
         toolError: block.is_error,
       });
     }
+    // citation: harvested above; nothing to emit per-block here
+  }
+  if (citations.length > 0 && lastAssistantIdx !== null) {
+    const target = out[lastAssistantIdx];
+    if (target) target.citations = citations;
   }
   return out;
 }

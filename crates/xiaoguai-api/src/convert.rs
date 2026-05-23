@@ -110,6 +110,13 @@ pub fn domain_to_llm(m: &DomainMessage) -> LlmMessage {
                 tool_call_id = Some(id.clone());
                 content.push_str(&output.to_string());
             }
+            ContentBlock::Citation { .. } => {
+                // v0.9.3: citations are visible to the UI but invisible to
+                // the LLM next-turn. The retrieval content already lived
+                // in a `Text` block (or a tool result) when the model
+                // produced the assistant turn; the citation is meta. Skip
+                // here so we don't feed `[1] file:///x.md` back as text.
+            }
         }
     }
 
