@@ -99,12 +99,21 @@ async fn message_event_is_accepted_and_reply_dispatched() {
     let v = body_json(resp.into_body()).await;
     assert_eq!(v["status"], "accepted");
 
-    // Reply spawn races with our test; give it ~50ms.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // The ReactAgent loop runs against the scripted MockBackend; allow
+    // a short grace period for the background spawn to deliver its
+    // reply into the recording sink.
+    for _ in 0..20 {
+        if !sink.lock().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
     let buf = sink.lock();
-    assert_eq!(buf.len(), 1);
+    assert_eq!(buf.len(), 1, "exactly one reply should have been recorded");
     assert_eq!(buf[0].conversation_id, "oc_chat");
-    assert!(buf[0].text.contains("hi"));
+    // v0.7.1: the reply text is the MockBackend's scripted output, not
+    // an echo of the user's input. The script returns "noop".
+    assert_eq!(buf[0].text, "noop");
 }
 
 #[tokio::test]
