@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { SessionList } from './SessionList';
 import { ChatPage } from './ChatPage';
+import { ThemeToggle } from './ThemeToggle';
 
 /**
  * Top-level shell — owns the in-memory session list (sessions don't have a
@@ -13,7 +14,9 @@ export function App() {
 
   return (
     <div className="layout">
-      <SessionList sessions={sessions} />
+      <SessionList sessions={sessions}>
+        <ThemeToggle />
+      </SessionList>
       <main className="main">
         <Routes>
           <Route

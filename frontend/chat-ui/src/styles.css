@@ -1,6 +1,6 @@
-/* Xiaoguai chat-ui — v0.8.1 design pass.
+/* Xiaoguai chat-ui — v0.8.1 design pass + v0.8.2 dark mode & markdown.
  *
- * Goals:
+ * Goals (v0.8.1):
  *   - Generous whitespace, readable typography (Inter on the web, system
  *     stack as fallback).
  *   - Subtle shadows + 1-px borders rather than heavy outlines.
@@ -11,11 +11,16 @@
  *   - Code-style tool bubbles get their own JetBrains Mono / IBM Plex
  *     Mono stack so monospace tool calls feel deliberate, not afterthought.
  *
- * Tokens are intentionally a small set; resist sprawl. If a future
- * theme needs them, fork into light/dark CSS variables.
+ * v0.8.2 additions:
+ *   - Dark mode via `data-theme="dark"` token fork. Light is the default
+ *     (`:root` + `data-theme="light"` resolve identically).
+ *   - Markdown rendering tokens (`.md *`) tuned for both themes.
+ *   - Theme toggle styled as a small segmented switch in the sidebar
+ *     footer.
  */
 
-:root {
+:root,
+[data-theme='light'] {
   /* Color tokens — neutral first, accent second. */
   --bg: #fafaf9;
   --surface: #ffffff;
@@ -39,6 +44,9 @@
   --tool-error-fg: #991b1b;
   --status-bg: #f4f4f5;
   --status-fg: #52525b;
+  --code-bg: #f4f4f5;
+  --code-fg: #18181b;
+  --link: #4f46e5;
 
   /* Spacing scale (4-pt grid). */
   --space-1: 4px;
@@ -381,6 +389,188 @@ html,
   border-top: 1px solid var(--border);
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------- markdown body */
+
+/* Wraps assistant bubble content. Inherit colour so dark mode flows
+   through automatically — only the *code* and *link* tokens need to
+   adapt per theme. */
+.md > * {
+  margin: 0;
+}
+
+.md > * + * {
+  margin-top: var(--space-3);
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  font-weight: 600;
+  line-height: 1.3;
+}
+.md h1 { font-size: 1.35em; }
+.md h2 { font-size: 1.2em; }
+.md h3 { font-size: 1.08em; }
+.md h4 { font-size: 1em; color: var(--fg-soft); }
+
+.md ul,
+.md ol {
+  padding-left: 1.4em;
+}
+
+.md li + li {
+  margin-top: var(--space-1);
+}
+
+.md a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md a:hover {
+  text-decoration-thickness: 2px;
+}
+
+.md code {
+  font-family:
+    'JetBrains Mono',
+    'IBM Plex Mono',
+    'SFMono-Regular',
+    Menlo,
+    Monaco,
+    Consolas,
+    'Courier New',
+    monospace;
+  font-size: 0.9em;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+}
+
+.md pre {
+  background: var(--code-bg);
+  color: var(--code-fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.md pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+.md blockquote {
+  margin: 0;
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--border);
+  color: var(--fg-soft);
+}
+
+.md table {
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.md th,
+.md td {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.md th {
+  background: var(--border-soft);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------- theme toggle */
+
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.theme-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.theme-toggle__btn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  width: 36px;
+  height: 30px;
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.theme-toggle__btn:hover {
+  background: var(--border-soft);
+  color: var(--fg);
+}
+
+.theme-toggle__btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.theme-toggle__btn + .theme-toggle__btn {
+  border-left: 1px solid var(--border);
+}
+
+/* ---------------------------------------------------------- dark theme */
+
+[data-theme='dark'] {
+  --bg: #0b0c10;
+  --surface: #14161c;
+  --surface-elevated: #1b1e26;
+  --fg: #ececf1;
+  --fg-soft: #c4c5cf;
+  --muted: #8a8f9b;
+  --border: #2a2d36;
+  --border-soft: #1f2229;
+  --accent: #818cf8;
+  --accent-hover: #a5b4fc;
+  --accent-soft: #1f2138;
+  --user-bg: #4f46e5;
+  --user-fg: #ffffff;
+  --assistant-bg: #14161c;
+  --tool-bg: #1a1407;
+  --tool-border: #3a2c0e;
+  --tool-fg: #fcd34d;
+  --tool-error-bg: #1f1213;
+  --tool-error-border: #4a1d1d;
+  --tool-error-fg: #fca5a5;
+  --status-bg: #14161c;
+  --status-fg: #a1a1aa;
+  --code-bg: #0e1015;
+  --code-fg: #e4e4e7;
+  --link: #a5b4fc;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px 0 rgba(0, 0, 0, 0.55);
+  --shadow-focus: 0 0 0 3px rgba(129, 140, 248, 0.25);
+  color-scheme: dark;
 }
 
 /* ------------------------------------------------------------------ small screens */

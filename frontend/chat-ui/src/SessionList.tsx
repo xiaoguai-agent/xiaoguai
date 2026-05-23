@@ -1,10 +1,14 @@
+import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 interface Props {
   sessions: Array<{ id: string; title: string }>;
+  /** Optional footer slot — used to slot the theme toggle into the
+   *  sidebar's lower edge without coupling SessionList to the toggle. */
+  children?: ReactNode;
 }
 
-export function SessionList({ sessions }: Props) {
+export function SessionList({ sessions, children }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -30,6 +34,7 @@ export function SessionList({ sessions }: Props) {
           );
         })
       )}
+      {children && <div className="sidebar-footer">{children}</div>}
     </aside>
   );
 }
