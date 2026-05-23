@@ -11,6 +11,7 @@ pub mod audit;
 pub mod auth;
 pub mod convert;
 pub mod error;
+pub mod eval;
 pub mod marketplace;
 pub mod mcp_serve;
 pub mod rate_limit;
@@ -27,6 +28,11 @@ pub use audit::{
 };
 pub use auth::{Claims, JwtTokenValidator, StubValidator, TokenValidator};
 pub use error::{ApiError, ApiResult};
+pub use eval::{
+    build_case_yaml, list_suites_in, CaseFromSessionRequest, CaseFromSessionResponse,
+    CaseFromSessionSource, EvalService, EvalServiceError, EvalSuiteListItem, RunEvalRequest,
+    SessionForCase, StaticCaseFromSessionSource, ToolInvocationRecord,
+};
 pub use marketplace::{MarketplaceEntry, MarketplaceResponse};
 pub use mcp_serve::XiaoguaiMcpServer;
 pub use rate_limit::{rate_limit, RateLimiter};

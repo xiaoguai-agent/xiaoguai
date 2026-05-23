@@ -1,5 +1,6 @@
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { TodayPane } from './panes/Today';
+import { EvalPane } from './panes/Eval';
 import { McpServersPane } from './panes/McpServers';
 import { MarketplacePane } from './panes/Marketplace';
 import { TenantsPane } from './panes/Tenants';
@@ -17,6 +18,9 @@ export function App() {
         <h2>Xiaoguai · Admin</h2>
         <NavLink to="/today" className={({ isActive }) => (isActive ? 'active' : '')}>
           Today
+        </NavLink>
+        <NavLink to="/eval" className={({ isActive }) => (isActive ? 'active' : '')}>
+          Eval
         </NavLink>
         <div className="nav-section">Manage</div>
         <NavLink to="/tenants" className={({ isActive }) => (isActive ? 'active' : '')}>
@@ -39,6 +43,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/today" replace />} />
           <Route path="/today" element={<TodayPane />} />
+          <Route path="/eval" element={<EvalPane />} />
           <Route path="/marketplace" element={<MarketplacePane />} />
           <Route path="/mcp-servers" element={<McpServersPane />} />
           <Route path="/tenants" element={<TenantsPane />} />

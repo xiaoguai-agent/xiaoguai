@@ -6,7 +6,7 @@
  * Rust crate adds a field, mirror it here.
  */
 
-export const PACKAGE_VERSION = '0.3.0';
+export const PACKAGE_VERSION = '0.4.0';
 
 // ---- Wire types ----------------------------------------------------------
 
@@ -159,6 +159,54 @@ export interface ListTodayQuery {
   /** RFC 3339, inclusive lower bound on `ts`. */
   since?: string;
   kind?: TodayKind;
+}
+
+// ---- v0.11.2 — eval pane endpoints ------------------------------------
+
+/** Suite list-item returned by `GET /v1/admin/eval/suites`. */
+export interface EvalSuiteListItem {
+  name: string;
+  path: string;
+  /** Number of `.eval.yaml` cases under `path`. `null` for single-file suites. */
+  case_count: number | null;
+}
+
+export interface RunEvalRequest {
+  suite_name: string;
+  /** Optional override; defaults to `<suites_dir>/<suite_name>` server-side. */
+  cases_dir?: string;
+}
+
+export type EvalCaseStatus = 'pass' | 'fail';
+
+export interface EvalResult {
+  case_id: string;
+  status: EvalCaseStatus;
+  /** Populated only when `status = 'fail'`. */
+  reasons?: string[];
+  transcript_len: number;
+  duration_ms: number;
+}
+
+/** Mirror of `xiaoguai_eval::EvalReport` JSON shape. */
+export interface EvalReport {
+  suite: string;
+  started_at: string;
+  finished_at: string;
+  results: EvalResult[];
+  /** `[0, 1]`. */
+  pass_rate: number;
+}
+
+export interface CaseFromSessionRequest {
+  session_id: string;
+}
+
+export interface CaseFromSessionResponse {
+  case_yaml: string;
+  suggested_filename: string;
+  case_id: string;
+  tool_invocation_count: number;
 }
 
 /** v0.9.4 — curated MCP marketplace entry. */
@@ -327,6 +375,27 @@ export class XiaoguaiClient {
   /** v0.9.4 — curated MCP server catalog. */
   listMarketplace(): Promise<MarketplaceResponse> {
     return this.request<MarketplaceResponse>('GET', '/v1/mcp/marketplace');
+  }
+
+  /** v0.11.2 — enumerate suites discoverable under the configured suites_dir. */
+  listEvalSuites(): Promise<EvalSuiteListItem[]> {
+    return this.request<EvalSuiteListItem[]>('GET', '/v1/admin/eval/suites');
+  }
+
+  /** v0.11.2 — run a suite synchronously. Suites cap at 100 cases / 60s. */
+  runEvalSuite(req: RunEvalRequest): Promise<EvalReport> {
+    return this.request<EvalReport>('POST', '/v1/admin/eval/run', req);
+  }
+
+  /** v0.11.2 — convert a prod `sessions.id` into a ready-to-edit case YAML. */
+  evalCaseFromSession(
+    req: CaseFromSessionRequest,
+  ): Promise<CaseFromSessionResponse> {
+    return this.request<CaseFromSessionResponse>(
+      'POST',
+      '/v1/admin/eval/case-from-session',
+      req,
+    );
   }
 
   /** v0.9.4 — one-click install of a marketplace entry. */

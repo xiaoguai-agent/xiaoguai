@@ -89,6 +89,7 @@ fn build_state(
         mcp_publish_enabled: false,
         mcp_supervisor: None,
         today: None,
+        eval: None,
     }
 }
 
@@ -658,4 +659,233 @@ fn urlencoding_simple(s: &str) -> String {
         }
     }
     out
+}
+
+// ----------------------------------------------------------------------
+// v0.11.2 — `/v1/admin/eval/*` (eval pane substrate).
+// ----------------------------------------------------------------------
+
+mod eval_routes {
+    use super::*;
+    use std::path::Path;
+    use xiaoguai_api::eval::{
+        CaseFromSessionSource, EvalService, SessionForCase, StaticCaseFromSessionSource,
+        ToolInvocationRecord,
+    };
+    use xiaoguai_eval::{DefaultEvalAgentBuilder, EvalRunner};
+    use xiaoguai_llm::Message as LlmMessage;
+
+    fn write_case(dir: &Path, name: &str, body: &str) {
+        std::fs::write(dir.join(name), body).unwrap();
+    }
+
+    fn build_eval_service(suites_dir: &Path) -> Arc<EvalService> {
+        let runner = EvalRunner::new(Arc::new(DefaultEvalAgentBuilder::new(2)));
+        let source: Arc<dyn CaseFromSessionSource> =
+            Arc::new(StaticCaseFromSessionSource::with_session(SessionForCase {
+                session_id: "sess_abc".into(),
+                tenant_id: Some("ten".into()),
+                input_messages: vec![LlmMessage::user("hello")],
+                tool_invocations: vec![ToolInvocationRecord {
+                    tool_name: "search".into(),
+                    arguments_json: "{\"q\":\"x\"}".into(),
+                }],
+                final_assistant_text: Some("greetings".into()),
+            }));
+        Arc::new(EvalService::new(runner, suites_dir.to_path_buf(), source))
+    }
+
+    async fn body_json(body: Body) -> Value {
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn eval_suites_503_when_not_wired() {
+        let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/admin/eval/suites")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn eval_run_503_when_not_wired() {
+        let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/eval/run")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"suite_name":"x"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn eval_case_from_session_503_when_not_wired() {
+        let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/eval/case-from-session")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"session_id":"x"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn eval_suites_returns_disk_listing_sorted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let regression = tmp.path().join("regression");
+        std::fs::create_dir(&regression).unwrap();
+        write_case(
+            &regression,
+            "a.eval.yaml",
+            "id: a\ninput_messages: []\nassertions: []\n",
+        );
+        write_case(
+            tmp.path(),
+            "smoke.eval.yaml",
+            "id: smoke\ninput_messages: []\nassertions: []\n",
+        );
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.eval = Some(build_eval_service(tmp.path()));
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/admin/eval/suites")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = body_arr(resp.into_body()).await;
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0]["name"], "regression");
+        assert_eq!(v[0]["case_count"], 1);
+        assert_eq!(v[1]["name"], "smoke");
+        assert!(v[1]["case_count"].is_null());
+    }
+
+    #[tokio::test]
+    async fn eval_run_executes_a_disk_suite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let suite_dir = tmp.path().join("smoke");
+        std::fs::create_dir(&suite_dir).unwrap();
+        write_case(
+            &suite_dir,
+            "greet.eval.yaml",
+            "id: greet\n\
+             input_messages:\n  - role: user\n    content: hi\n\
+             mock_script:\n  turns:\n    - text: hello back\n\
+             assertions:\n  - kind: final_message_contains\n    text: hello\n",
+        );
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.eval = Some(build_eval_service(tmp.path()));
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/eval/run")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"suite_name":"smoke"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = body_json(resp.into_body()).await;
+        assert_eq!(v["suite"], "smoke");
+        assert_eq!(v["results"].as_array().unwrap().len(), 1);
+        assert!(v["pass_rate"].as_f64().unwrap() > 0.99);
+    }
+
+    #[tokio::test]
+    async fn eval_run_400_for_missing_suite_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.eval = Some(build_eval_service(tmp.path()));
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/eval/run")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"suite_name":"nope"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn eval_case_from_session_returns_yaml_for_known_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.eval = Some(build_eval_service(tmp.path()));
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/eval/case-from-session")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"session_id":"sess_abc"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = body_json(resp.into_body()).await;
+        assert_eq!(v["case_id"], "from-session-sess_abc");
+        assert_eq!(v["tool_invocation_count"], 1);
+        let yaml = v["case_yaml"].as_str().unwrap();
+        assert!(yaml.contains("search"));
+        assert!(yaml.contains("greetings"));
+        assert!(v["suggested_filename"]
+            .as_str()
+            .unwrap()
+            .ends_with(".eval.yaml"));
+    }
+
+    #[tokio::test]
+    async fn eval_case_from_session_400_for_unknown_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.eval = Some(build_eval_service(tmp.path()));
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/eval/case-from-session")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"session_id":"missing"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
 }

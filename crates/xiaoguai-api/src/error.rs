@@ -26,6 +26,10 @@ pub enum ApiError {
     Conflict(String),
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
+    #[error("payload too large: {0}")]
+    PayloadTooLarge(String),
+    #[error("gateway timeout: {0}")]
+    GatewayTimeout(String),
     #[error("internal: {0}")]
     Internal(#[from] anyhow::Error),
     #[error("storage: {0}")]
@@ -52,6 +56,16 @@ impl IntoResponse for ApiError {
             Self::ServiceUnavailable(_) => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "service_unavailable",
+                self.to_string(),
+            ),
+            Self::PayloadTooLarge(_) => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "payload_too_large",
+                self.to_string(),
+            ),
+            Self::GatewayTimeout(_) => (
+                StatusCode::GATEWAY_TIMEOUT,
+                "gateway_timeout",
                 self.to_string(),
             ),
             Self::Internal(err) => {

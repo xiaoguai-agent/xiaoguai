@@ -5,6 +5,7 @@
 //! (default) or executes a single subcommand (e.g. `smoke`).
 
 mod audit_bridge;
+mod eval_bridge;
 mod today_bridge;
 
 use std::path::PathBuf;
@@ -272,6 +273,9 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // sessions / im_conversations / scheduled_job_runs and merges
         // them client-side.
         today: Some(crate::today_bridge::PgTodayReader::arc(pool.clone())),
+        // v0.11.2: eval pane. The PG case-from-session source feeds
+        // operator "convert prod run to regression case" requests.
+        eval: Some(build_eval_service(settings, pool.clone())),
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by
@@ -437,4 +441,31 @@ async fn build_authz(settings: &Settings) -> Result<Option<std::sync::Arc<xiaogu
         .context("load casbin policy")?;
     tracing::info!("serve: Casbin authz loaded");
     Ok(Some(Arc::new(authz)))
+}
+
+/// v0.11.2 — assemble the `EvalService` so the admin pane can run
+/// suites and convert prod runs into regression cases. We always wire
+/// it (the suites directory may be empty; the list endpoint returns an
+/// empty array, the run endpoint returns 400 for missing suites). The
+/// case-from-session source reads `sessions` + `audit_log` directly.
+fn build_eval_service(
+    settings: &Settings,
+    pool: sqlx::PgPool,
+) -> std::sync::Arc<xiaoguai_api::EvalService> {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use xiaoguai_api::EvalService;
+    use xiaoguai_eval::{DefaultEvalAgentBuilder, EvalRunner};
+
+    let suites_dir = PathBuf::from(settings.eval.suites_dir.clone());
+    let runner = EvalRunner::new(Arc::new(DefaultEvalAgentBuilder::new(
+        settings.eval.max_iterations,
+    )));
+    let source = Arc::new(crate::eval_bridge::PgCaseFromSessionSource::new(pool));
+    tracing::info!(
+        suites_dir = %suites_dir.display(),
+        max_iterations = settings.eval.max_iterations,
+        "serve: EvalService wired"
+    );
+    Arc::new(EvalService::new(runner, suites_dir, source))
 }
