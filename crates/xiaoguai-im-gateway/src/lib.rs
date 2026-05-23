@@ -6,16 +6,26 @@
 //! an existing axum router so operators can compose multiple IM channels
 //! into one binary.
 //!
-//! v0.7 wires the webhook → `ReactAgent` path *without* a real reply
-//! channel — `Reply::Stub` records what would have been sent so tests can
-//! assert on it. Real Feishu `OpenAPI` reply lands in v0.7.1.
+//! v0.7.2 added an in-process `ConversationHistory` so the gateway can
+//! reply across multiple webhook deliveries on the same chat. v0.7.3
+//! generalises that into the [`ImHistoryStore`] trait, with two impls:
+//!
+//! * [`ConversationHistory`] (in-process, single-replica) — default.
+//! * [`PgImHistoryStore`] — durable, multi-replica. Maps external IM IDs
+//!   to internal tenant/user/session rows via the `im_identities` /
+//!   `im_conversations` tables.
 
 #![forbid(unsafe_code)]
 
 pub mod history;
+pub mod pg_history;
 pub mod provider;
 pub mod router;
 
-pub use history::ConversationHistory;
+pub use history::{ConversationHistory, ConversationIdent, HistoryError, ImHistoryStore};
+pub use pg_history::PgImHistoryStore;
 pub use provider::{ImEvent, ImProvider, IncomingMessage, OutgoingReply, ProviderError, Webhook};
-pub use router::{mount_feishu, run_agent_and_reply, GatewayState};
+pub use router::{
+    mount_feishu, mount_feishu_with_history, run_agent_and_reply, GatewayState,
+    DEFAULT_HISTORY_TURNS,
+};

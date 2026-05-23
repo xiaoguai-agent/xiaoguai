@@ -140,15 +140,18 @@ async fn malformed_signed_body_yields_400() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
-/// v0.7.2: prove that subsequent webhooks for the *same* conversation_id
-/// see the accumulated history, while a different conversation_id does
-/// not. Driven through `run_agent_and_reply` directly so the test does
-/// not have to race the background spawn.
+/// v0.7.2/v0.7.3: prove that subsequent webhooks for the *same*
+/// conversation_id see the accumulated history, while a different
+/// conversation_id does not. Driven through `run_agent_and_reply`
+/// directly so the test does not race the background spawn. Uses the
+/// in-memory `ConversationHistory` cast to the `ImHistoryStore` trait so
+/// the production code path (trait dispatch) is exercised.
 #[tokio::test]
 async fn conversation_history_accumulates_per_chat() {
     use xiaoguai_im_feishu::FeishuProvider;
     use xiaoguai_im_gateway::{
-        run_agent_and_reply, ConversationHistory, GatewayState, ImProvider, IncomingMessage,
+        run_agent_and_reply, ConversationHistory, GatewayState, ImHistoryStore, ImProvider,
+        IncomingMessage,
     };
 
     // Script three distinct assistant outputs so each turn is
@@ -175,11 +178,12 @@ async fn conversation_history_accumulates_per_chat() {
     };
     let sink = Arc::new(Mutex::new(Vec::new()));
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
-    let history = Arc::new(ConversationHistory::new(10));
+    let history_concrete = Arc::new(ConversationHistory::new(10));
+    let history: Arc<dyn ImHistoryStore> = history_concrete.clone();
     let state = GatewayState {
         app: app_state,
         feishu: provider,
-        history: history.clone(),
+        history,
     };
 
     let mk_msg = |chat: &str, text: &str| IncomingMessage {
@@ -202,14 +206,14 @@ async fn conversation_history_accumulates_per_chat() {
         .expect("turn 3");
 
     // oc_a saw two user+assistant turns = 4 messages.
-    let a = history.snapshot("oc_a");
+    let a = history_concrete.snapshot("oc_a");
     assert_eq!(a.len(), 4, "oc_a should have accumulated 2 turns");
     assert_eq!(a[0].content, "hello");
     assert_eq!(a[1].content, "first");
     assert_eq!(a[2].content, "and again");
     assert_eq!(a[3].content, "second");
     // oc_b is isolated — only one turn.
-    let b = history.snapshot("oc_b");
+    let b = history_concrete.snapshot("oc_b");
     assert_eq!(b.len(), 2);
     assert_eq!(b[0].content, "different chat");
     assert_eq!(b[1].content, "third");

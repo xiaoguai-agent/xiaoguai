@@ -4,6 +4,7 @@
 //! defense-in-depth via Postgres policies (ADR — multi-tenant isolation).
 
 pub mod error;
+pub mod im;
 pub mod llm_provider;
 pub mod mcp_server;
 pub mod message;
@@ -14,6 +15,10 @@ pub mod token_usage;
 pub mod user;
 
 pub use error::{RepoError, RepoResult};
+pub use im::{
+    ExternalConversation, ExternalIdentity, ImConversation, ImIdentity, ImIdentityRepository,
+    PgImIdentityRepository,
+};
 pub use llm_provider::{LlmProviderRepository, PgLlmProviderRepository};
 pub use mcp_server::{McpServerRepository, PgMcpServerRepository};
 pub use message::{MessageRepository, PgMessageRepository};

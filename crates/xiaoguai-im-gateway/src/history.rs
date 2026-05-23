@@ -1,21 +1,90 @@
-//! In-memory conversation history for IM webhooks.
+//! Conversation history for IM webhooks.
 //!
-//! Keyed by `conversation_id` (Feishu `chat_id`, DingTalk channel id,
-//! etc). Each chat thread gets a sliding window of the last `max_turns`
+//! Keyed by `conversation_id` (Feishu `chat_id`, DingTalk channel id, …).
+//! Each chat thread gets a sliding window of the last `max_turns`
 //! `LlmMessage`s so subsequent webhook deliveries pick up where the
 //! last one left off.
 //!
-//! Why not PG: the `messages` table is FK'd to `sessions`, which is
-//! FK'd to `users` and `tenants`. Auto-creating those rows from a
-//! Feishu `tenant_key`/`open_id` requires a tenant/user mapping
-//! decision that v0.7.2 deliberately defers. v0.7.2 keeps history in
-//! process so single-replica deployments get coherent multi-turn
-//! conversations now; multi-replica + persistence is a follow-up.
+//! v0.7.3 introduces the [`ImHistoryStore`] trait. Two impls ship in this
+//! crate:
+//!
+//! * [`ConversationHistory`] — original in-process `HashMap` store. Cheap,
+//!   single-replica only. Default for tests and dev.
+//! * [`crate::pg_history::PgImHistoryStore`] — durable, multi-replica safe.
+//!   Maps `(provider, tenant_ext, user_ext, conversation_id)` to the
+//!   internal tenant/user/session model via the `im_identities` /
+//!   `im_conversations` tables and persists each turn to the `messages`
+//!   table. Required for HA deployments.
+//!
+//! The two impls share the same trait surface so production code can
+//! flip stores via configuration without touching the webhook handler.
 
 use std::collections::HashMap;
 
+use async_trait::async_trait;
 use parking_lot::Mutex;
+use thiserror::Error;
 use xiaoguai_llm::Message as LlmMessage;
+
+/// Identity of an IM conversation, carrying every external key the
+/// gateway received from the provider plus the chat ID. Passing the
+/// whole struct (rather than just `conversation_id`) lets the PG store
+/// resolve / create the tenant + user on demand without re-parsing the
+/// webhook payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationIdent {
+    pub provider: String,
+    pub tenant_external_id: String,
+    pub user_external_id: String,
+    pub conversation_id: String,
+}
+
+impl ConversationIdent {
+    #[must_use]
+    pub fn new(
+        provider: impl Into<String>,
+        tenant_external_id: impl Into<String>,
+        user_external_id: impl Into<String>,
+        conversation_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            provider: provider.into(),
+            tenant_external_id: tenant_external_id.into(),
+            user_external_id: user_external_id.into(),
+            conversation_id: conversation_id.into(),
+        }
+    }
+}
+
+/// Errors a history store can surface. Kept narrow on purpose — the IM
+/// webhook handler treats every variant as a transient transport failure
+/// and returns HTTP 500 from the provider's perspective; the conversation
+/// is dropped for that turn.
+#[derive(Debug, Error)]
+pub enum HistoryError {
+    #[error("history backend error: {0}")]
+    Backend(String),
+}
+
+/// Abstract conversation history. The router only holds an
+/// `Arc<dyn ImHistoryStore>`, so different deployments can pick in-process
+/// (default) or PG-backed (HA) without touching the webhook code.
+#[async_trait]
+pub trait ImHistoryStore: Send + Sync {
+    /// Return the trailing window of messages for this conversation. The
+    /// PG impl auto-creates the underlying tenant/user/session on first
+    /// sight; the in-memory impl just reads its `HashMap`.
+    async fn snapshot(&self, ident: &ConversationIdent) -> Result<Vec<LlmMessage>, HistoryError>;
+
+    /// Append the user turn + assistant reply (or any other ordered
+    /// sequence) to the conversation. Existing messages stay; the store
+    /// may evict to a per-impl maximum window.
+    async fn extend(
+        &self,
+        ident: &ConversationIdent,
+        msgs: Vec<LlmMessage>,
+    ) -> Result<(), HistoryError>;
+}
 
 /// Per-process conversation memory. Cheap to clone (`Arc`-ish via the
 /// surrounding `Arc<ConversationHistory>`).
@@ -89,9 +158,32 @@ impl ConversationHistory {
     }
 }
 
+#[async_trait]
+impl ImHistoryStore for ConversationHistory {
+    async fn snapshot(&self, ident: &ConversationIdent) -> Result<Vec<LlmMessage>, HistoryError> {
+        // In-memory store: only the conversation_id matters; tenant/user
+        // external IDs are ignored. The trait still requires the full
+        // struct so the PG impl has what it needs.
+        Ok(Self::snapshot(self, &ident.conversation_id))
+    }
+
+    async fn extend(
+        &self,
+        ident: &ConversationIdent,
+        msgs: Vec<LlmMessage>,
+    ) -> Result<(), HistoryError> {
+        Self::extend(self, &ident.conversation_id, msgs);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ident(conv: &str) -> ConversationIdent {
+        ConversationIdent::new("feishu", "ten_x", "ou_alice", conv)
+    }
 
     #[test]
     fn empty_snapshot_for_unknown_conversation() {
@@ -149,5 +241,34 @@ mod tests {
             vec![LlmMessage::user("u"), LlmMessage::assistant("a")],
         );
         assert_eq!(h.snapshot("oc_a").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn trait_impl_round_trips_via_ident() {
+        let h = ConversationHistory::new(20);
+        h.extend(
+            "oc_a",
+            vec![LlmMessage::user("u"), LlmMessage::assistant("a")],
+        );
+        let store: &dyn ImHistoryStore = &h;
+        let got = store.snapshot(&ident("oc_a")).await.unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].content, "u");
+    }
+
+    #[tokio::test]
+    async fn trait_extend_appends_via_ident() {
+        let h = ConversationHistory::new(20);
+        let store: &dyn ImHistoryStore = &h;
+        store
+            .extend(
+                &ident("oc_a"),
+                vec![LlmMessage::user("x"), LlmMessage::assistant("y")],
+            )
+            .await
+            .unwrap();
+        let got = store.snapshot(&ident("oc_a")).await.unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[1].content, "y");
     }
 }
