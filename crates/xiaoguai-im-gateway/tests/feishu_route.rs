@@ -45,6 +45,7 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: None,
         auth: None,
+        authz: None,
     };
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
     mount_feishu(state, provider)

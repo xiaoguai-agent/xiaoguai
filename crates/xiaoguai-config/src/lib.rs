@@ -61,6 +61,14 @@ pub struct AuthSettings {
     pub audience: String,
     /// JWKS URL (e.g. `https://idp.example.com/.well-known/jwks.json`).
     pub jwks_url: String,
+    /// When `true`, the API server requires a Bearer JWT on `/v1/**` and
+    /// the rbac middleware enforces Casbin policies. When `false`
+    /// (default) the server runs in dev mode: claims fall back to the
+    /// request body, and rbac is bypassed.
+    ///
+    /// Override via `XIAOGUAI_AUTH__REQUIRED=true`.
+    #[serde(default)]
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +97,7 @@ impl Default for Settings {
                 issuer: "https://idp.example.com".into(),
                 audience: "xiaoguai-core".into(),
                 jwks_url: "https://idp.example.com/.well-known/jwks.json".into(),
+                required: false,
             },
             audit: AuditSettings {
                 hmac_key: "dev-only-change-me-32-bytes-min".into(),

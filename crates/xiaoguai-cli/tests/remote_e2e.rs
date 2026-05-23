@@ -31,6 +31,7 @@ async fn spawn_server(steps: Vec<ScriptStep>) -> String {
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: None,
         auth: None,
+        authz: None,
     };
     let (local, fut) = serve_with_state("127.0.0.1:0".parse().unwrap(), state)
         .await

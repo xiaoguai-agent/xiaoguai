@@ -16,6 +16,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use chrono::Utc;
 use tracing::warn;
 use xiaoguai_types::{ProviderId, SessionId, TenantId, UserId};
@@ -195,5 +196,27 @@ impl LlmRouter {
         }
 
         out
+    }
+}
+
+/// Drop-in `LlmBackend` impl for `LlmRouter` so callers that hold an
+/// `Arc<dyn LlmBackend>` (e.g. `AppState.backend` from xiaoguai-api,
+/// `ReactAgent::new`) can be handed a router transparently.
+///
+/// Per-request tenant routing requires the caller to know the tenant —
+/// that path goes through `LlmRouter::chat_stream(ctx, req)` directly.
+/// This impl falls back to `ResolveCtx::default()` so the system default
+/// + fallback chain still apply. v0.6.2 ships the default-only path;
+/// threading `tenant_id` from the request all the way down to a custom
+/// `ResolveCtx` is a follow-up (would need a new `BackendForTenant`
+/// wrapper or a context-aware trait).
+#[async_trait]
+impl LlmBackend for LlmRouter {
+    async fn chat_stream(&self, req: ChatRequest) -> Result<ChatStream, LlmError> {
+        self.chat_stream(ResolveCtx::default(), req).await
+    }
+
+    fn name(&self) -> &'static str {
+        "router"
     }
 }

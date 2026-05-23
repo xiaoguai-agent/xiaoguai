@@ -34,6 +34,7 @@ fn build_state(steps: Vec<ScriptStep>) -> (AppState, Arc<InMemoryMessageRepo>) {
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: None,
         auth: None,
+        authz: None,
     };
     (state, messages)
 }

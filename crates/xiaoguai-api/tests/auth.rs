@@ -41,6 +41,7 @@ fn build_state_with_auth() -> AppState {
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: None,
         auth: Some(validator),
+        authz: None,
     }
 }
 

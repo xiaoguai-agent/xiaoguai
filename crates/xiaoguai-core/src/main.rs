@@ -143,8 +143,10 @@ async fn run_serve(settings: &Settings) -> Result<()> {
     use std::sync::Arc;
     use xiaoguai_agent::{AgentConfig, Toolbox};
     use xiaoguai_api::{serve_with_state, AppState, CancelRegistry};
-    use xiaoguai_llm::{LlmBackend, MockBackend};
-    use xiaoguai_storage::repositories::{PgMessageRepository, PgSessionRepository};
+    use xiaoguai_llm::{build_router, LlmBackend, MockBackend, OsEnvResolver};
+    use xiaoguai_storage::repositories::{
+        LlmProviderRepository, PgLlmProviderRepository, PgMessageRepository, PgSessionRepository,
+    };
 
     tracing::info!("serve: connecting to Postgres");
     let pool = db::connect(&settings.database.url, settings.database.max_connections)
@@ -152,26 +154,63 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         .context("pg connect")?;
     db::migrate(&pool).await.context("pg migrate")?;
 
-    // v0.5.6 wires the minimum useful AppState. Real LLM provider routing
-    // (LlmRouter pulling from `llm_providers` repo) lands in v0.6 with the
-    // auth + tenant-context plumbing.
-    let backend: Arc<dyn LlmBackend> = Arc::new(MockBackend::with_response(
-        "MockBackend is the v0.5.6 default. Configure a real backend in v0.6.",
-    ));
+    // v0.6.2: read system-wide LLM providers and assemble a router. The
+    // resulting `LlmRouter` implements `LlmBackend`, so it drops in
+    // wherever the old `MockBackend` used to live. If the registry is
+    // empty we keep the `MockBackend` fallback so that fresh deployments
+    // still boot and serve a deterministic response.
+    let provider_repo = PgLlmProviderRepository::new(pool.clone());
+    let rows = provider_repo
+        .list_global()
+        .await
+        .context("pg list llm providers")?;
+    let (backend, default_model): (Arc<dyn LlmBackend>, String) = if rows.is_empty() {
+        tracing::warn!(
+            "serve: llm_providers table is empty — falling back to MockBackend. \
+             Use `xiaoguai provider register` to populate it."
+        );
+        (
+            Arc::new(MockBackend::with_response(
+                "No LLM providers configured. Register one via `xiaoguai provider register`.",
+            )),
+            "mock".to_string(),
+        )
+    } else {
+        let (router, report) = build_router(&rows, &OsEnvResolver);
+        for w in &report.warnings {
+            tracing::warn!(warning = %w, "serve: llm router build");
+        }
+        // Default agent model: prefer the first model that any provider
+        // claims as a default; otherwise the first declared model on the
+        // first provider; otherwise an empty string (caller must
+        // override per-request).
+        let default_model = rows
+            .iter()
+            .find_map(|p| p.default_for_models.first().cloned())
+            .or_else(|| rows.first().and_then(|p| p.models.first().cloned()))
+            .unwrap_or_default();
+        tracing::info!(
+            providers = rows.len(),
+            default_model = %default_model,
+            "serve: LlmRouter wired"
+        );
+        (Arc::new(router), default_model)
+    };
+
+    let auth = build_auth(settings);
+
     let state = AppState {
         sessions: Arc::new(PgSessionRepository::new(pool.clone())),
         messages: Arc::new(PgMessageRepository::new(pool.clone())),
         backend,
         toolbox: Arc::new(Toolbox::new()),
-        agent_defaults: AgentConfig::new("mock"),
+        agent_defaults: AgentConfig::new(default_model),
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: Some(Arc::new(
             xiaoguai_storage::repositories::PgMcpServerRepository::new(pool),
         )),
-        // v0.6 ships the validator trait; production wiring is gated on
-        // `XIAOGUAI_AUTH_REQUIRED=true` (config switch). Until that knob
-        // lands the binary keeps `auth: None` (dev mode).
-        auth: None,
+        auth,
+        authz: build_authz(settings).await.context("build authz")?,
     };
 
     let addr: SocketAddr = format!("{}:{}", settings.server.host, settings.server.port)
@@ -190,4 +229,46 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         _ = tokio::signal::ctrl_c() => tracing::info!("serve: shutdown via ctrl-c"),
     }
     Ok(())
+}
+
+/// Wire the JWT validator when `auth.required` is on. Returns `None` to
+/// keep the dev-mode "body-supplied identity" path; returns
+/// `Some(JwtTokenValidator)` to require Bearer tokens on `/v1/**`.
+fn build_auth(
+    settings: &Settings,
+) -> Option<std::sync::Arc<dyn xiaoguai_api::auth::TokenValidator>> {
+    use std::sync::Arc;
+    use xiaoguai_api::auth::{JwtTokenValidator, TokenValidator};
+    if !settings.auth.required {
+        return None;
+    }
+    let validator = xiaoguai_auth::JwtValidator::new(
+        settings.auth.issuer.clone(),
+        settings.auth.audience.clone(),
+        settings.auth.jwks_url.clone(),
+    );
+    let arc_validator = Arc::new(validator);
+    let wrapper: Arc<dyn TokenValidator> = Arc::new(JwtTokenValidator(arc_validator));
+    tracing::info!(
+        issuer = %settings.auth.issuer,
+        audience = %settings.auth.audience,
+        "serve: JWT validator enabled (auth.required=true)"
+    );
+    Some(wrapper)
+}
+
+/// Load the Casbin policy and return an `Authz`. When auth is disabled
+/// we still build it — the route middleware checks `auth.required` to
+/// decide whether to enforce. This keeps boot deterministic: if the
+/// shipped policy file fails to parse, the binary fails fast.
+async fn build_authz(settings: &Settings) -> Result<Option<std::sync::Arc<xiaoguai_auth::Authz>>> {
+    use std::sync::Arc;
+    if !settings.auth.required {
+        return Ok(None);
+    }
+    let authz = xiaoguai_auth::Authz::new_default()
+        .await
+        .context("load casbin policy")?;
+    tracing::info!("serve: Casbin authz loaded");
+    Ok(Some(Arc::new(authz)))
 }

@@ -9,6 +9,7 @@
 
 pub mod backend;
 pub mod breaker;
+pub mod build;
 pub mod mock;
 pub mod ollama;
 pub mod openai_compat;
@@ -18,6 +19,7 @@ pub mod usage;
 
 pub use backend::{ChatStream, LlmBackend, LlmError};
 pub use breaker::{Breaker, BreakerConfig, BreakerState, Breakers, Clock, SystemClock};
+pub use build::{build_router, BuildReport, EnvResolver, OsEnvResolver};
 pub use mock::MockBackend;
 pub use ollama::OllamaBackend;
 pub use openai_compat::OpenAiCompatBackend;
