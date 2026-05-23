@@ -28,6 +28,9 @@ pub struct Settings {
     /// v0.10.3 carries push-sink config under `scheduler.sinks.*`.
     #[serde(default)]
     pub scheduler: SchedulerSettings,
+    /// v0.7.4: IM gateway runtime knobs.
+    #[serde(default)]
+    pub im: ImSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +128,39 @@ pub struct SchedulerSinkSettings {
     pub inbox: Option<serde_json::Value>,
 }
 
+/// v0.7.4: IM gateway runtime knobs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImSettings {
+    /// When `true`, `xiaoguai-core` keeps the v0.7.2 in-process
+    /// `ConversationHistory` even when a PG pool is available. Production
+    /// HA deployments should leave this `false` so multi-replica
+    /// webhooks stay consistent.
+    ///
+    /// Override via `XIAOGUAI_IM__USE_IN_PROCESS_HISTORY=true`.
+    #[serde(default)]
+    pub use_in_process_history: bool,
+
+    /// Per-conversation replay-window cap. The IM history store reads at
+    /// most this many trailing turns when assembling the agent's input —
+    /// older messages stay in the DB (for audit) but are not replayed.
+    /// Default 50.
+    #[serde(default = "default_max_messages_per_conversation")]
+    pub max_messages_per_conversation: usize,
+}
+
+impl Default for ImSettings {
+    fn default() -> Self {
+        Self {
+            use_in_process_history: false,
+            max_messages_per_conversation: default_max_messages_per_conversation(),
+        }
+    }
+}
+
+const fn default_max_messages_per_conversation() -> usize {
+    50
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -151,6 +187,7 @@ impl Default for Settings {
                 signing_key_env: default_signing_key_env(),
             },
             scheduler: SchedulerSettings::default(),
+            im: ImSettings::default(),
         }
     }
 }

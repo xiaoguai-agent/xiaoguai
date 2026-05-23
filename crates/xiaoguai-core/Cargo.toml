@@ -35,6 +35,10 @@ sqlx = { workspace = true }
 # `AuditVerifier` traits inside this binary.
 async-trait = { workspace = true }
 hex = "0.4"
+# v0.7.4: IM gateway wiring (PG history default + in-process fallback).
+axum = { workspace = true }
+xiaoguai-im-gateway = { path = "../xiaoguai-im-gateway" }
+xiaoguai-im-feishu = { path = "../xiaoguai-im-feishu" }
 
 [lints]
 workspace = true

@@ -244,7 +244,7 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         messages: Arc::new(PgMessageRepository::new(pool.clone())),
         backend,
         toolbox: Arc::new(Toolbox::new()),
-        agent_defaults: AgentConfig::new(default_model),
+        agent_defaults: AgentConfig::new(default_model.clone()),
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: Some(mcp_servers_repo),
         auth,
@@ -263,9 +263,13 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         mcp_publish_enabled: std::env::var("XIAOGUAI_MCP__PUBLISH")
             .map(|s| matches!(s.as_str(), "1" | "true" | "yes"))
             .unwrap_or(false),
-        // v0.9.4.1: wired in a later tag — leaves marketplace installs
-        // in their v0.9.4 "write-only" mode until then.
     };
+
+    // v0.7.4: mount the Feishu webhook with a PG-backed history store by
+    // default (multi-replica safe). Operators can fall back to the
+    // single-replica in-process store by setting
+    // `XIAOGUAI_IM__USE_IN_PROCESS_HISTORY=true`.
+    let im_router = build_feishu_gateway(settings, &pool, &state, &default_model);
 
     let addr: SocketAddr = format!("{}:{}", settings.server.host, settings.server.port)
         .parse()
@@ -275,7 +279,7 @@ async fn run_serve(settings: &Settings) -> Result<()> {
                 settings.server.host, settings.server.port
             )
         })?;
-    let (local, fut) = xiaoguai_api::serve_with_state(addr, state)
+    let (local, fut) = serve_with_state_and_extras(addr, state, im_router)
         .await
         .context("bind api")?;
     tracing::info!(%local, "serve: api listening");
@@ -285,6 +289,103 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         _ = tokio::signal::ctrl_c() => tracing::info!("serve: shutdown via ctrl-c"),
     }
     Ok(())
+}
+
+/// v0.7.4: assemble the Feishu IM gateway router. Returns `None` when
+/// the operator hasn't supplied a Feishu signing key
+/// (`XIAOGUAI_IM_FEISHU__VERIFICATION_TOKEN`); mounting the route with
+/// an empty signing key would accept every payload.
+fn build_feishu_gateway(
+    settings: &xiaoguai_config::Settings,
+    pool: &sqlx::PgPool,
+    state: &xiaoguai_api::AppState,
+    default_model: &str,
+) -> Option<axum::Router> {
+    use std::sync::Arc;
+    use xiaoguai_im_feishu::FeishuProvider;
+    use xiaoguai_im_gateway::{
+        mount_feishu_with_history, ConversationHistory, ImHistoryStore, ImProvider,
+        PgImHistoryStore,
+    };
+    use xiaoguai_storage::repositories::PgImIdentityRepository;
+
+    let signing_key = std::env::var("XIAOGUAI_IM_FEISHU__VERIFICATION_TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty())?;
+
+    let history: Arc<dyn ImHistoryStore> = if settings.im.use_in_process_history {
+        tracing::info!(
+            "serve: IM history using in-process ConversationHistory (XIAOGUAI_IM__USE_IN_PROCESS_HISTORY=true)"
+        );
+        Arc::new(ConversationHistory::new(
+            settings.im.max_messages_per_conversation,
+        ))
+    } else {
+        tracing::info!(
+            cap = settings.im.max_messages_per_conversation,
+            "serve: IM history using PgImHistoryStore"
+        );
+        Arc::new(PgImHistoryStore::new(
+            Arc::new(PgImIdentityRepository::new(pool.clone())),
+            state.sessions.clone(),
+            state.messages.clone(),
+            default_model.to_string(),
+            settings.im.max_messages_per_conversation,
+        ))
+    };
+    let provider: Arc<dyn ImProvider> = match (
+        std::env::var("XIAOGUAI_IM_FEISHU__APP_ID").ok(),
+        std::env::var("XIAOGUAI_IM_FEISHU__APP_SECRET").ok(),
+    ) {
+        (Some(app_id), Some(app_secret)) if !app_id.is_empty() && !app_secret.is_empty() => {
+            match xiaoguai_im_feishu::HttpFeishuClient::new() {
+                Ok(client) => Arc::new(FeishuProvider::with_api_sink(
+                    signing_key,
+                    Arc::new(client),
+                    app_id,
+                    app_secret,
+                )),
+                Err(e) => {
+                    tracing::error!(error = %e, "serve: HttpFeishuClient build failed — falling back to stub reply sink");
+                    Arc::new(FeishuProvider::new(signing_key))
+                }
+            }
+        }
+        _ => {
+            tracing::warn!(
+                "serve: XIAOGUAI_IM_FEISHU__APP_ID / __APP_SECRET unset — Feishu replies will be stubbed"
+            );
+            Arc::new(FeishuProvider::new(signing_key))
+        }
+    };
+    Some(mount_feishu_with_history(state.clone(), provider, history))
+}
+
+/// Bind the main API router and merge the optional IM gateway router on
+/// top. Equivalent to `serve_with_state` but accepts a second router
+/// fragment so we can compose IM webhooks without adding a public API
+/// surface for it (the IM mount is per-operator wiring, not part of the
+/// stable HTTP contract).
+async fn serve_with_state_and_extras(
+    addr: std::net::SocketAddr,
+    state: xiaoguai_api::AppState,
+    extra: Option<axum::Router>,
+) -> Result<(
+    std::net::SocketAddr,
+    impl std::future::Future<Output = std::io::Result<()>>,
+)> {
+    use tokio::net::TcpListener;
+
+    let mut app = xiaoguai_api::router(state);
+    if let Some(r) = extra {
+        app = app.merge(r);
+    }
+    let listener = TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("bind {addr}"))?;
+    let local = listener.local_addr().context("read local addr")?;
+    let fut = async move { axum::serve(listener, app.into_make_service()).await };
+    Ok((local, fut))
 }
 
 /// Wire the JWT validator when `auth.required` is on. Returns `None` to
