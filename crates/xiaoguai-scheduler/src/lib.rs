@@ -1,4 +1,4 @@
-//! Scheduler crate for xiaoguai (v0.10.0).
+//! Scheduler crate for xiaoguai (v0.10.x).
 //!
 //! Three things make this crate worth a separate module instead of
 //! living inside `xiaoguai-agent`:
@@ -17,16 +17,26 @@
 //!    unified chat / IM / scheduled view by reading the `audit_log`,
 //!    so this contract is load-bearing.
 //!
-//! 3. **Retry + push-sink seams.** v0.10.0 ships the `RetryPolicy` +
-//!    `PushSink` traits with one stub sink ([`LoggingSink`]); the
-//!    real sinks (Feishu / Telegram / Email / chat-ui inbox) land
-//!    in v0.10.3 against the same trait.
+//! 3. **Retry + push-sink seams.** v0.10.0 shipped the
+//!    [`RetryPolicy`] + [`PushSink`] traits with one stub sink
+//!    ([`LoggingSink`]); the real sinks (Feishu / Telegram / Email /
+//!    chat-ui inbox) land in v0.10.3 against the same trait.
 //!
-//! Out of scope for v0.10.0: reactive triggers (file watcher, webhook,
-//! git push) — deferred to v0.10.1. Proactive triggers + per-user
-//! budget — deferred to v0.10.2. PG-backed repositories — the
-//! in-memory impls here are the production-shaped contract; the PG
-//! sink lands together with the runtime extraction in v0.12.0.
+//! v0.10.1 adds the reactive half: the [`Trigger`] enum learns
+//! [`Trigger::FileWatch`] / [`Trigger::Webhook`] /
+//! [`Trigger::GitPush`] / [`Trigger::DbPoll`] variants, a new
+//! [`TriggerSource`] trait + event channel lets external sources
+//! push fire requests, and [`JobRunner::run_loop`] merges the
+//! scheduled timer and the reactive channel behind one
+//! `tokio::select!`. Two concrete sources ship —
+//! [`sources::FileWatchSource`] (real `notify` watcher) and
+//! [`sources::WebhookSource`] (in-process push handle ready to be
+//! fronted by an axum route in xiaoguai-api).
+//!
+//! Out of scope for v0.10.1: proactive triggers + per-user budget —
+//! deferred to v0.10.2. PG-backed repositories — the in-memory impls
+//! here remain the production-shaped contract; the PG sink lands
+//! together with the runtime extraction in v0.12.0.
 
 #![forbid(unsafe_code)]
 #![warn(clippy::pedantic)]
@@ -43,10 +53,12 @@ pub mod repository;
 pub mod retry;
 pub mod runner;
 pub mod sink;
+pub mod sources;
 pub mod trigger;
+pub mod trigger_source;
 
 pub use audit::{AuditAppender, NullAuditAppender, RecordingAuditAppender};
-pub use executor::{ExecutionOutcome, JobExecutor};
+pub use executor::{EchoExecutor, ExecutionOutcome, JobExecutor};
 pub use job::{JobRun, JobRunStatus, ScheduledJob};
 pub use repository::{
     InMemoryJobRepository, InMemoryJobRunRepository, JobRepository, JobRunRepository, RepoError,
@@ -54,4 +66,9 @@ pub use repository::{
 pub use retry::RetryPolicy;
 pub use runner::{JobRunner, RunnerError, RunnerOptions};
 pub use sink::{LoggingSink, PushPayload, PushSink, SinkError};
+pub use sources::{FileWatchRoute, FileWatchSource, WebhookRoute, WebhookSource};
 pub use trigger::{Trigger, TriggerError};
+pub use trigger_source::{
+    event_channel, EventReceiver, EventSender, SourceError, TriggerEvent, TriggerSource,
+    DEFAULT_EVENT_CHANNEL_CAPACITY,
+};

@@ -91,6 +91,10 @@ impl JobRepository for InMemoryJobRepository {
         let mut out: Vec<ScheduledJob> = g
             .values()
             .filter(|j| j.enabled)
+            // Reactive triggers (file_watch / webhook / git_push /
+            // db_poll) fire via the TriggerEvent channel, never via
+            // this scheduled scan — skip them unconditionally.
+            .filter(|j| j.trigger.is_scheduled())
             .filter(|j| match j.next_fire_at {
                 Some(t) => t <= now,
                 // No next_fire_at yet — treat as "fire immediately" so
