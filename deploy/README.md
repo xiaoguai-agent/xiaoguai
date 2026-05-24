@@ -33,9 +33,47 @@ cargo run -p xiaoguai-cli -- remote \
 | Stack composition                        | `docker-compose.yml`                     |
 | State (pg, valkey)                       | named volumes `pg_data`, `valkey_data`   |
 
-## What's not here (deferred to v1.0)
+## Bare-metal install (v1.1.6)
+
+For deployments that don't run Docker, every `v*` tag publishes
+release tarballs alongside the container image:
+
+```
+xiaoguai-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
+xiaoguai-vX.Y.Z-aarch64-unknown-linux-gnu.tar.gz
+SHA256SUMS
+```
+
+Install on a systemd-based host (root required):
+
+```bash
+curl -LO https://github.com/xiaoguai-agent/xiaoguai/releases/download/vX.Y.Z/xiaoguai-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf xiaoguai-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
+cd xiaoguai-vX.Y.Z-x86_64-unknown-linux-gnu
+sudo bash scripts/install.sh
+
+sudo cp /etc/xiaoguai/config.example.yaml /etc/xiaoguai/config.yaml
+sudo $EDITOR /etc/xiaoguai/config.yaml      # set database / cache / hmac
+sudo systemctl start xiaoguai-core
+```
+
+Build the tarballs locally:
+
+```bash
+# requires Rust + cross (https://github.com/cross-rs/cross) + Docker.
+VERSION=1.1.6 bash scripts/release/build-tarball.sh
+ls dist/
+```
+
+The systemd unit lives in `deploy/systemd/xiaoguai-core.service` —
+`Type=simple` with full hardening (`ProtectSystem=strict`,
+`NoNewPrivileges`, empty `CapabilityBoundingSet`, syscall filter,
+read-only `/etc/xiaoguai`, etc.). Operators wanting `:80` / `:443`
+add `CAP_NET_BIND_SERVICE` via a drop-in.
+
+## What's not here (deferred post-v1.1.6)
 
 - Helm chart with values + ingress + secrets refs.
-- Bare-metal tarball + systemd unit + uninstall.
-- Multi-arch (amd64 + arm64) buildx workflow.
-- cosign signing + SBOM attachment.
+- Debian / RPM packages (would need `cargo-deb` or `fpm`).
+- musl statically-linked tarball (Alpine / older RHEL support).
+- Windows MSI, macOS pkg.
