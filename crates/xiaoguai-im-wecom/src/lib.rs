@@ -46,6 +46,7 @@
 #![forbid(unsafe_code)]
 
 pub mod api;
+pub mod crypto;
 
 use std::sync::Arc;
 
@@ -58,12 +59,17 @@ use xiaoguai_im_gateway::{
 };
 
 pub use api::{HttpWeComClient, TokenCache, TokenResponse, WeComClient, DEFAULT_BASE_URL};
+pub use crypto::{WecomCrypto, WecomCryptoError};
 
 #[derive(Clone)]
 pub struct WeComProvider {
     /// Inbound signing token (`Token` in WeCom callback config).
     token: String,
     reply_sink: ReplySink,
+    /// Optional AES crypto for encrypted-callback mode.
+    /// When `None`, the adapter operates in plain-text mode (legacy /
+    /// deployments with encryption disabled on the WeCom side).
+    crypto: Option<std::sync::Arc<WecomCrypto>>,
 }
 
 #[derive(Clone, Default)]
@@ -104,12 +110,26 @@ impl ApiSink {
 }
 
 impl WeComProvider {
+    /// Create a provider for **plain-text** callbacks (encryption disabled on
+    /// the WeCom console).
     #[must_use]
     pub fn new(token: impl Into<String>) -> Self {
         Self {
             token: token.into(),
             reply_sink: ReplySink::Stub,
+            crypto: None,
         }
+    }
+
+    /// Attach AES crypto to an existing provider (builder-style).
+    ///
+    /// Once set, `msg_signature` in the inbound request triggers the
+    /// encrypted path; plain-text inbound still works when `msg_signature`
+    /// is absent.
+    #[must_use]
+    pub fn with_crypto(mut self, crypto: WecomCrypto) -> Self {
+        self.crypto = Some(std::sync::Arc::new(crypto));
+        self
     }
 
     #[must_use]
@@ -120,6 +140,7 @@ impl WeComProvider {
         Self {
             token: token.into(),
             reply_sink: ReplySink::Recording(sink),
+            crypto: None,
         }
     }
 
@@ -139,6 +160,7 @@ impl WeComProvider {
                 corp_secret.into(),
                 agent_id,
             ))),
+            crypto: None,
         }
     }
 }
@@ -285,10 +307,14 @@ fn parse_event(body: &[u8]) -> Result<ImEvent, ProviderError> {
     let xml: WeComXml = quick_xml::de::from_str(body_str)
         .map_err(|e| ProviderError::Malformed(format!("decode xml: {e}")))?;
 
+    // Note: `<Encrypt>` at this point means the caller has already decrypted
+    // the outer envelope and we are parsing the *inner* XML — `encrypt` should
+    // be absent here.  If somehow a caller passes an undecrypted envelope, we
+    // produce a clear error rather than silently discarding it.
     if xml.encrypt.is_some() {
         return Err(ProviderError::Malformed(
-            "wecom AES-encrypted payloads are not supported in v1.1.3; \
-             disable EncodingAESKey in the WeCom admin console"
+            "parse_event called with undecrypted envelope; \
+             the provider should decrypt before calling parse_event"
                 .into(),
         ));
     }
@@ -360,13 +386,44 @@ pub fn split_conversation_id(id: &str) -> Option<(&str, &str)> {
 #[async_trait]
 impl ImProvider for WeComProvider {
     async fn parse(&self, webhook: &Webhook) -> Result<ImEvent, ProviderError> {
-        // For text-message bodies, the signed payload is the full body
-        // string itself. (For encrypted bodies the signed payload is the
-        // `Encrypt` element's text; that path is rejected upstream.)
         let body_text = std::str::from_utf8(&webhook.body)
             .map_err(|e| ProviderError::Malformed(format!("body not utf8: {e}")))?;
-        verify(webhook, &self.token, body_text)?;
-        parse_event(&webhook.body)
+
+        // Parse the XML envelope first so we can detect which mode we're in.
+        // Encrypted bodies contain <Encrypt> while plain-text bodies contain
+        // <MsgType>/<Content> directly.  Both modes use msg_signature for the
+        // signature header, so we cannot use that as the discriminator.
+        let xml: WeComXml = quick_xml::de::from_str(body_text)
+            .map_err(|e| ProviderError::Malformed(format!("decode xml: {e}")))?;
+
+        if let Some(encrypt_blob) = xml.encrypt {
+            // ── Encrypted path ──────────────────────────────────────────────
+            let crypto = self.crypto.as_ref().ok_or_else(|| {
+                ProviderError::Malformed(
+                    "wecom encrypted payload received but EncodingAESKey not configured; \
+                     call WeComProvider::with_crypto() or disable encryption in the WeCom console"
+                        .into(),
+                )
+            })?;
+
+            // Verify signature (signed over the Encrypt blob value).
+            let (timestamp, nonce, signature) =
+                read_sig_triple(webhook).ok_or(ProviderError::BadSignature)?;
+            if !crypto.verify_signature(&signature, &timestamp, &nonce, &encrypt_blob) {
+                return Err(ProviderError::BadSignature);
+            }
+
+            // Decrypt → inner XML.
+            let inner_xml = crypto
+                .decrypt(&encrypt_blob)
+                .map_err(|e| ProviderError::Malformed(format!("aes decrypt: {e}")))?;
+            parse_event(inner_xml.as_bytes())
+        } else {
+            // ── Plain-text path (backward-compatible) ──────────────────────
+            // For plain-text, the signature is over the full body string.
+            verify(webhook, &self.token, body_text)?;
+            parse_event(&webhook.body)
+        }
     }
 
     async fn reply(&self, out: &OutgoingReply) -> Result<JsonValue, ProviderError> {
@@ -496,14 +553,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parse_rejects_encrypted_payload() {
-        let body = r"<xml><Encrypt>base64-blob</Encrypt><ToUserName>corp_x</ToUserName></xml>";
-        let webhook = signed_webhook(body, "tok");
+    async fn parse_rejects_encrypted_payload_without_crypto_configured() {
+        // The body has an <Encrypt> element AND the webhook includes
+        // X-WeCom-Msg-Signature, triggering the encrypted path. Because
+        // `WeComProvider::new` has no crypto configured, it should
+        // return a Malformed error directing the operator to call
+        // `with_crypto()` or disable encryption.
+        let ts = "1716355200";
+        let nonce = "nonce_x";
+        let encrypt_blob = "base64-blob";
+        let sig = sig_for("tok", ts, nonce, encrypt_blob);
+        let body =
+            format!("<xml><Encrypt>{encrypt_blob}</Encrypt><ToUserName>corp_x</ToUserName></xml>");
+        let webhook = Webhook {
+            headers: vec![
+                ("X-WeCom-Timestamp".into(), ts.into()),
+                ("X-WeCom-Nonce".into(), nonce.into()),
+                ("X-WeCom-Msg-Signature".into(), sig),
+            ],
+            body: body.as_bytes().to_vec(),
+        };
         let provider = WeComProvider::new("tok");
         let err = provider.parse(&webhook).await.unwrap_err();
         match err {
             ProviderError::Malformed(msg) => {
-                assert!(msg.contains("AES-encrypted"));
+                assert!(
+                    msg.contains("EncodingAESKey not configured"),
+                    "unexpected msg: {msg}"
+                );
             }
             other => panic!("expected Malformed, got {other:?}"),
         }

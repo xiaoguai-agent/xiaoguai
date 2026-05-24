@@ -19,6 +19,11 @@ reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha1 = { workspace = true }
+aes = { workspace = true }
+base64 = { workspace = true }
+cbc = { workspace = true }
+cipher = { workspace = true }
+rand = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
