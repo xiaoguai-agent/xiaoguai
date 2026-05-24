@@ -32,6 +32,7 @@
 
 pub mod adapter;
 pub mod client;
+pub mod loaders;
 pub mod memory;
 pub mod presets;
 pub mod r2r;
@@ -39,6 +40,10 @@ pub mod types;
 
 pub use adapter::RagMcpAdapter;
 pub use client::{RagClient, RagError, RagResult};
+pub use loaders::{
+    detect, DocxLoader, HtmlLoader, LoadError, LoadResult, LoadedDoc, Loader, MarkdownLoader,
+    PageMeta, PdfLoader, PptxLoader,
+};
 pub use memory::InMemoryRagClient;
 pub use presets::{ChunkingPreset, IngestOptions};
 pub use r2r::R2RClient;
