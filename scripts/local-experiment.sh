@@ -88,7 +88,7 @@ set -a; source "${ENV_FILE}"; set +a
 OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://api.openai.com/v1}"
 OPENAI_MODEL="${OPENAI_MODEL:-gpt-4o-mini}"
 PROVIDER_NAME="${PROVIDER_NAME:-codex}"
-MARKETPLACE_INSTALL="${MARKETPLACE_INSTALL:-filesystem,fetch,sqlite}"
+MARKETPLACE_INSTALL="${MARKETPLACE_INSTALL:-filesystem,memory}"
 SKIP_FRONTEND_INSTALL="${SKIP_FRONTEND_INSTALL:-}"
 
 green "env loaded — provider=${PROVIDER_NAME} model=${OPENAI_MODEL} base=${OPENAI_BASE_URL}"
@@ -130,7 +130,7 @@ ${COMPOSE} -f "${COMPOSE_FILE}" exec -T \
   xiaoguai provider register \
     --name "${PROVIDER_NAME}" \
     --kind openai_compat \
-    --base-url "${OPENAI_BASE_URL}" \
+    --endpoint "${OPENAI_BASE_URL}" \
     --api-key-env OPENAI_API_KEY \
     --models "${OPENAI_MODEL}" \
     || yellow "provider register returned non-zero — usually safe if already registered; check via 'xiaoguai provider list'"
@@ -159,16 +159,16 @@ done
 # ──────────────────────────────────────────────────────────────────────
 
 bold "Step 6/8 — install MCP servers from marketplace: ${MARKETPLACE_INSTALL}"
-IFS=',' read -ra MARKETPLACE_IDS <<< "${MARKETPLACE_INSTALL}"
-for id in "${MARKETPLACE_IDS[@]}"; do
-  id="$(echo "${id}" | xargs)"  # trim
-  [[ -z "${id}" ]] && continue
-  echo "  → installing ${id}"
+IFS=',' read -ra MARKETPLACE_SLUGS <<< "${MARKETPLACE_INSTALL}"
+for slug in "${MARKETPLACE_SLUGS[@]}"; do
+  slug="$(echo "${slug}" | xargs)"  # trim
+  [[ -z "${slug}" ]] && continue
+  echo "  → installing ${slug}"
   curl -fsS -X POST "${BASE_URL}/v1/mcp/marketplace/install" \
     -H 'content-type: application/json' \
-    -d "{\"id\":\"${id}\"}" \
-    > /tmp/mcp-install-${id}.json 2>&1 \
-    || yellow "    install '${id}' failed (might already be installed — check ${BASE_URL}/v1/mcp/servers)"
+    -d "{\"slug\":\"${slug}\"}" \
+    > "/tmp/mcp-install-${slug}.json" 2>&1 \
+    || yellow "    install '${slug}' failed (might already be installed — check ${BASE_URL}/v1/mcp/servers; npm-backed servers like 'fetch' may fail offline)"
 done
 
 # ──────────────────────────────────────────────────────────────────────
