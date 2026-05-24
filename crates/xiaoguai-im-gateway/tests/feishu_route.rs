@@ -263,7 +263,7 @@ async fn agent_inherits_tenant_resolved_by_history_store() {
     });
     let state = GatewayState {
         app: app_state,
-        feishu: provider,
+        provider,
         history,
     };
     let msg = IncomingMessage {
@@ -329,7 +329,7 @@ async fn conversation_history_accumulates_per_chat() {
     let history: Arc<dyn ImHistoryStore> = history_concrete.clone();
     let state = GatewayState {
         app: app_state,
-        feishu: provider,
+        provider,
         history,
     };
 

@@ -55,7 +55,10 @@ pub const DEFAULT_HISTORY_TURNS: usize = 20;
 #[derive(Clone)]
 pub struct GatewayState {
     pub app: AppState,
-    pub feishu: Arc<dyn ImProvider>,
+    /// The IM adapter handling this mount. Named generically (was
+    /// `feishu` pre-v1.1.3) since the same shape now hosts DingTalk +
+    /// WeCom too.
+    pub provider: Arc<dyn ImProvider>,
     /// Conversation history store. Default is the in-process
     /// [`ConversationHistory`]; production wires the PG-backed
     /// `PgImHistoryStore`.
@@ -82,13 +85,62 @@ pub fn mount_feishu_with_history(
     feishu: Arc<dyn ImProvider>,
     history: Arc<dyn ImHistoryStore>,
 ) -> Router {
+    mount_with_history("/v1/im/feishu/webhook", app, feishu, history)
+}
+
+/// v1.1.3: DingTalk webhook mount. Same axum-state shape as the Feishu
+/// mount — only the URL path differs. Route:
+/// `POST /v1/im/dingtalk/webhook`.
+pub fn mount_dingtalk(app: AppState, provider: Arc<dyn ImProvider>) -> Router {
+    let history: Arc<dyn ImHistoryStore> =
+        Arc::new(ConversationHistory::new(DEFAULT_HISTORY_TURNS));
+    mount_dingtalk_with_history(app, provider, history)
+}
+
+/// v1.1.3: same as [`mount_dingtalk`] but lets the caller share an
+/// [`ImHistoryStore`] across mounts (recommended in multi-replica
+/// deployments — use [`PgImHistoryStore`] for cross-process safety).
+pub fn mount_dingtalk_with_history(
+    app: AppState,
+    provider: Arc<dyn ImProvider>,
+    history: Arc<dyn ImHistoryStore>,
+) -> Router {
+    mount_with_history("/v1/im/dingtalk/webhook", app, provider, history)
+}
+
+/// v1.1.3: WeCom webhook mount. Route: `POST /v1/im/wecom/webhook`.
+pub fn mount_wecom(app: AppState, provider: Arc<dyn ImProvider>) -> Router {
+    let history: Arc<dyn ImHistoryStore> =
+        Arc::new(ConversationHistory::new(DEFAULT_HISTORY_TURNS));
+    mount_wecom_with_history(app, provider, history)
+}
+
+/// v1.1.3: same as [`mount_wecom`] but accepts a shared
+/// [`ImHistoryStore`].
+pub fn mount_wecom_with_history(
+    app: AppState,
+    provider: Arc<dyn ImProvider>,
+    history: Arc<dyn ImHistoryStore>,
+) -> Router {
+    mount_with_history("/v1/im/wecom/webhook", app, provider, history)
+}
+
+/// Shared mount implementation. The handler is provider-agnostic — the
+/// adapter behind `provider` decides how to verify signatures and
+/// parse the body. The only thing each mount picks is the URL path.
+fn mount_with_history(
+    path: &str,
+    app: AppState,
+    provider: Arc<dyn ImProvider>,
+    history: Arc<dyn ImHistoryStore>,
+) -> Router {
     let state = GatewayState {
         app,
-        feishu,
+        provider,
         history,
     };
     Router::new()
-        .route("/v1/im/feishu/webhook", post(handle_webhook))
+        .route(path, post(handle_webhook))
         .with_state(state)
 }
 
@@ -105,7 +157,7 @@ async fn handle_webhook(
         body: body.to_vec(),
     };
 
-    match state.feishu.parse(&webhook).await {
+    match state.provider.parse(&webhook).await {
         Ok(ImEvent::Challenge { challenge }) => {
             Json(json!({ "challenge": challenge })).into_response()
         }
@@ -116,7 +168,7 @@ async fn handle_webhook(
         Err(ProviderError::BadSignature) => StatusCode::UNAUTHORIZED.into_response(),
         Err(ProviderError::Malformed(msg)) => (StatusCode::BAD_REQUEST, msg).into_response(),
         Err(ProviderError::Transport(msg)) => {
-            tracing::error!(%msg, "feishu transport error parsing webhook");
+            tracing::error!(%msg, provider = state.provider.name(), "im transport error parsing webhook");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
@@ -193,16 +245,21 @@ pub async fn run_agent_and_reply(
         conversation_id: msg.conversation_id.clone(),
         text: reply_text,
     };
-    state.feishu.reply(&out).await?;
+    state.provider.reply(&out).await?;
     Ok(out)
 }
 
 fn spawn_agent_reply(state: GatewayState, msg: IncomingMessage) {
+    let provider_name = state.provider.name();
     tokio::spawn(async move {
         let conv = msg.conversation_id.clone();
         match run_agent_and_reply(state, msg).await {
-            Ok(out) => tracing::info!(chat_id = %conv, len = out.text.len(), "feishu reply sent"),
-            Err(err) => tracing::warn!(?err, chat_id = %conv, "feishu reply failed"),
+            Ok(out) => {
+                tracing::info!(provider = provider_name, chat_id = %conv, len = out.text.len(), "im reply sent");
+            }
+            Err(err) => {
+                tracing::warn!(provider = provider_name, ?err, chat_id = %conv, "im reply failed");
+            }
         }
     });
 }

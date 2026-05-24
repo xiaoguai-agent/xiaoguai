@@ -6,13 +6,27 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "WeCom (企业微信) IM adapter (skeleton, v1.1 target)."
+description = "WeCom (企业微信) IM adapter — webhook signature verification + parser + OpenAPI reply."
 
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
+xiaoguai-im-gateway = { path = "../xiaoguai-im-gateway" }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+quick-xml = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha1 = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+mockito = { workspace = true }
 
 [lints]
 workspace = true

@@ -34,8 +34,13 @@ parking_lot = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 xiaoguai-im-feishu = { path = "../xiaoguai-im-feishu" }
+xiaoguai-im-dingtalk = { path = "../xiaoguai-im-dingtalk" }
+xiaoguai-im-wecom = { path = "../xiaoguai-im-wecom" }
 tower = { workspace = true }
 sha2 = { workspace = true }
+sha1 = { workspace = true }
+hmac = { workspace = true }
+base64 = { workspace = true }
 hex = "0.4"
 async-trait = { workspace = true }
 futures = { workspace = true }
