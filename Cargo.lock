@@ -994,6 +994,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
+name = "file-id"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1fc6a637b6dc58414714eddd9170ff187ecb0933d4c7024d1abbd23a3cc26e9"
+dependencies = [
+ "windows-sys 0.60.2",
+]
+
+[[package]]
 name = "filetime"
 version = "0.2.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2067,6 +2076,19 @@ dependencies = [
  "notify-types",
  "walkdir",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "notify-debouncer-full"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dcf855483228259b2353f89e99df35fc639b2b2510d1166e4858e3f67ec1afb"
+dependencies = [
+ "file-id",
+ "log",
+ "notify",
+ "notify-types",
+ "walkdir",
 ]
 
 [[package]]
@@ -5434,7 +5456,7 @@ dependencies = [
  "chrono",
  "cron",
  "mockito",
- "notify",
+ "notify-debouncer-full",
  "parking_lot",
  "reqwest 0.12.28",
  "serde",

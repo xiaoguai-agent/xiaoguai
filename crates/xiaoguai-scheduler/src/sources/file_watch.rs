@@ -1,35 +1,64 @@
-//! File-system watcher source — wraps the `notify` crate.
+//! File-system watcher source — wraps the `notify-debouncer-full` crate.
 //!
 //! Each [`FileWatchRoute`] binds one job id to one path. The source
-//! registers every path with a single recursive recommended watcher
-//! and, on each event, emits a [`TriggerEvent`] for every route whose
-//! `path` is an ancestor of (or equal to) the changed path.
+//! registers every path with a single recursive debounced watcher
+//! and, on each debounce batch, emits a [`TriggerEvent`] for every
+//! route whose `path` is an ancestor of (or equal to) a changed path.
 //!
-//! Debounce is intentionally minimal: `notify`'s recommended watcher
-//! already coalesces back-end events into one batch per syscall. A
-//! single `cp file dst` therefore yields one event per file written,
-//! not one per byte. If user feedback shows we need stronger
-//! debouncing we'll layer `notify-debouncer-full` in v0.10.1.x.
+//! ## Debounce window
 //!
-//! The watcher runs on `notify`'s own dedicated thread; this module
-//! only owns the small Tokio-side glue (a `std::sync::mpsc` ↔
-//! `tokio::sync::mpsc` bridge task) so the runner stays single-mpsc.
+//! The debounce window defaults to **250 ms** and is configurable via
+//! the `FILE_WATCH_DEBOUNCE_MS` environment variable (integer
+//! milliseconds).  Bursty operations such as an editor save sequence
+//! (`rename tmp → target`, `write`, `chmod`) that arrive within the
+//! window are coalesced into one batch, so the scheduler receives one
+//! `TriggerEvent` per logical change instead of three.
+//!
+//! ## Threading model
+//!
+//! `notify-debouncer-full` runs two background threads:
+//!
+//! 1. The OS-native watcher thread (inotify / kqueue / `FSEvents`).
+//! 2. A debouncer tick thread that flushes the coalesced batch after
+//!    the window expires and calls our handler with
+//!    `DebounceEventResult`.
+//!
+//! We bridge from the handler callback (called on the debouncer tick
+//! thread) into the Tokio event channel via a
+//! `std::sync::mpsc::channel`.  A `spawn_blocking` task drains that
+//! channel and forwards `TriggerEvent`s to the runner.
+//!
+//! Dropping the `Debouncer` guard stops both background threads.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
-use notify::{
-    event::{ModifyKind, RemoveKind},
-    Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
-};
+// notify-debouncer-full re-exports the underlying notify crate, so we
+// import notify through that re-export to avoid an extra direct dep.
+use notify_debouncer_full::notify::{self, RecursiveMode};
+use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
 use parking_lot::Mutex;
 
 use crate::trigger_source::{EventSender, SourceError, TriggerEvent, TriggerSource};
 
+/// Default debounce window when `FILE_WATCH_DEBOUNCE_MS` is not set.
+pub const DEFAULT_DEBOUNCE_MS: u64 = 250;
+
+/// Read the debounce window from the environment, falling back to
+/// [`DEFAULT_DEBOUNCE_MS`].
+fn debounce_duration() -> Duration {
+    let ms = std::env::var("FILE_WATCH_DEBOUNCE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_DEBOUNCE_MS);
+    Duration::from_millis(ms)
+}
+
 /// One (`job_id`, `path`) binding. The source emits a
-/// [`TriggerEvent`] for the bound `job_id` whenever a `notify::Event`
-/// touches `path` (or anything under it, recursively).
+/// [`TriggerEvent`] for the bound `job_id` whenever a debounced
+/// batch touches `path` (or anything under it, recursively).
 #[derive(Debug, Clone)]
 pub struct FileWatchRoute {
     pub job_id: String,
@@ -46,15 +75,20 @@ impl FileWatchRoute {
     }
 }
 
-/// Filesystem-watch source. Construct with [`FileWatchSource::new`],
-/// register routes via [`FileWatchSource::add_route`], then hand it
-/// to the runner via [`TriggerSource::start`].
+// Type alias to keep field declarations readable.
+type ArcDebouncer = Debouncer<notify::RecommendedWatcher, RecommendedCache>;
+
+/// Filesystem-watch source backed by `notify-debouncer-full`.
 ///
-/// The source holds the [`RecommendedWatcher`] internally so dropping
-/// the source stops the background thread.
+/// Construct with [`FileWatchSource::new`], register routes via
+/// [`FileWatchSource::add_route`], then hand it to the runner via
+/// [`TriggerSource::start`].
+///
+/// The source owns the [`Debouncer`] guard internally; dropping the
+/// source stops the background watcher and debouncer threads.
 pub struct FileWatchSource {
     routes: Arc<Mutex<Vec<FileWatchRoute>>>,
-    watcher: Mutex<Option<RecommendedWatcher>>,
+    debouncer: Mutex<Option<ArcDebouncer>>,
 }
 
 impl FileWatchSource {
@@ -62,33 +96,35 @@ impl FileWatchSource {
     pub fn new() -> Self {
         Self {
             routes: Arc::new(Mutex::new(Vec::new())),
-            watcher: Mutex::new(None),
+            debouncer: Mutex::new(None),
         }
     }
 
-    /// Register a (`job_id`, `path`) binding. May be called before or
-    /// after [`TriggerSource::start`] — when called after, the new
-    /// path is added to the existing watcher.
+    /// Register a (`job_id`, `path`) binding.
+    ///
+    /// May be called before or after [`TriggerSource::start`] — when
+    /// called after, the new path is added to the live debouncer.
     pub fn add_route(&self, route: FileWatchRoute) -> Result<(), SourceError> {
-        if let Some(w) = self.watcher.lock().as_mut() {
-            w.watch(&route.path, RecursiveMode::Recursive)
+        if let Some(d) = self.debouncer.lock().as_mut() {
+            d.watch(&route.path, RecursiveMode::Recursive)
                 .map_err(|e| SourceError::Backend(e.to_string()))?;
         }
         self.routes.lock().push(route);
         Ok(())
     }
 
-    /// True iff a notify event should fire a job.
+    /// True iff a notify `EventKind` should propagate to the runner.
     ///
-    /// We accept create/modify/remove events; pure access events
+    /// We accept create / modify / remove events; pure access events
     /// (Linux `inotify` `IN_ACCESS`) are ignored because they fire on
-    /// every read and would saturate the runner.
-    fn should_fire(kind: EventKind) -> bool {
+    /// every read.
+    fn should_fire(kind: notify::EventKind) -> bool {
+        use notify::event::{ModifyKind, RemoveKind};
         matches!(
             kind,
-            EventKind::Create(_)
-                | EventKind::Remove(RemoveKind::File | RemoveKind::Folder)
-                | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Name(_))
+            notify::EventKind::Create(_)
+                | notify::EventKind::Remove(RemoveKind::File | RemoveKind::Folder)
+                | notify::EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Name(_))
         )
     }
 
@@ -111,7 +147,7 @@ impl std::fmt::Debug for FileWatchSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FileWatchSource")
             .field("route_count", &self.routes.lock().len())
-            .field("started", &self.watcher.lock().is_some())
+            .field("started", &self.debouncer.lock().is_some())
             .finish()
     }
 }
@@ -123,64 +159,75 @@ impl TriggerSource for FileWatchSource {
     }
 
     async fn start(&self, tx: EventSender) -> Result<(), SourceError> {
-        if self.watcher.lock().is_some() {
+        if self.debouncer.lock().is_some() {
             return Err(SourceError::AlreadyStarted);
         }
 
-        // notify hands events to a std-thread callback; bounce them
-        // through a sync channel and drain into the tokio channel from
-        // a small background task.
-        let (raw_tx, raw_rx) = std::sync::mpsc::channel::<notify::Result<Event>>();
-        let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |res| {
-            // best-effort — receiver gone means we're shutting down.
-            let _ = raw_tx.send(res);
+        let timeout = debounce_duration();
+
+        // The debouncer handler is called on a background thread managed
+        // by notify-debouncer-full.  We forward batches through a sync
+        // channel so the blocking drain loop can live in spawn_blocking.
+        let (batch_tx, batch_rx) = std::sync::mpsc::channel::<DebounceEventResult>();
+
+        let debouncer = new_debouncer(timeout, None, move |res: DebounceEventResult| {
+            // best-effort — if the receiver is gone we're shutting down.
+            let _ = batch_tx.send(res);
         })
         .map_err(|e| SourceError::Backend(e.to_string()))?;
 
+        // Stash the debouncer so it stays alive (drop = stop).
+        *self.debouncer.lock() = Some(debouncer);
+
         // Watch every already-registered route.
         let initial = self.routes.lock().clone();
-        for r in initial {
-            watcher
-                .watch(&r.path, RecursiveMode::Recursive)
-                .map_err(|e| SourceError::Backend(e.to_string()))?;
+        for r in &initial {
+            if let Some(d) = self.debouncer.lock().as_mut() {
+                d.watch(&r.path, RecursiveMode::Recursive)
+                    .map_err(|e| SourceError::Backend(e.to_string()))?;
+            }
         }
 
-        // Stash the watcher so it stays alive (drop = stop).
-        *self.watcher.lock() = Some(watcher);
-
         let routes = self.routes.clone();
-        // The drain loop blocks on the std channel; tokio::task::spawn_blocking
-        // is the right home for it.
+        // The drain loop blocks on the sync channel; spawn_blocking is
+        // the right home so we don't block the Tokio worker pool.
         tokio::task::spawn_blocking(move || {
-            while let Ok(res) = raw_rx.recv() {
-                let event = match res {
-                    Ok(ev) => ev,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "notify error");
+            while let Ok(res) = batch_rx.recv() {
+                let events = match res {
+                    Ok(evs) => evs,
+                    Err(errs) => {
+                        for e in errs {
+                            tracing::warn!(error = %e, "notify-debouncer error");
+                        }
                         continue;
                     }
                 };
-                if !Self::should_fire(event.kind) {
-                    continue;
-                }
+
+                // One debounced batch may cover multiple changed paths.
+                // Iterate paths × routes and emit one TriggerEvent per match.
                 let snapshot = routes.lock().clone();
-                for path in &event.paths {
-                    for route in &snapshot {
-                        if !Self::route_matches(&route.path, path) {
-                            continue;
-                        }
-                        let ev = TriggerEvent::new(route.job_id.clone()).with_detail(
-                            serde_json::json!({
-                                "source": "file_watch",
-                                "changed_path": path.display().to_string(),
-                                "kind": format!("{:?}", event.kind),
-                            }),
-                        );
-                        // blocking_send is correct here: this task is
-                        // spawn_blocking, not a tokio runtime worker.
-                        if tx.blocking_send(ev).is_err() {
-                            // Receiver dropped — runner shut down. Bail.
-                            return;
+                for debounced in &events {
+                    // DebouncedEvent derefs to notify::Event.
+                    if !Self::should_fire(debounced.kind) {
+                        continue;
+                    }
+                    for path in &debounced.paths {
+                        for route in &snapshot {
+                            if !Self::route_matches(&route.path, path) {
+                                continue;
+                            }
+                            let ev = TriggerEvent::new(route.job_id.clone()).with_detail(
+                                serde_json::json!({
+                                    "source": "file_watch",
+                                    "changed_path": path.display().to_string(),
+                                    "kind": format!("{:?}", debounced.kind),
+                                }),
+                            );
+                            // blocking_send is correct: we're in spawn_blocking.
+                            if tx.blocking_send(ev).is_err() {
+                                // Receiver dropped — runner shut down.
+                                return;
+                            }
                         }
                     }
                 }
@@ -220,13 +267,21 @@ mod tests {
 
     #[test]
     fn should_fire_filters_pure_access() {
-        // We can't construct every notify EventKind ergonomically
-        // (the inner shape varies by backend), but we can at least
-        // assert that Access events don't fire.
         use notify::event::{AccessKind, AccessMode};
-        let k = EventKind::Access(AccessKind::Read);
+        let k = notify::EventKind::Access(AccessKind::Read);
         assert!(!FileWatchSource::should_fire(k));
-        let k = EventKind::Access(AccessKind::Open(AccessMode::Read));
+        let k = notify::EventKind::Access(AccessKind::Open(AccessMode::Read));
         assert!(!FileWatchSource::should_fire(k));
+    }
+
+    #[test]
+    fn default_debounce_ms_constant_is_250() {
+        // Tests the exported constant directly — no env-var manipulation,
+        // safe to run in parallel with other tests.
+        assert_eq!(DEFAULT_DEBOUNCE_MS, 250);
+        assert_eq!(
+            Duration::from_millis(DEFAULT_DEBOUNCE_MS),
+            Duration::from_millis(250)
+        );
     }
 }
