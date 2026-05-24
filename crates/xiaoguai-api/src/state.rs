@@ -25,6 +25,7 @@ use xiaoguai_storage::repositories::{
 use crate::audit::{AuditReader, AuditVerifier};
 use crate::auth::TokenValidator;
 use crate::eval::EvalService;
+use crate::scheduler::WebhookPusher;
 use crate::today::TodayReader;
 
 /// Registry of cancellation tokens keyed by `session_id`. A single token per
@@ -123,6 +124,12 @@ pub struct AppState {
     /// source + suites directory. `None` makes every `/v1/admin/eval/*`
     /// route return 503; production wires it from `[eval]` config.
     pub eval: Option<Arc<EvalService>>,
+    /// v0.12.0: scheduler webhook pusher. `None` makes
+    /// `POST /v1/admin/scheduler/webhooks/:route_id` return 503;
+    /// production wires it from `xiaoguai-core` by wrapping the
+    /// running `WebhookSource`. Behind admin auth — per-tenant tokens
+    /// land in v0.12.1.
+    pub webhook_pusher: Option<Arc<dyn WebhookPusher>>,
 }
 
 impl std::fmt::Debug for AppState {

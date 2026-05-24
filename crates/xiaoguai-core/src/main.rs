@@ -6,6 +6,7 @@
 
 mod audit_bridge;
 mod eval_bridge;
+mod scheduler_bridge;
 mod today_bridge;
 
 use std::path::PathBuf;
@@ -242,12 +243,82 @@ async fn run_serve(settings: &Settings) -> Result<()> {
     let mcp_servers_repo: Arc<dyn xiaoguai_storage::repositories::McpServerRepository> =
         Arc::new(PgMcpServerRepository::new(pool.clone()));
 
+    // v0.12.0: scheduler bootstrap. Off by default so existing
+    // deployments don't change behaviour. When enabled we spawn a
+    // `JobRunner::run_loop` on a tokio task, wire the PG repositories,
+    // run the agent loop through `RuntimeJobExecutor`, and hand the
+    // `WebhookSource` to `AppState` so `/v1/admin/scheduler/webhooks/...`
+    // can fire reactive jobs.
+    let toolbox = Arc::new(Toolbox::new());
+    let agent_defaults = AgentConfig::new(default_model.clone());
+    let (scheduler_handle, webhook_pusher): (
+        Option<tokio::task::JoinHandle<Result<(), xiaoguai_scheduler::RunnerError>>>,
+        Option<Arc<dyn xiaoguai_api::scheduler::WebhookPusher>>,
+    ) = if settings.scheduler.enabled {
+        let runtime_ctx = crate::scheduler_bridge::build_runtime_ctx(
+            backend.clone(),
+            toolbox.clone(),
+            agent_defaults.clone(),
+        );
+        let executor: Arc<dyn xiaoguai_scheduler::JobExecutor> =
+            Arc::new(xiaoguai_scheduler::RuntimeJobExecutor::new(runtime_ctx));
+        let jobs: Arc<dyn xiaoguai_scheduler::JobRepository> =
+            Arc::new(xiaoguai_scheduler::PgJobRepository::new(pool.clone()));
+        let runs: Arc<dyn xiaoguai_scheduler::JobRunRepository> =
+            Arc::new(xiaoguai_scheduler::PgJobRunRepository::new(pool.clone()));
+        // Audit appender: route through the same PgAuditSink the audit
+        // bridge already constructed when the signing key was present.
+        // When audit is unwired we fall back to NullAuditAppender so the
+        // scheduler still runs (audit gap is logged at startup).
+        let audit_appender: Arc<dyn xiaoguai_scheduler::AuditAppender> = match std::env::var(
+            &settings.audit.signing_key_env,
+        ) {
+            Ok(key) if !key.is_empty() => {
+                let sink = Arc::new(PgAuditSink::new(pool.clone(), key.into_bytes()));
+                Arc::new(crate::scheduler_bridge::PgSchedulerAuditAppender::new(sink))
+            }
+            _ => {
+                tracing::warn!("serve: scheduler audit appender = NullAuditAppender (no signing key); scheduler runs will NOT enter the audit chain");
+                Arc::new(xiaoguai_scheduler::NullAuditAppender)
+            }
+        };
+        let webhook_source = Arc::new(xiaoguai_scheduler::WebhookSource::new());
+        let (event_tx, event_rx) = xiaoguai_scheduler::event_channel();
+        if let Err(e) =
+            xiaoguai_scheduler::TriggerSource::start(webhook_source.as_ref(), event_tx).await
+        {
+            anyhow::bail!("scheduler webhook source start: {e}");
+        }
+        let runner = xiaoguai_scheduler::JobRunner::new(jobs, runs, executor, audit_appender)
+            .with_options(xiaoguai_scheduler::RunnerOptions {
+                max_jobs_per_tick: 32,
+                max_retry_sleep_secs: 30,
+                budget_limit_per_user_per_day: xiaoguai_scheduler::DEFAULT_PROACTIVE_BUDGET_PER_DAY,
+            });
+        let runner = Arc::new(runner);
+        let tick = std::time::Duration::from_secs(settings.scheduler.tick_interval_secs);
+        let runner_for_task = runner.clone();
+        let handle =
+            tokio::spawn(async move { runner_for_task.run_loop(event_rx, Some(tick)).await });
+        tracing::info!(
+            tick_secs = settings.scheduler.tick_interval_secs,
+            "serve: scheduler JobRunner spawned"
+        );
+        let pusher: Arc<dyn xiaoguai_api::scheduler::WebhookPusher> = Arc::new(
+            crate::scheduler_bridge::WebhookSourceAdapter::new(webhook_source.clone()),
+        );
+        (Some(handle), Some(pusher))
+    } else {
+        tracing::info!("serve: scheduler disabled (set [scheduler].enabled = true to opt in)");
+        (None, None)
+    };
+
     let state = AppState {
         sessions: Arc::new(PgSessionRepository::new(pool.clone())),
         messages: Arc::new(PgMessageRepository::new(pool.clone())),
         backend,
-        toolbox: Arc::new(Toolbox::new()),
-        agent_defaults: AgentConfig::new(default_model.clone()),
+        toolbox: toolbox.clone(),
+        agent_defaults: agent_defaults.clone(),
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: Some(mcp_servers_repo),
         auth,
@@ -276,6 +347,9 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // v0.11.2: eval pane. The PG case-from-session source feeds
         // operator "convert prod run to regression case" requests.
         eval: Some(build_eval_service(settings, pool.clone())),
+        // v0.12.0: webhook → JobRunner adapter. None when scheduler is
+        // disabled — the route then returns 503.
+        webhook_pusher,
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by
@@ -300,6 +374,13 @@ async fn run_serve(settings: &Settings) -> Result<()> {
     tokio::select! {
         res = fut => res.context("axum serve")?,
         _ = tokio::signal::ctrl_c() => tracing::info!("serve: shutdown via ctrl-c"),
+    }
+    // v0.12.0: aborting the scheduler task cancels its tokio::select!
+    // loop; in-flight fires complete naturally because run_to_completion
+    // is awaited inside the task body.
+    if let Some(h) = scheduler_handle {
+        h.abort();
+        let _ = h.await;
     }
     Ok(())
 }

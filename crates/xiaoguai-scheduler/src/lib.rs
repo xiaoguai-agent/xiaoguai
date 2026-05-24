@@ -69,10 +69,12 @@ pub mod audit;
 pub mod budget;
 pub mod executor;
 pub mod job;
+pub mod pg_repository;
 pub mod proactive;
 pub mod repository;
 pub mod retry;
 pub mod runner;
+pub mod runtime_executor;
 pub mod sink;
 pub mod sinks;
 pub mod sources;
@@ -85,6 +87,7 @@ pub use budget::{
 };
 pub use executor::{EchoExecutor, ExecutionOutcome, JobExecutor};
 pub use job::{JobRun, JobRunStatus, ScheduledJob};
+pub use pg_repository::{PgJobRepository, PgJobRunRepository};
 pub use proactive::{
     AlwaysFireChecker, NeverFireChecker, ProactiveChecker, ProactiveCtx, ProactiveError,
     ScriptedChecker,
@@ -94,6 +97,7 @@ pub use repository::{
 };
 pub use retry::RetryPolicy;
 pub use runner::{JobRunner, RunnerError, RunnerOptions};
+pub use runtime_executor::RuntimeJobExecutor;
 pub use sink::{LoggingSink, PushPayload, PushSink, SinkError};
 pub use sinks::{
     EmailPushSink, EmailSinkConfig, FeishuPushSink, FeishuSinkConfig, InboxMessage, InboxPushSink,

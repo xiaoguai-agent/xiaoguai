@@ -10,8 +10,9 @@ use axum::Json;
 use chrono::Utc;
 use futures::stream::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
-use xiaoguai_agent::{ReactAgent, StopReason};
+use xiaoguai_agent::StopReason;
 use xiaoguai_llm::Message as LlmMessage;
+use xiaoguai_runtime::{run_streamed, RuntimeContext, RuntimeOutcome};
 use xiaoguai_types::{Session, SessionId, SessionStatus, TenantId, UserId};
 
 use crate::auth::Claims;
@@ -219,19 +220,23 @@ pub async fn send_message(
     let mut messages = history;
     messages.push(domain_to_llm(&user_domain));
 
-    // 3. Build the agent and register a cancel token. v0.6.4 threads the
-    //    session's tenant down into the LlmRouter (when wired) so per-
-    //    tenant model defaults + fallback chains apply for this request.
+    // 3. Build the runtime context and register a cancel token. v0.6.4
+    //    threads the session's tenant down into the LlmRouter (when wired)
+    //    so per-tenant model defaults + fallback chains apply for this
+    //    request. v0.12.0: every call site builds via RuntimeContext.
     let model = req.model.unwrap_or(session.model);
-    let mut cfg = state.agent_defaults.clone();
-    cfg.model = model;
-    cfg.tenant_id = Some(session_tenant.clone());
-    let agent = ReactAgent::new(state.backend.clone(), (*state.toolbox).clone(), cfg);
+    let ctx = RuntimeContext::new(
+        state.backend.clone(),
+        state.toolbox.clone(),
+        state.agent_defaults.clone(),
+    )
+    .with_model(model)
+    .with_tenant(Some(session_tenant.clone()));
     let cancel = state.cancels.register(&session_id_str);
 
-    // 4. Launch the loop. `events` will close naturally when the agent
-    //    finishes; `join` resolves once the task body returns.
-    let (join, events) = agent.run_stream(messages, cancel);
+    // 4. Launch the loop via the runtime. `events` closes naturally when
+    //    the loop terminates; `join` resolves with the enriched outcome.
+    let (join, events) = run_streamed(&ctx, messages, cancel);
 
     // 5. Spawn the finalisation task — it runs concurrently with the SSE
     //    stream and persists anything the loop produced once the join
@@ -254,7 +259,7 @@ fn spawn_finalize_task(
     tenant_id: String,
     session_id_str: String,
     session_id: SessionId,
-    join: tokio::task::JoinHandle<Result<xiaoguai_agent::AgentOutcome, xiaoguai_agent::AgentError>>,
+    join: tokio::task::JoinHandle<Result<RuntimeOutcome, xiaoguai_runtime::RuntimeError>>,
     initial_count: usize,
 ) {
     tokio::spawn(async move {

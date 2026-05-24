@@ -53,6 +53,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/admin/eval/case-from-session",
             post(admin::eval_case_from_session),
+        )
+        .route(
+            "/v1/admin/scheduler/webhooks/:route_id",
+            post(admin::scheduler_webhook),
         );
 
     // Layer order (inner → outer, since `route_layer` adds outward):

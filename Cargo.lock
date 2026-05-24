@@ -3940,6 +3940,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
@@ -5003,6 +5004,7 @@ dependencies = [
  "xiaoguai-eval",
  "xiaoguai-llm",
  "xiaoguai-mcp",
+ "xiaoguai-runtime",
  "xiaoguai-storage",
  "xiaoguai-types",
 ]
@@ -5121,6 +5123,8 @@ dependencies = [
  "xiaoguai-im-gateway",
  "xiaoguai-llm",
  "xiaoguai-mcp",
+ "xiaoguai-runtime",
+ "xiaoguai-scheduler",
  "xiaoguai-storage",
  "xiaoguai-types",
 ]
@@ -5198,6 +5202,7 @@ dependencies = [
  "xiaoguai-api",
  "xiaoguai-im-feishu",
  "xiaoguai-llm",
+ "xiaoguai-runtime",
  "xiaoguai-storage",
  "xiaoguai-types",
 ]
@@ -5275,6 +5280,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "xiaoguai-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "parking_lot",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "xiaoguai-agent",
+ "xiaoguai-llm",
+]
+
+[[package]]
 name = "xiaoguai-scheduler"
 version = "0.1.0"
 dependencies = [
@@ -5287,14 +5308,22 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sqlx",
  "tempfile",
+ "testcontainers",
+ "testcontainers-modules",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
+ "xiaoguai-agent",
  "xiaoguai-audit",
  "xiaoguai-im-feishu",
  "xiaoguai-im-gateway",
+ "xiaoguai-llm",
+ "xiaoguai-runtime",
+ "xiaoguai-storage",
  "xiaoguai-types",
 ]
 

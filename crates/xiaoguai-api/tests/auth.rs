@@ -50,6 +50,7 @@ fn build_state_with_auth() -> AppState {
         mcp_supervisor: None,
         today: None,
         eval: None,
+        webhook_pusher: None,
     }
 }
 

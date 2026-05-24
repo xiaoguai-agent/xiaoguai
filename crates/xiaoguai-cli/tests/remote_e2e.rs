@@ -40,6 +40,7 @@ async fn spawn_server(steps: Vec<ScriptStep>) -> String {
         mcp_supervisor: None,
         today: None,
         eval: None,
+        webhook_pusher: None,
     };
     let (local, fut) = serve_with_state("127.0.0.1:0".parse().unwrap(), state)
         .await

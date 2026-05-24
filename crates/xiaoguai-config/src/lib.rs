@@ -103,12 +103,36 @@ fn default_signing_key_env() -> String {
     "XIAOGUAI_AUDIT_SIGNING_KEY".into()
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchedulerSettings {
+    /// v0.12.0: when `true`, `xiaoguai-core` spawns the `JobRunner`
+    /// on a tokio task. Off by default so existing deployments don't
+    /// change behaviour. Override via `XIAOGUAI_SCHEDULER__ENABLED=true`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// v0.12.0: how often the runner walks `scheduled_jobs` for due
+    /// rows (the `JobRunner::run_loop` timer arm). Reactive triggers
+    /// fire via the event channel regardless of this knob.
+    #[serde(default = "default_tick_interval_secs")]
+    pub tick_interval_secs: u64,
     /// Per-sink config blocks. Every field is `Option<_>` so an
     /// operator wires only the sinks they actually deploy.
     #[serde(default)]
     pub sinks: SchedulerSinkSettings,
+}
+
+impl Default for SchedulerSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            tick_interval_secs: default_tick_interval_secs(),
+            sinks: SchedulerSinkSettings::default(),
+        }
+    }
+}
+
+const fn default_tick_interval_secs() -> u64 {
+    30
 }
 
 /// Container for the four real `PushSink` configs shipped in
