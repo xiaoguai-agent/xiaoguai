@@ -1,0 +1,22 @@
+[package]
+name = "xiaoguai-anomaly"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Time-series anomaly detection — rolling Z-score and EWMA detectors for active wakeup triggers."
+
+[dependencies]
+serde = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

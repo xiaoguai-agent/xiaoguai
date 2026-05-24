@@ -21,6 +21,7 @@ members = [
     "crates/xiaoguai-im-wecom",
     "crates/xiaoguai-cli",
     "crates/xiaoguai-orchestrator",
+    "crates/xiaoguai-anomaly",
 ]
 
 [workspace.package]
