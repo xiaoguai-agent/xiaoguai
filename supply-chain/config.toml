@@ -1,0 +1,45 @@
+# cargo-vet supply-chain configuration
+# v1.1.8.1 — bootstrap: all current deps exempted, audit incrementally going forward.
+#
+# Docs: https://mozilla.github.io/cargo-vet/
+# To refresh imports: `cargo vet fetch-imports`
+# To suggest audits: `cargo vet suggest`
+
+[cargo-vet]
+version = "0.10"
+
+# ---------------------------------------------------------------------------
+# Trusted audit sources
+# ---------------------------------------------------------------------------
+# We import from four well-maintained public audit registries.  Their audits
+# reduce the manual audit burden over time — any crate they have marked
+# safe-to-deploy (or better) no longer needs an exemption here.
+
+[imports.mozilla]
+url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
+
+[imports.bytecode-alliance]
+url = "https://raw.githubusercontent.com/bytecodealliance/wasmtime/main/supply-chain/audits.toml"
+
+[imports.google]
+url = "https://raw.githubusercontent.com/google/supply-chain/main/audits.toml"
+
+[imports.embark-studios]
+url = "https://raw.githubusercontent.com/EmbarkStudios/rust-ecosystem/main/audits.toml"
+
+# ---------------------------------------------------------------------------
+# Workspace policy
+# ---------------------------------------------------------------------------
+# All published crates in this workspace require safe-to-deploy.
+# Dev-only crates only need safe-to-run.
+#
+# "safe-to-deploy" = code is safe to include in a production binary shipped
+#   to end users.  It does not imply the crate is bug-free; it means no
+#   obviously dangerous code (malware, exfiltration, supply chain attacks).
+#
+# The workspace does not publish to crates.io today; the policy is kept at
+# safe-to-deploy anyway so we're ready the moment any crate is published.
+
+[policy]
+criteria = "safe-to-deploy"
+dev-criteria = "safe-to-run"

@@ -1,0 +1,19 @@
+# cargo-vet imports.lock
+# v1.1.8.1 — stub created at bootstrap (no network access during init).
+#
+# This file is auto-managed by cargo-vet. Do NOT edit by hand.
+# To populate with real import snapshots, run:
+#   cargo vet fetch-imports
+#
+# The file will then contain locked snapshots of:
+#   - mozilla:           https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml
+#   - bytecode-alliance: https://raw.githubusercontent.com/bytecodealliance/wasmtime/main/supply-chain/audits.toml
+#   - google:            https://raw.githubusercontent.com/google/supply-chain/main/audits.toml
+#   - embark-studios:    https://raw.githubusercontent.com/EmbarkStudios/rust-ecosystem/main/audits.toml
+#
+# After fetching, commit the updated imports.lock alongside any changes to
+# supply-chain/audits.toml so that CI always operates from a reproducible
+# set of imported audits.
+
+[unpublished]
+# No unpublished crate overrides.
