@@ -3986,8 +3986,12 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -4149,6 +4153,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.6",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
  "utf-8",
@@ -5230,6 +5236,7 @@ dependencies = [
  "async-trait",
  "base64",
  "chrono",
+ "futures-util",
  "hmac",
  "mockito",
  "parking_lot",
@@ -5239,6 +5246,7 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "urlencoding",
  "xiaoguai-im-gateway",
