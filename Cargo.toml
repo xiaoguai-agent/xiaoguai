@@ -94,7 +94,13 @@ quick-xml = { version = "0.36", features = ["serialize"] }
 # config
 config = { version = "0.14", default-features = false, features = ["yaml"] }
 clap = { version = "4.5", features = ["derive", "env"] }
+clap_complete = "4.5"
+clap_mangen = "0.2"
 dotenvy = "0.15"
+
+# archive / compression
+flate2 = "1.0"
+tar = "0.4"
 
 # data
 uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
