@@ -45,6 +45,7 @@
 
 pub mod error;
 pub mod outcome;
+pub mod resilience;
 pub mod sink;
 
 use std::sync::Arc;
@@ -58,6 +59,10 @@ use xiaoguai_llm::{LlmBackend, Message};
 
 pub use error::RuntimeError;
 pub use outcome::RuntimeOutcome;
+pub use resilience::{
+    BreakerConfig, BreakerOpened, BreakerState, CircuitBreaker, EscalationBus, ResilienceError,
+    RetryPolicy, WallClock, BREAKER_LLM, BREAKER_PG, BREAKER_WEBHOOK,
+};
 pub use sink::{NoopSink, RuntimeSink};
 
 /// Context shared across every runtime entry point: backend, toolbox,
