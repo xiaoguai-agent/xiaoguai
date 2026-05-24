@@ -114,6 +114,14 @@ notify = "7"
 notify-debouncer-full = "0.4"
 tempfile = "3"
 
+# audit S3 export
+# NOTE: aws-sdk-s3 1.122 / aws-config 1.8.13 are the latest versions that
+# ship with rust-version = "1.88". If the toolchain is upgraded to ≥ 1.91,
+# remove the upper-bound pins below.
+aws-config = { version = "~1.8.13", default-features = false, features = ["behavior-version-latest"] }
+aws-sdk-s3 = { version = "~1.122", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
+flate2 = "1.0"
+
 # misc
 once_cell = "1.20"
 parking_lot = "0.12"

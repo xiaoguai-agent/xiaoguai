@@ -23,6 +23,8 @@ xiaoguai-llm = { path = "../xiaoguai-llm" }
 xiaoguai-eval = { path = "../xiaoguai-eval" }
 xiaoguai-storage = { path = "../xiaoguai-storage" }
 xiaoguai-config = { path = "../xiaoguai-config" }
+xiaoguai-audit = { path = "../xiaoguai-audit" }
+sqlx = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }

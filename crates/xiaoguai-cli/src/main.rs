@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use xiaoguai_cli::commands::{chat, eval, mcp, provider, remote};
+use xiaoguai_cli::commands::{audit, chat, eval, mcp, provider, remote};
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
     connect,
@@ -68,6 +68,54 @@ enum Cmd {
     Eval {
         #[command(subcommand)]
         action: EvalCmd,
+    },
+
+    /// Audit log management (export, verify).
+    Audit {
+        #[command(subcommand)]
+        action: AuditCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum AuditCmd {
+    /// Export new audit rows to a remote sink (S3-compatible).
+    Export {
+        /// Sink type. Currently only `s3` is supported.
+        #[arg(long, default_value = "s3")]
+        sink: String,
+
+        /// S3 bucket name.
+        #[arg(long, env = "AUDIT_S3_BUCKET")]
+        bucket: String,
+
+        /// S3 key prefix (no trailing slash).
+        #[arg(long, default_value = "audit")]
+        prefix: String,
+
+        /// AWS region.
+        #[arg(long, default_value = "us-east-1", env = "AWS_DEFAULT_REGION")]
+        region: String,
+
+        /// Optional endpoint URL for `MinIO` / localstack.
+        #[arg(long, env = "AUDIT_S3_ENDPOINT")]
+        endpoint_url: Option<String>,
+
+        /// Logical sink name stored in `audit_export_state`.
+        #[arg(long, default_value = "default")]
+        sink_name: String,
+
+        /// Daemon export interval in seconds (ignored with `--once`).
+        #[arg(long, default_value_t = 3600)]
+        interval_secs: u64,
+
+        /// Run one cycle then exit instead of looping.
+        #[arg(long)]
+        once: bool,
+
+        /// Postgres connection URL. Falls back to `DATABASE_URL` env var.
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
     },
 }
 
@@ -443,6 +491,39 @@ async fn handle_eval(action: EvalCmd) -> Result<()> {
     }
 }
 
+async fn handle_audit(action: AuditCmd) -> Result<()> {
+    match action {
+        AuditCmd::Export {
+            sink,
+            bucket,
+            prefix,
+            region,
+            endpoint_url,
+            sink_name,
+            interval_secs,
+            once,
+            database_url,
+        } => {
+            let n = audit::run_export(audit::ExportArgs {
+                sink,
+                bucket,
+                prefix,
+                region,
+                endpoint_url,
+                sink_name,
+                interval_secs,
+                once,
+                database_url,
+            })
+            .await?;
+            if once {
+                println!("exported {n} row(s)");
+            }
+            Ok(())
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -459,5 +540,6 @@ async fn main() -> Result<()> {
         Cmd::Mcp { action } => handle_mcp(cfg, action).await,
         Cmd::Remote { server, action } => handle_remote(server, action).await,
         Cmd::Eval { action } => handle_eval(action).await,
+        Cmd::Audit { action } => handle_audit(action).await,
     }
 }

@@ -4,6 +4,7 @@
 //! (typically a repository trait object) so they are unit-testable without
 //! involving clap or `assert_cmd`.
 
+pub mod audit;
 pub mod chat;
 pub mod eval;
 pub mod mcp;
