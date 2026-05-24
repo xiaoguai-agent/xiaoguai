@@ -1,0 +1,107 @@
+name: Load test smoke
+
+# Runs the k6 smoke gate (30 s, 5 VUs) against a local docker-compose stack
+# on PRs that touch the API or core crates.
+#
+# Full suite is gated behind workflow_dispatch to keep PR CI fast.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/xiaoguai-api/**"
+      - "crates/xiaoguai-core/**"
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Scenario to run (smoke | full | chat | webhook | usage | mixed | spike)"
+        required: false
+        default: "smoke"
+      session_id:
+        description: "Pre-created session UUID (required for chat / mixed / spike)"
+        required: false
+        default: ""
+      webhook_route_id:
+        description: "Webhook route ID (required for webhook-storm)"
+        required: false
+        default: ""
+
+env:
+  BASE_URL: http://localhost:7600
+
+jobs:
+  loadtest-smoke:
+    name: k6 ${{ github.event_name == 'workflow_dispatch' && inputs.scenario || 'smoke' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 1. Build the API image + start the stack
+      # -----------------------------------------------------------------------
+      - name: Start docker-compose stack
+        run: |
+          docker compose -f deploy/docker-compose.yml up -d --build
+        # Building from source on first run takes ~3 min on ubuntu-latest.
+
+      - name: Wait for /healthz
+        run: |
+          deadline=$(( $(date +%s) + 120 ))
+          until curl -fsS http://localhost:7600/healthz | grep -q ok; do
+            [ $(date +%s) -ge $deadline ] && { echo "healthz timeout"; exit 1; }
+            sleep 3
+          done
+          echo "Stack healthy"
+
+      # -----------------------------------------------------------------------
+      # 2. Seed test fixtures (session + webhook route) when SESSION_ID is not
+      #    provided via workflow_dispatch.
+      # -----------------------------------------------------------------------
+      - name: Seed test session
+        id: seed
+        run: |
+          SESSION_ID=$(curl -sf -X POST http://localhost:7600/v1/sessions \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"k6-ci-smoke"}' | jq -r '.id // empty')
+          if [ -z "$SESSION_ID" ]; then
+            echo "WARNING: could not create session — chat scenarios will be skipped"
+            SESSION_ID=""
+          fi
+          echo "session_id=$SESSION_ID" >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
+      # 3. Install k6
+      # -----------------------------------------------------------------------
+      - name: Install k6
+        run: |
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] \
+            https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq && sudo apt-get install -y k6
+
+      # -----------------------------------------------------------------------
+      # 4. Run k6
+      # -----------------------------------------------------------------------
+      - name: Run k6 load test
+        env:
+          SESSION_ID: ${{ steps.seed.outputs.session_id || inputs.session_id }}
+          WEBHOOK_ROUTE_ID: ${{ inputs.webhook_route_id }}
+          SCENARIO: ${{ inputs.scenario || 'smoke' }}
+        run: |
+          make -C scripts/loadtest "$SCENARIO" \
+            BASE_URL="$BASE_URL" \
+            SESSION_ID="$SESSION_ID" \
+            WEBHOOK_ROUTE_ID="$WEBHOOK_ROUTE_ID"
+
+      # -----------------------------------------------------------------------
+      # 5. Tear down
+      # -----------------------------------------------------------------------
+      - name: Tear down stack
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml down -v --remove-orphans
