@@ -264,6 +264,7 @@ fn build_state(
         webhook_token_validator: None,
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
+        rate_limit_state: None,
     };
     (state, sessions, messages)
 }

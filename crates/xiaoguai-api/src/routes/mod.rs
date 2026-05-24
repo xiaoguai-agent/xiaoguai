@@ -12,7 +12,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::require_bearer;
-use crate::rate_limit::rate_limit;
+use crate::rate_limit::{rate_limit, rate_limit_middleware};
 use crate::rbac::require_authorized;
 use crate::state::AppState;
 
@@ -92,7 +92,15 @@ pub fn router(state: AppState) -> Router {
     // so `require_bearer` runs first and populates Claims, then rbac
     // checks the policy, then rate_limit consumes a token, then the
     // handler runs.
-    let v1 = if let Some(limiter) = state.rate_limiter.clone() {
+    //
+    // v1.2.20: prefer the richer `rate_limit_state` (per-class, route-aware)
+    // when available; fall back to the legacy single-class `rate_limiter`.
+    let v1 = if let Some(rls) = state.rate_limit_state.clone() {
+        v1.route_layer(axum::middleware::from_fn(move |req, next| {
+            let s = rls.clone();
+            async move { rate_limit_middleware(s, req, next).await }
+        }))
+    } else if let Some(limiter) = state.rate_limiter.clone() {
         v1.route_layer(axum::middleware::from_fn(move |req, next| {
             let l = limiter.clone();
             async move { rate_limit(l, req, next).await }
@@ -132,7 +140,16 @@ pub fn router(state: AppState) -> Router {
         "/v1/scheduler/webhooks/:route_id",
         post(scheduler_public::scheduler_webhook_public),
     );
-    let public_v1 = if let Some(limiter) = state.rate_limiter.clone() {
+    // v1.2.20: scheduler webhooks get the richer rate_limit_state middleware
+    // (which classifies them as RouteClass::SchedulerWebhook) or falls back to
+    // the legacy single-class limiter. Flooding with bad tokens still gets
+    // rate-limited; bearer auth is intentionally skipped on this route.
+    let public_v1 = if let Some(rls) = state.rate_limit_state.clone() {
+        public_v1.route_layer(axum::middleware::from_fn(move |req, next| {
+            let s = rls.clone();
+            async move { rate_limit_middleware(s, req, next).await }
+        }))
+    } else if let Some(limiter) = state.rate_limiter.clone() {
         public_v1.route_layer(axum::middleware::from_fn(move |req, next| {
             let l = limiter.clone();
             async move { rate_limit(l, req, next).await }

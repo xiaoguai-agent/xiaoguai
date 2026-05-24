@@ -101,6 +101,11 @@ pub struct AppState {
     /// `None` = no rate-limit middleware. `Some(...)` is the token
     /// bucket store keyed by `tenant_id`.
     pub rate_limiter: Option<Arc<crate::rate_limit::RateLimiter>>,
+    /// v1.2.20: per-tenant, per-route-class rate-limit state. When set,
+    /// the router mounts [`crate::rate_limit::rate_limit_middleware`] which
+    /// classifies routes and enforces per-class quotas. Takes precedence
+    /// over the legacy `rate_limiter` field when both are set.
+    pub rate_limit_state: Option<Arc<crate::rate_limit::RateLimitState>>,
     /// `None` = `/v1/admin/audit` returns 503. `Some(...)` exposes the
     /// HMAC-chained audit log; production wires the
     /// `xiaoguai-audit::PgAuditSink` reader.

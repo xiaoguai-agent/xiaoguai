@@ -38,7 +38,10 @@ pub use eval::{
 };
 pub use marketplace::{MarketplaceEntry, MarketplaceResponse};
 pub use mcp_serve::XiaoguaiMcpServer;
-pub use rate_limit::{rate_limit, RateLimiter};
+pub use rate_limit::{
+    rate_limit, rate_limit_middleware, InMemoryBackend, RateClass, RateLimitBackend,
+    RateLimitState, RateLimiter, RedisBackend, RouteClass,
+};
 pub use rbac::{method_to_action, path_to_resource, require_authorized};
 pub use routes::router;
 pub use scheduler::{
