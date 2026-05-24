@@ -1,0 +1,48 @@
+# packs/hr-onboarding/triggers/start-date-trigger.yaml
+#
+# Scheduler trigger: daily at 06:00 local time, checks for employees whose
+# start_date = today and status = 'pending', then kicks off the onboarding
+# Supervisor for each.
+#
+# Wired into xiaoguai-scheduler via the CompositeExecutor introduced in v0.12.x.1.
+# The query + dispatch logic is implemented in the xiaoguai-scheduler
+# SqlDrivenTrigger source (planned; today a cron job calling the API works).
+
+name: hr-onboarding-start-date
+kind: cron
+
+schedule:
+  expression: "0 6 * * *"    # daily at 06:00 (server local time / TZ from env)
+  timezone: "${TZ:-Asia/Shanghai}"
+
+# What the trigger does when it fires
+action:
+  type: supervisor_dispatch
+  # The coordinator agent definition to instantiate
+  agent: packs/hr-onboarding/agents/coordinator.yaml
+  # SQL used to find today's new hires (runs inside xiaoguai-scheduler)
+  query: |
+    SELECT id, name, email, manager_id
+    FROM   employees
+    WHERE  start_date = CURRENT_DATE
+    AND    status     = 'pending'
+  # For each row, dispatch one supervisor run with this goal template.
+  # $name and $email are substituted from the query result row.
+  goal_template: "Onboard new employee: name=$name email=$email employee_id=$id"
+  # Update the employee row to 'onboarding' before dispatching so a retry
+  # of the cron job (e.g. after a crash) does not double-onboard.
+  pre_dispatch_sql: |
+    UPDATE employees
+    SET    status = 'onboarding'
+    WHERE  id = $id
+      AND  status = 'pending'
+
+# Retry policy for the trigger itself (not for individual workers)
+retry:
+  max_attempts: 3
+  backoff_seconds: 60
+
+# Alerting — sent via the configured IM adapter when the trigger itself errors
+on_error:
+  notify_channel: "ops-alerts"
+  message: "HR onboarding trigger failed: $error"

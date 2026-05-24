@@ -1,0 +1,53 @@
+# packs/hr-onboarding/agents/welcome-messenger.yaml
+#
+# SubTask C — Welcome Messenger
+#
+# Sends a welcome message to the new hire and creates a Feishu onboarding group.
+#
+# REAL: uses xiaoguai-im-feishu post_message + create_group_chat APIs.
+# In tests: swapped for MockImAdapter that records calls.
+
+name: hr-welcome-messenger
+kind: worker
+
+description: >
+  Sends a personalised welcome direct message to the new hire's email
+  via Feishu and creates an "Onboarding: <name>" group chat that includes
+  the new hire, their manager, and the HR contact. On success returns the
+  Feishu message ID and chat ID. On failure (e.g. user not yet in Feishu
+  directory — race with account provisioning) records the failure and
+  allows buddy_assignment to proceed.
+
+# IM adapter to use (resolved from pack.yaml config.im.adapter at runtime)
+im_adapter: feishu    # feishu | dingtalk | wecom
+
+# Message content
+welcome_message_template: |
+  Hi $name 👋
+
+  Welcome to the team! Your start date is today, $start_date.
+
+  Here's what to expect this week:
+  - Your accounts (email, GitHub, internal tools) have been provisioned.
+  - Check your calendar — we've scheduled your Day-1 orientation and
+    a 1:1 with your manager.
+  - Your onboarding buddy will reach out shortly.
+
+  Any questions? Reply here or ping HR at hr@company.com.
+
+  We're excited to have you!
+
+group_chat_name_template: "Onboarding: $name"
+group_chat_members:
+  - "$email"              # new hire
+  - "$manager_email"      # hiring manager
+  - "hr@company.com"      # HR point of contact
+
+# Real Feishu config (env-driven; no secrets in YAML)
+feishu:
+  app_id: "${FEISHU_APP_ID}"
+  app_secret: "${FEISHU_APP_SECRET}"
+
+on_failure:
+  audit: true
+  propagate: false

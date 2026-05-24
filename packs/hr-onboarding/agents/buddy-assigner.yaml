@@ -1,0 +1,48 @@
+# packs/hr-onboarding/agents/buddy-assigner.yaml
+#
+# SubTask D — Buddy Assigner
+#
+# Assigns an onboarding buddy to the new hire and notifies them via IM.
+#
+# MOCK: selects buddy from a configured pool (round-robin); writes audit log row.
+# REAL (deferred): could query an HR system API to get pool + track assignment counts.
+
+name: hr-buddy-assigner
+kind: worker
+
+description: >
+  Selects an onboarding buddy from the configured pool using the round-robin
+  strategy, writes the assignment to the audit log, and sends a Feishu DM to
+  the buddy notifying them of the assignment and introducing the new hire.
+  Depends on welcome_messaging completing so the buddy notification can
+  reference the new hire's onboarding group chat.
+
+im_adapter: feishu
+
+# Buddy pool — in production populated from an HR API or a DB table.
+# For the mock, this static list is used.
+buddy_pool:
+  - name: "Alice Chen"
+    email: "alice.chen@company.com"
+  - name: "Bob Zhang"
+    email: "bob.zhang@company.com"
+  - name: "Carol Li"
+    email: "carol.li@company.com"
+
+assignment_strategy: round_robin   # round_robin | least_recently_assigned
+
+buddy_notification_template: |
+  Hi $buddy_name,
+
+  You've been assigned as the onboarding buddy for $new_hire_name
+  (starting today, $start_date).
+
+  Please reach out and introduce yourself — they've just received a
+  welcome message with their group chat invite. You can find them at
+  $new_hire_email.
+
+  Thanks for helping make their first week great!
+
+on_failure:
+  audit: true
+  propagate: false

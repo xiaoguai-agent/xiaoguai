@@ -1,0 +1,101 @@
+# packs/hr-onboarding/agents/coordinator.yaml
+#
+# The HR Onboarding Coordinator — a Supervisor agent that decomposes
+# "onboard <employee>" into four ordered subtasks and dispatches each to
+# a specialist Worker.
+#
+# Implements the xiaoguai-orchestrator::Supervisor pattern from v1.1.5b.
+# The Supervisor::run_detailed() call drives the loop; this YAML is the
+# declarative spec consumed by the pack loader to construct the Supervisor.
+
+name: hr-onboarding-coordinator
+kind: supervisor          # tells the pack loader to use xiaoguai-orchestrator::Supervisor
+
+# ── Budget ───────────────────────────────────────────────────────────────────
+
+budget:
+  max_steps: 10           # upper bound; a normal run uses exactly 4 steps
+  max_wall_seconds: 300   # 5-minute guard against hung workers
+
+# ── System prompt for the coordinator's LLM planning turn ────────────────────
+#
+# Used only for the single planning turn (decomposing the goal into the 4
+# steps).  Once the plan is produced, the Supervisor drives dispatch without
+# further LLM calls.
+
+system_prompt: |
+  You are the HR Onboarding Coordinator. When given a goal of the form
+  "Onboard new employee: name=<name> email=<email> employee_id=<id>",
+  decompose it into exactly four subtasks in this order:
+
+    A. account_provisioning  — Create accounts for the new hire.
+    B. meeting_scheduling    — Schedule first-week meetings.
+    C. welcome_messaging     — Send welcome email and chat invite.
+    D. buddy_assignment      — Assign an onboarding buddy and notify them.
+
+  Return the four subtasks as a JSON array of PlanStep objects. Each step
+  must carry the employee_id in its description so workers have context.
+  Steps B, C, and D have no dependency on each other but all depend on A
+  completing first (buddy_assignment is last and depends on C so the buddy
+  can reference the welcome thread).
+
+  If a worker reports failure, flag it in your final report but do not abort
+  the remaining steps — partial onboarding is better than none.
+
+# ── Workers ──────────────────────────────────────────────────────────────────
+#
+# The pack loader registers these as dyn Worker in the Supervisor's pool.
+# Each worker definition resolves to a concrete Rust struct in the pack's
+# library crate (packs/hr-onboarding/src/).
+
+workers:
+  - id: account_provisioner
+    agent: packs/hr-onboarding/agents/account-provisioner.yaml
+    # Step ids this worker handles (for routing; round-robin is the default)
+    handles_step_prefix: "account"
+
+  - id: meeting_scheduler
+    agent: packs/hr-onboarding/agents/meeting-scheduler.yaml
+    handles_step_prefix: "meeting"
+
+  - id: welcome_messenger
+    agent: packs/hr-onboarding/agents/welcome-messenger.yaml
+    handles_step_prefix: "welcome"
+
+  - id: buddy_assigner
+    agent: packs/hr-onboarding/agents/buddy-assigner.yaml
+    handles_step_prefix: "buddy"
+
+# ── Static plan (used when LLM planning is disabled / in tests) ──────────────
+#
+# The pack loader can operate in two modes:
+#   llm_plan: true  — coordinator calls LLM to produce steps dynamically
+#   llm_plan: false — uses the static_plan below (always the 4 standard steps)
+#
+# Tests always use llm_plan: false with a MockPlanner for determinism.
+
+llm_plan: false     # override to true in production with a real LLM backend
+
+static_plan:
+  - id: account_provisioning
+    description: "Create Okta account, Google Workspace account, and GitHub org membership for employee_id=$employee_id (email=$email)"
+    deps: []
+
+  - id: meeting_scheduling
+    description: "Schedule Day-1 orientation, manager 1:1, team intro, and IT setup call for employee_id=$employee_id"
+    deps: [account_provisioning]
+
+  - id: welcome_messaging
+    description: "Send welcome email and Feishu group invite to employee_id=$employee_id (email=$email)"
+    deps: [account_provisioning]
+
+  - id: buddy_assignment
+    description: "Assign onboarding buddy for employee_id=$employee_id and notify buddy via Feishu DM"
+    deps: [welcome_messaging]
+
+# ── Output ────────────────────────────────────────────────────────────────────
+
+output:
+  report_template: packs/hr-onboarding/outputs/onboarding-report.md.j2
+  # Report is sent to the hiring manager via the configured IM adapter
+  send_to: manager
