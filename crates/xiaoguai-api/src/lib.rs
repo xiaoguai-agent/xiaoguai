@@ -30,7 +30,7 @@ pub use audit::{
     VerifyReport,
 };
 pub use auth::{Claims, JwtTokenValidator, StubValidator, TokenValidator};
-pub use error::{ApiError, ApiResult};
+pub use error::{ApiError, ApiResult, UnauthorizedReason};
 pub use eval::{
     build_case_yaml, list_suites_in, CaseFromSessionRequest, CaseFromSessionResponse,
     CaseFromSessionSource, EvalService, EvalServiceError, EvalSuiteListItem, RunEvalRequest,
