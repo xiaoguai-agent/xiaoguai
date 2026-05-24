@@ -26,21 +26,22 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
 use xiaoguai_api::today::{TodayError, TodayItem, TodayKind, TodayQuery, TodayReader};
+use xiaoguai_storage::ReadWritePool;
 
 pub struct PgTodayReader {
-    pool: PgPool,
+    /// All three fetch methods are pure reads — route to replica.
+    pool: ReadWritePool,
 }
 
 impl PgTodayReader {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: ReadWritePool) -> Self {
         Self { pool }
     }
 
     #[must_use]
-    pub fn arc(pool: PgPool) -> Arc<dyn TodayReader> {
+    pub fn arc(pool: ReadWritePool) -> Arc<dyn TodayReader> {
         Arc::new(Self::new(pool))
     }
 }
@@ -132,7 +133,7 @@ impl PgTodayReader {
         )
         .bind(q.since)
         .bind(q.limit)
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool.reader())
         .await
         .map_err(map_err)?;
 
@@ -194,7 +195,7 @@ impl PgTodayReader {
         )
         .bind(q.since)
         .bind(q.limit)
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool.reader())
         .await
         .map_err(map_err)?;
 
@@ -240,7 +241,7 @@ impl PgTodayReader {
         )
         .bind(q.since)
         .bind(q.limit)
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool.reader())
         .await
         .map_err(map_err)?;
 
