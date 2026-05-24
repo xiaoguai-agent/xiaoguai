@@ -24,6 +24,7 @@
 #![forbid(unsafe_code)]
 
 pub mod budget;
+pub mod challenger;
 pub mod error;
 pub mod plan;
 pub mod planner;
@@ -32,8 +33,9 @@ pub mod worker;
 pub mod worker_handle;
 
 pub use budget::Budget;
+pub use challenger::{Challenger, Critique, MockChallenger, Verdict};
 pub use error::OrchestratorError;
-pub use plan::{Plan, PlanStep, StepStatus};
+pub use plan::{Plan, PlanStep, RiskLevel, StepStatus};
 pub use planner::Planner;
 pub use supervisor::{RunOutcome, RunReport, StepResult, Supervisor};
 pub use worker::{Task, Worker, WorkerResult};
