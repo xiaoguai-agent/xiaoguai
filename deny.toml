@@ -5,6 +5,9 @@ all-features = true
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
+# v1.1.8: keep this list in lock-step with .cargo/audit.toml. Every entry
+# must justify itself in writing — review quarterly + drop the ignore as
+# soon as upstream ships a fix.
 ignore = [
     # dev-dep only (testcontainers → bollard → rustls-pemfile).
     # Production code never touches Docker. Track upstream replacement.
@@ -12,8 +15,16 @@ ignore = [
     # dev-dep only (testcontainers → bollard → tokio-tar).
     # PAX header smuggling does not affect our use of testcontainers (we control the images).
     { id = "RUSTSEC-2025-0111", reason = "tokio-tar PAX smuggling; dev-only via testcontainers, no untrusted tar input" },
+    # transitive via sqlx-mysql; we only use Postgres. No upstream fix.
+    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin sidechannel; pulled by unused sqlx-mysql backend, no fix available" },
+    # transitive via notify → notify-types. Low-risk web-time shim.
+    { id = "RUSTSEC-2024-0384", reason = "instant unmaintained; transitive via notify, no fix available" },
 ]
 
+# v1.1.8: gating allow-list. Anything not in this list is denied,
+# including copyleft licenses (GPL-*, AGPL-*, LGPL-*). The project
+# itself ships under BUSL-1.1; pulling in GPL-3.0 would force the
+# whole binary to GPL.
 [licenses]
 allow = [
     "MIT",

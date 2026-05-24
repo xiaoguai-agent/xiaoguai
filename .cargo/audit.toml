@@ -1,0 +1,29 @@
+# cargo-audit ignore list (mirrors deny.toml [advisories].ignore + extras
+# that cargo-audit treats as errors but deny.toml treats as warnings).
+#
+# Every entry MUST have a reason. Review quarterly — when upstream
+# publishes a fixed version, drop the ignore and bump the dep.
+
+[advisories]
+ignore = [
+    # rsa: Marvin Attack timing sidechannel. Pulled in transitively by
+    # sqlx-mysql even though we only use Postgres. No fixed upgrade is
+    # available upstream. Surface: zero (the MySQL backend is never
+    # constructed). Revisit when rsa publishes a constant-time path or
+    # sqlx ships feature-gated mysql/rsa decoupling.
+    "RUSTSEC-2023-0071",
+
+    # tokio-tar: PAX header smuggling. Dev-only via testcontainers →
+    # bollard → tokio-tar. We control the images we ship in tests, so
+    # there is no untrusted tar input. Mirrors deny.toml ignore.
+    "RUSTSEC-2025-0111",
+
+    # rustls-pemfile: unmaintained. Dev-only via testcontainers →
+    # bollard. Production code never touches bollard. Mirrors deny.toml.
+    "RUSTSEC-2025-0134",
+
+    # instant: unmaintained. Pulled in transitively by notify-types →
+    # notify (used by FileWatchSource). Low risk — instant is a thin
+    # web-time shim. Track upstream notify migration.
+    "RUSTSEC-2024-0384",
+]

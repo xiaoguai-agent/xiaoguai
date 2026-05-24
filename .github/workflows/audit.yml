@@ -1,0 +1,66 @@
+name: Security audit (nightly)
+
+# v1.1.8: nightly cargo-audit cron — fires at 08:00 UTC (16:00 Beijing).
+# This catches advisories that landed since the last PR even when nobody
+# touched the dep tree. On failure we open a GitHub issue so the on-call
+# eng wakes up to a tracked work item rather than a buried Action log.
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.88.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        id: audit
+        run: |
+          set -o pipefail
+          # --deny warnings escalates unmaintained / yanked / etc. to
+          # error so the job fails cleanly instead of hiding behind a 0
+          # exit code.
+          cargo audit --deny warnings 2>&1 | tee audit-report.txt
+
+      - name: Prepare issue body on failure
+        if: failure()
+        run: |
+          {
+            echo "# Nightly cargo-audit failure"
+            echo ""
+            echo "Workflow: ${{ github.workflow }}"
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo ""
+            echo '## Report'
+            echo ''
+            echo '```'
+            cat audit-report.txt
+            echo '```'
+            echo ''
+            echo "Action: review each advisory. Either upgrade the dep,"
+            echo "ignore in \`deny.toml\` with a reason if dev-only, or"
+            echo "open a downstream PR. Do not silently dismiss."
+          } > issue-body.md
+
+      - name: Open issue on failure
+        if: failure()
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Nightly cargo-audit failure — ${{ github.run_id }}"
+          content-filepath: ./issue-body.md
+          labels: security, automated, cargo-audit
