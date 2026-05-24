@@ -20,6 +20,7 @@ members = [
     "crates/xiaoguai-im-dingtalk",
     "crates/xiaoguai-im-wecom",
     "crates/xiaoguai-cli",
+    "crates/xiaoguai-orchestrator",
 ]
 
 [workspace.package]

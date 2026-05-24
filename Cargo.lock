@@ -5314,6 +5314,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "xiaoguai-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "xiaoguai-rag"
 version = "0.1.0"
 dependencies = [
