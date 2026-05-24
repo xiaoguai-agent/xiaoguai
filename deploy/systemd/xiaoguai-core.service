@@ -11,9 +11,20 @@ Requires=network-online.target
 Wants=postgresql.service valkey-server.service
 
 [Service]
-# axum doesn't speak sd_notify out of the box (v1.1.6); revisit if
-# xiaoguai-core ever wires the `sd-notify` crate.
-Type=simple
+# v1.1.6.2: Type=notify — systemd waits for READY=1 before declaring
+# the unit active and starting dependent units. The binary sends READY=1
+# after all listeners are bound, Postgres is connected, and the scheduler
+# (when enabled) has started. If the binary crashes before sending
+# READY=1 systemd marks the unit as failed immediately.
+#
+# Requires xiaoguai-core built at v1.1.6.2+ (sd-notify crate wired).
+# For older binaries change back to Type=simple to preserve behaviour.
+Type=notify
+
+# Optional: kill the service if it stops sending watchdog pings.
+# Uncomment to enable — the binary sends WATCHDOG=1 at half this interval.
+# Set to 0 to disable (default below keeps it opt-in).
+# WatchdogSec=30s
 User=xiaoguai
 Group=xiaoguai
 # Don't switch users dynamically — install.sh provisions the static
