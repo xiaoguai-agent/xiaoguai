@@ -1,0 +1,63 @@
+# Front-door peer — user-facing agent that delegates to the
+# specialist via MCP.
+#
+# Run with:
+#   xiaoguai-core --config examples/multi-agent/peer-pair/front-door/config.yaml serve
+#
+# This instance binds port 7612. Its Toolbox consumes the specialist
+# at http://127.0.0.1:7611/v1/mcp/serve via HttpMcpClient and surfaces
+# the specialist's `summarize_webpage` tool to its own ReAct loop.
+
+server:
+  host: "127.0.0.1"
+  port: 7612
+
+database:
+  # Separate database from the specialist — see notes in
+  # specialist/config.yaml.
+  url: "postgres://xiaoguai:xiaoguai@127.0.0.1:5432/xiaoguai_frontdoor"
+  max_connections: 8
+
+cache:
+  url: "redis://127.0.0.1:6379/3"
+  key_prefix: "xiaoguai_frontdoor:"
+
+auth:
+  issuer: "https://idp.example.com"
+  audience: "xiaoguai-frontdoor"
+  jwks_url: "https://idp.example.com/.well-known/jwks.json"
+  required: false
+
+audit:
+  hmac_key: "dev-only-do-not-use-in-prod"
+  signing_key_env: "XIAOGUAI_AUDIT_SIGNING_KEY"
+
+scheduler:
+  enabled: false
+
+im:
+  use_in_process_history: true
+  max_messages_per_conversation: 50
+
+eval:
+  suites_dir: "./eval-suites"
+  max_iterations: 8
+
+# How the operator wires the specialist into the front-door's Toolbox:
+#
+# Register an MCP server row whose transport is "http" pointing at
+# http://127.0.0.1:7611/v1/mcp/serve. The McpSupervisor (v0.9.4.1
+# live-pickup wiring) connects on next reconcile, discovers
+# `summarize_webpage` via `list_tools`, and adds it to the shared
+# Toolbox. The front-door's ReAct loop then sees `summarize_webpage`
+# alongside any other tools the front door publishes for itself.
+#
+# The front-door's system prompt should explicitly mention when to
+# delegate — for the demo: "If the user asks to summarise a URL,
+# call summarize_webpage with the URL as the `url` argument."
+#
+# We deliberately DO NOT flip XIAOGUAI_MCP__PUBLISH on the front door
+# in this example — it's meant to be the user-facing tip of the
+# topology, not a server for other peers. A bigger topology would
+# happily chain more layers (front-door → mid-tier → leaf
+# specialists) by flipping publish on the mid-tier.

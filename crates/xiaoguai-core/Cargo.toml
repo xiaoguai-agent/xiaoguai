@@ -59,6 +59,9 @@ xiaoguai-im-feishu = { path = "../xiaoguai-im-feishu" }
 parking_lot = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs"] }
+# v1.1.5a: peer_mvp integration test spins two in-process xiaoguai
+# peers on ephemeral TCP ports and drives the front-door via HTTP.
+reqwest = { workspace = true }
 
 [lints]
 workspace = true
