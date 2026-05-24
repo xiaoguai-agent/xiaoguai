@@ -1,0 +1,373 @@
+# Xiaoguai HA scaffolding (v1.1.4).
+#
+# Topology (see docs/runbooks/ha.md for the ASCII diagram + playbook):
+#
+#   client ──► nginx:7600 ──► xiaoguai-core-1
+#                      └────► xiaoguai-core-2
+#                                  │  writes + reads (today)
+#                                  ▼
+#                         ┌──────────────────────────┐
+#                         │ pg-primary               │
+#                         │ wal_level=logical        │
+#                         │ publication: xiaoguai_pub│
+#                         └──────────┬───────────────┘
+#                       logical repl │
+#                         ┌──────────┴───────────────┐
+#                         ▼                          ▼
+#                   pg-subscriber-a          pg-subscriber-b
+#                   (read-ready, NOT yet      (read-ready, NOT yet
+#                    routed — v1.1.4.1)        routed — v1.1.4.1)
+#
+#   xiaoguai-core-{1,2} ──► valkey-cluster (3 primary + 3 replica)
+#                            slots: 0-5460 / 5461-10922 / 10923-16383
+#
+# What this file IS:
+#   - HA scaffolding: replicated PG (logical repl), sharded Valkey,
+#     2× xiaoguai-core behind nginx, cluster bootstrap one-shot.
+#   - Drop-in replacement for docker-compose.yml when you want to
+#     practice failover or sanity-check the topology locally.
+#
+# What this file is NOT (see docs/runbooks/ha.md §6 + plan deferrals):
+#   - Today's xiaoguai-core points reads AND writes at pg-primary.
+#     Replica-aware read routing is v1.1.4.1.
+#   - The `redis` crate today uses a single-node connection string;
+#     it talks to one Valkey cluster node and relies on `-MOVED`
+#     redirects. Native `redis::cluster::ClusterClient` is its own
+#     slice (v1.1.4.2 candidate).
+#   - No automatic in-process PG primary-loss failover. Today
+#     nginx reroutes between core instances; PG failover is
+#     manual (promote a subscriber — see runbook §3).
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.ha.yml up --build
+#   open http://localhost:7600/healthz
+#
+# Reset:
+#   docker compose -f deploy/docker-compose.ha.yml down -v
+
+services:
+  # ---------- Postgres: primary + 2 logical subscribers ----------
+
+  pg-primary:
+    image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_logical_replication_workers=8
+      - -c
+      - wal_keep_size=512MB
+    environment:
+      POSTGRES_USER: xiaoguai
+      POSTGRES_PASSWORD: xiaoguai
+      POSTGRES_DB: xiaoguai
+    volumes:
+      - pg_primary_data:/var/lib/postgresql/data
+      - ./ha/pg-primary-init.sh:/docker-entrypoint-initdb.d/10-publication.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xiaoguai"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  pg-subscriber-a:
+    image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_logical_replication_workers=8
+    environment:
+      POSTGRES_USER: xiaoguai
+      POSTGRES_PASSWORD: xiaoguai
+      POSTGRES_DB: xiaoguai
+      PRIMARY_HOST: pg-primary
+      SUBSCRIPTION_NAME: xiaoguai_sub_a
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+    volumes:
+      - pg_subscriber_a_data:/var/lib/postgresql/data
+      - ./ha/pg-subscriber-init.sh:/docker-entrypoint-initdb.d/10-subscription.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xiaoguai"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  pg-subscriber-b:
+    image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_logical_replication_workers=8
+    environment:
+      POSTGRES_USER: xiaoguai
+      POSTGRES_PASSWORD: xiaoguai
+      POSTGRES_DB: xiaoguai
+      PRIMARY_HOST: pg-primary
+      SUBSCRIPTION_NAME: xiaoguai_sub_b
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+    volumes:
+      - pg_subscriber_b_data:/var/lib/postgresql/data
+      - ./ha/pg-subscriber-init.sh:/docker-entrypoint-initdb.d/10-subscription.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xiaoguai"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ---------- Valkey: 3 primary + 3 replica cluster ----------
+  # Each node uses --cluster-enabled and a per-node port. Replica
+  # assignment is decided by valkey-cluster-init at first boot.
+
+  valkey-cluster-1:
+    image: valkey/valkey:8-alpine
+    command:
+      - valkey-server
+      - --cluster-enabled
+      - "yes"
+      - --cluster-config-file
+      - /data/nodes.conf
+      - --cluster-node-timeout
+      - "5000"
+      - --appendonly
+      - "yes"
+      - --port
+      - "6379"
+    volumes:
+      - valkey_1_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  valkey-cluster-2:
+    image: valkey/valkey:8-alpine
+    command:
+      - valkey-server
+      - --cluster-enabled
+      - "yes"
+      - --cluster-config-file
+      - /data/nodes.conf
+      - --cluster-node-timeout
+      - "5000"
+      - --appendonly
+      - "yes"
+      - --port
+      - "6379"
+    volumes:
+      - valkey_2_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  valkey-cluster-3:
+    image: valkey/valkey:8-alpine
+    command:
+      - valkey-server
+      - --cluster-enabled
+      - "yes"
+      - --cluster-config-file
+      - /data/nodes.conf
+      - --cluster-node-timeout
+      - "5000"
+      - --appendonly
+      - "yes"
+      - --port
+      - "6379"
+    volumes:
+      - valkey_3_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  valkey-cluster-4:
+    image: valkey/valkey:8-alpine
+    command:
+      - valkey-server
+      - --cluster-enabled
+      - "yes"
+      - --cluster-config-file
+      - /data/nodes.conf
+      - --cluster-node-timeout
+      - "5000"
+      - --appendonly
+      - "yes"
+      - --port
+      - "6379"
+    volumes:
+      - valkey_4_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  valkey-cluster-5:
+    image: valkey/valkey:8-alpine
+    command:
+      - valkey-server
+      - --cluster-enabled
+      - "yes"
+      - --cluster-config-file
+      - /data/nodes.conf
+      - --cluster-node-timeout
+      - "5000"
+      - --appendonly
+      - "yes"
+      - --port
+      - "6379"
+    volumes:
+      - valkey_5_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  valkey-cluster-6:
+    image: valkey/valkey:8-alpine
+    command:
+      - valkey-server
+      - --cluster-enabled
+      - "yes"
+      - --cluster-config-file
+      - /data/nodes.conf
+      - --cluster-node-timeout
+      - "5000"
+      - --appendonly
+      - "yes"
+      - --port
+      - "6379"
+    volumes:
+      - valkey_6_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: form the cluster on first boot. After success the
+  # container exits 0; subsequent `up` calls re-run idempotently
+  # because valkey-cli refuses to re-cluster an already-clustered
+  # node (exit 1, which the `|| true` swallows).
+  valkey-cluster-init:
+    image: valkey/valkey:8-alpine
+    depends_on:
+      valkey-cluster-1: { condition: service_healthy }
+      valkey-cluster-2: { condition: service_healthy }
+      valkey-cluster-3: { condition: service_healthy }
+      valkey-cluster-4: { condition: service_healthy }
+      valkey-cluster-5: { condition: service_healthy }
+      valkey-cluster-6: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "valkey-cluster-init: forming 3 primary + 3 replica cluster…"
+        valkey-cli --cluster create \
+          valkey-cluster-1:6379 \
+          valkey-cluster-2:6379 \
+          valkey-cluster-3:6379 \
+          valkey-cluster-4:6379 \
+          valkey-cluster-5:6379 \
+          valkey-cluster-6:6379 \
+          --cluster-replicas 1 \
+          --cluster-yes || echo "valkey-cluster-init: cluster already formed, skipping."
+        echo "valkey-cluster-init: done."
+    restart: "no"
+
+  # ---------- xiaoguai-core × 2 + nginx ----------
+
+  xiaoguai-core-1:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+      valkey-cluster-init:
+        condition: service_completed_successfully
+    environment:
+      XIAOGUAI_SERVER__HOST: 0.0.0.0
+      XIAOGUAI_SERVER__PORT: "8080"
+      XIAOGUAI_DATABASE__URL: postgres://xiaoguai:xiaoguai@pg-primary:5432/xiaoguai
+      # NOTE: single-node URL. The `redis` crate negotiates -MOVED
+      # redirects against any cluster node; native ClusterClient
+      # migration is deferred (see plan).
+      XIAOGUAI_CACHE__URL: redis://valkey-cluster-1:6379
+      XIAOGUAI_NODE_ID: core-1
+      RUST_LOG: info,sqlx=warn
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/xiaoguai-core", "smoke"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  xiaoguai-core-2:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+      valkey-cluster-init:
+        condition: service_completed_successfully
+    environment:
+      XIAOGUAI_SERVER__HOST: 0.0.0.0
+      XIAOGUAI_SERVER__PORT: "8080"
+      XIAOGUAI_DATABASE__URL: postgres://xiaoguai:xiaoguai@pg-primary:5432/xiaoguai
+      XIAOGUAI_CACHE__URL: redis://valkey-cluster-2:6379
+      XIAOGUAI_NODE_ID: core-2
+      RUST_LOG: info,sqlx=warn
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/xiaoguai-core", "smoke"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      xiaoguai-core-1:
+        condition: service_healthy
+      xiaoguai-core-2:
+        condition: service_healthy
+    volumes:
+      - ./ha/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "7600:7600"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:7600/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+volumes:
+  pg_primary_data:
+  pg_subscriber_a_data:
+  pg_subscriber_b_data:
+  valkey_1_data:
+  valkey_2_data:
+  valkey_3_data:
+  valkey_4_data:
+  valkey_5_data:
+  valkey_6_data:

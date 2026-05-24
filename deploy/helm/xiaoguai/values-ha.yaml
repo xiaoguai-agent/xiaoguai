@@ -1,0 +1,136 @@
+# HA overlay values for the xiaoguai chart (v1.1.4).
+#
+# Layered on top of values.yaml:
+#   helm install xiaoguai deploy/helm/xiaoguai \
+#     --values deploy/helm/xiaoguai/values.yaml \
+#     --values deploy/helm/xiaoguai/values-ha.yaml \
+#     --values your-secrets.yaml
+#
+# IMPORTANT — operator commitment:
+#
+# The xiaoguai chart does NOT install Postgres or Valkey. It points
+# the application at connection URLs supplied via pre-created
+# Secrets (`secrets.database.url`, `secrets.cache.url` — see
+# values.yaml). For HA on k8s you bring your own operators:
+#
+#   - Postgres: cloudnative-pg (CNPG) operator with a Cluster CR
+#     configured for logical replication. The Cluster manifest is
+#     out of scope for this chart; see docs/runbooks/ha.md §1 for
+#     the topology shape you're aiming at (1 primary + 2 logical
+#     subscribers, FOR ALL TABLES publication).
+#
+#   - Valkey/Redis: spotahome redis-operator OR ot-container-kit
+#     redis-operator with a RedisCluster CR (3 primary + 3 replica
+#     minimum). Both speak the cluster protocol; either works with
+#     today's `redis` crate single-node connection mode (relies on
+#     -MOVED redirects).
+#
+# The secret payloads should resolve to:
+#
+#   secrets.database.url  → postgres://…@<cnpg-primary-svc>:5432/xiaoguai
+#   secrets.cache.url     → redis://<rediscluster-svc>:6379
+#
+# When v1.1.4.1 lands (`pool_read` config), add a second secret
+# `xiaoguai-database-read` pointing at the read-only service the
+# CNPG cluster exposes (typically `<cluster>-ro`).
+
+# ---- Application-tier replication ----
+
+replicaCount: 2
+
+# Pod anti-affinity so the two xiaoguai-core replicas don't land on
+# the same node. Combined with the cluster's PDB this gives us
+# "lose one node, keep serving".
+podAntiAffinity:
+  enabled: true
+  topologyKey: kubernetes.io/hostname
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# ---- Postgres (informational — chart doesn't install) ----
+# These keys document the topology the operator-installed CNPG
+# Cluster CR must satisfy. The chart only reads
+# `secrets.database.url` from a Secret; the block below is a
+# pure-documentation reminder for the human installer.
+postgresql:
+  architecture: replication        # 1 primary + N subscribers
+  replication:
+    method: logical                # NOT streaming — we want
+                                   # per-table grain for future
+                                   # shard routing
+    publication: xiaoguai_pub
+    publicationScope: FOR ALL TABLES
+    subscribers: 2                 # match docker-compose.ha.yml
+  wal:
+    walLevel: logical
+    maxWalSenders: 10
+    maxReplicationSlots: 10
+  # If your CNPG Cluster exposes both rw + ro Services (it does by
+  # default — `<cluster>-rw` and `<cluster>-ro`), point the
+  # secrets at those:
+  expectedServices:
+    primary: <your-cluster>-rw
+    readOnly: <your-cluster>-ro
+
+# ---- Valkey (informational — chart doesn't install) ----
+valkey:
+  architecture: cluster
+  cluster:
+    nodes: 6                       # 3 primary + 3 replica
+    replicasPerPrimary: 1
+  # The `redis` crate today connects single-node; native cluster
+  # client migration is deferred (see docs/runbooks/ha.md §6).
+  # Single Service in front of all 6 nodes is fine — -MOVED
+  # redirects do the rest.
+  expectedService: <your-rediscluster>
+
+# ---- Reads (today vs v1.1.4.1) ----
+# v1.1.4 ships scaffolding only. Reads still hit the primary URL
+# from `secrets.database`. When v1.1.4.1 lands, set:
+#
+#   secrets:
+#     databaseRead: xiaoguai-database-read   # keys: url
+#
+# and the chart will mount it as XIAOGUAI_DATABASE__READ_URL.
+# Until then, leaving this commented is correct.
+#
+# secrets:
+#   databaseRead: xiaoguai-database-read
+
+# ---- Probes — tightened for HA ----
+# Faster failure detection so unhealthy pods drop out of the
+# Service endpoint set sooner.
+probes:
+  liveness:
+    httpGet:
+      path: /healthz
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  readiness:
+    httpGet:
+      path: /healthz
+      port: http
+    periodSeconds: 3
+    failureThreshold: 2
+
+# ---- Autoscaling ----
+# 2 replicas is the floor (PDB minAvailable: 1 enforces it). Scale
+# up on CPU; downscale window is 5 min so we don't flap during
+# bursty load.
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
+
+# ---- Env injected into each xiaoguai-core pod ----
+# NODE_ID lets the audit chain attribute each entry to a specific
+# replica. Defaults to the pod name via the downward API; see
+# templates/deployment.yaml (no changes required for v1.1.4 —
+# templates already pass POD_NAME).
+env:
+  RUST_LOG: "info,sqlx=warn"
+  XIAOGUAI_HA__ENABLED: "true"
