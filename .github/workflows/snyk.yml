@@ -1,0 +1,93 @@
+name: Snyk security
+
+# v1.1.8: Snyk SCA + container scan.
+# Runs on every PR + main push, but only if the SNYK_TOKEN repo secret
+# is set — forks and contributors without the token get a clean skip
+# instead of a red X they can't fix.
+#
+# Threshold policy:
+# - high severity → fails the workflow (gates PR merge)
+# - medium / low → warn only (visible in Snyk UI, doesn't fail CI)
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ---- Rust dependency scan -------------------------------------------
+  snyk-rust:
+    name: Snyk SCA (Rust)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for SNYK_TOKEN
+        id: token
+        run: |
+          if [ -n "${{ secrets.SNYK_TOKEN }}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SNYK_TOKEN not set — skipping Snyk SCA scan"
+          fi
+
+      - uses: dtolnay/rust-toolchain@1.88.0
+        if: steps.token.outputs.available == 'true'
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.token.outputs.available == 'true'
+
+      - name: Snyk SCA (Rust)
+        if: steps.token.outputs.available == 'true'
+        uses: snyk/actions/rust@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --all-projects
+
+  # ---- Container image scan -------------------------------------------
+  snyk-docker:
+    name: Snyk container scan
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for SNYK_TOKEN
+        id: token
+        run: |
+          if [ -n "${{ secrets.SNYK_TOKEN }}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SNYK_TOKEN not set — skipping Snyk container scan"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.token.outputs.available == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (load locally for scanning)
+        if: steps.token.outputs.available == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64
+          tags: xiaoguai-scan:ci
+          load: true
+          push: false
+
+      - name: Snyk container scan
+        if: steps.token.outputs.available == 'true'
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: xiaoguai-scan:ci
+          args: --severity-threshold=high --file=deploy/Dockerfile

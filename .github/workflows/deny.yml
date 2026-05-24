@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+# v1.1.8: promoted from advisory-only to gating.
+# A failure here now blocks PR merge — see deny.toml for the
+# license allow-list + advisory ignore list.
 jobs:
   cargo-deny:
     runs-on: ubuntu-latest
