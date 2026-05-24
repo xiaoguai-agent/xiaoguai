@@ -109,7 +109,7 @@ async fn register_creates_and_returns_provider() {
 async fn register_rejects_unknown_kind() {
     let repo = MemoryRepo::default();
     let mut args = args_ok("anth", None);
-    args.kind = "anthropic".into();
+    args.kind = "totally-bogus-kind".into();
     let err = register(&repo, args).await.expect_err("should fail");
     assert!(err.to_string().contains("unknown provider kind"));
 }
