@@ -1,0 +1,74 @@
+name: Supply chain (cargo-vet)
+
+# v1.1.8.1: report-only gate for supply chain attestation.
+# cargo-vet verifies that every dependency in Cargo.lock is either:
+#   (a) covered by a trusted imported audit (mozilla/bytecode-alliance/google/embark), or
+#   (b) listed in supply-chain/audits.toml as audited, or
+#   (c) listed in supply-chain/audits.toml as an exemption.
+#
+# CURRENT MODE: continue-on-error: true  — surfaces violations in the log
+#   but does NOT block PR merges.  Tighten to blocking once the import
+#   sources cover most of the dep tree (follow-up task).
+#
+# To upgrade to blocking:
+#   1. Run `cargo vet suggest` to see remaining unaudited crates.
+#   2. Audit or add exemptions for any crate not covered by imports.
+#   3. Set continue-on-error: false below.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-vet:
+    name: cargo vet
+    runs-on: ubuntu-latest
+    env:
+      CARGO_VET_VERSION: "0.10.0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.88.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Cache cargo-vet binary across runs to avoid reinstalling every time.
+          cache-on-failure: true
+
+      - name: Install cargo-vet
+        run: |
+          cargo install cargo-vet --version "${CARGO_VET_VERSION}" --locked
+        # cargo-vet is not in dtolnay's pre-built cache yet; ~90s first install,
+        # ~5s subsequent runs via Swatinem/rust-cache.
+
+      - name: Refresh import snapshots
+        # Fetch latest versions of all imported audit sources and update
+        # imports.lock.  This ensures we always benefit from newly published
+        # audits in mozilla/bytecode-alliance/google/embark.
+        #
+        # We allow failure here: if a remote source is temporarily unavailable
+        # we don't want the whole workflow to fail — cargo vet will fall back
+        # to the committed imports.lock snapshot.
+        run: cargo vet fetch-imports
+        continue-on-error: true
+
+      - name: Run cargo vet
+        # --locked: use Cargo.lock as-is (do not update deps).
+        # Violations are reported in the log; the job is report-only for now.
+        run: cargo vet --locked 2>&1 | tee vet-report.txt
+        continue-on-error: true   # REPORT-ONLY: flip to false to block PRs
+
+      - name: Upload vet report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-vet-report
+          path: vet-report.txt
+          retention-days: 30

@@ -1,0 +1,2985 @@
+# cargo-vet audits.toml — Xiaoguai maintainers
+# v1.1.8.1 — bootstrap state.
+#
+# This file has two sections:
+#   [audits]     — first-party manual audits (empty at bootstrap)
+#   [exemptions] — temporarily bypassed crates (all current deps)
+#
+# See: https://mozilla.github.io/cargo-vet/audit-entries.html
+
+[criteria]
+# Using cargo-vet built-in criteria: safe-to-deploy, safe-to-run, does-not-implement-crypto.
+
+[trusted]
+# No crates unconditionally trusted by publisher yet.
+# Add after thorough review of that publisher's release process.
+
+[audits]
+# First-party audits will appear here as maintainers review crates.
+# Priority order:
+#   1. High-impact crates: tokio, axum, sqlx, ring, rustls, reqwest
+#   2. Crates with active advisories (cargo audit)
+#   3. Anything flagged by: cargo vet suggest
+
+
+[exemptions]
+# Bootstrap exemptions — 493 (name, version) pairs — 2026-05-24.
+# Move entries to [audits] or rely on imported audits to shrink this list.
+
+[[exemptions.adler2]]
+version = "=2.0.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.ahash]]
+version = "=0.8.12"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.aho-corasick]]
+version = "=1.1.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.allocator-api2]]
+version = "=0.2.21"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.android_system_properties]]
+version = "=0.1.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.anstream]]
+version = "=1.0.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.anstyle]]
+version = "=1.0.14"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.anstyle-parse]]
+version = "=1.0.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.anstyle-query]]
+version = "=1.1.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.anstyle-wincon]]
+version = "=3.0.11"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.anyhow]]
+version = "=1.0.102"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.arc-swap]]
+version = "=1.9.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.arraydeque]]
+version = "=0.5.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.assert-json-diff]]
+version = "=2.0.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.assert_cmd]]
+version = "=2.2.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.async-compression]]
+version = "=0.4.42"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.async-trait]]
+version = "=0.1.89"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.atoi]]
+version = "=2.0.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.atomic-waker]]
+version = "=1.1.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.autocfg]]
+version = "=1.5.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.aws-lc-rs]]
+version = "=1.17.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.aws-lc-sys]]
+version = "=0.41.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.axum]]
+version = "=0.7.9"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.axum-core]]
+version = "=0.4.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.axum-macros]]
+version = "=0.4.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.backon]]
+version = "=1.6.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.base64]]
+version = "=0.22.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.base64ct]]
+version = "=1.8.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.bit-set]]
+version = "=0.8.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.bit-vec]]
+version = "=0.8.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.bitflags]]
+version = "=1.3.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.bitflags]]
+version = "=2.11.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.block-buffer]]
+version = "=0.10.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.bollard]]
+version = "=0.18.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.bollard-stubs]]
+version = "=1.47.1-rc.27.3.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.bs58]]
+version = "=0.5.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.bstr]]
+version = "=1.12.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.bumpalo]]
+version = "=3.20.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.byteorder]]
+version = "=1.5.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.bytes]]
+version = "=1.11.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.casbin]]
+version = "=2.20.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.cast]]
+version = "=0.3.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.cc]]
+version = "=1.2.62"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.cfg-if]]
+version = "=1.0.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.cfg_aliases]]
+version = "=0.2.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.chacha20]]
+version = "=0.10.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.chrono]]
+version = "=0.4.44"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.clap]]
+version = "=4.6.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.clap_builder]]
+version = "=4.6.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.clap_derive]]
+version = "=4.6.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.clap_lex]]
+version = "=1.1.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.cmake]]
+version = "=0.1.58"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.colorchoice]]
+version = "=1.0.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.colored]]
+version = "=3.1.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.combine]]
+version = "=4.6.7"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.compression-codecs]]
+version = "=0.4.38"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.compression-core]]
+version = "=0.4.32"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.concurrent-queue]]
+version = "=2.5.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.config]]
+version = "=0.14.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.console]]
+version = "=0.16.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.const-oid]]
+version = "=0.9.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.const-random]]
+version = "=0.1.18"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.const-random-macro]]
+version = "=0.1.16"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.core-foundation]]
+version = "=0.10.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.core-foundation-sys]]
+version = "=0.8.7"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.cpufeatures]]
+version = "=0.2.17"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.cpufeatures]]
+version = "=0.3.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.crc]]
+version = "=3.4.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.crc-catalog]]
+version = "=2.5.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.crc32fast]]
+version = "=1.5.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.cron]]
+version = "=0.12.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.crossbeam-queue]]
+version = "=0.3.12"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.crossbeam-utils]]
+version = "=0.8.21"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.crunchy]]
+version = "=0.2.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.crypto-common]]
+version = "=0.1.7"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.darling]]
+version = "=0.23.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.darling_core]]
+version = "=0.23.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.darling_macro]]
+version = "=0.23.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.data-encoding]]
+version = "=2.11.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.der]]
+version = "=0.7.10"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.deranged]]
+version = "=0.5.8"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.difflib]]
+version = "=0.4.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.digest]]
+version = "=0.10.7"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.displaydoc]]
+version = "=0.2.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.docker_credential]]
+version = "=1.4.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.dotenvy]]
+version = "=0.15.7"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.dunce]]
+version = "=1.0.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.dyn-clone]]
+version = "=1.0.20"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.either]]
+version = "=1.16.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.encode_unicode]]
+version = "=1.0.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.encoding_rs]]
+version = "=0.8.35"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.equivalent]]
+version = "=1.0.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.errno]]
+version = "=0.3.14"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.etcetera]]
+version = "=0.8.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.event-listener]]
+version = "=5.4.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.eventsource-stream]]
+version = "=0.2.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.fastrand]]
+version = "=2.4.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.filetime]]
+version = "=0.2.29"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.find-msvc-tools]]
+version = "=0.1.9"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.fixedbitset]]
+version = "=0.4.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.flate2]]
+version = "=1.1.9"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.float-cmp]]
+version = "=0.10.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.flume]]
+version = "=0.11.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.fnv]]
+version = "=1.0.7"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.foldhash]]
+version = "=0.1.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.form_urlencoded]]
+version = "=1.2.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.fs_extra]]
+version = "=1.3.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.fsevent-sys]]
+version = "=4.1.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.futures]]
+version = "=0.3.32"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.futures-channel]]
+version = "=0.3.32"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.futures-core]]
+version = "=0.3.32"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.futures-executor]]
+version = "=0.3.32"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.futures-intrusive]]
+version = "=0.5.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.futures-io]]
+version = "=0.3.32"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.futures-macro]]
+version = "=0.3.32"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.futures-sink]]
+version = "=0.3.32"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.futures-task]]
+version = "=0.3.32"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.futures-util]]
+version = "=0.3.32"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.generic-array]]
+version = "=0.14.7"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.getrandom]]
+version = "=0.2.17"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.getrandom]]
+version = "=0.3.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.getrandom]]
+version = "=0.4.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.h2]]
+version = "=0.4.14"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hashbrown]]
+version = "=0.12.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hashbrown]]
+version = "=0.14.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hashbrown]]
+version = "=0.15.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hashbrown]]
+version = "=0.17.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hashlink]]
+version = "=0.10.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hashlink]]
+version = "=0.8.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hashlink]]
+version = "=0.9.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.heck]]
+version = "=0.5.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hex]]
+version = "=0.4.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hkdf]]
+version = "=0.12.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hmac]]
+version = "=0.12.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.home]]
+version = "=0.5.12"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.http]]
+version = "=1.4.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.http-body]]
+version = "=1.0.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.http-body-util]]
+version = "=0.1.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.httparse]]
+version = "=1.10.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.httpdate]]
+version = "=1.0.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hyper]]
+version = "=1.9.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hyper-named-pipe]]
+version = "=0.1.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hyper-rustls]]
+version = "=0.27.9"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hyper-util]]
+version = "=0.1.20"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.hyperlocal]]
+version = "=0.9.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.iana-time-zone]]
+version = "=0.1.65"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.iana-time-zone-haiku]]
+version = "=0.1.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.icu_collections]]
+version = "=2.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.icu_locale_core]]
+version = "=2.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.icu_normalizer]]
+version = "=2.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.icu_normalizer_data]]
+version = "=2.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.icu_properties]]
+version = "=2.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.icu_properties_data]]
+version = "=2.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.icu_provider]]
+version = "=2.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.id-arena]]
+version = "=2.3.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.ident_case]]
+version = "=1.0.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.idna]]
+version = "=1.1.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.idna_adapter]]
+version = "=1.2.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.indexmap]]
+version = "=1.9.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.indexmap]]
+version = "=2.14.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.inotify]]
+version = "=0.10.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.inotify-sys]]
+version = "=0.1.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.insta]]
+version = "=1.47.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.instant]]
+version = "=0.1.13"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.ipnet]]
+version = "=2.12.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.is_terminal_polyfill]]
+version = "=1.70.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.itertools]]
+version = "=0.13.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.itoa]]
+version = "=1.0.18"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.jni]]
+version = "=0.22.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.jni-macros]]
+version = "=0.22.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.jni-sys]]
+version = "=0.4.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.jni-sys-macros]]
+version = "=0.4.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.jobserver]]
+version = "=0.1.34"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.js-sys]]
+version = "=0.3.98"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.jsonwebtoken]]
+version = "=9.3.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.kqueue]]
+version = "=1.1.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.kqueue-sys]]
+version = "=1.1.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.lazy_static]]
+version = "=1.5.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.leb128fmt]]
+version = "=0.1.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.libc]]
+version = "=0.2.186"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.libm]]
+version = "=0.2.16"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.libredox]]
+version = "=0.1.16"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.libsqlite3-sys]]
+version = "=0.30.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.linux-raw-sys]]
+version = "=0.12.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.litemap]]
+version = "=0.8.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.lock_api]]
+version = "=0.4.14"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.log]]
+version = "=0.4.29"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.lru-slab]]
+version = "=0.1.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.matchers]]
+version = "=0.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.matchit]]
+version = "=0.7.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.md-5]]
+version = "=0.10.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.memchr]]
+version = "=2.8.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.mime]]
+version = "=0.3.17"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.minicov]]
+version = "=0.3.8"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.minimal-lexical]]
+version = "=0.2.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.miniz_oxide]]
+version = "=0.8.9"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.mio]]
+version = "=1.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.mockito]]
+version = "=1.7.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.nix]]
+version = "=0.31.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.no-std-compat]]
+version = "=0.4.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.nom]]
+version = "=7.1.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.normalize-line-endings]]
+version = "=0.3.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.notify]]
+version = "=7.0.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.notify-types]]
+version = "=1.0.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.nu-ansi-term]]
+version = "=0.50.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.num-bigint]]
+version = "=0.4.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.num-bigint-dig]]
+version = "=0.8.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.num-conv]]
+version = "=0.2.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.num-integer]]
+version = "=0.1.46"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.num-iter]]
+version = "=0.1.45"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.num-traits]]
+version = "=0.2.19"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.once_cell]]
+version = "=1.21.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.once_cell_polyfill]]
+version = "=1.70.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.oorandom]]
+version = "=11.1.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.openssl-probe]]
+version = "=0.2.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.parking]]
+version = "=2.2.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.parking_lot]]
+version = "=0.12.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.parking_lot_core]]
+version = "=0.9.12"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.parse-display]]
+version = "=0.9.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.parse-display-derive]]
+version = "=0.9.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.pastey]]
+version = "=0.2.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.pathdiff]]
+version = "=0.2.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.pem]]
+version = "=3.0.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.pem-rfc7468]]
+version = "=0.7.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.percent-encoding]]
+version = "=2.3.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.petgraph]]
+version = "=0.6.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.pin-project-lite]]
+version = "=0.2.17"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.pkcs1]]
+version = "=0.7.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.pkcs8]]
+version = "=0.10.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.pkg-config]]
+version = "=0.3.33"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.plain]]
+version = "=0.2.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.portable-atomic]]
+version = "=1.13.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.potential_utf]]
+version = "=0.1.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.powerfmt]]
+version = "=0.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.ppv-lite86]]
+version = "=0.2.21"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.predicates]]
+version = "=3.1.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.predicates-core]]
+version = "=1.0.10"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.predicates-tree]]
+version = "=1.0.13"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.prettyplease]]
+version = "=0.2.37"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.proc-macro2]]
+version = "=1.0.106"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.process-wrap]]
+version = "=9.1.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.proptest]]
+version = "=1.11.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.quick-error]]
+version = "=1.2.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.quick-xml]]
+version = "=0.36.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.quinn]]
+version = "=0.11.9"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.quinn-proto]]
+version = "=0.11.14"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.quinn-udp]]
+version = "=0.5.14"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.quote]]
+version = "=1.0.45"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.r-efi]]
+version = "=5.3.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.r-efi]]
+version = "=6.0.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rand]]
+version = "=0.10.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rand]]
+version = "=0.8.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rand]]
+version = "=0.9.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rand_chacha]]
+version = "=0.3.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rand_chacha]]
+version = "=0.9.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rand_core]]
+version = "=0.10.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rand_core]]
+version = "=0.6.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rand_core]]
+version = "=0.9.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rand_xorshift]]
+version = "=0.4.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.redis]]
+version = "=0.27.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.redox_syscall]]
+version = "=0.3.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.redox_syscall]]
+version = "=0.5.18"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.redox_syscall]]
+version = "=0.7.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.ref-cast]]
+version = "=1.0.25"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.ref-cast-impl]]
+version = "=1.0.25"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.regex]]
+version = "=1.12.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.regex-automata]]
+version = "=0.4.14"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.regex-syntax]]
+version = "=0.8.10"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.reqwest]]
+version = "=0.12.28"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.reqwest]]
+version = "=0.13.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rhai]]
+version = "=1.24.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rhai_codegen]]
+version = "=3.1.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.ring]]
+version = "=0.17.14"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rmcp]]
+version = "=1.7.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rmcp-macros]]
+version = "=1.7.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rsa]]
+version = "=0.9.10"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rustc-hash]]
+version = "=2.1.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rustc_version]]
+version = "=0.4.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rustix]]
+version = "=1.1.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rustls]]
+version = "=0.23.40"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rustls-native-certs]]
+version = "=0.8.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rustls-pemfile]]
+version = "=2.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rustls-pki-types]]
+version = "=1.14.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rustls-platform-verifier]]
+version = "=0.7.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rustls-platform-verifier-android]]
+version = "=0.1.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rustls-webpki]]
+version = "=0.103.13"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rustversion]]
+version = "=1.0.22"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.rusty-fork]]
+version = "=0.3.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.ryu]]
+version = "=1.0.23"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.same-file]]
+version = "=1.0.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.schannel]]
+version = "=0.1.29"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.schemars]]
+version = "=0.9.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.schemars]]
+version = "=1.2.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.schemars_derive]]
+version = "=1.2.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.scopeguard]]
+version = "=1.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.security-framework]]
+version = "=3.7.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.security-framework-sys]]
+version = "=2.17.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.semver]]
+version = "=1.0.28"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.serde]]
+version = "=1.0.228"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.serde_core]]
+version = "=1.0.228"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.serde_derive]]
+version = "=1.0.228"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.serde_derive_internals]]
+version = "=0.29.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.serde_json]]
+version = "=1.0.149"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.serde_path_to_error]]
+version = "=0.1.20"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.serde_repr]]
+version = "=0.1.20"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.serde_urlencoded]]
+version = "=0.7.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.serde_with]]
+version = "=3.20.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.serde_with_macros]]
+version = "=3.20.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.serde_yaml]]
+version = "=0.9.34+deprecated"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.sha1]]
+version = "=0.10.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.sha1_smol]]
+version = "=1.0.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.sha2]]
+version = "=0.10.9"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.sharded-slab]]
+version = "=0.1.7"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.shlex]]
+version = "=1.3.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.signal-hook-registry]]
+version = "=1.4.8"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.signature]]
+version = "=2.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.simd-adler32]]
+version = "=0.3.9"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.simd_cesu8]]
+version = "=1.1.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.simdutf8]]
+version = "=0.1.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.similar]]
+version = "=2.7.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.simple_asn1]]
+version = "=0.6.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.slab]]
+version = "=0.4.12"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.smallvec]]
+version = "=1.15.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.smartstring]]
+version = "=1.0.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.socket2]]
+version = "=0.5.10"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.socket2]]
+version = "=0.6.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.spin]]
+version = "=0.5.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.spin]]
+version = "=0.9.8"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.spki]]
+version = "=0.7.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.sqlx]]
+version = "=0.8.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.sqlx-core]]
+version = "=0.8.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.sqlx-macros]]
+version = "=0.8.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.sqlx-macros-core]]
+version = "=0.8.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.sqlx-mysql]]
+version = "=0.8.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.sqlx-postgres]]
+version = "=0.8.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.sqlx-sqlite]]
+version = "=0.8.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.sse-stream]]
+version = "=0.2.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.stable_deref_trait]]
+version = "=1.2.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.static_assertions]]
+version = "=1.1.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.stringprep]]
+version = "=0.1.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.strsim]]
+version = "=0.11.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.structmeta]]
+version = "=0.3.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.structmeta-derive]]
+version = "=0.3.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.subtle]]
+version = "=2.6.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.syn]]
+version = "=2.0.117"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.sync_wrapper]]
+version = "=1.0.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.synstructure]]
+version = "=0.13.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tempfile]]
+version = "=3.27.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.termtree]]
+version = "=0.5.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.testcontainers]]
+version = "=0.23.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.testcontainers-modules]]
+version = "=0.11.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.thin-vec]]
+version = "=0.2.18"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.thiserror]]
+version = "=1.0.69"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.thiserror]]
+version = "=2.0.18"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.thiserror-impl]]
+version = "=1.0.69"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.thiserror-impl]]
+version = "=2.0.18"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.thread_local]]
+version = "=1.1.9"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.time]]
+version = "=0.3.47"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.time-core]]
+version = "=0.1.8"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.time-macros]]
+version = "=0.2.27"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tiny-keccak]]
+version = "=2.0.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tinystr]]
+version = "=0.8.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tinyvec]]
+version = "=1.11.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tinyvec_macros]]
+version = "=0.1.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tokio]]
+version = "=1.52.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tokio-macros]]
+version = "=2.7.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tokio-rustls]]
+version = "=0.26.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tokio-stream]]
+version = "=0.1.18"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tokio-tar]]
+version = "=0.3.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tokio-tungstenite]]
+version = "=0.24.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tokio-util]]
+version = "=0.7.18"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tower]]
+version = "=0.5.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tower-http]]
+version = "=0.6.11"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tower-layer]]
+version = "=0.3.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tower-service]]
+version = "=0.3.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tracing]]
+version = "=0.1.44"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tracing-attributes]]
+version = "=0.1.31"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tracing-core]]
+version = "=0.1.36"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tracing-log]]
+version = "=0.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tracing-serde]]
+version = "=0.2.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tracing-subscriber]]
+version = "=0.3.23"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.try-lock]]
+version = "=0.2.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.tungstenite]]
+version = "=0.24.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.typenum]]
+version = "=1.20.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.unarray]]
+version = "=0.1.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.unicode-bidi]]
+version = "=0.3.18"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.unicode-ident]]
+version = "=1.0.24"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.unicode-normalization]]
+version = "=0.1.25"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.unicode-properties]]
+version = "=0.1.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.unicode-xid]]
+version = "=0.2.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.unsafe-libyaml]]
+version = "=0.2.11"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.untrusted]]
+version = "=0.9.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.url]]
+version = "=2.5.8"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.urlencoding]]
+version = "=2.1.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.utf-8]]
+version = "=0.7.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.utf8_iter]]
+version = "=1.0.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.utf8parse]]
+version = "=0.2.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.uuid]]
+version = "=1.23.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.valuable]]
+version = "=0.1.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.vcpkg]]
+version = "=0.2.15"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.version_check]]
+version = "=0.9.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wait-timeout]]
+version = "=0.2.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.walkdir]]
+version = "=2.5.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.want]]
+version = "=0.3.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasi]]
+version = "=0.11.1+wasi-snapshot-preview1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasip2]]
+version = "=1.0.3+wasi-0.2.9"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasip3]]
+version = "=0.4.0+wasi-0.3.0-rc-2026-01-06"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasite]]
+version = "=0.1.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasm-bindgen]]
+version = "=0.2.121"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasm-bindgen-futures]]
+version = "=0.4.71"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasm-bindgen-macro]]
+version = "=0.2.121"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasm-bindgen-macro-support]]
+version = "=0.2.121"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasm-bindgen-shared]]
+version = "=0.2.121"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasm-bindgen-test]]
+version = "=0.3.71"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasm-bindgen-test-macro]]
+version = "=0.3.71"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasm-bindgen-test-shared]]
+version = "=0.2.121"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasm-encoder]]
+version = "=0.244.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasm-metadata]]
+version = "=0.244.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasm-streams]]
+version = "=0.4.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasm-streams]]
+version = "=0.5.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wasmparser]]
+version = "=0.244.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.web-sys]]
+version = "=0.3.98"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.web-time]]
+version = "=1.1.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.webpki-root-certs]]
+version = "=1.0.7"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.webpki-roots]]
+version = "=0.26.11"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.webpki-roots]]
+version = "=1.0.7"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.whoami]]
+version = "=1.6.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.winapi]]
+version = "=0.3.9"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.winapi-i686-pc-windows-gnu]]
+version = "=0.4.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.winapi-util]]
+version = "=0.1.11"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.winapi-x86_64-pc-windows-gnu]]
+version = "=0.4.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows]]
+version = "=0.62.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-collections]]
+version = "=0.3.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-core]]
+version = "=0.62.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-future]]
+version = "=0.3.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-implement]]
+version = "=0.60.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-interface]]
+version = "=0.59.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-link]]
+version = "=0.2.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-numerics]]
+version = "=0.3.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-result]]
+version = "=0.4.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-strings]]
+version = "=0.5.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-sys]]
+version = "=0.48.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-sys]]
+version = "=0.52.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-sys]]
+version = "=0.60.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-sys]]
+version = "=0.61.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-targets]]
+version = "=0.48.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-targets]]
+version = "=0.52.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-targets]]
+version = "=0.53.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows-threading]]
+version = "=0.2.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_aarch64_gnullvm]]
+version = "=0.48.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_aarch64_gnullvm]]
+version = "=0.52.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_aarch64_gnullvm]]
+version = "=0.53.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_aarch64_msvc]]
+version = "=0.48.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_aarch64_msvc]]
+version = "=0.52.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_aarch64_msvc]]
+version = "=0.53.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_i686_gnu]]
+version = "=0.48.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_i686_gnu]]
+version = "=0.52.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_i686_gnu]]
+version = "=0.53.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_i686_gnullvm]]
+version = "=0.52.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_i686_gnullvm]]
+version = "=0.53.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_i686_msvc]]
+version = "=0.48.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_i686_msvc]]
+version = "=0.52.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_i686_msvc]]
+version = "=0.53.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_x86_64_gnu]]
+version = "=0.48.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_x86_64_gnu]]
+version = "=0.52.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_x86_64_gnu]]
+version = "=0.53.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_x86_64_gnullvm]]
+version = "=0.48.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_x86_64_gnullvm]]
+version = "=0.52.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_x86_64_gnullvm]]
+version = "=0.53.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_x86_64_msvc]]
+version = "=0.48.5"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_x86_64_msvc]]
+version = "=0.52.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.windows_x86_64_msvc]]
+version = "=0.53.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wit-bindgen]]
+version = "=0.51.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wit-bindgen]]
+version = "=0.57.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wit-bindgen-core]]
+version = "=0.51.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wit-bindgen-rust]]
+version = "=0.51.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wit-bindgen-rust-macro]]
+version = "=0.51.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wit-component]]
+version = "=0.244.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.wit-parser]]
+version = "=0.244.0"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.writeable]]
+version = "=0.6.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.xattr]]
+version = "=1.6.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.yaml-rust2]]
+version = "=0.8.1"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.yoke]]
+version = "=0.8.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.yoke-derive]]
+version = "=0.8.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.zerocopy]]
+version = "=0.8.48"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.zerocopy-derive]]
+version = "=0.8.48"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.zerofrom]]
+version = "=0.1.8"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.zerofrom-derive]]
+version = "=0.1.7"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.zeroize]]
+version = "=1.8.2"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.zerotrie]]
+version = "=0.2.4"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.zerovec]]
+version = "=0.11.6"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.zerovec-derive]]
+version = "=0.11.3"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
+
+[[exemptions.zmij]]
+version = "=1.0.21"
+criteria = "safe-to-deploy"
+suggest = false
+notes = "bootstrap exemption — audit incrementally"
