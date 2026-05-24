@@ -1,0 +1,59 @@
+# Incident RCA: {{ incident.title }}
+
+> **Incident ID**: `{{ incident.id }}`
+> **Source**: {{ incident.source }}
+> **Severity**: {{ incident.severity | upper }}
+> **Environment**: {{ incident.environment }}
+> **Project**: {{ incident.project }}
+> **Occurred at**: {{ incident.occurred_at }}
+> **RCA confidence**: {{ rca.confidence }}
+> [View in {{ incident.source | title }}]({{ incident.url }})
+
+---
+
+## 1. Summary
+
+{{ rca.summary }}
+
+---
+
+## 2. Impact
+
+{{ rca.impact }}
+
+---
+
+## 3. Root Cause
+
+{{ rca.root_cause }}
+
+**Evidence references:**
+{% for ref in rca.evidence_refs %}
+- `{{ ref }}`
+{% endfor %}
+
+---
+
+## 4. Timeline
+
+| Time (UTC) | Event |
+|---|---|
+{% for entry in rca.timeline %}
+| `{{ entry.time }}` | {{ entry.event }} |
+{% endfor %}
+
+---
+
+## 5. Action Items
+
+| Priority | Assignee | Action |
+|---|---|---|
+{% for item in rca.action_items %}
+| {{ item.priority }} | {{ item.assignee }} | {{ item.action }} |
+{% endfor %}
+
+---
+
+*Generated automatically by xiaoguai incident-triage pack v{{ pack_version }}.*
+*Reviewed and approved by: <!-- @mention engineer -->*
+*Date closed: <!-- YYYY-MM-DD -->*

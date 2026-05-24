@@ -1,0 +1,111 @@
+---
+# Triage Agent — automatic root-cause analysis.
+#
+# Input:  a normalized Incident struct (from SentrySource or DatadogSource).
+# Output: a populated RcaDraft struct (summary, impact, root_cause,
+#         timeline, action_items) rendered via templates/rca.md.j2.
+
+name: triage-agent
+description: >
+  Given an Incident, gather context from recent git commits, audit-log
+  entries, and recent deploys, then draft an RCA in the standard 5-section
+  format and emit it to the configured output connectors.
+
+# LLM settings — inherits the workspace default if not overridden.
+llm:
+  # Use the fastest available model for quick triage drafts.
+  # Override with TRIAGE_LLM_MODEL env var.
+  model: ${TRIAGE_LLM_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 4096
+
+# Context-gathering steps executed before the LLM prompt.
+# Each step runs a tool call; results are injected into the prompt as
+# structured context sections.
+context_steps:
+  - id: recent_commits
+    description: "Recent git commits (incident_time - 4h .. incident_time)"
+    tool: bash
+    command: >
+      git log
+      --since="{{ (incident.occurred_at | parse_datetime) - duration('4h') | iso8601 }}"
+      --until="{{ incident.occurred_at }}"
+      --oneline --no-decorate
+    # Truncated to 50 lines to keep token budget reasonable.
+    max_lines: 50
+
+  - id: audit_log
+    description: "Audit-log entries from the 4h window"
+    tool: xiaoguai_audit_search
+    params:
+      since: "{{ (incident.occurred_at | parse_datetime) - duration('4h') | iso8601 }}"
+      until: "{{ incident.occurred_at }}"
+      limit: 100
+
+  - id: recent_deploys
+    description: "Deploy events from git tags / CI in the same window"
+    tool: bash
+    command: >
+      git log
+      --since="{{ (incident.occurred_at | parse_datetime) - duration('4h') | iso8601 }}"
+      --until="{{ incident.occurred_at }}"
+      --tags --simplify-by-decoration --oneline
+
+# System prompt template injected before the gathered context.
+system_prompt: |
+  You are an SRE on-call assistant performing root-cause analysis.
+  You will be given information about an incident and recent engineering
+  activity. Your job is to identify the most likely root-cause candidates
+  and produce a structured RCA draft.
+
+  Rules:
+  - Be factual; if the evidence is insufficient, say so explicitly.
+  - Prioritise commit diffs and deploy events over speculative causes.
+  - Action items must be concrete and assignable.
+  - Respond ONLY with valid JSON matching the RcaDraft schema below.
+
+  RcaDraft schema:
+  {
+    "summary": "1-2 sentence executive summary",
+    "impact": "Who / what was affected and for how long",
+    "root_cause": "Most likely root cause with evidence references",
+    "timeline": [
+      {"time": "ISO-8601", "event": "description"}
+    ],
+    "action_items": [
+      {"assignee": "team or person", "action": "what to do", "priority": "P0|P1|P2"}
+    ],
+    "confidence": "high|medium|low",
+    "evidence_refs": ["commit:abc123", "deploy:v1.2.3", "audit:op-789"]
+  }
+
+# User prompt template — rendered with Jinja2-like syntax.
+user_prompt: |
+  ## Incident
+  - ID: {{ incident.id }}
+  - Source: {{ incident.source }}
+  - Title: {{ incident.title }}
+  - Severity: {{ incident.severity }}
+  - Occurred at: {{ incident.occurred_at }}
+  - Project: {{ incident.project }}
+  - Environment: {{ incident.environment }}
+  - URL: {{ incident.url }}
+
+  ## Recent commits ({{ incident.occurred_at | minus('4h') }} — {{ incident.occurred_at }})
+  {{ context.recent_commits | truncate(2000) }}
+
+  ## Audit log entries
+  {{ context.audit_log | truncate(2000) }}
+
+  ## Recent deploys
+  {{ context.recent_deploys | truncate(500) }}
+
+  Draft the RCA JSON now.
+
+# Output routing — results passed to each configured output connector.
+outputs:
+  - outputs/draft-pr.yaml
+
+# Deferred:
+#   - on-call rotation lookup (PagerDuty Schedules API → auto-assign owner)
+#   - automated severity escalation if confidence=high + severity=critical
