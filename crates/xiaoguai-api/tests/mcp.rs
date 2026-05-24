@@ -116,6 +116,8 @@ fn build_state(auth: Option<Arc<dyn TokenValidator>>, mcp: Arc<InMemoryMcpRepo>)
         today: None,
         eval: None,
         webhook_pusher: None,
+        nl_job_compiler: None,
+        job_upserter: None,
     }
 }
 

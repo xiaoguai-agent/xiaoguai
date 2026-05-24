@@ -103,6 +103,8 @@ fn build_state(mcp: Option<Arc<dyn McpServerRepository>>) -> AppState {
         today: None,
         eval: None,
         webhook_pusher: None,
+        nl_job_compiler: None,
+        job_upserter: None,
     }
 }
 

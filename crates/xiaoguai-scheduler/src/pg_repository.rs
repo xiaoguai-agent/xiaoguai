@@ -297,14 +297,20 @@ fn parse_status(s: &str) -> RepoResult<JobRunStatus> {
     }
 }
 
+// Helpers below are designed to be passed straight to `.map_err(..)`
+// which yields owned errors; clippy's needless_pass_by_value lint
+// doesn't fit this shape.
+#[allow(clippy::needless_pass_by_value)]
 fn sqlx_err(e: sqlx::Error) -> RepoError {
     RepoError::Backend(e.to_string())
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn serde_err(e: serde_json::Error) -> RepoError {
     RepoError::Backend(format!("serde: {e}"))
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn repo_err(e: xiaoguai_storage::repositories::error::RepoError) -> RepoError {
     RepoError::Backend(e.to_string())
 }

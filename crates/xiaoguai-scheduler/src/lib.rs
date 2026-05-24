@@ -97,7 +97,7 @@ pub use repository::{
 };
 pub use retry::RetryPolicy;
 pub use runner::{JobRunner, RunnerError, RunnerOptions};
-pub use runtime_executor::RuntimeJobExecutor;
+pub use runtime_executor::{RuntimeJobExecutor, ScheduledSessionWriter};
 pub use sink::{LoggingSink, PushPayload, PushSink, SinkError};
 pub use sinks::{
     EmailPushSink, EmailSinkConfig, FeishuPushSink, FeishuSinkConfig, InboxMessage, InboxPushSink,

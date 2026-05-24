@@ -39,7 +39,10 @@ pub use mcp_serve::XiaoguaiMcpServer;
 pub use rate_limit::{rate_limit, RateLimiter};
 pub use rbac::{method_to_action, path_to_resource, require_authorized};
 pub use routes::router;
-pub use scheduler::{WebhookPushError, WebhookPusher};
+pub use scheduler::{
+    NlJobCompileError, NlJobCompiler, RecordingJobUpserter, ScheduledJobUpsertError,
+    ScheduledJobUpserter, StaticNlJobCompiler, WebhookPushError, WebhookPusher,
+};
 pub use serve::serve_with_state;
 pub use state::{AppState, CancelRegistry};
 pub use today::{StaticTodayReader, TodayError, TodayItem, TodayKind, TodayQuery, TodayReader};

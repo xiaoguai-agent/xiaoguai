@@ -25,7 +25,7 @@ use xiaoguai_storage::repositories::{
 use crate::audit::{AuditReader, AuditVerifier};
 use crate::auth::TokenValidator;
 use crate::eval::EvalService;
-use crate::scheduler::WebhookPusher;
+use crate::scheduler::{NlJobCompiler, ScheduledJobUpserter, WebhookPusher};
 use crate::today::TodayReader;
 
 /// Registry of cancellation tokens keyed by `session_id`. A single token per
@@ -130,6 +130,15 @@ pub struct AppState {
     /// running `WebhookSource`. Behind admin auth — per-tenant tokens
     /// land in v0.12.1.
     pub webhook_pusher: Option<Arc<dyn WebhookPusher>>,
+    /// v0.12.1: natural-language → `ScheduledJob` compiler. `None`
+    /// makes `POST /v1/admin/scheduler/jobs/compile` return 503;
+    /// production wires `LlmNlJobCompiler` from `xiaoguai-core` when
+    /// an `LlmBackend` is available.
+    pub nl_job_compiler: Option<Arc<dyn NlJobCompiler>>,
+    /// v0.12.1: scheduled-job upsert sink for `POST /v1/admin/scheduler/jobs`.
+    /// `None` makes the endpoint return 503; production wires the
+    /// `PgJobRepository` via a thin adapter in `xiaoguai-core`.
+    pub job_upserter: Option<Arc<dyn ScheduledJobUpserter>>,
 }
 
 impl std::fmt::Debug for AppState {

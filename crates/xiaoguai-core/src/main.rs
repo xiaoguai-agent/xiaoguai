@@ -249,21 +249,40 @@ async fn run_serve(settings: &Settings) -> Result<()> {
     // run the agent loop through `RuntimeJobExecutor`, and hand the
     // `WebhookSource` to `AppState` so `/v1/admin/scheduler/webhooks/...`
     // can fire reactive jobs.
+    //
+    // v0.12.1: also wire the `PgScheduledSessionWriter` into the
+    // executor (so `scheduled_job_runs.session_id` populates and the
+    // audit-first console can drill into transcripts) and the
+    // `PgScheduledJobUpserter` into AppState for `POST /v1/admin/scheduler/jobs`.
     let toolbox = Arc::new(Toolbox::new());
     let agent_defaults = AgentConfig::new(default_model.clone());
-    let (scheduler_handle, webhook_pusher): (
+    // Build these once so both the executor session writer and the
+    // upserter on AppState see the same PG handles.
+    let pg_session_repo: Arc<dyn xiaoguai_storage::repositories::SessionRepository> =
+        Arc::new(PgSessionRepository::new(pool.clone()));
+    let pg_message_repo: Arc<dyn xiaoguai_storage::repositories::MessageRepository> =
+        Arc::new(PgMessageRepository::new(pool.clone()));
+    let (scheduler_handle, webhook_pusher, job_upserter): (
         Option<tokio::task::JoinHandle<Result<(), xiaoguai_scheduler::RunnerError>>>,
         Option<Arc<dyn xiaoguai_api::scheduler::WebhookPusher>>,
+        Option<Arc<dyn xiaoguai_api::scheduler::ScheduledJobUpserter>>,
     ) = if settings.scheduler.enabled {
         let runtime_ctx = crate::scheduler_bridge::build_runtime_ctx(
             backend.clone(),
             toolbox.clone(),
             agent_defaults.clone(),
         );
-        let executor: Arc<dyn xiaoguai_scheduler::JobExecutor> =
-            Arc::new(xiaoguai_scheduler::RuntimeJobExecutor::new(runtime_ctx));
-        let jobs: Arc<dyn xiaoguai_scheduler::JobRepository> =
-            Arc::new(xiaoguai_scheduler::PgJobRepository::new(pool.clone()));
+        let session_writer: Arc<dyn xiaoguai_scheduler::ScheduledSessionWriter> =
+            Arc::new(crate::scheduler_bridge::PgScheduledSessionWriter::new(
+                pg_session_repo.clone(),
+                pg_message_repo.clone(),
+            ));
+        let executor: Arc<dyn xiaoguai_scheduler::JobExecutor> = Arc::new(
+            xiaoguai_scheduler::RuntimeJobExecutor::new(runtime_ctx)
+                .with_session_writer(session_writer),
+        );
+        let pg_jobs = Arc::new(xiaoguai_scheduler::PgJobRepository::new(pool.clone()));
+        let jobs: Arc<dyn xiaoguai_scheduler::JobRepository> = pg_jobs.clone();
         let runs: Arc<dyn xiaoguai_scheduler::JobRunRepository> =
             Arc::new(xiaoguai_scheduler::PgJobRunRepository::new(pool.clone()));
         // Audit appender: route through the same PgAuditSink the audit
@@ -307,15 +326,32 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         let pusher: Arc<dyn xiaoguai_api::scheduler::WebhookPusher> = Arc::new(
             crate::scheduler_bridge::WebhookSourceAdapter::new(webhook_source.clone()),
         );
-        (Some(handle), Some(pusher))
+        let upserter: Arc<dyn xiaoguai_api::scheduler::ScheduledJobUpserter> = Arc::new(
+            crate::scheduler_bridge::PgScheduledJobUpserter::new(pg_jobs),
+        );
+        (Some(handle), Some(pusher), Some(upserter))
     } else {
         tracing::info!("serve: scheduler disabled (set [scheduler].enabled = true to opt in)");
-        (None, None)
+        (None, None, None)
     };
 
+    // v0.12.1: NL → ScheduledJob compiler. Always wire when we have an
+    // LlmBackend (which is always — Mock fallback included). Independent
+    // of the scheduler-enabled flag: an operator can use compile to
+    // preview suggestions even before flipping the runner on. Upsert
+    // still requires the scheduler to be enabled, though, so the
+    // compile-then-save flow only completes when both are on.
+    let nl_job_compiler: Option<Arc<dyn xiaoguai_api::scheduler::NlJobCompiler>> = Some(Arc::new(
+        crate::scheduler_bridge::LlmNlJobCompiler::new(backend.clone(), default_model.clone()),
+    ));
+    tracing::info!(
+        model = %default_model,
+        "serve: NlJobCompiler wired"
+    );
+
     let state = AppState {
-        sessions: Arc::new(PgSessionRepository::new(pool.clone())),
-        messages: Arc::new(PgMessageRepository::new(pool.clone())),
+        sessions: pg_session_repo.clone(),
+        messages: pg_message_repo.clone(),
         backend,
         toolbox: toolbox.clone(),
         agent_defaults: agent_defaults.clone(),
@@ -350,6 +386,10 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // v0.12.0: webhook → JobRunner adapter. None when scheduler is
         // disabled — the route then returns 503.
         webhook_pusher,
+        // v0.12.1: NL → ScheduledJob compiler (always wired) +
+        // ScheduledJob upserter (only when scheduler is enabled).
+        nl_job_compiler,
+        job_upserter,
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

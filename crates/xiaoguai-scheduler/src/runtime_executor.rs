@@ -6,20 +6,17 @@
 //! single-user-turn history, applies the job's `tenant_id` to the
 //! runtime context, and calls `run_to_completion`. The resulting
 //! `RuntimeOutcome::reply_text` becomes the `ExecutionOutcome::output_preview`
-//! (truncated to a reasonable length so the JobRun row + push payloads
+//! (truncated to a reasonable length so the `JobRun` row + push payloads
 //! stay light).
 //!
-//! Out of scope for v0.12.0 (deferred to v0.12.1):
-//!
-//! * **Per-run synthetic session.** `scheduled_job_runs.session_id` is
-//!   nullable; today we leave it `None`. v0.12.1 will create a session
-//!   on the fly so the audit-first console (v0.11.1) can drill into the
-//!   scheduler-driven transcript.
-//! * **Per-attempt RuntimeSink hookup.** Today we use `run_to_completion`
-//!   because the `JobExecutor` trait already encapsulates retries. If
-//!   v0.12.1 wants streaming AgentEvents into a sink (e.g. for the
-//!   audit-first console's live progress view), we'll switch to
-//!   `run_to_sink` then.
+//! v0.12.1 adds the [`ScheduledSessionWriter`] hook. When the executor
+//! is built with `Some(writer)` it creates a synthetic session per run
+//! (so `scheduled_job_runs.session_id` is populated) and writes the
+//! resulting `new_messages` slice into the `messages` table — the
+//! v0.11.1 audit-first console can then drill from a scheduled run
+//! into the chat-style transcript. When the writer is `None` the
+//! executor preserves the v0.12.0 behaviour and returns
+//! `session_id: None`.
 
 use std::sync::Arc;
 
@@ -32,14 +29,55 @@ use crate::job::ScheduledJob;
 
 const OUTPUT_PREVIEW_MAX: usize = 500;
 
+/// Persist a synthetic session for one scheduled-job run.
+///
+/// The writer creates a session row, persists the messages produced by
+/// the agent loop, and returns the new `session_id` so the
+/// `JobExecutor` can hand it back inside [`ExecutionOutcome`]. The
+/// `audit-first` console joins `scheduled_job_runs.session_id` →
+/// `sessions.id` to render the scheduler-driven transcript.
+///
+/// The writer is responsible for choosing a stable `user_id` for
+/// scheduled runs (production wires a synthetic "scheduler:<job_id>"
+/// user); the trait takes only what's strictly required.
+#[async_trait]
+pub trait ScheduledSessionWriter: Send + Sync {
+    /// Create a session, persist `new_messages`, and return the
+    /// `session_id`. Returns a string-level error so the executor can
+    /// surface it back through `JobExecutor::execute`'s error channel.
+    async fn create_and_record(
+        &self,
+        job: &ScheduledJob,
+        prompt: &str,
+        new_messages: &[LlmMessage],
+    ) -> Result<String, String>;
+}
+
 pub struct RuntimeJobExecutor {
     ctx: Arc<RuntimeContext>,
+    session_writer: Option<Arc<dyn ScheduledSessionWriter>>,
 }
 
 impl RuntimeJobExecutor {
+    /// Construct an executor that does NOT persist a per-run session.
+    /// `ExecutionOutcome.session_id` will be `None`. Equivalent to the
+    /// v0.12.0 constructor — preserved so existing callers don't need
+    /// to thread an `Option<Arc<...>>` they wouldn't use.
     #[must_use]
     pub fn new(ctx: Arc<RuntimeContext>) -> Self {
-        Self { ctx }
+        Self {
+            ctx,
+            session_writer: None,
+        }
+    }
+
+    /// v0.12.1: opt into per-run synthetic sessions. When `Some`, every
+    /// successful run gets a session row + messages persisted via the
+    /// writer; `ExecutionOutcome.session_id` carries the new id.
+    #[must_use]
+    pub fn with_session_writer(mut self, writer: Arc<dyn ScheduledSessionWriter>) -> Self {
+        self.session_writer = Some(writer);
+        self
     }
 }
 
@@ -58,9 +96,27 @@ impl JobExecutor for RuntimeJobExecutor {
             .await
             .map_err(|e| format!("runtime: {e}"))?;
 
+        // v0.12.1: optionally persist a synthetic session so the
+        // audit-first console can drill into the transcript. We do this
+        // AFTER the runtime returns so a writer failure can't cancel an
+        // already-completed agent run — it surfaces as the JobRun error
+        // and the audit row instead. Writer failure does not roll back
+        // the agent run (it already ran), but it does flip the run to
+        // failed in the JobRun row so the operator notices.
+        let session_id = if let Some(writer) = &self.session_writer {
+            Some(
+                writer
+                    .create_and_record(job, prompt, &outcome.new_messages)
+                    .await
+                    .map_err(|e| format!("session writer: {e}"))?,
+            )
+        } else {
+            None
+        };
+
         Ok(ExecutionOutcome {
             output_preview: truncate_preview(&outcome.reply_text),
-            session_id: None,
+            session_id,
         })
     }
 }
@@ -78,6 +134,7 @@ fn truncate_preview(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parking_lot::Mutex;
     use std::sync::Arc;
     use xiaoguai_agent::{AgentConfig, Toolbox};
     use xiaoguai_llm::{LlmBackend, MockBackend};
@@ -85,17 +142,16 @@ mod tests {
     use crate::job::ScheduledJob;
     use crate::trigger::Trigger;
 
-    fn make_executor(reply: &str) -> RuntimeJobExecutor {
+    fn make_ctx(reply: &str) -> Arc<RuntimeContext> {
         let backend: Arc<dyn LlmBackend> = Arc::new(MockBackend::with_response(reply));
-        let ctx = Arc::new(RuntimeContext::new(
+        Arc::new(RuntimeContext::new(
             backend,
             Arc::new(Toolbox::new()),
             AgentConfig::new("mock-model"),
-        ));
-        RuntimeJobExecutor::new(ctx)
+        ))
     }
 
-    fn make_job(prompt: serde_json::Value) -> ScheduledJob {
+    fn make_job(prompt: &serde_json::Value) -> ScheduledJob {
         ScheduledJob::new(
             "j1",
             Some("tenant-x".into()),
@@ -105,10 +161,34 @@ mod tests {
         )
     }
 
+    struct RecordingSessionWriter {
+        calls: Mutex<Vec<(String, String, usize)>>,
+        next_id: &'static str,
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl ScheduledSessionWriter for RecordingSessionWriter {
+        async fn create_and_record(
+            &self,
+            job: &ScheduledJob,
+            prompt: &str,
+            new_messages: &[LlmMessage],
+        ) -> Result<String, String> {
+            self.calls
+                .lock()
+                .push((job.id.clone(), prompt.to_string(), new_messages.len()));
+            if self.fail {
+                return Err("writer boom".into());
+            }
+            Ok(self.next_id.to_string())
+        }
+    }
+
     #[tokio::test]
     async fn execute_returns_reply_text_as_preview() {
-        let exec = make_executor("hello scheduled world");
-        let job = make_job(serde_json::Value::String("ping".into()));
+        let exec = RuntimeJobExecutor::new(make_ctx("hello scheduled world"));
+        let job = make_job(&serde_json::Value::String("ping".into()));
         let outcome = exec.execute(&job, 1).await.unwrap();
         assert_eq!(outcome.output_preview, "hello scheduled world");
         assert!(outcome.session_id.is_none());
@@ -116,8 +196,8 @@ mod tests {
 
     #[tokio::test]
     async fn execute_errors_when_prompt_missing() {
-        let exec = make_executor("never reached");
-        let job = make_job(serde_json::Value::Null);
+        let exec = RuntimeJobExecutor::new(make_ctx("never reached"));
+        let job = make_job(&serde_json::Value::Null);
         let err = exec.execute(&job, 1).await.unwrap_err();
         assert!(err.contains("prompt"));
     }
@@ -132,5 +212,43 @@ mod tests {
             out.len()
         );
         assert!(out.ends_with('…'));
+    }
+
+    #[tokio::test]
+    async fn execute_with_session_writer_returns_session_id() {
+        let writer = Arc::new(RecordingSessionWriter {
+            calls: Mutex::new(Vec::new()),
+            next_id: "sess_42",
+            fail: false,
+        });
+        let exec = RuntimeJobExecutor::new(make_ctx("ok"))
+            .with_session_writer(writer.clone() as Arc<dyn ScheduledSessionWriter>);
+        let job = make_job(&serde_json::Value::String("hello".into()));
+        let outcome = exec.execute(&job, 1).await.unwrap();
+        assert_eq!(outcome.session_id.as_deref(), Some("sess_42"));
+        let calls = writer.calls.lock();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "j1");
+        assert_eq!(calls[0].1, "hello");
+        // new_messages slice contains at least the user prompt + the assistant reply.
+        assert!(
+            calls[0].2 >= 2,
+            "expected ≥2 new messages, got {}",
+            calls[0].2
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_surfaces_session_writer_error() {
+        let writer = Arc::new(RecordingSessionWriter {
+            calls: Mutex::new(Vec::new()),
+            next_id: "unused",
+            fail: true,
+        });
+        let exec = RuntimeJobExecutor::new(make_ctx("ok"))
+            .with_session_writer(writer as Arc<dyn ScheduledSessionWriter>);
+        let job = make_job(&serde_json::Value::String("hello".into()));
+        let err = exec.execute(&job, 1).await.unwrap_err();
+        assert!(err.contains("session writer"));
     }
 }

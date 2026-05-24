@@ -57,6 +57,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/admin/scheduler/webhooks/:route_id",
             post(admin::scheduler_webhook),
+        )
+        .route(
+            "/v1/admin/scheduler/jobs/compile",
+            post(admin::scheduler_compile_job),
+        )
+        .route(
+            "/v1/admin/scheduler/jobs",
+            post(admin::scheduler_upsert_job),
         );
 
     // Layer order (inner → outer, since `route_layer` adds outward):
