@@ -21,6 +21,7 @@ members = [
     "crates/xiaoguai-im-wecom",
     "crates/xiaoguai-cli",
     "crates/xiaoguai-orchestrator",
+    "crates/xiaoguai-watch",
 ]
 
 [workspace.package]
@@ -113,6 +114,9 @@ cron = "0.12"
 notify = "7"
 notify-debouncer-full = "0.4"
 tempfile = "3"
+
+# caching / watch dedup
+moka = { version = "0.12", features = ["future"] }
 
 # misc
 once_cell = "1.20"
