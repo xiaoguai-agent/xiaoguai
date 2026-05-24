@@ -125,6 +125,33 @@ async fn list_due_filters_reactive_jobs() {
 
 #[tokio::test]
 #[ignore = "requires Docker"]
+async fn list_reactive_returns_only_reactive_enabled_jobs() {
+    let (pool, _pg) = setup().await;
+    insert_tenant(&pool, "tenant-x").await;
+    let repo = Arc::new(PgJobRepository::new(pool.clone()));
+
+    let mut watch = sample_job("watch-1", Some("tenant-x".into()));
+    watch.trigger = Trigger::file_watch("/var/notes").unwrap();
+    repo.upsert(&watch).await.unwrap();
+
+    let mut disabled = sample_job("watch-disabled", Some("tenant-x".into()));
+    disabled.trigger = Trigger::file_watch("/var/disabled").unwrap();
+    disabled.enabled = false;
+    repo.upsert(&disabled).await.unwrap();
+
+    repo.upsert(&sample_job("scheduled", Some("tenant-x".into())))
+        .await
+        .unwrap();
+
+    let got = repo.list_reactive().await.unwrap();
+    let ids: Vec<_> = got.iter().map(|j| j.id.clone()).collect();
+    assert!(ids.contains(&"watch-1".to_string()));
+    assert!(!ids.contains(&"scheduled".to_string()));
+    assert!(!ids.contains(&"watch-disabled".to_string()));
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
 async fn record_fire_updates_bookkeeping() {
     let (pool, _pg) = setup().await;
     insert_tenant(&pool, "tenant-x").await;

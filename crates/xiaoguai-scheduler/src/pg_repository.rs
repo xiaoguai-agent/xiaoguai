@@ -149,6 +149,31 @@ impl JobRepository for PgJobRepository {
         }
         Ok(())
     }
+
+    async fn list_reactive(&self) -> RepoResult<Vec<ScheduledJob>> {
+        // Push the type filter into SQL so we don't pull every enabled
+        // job through the application layer just to discard most of
+        // them. The expression `trigger->>'type'` reads the discriminant
+        // out of the JSONB column populated by serde's
+        // `#[serde(tag = "type")]` representation.
+        let rows = sqlx::query(
+            "SELECT * FROM scheduled_jobs
+             WHERE enabled IS TRUE
+               AND trigger->>'type' IN ('file_watch','webhook','git_push','db_poll')",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sqlx_err)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let job = row_to_job(r)?;
+            if job.trigger.is_reactive() {
+                out.push(job);
+            }
+        }
+        Ok(out)
+    }
 }
 
 pub struct PgJobRunRepository {
@@ -297,9 +322,10 @@ fn parse_status(s: &str) -> RepoResult<JobRunStatus> {
     }
 }
 
-// Helpers below are designed to be passed straight to `.map_err(..)`
-// which yields owned errors; clippy's needless_pass_by_value lint
-// doesn't fit this shape.
+// These three closures are passed by value to `Result::map_err`, which
+// owns the error — taking `&E` would force `.map_err(|e| sqlx_err(&e))`
+// at every call site. clippy's needless_pass_by_value lint doesn't fit
+// this shape.
 #[allow(clippy::needless_pass_by_value)]
 fn sqlx_err(e: sqlx::Error) -> RepoError {
     RepoError::Backend(e.to_string())

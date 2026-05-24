@@ -183,6 +183,23 @@ impl RagClient for InMemoryRagClient {
         }
         Ok(())
     }
+
+    async fn reindex_path(&self, collection_id: &str, path: &std::path::Path) -> RagResult<usize> {
+        // Read off the lock — file IO can block; we don't want it under
+        // the mutex.
+        let content = tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| RagError::InvalidArgument(format!("read {}: {e}", path.display())))?;
+        let source_uri = format!("file://{}", path.display());
+        let ingest_req = IngestRequest {
+            collection_id: collection_id.into(),
+            source_uri,
+            content,
+            metadata: serde_json::json!({ "reindexed_at": Utc::now().to_rfc3339() }),
+        };
+        let outcome = self.ingest(ingest_req).await?;
+        Ok(usize::try_from(outcome.chunk_count).unwrap_or(usize::MAX))
+    }
 }
 
 #[cfg(test)]
@@ -263,6 +280,73 @@ mod tests {
             .await
             .expect_err("should be NotFound");
         assert!(matches!(err, RagError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn reindex_path_reads_file_and_returns_chunk_count() {
+        let c = InMemoryRagClient::new();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("note.md");
+        tokio::fs::write(&p, "line one\nline two\nthe needle is here\n")
+            .await
+            .unwrap();
+
+        let n = c.reindex_path("notes", &p).await.unwrap();
+        assert_eq!(n, 3, "three lines = three chunks");
+
+        let res = c
+            .search(SearchRequest {
+                collection_id: "notes".into(),
+                query: "needle".into(),
+                top_k: 5,
+                min_score: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(res.hits.len(), 1);
+        assert!(res.hits[0].citation.source_uri.starts_with("file://"));
+        assert!(res.hits[0].citation.source_uri.ends_with("note.md"));
+    }
+
+    #[tokio::test]
+    async fn reindex_path_is_idempotent_replacing_prior_content() {
+        let c = InMemoryRagClient::new();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("note.md");
+
+        tokio::fs::write(&p, "first version with needle\n")
+            .await
+            .unwrap();
+        c.reindex_path("notes", &p).await.unwrap();
+
+        tokio::fs::write(&p, "second version without it\n")
+            .await
+            .unwrap();
+        c.reindex_path("notes", &p).await.unwrap();
+
+        let res = c
+            .search(SearchRequest {
+                collection_id: "notes".into(),
+                query: "needle".into(),
+                top_k: 5,
+                min_score: None,
+            })
+            .await
+            .unwrap();
+        assert!(
+            res.hits.is_empty(),
+            "second reindex must replace, not append"
+        );
+    }
+
+    #[tokio::test]
+    async fn reindex_path_errors_when_file_missing() {
+        let c = InMemoryRagClient::new();
+        let err = c
+            .reindex_path("notes", std::path::Path::new("/tmp/does-not-exist-xyz.md"))
+            .await
+            .expect_err("missing file should error");
+        assert!(matches!(err, RagError::InvalidArgument(_)));
     }
 
     #[tokio::test]

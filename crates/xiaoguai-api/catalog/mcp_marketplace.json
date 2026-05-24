@@ -52,13 +52,13 @@
     {
       "slug": "obsidian",
       "name": "obsidian",
-      "description": "Read your Obsidian vault as a knowledge source. Community server.",
+      "description": "Browse, search, create, edit, and tag notes in an Obsidian vault. Community server (StevenStavrakis/obsidian-mcp, ~710 stars, MIT). Read AND write capable — back up the vault (git or otherwise) before pointing this at it. Edit the second arg below to your vault's absolute path; the server takes the vault path as a positional CLI argument, not an env var. xiaoguai's first-party write-safe Obsidian connector is on the v1.1+ roadmap; until then, use this and rely on backups.",
       "category": "notes",
       "transport": "stdio",
-      "version": "0.1.0",
+      "version": "1.0.6",
       "command": "npx",
-      "args": ["-y", "obsidian-mcp"],
-      "env_keys": ["OBSIDIAN_VAULT_PATH"],
+      "args": ["-y", "obsidian-mcp", "/path/to/your/obsidian/vault"],
+      "env_keys": [],
       "source_url": "https://github.com/StevenStavrakis/obsidian-mcp"
     },
     {

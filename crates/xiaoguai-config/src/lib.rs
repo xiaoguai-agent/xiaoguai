@@ -119,6 +119,15 @@ pub struct SchedulerSettings {
     /// operator wires only the sinks they actually deploy.
     #[serde(default)]
     pub sinks: SchedulerSinkSettings,
+    /// v0.12.2: filesystem-watch source bootstrap. Off by default so
+    /// existing deployments keep the v0.12.0 webhook-only behaviour.
+    /// Routes come from two places: the static `routes` list here
+    /// (config-defined, ops-friendly) AND every persisted
+    /// `scheduled_jobs` row whose `trigger.type == "file_watch"`
+    /// (operator-friendly, edit a job in the admin pane to add a
+    /// watch). Both lists merge into one [`FileWatchSource`].
+    #[serde(default)]
+    pub file_watch: FileWatchSettings,
 }
 
 impl Default for SchedulerSettings {
@@ -127,8 +136,51 @@ impl Default for SchedulerSettings {
             enabled: false,
             tick_interval_secs: default_tick_interval_secs(),
             sinks: SchedulerSinkSettings::default(),
+            file_watch: FileWatchSettings::default(),
         }
     }
+}
+
+/// v0.12.2: file-watch source configuration block.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FileWatchSettings {
+    /// When `true`, `xiaoguai-core` instantiates a `FileWatchSource`,
+    /// registers every [`FileWatchRoute`] below, optionally scans the
+    /// `scheduled_jobs` table for additional `file_watch` triggers,
+    /// then starts the source against the existing scheduler event
+    /// channel. Off by default — operators flip
+    /// `XIAOGUAI_SCHEDULER__FILE_WATCH__ENABLED=true` to opt in.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Static routes. One entry per `(job_id, path)` binding. Empty by
+    /// default; operators add entries in `config.yaml` for ops
+    /// scenarios that shouldn't require a DB write.
+    #[serde(default)]
+    pub routes: Vec<FileWatchRoute>,
+    /// When `true` AND `enabled` is true, `xiaoguai-core` scans
+    /// `scheduled_jobs` for rows whose trigger type is `file_watch`
+    /// and registers each as a route automatically. Defaults to `true`
+    /// because the DB-driven path is the operator-friendly default;
+    /// disable when you want the static `routes` list to be the
+    /// exclusive source.
+    #[serde(default = "default_load_routes_from_db")]
+    pub load_routes_from_db: bool,
+}
+
+const fn default_load_routes_from_db() -> bool {
+    true
+}
+
+/// One static `(job_id, path)` binding for the file-watch source.
+///
+/// Mirrors `xiaoguai_scheduler::FileWatchRoute` in shape — kept here
+/// (not imported) so the config crate stays independent of the
+/// scheduler crate. The operator binary converts these into the
+/// scheduler type at boot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileWatchRoute {
+    pub job_id: String,
+    pub path: String,
 }
 
 const fn default_tick_interval_secs() -> u64 {

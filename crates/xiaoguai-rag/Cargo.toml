@@ -21,9 +21,14 @@ parking_lot = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+# v0.12.2: `reindex_path` reads the watched file from disk before
+# handing it to `ingest` — keeps the in-memory backend usable by the
+# file-watch ↔ RAG bridge without dragging in extra deps.
+tokio = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs"] }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
