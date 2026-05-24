@@ -6,6 +6,7 @@ import { MarketplacePane } from './panes/Marketplace';
 import { TenantsPane } from './panes/Tenants';
 import { ProvidersPane } from './panes/Providers';
 import { AuditPane } from './panes/Audit';
+import { UsagePane } from './panes/Usage';
 
 /**
  * v0.11.1 — audit-first console. `Today` becomes the default landing
@@ -21,6 +22,10 @@ export function App() {
         </NavLink>
         <NavLink to="/eval" className={({ isActive }) => (isActive ? 'active' : '')}>
           Eval
+        </NavLink>
+        {/* v1.1.1: Usage slots AFTER Eval, BEFORE MCP-related entries. */}
+        <NavLink to="/usage" className={({ isActive }) => (isActive ? 'active' : '')}>
+          Usage
         </NavLink>
         <div className="nav-section">Manage</div>
         <NavLink to="/tenants" className={({ isActive }) => (isActive ? 'active' : '')}>
@@ -44,6 +49,7 @@ export function App() {
           <Route path="/" element={<Navigate to="/today" replace />} />
           <Route path="/today" element={<TodayPane />} />
           <Route path="/eval" element={<EvalPane />} />
+          <Route path="/usage" element={<UsagePane />} />
           <Route path="/marketplace" element={<MarketplacePane />} />
           <Route path="/mcp-servers" element={<McpServersPane />} />
           <Route path="/tenants" element={<TenantsPane />} />

@@ -179,6 +179,39 @@ export interface ListTodayQuery {
   kind?: TodayKind;
 }
 
+// ---- v1.1.1 — token usage aggregation -----------------------------------
+
+export type UsageGroupBy = 'day' | 'provider' | 'model';
+
+export interface UsageQuery {
+  tenant_id?: string;
+  /** RFC 3339, inclusive lower bound on the underlying `ts`. */
+  since?: string;
+  /** RFC 3339, inclusive upper bound on the underlying `ts`. */
+  until?: string;
+  /** Defaults to `day` server-side. */
+  group_by?: UsageGroupBy;
+}
+
+export interface UsageRow {
+  /** Bucket key. `day` → `YYYY-MM-DD`; otherwise the provider/model name. */
+  bucket: string;
+  /** u64 server-side; JSON numbers — caller must tolerate `> Number.MAX_SAFE_INTEGER`
+   *  rounding for very large deployments. */
+  input_tokens: number;
+  output_tokens: number;
+  /** `null` until per-provider cost rates are wired (v1.1.1 deferral). */
+  cost_cents: number | null;
+}
+
+export interface UsageReport {
+  rows: UsageRow[];
+  total_input_tokens: number;
+  total_output_tokens: number;
+  /** `null` until per-provider cost rates are wired (v1.1.1 deferral). */
+  cost_cents: number | null;
+}
+
 // ---- v0.11.2 — eval pane endpoints ------------------------------------
 
 /** Suite list-item returned by `GET /v1/admin/eval/suites`. */
@@ -402,6 +435,20 @@ export class XiaoguaiClient {
     if (q?.kind) params.set('kind', q.kind);
     const qs = params.toString();
     return this.request<TodayItem[]>('GET', `/v1/admin/today${qs ? `?${qs}` : ''}`);
+  }
+
+  /**
+   * v1.1.1 — token-usage aggregation. The admin-ui Usage pane drives
+   * this directly; the Today pane uses it for the 24h summary card.
+   */
+  getUsage(q?: UsageQuery): Promise<UsageReport> {
+    const params = new URLSearchParams();
+    if (q?.tenant_id) params.set('tenant_id', q.tenant_id);
+    if (q?.since) params.set('since', q.since);
+    if (q?.until) params.set('until', q.until);
+    if (q?.group_by) params.set('group_by', q.group_by);
+    const qs = params.toString();
+    return this.request<UsageReport>('GET', `/v1/usage${qs ? `?${qs}` : ''}`);
   }
 
   /** v0.9.4 — curated MCP server catalog. */

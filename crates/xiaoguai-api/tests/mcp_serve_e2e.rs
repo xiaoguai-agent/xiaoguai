@@ -78,6 +78,7 @@ fn build_state_with_toolbox(toolbox: Toolbox, publish: bool) -> AppState {
         nl_job_compiler: None,
         job_upserter: None,
         session_forker: None,
+        usage_reader: None,
     }
 }
 

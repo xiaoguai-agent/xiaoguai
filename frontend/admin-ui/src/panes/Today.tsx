@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { TodayItem, TodayKind, ListTodayQuery } from '@xiaoguai/shared';
+import type { TodayItem, TodayKind, ListTodayQuery, UsageReport } from '@xiaoguai/shared';
 import { client } from '../client';
 
 type DateRange = 'last_24h' | 'last_7d' | 'all';
@@ -37,6 +37,11 @@ export function TodayPane() {
   const [search, setSearch] = useState('');
   const [paused, setPaused] = useState(false);
   const [drill, setDrill] = useState<DrilldownState | null>(null);
+
+  // v1.1.1: 24h token-usage summary card. Quietly hidden on failure
+  // (the endpoint 503s when no `usage_reader` is wired in dev) so the
+  // primary timeline stays the focal point.
+  const [usage24h, setUsage24h] = useState<UsageReport | null>(null);
 
   const sinceParam = useMemo(() => {
     if (range === 'all') return undefined;
@@ -69,6 +74,25 @@ export function TodayPane() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // v1.1.1: fetch the 24h token-usage summary alongside the timeline.
+  // Recomputes on every timeline refresh tick so the card stays in
+  // sync with everything else on the page.
+  useEffect(() => {
+    let cancelled = false;
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    client
+      .getUsage({ since, group_by: 'day' })
+      .then((r) => {
+        if (!cancelled) setUsage24h(r);
+      })
+      .catch(() => {
+        if (!cancelled) setUsage24h(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lastRefreshedAt]);
 
   useEffect(() => {
     if (paused) return;
@@ -156,6 +180,28 @@ export function TodayPane() {
           placeholder="Filter previews or tenant…"
         />
       </div>
+
+      {usage24h && (
+        <div
+          className="timeline-card timeline-card-chat"
+          aria-label="Token usage in the last 24 hours"
+        >
+          <div className="timeline-card-body">
+            <div className="timeline-card-row">
+              <span className="kind-tag kind-tag-chat">Token usage (24h)</span>
+            </div>
+            <div className="timeline-card-headline">
+              {usage24h.total_input_tokens.toLocaleString()} in /{' '}
+              {usage24h.total_output_tokens.toLocaleString()} out
+            </div>
+            <div className="timeline-card-meta">
+              {usage24h.cost_cents === null
+                ? 'cost: — (rates not yet configured)'
+                : `cost: $${(usage24h.cost_cents / 100).toFixed(2)}`}
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && <div className="error">Failed: {error}</div>}
 
