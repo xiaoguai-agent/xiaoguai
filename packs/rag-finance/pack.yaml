@@ -1,0 +1,34 @@
+# Finance RAG Pack
+# kind: scaffold-only — swap in real tenant corpus before production use.
+#
+# Corpus sources (all public-domain / MIT):
+#   - SEC EDGAR public filings (10-K/10-Q excerpts): public domain (US gov works)
+#     https://www.sec.gov/cgi-bin/browse-edgar
+#   - IFRS Foundation summaries: public-domain educational summaries
+#     (paraphrased from public IFRS standards; not verbatim IFRS text)
+#   - US GAAP ASC summaries: original work under MIT, citing public FASB codification
+#   - Financial ratio reference: original work under MIT
+
+kind: scaffold-only
+
+domain: finance
+
+# Recommended embedding model — change to match your deployment.
+embedding_model: nomic-embed-text
+
+# Reranker integration — uses the xiaoguai reranker when C13 is merged.
+reranker: bge-reranker-v2-m3
+
+# Top-k before reranking.
+top_k: 20
+top_k_final: 5
+
+# Chunking preset — pdf-heavy suits long annual report prose.
+# Use text-default for shorter Q&A documents.
+chunking_preset: pdf-heavy
+
+# Collection id used when bulk-loading this pack.
+collection_id: rag-finance
+
+corpus_dir: corpus
+prompts_dir: prompts
