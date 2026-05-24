@@ -116,6 +116,8 @@ fn fixture_session(tenant: &TenantId, user: &UserId, title: &str) -> Session {
         updated_at: now,
         model: "gpt-4o-mini".into(),
         status: SessionStatus::Active,
+        parent_session_id: None,
+        forked_from_message_id: None,
     }
 }
 

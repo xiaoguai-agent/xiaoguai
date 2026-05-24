@@ -259,6 +259,7 @@ fn build_state(
         webhook_pusher: None,
         nl_job_compiler: None,
         job_upserter: None,
+        session_forker: None,
     };
     (state, sessions, messages)
 }

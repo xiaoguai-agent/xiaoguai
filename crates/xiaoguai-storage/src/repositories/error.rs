@@ -21,6 +21,13 @@ pub enum RepoError {
 
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
+
+    /// v1.1.2 — a repo trait method was called on an impl that doesn't
+    /// support it. Used by the default `SessionRepository::fork` body
+    /// so test mocks compile without an explicit override; only the
+    /// production `PgSessionRepository` implements the real copy.
+    #[error("unsupported: {0}")]
+    Unsupported(String),
 }
 
 pub type RepoResult<T> = Result<T, RepoError>;

@@ -49,6 +49,7 @@ async fn build_state(roles: Vec<&str>) -> AppState {
         webhook_pusher: None,
         nl_job_compiler: None,
         job_upserter: None,
+        session_forker: None,
     }
 }
 

@@ -14,6 +14,15 @@ pub struct Session {
     pub updated_at: DateTime<Utc>,
     pub model: String,
     pub status: SessionStatus,
+    /// v1.1.2 — when this session was created via "branch from here",
+    /// the ID of the session it forked off of. `None` for top-level
+    /// sessions (the overwhelming majority).
+    #[serde(default)]
+    pub parent_session_id: Option<SessionId>,
+    /// v1.1.2 — companion to `parent_session_id`: the last message
+    /// from the parent that was copied into this session at fork time.
+    #[serde(default)]
+    pub forked_from_message_id: Option<MessageId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

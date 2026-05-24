@@ -75,6 +75,8 @@ fn fixture_session(tenant: &TenantId, user: &UserId, model: &str) -> Session {
         updated_at: now,
         model: model.to_string(),
         status: SessionStatus::Active,
+        parent_session_id: None,
+        forked_from_message_id: None,
     }
 }
 

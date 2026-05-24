@@ -710,6 +710,51 @@ html,
   padding-right: calc(var(--space-4) + 56px);
 }
 
+/* v1.1.2 — "Branch from here" action on assistant bubbles. Same
+   hover-reveal pattern as `.copy-btn`, parked next to it in the top
+   right. Lives inside `.bubble.assistant.copy-host` (every assistant
+   bubble is now a copy-host so the hover-reveal trigger area covers
+   the whole bubble). */
+.bubble-action.bubble-fork {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface-elevated);
+  color: var(--fg-soft);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+  z-index: 1;
+}
+
+.bubble.copy-host:hover .bubble-fork,
+.bubble-fork:focus-visible {
+  opacity: 1;
+}
+
+.bubble-fork:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.bubble-fork:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
 /* ---------------------------------------------------------- dark theme */
 
 [data-theme='dark'] {

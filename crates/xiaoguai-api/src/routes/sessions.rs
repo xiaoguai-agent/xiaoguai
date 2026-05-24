@@ -18,6 +18,7 @@ use xiaoguai_types::{Session, SessionId, SessionStatus, TenantId, UserId};
 use crate::auth::Claims;
 use crate::convert::{domain_to_llm, llm_to_domain};
 use crate::error::{ApiError, ApiResult};
+use crate::sessions_ext::SessionForkError;
 use crate::sse::event_to_sse;
 use crate::state::AppState;
 
@@ -50,6 +51,14 @@ pub struct SessionResponse {
     pub title: Option<String>,
     pub model: String,
     pub status: SessionStatus,
+    /// v1.1.2 — when the row was created via `POST /v1/sessions/:id/fork`,
+    /// the parent session's id. `None` for top-level sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
+    /// v1.1.2 — companion to `parent_session_id`: the last message of
+    /// the parent that was copied into this session at fork time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forked_from_message_id: Option<String>,
 }
 
 impl From<Session> for SessionResponse {
@@ -61,6 +70,8 @@ impl From<Session> for SessionResponse {
             title: s.title,
             model: s.model,
             status: s.status,
+            parent_session_id: s.parent_session_id.map(|id| id.to_string()),
+            forked_from_message_id: s.forked_from_message_id.map(|id| id.to_string()),
         }
     }
 }
@@ -90,6 +101,8 @@ pub async fn create_session(
         updated_at: now,
         model: req.model,
         status: SessionStatus::Active,
+        parent_session_id: None,
+        forked_from_message_id: None,
     };
     state.sessions.create(Some(&tenant_id), &session).await?;
     Ok((StatusCode::CREATED, Json(session.into())))
@@ -356,4 +369,70 @@ async fn persist_loop_output(
         messages_repo.append(Some(tenant_id), &m).await?;
     }
     Ok(())
+}
+
+// -- v1.1.2: conversation fork -----------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ForkSessionRequest {
+    pub from_message_id: String,
+    pub title: Option<String>,
+}
+
+/// `POST /v1/sessions/:id/fork` — branch this session at
+/// `from_message_id`. The new session starts with a copy of every
+/// message from the parent up to and including the cutoff; the
+/// caller can then `POST .../messages` against the new id to take
+/// the conversation in a different direction.
+///
+/// Tenant resolution mirrors `send_message`: claims first (auth-on
+/// mode), parent session row second (auth-off dev mode). Both paths
+/// converge on a single `tenant` string passed to the forker.
+pub async fn fork_session(
+    State(state): State<AppState>,
+    claims: Option<Extension<Claims>>,
+    Path(session_id_str): Path<String>,
+    Json(req): Json<ForkSessionRequest>,
+) -> ApiResult<(StatusCode, Json<SessionResponse>)> {
+    let forker = state
+        .session_forker
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("fork not wired".into()))?
+        .clone();
+
+    if req.from_message_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "from_message_id must be non-empty".into(),
+        ));
+    }
+
+    // Resolve tenant: prefer claims (authed mode), fall back to the
+    // parent session row (dev mode). find_by_id is also our auth check
+    // — if claims-tenant doesn't match the row's tenant, RLS returns
+    // None and we 404. Same behaviour as get_session.
+    let claims_tenant = tenant_from_claims(claims.as_ref());
+    let parent = state
+        .sessions
+        .find_by_id(claims_tenant, &session_id_str)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let tenant = parent.tenant_id.as_str().to_string();
+
+    let new_session = forker
+        .fork(&tenant, &session_id_str, &req.from_message_id, req.title)
+        .await
+        .map_err(fork_error_to_api)?;
+    Ok((StatusCode::CREATED, Json(new_session.into())))
+}
+
+fn fork_error_to_api(err: SessionForkError) -> ApiError {
+    match err {
+        SessionForkError::ParentNotFound | SessionForkError::MessageNotFound => ApiError::NotFound,
+        SessionForkError::ParentNotForkable(s) => ApiError::Conflict(s),
+        SessionForkError::InvalidArgument(s) => ApiError::BadRequest(s),
+        SessionForkError::Repository(s) => {
+            tracing::error!(err = %s, "session fork repository error");
+            ApiError::Internal(anyhow::anyhow!("session fork: {s}"))
+        }
+    }
 }

@@ -72,6 +72,8 @@ async fn seed_session(pool: &PgPool, tenant: &TenantId, user: &UserId) -> Sessio
         updated_at: now,
         model: "gpt-4o-mini".to_string(),
         status: SessionStatus::Active,
+        parent_session_id: None,
+        forked_from_message_id: None,
     };
     let id = s.id.clone();
     PgSessionRepository::new(pool.clone())

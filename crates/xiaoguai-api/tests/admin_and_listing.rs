@@ -93,6 +93,7 @@ fn build_state(
         webhook_pusher: None,
         nl_job_compiler: None,
         job_upserter: None,
+        session_forker: None,
     }
 }
 
@@ -107,6 +108,8 @@ fn fixture_session(user_id: &str, tenant: &str, model: &str) -> Session {
         updated_at: now,
         model: model.into(),
         status: SessionStatus::Active,
+        parent_session_id: None,
+        forked_from_message_id: None,
     }
 }
 

@@ -371,6 +371,8 @@ impl ScheduledSessionWriter for PgScheduledSessionWriter {
             updated_at: now,
             model,
             status: SessionStatus::Active,
+            parent_session_id: None,
+            forked_from_message_id: None,
         };
         self.sessions
             .create(Some(tenant_id_str), &session)

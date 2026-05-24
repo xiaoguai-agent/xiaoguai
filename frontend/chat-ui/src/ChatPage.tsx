@@ -21,6 +21,12 @@ interface DisplayBubble {
   streaming?: boolean;
   /** v0.9.3 — citation chips attached to an assistant turn. */
   citations?: CitationBlock[];
+  /**
+   * v1.1.2 — when this bubble came from a persisted assistant message,
+   * its message id (so "Branch from here" knows the cutoff). Bubbles
+   * produced live by streaming have no id yet and don't get the button.
+   */
+  messageId?: string;
 }
 
 const DEV_USER_ID = 'usr_dev';
@@ -181,11 +187,23 @@ export function ChatPage({ onSessionCreated }: Props) {
     abortRef.current?.();
   }
 
+  async function fork(messageId: string) {
+    if (!sessionId) return;
+    try {
+      const child = await client.forkSession(sessionId, { from_message_id: messageId });
+      // Open in a new tab — preserves the user's current spot in the
+      // original session, which is the whole point of branching.
+      window.open(`/sessions/${child.id}`, '_blank', 'noopener');
+    } catch (err) {
+      setStatus(`fork failed: ${(err as Error).message}`);
+    }
+  }
+
   return (
     <>
       <div className="messages" ref={scrollRef}>
         {bubbles.map((b, i) => (
-          <Bubble key={i} bubble={b} />
+          <Bubble key={i} bubble={b} onFork={fork} />
         ))}
       </div>
       {status && <div className="status">{status}</div>}
@@ -214,11 +232,17 @@ export function ChatPage({ onSessionCreated }: Props) {
   );
 }
 
-function Bubble({ bubble }: { bubble: DisplayBubble }) {
+function Bubble({
+  bubble,
+  onFork,
+}: {
+  bubble: DisplayBubble;
+  onFork: (messageId: string) => void;
+}) {
   const className =
     bubble.kind === 'tool'
       ? `bubble tool copy-host${bubble.toolError ? ' error' : ''}`
-      : `bubble ${bubble.kind}`;
+      : `bubble ${bubble.kind} copy-host`;
   const isEmptyStreaming = !bubble.text && bubble.streaming;
   // v0.8.2: assistant turns render through react-markdown so headings,
   // tables, fenced code blocks, etc. come out formatted. User + tool
@@ -228,9 +252,24 @@ function Bubble({ bubble }: { bubble: DisplayBubble }) {
   // into shells / issue trackers, so they get the same hover-to-copy
   // affordance code blocks do. Empty / still-streaming bubbles skip it.
   const showCopy = bubble.kind === 'tool' && bubble.text.length > 0;
+  // v1.1.2: branch from here. Only on persisted assistant bubbles
+  // (live-streaming ones have no message id yet, and forking from a
+  // user prompt is just "create a new session").
+  const showFork = bubble.kind === 'assistant' && !!bubble.messageId && !bubble.streaming;
   return (
     <div className={className}>
       {showCopy && <CopyButton text={bubble.text} />}
+      {showFork && bubble.messageId && (
+        <button
+          type="button"
+          className="bubble-action bubble-fork"
+          title="Branch a new conversation from this point"
+          aria-label="Branch from here"
+          onClick={() => onFork(bubble.messageId!)}
+        >
+          Branch
+        </button>
+      )}
       {renderMarkdown ? <MarkdownBody text={bubble.text} /> : bubble.text}
       {isEmptyStreaming && (
         <span className="streaming-dots" aria-label="thinking">
@@ -263,6 +302,13 @@ function messageToBubbles(m: Message): DisplayBubble[] {
       out.push({
         kind: m.role === 'user' ? 'user' : 'assistant',
         text: block.text,
+        // v1.1.2: tag assistant bubbles with their persisted message id
+        // so the "Branch from here" button knows the cutoff. We attach
+        // it to *every* text-block we produce from this message — if a
+        // multi-block assistant turn renders as N bubbles, branching
+        // from any of them cuts at the same boundary, which is the
+        // expected behaviour at the schema level.
+        messageId: m.role === 'assistant' ? m.id : undefined,
       });
       if (m.role !== 'user') lastAssistantIdx = idx;
     } else if (block.type === 'tool_call') {
