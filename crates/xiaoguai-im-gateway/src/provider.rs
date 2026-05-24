@@ -13,6 +13,17 @@ pub enum ImEvent {
     Challenge { challenge: String },
     /// A user-originated chat message.
     Message(IncomingMessage),
+    /// The event was intentionally dropped (e.g. bot message, Slack retry
+    /// re-delivery). Callers should not process or reply to this variant.
+    Ignored,
+}
+
+impl ImEvent {
+    /// Return `true` when the event should be silently discarded.
+    #[must_use]
+    pub fn is_ignored(&self) -> bool {
+        matches!(self, ImEvent::Ignored)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
