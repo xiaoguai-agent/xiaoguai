@@ -1,0 +1,87 @@
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/book/**"
+      - "docs/runbooks/**"
+      - "docs/user-guide/**"
+      - "docs/architecture/**"
+  pull_request:
+    paths:
+      - "docs/book/**"
+      - "docs/runbooks/**"
+      - "docs/user-guide/**"
+      - "docs/architecture/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deploy at a time; cancel in-progress deploys on new push
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build mdbook
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mdbook
+        run: |
+          curl -sL https://github.com/rust-lang/mdBook/releases/download/v0.4.40/mdbook-v0.4.40-x86_64-unknown-linux-gnu.tar.gz \
+            | tar xz -C /usr/local/bin mdbook
+          mdbook --version
+
+      - name: Install mdbook-mermaid
+        run: |
+          curl -sL https://github.com/badboy/mdbook-mermaid/releases/download/v0.14.0/mdbook-mermaid-v0.14.0-x86_64-unknown-linux-gnu.tar.gz \
+            | tar xz -C /usr/local/bin mdbook-mermaid
+          mdbook-mermaid --version
+
+      - name: Install mdbook-linkcheck
+        run: |
+          curl -sL https://github.com/Michael-F-Bryan/mdbook-linkcheck/releases/download/v0.7.7/code-v0.7.7-x86_64-unknown-linux-gnu.tar.gz \
+            | tar xz -C /usr/local/bin mdbook-linkcheck 2>/dev/null || \
+          curl -sL https://github.com/Michael-F-Bryan/mdbook-linkcheck/releases/download/v0.7.7/mdbook-linkcheck.x86_64-unknown-linux-gnu.zip \
+            -o /tmp/linkcheck.zip && unzip -q /tmp/linkcheck.zip -d /usr/local/bin/ || true
+          which mdbook-linkcheck && mdbook-linkcheck --version || echo "linkcheck not available; skipping"
+
+      - name: Build book
+        run: mdbook build docs/book
+
+      - name: Verify output exists
+        run: |
+          test -f docs/book/book/index.html || (echo "ERROR: book/index.html not found" && exit 1)
+          count=$(find docs/book/book -name '*.html' | wc -l)
+          echo "Generated $count HTML files"
+          test "$count" -ge 5 || (echo "ERROR: expected at least 5 HTML files, got $count" && exit 1)
+
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/book/book
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    # Only deploy from the canonical repo on pushes to main
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      github.repository == 'xiaoguai-agent/xiaoguai'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

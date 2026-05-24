@@ -4,6 +4,8 @@
 >
 > *Your Little Agent for Big Work · 小怪不小，能办大事*
 
+**Documentation:** <https://xiaoguai-agent.github.io/xiaoguai/>
+
 Xiaoguai is a self-hostable AI agent platform for technical individuals,
 small teams, and anyone with a compliance or traceability constraint.
 Every tool call writes an HMAC-chained audit row. Every scheduled job
@@ -183,6 +185,19 @@ Licensed under the [Business Source License 1.1](LICENSE).
 BUSL-1.1 is not an OSI-approved Open Source license; it is
 *source available + eventually open*. The full text and the
 "Additional Use Grant" carve-outs are in [`LICENSE`](LICENSE).
+
+## Documentation
+
+The full handbook is hosted at **<https://xiaoguai-agent.github.io/xiaoguai/>**.
+
+Source lives in [`docs/book/`](docs/book/). To build locally:
+
+```bash
+# Install mdbook and mdbook-mermaid first
+cargo install mdbook mdbook-mermaid
+# Then:
+bash docs/book/test-build.sh
+```
 
 ---
 
