@@ -1,0 +1,70 @@
+---
+# Datadog webhook source spec.
+#
+# Datadog delivers monitor alert notifications via POST to configured
+# webhook URLs (https://docs.datadoghq.com/integrations/webhooks/).
+# Payload shape: Datadog "Webhooks" integration — JSON body.
+#
+# Mounting: POST /v1/incidents/inbound/datadog/{route_id}
+# Auth:     Bearer token from scheduler_webhook_tokens table.
+#           Additionally the adapter can verify the DD-Signature header
+#           (HMAC-SHA256 of shared_secret + body + timestamp).
+
+source: datadog
+route_prefix: /v1/incidents/inbound/datadog
+
+normalize:
+  # Optional HMAC validation on DD-Signature header.
+  # Shared secret configured in the Datadog Webhooks integration settings.
+  hmac_secret: ${DATADOG_WEBHOOK_SECRET}
+
+  # Mapping: Datadog field path -> Incident field
+  field_map:
+    # Incident.id: Datadog alert ID
+    id: alert_id
+    # Incident.title: alert title
+    title: title
+    # Incident.severity: derived from alert_priority (P1..P5 or None)
+    severity:
+      source: alert_priority
+      map:
+        P1: critical
+        P2: high
+        P3: medium
+        P4: low
+        P5: low
+        _default: medium
+    # Incident.source
+    source: _const:datadog
+    # Incident.occurred_at: last_updated_at ISO-8601
+    occurred_at: last_updated_at
+    # Incident.url: event_url for deep-link into Datadog monitor
+    url: event_url
+    # Incident.project: $hostname tag value, fallback to monitor name
+    project: tags.host
+    # Incident.environment: env tag
+    environment: tags.env
+    # Incident.raw
+    raw: _self
+
+# Datadog alert_type values that trigger triage.
+# "Recovered" / "No Data" events are acknowledged but not processed.
+accepted_alert_types:
+  - error
+  - warning
+  - info
+
+# Sample payload — based on Datadog Webhooks integration documentation.
+# Used in crates/xiaoguai-api/src/incidents.rs DatadogSource tests.
+sample_payload: |
+  {
+    "id": "dd-event-456",
+    "title": "[Triggered on {host:web-01}] High CPU usage on web-01",
+    "alert_id": "456",
+    "alert_priority": "P1",
+    "alert_type": "error",
+    "last_updated_at": "2024-05-24T11:30:00.000Z",
+    "event_url": "https://app.datadoghq.com/monitors/456",
+    "tags": "env:production,host:web-01,service:api",
+    "body": "CPU usage exceeded 90% for 15 minutes"
+  }

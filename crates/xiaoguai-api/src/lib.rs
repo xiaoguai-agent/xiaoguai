@@ -12,6 +12,7 @@ pub mod auth;
 pub mod convert;
 pub mod error;
 pub mod eval;
+pub mod incidents;
 pub mod marketplace;
 pub mod mcp_serve;
 pub mod rate_limit;
@@ -55,4 +56,8 @@ pub use today::{StaticTodayReader, TodayError, TodayItem, TodayKind, TodayQuery,
 pub use usage::{
     StaticUsageEntry, StaticUsageReader, UsageError, UsageGroupBy, UsageQuery, UsageReader,
     UsageReport, UsageRow,
+};
+pub use incidents::{
+    ActionItem, DatadogSource, ImNotification, Incident, IncidentSource, NormalizeError, PrDraft,
+    RcaDraft, SentrySource, Severity, TimelineEntry,
 };

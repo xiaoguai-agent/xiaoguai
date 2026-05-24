@@ -1,0 +1,49 @@
+---
+# Incident Triage Skill Pack — v0.1.0
+# Receives Sentry / Datadog webhook events, normalizes them to a common
+# Incident schema, runs an LLM-assisted RCA agent, and publishes a draft
+# GitHub PR + IM message.
+#
+# v0.12.x.1 per-tenant webhook tokens gate every inbound source.
+
+name: incident-triage
+version: "0.1.0"
+description: >
+  Receives observability alerts (Sentry issues, Datadog events) via
+  authenticated webhook, performs automated root-cause analysis using
+  recent git commits and audit-log entries, then outputs a draft RCA
+  GitHub PR and an IM notification to the configured channel.
+
+depends:
+  # Requires v0.12.x.1 per-tenant webhook token middleware.
+  xiaoguai-api: ">=0.12.1"
+  # LLM backend required for the triage-agent RCA drafting step.
+  llm: required
+  # At least one IM provider for outbound notifications.
+  im:
+    any:
+      - feishu
+      - dingtalk
+      - wecom
+
+# Webhook sources accepted by this pack.
+sources:
+  - inbound/sentry-webhook.yaml
+  - inbound/datadog-webhook.yaml
+
+# Agent definitions.
+agents:
+  - agents/triage-agent.yaml
+
+# Output connectors.
+outputs:
+  - outputs/draft-pr.yaml
+
+# Feature flag that gates the /v1/incidents route family.
+# Set XIAOGUAI_INCIDENTS_ENABLED=true in your .env to activate.
+feature_flag: XIAOGUAI_INCIDENTS_ENABLED
+
+# Deferred / not-yet-implemented sources:
+#   - PagerDuty incident webhook (PD v2 alert schema)
+#   - On-call rotation lookup (PD Schedules API)
+# See docs/plans/incident-triage-backlog.md for prioritisation.
