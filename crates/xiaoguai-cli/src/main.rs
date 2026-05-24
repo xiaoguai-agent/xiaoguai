@@ -2,8 +2,10 @@
 //! so they remain unit-testable.
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use xiaoguai_cli::commands::{chat, eval, mcp, provider, remote};
+use clap::{CommandFactory, Parser, Subcommand};
+use xiaoguai_cli::commands::{
+    backup, chat, completions, eval, manpages, mcp, provider, remote, self_update,
+};
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
     connect,
@@ -68,6 +70,59 @@ enum Cmd {
     Eval {
         #[command(subcommand)]
         action: EvalCmd,
+    },
+
+    /// Write a shell completion script to stdout.
+    ///
+    /// Source the output in your shell init file.
+    #[command(hide = true)]
+    Completions {
+        /// Target shell.
+        shell: completions::Shell,
+    },
+
+    /// Generate man pages into a directory.
+    #[command(hide = true)]
+    Manpages {
+        /// Output directory (created if absent). Defaults to `./man`.
+        #[arg(default_value = "man")]
+        outdir: String,
+    },
+
+    /// Create a backup archive (`pg_dump` + config + audit DB).
+    Backup {
+        /// Output path for the `.tar.gz` file.
+        #[arg(long)]
+        out: String,
+        /// PostgreSQL connection URL.  Defaults to `$DATABASE_URL`.
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+        /// Encrypt the archive with an age public-key file.
+        #[arg(long)]
+        encrypt: Option<String>,
+    },
+
+    /// Restore a backup archive created by `xiaoguai backup`.
+    Restore {
+        /// Path to the backup `.tar.gz` (or `.tar.gz.age`) file.
+        #[arg(long = "in")]
+        input: String,
+        /// Directory to extract into.
+        #[arg(long, default_value = "./restore-out")]
+        outdir: String,
+        /// Overwrite existing output directory.
+        #[arg(long)]
+        force: bool,
+        /// Age identity file for decryption (required for encrypted backups).
+        #[arg(long)]
+        identity: Option<String>,
+    },
+
+    /// Check for and apply binary updates from GitHub Releases.
+    SelfUpdate {
+        /// Only report whether an update is available; do not download.
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -459,5 +514,52 @@ async fn main() -> Result<()> {
         Cmd::Mcp { action } => handle_mcp(cfg, action).await,
         Cmd::Remote { server, action } => handle_remote(server, action).await,
         Cmd::Eval { action } => handle_eval(action).await,
+        Cmd::Completions { shell } => {
+            let mut cmd = Cli::command();
+            completions::run(shell, &mut cmd, &mut std::io::stdout())
+        }
+        Cmd::Manpages { outdir } => {
+            let mut cmd = Cli::command();
+            let written = manpages::run(&mut cmd, std::path::Path::new(&outdir))?;
+            for p in written {
+                println!("wrote {}", p.display());
+            }
+            Ok(())
+        }
+        Cmd::Backup {
+            out,
+            database_url,
+            encrypt,
+        } => {
+            let out_path = backup::run_backup(backup::BackupArgs {
+                out: std::path::PathBuf::from(out),
+                database_url,
+                encrypt: encrypt.map(std::path::PathBuf::from),
+            })?;
+            println!("backup written to {}", out_path.display());
+            Ok(())
+        }
+        Cmd::Restore {
+            input,
+            outdir,
+            force,
+            identity,
+        } => {
+            backup::run_restore(backup::RestoreArgs {
+                input: std::path::PathBuf::from(input),
+                outdir: std::path::PathBuf::from(outdir),
+                force,
+                identity: identity.map(std::path::PathBuf::from),
+            })?;
+            println!("restore complete");
+            Ok(())
+        }
+        Cmd::SelfUpdate { check } => {
+            self_update::run_self_update(self_update::SelfUpdateArgs {
+                check,
+                api_url: None,
+            })
+            .await
+        }
     }
 }

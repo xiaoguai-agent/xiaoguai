@@ -28,6 +28,8 @@ chrono = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
+clap_complete = { workspace = true }
+clap_mangen = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 reqwest = { workspace = true }
@@ -36,12 +38,26 @@ futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+age = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
+
+[build-dependencies]
+clap = { version = "4.5", features = ["derive"] }
+clap_complete = "4.5"
+clap_mangen = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
 parking_lot = { workspace = true }
 tempfile = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+serde_json = { workspace = true }
+mockito = { workspace = true }
 xiaoguai-api = { path = "../xiaoguai-api" }
 xiaoguai-mcp = { path = "../xiaoguai-mcp" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
