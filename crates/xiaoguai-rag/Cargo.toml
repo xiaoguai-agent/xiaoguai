@@ -25,6 +25,12 @@ tracing = { workspace = true }
 # handing it to `ingest` — keeps the in-memory backend usable by the
 # file-watch ↔ RAG bridge without dragging in extra deps.
 tokio = { workspace = true, features = ["fs"] }
+# v1.2.16: Qdrant vector store backend (gRPC/tonic; always included in
+# xiaoguai-rag so callers can swap backends without recompilation).
+qdrant-client = { workspace = true }
+# v1.2.16: Tantivy local BM25 lexical backend.
+tantivy = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs"] }
