@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { MarketplaceEntry } from '@xiaoguai/shared';
 import { client } from '../client';
 
@@ -22,6 +23,7 @@ type Status =
   | { kind: 'error'; slug: string; message: string };
 
 export function MarketplacePane() {
+  const { t } = useTranslation();
   const [entries, setEntries] = useState<MarketplaceEntry[] | null>(null);
   const [version, setVersion] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -68,18 +70,17 @@ export function MarketplacePane() {
 
   return (
     <>
-      <h1>MCP Marketplace</h1>
+      <h1>{t('pane.marketplace.title')}</h1>
       <p className="hint">
-        Curated MCP servers. Click <strong>Install</strong> to add one
-        to your <code>mcp_servers</code> table; configure required env
-        vars out-of-band. Catalog version{' '}
-        {version === null ? '…' : <code>{version}</code>}.
+        {t('pane.marketplace.description', {
+          version: version === null ? '…' : String(version),
+        })}
       </p>
 
-      {loadError && <div className="error">Failed: {loadError}</div>}
+      {loadError && <div className="error">{t('common.failed', { message: loadError })}</div>}
 
       {grouped === null ? (
-        <div className="empty">Loading…</div>
+        <div className="empty">{t('pane.marketplace.empty_loading')}</div>
       ) : (
         grouped.map(([category, items]) => (
           <section key={category} className="marketplace-section">
@@ -94,7 +95,8 @@ export function MarketplacePane() {
                   <p>{entry.description}</p>
                   {entry.env_keys && entry.env_keys.length > 0 && (
                     <div className="env-keys">
-                      Required env: {entry.env_keys.map((k) => (
+                      {t('pane.marketplace.required_env')}{' '}
+                      {entry.env_keys.map((k) => (
                         <code key={k}>{k}</code>
                       ))}
                     </div>
@@ -106,7 +108,7 @@ export function MarketplacePane() {
                         target="_blank"
                         rel="noreferrer noopener"
                       >
-                        source ↗
+                        {t('pane.marketplace.source_link')}
                       </a>
                     )}
                     <InstallButton
@@ -134,11 +136,12 @@ function InstallButton({
   status: Status;
   onClick: () => void;
 }) {
+  const { t } = useTranslation();
   const label = (() => {
-    if (status.kind === 'installing' && status.slug === slug) return 'Installing…';
-    if (status.kind === 'installed' && status.slug === slug) return '✓ Installed';
-    if (status.kind === 'error' && status.slug === slug) return 'Retry';
-    return 'Install';
+    if (status.kind === 'installing' && status.slug === slug) return t('pane.marketplace.btn_installing');
+    if (status.kind === 'installed' && status.slug === slug) return t('pane.marketplace.btn_installed');
+    if (status.kind === 'error' && status.slug === slug) return t('pane.marketplace.btn_retry');
+    return t('pane.marketplace.btn_install');
   })();
   const disabled = status.kind === 'installing' && status.slug === slug;
   return (

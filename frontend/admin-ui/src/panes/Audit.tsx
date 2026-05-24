@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { AuditEntryView } from '@xiaoguai/shared';
 import { client } from '../client';
 
@@ -8,6 +9,7 @@ import { client } from '../client';
  * the operator override via the input box.
  */
 export function AuditPane() {
+  const { t } = useTranslation();
   const [tenantId, setTenantId] = useState('ten_dev');
   const [rows, setRows] = useState<AuditEntryView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,10 +37,10 @@ export function AuditPane() {
 
   return (
     <>
-      <h1>Audit Log</h1>
+      <h1>{t('pane.audit.title')}</h1>
       <div className="toolbar">
         <label>
-          Tenant ID
+          {t('pane.audit.label_tenant_id')}
           <input
             value={tenantId}
             onChange={(e) => setTenantId(e.target.value)}
@@ -46,26 +48,26 @@ export function AuditPane() {
           />
         </label>
         <button onClick={() => void load(tenantId)} disabled={loading || !tenantId}>
-          {loading ? 'Loading…' : 'Refresh'}
+          {loading ? t('common.loading') : t('common.refresh')}
         </button>
       </div>
 
-      {error && <div className="error">Failed: {error}</div>}
+      {error && <div className="error">{t('common.failed', { message: error })}</div>}
 
       {rows && rows.length === 0 && (
-        <div className="empty">No audit rows for tenant <code>{tenantId}</code>.</div>
+        <div className="empty">{t('pane.audit.empty_for_tenant', { tenant: tenantId })}</div>
       )}
 
       {rows && rows.length > 0 && (
         <table className="audit-table">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Timestamp</th>
-              <th>Actor</th>
-              <th>Action</th>
-              <th>Resource</th>
-              <th>HMAC (last 8)</th>
+              <th>{t('pane.audit.col_id')}</th>
+              <th>{t('pane.audit.col_timestamp')}</th>
+              <th>{t('pane.audit.col_actor')}</th>
+              <th>{t('pane.audit.col_action')}</th>
+              <th>{t('pane.audit.col_resource')}</th>
+              <th>{t('pane.audit.col_hmac')}</th>
             </tr>
           </thead>
           <tbody>

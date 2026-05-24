@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { McpServerResponse } from '@xiaoguai/shared';
 import { client } from '../client';
 
 export function McpServersPane() {
+  const { t } = useTranslation();
   const [rows, setRows] = useState<McpServerResponse[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,24 +25,21 @@ export function McpServersPane() {
 
   return (
     <>
-      <h1>MCP Servers</h1>
+      <h1>{t('pane.mcp_servers.title')}</h1>
       {error && <div className="error">{error}</div>}
       {!rows ? (
-        <div className="empty">Loading…</div>
+        <div className="empty">{t('pane.mcp_servers.empty_loading')}</div>
       ) : rows.length === 0 ? (
-        <div className="empty">
-          No MCP servers registered. Use{' '}
-          <code>xiaoguai mcp register --name ... --transport stdio --command ...</code> to add one.
-        </div>
+        <div className="empty">{t('pane.mcp_servers.empty_none')}</div>
       ) : (
         <table>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Version</th>
-              <th>Transport</th>
-              <th>Scope</th>
-              <th>Command / Endpoint</th>
+              <th>{t('pane.mcp_servers.col_name')}</th>
+              <th>{t('pane.mcp_servers.col_version')}</th>
+              <th>{t('pane.mcp_servers.col_transport')}</th>
+              <th>{t('pane.mcp_servers.col_scope')}</th>
+              <th>{t('pane.mcp_servers.col_command_endpoint')}</th>
             </tr>
           </thead>
           <tbody>
@@ -51,7 +50,7 @@ export function McpServersPane() {
                 <td>
                   <span className="tag">{r.transport}</span>
                 </td>
-                <td>{r.tenant_id ?? <em>global</em>}</td>
+                <td>{r.tenant_id ?? <em>{t('pane.mcp_servers.scope_global')}</em>}</td>
                 <td>
                   <code>
                     {r.transport === 'stdio'

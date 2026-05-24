@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type {
   CaseFromSessionResponse,
   EvalReport,
@@ -28,6 +29,7 @@ type RightTab = 'run' | 'convert';
 const LAST_RUN_KEY = (suite: string) => `xiaoguai.eval.lastRun.${suite}`;
 
 export function EvalPane() {
+  const { t } = useTranslation();
   const [suites, setSuites] = useState<EvalSuiteListItem[] | null>(null);
   const [suitesError, setSuitesError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -54,29 +56,23 @@ export function EvalPane() {
   return (
     <>
       <header className="eval-header">
-        <h1>Eval</h1>
-        <p className="muted">
-          Regression + capability suites against the same{' '}
-          <code>MockBackend</code> the CLI uses. Reports stay on disk; the
-          console caches the last verdict per suite.
-        </p>
+        <h1>{t('pane.eval.title')}</h1>
+        <p className="muted">{t('pane.eval.description')}</p>
       </header>
 
       <div className="eval-layout">
         <aside className="eval-sidebar">
           <div className="eval-sidebar-head">
-            <h2>Suites</h2>
+            <h2>{t('pane.eval.suites_title')}</h2>
             <button type="button" onClick={() => void refreshSuites()}>
-              Refresh
+              {t('common.refresh')}
             </button>
           </div>
-          {suitesError && <div className="error">Failed: {suitesError}</div>}
+          {suitesError && <div className="error">{t('common.failed', { message: suitesError })}</div>}
           {suites === null ? (
-            <div className="empty">Loading…</div>
+            <div className="empty">{t('pane.eval.suites_empty_loading')}</div>
           ) : suites.length === 0 ? (
-            <div className="empty">
-              No suites under the configured directory.
-            </div>
+            <div className="empty">{t('pane.eval.suites_empty_none')}</div>
           ) : (
             <ul className="eval-suite-list">
               {suites.map((s) => (
@@ -89,8 +85,13 @@ export function EvalPane() {
                     <span className="suite-name">{s.name}</span>
                     <span className="suite-meta">
                       {s.case_count === null
-                        ? 'single file'
-                        : `${s.case_count} case${s.case_count === 1 ? '' : 's'}`}
+                        ? t('pane.eval.suite_single_file')
+                        : t(
+                            s.case_count === 1
+                              ? 'pane.eval.suite_case_count_one'
+                              : 'pane.eval.suite_case_count_other',
+                            { count: s.case_count },
+                          )}
                     </span>
                   </button>
                 </li>
@@ -108,7 +109,7 @@ export function EvalPane() {
               className={tab === 'run' ? 'active' : ''}
               onClick={() => setTab('run')}
             >
-              Run suite
+              {t('pane.eval.tab_run_suite')}
             </button>
             <button
               type="button"
@@ -117,7 +118,7 @@ export function EvalPane() {
               className={tab === 'convert' ? 'active' : ''}
               onClick={() => setTab('convert')}
             >
-              Convert from session
+              {t('pane.eval.tab_convert')}
             </button>
           </div>
 
@@ -133,6 +134,7 @@ export function EvalPane() {
 }
 
 function RunSuiteTab({ suiteName }: { suiteName: string | null }): JSX.Element {
+  const { t } = useTranslation();
   const [report, setReport] = useState<EvalReport | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -175,7 +177,7 @@ function RunSuiteTab({ suiteName }: { suiteName: string | null }): JSX.Element {
 
   if (suiteName === null) {
     return (
-      <div className="empty">Pick a suite from the left to run it.</div>
+      <div className="empty">{t('pane.eval.run_pick_prompt')}</div>
     );
   }
 
@@ -191,35 +193,35 @@ function RunSuiteTab({ suiteName }: { suiteName: string | null }): JSX.Element {
           onClick={() => void run()}
           disabled={running}
         >
-          {running ? <Spinner /> : 'Run suite'}
+          {running ? <Spinner /> : t('pane.eval.run_btn')}
         </button>
         <span className="muted">
-          Suite: <code>{suiteName}</code>
+          {t('pane.eval.run_suite_label')} <code>{suiteName}</code>
         </span>
         {report && (
           <span className="muted">
-            Last run: {new Date(report.finished_at).toLocaleString()}
+            {t('pane.eval.run_last_run', { time: new Date(report.finished_at).toLocaleString() })}
           </span>
         )}
       </div>
 
-      {error && <div className="error">Failed: {error}</div>}
+      {error && <div className="error">{t('common.failed', { message: error })}</div>}
 
       {report && (
         <div className="run-report">
           <div className={`pass-rate-card ${passed === total ? 'all-pass' : ''}`}>
             <div className="rate">{Math.round(report.pass_rate * 100)}%</div>
             <div className="rate-meta">
-              {passed} / {total} passed
+              {t('pane.eval.run_passed', { passed, total })}
             </div>
           </div>
           <table className="result-table">
             <thead>
               <tr>
-                <th>Case</th>
-                <th>Status</th>
-                <th className="num">Duration</th>
-                <th className="num">Events</th>
+                <th>{t('pane.eval.col_case')}</th>
+                <th>{t('pane.eval.col_status')}</th>
+                <th className="num">{t('pane.eval.col_duration')}</th>
+                <th className="num">{t('pane.eval.col_events')}</th>
               </tr>
             </thead>
             <tbody>
@@ -278,6 +280,7 @@ function ResultRow({ row }: { row: EvalResult }): JSX.Element {
 }
 
 function ConvertFromSessionTab(): JSX.Element {
+  const { t } = useTranslation();
   const [sessionId, setSessionId] = useState('');
   const [resp, setResp] = useState<CaseFromSessionResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -302,17 +305,13 @@ function ConvertFromSessionTab(): JSX.Element {
 
   return (
     <div className="convert-tab">
-      <p className="muted">
-        Project a production <code>sessions.id</code> into a ready-to-edit{' '}
-        <code>.eval.yaml</code> case. The server suggests assertions; review
-        + paste into a file under <code>suites_dir/</code>.
-      </p>
+      <p className="muted">{t('pane.eval.convert_description')}</p>
       <div className="convert-input">
         <input
           type="text"
           value={sessionId}
           onChange={(e) => setSessionId(e.target.value)}
-          placeholder="sessions.id (e.g. sess_abc123)"
+          placeholder={t('pane.eval.convert_placeholder')}
           spellCheck={false}
           onKeyDown={(e) => {
             if (e.key === 'Enter') void convert();
@@ -323,19 +322,23 @@ function ConvertFromSessionTab(): JSX.Element {
           onClick={() => void convert()}
           disabled={loading || !sessionId.trim()}
         >
-          {loading ? <Spinner /> : 'Convert'}
+          {loading ? <Spinner /> : t('pane.eval.convert_btn')}
         </button>
       </div>
-      {error && <div className="error">Failed: {error}</div>}
+      {error && <div className="error">{t('common.failed', { message: error })}</div>}
       {resp && (
         <div className="convert-output">
           <div className="convert-meta">
             <span>
-              Suggested filename: <code>{resp.suggested_filename}</code>
+              {t('pane.eval.suggested_filename')} <code>{resp.suggested_filename}</code>
             </span>
             <span className="muted">
-              {resp.tool_invocation_count} tool invocation
-              {resp.tool_invocation_count === 1 ? '' : 's'}
+              {t(
+                resp.tool_invocation_count === 1
+                  ? 'pane.eval.convert_tool_invocations_one'
+                  : 'pane.eval.convert_tool_invocations_other',
+                { count: resp.tool_invocation_count },
+              )}
             </span>
           </div>
           <div className="yaml-block">
