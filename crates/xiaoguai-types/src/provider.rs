@@ -56,6 +56,12 @@ pub struct LlmProvider {
     pub api_key_env: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// v1.1.1.1 — 2026-Q2 list pricing per provider docs.
+    /// `None` means no rate configured; the Usage pane shows "—".
+    /// USD per 1,000 input tokens.
+    pub cost_per_1k_input_usd: Option<f64>,
+    /// USD per 1,000 output tokens.
+    pub cost_per_1k_output_usd: Option<f64>,
 }
 
 #[cfg(test)]
