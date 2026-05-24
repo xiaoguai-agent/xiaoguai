@@ -120,6 +120,10 @@ bytes = "1.8"
 mime = "0.3"
 regex = "1.11"
 
+# websocket (DingTalk Stream API)
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+
 # testing
 mockito = "1.6"
 proptest = "1.5"

@@ -44,6 +44,9 @@
 #![forbid(unsafe_code)]
 
 pub mod api;
+pub mod stream;
+
+pub use stream::{run_stream, InboundMessage, OutboundReply, StreamClient};
 
 use std::sync::Arc;
 
