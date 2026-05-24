@@ -58,6 +58,13 @@ xiaoguai-im-feishu = { path = "../xiaoguai-im-feishu" }
 # operator supplies the required env vars.
 xiaoguai-im-dingtalk = { path = "../xiaoguai-im-dingtalk" }
 xiaoguai-im-wecom = { path = "../xiaoguai-im-wecom" }
+# v1.2.11: Prometheus metrics + OTLP traces — gated on the
+# "observability" feature so builds without telemetry stay unchanged.
+xiaoguai-observability = { path = "../xiaoguai-observability", optional = true }
+
+[features]
+# Activate Prometheus + OTLP telemetry layers.
+observability = ["dep:xiaoguai-observability"]
 
 [dev-dependencies]
 parking_lot = { workspace = true }

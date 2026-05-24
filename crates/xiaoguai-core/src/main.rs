@@ -161,6 +161,8 @@ async fn run_smoke(settings: &Settings) -> Result<()> {
 async fn run_serve(settings: &Settings) -> Result<()> {
     use std::net::SocketAddr;
     use std::sync::Arc;
+    #[cfg(feature = "observability")]
+    use xiaoguai_observability;
     use xiaoguai_agent::{AgentConfig, Toolbox};
     use xiaoguai_api::{
         audit::{AuditReader, AuditVerifier},
@@ -807,6 +809,20 @@ async fn serve_with_state_and_extras(
     if let Some(r) = extra {
         app = app.merge(r);
     }
+
+    // v1.2.11: Prometheus + OTLP telemetry.
+    // Gated on the `observability` Cargo feature so default builds are
+    // unchanged. When enabled:
+    //   - `GET /metrics` returns Prometheus text-format exposition.
+    //   - All tracing spans are forwarded to the OTLP endpoint
+    //     configured via `OTEL_EXPORTER_OTLP_ENDPOINT`
+    //     (default `http://localhost:4317`).
+    #[cfg(feature = "observability")]
+    {
+        app = xiaoguai_observability::mount(app).context("init observability")?;
+        tracing::info!("serve: observability mounted (Prometheus + OTLP)");
+    }
+
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("bind {addr}"))?;
