@@ -1,0 +1,168 @@
+name: Pip wheel
+
+# Fires on the same `v*` tag pattern as release.yml so wheel builds
+# land alongside the container image + SBOM. Sibling worktrees C7
+# (tarball) and C9 (CI security) also hook into v* tags via their
+# own dedicated workflow files — keep changes scoped to this file
+# only to avoid cross-worktree merge conflicts.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: 'Force a XIAOGUAI_VERSION value (manual builds only).'
+        required: false
+        default: ''
+
+env:
+  CARGO_TERM_COLOR: always
+  # cibuildwheel's default verbosity is too quiet for diagnosing
+  # native-binary staging issues. 1 = print each step's command.
+  CIBW_BUILD_VERBOSITY: '1'
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Matrix: build the native Rust binary, then build a platform-tagged
+  # wheel that bundles it as package data.
+  #
+  # Each job stages its binary under
+  #   python/xiaoguai/src/xiaoguai/_binary/<target>/xiaoguai[.exe]
+  # before invoking cibuildwheel so the wheel picks it up via the
+  # package-data glob in pyproject.toml.
+  # ---------------------------------------------------------------------
+  build-wheel:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14            # M-series runner
+            cibw_archs: arm64
+            cibw_platform: macos
+          - target: x86_64-apple-darwin
+            runner: macos-13            # Intel runner
+            cibw_archs: x86_64
+            cibw_platform: macos
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cibw_archs: x86_64
+            cibw_platform: linux
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm    # GitHub-hosted ARM runner
+            cibw_archs: aarch64
+            cibw_platform: linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute XIAOGUAI_VERSION
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.version_override }}" ]]; then
+            VERSION="${{ inputs.version_override }}"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # Strip the leading 'v' from v1.1.7 -> 1.1.7
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0+ci.${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "XIAOGUAI_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Resolved XIAOGUAI_VERSION=$VERSION"
+
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build native binary
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo build --release --locked --target ${{ matrix.target }} -p xiaoguai-cli
+
+      - name: Stage binary for package data
+        shell: bash
+        run: |
+          set -euxo pipefail
+          DEST="python/xiaoguai/src/xiaoguai/_binary/${{ matrix.target }}"
+          mkdir -p "$DEST"
+          cp "target/${{ matrix.target }}/release/xiaoguai" "$DEST/xiaoguai"
+          chmod +x "$DEST/xiaoguai"
+          ls -la "$DEST"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build wheel
+        uses: pypa/cibuildwheel@v2.21.3
+        with:
+          package-dir: python/xiaoguai
+          output-dir: wheelhouse
+        env:
+          XIAOGUAI_VERSION: ${{ steps.version.outputs.version }}
+          CIBW_ARCHS: ${{ matrix.cibw_archs }}
+          CIBW_PLATFORM: ${{ matrix.cibw_platform }}
+          # Re-export inside the cibuildwheel container too — the
+          # Linux build runs setup.py inside a manylinux image that
+          # does NOT inherit the host env unless we ask it to.
+          CIBW_ENVIRONMENT: XIAOGUAI_VERSION=${{ steps.version.outputs.version }}
+
+      - name: Inspect wheel contents
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for whl in wheelhouse/*.whl; do
+            echo "==> $whl"
+            python -m zipfile -l "$whl" | grep -E "xiaoguai/_binary|xiaoguai/__main__|xiaoguai/_version" || true
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------
+  # Publish to PyPI — deferred. Token + trusted-publisher config not in
+  # scope for v1.1.7. The block below stays as `if: false` so the
+  # plumbing is in tree but the action never fires. Flip `if:` to
+  # `${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}`
+  # and configure PyPI trusted publishing per:
+  #   https://docs.pypi.org/trusted-publishers/
+  # when we're ready (v1.1.8+).
+  # ---------------------------------------------------------------------
+  publish:
+    name: Publish to PyPI (DEFERRED)
+    needs: build-wheel
+    runs-on: ubuntu-latest
+    if: false  # TODO(v1.1.8): enable when PyPI trusted-publishing is set up
+    permissions:
+      id-token: write    # trusted-publisher OIDC
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: wheels-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # Verify the upload was deterministic — `--verbose` so the
+          # PyPI response (file hashes) ends up in the run log.
+          verbose: true

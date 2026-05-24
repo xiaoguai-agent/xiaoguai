@@ -1,0 +1,94 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xiaoguai"
+# Version is sourced from the $XIAOGUAI_VERSION env var by setup.py.
+# When unset (local dev builds) we fall back to "0.0.0+local" so the
+# wheel is still installable but never collides with a real release.
+dynamic = ["version"]
+description = "Python convenience wrapper around the Rust xiaoguai CLI."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "BUSL-1.1" }
+authors = [
+    { name = "Xiaoguai contributors" },
+]
+keywords = ["xiaoguai", "agent", "llm", "mcp", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: Other/Proprietary License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Utilities",
+]
+
+[project.scripts]
+xiaoguai = "xiaoguai.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/xiaoguai-agent/xiaoguai"
+Repository = "https://github.com/xiaoguai-agent/xiaoguai"
+Issues = "https://github.com/xiaoguai-agent/xiaoguai/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["xiaoguai*"]
+
+[tool.setuptools.package-data]
+# The CI workflow stages the Rust-built binary under
+# src/xiaoguai/_binary/<target>/xiaoguai[.exe] before invoking
+# cibuildwheel. We ship the whole subtree.
+xiaoguai = ["_binary/**/*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "xiaoguai._version.__version__" }
+
+# ---- cibuildwheel ---------------------------------------------------------
+#
+# Wheels are platform-specific because they bundle a native binary. We tag
+# each wheel with the platform that built it and skip cross-arch emulation
+# (each target runs on its native runner in pip-wheel.yml).
+
+[tool.cibuildwheel]
+# We don't build for every Python tag because the wheel only ships a
+# binary launcher — the Python stub doesn't depend on the interpreter
+# version. We still build one Python tag per platform to satisfy pip's
+# matcher; py3-none-<plat> would be ideal but cibuildwheel doesn't
+# produce that shape natively. cp310 is the lowest we support.
+build = "cp310-*"
+skip = [
+    "*-musllinux_*",     # Alpine — not part of v1.1.7 scope.
+    "*-win32",           # 32-bit Windows — skip.
+    "pp*",               # PyPy — skip.
+]
+# The binary is built outside cibuildwheel and staged in package-data,
+# so the build step doesn't need a Rust toolchain inside the wheel
+# container.
+build-frontend = "build"
+test-command = "xiaoguai --help"
+
+[tool.cibuildwheel.linux]
+# manylinux_2_28 — broad compatibility floor matching the Rust binary
+# we link statically with -C target-cpu=x86-64-v2 / aarch64 baseline.
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+
+[tool.cibuildwheel.macos]
+# The bundled binary is signed for the matching arch only. We
+# explicitly skip universal2 — separate arm64 + x86_64 wheels keep
+# bundle size down and let cosign sign each binary independently.
+archs = ["native"]
