@@ -60,8 +60,10 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use xiaoguai_agent::{AgentConfig, Toolbox};
 use xiaoguai_api::scheduler::{
-    NlJobCompileError, NlJobCompiler, ScheduledJobUpsertError, ScheduledJobUpserter,
-    WebhookPushError, WebhookPusher,
+    NlJobCompileError, NlJobCompiler, ScheduledJobSummary, ScheduledJobUpsertError,
+    ScheduledJobUpserter, ScheduledJobsReadError, ScheduledJobsReader, WebhookPushError,
+    WebhookPusher, WebhookTokenAdmin, WebhookTokenAdminError, WebhookTokenError,
+    WebhookTokenRecord, WebhookTokenValidator,
 };
 use xiaoguai_audit::{chain::sink::PgAuditSink, AuditEntry};
 use xiaoguai_config::FileWatchSettings;
@@ -70,8 +72,8 @@ use xiaoguai_rag::RagClient;
 use xiaoguai_runtime::RuntimeContext;
 use xiaoguai_scheduler::{
     AuditAppender, EventSender, ExecutionOutcome, FileWatchRoute, FileWatchSource, JobExecutor,
-    JobRepository, PgJobRepository, ScheduledJob, ScheduledSessionWriter, Trigger, TriggerSource,
-    WebhookSource,
+    JobRepository, JobRunner, PgJobRepository, ScheduledJob, ScheduledSessionWriter, Trigger,
+    TriggerSource, WebhookSource,
 };
 use xiaoguai_storage::repositories::{MessageRepository, SessionRepository};
 use xiaoguai_types::{
@@ -511,10 +513,7 @@ pub struct RagReindexExecutor {
 }
 
 impl RagReindexExecutor {
-    // dead_code: see the v0.12.2.1 deferral note on `RagReindexExecutor`.
-    // Tests exercise this constructor; the binary entry point won't until
-    // the payload-dispatching CompositeExecutor lands.
-    #[allow(dead_code)]
+    // v0.12.x.1: now wired into the operator binary via CompositeExecutor.
     #[must_use]
     pub fn new(rag: Arc<dyn RagClient>) -> Self {
         Self { rag }
@@ -543,6 +542,261 @@ impl JobExecutor for RagReindexExecutor {
             output_preview: format!("reindexed {n} chunk(s) from {path} into {collection_id}"),
             session_id: None,
         })
+    }
+}
+
+// ----------------------------------------------------------------------
+// v0.12.x.1 — per-tenant webhook tokens (PG impls).
+// ----------------------------------------------------------------------
+
+/// PG-backed [`WebhookTokenValidator`] reading from
+/// `scheduler_webhook_tokens` (migration 0008). Best-effort updates
+/// `last_used_at` on every successful validation; update failures are
+/// logged but do not block the push.
+pub struct PgWebhookTokenValidator {
+    pool: sqlx::PgPool,
+}
+
+impl PgWebhookTokenValidator {
+    #[must_use]
+    pub fn new(pool: sqlx::PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl WebhookTokenValidator for PgWebhookTokenValidator {
+    async fn validate(
+        &self,
+        token: &str,
+        route_id: &str,
+    ) -> Result<Option<String>, WebhookTokenError> {
+        // Admin-side query, RLS bypassed (we trust the caller to gate by
+        // tenant after validation). Cross-tenant query is exactly what
+        // we need: the token IS the proof of ownership.
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT tenant_id FROM scheduler_webhook_tokens
+             WHERE token = $1 AND route_id = $2",
+        )
+        .bind(token)
+        .bind(route_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WebhookTokenError::Backend(e.to_string()))?;
+        let Some((tenant_id,)) = row else {
+            return Ok(None);
+        };
+        // Best-effort timestamp update — never block the push on this.
+        if let Err(e) =
+            sqlx::query("UPDATE scheduler_webhook_tokens SET last_used_at = NOW() WHERE token = $1")
+                .bind(token)
+                .execute(&self.pool)
+                .await
+        {
+            tracing::warn!(error = %e, "scheduler_webhook_tokens last_used_at update failed");
+        }
+        Ok(Some(tenant_id))
+    }
+}
+
+/// PG-backed [`WebhookTokenAdmin`] CRUD against
+/// `scheduler_webhook_tokens`. Generates 32-byte opaque tokens via
+/// uuid v4 + `simple` encoding; admins capture them on create response.
+pub struct PgWebhookTokenAdmin {
+    pool: sqlx::PgPool,
+}
+
+impl PgWebhookTokenAdmin {
+    #[must_use]
+    pub fn new(pool: sqlx::PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+fn generate_webhook_token() -> String {
+    // 32-char hex from a single uuid v4 (122 bits of entropy). Good
+    // enough for an opaque bearer that lives in a private tenant table.
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
+#[async_trait]
+impl WebhookTokenAdmin for PgWebhookTokenAdmin {
+    async fn create(
+        &self,
+        tenant_id: &str,
+        route_id: &str,
+    ) -> Result<WebhookTokenRecord, WebhookTokenAdminError> {
+        if tenant_id.is_empty() {
+            return Err(WebhookTokenAdminError::InvalidArgument(
+                "tenant_id required".into(),
+            ));
+        }
+        if route_id.is_empty() {
+            return Err(WebhookTokenAdminError::InvalidArgument(
+                "route_id required".into(),
+            ));
+        }
+        let token = generate_webhook_token();
+        let now = chrono::Utc::now();
+        sqlx::query(
+            "INSERT INTO scheduler_webhook_tokens (token, tenant_id, route_id, created_at)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(&token)
+        .bind(tenant_id)
+        .bind(route_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| WebhookTokenAdminError::Backend(e.to_string()))?;
+        Ok(WebhookTokenRecord {
+            token,
+            tenant_id: tenant_id.to_string(),
+            route_id: route_id.to_string(),
+            created_at: now,
+            last_used_at: None,
+        })
+    }
+
+    async fn list(
+        &self,
+        tenant_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<WebhookTokenRecord>, WebhookTokenAdminError> {
+        let limit = limit.clamp(1, 1000);
+        let rows: Vec<(
+            String,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        )> = match tenant_id {
+            Some(t) => {
+                sqlx::query_as(
+                    "SELECT token, tenant_id, route_id, created_at, last_used_at
+                 FROM scheduler_webhook_tokens
+                 WHERE tenant_id = $1
+                 ORDER BY created_at DESC
+                 LIMIT $2",
+                )
+                .bind(t)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+            None => {
+                sqlx::query_as(
+                    "SELECT token, tenant_id, route_id, created_at, last_used_at
+                 FROM scheduler_webhook_tokens
+                 ORDER BY created_at DESC
+                 LIMIT $1",
+                )
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+        }
+        .map_err(|e| WebhookTokenAdminError::Backend(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(token, tenant_id, route_id, created_at, last_used_at)| WebhookTokenRecord {
+                    token,
+                    tenant_id,
+                    route_id,
+                    created_at,
+                    last_used_at,
+                },
+            )
+            .collect())
+    }
+
+    async fn revoke(&self, token: &str) -> Result<(), WebhookTokenAdminError> {
+        let res = sqlx::query("DELETE FROM scheduler_webhook_tokens WHERE token = $1")
+            .bind(token)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WebhookTokenAdminError::Backend(e.to_string()))?;
+        if res.rows_affected() == 0 {
+            return Err(WebhookTokenAdminError::NotFound(token.into()));
+        }
+        Ok(())
+    }
+}
+
+// ----------------------------------------------------------------------
+// v0.12.x.1 — admin-ui Scheduler pane: jobs reader + fire_now.
+// ----------------------------------------------------------------------
+
+/// Bridges `xiaoguai-api::ScheduledJobsReader` onto the
+/// `PgJobRepository` + a live `JobRunner` for out-of-band fires.
+pub struct PgScheduledJobsReader {
+    jobs: Arc<PgJobRepository>,
+    runner: Arc<JobRunner>,
+}
+
+impl PgScheduledJobsReader {
+    #[must_use]
+    pub fn new(jobs: Arc<PgJobRepository>, runner: Arc<JobRunner>) -> Self {
+        Self { jobs, runner }
+    }
+}
+
+#[async_trait]
+impl ScheduledJobsReader for PgScheduledJobsReader {
+    async fn list(&self, limit: i64) -> Result<Vec<ScheduledJobSummary>, ScheduledJobsReadError> {
+        // Pull a generous slice across "due" + "everything else"; the
+        // admin pane doesn't yet need pagination. `list_due` covers
+        // jobs whose next_fire_at is past or null; for the admin view
+        // we want both enabled+disabled rows so the pane can show
+        // toggles. v0.12.x.1 implementation cheats by reading "now +
+        // far future" as the upper bound so all enabled jobs show; the
+        // disabled rows are deferred to a `list_all` repo method.
+        let far_future = chrono::Utc::now() + chrono::Duration::days(365 * 10);
+        let limit_usize = usize::try_from(limit.max(0)).unwrap_or(0);
+        let rows = self
+            .jobs
+            .list_due(far_future, limit_usize)
+            .await
+            .map_err(|e| ScheduledJobsReadError::Backend(e.to_string()))?;
+        Ok(rows.into_iter().map(scheduled_job_to_summary).collect())
+    }
+
+    async fn fire_now(&self, job_id: &str) -> Result<(), ScheduledJobsReadError> {
+        self.runner.fire_now(job_id).await.map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("not found") {
+                ScheduledJobsReadError::NotFound(job_id.into())
+            } else {
+                ScheduledJobsReadError::Backend(msg)
+            }
+        })
+    }
+}
+
+fn scheduled_job_to_summary(job: ScheduledJob) -> ScheduledJobSummary {
+    let trigger_summary = match &job.trigger {
+        Trigger::Cron { expr } => format!("cron `{expr}` (UTC)"),
+        Trigger::Interval { secs } => format!("every {secs}s"),
+        Trigger::FileWatch { path } => format!("watch `{path}`"),
+        Trigger::Webhook { route_id } => format!("webhook `{route_id}`"),
+        Trigger::GitPush { repo_url, branch } => {
+            format!("git push `{repo_url}`@`{branch}`")
+        }
+        Trigger::DbPoll { query } => format!("db poll `{query}`"),
+        Trigger::Proactive {
+            interval_secs,
+            check_prompt,
+        } => format!("proactive every {interval_secs}s — `{check_prompt}`"),
+    };
+    ScheduledJobSummary {
+        id: job.id,
+        tenant_id: job.tenant_id,
+        name: job.name,
+        trigger_summary,
+        enabled: job.enabled,
+        last_fire_at: job.last_fire_at,
+        next_fire_at: job.next_fire_at,
     }
 }
 
@@ -908,5 +1162,46 @@ mod tests {
         let source = spawn_file_watch_source(&cfg, &jobs, tx).await.unwrap();
         let dbg = format!("{source:?}");
         assert!(dbg.contains("route_count: 1"));
+    }
+
+    // ------------------------------------------------------------------
+    // v0.12.x.1 — webhook tokens + jobs reader.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn generate_webhook_token_yields_hex_uuid_len() {
+        let t = generate_webhook_token();
+        // 32 hex chars (no dashes) when using uuid simple encoding.
+        assert_eq!(t.len(), 32);
+        assert!(t.chars().all(|c| c.is_ascii_hexdigit()));
+        // Two consecutive calls don't collide.
+        assert_ne!(t, generate_webhook_token());
+    }
+
+    #[test]
+    fn scheduled_job_to_summary_describes_each_trigger() {
+        let cron = ScheduledJob::new(
+            "j1",
+            Some("t".into()),
+            "n",
+            Trigger::cron("0 0 8 * * *").unwrap(),
+            serde_json::json!({}),
+        );
+        let s = scheduled_job_to_summary(cron);
+        assert_eq!(s.id, "j1");
+        assert_eq!(s.tenant_id.as_deref(), Some("t"));
+        assert!(s.trigger_summary.contains("cron"));
+        assert!(s.enabled);
+
+        let webhook = ScheduledJob::new(
+            "j2",
+            None,
+            "n",
+            Trigger::webhook("deploy").unwrap(),
+            serde_json::json!({}),
+        );
+        let s = scheduled_job_to_summary(webhook);
+        assert!(s.trigger_summary.contains("webhook"));
+        assert!(s.trigger_summary.contains("deploy"));
     }
 }

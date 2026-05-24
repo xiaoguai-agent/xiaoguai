@@ -32,6 +32,115 @@ pub enum WebhookPushError {
     Backend(String),
 }
 
+// ----------------------------------------------------------------------
+// v0.12.x.1 — per-tenant webhook tokens.
+// ----------------------------------------------------------------------
+
+#[derive(Debug, Error)]
+pub enum WebhookTokenError {
+    #[error("backend: {0}")]
+    Backend(String),
+}
+
+/// Validate a per-tenant webhook token against `(token, route_id)`. On
+/// success returns the owning `tenant_id`; on a mismatch (unknown
+/// token, or token bound to a different route) returns `Ok(None)`.
+///
+/// This trait fronts the `scheduler_webhook_tokens` table — see
+/// `crates/xiaoguai-storage/migrations/0008_scheduler_webhook_tokens.sql`.
+/// The production impl (`PgWebhookTokenValidator` in `xiaoguai-core`)
+/// also best-effort updates `last_used_at`; failures there are logged
+/// but do not block the push (the audit row is the source of truth).
+#[async_trait]
+pub trait WebhookTokenValidator: Send + Sync {
+    async fn validate(
+        &self,
+        token: &str,
+        route_id: &str,
+    ) -> Result<Option<String /* tenant_id */>, WebhookTokenError>;
+}
+
+#[derive(Debug, Error)]
+pub enum WebhookTokenAdminError {
+    #[error("not found: {0}")]
+    NotFound(String),
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
+    #[error("backend: {0}")]
+    Backend(String),
+}
+
+/// One row out of `scheduler_webhook_tokens`. Surfaced to admin
+/// endpoints (list + create + revoke) — the boundary is kept as a
+/// plain struct rather than a `Value` because admin routes always
+/// know the shape and want strict typing.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WebhookTokenRecord {
+    pub token: String,
+    pub tenant_id: String,
+    pub route_id: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Admin-side CRUD for `scheduler_webhook_tokens`. Backs
+/// `/v1/admin/scheduler/tokens` (list / create / revoke). Separate from
+/// [`WebhookTokenValidator`] so the read-path on the public webhook
+/// route doesn't drag the admin surface in.
+#[async_trait]
+pub trait WebhookTokenAdmin: Send + Sync {
+    async fn create(
+        &self,
+        tenant_id: &str,
+        route_id: &str,
+    ) -> Result<WebhookTokenRecord, WebhookTokenAdminError>;
+    /// List tokens; when `tenant_id` is `Some`, scope to that tenant.
+    /// Returns at most `limit` rows (default 100, max 1000).
+    async fn list(
+        &self,
+        tenant_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<WebhookTokenRecord>, WebhookTokenAdminError>;
+    /// Revoke (delete) a token. Returns `NotFound` if no row matched.
+    async fn revoke(&self, token: &str) -> Result<(), WebhookTokenAdminError>;
+}
+
+// ----------------------------------------------------------------------
+// v0.12.x.1 — scheduled-jobs reader (admin pane).
+// ----------------------------------------------------------------------
+
+#[derive(Debug, Error)]
+pub enum ScheduledJobsReadError {
+    #[error("backend: {0}")]
+    Backend(String),
+    #[error("not found: {0}")]
+    NotFound(String),
+}
+
+/// Summary row for the admin-ui Scheduler pane's Jobs tab. Kept narrow
+/// so the wire shape stays small — the pane's drill-in fetches the
+/// full job via a separate (deferred) endpoint when needed.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ScheduledJobSummary {
+    pub id: String,
+    pub tenant_id: Option<String>,
+    pub name: String,
+    pub trigger_summary: String,
+    pub enabled: bool,
+    pub last_fire_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub next_fire_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Read scheduled-job rows for the admin pane + fire one manually.
+/// `fire_now` returns `Ok(())` when the runner has accepted the
+/// out-of-band fire (the actual execution is async; the operator's UI
+/// updates on the next refresh).
+#[async_trait]
+pub trait ScheduledJobsReader: Send + Sync {
+    async fn list(&self, limit: i64) -> Result<Vec<ScheduledJobSummary>, ScheduledJobsReadError>;
+    async fn fire_now(&self, job_id: &str) -> Result<(), ScheduledJobsReadError>;
+}
+
 /// Push a reactive trigger event onto the scheduler's event channel.
 ///
 /// `route_id` identifies the bound (route → job) mapping inside the
@@ -143,6 +252,119 @@ impl ScheduledJobUpserter for RecordingJobUpserter {
     }
 }
 
+// ----------------------------------------------------------------------
+// v0.12.x.1 — in-memory test helpers.
+// ----------------------------------------------------------------------
+
+/// Static token validator: returns `Some(tenant_id)` only when the
+/// `(token, route_id)` pair matches the canned binding.
+pub struct StaticWebhookTokenValidator {
+    pub token: String,
+    pub route_id: String,
+    pub tenant_id: String,
+}
+
+#[async_trait]
+impl WebhookTokenValidator for StaticWebhookTokenValidator {
+    async fn validate(
+        &self,
+        token: &str,
+        route_id: &str,
+    ) -> Result<Option<String>, WebhookTokenError> {
+        if token == self.token && route_id == self.route_id {
+            Ok(Some(self.tenant_id.clone()))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+/// In-memory `WebhookTokenAdmin` for route tests. Generates tokens as
+/// `tok-N`; preserves the chronological order in `list`.
+#[derive(Default)]
+pub struct InMemoryWebhookTokenAdmin {
+    rows: parking_lot::Mutex<Vec<WebhookTokenRecord>>,
+    counter: parking_lot::Mutex<u32>,
+}
+
+#[async_trait]
+impl WebhookTokenAdmin for InMemoryWebhookTokenAdmin {
+    async fn create(
+        &self,
+        tenant_id: &str,
+        route_id: &str,
+    ) -> Result<WebhookTokenRecord, WebhookTokenAdminError> {
+        if tenant_id.is_empty() {
+            return Err(WebhookTokenAdminError::InvalidArgument(
+                "tenant_id required".into(),
+            ));
+        }
+        if route_id.is_empty() {
+            return Err(WebhookTokenAdminError::InvalidArgument(
+                "route_id required".into(),
+            ));
+        }
+        let mut c = self.counter.lock();
+        *c += 1;
+        let token = format!("tok-{}", *c);
+        drop(c);
+        let row = WebhookTokenRecord {
+            token: token.clone(),
+            tenant_id: tenant_id.to_string(),
+            route_id: route_id.to_string(),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+        };
+        self.rows.lock().push(row.clone());
+        Ok(row)
+    }
+    async fn list(
+        &self,
+        tenant_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<WebhookTokenRecord>, WebhookTokenAdminError> {
+        let limit = usize::try_from(limit.max(0)).unwrap_or(0);
+        let rows = self.rows.lock();
+        let it = rows.iter().filter(|r| match tenant_id {
+            Some(t) => r.tenant_id == t,
+            None => true,
+        });
+        Ok(it.take(limit).cloned().collect())
+    }
+    async fn revoke(&self, token: &str) -> Result<(), WebhookTokenAdminError> {
+        let mut rows = self.rows.lock();
+        let before = rows.len();
+        rows.retain(|r| r.token != token);
+        if rows.len() == before {
+            return Err(WebhookTokenAdminError::NotFound(token.into()));
+        }
+        Ok(())
+    }
+}
+
+/// Static jobs reader for tests: returns the canned summary list and
+/// records `fire_now` calls.
+#[derive(Default)]
+pub struct StaticScheduledJobsReader {
+    pub jobs: Vec<ScheduledJobSummary>,
+    pub fire_calls: parking_lot::Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl ScheduledJobsReader for StaticScheduledJobsReader {
+    async fn list(&self, limit: i64) -> Result<Vec<ScheduledJobSummary>, ScheduledJobsReadError> {
+        let limit = usize::try_from(limit.max(0)).unwrap_or(0);
+        Ok(self.jobs.iter().take(limit).cloned().collect())
+    }
+    async fn fire_now(&self, job_id: &str) -> Result<(), ScheduledJobsReadError> {
+        if !self.jobs.iter().any(|j| j.id == job_id) {
+            return Err(ScheduledJobsReadError::NotFound(job_id.into()));
+        }
+        self.fire_calls.lock().push(job_id.into());
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,5 +396,71 @@ mod tests {
         assert_eq!(jobs.len(), 2);
         assert_eq!(jobs[0]["id"], "j1");
         assert_eq!(jobs[1]["id"], "j2");
+    }
+
+    #[tokio::test]
+    async fn static_token_validator_matches_only_exact_pair() {
+        let v = StaticWebhookTokenValidator {
+            token: "secret".into(),
+            route_id: "deploy".into(),
+            tenant_id: "tenant-a".into(),
+        };
+        assert_eq!(
+            v.validate("secret", "deploy").await.unwrap().as_deref(),
+            Some("tenant-a")
+        );
+        assert!(v.validate("secret", "other").await.unwrap().is_none());
+        assert!(v.validate("nope", "deploy").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn in_memory_token_admin_create_list_revoke() {
+        let admin = InMemoryWebhookTokenAdmin::default();
+        let row = admin.create("tenant-a", "deploy").await.unwrap();
+        assert_eq!(row.tenant_id, "tenant-a");
+        assert_eq!(row.route_id, "deploy");
+        assert!(row.token.starts_with("tok-"));
+        let _ = admin.create("tenant-a", "build").await.unwrap();
+        let _ = admin.create("tenant-b", "deploy").await.unwrap();
+        let all = admin.list(None, 100).await.unwrap();
+        assert_eq!(all.len(), 3);
+        let mine = admin.list(Some("tenant-a"), 100).await.unwrap();
+        assert_eq!(mine.len(), 2);
+        admin.revoke(&row.token).await.unwrap();
+        let err = admin.revoke(&row.token).await.unwrap_err();
+        assert!(matches!(err, WebhookTokenAdminError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn in_memory_token_admin_rejects_empty_args() {
+        let admin = InMemoryWebhookTokenAdmin::default();
+        let err = admin.create("", "deploy").await.unwrap_err();
+        assert!(matches!(err, WebhookTokenAdminError::InvalidArgument(_)));
+        let err = admin.create("t", "").await.unwrap_err();
+        assert!(matches!(err, WebhookTokenAdminError::InvalidArgument(_)));
+    }
+
+    #[tokio::test]
+    async fn static_jobs_reader_list_and_fire_now() {
+        let job = ScheduledJobSummary {
+            id: "j1".into(),
+            tenant_id: Some("t".into()),
+            name: "daily-scan".into(),
+            trigger_summary: "cron `0 0 8 * * *`".into(),
+            enabled: true,
+            last_fire_at: None,
+            next_fire_at: None,
+        };
+        let reader = StaticScheduledJobsReader {
+            jobs: vec![job],
+            fire_calls: parking_lot::Mutex::new(Vec::new()),
+        };
+        let got = reader.list(100).await.unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, "j1");
+        reader.fire_now("j1").await.unwrap();
+        assert_eq!(reader.fire_calls.lock().as_slice(), &["j1".to_string()]);
+        let err = reader.fire_now("nope").await.unwrap_err();
+        assert!(matches!(err, ScheduledJobsReadError::NotFound(_)));
     }
 }

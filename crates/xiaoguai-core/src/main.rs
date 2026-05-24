@@ -264,10 +264,24 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         Arc::new(PgSessionRepository::new(pool.clone()));
     let pg_message_repo: Arc<dyn xiaoguai_storage::repositories::MessageRepository> =
         Arc::new(PgMessageRepository::new(pool.clone()));
-    let (scheduler_handle, webhook_pusher, job_upserter): (
+    // v0.12.x.1: also wire `PgScheduledJobsReader` (admin-ui Scheduler
+    // pane backend) and the per-tenant webhook token validator + admin
+    // (out-of-band webhook auth). All three are `None` when scheduler is
+    // disabled — the matching routes return 503.
+    let (
+        scheduler_handle,
+        webhook_pusher,
+        job_upserter,
+        scheduler_jobs_reader,
+        webhook_token_validator,
+        webhook_token_admin,
+    ): (
         Option<tokio::task::JoinHandle<Result<(), xiaoguai_scheduler::RunnerError>>>,
         Option<Arc<dyn xiaoguai_api::scheduler::WebhookPusher>>,
         Option<Arc<dyn xiaoguai_api::scheduler::ScheduledJobUpserter>>,
+        Option<Arc<dyn xiaoguai_api::scheduler::ScheduledJobsReader>>,
+        Option<Arc<dyn xiaoguai_api::scheduler::WebhookTokenValidator>>,
+        Option<Arc<dyn xiaoguai_api::scheduler::WebhookTokenAdmin>>,
     ) = if settings.scheduler.enabled {
         let runtime_ctx = crate::scheduler_bridge::build_runtime_ctx(
             backend.clone(),
@@ -279,9 +293,23 @@ async fn run_serve(settings: &Settings) -> Result<()> {
                 pg_session_repo.clone(),
                 pg_message_repo.clone(),
             ));
-        let executor: Arc<dyn xiaoguai_scheduler::JobExecutor> = Arc::new(
+        // v0.12.x.1: CompositeExecutor dispatches by `payload.kind`.
+        // Default = RuntimeJobExecutor (every existing job; payload has
+        // no `kind`). Registered = RagReindexExecutor for
+        // `kind == "rag_reindex"`. The default arm preserves v0.12.0
+        // behaviour exactly — only payloads that opt in via `kind` see
+        // the alternate dispatch.
+        let runtime_executor: Arc<dyn xiaoguai_scheduler::JobExecutor> = Arc::new(
             xiaoguai_scheduler::RuntimeJobExecutor::new(runtime_ctx)
                 .with_session_writer(session_writer),
+        );
+        let rag_client: Arc<dyn xiaoguai_rag::RagClient> =
+            Arc::new(xiaoguai_rag::InMemoryRagClient::new());
+        let rag_executor: Arc<dyn xiaoguai_scheduler::JobExecutor> =
+            Arc::new(crate::scheduler_bridge::RagReindexExecutor::new(rag_client));
+        let executor: Arc<dyn xiaoguai_scheduler::JobExecutor> = Arc::new(
+            xiaoguai_scheduler::CompositeExecutor::new(runtime_executor)
+                .register("rag_reindex", rag_executor),
         );
         let pg_jobs = Arc::new(xiaoguai_scheduler::PgJobRepository::new(pool.clone()));
         let jobs: Arc<dyn xiaoguai_scheduler::JobRepository> = pg_jobs.clone();
@@ -355,12 +383,30 @@ async fn run_serve(settings: &Settings) -> Result<()> {
             crate::scheduler_bridge::WebhookSourceAdapter::new(webhook_source.clone()),
         );
         let upserter: Arc<dyn xiaoguai_api::scheduler::ScheduledJobUpserter> = Arc::new(
-            crate::scheduler_bridge::PgScheduledJobUpserter::new(pg_jobs),
+            crate::scheduler_bridge::PgScheduledJobUpserter::new(pg_jobs.clone()),
         );
-        (Some(handle), Some(pusher), Some(upserter))
+        // v0.12.x.1: admin-ui Scheduler pane reader + "Run now" handle.
+        let jobs_reader: Arc<dyn xiaoguai_api::scheduler::ScheduledJobsReader> = Arc::new(
+            crate::scheduler_bridge::PgScheduledJobsReader::new(pg_jobs, runner.clone()),
+        );
+        // v0.12.x.1: per-tenant webhook tokens — PG validator + admin.
+        let token_validator: Arc<dyn xiaoguai_api::scheduler::WebhookTokenValidator> = Arc::new(
+            crate::scheduler_bridge::PgWebhookTokenValidator::new(pool.clone()),
+        );
+        let token_admin: Arc<dyn xiaoguai_api::scheduler::WebhookTokenAdmin> = Arc::new(
+            crate::scheduler_bridge::PgWebhookTokenAdmin::new(pool.clone()),
+        );
+        (
+            Some(handle),
+            Some(pusher),
+            Some(upserter),
+            Some(jobs_reader),
+            Some(token_validator),
+            Some(token_admin),
+        )
     } else {
         tracing::info!("serve: scheduler disabled (set [scheduler].enabled = true to opt in)");
-        (None, None, None)
+        (None, None, None, None, None, None)
     };
 
     // v0.12.1: NL → ScheduledJob compiler. Always wire when we have an
@@ -429,6 +475,12 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // Always wired in production — the underlying token_usage table
         // is unconditional (migration 0004).
         usage_reader: Some(crate::usage_bridge::PgUsageReader::arc(pool.clone())),
+        // v0.12.x.1: per-tenant webhook token validator + admin CRUD
+        // + admin-ui Scheduler pane jobs reader. All `None` when the
+        // scheduler is disabled — the matching routes return 503.
+        webhook_token_validator,
+        webhook_token_admin,
+        scheduler_jobs_reader,
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

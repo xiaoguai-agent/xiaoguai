@@ -67,6 +67,7 @@
 
 pub mod audit;
 pub mod budget;
+pub mod composite_executor;
 pub mod executor;
 pub mod job;
 pub mod pg_repository;
@@ -85,6 +86,7 @@ pub use audit::{AuditAppender, NullAuditAppender, RecordingAuditAppender};
 pub use budget::{
     BudgetError, BudgetLedger, InMemoryBudgetLedger, DEFAULT_PROACTIVE_BUDGET_PER_DAY,
 };
+pub use composite_executor::CompositeExecutor;
 pub use executor::{EchoExecutor, ExecutionOutcome, JobExecutor};
 pub use job::{JobRun, JobRunStatus, ScheduledJob};
 pub use pg_repository::{PgJobRepository, PgJobRunRepository};

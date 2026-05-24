@@ -95,6 +95,9 @@ fn build_state(
         job_upserter: None,
         session_forker: None,
         usage_reader: None,
+        webhook_token_validator: None,
+        webhook_token_admin: None,
+        scheduler_jobs_reader: None,
     }
 }
 
@@ -1149,5 +1152,368 @@ mod scheduler_nl_jobs {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+mod scheduler_public_webhook {
+    //! v0.12.x.1 — public (token-gated) webhook route at
+    //! `/v1/scheduler/webhooks/:route_id` (NOT under /admin).
+    use super::*;
+    use async_trait::async_trait;
+    use xiaoguai_api::scheduler::{StaticWebhookTokenValidator, WebhookPushError, WebhookPusher};
+
+    struct AcceptAllPusher {
+        deliver: usize,
+    }
+    #[async_trait]
+    impl WebhookPusher for AcceptAllPusher {
+        async fn push(
+            &self,
+            _route_id: &str,
+            _detail: serde_json::Value,
+        ) -> Result<usize, WebhookPushError> {
+            Ok(self.deliver)
+        }
+    }
+
+    #[tokio::test]
+    async fn public_webhook_503_when_token_validator_unwired() {
+        let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/scheduler/webhooks/foo")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn public_webhook_401_when_token_missing() {
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.webhook_token_validator = Some(Arc::new(StaticWebhookTokenValidator {
+            token: "secret".into(),
+            route_id: "deploy".into(),
+            tenant_id: "tenant-a".into(),
+        }));
+        state.webhook_pusher = Some(Arc::new(AcceptAllPusher { deliver: 1 }));
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/scheduler/webhooks/deploy")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn public_webhook_401_when_token_wrong() {
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.webhook_token_validator = Some(Arc::new(StaticWebhookTokenValidator {
+            token: "secret".into(),
+            route_id: "deploy".into(),
+            tenant_id: "tenant-a".into(),
+        }));
+        state.webhook_pusher = Some(Arc::new(AcceptAllPusher { deliver: 1 }));
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/scheduler/webhooks/deploy")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("X-Xiaoguai-Token", "wrong")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn public_webhook_202_when_token_and_route_match() {
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.webhook_token_validator = Some(Arc::new(StaticWebhookTokenValidator {
+            token: "secret".into(),
+            route_id: "deploy".into(),
+            tenant_id: "tenant-a".into(),
+        }));
+        state.webhook_pusher = Some(Arc::new(AcceptAllPusher { deliver: 2 }));
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/scheduler/webhooks/deploy")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("X-Xiaoguai-Token", "secret")
+                    .body(Body::from(r#"{"sha":"abc"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let v: serde_json::Value =
+            serde_json::from_slice(&to_bytes(resp.into_body(), 1024).await.unwrap()).unwrap();
+        assert_eq!(v["delivered"], 2);
+        assert_eq!(v["tenant_id"], "tenant-a");
+    }
+
+    #[tokio::test]
+    async fn public_webhook_404_when_no_jobs_bound() {
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.webhook_token_validator = Some(Arc::new(StaticWebhookTokenValidator {
+            token: "secret".into(),
+            route_id: "nobody".into(),
+            tenant_id: "tenant-a".into(),
+        }));
+        state.webhook_pusher = Some(Arc::new(AcceptAllPusher { deliver: 0 }));
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/scheduler/webhooks/nobody")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("X-Xiaoguai-Token", "secret")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+mod scheduler_token_admin {
+    //! v0.12.x.1 — /v1/admin/scheduler/tokens CRUD.
+    use super::*;
+    use xiaoguai_api::scheduler::InMemoryWebhookTokenAdmin;
+
+    fn state_with_admin(admin: Arc<InMemoryWebhookTokenAdmin>) -> AppState {
+        let mut s = build_state(InMemorySessionRepo::arc(), None, None, None);
+        s.webhook_token_admin = Some(admin);
+        s
+    }
+
+    #[tokio::test]
+    async fn tokens_503_when_unwired() {
+        let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/admin/scheduler/tokens")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn tokens_create_list_revoke_roundtrip() {
+        let admin = Arc::new(InMemoryWebhookTokenAdmin::default());
+        let app = router(state_with_admin(admin.clone()));
+
+        // Create.
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/scheduler/tokens")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"tenant_id":"t","route_id":"deploy"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let row: serde_json::Value =
+            serde_json::from_slice(&to_bytes(resp.into_body(), 1024).await.unwrap()).unwrap();
+        let token = row["token"].as_str().unwrap().to_string();
+        assert_eq!(row["tenant_id"], "t");
+        assert_eq!(row["route_id"], "deploy");
+
+        // List.
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/admin/scheduler/tokens?tenant_id=t")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_slice(&to_bytes(resp.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(rows.len(), 1);
+
+        // Revoke.
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/v1/admin/scheduler/tokens/{token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+        // Revoking again 404s.
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/v1/admin/scheduler/tokens/{token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn tokens_create_rejects_empty_tenant_id() {
+        let admin = Arc::new(InMemoryWebhookTokenAdmin::default());
+        let app = router(state_with_admin(admin));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/scheduler/tokens")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"tenant_id":"","route_id":"r"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+mod scheduler_jobs_reader {
+    //! v0.12.x.1 — /v1/admin/scheduler/jobs GET + fire-now POST.
+    use super::*;
+    use xiaoguai_api::scheduler::{ScheduledJobSummary, StaticScheduledJobsReader};
+
+    fn sample_summary(id: &str) -> ScheduledJobSummary {
+        ScheduledJobSummary {
+            id: id.into(),
+            tenant_id: Some("tenant-a".into()),
+            name: format!("job-{id}"),
+            trigger_summary: "every 60s".into(),
+            enabled: true,
+            last_fire_at: None,
+            next_fire_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn list_jobs_503_when_unwired() {
+        let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/admin/scheduler/jobs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn list_jobs_returns_summaries() {
+        let reader = Arc::new(StaticScheduledJobsReader {
+            jobs: vec![sample_summary("a"), sample_summary("b")],
+            fire_calls: parking_lot::Mutex::new(Vec::new()),
+        });
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.scheduler_jobs_reader = Some(reader);
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/admin/scheduler/jobs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v: Vec<serde_json::Value> =
+            serde_json::from_slice(&to_bytes(resp.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0]["id"], "a");
+    }
+
+    #[tokio::test]
+    async fn fire_now_404_when_unknown_job() {
+        let reader = Arc::new(StaticScheduledJobsReader {
+            jobs: vec![sample_summary("a")],
+            fire_calls: parking_lot::Mutex::new(Vec::new()),
+        });
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.scheduler_jobs_reader = Some(reader);
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/scheduler/jobs/nope/fire-now")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn fire_now_202_when_job_exists() {
+        let reader = Arc::new(StaticScheduledJobsReader {
+            jobs: vec![sample_summary("a")],
+            fire_calls: parking_lot::Mutex::new(Vec::new()),
+        });
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.scheduler_jobs_reader = Some(reader.clone());
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/scheduler/jobs/a/fire-now")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        assert_eq!(reader.fire_calls.lock().as_slice(), &["a".to_string()]);
     }
 }

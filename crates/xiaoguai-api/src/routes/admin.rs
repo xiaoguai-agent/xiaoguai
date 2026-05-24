@@ -24,7 +24,10 @@ use crate::eval::{
     CaseFromSessionRequest, CaseFromSessionResponse, EvalServiceError, EvalSuiteListItem,
     RunEvalRequest,
 };
-use crate::scheduler::{NlJobCompileError, ScheduledJobUpsertError};
+use crate::scheduler::{
+    NlJobCompileError, ScheduledJobUpsertError, ScheduledJobsReadError, WebhookTokenAdminError,
+    WebhookTokenRecord,
+};
 use crate::state::AppState;
 use crate::today::{TodayItem, TodayKind, TodayQuery};
 
@@ -350,6 +353,162 @@ pub async fn scheduler_upsert_job(
         axum::http::StatusCode::CREATED,
         Json(json!({ "id": id.unwrap_or_default() })),
     ))
+}
+
+// ----------------------------------------------------------------------
+// v0.12.x.1 — webhook token admin + Scheduler-pane jobs reader.
+// ----------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct CreateTokenRequest {
+    pub tenant_id: String,
+    pub route_id: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ListTokensQuery {
+    pub tenant_id: Option<String>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TokenResponse {
+    pub token: String,
+    pub tenant_id: String,
+    pub route_id: String,
+    pub created_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
+impl From<WebhookTokenRecord> for TokenResponse {
+    fn from(r: WebhookTokenRecord) -> Self {
+        Self {
+            token: r.token,
+            tenant_id: r.tenant_id,
+            route_id: r.route_id,
+            created_at: r.created_at,
+            last_used_at: r.last_used_at,
+        }
+    }
+}
+
+/// `POST /v1/admin/scheduler/tokens` — mint a new webhook token bound to
+/// `(tenant_id, route_id)`. The token is returned exactly once in the
+/// response body; the operator must capture it immediately.
+pub async fn scheduler_create_token(
+    State(state): State<AppState>,
+    Json(req): Json<CreateTokenRequest>,
+) -> ApiResult<(axum::http::StatusCode, Json<TokenResponse>)> {
+    let admin = state
+        .webhook_token_admin
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("webhook token admin not wired".into()))?;
+    if req.tenant_id.trim().is_empty() {
+        return Err(ApiError::InvalidRequest(
+            "tenant_id must not be empty".into(),
+        ));
+    }
+    if req.route_id.trim().is_empty() {
+        return Err(ApiError::InvalidRequest(
+            "route_id must not be empty".into(),
+        ));
+    }
+    let row = admin
+        .create(req.tenant_id.trim(), req.route_id.trim())
+        .await
+        .map_err(token_admin_err_to_api)?;
+    Ok((axum::http::StatusCode::CREATED, Json(row.into())))
+}
+
+/// `GET /v1/admin/scheduler/tokens?tenant_id=...&limit=...` — list
+/// tokens, optionally scoped to one tenant.
+pub async fn scheduler_list_tokens(
+    State(state): State<AppState>,
+    Query(q): Query<ListTokensQuery>,
+) -> ApiResult<Json<Vec<TokenResponse>>> {
+    let admin = state
+        .webhook_token_admin
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("webhook token admin not wired".into()))?;
+    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let rows = admin
+        .list(q.tenant_id.as_deref(), limit)
+        .await
+        .map_err(token_admin_err_to_api)?;
+    Ok(Json(rows.into_iter().map(Into::into).collect()))
+}
+
+/// `DELETE /v1/admin/scheduler/tokens/:token` — revoke a webhook token.
+pub async fn scheduler_revoke_token(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> ApiResult<axum::http::StatusCode> {
+    let admin = state
+        .webhook_token_admin
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("webhook token admin not wired".into()))?;
+    admin.revoke(&token).await.map_err(token_admin_err_to_api)?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ListScheduledJobsQuery {
+    pub limit: Option<i64>,
+}
+
+/// `GET /v1/admin/scheduler/jobs` — enumerate scheduled jobs for the
+/// admin-ui Scheduler pane's Jobs tab. Returns the narrow
+/// `ScheduledJobSummary` shape; drill-in (full row) is a separate
+/// future endpoint.
+pub async fn scheduler_list_jobs(
+    State(state): State<AppState>,
+    Query(q): Query<ListScheduledJobsQuery>,
+) -> ApiResult<Json<Vec<crate::scheduler::ScheduledJobSummary>>> {
+    let reader = state
+        .scheduler_jobs_reader
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("scheduled jobs reader not wired".into()))?;
+    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let rows = reader.list(limit).await.map_err(jobs_read_err_to_api)?;
+    Ok(Json(rows))
+}
+
+/// `POST /v1/admin/scheduler/jobs/:id/fire-now` — fire one scheduled
+/// job out-of-band (regardless of `next_fire_at`). Returns 202; the
+/// run completes asynchronously and shows up in the next refresh of
+/// the Today pane.
+pub async fn scheduler_fire_now(
+    State(state): State<AppState>,
+    Path(job_id): Path<String>,
+) -> ApiResult<(axum::http::StatusCode, Json<serde_json::Value>)> {
+    let reader = state
+        .scheduler_jobs_reader
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("scheduled jobs reader not wired".into()))?;
+    reader
+        .fire_now(&job_id)
+        .await
+        .map_err(jobs_read_err_to_api)?;
+    Ok((
+        axum::http::StatusCode::ACCEPTED,
+        Json(json!({ "fired": job_id })),
+    ))
+}
+
+fn token_admin_err_to_api(e: WebhookTokenAdminError) -> ApiError {
+    match e {
+        WebhookTokenAdminError::NotFound(_) => ApiError::NotFound,
+        WebhookTokenAdminError::InvalidArgument(msg) => ApiError::InvalidRequest(msg),
+        WebhookTokenAdminError::Backend(_) => ApiError::Internal(anyhow::anyhow!("{e}")),
+    }
+}
+
+fn jobs_read_err_to_api(e: ScheduledJobsReadError) -> ApiError {
+    match e {
+        ScheduledJobsReadError::NotFound(_) => ApiError::NotFound,
+        ScheduledJobsReadError::Backend(_) => ApiError::Internal(anyhow::anyhow!("{e}")),
+    }
 }
 
 fn nl_compile_err_to_api(e: NlJobCompileError) -> ApiError {

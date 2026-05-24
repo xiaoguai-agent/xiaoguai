@@ -18,6 +18,8 @@ use xiaoguai_storage::repositories::RepoError;
 pub enum ApiError {
     #[error("not found")]
     NotFound,
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
     #[error("bad request: {0}")]
     BadRequest(String),
     #[error("invalid request: {0}")]
@@ -48,6 +50,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code, message) = match &self {
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found", self.to_string()),
+            Self::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized", self.to_string()),
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request", self.to_string()),
             Self::InvalidRequest(_) => {
                 (StatusCode::BAD_REQUEST, "invalid_request", self.to_string())
