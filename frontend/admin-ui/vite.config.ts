@@ -10,4 +10,8 @@ export default defineConfig({
       '/healthz': 'http://localhost:8080',
     },
   },
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+  },
 });

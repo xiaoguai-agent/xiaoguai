@@ -57,6 +57,10 @@ pub async fn register(repo: &dyn LlmProviderRepository, args: RegisterArgs) -> R
         api_key_env: args.api_key_env,
         created_at: now,
         updated_at: now,
+        // Cost rates are not supplied via the register CLI; operators set
+        // them by running the migration or via direct SQL UPDATE.
+        cost_per_1k_input_usd: None,
+        cost_per_1k_output_usd: None,
     };
     repo.create(tenant_guc.as_deref(), &prov).await?;
     Ok(prov)

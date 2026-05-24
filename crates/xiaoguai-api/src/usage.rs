@@ -368,4 +368,174 @@ mod tests {
         let back: UsageGroupBy = serde_json::from_str("\"provider\"").unwrap();
         assert_eq!(back, UsageGroupBy::Provider);
     }
+
+    // v1.1.1.1: cost computation tests.
+    //
+    // These drive the StaticUsageReader path (cost_cents is pre-computed
+    // by the caller) rather than the PG bridge (which does it in SQL). The
+    // goal is to assert the aggregation math and the partial-cost sentinel
+    // semantics are correct end-to-end through the reader trait.
+
+    /// Helper: build an entry with explicit token counts and a cost that
+    /// mirrors what the PG bridge would compute for a given rate.
+    ///
+    /// Formula: cost_cents = round((input * rate_in + output * rate_out) / 1000 * 100)
+    fn entry_with_cost(
+        ts: DateTime<Utc>,
+        input: u64,
+        output: u64,
+        cost_usd_per_1k_input: f64,
+        cost_usd_per_1k_output: f64,
+    ) -> StaticUsageEntry {
+        let usd = (input as f64 * cost_usd_per_1k_input + output as f64 * cost_usd_per_1k_output)
+            / 1000.0;
+        let cents = (usd * 100.0).round() as u64;
+        StaticUsageEntry {
+            ts,
+            tenant_id: "ten".into(),
+            provider_id: "openai".into(),
+            model: "gpt-4o".into(),
+            input_tokens: input,
+            output_tokens: output,
+            cost_cents: Some(cents),
+        }
+    }
+
+    #[tokio::test]
+    async fn cost_computation_known_inputs_gpt4o() {
+        // gpt-4o: $2.50/1k input, $10.00/1k output.
+        // 1000 input + 500 output → ($2.50 + $5.00) = $7.50 = 750 cents.
+        let ts = Utc::now();
+        let e = entry_with_cost(ts, 1000, 500, 2.50, 10.00);
+        assert_eq!(e.cost_cents, Some(750));
+
+        let reader = StaticUsageReader::with_entries(vec![e]);
+        let got = reader
+            .aggregate(UsageQuery {
+                tenant_id: None,
+                since: None,
+                until: None,
+                group_by: UsageGroupBy::Provider,
+            })
+            .await
+            .unwrap();
+        assert_eq!(got.rows.len(), 1);
+        assert_eq!(got.rows[0].cost_cents, Some(750));
+        assert_eq!(got.cost_cents, Some(750));
+    }
+
+    #[tokio::test]
+    async fn cost_computation_known_inputs_haiku() {
+        // claude-haiku-4-5: $1.00/1k input, $5.00/1k output.
+        // 500 input + 200 output → ($0.50 + $1.00) = $1.50 = 150 cents.
+        let ts = Utc::now();
+        let e = entry_with_cost(ts, 500, 200, 1.00, 5.00);
+        assert_eq!(e.cost_cents, Some(150));
+
+        let reader = StaticUsageReader::with_entries(vec![e]);
+        let got = reader
+            .aggregate(UsageQuery {
+                tenant_id: None,
+                since: None,
+                until: None,
+                group_by: UsageGroupBy::Day,
+            })
+            .await
+            .unwrap();
+        assert_eq!(got.rows.len(), 1);
+        assert_eq!(got.rows[0].cost_cents, Some(150));
+        assert_eq!(got.cost_cents, Some(150));
+    }
+
+    #[tokio::test]
+    async fn cost_computation_ollama_zero_cost() {
+        // ollama-local: $0.00/$0.00 — cost_cents should be 0, not None.
+        let ts = Utc::now();
+        let e = StaticUsageEntry {
+            ts,
+            tenant_id: "ten".into(),
+            provider_id: "ollama-local".into(),
+            model: "llama3".into(),
+            input_tokens: 10_000,
+            output_tokens: 5_000,
+            cost_cents: Some(0),
+        };
+        let reader = StaticUsageReader::with_entries(vec![e]);
+        let got = reader
+            .aggregate(UsageQuery {
+                tenant_id: None,
+                since: None,
+                until: None,
+                group_by: UsageGroupBy::Provider,
+            })
+            .await
+            .unwrap();
+        assert_eq!(got.rows[0].cost_cents, Some(0));
+        assert_eq!(got.cost_cents, Some(0));
+    }
+
+    #[tokio::test]
+    async fn cost_null_for_unconfigured_provider() {
+        // No cost_cents on the entry → should propagate as None up the chain.
+        let ts = Utc::now();
+        let e = StaticUsageEntry {
+            ts,
+            tenant_id: "ten".into(),
+            provider_id: "mock-provider".into(),
+            model: "mock-model".into(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_cents: None, // mock/test provider has no rates configured
+        };
+        let reader = StaticUsageReader::with_entries(vec![e]);
+        let got = reader
+            .aggregate(UsageQuery {
+                tenant_id: None,
+                since: None,
+                until: None,
+                group_by: UsageGroupBy::Provider,
+            })
+            .await
+            .unwrap();
+        assert!(got.rows[0].cost_cents.is_none());
+        assert!(got.cost_cents.is_none());
+    }
+
+    #[tokio::test]
+    async fn cost_multi_bucket_all_known() {
+        // Two providers, both with rates — report total should be the sum.
+        // gpt-4o: 1000 in / 0 out @ 2.50/10.00 = $2.50 = 250 cents.
+        // haiku: 0 in / 1000 out @ 1.00/5.00 = $5.00 = 500 cents.
+        // Total = 750 cents.
+        let ts = Utc::now();
+        let e1 = StaticUsageEntry {
+            ts,
+            tenant_id: "ten".into(),
+            provider_id: "openai".into(),
+            model: "gpt-4o".into(),
+            input_tokens: 1000,
+            output_tokens: 0,
+            cost_cents: Some(250),
+        };
+        let e2 = StaticUsageEntry {
+            ts,
+            tenant_id: "ten".into(),
+            provider_id: "anthropic".into(),
+            model: "claude-haiku-4-5".into(),
+            input_tokens: 0,
+            output_tokens: 1000,
+            cost_cents: Some(500),
+        };
+        let reader = StaticUsageReader::with_entries(vec![e1, e2]);
+        let got = reader
+            .aggregate(UsageQuery {
+                tenant_id: None,
+                since: None,
+                until: None,
+                group_by: UsageGroupBy::Provider,
+            })
+            .await
+            .unwrap();
+        assert_eq!(got.cost_cents, Some(750));
+    }
 }
