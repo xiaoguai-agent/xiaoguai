@@ -1,0 +1,18 @@
+# Python build / cache artefacts
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Distribution / wheel build outputs
+build/
+dist/
+wheelhouse/
+*.egg-info/
+*.egg
+
+# CI-staged native binaries — never committed; populated per-job
+# by .github/workflows/pip-wheel.yml.
+src/xiaoguai/_binary/
