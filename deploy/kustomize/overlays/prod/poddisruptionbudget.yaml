@@ -1,0 +1,15 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: xiaoguai
+  labels:
+    app.kubernetes.io/name: xiaoguai
+    app.kubernetes.io/component: core
+spec:
+  # At least 2 pods must stay up during voluntary disruptions (node drains,
+  # rolling upgrades). With minReplicas=3 this allows draining one node at
+  # a time safely.
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: xiaoguai

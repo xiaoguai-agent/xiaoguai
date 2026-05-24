@@ -1,0 +1,42 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: xiaoguai
+  labels:
+    app.kubernetes.io/name: xiaoguai
+    app.kubernetes.io/component: core
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: xiaoguai
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from ingress controller namespace only
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # Allow DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow outbound to PostgreSQL
+    - ports:
+        - protocol: TCP
+          port: 5432
+    # Allow outbound to Valkey/Redis
+    - ports:
+        - protocol: TCP
+          port: 6379
+    # Allow HTTPS (JWKS endpoint, LLM APIs)
+    - ports:
+        - protocol: TCP
+          port: 443

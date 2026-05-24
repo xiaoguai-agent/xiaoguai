@@ -1,0 +1,92 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: xiaoguai-prod
+
+resources:
+  - ../../base
+  - hpa.yaml
+  - networkpolicy.yaml
+  - poddisruptionbudget.yaml
+  - priorityclass.yaml
+
+images:
+  - name: ghcr.io/xiaoguai-agent/xiaoguai
+    # Pin to a specific digest or semver tag in production.
+    # Use `newDigest` for immutable pinning, e.g.:
+    #   newDigest: sha256:abc123...
+    newTag: stable
+
+patches:
+  # 3 replicas at rest; HPA scales to 10
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: xiaoguai
+      spec:
+        replicas: 3
+        template:
+          metadata:
+            annotations:
+              # Restart rollout when configmap changes (via kustomize hash suffix)
+              cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
+          spec:
+            # Spread pods across nodes and zones
+            topologySpreadConstraints:
+              - maxSkew: 1
+                topologyKey: kubernetes.io/hostname
+                whenUnsatisfiable: DoNotSchedule
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: xiaoguai
+              - maxSkew: 1
+                topologyKey: topology.kubernetes.io/zone
+                whenUnsatisfiable: ScheduleAnyway
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: xiaoguai
+            affinity:
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/name: xiaoguai
+                    topologyKey: kubernetes.io/hostname
+            priorityClassName: xiaoguai-high
+            containers:
+              - name: xiaoguai-core
+                resources:
+                  requests:
+                    cpu: 200m
+                    memory: 256Mi
+                  limits:
+                    cpu: "2"
+                    memory: 2Gi
+
+  # Production ingress with TLS
+  - patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: xiaoguai
+        annotations:
+          nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+          nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+          cert-manager.io/cluster-issuer: letsencrypt-prod
+      spec:
+        tls:
+          - hosts:
+              - xiaoguai.example.com
+            secretName: xiaoguai-tls
+        rules:
+          - host: xiaoguai.example.com
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: xiaoguai
+                      port:
+                        number: 8080

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: xiaoguai-config
+  labels:
+    app.kubernetes.io/name: xiaoguai
+    app.kubernetes.io/component: core
+data:
+  # Non-sensitive runtime configuration.
+  # Sensitive values (DB URL, secrets) live in Kubernetes Secrets — see secret.yaml.
+  XIAOGUAI_SERVER__HOST: "0.0.0.0"
+  XIAOGUAI_SERVER__PORT: "8080"
