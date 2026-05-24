@@ -36,6 +36,8 @@ fn sample_provider(name: &str, tenant_id: Option<TenantId>) -> LlmProvider {
         api_key_env: Some("DEEPSEEK_API_KEY".into()),
         created_at: now,
         updated_at: now,
+        cost_per_1k_input_usd: Some(0.27),
+        cost_per_1k_output_usd: Some(1.10),
     }
 }
 

@@ -57,6 +57,10 @@ struct LlmProviderRow {
     api_key_env: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    /// v1.1.1.1 — may be NULL if the column was added after the row was
+    /// inserted (pre-migration rows) or for mock/test providers.
+    cost_per_1k_input_usd: Option<f64>,
+    cost_per_1k_output_usd: Option<f64>,
 }
 
 impl LlmProviderRow {
@@ -78,12 +82,15 @@ impl LlmProviderRow {
             api_key_env: self.api_key_env,
             created_at: self.created_at,
             updated_at: self.updated_at,
+            cost_per_1k_input_usd: self.cost_per_1k_input_usd,
+            cost_per_1k_output_usd: self.cost_per_1k_output_usd,
         })
     }
 }
 
 const SELECT_COLUMNS: &str = "id, tenant_id, name, kind, endpoint, models, default_for_models, \
-     fallback_order, api_key_env, created_at, updated_at";
+     fallback_order, api_key_env, created_at, updated_at, \
+     cost_per_1k_input_usd, cost_per_1k_output_usd";
 
 #[async_trait]
 impl LlmProviderRepository for PgLlmProviderRepository {
@@ -94,8 +101,9 @@ impl LlmProviderRepository for PgLlmProviderRepository {
         sqlx::query(
             "INSERT INTO llm_providers \
              (id, tenant_id, name, kind, endpoint, models, default_for_models, \
-              fallback_order, api_key_env, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+              fallback_order, api_key_env, created_at, updated_at, \
+              cost_per_1k_input_usd, cost_per_1k_output_usd) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
         .bind(prov.id.as_str())
         .bind(prov.tenant_id.as_ref().map(AsRef::as_ref))
@@ -108,6 +116,8 @@ impl LlmProviderRepository for PgLlmProviderRepository {
         .bind(prov.api_key_env.as_deref())
         .bind(prov.created_at)
         .bind(prov.updated_at)
+        .bind(prov.cost_per_1k_input_usd)
+        .bind(prov.cost_per_1k_output_usd)
         .execute(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;

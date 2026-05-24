@@ -191,6 +191,8 @@ mod tests {
             api_key_env: api_key_env.map(str::to_string),
             created_at: now,
             updated_at: now,
+            cost_per_1k_input_usd: None,
+            cost_per_1k_output_usd: None,
         }
     }
 
