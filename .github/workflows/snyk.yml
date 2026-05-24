@@ -10,9 +10,13 @@ name: Snyk security
 # - medium / low → warn only (visible in Snyk UI, doesn't fail CI)
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      # TEMP: fire on feat/ci-dryrun for dry-run validation; remove before merge.
+      - 'feat/ci-dryrun'
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read

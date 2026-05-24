@@ -10,6 +10,10 @@ on:
   push:
     tags:
       - 'v*'
+    # TEMP: fire on feat/ci-dryrun for dry-run validation; remove before merge.
+    branches:
+      - 'feat/ci-dryrun'
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -41,11 +45,15 @@ jobs:
         run: cargo install cross --locked --version 0.2.5
 
       - name: Build tarball
-        env:
-          VERSION: ${{ github.ref_name }}
         run: |
-          # Strip the leading `v` — VERSION env var stores the bare semver.
-          export VERSION="${VERSION#v}"
+          # Derive VERSION: strip leading 'v' from a tag ref, or use a
+          # dev sentinel for branch/manual runs (no real semver on the wire).
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            export VERSION="${{ github.ref_name }}"
+            export VERSION="${VERSION#v}"
+          else
+            export VERSION="0.0.0+ci.${GITHUB_SHA::7}"
+          fi
           # Single-target invocation: replace the matrix in the script with
           # the current matrix value.
           export TARGETS="${{ matrix.target }}"
@@ -61,9 +69,11 @@ jobs:
 
   # Aggregate per-target tarballs, write a combined SHA256SUMS, and attach
   # everything to the GitHub Release.
+  # Skipped on branch/manual runs — no GitHub Release exists to attach to.
   publish:
     name: Publish to GitHub Release
     needs: build
+    if: ${{ github.ref_type == 'tag' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
