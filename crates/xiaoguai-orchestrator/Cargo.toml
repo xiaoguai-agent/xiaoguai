@@ -22,5 +22,14 @@ chrono = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
+# HR Onboarding pack integration tests.
+# The test file lives in packs/hr-onboarding/tests/ alongside the YAML
+# definitions it exercises.  A [[test]] stanza is used so the test is only
+# compiled / run when explicitly requested (or via --workspace), keeping the
+# orchestrator crate's own fast unit-test cycle clean.
+[[test]]
+name = "hr_onboarding_tests"
+path = "../../packs/hr-onboarding/tests/hr_onboarding_tests.rs"
+
 [lints]
 workspace = true

@@ -1,0 +1,63 @@
+# packs/hr-onboarding/agents/meeting-scheduler.yaml
+#
+# SubTask B — Meeting Scheduler
+#
+# Schedules four first-week meetings for the new hire.
+#
+# MOCK: writes rows to `scheduled_meetings` table.
+# REAL (deferred): calls Google Calendar MCP tool.
+
+name: hr-meeting-scheduler
+kind: worker
+
+description: >
+  Schedules four standard first-week meetings for a new hire:
+    1. Day-1 orientation (Day 1, 09:00, 60 min)
+    2. Manager 1:1 (Day 1, 14:00, 30 min)
+    3. Team introduction (Day 2, 10:00, 60 min)
+    4. IT setup (Day 1, 11:00, 30 min)
+  On success returns a summary of scheduled meetings. On failure (e.g.
+  calendar conflict) the Supervisor records the failure and continues —
+  remaining subtasks (welcome_messaging, buddy_assignment) are not blocked.
+
+real_integrations: false
+
+# Mock: write rows to scheduled_meetings table
+mock_meetings:
+  - title: "Day-1 Orientation"
+    attendees: ["$email", "hr@company.com"]
+    offset_days: 0
+    hour: 9
+    duration_min: 60
+
+  - title: "Manager 1:1"
+    attendees: ["$email", "$manager_email"]
+    offset_days: 0
+    hour: 14
+    duration_min: 30
+
+  - title: "Team Introduction"
+    attendees: ["$email", "team@company.com"]
+    offset_days: 1
+    hour: 10
+    duration_min: 60
+
+  - title: "IT Setup"
+    attendees: ["$email", "it@company.com"]
+    offset_days: 0
+    hour: 11
+    duration_min: 30
+
+# ── Real integration hook (deferred) ─────────────────────────────────────────
+#
+# real_integrations: true
+# integrations:
+#   google_calendar:
+#     mcp_tool: google_calendar_create_event
+#     config:
+#       oauth_token_path: "${GOOGLE_OAUTH_TOKEN_PATH}"
+#       calendar_id: "primary"
+
+on_failure:
+  audit: true
+  propagate: false    # welcome_messaging and buddy_assignment still run
