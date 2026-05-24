@@ -5109,6 +5109,7 @@ dependencies = [
  "futures",
  "hex",
  "parking_lot",
+ "reqwest 0.12.28",
  "serde_json",
  "sqlx",
  "tempfile",

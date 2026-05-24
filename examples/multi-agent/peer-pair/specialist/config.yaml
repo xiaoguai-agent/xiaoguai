@@ -1,0 +1,71 @@
+# Specialist peer — "summarize_webpage" agent.
+#
+# Run with:
+#   XIAOGUAI_MCP__PUBLISH=true \
+#   XIAOGUAI_AUDIT_SIGNING_KEY=dev-only-rotate-me \
+#   xiaoguai-core --config examples/multi-agent/peer-pair/specialist/config.yaml serve
+#
+# This instance publishes /v1/mcp/serve on port 7611. Its Toolbox is
+# intentionally narrow — see notes at the bottom for the one-tool
+# registration the operator wires in.
+
+server:
+  host: "127.0.0.1"
+  port: 7611
+
+database:
+  # The peer pattern doesn't impose new schema; reuse the standard
+  # xiaoguai migrations. Each peer should have its own database (or
+  # at least its own RLS tenant) so audit chains stay separate.
+  url: "postgres://xiaoguai:xiaoguai@127.0.0.1:5432/xiaoguai_specialist"
+  max_connections: 8
+
+cache:
+  url: "redis://127.0.0.1:6379/2"
+  key_prefix: "xiaoguai_specialist:"
+
+auth:
+  # Dev mode for the example. Production peers should require JWT
+  # exactly like the main API; the published MCP endpoint sits OUTSIDE
+  # the v1 auth stack by design (see crates/xiaoguai-api/src/routes/mod.rs)
+  # so an MCP-layer token + HttpClientConfig::with_auth(...) on the
+  # front door is the recommended hop auth.
+  issuer: "https://idp.example.com"
+  audience: "xiaoguai-specialist"
+  jwks_url: "https://idp.example.com/.well-known/jwks.json"
+  required: false
+
+audit:
+  hmac_key: "dev-only-do-not-use-in-prod"
+  signing_key_env: "XIAOGUAI_AUDIT_SIGNING_KEY"
+
+scheduler:
+  # Specialists are usually request-driven; no need for the scheduler.
+  enabled: false
+
+im:
+  use_in_process_history: true
+  max_messages_per_conversation: 50
+
+eval:
+  suites_dir: "./eval-suites"
+  max_iterations: 8
+
+# How the operator narrows the Toolbox to one tool:
+#
+# 1. Register an LLM provider whose system prompt is "You are a
+#    webpage summariser. Reply with 3 bullets." This becomes the
+#    specialist's default model.
+#
+# 2. Register one MCP server (via the marketplace pane or directly in
+#    the mcp_servers table) whose tool is `summarize_webpage`. In the
+#    runnable demo, the simplest path is to wire a stdio MCP server
+#    that wraps `curl + chosen LLM`; in production you'd point this
+#    at whatever capability the specialist is meant to host.
+#
+# 3. Flip XIAOGUAI_MCP__PUBLISH=true. The Toolbox — now containing
+#    just `summarize_webpage` — is exposed at /v1/mcp/serve.
+#
+# That's the entirety of the "specialist". It's still a normal
+# xiaoguai-core instance; the only thing that makes it a specialist
+# is the deliberately narrow Toolbox + tuned prompt.
