@@ -45,7 +45,7 @@ pub async fn scheduler_webhook_public(
         .unwrap_or("")
         .trim();
     if token.is_empty() {
-        return Err(ApiError::Unauthorized(format!(
+        return Err(ApiError::missing_webhook_token(format!(
             "{TOKEN_HEADER} header missing or empty"
         )));
     }
@@ -53,7 +53,7 @@ pub async fn scheduler_webhook_public(
         .validate(token, &route_id)
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("token validate: {e}")))?
-        .ok_or_else(|| ApiError::Unauthorized("invalid webhook token for this route".into()))?;
+        .ok_or_else(|| ApiError::invalid_webhook_token("invalid webhook token for this route"))?;
 
     let delivered = pusher
         .push(&route_id, body)
