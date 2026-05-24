@@ -26,24 +26,26 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use xiaoguai_api::usage::{
     UsageError, UsageGroupBy, UsageQuery, UsageReader, UsageReport, UsageRow,
 };
-use xiaoguai_storage::repositories::begin_tenant_tx;
+use xiaoguai_storage::{repositories::begin_tenant_tx, ReadWritePool};
 
 pub struct PgUsageReader {
-    pool: PgPool,
+    /// Read/write pool: cross-tenant admin reads routed to replica;
+    /// tenant-scoped reads run inside a transaction on the primary.
+    pool: ReadWritePool,
 }
 
 impl PgUsageReader {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: ReadWritePool) -> Self {
         Self { pool }
     }
 
     #[must_use]
-    pub fn arc(pool: PgPool) -> Arc<dyn UsageReader> {
+    pub fn arc(pool: ReadWritePool) -> Arc<dyn UsageReader> {
         Arc::new(Self::new(pool))
     }
 }
@@ -79,7 +81,9 @@ impl UsageReader for PgUsageReader {
         );
 
         let rows = if let Some(t) = &query.tenant_id {
-            let mut tx = begin_tenant_tx(&self.pool, Some(t))
+            // Tenant-scoped query: runs inside an RLS transaction on the
+            // primary (writes to the same Pg session that SET LOCAL app.tenant).
+            let mut tx = begin_tenant_tx(self.pool.writer(), Some(t))
                 .await
                 .map_err(|e| UsageError::Backend(format!("begin tenant tx: {e}")))?;
             let rows = sqlx::query(&sql)
@@ -92,11 +96,12 @@ impl UsageReader for PgUsageReader {
             tx.commit().await.map_err(map_err)?;
             rows
         } else {
+            // Cross-tenant admin view: pure read, route to replica.
             sqlx::query(&sql)
                 .bind::<Option<String>>(None)
                 .bind(query.since)
                 .bind(query.until)
-                .fetch_all(&self.pool)
+                .fetch_all(self.pool.reader())
                 .await
                 .map_err(map_err)?
         };

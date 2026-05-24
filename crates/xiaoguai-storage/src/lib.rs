@@ -11,6 +11,8 @@
 pub mod cache;
 pub mod db;
 pub mod migrations;
+pub mod read_write_pool;
 pub mod repositories;
 
 pub use db::{connect, migrate};
+pub use read_write_pool::ReadWritePool;
