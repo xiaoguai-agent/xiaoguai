@@ -7,7 +7,7 @@
 # Brings up:
 #   - postgres 16     (state for sessions / messages / mcp / providers / audit)
 #   - valkey 8        (cache + idempotency keys)
-#   - xiaoguai-core   (HTTP API on :8080)
+#   - xiaoguai-core   (HTTP API on :7600)
 #
 # Optional add-ons (not enabled by default):
 #   - ollama          uncomment the ollama service to run a local LLM
@@ -53,13 +53,13 @@ services:
         condition: service_healthy
     environment:
       XIAOGUAI_SERVER__HOST: 0.0.0.0
-      XIAOGUAI_SERVER__PORT: "8080"
+      XIAOGUAI_SERVER__PORT: "7600"
       XIAOGUAI_DATABASE__URL: postgres://xiaoguai:xiaoguai@postgres:5432/xiaoguai
       XIAOGUAI_CACHE__URL: redis://valkey:6379
       # v0.6 ships MockBackend by default; v0.6.1 will wire LlmRouter.
       RUST_LOG: info,sqlx=warn
     ports:
-      - "8080:8080"
+      - "7600:7600"
 
   # Uncomment to add a local Ollama instance to the stack. Pull a model
   # first: `docker compose exec ollama ollama pull qwen2.5-coder`.
