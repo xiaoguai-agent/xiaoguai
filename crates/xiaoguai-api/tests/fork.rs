@@ -95,6 +95,10 @@ fn build_state(forker: Option<Arc<dyn SessionForker>>) -> (AppState, Arc<InMemor
         nl_job_compiler: None,
         job_upserter: None,
         session_forker: forker,
+        usage_reader: None,
+        webhook_token_validator: None,
+        webhook_token_admin: None,
+        scheduler_jobs_reader: None,
     };
     (state, sessions)
 }

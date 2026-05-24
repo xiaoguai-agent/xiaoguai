@@ -47,6 +47,10 @@ fn build_state(usage_reader: Option<Arc<dyn UsageReader>>) -> AppState {
         nl_job_compiler: None,
         job_upserter: None,
         usage_reader,
+        session_forker: None,
+        webhook_token_validator: None,
+        webhook_token_admin: None,
+        scheduler_jobs_reader: None,
     }
 }
 
