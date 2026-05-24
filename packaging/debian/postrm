@@ -1,0 +1,39 @@
+#!/bin/sh
+# Debian postrm — run after package files are removed.
+# Disables the systemd unit on full removal; keeps config + state on purge
+# only if the admin explicitly runs `dpkg --purge`.
+set -e
+
+UNIT="xiaoguai-core.service"
+
+case "$1" in
+    remove)
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
+            systemctl disable "$UNIT" || true
+            systemctl daemon-reload   || true
+        fi
+        ;;
+
+    purge)
+        # Full cleanup: disable unit, remove runtime dirs and system user.
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
+            systemctl disable "$UNIT" || true
+            systemctl daemon-reload   || true
+        fi
+        rm -rf /var/lib/xiaoguai /var/log/xiaoguai || true
+        # Remove the system user if it was created by postinst.
+        if id -u xiaoguai >/dev/null 2>&1; then
+            deluser --quiet --system xiaoguai || true
+        fi
+        ;;
+
+    upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+
+    *)
+        echo "postrm called with unknown argument: '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

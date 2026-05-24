@@ -1,0 +1,50 @@
+#!/bin/sh
+# Debian postinst — run after package files are installed.
+# Equivalent to dh_installsystemd behaviour for xiaoguai-core.service.
+set -e
+
+UNIT="xiaoguai-core.service"
+CONFIG="/etc/xiaoguai/config.yaml"
+EXAMPLE="/etc/xiaoguai/config.yaml.example"
+
+case "$1" in
+    configure)
+        # Create system user if it does not already exist.
+        if ! id -u xiaoguai >/dev/null 2>&1; then
+            adduser --system --group \
+                    --home /var/lib/xiaoguai \
+                    --no-create-home \
+                    --shell /usr/sbin/nologin \
+                    xiaoguai
+        fi
+
+        # Ensure runtime / log directories exist with correct ownership.
+        install -d -o xiaoguai -g xiaoguai -m 0750 /var/lib/xiaoguai
+        install -d -o xiaoguai -g xiaoguai -m 0750 /var/log/xiaoguai
+
+        # Seed config from the example if no real config is present yet.
+        if [ ! -f "$CONFIG" ] && [ -f "$EXAMPLE" ]; then
+            cp "$EXAMPLE" "$CONFIG"
+            chown root:xiaoguai "$CONFIG"
+            chmod 0640 "$CONFIG"
+        fi
+
+        # Enable and (re)start the unit. systemctl is a no-op inside
+        # containers without a live init; the || true makes that safe.
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
+            systemctl daemon-reload       || true
+            systemctl enable "$UNIT"      || true
+            systemctl restart "$UNIT"     || true
+        fi
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument: '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0
