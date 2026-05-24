@@ -1,0 +1,93 @@
+# Architecture Overview
+
+Xiaoguai is built as a Rust workspace of eighteen crates across three layers:
+**substrate** (pure data + policy), **domain** (agent, MCP, RAG, scheduler, eval),
+and **edges** (REST API, IM gateway, CLI, production binary).
+
+## Layer diagram
+
+```
+edges      ┌──────────────┬──────────────┬──────────────┬──────────────┐
+           │ xiaoguai-api │ xiaoguai-im- │ xiaoguai-cli │ xiaoguai-    │
+           │ axum REST +  │ gateway      │ chat / eval  │ core         │
+           │ SSE, 15+ /v1 │ + im-feishu  │ provider /   │ production   │
+           │ endpoints    │ (+dingtalk / │ mcp / remote │ binary;      │
+           │              │  wecom)      │              │ wires all    │
+           └──────┬───────┴──────┬───────┴──────┬───────┴──────┬───────┘
+                  │              │              │              │
+domain     ┌──────┴──────────────┴──────────────┴──────────────┴───────┐
+           │  xiaoguai-llm     LlmBackend + Ollama / OpenAI-compat /    │
+           │                   Mock + LlmRouter + circuit breakers      │
+           │  xiaoguai-mcp     stdio / SSE / streamable-HTTP clients +  │
+           │                   McpSupervisor (live reload from DB)      │
+           │  xiaoguai-agent   Toolbox + ReactAgent::run_stream +       │
+           │                   AgentEvent + sliding-window history      │
+           │  xiaoguai-rag     R2R HTTP + in-mem fallback + RagMcp-     │
+           │                   Adapter + reindex_path                   │
+           │  xiaoguai-scheduler  Trigger × RetryPolicy × JobRun +     │
+           │                   FileWatch + Webhook + ProactiveChecker + │
+           │                   BudgetLedger + 4 PushSinks + Pg repos    │
+           │  xiaoguai-runtime run_to_completion / run_streamed /       │
+           │                   run_to_sink — shared agent loop          │
+           │  xiaoguai-eval    regression + capability suites +         │
+           │                   5 graders + EvalRunner + CLI             │
+           └──────┬─────────────────────────────────────────────────────┘
+                  │
+substrate  ┌──────┴─────────────────────────────────────────────────────┐
+           │  xiaoguai-types   canonical types (ContentBlock, AgentEvent,│
+           │                   Citation, ToolCall, …)                   │
+           │  xiaoguai-audit   append-only HMAC-chained AuditLog trait  │
+           │  xiaoguai-policy  Casbin RBAC + OIDC JWT validation        │
+           │  xiaoguai-storage PG migrations (sqlx) + Valkey client     │
+           └─────────────────────────────────────────────────────────────┘
+```
+
+## Key design decisions
+
+### Audit-first
+
+Every operation — chat turn, tool call, scheduled job, IM message — writes
+an HMAC-chained audit row before the response is sent. The chain is
+verifiable offline: `xiaoguai admin audit verify --tenant <id>`.
+
+### MCP two-way
+
+Xiaoguai is simultaneously an MCP **consumer** (connecting to external MCP servers
+per tenant via `McpSupervisor`) and an MCP **publisher** (exposing its own
+`Toolbox` at `GET /v1/mcp/serve`). External agents and peer xiaoguai instances
+both connect over Streamable-HTTP.
+
+### ReAct loop, not workflow editor
+
+The agent loop is a pure ReAct loop: observe → reason → act, repeated until
+the model produces a final answer or the budget is exhausted. There is no
+drag-and-drop workflow editor. Complexity lives in composing MCP tools, not
+in platform-specific pipeline DSLs.
+
+### Local-LLM default
+
+`LlmRouter` selects among registered providers by model name. The default
+compose stack ships with `MockBackend` so the platform runs without any
+external LLM. Connecting Ollama or any OpenAI-compatible endpoint requires
+one `xiaoguai provider register` command.
+
+## Storage
+
+| Component | Role |
+|-----------|------|
+| **Postgres 16** | Sessions, messages, MCP registry, LLM providers, scheduled jobs, audit log, tenant RBAC |
+| **Valkey 8** | Cache, idempotency keys, per-user rate-limiting counters |
+
+## Delivery paths (v1.0 + v1.1)
+
+| Path | Command |
+|------|---------|
+| docker-compose | `docker compose -f deploy/docker-compose.yml up` |
+| Helm chart | `helm install xiaoguai deploy/helm/xiaoguai/` |
+| Bare-metal tarball | `curl … | tar xz && ./install.sh` |
+| pip wheel | `pip install xiaoguai && xiaoguai serve` |
+
+## Further reading
+
+- [Multi-Agent Peer Topology](architecture/multi-agent.md) — how peer MCP links compose xiaoguai instances
+- [Crate Layout](architecture/crates.md) — full workspace inventory

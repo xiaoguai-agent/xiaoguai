@@ -1,0 +1,58 @@
+# Roadmap
+
+## v1.0 — shipped
+
+Everything needed for production single-node deployments:
+
+- Rust workspace (18 crates, 530 tests)
+- ReAct agent loop with MCP two-way (consume + publish)
+- Feishu IM adapter
+- OIDC RS256/ES256 JWT + Casbin RBAC + Postgres RLS
+- HMAC-chained audit log
+- Four delivery paths: docker-compose, Helm, bare-metal tarball, pip wheel
+- Regression eval framework (5 graders)
+
+## v1.1 — shipped
+
+Incremental shipping-readiness and product features:
+
+| Tag | Feature |
+|-----|---------|
+| v1.1.1 | `/v1/usage` endpoint + Usage admin pane + Today 24h summary |
+| v1.1.2 | Conversation fork (`POST /v1/sessions/:id/fork` + Branch button) |
+| v1.1.3 | DingTalk + WeCom IM adapters (+37 tests) |
+| v1.1.4 | HA scaffold — PG logical replication + Valkey Cluster + nginx |
+| v1.1.5a | Multi-agent peer MVP (MCP peer links, integration test) |
+| v1.1.5b | Supervisor plan doc |
+| v1.1.6 | Bare-metal tarball + hardened systemd unit |
+| v1.1.7 | pip wheel + cibuildwheel matrix |
+| v1.1.8 | CI security — cargo-deny + cargo-audit cron + Snyk |
+| v0.12.x.1 | Per-tenant webhook tokens + CompositeExecutor + Scheduler admin pane |
+
+## v1.1.x follow-ups (deferred, tracked)
+
+- Cost columns on `llm_providers` (unblocks Usage pane cost display)
+- WeCom `EncodingAESKey` encrypted payload
+- DingTalk Stream API long-poll client
+- Replica-aware read pool routing (v1.1.4.1)
+- Valkey `ClusterClient` migration (v1.1.4.x)
+- cargo-vet bootstrap to blocking (v1.1.8.1)
+- Dependabot auto-merge gates (v1.1.8.2)
+
+## v1.2 — planned (wait for first user feedback)
+
+- Supervisor / orchestrator crate (`xiaoguai-orchestrator`)
+- PyO3 native Python bindings
+- Real cargo-vet supply chain attestation (blocking gate)
+- Multi-region deployment support
+- rustdoc CI artifact alongside this handbook
+- Public-cloud LLM providers (Anthropic, Gemini, 通义, DeepSeek, 智谱)
+
+## Stability policy
+
+- **Patch** (x.y.Z) — bug fixes, documentation, CI
+- **Minor** (x.Y.0) — new features, backwards-compatible API additions
+- **Major** (X.0.0) — breaking API changes (none planned before v2.0)
+
+The REST API at `/v1/**` is stable as of v1.0. The internal crate APIs (`xiaoguai-*`) 
+are semver-exempt until v2.0.

@@ -1,0 +1,44 @@
+[book]
+title = "Xiaoguai Handbook"
+authors = ["Xiaoguai Contributors"]
+description = "Documentation for the Xiaoguai (小怪) AI agent platform"
+language = "en"
+multilingual = false
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/xiaoguai-agent/xiaoguai"
+edit-url-template = "https://github.com/xiaoguai-agent/xiaoguai/edit/main/docs/book/src/{path}"
+site-url = "/xiaoguai/"
+no-section-label = false
+
+[output.html.playground]
+editable = false
+
+[output.html.fold]
+enable = true
+level = 1
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[preprocessor.links]
+
+# mdbook-linkcheck: fail build on broken links
+# Install: cargo install mdbook-linkcheck
+# Disabled by default so local builds without linkcheck still work.
+# Enabled in CI via the MDBOOK_LINKCHECK env var or by installing the binary.
+# [preprocessor.linkcheck]
+
+[output.html.mathjax]
+support = true
+
+[output.linkcheck]
+# Uncomment to enable link checking as an output (alternative to preprocessor)
+# warning-policy = "error"
