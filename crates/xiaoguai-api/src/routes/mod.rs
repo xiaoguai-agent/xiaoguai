@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod mcp;
 pub mod sessions;
+pub mod usage;
 
 use axum::routing::{get, post};
 use axum::Router;
@@ -66,9 +67,12 @@ pub fn router(state: AppState) -> Router {
             "/v1/admin/scheduler/jobs",
             post(admin::scheduler_upsert_job),
         )
-        // v1.1.2: conversation fork. Mounted last so the route table
-        // stays append-only at the v1 boundary.
-        .route("/v1/sessions/:id/fork", post(sessions::fork_session));
+        // v1.1.2: conversation fork.
+        .route("/v1/sessions/:id/fork", post(sessions::fork_session))
+        // v1.1.1 — token-usage aggregation. End of the v1 chain by
+        // convention (3-way coordination wave: B5 / C2 / C3 each append
+        // their own routes here without conflicting on order).
+        .route("/v1/usage", get(usage::list_usage));
 
     // Layer order (inner → outer, since `route_layer` adds outward):
     //   handler → rate_limit → rbac → require_bearer

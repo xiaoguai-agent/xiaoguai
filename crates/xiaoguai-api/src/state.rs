@@ -28,6 +28,7 @@ use crate::eval::EvalService;
 use crate::scheduler::{NlJobCompiler, ScheduledJobUpserter, WebhookPusher};
 use crate::sessions_ext::SessionForker;
 use crate::today::TodayReader;
+use crate::usage::UsageReader;
 
 /// Registry of cancellation tokens keyed by `session_id`. A single token per
 /// session is enough — the API contract serialises message turns within a
@@ -145,6 +146,10 @@ pub struct AppState {
     /// 503; production wires `PgSessionForker` in
     /// `xiaoguai-core::sessions_bridge`.
     pub session_forker: Option<Arc<dyn SessionForker>>,
+    /// v1.1.1: token-usage aggregator backing `GET /v1/usage`. `None`
+    /// makes the endpoint return 503; production wires a
+    /// `PgUsageReader` in `xiaoguai-core/src/usage_bridge.rs`.
+    pub usage_reader: Option<Arc<dyn UsageReader>>,
 }
 
 impl std::fmt::Debug for AppState {

@@ -23,6 +23,7 @@ pub mod sessions_ext;
 pub mod sse;
 pub mod state;
 pub mod today;
+pub mod usage;
 
 pub use audit::{
     AuditEntryView, AuditError, AuditReader, AuditVerifier, StaticAuditReader, StaticAuditVerifier,
@@ -48,3 +49,7 @@ pub use serve::serve_with_state;
 pub use sessions_ext::{SessionForkError, SessionForker};
 pub use state::{AppState, CancelRegistry};
 pub use today::{StaticTodayReader, TodayError, TodayItem, TodayKind, TodayQuery, TodayReader};
+pub use usage::{
+    StaticUsageEntry, StaticUsageReader, UsageError, UsageGroupBy, UsageQuery, UsageReader,
+    UsageReport, UsageRow,
+};

@@ -9,6 +9,7 @@ mod eval_bridge;
 mod scheduler_bridge;
 mod sessions_bridge;
 mod today_bridge;
+mod usage_bridge;
 
 use std::path::PathBuf;
 
@@ -423,6 +424,11 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         session_forker: Some(crate::sessions_bridge::PgSessionForker::arc(
             pg_session_repo.clone(),
         )),
+        // v1.1.1: token-usage aggregator backing /v1/usage and the
+        // admin-ui Usage pane (plus the Today pane's 24h summary card).
+        // Always wired in production — the underlying token_usage table
+        // is unconditional (migration 0004).
+        usage_reader: Some(crate::usage_bridge::PgUsageReader::arc(pool.clone())),
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

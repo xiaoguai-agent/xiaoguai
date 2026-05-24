@@ -94,6 +94,7 @@ fn build_state(
         nl_job_compiler: None,
         job_upserter: None,
         session_forker: None,
+        usage_reader: None,
     }
 }
 

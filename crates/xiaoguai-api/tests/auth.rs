@@ -54,6 +54,7 @@ fn build_state_with_auth() -> AppState {
         nl_job_compiler: None,
         job_upserter: None,
         session_forker: None,
+        usage_reader: None,
     }
 }
 
