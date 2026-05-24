@@ -11,6 +11,7 @@ description = "RAG layer — RagClient trait + R2R HTTP adapter + in-memory dev 
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-mcp = { path = "../xiaoguai-mcp" }
+xiaoguai-llm = { path = "../xiaoguai-llm" }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
@@ -24,10 +25,11 @@ tracing = { workspace = true }
 # v0.12.2: `reindex_path` reads the watched file from disk before
 # handing it to `ingest` — keeps the in-memory backend usable by the
 # file-watch ↔ RAG bridge without dragging in extra deps.
-tokio = { workspace = true, features = ["fs"] }
+tokio = { workspace = true, features = ["fs", "time"] }
+futures = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "time"] }
 tempfile = { workspace = true }
 
 [lints]
