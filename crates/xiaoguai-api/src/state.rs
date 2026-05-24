@@ -26,6 +26,7 @@ use crate::audit::{AuditReader, AuditVerifier};
 use crate::auth::TokenValidator;
 use crate::eval::EvalService;
 use crate::scheduler::{NlJobCompiler, ScheduledJobUpserter, WebhookPusher};
+use crate::sessions_ext::SessionForker;
 use crate::today::TodayReader;
 
 /// Registry of cancellation tokens keyed by `session_id`. A single token per
@@ -139,6 +140,11 @@ pub struct AppState {
     /// `None` makes the endpoint return 503; production wires the
     /// `PgJobRepository` via a thin adapter in `xiaoguai-core`.
     pub job_upserter: Option<Arc<dyn ScheduledJobUpserter>>,
+    /// v1.1.2: conversation fork — backs
+    /// `POST /v1/sessions/:id/fork`. `None` makes the route return
+    /// 503; production wires `PgSessionForker` in
+    /// `xiaoguai-core::sessions_bridge`.
+    pub session_forker: Option<Arc<dyn SessionForker>>,
 }
 
 impl std::fmt::Debug for AppState {

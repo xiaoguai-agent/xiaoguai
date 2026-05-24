@@ -7,6 +7,7 @@
 mod audit_bridge;
 mod eval_bridge;
 mod scheduler_bridge;
+mod sessions_bridge;
 mod today_bridge;
 
 use std::path::PathBuf;
@@ -416,6 +417,12 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // ScheduledJob upserter (only when scheduler is enabled).
         nl_job_compiler,
         job_upserter,
+        // v1.1.2: conversation fork — always wired in production
+        // since it only needs the SessionRepository the rest of the
+        // binary already holds.
+        session_forker: Some(crate::sessions_bridge::PgSessionForker::arc(
+            pg_session_repo.clone(),
+        )),
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

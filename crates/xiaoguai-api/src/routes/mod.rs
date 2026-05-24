@@ -65,7 +65,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/admin/scheduler/jobs",
             post(admin::scheduler_upsert_job),
-        );
+        )
+        // v1.1.2: conversation fork. Mounted last so the route table
+        // stays append-only at the v1 boundary.
+        .route("/v1/sessions/:id/fork", post(sessions::fork_session));
 
     // Layer order (inner → outer, since `route_layer` adds outward):
     //   handler → rate_limit → rbac → require_bearer

@@ -19,6 +19,13 @@ export interface SessionResponse {
   title: string | null;
   model: string;
   status: SessionStatus;
+  /**
+   * v1.1.2 — populated when the row was created via
+   * `POST /v1/sessions/:id/fork`. Omitted (undefined) on top-level rows.
+   */
+  parent_session_id?: string;
+  /** v1.1.2 — companion to {@link parent_session_id}. */
+  forked_from_message_id?: string;
 }
 
 export interface CreateSessionRequest {
@@ -31,6 +38,17 @@ export interface CreateSessionRequest {
 export interface SendMessageRequest {
   content: string;
   model?: string;
+}
+
+/**
+ * v1.1.2 — request body for `POST /v1/sessions/:id/fork`. The handler
+ * clones the parent session, copies every message with `created_at <=`
+ * the cutoff into the new session, and returns the new
+ * {@link SessionResponse}.
+ */
+export interface ForkSessionRequest {
+  from_message_id: string;
+  title?: string;
 }
 
 export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
@@ -331,6 +349,20 @@ export class XiaoguaiClient {
 
   cancel(sessionId: string): Promise<{ cancelled: boolean }> {
     return this.request('POST', `/v1/sessions/${encodeURIComponent(sessionId)}/cancel`, {});
+  }
+
+  /**
+   * v1.1.2 — branch a session at a given message boundary. Returns the
+   * newly-created child session. UI flow: click "Branch from here" on
+   * an assistant bubble → call this with `from_message_id = that
+   * message's id` → `window.open` the returned `id`.
+   */
+  forkSession(sessionId: string, req: ForkSessionRequest): Promise<SessionResponse> {
+    return this.request<SessionResponse>(
+      'POST',
+      `/v1/sessions/${encodeURIComponent(sessionId)}/fork`,
+      req,
+    );
   }
 
   listMcpServers(): Promise<McpServerResponse[]> {

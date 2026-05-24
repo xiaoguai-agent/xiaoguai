@@ -237,6 +237,8 @@ impl ImIdentityRepository for PgImIdentityRepository {
             updated_at: Utc::now(),
             model: model.unwrap_or(DEFAULT_IM_MODEL).to_string(),
             status: SessionStatus::Active,
+            parent_session_id: None,
+            forked_from_message_id: None,
         };
 
         sqlx::query(
