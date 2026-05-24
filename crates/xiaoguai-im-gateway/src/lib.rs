@@ -26,6 +26,7 @@ pub use history::{ConversationHistory, ConversationIdent, HistoryError, ImHistor
 pub use pg_history::PgImHistoryStore;
 pub use provider::{ImEvent, ImProvider, IncomingMessage, OutgoingReply, ProviderError, Webhook};
 pub use router::{
-    mount_feishu, mount_feishu_with_history, run_agent_and_reply, GatewayState,
+    mount_dingtalk, mount_dingtalk_with_history, mount_feishu, mount_feishu_with_history,
+    mount_wecom, mount_wecom_with_history, run_agent_and_reply, GatewayState,
     DEFAULT_HISTORY_TURNS,
 };

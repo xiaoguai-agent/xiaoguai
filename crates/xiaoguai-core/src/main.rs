@@ -422,7 +422,18 @@ async fn run_serve(settings: &Settings) -> Result<()> {
     // default (multi-replica safe). Operators can fall back to the
     // single-replica in-process store by setting
     // `XIAOGUAI_IM__USE_IN_PROCESS_HISTORY=true`.
-    let im_router = build_feishu_gateway(settings, &pool, &state, &default_model);
+    //
+    // v1.1.3: DingTalk + WeCom mounts use the same history store as
+    // Feishu — the store is keyed by `(provider, tenant, user, conv)`
+    // so collisions across providers are impossible. Each `build_*_gateway`
+    // helper returns `None` when the corresponding env vars are unset,
+    // letting operators opt into one, two, or all three IM channels.
+    let im_history = build_im_history(settings, &pool, &state, &default_model);
+    let im_router = merge_routers(vec![
+        build_feishu_gateway(&state, im_history.clone()),
+        build_dingtalk_gateway(&state, im_history.clone()),
+        build_wecom_gateway(&state, im_history.clone()),
+    ]);
 
     let addr: SocketAddr = format!("{}:{}", settings.server.host, settings.server.port)
         .parse()
@@ -451,48 +462,73 @@ async fn run_serve(settings: &Settings) -> Result<()> {
     Ok(())
 }
 
-/// v0.7.4: assemble the Feishu IM gateway router. Returns `None` when
-/// the operator hasn't supplied a Feishu signing key
-/// (`XIAOGUAI_IM_FEISHU__VERIFICATION_TOKEN`); mounting the route with
-/// an empty signing key would accept every payload.
-fn build_feishu_gateway(
+/// v0.7.4 / v1.1.3: build the shared `ImHistoryStore` used by every IM
+/// mount. PG-backed by default for multi-replica safety; the in-process
+/// `ConversationHistory` is an explicit opt-in via
+/// `XIAOGUAI_IM__USE_IN_PROCESS_HISTORY=true`.
+fn build_im_history(
     settings: &xiaoguai_config::Settings,
     pool: &sqlx::PgPool,
     state: &xiaoguai_api::AppState,
     default_model: &str,
-) -> Option<axum::Router> {
+) -> std::sync::Arc<dyn xiaoguai_im_gateway::ImHistoryStore> {
     use std::sync::Arc;
-    use xiaoguai_im_feishu::FeishuProvider;
-    use xiaoguai_im_gateway::{
-        mount_feishu_with_history, ConversationHistory, ImHistoryStore, ImProvider,
-        PgImHistoryStore,
-    };
+    use xiaoguai_im_gateway::{ConversationHistory, ImHistoryStore, PgImHistoryStore};
     use xiaoguai_storage::repositories::PgImIdentityRepository;
 
-    let signing_key = std::env::var("XIAOGUAI_IM_FEISHU__VERIFICATION_TOKEN")
-        .ok()
-        .filter(|s| !s.is_empty())?;
-
-    let history: Arc<dyn ImHistoryStore> = if settings.im.use_in_process_history {
+    if settings.im.use_in_process_history {
         tracing::info!(
             "serve: IM history using in-process ConversationHistory (XIAOGUAI_IM__USE_IN_PROCESS_HISTORY=true)"
         );
-        Arc::new(ConversationHistory::new(
+        let store: Arc<dyn ImHistoryStore> = Arc::new(ConversationHistory::new(
             settings.im.max_messages_per_conversation,
-        ))
+        ));
+        store
     } else {
         tracing::info!(
             cap = settings.im.max_messages_per_conversation,
             "serve: IM history using PgImHistoryStore"
         );
-        Arc::new(PgImHistoryStore::new(
+        let store: Arc<dyn ImHistoryStore> = Arc::new(PgImHistoryStore::new(
             Arc::new(PgImIdentityRepository::new(pool.clone())),
             state.sessions.clone(),
             state.messages.clone(),
             default_model.to_string(),
             settings.im.max_messages_per_conversation,
-        ))
-    };
+        ));
+        store
+    }
+}
+
+/// Merge zero-or-more optional IM gateway routers into one. Returns
+/// `None` when every input is `None` so the API router stays
+/// unchanged when no IM channel is configured.
+fn merge_routers(routers: Vec<Option<axum::Router>>) -> Option<axum::Router> {
+    let mut combined: Option<axum::Router> = None;
+    for r in routers.into_iter().flatten() {
+        combined = Some(match combined {
+            Some(acc) => acc.merge(r),
+            None => r,
+        });
+    }
+    combined
+}
+
+/// v0.7.4: assemble the Feishu IM gateway router. Returns `None` when
+/// the operator hasn't supplied a Feishu signing key
+/// (`XIAOGUAI_IM_FEISHU__VERIFICATION_TOKEN`); mounting the route with
+/// an empty signing key would accept every payload.
+fn build_feishu_gateway(
+    state: &xiaoguai_api::AppState,
+    history: std::sync::Arc<dyn xiaoguai_im_gateway::ImHistoryStore>,
+) -> Option<axum::Router> {
+    use std::sync::Arc;
+    use xiaoguai_im_feishu::FeishuProvider;
+    use xiaoguai_im_gateway::{mount_feishu_with_history, ImProvider};
+
+    let signing_key = std::env::var("XIAOGUAI_IM_FEISHU__VERIFICATION_TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty())?;
     let provider: Arc<dyn ImProvider> = match (
         std::env::var("XIAOGUAI_IM_FEISHU__APP_ID").ok(),
         std::env::var("XIAOGUAI_IM_FEISHU__APP_SECRET").ok(),
@@ -519,6 +555,136 @@ fn build_feishu_gateway(
         }
     };
     Some(mount_feishu_with_history(state.clone(), provider, history))
+}
+
+/// v1.1.3: assemble the DingTalk IM gateway router. Returns `None` when
+/// the operator hasn't supplied a DingTalk webhook signing secret
+/// (`XIAOGUAI_IM_DINGTALK__APP_SECRET`); mounting with an empty secret
+/// would accept every payload.
+///
+/// Reply path requires the trio `XIAOGUAI_IM_DINGTALK__APP_KEY`,
+/// `XIAOGUAI_IM_DINGTALK__API_SECRET`, and `XIAOGUAI_IM_DINGTALK__ROBOT_CODE`.
+/// When any reply-side env var is unset we mount the inbound webhook
+/// anyway and stub the outbound reply — useful for soak-testing
+/// signature + parser logic without needing `OpenAPI` credentials.
+fn build_dingtalk_gateway(
+    state: &xiaoguai_api::AppState,
+    history: std::sync::Arc<dyn xiaoguai_im_gateway::ImHistoryStore>,
+) -> Option<axum::Router> {
+    use std::sync::Arc;
+    use xiaoguai_im_dingtalk::DingTalkProvider;
+    use xiaoguai_im_gateway::{mount_dingtalk_with_history, ImProvider};
+
+    let webhook_secret = std::env::var("XIAOGUAI_IM_DINGTALK__APP_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty())?;
+
+    let app_key = std::env::var("XIAOGUAI_IM_DINGTALK__APP_KEY")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let api_secret = std::env::var("XIAOGUAI_IM_DINGTALK__API_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty())
+        // Operators frequently use the same value for both — fall back.
+        .or_else(|| Some(webhook_secret.clone()));
+    let robot_code = std::env::var("XIAOGUAI_IM_DINGTALK__ROBOT_CODE")
+        .ok()
+        .filter(|s| !s.is_empty());
+
+    let provider: Arc<dyn ImProvider> = if let (Some(ak), Some(sec), Some(rc)) =
+        (app_key, api_secret, robot_code)
+    {
+        match xiaoguai_im_dingtalk::HttpDingTalkClient::new() {
+            Ok(client) => Arc::new(DingTalkProvider::with_api_sink(
+                webhook_secret,
+                Arc::new(client),
+                ak,
+                sec,
+                rc,
+            )),
+            Err(e) => {
+                tracing::error!(error = %e, "serve: HttpDingTalkClient build failed — falling back to stub reply sink");
+                Arc::new(DingTalkProvider::new(webhook_secret))
+            }
+        }
+    } else {
+        tracing::warn!(
+            "serve: XIAOGUAI_IM_DINGTALK__APP_KEY / __API_SECRET / __ROBOT_CODE incomplete — DingTalk replies will be stubbed"
+        );
+        Arc::new(DingTalkProvider::new(webhook_secret))
+    };
+    Some(mount_dingtalk_with_history(
+        state.clone(),
+        provider,
+        history,
+    ))
+}
+
+/// v1.1.3: assemble the WeCom IM gateway router. Returns `None` when
+/// the operator hasn't supplied a WeCom callback token
+/// (`XIAOGUAI_IM_WECOM__TOKEN`); mounting with an empty token would
+/// accept every payload.
+///
+/// Reply path requires `XIAOGUAI_IM_WECOM__CORP_ID` + `__SECRET` +
+/// `__AGENT_ID`. When any is unset we mount the inbound webhook and
+/// stub outbound — same pattern as the DingTalk helper. The
+/// `__AES_KEY` env var is reserved for the encrypted-payload variant
+/// which is deferred (see v1.1.3 plan doc).
+fn build_wecom_gateway(
+    state: &xiaoguai_api::AppState,
+    history: std::sync::Arc<dyn xiaoguai_im_gateway::ImHistoryStore>,
+) -> Option<axum::Router> {
+    use std::sync::Arc;
+    use xiaoguai_im_gateway::{mount_wecom_with_history, ImProvider};
+    use xiaoguai_im_wecom::WeComProvider;
+
+    let token = std::env::var("XIAOGUAI_IM_WECOM__TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty())?;
+
+    let corp_id = std::env::var("XIAOGUAI_IM_WECOM__CORP_ID")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let secret = std::env::var("XIAOGUAI_IM_WECOM__SECRET")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let agent_id = std::env::var("XIAOGUAI_IM_WECOM__AGENT_ID")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok());
+
+    if std::env::var("XIAOGUAI_IM_WECOM__AES_KEY")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .is_some()
+    {
+        tracing::warn!(
+            "serve: XIAOGUAI_IM_WECOM__AES_KEY is set but encrypted payloads are not supported in v1.1.3 — disable EncodingAESKey in the WeCom admin console for now"
+        );
+    }
+
+    let provider: Arc<dyn ImProvider> = if let (Some(cid), Some(sec), Some(aid)) =
+        (corp_id, secret, agent_id)
+    {
+        match xiaoguai_im_wecom::HttpWeComClient::new() {
+            Ok(client) => Arc::new(WeComProvider::with_api_sink(
+                token,
+                Arc::new(client),
+                cid,
+                sec,
+                aid,
+            )),
+            Err(e) => {
+                tracing::error!(error = %e, "serve: HttpWeComClient build failed — falling back to stub reply sink");
+                Arc::new(WeComProvider::new(token))
+            }
+        }
+    } else {
+        tracing::warn!(
+            "serve: XIAOGUAI_IM_WECOM__CORP_ID / __SECRET / __AGENT_ID incomplete — WeCom replies will be stubbed"
+        );
+        Arc::new(WeComProvider::new(token))
+    };
+    Some(mount_wecom_with_history(state.clone(), provider, history))
 }
 
 /// Bind the main API router and merge the optional IM gateway router on
