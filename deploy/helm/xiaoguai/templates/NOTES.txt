@@ -1,0 +1,61 @@
+Xiaoguai {{ .Chart.AppVersion }} has been deployed.
+
+  Release name : {{ .Release.Name }}
+  Namespace    : {{ .Release.Namespace }}
+
+=============================================================================
+NEXT STEPS
+=============================================================================
+
+1. Verify the pods are running:
+
+   kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. Check the health endpoint (port-forward):
+
+   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "xiaoguai.fullname" . }} 8080:{{ .Values.service.port }}
+   curl http://localhost:8080/healthz
+
+{{- if .Values.ingress.enabled }}
+
+3. The Ingress has been created. Access xiaoguai at:
+
+   {{- range .Values.ingress.hosts }}
+   http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+   {{- end }}
+
+{{- else }}
+
+3. Ingress is disabled. To expose externally, either:
+   - Enable ingress: --set ingress.enabled=true --set ingress.hosts[0].host=ai.example.com
+   - Or use a LoadBalancer: --set service.type=LoadBalancer
+
+{{- end }}
+
+=============================================================================
+SECRETS
+=============================================================================
+
+{{- if .Values.createSecret }}
+WARNING: createSecret=true — credentials are stored in a chart-managed
+Secret. This is suitable for testing only. In production, set
+createSecret=false and pre-create Secrets externally.
+{{- else }}
+The following pre-created Secrets are expected in namespace {{ .Release.Namespace }}:
+
+  - {{ .Values.secrets.database }} (key: url)        — PostgreSQL URL
+  - {{ .Values.secrets.cache }}    (key: url)         — Valkey/Redis URL
+  - {{ .Values.secrets.auth }}     (keys: issuer, audience, jwks_url)
+  - {{ .Values.secrets.audit }}    (key: hmac_key)
+{{- if .Values.secrets.llm }}
+  - {{ .Values.secrets.llm }}      (LLM provider API keys, all optional)
+{{- end }}
+{{- end }}
+
+=============================================================================
+DOCUMENTATION
+=============================================================================
+
+  Operator runbook : docs/runbooks/k8s-helm.md
+  HA topology      : docs/runbooks/ha.md
+  Upgrade path     : helm upgrade {{ .Release.Name }} deploy/helm/xiaoguai

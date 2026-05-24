@@ -1,16 +1,33 @@
 # Default Xiaoguai chart values.
 #
-# Postgres + Valkey are NOT bundled as sub-charts on purpose — production
-# operators almost always run managed instances or already-existing
-# clusters. Supply the connection URLs via secrets referenced below.
+# Postgres + Valkey are NOT bundled as sub-charts — production operators
+# almost always run managed instances or already-existing clusters. Supply
+# connection URLs via pre-created Secrets referenced by name below.
+#
+# Quick-start overrides:
+#   helm install xiaoguai deploy/helm/xiaoguai \
+#     --set secrets.database=my-db-secret \
+#     --set secrets.cache=my-cache-secret \
+#     --set ingress.enabled=true \
+#     --set ingress.hosts[0].host=ai.example.com
 
+# ---------------------------------------------------------------------------
+# Image
+# ---------------------------------------------------------------------------
 image:
   repository: ghcr.io/xiaoguai-agent/xiaoguai
   tag: ""                  # empty = chart appVersion
   pullPolicy: IfNotPresent
+  pullSecrets: []          # list of imagePullSecret names
 
+# ---------------------------------------------------------------------------
+# Replicas
+# ---------------------------------------------------------------------------
 replicaCount: 2
 
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
 resources:
   requests:
     cpu: 200m
@@ -19,32 +36,86 @@ resources:
     cpu: 2
     memory: 2Gi
 
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
 service:
   type: ClusterIP
   port: 8080
+  # headless: set to true to also create a headless Service (useful for
+  # StatefulSet-style DNS discovery or Prometheus scraping via pod IPs).
+  headless: false
 
+# ---------------------------------------------------------------------------
+# Ingress
+# ---------------------------------------------------------------------------
 ingress:
   enabled: false
   className: ""
   annotations: {}
+  #   kubernetes.io/ingress.class: nginx
+  #   cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
     - host: xiaoguai.example.com
       paths: ["/"]
   tls: []
+  #   - secretName: xiaoguai-tls
+  #     hosts: [xiaoguai.example.com]
 
-# Names of Kubernetes Secrets the operator pre-creates. Each must contain
-# the listed keys.
+# ---------------------------------------------------------------------------
+# External Secrets — pre-created by the operator before helm install.
+# Each value is the name of a Kubernetes Secret; the chart reads specific
+# keys from each secret (see templates/deployment.yaml).
+# ---------------------------------------------------------------------------
 secrets:
-  database: xiaoguai-database     # keys: url
-  cache:    xiaoguai-cache        # keys: url
-  auth:     xiaoguai-auth         # keys: issuer, audience, jwks_url
-  audit:    xiaoguai-audit        # keys: hmac_key
+  database: xiaoguai-database   # required key: url
+  cache:    xiaoguai-cache       # required key: url
+  auth:     xiaoguai-auth        # required keys: issuer, audience, jwks_url
+  audit:    xiaoguai-audit       # required key: hmac_key
+  # Optional — LLM provider API keys. Set to the name of a pre-created
+  # Secret that contains any of: ANTHROPIC_API_KEY, OPENAI_API_KEY,
+  # DEEPSEEK_API_KEY, GEMINI_API_KEY, ZHIPU_API_KEY.
+  # Leave empty ("") to skip; the chart will not mount env vars for
+  # keys that are not present.
+  llm: ""                        # e.g. xiaoguai-llm-keys
+  # Optional — if set, an additional read-only DB URL is mounted for
+  # read-replica routing (v1.1.4.1+).
+  databaseRead: ""               # keys: url
 
-env:
+# ---------------------------------------------------------------------------
+# createSecret — convenience for non-production / CI environments.
+# When true, the chart creates a Secret from the plaintext values below.
+# In production ALWAYS leave this false and pre-create secrets externally
+# (Vault, external-secrets-operator, SealedSecrets, etc.).
+# ---------------------------------------------------------------------------
+createSecret: false
+secretValues:
+  databaseUrl: "postgres://xiaoguai:changeme@postgres:5432/xiaoguai"
+  cacheUrl:    "redis://valkey:6379"
+  authIssuer:  "https://auth.example.com"
+  authAudience: "xiaoguai"
+  authJwksUrl:  "https://auth.example.com/.well-known/jwks.json"
+  auditHmacKey: "change-me-in-production"
+
+# ---------------------------------------------------------------------------
+# ConfigMap — non-secret runtime configuration.
+# Values here are injected as XIAOGUAI_* env vars (key format:
+# XIAOGUAI_<SECTION>__<KEY>). Extend as needed.
+# ---------------------------------------------------------------------------
+config:
+  XIAOGUAI_SERVER__HOST: "0.0.0.0"
+  XIAOGUAI_SERVER__PORT: "8080"
   RUST_LOG: "info,sqlx=warn"
 
-# Pod security defaults. Distroless image already runs as uid 65532; we
-# tighten further with seccomp + read-only root fs.
+# ---------------------------------------------------------------------------
+# Extra env vars injected verbatim into the pod (key: value pairs).
+# Use this for ad-hoc overrides; prefer config: above for structured config.
+# ---------------------------------------------------------------------------
+env: {}
+
+# ---------------------------------------------------------------------------
+# Pod security
+# ---------------------------------------------------------------------------
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 65532
@@ -59,20 +130,71 @@ containerSecurityContext:
   capabilities:
     drop: ["ALL"]
 
+# ---------------------------------------------------------------------------
+# Probes
+# ---------------------------------------------------------------------------
 probes:
   liveness:
     httpGet:
       path: /healthz
       port: http
+    initialDelaySeconds: 5
     periodSeconds: 10
+    failureThreshold: 3
   readiness:
     httpGet:
       path: /healthz
       port: http
+    initialDelaySeconds: 5
     periodSeconds: 5
+    failureThreshold: 3
 
+# ---------------------------------------------------------------------------
+# Horizontal Pod Autoscaler
+# ---------------------------------------------------------------------------
 autoscaling:
   enabled: false
   minReplicas: 2
   maxReplicas: 8
   targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# ---------------------------------------------------------------------------
+# Pod Anti-Affinity — keeps replicas on separate nodes for HA.
+# ---------------------------------------------------------------------------
+podAntiAffinity:
+  enabled: true
+  # "soft" = preferredDuringSchedulingIgnoredDuringExecution (won't block scheduling)
+  # "hard" = requiredDuringSchedulingIgnoredDuringExecution  (strict; may prevent scheduling)
+  mode: soft
+  topologyKey: kubernetes.io/hostname
+
+# ---------------------------------------------------------------------------
+# Pod Disruption Budget
+# ---------------------------------------------------------------------------
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# ---------------------------------------------------------------------------
+# Network Policy
+# ---------------------------------------------------------------------------
+networkPolicy:
+  # Set to true to install a NetworkPolicy that restricts ingress/egress.
+  # Requires a CNI plugin that honours NetworkPolicy (Cilium, Calico, etc.).
+  enabled: false
+  # Namespaces whose pods are allowed to reach xiaoguai on the http port.
+  # Empty list = only same-namespace ingress.
+  ingressFromNamespaces: []
+  # CIDR blocks the app is allowed to reach for outbound LLM API calls.
+  # Add your cloud NAT gateway IPs or the CIDRs of your LLM provider.
+  egressLLMCidrs:
+    - 0.0.0.0/0   # permissive default; tighten in production
+  # Whether to allow unrestricted DNS egress (udp/tcp 53). Usually needed.
+  allowDNSEgress: true
+
+# ---------------------------------------------------------------------------
+# Annotations / Labels
+# ---------------------------------------------------------------------------
+podAnnotations: {}
+commonLabels: {}
