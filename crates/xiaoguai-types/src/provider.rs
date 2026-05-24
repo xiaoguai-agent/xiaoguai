@@ -15,6 +15,15 @@ pub enum ProviderKind {
     Ollama,
     #[serde(rename = "openai_compat")]
     OpenAiCompat,
+    /// Anthropic Messages API (`/v1/messages`). Auth via `x-api-key` header +
+    /// `anthropic-version: 2023-06-01`. Models: `claude-sonnet-4-6`,
+    /// `claude-opus-4-7`, `claude-haiku-4-5`.
+    #[serde(rename = "anthropic")]
+    Anthropic,
+    /// Google Gemini `generateContent` API. Auth via `key=` query param.
+    /// Models: `gemini-2.0-flash`, `gemini-2.5-pro`.
+    #[serde(rename = "gemini")]
+    Gemini,
 }
 
 impl ProviderKind {
@@ -23,6 +32,8 @@ impl ProviderKind {
         match self {
             Self::Ollama => "ollama",
             Self::OpenAiCompat => "openai_compat",
+            Self::Anthropic => "anthropic",
+            Self::Gemini => "gemini",
         }
     }
 
@@ -35,6 +46,8 @@ impl ProviderKind {
         match s {
             "ollama" => Some(Self::Ollama),
             "openai_compat" => Some(Self::OpenAiCompat),
+            "anthropic" => Some(Self::Anthropic),
+            "gemini" => Some(Self::Gemini),
             _ => None,
         }
     }
@@ -64,14 +77,19 @@ mod tests {
 
     #[test]
     fn kind_round_trips_through_string() {
-        for k in [ProviderKind::Ollama, ProviderKind::OpenAiCompat] {
+        for k in [
+            ProviderKind::Ollama,
+            ProviderKind::OpenAiCompat,
+            ProviderKind::Anthropic,
+            ProviderKind::Gemini,
+        ] {
             assert_eq!(ProviderKind::parse(k.as_str()), Some(k));
         }
     }
 
     #[test]
     fn unknown_kind_returns_none() {
-        assert_eq!(ProviderKind::parse("anthropic"), None);
+        assert_eq!(ProviderKind::parse("vertexai"), None);
     }
 
     #[test]
