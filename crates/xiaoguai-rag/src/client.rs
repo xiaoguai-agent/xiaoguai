@@ -1,5 +1,7 @@
 //! `RagClient` — backend-agnostic RAG operations.
 
+use std::path::Path;
+
 use async_trait::async_trait;
 use thiserror::Error;
 
@@ -13,6 +15,12 @@ pub enum RagError {
     NotFound(String),
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
+    /// The backend does not implement this method. Default trait impls
+    /// (e.g. [`RagClient::reindex_path`] before a backend opts in)
+    /// surface as this variant so callers can detect missing capability
+    /// without parsing error strings.
+    #[error("unsupported: {0}")]
+    Unsupported(String),
 }
 
 pub type RagResult<T> = Result<T, RagError>;
@@ -38,6 +46,24 @@ pub trait RagClient: Send + Sync {
 
     /// Remove a document by id. Idempotent — missing is `Ok(())`.
     async fn delete_document(&self, collection_id: &str, document_id: &str) -> RagResult<()>;
+
+    /// v0.12.2 — incremental re-index of a single filesystem path into
+    /// `collection_id`. Called by the file-watch ↔ RAG bridge when a
+    /// watched path changes.
+    ///
+    /// Returns the number of chunks re-indexed. Backends that can't
+    /// re-ingest by path (e.g. HTTP-only backends without filesystem
+    /// access) leave the default impl in place, which returns
+    /// [`RagError::Unsupported`] so the caller can fall through to a
+    /// content-based path without crashing the runner.
+    ///
+    /// Idempotent on `source_uri = file://<path>` — same contract as
+    /// [`RagClient::ingest`].
+    async fn reindex_path(&self, _collection_id: &str, _path: &Path) -> RagResult<usize> {
+        Err(RagError::Unsupported(
+            "reindex_path not implemented for this backend".into(),
+        ))
+    }
 }
 
 // Object-safety check.

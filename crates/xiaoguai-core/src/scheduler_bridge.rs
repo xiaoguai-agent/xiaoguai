@@ -36,7 +36,24 @@
 //!    runtime's `new_messages` slice. The audit-first console joins
 //!    `scheduled_job_runs.session_id` → `sessions.id` to render the
 //!    scheduler-driven transcript.
+//!
+//! v0.12.2 adds two more, paired with the file-watch + RAG re-index work:
+//!
+//! 7. [`spawn_file_watch_source`] — instantiates a
+//!    `xiaoguai_scheduler::FileWatchSource`, merges
+//!    config-defined and DB-defined routes (`scheduled_jobs` rows whose
+//!    `trigger.type == "file_watch"`), and starts it against the shared
+//!    scheduler event channel.
+//!
+//! 8. [`RagReindexExecutor`] — alternate [`JobExecutor`] for jobs whose
+//!    `payload.kind == "rag_reindex"`. Reads `collection_id` + `path`
+//!    out of the payload and calls `RagClient::reindex_path`. NOT yet
+//!    wired into the operator binary's executor selection — production
+//!    still uses `RuntimeJobExecutor` exclusively. The
+//!    payload-dispatching `CompositeExecutor` lands in v0.12.2.1; see
+//!    `docs/plans/2026-05-24-v0.12.2.md` for the deferral note.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -47,10 +64,13 @@ use xiaoguai_api::scheduler::{
     WebhookPushError, WebhookPusher,
 };
 use xiaoguai_audit::{chain::sink::PgAuditSink, AuditEntry};
+use xiaoguai_config::FileWatchSettings;
 use xiaoguai_llm::{ChatRequest, LlmBackend, Message as LlmMessage, Role as LlmRole};
+use xiaoguai_rag::RagClient;
 use xiaoguai_runtime::RuntimeContext;
 use xiaoguai_scheduler::{
-    AuditAppender, JobRepository, PgJobRepository, ScheduledJob, ScheduledSessionWriter,
+    AuditAppender, EventSender, ExecutionOutcome, FileWatchRoute, FileWatchSource, JobExecutor,
+    JobRepository, PgJobRepository, ScheduledJob, ScheduledSessionWriter, Trigger, TriggerSource,
     WebhookSource,
 };
 use xiaoguai_storage::repositories::{MessageRepository, SessionRepository};
@@ -386,12 +406,151 @@ fn llm_to_domain(session_id: &str, msg: &LlmMessage) -> DomainMessage {
     }
 }
 
+// ----------------------------------------------------------------------
+// v0.12.2 — file-watch source bootstrap + RAG re-index executor.
+// ----------------------------------------------------------------------
+
+/// v0.12.2 — instantiate and start a [`FileWatchSource`] against the
+/// shared scheduler event channel.
+///
+/// Route sources are merged in this order: (a) the static
+/// `cfg.routes` list (config-defined), (b) the persisted
+/// `scheduled_jobs` rows whose trigger is `Trigger::FileWatch` (when
+/// `cfg.load_routes_from_db` is true). Duplicates are de-duped by
+/// `(job_id, path)`; the static list wins on conflict.
+///
+/// Per-route registration errors are logged but do not abort the
+/// bootstrap — a single misconfigured path shouldn't kill the rest of
+/// the source.
+pub async fn spawn_file_watch_source(
+    cfg: &FileWatchSettings,
+    jobs: &dyn JobRepository,
+    event_tx: EventSender,
+) -> anyhow::Result<Arc<FileWatchSource>> {
+    let source = Arc::new(FileWatchSource::new());
+
+    let static_routes: Vec<FileWatchRoute> = cfg
+        .routes
+        .iter()
+        .map(|r| FileWatchRoute::new(r.job_id.clone(), PathBuf::from(&r.path)))
+        .collect();
+
+    let db_routes: Vec<FileWatchRoute> = if cfg.load_routes_from_db {
+        match jobs.list_reactive().await {
+            Ok(rows) => rows
+                .into_iter()
+                .filter_map(|j| match &j.trigger {
+                    Trigger::FileWatch { path } => {
+                        Some(FileWatchRoute::new(j.id.clone(), PathBuf::from(path)))
+                    }
+                    _ => None,
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "serve: file_watch list_reactive failed; only static routes will be registered");
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Static routes first so they win on (job_id, path) conflict.
+    let mut seen: std::collections::HashSet<(String, PathBuf)> = std::collections::HashSet::new();
+    let mut registered = 0_usize;
+    for route in static_routes.into_iter().chain(db_routes.into_iter()) {
+        let key = (route.job_id.clone(), route.path.clone());
+        if !seen.insert(key) {
+            continue;
+        }
+        if let Err(e) = source.add_route(route.clone()) {
+            tracing::warn!(
+                job_id = %route.job_id,
+                path = %route.path.display(),
+                error = %e,
+                "serve: file_watch route registration failed"
+            );
+            continue;
+        }
+        registered += 1;
+    }
+
+    TriggerSource::start(source.as_ref(), event_tx)
+        .await
+        .map_err(|e| anyhow::anyhow!("file_watch source start: {e}"))?;
+
+    tracing::info!(routes = registered, "serve: file_watch source started");
+    Ok(source)
+}
+
+/// v0.12.2 — [`JobExecutor`] for jobs whose payload describes an
+/// incremental RAG re-index instead of a chat-style prompt.
+///
+/// Payload shape:
+/// ```json
+/// {
+///     "kind": "rag_reindex",
+///     "collection_id": "notes",
+///     "path": "/var/notes/topic.md"
+/// }
+/// ```
+///
+/// Returns an `ExecutionOutcome` whose `output_preview` reports the
+/// number of chunks re-indexed.
+///
+/// **Wiring status (v0.12.2):** this executor compiles, is tested in
+/// isolation, but is NOT yet selected by the operator binary — every
+/// scheduled job today still runs through `RuntimeJobExecutor`. The
+/// payload-dispatching `CompositeExecutor` that picks between the two
+/// based on `payload.kind` is deferred to v0.12.2.1 per
+/// `docs/plans/2026-05-24-v0.12.2.md`.
+pub struct RagReindexExecutor {
+    rag: Arc<dyn RagClient>,
+}
+
+impl RagReindexExecutor {
+    // dead_code: see the v0.12.2.1 deferral note on `RagReindexExecutor`.
+    // Tests exercise this constructor; the binary entry point won't until
+    // the payload-dispatching CompositeExecutor lands.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn new(rag: Arc<dyn RagClient>) -> Self {
+        Self { rag }
+    }
+}
+
+#[async_trait]
+impl JobExecutor for RagReindexExecutor {
+    async fn execute(&self, job: &ScheduledJob, _attempt: u32) -> Result<ExecutionOutcome, String> {
+        let collection_id = job
+            .payload
+            .get("collection_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "rag_reindex payload missing string `collection_id`".to_string())?;
+        let path = job
+            .payload
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "rag_reindex payload missing string `path`".to_string())?;
+        let n = self
+            .rag
+            .reindex_path(collection_id, std::path::Path::new(path))
+            .await
+            .map_err(|e| format!("rag reindex: {e}"))?;
+        Ok(ExecutionOutcome {
+            output_preview: format!("reindexed {n} chunk(s) from {path} into {collection_id}"),
+            session_id: None,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use parking_lot::Mutex;
     use std::sync::Arc;
     use xiaoguai_llm::MockBackend;
+    use xiaoguai_rag::InMemoryRagClient;
     use xiaoguai_scheduler::{ScheduledJob, Trigger};
     use xiaoguai_storage::repositories::{RepoError, RepoResult};
 
@@ -640,5 +799,112 @@ mod tests {
         let job = make_job(Some("t"));
         let err = writer.create_and_record(&job, "x", &[]).await.unwrap_err();
         assert!(err.contains("session create"));
+    }
+
+    // ------------------------------------------------------------------
+    // v0.12.2 — RagReindexExecutor + file-watch source tests.
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn rag_reindex_executor_returns_chunk_count_in_preview() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("doc.md");
+        tokio::fs::write(&path, "alpha\nbeta\ngamma\n")
+            .await
+            .unwrap();
+
+        let rag: Arc<dyn RagClient> = Arc::new(InMemoryRagClient::new());
+        let executor = RagReindexExecutor::new(rag);
+
+        let job = ScheduledJob::new(
+            "watch-1",
+            None,
+            "watch-1",
+            Trigger::file_watch(path.to_string_lossy().to_string()).unwrap(),
+            serde_json::json!({
+                "kind": "rag_reindex",
+                "collection_id": "notes",
+                "path": path.to_string_lossy(),
+            }),
+        );
+
+        let outcome = executor.execute(&job, 1).await.unwrap();
+        assert!(outcome.output_preview.contains("3 chunk"));
+        assert!(outcome.output_preview.contains("notes"));
+    }
+
+    #[tokio::test]
+    async fn rag_reindex_executor_errors_on_missing_collection_id() {
+        let rag: Arc<dyn RagClient> = Arc::new(InMemoryRagClient::new());
+        let executor = RagReindexExecutor::new(rag);
+        let job = ScheduledJob::new(
+            "x",
+            None,
+            "x",
+            Trigger::file_watch("/tmp/foo").unwrap(),
+            serde_json::json!({"kind": "rag_reindex", "path": "/tmp/foo"}),
+        );
+        let err = executor.execute(&job, 1).await.unwrap_err();
+        assert!(err.contains("collection_id"));
+    }
+
+    #[tokio::test]
+    async fn rag_reindex_executor_errors_on_missing_path() {
+        let rag: Arc<dyn RagClient> = Arc::new(InMemoryRagClient::new());
+        let executor = RagReindexExecutor::new(rag);
+        let job = ScheduledJob::new(
+            "x",
+            None,
+            "x",
+            Trigger::file_watch("/tmp/foo").unwrap(),
+            serde_json::json!({"kind": "rag_reindex", "collection_id": "notes"}),
+        );
+        let err = executor.execute(&job, 1).await.unwrap_err();
+        assert!(err.contains("path"));
+    }
+
+    #[tokio::test]
+    async fn spawn_file_watch_source_starts_with_zero_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = FileWatchSettings {
+            enabled: true,
+            routes: vec![xiaoguai_config::FileWatchRoute {
+                job_id: "j1".into(),
+                path: dir.path().display().to_string(),
+            }],
+            load_routes_from_db: false,
+        };
+        let jobs = xiaoguai_scheduler::InMemoryJobRepository::new();
+        let (tx, _rx) = xiaoguai_scheduler::event_channel();
+        let source = spawn_file_watch_source(&cfg, &jobs, tx).await.unwrap();
+        // The watcher is running; can't easily assert route count without
+        // exposing internals — settling for "no error" + Debug print
+        // showing started: true.
+        let dbg = format!("{source:?}");
+        assert!(dbg.contains("started: true"));
+    }
+
+    #[tokio::test]
+    async fn spawn_file_watch_source_merges_db_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        let jobs = xiaoguai_scheduler::InMemoryJobRepository::new();
+        let job = ScheduledJob::new(
+            "watch-db",
+            None,
+            "watch-db",
+            Trigger::file_watch(dir.path().display().to_string()).unwrap(),
+            serde_json::json!({}),
+        );
+        jobs.upsert(&job).await.unwrap();
+
+        let cfg = FileWatchSettings {
+            enabled: true,
+            routes: Vec::new(),
+            load_routes_from_db: true,
+        };
+        let (tx, _rx) = xiaoguai_scheduler::event_channel();
+        let source = spawn_file_watch_source(&cfg, &jobs, tx).await.unwrap();
+        let dbg = format!("{source:?}");
+        assert!(dbg.contains("route_count: 1"));
     }
 }

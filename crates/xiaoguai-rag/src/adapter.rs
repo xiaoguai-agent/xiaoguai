@@ -55,6 +55,12 @@ fn map_rag_err(e: RagError) -> McpError {
         RagError::NotFound(s) => McpError::InvalidArgument(format!("not found: {s}")),
         RagError::InvalidArgument(s) => McpError::InvalidArgument(s),
         RagError::Backend(s) => McpError::Transport(s),
+        // v0.12.2: backends that don't implement an optional method
+        // (today only `reindex_path`) surface as Unsupported. Map to
+        // InvalidArgument so the MCP tool surface stays predictable
+        // (agents see a "this isn't supported" message, not a transport
+        // error that would hint at a wire-level problem).
+        RagError::Unsupported(s) => McpError::InvalidArgument(format!("unsupported: {s}")),
     }
 }
 

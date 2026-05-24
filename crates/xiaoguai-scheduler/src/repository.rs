@@ -41,6 +41,19 @@ pub trait JobRepository: Send + Sync {
         last_fire_at: DateTime<Utc>,
         next_fire_at: Option<DateTime<Utc>>,
     ) -> RepoResult<()>;
+
+    /// v0.12.2 — list every enabled job whose trigger is reactive
+    /// (file_watch / webhook / git_push / db_poll). Used at boot by
+    /// operator wiring that needs to register routes against
+    /// [`crate::sources::FileWatchSource`] / [`crate::sources::WebhookSource`]
+    /// from the persisted job rows.
+    ///
+    /// Default impl returns an empty vec so existing backends keep
+    /// compiling — the operator binary just won't see any DB-defined
+    /// routes against that backend.
+    async fn list_reactive(&self) -> RepoResult<Vec<ScheduledJob>> {
+        Ok(Vec::new())
+    }
 }
 
 #[async_trait]
@@ -122,6 +135,16 @@ impl JobRepository for InMemoryJobRepository {
         j.next_fire_at = next_fire_at;
         j.updated_at = Utc::now();
         Ok(())
+    }
+
+    async fn list_reactive(&self) -> RepoResult<Vec<ScheduledJob>> {
+        let g = self.jobs.lock();
+        let out: Vec<ScheduledJob> = g
+            .values()
+            .filter(|j| j.enabled && j.trigger.is_reactive())
+            .cloned()
+            .collect();
+        Ok(out)
     }
 }
 
@@ -236,6 +259,35 @@ mod tests {
         let back = repo.get("j1").await.unwrap();
         assert_eq!(back.last_fire_at, Some(now));
         assert_eq!(back.next_fire_at, Some(next));
+    }
+
+    #[tokio::test]
+    async fn list_reactive_returns_only_reactive_enabled_jobs() {
+        let repo = InMemoryJobRepository::new();
+        repo.upsert(&sample_job("scheduled-1")).await.unwrap();
+
+        let reactive = ScheduledJob::new(
+            "watch-1",
+            Some("t".into()),
+            "watch-1",
+            Trigger::file_watch("/tmp/notes").unwrap(),
+            serde_json::json!({}),
+        );
+        repo.upsert(&reactive).await.unwrap();
+
+        let mut disabled = ScheduledJob::new(
+            "watch-2",
+            Some("t".into()),
+            "watch-2",
+            Trigger::file_watch("/tmp/disabled").unwrap(),
+            serde_json::json!({}),
+        );
+        disabled.enabled = false;
+        repo.upsert(&disabled).await.unwrap();
+
+        let got = repo.list_reactive().await.unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, "watch-1");
     }
 
     #[tokio::test]

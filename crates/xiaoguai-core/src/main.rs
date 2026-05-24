@@ -304,10 +304,36 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         let webhook_source = Arc::new(xiaoguai_scheduler::WebhookSource::new());
         let (event_tx, event_rx) = xiaoguai_scheduler::event_channel();
         if let Err(e) =
-            xiaoguai_scheduler::TriggerSource::start(webhook_source.as_ref(), event_tx).await
+            xiaoguai_scheduler::TriggerSource::start(webhook_source.as_ref(), event_tx.clone())
+                .await
         {
             anyhow::bail!("scheduler webhook source start: {e}");
         }
+
+        // v0.12.2: optional FileWatchSource sharing the same event
+        // channel. Routes come from two places: the static
+        // `[scheduler.file_watch].routes` block in config (ops-friendly,
+        // no DB write needed) and the persisted `scheduled_jobs` rows
+        // whose `trigger.type == "file_watch"` (operator-friendly, the
+        // admin pane creates them). Errors here are logged but do NOT
+        // bail the server — a misconfigured watched path shouldn't kill
+        // every other scheduler capability.
+        if settings.scheduler.file_watch.enabled {
+            if let Err(e) = crate::scheduler_bridge::spawn_file_watch_source(
+                &settings.scheduler.file_watch,
+                jobs.as_ref(),
+                event_tx,
+            )
+            .await
+            {
+                tracing::error!(error = %e, "serve: file_watch source bootstrap failed; continuing without it");
+            }
+        } else {
+            tracing::info!(
+                "serve: file_watch source disabled (set [scheduler.file_watch].enabled = true to opt in)"
+            );
+        }
+
         let runner = xiaoguai_scheduler::JobRunner::new(jobs, runs, executor, audit_appender)
             .with_options(xiaoguai_scheduler::RunnerOptions {
                 max_jobs_per_tick: 32,

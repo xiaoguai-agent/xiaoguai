@@ -178,6 +178,35 @@ impl RagClient for R2RClient {
         })
     }
 
+    async fn reindex_path(&self, collection_id: &str, path: &std::path::Path) -> RagResult<usize> {
+        // R2R v3 prefers multipart `/v3/documents` with a real file upload
+        // for binary formats (PDF / docx), but path-based watcher signals
+        // arrive for text more often than not. We read once on our side
+        // and post via the same `raw_text` path as `ingest` — this keeps
+        // the citation contract intact (same `source_uri` shape) and
+        // matches v0.9.2's "ingest is the load-bearing entry" design.
+        // Binary re-index belongs in v0.12.2.1 if a user reports it.
+        let content = tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| RagError::InvalidArgument(format!("read {}: {e}", path.display())))?;
+        let ingest_req = IngestRequest {
+            collection_id: collection_id.into(),
+            source_uri: format!("file://{}", path.display()),
+            content,
+            metadata: serde_json::json!({
+                "reindexed_at": chrono::Utc::now().to_rfc3339(),
+                "source": "file_watch",
+            }),
+        };
+        let outcome = self.ingest(ingest_req).await?;
+        // R2R's ingest is async — `chunk_count` is 0 on the initial
+        // response. Report 1 (we successfully re-submitted the doc)
+        // when R2R hasn't populated the count yet; otherwise pass
+        // through the real count.
+        let n = usize::try_from(outcome.chunk_count).unwrap_or(usize::MAX);
+        Ok(n.max(1))
+    }
+
     async fn delete_document(&self, _collection_id: &str, document_id: &str) -> RagResult<()> {
         let path = format!("/v3/documents/{document_id}");
         let resp = self
