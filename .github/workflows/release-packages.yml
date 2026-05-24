@@ -1,0 +1,242 @@
+name: Release — native Linux packages (deb + rpm)
+
+# v1.1.6.1: ships native .deb and .rpm installers alongside the tarball.
+#
+# Kept separate from release-tarball.yml so a failure in either pipeline
+# does not gate the other.  Both fire on the same `v*` tag push.
+#
+# Architecture: amd64 only for now (the cross-compilation matrix used by
+# release-tarball.yml would require installing the matching sysroot inside
+# the debootstrap / mock environments, which is non-trivial).  If arm64
+# packages are needed later, the recommended path is a self-hosted
+# aarch64 runner or a QEMU-binfmt GitHub Actions runner.
+#
+# GLIBC pinning: both jobs use ubuntu-22.04 (glibc 2.35), which gives a
+# reasonable lower bound for Debian 12 / Ubuntu 22.04 / RHEL 9 deployments.
+# If an older GLIBC is needed, switch to ubuntu-20.04 or use cargo-zigbuild.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build packages but do not attach to a release"
+        required: false
+        default: "false"
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+  # Both package tools need the release binary; build once and reuse.
+  CARGO_DEB_VERSION: "2.6"
+  CARGO_GENERATE_RPM_VERSION: "0.14"
+
+jobs:
+  # ============================================================
+  # 1. Build the release binaries (shared between deb + rpm jobs)
+  # ============================================================
+  build:
+    name: Build release binaries (x86_64)
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.88.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: packages-x86_64
+
+      - name: Build xiaoguai-core + xiaoguai (release)
+        run: |
+          cargo build --release \
+            --bin xiaoguai-core \
+            --bin xiaoguai
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-x86_64
+          path: |
+            target/release/xiaoguai-core
+            target/release/xiaoguai
+          retention-days: 1
+
+  # ============================================================
+  # 2. Build the .deb package
+  # ============================================================
+  deb:
+    name: Build .deb (ubuntu-22.04 / amd64)
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Restore binaries from the build job so cargo-deb can find them.
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-x86_64
+          path: target/release
+
+      - name: Fix binary permissions
+        run: chmod 0755 target/release/xiaoguai-core target/release/xiaoguai
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked --version ${{ env.CARGO_DEB_VERSION }}
+
+      # --no-build: binaries already built above.
+      # -p xiaoguai-cli: the package that carries the [package.metadata.deb] config.
+      - name: Build .deb
+        run: cargo deb -p xiaoguai-cli --no-build --output dist/
+
+      - name: List dist/
+        run: ls -lh dist/
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-amd64
+          path: dist/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+  # ============================================================
+  # 3. Build the .rpm package
+  # ============================================================
+  rpm:
+    name: Build .rpm (ubuntu-22.04 / amd64)
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-x86_64
+          path: target/release
+
+      - name: Fix binary permissions
+        run: chmod 0755 target/release/xiaoguai-core target/release/xiaoguai
+
+      - name: Install cargo-generate-rpm
+        run: cargo install cargo-generate-rpm --locked --version ${{ env.CARGO_GENERATE_RPM_VERSION }}
+
+      - name: Build .rpm
+        run: |
+          cargo generate-rpm -p crates/xiaoguai-cli --output dist/
+
+      - name: List dist/
+        run: ls -lh dist/
+
+      - name: Upload .rpm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-x86_64
+          path: dist/*.rpm
+          if-no-files-found: error
+          retention-days: 7
+
+  # ============================================================
+  # 4a. Smoke-test the .deb in a fresh Ubuntu 22.04 container
+  # ============================================================
+  smoke-deb:
+    name: Smoke — install .deb (ubuntu:22.04)
+    needs: deb
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download .deb
+        uses: actions/download-artifact@v4
+        with:
+          name: deb-amd64
+          path: dist
+
+      - name: Run deb smoke-test in Docker
+        run: |
+          DEB=$(ls dist/*.deb | head -1)
+          docker run --rm \
+            -v "$(pwd)/dist:/pkg:ro" \
+            -v "$(pwd)/packaging/smoke.sh:/smoke.sh:ro" \
+            ubuntu:22.04 \
+            bash /smoke.sh deb "/pkg/$(basename "$DEB")"
+
+  # ============================================================
+  # 4b. Smoke-test the .rpm in a fresh Rocky Linux 9 container
+  # ============================================================
+  smoke-rpm:
+    name: Smoke — install .rpm (rockylinux:9)
+    needs: rpm
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download .rpm
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-x86_64
+          path: dist
+
+      - name: Run rpm smoke-test in Docker
+        run: |
+          RPM=$(ls dist/*.rpm | head -1)
+          docker run --rm \
+            -v "$(pwd)/dist:/pkg:ro" \
+            -v "$(pwd)/packaging/smoke.sh:/smoke.sh:ro" \
+            rockylinux:9 \
+            bash /smoke.sh rpm "/pkg/$(basename "$RPM")"
+
+  # ============================================================
+  # 5. Attach packages to the GitHub Release (tag pushes only)
+  # ============================================================
+  publish:
+    name: Attach packages to release
+    needs: [smoke-deb, smoke-rpm]
+    runs-on: ubuntu-22.04
+    # Only publish on real tag pushes; skip for workflow_dispatch dry-runs.
+    if: >
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      github.event.inputs.dry_run != 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Download .deb
+        uses: actions/download-artifact@v4
+        with:
+          name: deb-amd64
+          path: dist
+
+      - name: Download .rpm
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-x86_64
+          path: dist
+
+      - name: Generate SHA256SUMS for packages
+        run: |
+          cd dist
+          sha256sum *.deb *.rpm > SHA256SUMS-packages
+          cat SHA256SUMS-packages
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.deb
+            dist/*.rpm
+            dist/SHA256SUMS-packages
+          fail_on_unmatched_files: true
