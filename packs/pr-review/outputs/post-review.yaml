@@ -1,0 +1,54 @@
+# Output adapter — post GitHub PR review
+#
+# Combines the reviewer's inline comments and the challenger's supplements,
+# then calls `post_pr_review` via the github_pr MCP server.
+#
+# Suppression logic (F5 Challenger hook):
+#   If challenger.verdict == "Reject":
+#     - skip post_pr_review
+#     - write an audit log entry with rejection_reason
+#     - set step status = "suppressed" (visible in admin-ui)
+#
+# Review event type mapping:
+#   blocker/major  → CHANGES_REQUESTED (if any exist in merged list)
+#   minor/nit only → COMMENT
+#   empty list     → APPROVE (with summary message)
+
+name: post-review
+kind: mcp-tool
+
+mcp_server: github_pr
+tool: post_pr_review
+
+# Template used for the top-level review body (summary card).
+summary_template: templates/review-summary.md.j2
+
+# Merge strategy for reviewer + challenger comment arrays.
+merge:
+  reviewer_field: "review_comments"    # from reviewer step output
+  challenger_supplements_field: "challenger.supplements"
+  dedup_by: ["path", "line"]           # drop exact-same-location duplicates
+
+# Map severity → GitHub review event.
+# Takes the most severe finding across merged list.
+severity_to_event:
+  blocker: CHANGES_REQUESTED
+  major:   CHANGES_REQUESTED
+  minor:   COMMENT
+  nit:     COMMENT
+  none:    APPROVE
+
+# Audit entry written regardless of suppression.
+audit:
+  table: pack_pr_review_runs
+  fields:
+    - pr_number
+    - repo_owner
+    - repo_name
+    - head_sha
+    - reviewer_findings_count
+    - challenger_verdict
+    - challenger_supplements_count
+    - review_event
+    - suppressed
+    - posted_at

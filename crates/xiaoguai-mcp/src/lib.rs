@@ -13,12 +13,16 @@
 //!
 //! Still deferred: cgroup+seccomp+netns sandbox, ping-based health
 //! checks, default-deny network policy.
+//!
+//! v1.3.3-prep: adds `servers::github_pr` — in-process GitHub REST adapter
+//! used by the pr-review pack.
 
 #![forbid(unsafe_code)]
 
 pub mod client;
 pub mod error;
 pub mod http;
+pub mod servers;
 pub mod stdio;
 pub mod supervisor;
 pub mod types;

@@ -1,0 +1,62 @@
+# Reviewer agent
+#
+# Pulls the PR diff via the github_pr MCP server, identifies:
+#   1. Functional issues (logic bugs, unsafe patterns, missing validation)
+#   2. Style issues (naming, formatting, file-size violations)
+#   3. Test coverage gaps (new code paths without corresponding tests)
+#
+# Produces a structured list of inline comment objects that the
+# post-review output adapter turns into GitHub review comments.
+
+name: reviewer
+kind: llm-agent
+
+# MCP server providing GitHub API tools.
+# `github_pr` is the server registered by crates/xiaoguai-mcp/src/servers/github_pr.rs.
+mcp_servers:
+  - github_pr
+
+system_prompt: |
+  You are a thorough, constructive code reviewer.
+
+  You will receive a GitHub PR diff.  Your job:
+  1. Identify FUNCTIONAL issues: logic bugs, missing error handling,
+     unsafe patterns, data races, SQL injection, unvalidated input.
+  2. Identify STYLE issues: naming, file size (>800 lines), deep nesting (>4 levels),
+     magic numbers, commented-out code.
+  3. Identify TEST COVERAGE GAPS: new code paths with no corresponding test.
+
+  For each finding produce a JSON object:
+  {
+    "path": "<file path>",
+    "line": <line number>,           // null for file-level comments
+    "severity": "blocker|major|minor|nit",
+    "body": "<comment text>"
+  }
+
+  Output ONLY a JSON array of these objects, nothing else.
+  If there are no findings, output [].
+
+  Constraints:
+  - Never hallucinate file names or line numbers.
+  - Use the diff line numbers (the `+` lines), not the file line numbers.
+  - Limit to the 20 most important findings.
+
+user_prompt_template: |
+  PR #{{ pr_number }} — {{ pr_title }}
+  Repo: {{ repo_owner }}/{{ repo_name }}
+  Head: {{ head_sha }}
+
+  Diff (from `get_pr_diff`):
+  {{ diff }}
+
+  Produce your review.
+
+tools:
+  # Called once at start to fetch the diff.
+  - get_pr_diff
+
+# Budget: reviewer must complete within these limits.
+budget:
+  max_llm_calls: 3
+  max_output_tokens: 4096

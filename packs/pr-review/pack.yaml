@@ -1,0 +1,67 @@
+# Pack manifest: pr-review
+#
+# Wires GitHub pull_request webhook events through a
+# Reviewer → Challenger pipeline and posts the combined output
+# as a GitHub PR review with inline comments.
+#
+# Runtime dependencies (all must be present in the xiaoguai env):
+#   - webhook_token:  secret shared with GitHub (HMAC-SHA256)
+#   - llm_provider:   any provider registered in xiaoguai-llm
+#   - github_token:   PAT or GitHub App installation token
+#
+# F5 Challenger integration:
+#   When xiaoguai-orchestrator gains the Challenger middleware
+#   (planned v1.2), set `challenger.middleware: orchestrator/challenger`
+#   below; the orchestrator will inject a critique step automatically
+#   after the reviewer step.  Until then the pack wires the challenger
+#   agent directly as a second plan step.
+
+name: pr-review
+version: "1.0.0"
+description: >
+  GitHub PR review pack — webhook-triggered, two-agent pipeline
+  (reviewer + challenger), posts inline comments.
+
+# ── Inbound events ────────────────────────────────────────────
+inbound:
+  - ref: inbound/github-pr-webhook.yaml
+
+# ── Agent definitions ─────────────────────────────────────────
+agents:
+  - ref: agents/reviewer.yaml
+  - ref: agents/challenger.yaml
+
+# ── Output adapters ───────────────────────────────────────────
+outputs:
+  - ref: outputs/post-review.yaml
+
+# ── Execution plan ────────────────────────────────────────────
+# Steps run sequentially; challenger receives reviewer output as
+# `context`.  When orchestrator Challenger middleware lands (v1.2),
+# replace this plan section with `middleware: [orchestrator/challenger]`.
+plan:
+  - id: review
+    agent: reviewer
+    description: "Pull PR diff and produce inline review comments."
+  - id: challenge
+    agent: challenger
+    description: "Critique the reviewer's output for gaps and unstated assumptions."
+    deps: [review]
+  - id: post
+    output: post-review
+    description: "Post combined reviewer + challenger output as GitHub PR review."
+    deps: [review, challenge]
+
+# ── Resource requirements ─────────────────────────────────────
+requires:
+  env:
+    - GITHUB_TOKEN          # PAT or App installation token (repo:write)
+    - GITHUB_WEBHOOK_SECRET # HMAC-SHA256 secret configured in the repo
+  llm: true                 # any registered provider
+
+# ── F5 Challenger hook (forward-compatible) ───────────────────
+# When orchestrator/challenger middleware is merged, uncomment:
+# challenger:
+#   middleware: orchestrator/challenger
+#   critique_prompt_ref: templates/challenger-critique.md.j2
+#   reject_action: suppress_post  # do not post review if challenger rejects
