@@ -138,21 +138,27 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------------
-  # Publish to PyPI — deferred. Token + trusted-publisher config not in
-  # scope for v1.1.7. The block below stays as `if: false` so the
-  # plumbing is in tree but the action never fires. Flip `if:` to
-  # `${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}`
-  # and configure PyPI trusted publishing per:
-  #   https://docs.pypi.org/trusted-publishers/
-  # when we're ready (v1.1.8+).
+  # Publish to TestPyPI — runs on workflow_dispatch OR on any pre-release
+  # tag (e.g. v1.1.7.1rc1, v1.2.0a0, anything whose ref contains '-' or
+  # whose version segment contains 'a'/'b'/'rc').
+  #
+  # No API token needed.  PyPI trusted-publisher OIDC is used throughout.
+  # Maintainer setup: see docs/runbooks/pypi-trusted-publisher.md.
   # ---------------------------------------------------------------------
-  publish:
-    name: Publish to PyPI (DEFERRED)
+  publish-testpypi:
+    name: Rehearsal → TestPyPI
     needs: build-wheel
     runs-on: ubuntu-latest
-    if: false  # TODO(v1.1.8): enable when PyPI trusted-publishing is set up
+    # Fire on manual dispatch OR on pre-release tags (contain 'a', 'b', 'rc', or '.dev')
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' &&
+       startsWith(github.ref, 'refs/tags/v') &&
+       (contains(github.ref, 'a') || contains(github.ref, 'b') ||
+        contains(github.ref, 'rc') || contains(github.ref, '.dev')))
     permissions:
-      id-token: write    # trusted-publisher OIDC
+      id-token: write   # OIDC token for TestPyPI trusted publisher
+      contents: read
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -163,9 +169,51 @@ jobs:
       - name: List artifacts
         run: ls -la dist/
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
-          # Verify the upload was deterministic — `--verbose` so the
-          # PyPI response (file hashes) ends up in the run log.
+          repository-url: https://test.pypi.org/legacy/
           verbose: true
+          # No `password:` — OIDC auto-detected when id-token: write is present.
+
+  # ---------------------------------------------------------------------
+  # Publish to PyPI (production) — fires ONLY on stable release tags,
+  # i.e. tags that match v* AND do NOT contain a pre-release segment.
+  #
+  # Condition: push to refs/tags/v* AND ref does NOT contain 'a', 'b',
+  # 'rc', or '.dev'.  This mirrors PEP 440 stable-release semantics.
+  #
+  # No API token needed.  OIDC trusted-publisher only.
+  # ---------------------------------------------------------------------
+  publish:
+    name: Publish → PyPI
+    needs: build-wheel
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      !contains(github.ref, 'a') &&
+      !contains(github.ref, 'b') &&
+      !contains(github.ref, 'rc') &&
+      !contains(github.ref, '.dev')
+    permissions:
+      id-token: write   # OIDC token for PyPI trusted publisher
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: wheels-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          verbose: true
+          # No `password:` — OIDC auto-detected when id-token: write is present.
+          # No `repository-url:` — defaults to https://upload.pypi.org/legacy/.

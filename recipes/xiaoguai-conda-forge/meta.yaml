@@ -1,0 +1,73 @@
+# conda-forge feedstock template for xiaoguai
+#
+# STATUS: NOT YET SUBMITTED
+#
+# When the project is ready to list on conda-forge:
+#   1. Publish a stable release on PyPI (e.g. v1.2.0).
+#   2. Update `version`, `sha256`, and `url` below (run `sha256sum` on the sdist).
+#   3. Fork https://github.com/conda-forge/staged-recipes.
+#   4. Copy this file to  recipes/xiaoguai/meta.yaml  in your fork.
+#   5. Open a PR against conda-forge/staged-recipes.
+#      Title: "Add recipe for xiaoguai"
+#   6. A conda-forge bot (conda-forge-admin) will validate and review.
+#
+# This file is intentionally a template — fill in the blanks marked TODO.
+# No CI workflow drives this; conda-forge's own automation takes over after
+# the staged-recipes PR is merged.
+
+{% set name = "xiaoguai" %}
+{% set version = "TODO: e.g. 1.2.0" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  # Use the PyPI sdist (not the wheel) so conda-forge can build natively.
+  url: https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/{{ name }}-{{ version }}.tar.gz
+  sha256: TODO  # run: sha256sum xiaoguai-{{ version }}.tar.gz
+
+build:
+  # Noarch is NOT suitable here — xiaoguai bundles a platform-native Rust binary.
+  # conda-forge will build separate packages for linux-64, osx-64, osx-arm64, win-64.
+  number: 0
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  # The Rust binary is compiled inside the Python build (via maturin or a custom
+  # setup.py).  Rust must be available in the build environment (see requirements).
+
+requirements:
+  build:
+    - {{ compiler('rust') }}    # conda-forge rust compiler
+    - {{ compiler('c') }}       # needed by some pyo3/maturin paths
+    - cargo
+  host:
+    - python >=3.10
+    - pip
+    - maturin >=1.0             # or setuptools-rust, depending on build backend
+  run:
+    - python >=3.10
+
+test:
+  imports:
+    - xiaoguai
+  commands:
+    - xiaoguai --version
+    - xiaoguai --help
+
+about:
+  home: https://github.com/xiaoguai-agent/xiaoguai
+  license: MIT
+  license_file: LICENSE
+  summary: >-
+    Xiaoguai — open-source AI agent server with IM adapters,
+    scheduler, multi-agent orchestration, and admin UI.
+  description: |
+    Xiaoguai is a self-hostable AI agent server built in Rust.
+    This package provides the `xiaoguai` command-line interface
+    as a Python wheel that bundles the pre-compiled native binary.
+  doc_url: https://github.com/xiaoguai-agent/xiaoguai/tree/main/docs
+  dev_url: https://github.com/xiaoguai-agent/xiaoguai
+
+extra:
+  recipe-maintainers:
+    - TODO  # add your GitHub username
