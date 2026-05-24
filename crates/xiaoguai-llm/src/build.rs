@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use xiaoguai_types::{LlmProvider, ProviderId, ProviderKind};
 
+use crate::anthropic::AnthropicBackend;
 use crate::backend::LlmBackend;
+use crate::gemini::GeminiBackend;
 use crate::ollama::OllamaBackend;
 use crate::openai_compat::OpenAiCompatBackend;
 use crate::router::{LlmRouter, RouterConfig};
@@ -57,6 +59,33 @@ impl EnvResolver for OsEnvResolver {
     }
 }
 
+/// Resolve the API key env-var for a provider that *requires* a key.
+/// Returns the key value or an empty string (with a warning) if unset.
+fn resolve_required_key(
+    row: &xiaoguai_types::LlmProvider,
+    env: &dyn EnvResolver,
+    report: &mut BuildReport,
+) -> String {
+    if let Some(key) = row.api_key_env.as_deref() {
+        if let Some(v) = env.get(key) {
+            return v;
+        }
+        report.warn(format!(
+            "provider {} ({}): env var {key} is unset; backend will be unauthenticated",
+            row.name,
+            row.id.as_str()
+        ));
+    } else {
+        report.warn(format!(
+            "provider {} ({}): no api_key_env set for {} provider",
+            row.name,
+            row.id.as_str(),
+            row.kind.as_str()
+        ));
+    }
+    String::new()
+}
+
 /// Build an [`LlmRouter`] from a slice of `LlmProvider` rows.
 ///
 /// Order of operations:
@@ -92,6 +121,14 @@ pub fn build_router(rows: &[LlmProvider], env: &dyn EnvResolver) -> (LlmRouter, 
                     v
                 });
                 Arc::new(OpenAiCompatBackend::new(row.endpoint.clone(), api_key))
+            }
+            ProviderKind::Anthropic => {
+                let api_key = resolve_required_key(row, env, &mut report);
+                Arc::new(AnthropicBackend::new(row.endpoint.clone(), api_key))
+            }
+            ProviderKind::Gemini => {
+                let api_key = resolve_required_key(row, env, &mut report);
+                Arc::new(GeminiBackend::with_base_url(row.endpoint.clone(), api_key))
             }
         };
         if backends.insert(row.id.clone(), backend).is_some() {
