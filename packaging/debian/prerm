@@ -1,0 +1,26 @@
+#!/bin/sh
+# Debian prerm — run before the package files are removed.
+# Stops the service cleanly before binaries are deleted.
+set -e
+
+UNIT="xiaoguai-core.service"
+
+case "$1" in
+    remove|deconfigure)
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
+            systemctl stop "$UNIT"    || true
+        fi
+        ;;
+
+    upgrade|failed-upgrade)
+        # dpkg handles binary replacement on upgrade; do not stop the unit
+        # here — postinst's `restart` is sufficient.
+        ;;
+
+    *)
+        echo "prerm called with unknown argument: '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0
