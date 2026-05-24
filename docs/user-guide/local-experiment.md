@@ -35,7 +35,7 @@ You **must** set `OPENAI_API_KEY`. Everything else has sane defaults:
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Chinese reseller / Codex relay / DeepSeek |
 | `OPENAI_MODEL` | `gpt-4o-mini` | bigger model needed |
 | `PROVIDER_NAME` | `codex` | rename if multiple providers |
-| `MARKETPLACE_INSTALL` | `filesystem,fetch,sqlite` | which MCP servers to pre-install |
+| `MARKETPLACE_INSTALL` | `filesystem,memory` | which MCP servers to pre-install (npx-based only by default; `fetch`/`sqlite` need uvx + Python) |
 | `SKIP_FRONTEND_INSTALL` | (unset) | set to `1` if `node_modules` is warm |
 
 ## 2. Boot

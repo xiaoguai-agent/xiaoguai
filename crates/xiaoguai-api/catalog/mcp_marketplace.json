@@ -40,12 +40,12 @@
     {
       "slug": "sqlite",
       "name": "sqlite",
-      "description": "Query and modify SQLite databases. Includes schema introspection.",
+      "description": "Query and modify SQLite databases. Includes schema introspection. Python.",
       "category": "data",
       "transport": "stdio",
       "version": "0.6.2",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sqlite"],
+      "command": "uvx",
+      "args": ["mcp-server-sqlite", "--db-path", "/tmp/xiaoguai-mcp-sqlite.db"],
       "env_keys": [],
       "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/sqlite"
     },
@@ -76,12 +76,12 @@
     {
       "slug": "fetch",
       "name": "fetch",
-      "description": "Fetch web pages and return the cleaned content. Official.",
+      "description": "Fetch web pages and return the cleaned content. Official MCP reference server (Python).",
       "category": "files",
       "transport": "stdio",
       "version": "0.6.2",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-fetch"],
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
       "env_keys": [],
       "source_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch"
     },
