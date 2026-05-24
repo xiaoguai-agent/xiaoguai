@@ -48,3 +48,65 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
 
 [lints]
 workspace = true
+
+# ---- cargo-deb (v2.x) -------------------------------------------------------
+# Build: cargo deb -p xiaoguai-cli --no-build   (after a prior cargo build --release)
+# Docs:  https://github.com/kornelski/cargo-deb
+[package.metadata.deb]
+maintainer = "Xiaoguai Maintainers <maintainers@example.com>"
+extended-description-file = "../../README.md"
+depends = "$auto"
+section = "net"
+priority = "optional"
+# The systemd unit is named xiaoguai-core.service because the long-running
+# daemon binary is `xiaoguai-core` (from crates/xiaoguai-core); the CLI
+# package is the conventional entry-point for the .deb because cargo-deb
+# must be rooted in a single crate, and xiaoguai-cli is the package that
+# produces the user-facing `xiaoguai` binary.
+#
+# cargo-deb resolves paths relative to the *workspace root*, not this
+# Cargo.toml, so all paths below start from the repository root.
+assets = [
+    # server binary (built from crates/xiaoguai-core but cross-compiled into
+    # the same target/ tree; --no-build means CI must build both before
+    # running cargo-deb).
+    ["target/release/xiaoguai-core",    "usr/local/bin/xiaoguai-core",    "755"],
+    # CLI binary
+    ["target/release/xiaoguai",         "usr/local/bin/xiaoguai",         "755"],
+    # systemd unit file — installed to /lib/systemd/system so it works on
+    # both Debian and Ubuntu without a drop-in override.
+    ["deploy/systemd/xiaoguai-core.service", "lib/systemd/system/xiaoguai-core.service", "644"],
+    # Default config (ships as .example; postinst copies if missing)
+    ["deploy/config.example.yaml",      "etc/xiaoguai/config.yaml.example", "644"],
+    # Runbook (operator reference PDF/MD — Markdown lives in the repo)
+    ["docs/runbooks/operator.md",       "usr/share/doc/xiaoguai/operator-runbook.md", "644"],
+    # Package docs
+    ["README.md",                        "usr/share/doc/xiaoguai/README.md", "644"],
+    ["LICENSE",                          "usr/share/doc/xiaoguai/copyright",  "644"],
+]
+conf-files = ["/etc/xiaoguai/config.yaml"]
+maintainer-scripts = "../../packaging/debian"
+# Restart the daemon automatically after upgrade (systemd only).
+systemd-units = { enable = true }
+
+# ---- cargo-generate-rpm -----------------------------------------------------
+# Build: cargo generate-rpm -p xiaoguai-cli   (after a prior cargo build --release)
+# Docs:  https://github.com/cat-in-136/cargo-generate-rpm
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/xiaoguai-core",   dest = "/usr/local/bin/xiaoguai-core",            mode = "0755" },
+    { source = "target/release/xiaoguai",         dest = "/usr/local/bin/xiaoguai",                 mode = "0755" },
+    { source = "deploy/systemd/xiaoguai-core.service", dest = "/lib/systemd/system/xiaoguai-core.service", mode = "0644" },
+    { source = "deploy/config.example.yaml",      dest = "/etc/xiaoguai/config.yaml.example",       mode = "0644", config = true },
+    { source = "docs/runbooks/operator.md",        dest = "/usr/share/doc/xiaoguai/operator-runbook.md", mode = "0644" },
+    { source = "README.md",                         dest = "/usr/share/doc/xiaoguai/README.md",      mode = "0644" },
+    { source = "LICENSE",                           dest = "/usr/share/doc/xiaoguai/LICENSE",         mode = "0644" },
+]
+# %pre — ensure the system user exists before files land on disk.
+pre_install_script = "packaging/rpm/scriptlets/pre_install.sh"
+# %post — enable + start the unit, seed config if missing.
+post_install_script = "packaging/rpm/scriptlets/post_install.sh"
+# %preun — stop the unit before files are removed.
+pre_uninstall_script = "packaging/rpm/scriptlets/pre_uninstall.sh"
+# %postun — disable the unit and clean up after full removal.
+post_uninstall_script = "packaging/rpm/scriptlets/post_uninstall.sh"
