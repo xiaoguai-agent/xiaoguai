@@ -1,0 +1,83 @@
+# Xiaoguai Core — example configuration.
+#
+# Copy this file to /etc/xiaoguai/config.yaml and edit for your deployment.
+# Every setting can also be overridden by an environment variable using the
+# XIAOGUAI_ prefix and `__` as a nested-key separator. Example:
+#
+#     XIAOGUAI_DATABASE__URL=postgres://...
+#     XIAOGUAI_AUTH__REQUIRED=true
+#
+# Env overrides win over file values. CLI flags win over env.
+
+server:
+  # 0.0.0.0 binds to all interfaces. Restrict to 127.0.0.1 if you front
+  # the service with a reverse proxy on the same host.
+  host: 0.0.0.0
+  port: 7600
+
+database:
+  # Postgres connection string. The service applies the bundled migrations
+  # (in /etc/xiaoguai/migrations after install) automatically on boot.
+  url: postgres://xiaoguai:CHANGEME@localhost:5432/xiaoguai
+  max_connections: 16
+
+cache:
+  # Valkey / Redis URL. Used for idempotency keys + per-tenant caches.
+  url: redis://localhost:6379
+  key_prefix: "xiaoguai:"
+
+auth:
+  # JWT validation knobs. Leave `required: false` for dev / single-tenant
+  # bring-up; flip to `true` once you front the service with an IdP.
+  issuer: https://idp.example.com
+  audience: xiaoguai-core
+  jwks_url: https://idp.example.com/.well-known/jwks.json
+  required: false
+
+audit:
+  # HMAC-SHA256 signing key for the tamper-evident audit chain. This dev
+  # default MUST be rotated before production use — either edit this file
+  # or set the env var named by `signing_key_env` and the service will
+  # prefer the env value.
+  hmac_key: dev-only-change-me-32-bytes-min
+  signing_key_env: XIAOGUAI_AUDIT_SIGNING_KEY
+
+scheduler:
+  # Off by default. Flip to `true` to enable cron / reactive jobs.
+  enabled: false
+  tick_interval_secs: 30
+
+  # Per-sink config. Uncomment + fill in the sink(s) you want.
+  sinks:
+    # feishu:
+    #   webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/...
+    #   secret: ""
+    # telegram:
+    #   bot_token: "123456:ABC..."
+    #   chat_id: "-1001234567890"
+    # email:
+    #   smtp_host: smtp.example.com
+    #   smtp_port: 587
+    #   from: "xiaoguai@example.com"
+    #   to: ["ops@example.com"]
+    #   username: xiaoguai
+    #   password_env: XIAOGUAI_SMTP_PASSWORD
+    # inbox: {}
+
+  file_watch:
+    enabled: false
+    load_routes_from_db: true
+    routes: []
+    # routes:
+    #   - job_id: "notes-reindex"
+    #     path: "/var/notes"
+
+im:
+  use_in_process_history: false
+  max_messages_per_conversation: 50
+
+eval:
+  # Directory of *.eval.yaml suites. Endpoints return 503 when the dir
+  # doesn't exist — leave the default to keep eval disabled.
+  suites_dir: ./eval-suites
+  max_iterations: 0

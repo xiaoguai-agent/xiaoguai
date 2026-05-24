@@ -1,0 +1,95 @@
+[Unit]
+Description=Xiaoguai Core API server
+Documentation=https://github.com/xiaoguai-agent/xiaoguai
+# Wait for the network stack to be fully up before starting; local
+# postgres / valkey are likely to be available before us but we don't
+# strictly require them on the same host (they may be remote).
+After=network-online.target postgresql.service valkey-server.service
+Requires=network-online.target
+# Soft-wants — if either is co-located we want them up first, but if
+# they're remote we don't fail at boot.
+Wants=postgresql.service valkey-server.service
+
+[Service]
+# axum doesn't speak sd_notify out of the box (v1.1.6); revisit if
+# xiaoguai-core ever wires the `sd-notify` crate.
+Type=simple
+User=xiaoguai
+Group=xiaoguai
+# Don't switch users dynamically — install.sh provisions the static
+# `xiaoguai` system account so on-disk state owned by it survives
+# upgrades.
+DynamicUser=no
+
+# Working directory holds runtime state (audit cache, scratch); kept
+# under /var/lib so it survives reboots and is excluded from the
+# read-only filesystem hardening below via ReadWritePaths.
+WorkingDirectory=/var/lib/xiaoguai
+Environment="RUST_LOG=info,sqlx=warn"
+# Operators set XIAOGUAI_* env vars in a drop-in:
+#   /etc/systemd/system/xiaoguai-core.service.d/override.conf
+# Or edit /etc/xiaoguai/config.yaml directly.
+ExecStart=/usr/local/bin/xiaoguai-core serve --config /etc/xiaoguai/config.yaml
+
+Restart=on-failure
+RestartSec=5s
+# Cap restart storms — give up after 5 failures in 60s so a broken
+# config doesn't pin the CPU.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Sane shutdown — axum's graceful shutdown handler responds to SIGTERM.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# ---- Hardening ----
+# Drop everything we don't need. xiaoguai-core is a single-process
+# HTTP server; it doesn't need to spawn shells, mount filesystems,
+# tweak the kernel, or talk to anything other than tcp/udp sockets.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+ProtectProc=invisible
+# Read-write paths the service legitimately needs:
+#   /var/lib/xiaoguai      — runtime state (audit cache, scratch)
+#   /var/log/xiaoguai      — optional log dir (off by default; we use stdout)
+ReadWritePaths=/var/lib/xiaoguai /var/log/xiaoguai
+# Lock down /etc/xiaoguai to read-only (config files only).
+ReadOnlyPaths=/etc/xiaoguai
+
+# Network: outbound only — block raw sockets / AF_PACKET / AF_NETLINK.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @reboot @swap @cpu-emulation @obsolete
+
+# Capability lockdown — start from an empty bounding set; xiaoguai-core
+# binds to a high port (>1024) so CAP_NET_BIND_SERVICE isn't needed by
+# default. If an operator wants to bind to :80 / :443 they add it via
+# a drop-in.
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Resource limits — generous but bounded.
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# stdout/stderr land in journald; the runtime config decides verbosity.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
