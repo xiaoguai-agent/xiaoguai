@@ -3,10 +3,22 @@
 //! Loads configuration, connects to Postgres + Valkey, applies migrations,
 //! initializes JWT + RBAC + audit chain, then either runs the API server
 //! (default) or executes a single subcommand (e.g. `smoke`).
+//!
+//! ## sd-notify integration (v1.1.6.2)
+//!
+//! When running under systemd with `Type=notify` the binary sends:
+//! - `READY=1` once all listeners are bound and subsystems started.
+//! - `WATCHDOG=1` pings on a background interval when `WATCHDOG_USEC` is
+//!   set by systemd (opt-in via `WatchdogSec=` in the unit file).
+//! - `STOPPING=1` before the graceful-shutdown path.
+//!
+//! All sd-notify calls are gated on `#[cfg(target_os = "linux")]` so
+//! macOS and Windows developer builds compile and run without change.
 
 mod audit_bridge;
 mod eval_bridge;
 mod scheduler_bridge;
+mod sd_notify_bridge;
 mod sessions_bridge;
 mod today_bridge;
 mod usage_bridge;
@@ -513,10 +525,24 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         .context("bind api")?;
     tracing::info!(%local, "serve: api listening");
 
+    // v1.1.6.2: notify systemd that all subsystems are up (Type=notify).
+    // This also spawns the watchdog ping task when WATCHDOG_USEC is set;
+    // the handle is aborted on shutdown so the tokio runtime can drain.
+    crate::sd_notify_bridge::notify_ready();
+    let watchdog_handle = crate::sd_notify_bridge::spawn_watchdog_ticker();
+
     tokio::select! {
         res = fut => res.context("axum serve")?,
         _ = tokio::signal::ctrl_c() => tracing::info!("serve: shutdown via ctrl-c"),
     }
+
+    // v1.1.6.2: tell systemd we are shutting down before any cleanup.
+    crate::sd_notify_bridge::notify_stopping();
+    if let Some(h) = watchdog_handle {
+        h.abort();
+        let _ = h.await;
+    }
+
     // v0.12.0: aborting the scheduler task cancels its tokio::select!
     // loop; in-flight fires complete naturally because run_to_completion
     // is awaited inside the task body.
