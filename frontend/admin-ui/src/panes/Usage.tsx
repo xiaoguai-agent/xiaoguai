@@ -16,6 +16,7 @@ import type {
   UsageReport,
 } from '@xiaoguai/shared';
 import { client } from '../client';
+import { formatCents } from '../utils/cost';
 
 const GROUP_BY_OPTIONS: UsageGroupBy[] = ['day', 'provider', 'model'];
 
@@ -192,7 +193,7 @@ export function UsagePane(): JSX.Element {
               <th scope="col">{groupBy === 'day' ? 'Date' : groupBy === 'provider' ? 'Provider' : 'Model'}</th>
               <th scope="col">Input tokens</th>
               <th scope="col">Output tokens</th>
-              <th scope="col">Cost</th>
+              <th scope="col">Cost (USD)</th>
             </tr>
           </thead>
           <tbody>
@@ -205,13 +206,27 @@ export function UsagePane(): JSX.Element {
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr className="usage-table-total">
+              <td>
+                <strong>Total</strong>
+              </td>
+              <td>
+                <strong>{report.total_input_tokens.toLocaleString()}</strong>
+              </td>
+              <td>
+                <strong>{report.total_output_tokens.toLocaleString()}</strong>
+              </td>
+              <td>
+                <strong>
+                  {report.cost_cents === null ? '—' : formatCents(report.cost_cents)}
+                </strong>
+              </td>
+            </tr>
+          </tfoot>
         </table>
       )}
     </>
   );
 }
 
-function formatCents(cents: number): string {
-  const dollars = cents / 100;
-  return `$${dollars.toFixed(2)}`;
-}
