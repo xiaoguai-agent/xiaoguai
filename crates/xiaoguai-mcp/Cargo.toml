@@ -23,6 +23,11 @@ tracing = { workspace = true }
 # v0.9.0: HTTP transport uses `http::HeaderName/HeaderValue` for custom
 # request headers. Pin to rmcp's version range.
 http = "1"
+# v1.3.3-prep: github_pr server — signature verification + REST client.
+reqwest = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = "0.4"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

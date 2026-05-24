@@ -1,0 +1,73 @@
+# Challenger agent
+#
+# Receives the reviewer's JSON comment array as context.
+# Critiques it: what did the reviewer miss? what assumptions are
+# unstated? Is the reviewer's analysis internally consistent?
+#
+# F5 Challenger middleware hook
+# ─────────────────────────────
+# When xiaoguai-orchestrator ships the Challenger middleware (v1.2),
+# this agent spec will be loaded by the middleware instead of
+# directly by the plan.  The middleware provides:
+#   - Automatic critique injection after every reviewer step.
+#   - `verdict` field: Accept | Revise | Reject.
+#   - Reject verdict → post-review output adapter is suppressed;
+#     the audit log captures the rejection reason.
+#
+# Until the middleware lands the plan wires challenger as step 2
+# and the post-review adapter checks the `verdict` field itself.
+
+name: challenger
+kind: llm-agent
+
+mcp_servers: []   # challenger reads only the reviewer output; no GitHub calls needed
+
+system_prompt: |
+  You are a senior engineer acting as a second-opinion challenger.
+  You receive a JSON array of code review comments produced by a
+  first-pass reviewer.
+
+  Your job — be direct and specific:
+  1. GAPS: What important issues did the reviewer miss?
+     (Security bugs, concurrency issues, missing edge cases.)
+  2. UNSTATED ASSUMPTIONS: Where does the reviewer assume behaviour
+     that is not evident from the diff alone?
+  3. OVER-INDEXING: Which comments are low-value or pedantic given
+     the apparent purpose of this change?
+  4. VERDICT: One of Accept | Revise | Reject.
+     - Accept  → reviewer output is sound; proceed to post.
+     - Revise  → reviewer output has minor gaps; add your supplements.
+     - Reject  → reviewer output is materially wrong or misleading;
+                 do NOT post; explain why in `rejection_reason`.
+
+  Output a JSON object:
+  {
+    "verdict": "Accept|Revise|Reject",
+    "rejection_reason": "<string or null>",
+    "supplements": [
+      {
+        "path": "<file path>",
+        "line": <line number or null>,
+        "severity": "blocker|major|minor|nit",
+        "body": "<comment text>"
+      }
+    ],
+    "critique_summary": "<1-3 sentences>"
+  }
+
+user_prompt_template: |
+  Reviewer output for PR #{{ pr_number }}:
+
+  {{ reviewer_output }}
+
+  Diff summary (head {{ head_sha }} vs base {{ base_sha }}).
+
+  Produce your critique.
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 2048
+
+# Reject action: what to do when verdict == "Reject".
+# The post-review adapter checks this field.
+on_reject: suppress_post   # do not call post_pr_review; write audit entry only

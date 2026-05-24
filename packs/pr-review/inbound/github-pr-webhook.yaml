@@ -1,0 +1,44 @@
+# Inbound webhook source — GitHub pull_request events
+#
+# GitHub must be configured to send pull_request webhooks to:
+#   POST https://<host>/v1/scheduler/webhooks/<route_id>
+#
+# Signature verification: HMAC-SHA256 over the raw request body,
+# compared against the `X-Hub-Signature-256` header.
+# The route uses the existing WebhookSourceAdapter in xiaoguai-scheduler.
+
+name: github-pr-webhook
+kind: webhook
+
+# Route registered in the scheduler webhook table.
+# `route_id` is set at deploy time; the adapter maps it to a token.
+route_id: "github-pr-${PACK_INSTANCE_ID}"
+
+# Only handle these GitHub event types.
+event_filter:
+  header: "X-GitHub-Event"
+  values: ["pull_request"]
+
+# Only handle these PR actions (opened = new PR; synchronize = new push).
+payload_filter:
+  json_path: "$.action"
+  values: ["opened", "synchronize"]
+
+# Signature verification settings.
+signature:
+  algorithm: hmac-sha256
+  header: "X-Hub-Signature-256"
+  prefix: "sha256="
+  secret_env: GITHUB_WEBHOOK_SECRET
+
+# Fields extracted from the payload and passed to the plan context.
+extract:
+  pr_number:    "$.number"
+  repo_owner:   "$.repository.owner.login"
+  repo_name:    "$.repository.name"
+  head_sha:     "$.pull_request.head.sha"
+  base_sha:     "$.pull_request.base.sha"
+  pr_title:     "$.pull_request.title"
+  pr_body:      "$.pull_request.body"
+  pr_html_url:  "$.pull_request.html_url"
+  diff_url:     "$.pull_request.diff_url"
