@@ -1,0 +1,63 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namePrefix: ""
+namespace: xiaoguai-dev
+
+resources:
+  - ../../base
+
+# Pin to :dev image tag for local / CI builds
+images:
+  - name: ghcr.io/xiaoguai-agent/xiaoguai
+    newTag: dev
+
+# Overlay-specific patches
+patches:
+  # Single replica; no HPA needed at dev scale
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: xiaoguai
+      spec:
+        replicas: 1
+        template:
+          spec:
+            containers:
+              - name: xiaoguai-core
+                resources:
+                  requests:
+                    cpu: 50m
+                    memory: 128Mi
+                  limits:
+                    cpu: "1"
+                    memory: 512Mi
+
+  # Debug logging for dev
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: xiaoguai-config
+      data:
+        RUST_LOG: "debug,sqlx=debug,tower_http=debug"
+
+  # Dev ingress host
+  - patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: xiaoguai
+      spec:
+        rules:
+          - host: xiaoguai.dev.local
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: xiaoguai
+                      port:
+                        number: 8080
