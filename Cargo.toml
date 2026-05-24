@@ -19,6 +19,7 @@ members = [
     "crates/xiaoguai-im-feishu",
     "crates/xiaoguai-im-dingtalk",
     "crates/xiaoguai-im-wecom",
+    "crates/xiaoguai-im-telegram",
     "crates/xiaoguai-cli",
     "crates/xiaoguai-orchestrator",
 ]
