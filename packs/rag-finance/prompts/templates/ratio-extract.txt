@@ -1,0 +1,31 @@
+Compute the following financial ratios for {{company_name}} using the retrieved financial
+statement data for the period {{period}}:
+
+Requested ratios:
+{{ratio_list}}
+
+For each ratio:
+1. State the ratio name and category (profitability / liquidity / leverage / efficiency)
+2. Show the formula with labeled components
+3. Insert the values from the retrieved context, with citations
+4. Compute the result (show arithmetic)
+5. Provide a 1-sentence interpretation against the benchmark in the ratio reference guide
+6. If data is insufficient, state "Insufficient data: [what is missing]"
+
+Output format:
+
+### [Ratio Name] ([Category])
+**Formula**: [formula]
+**Inputs** [Source: <doc>, Table/§]:
+  - [component 1] = [value]
+  - [component 2] = [value]
+**Result**: [value]
+**Interpretation**: [1 sentence vs. benchmark]
+
+---
+
+Company: {{company_name}}
+Period: {{period}}
+Retrieved context:
+---
+{{retrieved_context}}

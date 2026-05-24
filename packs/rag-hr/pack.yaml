@@ -1,0 +1,33 @@
+# HR RAG Pack
+# kind: scaffold-only — swap in real tenant corpus before production use.
+#
+# Corpus sources (all public-domain / MIT):
+#   - US Department of Labor FMLA fact sheets: public domain (US gov work)
+#     https://www.dol.gov/agencies/whd/fmla
+#   - US Department of Labor FLSA fact sheets: public domain (US gov work)
+#     https://www.dol.gov/agencies/whd/flsa
+#   - SHRM-style HR policy templates: original MIT work (not SHRM proprietary text)
+#   - EEO/Title VII summary: original MIT summary citing public EEOC guidance
+
+kind: scaffold-only
+
+domain: hr
+
+# Recommended embedding model.
+embedding_model: nomic-embed-text
+
+# Reranker integration — uses the xiaoguai reranker when C13 is merged.
+reranker: bge-reranker-v2-m3
+
+# Top-k before reranking.
+top_k: 20
+top_k_final: 5
+
+# Chunking preset — text-default suits policy documents and fact sheets.
+chunking_preset: text-default
+
+# Collection id used when bulk-loading this pack.
+collection_id: rag-hr
+
+corpus_dir: corpus
+prompts_dir: prompts

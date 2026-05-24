@@ -1,0 +1,26 @@
+Extract the following clause types from the retrieved contract documents:
+
+Clause types to extract:
+{{clause_types}}
+
+For each clause found, provide:
+1. Clause type
+2. Verbatim text (or paraphrase if verbatim exceeds 200 words, marked as paraphrase)
+3. Source document and section number
+4. Plain-language summary (1-2 sentences)
+
+If a clause type is not present in the retrieved context, explicitly note its absence —
+a missing clause is itself a finding.
+
+Format each result as:
+
+### [Clause Type]
+**Found**: Yes / No / Partial
+**Source**: [document name, §section]
+**Text**: "[verbatim or paraphrase]"
+**Summary**: [plain-language explanation]
+
+Requested clause types: {{clause_types}}
+Document context below:
+---
+{{retrieved_context}}
