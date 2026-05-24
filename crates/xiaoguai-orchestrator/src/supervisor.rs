@@ -1,12 +1,19 @@
 //! `Supervisor` — the orchestration entry point.
 //!
-//! ## Run loop
+//! ## Run loop (with optional Challenger)
 //!
 //! ```text
 //! loop {
 //!   check budget → BudgetExhausted?
 //!   planner.next_step(goal, history) → None  → GoalAchieved
-//!                                    → Some(step) → dispatch
+//!                                    → Some(step) →
+//!     if step.risk_level == High && challenger present:
+//!       challenger.critique(step) →
+//!         Accept          → dispatch as normal
+//!         RequestRevision → re-ask planner with critique; loop ≤ MAX_REVISIONS
+//!         Reject          → record skipped StepResult; continue
+//!     else:
+//!       dispatch directly
 //!   worker_pool.next() → execute(task)
 //!   record StepResult in history
 //!   steps_taken += 1
@@ -18,6 +25,7 @@
 //! - Dynamic re-planning (planner sees worker output mid-run)
 //! - Cancel token propagation to in-flight workers
 //! - Token-usage bubbling from worker runs
+//! - Challenger memory / cross-run audit trail
 
 use std::sync::Arc;
 
@@ -25,11 +33,16 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use crate::budget::Budget;
+use crate::challenger::{Challenger, Verdict};
 use crate::error::OrchestratorError;
-use crate::plan::PlanStep;
+use crate::plan::{PlanStep, RiskLevel};
 use crate::planner::Planner;
 use crate::worker::{Task, Worker, WorkerResult};
 use crate::worker_handle::WorkerPool;
+
+/// Maximum number of revision loops for a single step before the supervisor
+/// gives up and dispatches the (possibly still-risky) revised step anyway.
+const MAX_REVISIONS: u32 = 3;
 
 /// The terminal outcome of a supervisor run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,9 +65,43 @@ pub struct StepResult {
     pub success: bool,
     /// The worker's output text (or error message on failure).
     pub output: String,
+    /// Critique produced by the Challenger, if any.  `None` for steps that
+    /// bypassed the challenger (`risk_level` < High or no challenger configured).
+    pub critique_reasons: Option<Vec<String>>,
+    /// Risk score from the Challenger, if any.
+    pub critique_risk_score: Option<f64>,
 }
 
-/// Supervisor — owns the budget, planner, and worker pool.
+impl StepResult {
+    /// Build a plain (non-challenged) result.
+    fn plain(step_id: String, description: String, success: bool, output: String) -> Self {
+        Self {
+            step_id,
+            description,
+            success,
+            output,
+            critique_reasons: None,
+            critique_risk_score: None,
+        }
+    }
+
+    /// Build a result that was rejected by the Challenger (skipped).
+    fn rejected(step: &PlanStep, reasons: Vec<String>, risk_score: f64) -> Self {
+        Self {
+            step_id: step.id.clone(),
+            description: step.description.clone(),
+            success: false,
+            output: format!(
+                "Rejected by challenger (risk={risk_score:.2}): {}",
+                reasons.join("; ")
+            ),
+            critique_reasons: Some(reasons),
+            critique_risk_score: Some(risk_score),
+        }
+    }
+}
+
+/// Supervisor — owns the budget, planner, worker pool, and optional Challenger.
 ///
 /// Workers are type-erased (`dyn Worker`) so the pool can hold heterogeneous
 /// implementations.  Use `add_worker` to register workers before calling `run`.
@@ -62,16 +109,26 @@ pub struct Supervisor {
     budget: Budget,
     planner: Box<dyn Planner>,
     pool: WorkerPool,
+    /// Optional challenger middleware.  Only invoked for `RiskLevel::High` steps.
+    challenger: Option<Arc<dyn Challenger>>,
 }
 
 impl Supervisor {
-    /// Build a supervisor with an empty worker pool.
+    /// Build a supervisor with an empty worker pool and no challenger.
     pub fn new(budget: Budget, planner: Box<dyn Planner>) -> Self {
         Self {
             budget,
             planner,
             pool: WorkerPool::new(),
+            challenger: None,
         }
+    }
+
+    /// Attach a challenger.  High-risk steps will be critiqued before dispatch.
+    #[must_use]
+    pub fn with_challenger(mut self, challenger: Arc<dyn Challenger>) -> Self {
+        self.challenger = Some(challenger);
+        self
     }
 
     /// Add a worker to the round-robin pool.
@@ -117,29 +174,135 @@ impl Supervisor {
                 }
             };
 
-            let result = dispatch_step(&self.pool, &step, &history).await;
-            let step_result = match result {
-                Ok(wr) => StepResult {
-                    step_id: step.id.clone(),
-                    description: step.description.clone(),
-                    success: wr.success,
-                    output: wr.output,
-                },
-                Err(OrchestratorError::WorkerFailed(msg)) => {
-                    warn!(step_id = %step.id, %msg, "worker failed; recording and continuing");
-                    StepResult {
-                        step_id: step.id.clone(),
-                        description: step.description.clone(),
-                        success: false,
-                        output: msg,
-                    }
-                }
-                Err(e) => return Err(e),
-            };
+            // Challenge high-risk steps before dispatching.
+            let step_result = self
+                .challenge_and_dispatch(goal, step, &mut history)
+                .await?;
+            if step_result.is_none() {
+                // revision loop exhausted without settlement — should not
+                // normally happen, but guard against an infinite loop.
+                continue;
+            }
+            let step_result = step_result.unwrap();
 
             debug!(step_id = %step_result.step_id, success = step_result.success, "step done");
             history.push(step_result);
             steps_taken += 1;
+        }
+    }
+
+    /// Route a step through the challenger (if configured and step is High risk)
+    /// and return the final `StepResult`.
+    ///
+    /// Returns `None` only if `MAX_REVISIONS` is somehow exceeded without
+    /// settling — treated as a safety skip in the caller.
+    async fn challenge_and_dispatch(
+        &self,
+        goal: &str,
+        mut step: PlanStep,
+        history: &mut Vec<StepResult>,
+    ) -> Result<Option<StepResult>, OrchestratorError> {
+        // Non-high-risk steps or no challenger configured: dispatch directly.
+        if step.risk_level != RiskLevel::High || self.challenger.is_none() {
+            return Ok(Some(self.do_dispatch(&step, history).await?));
+        }
+
+        let challenger = self.challenger.as_ref().unwrap();
+
+        for revision in 0..=MAX_REVISIONS {
+            let critique = challenger.critique(&step).await?;
+
+            match critique.verdict {
+                Verdict::Accept => {
+                    debug!(step_id = %step.id, "challenger accepted step");
+                    return Ok(Some(self.do_dispatch(&step, history).await?));
+                }
+                Verdict::Reject => {
+                    warn!(
+                        step_id = %step.id,
+                        risk = critique.risk_score,
+                        "challenger rejected step — skipping"
+                    );
+                    return Ok(Some(StepResult::rejected(
+                        &step,
+                        critique.reasons,
+                        critique.risk_score,
+                    )));
+                }
+                Verdict::RequestRevision => {
+                    if revision >= MAX_REVISIONS {
+                        warn!(
+                            step_id = %step.id,
+                            "max revisions ({MAX_REVISIONS}) reached — dispatching as-is"
+                        );
+                        return Ok(Some(self.do_dispatch(&step, history).await?));
+                    }
+                    // Ask the planner for a revised step, passing the critique.
+                    let critique_ctx = critique.to_context_string();
+                    info!(
+                        step_id = %step.id,
+                        revision,
+                        %critique_ctx,
+                        "challenger requested revision — re-asking planner"
+                    );
+
+                    // Temporarily push a fake "revision request" into history so
+                    // the planner sees the critique.  We remove it afterwards.
+                    let temp_result = StepResult::plain(
+                        format!("__revision_{}_for_{}", revision, step.id),
+                        critique_ctx.clone(),
+                        false,
+                        critique_ctx,
+                    );
+                    history.push(temp_result);
+
+                    let revised = self.planner.next_step(goal, history).await?;
+                    // Remove the temporary marker.
+                    history.pop();
+
+                    match revised {
+                        Some(s) => step = s,
+                        None => {
+                            // Planner gave up — treat as reject.
+                            return Ok(Some(StepResult::rejected(
+                                &step,
+                                critique.reasons,
+                                critique.risk_score,
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Should be unreachable (loop exits via return), but satisfy the compiler.
+        Ok(None)
+    }
+
+    /// Dispatch a step to the worker pool and wrap the result as a `StepResult`.
+    async fn do_dispatch(
+        &self,
+        step: &PlanStep,
+        history: &[StepResult],
+    ) -> Result<StepResult, OrchestratorError> {
+        let result = dispatch_step(&self.pool, step, history).await;
+        match result {
+            Ok(wr) => Ok(StepResult::plain(
+                step.id.clone(),
+                step.description.clone(),
+                wr.success,
+                wr.output,
+            )),
+            Err(OrchestratorError::WorkerFailed(msg)) => {
+                warn!(step_id = %step.id, %msg, "worker failed; recording and continuing");
+                Ok(StepResult::plain(
+                    step.id.clone(),
+                    step.description.clone(),
+                    false,
+                    msg,
+                ))
+            }
+            Err(e) => Err(e),
         }
     }
 }

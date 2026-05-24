@@ -5,6 +5,7 @@
 //!   - a human-readable `description` (what the worker should do)
 //!   - `deps`: ids of steps that must succeed before this step may run
 //!   - `status`: current lifecycle state
+//!   - `risk_level`: hint to the Supervisor about whether to invoke the Challenger
 
 use serde::{Deserialize, Serialize};
 
@@ -20,8 +21,30 @@ pub enum StepStatus {
     Succeeded,
     /// Worker returned failure.
     Failed,
-    /// Skipped (e.g. dependency never succeeded).
+    /// Skipped (e.g. dependency never succeeded, or Challenger rejected).
     Skipped,
+}
+
+/// Estimated risk level of a plan step.
+///
+/// The Supervisor routes `High`-risk steps through the `Challenger` before
+/// dispatching them to a worker.  `Low` and `Medium` steps bypass the
+/// challenger.
+///
+/// Heuristics for `High` in a default planner:
+/// - Writes to external systems (databases, APIs, file-systems)
+/// - Financial or payment transactions
+/// - Irreversible operations (deletions, sends, publishes)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskLevel {
+    /// Safe, reversible, read-only operations.
+    #[default]
+    Low,
+    /// Operations with moderate impact; typically reversible.
+    Medium,
+    /// Irreversible, financial, or external-write operations.
+    High,
 }
 
 /// One unit of work in the plan.
@@ -36,17 +59,28 @@ pub struct PlanStep {
     pub deps: Vec<String>,
     /// Current status.
     pub status: StepStatus,
+    /// Risk classification — drives challenger routing.  Defaults to `Low`.
+    #[serde(default)]
+    pub risk_level: RiskLevel,
 }
 
 impl PlanStep {
-    /// Construct a step in `Pending` state.
+    /// Construct a step in `Pending` state with `RiskLevel::Low`.
     pub fn new(id: impl Into<String>, description: impl Into<String>, deps: Vec<String>) -> Self {
         Self {
             id: id.into(),
             description: description.into(),
             deps,
             status: StepStatus::Pending,
+            risk_level: RiskLevel::Low,
         }
+    }
+
+    /// Builder: set the risk level.
+    #[must_use]
+    pub fn with_risk(mut self, risk_level: RiskLevel) -> Self {
+        self.risk_level = risk_level;
+        self
     }
 
     /// Returns `true` if all `deps` appear in `completed_ids`.
