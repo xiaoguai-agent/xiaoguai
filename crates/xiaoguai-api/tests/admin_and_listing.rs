@@ -91,6 +91,8 @@ fn build_state(
         today: None,
         eval: None,
         webhook_pusher: None,
+        nl_job_compiler: None,
+        job_upserter: None,
     }
 }
 
@@ -989,5 +991,159 @@ mod scheduler_webhook {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+mod scheduler_nl_jobs {
+    //! v0.12.1 — NL job compile + upsert endpoints.
+    use super::*;
+    use xiaoguai_api::scheduler::{RecordingJobUpserter, StaticNlJobCompiler};
+
+    fn sample_job() -> serde_json::Value {
+        serde_json::json!({
+            "id": "j-from-llm",
+            "tenant_id": null,
+            "name": "scan-hn-daily",
+            "description": null,
+            "trigger": {"type": "cron", "expr": "0 0 8 * * *"},
+            "payload": {"prompt": "scan HN"},
+            "retry_policy": {"max_attempts": 3, "initial_backoff_secs": 5, "max_backoff_secs": 60, "multiplier": 2.0},
+            "sinks": [],
+            "enabled": true,
+            "next_fire_at": null,
+            "last_fire_at": null,
+            "created_at": "2026-05-24T00:00:00Z",
+            "updated_at": "2026-05-24T00:00:00Z",
+        })
+    }
+
+    #[tokio::test]
+    async fn compile_503_when_unwired() {
+        let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/scheduler/jobs/compile")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"description":"daily scan"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn compile_rejects_empty_description() {
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.nl_job_compiler = Some(Arc::new(StaticNlJobCompiler {
+            job: sample_job(),
+            rationale: "x".into(),
+        }));
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/scheduler/jobs/compile")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"description":"  "}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn compile_returns_suggested_job_and_rationale() {
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.nl_job_compiler = Some(Arc::new(StaticNlJobCompiler {
+            job: sample_job(),
+            rationale: "interpreted as a cron at 08:00 UTC".into(),
+        }));
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/scheduler/jobs/compile")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"description":"每天 8 点扫 HN","tenant_id":"t1"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v: serde_json::Value =
+            serde_json::from_slice(&to_bytes(resp.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(v["suggested_job"]["id"], "j-from-llm");
+        assert_eq!(v["rationale"], "interpreted as a cron at 08:00 UTC");
+    }
+
+    #[tokio::test]
+    async fn upsert_503_when_unwired() {
+        let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/scheduler/jobs")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(sample_job().to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn upsert_201_records_job() {
+        let upserter = Arc::new(RecordingJobUpserter::default());
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.job_upserter = Some(upserter.clone());
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/scheduler/jobs")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(sample_job().to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let v: serde_json::Value =
+            serde_json::from_slice(&to_bytes(resp.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(v["id"], "j-from-llm");
+        let jobs = upserter.jobs.lock();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0]["id"], "j-from-llm");
+    }
+
+    #[tokio::test]
+    async fn upsert_400_for_invalid_body() {
+        let upserter = Arc::new(RecordingJobUpserter::default());
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.job_upserter = Some(upserter);
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/scheduler/jobs")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

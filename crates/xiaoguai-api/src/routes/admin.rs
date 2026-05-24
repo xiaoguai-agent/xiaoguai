@@ -24,6 +24,7 @@ use crate::eval::{
     CaseFromSessionRequest, CaseFromSessionResponse, EvalServiceError, EvalSuiteListItem,
     RunEvalRequest,
 };
+use crate::scheduler::{NlJobCompileError, ScheduledJobUpsertError};
 use crate::state::AppState;
 use crate::today::{TodayItem, TodayKind, TodayQuery};
 
@@ -275,6 +276,95 @@ pub async fn scheduler_webhook(
         axum::http::StatusCode::ACCEPTED,
         Json(json!({ "delivered": delivered })),
     ))
+}
+
+// ----------------------------------------------------------------------
+// v0.12.1 — natural-language scheduled-job definition.
+// ----------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct CompileJobRequest {
+    pub description: String,
+    #[serde(default)]
+    pub tenant_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompileJobResponse {
+    /// Fully-populated `ScheduledJob` (JSON shape mirrors
+    /// `xiaoguai_scheduler::ScheduledJob`). Surfaced to the operator
+    /// for review before they POST to `/v1/admin/scheduler/jobs`.
+    pub suggested_job: serde_json::Value,
+    /// Short human-readable explanation of how the LLM interpreted the
+    /// description. Shown in the admin-ui Scheduler pane.
+    pub rationale: String,
+}
+
+/// `POST /v1/admin/scheduler/jobs/compile` — turn a free-form
+/// description ("每天 8 点扫 r/LocalLLaMA + HN 推 Telegram") into a
+/// ready-to-review `ScheduledJob` row. Does NOT persist; the operator
+/// reviews and then POSTs to `/v1/admin/scheduler/jobs`.
+pub async fn scheduler_compile_job(
+    State(state): State<AppState>,
+    Json(req): Json<CompileJobRequest>,
+) -> ApiResult<Json<CompileJobResponse>> {
+    if req.description.trim().is_empty() {
+        return Err(ApiError::InvalidRequest(
+            "description must not be empty".into(),
+        ));
+    }
+    let compiler = state
+        .nl_job_compiler
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("nl job compiler not wired".into()))?;
+    let (suggested_job, rationale) = compiler
+        .compile(&req.description, req.tenant_id.as_deref())
+        .await
+        .map_err(nl_compile_err_to_api)?;
+    Ok(Json(CompileJobResponse {
+        suggested_job,
+        rationale,
+    }))
+}
+
+/// `POST /v1/admin/scheduler/jobs` — upsert a `ScheduledJob` row.
+/// Body shape mirrors `xiaoguai_scheduler::ScheduledJob`. Returns 201
+/// on success, 400 on invalid payload, 503 when the scheduler isn't
+/// wired in this process.
+pub async fn scheduler_upsert_job(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> ApiResult<(axum::http::StatusCode, Json<serde_json::Value>)> {
+    let upserter = state
+        .job_upserter
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("scheduler job upserter not wired".into()))?;
+    // Pull the id back to return it in the 201 response so callers don't
+    // have to re-parse the request body.
+    let id = body
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    upserter.upsert(body).await.map_err(upsert_err_to_api)?;
+    Ok((
+        axum::http::StatusCode::CREATED,
+        Json(json!({ "id": id.unwrap_or_default() })),
+    ))
+}
+
+fn nl_compile_err_to_api(e: NlJobCompileError) -> ApiError {
+    match e {
+        NlJobCompileError::InvalidArgument(msg) => ApiError::InvalidRequest(msg),
+        NlJobCompileError::Unparseable(msg) => ApiError::BadRequest(msg),
+        NlJobCompileError::Backend(_) => ApiError::Internal(anyhow::anyhow!("{e}")),
+    }
+}
+
+fn upsert_err_to_api(e: ScheduledJobUpsertError) -> ApiError {
+    match e {
+        ScheduledJobUpsertError::InvalidJob(msg) => ApiError::BadRequest(msg),
+        ScheduledJobUpsertError::Repository(_) => ApiError::Internal(anyhow::anyhow!("{e}")),
+    }
 }
 
 fn eval_err_to_api(e: EvalServiceError) -> ApiError {

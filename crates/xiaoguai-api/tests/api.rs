@@ -44,6 +44,8 @@ fn build_state(steps: Vec<ScriptStep>) -> (AppState, Arc<InMemoryMessageRepo>) {
         today: None,
         eval: None,
         webhook_pusher: None,
+        nl_job_compiler: None,
+        job_upserter: None,
     };
     (state, messages)
 }

@@ -84,8 +84,8 @@ impl RuntimeContext {
     }
 
     /// Return a clone with `agent_config.tenant_id` set. The original
-    /// pattern at every call site was "clone agent_defaults, set tenant_id,
-    /// build agent" — encode it once here.
+    /// pattern at every call site was "clone `agent_defaults`, set
+    /// `tenant_id`, build agent" — encode it once here.
     #[must_use]
     pub fn with_tenant(&self, tenant_id: Option<String>) -> Self {
         let mut cfg = self.agent_config.clone();

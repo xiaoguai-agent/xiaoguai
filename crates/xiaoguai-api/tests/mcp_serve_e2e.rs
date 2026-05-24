@@ -75,6 +75,8 @@ fn build_state_with_toolbox(toolbox: Toolbox, publish: bool) -> AppState {
         today: None,
         eval: None,
         webhook_pusher: None,
+        nl_job_compiler: None,
+        job_upserter: None,
     }
 }
 
