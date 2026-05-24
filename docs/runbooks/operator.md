@@ -110,7 +110,7 @@ Six trigger variants live in `Trigger`:
 | `Cron`        | scheduled  | 6-field UTC cron expression evaluated on the timer arm.                    |
 | `Interval`    | scheduled  | Wall-clock interval evaluated on the timer arm.                            |
 | `Proactive`   | scheduled  | Interval-driven; runs the `ProactiveChecker` and fires only on a non-empty reason. |
-| `FileWatch`   | reactive   | `notify` filesystem event matched against `(job_id, path)` routes.         |
+| `FileWatch`   | reactive   | `notify-debouncer-full` filesystem event matched against `(job_id, path)` routes. Bursts within `FILE_WATCH_DEBOUNCE_MS` (default 250 ms) are coalesced. |
 | `Webhook`     | reactive   | `POST /v1/admin/scheduler/webhooks/:route_id` matched against route bindings. |
 | `GitPush`     | reactive   | Data variant only; concrete source deferred (route incoming events through `Webhook` for now). |
 | `DbPoll`      | reactive   | Data variant only; concrete source deferred.                                |
@@ -298,14 +298,21 @@ misconfigured route does not kill the source.
 
 Caveats:
 
-- **Bursty filesystem operations saturate the runner.** A
-  `git checkout` over a thousand-file repo can fire thousands of
-  `notify` events in milliseconds. v0.10.1's source emits one
-  `TriggerEvent` per `notify` event. Until v1.1 adds
-  `notify-debouncer-full`, work around with one of: watch a
-  smaller subtree, run the operation outside of business hours, or
-  temporarily disable the watch via
-  `XIAOGUAI_SCHEDULER__FILE_WATCH__ENABLED=false` + restart.
+- **Debounce window (v1.1.10+).** The source now uses
+  `notify-debouncer-full` to coalesce bursts of OS events into a
+  single `TriggerEvent` per logical change.  The debounce window
+  defaults to **250 ms** and is controlled by the env var:
+
+  ```
+  FILE_WATCH_DEBOUNCE_MS=250   # integer milliseconds; 0 disables coalescing
+  ```
+
+  A `git checkout` over a thousand-file repo that previously fired
+  thousands of `TriggerEvent`s now fires one per debounce window.
+  If you need faster reactions (e.g. a CI hot-reload scenario), lower
+  the value; if you still see spurious duplicate jobs under very bursty
+  operations, raise it.
+
 - **Access-only events are dropped.** `inotify`'s `IN_ACCESS` /
   fsevent's read events fire on every read and would saturate. The
   source filters to create / data-modify / name-modify / remove
