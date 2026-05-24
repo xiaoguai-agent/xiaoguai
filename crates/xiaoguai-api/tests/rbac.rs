@@ -46,6 +46,7 @@ async fn build_state(roles: Vec<&str>) -> AppState {
         mcp_supervisor: None,
         today: None,
         eval: None,
+        webhook_pusher: None,
     }
 }
 

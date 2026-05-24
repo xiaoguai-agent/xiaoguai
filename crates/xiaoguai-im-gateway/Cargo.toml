@@ -17,6 +17,7 @@ xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-api = { path = "../xiaoguai-api" }
 xiaoguai-agent = { path = "../xiaoguai-agent" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
+xiaoguai-runtime = { path = "../xiaoguai-runtime" }
 xiaoguai-storage = { path = "../xiaoguai-storage" }
 async-trait = { workspace = true }
 axum = { workspace = true }

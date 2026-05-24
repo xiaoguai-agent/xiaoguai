@@ -43,6 +43,7 @@ fn build_state(steps: Vec<ScriptStep>) -> (AppState, Arc<InMemoryMessageRepo>) {
         mcp_supervisor: None,
         today: None,
         eval: None,
+        webhook_pusher: None,
     };
     (state, messages)
 }

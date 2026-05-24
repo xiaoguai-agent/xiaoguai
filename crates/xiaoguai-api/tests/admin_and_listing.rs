@@ -90,6 +90,7 @@ fn build_state(
         mcp_supervisor: None,
         today: None,
         eval: None,
+        webhook_pusher: None,
     }
 }
 
@@ -887,5 +888,106 @@ mod eval_routes {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+mod scheduler_webhook {
+    use super::*;
+    use async_trait::async_trait;
+    use parking_lot::Mutex;
+    use xiaoguai_api::scheduler::{WebhookPushError, WebhookPusher};
+
+    struct RecordingPusher {
+        calls: Mutex<Vec<(String, serde_json::Value)>>,
+        deliver: usize,
+        err: Option<String>,
+    }
+
+    #[async_trait]
+    impl WebhookPusher for RecordingPusher {
+        async fn push(
+            &self,
+            route_id: &str,
+            detail: serde_json::Value,
+        ) -> Result<usize, WebhookPushError> {
+            self.calls.lock().push((route_id.into(), detail));
+            if let Some(msg) = &self.err {
+                return Err(WebhookPushError::Backend(msg.clone()));
+            }
+            Ok(self.deliver)
+        }
+    }
+
+    #[tokio::test]
+    async fn webhook_503_when_unwired() {
+        let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/scheduler/webhooks/foo")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn webhook_202_with_delivered_count() {
+        let pusher = Arc::new(RecordingPusher {
+            calls: Mutex::new(Vec::new()),
+            deliver: 3,
+            err: None,
+        });
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.webhook_pusher = Some(pusher.clone());
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/scheduler/webhooks/deploy")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"sha":"abc"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let v: serde_json::Value =
+            serde_json::from_slice(&to_bytes(resp.into_body(), 1024).await.unwrap()).unwrap();
+        assert_eq!(v["delivered"], 3);
+
+        let calls = pusher.calls.lock();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "deploy");
+        assert_eq!(calls[0].1, serde_json::json!({"sha": "abc"}));
+    }
+
+    #[tokio::test]
+    async fn webhook_404_when_no_jobs_bound() {
+        let pusher = Arc::new(RecordingPusher {
+            calls: Mutex::new(Vec::new()),
+            deliver: 0,
+            err: None,
+        });
+        let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+        state.webhook_pusher = Some(pusher);
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/scheduler/webhooks/nobody")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }

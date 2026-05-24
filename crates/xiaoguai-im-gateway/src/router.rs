@@ -38,9 +38,9 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
 use axum::Router;
 use serde_json::json;
-use xiaoguai_agent::ReactAgent;
 use xiaoguai_api::AppState;
-use xiaoguai_llm::{Message as LlmMessage, Role};
+use xiaoguai_llm::Message as LlmMessage;
+use xiaoguai_runtime::{run_to_completion, RuntimeContext};
 
 use crate::history::{ConversationHistory, ConversationIdent, ImHistoryStore};
 use crate::provider::{
@@ -148,18 +148,16 @@ pub async fn run_agent_and_reply(
         .resolve_tenant(&ident)
         .await
         .map_err(|e| ProviderError::Transport(format!("history resolve tenant: {e}")))?;
-    let mut agent_cfg = state.app.agent_defaults.clone();
-    if let Some(t) = &resolved_tenant {
-        agent_cfg.tenant_id = Some(t.clone());
-    }
-    let agent = ReactAgent::new(
+    // v0.12.0: route through the shared runtime so REST / IM / scheduler
+    // build their agent the same way. Tenant scoping flows through
+    // `RuntimeContext::with_tenant`.
+    let ctx = RuntimeContext::new(
         state.app.backend.clone(),
-        (*state.app.toolbox).clone(),
-        agent_cfg,
-    );
-    // v0.7.3: include the prior turns from whichever store is wired.
-    // Snapshot once so the agent sees a stable view even if another
-    // concurrent webhook lands.
+        state.app.toolbox.clone(),
+        state.app.agent_defaults.clone(),
+    )
+    .with_tenant(resolved_tenant.clone());
+
     let prior = state
         .history
         .snapshot(&ident)
@@ -168,36 +166,24 @@ pub async fn run_agent_and_reply(
     let inbound = LlmMessage::user(msg.text.clone());
     let mut history = prior;
     history.push(inbound.clone());
-    let outcome = agent
-        .run_to_completion(history, tokio_util::sync::CancellationToken::new())
+
+    let outcome = run_to_completion(&ctx, history, tokio_util::sync::CancellationToken::new())
         .await
         .map_err(|e| ProviderError::Transport(format!("agent: {e}")))?;
-    // Walk messages in reverse so the *latest* assistant text wins, even
-    // if the loop also produced earlier tool_calls.
-    let reply_text = outcome
-        .0
-        .messages
-        .iter()
-        .rev()
-        .find(|m| matches!(m.role, Role::Assistant) && !m.content.is_empty())
-        .map_or_else(|| "(no reply produced)".to_string(), |m| m.content.clone());
-    // v0.7.4: persist this turn — `[inbound, …agent-produced messages
-    // after inbound…]`. Walk outcome.messages from the end, find the
-    // most recent `user` turn whose content matches `msg.text` (this is
-    // `inbound`), and take everything from there. Any assistant
-    // tool_call + tool result messages produced by the loop land in the
-    // transcript so a restart can see them. If we can't find inbound
-    // (e.g. the slide window dropped it from a very long thread) we
-    // fall back to the v0.7.3 minimal pair.
-    let to_persist = outcome
-        .0
-        .messages
-        .iter()
-        .rposition(|m| matches!(m.role, Role::User) && m.content == msg.text)
-        .map_or_else(
-            || vec![inbound.clone(), LlmMessage::assistant(reply_text.clone())],
-            |idx| outcome.0.messages[idx..].to_vec(),
-        );
+
+    let reply_text = if outcome.reply_text.is_empty() {
+        "(no reply produced)".to_string()
+    } else {
+        outcome.reply_text.clone()
+    };
+    // v0.12.0: `new_messages` already slices `[inbound, …assistant turns…]`
+    // and falls back to empty when the slide window dropped the inbound.
+    // Preserve the v0.7.4 fallback behaviour: empty → minimal pair.
+    let to_persist = if outcome.new_messages.is_empty() {
+        vec![inbound.clone(), LlmMessage::assistant(reply_text.clone())]
+    } else {
+        outcome.new_messages.clone()
+    };
     state
         .history
         .extend(&ident, to_persist)

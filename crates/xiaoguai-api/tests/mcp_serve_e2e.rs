@@ -74,6 +74,7 @@ fn build_state_with_toolbox(toolbox: Toolbox, publish: bool) -> AppState {
         mcp_supervisor: None,
         today: None,
         eval: None,
+        webhook_pusher: None,
     }
 }
 

@@ -10,10 +10,11 @@
 //! When `authz` is `None` (dev mode) the endpoints are reachable by
 //! any caller — same trust model as the rest of the API in dev.
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::Json;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use xiaoguai_eval::EvalReport;
 use xiaoguai_types::{Tenant, TenantStatus};
 
@@ -241,6 +242,39 @@ pub async fn eval_case_from_session(
         .ok_or_else(|| ApiError::ServiceUnavailable("eval service not wired".into()))?;
     let resp = svc.case_from_session(&req).await.map_err(eval_err_to_api)?;
     Ok(Json(resp))
+}
+
+/// `POST /v1/admin/scheduler/webhooks/:route_id` — push a reactive
+/// trigger event into the scheduler. Body is opaque JSON forwarded
+/// into the audit row's `details.trigger` field.
+///
+/// Returns 202 with `{ "delivered": N }` when at least one job was
+/// notified; 404 when no jobs are bound to `route_id`; 503 when the
+/// scheduler isn't wired in this process.
+///
+/// Per-tenant API tokens (so external integrators can hit the endpoint
+/// without an admin bearer) land in v0.12.1 — today the route uses the
+/// existing admin bearer/Casbin guard.
+pub async fn scheduler_webhook(
+    State(state): State<AppState>,
+    Path(route_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> ApiResult<(axum::http::StatusCode, Json<serde_json::Value>)> {
+    let pusher = state
+        .webhook_pusher
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("scheduler webhook not wired".into()))?;
+    let delivered = pusher
+        .push(&route_id, body)
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("webhook push: {e}")))?;
+    if delivered == 0 {
+        return Err(ApiError::NotFound);
+    }
+    Ok((
+        axum::http::StatusCode::ACCEPTED,
+        Json(json!({ "delivered": delivered })),
+    ))
 }
 
 fn eval_err_to_api(e: EvalServiceError) -> ApiError {
