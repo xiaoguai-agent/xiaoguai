@@ -1,0 +1,68 @@
+version: 2
+
+updates:
+  # ── 1. Rust / Cargo (workspace root) ──────────────────────────────────────
+  - package-ecosystem: cargo
+    directory: /
+    target-branch: main
+    schedule:
+      interval: daily
+    commit-message:
+      prefix: "deps"
+    open-pull-requests-limit: 10
+    # reviewers:
+    #   - your-github-handle
+    # assignees:
+    #   - your-github-handle
+    groups:
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    # Major-version bumps intentionally excluded from the group so each gets
+    # its own PR with full changelog context.
+
+  # ── 2. JavaScript / pnpm (frontend workspace) ─────────────────────────────
+  - package-ecosystem: npm
+    directory: /frontend
+    target-branch: main
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps"
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
+    # reviewers:
+    #   - your-github-handle
+    # assignees:
+    #   - your-github-handle
+    groups:
+      npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # ── 3. GitHub Actions ──────────────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: main
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps"
+    open-pull-requests-limit: 5
+    # reviewers:
+    #   - your-github-handle
+    # assignees:
+    #   - your-github-handle
+    groups:
+      actions-all:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
