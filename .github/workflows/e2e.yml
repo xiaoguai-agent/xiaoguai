@@ -1,0 +1,158 @@
+name: E2E (Playwright)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "crates/xiaoguai-api/**"
+      - ".github/workflows/e2e.yml"
+  # Allow manual trigger for debugging.
+  workflow_dispatch:
+
+jobs:
+  playwright:
+    name: Playwright (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+
+    steps:
+      # ----------------------------------------------------------------
+      # 1. Checkout
+      # ----------------------------------------------------------------
+      - uses: actions/checkout@v4
+
+      # ----------------------------------------------------------------
+      # 2. Start the docker-compose stack (postgres + valkey + xiaoguai-core)
+      # ----------------------------------------------------------------
+      - name: Start docker-compose stack
+        run: |
+          docker compose -f deploy/docker-compose.yml up --build --detach
+        env:
+          DOCKER_BUILDKIT: "1"
+
+      # ----------------------------------------------------------------
+      # 3. Node + pnpm setup
+      # ----------------------------------------------------------------
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      # ----------------------------------------------------------------
+      # 4. Install Playwright browsers (only the matrix browser)
+      # ----------------------------------------------------------------
+      - name: Install Playwright browser
+        working-directory: frontend/e2e
+        run: pnpm exec playwright install --with-deps ${{ matrix.browser }}
+
+      # ----------------------------------------------------------------
+      # 5. Build frontend assets for serving
+      #    (chat-ui → dist served at http://localhost:5173 via `vite preview`)
+      #    (admin-ui → dist served at http://localhost:5174 via `vite preview`)
+      # ----------------------------------------------------------------
+      - name: Build chat-ui
+        working-directory: frontend/chat-ui
+        run: pnpm build
+
+      - name: Build admin-ui
+        working-directory: frontend/admin-ui
+        run: pnpm build
+
+      - name: Serve chat-ui (background)
+        working-directory: frontend/chat-ui
+        run: pnpm exec vite preview --port 5173 &
+
+      - name: Serve admin-ui (background)
+        working-directory: frontend/admin-ui
+        run: pnpm exec vite preview --port 5174 &
+
+      # ----------------------------------------------------------------
+      # 6. Wait for all services to be healthy
+      # ----------------------------------------------------------------
+      - name: Wait for xiaoguai-core /healthz
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:7600/healthz; then
+              echo "API is up"
+              break
+            fi
+            echo "Waiting for API... attempt $i"
+            sleep 3
+          done
+
+      - name: Wait for chat-ui
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5173/; then
+              echo "chat-ui is up"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Wait for admin-ui
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5174/; then
+              echo "admin-ui is up"
+              break
+            fi
+            sleep 2
+          done
+
+      # ----------------------------------------------------------------
+      # 7. Run Playwright tests (single-browser shard)
+      # ----------------------------------------------------------------
+      - name: Run Playwright tests (${{ matrix.browser }})
+        working-directory: frontend/e2e
+        run: |
+          pnpm exec playwright test \
+            --project="chat-ui / ${{ matrix.browser }}" \
+            --project="admin-ui / ${{ matrix.browser }}" \
+            --project="scheduler-flow / ${{ matrix.browser }}"
+        env:
+          BASE_URL: "http://localhost:7600"
+          CHAT_UI_URL: "http://localhost:5173"
+          ADMIN_UI_URL: "http://localhost:5174"
+          CI: "true"
+
+      # ----------------------------------------------------------------
+      # 8. Upload artifacts on failure
+      # ----------------------------------------------------------------
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.browser }}
+          path: frontend/e2e/playwright-report/
+          retention-days: 14
+
+      - name: Upload traces and videos
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results-${{ matrix.browser }}
+          path: frontend/e2e/test-results/
+          retention-days: 7
+
+      # ----------------------------------------------------------------
+      # 9. Tear down the compose stack
+      # ----------------------------------------------------------------
+      - name: Tear down docker-compose stack
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml down -v
