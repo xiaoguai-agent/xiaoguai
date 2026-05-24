@@ -13,10 +13,12 @@
 //!   * `Model`    → `model`
 //!
 //! v1.1.1.1 cost computation (migration 0010):
+//! ```text
 //!   cost_usd = (SUM(prompt_tokens) * cost_per_1k_input_usd
 //!             + SUM(completion_tokens) * cost_per_1k_output_usd) / 1000
+//! ```
 //!
-//! `cost_cents` is `None` for a bucket when ANY token_usage row in that
+//! `cost_cents` is `None` for a bucket when ANY `token_usage` row in that
 //! bucket lacks a matching provider with rates (NULL rates → operator
 //! hasn't configured pricing). This matches the partial-cost semantics
 //! in `StaticUsageReader`.
@@ -137,70 +139,88 @@ impl UsageReader for PgUsageReader {
                 .map_err(map_err)?
         };
 
-        let mut total_in: u64 = 0;
-        let mut total_out: u64 = 0;
-        let mut total_cost_cents: u64 = 0;
-        let mut any_missing_cost = false;
-        let mut any_row = false;
-        let mut out_rows: Vec<UsageRow> = Vec::with_capacity(rows.len());
-        for r in rows {
-            any_row = true;
-            let bucket: String = r
-                .try_get::<String, _>("bucket")
-                .unwrap_or_else(|_| String::new());
-            let in_tokens: i64 = r.try_get::<i64, _>("in_tokens").unwrap_or(0);
-            let out_tokens: i64 = r.try_get::<i64, _>("out_tokens").unwrap_or(0);
-            let input = u64::try_from(in_tokens.max(0)).unwrap_or(0);
-            let output = u64::try_from(out_tokens.max(0)).unwrap_or(0);
-            total_in = total_in.saturating_add(input);
-            total_out = total_out.saturating_add(output);
+        Ok(build_report(rows))
+    }
+}
 
-            // v1.1.1.1: cost_usd is a NUMERIC computed by the SQL; map to
-            // cost_cents (u64) by multiplying by 100 and truncating. NULL
-            // means at least one row in this bucket had no provider rates.
-            let cost_cents: Option<u64> = r
-                .try_get::<Option<f64>, _>("cost_usd")
-                .ok()
-                .flatten()
-                .map(|usd| {
-                    let cents = usd * 100.0;
-                    // Guard against NaN / negative / overflow from bad data.
-                    if cents.is_finite() && cents >= 0.0 {
-                        cents.round() as u64
-                    } else {
-                        0
-                    }
-                });
+/// Map a set of raw SQL rows into a [`UsageReport`].
+///
+/// Accumulates token totals and cost cents, propagating `None` cost to the
+/// report level when any bucket lacked provider pricing data.
+fn build_report(rows: Vec<sqlx::postgres::PgRow>) -> UsageReport {
+    let mut total_in: u64 = 0;
+    let mut total_out: u64 = 0;
+    let mut total_cost_cents: u64 = 0;
+    let mut any_missing_cost = false;
+    let mut any_row = false;
+    let mut out_rows: Vec<UsageRow> = Vec::with_capacity(rows.len());
 
-            if cost_cents.is_none() {
-                any_missing_cost = true;
-            } else if let Some(c) = cost_cents {
-                total_cost_cents = total_cost_cents.saturating_add(c);
-            }
+    for r in rows {
+        any_row = true;
+        let bucket: String = r
+            .try_get::<String, _>("bucket")
+            .unwrap_or_else(|_| String::new());
+        let in_tokens: i64 = r.try_get::<i64, _>("in_tokens").unwrap_or(0);
+        let out_tokens: i64 = r.try_get::<i64, _>("out_tokens").unwrap_or(0);
+        let input = u64::try_from(in_tokens.max(0)).unwrap_or(0);
+        let output = u64::try_from(out_tokens.max(0)).unwrap_or(0);
+        total_in = total_in.saturating_add(input);
+        total_out = total_out.saturating_add(output);
 
-            out_rows.push(UsageRow {
-                bucket,
-                input_tokens: input,
-                output_tokens: output,
-                cost_cents,
-            });
+        // v1.1.1.1: cost_usd from the SQL CASE expression; NULL means at
+        // least one row in this bucket had no provider rates configured.
+        let cost_cents: Option<u64> = r
+            .try_get::<Option<f64>, _>("cost_usd")
+            .ok()
+            .flatten()
+            .map(cents_from_usd);
+
+        if cost_cents.is_none() {
+            any_missing_cost = true;
+        } else if let Some(c) = cost_cents {
+            total_cost_cents = total_cost_cents.saturating_add(c);
         }
 
-        // Report-level cost is the sum only when every bucket had a cost.
-        // When no rows at all we also return None (consistent with
-        // StaticUsageReader's behaviour on an empty dataset).
-        let report_cost = if !any_row || any_missing_cost {
-            None
-        } else {
-            Some(total_cost_cents)
-        };
+        out_rows.push(UsageRow {
+            bucket,
+            input_tokens: input,
+            output_tokens: output,
+            cost_cents,
+        });
+    }
 
-        Ok(UsageReport {
-            rows: out_rows,
-            total_input_tokens: total_in,
-            total_output_tokens: total_out,
-            cost_cents: report_cost,
-        })
+    // Report-level cost is the sum only when every bucket had a cost.
+    // When no rows at all we also return None (consistent with
+    // StaticUsageReader's behaviour on an empty dataset).
+    let report_cost = if !any_row || any_missing_cost {
+        None
+    } else {
+        Some(total_cost_cents)
+    };
+
+    UsageReport {
+        rows: out_rows,
+        total_input_tokens: total_in,
+        total_output_tokens: total_out,
+        cost_cents: report_cost,
+    }
+}
+
+/// Convert a USD float (from the SQL `cost_usd` column) to integer cents.
+///
+/// Returns 0 for NaN, infinite, or negative values — those indicate bad data
+/// in `llm_providers` rates. The caller already guards against NULL (i.e.
+/// the `cost_usd IS NULL` path is handled before this is called).
+fn cents_from_usd(usd: f64) -> u64 {
+    let cents = usd * 100.0;
+    // Safety: we check `is_finite() && >= 0.0` before casting, so the value
+    // is a non-negative finite f64 in [0, f64::MAX). Truncation is intentional
+    // (sub-cent amounts are negligible for display purposes).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    if cents.is_finite() && cents >= 0.0 {
+        cents.round() as u64
+    } else {
+        0
     }
 }
 
