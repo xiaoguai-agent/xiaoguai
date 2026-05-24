@@ -18,7 +18,7 @@ use clap::{Parser, Subcommand};
 use xiaoguai_audit::{AuditEntry, ChainedAudit};
 use xiaoguai_auth::{Authz, JwtValidator};
 use xiaoguai_config::Settings;
-use xiaoguai_storage::{cache::Cache, db};
+use xiaoguai_storage::{cache::Cache, db, ReadWritePool};
 
 #[derive(Parser, Debug)]
 #[command(name = "xiaoguai-core", version, about = "Xiaoguai core binary")]
@@ -169,6 +169,16 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         .await
         .context("pg connect")?;
     db::migrate(&pool).await.context("pg migrate")?;
+
+    // v1.1.4.1: build the read/write pool router.
+    // `DATABASE_REPLICA_URLS` (comma-separated) — optional; defaults to
+    // primary-only when absent, preserving v1.1.4 behaviour exactly.
+    let rw_pool = {
+        let replicas = ReadWritePool::replicas_from_env(settings.database.max_connections)
+            .await
+            .context("replica pool connect")?;
+        ReadWritePool::new(pool.clone(), replicas)
+    };
 
     // v0.6.2: read system-wide LLM providers and assemble a router. The
     // resulting `LlmRouter` implements `LlmBackend`, so it drops in
@@ -453,7 +463,7 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // v0.11.1: audit-first console substrate. The PG adapter walks
         // sessions / im_conversations / scheduled_job_runs and merges
         // them client-side.
-        today: Some(crate::today_bridge::PgTodayReader::arc(pool.clone())),
+        today: Some(crate::today_bridge::PgTodayReader::arc(rw_pool.clone())),
         // v0.11.2: eval pane. The PG case-from-session source feeds
         // operator "convert prod run to regression case" requests.
         eval: Some(build_eval_service(settings, pool.clone())),
@@ -474,7 +484,7 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // admin-ui Usage pane (plus the Today pane's 24h summary card).
         // Always wired in production — the underlying token_usage table
         // is unconditional (migration 0004).
-        usage_reader: Some(crate::usage_bridge::PgUsageReader::arc(pool.clone())),
+        usage_reader: Some(crate::usage_bridge::PgUsageReader::arc(rw_pool.clone())),
         // v0.12.x.1: per-tenant webhook token validator + admin CRUD
         // + admin-ui Scheduler pane jobs reader. All `None` when the
         // scheduler is disabled — the matching routes return 503.
