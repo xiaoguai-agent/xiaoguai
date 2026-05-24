@@ -291,6 +291,40 @@ export interface InstallMarketplaceResponse {
   name: string;
 }
 
+// ---- v0.12.x.1 Scheduler pane -------------------------------------------
+
+/** Mirror of `xiaoguai_api::scheduler::ScheduledJobSummary`. */
+export interface ScheduledJobSummary {
+  id: string;
+  tenant_id: string | null;
+  name: string;
+  trigger_summary: string;
+  enabled: boolean;
+  last_fire_at: string | null;
+  next_fire_at: string | null;
+}
+
+/** Mirror of `xiaoguai_api::scheduler::WebhookTokenRecord`. */
+export interface WebhookToken {
+  token: string;
+  tenant_id: string;
+  route_id: string;
+  created_at: string;
+  last_used_at?: string | null;
+}
+
+export interface CompileScheduledJobRequest {
+  description: string;
+  tenant_id?: string;
+}
+
+export interface CompileScheduledJobResponse {
+  /** Fully-populated ScheduledJob JSON; pasted into `upsertScheduledJob`. */
+  suggested_job: unknown;
+  /** One-line human-readable explanation of the compiled job. */
+  rationale: string;
+}
+
 // ---- Agent event stream --------------------------------------------------
 
 export type AgentEvent =
@@ -475,6 +509,85 @@ export class XiaoguaiClient {
       '/v1/admin/eval/case-from-session',
       req,
     );
+  }
+
+  // ---- v0.12.x.1 Scheduler pane ------------------------------------------
+
+  /** Enumerate scheduled jobs for the admin-ui Scheduler pane. */
+  listScheduledJobs(opts?: { limit?: number }): Promise<ScheduledJobSummary[]> {
+    const params = new URLSearchParams();
+    if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+    const qs = params.toString();
+    return this.request<ScheduledJobSummary[]>(
+      'GET',
+      `/v1/admin/scheduler/jobs${qs ? `?${qs}` : ''}`,
+    );
+  }
+
+  /** Fire a scheduled job out-of-band. Returns 202; run is async. */
+  fireScheduledJob(jobId: string): Promise<{ fired: string }> {
+    return this.request<{ fired: string }>(
+      'POST',
+      `/v1/admin/scheduler/jobs/${encodeURIComponent(jobId)}/fire-now`,
+    );
+  }
+
+  /** Compile a free-form job description into a `ScheduledJob` JSON. */
+  compileScheduledJob(
+    req: CompileScheduledJobRequest,
+  ): Promise<CompileScheduledJobResponse> {
+    return this.request<CompileScheduledJobResponse>(
+      'POST',
+      '/v1/admin/scheduler/jobs/compile',
+      req,
+    );
+  }
+
+  /** Upsert a `ScheduledJob` row (insert or update by id). */
+  upsertScheduledJob(job: unknown): Promise<{ id: string }> {
+    return this.request<{ id: string }>(
+      'POST',
+      '/v1/admin/scheduler/jobs',
+      job,
+    );
+  }
+
+  /** List per-tenant webhook tokens. */
+  listWebhookTokens(opts?: {
+    tenant_id?: string;
+    limit?: number;
+  }): Promise<WebhookToken[]> {
+    const params = new URLSearchParams();
+    if (opts?.tenant_id) params.set('tenant_id', opts.tenant_id);
+    if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+    const qs = params.toString();
+    return this.request<WebhookToken[]>(
+      'GET',
+      `/v1/admin/scheduler/tokens${qs ? `?${qs}` : ''}`,
+    );
+  }
+
+  /** Mint a new webhook token bound to `(tenant_id, route_id)`. */
+  createWebhookToken(req: {
+    tenant_id: string;
+    route_id: string;
+  }): Promise<WebhookToken> {
+    return this.request<WebhookToken>(
+      'POST',
+      '/v1/admin/scheduler/tokens',
+      req,
+    );
+  }
+
+  /** Revoke (delete) a webhook token. Returns 204; no body. */
+  async revokeWebhookToken(token: string): Promise<void> {
+    const resp = await this.fetchImpl(
+      `${this.baseUrl}/v1/admin/scheduler/tokens/${encodeURIComponent(token)}`,
+      { method: 'DELETE', headers: this.headers() },
+    );
+    if (!resp.ok) {
+      throw new ApiError(resp.status, 'http_error', `HTTP ${resp.status}`);
+    }
   }
 
   /** v0.9.4 — one-click install of a marketplace entry. */

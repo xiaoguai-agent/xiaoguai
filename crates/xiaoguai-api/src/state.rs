@@ -25,7 +25,10 @@ use xiaoguai_storage::repositories::{
 use crate::audit::{AuditReader, AuditVerifier};
 use crate::auth::TokenValidator;
 use crate::eval::EvalService;
-use crate::scheduler::{NlJobCompiler, ScheduledJobUpserter, WebhookPusher};
+use crate::scheduler::{
+    NlJobCompiler, ScheduledJobUpserter, ScheduledJobsReader, WebhookPusher, WebhookTokenAdmin,
+    WebhookTokenValidator,
+};
 use crate::sessions_ext::SessionForker;
 use crate::today::TodayReader;
 use crate::usage::UsageReader;
@@ -150,6 +153,21 @@ pub struct AppState {
     /// makes the endpoint return 503; production wires a
     /// `PgUsageReader` in `xiaoguai-core/src/usage_bridge.rs`.
     pub usage_reader: Option<Arc<dyn UsageReader>>,
+    /// v0.12.x.1: per-tenant webhook token validator backing
+    /// `POST /v1/scheduler/webhooks/:route_id` (note: NOT under /admin —
+    /// the admin route stays bearer-gated). `None` makes the public
+    /// webhook endpoint return 503; production wires
+    /// `PgWebhookTokenValidator` from `xiaoguai-core`.
+    pub webhook_token_validator: Option<Arc<dyn WebhookTokenValidator>>,
+    /// v0.12.x.1: admin CRUD for webhook tokens backing
+    /// `/v1/admin/scheduler/tokens`. `None` makes the admin endpoints
+    /// return 503.
+    pub webhook_token_admin: Option<Arc<dyn WebhookTokenAdmin>>,
+    /// v0.12.x.1: read-only enumeration + `fire_now` for the admin-ui
+    /// Scheduler pane's Jobs tab. `None` makes
+    /// `GET /v1/admin/scheduler/jobs` and the matching `/fire-now`
+    /// endpoint return 503.
+    pub scheduler_jobs_reader: Option<Arc<dyn ScheduledJobsReader>>,
 }
 
 impl std::fmt::Debug for AppState {
