@@ -1,0 +1,31 @@
+Subject: Second Notice — Outstanding Balance of {{ currency }} {{ total_overdue | round(precision=2) }} Requires Attention
+
+Dear {{ contact_name | default(value="Accounts Payable Team") }},
+
+This is a follow-up to our previous reminder dated {{ prior_dunning_date }}.
+We have not yet received payment for the invoice{% if invoices | length > 1 %}s{% endif %} listed below.
+
+Account: {{ company_name }}
+Outstanding balance: {{ currency }} {{ total_overdue | round(precision=2) }}
+
+{% for inv in invoices %}
+Invoice {{ inv.invoice_id }} | {{ inv.currency }} {{ inv.amount | round(precision=2) }} | Due: {{ inv.due_date }} | {{ inv.days_overdue }} days overdue
+{% endfor %}
+
+We understand that oversights can occur and we are happy to work with you on
+a resolution. Please take one of the following actions within 7 business days:
+
+1. Arrange full payment to the bank details on the original invoice.
+2. Contact us to discuss a payment arrangement if you are experiencing
+   difficulties.
+3. Confirm in writing if there is a dispute on any invoice so we can
+   investigate promptly.
+
+Failure to respond may result in a referral to our collections process.
+We sincerely hope to resolve this amicably.
+
+Please do not hesitate to reach out if you have any questions.
+
+Regards,
+{{ sender_name | default(value="Accounts Receivable Team") }}
+{{ company_name }}

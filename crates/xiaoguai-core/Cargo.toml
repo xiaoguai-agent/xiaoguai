@@ -12,6 +12,13 @@ description = "Xiaoguai core binary — wires api + agent + mcp + llm + storage 
 name = "xiaoguai-core"
 path = "src/main.rs"
 
+# v1.3.1-prep: AR collections pack integration tests.
+# Exercises pack manifest parsing, watch/anomaly spec round-trips, and Jinja
+# template rendering.  DB + F1/F2 tests inside are marked #[ignore].
+[[test]]
+name = "ar_collections_pack"
+path = "../../packs/ar-collections/tests/integration.rs"
+
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-config = { path = "../xiaoguai-config" }
@@ -50,6 +57,15 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 uuid = { workspace = true }
 hex = "0.4"
+# v1.3.1-prep: pack loader — YAML manifest parsing + Jinja template rendering.
+# Both are feature-gated (`cfg(feature = "packs")`) so existing builds are
+# unaffected until the feature flag is explicitly enabled.
+serde_yaml = { workspace = true, optional = true }
+tera = { workspace = true, optional = true }
+# serde with derive is needed by packs.rs (feature-gated) for PackManifest
+# deserialization. Pulled in explicitly so the proc-macro path is unambiguous
+# even when rmcp re-exports its own serde namespace.
+serde = { workspace = true, optional = true }
 # v0.7.4: IM gateway wiring (PG history default + in-process fallback).
 axum = { workspace = true }
 xiaoguai-im-gateway = { path = "../xiaoguai-im-gateway" }
@@ -59,6 +75,12 @@ xiaoguai-im-feishu = { path = "../xiaoguai-im-feishu" }
 xiaoguai-im-dingtalk = { path = "../xiaoguai-im-dingtalk" }
 xiaoguai-im-wecom = { path = "../xiaoguai-im-wecom" }
 
+[features]
+# v1.3.1-prep: pack loader (declarative skill pack manifest + template engine).
+# Enable with: cargo build --features packs
+# Will be enabled by default once F1/F2/F3 are merged.
+packs = ["dep:serde_yaml", "dep:tera", "dep:serde"]
+
 [dev-dependencies]
 parking_lot = { workspace = true }
 tempfile = { workspace = true }
@@ -66,6 +88,13 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs"] }
 # v1.1.5a: peer_mvp integration test spins two in-process xiaoguai
 # peers on ephemeral TCP ports and drives the front-door via HTTP.
 reqwest = { workspace = true }
+# v1.3.1-prep: ar-collections pack integration tests (template rendering,
+# spec parsing). These run without --features packs because the test file
+# imports tera + serde_yaml directly rather than via packs.rs.
+tera = { workspace = true }
+serde_yaml = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
 
 # v1.1.6.2: sd-notify integration for Type=notify and watchdog pings.
 # Linux-only; only used in xiaoguai-core (not a workspace dep).

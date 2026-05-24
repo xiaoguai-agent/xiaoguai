@@ -1,0 +1,97 @@
+# Anomaly spec — DSO drift (rolling 30-day z-score)
+# ---------------------------------------------------------------------------
+# Detects when the tenant-wide DSO (Days Sales Outstanding) drifts
+# significantly above its 30-day rolling baseline.  This fires earlier than
+# the dso-over-60 watch — it catches a worsening trend before any single
+# invoice crosses the 60-day threshold.
+#
+# Schema reference: F2 AnomalySpec (xiaoguai-anomaly, pending merge).
+# ---------------------------------------------------------------------------
+
+name: dso-drift
+version: "1.0.0"
+description: >
+  Rolling 30-day DSO anomaly detector. Alerts when today's DSO exceeds
+  the rolling mean by more than n_sigma standard deviations (default: 2.5).
+
+# --------------------------------------------------------------------------
+# Metric definition
+# --------------------------------------------------------------------------
+metric:
+  name: tenant_dso_days
+  description: "Mean days outstanding across all unpaid invoices for the tenant"
+  unit: days
+  # SQL to compute the current metric value per tenant
+  query: |
+    SELECT
+        tenant_id,
+        AVG(EXTRACT(DAY FROM NOW() - due_date)) AS value
+    FROM ar_aging
+    WHERE tenant_id = '{tenant_id}'
+      AND paid_at IS NULL
+    GROUP BY tenant_id
+  tenant_column: tenant_id
+
+# --------------------------------------------------------------------------
+# Baseline window
+# --------------------------------------------------------------------------
+baseline:
+  kind: rolling
+  # Collect one data point per day and compute rolling stats over 30 days
+  window_days: 30
+  # Minimum observations required before alerting (avoid false positives on
+  # new tenants with < 7 days of data)
+  min_observations: 7
+
+# --------------------------------------------------------------------------
+# Alert condition
+# --------------------------------------------------------------------------
+alert:
+  # Fire when current value > rolling_mean + n_sigma * rolling_stddev
+  kind: n_sigma
+  n_sigma: 2.5
+  # Also fire on absolute threshold regardless of statistical signal
+  absolute_threshold:
+    operator: ">"
+    value: 75  # days — catches tenants with low variance but high absolute DSO
+
+# --------------------------------------------------------------------------
+# Schedule: compute metric once per day (DSO is a daily KPI)
+# --------------------------------------------------------------------------
+schedule:
+  cron: "0 8 * * *"  # 08:00 server time — before the business day starts
+
+# --------------------------------------------------------------------------
+# Output — AnomalyEvent emitted when the condition is met
+# --------------------------------------------------------------------------
+event:
+  kind: ar.dso_drift
+  payload_mapping:
+    tenant_id:        "$.tenant_id"
+    current_dso:      "$.current_value"
+    rolling_mean:     "$.baseline.mean"
+    rolling_stddev:   "$.baseline.stddev"
+    sigma_distance:   "$.sigma_distance"
+    window_days:      30
+
+# --------------------------------------------------------------------------
+# Severity escalation
+# --------------------------------------------------------------------------
+severity:
+  # Escalate to WARNING at 2.5 sigma, CRITICAL at 4.0 sigma
+  - sigma: 2.5
+    level: warning
+  - sigma: 4.0
+    level: critical
+
+# --------------------------------------------------------------------------
+# Downstream
+# --------------------------------------------------------------------------
+downstream:
+  # Drift events go to the same dunning-drafter; it will look up the
+  # per-customer breakdown to decide which customers to prioritise.
+  agents:
+    - dunning-drafter
+  # Also emit to any dashboards subscribed to ar.dso_drift
+  dashboards:
+    - ar-aging-overview

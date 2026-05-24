@@ -1,0 +1,40 @@
+Subject: FINAL NOTICE — Immediate Payment Required: {{ currency }} {{ total_overdue | round(precision=2) }}
+
+Dear {{ contact_name | default(value="Accounts Payable Team") }},
+
+Despite our previous reminders dated {% for d in prior_dunning_dates %}{{ d }}{% if not loop.last %} and {% endif %}{% endfor %},
+the balance below remains unpaid. This is our FINAL NOTICE prior to
+escalation.
+
+Account: {{ company_name }}
+Total overdue: {{ currency }} {{ total_overdue | round(precision=2) }}
+Oldest invoice: {{ max_days_overdue }} days past due
+
+{% for inv in invoices %}
+- Invoice {{ inv.invoice_id }} — {{ inv.currency }} {{ inv.amount | round(precision=2) }}
+  ({{ inv.days_overdue }} days overdue)
+{% endfor %}
+
+We require full payment within 5 business days of this notice.
+
+If payment is not received by that date, we will have no alternative but to:
+- Place your account on hold and suspend credit terms.
+- Refer the outstanding balance to our external collections partner.
+
+To avoid these consequences, please arrange payment immediately using the
+bank details on your original invoices, or contact us by reply to this email
+to make arrangements.
+
+If there is a genuine dispute on any of these invoices, please raise it in
+writing by return so we can investigate — disputed amounts will be treated
+separately from the undisputed balance.
+
+We hope to resolve this without further action.
+
+Yours sincerely,
+{{ sender_name | default(value="Senior Accounts Receivable") }}
+{{ company_name }}
+
+---
+This notice was prepared for human review and approval before sending.
+No automated action has been taken on your account. Status: pending_approval.

@@ -1,0 +1,98 @@
+# AR Collections Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# Sivulka's reference implementation: continuously watch AR aging, flag
+# deteriorating receivables before anyone opens the PDF.
+#
+# Install:   xiaoguai pack install packs/ar-collections/
+# Requires:  xiaoguai >= v1.3.1-prep (features: watch, anomaly, llm,
+#            outcome-telemetry)
+# ---------------------------------------------------------------------------
+
+name: ar-collections
+version: "1.0.0"
+description: >
+  Proactively monitors accounts-receivable aging, detects DSO drift before
+  it surfaces in a static report, and drafts graded dunning communications
+  for human review. All email actions are HOTL-gated (zero send without
+  human approval).
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - watch            # F1: WatchSpec + WatchEvent bus
+    - anomaly          # F2: AnomalySpec + rolling-window alerting
+    - llm              # core LLM backend (always available)
+    - outcome-telemetry  # F3: records draft/send outcome for improvement loop
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_ar_aging.sql
+
+# --------------------------------------------------------------------------
+# Watch specs (declarative; registered into the watch registry on load)
+# --------------------------------------------------------------------------
+watches:
+  - path: watches/dso-over-60.yaml
+
+# --------------------------------------------------------------------------
+# Anomaly specs (declarative; registered into the anomaly registry on load)
+# --------------------------------------------------------------------------
+anomalies:
+  - path: anomalies/dso-drift.yaml
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/dunning-drafter.yaml
+
+# --------------------------------------------------------------------------
+# Dashboard definitions (rendered in admin-ui when the packs UI lands)
+# --------------------------------------------------------------------------
+dashboards:
+  - name: ar-aging-overview
+    description: "DSO trend, overdue buckets, and dunning queue"
+    # layout and widget specs — intentionally minimal; dashboard renderer
+    # is a future admin-ui surface (not wired in v1.3.1-prep).
+    widgets:
+      - type: metric
+        title: "Current DSO"
+        query: >
+          SELECT ROUND(AVG(EXTRACT(DAY FROM NOW() - due_date)), 1) AS dso
+          FROM ar_aging
+          WHERE paid_at IS NULL
+      - type: table
+        title: "Overdue > 60 days"
+        query: >
+          SELECT customer_id, COUNT(*) AS invoices,
+                 SUM(amount) AS total_overdue
+          FROM ar_aging
+          WHERE paid_at IS NULL
+            AND due_date < NOW() - INTERVAL '60 days'
+          GROUP BY customer_id
+          ORDER BY total_overdue DESC
+          LIMIT 20
+      - type: chart
+        title: "30-day DSO Trend"
+        query: >
+          SELECT DATE_TRUNC('day', due_date) AS day,
+                 AVG(EXTRACT(DAY FROM COALESCE(paid_at, NOW()) - due_date)) AS dso
+          FROM ar_aging
+          WHERE due_date > NOW() - INTERVAL '30 days'
+          GROUP BY day
+          ORDER BY day
+
+# --------------------------------------------------------------------------
+# Schema migration helper (pack loader wires this into sqlx migrate)
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "ar_"
+  namespace: "ar_collections"
