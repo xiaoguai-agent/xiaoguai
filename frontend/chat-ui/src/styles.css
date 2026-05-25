@@ -1186,6 +1186,213 @@ html,
   color: var(--accent);
 }
 
+/* ---------------------------------------------------------- HotL banner (v1.3.x) */
+
+/**
+ * Non-dismissible escalation banner shown at the top of the main pane
+ * when HotlVerdict::Escalate is received. Amber palette signals
+ * "paused awaiting human" rather than "error".
+ */
+.hotl-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  background: #fffbeb;
+  border-bottom: 2px solid #f59e0b;
+  color: #78350f;
+  font-size: 14px;
+  line-height: 1.5;
+  /* No close button — intentionally non-dismissible. */
+}
+
+[data-theme='dark'] .hotl-banner {
+  background: #1c1407;
+  border-bottom-color: #92400e;
+  color: #fcd34d;
+}
+
+.hotl-banner__icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.hotl-banner__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.hotl-banner__title {
+  display: block;
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: var(--space-1);
+}
+
+.hotl-banner__detail,
+.hotl-banner__reason {
+  margin: 0;
+}
+
+.hotl-banner__detail + .hotl-banner__reason {
+  margin-top: var(--space-1);
+  font-style: italic;
+  color: inherit;
+  opacity: 0.85;
+}
+
+.hotl-banner__scope {
+  font-family: 'JetBrains Mono', 'IBM Plex Mono', monospace;
+  font-size: 0.9em;
+  background: rgba(0, 0, 0, 0.07);
+  padding: 0.05em 0.3em;
+  border-radius: var(--radius-sm);
+}
+
+[data-theme='dark'] .hotl-banner__scope {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.hotl-banner__link {
+  flex-shrink: 0;
+  align-self: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #92400e;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+
+[data-theme='dark'] .hotl-banner__link {
+  color: #fcd34d;
+}
+
+.hotl-banner__link:hover {
+  opacity: 0.8;
+}
+
+/* ---------------------------------------------------------- outcomes panel (v1.3.x) */
+
+.outcomes-panel {
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.outcomes-panel__title {
+  margin: 0 0 var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.outcomes-panel__muted {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.outcomes-panel__error {
+  margin: 0 0 var(--space-1);
+  color: var(--tool-error-fg);
+  font-size: 12px;
+}
+
+.outcomes-panel__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.outcome-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: var(--border-soft);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.outcome-chip__kind {
+  color: var(--fg-soft);
+  text-transform: lowercase;
+}
+
+.outcome-chip__count {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.outcomes-panel__list {
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.outcomes-event {
+  display: grid;
+  grid-template-columns: 60px auto 1fr;
+  gap: var(--space-1);
+  font-size: 12px;
+  align-items: baseline;
+}
+
+.outcomes-event__ts {
+  font-family: 'JetBrains Mono', 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.outcomes-event__kind {
+  font-weight: 600;
+  color: var(--fg-soft);
+  text-transform: lowercase;
+}
+
+.outcomes-event__value {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.outcomes-event__desc {
+  grid-column: 2 / -1;
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outcomes-panel__audit-link {
+  display: inline-block;
+  margin-top: var(--space-1);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.outcomes-panel__audit-link:hover {
+  opacity: 0.8;
+}
+
 /* ------------------------------------------------------------------ small screens */
 
 @media (max-width: 720px) {

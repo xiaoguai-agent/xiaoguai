@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { RecentOutcomesPanel } from './RecentOutcomesPanel';
 
 interface Props {
   sessions: Array<{ id: string; title: string }>;
@@ -11,6 +12,9 @@ interface Props {
 export function SessionList({ sessions, children }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
+  // v1.3.x — extract the active session id from the route so
+  // RecentOutcomesPanel can poll for session-scoped outcomes.
+  const { id: activeSessionId } = useParams<{ id: string }>();
 
   // Highlight the Skills nav link when on /skills.
   const onSkills = location.pathname === '/skills';
@@ -43,6 +47,10 @@ export function SessionList({ sessions, children }: Props) {
           );
         })
       )}
+
+      {/* v1.3.x — session-scoped outcome summary panel */}
+      <RecentOutcomesPanel sessionId={activeSessionId} />
+
       {children && <div className="sidebar-footer">{children}</div>}
     </aside>
   );

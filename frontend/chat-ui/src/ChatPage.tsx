@@ -5,6 +5,8 @@ import { client } from './client';
 import { CitationStrip } from './citations';
 import { CopyButton } from './codeblock';
 import { MarkdownBody } from './markdown';
+import { HotlBanner } from './HotlBanner';
+import type { HotlPendingState } from './HotlBanner';
 
 type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
 
@@ -41,12 +43,15 @@ export function ChatPage({ onSessionCreated }: Props) {
   const [draft, setDraft] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  /** v1.3.x — non-null while an HotL escalation is pending for this session. */
+  const [hotlPending, setHotlPending] = useState<HotlPendingState | null>(null);
   const abortRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // When the route changes (user clicks a different session), reload history.
   useEffect(() => {
     setBubbles([]);
+    setHotlPending(null);
     setSessionId(routeId);
     if (!routeId) return;
     void (async () => {
@@ -95,7 +100,7 @@ export function ChatPage({ onSessionCreated }: Props) {
     abortRef.current = client.sendMessage(
       sid,
       { content: text },
-      (ev) => applyEvent(ev, setBubbles, setStatus),
+      (ev) => applyEvent(ev, setBubbles, setStatus, setHotlPending),
       (err) => {
         setStatus(`stream error: ${err.message}`);
         setStreaming(false);
@@ -110,6 +115,7 @@ export function ChatPage({ onSessionCreated }: Props) {
     ev: AgentEvent,
     update: typeof setBubbles,
     statusSetter: typeof setStatus,
+    hotlSetter: typeof setHotlPending,
   ) {
     switch (ev.type) {
       case 'text_delta':
@@ -176,6 +182,21 @@ export function ChatPage({ onSessionCreated }: Props) {
         statusSetter(`agent error: ${ev.message}`);
         setStreaming(false);
         break;
+      // v1.3.x — HotL escalation events
+      case 'hotl_pending':
+        hotlSetter({
+          escalation_id: ev.escalation_id,
+          scope: ev.scope,
+          reason: ev.reason,
+        });
+        break;
+      case 'hotl_resolved':
+        // Clear the banner once the operator resolves the escalation.
+        hotlSetter(null);
+        break;
+      // v1.3.x — outcome recorded events are informational; no UI change needed here.
+      case 'outcome_recorded':
+        break;
     }
   }
 
@@ -201,6 +222,8 @@ export function ChatPage({ onSessionCreated }: Props) {
 
   return (
     <>
+      {/* v1.3.x — HotL escalation banner: non-dismissible, shown above messages. */}
+      {hotlPending && <HotlBanner pending={hotlPending} />}
       <div className="messages" ref={scrollRef}>
         {bubbles.map((b, i) => (
           <Bubble key={i} bubble={b} onFork={fork} />
