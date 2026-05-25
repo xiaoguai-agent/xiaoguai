@@ -24,6 +24,7 @@
     "providers": "LLM Providers",
     "mcp_servers": "MCP Servers",
     "marketplace": "MCP Marketplace",
+    "skill_packs": "Skill Packs",
     "audit": "Audit Log"
   },
   "language": {
