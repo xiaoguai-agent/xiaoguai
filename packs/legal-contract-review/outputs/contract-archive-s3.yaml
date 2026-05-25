@@ -1,0 +1,81 @@
+---
+# Contract archive S3 output adapter.
+#
+# Archives the following artefacts to S3 under a structured prefix:
+#   contracts/<year>/<month>/<document_id>/
+#     original.<ext>       — original contract file
+#     clauses.json         — ClauseSet from clause-extractor
+#     redlines.json        — RedlineSet from redline-suggester
+#     fallback.json        — FallbackReport from fallback-detector
+#     risk-assessment.json — RiskAssessment from risk-scorer
+#     review-summary.md    — rendered redline-summary template (human-readable)
+#     metadata.json        — document metadata + pipeline run info
+#
+# Retention policy is enforced via S3 Lifecycle rules (configured separately);
+# the adapter only writes — it does not manage retention.
+
+output: contract-archive-s3
+
+s3:
+  bucket: ${CONTRACT_S3_BUCKET}
+  region: ${CONTRACT_S3_REGION:-us-east-1}
+  # KMS key ARN for server-side encryption (SSE-KMS).
+  # Leave blank to use SSE-S3 (AES-256).
+  kms_key_arn: ${CONTRACT_S3_KMS_KEY_ARN:-}
+
+  # Prefix template for all artefacts.
+  prefix_template: "contracts/{{ occurred_at | format_date('%Y/%m') }}/{{ contract.document_id }}/"
+
+  # Individual object definitions.
+  objects:
+    - key: "original{{ contract.source_url | file_extension | default('.pdf') }}"
+      source: contract_file          # downloaded from contract.source_url
+      content_type: application/pdf
+      metadata:
+        document_id: "{{ contract.document_id }}"
+        contract_type: "{{ contract.contract_type }}"
+        source: "{{ contract.source }}"
+
+    - key: clauses.json
+      source: clause_extractor_output
+      content_type: application/json
+
+    - key: redlines.json
+      source: redline_suggester_output
+      content_type: application/json
+
+    - key: fallback.json
+      source: fallback_detector_output
+      content_type: application/json
+
+    - key: risk-assessment.json
+      source: risk_scorer_output
+      content_type: application/json
+
+    - key: review-summary.md
+      source_template_ref: templates/redline-summary.md.j2
+      content_type: text/markdown
+
+    - key: metadata.json
+      source: _generated_metadata
+      content_type: application/json
+      # metadata.json schema:
+      # {
+      #   "document_id":    "...",
+      #   "contract_type":  "...",
+      #   "parties":        [...],
+      #   "source":         "...",
+      #   "occurred_at":    "ISO-8601",
+      #   "pipeline_run_id":"...",
+      #   "risk_tier":      "...",
+      #   "jira_ticket_url":"...",
+      #   "archived_at":    "ISO-8601"
+      # }
+
+# Presigned URL settings for the Slack "View Archive" button.
+presigned_url:
+  expiry_seconds: 604800   # 7 days
+
+# Access logging — write S3 server access logs to a separate bucket.
+# Configure separately via S3 console / Terraform; the adapter does not set this.
+access_log_note: "Enable S3 server access logging on CONTRACT_S3_BUCKET for audit compliance."

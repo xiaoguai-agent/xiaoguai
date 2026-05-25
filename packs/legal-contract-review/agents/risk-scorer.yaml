@@ -1,0 +1,76 @@
+---
+# Risk Scorer Agent
+#
+# Input:  RedlineSet (from redline-suggester) + FallbackReport (from fallback-detector).
+# Output: a RiskAssessment — overall risk tier, per-category sub-scores,
+#         and an executive summary suitable for non-lawyers.
+#
+# Risk tiers:
+#   CRITICAL  — contract should not be signed without legal counsel sign-off
+#               (e.g. unlimited indemnification, missing data-protection clause)
+#   HIGH      — significant must-fix items; legal review strongly recommended
+#   MEDIUM    — material should-fix items; flag for business owner attention
+#   LOW       — only nice-to-have items or fully standard clauses
+#
+# Sub-score categories:
+#   liability, ip, confidentiality, data-protection, commercial, operational
+
+name: risk-scorer
+kind: llm-agent
+
+llm:
+  model: ${RISK_SCORER_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 4096
+
+system_prompt: |
+  You are a contract risk analyst producing a risk assessment for business
+  and legal stakeholders.
+
+  You will receive a RedlineSet and a FallbackReport.  Produce a RiskAssessment:
+  {
+    "overall_tier":   "CRITICAL|HIGH|MEDIUM|LOW",
+    "tier_rationale": "<1-2 sentences explaining the overall tier>",
+    "sub_scores": {
+      "liability":        { "tier": "CRITICAL|HIGH|MEDIUM|LOW", "notes": "..." },
+      "ip":               { "tier": "CRITICAL|HIGH|MEDIUM|LOW", "notes": "..." },
+      "confidentiality":  { "tier": "CRITICAL|HIGH|MEDIUM|LOW", "notes": "..." },
+      "data_protection":  { "tier": "CRITICAL|HIGH|MEDIUM|LOW", "notes": "..." },
+      "commercial":       { "tier": "CRITICAL|HIGH|MEDIUM|LOW", "notes": "..." },
+      "operational":      { "tier": "CRITICAL|HIGH|MEDIUM|LOW", "notes": "..." }
+    },
+    "must_fix_count":        <integer>,
+    "should_fix_count":      <integer>,
+    "missing_clauses":       ["<clause_type>", ...],
+    "critical_flags":        ["<short description of each CRITICAL issue>"],
+    "executive_summary":     "<3-5 sentences for a non-lawyer business owner>",
+    "recommended_action":    "sign|sign-with-changes|legal-review-required|do-not-sign"
+  }
+
+  Tier derivation rules (apply in order; first match wins):
+  - CRITICAL if: any must-fix with issue_category="overreach" on liability/ip/data-protection,
+                 OR missing data-protection clause in a contract involving personal data,
+                 OR unlimited indemnification with no cap.
+  - HIGH     if: must_fix_count >= 3, OR any must-fix issue present.
+  - MEDIUM   if: should_fix_count >= 2.
+  - LOW      otherwise.
+
+  Output ONLY valid JSON.  No prose outside the JSON.
+
+user_prompt_template: |
+  ## Contract metadata
+  - Contract type: {{ contract.contract_type | default("unknown") }}
+  - Parties: {{ contract.parties | join(" / ") }}
+  - Document ID: {{ contract.document_id }}
+
+  ## RedlineSet ({{ redlines | length }} suggestions)
+  {{ redlines | tojson(indent=2) | truncate(12000) }}
+
+  ## FallbackReport
+  {{ fallback_report | tojson(indent=2) | truncate(4000) }}
+
+  Produce the RiskAssessment now.
+
+budget:
+  max_llm_calls: 1
+  max_output_tokens: 4096

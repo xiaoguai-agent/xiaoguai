@@ -1,0 +1,81 @@
+---
+# Clause Extractor Agent
+#
+# Input:  a ContractDocument (PDF bytes or plain text, plus metadata).
+# Output: a ClauseSet — a structured list of identified clauses, each
+#         tagged with clause_type, text, page_ref, and standard_flag.
+#
+# Clause types recognised (NDA / MSA / SOW superset):
+#   confidentiality, ip-ownership, indemnification, limitation-of-liability,
+#   termination, governing-law, dispute-resolution, payment-terms,
+#   data-protection, non-compete, non-solicitation, warranty, sow-scope,
+#   sow-deliverable, sow-acceptance-criteria, change-order, force-majeure,
+#   entire-agreement, amendment, assignment, notice
+
+name: clause-extractor
+kind: llm-agent
+
+llm:
+  model: ${CLAUSE_EXTRACTOR_LLM_MODEL:-default}
+  temperature: 0.1   # low temperature — extraction should be deterministic
+  max_tokens: 8192
+
+# Context steps executed before the LLM prompt.
+context_steps:
+  - id: document_text
+    description: "Extract plain text from the contract document (PDF or text)."
+    tool: xiaoguai_document_extract
+    params:
+      source: "{{ contract.source_url }}"
+      format: text
+      max_chars: 80000   # ~60k token budget safety ceiling
+
+system_prompt: |
+  You are a contract analysis assistant specialised in commercial agreements
+  (NDA, MSA, SOW).  Your task is ONLY to extract and classify clauses —
+  do NOT evaluate or suggest changes at this stage.
+
+  For every distinct clause in the contract produce a JSON object:
+  {
+    "clause_id":      "<short slug, e.g. 'confidentiality-1'>",
+    "clause_type":    "<one of the recognised clause types>",
+    "heading":        "<clause heading as it appears in the document, or null>",
+    "text":           "<verbatim clause text, truncated to 1500 chars>",
+    "page_ref":       <page number integer, or null if unknown>,
+    "standard_flag":  "<standard|non-standard|missing>",
+    "notes":          "<1-sentence observation, e.g. 'unusually broad scope'>"
+  }
+
+  Recognised clause_types:
+    confidentiality, ip-ownership, indemnification, limitation-of-liability,
+    termination, governing-law, dispute-resolution, payment-terms,
+    data-protection, non-compete, non-solicitation, warranty, sow-scope,
+    sow-deliverable, sow-acceptance-criteria, change-order, force-majeure,
+    entire-agreement, amendment, assignment, notice
+
+  Rules:
+  - Output ONLY a JSON array of clause objects.  No prose.
+  - If a recognised clause type is ABSENT from the document, include one entry
+    with standard_flag="missing" and text=null.
+  - Do not hallucinate page numbers; set page_ref=null if uncertain.
+  - Limit to 40 clause entries; merge sub-clauses into their parent.
+
+user_prompt_template: |
+  ## Contract metadata
+  - Contract type: {{ contract.contract_type | default("unknown") }}
+  - Parties: {{ contract.parties | join(" / ") }}
+  - Document ID: {{ contract.document_id }}
+  - Source: {{ contract.source }}
+
+  ## Contract text ({{ context.document_text | length }} chars)
+  {{ context.document_text | truncate(75000) }}
+
+  Extract all clauses now.
+
+outputs:
+  - agents/redline-suggester.yaml
+  - agents/fallback-detector.yaml
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 8192

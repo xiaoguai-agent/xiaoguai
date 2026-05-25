@@ -1,0 +1,134 @@
+# Contract Redline Summary: {{ contract.document_id }}
+
+> **Contract type**: {{ contract.contract_type | upper }}
+> **Parties**: {{ contract.parties | join(" / ") }}
+> **Source**: {{ contract.source | title }}
+> **Received**: {{ contract.occurred_at }}
+> **Risk tier**: {{ risk.overall_tier }}
+> **Recommended action**: `{{ risk.recommended_action }}`
+
+---
+
+## Executive Summary
+
+{{ risk.executive_summary }}
+
+---
+
+## Risk Sub-scores
+
+| Category | Tier | Notes |
+|---|---|---|
+{% for category, score in risk.sub_scores.items() %}
+| {{ category | replace("_", " ") | title }} | **{{ score.tier }}** | {{ score.notes }} |
+{% endfor %}
+
+---
+
+## Must-Fix Items ({{ risk.must_fix_count }})
+
+{% set must_fix = redlines | selectattr("urgency", "equalto", "must-fix") | list %}
+{% if must_fix %}
+{% for s in must_fix %}
+### {{ loop.index }}. [{{ s.clause_type | upper }}] {{ s.issue_category | title }}
+
+**Clause**: `{{ s.clause_id }}`
+**Issue category**: {{ s.issue_category }}
+
+**Original:**
+> {{ s.original | default("*(clause absent)*") }}
+
+**Proposed:**
+> {{ s.proposed }}
+
+**Rationale**: {{ s.rationale }}
+{% if s.precedent_ref %}
+**Precedent reference**: {{ s.precedent_ref }}
+{% endif %}
+
+---
+{% endfor %}
+{% else %}
+*No must-fix items identified.*
+{% endif %}
+
+## Should-Fix Items ({{ risk.should_fix_count }})
+
+{% set should_fix = redlines | selectattr("urgency", "equalto", "should-fix") | list %}
+{% if should_fix %}
+{% for s in should_fix %}
+### {{ loop.index }}. [{{ s.clause_type | upper }}] {{ s.issue_category | title }}
+
+**Clause**: `{{ s.clause_id }}` | **Category**: {{ s.issue_category }}
+
+**Original:** {{ s.original | default("*(clause absent)*") | truncate(300) }}
+
+**Proposed:** {{ s.proposed | truncate(300) }}
+
+**Rationale**: {{ s.rationale }}
+
+---
+{% endfor %}
+{% else %}
+*No should-fix items identified.*
+{% endif %}
+
+## Nice-to-Have Items
+
+{% set nice = redlines | selectattr("urgency", "equalto", "nice-to-have") | list %}
+{% if nice %}
+| Clause | Type | Issue | Rationale |
+|---|---|---|---|
+{% for s in nice %}
+| `{{ s.clause_id }}` | {{ s.clause_type }} | {{ s.issue_category }} | {{ s.rationale | truncate(120) }} |
+{% endfor %}
+{% else %}
+*No nice-to-have items identified.*
+{% endif %}
+
+---
+
+## Missing Clauses
+
+{% if risk.missing_clauses %}
+| Clause Type | Severity | Risk if Absent |
+|---|---|---|
+{% for mc in fallback.missing_clauses %}
+| {{ mc.clause_type }} | **{{ mc.severity | upper }}** | {{ mc.risk_if_absent }} |
+{% endfor %}
+{% else %}
+*All required clauses are present.*
+{% endif %}
+
+---
+
+## One-Sided Clauses
+
+{% if fallback.one_sided_clauses %}
+| Clause | Direction | Description |
+|---|---|---|
+{% for oc in fallback.one_sided_clauses %}
+| `{{ oc.clause_id }}` ({{ oc.clause_type }}) | {{ oc.direction }} | {{ oc.description }} |
+{% endfor %}
+{% else %}
+*No obviously one-sided clauses detected.*
+{% endif %}
+
+---
+
+## Silent Defaults
+
+{% if fallback.silent_defaults %}
+{% for sd in fallback.silent_defaults %}
+- **{{ sd.topic }}**: {{ sd.risk }}
+{% endfor %}
+{% else %}
+*No material silent defaults detected.*
+{% endif %}
+
+---
+
+*Generated automatically by xiaoguai legal-contract-review pack v{{ pack_version }}.*
+*Legal review required before signing. This report is not legal advice.*
+*Reviewed by: <!-- @mention legal counsel -->*
+*Date approved: <!-- YYYY-MM-DD -->*

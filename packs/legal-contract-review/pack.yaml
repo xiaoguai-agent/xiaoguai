@@ -1,0 +1,118 @@
+---
+# Pack manifest: legal-contract-review
+#
+# Operational contract review for NDA / MSA / SOW documents.
+# Extracts clauses, generates redline suggestions, and scores risk —
+# distinct from packs/rag-legal/ which is a knowledge-base RAG lookup.
+#
+# Trigger sources:
+#   - DocuSign envelope status webhooks (completed / declined / voided)
+#   - Google Drive "file changed" watch events (legal-contracts/ folder)
+#   - Manual upload via the /v1/contracts/inbound/upload API
+#
+# Pipeline:
+#   clause-extractor  →  redline-suggester  →  risk-scorer
+#                                          └→  fallback-detector (parallel)
+#
+# Outputs:
+#   - Slack legal-review notification with risk tier + summary
+#   - Jira redline ticket with full diff markup
+#   - Archived contract + review artefacts in S3
+#
+# Runtime dependencies:
+#   - llm_provider:  any provider registered in xiaoguai-llm
+#   - LEGAL_SLACK_WEBHOOK_URL
+#   - JIRA_API_TOKEN + JIRA_PROJECT_KEY
+#   - CONTRACT_S3_BUCKET + AWS credentials
+#   - DOCUSIGN_HMAC_SECRET  (optional — only for DocuSign inbound)
+#   - GDRIVE_WATCH_SECRET   (optional — only for Drive inbound)
+
+name: legal-contract-review
+version: "0.1.0"
+description: >
+  NDA / MSA / SOW operational review pack — clause extraction, redline
+  suggestions, and risk scoring.  Triggered by DocuSign webhooks, Google
+  Drive file-watch events, or manual upload.  Distinct from packs/rag-legal/
+  (knowledge RAG); this pack operates on a specific contract document.
+
+depends:
+  xiaoguai-api: ">=0.12.1"
+  llm: required
+
+# ── Inbound event sources ─────────────────────────────────────────────────
+inbound:
+  - ref: inbound/docusign-event.yaml
+  - ref: inbound/drive-watch.yaml
+  - ref: inbound/manual-upload.yaml
+
+# ── Agent definitions ─────────────────────────────────────────────────────
+agents:
+  - ref: agents/clause-extractor.yaml
+  - ref: agents/redline-suggester.yaml
+  - ref: agents/risk-scorer.yaml
+  - ref: agents/fallback-detector.yaml
+
+# ── Output adapters ───────────────────────────────────────────────────────
+outputs:
+  - ref: outputs/slack-legal-review.yaml
+  - ref: outputs/jira-redline-ticket.yaml
+  - ref: outputs/contract-archive-s3.yaml
+
+# ── Execution plan ────────────────────────────────────────────────────────
+# clause-extractor runs first; its output feeds redline-suggester and
+# fallback-detector in parallel, then risk-scorer aggregates both before
+# outputs fire.
+plan:
+  - id: extract
+    agent: clause-extractor
+    description: "Parse document, identify and classify all contract clauses."
+
+  - id: redline
+    agent: redline-suggester
+    description: "Generate redline suggestions for non-standard or risky clauses."
+    deps: [extract]
+
+  - id: fallback
+    agent: fallback-detector
+    description: "Detect missing standard clauses and one-sided fallback positions."
+    deps: [extract]
+    parallel: true   # runs concurrently with redline
+
+  - id: score
+    agent: risk-scorer
+    description: "Aggregate clause analysis and produce a tiered risk score."
+    deps: [redline, fallback]
+
+  - id: notify_slack
+    output: slack-legal-review
+    description: "Post risk tier + executive summary to Slack legal-review channel."
+    deps: [score]
+
+  - id: create_jira
+    output: jira-redline-ticket
+    description: "Open a Jira ticket with full redline markup for legal team action."
+    deps: [score]
+    parallel: true   # fires concurrently with notify_slack
+
+  - id: archive
+    output: contract-archive-s3
+    description: "Archive contract PDF + review JSON to S3 for audit retention."
+    deps: [score]
+    parallel: true   # fires concurrently with notify_slack
+
+# ── Resource requirements ─────────────────────────────────────────────────
+requires:
+  env:
+    - LEGAL_SLACK_WEBHOOK_URL
+    - JIRA_API_TOKEN
+    - JIRA_PROJECT_KEY
+    - CONTRACT_S3_BUCKET
+  llm: true
+
+# ── Feature flag ──────────────────────────────────────────────────────────
+feature_flag: XIAOGUAI_LEGAL_CONTRACT_REVIEW_ENABLED
+
+# Deferred / not-yet-implemented:
+#   - Clause-level diff against a company standard template (golden-copy comparison)
+#   - Multi-party redline round-trip tracking
+#   - Integration with DocuSign CLM / Ironclad
