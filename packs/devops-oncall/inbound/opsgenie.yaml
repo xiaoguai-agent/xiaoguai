@@ -1,0 +1,71 @@
+---
+# Inbound webhook source — Opsgenie alert webhooks
+#
+# Opsgenie delivers POST requests to:
+#   POST https://<host>/v1/oncall/inbound/opsgenie/{route_id}
+#
+# Configure an Opsgenie webhook integration pointing to this URL.
+# Set the shared secret in OPSGENIE_WEBHOOK_SECRET; xiaoguai will verify the
+# X-OG-Delivery-Token header on every request.
+#
+# References: https://support.atlassian.com/opsgenie/docs/what-is-a-webhook-integration/
+
+name: opsgenie-webhook
+kind: webhook
+
+route_id: "oncall-opsgenie-${PACK_INSTANCE_ID}"
+route_prefix: /v1/oncall/inbound/opsgenie
+
+# Only process create / escalate actions.
+event_filter:
+  payload_path: "$.action"
+  values:
+    - "Create"
+    - "Escalate"
+    - "AddNote"     # notes sometimes carry triage context worth re-classifying on
+
+# Opsgenie uses a static token in a custom header rather than HMAC.
+signature:
+  algorithm: static-token
+  header: "X-OG-Delivery-Token"
+  secret_env: OPSGENIE_WEBHOOK_SECRET
+
+normalize:
+  field_map:
+    id:             "alert.alertId"
+    name:           "alert.message"
+    description:    "alert.description"
+    raw_severity:
+      source: "alert.priority"
+      map:
+        P1: critical
+        P2: high
+        P3: medium
+        P4: low
+        P5: low
+        _default: medium
+    component:      "alert.entity"
+    environment:
+      source: "alert.tags"
+      extract_tag_key: "env"   # look for a tag shaped "env:production"
+    fired_at:       "alert.createdAt"
+    source:         _const:opsgenie
+    url:            "alert.source"
+    labels:         "alert.tags"
+    raw:            _self
+
+# Sample payload for integration tests.
+sample_payload: |
+  {
+    "action": "Create",
+    "alert": {
+      "alertId": "og-456def",
+      "message": "CPU saturation on api-gateway",
+      "description": "CPU usage > 90% for 5 minutes",
+      "priority": "P2",
+      "createdAt": 1716559800000,
+      "entity": "api-gateway",
+      "tags": ["env:production", "team:platform"],
+      "source": "https://app.opsgenie.com/alert/detail/og-456def"
+    }
+  }

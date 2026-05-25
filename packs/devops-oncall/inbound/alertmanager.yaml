@@ -1,0 +1,93 @@
+---
+# Inbound webhook source — Prometheus Alertmanager webhook receiver
+#
+# Configure Alertmanager's webhook_config to POST to:
+#   POST https://<host>/v1/oncall/inbound/alertmanager/{route_id}
+#
+# Alertmanager sends a JSON body matching the webhook_config v2 schema.
+# There is no built-in HMAC; authentication relies on the per-tenant bearer
+# token enforced by the scheduler webhook middleware.
+#
+# References:
+#   https://prometheus.io/docs/alerting/latest/configuration/#webhook_config
+#   https://prometheus.io/docs/alerting/latest/notifications/#webhook-payload
+
+name: alertmanager-webhook
+kind: webhook
+
+route_id: "oncall-alertmanager-${PACK_INSTANCE_ID}"
+route_prefix: /v1/oncall/inbound/alertmanager
+
+# Alertmanager does not send a signature header; rely on per-tenant bearer token.
+signature:
+  algorithm: bearer
+  header: "Authorization"
+  prefix: "Bearer "
+  secret_env: ALERTMANAGER_WEBHOOK_TOKEN
+
+# Process only "firing" status; skip "resolved" (no action needed in this pack).
+event_filter:
+  payload_path: "$.status"
+  values:
+    - "firing"
+
+# Alertmanager sends an array of alerts; each fires a separate plan execution.
+multi_alert:
+  root_path: "$.alerts"
+
+normalize:
+  # Applied per alert element in the $.alerts array.
+  field_map:
+    id:
+      # Alertmanager has no stable ID; derive from fingerprint.
+      source: "fingerprint"
+    name:             "labels.alertname"
+    description:      "annotations.description"
+    raw_severity:
+      source: "labels.severity"
+      map:
+        critical: critical
+        warning:  warning
+        info:     low
+        none:     low
+        _default: warning
+    component:        "labels.job"        # Prometheus job label is the closest proxy
+    environment:      "labels.env"
+    fired_at:         "startsAt"
+    source:           _const:alertmanager
+    url:              "generatorURL"
+    labels:           "labels"            # pass full label set for richer classification
+    raw:              _self
+
+# Alertmanager-specific options.
+options:
+  # Group alerts that arrive in the same webhook batch but belong to different
+  # alertname values; treat each as an independent plan execution.
+  deduplicate_fingerprint: true
+  # Silence alerts that are already active in Alertmanager (status=suppressed).
+  skip_suppressed: true
+
+# Sample payload for integration tests.
+sample_payload: |
+  {
+    "version": "4",
+    "receiver": "xiaoguai-oncall",
+    "status": "firing",
+    "alerts": [
+      {
+        "status": "firing",
+        "labels": {
+          "alertname": "HighErrorRate",
+          "severity": "critical",
+          "job": "auth-service",
+          "env": "production"
+        },
+        "annotations": {
+          "description": "HTTP 5xx rate > 1% for 5 minutes on auth-service"
+        },
+        "startsAt": "2025-05-24T14:30:00Z",
+        "generatorURL": "http://prometheus.internal/graph?g0.expr=...",
+        "fingerprint": "abc123def456"
+      }
+    ]
+  }

@@ -1,0 +1,98 @@
+---
+# snapshot-collector agent
+#
+# Input:  suspected_component (string) and time window derived from alert.fired_at.
+#         Both are provided by the classify-alert output in the plan context.
+#
+# Output: ObservabilitySnapshot struct —
+#           component:      string (the queried component)
+#           window_start:   ISO-8601
+#           window_end:     ISO-8601
+#           metrics:        array of {name, unit, values: [{ts, v}], anomaly: bool}
+#           log_excerpts:   array of {ts, level, message, source}
+#           dashboards:     array of {title, url} (deep-links into the obs platform)
+#           summary:        LLM-generated 2-3 sentence plain-language description
+#
+# The agent uses the observability MCP server (configured via ONCALL_OBSERVABILITY_URL)
+# to pull real data; the LLM step generates the plain-language summary only.
+
+name: snapshot-collector
+kind: llm-agent
+
+mcp_servers:
+  - observability   # registered server; URL + token from env vars
+
+llm:
+  model: ${ONCALL_LLM_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 1024
+
+# Time window: fired_at - lookback_minutes .. fired_at + 5 min (grace period).
+# Configurable via ONCALL_SNAPSHOT_LOOKBACK_MINUTES (default: 30).
+config:
+  lookback_minutes: ${ONCALL_SNAPSHOT_LOOKBACK_MINUTES:-30}
+  max_log_lines: 50
+  max_metric_points: 120   # ~1 point/15s for a 30-min window
+
+system_prompt: |
+  You are an SRE observability assistant.
+
+  You have access to the observability MCP server (tools: query_metrics, query_logs,
+  list_dashboards). Your job is to:
+  1. Call query_metrics for the top 3-5 golden signals for the suspected component
+     (error rate, latency p99, throughput, saturation, availability — whichever apply).
+  2. Call query_logs to fetch the most relevant recent log lines (errors/warnings first).
+  3. Call list_dashboards to find deep-link URLs for the component.
+  4. Write a 2-3 sentence plain-language SUMMARY describing what the metrics and logs
+     reveal about the current state of the component.
+
+  Rules:
+  - Query only the specified component and time window; do not widen scope.
+  - If a metric query returns no data, note it explicitly in the summary.
+  - Truncate log messages to 200 chars each to keep token budget reasonable.
+  - Output ONLY valid JSON matching the ObservabilitySnapshot schema.
+
+  ObservabilitySnapshot schema:
+  {
+    "component": "string",
+    "window_start": "ISO-8601",
+    "window_end": "ISO-8601",
+    "metrics": [
+      {
+        "name": "string",
+        "unit": "string",
+        "values": [{"ts": "ISO-8601", "v": 0.0}],
+        "anomaly": false
+      }
+    ],
+    "log_excerpts": [
+      {"ts": "ISO-8601", "level": "ERROR|WARN|INFO", "message": "string", "source": "string"}
+    ],
+    "dashboards": [
+      {"title": "string", "url": "string"}
+    ],
+    "summary": "string"
+  }
+
+user_prompt: |
+  ## Target Component
+  {{ classify.suspected_component }}
+
+  ## Time Window
+  - Start: {{ alert.fired_at | minus(minutes=config.lookback_minutes) | iso8601 }}
+  - End:   {{ alert.fired_at | plus(minutes=5) | iso8601 }}
+
+  ## Context
+  - Priority: {{ classify.priority }}
+  - Impact:   {{ classify.impact_summary }}
+
+  Collect the observability snapshot now.
+
+tools:
+  - query_metrics
+  - query_logs
+  - list_dashboards
+
+budget:
+  max_llm_calls: 4   # 3 tool calls + 1 summary generation
+  max_output_tokens: 1024

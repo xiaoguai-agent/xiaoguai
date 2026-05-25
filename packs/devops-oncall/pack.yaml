@@ -1,0 +1,85 @@
+# Pack manifest: devops-oncall
+#
+# Real-time alert triage and runbook execution for on-call engineers.
+# Distinct from incident-triage (after-action RCA): this pack is reactive,
+# acting within seconds of an alert firing.  It classifies severity (P1/P2/P3),
+# locates the matching runbook steps, and pulls an observability snapshot so
+# the engineer arrives at the incident with full context.
+#
+# Runtime dependencies:
+#   - llm_provider:    any provider registered in xiaoguai-llm
+#   - observability:   MCP server exposing metrics/logs (e.g. Datadog, Grafana)
+#   - slack_token:     Bot token with chat:write to the oncall channel
+#   - statuspage_key:  Statuspage.io API key (optional; needed for outputs/statuspage-incident.yaml)
+
+name: devops-oncall
+version: "0.1.0"
+description: >
+  Real-time alert triage for on-call engineers: classifies incoming alerts as
+  P1/P2/P3, maps them to suspected components, looks up matching runbook steps,
+  and attaches an observability snapshot (metrics + log excerpts) before paging
+  the engineer.  Distinct from incident-triage, which handles post-incident RCA.
+
+# ── Inbound alert sources ──────────────────────────────────────────────────
+inbound:
+  - ref: inbound/pagerduty.yaml
+  - ref: inbound/opsgenie.yaml
+  - ref: inbound/alertmanager.yaml
+
+# ── Agent definitions ──────────────────────────────────────────────────────
+agents:
+  - ref: agents/classify-alert.yaml
+  - ref: agents/runbook-lookup.yaml
+  - ref: agents/snapshot-collector.yaml
+
+# ── Output adapters ────────────────────────────────────────────────────────
+outputs:
+  - ref: outputs/slack-oncall-channel.yaml
+  - ref: outputs/statuspage-incident.yaml
+
+# ── Execution plan ─────────────────────────────────────────────────────────
+# classify-alert runs first; its output feeds the two parallel steps.
+# snapshot-collector and runbook-lookup can run concurrently once classification
+# is done.  Both results are merged before the output adapters fire.
+plan:
+  - id: classify
+    agent: classify-alert
+    description: "Classify incoming alert: assign priority, suspect component, and similar past incidents."
+
+  - id: lookup
+    agent: runbook-lookup
+    description: "Retrieve runbook steps matching the classified alert."
+    deps: [classify]
+
+  - id: snapshot
+    agent: snapshot-collector
+    description: "Pull metrics and log excerpts for the suspected component."
+    deps: [classify]
+
+  - id: notify
+    output: slack-oncall-channel
+    description: "Post alert summary + runbook steps + observability snapshot to the on-call Slack channel."
+    deps: [classify, lookup, snapshot]
+
+  - id: open_incident
+    output: statuspage-incident
+    description: "Open a Statuspage incident if priority is P1."
+    deps: [classify]
+    condition: "{{ classify.priority == 'P1' }}"
+
+# ── Resource requirements ──────────────────────────────────────────────────
+requires:
+  env:
+    - ONCALL_SLACK_TOKEN          # Slack bot token (chat:write)
+    - ONCALL_SLACK_CHANNEL        # e.g. #oncall-eng
+    - ONCALL_OBSERVABILITY_URL    # Base URL for the observability MCP server
+    - ONCALL_OBSERVABILITY_TOKEN  # Auth token for observability MCP
+  env_optional:
+    - STATUSPAGE_API_KEY          # Required only if statuspage-incident output is enabled
+    - STATUSPAGE_PAGE_ID          # Statuspage page ID
+    - ONCALL_LLM_MODEL            # Override LLM model; default: workspace default
+  llm: true
+
+# ── Feature flag ──────────────────────────────────────────────────────────
+# Set XIAOGUAI_DEVOPS_ONCALL_ENABLED=true in your .env to activate.
+feature_flag: XIAOGUAI_DEVOPS_ONCALL_ENABLED

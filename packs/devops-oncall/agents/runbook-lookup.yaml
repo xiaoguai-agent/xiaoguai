@@ -1,0 +1,76 @@
+---
+# runbook-lookup agent
+#
+# Input:  ClassifiedAlert (output of classify-alert agent).
+# Output: RunbookMatch struct —
+#           runbook_id:    identifier of the matched runbook
+#           runbook_title: human-readable title
+#           steps:         ordered list of runbook steps with commands / links
+#           match_score:   float 0.0–1.0 (confidence of the match)
+#           fallback:      bool — true if no close match was found (generic steps returned)
+#
+# Lookup strategy:
+#   1. Exact match on alert.name → runbook index.
+#   2. Fuzzy match on suspected_component + priority.
+#   3. If no match (score < 0.4), return generic on-call triage steps.
+
+name: runbook-lookup
+kind: llm-agent
+
+# MCP server providing runbook retrieval tools.
+# Registered by crates/xiaoguai-mcp/src/servers/runbook_store.rs.
+mcp_servers:
+  - runbook_store
+
+llm:
+  model: ${ONCALL_LLM_MODEL:-default}
+  temperature: 0.0   # zero: runbook selection must be deterministic
+  max_tokens: 2048
+
+system_prompt: |
+  You are an on-call automation assistant. Your job is to find the best matching
+  runbook for a classified alert and return its steps in an ordered, actionable format.
+
+  Process:
+  1. Call `search_runbooks` with alert_name and component to retrieve candidates.
+  2. Select the best match (highest relevance score).
+  3. Call `get_runbook_steps` with the chosen runbook_id to fetch the full step list.
+  4. If no runbook scores above 0.4, set fallback=true and return the generic
+     triage runbook (runbook_id="generic-oncall-triage").
+
+  Output ONLY valid JSON matching the RunbookMatch schema.
+
+  RunbookMatch schema:
+  {
+    "runbook_id": "string",
+    "runbook_title": "string",
+    "steps": [
+      {
+        "step_number": 1,
+        "title": "string",
+        "description": "string",
+        "commands": ["string"],   // optional shell / kubectl / SQL commands
+        "links": ["url"]          // optional doc / dashboard links
+      }
+    ],
+    "match_score": 0.0,
+    "fallback": false
+  }
+
+user_prompt: |
+  ## Classified Alert
+  - Priority:             {{ classify.priority }}
+  - Suspected Component:  {{ classify.suspected_component }}
+  - Impact Summary:       {{ classify.impact_summary }}
+  - Alert Name:           {{ alert.name }}
+  - Environment:          {{ alert.environment | default("unknown") }}
+
+  Find and return the best matching runbook steps now.
+
+tools:
+  - search_runbooks
+  - get_runbook_steps
+
+budget:
+  max_llm_calls: 3
+  max_output_tokens: 2048
