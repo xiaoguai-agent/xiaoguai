@@ -11,6 +11,7 @@ import { AuditPane } from './panes/Audit';
 import { UsagePane } from './panes/Usage';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { OutcomesPane } from './panes/Outcomes';
+import { MemoryPane } from './panes/Memory';
 
 /**
  * v0.11.1 — audit-first console. `Today` becomes the default landing
@@ -56,6 +57,10 @@ export function App() {
         <NavLink to="/audit" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.audit')}
         </NavLink>
+        {/* v1.4: Memory browser — v1.4-ready with 404 fallback + mock data (ADR-0019). */}
+        <NavLink to="/memory" className={({ isActive }) => (isActive ? 'active' : '')}>
+          {t('nav.memory')}
+        </NavLink>
         <LanguageSwitcher />
       </nav>
       <main className="main">
@@ -71,6 +76,7 @@ export function App() {
           <Route path="/tenants" element={<TenantsPane />} />
           <Route path="/providers" element={<ProvidersPane />} />
           <Route path="/audit" element={<AuditPane />} />
+          <Route path="/memory" element={<MemoryPane />} />
         </Routes>
       </main>
     </div>
