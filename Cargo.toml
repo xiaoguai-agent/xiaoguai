@@ -29,6 +29,7 @@ members = [
     "crates/xiaoguai-watch",
     "crates/xiaoguai-anomaly",
     "crates/xiaoguai-personas",
+    "crates/xiaoguai-memory",
 ]
 
 [workspace.package]

@@ -28,6 +28,7 @@ use crate::eval::EvalService;
 use crate::hotl::enforcer::HotlEnforcer;
 use crate::hotl::policy::HotlPolicyStore;
 use crate::outcomes::{OutcomeWriter, OutcomesReader};
+use xiaoguai_memory::MemoryStore;
 use crate::scheduler::{
     NlJobCompiler, ScheduledJobUpserter, ScheduledJobsReader, WebhookPusher, WebhookTokenAdmin,
     WebhookTokenValidator,
@@ -200,6 +201,11 @@ pub struct AppState {
     /// return 503; production wires `PgSkillPackRepository` from
     /// `xiaoguai-core`.
     pub skill_packs: Option<Arc<dyn SkillPackRepository>>,
+    /// v1.3.x: long-term memory with semantic retrieval — backs
+    /// `/v1/memories` CRUD + `/v1/memories/recall` + `/v1/memories/similar/:id`.
+    /// `None` makes those endpoints return 503; production wires
+    /// `PgMemoryStore` from `xiaoguai-core`.
+    pub memory_store: Option<Arc<dyn MemoryStore>>,
 }
 
 impl std::fmt::Debug for AppState {
