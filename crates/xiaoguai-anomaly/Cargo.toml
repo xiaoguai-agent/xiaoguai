@@ -13,6 +13,7 @@ serde = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
+xiaoguai-observability = { workspace = true }
 
 [dev-dependencies]
 chrono = { workspace = true }

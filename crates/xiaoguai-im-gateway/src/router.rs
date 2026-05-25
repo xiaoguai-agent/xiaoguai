@@ -157,11 +157,15 @@ async fn handle_webhook(
         body: body.to_vec(),
     };
 
+    let adapter = state.provider.name().to_string();
     match state.provider.parse(&webhook).await {
         Ok(ImEvent::Challenge { challenge }) => {
             Json(json!({ "challenge": challenge })).into_response()
         }
         Ok(ImEvent::Message(msg)) => {
+            if let Some(ctr) = xiaoguai_observability::im_messages_total() {
+                ctr.with_label_values(&[&adapter, "inbound"]).inc();
+            }
             spawn_agent_reply(state, msg);
             (StatusCode::OK, Json(json!({"status":"accepted"}))).into_response()
         }
@@ -172,7 +176,7 @@ async fn handle_webhook(
         Err(ProviderError::BadSignature) => StatusCode::UNAUTHORIZED.into_response(),
         Err(ProviderError::Malformed(msg)) => (StatusCode::BAD_REQUEST, msg).into_response(),
         Err(ProviderError::Transport(msg)) => {
-            tracing::error!(%msg, provider = state.provider.name(), "im transport error parsing webhook");
+            tracing::error!(%msg, provider = adapter, "im transport error parsing webhook");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
@@ -250,6 +254,10 @@ pub async fn run_agent_and_reply(
         text: reply_text,
     };
     state.provider.reply(&out).await?;
+    if let Some(ctr) = xiaoguai_observability::im_messages_total() {
+        ctr.with_label_values(&[msg.provider.as_str(), "outbound"])
+            .inc();
+    }
     Ok(out)
 }
 

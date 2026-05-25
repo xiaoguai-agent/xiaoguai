@@ -232,6 +232,19 @@ impl OutcomeRecorder for InMemoryOutcomeRecorder {
                 "kind must not be empty".into(),
             ));
         }
+        // Emit Prometheus metrics for outcomes recording.
+        if let Some(ctr) = xiaoguai_observability::outcomes_recorded_total() {
+            ctr.with_label_values(&[tenant_id, kind]).inc();
+        }
+        // Chain depth: derive from the metadata "chain_depth" field if present,
+        // otherwise default to 1 (single-turn attribution).
+        let chain_depth = metadata
+            .get("chain_depth")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(1.0);
+        if let Some(hist) = xiaoguai_observability::outcomes_chain_depth() {
+            hist.observe(chain_depth);
+        }
         let rec = OutcomeRecord {
             tenant_id: tenant_id.to_owned(),
             session_id: session_id.map(ToOwned::to_owned),
