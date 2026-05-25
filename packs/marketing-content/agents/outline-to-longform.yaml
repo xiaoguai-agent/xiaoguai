@@ -1,0 +1,77 @@
+# Agent: outline-to-longform
+#
+# Expands a ContentOutline (produced by brief-to-outline) into a complete
+# blog article or long-form draft, respecting the target word count and
+# brand voice.
+#
+# Input context keys:
+#   outline            — ContentOutline JSON object from the outline step
+#   word_count_target  — integer target word count (default: 1500)
+#   brand_voice_ref    — name of the brand voice template to inject
+#   seo_keywords       — optional list of keywords to weave in naturally
+#
+# Output:
+#   A JSON object with the full article in Markdown and metadata.
+
+name: outline-to-longform
+kind: llm-agent
+
+system_prompt_template: templates/brand-voice-system-prompt.j2
+
+user_prompt_template: |
+  ## Assignment
+
+  Expand the following content outline into a full article.
+
+  **Target word count:** {{ word_count_target | default(1500) }} words (±10%).
+  {% if seo_keywords is defined and seo_keywords | length > 0 %}
+  **SEO keywords to include naturally:** {{ seo_keywords | join(", ") }}
+  {% endif %}
+
+  ## Content Outline (JSON)
+
+  ```json
+  {{ outline | tojson(indent=2) }}
+  ```
+
+  ## Instructions
+
+  - Open with the `intro_hook` from the outline, then expand into a compelling
+    first paragraph that previews the article's value.
+  - For each section, write full prose under the H2.  Convert `sub_points`
+    into H3 sub-sections with supporting paragraphs, examples, and data where
+    appropriate.
+  - Insert the `inline_cta` text at the end of the indicated section if present.
+  - Close with the `cta.primary` as a clear call-to-action block, followed by
+    the `cta.secondary` as a softer inline suggestion.
+  - Use active voice.  Vary sentence length.  No filler phrases
+    ("In conclusion", "As we have seen", etc.).
+  - Output a single JSON object matching the LongformDraft schema.
+
+output_schema:
+  type: object
+  description: LongformDraft
+  required: [title, markdown, word_count, meta_description]
+  properties:
+    title:
+      type: string
+      description: "Final H1 title (may refine the outline title for flow)"
+    markdown:
+      type: string
+      description: "Full article body in GitHub-flavoured Markdown"
+    word_count:
+      type: integer
+      description: "Actual word count of the markdown body"
+    meta_description:
+      type: string
+      description: "SEO meta description (≤160 chars)"
+    slug_suggestion:
+      type: string
+      description: "URL-safe slug derived from the title"
+    reading_time_minutes:
+      type: integer
+      description: "Estimated reading time (words / 200)"
+
+budget:
+  max_llm_calls: 4
+  max_output_tokens: 8192

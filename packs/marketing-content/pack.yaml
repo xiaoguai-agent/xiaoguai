@@ -1,0 +1,140 @@
+# Pack manifest: marketing-content
+#
+# Content generation and repurposing pipeline.
+#
+# Wires creative briefs (from Notion, Contentful, or manual webhooks) through
+# a four-agent pipeline:
+#   brief-to-outline → outline-to-longform → longform-to-social
+#                                          → longform-to-email
+#
+# All drafts are routed to a Slack review channel before any outbound publish
+# action (Ghost draft or Mailchimp campaign) is executed.
+# Zero publish without human approval — HOTL-gated at the output adapters.
+#
+# Runtime dependencies (all must be present in the xiaoguai env):
+#   - llm_provider:         any provider registered in xiaoguai-llm
+#   - SLACK_BOT_TOKEN:      bot token with chat:write scope (review channel)
+#   - GHOST_ADMIN_API_KEY:  Ghost Admin API key (blog draft publishing)
+#   - MAILCHIMP_API_KEY:    Mailchimp API key (email campaign creation)
+
+name: marketing-content
+version: "1.0.0"
+description: >
+  Content generation and repurposing pack — turns a creative brief into a
+  full blog article, then derives platform-tuned social snippets and a
+  3-email nurture sequence. Triggered via Notion database updates, Contentful
+  publish events, or a manual webhook. Drafts are reviewed in Slack before
+  any publish action.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# ── Runtime dependencies ──────────────────────────────────────────────────────
+
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - llm               # core LLM backend (all four agents)
+    - webhook           # inbound trigger processing
+    - outcome-telemetry # records review/publish outcome for improvement loop
+
+# ── Inbound triggers ──────────────────────────────────────────────────────────
+
+inbound:
+  - ref: inbound/notion-database-trigger.yaml
+  - ref: inbound/contentful-publish.yaml
+  - ref: inbound/manual-brief-submit.yaml
+
+# ── Agent definitions ─────────────────────────────────────────────────────────
+
+agents:
+  - ref: agents/brief-to-outline.yaml
+  - ref: agents/outline-to-longform.yaml
+  - ref: agents/longform-to-social.yaml
+  - ref: agents/longform-to-email.yaml
+
+# ── Output adapters ───────────────────────────────────────────────────────────
+
+outputs:
+  - ref: outputs/slack-content-review.yaml
+  - ref: outputs/ghost-blog-draft.yaml
+  - ref: outputs/mailchimp-campaign.yaml
+
+# ── Execution plan ────────────────────────────────────────────────────────────
+#
+# brief-to-outline runs first.
+# outline-to-longform depends on it.
+# longform-to-social and longform-to-email run in parallel once longform is done.
+# All three outputs wait for the longform (and derivative) steps to complete.
+# Slack review is the HOTL gate; ghost-blog-draft and mailchimp-campaign only
+# run after a human approves in Slack.
+
+plan:
+  - id: outline
+    agent: brief-to-outline
+    description: "Transform the creative brief and brand voice into a structured content outline."
+
+  - id: longform
+    agent: outline-to-longform
+    description: "Expand the structured outline into a full blog article or long-form draft."
+    deps: [outline]
+
+  - id: social
+    agent: longform-to-social
+    description: "Derive five platform-tuned social snippets from the long-form draft."
+    deps: [longform]
+
+  - id: email
+    agent: longform-to-email
+    description: "Derive a 3-email nurture sequence from the long-form draft."
+    deps: [longform]
+
+  - id: review
+    output: slack-content-review
+    description: "Post all drafts to the Slack review channel and await human approval."
+    deps: [longform, social, email]
+
+  - id: publish-blog
+    output: ghost-blog-draft
+    description: "Push the approved long-form draft as a Ghost blog draft (HOTL-gated)."
+    deps: [review]
+    condition: "review.approved == true"
+
+  - id: publish-email
+    output: mailchimp-campaign
+    description: "Create Mailchimp campaigns from the approved nurture sequence (HOTL-gated)."
+    deps: [review]
+    condition: "review.approved == true"
+
+# ── Resource requirements ─────────────────────────────────────────────────────
+
+env:
+  required:
+    - SLACK_BOT_TOKEN          # bot with chat:write scope
+    - SLACK_REVIEW_CHANNEL_ID  # target channel for content review posts
+  optional:
+    - GHOST_ADMIN_API_KEY      # required only when ghost-blog-draft output is active
+    - GHOST_API_URL            # e.g. https://myblog.ghost.io
+    - MAILCHIMP_API_KEY        # required only when mailchimp-campaign output is active
+    - MAILCHIMP_SERVER_PREFIX  # e.g. us14
+    - MAILCHIMP_LIST_ID        # audience list to associate campaigns with
+    - NOTION_WEBHOOK_SECRET    # HMAC-SHA256 secret for Notion webhook verification
+    - CONTENTFUL_WEBHOOK_SECRET # secret for Contentful webhook verification
+    - MANUAL_BRIEF_API_TOKEN   # bearer token for manual-brief-submit endpoint
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+
+config:
+  content:
+    default_word_count: 1500      # target for outline-to-longform when not specified in brief
+    max_word_count: 4000          # hard upper bound passed to the agent budget
+  social:
+    platforms: [twitter, linkedin, instagram, tiktok_hook, threads]
+  email:
+    sequence_length: 3            # number of emails in the nurture sequence
+    default_cadence_days: [0, 3, 7]  # send days relative to subscribe date
+  review:
+    approval_timeout_hours: 72    # auto-expire the review request after 3 days
+    remind_after_hours: 24        # post a Slack reminder if no action in 24 h
+  audit:
+    table: marketing_content_runs

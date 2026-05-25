@@ -1,0 +1,76 @@
+# Output adapter — Mailchimp email campaign creation
+#
+# Creates one Mailchimp campaign per email in the approved 3-email nurture
+# sequence, then schedules them according to the cadence.
+#
+# HOTL-gated: this adapter only runs after the slack-content-review step
+# sets `review.approved == true`.
+#
+# Mailchimp API docs: https://mailchimp.com/developer/marketing/api/
+# Endpoints used:
+#   POST /3.0/campaigns           — create campaign
+#   PUT  /3.0/campaigns/{id}/content — set HTML + plain-text content
+#   POST /3.0/campaigns/{id}/actions/schedule — schedule send
+#
+# Campaigns are created in "scheduled" status.  The send time is derived
+# from the pack trigger timestamp + cadence_days offset.
+# All campaigns remain in the Mailchimp UI for final review before Mailchimp
+# sends them — this adapter does NOT move campaigns to "sending" status.
+
+name: mailchimp-campaign
+kind: mailchimp
+
+# Mailchimp credentials.
+api_key_env: MAILCHIMP_API_KEY           # format: <key>-<server_prefix>
+server_prefix_env: MAILCHIMP_SERVER_PREFIX  # e.g. us14
+list_id_env: MAILCHIMP_LIST_ID           # audience list to associate campaigns with
+
+# Campaign creation settings (applied to all 3 campaigns in the sequence).
+defaults:
+  type: regular
+  from_name: "{{ brand_name | default('The Team') }}"
+  reply_to_env: MAILCHIMP_REPLY_TO       # optional; defaults to account email
+  auto_footer: false
+  inline_css: true                       # Mailchimp inlines CSS automatically
+
+# Sequence mapping — one campaign per EmailDraft in the sequence.
+# `send_offset_hours` is calculated as: email.send_day * 24 + trigger_hour.
+sequence:
+  source_field: email_sequence           # list of EmailDraft objects from the email step
+  per_item:
+    subject_field:        subject
+    preview_text_field:   preview_text
+    body_html_field:      body_html
+    body_text_field:      body_text
+    send_day_field:       send_day
+    cta_url_substitutions:
+      "{article_url}":     "{{ ghost_post_url | default(article_url_placeholder) }}"
+      "{demo_booking_url}": "{{ demo_booking_url | default('#') }}"
+      "{cta_url}":          "{{ primary_cta_url | default('#') }}"
+
+# Segment filter applied when list_segment is provided.
+segment:
+  condition_type: all
+  conditions:
+    - condition_type: TextMerge
+      field: SEGMENT_TAG
+      op: is
+      value: "{{ list_segment | default('') }}"
+
+# Extract created campaign IDs for audit logging.
+response_extract:
+  campaign_ids: "[*].id"
+  campaign_urls: "[*].archive_url"
+
+# Audit entry written for each campaign creation.
+audit:
+  table: marketing_content_runs
+  fields:
+    - run_id
+    - list_id
+    - list_segment
+    - campaign_ids       # array of 3 Mailchimp campaign IDs
+    - campaign_urls      # array of 3 archive URLs
+    - scheduled_at       # timestamp when campaigns were scheduled
+    - status             # scheduled | failed
+    - error_message      # populated on failure
