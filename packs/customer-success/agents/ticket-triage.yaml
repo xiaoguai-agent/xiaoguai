@@ -1,0 +1,106 @@
+# Ticket Triage agent
+#
+# Input:  a raw support ticket (from Zendesk or Intercom inbound adapter)
+# Output: structured TicketTriage object
+#   - category        (bug | feature-request | billing | onboarding | other)
+#   - priority        (critical | high | medium | low)
+#   - suggested_owner (team slug, e.g. "platform-eng", "billing", "customer-success")
+#   - similar_tickets (list of up to 5 ticket IDs from historical search)
+#   - summary         (1-sentence plain-English description)
+#   - escalate        (bool — true if SLA breach likely within 4h)
+#
+# The result is consumed by:
+#   - churn-risk-scorer (ticket spike signal)
+#   - csm-slack-alert   (if priority >= high or escalate == true)
+#   - salesforce-account-update (activity timeline entry)
+
+name: ticket-triage
+kind: llm-agent
+
+mcp_servers:
+  - zendesk       # provides search_tickets, get_ticket, list_ticket_comments
+  - intercom      # provides search_conversations, get_conversation
+
+system_prompt: |
+  You are a senior customer support analyst performing first-pass ticket triage.
+
+  You will receive a raw support ticket (title + body + metadata).
+  Your job:
+
+  1. CATEGORY — classify into exactly one:
+     bug              = reproducible product defect reported by the customer
+     feature-request  = customer asking for new or changed functionality
+     billing          = invoice, payment, subscription, refund
+     onboarding       = setup, configuration, first-run help
+     other            = anything that does not fit the above
+
+  2. PRIORITY — assign exactly one:
+     critical  = production outage or data loss for the customer
+     high      = significant feature broken; no workaround; SLA at risk
+     medium    = degraded experience; workaround exists
+     low       = question, cosmetic issue, or enhancement request
+
+  3. SUGGESTED_OWNER — return the team slug best placed to resolve this:
+     platform-eng      (infrastructure, APIs, performance)
+     product           (feature requests, UX feedback)
+     billing           (payment, subscription, contract)
+     customer-success  (onboarding, adoption, relationship)
+     security          (data, compliance, access control)
+
+  4. SIMILAR_TICKETS — call search_tickets with key terms from the ticket body;
+     return up to 5 existing ticket IDs most similar to this one.
+     If none are found, return [].
+
+  5. SUMMARY — one sentence (≤ 20 words) plain-English description.
+
+  6. ESCALATE — set true if ANY of the following:
+     - category == "bug" AND priority == "critical"
+     - customer tier is "enterprise" AND priority >= "high"
+     - ticket age > 2h AND no agent has responded yet
+
+  Output ONLY a JSON object:
+  {
+    "category": "<string>",
+    "priority": "<string>",
+    "suggested_owner": "<string>",
+    "similar_tickets": ["<ticket_id>", ...],
+    "summary": "<string>",
+    "escalate": <bool>
+  }
+
+  Constraints:
+  - Never invent ticket IDs; use only results from search_tickets.
+  - Do not include any explanation outside the JSON object.
+
+user_prompt_template: |
+  ## Ticket
+  ID:         {{ ticket.id }}
+  Source:     {{ ticket.source }}
+  Created at: {{ ticket.created_at }}
+  Customer:   {{ ticket.customer_email }} (tier: {{ ticket.customer_tier | default("unknown") }})
+  Age:        {{ ticket.age_minutes }} minutes
+  Has reply:  {{ ticket.has_agent_reply }}
+
+  ### Subject
+  {{ ticket.subject }}
+
+  ### Body
+  {{ ticket.body | truncate(3000) }}
+
+  {% if ticket.tags %}
+  ### Tags
+  {{ ticket.tags | join(", ") }}
+  {% endif %}
+
+  Triage this ticket now.
+
+tools:
+  - search_tickets
+  - get_ticket
+
+# Template used for the Slack alert message body.
+summary_template: templates/ticket-classification-rubric.j2
+
+budget:
+  max_llm_calls: 3
+  max_output_tokens: 512

@@ -1,0 +1,32 @@
+{# ticket-classification-rubric.j2
+   Renders a concise triage card for inclusion in CSM Slack alerts
+   and Salesforce Task descriptions.
+   Variables: ticket (TicketTriage output), account_name, ticket_url
+#}
+## Ticket Triage — #{{ ticket.id }}
+
+**Account:** {{ account_name }}
+**Summary:** {{ ticket.summary }}
+
+| Field            | Value                       |
+|------------------|-----------------------------|
+| Category         | `{{ ticket.category }}`     |
+| Priority         | `{{ ticket.priority | upper }}` |
+| Suggested owner  | `{{ ticket.suggested_owner }}` |
+| Escalate         | {{ "YES — immediate action required" if ticket.escalate else "No" }} |
+
+{% if ticket.similar_tickets %}
+**Similar tickets ({{ ticket.similar_tickets | length }}):**
+{% for tid in ticket.similar_tickets %}
+- #{{ tid }}
+{% endfor %}
+{% endif %}
+
+{% if ticket.escalate %}
+> **Escalation note:** This ticket meets escalation criteria.
+> The assigned CSM should reach out to the customer within 1 hour.
+{% endif %}
+
+---
+*Triaged by xiaoguai customer-success pack v{{ pack_version }}*
+[Open ticket]({{ ticket_url }})

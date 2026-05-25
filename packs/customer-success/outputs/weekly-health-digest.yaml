@@ -1,0 +1,89 @@
+# Output adapter — weekly customer health digest
+#
+# Compiles a Markdown health digest from outputs produced during the week
+# and sends it to the configured recipients every Monday at 08:00 (account
+# timezone, defaulting to UTC).
+#
+# Digest sections (assembled in order):
+#   1. NPS Summary       — from nps-theme-extractor (latest batch)
+#   2. Top Risk Accounts — accounts with risk_band == "red" or score > 60
+#   3. Ticket Trends     — volume by category and priority vs prior week
+#   4. Upcoming Renewals — contracts ending within 60 days
+#   5. QBR Calendar      — QBRs scheduled in the next 30 days
+#
+# Delivery channels (at least one must be configured):
+#   - Email (SMTP or SendGrid)
+#   - Slack (weekly digest channel, different from the CSM alert channel)
+#
+# The adapter reads from the pack's internal state store, not from live
+# CRM APIs, to avoid hammering Salesforce on send day.
+
+name: weekly-health-digest
+kind: scheduled-report
+
+# Cron expression (UTC): every Monday at 08:00 UTC.
+schedule: "0 8 * * 1"
+
+# Sections pulled from pack state.
+sections:
+  nps_summary:
+    source: nps-theme-extractor
+    latest_run: true
+    template_block: nps
+  top_risk_accounts:
+    source: churn-risk-scorer
+    filter: "risk_score >= 60"
+    order_by: risk_score
+    direction: desc
+    limit: 10
+    template_block: risks
+  ticket_trends:
+    source: ticket-triage
+    window_days: 7
+    group_by: [category, priority]
+    compare_to_prior_window: true
+    template_block: tickets
+  upcoming_renewals:
+    source: salesforce-account-update
+    filter: "contract_end_days_remaining <= 60"
+    order_by: contract_end_days_remaining
+    direction: asc
+    limit: 20
+    template_block: renewals
+  qbr_calendar:
+    source: qbr-prep
+    filter: "qbr_date_days_ahead <= 30"
+    order_by: qbr_date_days_ahead
+    direction: asc
+    template_block: qbr_calendar
+
+# Rendering.
+report_template: templates/weekly-health-digest.md.j2    # full Markdown report
+subject_template: "Customer Health Digest — week of {{ week_start_date }}"
+
+# Delivery channels.
+delivery:
+  email:
+    enabled: true
+    smtp_env: DIGEST_SMTP_DSN       # e.g. smtp://user:pass@host:587
+    from: "xiaoguai-cs@{{ DIGEST_EMAIL_DOMAIN }}"
+    to_env: DIGEST_EMAIL_RECIPIENTS  # comma-separated list
+
+  slack:
+    enabled: true
+    webhook_url_env: DIGEST_SLACK_WEBHOOK_URL
+    # Slack receives a truncated summary (first 3 sections, ≤ 3000 chars).
+    max_chars: 3000
+
+# Audit entry written after each delivery attempt.
+audit:
+  table: pack_cs_weekly_digests
+  fields:
+    - week_start_date
+    - nps_score
+    - red_account_count
+    - ticket_volume_7d
+    - email_sent
+    - slack_sent
+    - error_message
+    - sent_at

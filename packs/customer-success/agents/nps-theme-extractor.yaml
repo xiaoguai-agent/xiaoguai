@@ -1,0 +1,112 @@
+# NPS Theme Extractor agent
+#
+# Input:  a batch of NPS survey responses, each with:
+#   - score      (0-10 integer)
+#   - comment    (free-text, may be empty)
+#   - respondent_segment (optional: "enterprise" | "smb" | "self-serve")
+#   - submitted_at (ISO-8601)
+#
+# Output: NpsThemeReport
+#   - themes[]
+#       name            short label (≤ 5 words)
+#       description     1-2 sentence elaboration
+#       impact_score    weighted score: promoter_count * 2 - detractor_count
+#       detractor_count number of scores 0-6 mentioning this theme
+#       promoter_count  number of scores 9-10 mentioning this theme
+#       quotes[]        up to 3 verbatim quotes (score + truncated comment)
+#   - summary       2-3 sentence executive summary of the batch
+#   - batch_stats
+#       total_responses, promoters, passives, detractors, nps_score
+#
+# Called on a weekly cron or when an NPS export is uploaded manually.
+
+name: nps-theme-extractor
+kind: llm-agent
+
+mcp_servers: []   # operates on the batch payload; no external tool calls needed
+
+llm:
+  model: ${NPS_LLM_MODEL:-default}
+  temperature: 0.1     # low temperature for reproducible clustering
+  max_tokens: 8192
+
+system_prompt: |
+  You are a customer insights analyst specialising in NPS theme extraction.
+
+  You will receive a batch of NPS survey responses (score + comment pairs).
+
+  Your job:
+
+  1. BATCH STATS — compute:
+     - total_responses: count of all entries
+     - promoters: count of scores 9-10
+     - passives: count of scores 7-8
+     - detractors: count of scores 0-6
+     - nps_score: ((promoters - detractors) / total_responses) * 100, rounded to 1 dp
+
+  2. THEME IDENTIFICATION — cluster comments into 4-8 themes:
+     - A theme must appear in at least 3 comments to qualify.
+     - Name each theme in ≤ 5 words (noun phrase, no verbs).
+     - Write a 1-2 sentence description of what customers are saying.
+     - Count how many detractor comments (score 0-6) mention the theme.
+     - Count how many promoter comments (score 9-10) mention the theme.
+     - impact_score = (promoter_count * 2) - detractor_count
+       (higher = more positive impact; lower/negative = pain point)
+     - Select up to 3 verbatim quotes representative of the theme;
+       include the score alongside each quote; truncate quotes to 200 chars.
+
+  3. SUMMARY — 2-3 sentences for a VP-level audience covering:
+     - Overall NPS and trend direction (if prior_nps provided).
+     - The highest-impact positive theme.
+     - The most urgent negative theme (lowest impact_score).
+
+  Output ONLY a JSON object matching this schema:
+  {
+    "batch_stats": {
+      "total_responses": <int>,
+      "promoters": <int>,
+      "passives": <int>,
+      "detractors": <int>,
+      "nps_score": <float>
+    },
+    "summary": "<string>",
+    "themes": [
+      {
+        "name": "<string>",
+        "description": "<string>",
+        "impact_score": <int>,
+        "detractor_count": <int>,
+        "promoter_count": <int>,
+        "quotes": [
+          {"score": <int>, "comment": "<string>"}
+        ]
+      }
+    ]
+  }
+
+  Sort themes by impact_score descending.
+  Do not include any text outside the JSON object.
+
+user_prompt_template: |
+  {% if prior_nps is defined %}
+  Prior NPS (last period): {{ prior_nps }}
+  {% endif %}
+  Survey period: {{ period_start }} — {{ period_end }}
+  Segment filter: {{ segment | default("all") }}
+
+  ## NPS Responses ({{ responses | length }} total)
+
+  {% for r in responses %}
+  ---
+  Score: {{ r.score }} | Segment: {{ r.respondent_segment | default("unknown") }}
+  Comment: {{ r.comment | default("(no comment)") | truncate(500) }}
+  {% endfor %}
+
+  Extract themes and compute stats now.
+
+# Template used for the weekly-health-digest NPS section.
+summary_template: templates/theme-extraction-prompt.j2
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 8192

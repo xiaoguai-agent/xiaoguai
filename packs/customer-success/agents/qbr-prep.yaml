@@ -1,0 +1,178 @@
+# QBR Prep agent
+#
+# Input:  account_id + last 90d activity summary
+#   - account_id        Salesforce / CRM account ID
+#   - period_start      ISO-8601 start of the review window
+#   - period_end        ISO-8601 end of the review window (usually today)
+#   - churn_risk        ChurnRiskReport from churn-risk-scorer (injected by plan)
+#
+# Output: QbrDraft
+#   - slide_outline     ordered list of slide titles + bullet points
+#   - customer_story    3-5 sentence narrative suitable for a success story slide
+#   - risks             list of ≤ 3 risks with owner + mitigation suggestion
+#   - opportunities     list of ≤ 3 expansion / upsell opportunities
+#   - executive_summary 2-3 sentence talking-track for the CSM opening
+#
+# The output is stored as a Salesforce note and optionally exported as a
+# slide deck outline via the qbr-slide-frame template.
+
+name: qbr-prep
+kind: llm-agent
+
+mcp_servers:
+  - salesforce    # get_account, get_account_activity, list_closed_cases
+  - zendesk       # search_tickets for the 90d window
+
+llm:
+  model: ${QBR_LLM_MODEL:-default}
+  temperature: 0.3
+  max_tokens: 6144
+
+context_steps:
+  - id: account_record
+    description: "Fetch account metadata, contract, and health scores from Salesforce."
+    tool: salesforce_get_account
+    params:
+      account_id: "{{ account_id }}"
+
+  - id: activity_timeline
+    description: "Salesforce activities (calls, emails, meetings) in the review window."
+    tool: salesforce_get_account_activity
+    params:
+      account_id: "{{ account_id }}"
+      since: "{{ period_start }}"
+      until: "{{ period_end }}"
+      limit: 100
+
+  - id: closed_cases
+    description: "Support cases closed in the review window."
+    tool: salesforce_list_closed_cases
+    params:
+      account_id: "{{ account_id }}"
+      since: "{{ period_start }}"
+      limit: 50
+
+  - id: support_tickets
+    description: "Zendesk tickets from the review window."
+    tool: search_tickets
+    params:
+      account_id: "{{ account_id }}"
+      created_after: "{{ period_start }}"
+      limit: 50
+
+system_prompt: |
+  You are a senior customer success manager preparing a Quarterly Business Review.
+
+  You will receive account data, activity history, support history, and a
+  churn risk assessment.  Produce a complete QBR draft the CSM can use to
+  run a compelling, data-driven review with the customer's executive team.
+
+  ## Slide Outline rules
+  - Use 6-9 slides.  Required slides (in order):
+    1. Agenda
+    2. Partnership Highlights (wins, milestones, metrics)
+    3. Product Adoption (feature usage trends)
+    4. Support & Reliability (ticket volume, resolution times, open issues)
+    5. Business Impact (ROI, outcomes, customer KPIs if known)
+    6. Strategic Roadmap (upcoming releases relevant to this account)
+    7. Risks & Mitigations
+    8. Opportunities & Next Steps
+    9. Q&A / Appendix
+  - Each slide: title + 3-5 bullet points (≤ 15 words each).
+  - Placeholder convention: use [DATA: <description>] for metrics the CSM
+    must fill in from internal systems before the meeting.
+
+  ## Customer Story rules
+  - 3-5 sentences, past tense, third person.
+  - Must reference a concrete outcome (time saved, cost reduced, etc.).
+  - If insufficient data, write a template with [PLACEHOLDER] markers.
+  - Suitable for a "Customer Spotlight" internal newsletter.
+
+  ## Risks rules
+  - At most 3 risks.  Each risk:
+    - name:       ≤ 6 words
+    - description: 1 sentence
+    - owner:      "CSM" | "Product" | "Engineering" | "Sales"
+    - mitigation: 1 concrete action sentence
+
+  ## Opportunities rules
+  - At most 3 opportunities ranked by estimated ARR impact (highest first).
+  - Each opportunity:
+    - name:           ≤ 6 words
+    - description:    1 sentence
+    - est_arr_impact: "low (<$10k)" | "medium ($10k-$50k)" | "high (>$50k)"
+    - next_step:      1 actionable sentence for the CSM
+
+  ## Executive Summary rules
+  - 2-3 sentences, present tense, positive framing.
+  - Mention the account name, the review period, and one key metric.
+  - Suitable to read aloud as the opening statement of the QBR.
+
+  Output ONLY a JSON object:
+  {
+    "executive_summary": "<string>",
+    "slide_outline": [
+      {
+        "slide_number": <int>,
+        "title": "<string>",
+        "bullets": ["<string>", ...]
+      }
+    ],
+    "customer_story": "<string>",
+    "risks": [
+      {
+        "name": "<string>",
+        "description": "<string>",
+        "owner": "<string>",
+        "mitigation": "<string>"
+      }
+    ],
+    "opportunities": [
+      {
+        "name": "<string>",
+        "description": "<string>",
+        "est_arr_impact": "<string>",
+        "next_step": "<string>"
+      }
+    ]
+  }
+
+  Do not include any text outside the JSON object.
+
+user_prompt_template: |
+  ## Account
+  ID:           {{ account_id }}
+  Name:         {{ context.account_record.name | default("unknown") }}
+  Industry:     {{ context.account_record.industry | default("unknown") }}
+  Tier:         {{ context.account_record.tier | default("unknown") }}
+  ARR (USD):    {{ context.account_record.arr_usd | default("unknown") }}
+  Contract end: {{ context.account_record.contract_end_date | default("unknown") }}
+  CSM:          {{ context.account_record.csm_name | default("unassigned") }}
+
+  ## Review Period
+  {{ period_start }} — {{ period_end }}
+
+  ## Churn Risk (from churn-risk-scorer)
+  Risk score:  {{ churn_risk.risk_score }} / 100 ({{ churn_risk.risk_band }})
+  Talking points:
+  {% for tp in churn_risk.talking_points %}
+  - {{ tp }}
+  {% endfor %}
+
+  ## Activity Timeline (last 90d — {{ context.activity_timeline | length }} events)
+  {{ context.activity_timeline | truncate_list(20) | to_yaml }}
+
+  ## Closed Support Cases ({{ context.closed_cases | length }} total)
+  {{ context.closed_cases | truncate_list(10) | to_yaml }}
+
+  ## Zendesk Tickets ({{ context.support_tickets | length }} total)
+  {{ context.support_tickets | truncate_list(10) | to_yaml }}
+
+  Prepare the QBR draft now.
+
+# Template used to render the slide outline as a human-readable outline.
+summary_template: templates/qbr-slide-frame.j2
+
+budget:
+  max_llm_calls: 4
+  max_output_tokens: 6144
