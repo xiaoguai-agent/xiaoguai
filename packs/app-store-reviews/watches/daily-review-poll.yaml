@@ -1,0 +1,100 @@
+---
+# Watch: daily-review-poll
+#
+# Polls Apple App Store RSS feed and Google Play Store for new first-party
+# app reviews on a daily schedule, using a last-fetched cursor per platform
+# to avoid re-processing seen reviews.
+#
+# Cursor strategy: the watch engine persists `last_fetched_cursor` per
+# (platform, app_id) in the xiaoguai watch_state table.  Each poll fetches
+# reviews newer than the cursor and advances it to the newest reviewed_at seen.
+
+name: daily-review-poll
+description: >
+  Polls Apple App Store RSS and Google Play Store for new first-party reviews
+  each day (configurable schedule). Uses a last-fetched cursor per platform
+  to fetch only new reviews. Upserts results into the reviews table and
+  enqueues pending rows for sentiment-themer classification.
+
+# Cron schedule — daily at 06:00 UTC.
+schedule: "0 6 * * *"
+
+platforms:
+  apple:
+    enabled: ${ASR_APPLE_ENABLED:-true}
+    # Apple RSS feed for app reviews (JSON format, up to 500 most recent).
+    # Paged: page 1–10, 50 reviews/page.
+    endpoint: https://itunes.apple.com/${ASR_STORE_REGION:-us}/rss/customerreviews/page={page}/id=${APP_STORE_APP_ID}/sortby=mostrecent/json
+    auth:
+      type: none
+    pagination:
+      strategy: page_number
+      max_pages: 10
+      page_param: page
+      # Stop pagination when all reviews on the page predate the cursor.
+      stop_when: all_before_cursor
+    normalize:
+      external_id: "entry[*].id.label"
+      rating: "entry[*].im:rating.label | int"
+      body: "entry[*].content.label | truncate(8192)"
+      title: "entry[*].im:name.label"
+      author_name: "entry[*].author.name.label"
+      app_version: "entry[*].im:version.label"
+      reviewed_at: "entry[*].updated.label"
+      store_region: _const:${ASR_STORE_REGION:-us}
+    # Supplement with App Store Connect API for structured metadata.
+    # See inbound/app-store-connect-api.yaml for the Connect API poller.
+
+  google:
+    enabled: ${ASR_GOOGLE_ENABLED:-true}
+    # Google Play public RSS feed (Atom format, up to 40 most recent).
+    # Note: for more reviews use inbound/google-play-scraper endpoint.
+    endpoint: https://play.google.com/store/getreviews?id=${GOOGLE_PLAY_PACKAGE_NAME}&reviewType=0&pageNum={page}&hl=en&gl=us
+    auth:
+      type: none
+    pagination:
+      strategy: page_number
+      max_pages: 25
+      page_param: pageNum
+      stop_when: all_before_cursor
+    normalize:
+      external_id: "reviews[*].reviewId"
+      rating: "reviews[*].starRating | int"
+      body: "reviews[*].userComment.text | truncate(8192)"
+      title: _const:null
+      author_name: "reviews[*].authorName"
+      app_version: "reviews[*].reviewCreationTime"
+      reviewed_at: "reviews[*].reviewCreationTime"
+      store_region: _const:us
+
+# Upsert strategy: conflict on (platform, external_id, app_id); ignore duplicates.
+upsert:
+  conflict_target: [platform, external_id, app_id]
+  conflict_action: ignore
+
+# After upsert, enqueue newly inserted reviews for classification.
+post_upsert:
+  enqueue_for: agents/sentiment-themer.yaml
+  filter: "classified_at IS NULL"
+  batch_size: 50
+
+# Cursor management.
+cursor:
+  field: reviewed_at
+  persist_key: "asr_daily_poll_{platform}_{app_id}"
+
+# Error handling.
+on_error:
+  retry:
+    max_attempts: 3
+    backoff_seconds: 60
+  rate_limit:
+    respect_retry_after: true
+    fallback_backoff_seconds: 300
+  auth_failure:
+    alert_channel: ${ASR_OPS_ALERT_CHANNEL}
+    disable_platform: true
+
+# Deferred:
+#   - Multi-region polling (iterate over ASR_STORE_REGIONS list)
+#   - Language-specific review filtering (hl param)

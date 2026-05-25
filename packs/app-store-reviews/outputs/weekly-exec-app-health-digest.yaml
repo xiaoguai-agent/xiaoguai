@@ -1,0 +1,65 @@
+---
+# Output: weekly-exec-app-health-digest
+#
+# Delivers a weekly executive digest combining:
+#   - 7-day rating trend (Apple + Google)
+#   - Top fix priorities and Jira status
+#   - Competitor feature gap summary
+#   - Volume and anomaly summary
+#
+# Sent via email (HTML rendered from template) and optionally posted
+# to an exec Slack channel.
+#
+# Triggered by plan_weekly.complete (Sunday after competitor-poll + gap analysis).
+
+output: weekly-exec-app-health-digest
+description: >
+  Weekly executive health digest covering 7-day rating trends, top fix
+  priorities with Jira status, competitor feature gaps, and review volume
+  anomalies. Delivered by email and optionally to an exec Slack channel.
+
+# Trigger: weekly plan completion.
+trigger: plan_weekly.complete
+schedule_description: "Sunday after 03:00 UTC (after competitor-poll + gap analysis)"
+
+# Email delivery.
+email:
+  to: ${EXEC_EMAIL_RECIPIENTS}            # comma-separated
+  from: ${ASR_EMAIL_FROM:-noreply@xiaoguai}
+  subject: "App Store Health — Week of {{ week_start | date('D MMM YYYY') }}"
+  # HTML email rendered from the digest template (Markdown → HTML conversion).
+  body_template: templates/daily-review-digest.md.j2
+  # Include competitor gap analysis as an inline section.
+  include_sections:
+    - templates/competitor-gap-analysis.md.j2
+  format: html_from_markdown
+
+# Optional Slack delivery to exec channel.
+slack:
+  enabled: ${ASR_EXEC_SLACK_ENABLED:-false}
+  webhook_url: ${EXEC_SLACK_WEBHOOK_URL:-}
+  # Brief summary card; full digest linked externally.
+  blocks:
+    - type: header
+      text: "📊 Weekly App Health — {{ week_start | date('D MMM') }}"
+    - type: section
+      fields:
+        - "*Combined rating:* {{ combined.mean_rating | round(2) }}⭐ (Δ{{ combined.delta | round(2) | prefix_sign }})"
+        - "*Reviews this week:* {{ combined.review_count }}"
+        - "*Top fix:* `{{ fix_priorities[0].theme_label }}` (score {{ fix_priorities[0].impact_score | round(0) | int }})"
+        - "*Top gap vs competitors:* {{ gap_analysis[0].gap_theme | default('none identified') }}"
+
+# Digest content configuration.
+content:
+  # Rating trend: rolling 7-day window.
+  rating_window_days: 7
+  # Fix priorities: top 10 from latest scored_at.
+  fix_priorities_top_n: 10
+  # Competitor gaps: top 5 from latest weekly analysis.
+  competitor_gaps_top_n: 5
+  # Notable reviews: top 3 lowest-rated + top 3 highest-rated.
+  notable_reviews_count: 3
+
+# Deferred:
+#   - PDF attachment for email (rendered from template)
+#   - Metrics sparkline charts (rating trend graph embedded in HTML)

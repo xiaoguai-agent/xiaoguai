@@ -1,0 +1,119 @@
+---
+# Agent: competitor-feature-gap
+#
+# Input:  unprocessed competitor reviews (feature_theme IS NULL) from the
+#         competitor_reviews table, grouped by competitor.
+# Output: feature_theme and is_gap_signal flags written back to
+#         competitor_reviews; a structured gap analysis report forwarded
+#         to weekly-exec-app-health-digest.
+#
+# Identifies features that users praise or request in competitor reviews
+# that are absent or inferior in our own app, based on comparison with
+# our first-party review themes.
+
+name: competitor-feature-gap
+kind: llm-agent
+description: >
+  Analyses competitor app reviews to identify features praised or requested
+  in competitor apps that our app lacks or under-delivers. Compares competitor
+  themes against our first-party review_themes to surface actionable gaps.
+  Outputs a ranked gap list for the weekly exec digest and product roadmap.
+
+llm:
+  model: ${ASR_GAP_LLM_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 4096
+
+# Input: pending competitor reviews grouped by competitor.
+input:
+  table: competitor_reviews
+  filter: "feature_theme IS NULL"
+  batch_size: 100
+  group_by: competitor_app_id
+  order_by: "reviewed_at DESC"
+
+# Context: our first-party theme landscape for comparison.
+context_steps:
+  - id: our_themes
+    description: "Our top 20 theme labels by mention count (past 30 days)"
+    query: |
+      SELECT theme_label, COUNT(*) AS mention_count, AVG(r.rating) AS mean_rating
+      FROM review_themes t
+      JOIN reviews r ON r.id = t.review_id
+      WHERE r.reviewed_at >= NOW() - INTERVAL '30 days'
+        AND t.category IN ('bug', 'feature-request', 'complaint')
+      GROUP BY theme_label
+      ORDER BY mention_count DESC
+      LIMIT 20
+
+system_prompt: |
+  You are a competitive product analyst. You will receive:
+  1. A list of our app's current top review themes (bugs, feature requests, complaints).
+  2. A batch of competitor app reviews (grouped by competitor).
+
+  Your tasks:
+  A. For each competitor review, classify it with a feature_theme label
+     (kebab-case, 2–5 words) and set is_gap_signal=true if it describes a
+     feature or quality dimension that our app lacks or under-delivers based
+     on our theme list.
+
+  B. After classifying all reviews, produce a ranked gap analysis:
+     - List the top 10 feature/quality gaps by frequency in competitor reviews.
+     - For each gap, note: gap_theme, mention_count, competitor(s) affected,
+       whether it maps to an existing pain in our reviews or is a new dimension.
+
+  Output format:
+  {
+    "review_classifications": [
+      {"external_id": "...", "competitor_app_id": "...", "feature_theme": "...", "is_gap_signal": true|false}
+    ],
+    "gap_analysis": [
+      {
+        "gap_theme": "...",
+        "mention_count": N,
+        "competitors": ["..."],
+        "in_our_reviews": true|false,
+        "our_review_theme": "<matching theme from our list, or null>",
+        "description": "<1–2 sentence description of the gap>"
+      }
+    ]
+  }
+
+  Rules:
+  - Output ONLY the JSON object above.
+  - is_gap_signal=false for bug reports about the competitor (not relevant to us).
+  - is_gap_signal=true for features users praise in competitors that we lack.
+  - feature_theme must be assigned to every review regardless of is_gap_signal.
+
+user_prompt: |
+  Our current top review themes:
+  {% for theme in context.our_themes %}
+  - {{ theme.theme_label }} ({{ theme.mention_count }} mentions, mean rating {{ theme.mean_rating }})
+  {% endfor %}
+
+  Competitor reviews to classify ({{ reviews | length }} total):
+  {% for competitor_id, group in reviews | groupby('competitor_app_id') %}
+  === Competitor: {{ group[0].competitor_name }} ({{ competitor_id }}) ===
+  {% for review in group %}
+  external_id: {{ review.external_id }}
+  rating: {{ review.rating }} / 5
+  body: {{ review.body | truncate(500) }}
+  ---
+  {% endfor %}
+  {% endfor %}
+
+  Output the JSON now.
+
+# Post-processing.
+post_process:
+  - update_table: competitor_reviews
+    from_result: review_classifications
+    set_fields: [feature_theme, is_gap_signal]
+    where: "external_id = result.external_id AND competitor_app_id = result.competitor_app_id"
+  - enqueue_for: outputs/weekly-exec-app-health-digest.yaml
+    payload_field: gap_analysis
+
+# Budget.
+budget:
+  max_llm_calls: 3
+  max_output_tokens: 4096

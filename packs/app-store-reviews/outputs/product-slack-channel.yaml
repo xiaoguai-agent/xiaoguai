@@ -1,0 +1,59 @@
+---
+# Output: product-slack-channel
+#
+# Posts the daily review digest and anomaly alerts to the configured
+# product Slack channel.
+#
+# Two message types:
+#   1. daily_digest — summary card posted once per day after classification.
+#   2. anomaly_alert — immediate alert when rating-drop or volume-spike fires.
+#
+# Messages use Slack Block Kit for rich formatting.
+
+output: product-slack-channel
+description: >
+  Posts daily review digest cards and anomaly alerts (rating drop, volume
+  spike) to the product team Slack channel. Uses Block Kit rich formatting.
+
+slack:
+  webhook_url: ${PRODUCT_SLACK_WEBHOOK_URL}
+  # Fallback channel mention on anomaly alerts.
+  anomaly_mention: ${ASR_SLACK_ANOMALY_MENTION:-<!here>}
+
+# Message type: daily digest.
+daily_digest:
+  trigger: plan_daily.complete
+  template: templates/daily-review-digest.md.j2
+  # Slack block structure: header + stats table + top 5 themes + CTA.
+  blocks:
+    - type: header
+      text: "📱 App Store Digest — {{ digest_date }}"
+    - type: section
+      fields:
+        - "🍎 Apple: {{ apple.mean_rating | round(2) }}⭐ ({{ apple.review_count }} reviews)"
+        - "🤖 Google: {{ google.mean_rating | round(2) }}⭐ ({{ google.review_count }} reviews)"
+    - type: section
+      text: |
+        *Top fix priority:* `{{ fix_priorities[0].theme_label }}` — impact {{ fix_priorities[0].impact_score | round(0) | int }}
+        {% if fix_priorities[0].jira_ticket_id %}[{{ fix_priorities[0].jira_ticket_id }}]({{ env.JIRA_BASE_URL }}/browse/{{ fix_priorities[0].jira_ticket_id }}){% endif %}
+    - type: actions
+      elements:
+        - type: button
+          text: "View Full Digest"
+          url: "{{ digest_url }}"
+
+# Message type: anomaly alert.
+anomaly_alert:
+  trigger: anomaly.fired
+  # Immediate send — do not wait for daily_digest cycle.
+  priority: high
+  blocks:
+    - type: header
+      text: "⚠ App Store Anomaly — {{ anomaly.platform | title }}"
+    - type: section
+      text: |
+        {{ anomaly_mention }}
+        *Type:* {{ anomaly.anomaly_type | replace('_', ' ') | title }}
+        *Platform:* {{ anomaly.platform | title }}
+        *Detail:* {{ anomaly.description }}
+        *Z-score:* {{ anomaly.z_score | round(2) }}

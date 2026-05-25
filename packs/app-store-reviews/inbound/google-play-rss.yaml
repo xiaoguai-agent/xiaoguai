@@ -1,0 +1,55 @@
+---
+# Inbound: google-play-rss
+#
+# Polls Google Play Store for app reviews via the public reviews endpoint.
+# The endpoint is unauthenticated and returns up to ~40 reviews per page.
+#
+# For programmatic replies or structured metrics, use the Google Play
+# Developer API (requires OAuth2 service account) — not yet implemented;
+# see deferred section.
+
+source: google-play-rss
+description: >
+  Google Play Store public reviews endpoint. Delivers up to ~40 reviews per
+  page (multiple pages polled). Unauthenticated; requires only the package
+  name. Handled by watches/daily-review-poll.yaml (daily at 06:00 UTC).
+
+# Base endpoint template.
+endpoint_template: >
+  https://play.google.com/store/getreviews?id={package_name}&reviewType=0&pageNum={page}&hl=en&gl=us
+
+auth:
+  type: none
+
+# Payload format: Google returns an XSSI-prefixed JSON response.
+# The adapter strips the XSSI prefix (")]}'\n") before parsing.
+payload_format: google_play_json
+# After XSSI strip, the review array is at payload[0][2][0].
+response_field: "payload[0][2][0]"
+
+field_map:
+  external_id: "[0]"
+  author_name: "[1][0]"
+  body: "[4][0]"
+  rating: "[2]"             # integer 1–5
+  reviewed_at: "[5][0]"     # Unix timestamp seconds
+  app_version: "[10]"
+
+# Reviewed_at conversion: Unix timestamp → ISO-8601.
+transforms:
+  reviewed_at: unix_to_iso8601
+
+# Rate limits: Google does not publish official limits.
+# Empirically safe: ≤1 request/2 seconds.
+rate_limit:
+  requests_per_second: 0.5
+  max_requests_per_hour: 60
+
+# Sample payload excerpt (simplified; actual XSSI prefix stripped by adapter).
+sample_payload: |
+  )]}'\n
+  [[null, [["review-gp-abc123", ["User Name"], null, null, ["Crashes on startup since last update"], null, [2], null, null, null, "4.2.1", null, [1716580800]]]]]
+
+# Deferred:
+#   - Google Play Developer API (OAuth2 service account, programmatic replies)
+#   - Multi-language support (hl param iteration)

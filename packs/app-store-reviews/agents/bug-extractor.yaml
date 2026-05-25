@@ -1,0 +1,95 @@
+---
+# Agent: bug-extractor
+#
+# Input:  reviews flagged with has_bug_report=true by sentiment-themer.
+# Output: structured bug report objects formatted for engineering consumption.
+#
+# Extracts: steps to reproduce, affected conditions (OS version, device,
+# app version), observed vs expected behaviour, error messages, frequency
+# signal, and severity estimate. Does NOT create Jira tickets directly —
+# output is passed to engineering-jira-bug-ticket for filing after
+# fix-priority-ranker scores the candidate.
+
+name: bug-extractor
+kind: llm-agent
+description: >
+  Extracts structured, reproducible bug reports from reviews flagged by
+  sentiment-themer. Produces engineering-ready bug objects with steps to
+  reproduce, affected conditions, severity, and supporting review references.
+  Output feeds fix-priority-ranker and engineering-jira-bug-ticket.
+
+llm:
+  model: ${ASR_BUG_EXTRACTOR_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 8192
+
+# Reviews to process: has_bug_report=true, not yet extracted.
+input:
+  table: reviews
+  join: review_themes
+  filter: "review_themes.has_bug_report = true AND reviews.classified_at IS NOT NULL"
+  batch_size: 20
+  order_by: "reviews.rating ASC, reviews.reviewed_at DESC"
+
+system_prompt: |
+  You are a senior QA engineer extracting reproducible bug reports from
+  app store reviews. App store reviews are often vague; extract as much
+  structured signal as possible, and be honest when evidence is insufficient.
+
+  For each review, output a JSON bug report:
+  {
+    "review_external_id": "<external_id from input>",
+    "title": "<concise bug title, ≤80 chars>",
+    "summary": "<1–2 sentence description of the failure>",
+    "steps_to_reproduce": ["step 1", "step 2", ...],   // empty array if not determinable
+    "conditions": {
+      "os_version": "<iOS/Android version if mentioned, else null>",
+      "device": "<device name if mentioned, else null>",
+      "app_version": "<app version if mentioned, else null>",
+      "network": "<wifi/cellular/offline if mentioned, else null>"
+    },
+    "observed_behaviour": "<what the user saw>",
+    "expected_behaviour": "<what the user expected, if stated; else null>",
+    "error_message": "<verbatim error text if quoted, else null>",
+    "severity_estimate": "crash | data-loss | functional-broken | ui-glitch | performance",
+    "reproducibility": "always | sometimes | once | unknown",
+    "evidence_reviews": ["<external_id>"]   // always includes the source review
+  }
+
+  Rules:
+  - Output ONLY a JSON array, one object per input review.
+  - steps_to_reproduce: extract only what the user explicitly described.
+  - Do not invent conditions not mentioned in the review.
+  - severity_estimate: crash > data-loss > functional-broken > ui-glitch > performance.
+  - If the review is too vague to produce any useful bug report, output:
+    {"review_external_id": "...", "title": null, "summary": null, ...all null..., "severity_estimate": null, "reproducibility": "unknown", "evidence_reviews": ["<id>"]}
+  - Null-titled reports are stored but excluded from fix-priority scoring.
+
+user_prompt: |
+  Extract bug reports from the following {{ reviews | length }} flagged reviews.
+
+  App: {{ env.APP_STORE_APP_ID }} / {{ env.GOOGLE_PLAY_PACKAGE_NAME }}
+
+  {% for review in reviews %}
+  ---
+  external_id: {{ review.external_id }}
+  platform: {{ review.platform }}
+  rating: {{ review.rating }} / 5
+  app_version: {{ review.app_version | default('unknown') }}
+  body: {{ review.body | truncate(2000) }}
+  {% endfor %}
+
+  Output the JSON array now.
+
+# Post-processing: store extracted bug reports.
+# Bug reports are stored in the review_themes.theme_label and forwarded to
+# fix-priority-ranker as structured JSON blobs via the xiaoguai job queue.
+post_process:
+  - enqueue_for: agents/fix-priority-ranker.yaml
+    payload_field: bug_reports
+    filter: "result.title IS NOT NULL"
+
+# Budget.
+budget:
+  max_llm_calls: 3
+  max_output_tokens: 8192
