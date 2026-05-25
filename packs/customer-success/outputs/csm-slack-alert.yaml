@@ -1,0 +1,121 @@
+# Output adapter — CSM Slack alert
+#
+# Sends a structured Slack Block Kit message to the CSM channel when:
+#   - A ticket is triaged with priority >= "high"  OR  escalate == true
+#   - A churn risk score crosses a threshold band (yellow → red, or new red)
+#   - A Segment "Account Downgraded" or "Subscription Cancelled" event arrives
+#
+# Message colour coding (Slack attachment colour):
+#   critical / red-risk  → #E53935 (red)
+#   high / yellow-risk   → #FB8C00 (amber)
+#   medium               → #1E88E5 (blue)
+#
+# The adapter deduplicates alerts: if a Slack alert was already sent for the
+# same (account_id, alert_type) within the last 4 hours, the message is
+# suppressed and an audit entry is written instead.
+
+name: csm-slack-alert
+kind: slack-webhook
+
+webhook_url_env: CSM_SLACK_WEBHOOK_URL
+
+# Conditions under which to send the alert (evaluated in order; first match wins).
+send_when:
+  - condition: "ticket.priority == 'critical' or ticket.escalate == true"
+    alert_type: ticket_critical
+    color: "#E53935"
+  - condition: "ticket.priority == 'high'"
+    alert_type: ticket_high
+    color: "#FB8C00"
+  - condition: "churn_risk.risk_band == 'red'"
+    alert_type: churn_red
+    color: "#E53935"
+  - condition: "churn_risk.risk_band == 'yellow' and churn_risk.risk_score >= 55"
+    alert_type: churn_yellow
+    color: "#FB8C00"
+
+# Deduplication window (seconds).
+dedup_window_seconds: 14400   # 4 hours
+
+# Slack Block Kit message template.
+# Rendered with Jinja2-like syntax; `alert` is the matched send_when entry.
+message_template: |
+  {
+    "attachments": [
+      {
+        "color": "{{ alert.color }}",
+        "blocks": [
+          {
+            "type": "header",
+            "text": {
+              "type": "plain_text",
+              "text": "{{ alert_emoji }} Customer Success Alert — {{ account_name }}"
+            }
+          },
+          {
+            "type": "section",
+            "fields": [
+              {"type": "mrkdwn", "text": "*Account:*\n{{ account_name }}"},
+              {"type": "mrkdwn", "text": "*CSM:*\n{{ csm_name | default('Unassigned') }}"},
+              {"type": "mrkdwn", "text": "*Alert Type:*\n{{ alert.alert_type | replace('_', ' ') | title }}"},
+              {"type": "mrkdwn", "text": "*ARR:*\n${{ arr_usd | intcomma | default('—') }}"}
+            ]
+          },
+          {%- if alert.alert_type in ['ticket_critical', 'ticket_high'] %}
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*Ticket #{{ ticket.id }}:* {{ ticket.summary }}\nPriority: `{{ ticket.priority | upper }}`  Category: `{{ ticket.category }}`"
+            }
+          },
+          {%- endif %}
+          {%- if alert.alert_type in ['churn_red', 'churn_yellow'] %}
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*Churn Risk Score:* {{ churn_risk.risk_score }}/100 (`{{ churn_risk.risk_band | upper }}`)\n*Recommended action:* {{ churn_risk.recommended_action }}"
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*Talking points:*\n{% for tp in churn_risk.talking_points %}\n• {{ tp }}\n{% endfor %}"
+            }
+          },
+          {%- endif %}
+          {
+            "type": "actions",
+            "elements": [
+              {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "View in Salesforce"},
+                "url": "{{ salesforce_account_url }}"
+              },
+              {%- if ticket is defined %}
+              {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Open Ticket"},
+                "url": "{{ ticket_url }}"
+              }
+              {%- endif %}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+
+# Audit entry written for every attempted send (including suppressed ones).
+audit:
+  table: pack_cs_slack_alerts
+  fields:
+    - account_id
+    - alert_type
+    - risk_score
+    - ticket_id
+    - sent
+    - suppressed_reason
+    - sent_at

@@ -1,0 +1,100 @@
+# Pack manifest: customer-success
+#
+# Wires customer signals (Zendesk tickets, Intercom conversations,
+# Segment usage events) through a four-agent pipeline:
+#
+#   1. ticket-triage       — categorise + prioritise inbound support tickets
+#   2. nps-theme-extractor — surface top NPS themes from batch responses
+#   3. churn-risk-scorer   — score account health and arm CSMs with talk-tracks
+#   4. qbr-prep            — generate QBR slide outline + account story
+#
+# Runtime dependencies (all must be present in the xiaoguai env):
+#   - zendesk_token / intercom_token: API credentials for inbound sources
+#   - salesforce_token: for the Salesforce account-update output adapter
+#   - slack_webhook:    for the CSM Slack alert output adapter
+#   - llm_provider:     any provider registered in xiaoguai-llm
+
+name: customer-success
+version: "1.0.0"
+description: >
+  Customer success pack — ticket triage, NPS theme extraction, churn-risk
+  scoring, and QBR prep.  Ingests Zendesk tickets, Intercom conversations,
+  and Segment event streams; publishes CSM Slack alerts, Salesforce account
+  updates, and a weekly health digest.
+
+# ── Inbound sources ───────────────────────────────────────────
+inbound:
+  - ref: inbound/zendesk-ticket.yaml
+  - ref: inbound/intercom-conversation.yaml
+  - ref: inbound/segment-event-stream.yaml
+
+# ── Agent definitions ─────────────────────────────────────────
+agents:
+  - ref: agents/ticket-triage.yaml
+  - ref: agents/nps-theme-extractor.yaml
+  - ref: agents/churn-risk-scorer.yaml
+  - ref: agents/qbr-prep.yaml
+
+# ── Output adapters ───────────────────────────────────────────
+outputs:
+  - ref: outputs/csm-slack-alert.yaml
+  - ref: outputs/salesforce-account-update.yaml
+  - ref: outputs/weekly-health-digest.yaml
+
+# ── Execution plans ───────────────────────────────────────────
+# Three independent trigger paths share agents:
+#
+# Path A — new support ticket (zendesk / intercom inbound)
+plan_ticket:
+  - id: triage
+    agent: ticket-triage
+    description: "Classify ticket, set priority, suggest owner, find similar tickets."
+  - id: risk_check
+    agent: churn-risk-scorer
+    description: "Re-score account health incorporating ticket spike signal."
+    deps: [triage]
+  - id: alert
+    output: csm-slack-alert
+    description: "Notify CSM if priority >= high or churn risk >= 70."
+    deps: [triage, risk_check]
+  - id: sf_update
+    output: salesforce-account-update
+    description: "Write triage result + risk delta to account activity timeline."
+    deps: [risk_check]
+
+# Path B — NPS batch (weekly cron or manual trigger)
+plan_nps:
+  - id: themes
+    agent: nps-theme-extractor
+    description: "Cluster NPS comments into themes, rank by impact."
+  - id: digest
+    output: weekly-health-digest
+    description: "Append NPS section to the weekly digest report."
+    deps: [themes]
+
+# Path C — QBR prep (manual trigger with account_id + 90d window)
+plan_qbr:
+  - id: risk
+    agent: churn-risk-scorer
+    description: "Compute current risk score + talking points for the account."
+  - id: qbr
+    agent: qbr-prep
+    description: "Generate QBR slide outline, customer story, risks, opportunities."
+    deps: [risk]
+  - id: sf_update
+    output: salesforce-account-update
+    description: "Store QBR outline draft on the Salesforce account record."
+    deps: [qbr]
+
+# ── Resource requirements ─────────────────────────────────────
+requires:
+  env:
+    - ZENDESK_API_TOKEN         # Zendesk API token (read + write tickets)
+    - ZENDESK_SUBDOMAIN         # e.g. "acme" for acme.zendesk.com
+    - INTERCOM_ACCESS_TOKEN     # Intercom workspace access token
+    - SEGMENT_WRITE_KEY         # Segment source write key (for event stream inbound)
+    - SALESFORCE_CLIENT_ID      # Salesforce connected-app client ID
+    - SALESFORCE_CLIENT_SECRET  # Salesforce connected-app client secret
+    - SALESFORCE_INSTANCE_URL   # e.g. https://acme.my.salesforce.com
+    - CSM_SLACK_WEBHOOK_URL     # Incoming-webhook URL for CSM Slack channel
+  llm: true                     # any registered provider

@@ -1,0 +1,91 @@
+# Output adapter — Salesforce account update
+#
+# Writes pack outputs back to the Salesforce account record via the
+# Salesforce REST API (connected-app OAuth 2.0 client credentials flow).
+#
+# Three types of writes, controlled by the `write_mode` field:
+#
+#   activity_log   → creates a Salesforce Task linked to the account
+#                    (used by ticket-triage and churn-risk-scorer outputs)
+#   account_fields → updates custom fields on the Account object
+#                    (used to persist the latest churn_risk_score)
+#   note           → creates a ContentNote linked to the account
+#                    (used by qbr-prep to store the QBR draft)
+#
+# The adapter is idempotent: it checks for an existing record with the
+# same external_id before creating a new one.
+
+name: salesforce-account-update
+kind: salesforce-rest
+
+instance_url_env: SALESFORCE_INSTANCE_URL
+client_id_env:    SALESFORCE_CLIENT_ID
+client_secret_env: SALESFORCE_CLIENT_SECRET
+
+# OAuth 2.0 token endpoint (client credentials flow).
+auth:
+  flow: client_credentials
+  token_url: "{{ salesforce_instance_url }}/services/oauth2/token"
+  # Token is cached in-memory and refreshed 60s before expiry.
+  token_cache_seconds: 3540
+
+# Write operations, referenced by write_mode.
+operations:
+  activity_log:
+    object: Task
+    method: POST
+    endpoint: "/services/data/v60.0/sobjects/Task"
+    external_id_field: xiaoguai_run_id__c
+    fields:
+      Subject:              "{{ op_subject }}"
+      Description:          "{{ op_description | truncate(32000) }}"
+      ActivityDate:         "{{ today_iso }}"
+      Status:               "Completed"
+      WhatId:               "{{ account_sf_id }}"
+      xiaoguai_run_id__c:   "{{ run_id }}"
+      xiaoguai_pack__c:     "customer-success"
+
+  account_fields:
+    object: Account
+    method: PATCH
+    endpoint: "/services/data/v60.0/sobjects/Account/{{ account_sf_id }}"
+    fields:
+      Churn_Risk_Score__c:  "{{ churn_risk.risk_score }}"
+      Churn_Risk_Band__c:   "{{ churn_risk.risk_band }}"
+      Churn_Risk_Updated__c: "{{ now_iso }}"
+      Churn_Risk_Confidence__c: "{{ churn_risk.confidence }}"
+
+  note:
+    object: ContentNote
+    method: POST
+    endpoint: "/services/data/v60.0/sobjects/ContentNote"
+    fields:
+      Title:   "{{ note_title }}"
+      Content: "{{ note_content | base64 }}"   # Salesforce requires base64-encoded HTML
+
+    # Link the note to the account via ContentDocumentLink.
+    link:
+      object: ContentDocumentLink
+      endpoint: "/services/data/v60.0/sobjects/ContentDocumentLink"
+      fields:
+        LinkedEntityId: "{{ account_sf_id }}"
+        ContentDocumentId: "{{ created_record_id }}"
+        ShareType: "V"
+
+# Retry on transient Salesforce errors (rate limit, 5xx).
+retry:
+  max_attempts: 3
+  backoff_seconds: [2, 5, 15]
+  retry_on_status: [429, 500, 502, 503, 504]
+
+# Audit entry for every write.
+audit:
+  table: pack_cs_sf_updates
+  fields:
+    - account_id
+    - account_sf_id
+    - write_mode
+    - sf_record_id
+    - success
+    - error_message
+    - written_at

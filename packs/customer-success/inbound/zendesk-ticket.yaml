@@ -1,0 +1,78 @@
+# Inbound source — Zendesk ticket events
+#
+# Zendesk delivers ticket.created and ticket.updated webhook events to:
+#   POST https://<host>/v1/customer-success/inbound/zendesk/{route_id}
+#
+# Authentication: HMAC-SHA256 over the raw request body, compared against
+# the X-Zendesk-Webhook-Signature header.
+# The route uses the WebhookSourceAdapter in xiaoguai-scheduler.
+#
+# Only ticket.created events with status "new" are forwarded to the triage
+# agent; ticket.updated events with status "solved" or "closed" are
+# acknowledged (HTTP 200) but not processed.
+
+name: zendesk-ticket
+kind: webhook
+
+route_id: "zendesk-ticket-${PACK_INSTANCE_ID}"
+
+# Only handle these Zendesk event types.
+event_filter:
+  header: "X-Zendesk-Webhook-Type"
+  values: ["ticket.created", "ticket.updated"]
+
+# Forward only new/open tickets (not solved/closed/pending).
+payload_filter:
+  json_path: "$.ticket.status"
+  values: ["new", "open"]
+
+# Signature verification.
+signature:
+  algorithm: hmac-sha256
+  header: "X-Zendesk-Webhook-Signature"
+  secret_env: ZENDESK_WEBHOOK_SECRET
+
+# Fields extracted from the Zendesk payload and passed to the plan context.
+extract:
+  id:               "$.ticket.id"
+  subject:          "$.ticket.subject"
+  body:             "$.ticket.description"
+  status:           "$.ticket.status"
+  priority:         "$.ticket.priority"
+  tags:             "$.ticket.tags"
+  created_at:       "$.ticket.created_at"
+  updated_at:       "$.ticket.updated_at"
+  customer_email:   "$.ticket.requester.email"
+  customer_name:    "$.ticket.requester.name"
+  has_agent_reply:  "$.ticket.reply_time_in_minutes.calendar"
+  source:           "_const:zendesk"
+
+# Derived fields computed by the adapter before passing to the agent.
+derived:
+  age_minutes:
+    expr: "now_utc_minutes() - parse_iso8601_minutes($.ticket.created_at)"
+  customer_tier:
+    tool: salesforce_get_account_tier
+    params:
+      email: "{{ extract.customer_email }}"
+    fallback: "unknown"
+
+# Sample payload (from Zendesk webhook docs — used in tests).
+sample_payload: |
+  {
+    "ticket": {
+      "id": 12345,
+      "subject": "Cannot export data to CSV",
+      "description": "Hi, whenever I click the export button nothing happens...",
+      "status": "new",
+      "priority": "normal",
+      "tags": ["export", "data"],
+      "created_at": "2026-05-25T09:14:00Z",
+      "updated_at": "2026-05-25T09:14:00Z",
+      "requester": {
+        "email": "alice@acmecorp.com",
+        "name": "Alice Zhang"
+      },
+      "reply_time_in_minutes": {"calendar": null}
+    }
+  }

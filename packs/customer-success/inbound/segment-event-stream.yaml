@@ -1,0 +1,87 @@
+# Inbound source — Segment event stream (usage signals)
+#
+# Segment forwards track() and identify() events via its Webhook Destination
+# to:
+#   POST https://<host>/v1/customer-success/inbound/segment/{route_id}
+#
+# Authentication: Segment signs payloads with a shared secret in the
+# X-Signature header (SHA1 HMAC over the raw body).
+#
+# This source is used to detect usage drops and login inactivity that feed
+# the churn-risk-scorer.  The adapter does NOT trigger the ticket-triage
+# agent — it updates account health state only.
+#
+# Relevant event types:
+#   - "App Opened"           → refresh last_login timestamp
+#   - "Feature Used"         → increment feature usage counter
+#   - "Export Completed"     → record high-value activity
+#   - "Account Downgraded"   → immediate CSM Slack alert
+#   - "Subscription Cancelled" → immediate CSM Slack alert + risk_score = 100
+
+name: segment-event-stream
+kind: webhook
+
+route_id: "segment-events-${PACK_INSTANCE_ID}"
+
+event_filter:
+  header: "Content-Type"
+  values: ["application/json"]
+
+# Only process events from paying accounts (filter out free/trial).
+payload_filter:
+  json_path: "$.properties.account_tier"
+  values: ["starter", "growth", "enterprise", "enterprise-plus"]
+
+signature:
+  algorithm: hmac-sha1
+  header: "X-Signature"
+  secret_env: SEGMENT_WEBHOOK_SECRET
+
+extract:
+  event_type:     "$.event"
+  account_id:     "$.properties.account_id"
+  user_email:     "$.userId"
+  occurred_at:    "$.timestamp"
+  account_tier:   "$.properties.account_tier"
+  feature_name:   "$.properties.feature_name"
+  source:         "_const:segment"
+
+# Per event_type routing:
+#   high-urgency events bypass the weekly batch and trigger churn-risk-scorer immediately
+routing:
+  immediate_trigger_events:
+    - "Account Downgraded"
+    - "Subscription Cancelled"
+    - "Bulk Data Export"         # potential churning data extraction
+  batch_accumulate_events:
+    - "App Opened"
+    - "Feature Used"
+    - "Export Completed"
+    - "Dashboard Viewed"
+
+# Usage metrics accumulated per account (reset daily at 00:00 UTC).
+# The weekly-health-digest output reads these counters.
+metrics:
+  - name: dau
+    event: "App Opened"
+    aggregation: distinct_count
+    dimension: user_email
+  - name: feature_usage_events
+    event: "Feature Used"
+    aggregation: count
+  - name: high_value_actions
+    events: ["Export Completed", "Dashboard Viewed", "Report Shared"]
+    aggregation: count
+
+sample_payload: |
+  {
+    "event": "Feature Used",
+    "userId": "user-abc@acmecorp.com",
+    "timestamp": "2026-05-25T14:30:00Z",
+    "properties": {
+      "account_id": "sf-001-acmecorp",
+      "account_tier": "enterprise",
+      "feature_name": "advanced-analytics",
+      "feature_category": "reporting"
+    }
+  }
