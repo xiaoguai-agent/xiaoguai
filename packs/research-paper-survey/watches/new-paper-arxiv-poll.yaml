@@ -1,0 +1,108 @@
+# packs/research-paper-survey/watches/new-paper-arxiv-poll.yaml
+#
+# Watch: poll arXiv RSS feeds for new papers by category.
+#
+# arXiv publishes a daily RSS feed per category at:
+#   https://export.arxiv.org/rss/<category>
+#
+# This watch fires an `arxiv-new-paper` inbound event for each entry
+# whose arxiv_id is not already present in the papers table.
+# The poll runs on the configured interval (default 60 minutes) so that
+# papers landing early in arXiv's submission window are picked up promptly.
+
+name: new-paper-arxiv-poll
+kind: http-poll
+
+# ── Poll schedule ─────────────────────────────────────────────────────────────
+
+schedule:
+  # arXiv submissions are processed once per day (Mon–Fri ~20:00 ET).
+  # Polling every 60 min is generous; reduce to 30 min for high-velocity fields.
+  interval_minutes: ${ARXIV_POLL_INTERVAL_MINUTES:-60}
+
+# ── HTTP request ─────────────────────────────────────────────────────────────
+#
+# One request is issued per category in the `categories` list.
+# The watch engine fans out and merges deduplicated results.
+
+request:
+  # Base URL — one GET per category; category is appended as the path segment.
+  url_template: "https://export.arxiv.org/rss/{{ category }}"
+  method: GET
+  headers:
+    User-Agent: "xiaoguai-research-survey/0.1.0 (contact: ${SURVEY_CONTACT_EMAIL:-research@example.com})"
+  # arXiv does not require auth for RSS; leave auth blank.
+  timeout_seconds: 30
+
+# ── Categories to poll ────────────────────────────────────────────────────────
+#
+# Overridden at runtime by ARXIV_POLL_CATEGORIES env var (space-separated).
+# Default covers ML, NLP, CV, Robotics, and ML-adjacent stats.
+
+categories: "${ARXIV_POLL_CATEGORIES:-cs.LG cs.CL cs.CV cs.RO stat.ML}"
+
+# ── Response parsing ──────────────────────────────────────────────────────────
+
+parse:
+  format: rss2             # arXiv uses RSS 2.0
+  item_fields:
+    arxiv_id:
+      # arXiv uses the GUID as the canonical URL; extract the ID from it.
+      # e.g. "http://arxiv.org/abs/2310.06825v1" → "2310.06825"
+      source: guid
+      transform: "regex_extract('arxiv\\.org/abs/([\\d.]+)', 1)"
+    title:      { source: title }
+    abstract:   { source: description }
+    authors:
+      source: dc:creator
+      transform: "split(', ')"
+    published_date:
+      source: pubDate
+      transform: "parse_date_rfc822"
+    url:        { source: link }
+    category:   { source: _context.category }  # injected by the fan-out loop
+
+# ── Deduplication ─────────────────────────────────────────────────────────────
+#
+# Before emitting an event the watch engine checks whether arxiv_id already
+# exists in the papers table (via the xiaoguai-watch dedup store).
+# Duplicate entries are silently dropped.
+
+dedup:
+  store: database
+  key_field: arxiv_id
+  table: papers
+  column: arxiv_id
+
+# ── Event emitted per new paper ───────────────────────────────────────────────
+
+emits:
+  event: arxiv-new-paper
+  payload_mapping:
+    arxiv_id:       "{{ item.arxiv_id }}"
+    title:          "{{ item.title }}"
+    abstract:       "{{ item.abstract | truncate(2000) }}"
+    authors:        "{{ item.authors }}"
+    published_date: "{{ item.published_date }}"
+    url:            "{{ item.url }}"
+    category:       "{{ item.category }}"
+    inbound_source: "arxiv"
+
+# ── Error handling ────────────────────────────────────────────────────────────
+
+on_error:
+  # arXiv occasionally throttles; back off and retry before alerting.
+  retry:
+    max_attempts: 3
+    backoff_seconds: 120
+  # After all retries exhausted, log a warning — do not halt the pack.
+  action: log_warning
+  message: "arXiv RSS poll failed for category {{ category }}: {{ error }}"
+
+# ── Rate limiting ─────────────────────────────────────────────────────────────
+#
+# arXiv's robots.txt asks for a minimum 3-second delay between requests.
+# The watch engine enforces this automatically for http-poll kinds.
+
+rate_limit:
+  requests_per_second: 0.33   # 1 request per 3 seconds

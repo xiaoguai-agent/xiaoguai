@@ -1,0 +1,151 @@
+# packs/research-paper-survey/agents/paper-classifier.yaml
+#
+# Paper Classifier agent
+#
+# Input:  a paper payload (title, abstract, authors, venue, arxiv_id, etc.)
+# Output: classification — relevance_score (0.0–1.0) + paper_type
+#         (empirical | theoretical | survey | position)
+#
+# Side effects:
+#   - Inserts / upserts the paper row in the papers table
+#   - Generates and stores the abstract embedding
+#   - Records the classification to outcome-telemetry for feedback loop
+
+name: paper-classifier
+kind: llm-agent
+
+llm:
+  # Fast model is sufficient for classification — no deep reasoning needed.
+  model: ${CLASSIFIER_LLM_MODEL:-default}
+  temperature: 0.1     # low temperature for consistent categorical output
+  max_tokens: 512
+
+# ── Context steps ─────────────────────────────────────────────────────────────
+
+context_steps:
+  - id: embed_abstract
+    description: "Generate embedding for the paper abstract"
+    tool: embed_text
+    params:
+      text: "{{ paper.title }}. {{ paper.abstract | default('') | truncate(1000) }}"
+      model: "${EMBEDDING_MODEL:-text-embedding-3-small}"
+    # Embedding stored for later clustering; injected into context for the
+    # classifier prompt only if similarity-to-existing-papers context is needed.
+    store_as: abstract_embedding
+
+  - id: survey_topic
+    description: "Retrieve the current survey topic from the active survey run"
+    tool: xiaoguai_db_query
+    params:
+      sql: |
+        SELECT topic, config_snapshot
+        FROM survey_runs
+        WHERE status = 'running'
+        ORDER BY started_at DESC
+        LIMIT 1
+    # If no active run, the classifier uses a generic relevance heuristic.
+    store_as: active_survey
+
+system_prompt: |
+  You are a scientific literature classifier for an automated literature review system.
+
+  Your tasks:
+  1. RELEVANCE: Score the paper's relevance to the survey topic on a 0.0–1.0 scale.
+     - 0.0: Completely off-topic.
+     - 0.3: Tangentially related.
+     - 0.6: Relevant but peripheral.
+     - 0.8: Directly relevant to the core topic.
+     - 1.0: Central contribution to the survey topic.
+
+  2. TYPE: Classify the paper into exactly one type:
+     - empirical: Presents experimental results, datasets, benchmarks, or measurements.
+     - theoretical: Proves theorems, formalizes models, or develops mathematical frameworks.
+     - survey: Reviews existing literature (systematic review, meta-analysis, tutorial).
+     - position: Argues a viewpoint, proposes a research agenda, or critiques a field.
+
+  Classification rules:
+  - Base your decision primarily on the abstract. Title and venue are secondary signals.
+  - A paper can have both experimental and theoretical components; choose the dominant one.
+  - Workshop papers, technical reports, and preprints are valid; do not penalise them.
+  - If the abstract is missing or too short to classify, set relevance_score=null and
+    paper_type="unknown".
+
+  Respond ONLY with valid JSON matching this schema (no prose):
+  {
+    "relevance_score": <float 0.0–1.0 or null>,
+    "paper_type": "empirical" | "theoretical" | "survey" | "position" | "unknown",
+    "relevance_rationale": "<1–2 sentence explanation>",
+    "type_rationale": "<1–2 sentence explanation>"
+  }
+
+user_prompt_template: |
+  ## Survey Topic
+  {{ context.active_survey.topic | default("General AI/ML research") }}
+
+  ## Paper to Classify
+  Title: {{ paper.title }}
+  Authors: {{ paper.authors | join(', ') | truncate(200) }}
+  Venue: {{ paper.venue | default('unknown') }}
+  Published: {{ paper.published_date | default('unknown') }}
+
+  Abstract:
+  {{ paper.abstract | default('[No abstract available]') | truncate(1500) }}
+
+  Classify this paper now.
+
+# ── Post-processing ───────────────────────────────────────────────────────────
+#
+# After the LLM responds, the agent upserts the paper row and records
+# the embedding and classification result.
+
+post_steps:
+  - id: upsert_paper
+    tool: xiaoguai_db_exec
+    params:
+      sql: |
+        INSERT INTO papers (
+            arxiv_id, semantic_scholar_id, doi,
+            title, authors, abstract, published_date, venue, url,
+            paper_type, relevance_score,
+            abstract_embedding, status, inbound_source,
+            created_at, updated_at
+        ) VALUES (
+            {{ paper.arxiv_id | sql_nullable }},
+            {{ paper.semantic_scholar_id | sql_nullable }},
+            {{ paper.doi | sql_nullable }},
+            {{ paper.title | sql_str }},
+            {{ paper.authors | sql_array }},
+            {{ paper.abstract | sql_nullable }},
+            {{ paper.published_date | sql_nullable }},
+            {{ paper.venue | sql_nullable }},
+            {{ paper.url | sql_nullable }},
+            {{ result.paper_type | sql_str }},
+            {{ result.relevance_score | sql_nullable }},
+            {{ context.abstract_embedding | tojson | sql_nullable }},
+            'classified',
+            {{ paper.inbound_source | sql_str }},
+            now(), now()
+        )
+        ON CONFLICT (arxiv_id) DO UPDATE SET
+            paper_type        = EXCLUDED.paper_type,
+            relevance_score   = EXCLUDED.relevance_score,
+            abstract_embedding = EXCLUDED.abstract_embedding,
+            status            = 'classified',
+            updated_at        = now()
+        RETURNING id
+
+  - id: record_telemetry
+    tool: xiaoguai_outcome_telemetry_record
+    params:
+      event_type: paper_classified
+      payload:
+        paper_id:         "{{ post_steps.upsert_paper.id }}"
+        paper_type:       "{{ result.paper_type }}"
+        relevance_score:  "{{ result.relevance_score }}"
+        inbound_source:   "{{ paper.inbound_source }}"
+
+# ── Budget ────────────────────────────────────────────────────────────────────
+
+budget:
+  max_llm_calls: 2      # 1 for classification + 1 retry budget
+  max_wall_seconds: 30
