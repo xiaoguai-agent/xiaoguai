@@ -1,0 +1,1177 @@
+---
+# Wave-3 Multi-Window Multi-Burn-Rate (MWMBR) SLO Alerting Rules
+#
+# Model: Google SRE Workbook ch.5 — "Alerting on SLOs"
+# https://sre.google/workbook/alerting-on-slos/
+#
+# Error budget window: 28 days
+# 28d = 2,419,200 seconds
+#
+# Canonical 4-pair burn-rate table (all SLOs):
+#
+#  Pair | Severity | Long window | Short window | Burn rate | Pages?
+#  -----|----------|-------------|--------------|-----------|-------
+#    1  | critical |     1h      |      5m      |   14.4×   |  yes
+#    2  | critical |     6h      |     30m      |    6×     |  yes
+#    3  | warning  |     1d      |      2h      |    3×     |  yes
+#    4  | warning  |     3d      |      6h      |    1×     | ticket
+#
+# Burn-rate rationale (pair 1, 14.4×):
+#   At a 14.4× burn rate the 28-day error budget is exhausted in
+#   28d / 14.4 ≈ 1.94d ≈ 46.7 h.  A 1h long window ensures we've
+#   seen sustained burn before paging (not a 1-minute spike).
+#   The 5m short window catches the same burst a few minutes after onset,
+#   so both windows must fire simultaneously — this dramatically reduces
+#   false positives caused by brief traffic blips.
+#
+# SLO targets (from docs/architecture/perf-budget-wave3.md):
+#
+#  SLO name             | Metric prefix                          | p95 budget | error ratio
+#  ---------------------|----------------------------------------|------------|------------
+#  hotl_check_latency   | xiaoguai_hotl_check_duration_seconds   | 25 ms      | 0.001 (99.9%)
+#  outcomes_record      | xiaoguai_outcomes_record_duration_sec  | 50 ms      | 0.001 (99.9%)
+#  outcomes_summary     | xiaoguai_outcomes_summary_duration_sec | 200 ms     | 0.010 (99%)
+#  outcomes_timeseries  | xiaoguai_outcomes_timeseries_dur_sec   | 500 ms     | 0.010 (99%)
+#  skills_installed     | xiaoguai_skills_installed_duration_sec | 100 ms     | 0.010 (99%)
+#  hotl_policies_write  | xiaoguai_hotl_policies_write_dur_sec   | 100 ms     | 0.010 (99%)
+#  hotl_availability    | xiaoguai_hotl_requests_total           | n/a        | 0.001 (99.9%)
+#  outcomes_avail       | xiaoguai_outcomes_requests_total       | n/a        | 0.0005 (99.95%)
+#
+# Recording rule naming convention:
+#   sli:<slo_name>:fast_ratio:rate<window>
+#   sli:<slo_name>:error_ratio:rate<window>
+#
+# Alert naming convention:
+#   <SloName>BurnRate<severity><windows>
+#   e.g. HotlCheckLatencyBurnRateCritical1h5m
+
+# ============================================================
+# GROUP 1 — Recording rules for latency SLI fast ratios
+# ============================================================
+groups:
+  - name: wave3-slo-recording-rules
+    interval: 1m
+    rules:
+
+      # ----------------------------------------------------------
+      # hotl_check_latency — p95 SLO: 25 ms (99.9%)
+      # fast request = completed in ≤ 25 ms (le="0.025" bucket)
+      # ----------------------------------------------------------
+      - record: sli:hotl_check_latency:fast_ratio:rate5m
+        expr: |
+          sum(rate(xiaoguai_hotl_check_duration_seconds_bucket{le="0.025"}[5m]))
+          /
+          sum(rate(xiaoguai_hotl_check_duration_seconds_count[5m]))
+
+      - record: sli:hotl_check_latency:fast_ratio:rate30m
+        expr: |
+          sum(rate(xiaoguai_hotl_check_duration_seconds_bucket{le="0.025"}[30m]))
+          /
+          sum(rate(xiaoguai_hotl_check_duration_seconds_count[30m]))
+
+      - record: sli:hotl_check_latency:fast_ratio:rate1h
+        expr: |
+          sum(rate(xiaoguai_hotl_check_duration_seconds_bucket{le="0.025"}[1h]))
+          /
+          sum(rate(xiaoguai_hotl_check_duration_seconds_count[1h]))
+
+      - record: sli:hotl_check_latency:fast_ratio:rate2h
+        expr: |
+          sum(rate(xiaoguai_hotl_check_duration_seconds_bucket{le="0.025"}[2h]))
+          /
+          sum(rate(xiaoguai_hotl_check_duration_seconds_count[2h]))
+
+      - record: sli:hotl_check_latency:fast_ratio:rate6h
+        expr: |
+          sum(rate(xiaoguai_hotl_check_duration_seconds_bucket{le="0.025"}[6h]))
+          /
+          sum(rate(xiaoguai_hotl_check_duration_seconds_count[6h]))
+
+      - record: sli:hotl_check_latency:fast_ratio:rate1d
+        expr: |
+          sum(rate(xiaoguai_hotl_check_duration_seconds_bucket{le="0.025"}[1d]))
+          /
+          sum(rate(xiaoguai_hotl_check_duration_seconds_count[1d]))
+
+      - record: sli:hotl_check_latency:fast_ratio:rate3d
+        expr: |
+          sum(rate(xiaoguai_hotl_check_duration_seconds_bucket{le="0.025"}[3d]))
+          /
+          sum(rate(xiaoguai_hotl_check_duration_seconds_count[3d]))
+
+      # ----------------------------------------------------------
+      # outcomes_record — p95 SLO: 50 ms (99.9%)
+      # ----------------------------------------------------------
+      - record: sli:outcomes_record:fast_ratio:rate5m
+        expr: |
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_bucket{le="0.05"}[5m]))
+          /
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_count[5m]))
+
+      - record: sli:outcomes_record:fast_ratio:rate30m
+        expr: |
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_bucket{le="0.05"}[30m]))
+          /
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_count[30m]))
+
+      - record: sli:outcomes_record:fast_ratio:rate1h
+        expr: |
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_bucket{le="0.05"}[1h]))
+          /
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_count[1h]))
+
+      - record: sli:outcomes_record:fast_ratio:rate2h
+        expr: |
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_bucket{le="0.05"}[2h]))
+          /
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_count[2h]))
+
+      - record: sli:outcomes_record:fast_ratio:rate6h
+        expr: |
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_bucket{le="0.05"}[6h]))
+          /
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_count[6h]))
+
+      - record: sli:outcomes_record:fast_ratio:rate1d
+        expr: |
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_bucket{le="0.05"}[1d]))
+          /
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_count[1d]))
+
+      - record: sli:outcomes_record:fast_ratio:rate3d
+        expr: |
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_bucket{le="0.05"}[3d]))
+          /
+          sum(rate(xiaoguai_outcomes_record_duration_seconds_count[3d]))
+
+      # ----------------------------------------------------------
+      # outcomes_summary — p95 SLO: 200 ms (99%)
+      # ----------------------------------------------------------
+      - record: sli:outcomes_summary:fast_ratio:rate5m
+        expr: |
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_bucket{le="0.2"}[5m]))
+          /
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_count[5m]))
+
+      - record: sli:outcomes_summary:fast_ratio:rate30m
+        expr: |
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_bucket{le="0.2"}[30m]))
+          /
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_count[30m]))
+
+      - record: sli:outcomes_summary:fast_ratio:rate1h
+        expr: |
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_bucket{le="0.2"}[1h]))
+          /
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_count[1h]))
+
+      - record: sli:outcomes_summary:fast_ratio:rate2h
+        expr: |
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_bucket{le="0.2"}[2h]))
+          /
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_count[2h]))
+
+      - record: sli:outcomes_summary:fast_ratio:rate6h
+        expr: |
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_bucket{le="0.2"}[6h]))
+          /
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_count[6h]))
+
+      - record: sli:outcomes_summary:fast_ratio:rate1d
+        expr: |
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_bucket{le="0.2"}[1d]))
+          /
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_count[1d]))
+
+      - record: sli:outcomes_summary:fast_ratio:rate3d
+        expr: |
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_bucket{le="0.2"}[3d]))
+          /
+          sum(rate(xiaoguai_outcomes_summary_duration_seconds_count[3d]))
+
+      # ----------------------------------------------------------
+      # outcomes_timeseries — p95 SLO: 500 ms (99%)
+      # ----------------------------------------------------------
+      - record: sli:outcomes_timeseries:fast_ratio:rate5m
+        expr: |
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_bucket{le="0.5"}[5m]))
+          /
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_count[5m]))
+
+      - record: sli:outcomes_timeseries:fast_ratio:rate30m
+        expr: |
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_bucket{le="0.5"}[30m]))
+          /
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_count[30m]))
+
+      - record: sli:outcomes_timeseries:fast_ratio:rate1h
+        expr: |
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_bucket{le="0.5"}[1h]))
+          /
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_count[1h]))
+
+      - record: sli:outcomes_timeseries:fast_ratio:rate2h
+        expr: |
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_bucket{le="0.5"}[2h]))
+          /
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_count[2h]))
+
+      - record: sli:outcomes_timeseries:fast_ratio:rate6h
+        expr: |
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_bucket{le="0.5"}[6h]))
+          /
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_count[6h]))
+
+      - record: sli:outcomes_timeseries:fast_ratio:rate1d
+        expr: |
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_bucket{le="0.5"}[1d]))
+          /
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_count[1d]))
+
+      - record: sli:outcomes_timeseries:fast_ratio:rate3d
+        expr: |
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_bucket{le="0.5"}[3d]))
+          /
+          sum(rate(xiaoguai_outcomes_timeseries_duration_seconds_count[3d]))
+
+      # ----------------------------------------------------------
+      # skills_installed — p95 SLO: 100 ms (99%)
+      # ----------------------------------------------------------
+      - record: sli:skills_installed:fast_ratio:rate5m
+        expr: |
+          sum(rate(xiaoguai_skills_installed_duration_seconds_bucket{le="0.1"}[5m]))
+          /
+          sum(rate(xiaoguai_skills_installed_duration_seconds_count[5m]))
+
+      - record: sli:skills_installed:fast_ratio:rate30m
+        expr: |
+          sum(rate(xiaoguai_skills_installed_duration_seconds_bucket{le="0.1"}[30m]))
+          /
+          sum(rate(xiaoguai_skills_installed_duration_seconds_count[30m]))
+
+      - record: sli:skills_installed:fast_ratio:rate1h
+        expr: |
+          sum(rate(xiaoguai_skills_installed_duration_seconds_bucket{le="0.1"}[1h]))
+          /
+          sum(rate(xiaoguai_skills_installed_duration_seconds_count[1h]))
+
+      - record: sli:skills_installed:fast_ratio:rate2h
+        expr: |
+          sum(rate(xiaoguai_skills_installed_duration_seconds_bucket{le="0.1"}[2h]))
+          /
+          sum(rate(xiaoguai_skills_installed_duration_seconds_count[2h]))
+
+      - record: sli:skills_installed:fast_ratio:rate6h
+        expr: |
+          sum(rate(xiaoguai_skills_installed_duration_seconds_bucket{le="0.1"}[6h]))
+          /
+          sum(rate(xiaoguai_skills_installed_duration_seconds_count[6h]))
+
+      - record: sli:skills_installed:fast_ratio:rate1d
+        expr: |
+          sum(rate(xiaoguai_skills_installed_duration_seconds_bucket{le="0.1"}[1d]))
+          /
+          sum(rate(xiaoguai_skills_installed_duration_seconds_count[1d]))
+
+      - record: sli:skills_installed:fast_ratio:rate3d
+        expr: |
+          sum(rate(xiaoguai_skills_installed_duration_seconds_bucket{le="0.1"}[3d]))
+          /
+          sum(rate(xiaoguai_skills_installed_duration_seconds_count[3d]))
+
+      # ----------------------------------------------------------
+      # hotl_policies_write — p95 SLO: 100 ms (99%)
+      # Metric: POST /v1/hotl/policies write path only
+      # ----------------------------------------------------------
+      - record: sli:hotl_policies_write:fast_ratio:rate5m
+        expr: |
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_bucket{le="0.1"}[5m]))
+          /
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_count[5m]))
+
+      - record: sli:hotl_policies_write:fast_ratio:rate30m
+        expr: |
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_bucket{le="0.1"}[30m]))
+          /
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_count[30m]))
+
+      - record: sli:hotl_policies_write:fast_ratio:rate1h
+        expr: |
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_bucket{le="0.1"}[1h]))
+          /
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_count[1h]))
+
+      - record: sli:hotl_policies_write:fast_ratio:rate2h
+        expr: |
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_bucket{le="0.1"}[2h]))
+          /
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_count[2h]))
+
+      - record: sli:hotl_policies_write:fast_ratio:rate6h
+        expr: |
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_bucket{le="0.1"}[6h]))
+          /
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_count[6h]))
+
+      - record: sli:hotl_policies_write:fast_ratio:rate1d
+        expr: |
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_bucket{le="0.1"}[1d]))
+          /
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_count[1d]))
+
+      - record: sli:hotl_policies_write:fast_ratio:rate3d
+        expr: |
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_bucket{le="0.1"}[3d]))
+          /
+          sum(rate(xiaoguai_hotl_policies_write_duration_seconds_count[3d]))
+
+      # ----------------------------------------------------------
+      # hotl_availability — success-rate SLO: 99.9%
+      # success = non-5xx (2xx + expected 4xx per perf budget §1.2)
+      # ----------------------------------------------------------
+      - record: sli:hotl_availability:success_ratio:rate5m
+        expr: |
+          sum(rate(xiaoguai_hotl_requests_total{status!~"5.."}[5m]))
+          /
+          sum(rate(xiaoguai_hotl_requests_total[5m]))
+
+      - record: sli:hotl_availability:success_ratio:rate30m
+        expr: |
+          sum(rate(xiaoguai_hotl_requests_total{status!~"5.."}[30m]))
+          /
+          sum(rate(xiaoguai_hotl_requests_total[30m]))
+
+      - record: sli:hotl_availability:success_ratio:rate1h
+        expr: |
+          sum(rate(xiaoguai_hotl_requests_total{status!~"5.."}[1h]))
+          /
+          sum(rate(xiaoguai_hotl_requests_total[1h]))
+
+      - record: sli:hotl_availability:success_ratio:rate2h
+        expr: |
+          sum(rate(xiaoguai_hotl_requests_total{status!~"5.."}[2h]))
+          /
+          sum(rate(xiaoguai_hotl_requests_total[2h]))
+
+      - record: sli:hotl_availability:success_ratio:rate6h
+        expr: |
+          sum(rate(xiaoguai_hotl_requests_total{status!~"5.."}[6h]))
+          /
+          sum(rate(xiaoguai_hotl_requests_total[6h]))
+
+      - record: sli:hotl_availability:success_ratio:rate1d
+        expr: |
+          sum(rate(xiaoguai_hotl_requests_total{status!~"5.."}[1d]))
+          /
+          sum(rate(xiaoguai_hotl_requests_total[1d]))
+
+      - record: sli:hotl_availability:success_ratio:rate3d
+        expr: |
+          sum(rate(xiaoguai_hotl_requests_total{status!~"5.."}[3d]))
+          /
+          sum(rate(xiaoguai_hotl_requests_total[3d]))
+
+      # ----------------------------------------------------------
+      # outcomes_availability — success-rate SLO: 99.95%
+      # ----------------------------------------------------------
+      - record: sli:outcomes_availability:success_ratio:rate5m
+        expr: |
+          sum(rate(xiaoguai_outcomes_requests_total{status!~"5.."}[5m]))
+          /
+          sum(rate(xiaoguai_outcomes_requests_total[5m]))
+
+      - record: sli:outcomes_availability:success_ratio:rate30m
+        expr: |
+          sum(rate(xiaoguai_outcomes_requests_total{status!~"5.."}[30m]))
+          /
+          sum(rate(xiaoguai_outcomes_requests_total[30m]))
+
+      - record: sli:outcomes_availability:success_ratio:rate1h
+        expr: |
+          sum(rate(xiaoguai_outcomes_requests_total{status!~"5.."}[1h]))
+          /
+          sum(rate(xiaoguai_outcomes_requests_total[1h]))
+
+      - record: sli:outcomes_availability:success_ratio:rate2h
+        expr: |
+          sum(rate(xiaoguai_outcomes_requests_total{status!~"5.."}[2h]))
+          /
+          sum(rate(xiaoguai_outcomes_requests_total[2h]))
+
+      - record: sli:outcomes_availability:success_ratio:rate6h
+        expr: |
+          sum(rate(xiaoguai_outcomes_requests_total{status!~"5.."}[6h]))
+          /
+          sum(rate(xiaoguai_outcomes_requests_total[6h]))
+
+      - record: sli:outcomes_availability:success_ratio:rate1d
+        expr: |
+          sum(rate(xiaoguai_outcomes_requests_total{status!~"5.."}[1d]))
+          /
+          sum(rate(xiaoguai_outcomes_requests_total[1d]))
+
+      - record: sli:outcomes_availability:success_ratio:rate3d
+        expr: |
+          sum(rate(xiaoguai_outcomes_requests_total{status!~"5.."}[3d]))
+          /
+          sum(rate(xiaoguai_outcomes_requests_total[3d]))
+
+
+# ============================================================
+# GROUP 2 — Burn-rate alert rules
+# ============================================================
+  - name: wave3-slo-burn-rate-alerts
+    rules:
+
+      # --------------------------------------------------------
+      # SLO: hotl_check_latency — 99.9% requests p95 < 25ms
+      # error_budget_ratio = 0.001
+      # --------------------------------------------------------
+
+      # Pair 1 — critical: 14.4× / 1h + 5m
+      - alert: HotlCheckLatencyBurnRateCritical1h5m
+        expr: |
+          (1 - sli:hotl_check_latency:fast_ratio:rate1h) > (14.4 * 0.001)
+          and
+          (1 - sli:hotl_check_latency:fast_ratio:rate5m) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          slo: hotl_check_latency
+          team: platform
+          subsystem: hotl
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md"
+        annotations:
+          summary: "HotL check latency SLO burning budget at 14.4x (critical, 1h+5m windows)"
+          description: >
+            The hotl_check_latency SLO (99.9% requests completing in <25ms) is burning
+            its 28-day error budget at >=14.4x the steady-state rate.
+            At this rate the full 28-day budget is exhausted in ~47 hours.
+            Both the 1h and 5m windows are breaching threshold simultaneously.
+            Error ratio (1h window): {{ printf "%.4f" (index . "value") }}.
+            See perf budget: docs/architecture/perf-budget-wave3.md §2.
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md"
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=hotl_check_latency"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+          error_budget_consumed_pct: >-
+            {{ printf "%.1f" (mul (sub 1.0 (index . "sli:hotl_check_latency:fast_ratio:rate1h")) (div 1.0 0.001) 100.0) }}%
+
+      # Pair 2 — critical: 6× / 6h + 30m
+      - alert: HotlCheckLatencyBurnRateCritical6h30m
+        expr: |
+          (1 - sli:hotl_check_latency:fast_ratio:rate6h) > (6 * 0.001)
+          and
+          (1 - sli:hotl_check_latency:fast_ratio:rate30m) > (6 * 0.001)
+        for: 5m
+        labels:
+          severity: critical
+          slo: hotl_check_latency
+          team: platform
+          subsystem: hotl
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md"
+        annotations:
+          summary: "HotL check latency SLO burning budget at 6x (critical, 6h+30m windows)"
+          description: >
+            The hotl_check_latency SLO is burning its error budget at >=6x the steady-state rate.
+            At this rate the full 28-day budget is exhausted in ~4.7 days.
+            Error ratio (6h window): {{ printf "%.4f" (index . "value") }}.
+            See perf budget: docs/architecture/perf-budget-wave3.md §2.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=hotl_check_latency"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 3 — warning: 3× / 1d + 2h
+      - alert: HotlCheckLatencyBurnRateWarning1d2h
+        expr: |
+          (1 - sli:hotl_check_latency:fast_ratio:rate1d) > (3 * 0.001)
+          and
+          (1 - sli:hotl_check_latency:fast_ratio:rate2h) > (3 * 0.001)
+        for: 5m
+        labels:
+          severity: warning
+          slo: hotl_check_latency
+          team: platform
+          subsystem: hotl
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md"
+        annotations:
+          summary: "HotL check latency SLO burning budget at 3x (warning, 1d+2h windows)"
+          description: >
+            The hotl_check_latency SLO is burning its error budget at >=3x the steady-state rate.
+            At this rate the full 28-day budget is exhausted in ~9.3 days.
+            Error ratio (1d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=hotl_check_latency"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 4 — warning/ticket: 1× / 3d + 6h
+      - alert: HotlCheckLatencyBurnRateWarning3d6h
+        expr: |
+          (1 - sli:hotl_check_latency:fast_ratio:rate3d) > (1 * 0.001)
+          and
+          (1 - sli:hotl_check_latency:fast_ratio:rate6h) > (1 * 0.001)
+        for: 5m
+        labels:
+          severity: warning
+          page: "false"
+          ticket: "true"
+          slo: hotl_check_latency
+          team: platform
+          subsystem: hotl
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md"
+        annotations:
+          summary: "HotL check latency SLO burning budget at 1x (ticket, 3d+6h windows)"
+          description: >
+            The hotl_check_latency SLO is burning its error budget at >=1x the steady-state rate
+            (i.e. budget will not be replenished at current rate). File a ticket.
+            Error ratio (3d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=hotl_check_latency"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # --------------------------------------------------------
+      # SLO: outcomes_record — 99.9% requests p95 < 50ms
+      # error_budget_ratio = 0.001
+      # --------------------------------------------------------
+
+      # Pair 1 — critical: 14.4× / 1h + 5m
+      - alert: OutcomesRecordBurnRateCritical1h5m
+        expr: |
+          (1 - sli:outcomes_record:fast_ratio:rate1h) > (14.4 * 0.001)
+          and
+          (1 - sli:outcomes_record:fast_ratio:rate5m) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          slo: outcomes_record
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes record latency SLO burning budget at 14.4x (critical, 1h+5m windows)"
+          description: >
+            The outcomes_record SLO (99.9% requests completing in <50ms) is burning its
+            28-day error budget at >=14.4x the steady-state rate (~47h to exhaustion).
+            Error ratio (1h window): {{ printf "%.4f" (index . "value") }}.
+            See perf budget: docs/architecture/perf-budget-wave3.md §2.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_record"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 2 — critical: 6× / 6h + 30m
+      - alert: OutcomesRecordBurnRateCritical6h30m
+        expr: |
+          (1 - sli:outcomes_record:fast_ratio:rate6h) > (6 * 0.001)
+          and
+          (1 - sli:outcomes_record:fast_ratio:rate30m) > (6 * 0.001)
+        for: 5m
+        labels:
+          severity: critical
+          slo: outcomes_record
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes record latency SLO burning budget at 6x (critical, 6h+30m windows)"
+          description: >
+            The outcomes_record SLO is burning its error budget at >=6x (~4.7 days to exhaustion).
+            Error ratio (6h window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_record"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 3 — warning: 3× / 1d + 2h
+      - alert: OutcomesRecordBurnRateWarning1d2h
+        expr: |
+          (1 - sli:outcomes_record:fast_ratio:rate1d) > (3 * 0.001)
+          and
+          (1 - sli:outcomes_record:fast_ratio:rate2h) > (3 * 0.001)
+        for: 5m
+        labels:
+          severity: warning
+          slo: outcomes_record
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes record latency SLO burning budget at 3x (warning, 1d+2h windows)"
+          description: >
+            The outcomes_record SLO is burning its error budget at >=3x (~9.3 days to exhaustion).
+            Error ratio (1d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_record"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 4 — warning/ticket: 1× / 3d + 6h
+      - alert: OutcomesRecordBurnRateWarning3d6h
+        expr: |
+          (1 - sli:outcomes_record:fast_ratio:rate3d) > (1 * 0.001)
+          and
+          (1 - sli:outcomes_record:fast_ratio:rate6h) > (1 * 0.001)
+        for: 5m
+        labels:
+          severity: warning
+          page: "false"
+          ticket: "true"
+          slo: outcomes_record
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes record latency SLO burning budget at 1x (ticket, 3d+6h windows)"
+          description: >
+            The outcomes_record SLO is burning at >=1x steady-state rate. File a ticket.
+            Error ratio (3d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_record"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # --------------------------------------------------------
+      # SLO: outcomes_summary — 99% requests p95 < 200ms
+      # error_budget_ratio = 0.01
+      # --------------------------------------------------------
+
+      # Pair 1 — critical: 14.4× / 1h + 5m
+      - alert: OutcomesSummaryBurnRateCritical1h5m
+        expr: |
+          (1 - sli:outcomes_summary:fast_ratio:rate1h) > (14.4 * 0.01)
+          and
+          (1 - sli:outcomes_summary:fast_ratio:rate5m) > (14.4 * 0.01)
+        for: 2m
+        labels:
+          severity: critical
+          slo: outcomes_summary
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes summary latency SLO burning budget at 14.4x (critical, 1h+5m windows)"
+          description: >
+            The outcomes_summary SLO (99% requests completing in <200ms) is burning its
+            28-day error budget at >=14.4x the steady-state rate (~47h to exhaustion).
+            Error ratio (1h window): {{ printf "%.4f" (index . "value") }}.
+            See perf budget: docs/architecture/perf-budget-wave3.md §2.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_summary"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 2 — critical: 6× / 6h + 30m
+      - alert: OutcomesSummaryBurnRateCritical6h30m
+        expr: |
+          (1 - sli:outcomes_summary:fast_ratio:rate6h) > (6 * 0.01)
+          and
+          (1 - sli:outcomes_summary:fast_ratio:rate30m) > (6 * 0.01)
+        for: 5m
+        labels:
+          severity: critical
+          slo: outcomes_summary
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes summary latency SLO burning budget at 6x (critical, 6h+30m windows)"
+          description: >
+            The outcomes_summary SLO is burning its error budget at >=6x (~4.7 days to exhaustion).
+            Error ratio (6h window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_summary"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 3 — warning: 3× / 1d + 2h
+      - alert: OutcomesSummaryBurnRateWarning1d2h
+        expr: |
+          (1 - sli:outcomes_summary:fast_ratio:rate1d) > (3 * 0.01)
+          and
+          (1 - sli:outcomes_summary:fast_ratio:rate2h) > (3 * 0.01)
+        for: 5m
+        labels:
+          severity: warning
+          slo: outcomes_summary
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes summary latency SLO burning budget at 3x (warning, 1d+2h windows)"
+          description: >
+            The outcomes_summary SLO is burning its error budget at >=3x (~9.3 days to exhaustion).
+            Error ratio (1d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_summary"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 4 — warning/ticket: 1× / 3d + 6h
+      - alert: OutcomesSummaryBurnRateWarning3d6h
+        expr: |
+          (1 - sli:outcomes_summary:fast_ratio:rate3d) > (1 * 0.01)
+          and
+          (1 - sli:outcomes_summary:fast_ratio:rate6h) > (1 * 0.01)
+        for: 5m
+        labels:
+          severity: warning
+          page: "false"
+          ticket: "true"
+          slo: outcomes_summary
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes summary latency SLO burning budget at 1x (ticket, 3d+6h windows)"
+          description: >
+            The outcomes_summary SLO is burning at >=1x steady-state rate. File a ticket.
+            Error ratio (3d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_summary"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # --------------------------------------------------------
+      # SLO: outcomes_timeseries — 99% requests p95 < 500ms
+      # error_budget_ratio = 0.01
+      # --------------------------------------------------------
+
+      # Pair 1 — critical: 14.4× / 1h + 5m
+      - alert: OutcomesTimeseriesBurnRateCritical1h5m
+        expr: |
+          (1 - sli:outcomes_timeseries:fast_ratio:rate1h) > (14.4 * 0.01)
+          and
+          (1 - sli:outcomes_timeseries:fast_ratio:rate5m) > (14.4 * 0.01)
+        for: 2m
+        labels:
+          severity: critical
+          slo: outcomes_timeseries
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes timeseries latency SLO burning budget at 14.4x (critical, 1h+5m windows)"
+          description: >
+            The outcomes_timeseries SLO (99% requests completing in <500ms) is burning its
+            28-day error budget at >=14.4x the steady-state rate (~47h to exhaustion).
+            Error ratio (1h window): {{ printf "%.4f" (index . "value") }}.
+            See perf budget: docs/architecture/perf-budget-wave3.md §2, §6.1.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_timeseries"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 2 — critical: 6× / 6h + 30m
+      - alert: OutcomesTimeseriesBurnRateCritical6h30m
+        expr: |
+          (1 - sli:outcomes_timeseries:fast_ratio:rate6h) > (6 * 0.01)
+          and
+          (1 - sli:outcomes_timeseries:fast_ratio:rate30m) > (6 * 0.01)
+        for: 5m
+        labels:
+          severity: critical
+          slo: outcomes_timeseries
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes timeseries latency SLO burning budget at 6x (critical, 6h+30m windows)"
+          description: >
+            The outcomes_timeseries SLO is burning at >=6x (~4.7 days to exhaustion).
+            Error ratio (6h window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_timeseries"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 3 — warning: 3× / 1d + 2h
+      - alert: OutcomesTimeseriesBurnRateWarning1d2h
+        expr: |
+          (1 - sli:outcomes_timeseries:fast_ratio:rate1d) > (3 * 0.01)
+          and
+          (1 - sli:outcomes_timeseries:fast_ratio:rate2h) > (3 * 0.01)
+        for: 5m
+        labels:
+          severity: warning
+          slo: outcomes_timeseries
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes timeseries latency SLO burning budget at 3x (warning, 1d+2h windows)"
+          description: >
+            The outcomes_timeseries SLO is burning at >=3x (~9.3 days to exhaustion).
+            Error ratio (1d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_timeseries"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 4 — warning/ticket: 1× / 3d + 6h
+      - alert: OutcomesTimeseriesBurnRateWarning3d6h
+        expr: |
+          (1 - sli:outcomes_timeseries:fast_ratio:rate3d) > (1 * 0.01)
+          and
+          (1 - sli:outcomes_timeseries:fast_ratio:rate6h) > (1 * 0.01)
+        for: 5m
+        labels:
+          severity: warning
+          page: "false"
+          ticket: "true"
+          slo: outcomes_timeseries
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes timeseries latency SLO burning budget at 1x (ticket, 3d+6h windows)"
+          description: >
+            The outcomes_timeseries SLO is burning at >=1x steady-state rate. File a ticket.
+            Error ratio (3d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_timeseries"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # --------------------------------------------------------
+      # SLO: skills_installed — 99% requests p95 < 100ms
+      # error_budget_ratio = 0.01
+      # --------------------------------------------------------
+
+      # Pair 1 — critical: 14.4× / 1h + 5m
+      - alert: SkillsInstalledBurnRateCritical1h5m
+        expr: |
+          (1 - sli:skills_installed:fast_ratio:rate1h) > (14.4 * 0.01)
+          and
+          (1 - sli:skills_installed:fast_ratio:rate5m) > (14.4 * 0.01)
+        for: 2m
+        labels:
+          severity: critical
+          slo: skills_installed
+          team: platform
+          subsystem: skills
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/pack-install-troubleshoot.md"
+        annotations:
+          summary: "Skills installed latency SLO burning budget at 14.4x (critical, 1h+5m windows)"
+          description: >
+            The skills_installed SLO (99% requests completing in <100ms) is burning its
+            28-day error budget at >=14.4x the steady-state rate (~47h to exhaustion).
+            Error ratio (1h window): {{ printf "%.4f" (index . "value") }}.
+            See perf budget: docs/architecture/perf-budget-wave3.md §2.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=skills_installed"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 2 — critical: 6× / 6h + 30m
+      - alert: SkillsInstalledBurnRateCritical6h30m
+        expr: |
+          (1 - sli:skills_installed:fast_ratio:rate6h) > (6 * 0.01)
+          and
+          (1 - sli:skills_installed:fast_ratio:rate30m) > (6 * 0.01)
+        for: 5m
+        labels:
+          severity: critical
+          slo: skills_installed
+          team: platform
+          subsystem: skills
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/pack-install-troubleshoot.md"
+        annotations:
+          summary: "Skills installed latency SLO burning budget at 6x (critical, 6h+30m windows)"
+          description: >
+            The skills_installed SLO is burning at >=6x (~4.7 days to exhaustion).
+            Error ratio (6h window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=skills_installed"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 3 — warning: 3× / 1d + 2h
+      - alert: SkillsInstalledBurnRateWarning1d2h
+        expr: |
+          (1 - sli:skills_installed:fast_ratio:rate1d) > (3 * 0.01)
+          and
+          (1 - sli:skills_installed:fast_ratio:rate2h) > (3 * 0.01)
+        for: 5m
+        labels:
+          severity: warning
+          slo: skills_installed
+          team: platform
+          subsystem: skills
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/pack-install-troubleshoot.md"
+        annotations:
+          summary: "Skills installed latency SLO burning budget at 3x (warning, 1d+2h windows)"
+          description: >
+            The skills_installed SLO is burning at >=3x (~9.3 days to exhaustion).
+            Error ratio (1d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=skills_installed"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 4 — warning/ticket: 1× / 3d + 6h
+      - alert: SkillsInstalledBurnRateWarning3d6h
+        expr: |
+          (1 - sli:skills_installed:fast_ratio:rate3d) > (1 * 0.01)
+          and
+          (1 - sli:skills_installed:fast_ratio:rate6h) > (1 * 0.01)
+        for: 5m
+        labels:
+          severity: warning
+          page: "false"
+          ticket: "true"
+          slo: skills_installed
+          team: platform
+          subsystem: skills
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/pack-install-troubleshoot.md"
+        annotations:
+          summary: "Skills installed latency SLO burning budget at 1x (ticket, 3d+6h windows)"
+          description: >
+            The skills_installed SLO is burning at >=1x steady-state rate. File a ticket.
+            Error ratio (3d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=skills_installed"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # --------------------------------------------------------
+      # SLO: hotl_policies_write — 99% requests p95 < 100ms
+      # error_budget_ratio = 0.01
+      # --------------------------------------------------------
+
+      # Pair 1 — critical: 14.4× / 1h + 5m
+      - alert: HotlPoliciesWriteBurnRateCritical1h5m
+        expr: |
+          (1 - sli:hotl_policies_write:fast_ratio:rate1h) > (14.4 * 0.01)
+          and
+          (1 - sli:hotl_policies_write:fast_ratio:rate5m) > (14.4 * 0.01)
+        for: 2m
+        labels:
+          severity: critical
+          slo: hotl_policies_write
+          team: platform
+          subsystem: hotl
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md"
+        annotations:
+          summary: "HotL policies write latency SLO burning budget at 14.4x (critical, 1h+5m windows)"
+          description: >
+            The hotl_policies_write SLO (99% POST /v1/hotl/policies completing in <100ms) is
+            burning its 28-day error budget at >=14.4x the steady-state rate (~47h to exhaustion).
+            Error ratio (1h window): {{ printf "%.4f" (index . "value") }}.
+            See perf budget: docs/architecture/perf-budget-wave3.md §2.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=hotl_policies_write"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 2 — critical: 6× / 6h + 30m
+      - alert: HotlPoliciesWriteBurnRateCritical6h30m
+        expr: |
+          (1 - sli:hotl_policies_write:fast_ratio:rate6h) > (6 * 0.01)
+          and
+          (1 - sli:hotl_policies_write:fast_ratio:rate30m) > (6 * 0.01)
+        for: 5m
+        labels:
+          severity: critical
+          slo: hotl_policies_write
+          team: platform
+          subsystem: hotl
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md"
+        annotations:
+          summary: "HotL policies write latency SLO burning budget at 6x (critical, 6h+30m windows)"
+          description: >
+            The hotl_policies_write SLO is burning at >=6x (~4.7 days to exhaustion).
+            Error ratio (6h window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=hotl_policies_write"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 3 — warning: 3× / 1d + 2h
+      - alert: HotlPoliciesWriteBurnRateWarning1d2h
+        expr: |
+          (1 - sli:hotl_policies_write:fast_ratio:rate1d) > (3 * 0.01)
+          and
+          (1 - sli:hotl_policies_write:fast_ratio:rate2h) > (3 * 0.01)
+        for: 5m
+        labels:
+          severity: warning
+          slo: hotl_policies_write
+          team: platform
+          subsystem: hotl
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md"
+        annotations:
+          summary: "HotL policies write latency SLO burning budget at 3x (warning, 1d+2h windows)"
+          description: >
+            The hotl_policies_write SLO is burning at >=3x (~9.3 days to exhaustion).
+            Error ratio (1d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=hotl_policies_write"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 4 — warning/ticket: 1× / 3d + 6h
+      - alert: HotlPoliciesWriteBurnRateWarning3d6h
+        expr: |
+          (1 - sli:hotl_policies_write:fast_ratio:rate3d) > (1 * 0.01)
+          and
+          (1 - sli:hotl_policies_write:fast_ratio:rate6h) > (1 * 0.01)
+        for: 5m
+        labels:
+          severity: warning
+          page: "false"
+          ticket: "true"
+          slo: hotl_policies_write
+          team: platform
+          subsystem: hotl
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md"
+        annotations:
+          summary: "HotL policies write latency SLO burning budget at 1x (ticket, 3d+6h windows)"
+          description: >
+            The hotl_policies_write SLO is burning at >=1x steady-state rate. File a ticket.
+            Error ratio (3d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=hotl_policies_write"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # --------------------------------------------------------
+      # SLO: hotl_availability — 99.9% non-5xx
+      # error_budget_ratio = 0.001
+      # --------------------------------------------------------
+
+      # Pair 1 — critical: 14.4× / 1h + 5m
+      - alert: HotlAvailabilityBurnRateCritical1h5m
+        expr: |
+          (1 - sli:hotl_availability:success_ratio:rate1h) > (14.4 * 0.001)
+          and
+          (1 - sli:hotl_availability:success_ratio:rate5m) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          slo: hotl_availability
+          team: platform
+          subsystem: hotl
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md"
+        annotations:
+          summary: "HotL availability SLO burning budget at 14.4x (critical, 1h+5m windows)"
+          description: >
+            The hotl_availability SLO (99.9% non-5xx for HotL endpoints) is burning its
+            28-day error budget at >=14.4x the steady-state rate (~47h to exhaustion).
+            Error ratio (1h window): {{ printf "%.4f" (index . "value") }}.
+            See perf budget: docs/architecture/perf-budget-wave3.md §1.2, §4.2.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=hotl_availability"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 2 — critical: 6× / 6h + 30m
+      - alert: HotlAvailabilityBurnRateCritical6h30m
+        expr: |
+          (1 - sli:hotl_availability:success_ratio:rate6h) > (6 * 0.001)
+          and
+          (1 - sli:hotl_availability:success_ratio:rate30m) > (6 * 0.001)
+        for: 5m
+        labels:
+          severity: critical
+          slo: hotl_availability
+          team: platform
+          subsystem: hotl
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md"
+        annotations:
+          summary: "HotL availability SLO burning budget at 6x (critical, 6h+30m windows)"
+          description: >
+            The hotl_availability SLO is burning at >=6x (~4.7 days to exhaustion).
+            Error ratio (6h window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=hotl_availability"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 3 — warning: 3× / 1d + 2h
+      - alert: HotlAvailabilityBurnRateWarning1d2h
+        expr: |
+          (1 - sli:hotl_availability:success_ratio:rate1d) > (3 * 0.001)
+          and
+          (1 - sli:hotl_availability:success_ratio:rate2h) > (3 * 0.001)
+        for: 5m
+        labels:
+          severity: warning
+          slo: hotl_availability
+          team: platform
+          subsystem: hotl
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md"
+        annotations:
+          summary: "HotL availability SLO burning budget at 3x (warning, 1d+2h windows)"
+          description: >
+            The hotl_availability SLO is burning at >=3x (~9.3 days to exhaustion).
+            Error ratio (1d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=hotl_availability"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 4 — warning/ticket: 1× / 3d + 6h
+      - alert: HotlAvailabilityBurnRateWarning3d6h
+        expr: |
+          (1 - sli:hotl_availability:success_ratio:rate3d) > (1 * 0.001)
+          and
+          (1 - sli:hotl_availability:success_ratio:rate6h) > (1 * 0.001)
+        for: 5m
+        labels:
+          severity: warning
+          page: "false"
+          ticket: "true"
+          slo: hotl_availability
+          team: platform
+          subsystem: hotl
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md"
+        annotations:
+          summary: "HotL availability SLO burning budget at 1x (ticket, 3d+6h windows)"
+          description: >
+            The hotl_availability SLO is burning at >=1x steady-state rate. File a ticket.
+            Error ratio (3d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=hotl_availability"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # --------------------------------------------------------
+      # SLO: outcomes_availability — 99.95% non-5xx
+      # error_budget_ratio = 0.0005
+      # --------------------------------------------------------
+
+      # Pair 1 — critical: 14.4× / 1h + 5m
+      - alert: OutcomesAvailabilityBurnRateCritical1h5m
+        expr: |
+          (1 - sli:outcomes_availability:success_ratio:rate1h) > (14.4 * 0.0005)
+          and
+          (1 - sli:outcomes_availability:success_ratio:rate5m) > (14.4 * 0.0005)
+        for: 2m
+        labels:
+          severity: critical
+          slo: outcomes_availability
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes availability SLO burning budget at 14.4x (critical, 1h+5m windows)"
+          description: >
+            The outcomes_availability SLO (99.95% non-5xx for outcomes endpoints) is burning its
+            28-day error budget at >=14.4x the steady-state rate (~47h to exhaustion).
+            Error ratio (1h window): {{ printf "%.4f" (index . "value") }}.
+            See perf budget: docs/architecture/perf-budget-wave3.md §1.2, §4.2.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_availability"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 2 — critical: 6× / 6h + 30m
+      - alert: OutcomesAvailabilityBurnRateCritical6h30m
+        expr: |
+          (1 - sli:outcomes_availability:success_ratio:rate6h) > (6 * 0.0005)
+          and
+          (1 - sli:outcomes_availability:success_ratio:rate30m) > (6 * 0.0005)
+        for: 5m
+        labels:
+          severity: critical
+          slo: outcomes_availability
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes availability SLO burning budget at 6x (critical, 6h+30m windows)"
+          description: >
+            The outcomes_availability SLO is burning at >=6x (~4.7 days to exhaustion).
+            Error ratio (6h window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_availability"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 3 — warning: 3× / 1d + 2h
+      - alert: OutcomesAvailabilityBurnRateWarning1d2h
+        expr: |
+          (1 - sli:outcomes_availability:success_ratio:rate1d) > (3 * 0.0005)
+          and
+          (1 - sli:outcomes_availability:success_ratio:rate2h) > (3 * 0.0005)
+        for: 5m
+        labels:
+          severity: warning
+          slo: outcomes_availability
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes availability SLO burning budget at 3x (warning, 1d+2h windows)"
+          description: >
+            The outcomes_availability SLO is burning at >=3x (~9.3 days to exhaustion).
+            Error ratio (1d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_availability"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
+
+      # Pair 4 — warning/ticket: 1× / 3d + 6h
+      - alert: OutcomesAvailabilityBurnRateWarning3d6h
+        expr: |
+          (1 - sli:outcomes_availability:success_ratio:rate3d) > (1 * 0.0005)
+          and
+          (1 - sli:outcomes_availability:success_ratio:rate6h) > (1 * 0.0005)
+        for: 5m
+        labels:
+          severity: warning
+          page: "false"
+          ticket: "true"
+          slo: outcomes_availability
+          team: platform
+          subsystem: outcomes
+          runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md"
+        annotations:
+          summary: "Outcomes availability SLO burning budget at 1x (ticket, 3d+6h windows)"
+          description: >
+            The outcomes_availability SLO is burning at >=1x steady-state rate. File a ticket.
+            Error ratio (3d window): {{ printf "%.4f" (index . "value") }}.
+          dashboard_url: "https://grafana.internal/d/xiaoguai-slo-burnrate?orgId=1&var-slo=outcomes_availability"
+          perf_budget_doc: "https://github.com/zw008/xiaoguai/blob/docs/perf-budget-wave3/docs/architecture/perf-budget-wave3.md"
