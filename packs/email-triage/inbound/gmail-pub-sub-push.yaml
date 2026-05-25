@@ -1,0 +1,60 @@
+# Inbound: Gmail Pub/Sub push subscription
+#
+# Google publishes new-message notifications to a Cloud Pub/Sub topic
+# when Gmail history changes. The xiaoguai-api endpoint decodes the
+# base64-encoded Pub/Sub message, fetches the full message via Gmail
+# API (messages.get), and normalizes it to the common Email schema.
+#
+# Setup:
+#   1. Create a Pub/Sub topic and subscription in GCP.
+#   2. Grant the Gmail service account pubsub.publisher on the topic.
+#   3. Set the push endpoint to:
+#        POST https://<host>/v1/email-triage/inbound/gmail/push
+#   4. Populate GMAIL_OAUTH_CREDENTIALS_PATH and GMAIL_PUBSUB_TOPIC.
+#
+# Auth: incoming Pub/Sub push uses Google-signed OIDC JWT in Authorization
+# header, verified against Google's public key endpoint.
+
+name: gmail-pub-sub-push
+kind: webhook
+
+route_id: "email-triage-gmail-${PACK_INSTANCE_ID}"
+route_prefix: /v1/email-triage/inbound/gmail/push
+
+signature:
+  algorithm: google-oidc-jwt
+  header: Authorization
+  prefix: "Bearer "
+  audience: "https://${XIAOGUAI_HOST}/v1/email-triage/inbound/gmail/push"
+
+# The Pub/Sub message body is base64-encoded JSON; decode before extracting.
+decode:
+  field: message.data
+  encoding: base64-json
+
+# Fields normalized to common Email schema after Gmail API fetch.
+# The adapter calls gmail.messages.get(id=message_id) to get the full message.
+normalize:
+  fetch_full_message: true
+  gmail_credentials_env: GMAIL_OAUTH_CREDENTIALS_PATH
+
+  field_map:
+    message_id:      "id"
+    thread_id:       "threadId"
+    sender_email:    "payload.headers[?(@.name=='From')].value | parse_email_address"
+    sender_display_name: "payload.headers[?(@.name=='From')].value | parse_display_name"
+    subject:         "payload.headers[?(@.name=='Subject')].value"
+    received_at:     "internalDate | epoch_ms_to_iso8601"
+    body:            "payload | extract_body_text"
+    thread_messages: "thread.messages | extract_thread_previews(max_chars=500)"
+    thread_message_count: "thread.messages | length"
+    headers:
+      list_unsubscribe: "payload.headers[?(@.name=='List-Unsubscribe')].value"
+      precedence:       "payload.headers[?(@.name=='Precedence')].value"
+      x_mailer:         "payload.headers[?(@.name=='X-Mailer')].value"
+      x_spam_score:     "payload.headers[?(@.name=='X-Spam-Score')].value"
+
+requires:
+  env:
+    - GMAIL_OAUTH_CREDENTIALS_PATH  # path to OAuth2 credentials JSON
+    - GMAIL_PUBSUB_TOPIC            # projects/<project>/topics/<topic>

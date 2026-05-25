@@ -1,0 +1,53 @@
+# Output: calendar invite extraction
+#
+# Only fires when draft.scheduling_request_detected == true.
+# Emits a structured calendar-invite-request event that downstream
+# integrations (Google Calendar, Microsoft Calendar, CalDAV) can
+# consume to propose meeting times or create draft invites.
+#
+# This output does NOT create calendar events automatically.
+# It emits an intent event; the user reviews and confirms.
+#
+# Event payload:
+#   - organizer:       email.sender_email
+#   - attendees:       [user.email, email.sender_email]
+#   - subject:         email.subject (used as meeting title candidate)
+#   - proposed_times:  draft.proposed_times (extracted date/time strings)
+#   - source_message:  email.message_id (for traceability)
+#
+# PII: proposed_times are extracted date/time strings only (e.g., "Friday 3pm",
+# "next Tuesday afternoon"), not body text. The event payload never
+# includes the original email body.
+
+name: calendar-invite-extract
+kind: event-emit
+
+# Event emitted to the xiaoguai event bus for calendar integrations.
+event_type: calendar.invite_request
+
+# Only fires when the plan condition is met (scheduling_request_detected=true).
+guard:
+  field: draft.scheduling_request_detected
+  operator: eq
+  value: true
+
+payload:
+  organizer:       "{{ email.sender_email }}"
+  attendees:
+    - "{{ user.email }}"
+    - "{{ email.sender_email }}"
+  title_candidate: "{{ email.subject | truncate(120) }}"
+  proposed_times:  "{{ draft.proposed_times }}"
+  source_message:  "{{ email.message_id }}"
+  priority:        "{{ score.priority }}"
+  created_at:      "{{ now | iso8601 }}"
+
+# Audit entry.
+audit:
+  table: pack_email_triage_calendar_events
+  fields:
+    - message_id
+    - subject_truncated   # first 200 chars
+    - sender_email
+    - proposed_times_count
+    - emitted_at

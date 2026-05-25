@@ -1,0 +1,138 @@
+# Pack manifest: email-triage
+#
+# Inbox prioritization pipeline:
+#   inbound email → spam-vs-newsletter-router → sender-classifier
+#   → priority-scorer → thread-summarizer → draft-generator
+#   → inbox-label-update + slack-priority-channel (P0) + drafts-folder-write
+#
+# PII handling (mandatory):
+#   The orchestrator enforces tenant=per-user scope. No agent or output
+#   adapter may log the full email body. Audit records contain only:
+#     - first 200 chars of the subject line (not the body)
+#     - classification result
+#     - priority label
+#   This is enforced via `pii_redact` settings below and in each agent.
+#
+# Runtime dependencies:
+#   - llm_provider:         any registered provider (haiku-class for scorers,
+#                           sonnet-class for draft-generator)
+#   - outcome-telemetry:    enabled; records priority decisions for fine-tuning
+#   - at least one inbound connector (gmail, graph, imap, or forward webhook)
+#   - at least one email write connector (drafts-folder-write recommended)
+
+name: email-triage
+version: "0.1.0"
+description: >
+  Inbox prioritization and draft-response pack. Classifies incoming email
+  by sender type and urgency, assigns a P0–P3 priority label, compresses
+  multi-message threads, generates three tone-variant draft replies, and
+  routes P0 alerts to Slack. Designed for single-user (per-user tenant)
+  deployments; full email bodies are never written to audit logs.
+
+depends:
+  xiaoguai-api: ">=0.12.1"
+  llm: required
+  outcome-telemetry: required
+
+# Tenant scope — enforced at orchestrator level.
+# Each user gets an isolated execution context; cross-tenant data access
+# is blocked by the scheduler before agents run.
+tenant_scope: per-user
+
+# ── Inbound connectors ──────────────────────────────────────────────────────
+inbound:
+  - ref: inbound/gmail-pub-sub-push.yaml
+  - ref: inbound/microsoft-graph-subscription.yaml
+  - ref: inbound/imap-poll.yaml
+  - ref: inbound/email-forward-webhook.yaml
+
+# ── Agent definitions ───────────────────────────────────────────────────────
+agents:
+  - ref: agents/spam-vs-newsletter-router.yaml
+  - ref: agents/sender-classifier.yaml
+  - ref: agents/priority-scorer.yaml
+  - ref: agents/thread-summarizer.yaml
+  - ref: agents/draft-generator.yaml
+
+# ── Output adapters ─────────────────────────────────────────────────────────
+outputs:
+  - ref: outputs/inbox-label-update.yaml
+  - ref: outputs/slack-priority-channel.yaml
+  - ref: outputs/drafts-folder-write.yaml
+  - ref: outputs/calendar-invite-extract.yaml
+
+# ── Execution plan ───────────────────────────────────────────────────────────
+# spam-vs-newsletter-router runs first; if it marks the email as spam or
+# newsletter the plan short-circuits (no drafts generated).
+plan:
+  - id: route
+    agent: spam-vs-newsletter-router
+    description: "Classify email as actionable / newsletter / spam. Short-circuits if not actionable."
+
+  - id: classify
+    agent: sender-classifier
+    description: "Classify sender as internal / customer / vendor / cold / automated."
+    deps: [route]
+    condition: "route.result == 'actionable'"
+
+  - id: score
+    agent: priority-scorer
+    description: "Assign P0–P3 based on sender VIP status, urgency keywords, and SLA windows."
+    deps: [classify]
+
+  - id: summarize
+    agent: thread-summarizer
+    description: "Compress multi-message thread into a structured summary card."
+    deps: [score]
+    condition: "context.thread_message_count > 1"
+
+  - id: draft
+    agent: draft-generator
+    description: "Generate three tone-variant draft replies (formal / casual / brief)."
+    deps: [score]
+
+  - id: label
+    output: inbox-label-update
+    description: "Apply priority label (P0–P3) and classification tag to the inbox message."
+    deps: [score]
+
+  - id: slack_alert
+    output: slack-priority-channel
+    description: "Post P0 email summary to the configured Slack channel."
+    deps: [score]
+    condition: "score.priority == 'P0'"
+
+  - id: write_draft
+    output: drafts-folder-write
+    description: "Save all three draft variants to the drafts folder."
+    deps: [draft]
+
+  - id: extract_calendar
+    output: calendar-invite-extract
+    description: "Extract scheduling requests and emit calendar-invite events."
+    deps: [draft]
+    condition: "draft.scheduling_request_detected == true"
+
+# ── Resource requirements ────────────────────────────────────────────────────
+requires:
+  llm: true
+  outcome_telemetry: true
+  env:
+    - EMAIL_TRIAGE_VIP_LIST_PATH   # path to per-user JSON VIP sender list
+    - EMAIL_TRIAGE_SLA_CONFIG_PATH # path to per-user SLA window config
+
+# ── PII redaction policy (orchestrator-enforced) ─────────────────────────────
+pii_redact:
+  # Audit records must never contain full email body.
+  # Only the fields listed here may appear in audit output.
+  audit_allowed_fields:
+    - message_id
+    - subject_truncated     # first 200 chars of subject only
+    - sender_email          # sender address (not display name)
+    - received_at
+    - thread_id
+    - priority              # P0–P3
+    - sender_class          # internal|customer|vendor|cold|automated
+    - route_result          # actionable|newsletter|spam
+  # Agents must reference this policy; violations surface as orchestrator errors.
+  policy_ref: pii_redact_v1
