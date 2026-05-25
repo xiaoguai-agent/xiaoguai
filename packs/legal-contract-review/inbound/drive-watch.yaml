@@ -1,0 +1,66 @@
+---
+# Google Drive file-watch inbound source.
+#
+# Uses the Google Drive Push Notifications API (drive.files.watch) to receive
+# a POST when a file in the watched folder changes.  The adapter then fetches
+# the file content via the Drive API and normalises it to ContractDocument.
+#
+# Setup:
+#   1. Service account with roles/drive.readonly on the target folder.
+#   2. Run: xiaoguai contracts drive-watch register --folder-id <FOLDER_ID>
+#      → registers a channel and stores the channel token in GDRIVE_WATCH_SECRET.
+#   3. Drive will POST to https://<host>/v1/contracts/inbound/drive/{route_id}
+#      on every file change event.
+#
+# Mounting: POST /v1/contracts/inbound/drive/{route_id}
+
+source: google-drive
+route_prefix: /v1/contracts/inbound/drive
+
+# Google Drive sends X-Goog-Channel-Token for authentication.
+# The adapter verifies the token matches GDRIVE_WATCH_SECRET.
+signature:
+  algorithm: token
+  header: X-Goog-Channel-Token
+  secret_env: GDRIVE_WATCH_SECRET
+
+# Watch channel configuration (populated at registration time).
+# Override with GDRIVE_FOLDER_ID env var.
+watch:
+  folder_id: ${GDRIVE_FOLDER_ID}
+  # Only trigger on these MIME types.
+  mime_types:
+    - application/pdf
+    - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+    - application/vnd.google-apps.document
+  # Ignore files matching these name patterns (drafts, templates, etc.)
+  exclude_name_patterns:
+    - "^TEMPLATE_"
+    - "^DRAFT_"
+    - "~\\$"   # Word auto-save lock files
+
+# Fields extracted / derived from the Drive change notification.
+extract:
+  document_id:   "$.id"                     # Drive file ID
+  source:        "_const:google-drive"
+  source_url:
+    # Drive export URL — PDF for native Docs, direct download otherwise.
+    template: "https://www.googleapis.com/drive/v3/files/{{ document_id }}/export?mimeType=application/pdf"
+  occurred_at:   "$.modifiedTime"
+  # contract_type and parties are inferred by clause-extractor from document content.
+  contract_type: "_inferred"
+  parties:       "_inferred"
+
+# Events that do not carry a file body are acknowledged and discarded.
+ignored_change_types:
+  - remove
+  - trash
+
+# Sample payload.
+sample_payload: |
+  {
+    "kind": "drive#change",
+    "type": "file",
+    "id": "1A2B3C4D5E6F",
+    "modifiedTime": "2026-05-25T11:00:00.000Z"
+  }

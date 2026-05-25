@@ -1,0 +1,71 @@
+---
+# DocuSign Connect webhook source.
+#
+# DocuSign delivers envelope status change events via POST to the configured
+# listener URL.  Only "completed" envelopes (all parties signed) are forwarded
+# to the contract review pipeline; other statuses are acknowledged and discarded.
+#
+# Setup:
+#   1. DocuSign Admin → Connect → Add Configuration
+#   2. URL: https://<host>/v1/contracts/inbound/docusign/{route_id}
+#   3. Trigger events: envelope-completed, envelope-declined, envelope-voided
+#   4. Set DOCUSIGN_HMAC_SECRET to the shared secret configured in Connect.
+#
+# Mounting: POST /v1/contracts/inbound/docusign/{route_id}
+
+source: docusign
+route_prefix: /v1/contracts/inbound/docusign
+
+# HMAC signature verification (DocuSign Connect HMAC-SHA256).
+# Header: X-DocuSign-Signature-1
+# Secret: DOCUSIGN_HMAC_SECRET env var.
+signature:
+  algorithm: hmac-sha256
+  header: X-DocuSign-Signature-1
+  secret_env: DOCUSIGN_HMAC_SECRET
+
+# Only process these envelope statuses.
+accepted_statuses:
+  - completed   # all parties signed — primary trigger
+  - declined    # counter-party declined — archive + notify only
+  - voided      # envelope voided — archive + notify only
+
+# Fields extracted from the DocuSign Connect payload and mapped to
+# the common ContractDocument schema.
+extract:
+  document_id:     "$.envelopeId"
+  contract_type:   "$.envelopeSummary.emailSubject"   # heuristic; overridable
+  source:          "_const:docusign"
+  status:          "$.envelopeSummary.status"
+  parties:
+    json_path:     "$.envelopeSummary.recipients.signers[*].name"
+    collect: list
+  source_url:
+    # DocuSign REST API URL to download the combined PDF.
+    template: "https://{{ docusign_base_url }}/restapi/v2.1/accounts/{{ account_id }}/envelopes/{{ document_id }}/documents/combined"
+  occurred_at:    "$.envelopeSummary.completedDateTime"
+
+# Events to acknowledge (HTTP 200) without forwarding to the pipeline.
+ignored_statuses:
+  - sent
+  - delivered
+  - created
+  - authoritativecopy
+  - transfercompleted
+
+# Sample payload (subset — for integration tests).
+sample_payload: |
+  {
+    "envelopeId": "env-00000000-0000-0000-0000-000000000001",
+    "envelopeSummary": {
+      "status": "completed",
+      "emailSubject": "NDA — ACME Corp and Counterparty Inc",
+      "completedDateTime": "2026-05-25T10:30:00.000Z",
+      "recipients": {
+        "signers": [
+          {"name": "ACME Corp"},
+          {"name": "Counterparty Inc"}
+        ]
+      }
+    }
+  }

@@ -1,0 +1,84 @@
+---
+# Slack legal-review output adapter.
+#
+# Posts a Block Kit message to the configured Slack channel summarising the
+# risk assessment.  Message format:
+#   - Header block: risk tier badge + contract title
+#   - Section: executive summary (from RiskAssessment.executive_summary)
+#   - Fields: must-fix count, should-fix count, recommended action
+#   - Actions: "Open Jira ticket" button (links to Jira output), "Archive" link
+#
+# For CRITICAL-tier contracts, also sends a direct mention to the on-call
+# legal counsel (LEGAL_ONCALL_SLACK_USER env var).
+
+output: slack-legal-review
+
+slack:
+  webhook_url: ${LEGAL_SLACK_WEBHOOK_URL}
+  channel: ${LEGAL_SLACK_CHANNEL:-#legal-contract-review}
+
+  # Tier-to-emoji mapping for the header badge.
+  tier_emoji:
+    CRITICAL: ":rotating_light:"
+    HIGH:     ":warning:"
+    MEDIUM:   ":large_yellow_circle:"
+    LOW:      ":white_check_mark:"
+
+  # Block Kit message template (rendered with Jinja2-like syntax).
+  message_template: |
+    {
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "{{ tier_emoji[risk.overall_tier] }} [{{ risk.overall_tier }}] Contract Review: {{ contract.document_id | truncate(60) }}"
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "{{ risk.executive_summary | truncate(300) }}"
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {"type": "mrkdwn", "text": "*Contract type:*\n{{ contract.contract_type | upper }}"},
+            {"type": "mrkdwn", "text": "*Parties:*\n{{ contract.parties | join(' / ') | truncate(80) }}"},
+            {"type": "mrkdwn", "text": "*Must-fix items:*\n{{ risk.must_fix_count }}"},
+            {"type": "mrkdwn", "text": "*Should-fix items:*\n{{ risk.should_fix_count }}"},
+            {"type": "mrkdwn", "text": "*Recommended action:*\n`{{ risk.recommended_action }}`"},
+            {"type": "mrkdwn", "text": "*Missing clauses:*\n{{ risk.missing_clauses | join(', ') | default('none') }}"}
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "text": {"type": "plain_text", "text": "Open Jira Ticket"},
+              "url": "{{ jira_ticket_url }}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "text": {"type": "plain_text", "text": "View Archive"},
+              "url": "{{ s3_archive_url }}"
+            }
+          ]
+        }
+      ]
+    }
+
+# CRITICAL-tier escalation: DM the on-call legal counsel.
+escalation:
+  trigger_tier: CRITICAL
+  dm_user_env: LEGAL_ONCALL_SLACK_USER
+  dm_message_template: |
+    :rotating_light: *CRITICAL contract requires your immediate review.*
+    Document: {{ contract.document_id }}
+    Parties: {{ contract.parties | join(' / ') | truncate(100) }}
+    Reason: {{ risk.tier_rationale }}
+    Jira: {{ jira_ticket_url }}
