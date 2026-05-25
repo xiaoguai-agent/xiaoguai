@@ -1,0 +1,86 @@
+# Output connector — MLflow tag update
+# ---------------------------------------------------------------------------
+# Writes drift classification and retrain job outcomes back to MLflow
+# as run tags and registered model version tags. This keeps MLflow as the
+# source-of-truth for model metadata, and makes drift history queryable in
+# the MLflow UI and via the MLflow API.
+#
+# Tags written:
+#   - xiaoguai.drift_type        (covariate | label | concept | data_quality)
+#   - xiaoguai.drift_severity    (low | medium | high | critical)
+#   - xiaoguai.drift_detected_at (ISO-8601)
+#   - xiaoguai.retrain_job_id    (UUID)
+#   - xiaoguai.retrain_outcome   (improved | neutral | regressed | unknown)
+#   - xiaoguai.promoted          (true | false)
+# ---------------------------------------------------------------------------
+
+output: mlflow-tag-update
+
+mlflow:
+  # MLflow tracking server URI.
+  tracking_uri: ${MLFLOW_TRACKING_URI:-http://localhost:5000}
+  # MLflow credentials (if the server requires auth).
+  username: ${MLFLOW_TRACKING_USERNAME}
+  password: ${MLFLOW_TRACKING_PASSWORD}
+
+# --------------------------------------------------------------------------
+# Tag write rules
+# --------------------------------------------------------------------------
+tag_rules:
+  # On drift classification: tag the currently-registered model version
+  - trigger: mlops.drift_classified
+    target: registered_model_version
+    lookup:
+      model_name:    "{{ model_name }}"
+      model_version: "{{ model_version }}"
+    tags:
+      "xiaoguai.drift_type":        "{{ drift_type }}"
+      "xiaoguai.drift_severity":    "{{ drift_severity }}"
+      "xiaoguai.drift_detected_at": "{{ detected_at }}"
+      "xiaoguai.drift_signal_id":   "{{ signal_id }}"
+      "xiaoguai.classifier_confidence": "{{ confidence }}"
+
+  # On retrain job creation: tag the trigger run with job ID
+  - trigger: mlops.retrain_job_created
+    target: run
+    lookup:
+      run_id: "{{ trigger_run_id }}"   # populated from inbound mlflow-event adapter
+    tags:
+      "xiaoguai.retrain_job_id":     "{{ job_id }}"
+      "xiaoguai.recommendation":     "{{ recommendation }}"
+
+  # On retrain succeeded / model promoted: tag the new champion version
+  - trigger: mlops.model_promoted
+    target: registered_model_version
+    lookup:
+      model_name:    "{{ model_name }}"
+      model_version: "{{ candidate_version }}"
+    tags:
+      "xiaoguai.promoted":           "true"
+      "xiaoguai.promoted_at":        "{{ promoted_at }}"
+      "xiaoguai.retrain_job_id":     "{{ job_id }}"
+      "xiaoguai.retrain_outcome":    "{{ outcome }}"
+      "xiaoguai.shadow_hours":       "{{ shadow_hours }}"
+      "xiaoguai.pass_rate_delta_pp": "{{ pass_rate_delta_pp }}"
+
+  # On retrain failed: tag the candidate run
+  - trigger: mlops.retrain_failed
+    target: registered_model_version
+    lookup:
+      model_name:    "{{ model_name }}"
+      model_version: "{{ candidate_version | default('unknown') }}"
+    tags:
+      "xiaoguai.retrain_failed":     "true"
+      "xiaoguai.failure_reason":     "{{ failure_reason | truncate(255) }}"
+      "xiaoguai.retrain_job_id":     "{{ job_id }}"
+
+# --------------------------------------------------------------------------
+# Error handling — tag write failures are non-blocking
+# --------------------------------------------------------------------------
+on_error:
+  action: log_and_continue
+  # Tag write failures do not block the retrain workflow.
+  notify_channel: "${ML_OPS_OPS_CHANNEL:-admin_ui}"
+  message: >
+    mlflow-tag-update: failed to write tags for {{ model_name }} {{ model_version }}.
+    Error: {{ error }}. The retrain workflow continues; tags can be written manually.

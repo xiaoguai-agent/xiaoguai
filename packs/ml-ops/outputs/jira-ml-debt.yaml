@@ -1,0 +1,105 @@
+# Output connector — Jira ml-debt project
+# ---------------------------------------------------------------------------
+# Creates or updates Jira issues in the ML Debt project for drift signals
+# and failed eval suites. Links the Jira issue to the retrain_job row and
+# keeps it in sync as the job progresses.
+#
+# Issue lifecycle:
+#   drift_classified (high/critical) → create issue (status: Open)
+#   retrain_approved                 → transition to In Progress
+#   retrain_succeeded                → transition to Done
+#   retrain_failed                   → transition to Blocked + add comment
+#   eval_summary (FAILING)           → create or update issue
+# ---------------------------------------------------------------------------
+
+output: jira-ml-debt
+
+jira:
+  # Jira Cloud base URL and auth.
+  base_url: ${JIRA_BASE_URL}
+  auth:
+    kind: api_token
+    email:     ${JIRA_EMAIL}
+    api_token: ${JIRA_API_TOKEN}
+  project_key: ${JIRA_ML_DEBT_PROJECT_KEY:-MLDEBT}
+  issue_type: Task
+
+# --------------------------------------------------------------------------
+# Issue creation template (rendered for high/critical drift signals)
+# --------------------------------------------------------------------------
+create_issue:
+  condition: "drift_severity IN ('high', 'critical') OR overall_status == 'FAILING'"
+  summary: "[ML-Drift] {{ drift_type | title }} drift on {{ model_name }} ({{ drift_severity | upper }})"
+  description: |
+    h2. Drift Signal
+
+    | Field | Value |
+    | Model | {{ model_name }} ({{ model_version }}) |
+    | Drift type | {{ drift_type }} |
+    | Severity | {{ drift_severity }} |
+    | Signal source | {{ signal_source }} |
+    | Detected at | {{ detected_at }} |
+
+    h2. Evidence
+
+    {% for item in primary_evidence %}
+    * {{ item }}
+    {% endfor %}
+
+    h2. Recommendation
+
+    *{{ recommendation | upper }}* — {{ rationale }}
+
+    [View in Admin UI|{{ admin_url }}/ml-ops/drift/{{ signal_id }}]
+    [Retrain Job|{{ admin_url }}/ml-ops/retrain/{{ job_id }}]
+
+  labels:
+    - ml-drift
+    - "drift-{{ drift_type }}"
+    - "severity-{{ drift_severity }}"
+    - "model-{{ model_name | replace(' ', '-') | lower }}"
+  priority:
+    map:
+      critical: Highest
+      high:     High
+      medium:   Medium
+      low:      Low
+  # Custom field for model name (configure JIRA_CUSTOM_FIELD_MODEL_NAME in env)
+  custom_fields:
+    "{{ JIRA_CUSTOM_FIELD_MODEL_NAME | default('customfield_10100') }}":
+      value: "{{ model_name }}"
+
+# --------------------------------------------------------------------------
+# Issue update rules (keep issue in sync with job lifecycle)
+# --------------------------------------------------------------------------
+update_issue:
+  # Find existing issue by drift signal ID stored in a custom field or label
+  lookup_by: "labels = 'signal-{{ signal_id }}'"
+
+  transitions:
+    retrain_approved:
+      transition_name: "In Progress"
+      comment: >
+        Retrain job approved by {{ approved_by }} at {{ approved_at }}.
+        Shadow deployment starting with {{ shadow_traffic_pct }}% traffic split.
+
+    retrain_succeeded:
+      transition_name: "Done"
+      comment: >
+        Retrain succeeded. New champion: {{ candidate_version }}.
+        Promoted at {{ promoted_at }}.
+
+    retrain_failed:
+      transition_name: "Blocked"
+      comment: >
+        Retrain failed: {{ failure_reason }}.
+        Manual investigation required.
+
+# --------------------------------------------------------------------------
+# Deduplication — one open Jira issue per model + drift_type at a time
+# --------------------------------------------------------------------------
+dedup:
+  key: "{model_name}:{drift_type}"
+  # Re-open or add a comment to an existing issue rather than creating a duplicate
+  existing_issue_action: add_comment
+  reopen_if_closed: true

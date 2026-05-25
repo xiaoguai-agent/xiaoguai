@@ -1,0 +1,218 @@
+# Agent definition — drift-classifier
+# ---------------------------------------------------------------------------
+# The first agent in the ml-ops plan. It receives a raw drift signal
+# (from any watch, anomaly spec, or inbound adapter) and classifies it
+# into one of three canonical drift types:
+#
+#   covariate  — input feature distribution has shifted (X changes, P(Y|X) stable)
+#   label      — output/ground-truth distribution has shifted (P(Y) changes)
+#   concept    — the relationship between inputs and outputs has changed
+#                (P(Y|X) changes), without a detectable input shift
+#
+# A fourth type — data_quality — is used when the signal is better explained
+# by a pipeline defect than by genuine drift.
+#
+# Classification logic
+# --------------------
+# 1. Feature stats available + PSI > threshold, prediction stable
+#    → covariate drift (inputs shifted but model still calibrated)
+# 2. Label rate / prediction histogram drifted, feature stats stable
+#    → label drift (ground truth or target concept changed)
+# 3. Feature stats stable, prediction drifted, eval accuracy dropped
+#    → concept drift (model's learned boundary no longer matches reality)
+# 4. Data quality score dropped significantly
+#    → data_quality (upstream pipeline issue; escalate to data engineers)
+# ---------------------------------------------------------------------------
+
+name: drift-classifier
+version: "0.1.0"
+description: >
+  Classifies incoming drift signals as covariate, label, concept, or
+  data_quality drift. Writes classification back to mlops_drift_signals
+  and emits a typed drift event for the retrain-recommender.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: mlops.feature_distribution_drift
+    source: feature-distribution-drift
+  - event: mlops.prediction_distribution_shift
+    source: prediction-distribution-shift
+  - event: mlops.data_quality_score_drop
+    source: data-quality-score-drop
+  # Also triggered directly by inbound adapters that produce raw drift signals
+  - event: mlops.inbound_drift_signal
+    source: "*"
+
+# --------------------------------------------------------------------------
+# LLM settings
+# --------------------------------------------------------------------------
+llm:
+  model: ${DRIFT_CLASSIFIER_LLM_MODEL:-default}
+  temperature: 0.1    # classification should be deterministic
+  max_tokens: 2048
+
+# --------------------------------------------------------------------------
+# Context-gathering steps
+# --------------------------------------------------------------------------
+context_steps:
+  - id: feature_stats
+    description: "Recent feature PSI scores for the model"
+    tool: sql
+    query: |
+      SELECT metric_name, metric_value, stat_context, created_at
+      FROM mlops_drift_signals
+      WHERE tenant_id   = '{tenant_id}'
+        AND model_name  = '{model_name}'
+        AND signal_source IN ('feature-distribution-drift', 'evidently-report')
+        AND created_at >= NOW() - INTERVAL '24 hours'
+      ORDER BY created_at DESC
+      LIMIT 20
+
+  - id: eval_trend
+    description: "Pass rate trend for the last 5 eval runs"
+    tool: sql
+    query: |
+      SELECT eval_type, suite_name, pass_rate, run_finished_at
+      FROM mlops_eval_runs
+      WHERE tenant_id    = '{tenant_id}'
+        AND model_name   = '{model_name}'
+      ORDER BY run_finished_at DESC
+      LIMIT 10
+
+  - id: prediction_histogram
+    description: "Recent prediction distribution anomaly signals"
+    tool: sql
+    query: |
+      SELECT metric_name, metric_value, stat_context, created_at
+      FROM mlops_drift_signals
+      WHERE tenant_id   = '{tenant_id}'
+        AND model_name  = '{model_name}'
+        AND signal_source = 'prediction-distribution-shift'
+        AND created_at >= NOW() - INTERVAL '48 hours'
+      ORDER BY created_at DESC
+      LIMIT 5
+
+  - id: data_quality_recent
+    description: "Data quality score for the last 3 batches"
+    tool: sql
+    query: |
+      SELECT metric_name, metric_value, stat_context, created_at
+      FROM mlops_drift_signals
+      WHERE tenant_id   = '{tenant_id}'
+        AND model_name  = '{model_name}'
+        AND signal_source = 'data-quality-score-drop'
+        AND created_at >= NOW() - INTERVAL '72 hours'
+      ORDER BY created_at DESC
+      LIMIT 5
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are an ML observability expert specialising in model drift classification.
+  Your job is to classify an incoming drift signal into exactly one of:
+
+  - covariate    : Input feature distribution has shifted (P(X) changed) but
+                   the conditional P(Y|X) is likely still valid. The model
+                   may still work correctly on the new inputs.
+                   Key signal: high feature PSI with stable prediction accuracy.
+
+  - label        : The marginal output/ground-truth distribution P(Y) has
+                   shifted. This often means the target concept has evolved
+                   (e.g. fraud patterns changed, new product category launched).
+                   Key signal: prediction histogram shifted, feature PSI low,
+                   eval accuracy declined on recent ground-truth labels.
+
+  - concept      : The relationship P(Y|X) has changed without detectable
+                   input shift — the model's decision boundary no longer
+                   matches reality. The hardest type to detect without labels.
+                   Key signal: stable feature PSI, shifted prediction histogram,
+                   declining eval accuracy (especially on capability evals).
+
+  - data_quality : The signal is better explained by an upstream pipeline
+                   defect (missing values, schema change, truncated batch)
+                   than by genuine distributional drift. Retrain will NOT fix
+                   this; escalate to data engineers.
+                   Key signal: data quality score drop, or extreme PSI spikes
+                   on many features simultaneously (consistent with a schema
+                   change or imputation bug).
+
+  Rules:
+  - If signals point to multiple types, choose the PRIMARY cause.
+  - Be conservative: prefer data_quality over drift types when the pattern
+    is consistent with a pipeline defect.
+  - Always cite the specific metrics that drove your classification.
+  - Output ONLY valid JSON matching the DriftClassification schema.
+
+  DriftClassification schema:
+  {
+    "drift_type": "covariate | label | concept | data_quality",
+    "drift_severity": "low | medium | high | critical",
+    "confidence": "high | medium | low",
+    "primary_evidence": ["<metric_name>: <value> — <interpretation>"],
+    "secondary_evidence": ["<metric_name>: <value> — <interpretation>"],
+    "counter_evidence": ["<why other drift types are less likely>"],
+    "recommended_next_step": "<brief recommendation for retrain-recommender>",
+    "notes": "<any caveats or data limitations>"
+  }
+
+# --------------------------------------------------------------------------
+# User prompt
+# --------------------------------------------------------------------------
+user_prompt: |
+  ## Incoming drift signal
+  - Tenant: {{ signal.tenant_id }}
+  - Model: {{ signal.model_name }} (version: {{ signal.model_version }})
+  - Signal source: {{ signal.signal_source }}
+  - Metric: {{ signal.metric_name }} = {{ signal.metric_value }}
+  - Statistical context: {{ signal.stat_context | tojson }}
+  - Detected at: {{ signal.created_at }}
+
+  ## Feature PSI statistics (last 24 h)
+  {{ context.feature_stats | truncate(1500) }}
+
+  ## Eval pass-rate trend (last 10 runs)
+  {{ context.eval_trend | truncate(1000) }}
+
+  ## Prediction histogram anomalies (last 48 h)
+  {{ context.prediction_histogram | truncate(800) }}
+
+  ## Data quality signals (last 72 h)
+  {{ context.data_quality_recent | truncate(800) }}
+
+  Classify this drift signal now.
+
+# --------------------------------------------------------------------------
+# Post-processing — write classification back to DB
+# --------------------------------------------------------------------------
+tools:
+  - name: write_classification
+    description: >
+      Write the drift classification back to mlops_drift_signals.
+      Called after the LLM produces its DriftClassification JSON.
+    kind: sql
+    query: |
+      UPDATE mlops_drift_signals
+      SET drift_type       = '{drift_type}',
+          drift_severity   = '{drift_severity}',
+          classifier_notes = '{notes}',
+          updated_at       = NOW()
+      WHERE id = '{signal_id}'
+
+# --------------------------------------------------------------------------
+# Output event (for retrain-recommender)
+# --------------------------------------------------------------------------
+output_event:
+  kind: mlops.drift_classified
+  payload_mapping:
+    signal_id:          "$.signal_id"
+    tenant_id:          "$.tenant_id"
+    model_name:         "$.model_name"
+    model_version:      "$.model_version"
+    drift_type:         "$.llm_output.drift_type"
+    drift_severity:     "$.llm_output.drift_severity"
+    confidence:         "$.llm_output.confidence"
+    primary_evidence:   "$.llm_output.primary_evidence"
+    recommended_next_step: "$.llm_output.recommended_next_step"

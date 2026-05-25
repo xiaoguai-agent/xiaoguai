@@ -1,0 +1,143 @@
+# ML-Ops Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# Continuous model health: detects feature/label/concept drift, aggregates
+# eval suite results, recommends retrain or alert-only, and orchestrates
+# shadow deployments.
+#
+# Install:   xiaoguai pack install packs/ml-ops/
+# Requires:  xiaoguai >= v1.3.1-prep (features: anomaly, watch, llm,
+#            outcome-telemetry)
+# ---------------------------------------------------------------------------
+
+name: ml-ops
+version: "0.1.0"
+description: >
+  Monitors deployed ML models for drift and quality degradation, aggregates
+  evaluation suite results, and triggers retrain workflows or shadow
+  deployments when thresholds are breached. All retrain dispatches are
+  HOTL-gated — no autonomous model promotion without human approval.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - anomaly            # F2: AnomalySpec + rolling-window alerting
+    - watch              # F1: WatchSpec + WatchEvent bus
+    - llm                # LLM backend for classifier + summariser agents
+    - outcome-telemetry  # F3: records retrain outcomes for future improvement
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_mlops_state.sql
+
+# --------------------------------------------------------------------------
+# Watch specs
+# --------------------------------------------------------------------------
+watches:
+  - path: watches/feature-distribution-drift.yaml
+  - path: watches/eval-suite-pass-rate.yaml
+
+# --------------------------------------------------------------------------
+# Anomaly specs
+# --------------------------------------------------------------------------
+anomalies:
+  - path: anomalies/prediction-distribution-shift.yaml
+  - path: anomalies/data-quality-score-drop.yaml
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/drift-classifier.yaml
+  - path: agents/retrain-recommender.yaml
+  - path: agents/eval-result-summarizer.yaml
+  - path: agents/shadow-deployment-orchestrator.yaml
+
+# --------------------------------------------------------------------------
+# Inbound event adapters
+# --------------------------------------------------------------------------
+inbound:
+  - path: inbound/mlflow-event.yaml
+  - path: inbound/sagemaker-monitor-alarm.yaml
+  - path: inbound/evidently-report.yaml
+  - path: inbound/vertex-ai-pipeline-event.yaml
+
+# --------------------------------------------------------------------------
+# Output connectors
+# --------------------------------------------------------------------------
+outputs:
+  - path: outputs/slack-ml-platform.yaml
+  - path: outputs/jira-ml-debt.yaml
+  - path: outputs/mlflow-tag-update.yaml
+  - path: outputs/pagerduty-on-drift.yaml
+
+# --------------------------------------------------------------------------
+# Execution plan
+# --------------------------------------------------------------------------
+plan:
+  # Step 1: classify the drift type
+  - id: classify_drift
+    agent: drift-classifier
+    description: >
+      Receives a drift signal (from watch or inbound adapter) and classifies
+      it as covariate, label, or concept drift using statistical fingerprints.
+
+  # Step 2: decide retrain vs alert-only
+  - id: recommend_action
+    agent: retrain-recommender
+    description: >
+      Uses drift classification + eval pass-rate trend to recommend retrain,
+      shadow-deploy, or alert-only.
+    deps: [classify_drift]
+
+  # Step 3a (parallel): summarise eval results
+  - id: summarize_evals
+    agent: eval-result-summarizer
+    description: >
+      Aggregates regression and capability eval results into a structured
+      eval-summary-card for human review.
+    deps: [classify_drift]
+
+  # Step 3b (parallel): post outputs
+  - id: emit_outputs
+    description: "Fan-out to Slack, Jira, MLflow, PagerDuty as configured."
+    deps: [recommend_action, summarize_evals]
+
+# --------------------------------------------------------------------------
+# Configuration keys (operators override in pack config or env)
+# --------------------------------------------------------------------------
+config:
+  drift_classifier:
+    min_samples_for_ks: 100        # minimum samples before KS-test fires
+    covariate_p_value_threshold: 0.05
+    label_drift_window_days: 7
+  retrain_recommender:
+    auto_retrain_sigma_threshold: 3.0  # z-score above which retrain is forced
+    eval_pass_rate_floor: 0.85         # below this, always recommend retrain
+  shadow_deployment:
+    traffic_split_pct: 10          # percentage of live traffic to shadow model
+    min_shadow_hours: 24           # minimum shadow run before promotion
+  outcome_telemetry:
+    feedback_table: mlops_retrain_jobs
+
+# --------------------------------------------------------------------------
+# Schema
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "mlops_"
+  namespace: "ml_ops"
+
+# --------------------------------------------------------------------------
+# Deferred / not-yet-implemented
+# --------------------------------------------------------------------------
+# - Weights & Biases inbound adapter (wandb run webhook)
+# - Automated champion/challenger tournament (requires xiaoguai-pilot >= 0.3)
+# - Per-feature importance drift (SHAP-based; waiting on xiaoguai-explain)
+# See docs/plans/ml-ops-backlog.md for prioritisation.
