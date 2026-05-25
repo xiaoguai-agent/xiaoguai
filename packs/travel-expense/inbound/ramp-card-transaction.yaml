@@ -1,0 +1,60 @@
+# Inbound adapter — Ramp card transaction webhook
+# ---------------------------------------------------------------------------
+# Receives Ramp real-time transaction events for corporate card spend.
+# Ramp's webhook delivers transaction data including the memo set by the
+# cardholder and any receipt already matched by Ramp's AI (receipt_url).
+#
+# Configuration:
+#   RAMP_WEBHOOK_SECRET — HMAC-SHA256 secret
+#   RAMP_CLIENT_ID, RAMP_CLIENT_SECRET — OAuth2 for fetching details
+#
+# Ramp docs: https://docs.ramp.com/developer-guide/webhooks
+# ---------------------------------------------------------------------------
+
+name: ramp-card-transaction
+kind: webhook
+version: "1.0.0"
+
+endpoint:
+  path: "/inbound/travel-expense/ramp"
+  method: POST
+  content_type: "application/json"
+
+auth:
+  kind: hmac_sha256
+  secret_env: RAMP_WEBHOOK_SECRET
+  header: "X-Ramp-Signature"
+
+filter:
+  field: "$.type"
+  value: "TRANSACTION_COMPLETED"
+
+field_mapping:
+  tenant_id: "$.data.business_id"
+  employee_id: "$.data.user_id"
+  amount: "$.data.amount"         # Ramp amounts in cents (integer)
+  amount_divisor: 100
+  currency: "$.data.currency_code"
+  merchant: "$.data.merchant_name"
+  expense_date: "$.data.user_transaction_time"
+  description: "$.data.memo"
+  receipt_path: "$.data.receipts[0].receipt_url"   # null if not yet uploaded
+  source_reference_id: "$.data.id"
+  category: "$.data.accounting_category_name"      # may be null
+
+category_map:
+  "Meals": "meals"
+  "Travel - Lodging": "accommodation"
+  "Travel - Airfare": "airfare"
+  "Travel - Ground": "transport"
+  "Software": "equipment_purchase"
+  "Hardware": "equipment_purchase"
+  "Conference": "conference_registration"
+  "Entertainment": "entertainment"
+
+# Ramp may send the receipt_url inline; if so, no additional receipt fetch needed
+receipt_inline: true
+
+emits:
+  - event: te.receipt_received
+    source: ramp

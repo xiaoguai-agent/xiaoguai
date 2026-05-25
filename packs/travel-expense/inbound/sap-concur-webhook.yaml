@@ -1,0 +1,59 @@
+# Inbound adapter — SAP Concur webhook
+# ---------------------------------------------------------------------------
+# Receives SAP Concur expense report status change events.
+# Concur sends an OAuth2-protected webhook on report submission.
+#
+# Configuration:
+#   CONCUR_CLIENT_ID, CONCUR_CLIENT_SECRET — OAuth2 app credentials
+#   CONCUR_COMPANY_UUID — identifies the tenant in Concur
+#
+# Concur docs: https://developer.concur.com/api-reference/expense/expense-report/
+# ---------------------------------------------------------------------------
+
+name: sap-concur-webhook
+kind: webhook
+version: "1.0.0"
+
+endpoint:
+  path: "/inbound/travel-expense/concur"
+  method: POST
+  content_type: "application/json"
+
+auth:
+  kind: oauth2_jwt
+  jwks_url: "https://us.api.concursolutions.com/.well-known/jwks.json"
+  audience_env: CONCUR_CLIENT_ID
+
+field_mapping:
+  tenant_id: "$.CompanyUUID"
+  employee_id: "$.Report.OwnerLoginID"
+  source_reference_id: "$.Report.ID"
+  # Individual line items fetched via Concur API after webhook receipt
+  # (webhook carries report-level event, not line-item detail)
+  fetch_detail:
+    kind: http_get
+    url: "https://www.concursolutions.com/api/v3.0/expense/reports/{source_reference_id}/expenses"
+    auth: oauth2
+    map:
+      amount: "$.Items[*].TransactionAmount"
+      currency: "$.Items[*].TransactionCurrencyCode"
+      category: "$.Items[*].ExpenseTypeName"
+      merchant: "$.Items[*].VendorDescription"
+      expense_date: "$.Items[*].TransactionDate"
+      description: "$.Items[*].Comment"
+      receipt_path: "$.Items[*].ReceiptImageID"
+
+category_map:
+  "Business Meals": "meals"
+  "Lodging": "accommodation"
+  "Airfare": "airfare"
+  "Ground Transportation": "transport"
+  "Conference/Training": "conference_registration"
+  "Office Supplies": "equipment_purchase"
+  "International Travel": "international_travel"
+  "Entertainment": "entertainment"
+  "Other": "other"
+
+emits:
+  - event: te.receipt_received
+    source: sap_concur
