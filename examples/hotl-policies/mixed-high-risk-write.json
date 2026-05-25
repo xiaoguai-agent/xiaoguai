@@ -1,0 +1,8 @@
+{
+  "tenant_id": "018e8f2c-1a2b-7000-8000-000000000003",
+  "scope": "high_risk_write",
+  "window_seconds": 3600,
+  "max_count": 10,
+  "max_usd": 50.0,
+  "escalate_to": "tier-1@example.com"
+}
