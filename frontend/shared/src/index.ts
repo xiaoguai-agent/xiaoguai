@@ -355,6 +355,29 @@ export interface RecordOutcomeResponse {
   ok: boolean;
 }
 
+/**
+ * v1.3.x — raw outcome record returned by `GET /v1/outcomes`.
+ * Mirrors the `agent_outcomes` row / `OutcomeRecord` Rust struct.
+ */
+export interface OutcomeRecord {
+  tenant_id: string;
+  session_id: string | null;
+  agent_name: string;
+  kind: string;
+  value: number;
+  unit: string | null;
+  description: string | null;
+  attributed_at: string; // ISO-8601
+  metadata: unknown;
+}
+
+/** Query knobs accepted by `GET /v1/outcomes`. */
+export interface ListOutcomesQuery {
+  tenant_id: string;
+  range?: OutcomesRange;
+  kind?: string;
+}
+
 /** Aggregate stats for a single outcome kind. */
 export interface OutcomeAggregate {
   sum: number;
@@ -697,6 +720,17 @@ export class XiaoguaiClient {
       'GET',
       `/v1/outcomes/timeseries?${params.toString()}`,
     );
+  }
+
+  /**
+   * v1.3.x — raw list of outcome records for a tenant.
+   * Backs the List view in the Outcomes browser pane.
+   */
+  listOutcomes(q: ListOutcomesQuery): Promise<OutcomeRecord[]> {
+    const params = new URLSearchParams({ tenant_id: q.tenant_id });
+    if (q.range) params.set('range', q.range);
+    if (q.kind) params.set('kind', q.kind);
+    return this.request<OutcomeRecord[]>('GET', `/v1/outcomes?${params.toString()}`);
   }
 
   /**
