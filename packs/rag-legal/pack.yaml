@@ -1,0 +1,38 @@
+# Legal RAG Pack
+# kind: scaffold-only — swap in real tenant corpus before production use.
+#
+# Corpus sources (all public-domain / MIT):
+#   - CommonAccord GH-MIT-0: https://github.com/CommonAccord/Org (MIT)
+#   - Apache License 2.0 canonical text: https://www.apache.org/licenses/LICENSE-2.0.txt (public domain)
+#   - MIT License canonical text: https://opensource.org/licenses/MIT (public domain)
+#   - 18 U.S.C. § 1030 (CFAA) statutory excerpt: public domain (US gov work)
+#   - FOSS NDA templates rewritten as original work: MIT
+
+kind: scaffold-only
+
+domain: legal
+
+# Recommended embedding model — change to match your deployment.
+# nomic-embed-text is a permissively licensed OSS model that runs via Ollama.
+embedding_model: nomic-embed-text
+
+# Reranker integration — uses the xiaoguai reranker when C13 is merged.
+# Set to null to disable.
+reranker: bge-reranker-v2-m3
+
+# Top-k for retrieval before reranking. Reduced post-rerank to top_k_final.
+top_k: 20
+top_k_final: 5
+
+# Chunking preset from xiaoguai-rag::presets::ChunkingPreset.
+# text-default: 512-token chunks, 64-token overlap — good for contract prose.
+chunking_preset: text-default
+
+# Collection id used when bulk-loading this pack via the pack loader.
+collection_id: rag-legal
+
+# Corpus directory — relative to pack root.
+corpus_dir: corpus
+
+# Prompt directory — relative to pack root.
+prompts_dir: prompts
