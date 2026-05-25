@@ -51,6 +51,7 @@ sbom-*.json
 # Docs build
 docs/_build/
 docs/.docusaurus/
+docs/book/book/
 
 # Local model files (huge)
 models/
