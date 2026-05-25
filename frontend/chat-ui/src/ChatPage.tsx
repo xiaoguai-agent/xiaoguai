@@ -5,6 +5,7 @@ import { client } from './client';
 import { CitationStrip } from './citations';
 import { CopyButton } from './codeblock';
 import { MarkdownBody } from './markdown';
+import { WatchIndicator } from './WatchIndicator';
 
 type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
 
@@ -201,6 +202,12 @@ export function ChatPage({ onSessionCreated }: Props) {
 
   return (
     <>
+      {/* Chat header — order: AiDisclosureBanner > HotlBanner > WatchIndicator */}
+      <div className="chat-header">
+        {/* AiDisclosureBanner placeholder — wired by feat/chat-ui-ai-disclosure branch */}
+        {/* HotlBanner placeholder — wired by feat/chat-ui-hotl-banner branch */}
+        <WatchIndicator sessionId={sessionId} />
+      </div>
       <div className="messages" ref={scrollRef}>
         {bubbles.map((b, i) => (
           <Bubble key={i} bubble={b} onFork={fork} />
