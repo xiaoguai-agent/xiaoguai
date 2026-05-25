@@ -1,0 +1,106 @@
+# Clause Coverage Checklist: {{ contract.document_id }}
+
+> **Contract type**: {{ contract.contract_type | upper }}
+> **Parties**: {{ contract.parties | join(" / ") }}
+> **Generated**: {{ pipeline_run_at }}
+
+This checklist shows which standard clauses are present, absent, or non-standard
+for a {{ contract.contract_type | upper }} agreement.  Use it to guide negotiation
+or drafting of a counter-proposal.
+
+---
+
+## Coverage Summary
+
+| Status | Count |
+|---|---|
+| Present (standard) | {{ clauses | selectattr("standard_flag", "equalto", "standard") | list | length }} |
+| Present (non-standard) | {{ clauses | selectattr("standard_flag", "equalto", "non-standard") | list | length }} |
+| Missing | {{ clauses | selectattr("standard_flag", "equalto", "missing") | list | length }} |
+
+---
+
+## Clause-by-Clause Checklist
+
+{% set status_icon = {"standard": ":white_check_mark:", "non-standard": ":warning:", "missing": ":x:"} %}
+
+| # | Clause Type | Status | Page | Notes |
+|---|---|---|---|---|
+{% for clause in clauses %}
+| {{ loop.index }} | **{{ clause.clause_type | replace("-", " ") | title }}** | {{ status_icon[clause.standard_flag] }} {{ clause.standard_flag | replace("-", " ") | title }} | {{ clause.page_ref | default("—") }} | {{ clause.notes | default("") | truncate(100) }} |
+{% endfor %}
+
+---
+
+## Missing Clauses — Recommended Additions
+
+{% set missing = clauses | selectattr("standard_flag", "equalto", "missing") | list %}
+{% if missing %}
+The following clauses are absent from the contract.  For each, consider whether
+they are required for this agreement type and negotiating position.
+
+{% for clause in missing %}
+### {{ clause.clause_type | replace("-", " ") | title }}
+
+{% if clause.clause_type == "limitation-of-liability" %}
+**Why it matters**: Without this clause, liability defaults to unlimited.
+Typical position: cap at 12 months of fees paid under the agreement.
+
+{% elif clause.clause_type == "data-protection" %}
+**Why it matters**: Required if personal data is processed under this agreement
+(GDPR Art. 28 mandates a Data Processing Agreement).
+
+{% elif clause.clause_type == "ip-ownership" %}
+**Why it matters**: Without explicit assignment, IP created under an SOW may
+default to the contractor/vendor under applicable IP law.
+
+{% elif clause.clause_type == "indemnification" %}
+**Why it matters**: Absent indemnification terms mean each party bears its own
+losses; the counter-party may later seek indemnification via their standard terms.
+
+{% elif clause.clause_type == "governing-law" %}
+**Why it matters**: Without a governing law clause, courts may apply the law
+of the counter-party's jurisdiction.
+
+{% elif clause.clause_type == "termination" %}
+**Why it matters**: Without termination provisions, exit rights may be
+governed solely by statute (often requiring lengthy notice periods).
+
+{% elif clause.clause_type == "force-majeure" %}
+**Why it matters**: Without this, obligations remain in force during
+extraordinary events (pandemics, natural disasters, war).
+
+{% else %}
+**Why it matters**: Review against your standard {{ contract.contract_type | upper }} template.
+{% endif %}
+
+{% endfor %}
+{% else %}
+*All required clauses for a {{ contract.contract_type | upper }} are present.*
+{% endif %}
+
+---
+
+## Non-Standard Clauses — Flagged for Review
+
+{% set non_standard = clauses | selectattr("standard_flag", "equalto", "non-standard") | list %}
+{% if non_standard %}
+{% for clause in non_standard %}
+### {{ clause.clause_type | replace("-", " ") | title }} (`{{ clause.clause_id }}`)
+{% if clause.page_ref %}*(Page {{ clause.page_ref }})*{% endif %}
+
+**Text excerpt:**
+> {{ clause.text | truncate(400) }}
+
+**Note**: {{ clause.notes | default("Departs from standard market practice — review carefully.") }}
+
+---
+{% endfor %}
+{% else %}
+*All present clauses are assessed as standard market practice.*
+{% endif %}
+
+---
+
+*Generated automatically by xiaoguai legal-contract-review pack v{{ pack_version }}.*
+*This checklist is a drafting aid, not a substitute for legal advice.*

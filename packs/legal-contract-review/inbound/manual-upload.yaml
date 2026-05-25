@@ -1,0 +1,75 @@
+---
+# Manual upload inbound source.
+#
+# Accepts authenticated multipart/form-data or JSON-with-base64 uploads
+# via the xiaoguai API.  Intended for ad-hoc review requests from legal
+# team members or business owners who do not use DocuSign / Drive.
+#
+# Endpoint: POST /v1/contracts/inbound/upload
+# Auth:     Bearer token (xiaoguai user session or API key with
+#           scope: contracts:write)
+#
+# Accepted file types:
+#   - application/pdf
+#   - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+#   - text/plain
+
+source: manual-upload
+route_prefix: /v1/contracts/inbound/upload
+
+auth:
+  kind: bearer
+  scope: contracts:write
+
+# Request body fields (multipart/form-data or JSON).
+fields:
+  # Required
+  file:
+    kind: file
+    max_size_mb: 20
+    accepted_mime_types:
+      - application/pdf
+      - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+      - text/plain
+
+  # Optional metadata — used to pre-populate ContractDocument.
+  contract_type:
+    kind: string
+    required: false
+    enum: [nda, msa, sow, other]
+    description: "Contract type hint.  If omitted, clause-extractor will infer."
+
+  parties:
+    kind: string
+    required: false
+    description: "Comma-separated party names, e.g. 'ACME Corp, Counterparty Inc'."
+
+  priority:
+    kind: string
+    required: false
+    enum: [normal, urgent]
+    default: normal
+    description: "urgent = skip queue, emit Slack notification immediately."
+
+# Fields normalised to ContractDocument schema.
+extract:
+  document_id:   "_uuid_generated"
+  source:        "_const:manual-upload"
+  source_url:    "_uploaded_file_url"   # temporary signed URL stored by the API
+  occurred_at:   "_now"
+  contract_type:
+    field: contract_type
+    fallback: _inferred
+  parties:
+    field: parties
+    transform: split_csv
+    fallback: _inferred
+
+# Rate limiting — prevent abuse.
+rate_limit:
+  per_user:
+    requests: 20
+    window: 1h
+  global:
+    requests: 200
+    window: 1h
