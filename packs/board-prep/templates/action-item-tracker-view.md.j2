@@ -1,0 +1,38 @@
+{# Action Item Tracker View Template
+   Rendered by action-tracker agent for exec-team Slack posts and meeting reports.
+   Variables: items, run_at, meeting (optional), tenant_config
+#}
+**BOARD ACTION ITEM STATUS REPORT**
+{% if meeting %}Meeting: {{ meeting.scheduled_at | format_datetime(fmt="%B %-d, %Y") }} | {% endif %}As of: {{ run_at | format_datetime(fmt="%Y-%m-%d %H:%M UTC") }}
+
+---
+
+{% set open_items = items | selectattr("status", "in", ["open", "in_progress"]) | list %}
+{% set overdue_items = items | selectattr("status", "equalto", "overdue") | list %}
+{% set completed_items = items | selectattr("status", "equalto", "completed") | list %}
+
+**Summary:** {{ open_items | length }} open · {{ overdue_items | length }} overdue · {{ completed_items | length }} completed this period
+
+{% if overdue_items %}
+### Overdue Items (Requires Immediate Attention)
+
+| Item | Owner | Due Date | Days Overdue | Escalated |
+|------|-------|----------|:------------:|:---------:|
+{% for item in overdue_items | sort(attribute="due_date") %}
+| {{ item.description | truncate(60) }} | {{ item.owner }} | {{ item.due_date }} | {{ item.days_overdue }} | {{ "Yes" if item.escalated_to_chair else "No" }} |
+{% endfor %}
+
+{% endif %}
+{% if open_items %}
+### Open Items
+
+| Item | Owner | Due Date | Days Remaining | Priority |
+|------|-------|----------|:--------------:|----------|
+{% for item in open_items | sort(attribute="due_date") %}
+| {{ item.description | truncate(60) }} | {{ item.owner }} | {{ item.due_date }} | {{ item.days_until_due }} | {{ item.priority | title }} |
+{% endfor %}
+
+{% endif %}
+{% if not open_items and not overdue_items %}
+*No open action items.*
+{% endif %}

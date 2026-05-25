@@ -1,0 +1,138 @@
+# Agent definition — deck-assembler
+# ---------------------------------------------------------------------------
+# Assembles the board pre-read deck (board pack) from multiple source
+# documents:
+#   - Latest KPI digest (from exec-briefing pack or direct data pull)
+#   - Financial reports (P&L, balance sheet, cash flow — PDF/XLSX)
+#   - Executive memos submitted by functional leads
+#   - Approved agenda (as the deck table of contents)
+#
+# Produces a structured deck draft stored in board_minutes.draft_body
+# (pre-meeting use) and routed to board-portal-publish on HOTL approval.
+# Privileged: distribution is HOTL-gated.
+# ---------------------------------------------------------------------------
+
+name: deck-assembler
+version: "1.0.0"
+description: >
+  Pulls KPI digest, financial reports, and exec memos; assembles them into
+  a formatted board pre-read deck using the deck-section-frame template.
+  Board-portal publishing requires HOTL approval from the corporate secretary.
+
+triggers:
+  # Fires when agenda transitions to 'approved' status (T-5 days typically)
+  - event: board.agenda_approved
+    source: agenda-builder
+  # Manual trigger from admin UI
+  - event: board.deck_build_requested
+    source: manual
+
+llm:
+  model: ${BOARD_PREP_LLM_MODEL:-default}
+  temperature: 0.15
+  max_tokens: 16384
+
+system_prompt: |
+  You are the corporate secretary's assistant assembling the board pre-read
+  deck. Your job is to pull together source documents into a coherent,
+  professional board pack.
+
+  Rules:
+  - Structure the deck using the approved agenda as the table of contents.
+  - For each agenda section, include the relevant supporting material
+    (KPI data, financial summaries, exec memos).
+  - Summarise financial data; do not reproduce full financial statements
+    verbatim — link to the source document instead.
+  - Flag any data gaps or missing reports explicitly so the secretary can
+    follow up before distribution.
+  - Use the deck-section-frame template for consistent formatting.
+  - Do not include PII of board members (addresses, national IDs) in the
+    deck body.
+  - Output a JSON object matching the DeckDraft schema.
+
+  DeckDraft schema:
+  {
+    "meeting_id": "uuid",
+    "title": "Board Meeting Pre-Read — <date>",
+    "sections": [
+      {
+        "agenda_section": "string",
+        "title": "string",
+        "summary": "markdown string (≤ 500 words)",
+        "kpi_highlights": ["string", ...],
+        "source_refs": ["document name or URL", ...],
+        "data_gaps": ["description of missing data", ...]
+      }
+    ],
+    "overall_data_gaps": ["string", ...]
+  }
+
+context_steps:
+  - id: approved_agenda
+    description: "Fetch approved agenda items for the meeting"
+    tool: sql
+    query: |
+      SELECT
+          ai.section,
+          ai.sequence,
+          ai.title,
+          ai.description,
+          COALESCE(bm.full_name, 'TBD') AS presenter,
+          ai.estimated_minutes
+      FROM board_agenda_items ai
+      JOIN board_agendas a ON a.id = ai.agenda_id
+      LEFT JOIN board_members bm ON bm.id = ai.presenter_member_id
+      WHERE a.meeting_id = '{meeting_id}'
+        AND a.status = 'approved'
+      ORDER BY ai.sequence
+
+  - id: kpi_digest
+    description: "Latest KPI digest from exec-briefing pack or direct pull"
+    tool: xiaoguai_pack_bridge
+    pack: exec-briefing
+    operation: latest_kpi_digest
+    params:
+      tenant_id: "{tenant_id}"
+    fallback: "KPI digest not available — attach manually before distribution."
+
+  - id: exec_memos
+    description: "Executive memos submitted for this meeting from Dropbox watch"
+    tool: sql
+    query: |
+      SELECT title, submitter, submitted_at, file_ref
+      FROM board_inbound_documents
+      WHERE tenant_id = '{tenant_id}'
+        AND meeting_id = '{meeting_id}'
+        AND doc_type = 'exec_memo'
+      ORDER BY submitter, submitted_at
+
+tools:
+  - name: save_deck_draft
+    description: >
+      Save the assembled deck draft. Stores the JSON deck in a deck_drafts
+      sidecar table linked to the meeting. Returns deck_draft_id.
+    kind: sql
+    query: |
+      INSERT INTO board_deck_drafts
+          (tenant_id, meeting_id, version, status, draft_json)
+      VALUES
+          ('{tenant_id}', '{meeting_id}', 1, 'draft', '{draft_json}')
+      RETURNING id
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    publish_to_portal: 0
+    email_board_members: 0
+  require_human_approval:
+    - publish_to_portal
+    - email_board_members
+  notify_channel: "${BOARD_PREP_SECRETARY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - draft_created
+    - draft_approved
+    - draft_rejected
+    - published
+  feedback_table: board_deck_drafts

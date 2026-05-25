@@ -1,0 +1,50 @@
+---
+# Calendar Board Meeting Event
+# Watches the corporate calendar (Google Calendar or Exchange/Microsoft 365)
+# for board meeting events. When a qualifying event is found or updated,
+# fires board.meeting_scheduled to trigger agenda assembly at T-7 days.
+
+source: calendar-board-meeting-event
+kind: watch
+
+# Configure one provider; leave the other commented out.
+calendar:
+  # -- Google Calendar --
+  provider: google
+  calendar_id: ${BOARD_PREP_GCAL_CALENDAR_ID}
+  service_account_json: ${BOARD_PREP_GCAL_SERVICE_ACCOUNT_JSON}
+
+  # -- Microsoft 365 / Exchange (uncomment to use instead) --
+  # provider: microsoft365
+  # tenant_id: ${BOARD_PREP_M365_TENANT_ID}
+  # client_id: ${BOARD_PREP_M365_CLIENT_ID}
+  # client_secret: ${BOARD_PREP_M365_CLIENT_SECRET}
+  # calendar_id: ${BOARD_PREP_M365_CALENDAR_ID}
+
+  # Poll interval for calendar changes
+  poll_interval_minutes: 60
+
+# Events must match these criteria to be treated as board meetings
+event_filter:
+  # Title must contain one of these strings (case-insensitive)
+  title_contains_any:
+    - "board meeting"
+    - "board of directors"
+    - "special board"
+    - "committee meeting"
+  # Minimum duration (minutes) to distinguish from brief calls
+  min_duration_minutes: 30
+
+# Meeting type inference from event title
+meeting_type_inference:
+  special:   ["special board", "special meeting"]
+  committee: ["audit committee", "compensation committee", "nominating committee", "committee meeting"]
+  regular:   ["board meeting", "board of directors"]   # default
+
+# Zoom meeting ID extraction (from event description or conferencing field)
+zoom_extraction:
+  enabled: true
+  # Regex to extract Zoom meeting ID from description
+  pattern: 'zoom\.us/j/(\d{9,11})'
+
+emits_event: board.meeting_scheduled
