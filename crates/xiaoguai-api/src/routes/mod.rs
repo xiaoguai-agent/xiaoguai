@@ -11,6 +11,8 @@ use axum::Router;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::skills;
+
 use crate::auth::require_bearer;
 use crate::rate_limit::rate_limit;
 use crate::rbac::require_authorized;
@@ -85,7 +87,15 @@ pub fn router(state: AppState) -> Router {
         // v1.1.2: conversation fork.
         .route("/v1/sessions/:id/fork", post(sessions::fork_session))
         // v1.1.1 — token-usage aggregation.
-        .route("/v1/usage", get(usage::list_usage));
+        .route("/v1/usage", get(usage::list_usage))
+        // v1.2.28 — skill pack marketplace.
+        .route("/v1/skills/catalog", get(skills::list_catalog))
+        .route("/v1/skills/installed", get(skills::list_installed))
+        .route("/v1/skills/install", post(skills::install_pack))
+        .route(
+            "/v1/skills/install/:id",
+            delete(skills::uninstall_pack),
+        );
 
     // Layer order (inner → outer, since `route_layer` adds outward):
     //   handler → rate_limit → rbac → require_bearer

@@ -30,6 +30,7 @@ use crate::scheduler::{
     WebhookTokenValidator,
 };
 use crate::sessions_ext::SessionForker;
+use crate::skills::SkillPackRepository;
 use crate::today::TodayReader;
 use crate::usage::UsageReader;
 
@@ -168,6 +169,12 @@ pub struct AppState {
     /// `GET /v1/admin/scheduler/jobs` and the matching `/fire-now`
     /// endpoint return 503.
     pub scheduler_jobs_reader: Option<Arc<dyn ScheduledJobsReader>>,
+    /// v1.2.28: skill pack install/uninstall store backing
+    /// `GET /v1/skills/installed`, `POST /v1/skills/install`, and
+    /// `DELETE /v1/skills/install/:id`. `None` makes those endpoints
+    /// return 503; production wires `PgSkillPackRepository` from
+    /// `xiaoguai-core`.
+    pub skill_packs: Option<Arc<dyn SkillPackRepository>>,
 }
 
 impl std::fmt::Debug for AppState {

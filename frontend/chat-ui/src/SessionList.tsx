@@ -12,10 +12,19 @@ export function SessionList({ sessions, children }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
 
+  // Highlight the Skills nav link when on /skills.
+  const onSkills = location.pathname === '/skills';
+
   return (
     <aside className="sidebar">
       <h2>Xiaoguai</h2>
       <button onClick={() => navigate('/')}>+ New chat</button>
+
+      {/* v1.2.28 — Skills pane nav entry */}
+      <Link to="/skills" className={`nav-link${onSkills ? ' active' : ''}`}>
+        Skills
+      </Link>
+
       {sessions.length === 0 ? (
         <p style={{ color: 'var(--muted)', fontSize: 12 }}>
           No sessions yet. Send a message to create one.

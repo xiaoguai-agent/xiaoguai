@@ -110,6 +110,7 @@ fn build_state(mcp: Option<Arc<dyn McpServerRepository>>) -> AppState {
         webhook_token_validator: None,
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
+        skill_packs: None,
     }
 }
 
