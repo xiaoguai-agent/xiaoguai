@@ -1,0 +1,67 @@
+# packs/customer-onboarding/watches/milestone-overdue.yaml
+#
+# Watch: fires when an in-progress milestone passes its deadline (plus grace period).
+# Implemented via xiaoguai-watch SqlPollWatch — polls onboarding_milestones every
+# 30 minutes and emits a MilestoneOverdueEvent for each newly-overdue row.
+
+name: milestone-overdue
+kind: sql-poll
+
+schedule:
+  interval_seconds: 1800    # every 30 minutes
+
+# SQL poll query — returns rows that have crossed their deadline (+ grace period)
+# and are not yet marked overdue/completed/skipped.
+# $grace_days is substituted from config.stall.overdue_grace_days.
+query: |
+  SELECT
+      m.id               AS milestone_id,
+      m.customer_id,
+      m.opportunity_id,
+      m.csm_owner_id,
+      m.ae_owner_id,
+      m.stage,
+      m.status,
+      m.deadline_at,
+      m.last_activity_at,
+      m.usage_events_count,
+      now() - m.deadline_at AS overdue_by,
+      now() - m.last_activity_at AS inactive_for
+  FROM  onboarding_milestones m
+  WHERE m.status = 'in_progress'
+    AND m.deadline_at + ($grace_days || ' days')::INTERVAL < now()
+  ORDER BY m.deadline_at ASC
+
+# Mark the row so we don't re-fire on the next poll cycle.
+# The milestone-coach agent is responsible for clearing this when the stage progresses.
+post_query_sql: |
+  UPDATE onboarding_milestones
+  SET    status = 'overdue', updated_at = now()
+  WHERE  id = ANY($milestone_ids)
+    AND  status = 'in_progress'
+
+# Event emitted per matching row — consumed by milestone-coach and stall-detector
+event:
+  type: MilestoneOverdueEvent
+  fields:
+    - milestone_id
+    - customer_id
+    - opportunity_id
+    - csm_owner_id
+    - stage
+    - deadline_at
+    - overdue_by          # interval, e.g. "3 days 04:22:00"
+    - inactive_for        # interval since last Segment activity
+
+# Dispatch: both agents run in parallel per event
+dispatch:
+  - agent: packs/customer-onboarding/agents/stall-detector.yaml
+  - agent: packs/customer-onboarding/agents/milestone-coach.yaml
+
+on_error:
+  notify_channel: "ops-alerts"
+  message: "customer-onboarding milestone-overdue watch error: $error"
+
+retry:
+  max_attempts: 3
+  backoff_seconds: 120

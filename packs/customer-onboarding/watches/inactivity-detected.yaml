@@ -1,0 +1,71 @@
+# packs/customer-onboarding/watches/inactivity-detected.yaml
+#
+# Watch: fires when a customer in active onboarding has had no product usage events
+# for more than config.stall.inactivity_threshold_days days.
+#
+# "Usage events" = Segment product-events inbound ingested into onboarding_milestones.
+# The watch is separate from milestone-overdue because inactivity can signal a stall
+# even when the milestone deadline has not yet passed.
+
+name: inactivity-detected
+kind: sql-poll
+
+schedule:
+  interval_seconds: 3600    # every hour (more frequent than overdue — early warning)
+
+# $threshold_days is substituted from config.stall.inactivity_threshold_days
+query: |
+  SELECT
+      m.id                AS milestone_id,
+      m.customer_id,
+      m.opportunity_id,
+      m.csm_owner_id,
+      m.ae_owner_id,
+      m.stage,
+      m.deadline_at,
+      m.last_activity_at,
+      m.usage_events_count,
+      now() - m.last_activity_at AS inactive_for,
+      m.deadline_at - now()      AS time_to_deadline
+  FROM  onboarding_milestones m
+  WHERE m.status = 'in_progress'
+    AND m.stage NOT IN ('contract_signed', 'expansion_ready')  -- activity not meaningful at anchors
+    AND (
+        m.last_activity_at IS NULL                                          -- never had any events
+        OR m.last_activity_at < now() - ($threshold_days || ' days')::INTERVAL
+    )
+  ORDER BY m.last_activity_at ASC NULLS FIRST
+
+# Deduplicate: only emit if no open inactivity stall_signal already exists for this milestone
+dedup_query: |
+  SELECT 1
+  FROM   stall_signals
+  WHERE  milestone_id = $milestone_id
+    AND  status = 'open'
+    AND  evidence->>'trigger' = 'inactivity-detected'
+  LIMIT 1
+
+# Event emitted per matching row (after dedup check passes)
+event:
+  type: InactivityDetectedEvent
+  fields:
+    - milestone_id
+    - customer_id
+    - opportunity_id
+    - csm_owner_id
+    - stage
+    - last_activity_at    # nullable — null means no events ever recorded
+    - inactive_for        # interval
+    - time_to_deadline    # how long until deadline — urgency context for agents
+
+dispatch:
+  - agent: packs/customer-onboarding/agents/stall-detector.yaml
+  - agent: packs/customer-onboarding/agents/milestone-coach.yaml
+
+on_error:
+  notify_channel: "ops-alerts"
+  message: "customer-onboarding inactivity-detected watch error: $error"
+
+retry:
+  max_attempts: 3
+  backoff_seconds: 60
