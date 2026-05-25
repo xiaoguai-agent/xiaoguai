@@ -16,6 +16,7 @@ authors = [
     { name = "Xiaoguai contributors" },
 ]
 keywords = ["xiaoguai", "agent", "llm", "mcp", "cli"]
+dependencies = []
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -32,6 +33,10 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
     "Topic :: Utilities",
 ]
+
+[project.optional-dependencies]
+# pip install 'xiaoguai[client]'  — adds the synchronous HTTP client (wave-3).
+client = ["httpx>=0.25"]
 
 [project.scripts]
 xiaoguai = "xiaoguai.__main__:main"
