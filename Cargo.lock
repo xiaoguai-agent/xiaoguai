@@ -8593,6 +8593,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "xiaoguai-tasks"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "xiaoguai-audit",
+ "xiaoguai-storage",
+]
+
+[[package]]
 name = "xiaoguai-types"
 version = "0.1.0"
 dependencies = [

@@ -28,6 +28,7 @@ members = [
     "crates/xiaoguai-observability",
     "crates/xiaoguai-watch",
     "crates/xiaoguai-anomaly",
+    "crates/xiaoguai-tasks",
 ]
 
 [workspace.package]
