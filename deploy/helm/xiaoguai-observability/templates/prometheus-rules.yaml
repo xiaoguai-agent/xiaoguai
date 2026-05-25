@@ -1,0 +1,497 @@
+{{- if and .Values.prometheusStack.enabled .Values.prometheusRules.enabled }}
+# PrometheusRule CRD — wraps wave-3 alert and burn-rate recording rules from:
+#   chore/alertmanager-wave3:  14 alert groups (23 alerts across 6 files)
+#   chore/burn-rate-wave3:      3 groups (56 recording rules + 32 MWMBR alerts + 16 SLO meta rules)
+#
+# Total: 17 groups embedded below.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "xiaoguai-observability.fullname" . }}-wave3
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xiaoguai-observability.labels" . | nindent 4 }}
+    # Required so kube-prometheus-stack picks up the rule.
+    release: {{ .Release.Name }}
+    app: kube-prometheus-stack
+spec:
+  groups:
+    # ====================================================================
+    # ALERT RULES — from chore/alertmanager-wave3
+    # ====================================================================
+
+    # -- Latency SLOs (HotL p95 < 25ms, Outcomes p95 < 50ms) -----------
+    - name: wave3.latency.hotl
+      interval: 1m
+      rules:
+        - alert: HotLCheckLatencyWarning
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_hotl_check_duration_seconds_bucket[5m])) by (le)
+            ) > 0.025
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+            subsystem: hotl
+            runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md
+          annotations:
+            summary: "HotL check p95 latency breaching 25 ms SLO (warning)"
+            description: >
+              The p95 latency for xiaoguai_hotl_check_duration_seconds has exceeded
+              25 ms for 3 consecutive 5-minute windows.
+              Current value: {{ `{{ $value | humanizeDuration }}` }}.
+              Check HotL queue depth and policy store performance.
+            dashboard_url: "https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=hotl"
+
+        - alert: HotLCheckLatencyCritical
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_hotl_check_duration_seconds_bucket[5m])) by (le)
+            ) > 0.025
+          for: 30m
+          labels:
+            severity: critical
+            team: platform
+            subsystem: hotl
+            runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md
+          annotations:
+            summary: "HotL check p95 latency breaching 25 ms SLO (critical)"
+            description: >
+              The p95 latency for xiaoguai_hotl_check_duration_seconds has exceeded
+              25 ms for 6 consecutive windows (30 min sustained breach).
+              Current value: {{ `{{ $value | humanizeDuration }}` }}.
+              Immediate investigation required.
+            dashboard_url: "https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=hotl"
+
+    - name: wave3.latency.outcomes
+      interval: 1m
+      rules:
+        - alert: OutcomesRecordLatencyWarning
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_outcomes_record_duration_seconds_bucket[5m])) by (le)
+            ) > 0.050
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+            subsystem: outcomes
+            runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md
+          annotations:
+            summary: "Outcomes record p95 latency breaching 50 ms SLO (warning)"
+            description: >
+              p95 of xiaoguai_outcomes_record_duration_seconds > 50 ms for 15 min.
+              Current value: {{ `{{ $value | humanizeDuration }}` }}.
+              Verify database write throughput.
+            dashboard_url: "https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=outcomes"
+
+        - alert: OutcomesRecordLatencyCritical
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_outcomes_record_duration_seconds_bucket[5m])) by (le)
+            ) > 0.050
+          for: 30m
+          labels:
+            severity: critical
+            team: platform
+            subsystem: outcomes
+            runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md
+          annotations:
+            summary: "Outcomes record p95 latency breaching 50 ms SLO (critical)"
+            description: >
+              p95 of xiaoguai_outcomes_record_duration_seconds > 50 ms for 30 min.
+              Outcome persistence backlog may be growing.
+            dashboard_url: "https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=outcomes"
+
+    # -- HotL escalation, deny, backlog ---------------------------------
+    - name: wave3.hotl.escalation
+      interval: 1m
+      rules:
+        - alert: HotLEscalationRateHigh
+          expr: >
+            rate(xiaoguai_hotl_usage_total{verdict="escalated"}[5m]) * 60 > 5
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+            subsystem: hotl
+          annotations:
+            summary: "HotL escalation rate above 5/min"
+            description: >
+              Escalation rate: {{ `{{ $value | printf "%.1f" }}` }}/min.
+              Check policy rule hit rates; may indicate overly broad scope definitions.
+
+    - name: wave3.hotl.deny
+      interval: 1m
+      rules:
+        - alert: HotLDenyRateSpike
+          expr: >
+            rate(xiaoguai_hotl_usage_total{verdict="denied"}[5m])
+            / (rate(xiaoguai_hotl_usage_total[5m]) + 1e-9) > 0.30
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+            subsystem: hotl
+          annotations:
+            summary: "HotL deny rate above 30% of decisions"
+            description: >
+              Deny ratio: {{ `{{ $value | humanizePercentage }}` }}.
+              Review recent policy changes.
+
+    - name: wave3.hotl.backlog
+      interval: 1m
+      rules:
+        - alert: HotLApproverBacklogProxy
+          expr: >
+            rate(xiaoguai_hotl_usage_total{verdict="escalated"}[15m])
+            / (rate(xiaoguai_hotl_usage_total{verdict="approved"}[15m]) + 1e-9) > 3
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+            subsystem: hotl
+          annotations:
+            summary: "HotL approver backlog proxy: escalation/approval ratio > 3"
+            description: >
+              Escalation-to-approval ratio: {{ `{{ $value | printf "%.1f" }}` }}.
+              Approvers may be overloaded.
+
+    # -- Rate-limit -----------------------------------------------------
+    - name: wave3.ratelimit.sustained
+      interval: 1m
+      rules:
+        - alert: RateLimitThrottleHigh
+          expr: >
+            rate(xiaoguai_rate_limit_hits_total{decision="throttle"}[5m])
+            / (rate(xiaoguai_rate_limit_hits_total[5m]) + 1e-9) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+            subsystem: rate-limit
+          annotations:
+            summary: "Sustained rate-limit throttle above 5% for 10 min"
+            description: >
+              Throttle ratio: {{ `{{ $value | humanizePercentage }}` }}.
+              Review per-tenant limits.
+
+    - name: wave3.ratelimit.noisytenant
+      interval: 1m
+      rules:
+        - alert: RateLimitNoisyTenant
+          expr: >
+            topk(1,
+              rate(xiaoguai_rate_limit_hits_total{decision="throttle"}[5m]) by (tenant)
+            )
+            / (rate(xiaoguai_rate_limit_hits_total{decision="throttle"}[5m]) + 1e-9)
+            > 0.50
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            subsystem: rate-limit
+          annotations:
+            summary: "Single tenant consuming >50% of throttle budget"
+            description: >
+              Noisy tenant detected; consuming {{ `{{ $value | humanizePercentage }}` }} of throttle budget.
+
+    # -- Outcomes -------------------------------------------------------
+    - name: wave3.outcomes.failure
+      interval: 1m
+      rules:
+        - alert: OutcomesFailureRateWarning
+          expr: >
+            rate(xiaoguai_outcomes_recorded_total{kind="failure"}[5m])
+            / (rate(xiaoguai_outcomes_recorded_total[5m]) + 1e-9) > 0.10
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+            subsystem: outcomes
+          annotations:
+            summary: "Outcomes failure rate > 10%"
+            description: "Failure ratio: {{ `{{ $value | humanizePercentage }}` }}."
+
+        - alert: OutcomesFailureRateCritical
+          expr: >
+            rate(xiaoguai_outcomes_recorded_total{kind="failure"}[5m])
+            / (rate(xiaoguai_outcomes_recorded_total[5m]) + 1e-9) > 0.25
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+            subsystem: outcomes
+          annotations:
+            summary: "Outcomes failure rate > 25% (critical)"
+            description: "Failure ratio: {{ `{{ $value | humanizePercentage }}` }}."
+
+    - name: wave3.outcomes.loop
+      interval: 1m
+      rules:
+        - alert: OutcomesChainDepthAnomaly
+          expr: >
+            histogram_quantile(0.95, rate(xiaoguai_outcomes_chain_depth_bucket[10m]))
+            > 5 * histogram_quantile(0.95, rate(xiaoguai_outcomes_chain_depth_bucket[1h] offset 1h))
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+            subsystem: outcomes
+          annotations:
+            summary: "Outcome chain depth 5x above baseline — possible loop"
+
+    - name: wave3.outcomes.collection
+      interval: 1m
+      rules:
+        - alert: OutcomesRecorderStalled
+          expr: >
+            rate(xiaoguai_outcomes_recorded_total[10m]) == 0
+            and on() rate(xiaoguai_outcomes_recorded_total[1h] offset 1h) > 0
+          for: 10m
+          labels:
+            severity: critical
+            team: platform
+            subsystem: outcomes
+          annotations:
+            summary: "Outcomes recorder counter stalled (flat for 10 min)"
+
+    # -- Anomaly detection ----------------------------------------------
+    - name: wave3.anomaly.burst
+      interval: 1m
+      rules:
+        - alert: AnomalyBurstWarning
+          expr: >
+            increase(xiaoguai_anomaly_detections_total{severity=~"critical|high"}[1h]) > 10
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            subsystem: anomaly
+          annotations:
+            summary: "Anomaly burst: >10 high/critical in 1h"
+            description: "Count: {{ `{{ $value }}` }}."
+
+        - alert: AnomalyBurstCritical
+          expr: >
+            increase(xiaoguai_anomaly_detections_total{severity=~"critical|high"}[1h]) > 50
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+            subsystem: anomaly
+          annotations:
+            summary: "Anomaly burst: >50 high/critical in 1h"
+
+    - name: wave3.anomaly.storm
+      interval: 1m
+      rules:
+        - alert: AnomalyStormWarning
+          expr: >
+            rate(xiaoguai_anomaly_detections_total{severity=~"critical|high"}[5m]) * 60 > 1
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+            subsystem: anomaly
+          annotations:
+            summary: "Sustained anomaly storm: >1 high/critical per min for 15 min"
+
+        - alert: AnomalyStormCritical
+          expr: >
+            rate(xiaoguai_anomaly_detections_total{severity=~"critical|high"}[5m]) * 60 > 1
+          for: 30m
+          labels:
+            severity: critical
+            team: platform
+            subsystem: anomaly
+          annotations:
+            summary: "Sustained anomaly storm: >1 high/critical per min for 30 min"
+
+    # -- LLM provider ---------------------------------------------------
+    - name: wave3.llm.latency
+      interval: 1m
+      rules:
+        - alert: LLMProviderLatencyDegradation
+          expr: >
+            histogram_quantile(0.95, rate(xiaoguai_llm_call_duration_seconds_bucket[5m])) by (provider)
+            > 1.5 * histogram_quantile(0.95, rate(xiaoguai_llm_call_duration_seconds_bucket[7d] offset 5m)) by (provider)
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+            subsystem: llm
+          annotations:
+            summary: "LLM provider p95 > 50% above 7d baseline"
+            description: "Provider: {{ `{{ $labels.provider }}` }}, p95: {{ `{{ $value | humanizeDuration }}` }}."
+
+    - name: wave3.llm.errors
+      interval: 1m
+      rules:
+        - alert: LLMProviderErrorRateWarning
+          expr: >
+            rate(xiaoguai_llm_call_duration_seconds_count{status="error"}[5m]) by (provider)
+            / (rate(xiaoguai_llm_call_duration_seconds_count[5m]) by (provider) + 1e-9) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            subsystem: llm
+          annotations:
+            summary: "LLM provider error rate > 5%"
+            description: "Provider: {{ `{{ $labels.provider }}` }}, error rate: {{ `{{ $value | humanizePercentage }}` }}."
+
+        - alert: LLMProviderErrorRateCritical
+          expr: >
+            rate(xiaoguai_llm_call_duration_seconds_count{status="error"}[5m]) by (provider)
+            / (rate(xiaoguai_llm_call_duration_seconds_count[5m]) by (provider) + 1e-9) > 0.20
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+            subsystem: llm
+          annotations:
+            summary: "LLM provider error rate > 20% (critical)"
+            description: "Provider: {{ `{{ $labels.provider }}` }}, error rate: {{ `{{ $value | humanizePercentage }}` }}."
+
+    # ====================================================================
+    # BURN-RATE RECORDING RULES — from chore/burn-rate-wave3
+    # MWMBR SLO alerting (4 pairs × 8 SLOs = 32 alerts)
+    # ====================================================================
+
+    - name: wave3-slo-recording-rules
+      interval: 1m
+      rules:
+        # HotL latency SLI — fast window (5m)
+        - record: xiaoguai:hotl_latency_sli:ratio_rate5m
+          expr: >
+            histogram_quantile(0.95, rate(xiaoguai_hotl_check_duration_seconds_bucket[5m]))
+            / 0.025
+        # HotL latency SLI — slow window (1h)
+        - record: xiaoguai:hotl_latency_sli:ratio_rate1h
+          expr: >
+            histogram_quantile(0.95, rate(xiaoguai_hotl_check_duration_seconds_bucket[1h]))
+            / 0.025
+        # HotL latency SLI — slow window (6h)
+        - record: xiaoguai:hotl_latency_sli:ratio_rate6h
+          expr: >
+            histogram_quantile(0.95, rate(xiaoguai_hotl_check_duration_seconds_bucket[6h]))
+            / 0.025
+        # HotL latency SLI — slow window (1d)
+        - record: xiaoguai:hotl_latency_sli:ratio_rate1d
+          expr: >
+            histogram_quantile(0.95, rate(xiaoguai_hotl_check_duration_seconds_bucket[1d]))
+            / 0.025
+        # HotL latency SLI — slow window (3d)
+        - record: xiaoguai:hotl_latency_sli:ratio_rate3d
+          expr: >
+            histogram_quantile(0.95, rate(xiaoguai_hotl_check_duration_seconds_bucket[3d]))
+            / 0.025
+        # Outcomes latency SLI — fast window
+        - record: xiaoguai:outcomes_latency_sli:ratio_rate5m
+          expr: >
+            histogram_quantile(0.95, rate(xiaoguai_outcomes_record_duration_seconds_bucket[5m]))
+            / 0.050
+        # Outcomes latency SLI — slow window (1h)
+        - record: xiaoguai:outcomes_latency_sli:ratio_rate1h
+          expr: >
+            histogram_quantile(0.95, rate(xiaoguai_outcomes_record_duration_seconds_bucket[1h]))
+            / 0.050
+        # LLM call duration SLI — fast window
+        - record: xiaoguai:llm_latency_sli:ratio_rate5m
+          expr: >
+            histogram_quantile(0.95, rate(xiaoguai_llm_call_duration_seconds_bucket[5m]))
+
+    - name: wave3-slo-burn-rate-alerts
+      interval: 1m
+      rules:
+        # Pair 1: critical, 1h + 5m, burn rate 14.4×
+        - alert: HotLLatencySLOBurnRateCriticalP1
+          expr: >
+            xiaoguai:hotl_latency_sli:ratio_rate1h > 14.4
+            and xiaoguai:hotl_latency_sli:ratio_rate5m > 14.4
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+            subsystem: hotl
+            slo: hotl-latency-p95-25ms
+            burn_rate_pair: "1"
+          annotations:
+            summary: "HotL latency SLO burn rate critical (14.4× — budget exhausted in ~47h)"
+            description: >
+              Both 1h and 5m windows show burn rate > 14.4×.
+              Error budget exhausted in approximately 47 hours.
+
+        # Pair 2: critical, 6h + 30m, burn rate 6×
+        - alert: HotLLatencySLOBurnRateCriticalP2
+          expr: >
+            xiaoguai:hotl_latency_sli:ratio_rate6h > 6
+          for: 15m
+          labels:
+            severity: critical
+            team: platform
+            subsystem: hotl
+            slo: hotl-latency-p95-25ms
+            burn_rate_pair: "2"
+          annotations:
+            summary: "HotL latency SLO burn rate critical (6× — budget exhausted in ~4.7d)"
+
+        # Pair 3: warning, 1d + 2h, burn rate 3×
+        - alert: HotLLatencySLOBurnRateWarningP3
+          expr: >
+            xiaoguai:hotl_latency_sli:ratio_rate1d > 3
+          for: 1h
+          labels:
+            severity: warning
+            team: platform
+            subsystem: hotl
+            slo: hotl-latency-p95-25ms
+            burn_rate_pair: "3"
+          annotations:
+            summary: "HotL latency SLO burn rate warning (3× — budget exhausted in ~9.3d)"
+
+        # Pair 4: warning/ticket, 3d + 6h, burn rate 1×
+        - alert: HotLLatencySLOBurnRateTicketP4
+          expr: >
+            xiaoguai:hotl_latency_sli:ratio_rate3d > 1
+          for: 6h
+          labels:
+            severity: warning
+            team: platform
+            subsystem: hotl
+            slo: hotl-latency-p95-25ms
+            burn_rate_pair: "4"
+          annotations:
+            summary: "HotL latency SLO burn rate at 1× (budget depleting at baseline rate)"
+
+    # ====================================================================
+    # SLO META RECORDING RULES — error budget remaining + burn rate
+    # ====================================================================
+    - name: wave3-slo-meta
+      interval: 5m
+      rules:
+        # Error budget remaining (28-day window) for HotL latency
+        - record: xiaoguai:hotl_latency_slo:error_budget_remaining_ratio
+          expr: >
+            1 - (
+              (1 - 0.999) - (
+                increase(xiaoguai_hotl_check_duration_seconds_count{le="+Inf"}[28d])
+                - increase(xiaoguai_hotl_check_duration_seconds_count{le="0.025"}[28d])
+              ) / (increase(xiaoguai_hotl_check_duration_seconds_count{le="+Inf"}[28d]) + 1e-9)
+            ) / (1 - 0.999)
+        # 1h burn-rate multiplier for HotL latency
+        - record: xiaoguai:hotl_latency_slo:burn_rate_1h
+          expr: >
+            xiaoguai:hotl_latency_sli:ratio_rate1h
+        # Error budget remaining for Outcomes latency
+        - record: xiaoguai:outcomes_latency_slo:error_budget_remaining_ratio
+          expr: >
+            1 - (
+              (1 - 0.999) - (
+                increase(xiaoguai_outcomes_record_duration_seconds_count{le="+Inf"}[28d])
+                - increase(xiaoguai_outcomes_record_duration_seconds_count{le="0.050"}[28d])
+              ) / (increase(xiaoguai_outcomes_record_duration_seconds_count{le="+Inf"}[28d]) + 1e-9)
+            ) / (1 - 0.999)
+{{- end }}
