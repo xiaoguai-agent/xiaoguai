@@ -1,0 +1,532 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/xiaoguai-agent/xiaoguai/schemas/recipe.yaml.schema.json",
+  "title": "Xiaoguai Recipe",
+  "description": "JSON Schema (draft 2020-12) for Xiaoguai agent recipe YAML files.",
+  "type": "object",
+  "required": ["name", "version", "description", "steps"],
+  "unevaluatedProperties": true,
+
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Unique slug for the recipe (kebab-case).",
+      "pattern": "^[a-z0-9][a-z0-9-]*[a-z0-9]$"
+    },
+    "version": {
+      "type": "string",
+      "description": "Semantic version of the recipe (e.g. '0.1.0').",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable summary of what the recipe does."
+    },
+    "owner": {
+      "type": "string",
+      "description": "Team or role responsible for this recipe (e.g. 'platform-sre')."
+    },
+    "tags": {
+      "type": "array",
+      "description": "Free-form labels for discovery and filtering.",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+
+    "requires": {
+      "$ref": "#/$defs/requires"
+    },
+
+    "config": {
+      "type": "object",
+      "description": "Static operator-configurable knobs for this recipe. Values may reference env vars via '${VAR:-default}' syntax.",
+      "unevaluatedProperties": true
+    },
+
+    "trigger": {
+      "$ref": "#/$defs/trigger"
+    },
+
+    "steps": {
+      "type": "array",
+      "description": "Ordered list of steps. Parallelism is expressed via 'deps' (a step with no deps runs immediately; steps sharing a common dep may run in parallel).",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" }
+    },
+
+    "on_error": {
+      "$ref": "#/$defs/global_error_handler"
+    }
+  },
+
+  "$defs": {
+
+    "requires": {
+      "type": "object",
+      "description": "Declares external dependencies: packs, feature flags, and required environment variables.",
+      "properties": {
+        "packs": {
+          "type": "array",
+          "description": "List of pack references with version constraints. Each entry is a single-key object: { 'pack-name': '>=1.0.0' }.",
+          "items": {
+            "type": "object",
+            "description": "Single-entry map of pack-name to SemVer constraint string.",
+            "minProperties": 1,
+            "maxProperties": 1,
+            "additionalProperties": {
+              "type": "string",
+              "description": "SemVer constraint (e.g. '>=0.1.0')."
+            }
+          }
+        },
+        "features": {
+          "type": "array",
+          "description": "Feature flags that must be enabled in the workspace.",
+          "items": {
+            "type": "string",
+            "enum": ["hotl", "outcome-telemetry", "anomaly", "watch"]
+          },
+          "uniqueItems": true
+        },
+        "env": {
+          "type": "array",
+          "description": "Environment variable names that MUST be set for the recipe to run.",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "env_optional": {
+          "type": "array",
+          "description": "Environment variable names that are optional (recipe provides defaults).",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "trigger": {
+      "type": "object",
+      "description": "Defines how the recipe is initiated.",
+      "properties": {
+        "inbound": {
+          "type": "string",
+          "description": "Pack-namespaced inbound adapter reference (e.g. 'devops-oncall/inbound/pagerduty')."
+        },
+        "event_bus": {
+          "type": "array",
+          "description": "One or more xg-anomaly / xg-watch event bus subscriptions.",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "description": "Event kind to subscribe to (e.g. 'anomaly.fired', 'watch.fired')."
+              },
+              "source": {
+                "type": "string",
+                "description": "Config-ref or pack-namespaced slug of the AnomalySpec / WatchSpec."
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "schedule": {
+          "type": "string",
+          "description": "Cron expression for scheduled recipes (e.g. '0 * * * *')."
+        },
+        "manual": {
+          "type": "boolean",
+          "description": "If true the recipe can only be started manually (no event source)."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable explanation of when the trigger fires."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "template_string": {
+      "type": "string",
+      "description": "A Jinja2-style template string (e.g. '{{ steps.foo.outputs.bar }}')."
+    },
+
+    "step": {
+      "type": "object",
+      "description": "A single step in the recipe execution graph.",
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for this step within the recipe (snake_case).",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional display name for the step."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable explanation of what this step does."
+        },
+        "condition": {
+          "$ref": "#/$defs/template_string",
+          "description": "Template expression evaluated at runtime; step is skipped if falsy."
+        },
+        "deps": {
+          "type": "array",
+          "description": "Step ids that must complete before this step starts.",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "inputs": {
+          "type": "object",
+          "description": "Key-value map of inputs passed to this step. Values are template strings or literal scalars.",
+          "unevaluatedProperties": true
+        },
+        "outputs": {
+          "type": "object",
+          "description": "Key-value map of named output bindings produced by this step.",
+          "unevaluatedProperties": true
+        },
+        "error_handling": {
+          "$ref": "#/$defs/step_error_handling"
+        },
+
+        "agent": {
+          "description": "Reference to a pack agent (string) or an inline agent definition.",
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Pack-namespaced agent reference (e.g. 'devops-oncall/agents/classify-alert')."
+            },
+            { "$ref": "#/$defs/inline_agent" }
+          ]
+        },
+
+        "output": {
+          "description": "Reference to a pack output adapter (string) or an inline output definition.",
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Pack-namespaced output adapter reference (e.g. 'devops-oncall/outputs/slack-oncall-channel')."
+            },
+            { "$ref": "#/$defs/inline_output" }
+          ]
+        },
+
+        "hotl": {
+          "$ref": "#/$defs/hotl_block"
+        },
+
+        "outcome": {
+          "$ref": "#/$defs/outcome_block"
+        },
+
+        "condition_check": {
+          "$ref": "#/$defs/condition_check_block"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+
+    "inline_agent": {
+      "type": "object",
+      "description": "An agent defined inline within the recipe (no separate pack registration required).",
+      "required": ["inline"],
+      "properties": {
+        "inline": {
+          "type": "string",
+          "description": "Local name for the inline agent."
+        },
+        "llm": {
+          "$ref": "#/$defs/llm_config"
+        },
+        "timeout_seconds": {
+          "description": "Wall-clock timeout for the agent (integer seconds or template string).",
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "$ref": "#/$defs/template_string" }
+          ]
+        },
+        "system_prompt": {
+          "type": "string",
+          "description": "System prompt text passed to the LLM."
+        },
+        "context_steps": {
+          "type": "array",
+          "description": "Ordered list of context-gathering mini-steps injected as LLM context.",
+          "items": { "$ref": "#/$defs/context_step" }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "llm_config": {
+      "type": "object",
+      "description": "LLM invocation settings for an inline agent.",
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Model identifier or env-var reference (e.g. '${XG_LLM_MODEL:-default}')."
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "context_step": {
+      "type": "object",
+      "description": "A context-gathering mini-step inside an inline agent.",
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Local name for the context slice."
+        },
+        "description": {
+          "type": "string"
+        },
+        "data": {
+          "description": "Static or template-resolved data injected directly.",
+          "$ref": "#/$defs/template_string"
+        },
+        "tool": {
+          "type": "string",
+          "description": "Built-in tool to invoke: 'bash' or 'xiaoguai_audit_search'.",
+          "enum": ["bash", "xiaoguai_audit_search"]
+        },
+        "command": {
+          "type": "string",
+          "description": "Shell command string (used when tool='bash')."
+        },
+        "params": {
+          "type": "object",
+          "description": "Keyword parameters passed to the named tool.",
+          "unevaluatedProperties": true
+        },
+        "condition": {
+          "$ref": "#/$defs/template_string",
+          "description": "Skip this context step if the template expression evaluates to false."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "inline_output": {
+      "type": "object",
+      "description": "An inline output adapter definition (e.g. a Slack webhook not backed by a pack).",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Output adapter kind (e.g. 'slack_webhook')."
+        },
+        "webhook_url": {
+          "type": "string",
+          "description": "Webhook URL or env-var reference."
+        },
+        "message_template": {
+          "type": "string",
+          "description": "Jinja2 message template rendered at runtime."
+        },
+        "message": {
+          "type": "string",
+          "description": "Static message string (alternative to message_template)."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "hotl_block": {
+      "type": "object",
+      "description": "HotL (Human-on-the-Loop) gate configuration. Suspends execution and requests human approval.",
+      "required": ["policy", "gated_on"],
+      "properties": {
+        "policy": {
+          "type": "string",
+          "description": "HotlPolicyStore slug that governs this gate."
+        },
+        "gated_on": {
+          "$ref": "#/$defs/template_string",
+          "description": "Boolean template expression; gate is activated only if truthy."
+        },
+        "approver_role": {
+          "type": "string",
+          "description": "Role identifier that must approve (e.g. 'oncall-manager', 'security-lead')."
+        },
+        "timeout_seconds": {
+          "description": "Maximum seconds to wait for human response.",
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "$ref": "#/$defs/template_string" }
+          ]
+        },
+        "on_timeout": {
+          "type": "string",
+          "description": "Action taken when timeout expires.",
+          "enum": ["auto_approve", "decline", "close_timed_out"]
+        },
+        "blocking": {
+          "type": "boolean",
+          "description": "If false, the gate runs asynchronously without halting the recipe (default: true).",
+          "default": true
+        },
+        "audit": {
+          "type": "boolean",
+          "description": "Write all approval events to the audit log (default: true).",
+          "default": true
+        },
+        "context_for_approver": {
+          "type": "object",
+          "description": "Structured data sent to the approver to inform their decision.",
+          "unevaluatedProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "outcome_block": {
+      "type": "object",
+      "description": "Records a structured outcome event to the OutcomeRecorder (feature: outcome-telemetry).",
+      "required": ["event", "payload"],
+      "properties": {
+        "event": {
+          "type": "string",
+          "description": "Dot-namespaced outcome event name (e.g. 'incident.triaged', 'cve.recipe.completed')."
+        },
+        "payload": {
+          "type": "object",
+          "description": "Key-value map of fields written to agent_outcomes. Values are template strings or literal scalars.",
+          "unevaluatedProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "condition_check_block": {
+      "type": "object",
+      "description": "A gate step that evaluates a condition and exposes the result as an output rather than executing an agent.",
+      "required": ["condition"],
+      "properties": {
+        "condition": {
+          "$ref": "#/$defs/template_string",
+          "description": "Boolean template expression; result exposed as '{{ <step_id>.passed }}'."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "step_error_handling": {
+      "type": "object",
+      "description": "Per-step error handling policy.",
+      "properties": {
+        "on_failure": {
+          "type": "string",
+          "description": "Action when the step fails.",
+          "enum": ["abort", "continue", "warn", "skip_to_notify"]
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of automatic retries before the on_failure action fires."
+        },
+        "fallback": {
+          "type": "object",
+          "description": "Literal fallback values injected into outputs when the step fails and on_failure is 'continue'.",
+          "unevaluatedProperties": true
+        },
+        "fallback_priority": {
+          "type": "string",
+          "description": "Convenience shorthand for a scalar fallback value (e.g. in classify step)."
+        },
+        "notify": {
+          "description": "Notification target invoked on failure (pack output reference, pack output reference with inline message, or inline adapter).",
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Pack-namespaced output adapter reference (no inline message)."
+            },
+            {
+              "type": "object",
+              "description": "Pack-namespaced output adapter reference with an inline message template.",
+              "required": ["output", "message"],
+              "properties": {
+                "output": {
+                  "type": "string",
+                  "description": "Pack-namespaced output adapter reference."
+                },
+                "message": {
+                  "type": "string",
+                  "description": "Message template rendered at runtime."
+                }
+              },
+              "additionalProperties": false
+            },
+            { "$ref": "#/$defs/inline_output" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "global_error_handler": {
+      "type": "object",
+      "description": "Recipe-level fallback invoked when any step raises an unhandled error.",
+      "required": ["notify"],
+      "properties": {
+        "notify": {
+          "description": "Where to send the error notification.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["output", "message"],
+              "properties": {
+                "output": {
+                  "type": "string",
+                  "description": "Pack-namespaced output adapter reference."
+                },
+                "message": {
+                  "type": "string",
+                  "description": "Message template (may reference '{{ failed_step }}' and '{{ error.message }}')."
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind", "webhook_url", "message"],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "description": "Inline adapter kind (e.g. 'slack_webhook')."
+                },
+                "webhook_url": {
+                  "type": "string",
+                  "description": "Webhook URL or env-var reference."
+                },
+                "message": {
+                  "type": "string",
+                  "description": "Message template."
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+
+  }
+}
