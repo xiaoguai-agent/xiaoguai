@@ -1,0 +1,120 @@
+# packs/research-paper-survey/watches/citation-update-poll.yaml
+#
+# Watch: track when a paper in our database accumulates 10+ new citations
+# since it was last checked. This is a signal of impact — a paper suddenly
+# attracting citations is worth surfacing to the research team.
+#
+# Implementation:
+#   1. Query the papers table for all tracked papers (status != 'pending').
+#   2. For each paper with a semantic_scholar_id, call the Semantic Scholar
+#      Graph API to fetch current citation_count.
+#   3. Compare with the stored citation_count.
+#   4. If the delta >= citation_delta_threshold (default 10), emit a
+#      `semantic-scholar-citation-event` inbound event.
+#   5. Update papers.citation_count and citation_count_updated_at regardless.
+#
+# The poll runs every 24 hours by default. Citation counts on S2 update
+# roughly once per day, so polling more frequently wastes API quota.
+
+name: citation-update-poll
+kind: db-driven-http-poll
+
+# ── Poll schedule ─────────────────────────────────────────────────────────────
+
+schedule:
+  interval_minutes: ${CITATION_POLL_INTERVAL_MINUTES:-1440}   # 24 hours
+
+# ── Source query ──────────────────────────────────────────────────────────────
+#
+# Retrieves papers that have a Semantic Scholar ID and were last checked
+# more than 23 hours ago (to avoid re-polling recently refreshed rows).
+
+query: |
+  SELECT
+      id,
+      semantic_scholar_id,
+      title,
+      citation_count        AS stored_citation_count,
+      citation_count_updated_at
+  FROM papers
+  WHERE semantic_scholar_id IS NOT NULL
+    AND status != 'pending'
+    AND (
+      citation_count_updated_at IS NULL
+      OR citation_count_updated_at < now() - INTERVAL '23 hours'
+    )
+  ORDER BY citation_count DESC   -- check highly-cited papers first (most likely to have new cites)
+  LIMIT ${CITATION_POLL_BATCH_SIZE:-200}
+
+# ── HTTP request (one per paper row) ─────────────────────────────────────────
+#
+# Semantic Scholar Graph API — paper fields endpoint.
+# Docs: https://api.semanticscholar.org/graph/v1/paper/{paper_id}
+
+request:
+  url_template: "https://api.semanticscholar.org/graph/v1/paper/{{ row.semantic_scholar_id }}?fields=citationCount,title"
+  method: GET
+  headers:
+    x-api-key: "${SEMANTIC_SCHOLAR_API_KEY}"
+    User-Agent: "xiaoguai-research-survey/0.1.0"
+  timeout_seconds: 15
+
+# ── Rate limiting ─────────────────────────────────────────────────────────────
+#
+# Semantic Scholar unauthenticated limit: 1 req/s. With an API key: 10 req/s.
+# We stay conservative at 5 req/s to share quota with other integrations.
+
+rate_limit:
+  requests_per_second: 5
+
+# ── Response processing ───────────────────────────────────────────────────────
+
+response:
+  # Extract the new citation count from the S2 response.
+  parse:
+    new_citation_count: "$.citationCount"
+
+  # Always update the stored count and timestamp.
+  post_request_sql: |
+    UPDATE papers
+    SET
+        citation_count            = {{ response.new_citation_count }},
+        citation_count_updated_at = now(),
+        updated_at                = now()
+    WHERE id = '{{ row.id }}'
+
+# ── Impact threshold and event emission ───────────────────────────────────────
+#
+# A paper is flagged as "impactful" when it gains >= 10 new citations since
+# the last poll. The threshold is intentionally generous: 10 citations in a
+# 24-hour window is unusual for most fields and worth a team notification.
+
+citation_delta_threshold: ${CITATION_DELTA_THRESHOLD:-10}
+
+emits:
+  # Only emit when delta >= threshold.
+  condition: "{{ response.new_citation_count - row.stored_citation_count >= citation_delta_threshold }}"
+  event: semantic-scholar-citation-event
+  payload_mapping:
+    paper_id:             "{{ row.id }}"
+    semantic_scholar_id:  "{{ row.semantic_scholar_id }}"
+    title:                "{{ row.title }}"
+    old_citation_count:   "{{ row.stored_citation_count }}"
+    new_citation_count:   "{{ response.new_citation_count }}"
+    delta:                "{{ response.new_citation_count - row.stored_citation_count }}"
+    inbound_source:       "semantic_scholar"
+
+# ── Error handling ────────────────────────────────────────────────────────────
+
+on_error:
+  # S2 returns 429 on rate-limit. Back off and continue with remaining papers.
+  per_item:
+    retry:
+      max_attempts: 2
+      backoff_seconds: 30
+    action: skip_and_log
+    message: "Citation poll failed for S2 paper {{ row.semantic_scholar_id }}: {{ error }}"
+  # If the entire batch fails (network issue), log and wait for next interval.
+  batch:
+    action: log_warning
+    message: "Citation-update-poll batch failed: {{ error }}"

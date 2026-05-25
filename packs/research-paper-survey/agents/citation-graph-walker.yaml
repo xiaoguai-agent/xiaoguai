@@ -1,0 +1,154 @@
+# packs/research-paper-survey/agents/citation-graph-walker.yaml
+#
+# Citation Graph Walker agent
+#
+# Input:  a classified paper (must have semantic_scholar_id or arxiv_id)
+# Output: citation_edges rows + updated PageRank / betweenness centrality scores
+#
+# Algorithm:
+#   BFS from the seed paper, alternately following references (backward edges)
+#   and citing papers (forward edges). Bounded by max_hops and max_breadth_per_hop
+#   to prevent runaway API consumption on highly-cited papers.
+#
+# Bounding strategy (depth + breadth):
+#   - Depth bound (max_hops):          stops BFS after N hops from the seed.
+#                                      Default 3. Configurable via pack config.
+#   - Breadth bound (max_breadth):     at each node, at most max_breadth_per_hop
+#                                      neighbours are enqueued. Neighbours are
+#                                      sorted by citation_count descending so the
+#                                      most-cited (highest-signal) papers are
+#                                      always explored within budget.
+#   - Visited set:                     global set of (paper_id, edge_type) pairs
+#                                      prevents re-traversal and cycles.
+#   - DB pre-filter:                   before queuing a neighbour, check the
+#                                      papers table; if already classified and
+#                                      hop_distance >= stored, skip it.
+#
+# Centrality is computed as incremental PageRank over the local subgraph after
+# each walk completes. Full-graph PageRank is re-run nightly via a scheduled job
+# (not part of this agent).
+
+name: citation-graph-walker
+kind: tool-agent           # no LLM calls — pure graph traversal via MCP tools
+
+# ── MCP tool servers used ─────────────────────────────────────────────────────
+
+mcp_servers:
+  - semantic_scholar   # provides: s2_get_paper_references, s2_get_paper_citations, s2_get_paper_details
+
+# ── Walk parameters ───────────────────────────────────────────────────────────
+#
+# These values are read from pack config at runtime; defaults shown here.
+
+params:
+  max_hops:             ${CITATION_MAX_HOPS:-3}
+  max_breadth_per_hop:  ${CITATION_MAX_BREADTH:-50}
+  centrality_metric:    ${CITATION_CENTRALITY:-pagerank}
+  # Minimum relevance_score for a neighbour paper to be enqueued.
+  # Avoids expanding into off-topic clusters when the seed is on the boundary.
+  min_relevance_to_enqueue: 0.0   # 0.0 = no filter; raise to 0.3 to stay focused
+
+# ── Walk plan ─────────────────────────────────────────────────────────────────
+
+plan:
+  - id: resolve_seed
+    description: "Resolve seed paper's Semantic Scholar ID if only arxiv_id is available."
+    tool: s2_get_paper_details
+    params:
+      paper_id: "{{ paper.semantic_scholar_id | default('arXiv:' + paper.arxiv_id) }}"
+      fields: "paperId,title,citationCount,referenceCount"
+
+  - id: bfs_walk
+    description: >
+      BFS citation traversal. Each iteration calls s2_get_paper_references or
+      s2_get_paper_citations for the current frontier, sorts by citation_count,
+      and enqueues the top max_breadth_per_hop neighbours not yet in the visited set.
+      Stops when frontier is empty or hop_distance > max_hops.
+    tool: xiaoguai_graph_bfs
+    params:
+      seed_id:            "{{ plan.resolve_seed.paperId }}"
+      max_hops:           "{{ params.max_hops }}"
+      max_breadth_per_hop: "{{ params.max_breadth_per_hop }}"
+      direction:          "both"    # explore references AND citing papers
+      sort_neighbours_by: "citationCount"
+      sort_order:         "desc"
+      visited_store:      "in_memory"   # per-walk; DB pre-filter handles cross-walk dedup
+      neighbour_fetch_tools:
+        references: s2_get_paper_references
+        citing:     s2_get_paper_citations
+      neighbour_fields: "paperId,title,year,citationCount,authors,venue,externalIds"
+      # DB pre-filter: skip if already stored with hop_distance <= current
+      db_prefilter_sql: |
+        SELECT 1 FROM papers p
+        JOIN citation_edges ce ON ce.cited_paper_id = p.id OR ce.citing_paper_id = p.id
+        WHERE p.semantic_scholar_id = '{{ neighbour.paperId }}'
+          AND ce.hop_distance <= {{ current_hop }}
+        LIMIT 1
+
+  - id: upsert_edges
+    description: "Persist all discovered edges and paper stubs to the database."
+    tool: xiaoguai_db_batch_exec
+    params:
+      # For each discovered node, upsert a minimal papers row (full classification
+      # happens when the arxiv-new-paper inbound event fires, or on next poll).
+      paper_upserts: |
+        INSERT INTO papers (semantic_scholar_id, title, authors, published_date, venue,
+                            citation_count, citation_count_updated_at,
+                            status, inbound_source, created_at, updated_at)
+        VALUES ({{ node.paperId | sql_str }},
+                {{ node.title | sql_str }},
+                {{ node.authors | pluck('name') | sql_array }},
+                {{ node.year | sql_date_nullable }},
+                {{ node.venue | sql_nullable }},
+                {{ node.citationCount | default(0) }},
+                now(), 'pending', 'semantic_scholar', now(), now())
+        ON CONFLICT (semantic_scholar_id) DO UPDATE SET
+            citation_count            = EXCLUDED.citation_count,
+            citation_count_updated_at = now(),
+            updated_at                = now()
+      edge_upserts: |
+        INSERT INTO citation_edges
+            (citing_paper_id, cited_paper_id, hop_distance, edge_type, discovered_at)
+        VALUES (
+            (SELECT id FROM papers WHERE semantic_scholar_id = {{ edge.citing_s2_id | sql_str }}),
+            (SELECT id FROM papers WHERE semantic_scholar_id = {{ edge.cited_s2_id  | sql_str }}),
+            {{ edge.hop_distance }},
+            {{ edge.edge_type | sql_str }},
+            now()
+        )
+        ON CONFLICT (citing_paper_id, cited_paper_id, edge_type) DO NOTHING
+
+  - id: compute_centrality
+    description: >
+      Run incremental PageRank over the local subgraph (all edges discovered in
+      this walk). Update pagerank_score on affected citation_edges rows.
+      Full-graph recomputation runs nightly and is not part of this agent.
+    tool: xiaoguai_graph_pagerank
+    params:
+      subgraph_query: |
+        SELECT citing_paper_id, cited_paper_id
+        FROM citation_edges
+        WHERE discovered_at > now() - INTERVAL '1 hour'
+      damping_factor: 0.85
+      max_iterations: 20
+      convergence_threshold: 0.001
+      write_back_sql: |
+        UPDATE citation_edges
+        SET pagerank_score = {{ scores[edge_id] }}
+        WHERE id = {{ edge_id }}
+
+# ── Budget ────────────────────────────────────────────────────────────────────
+
+budget:
+  # At max_hops=3, max_breadth=50: worst case 50^3 = 125,000 API calls.
+  # In practice the visited-set and DB pre-filter cut this to ~500–2000 calls.
+  # The wall-time limit is the primary safety valve for runaway walks.
+  max_tool_calls: 5000
+  max_wall_seconds: 600   # 10-minute guard; raise for large corpora
+
+on_budget_exceeded:
+  action: commit_partial
+  message: >
+    Citation walk for paper {{ paper.title | truncate(60) }} hit budget limit.
+    Partial results committed. Increase CITATION_MAX_HOPS or CITATION_MAX_BREADTH
+    to resume from a wider starting point next run.

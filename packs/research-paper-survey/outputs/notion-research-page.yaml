@@ -1,0 +1,81 @@
+# packs/research-paper-survey/outputs/notion-research-page.yaml
+#
+# Output connector: Notion Research Page
+#
+# Pushes survey artifacts to a Notion database:
+#   - Per-paper entries: one database page per paper (using paper-summary-card template)
+#   - Per-cluster gap pages: one page per topic cluster (using gap-analysis-frame template)
+#   - Survey section pages: one page per drafted section (using survey-section-skeleton)
+#
+# Requires:
+#   NOTION_API_TOKEN              — Notion integration token (Internal Integration)
+#   NOTION_RESEARCH_DATABASE_ID   — target Notion database (must have the expected properties)
+#
+# Expected Notion database properties:
+#   Title (title), Type (select), Status (select), Relevance (number),
+#   Citations (number), Cluster (relation → clusters DB), ArxivID (rich_text),
+#   DOI (rich_text), Published (date), Authors (rich_text), Source (select)
+
+output: notion-research-page
+
+notion:
+  api_token: "${NOTION_API_TOKEN}"
+
+  # ── Paper entries ────────────────────────────────────────────────────────────
+
+  paper_database_id: "${NOTION_RESEARCH_DATABASE_ID}"
+  paper_properties_mapping:
+    Title:      "{{ paper.title | truncate(255) }}"
+    Type:       "{{ paper.paper_type | title }}"
+    Status:     "{{ paper.status | title }}"
+    Relevance:  "{{ paper.relevance_score | default(0) | round(2) }}"
+    Citations:  "{{ paper.citation_count }}"
+    ArxivID:    "{{ paper.arxiv_id | default('') }}"
+    DOI:        "{{ paper.doi | default('') }}"
+    Published:  "{{ paper.published_date | default(null) }}"
+    Authors:    "{{ paper.authors | join(', ') | truncate(500) }}"
+    Source:     "{{ paper.inbound_source | title }}"
+
+  # Page body rendered from the paper-summary-card template.
+  paper_page_body_template: packs/research-paper-survey/templates/paper-summary-card.md.j2
+
+  # ── Cluster / gap pages ───────────────────────────────────────────────────────
+
+  gap_database_id: "${NOTION_GAP_DATABASE_ID:-${NOTION_RESEARCH_DATABASE_ID}}"
+  gap_properties_mapping:
+    Title:      "Gap: {{ cluster.label }}"
+    Type:       "Research Gap"
+    Sparsity:   "{{ (cluster.sparsity_score * 100) | round | int }}"
+    Papers:     "{{ cluster.paper_count }}"
+    Keywords:   "{{ cluster.keywords | join(', ') | truncate(500) }}"
+
+  gap_page_body_template: packs/research-paper-survey/templates/gap-analysis-frame.md.j2
+
+  # ── Survey section pages ──────────────────────────────────────────────────────
+
+  section_database_id: "${NOTION_SECTION_DATABASE_ID:-${NOTION_RESEARCH_DATABASE_ID}}"
+  section_properties_mapping:
+    Title:      "Section: {{ cluster.label }}"
+    Type:       "Survey Section"
+    Cluster:    "{{ cluster.label }}"
+    Papers:     "{{ paper_count }}"
+
+  # Section body is the already-rendered output from survey-section-drafter.
+  # No additional template rendering — content passed through directly.
+
+  # ── Upsert strategy ────────────────────────────────────────────────────────
+  #
+  # On conflict (page with same Title already exists), update properties and
+  # append a new content block — do not overwrite the entire page.
+
+  on_conflict: upsert
+
+# ── Error handling ────────────────────────────────────────────────────────────
+
+on_error:
+  # Notion API has a rate limit of 3 req/s. Back off on 429.
+  retry:
+    max_attempts: 3
+    backoff_seconds: 20
+  action: log_warning
+  message: "Notion push failed for {{ artifact_type }} '{{ artifact_title | truncate(60) }}': {{ error }}"
