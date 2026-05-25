@@ -1,9 +1,13 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}
+  name: {{ include "xiaoguai.fullname" . }}
   labels:
     {{- include "xiaoguai.labels" . | nindent 4 }}
+  {{- with .Values.podAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
@@ -15,9 +19,36 @@ spec:
     metadata:
       labels:
         {{- include "xiaoguai.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.podAntiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          {{- if eq .Values.podAntiAffinity.mode "hard" }}
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "xiaoguai.selectorLabels" . | nindent 18 }}
+              topologyKey: {{ .Values.podAntiAffinity.topologyKey | quote }}
+          {{- else }}
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "xiaoguai.selectorLabels" . | nindent 20 }}
+                topologyKey: {{ .Values.podAntiAffinity.topologyKey | quote }}
+          {{- end }}
+      {{- end }}
       containers:
         - name: xiaoguai-core
           image: {{ include "xiaoguai.image" . }}
@@ -28,23 +59,92 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          # Non-secret config from ConfigMap
+          envFrom:
+            - configMapRef:
+                name: {{ include "xiaoguai.configmapName" . }}
           env:
-            - name: XIAOGUAI_SERVER__HOST
-              value: "0.0.0.0"
-            - name: XIAOGUAI_SERVER__PORT
-              value: "8080"
+            # Downward API: expose pod name for audit attribution
+            - name: XIAOGUAI_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # Database URL
             - name: XIAOGUAI_DATABASE__URL
-              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.database }}, key: url } }
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.database | quote }}
+                  key: url
+            # Cache URL
             - name: XIAOGUAI_CACHE__URL
-              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.cache }}, key: url } }
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.cache | quote }}
+                  key: url
+            # Auth config
             - name: XIAOGUAI_AUTH__ISSUER
-              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.auth }}, key: issuer } }
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.auth | quote }}
+                  key: issuer
             - name: XIAOGUAI_AUTH__AUDIENCE
-              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.auth }}, key: audience } }
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.auth | quote }}
+                  key: audience
             - name: XIAOGUAI_AUTH__JWKS_URL
-              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.auth }}, key: jwks_url } }
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.auth | quote }}
+                  key: jwks_url
+            # Audit HMAC key
             - name: XIAOGUAI_AUDIT__HMAC_KEY
-              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.audit }}, key: hmac_key } }
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.audit | quote }}
+                  key: hmac_key
+            {{- if .Values.secrets.databaseRead }}
+            # Optional read-replica URL (v1.1.4.1+)
+            - name: XIAOGUAI_DATABASE__READ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.databaseRead | quote }}
+                  key: url
+            {{- end }}
+            {{- if .Values.secrets.llm }}
+            # LLM provider API keys — individual keys injected from the secret.
+            # The Secret may contain any subset of these keys; missing keys are ignored.
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.llm | quote }}
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.llm | quote }}
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.llm | quote }}
+                  key: DEEPSEEK_API_KEY
+                  optional: true
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.llm | quote }}
+                  key: GEMINI_API_KEY
+                  optional: true
+            - name: ZHIPU_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.llm | quote }}
+                  key: ZHIPU_API_KEY
+                  optional: true
+            {{- end }}
             {{- range $k, $v := .Values.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
