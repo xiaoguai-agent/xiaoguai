@@ -43,6 +43,25 @@ That's a full stack — `xiaoguai-core` on `:8080`, Postgres 16, Valkey
 For the chat UI, real LLM providers, MCP server registration, and the
 admin console, see [`docs/user-guide/quickstart.md`](docs/user-guide/quickstart.md).
 
+## Kubernetes observability (optional)
+
+An optional Helm sub-chart at `deploy/helm/xiaoguai-observability/` bundles
+Prometheus, Grafana, Loki, and Tempo with pre-provisioned datasources, the
+Wave-3 overview dashboard, SLO alert rules, and a ServiceMonitor targeting
+xiaoguai-core `/metrics`. All four components can be individually disabled.
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add grafana https://grafana.github.io/helm-charts
+helm dependency update deploy/helm/xiaoguai-observability
+helm upgrade --install xiaoguai-obs deploy/helm/xiaoguai-observability \
+  -f deploy/helm/xiaoguai-observability/values-dev.yaml \
+  -n monitoring --create-namespace
+```
+
+See [`deploy/helm/xiaoguai-observability/README.md`](deploy/helm/xiaoguai-observability/README.md)
+for dependency versions, persistent storage requirements, and production overrides.
+
 ## Architecture
 
 Three layers, eighteen Rust crates, one workspace. Substrate at the

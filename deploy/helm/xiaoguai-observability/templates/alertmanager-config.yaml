@@ -1,0 +1,132 @@
+{{- if and .Values.prometheusStack.enabled .Values.alertmanagerConfig.enabled }}
+# AlertmanagerConfig — routes alerts by severity to Slack, PagerDuty, and email.
+#
+# This creates an AlertmanagerConfig CR (monitoring.coreos.com/v1alpha1).
+# kube-prometheus-stack must be configured to allow AlertmanagerConfig selection
+# (the default kube-prometheus-stack values do enable this).
+#
+# Routing:
+#   severity=critical → pagerduty (if key set) + slack (if url set)
+#   severity=warning  → slack (if url set) + email (if enabled)
+#   default           → null receiver (silently dropped — avoids noise)
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: {{ include "xiaoguai-observability.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xiaoguai-observability.labels" . | nindent 4 }}
+spec:
+  route:
+    # Default receiver for unmatched alerts.
+    receiver: "null"
+    groupBy: ["alertname", "severity", "subsystem"]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 4h
+    routes:
+      # Critical → PagerDuty + Slack
+      - matchers:
+          - name: severity
+            value: critical
+        receiver: critical
+        continue: false
+
+      # Warning → Slack + email
+      - matchers:
+          - name: severity
+            value: warning
+        receiver: warning
+        continue: false
+
+  receivers:
+    # Null receiver — swallows unmatched alerts silently.
+    - name: "null"
+
+    # Critical receiver: PagerDuty + Slack
+    - name: critical
+      {{- if .Values.alertmanagerConfig.pagerdutyIntegrationKey }}
+      pagerdutyConfigs:
+        - routingKey: {{ .Values.alertmanagerConfig.pagerdutyIntegrationKey | quote }}
+          description: '{{ `{{ template "pagerduty.default.description" . }}` }}'
+          severity: critical
+          details:
+            - key: summary
+              value: '{{ `{{ (index .Alerts 0).Annotations.summary }}` }}'
+            - key: subsystem
+              value: '{{ `{{ (index .Alerts 0).Labels.subsystem }}` }}'
+            - key: runbook
+              value: '{{ `{{ (index .Alerts 0).Labels.runbook_url }}` }}'
+      {{- end }}
+      {{- if .Values.alertmanagerConfig.slackWebhookUrl }}
+      slackConfigs:
+        - apiURL:
+            key: webhookUrl
+            name: {{ include "xiaoguai-observability.fullname" . }}-alertmanager-slack
+          channel: "#xiaoguai-alerts"
+          color: '#FF0000'
+          title: '[CRITICAL] {{ `{{ .GroupLabels.alertname }}` }}'
+          text: >-
+            {{ `{{ range .Alerts }}` }}
+            *Alert:* {{ `{{ .Annotations.summary }}` }}
+            *Severity:* {{ `{{ .Labels.severity }}` }}
+            *Subsystem:* {{ `{{ .Labels.subsystem }}` }}
+            *Description:* {{ `{{ .Annotations.description }}` }}
+            {{ `{{ if .Labels.runbook_url }}` }}*Runbook:* {{ `{{ .Labels.runbook_url }}` }}{{ `{{ end }}` }}
+            {{ `{{ end }}` }}
+          sendResolved: true
+      {{- end }}
+
+    # Warning receiver: Slack + email
+    - name: warning
+      {{- if .Values.alertmanagerConfig.slackWebhookUrl }}
+      slackConfigs:
+        - apiURL:
+            key: webhookUrl
+            name: {{ include "xiaoguai-observability.fullname" . }}-alertmanager-slack
+          channel: "#xiaoguai-alerts"
+          color: '#FFA500'
+          title: '[WARNING] {{ `{{ .GroupLabels.alertname }}` }}'
+          text: >-
+            {{ `{{ range .Alerts }}` }}
+            *Alert:* {{ `{{ .Annotations.summary }}` }}
+            *Subsystem:* {{ `{{ .Labels.subsystem }}` }}
+            {{ `{{ end }}` }}
+          sendResolved: true
+      {{- end }}
+      {{- if .Values.alertmanagerConfig.email.enabled }}
+      emailConfigs:
+        - to: {{ .Values.alertmanagerConfig.email.to | quote }}
+          from: {{ .Values.alertmanagerConfig.email.from | quote }}
+          smarthost: {{ .Values.alertmanagerConfig.email.smarthost | quote }}
+          authUsername: {{ .Values.alertmanagerConfig.email.authUsername | quote }}
+          authPassword:
+            key: password
+            name: {{ include "xiaoguai-observability.fullname" . }}-alertmanager-email
+          requireTLS: true
+          sendResolved: true
+          html: >-
+            <h2>{{ `{{ .GroupLabels.alertname }}` }}</h2>
+            {{ `{{ range .Alerts }}` }}
+            <p><strong>{{ `{{ .Annotations.summary }}` }}</strong></p>
+            <p>{{ `{{ .Annotations.description }}` }}</p>
+            {{ `{{ end }}` }}
+      {{- end }}
+
+---
+{{/* Only create the Slack Secret stub if a URL is provided */}}
+{{- if .Values.alertmanagerConfig.slackWebhookUrl }}
+# Secret holding the Slack webhook URL.
+# In production, manage this via external-secrets-operator or Vault.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "xiaoguai-observability.fullname" . }}-alertmanager-slack
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xiaoguai-observability.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  webhookUrl: {{ .Values.alertmanagerConfig.slackWebhookUrl | quote }}
+{{- end }}
+{{- end }}

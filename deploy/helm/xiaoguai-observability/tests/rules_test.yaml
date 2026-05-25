@@ -1,0 +1,89 @@
+# helm-unittest tests for prometheus-rules.yaml
+suite: prometheus-rules
+templates:
+  - prometheus-rules.yaml
+
+tests:
+  - it: "renders no PrometheusRule when prometheusStack.enabled=false"
+    set:
+      prometheusStack.enabled: false
+      prometheusRules.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: "renders no PrometheusRule when prometheusRules.enabled=false"
+    set:
+      prometheusStack.enabled: true
+      prometheusRules.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: "renders one PrometheusRule document when both flags enabled"
+    set:
+      prometheusStack.enabled: true
+      prometheusRules.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: "PrometheusRule is kind PrometheusRule with correct apiVersion"
+    set:
+      prometheusStack.enabled: true
+      prometheusRules.enabled: true
+    asserts:
+      - isKind:
+          of: PrometheusRule
+      - equal:
+          path: apiVersion
+          value: "monitoring.coreos.com/v1"
+
+  - it: "PrometheusRule carries release label for kube-prometheus-stack discovery"
+    set:
+      prometheusStack.enabled: true
+      prometheusRules.enabled: true
+    asserts:
+      - isNotNull:
+          path: metadata.labels.release
+
+  - it: "spec.groups contains wave3.latency.hotl group"
+    set:
+      prometheusStack.enabled: true
+      prometheusRules.enabled: true
+    asserts:
+      - contains:
+          path: spec.groups
+          content:
+            name: wave3.latency.hotl
+          any: true
+
+  - it: "spec.groups contains wave3-slo-burn-rate-alerts group"
+    set:
+      prometheusStack.enabled: true
+      prometheusRules.enabled: true
+    asserts:
+      - contains:
+          path: spec.groups
+          content:
+            name: wave3-slo-burn-rate-alerts
+          any: true
+
+  - it: "spec.groups contains wave3-slo-meta group"
+    set:
+      prometheusStack.enabled: true
+      prometheusRules.enabled: true
+    asserts:
+      - contains:
+          path: spec.groups
+          content:
+            name: wave3-slo-meta
+          any: true
+
+  - it: "has at least 14 groups total (alerts + burn-rate)"
+    set:
+      prometheusStack.enabled: true
+      prometheusRules.enabled: true
+    asserts:
+      - isNotNull:
+          path: spec.groups[13]
