@@ -1,0 +1,132 @@
+# packs/events-management/pack.yaml
+#
+# Events Management Skill Pack — manifest
+#
+# Automates event registration triage, speaker outreach, session content QC,
+# and no-show prediction across the full event lifecycle.
+#
+# Dependency map
+# --------------
+#   xiaoguai-llm              LLM backend — registration-triage planning turn,
+#                             speaker-outreach drafts, content-qc pass, no-show scoring
+#   xiaoguai-watch            WatchSpec + WatchEvent bus — capacity threshold watches,
+#                             content review deadline watches, VIP flag watches
+#   xiaoguai-outcome-telemetry Records outreach sent/opened/replied outcomes for
+#                             improvement loop on speaker-outreach-drafter
+
+name: events-management
+version: "1.0.0"
+description: >
+  Multi-agent skill pack for end-to-end event management: registration triage
+  with VIP detection and waitlist routing, personalised speaker outreach,
+  session content QC (slides + abstract + brand), and per-registrant no-show
+  prediction. Watches fire when capacity thresholds are crossed, content
+  reviews go overdue, or VIP registrations need immediate handling.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# ── Required xiaoguai platform features ──────────────────────────────────────
+
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - llm               # planning turn + drafting + QC scoring
+    - outcome-telemetry # records outreach + no-show prediction outcomes
+    - watch             # WatchSpec + WatchEvent bus for threshold watches
+
+# ── Database migrations ───────────────────────────────────────────────────────
+
+migrations:
+  - path: migrations/0001_events.sql
+
+# ── Watch specs ───────────────────────────────────────────────────────────────
+
+watches:
+  - path: watches/registration-cap-approaching.yaml
+  - path: watches/session-content-review-overdue.yaml
+  - path: watches/vip-registration-needs-handling.yaml
+
+# ── Agent definitions ─────────────────────────────────────────────────────────
+
+agents:
+  - path: agents/registration-triage.yaml
+  - path: agents/speaker-outreach-drafter.yaml
+  - path: agents/session-content-qc.yaml
+  - path: agents/no-show-predictor.yaml
+
+# ── Output connectors ─────────────────────────────────────────────────────────
+
+outputs:
+  - path: outputs/event-team-slack.yaml
+  - path: outputs/marketing-personalized-email.yaml
+  - path: outputs/speaker-resource-portal-update.yaml
+  - path: outputs/post-event-survey-trigger.yaml
+
+# ── Inbound sources ───────────────────────────────────────────────────────────
+
+sources:
+  - path: inbound/eventbrite-registration.yaml
+  - path: inbound/hopin-event.yaml
+  - path: inbound/sessionize-cfp.yaml
+  - path: inbound/manual-vip-add.yaml
+  - path: inbound/calendly-speaker-confirm.yaml
+
+# ── Configuration keys ────────────────────────────────────────────────────────
+
+config:
+  capacity:
+    # Fraction of total capacity at which the cap-approaching watch fires.
+    # 0.80 = 80 %
+    warning_threshold: 0.80
+  content_review:
+    # Days after a session is confirmed before the content review is overdue.
+    overdue_after_days: 14
+  no_show:
+    # Minimum predicted no-show probability to flag a registrant.
+    flag_threshold: 0.65
+  vip:
+    # Comma-separated email-domain suffixes treated as VIP by default.
+    # Individual VIPs can also be added via inbound/manual-vip-add.
+    domain_list: "${VIP_DOMAIN_LIST:-}"
+  hotl:
+    # IM channel for human-on-the-loop review of outreach drafts and VIP flags.
+    notify_channel: "${EVENTS_HOTL_CHANNEL:-admin_ui}"
+
+# ── External system hooks (mock vs real) ──────────────────────────────────────
+
+external_systems:
+  eventbrite:
+    status: mocked
+    real_integration: >
+      Would call Eventbrite API v3 (GET /events/{id}/attendees) via an MCP
+      tool "eventbrite_list_attendees". Requires EVENTBRITE_PRIVATE_TOKEN.
+      Hook point: inbound/eventbrite-registration.yaml normalize step.
+
+  hopin:
+    status: mocked
+    real_integration: >
+      Would call Hopin REST API (GET /api/v2/events/{slug}/registrations)
+      via MCP tool "hopin_list_registrations". Requires HOPIN_API_KEY.
+
+  sessionize:
+    status: mocked
+    real_integration: >
+      Would call Sessionize API (GET /api/v2/{apiKey}/sessions) to ingest
+      CFP submissions. Requires SESSIONIZE_API_KEY.
+
+  slack:
+    status: mocked
+    real_integration: >
+      Would call Slack Web API (chat.postMessage) via xiaoguai-im-slack
+      (planned). Requires SLACK_BOT_TOKEN + EVENTS_SLACK_CHANNEL.
+
+  sendgrid:
+    status: mocked
+    real_integration: >
+      Would call SendGrid Mail Send API for personalised attendee emails.
+      Requires SENDGRID_API_KEY + EVENTS_FROM_EMAIL.
+
+# ── Feature flag ──────────────────────────────────────────────────────────────
+
+feature_flag: XIAOGUAI_EVENTS_ENABLED

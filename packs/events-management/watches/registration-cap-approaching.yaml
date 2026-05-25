@@ -1,0 +1,90 @@
+# Watch spec — registration-cap-approaching
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent when confirmed registrations exceed 80 % of an event's
+# declared capacity.  Wired to registration-triage so it can begin routing
+# new arrivals to the waitlist before the cap is actually hit.
+#
+# Schema reference: F1 WatchSpec (xiaoguai-watch, >=1.3.1).
+# ---------------------------------------------------------------------------
+
+name: registration-cap-approaching
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each open event whose confirmed registration count
+  exceeds the configured capacity warning threshold (default 80 %). Runs
+  every 5 minutes. Triggers registration-triage to activate waitlist routing
+  and notifies the event team via Slack.
+
+# --------------------------------------------------------------------------
+# Data source
+# --------------------------------------------------------------------------
+source:
+  kind: sql
+  table: events
+  tenant_column: null   # single-tenant pack; no per-tenant scoping needed
+
+# SQL executed per tick. Returns one row per event approaching capacity.
+# `{threshold}` is substituted from pack config.capacity.warning_threshold.
+query: |
+  SELECT
+      e.id                                              AS event_id,
+      e.name                                            AS event_name,
+      e.slug,
+      e.capacity,
+      COUNT(r.id)                                       AS confirmed_count,
+      ROUND(COUNT(r.id)::NUMERIC / NULLIF(e.capacity, 0), 4)
+                                                        AS fill_ratio,
+      e.starts_at
+  FROM events e
+  LEFT JOIN registrations r
+         ON r.event_id = e.id
+        AND r.status   = 'confirmed'
+  WHERE e.status   = 'open'
+    AND e.capacity > 0
+  GROUP BY e.id, e.name, e.slug, e.capacity, e.starts_at
+  HAVING COUNT(r.id)::NUMERIC / NULLIF(e.capacity, 0)
+         >= {threshold}
+  ORDER BY fill_ratio DESC
+
+# --------------------------------------------------------------------------
+# Trigger condition
+# --------------------------------------------------------------------------
+trigger:
+  condition: row_count > 0
+
+# --------------------------------------------------------------------------
+# Schedule
+# --------------------------------------------------------------------------
+schedule:
+  cron: "*/5 * * * *"    # every 5 minutes
+
+# --------------------------------------------------------------------------
+# Output — WatchEvent shape emitted onto the event bus
+# --------------------------------------------------------------------------
+event:
+  kind: events.registration_cap_approaching
+  cardinality: per_row
+  payload_mapping:
+    event_id:        "$.event_id"
+    event_name:      "$.event_name"
+    slug:            "$.slug"
+    capacity:        "$.capacity"
+    confirmed_count: "$.confirmed_count"
+    fill_ratio:      "$.fill_ratio"
+    starts_at:       "$.starts_at"
+
+# --------------------------------------------------------------------------
+# Downstream agents that subscribe to this event
+# --------------------------------------------------------------------------
+downstream:
+  agents:
+    - registration-triage
+
+# --------------------------------------------------------------------------
+# Deduplication — re-fire at most every 30 minutes per event unless
+# fill_ratio has jumped by more than 5 percentage points since last fire.
+# --------------------------------------------------------------------------
+dedup:
+  key: "{event_id}"
+  ttl_seconds: 1800
+  re_fire_if: "payload.fill_ratio > prior.fill_ratio + 0.05"

@@ -1,0 +1,57 @@
+---
+# Inbound source — Hopin registration webhook
+#
+# Hopin delivers registrant.registered events via POST when an attendee
+# registers for an event. Payload shape follows Hopin Webhooks v2.
+#
+# Mounting: POST /v1/events/inbound/hopin/{route_id}
+# Auth:     Per-tenant bearer token + Hopin webhook signature header
+#           (X-Hopin-Signature: sha256=<hmac>).
+
+name: hopin-event
+kind: webhook
+
+route_prefix: /v1/events/inbound/hopin
+
+# Signature verification
+signature:
+  algorithm: hmac-sha256
+  header: X-Hopin-Signature
+  prefix: "sha256="
+  secret_env: HOPIN_WEBHOOK_SECRET
+
+# Only handle registrant.registered events
+event_filter:
+  json_path: "$.event"
+  values:
+    - registrant.registered
+
+normalize:
+  field_map:
+    external_id:       "$.data.registrant.id"
+    event_external_id: "$.data.event.id"
+    name:              "$.data.registrant.name"
+    email:             "$.data.registrant.email"
+    tier:              _const:general
+    raw:               _self
+
+sample_payload: |
+  {
+    "event": "registrant.registered",
+    "data": {
+      "event": {
+        "id": "evt-abc-123",
+        "name": "DevConf 2026"
+      },
+      "registrant": {
+        "id": "reg-xyz-456",
+        "name": "Bob Lee",
+        "email": "bob.lee@example.com",
+        "registered_at": "2026-05-25T14:30:00Z"
+      }
+    }
+  }
+
+# Deferred:
+#   - Hopin session.started events for live attendance tracking
+#   - Hopin registrant.cancelled to update status = 'cancelled'

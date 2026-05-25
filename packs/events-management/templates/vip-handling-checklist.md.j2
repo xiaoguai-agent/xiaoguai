@@ -1,0 +1,77 @@
+{# packs/events-management/templates/vip-handling-checklist.md.j2
+   Jinja2 template for the VIP handling checklist posted to event-team-slack.
+   Rendered by registration-triage when is_vip = true.
+   Posted immediately (no HOTL gate) as a Slack notification.
+
+   Context variables:
+     registration.id            — registration UUID
+     registration.name          — VIP registrant full name
+     registration.email         — VIP registrant email
+     registration.tier          — 'vip' (always, by this point)
+     registration.status        — 'confirmed' | 'waitlisted'
+     registration.vip_reason    — 'tier_field' | 'domain_match'
+     registration.dietary_needs       — list of normalised tags
+     registration.accessibility_needs — list of normalised tags
+     registration.registered_at  — registration timestamp
+     event.name                 — event name
+     event.starts_at            — event start datetime
+     capacity_override          — boolean (true if VIP bypassed capacity)
+     triage_notes               — optional free text from agent
+#}
+
+**VIP Registration Alert** — {{ event.name }}
+
+A new VIP registrant has been processed and requires white-glove handling.
+
+---
+
+**Registrant**
+
+| Field        | Value |
+|--------------|-------|
+| Name         | {{ registration.name }} |
+| Email        | {{ registration.email }} |
+| Status       | {{ registration.status | upper }} |
+| VIP signal   | {{ registration.vip_reason | replace('_', ' ') | title }} |
+| Registered   | {{ registration.registered_at | datetime_format('%Y-%m-%d %H:%M UTC') }} |
+
+{% if capacity_override %}
+> ⚠️ **Capacity override applied** — this VIP was confirmed despite the event
+> being at or above capacity. Please verify this is intentional.
+
+{% endif %}
+{% if registration.dietary_needs %}
+**Dietary needs:** {{ registration.dietary_needs | join(', ') }}
+{% endif %}
+{% if registration.accessibility_needs %}
+**Accessibility needs:** {{ registration.accessibility_needs | join(', ') }}
+{% endif %}
+{% if triage_notes %}
+**Triage notes:** {{ triage_notes }}
+{% endif %}
+
+---
+
+**Handling Checklist**
+
+Please complete the following before the event:
+
+- [ ] Send personalised welcome email (use speaker-outreach-drafter or custom)
+- [ ] Assign a dedicated event team point of contact for this VIP
+- [ ] Reserve preferred seating / table if applicable
+- [ ] Confirm dietary and accessibility arrangements with the venue
+{% if registration.dietary_needs %}
+  - Dietary: {{ registration.dietary_needs | join(', ') }}
+{% endif %}
+{% if registration.accessibility_needs %}
+  - Accessibility: {{ registration.accessibility_needs | join(', ') }}
+{% endif %}
+- [ ] Add to VIP-only communications list (briefings, exclusive sessions)
+- [ ] Ensure badge printing includes VIP designation
+- [ ] Brief on-site staff on VIP's name and preferences
+- [ ] Post-event: send thank-you note within 48 hours
+
+---
+
+Registration ID: `{{ registration.id }}`
+Event starts: {{ event.starts_at | datetime_format('%Y-%m-%d %H:%M UTC') }}
