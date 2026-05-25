@@ -1,0 +1,63 @@
+name: Feature Request
+description: Propose a new capability or improvement.
+title: "feat: <short description>"
+labels: ["enhancement", "triage"]
+assignees: []
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What pain or gap motivates this request? Be concrete ("I have to…", "It's impossible to…").
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe what you want to happen. Include API surface, CLI flags, or UI sketches as appropriate.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you evaluate, and why do you prefer the proposed one?
+    validations:
+      required: true
+
+  - type: textarea
+    id: beneficiaries
+    attributes:
+      label: Who benefits and how often?
+      description: "Persona (ops engineer, end-user, integrator…), rough call/session frequency, expected volume."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: breaking
+    attributes:
+      label: Could this be a breaking change?
+      options:
+        - "No"
+        - "Yes — API / wire-format"
+        - "Yes — config schema"
+        - "Yes — behaviour / output"
+        - "Unsure"
+    validations:
+      required: true
+
+  - type: input
+    id: adr
+    attributes:
+      label: Related ADR
+      description: "If a design decision exists, link it (e.g. docs/adr/0012-hotl-policy.md). Leave blank if none."
+      placeholder: "docs/adr/XXXX-…"
+
+  - type: textarea
+    id: mockup
+    attributes:
+      label: Mock-up / sketch
+      description: Optional ASCII diagram, wireframe, or example config snippet.
