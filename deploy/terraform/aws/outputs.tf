@@ -45,3 +45,17 @@ output "llm_secrets_arn" {
   value       = module.secrets.llm_secrets_arn
   sensitive   = true
 }
+
+# ---------------------------------------------------------------------------
+# Wave-3 observability outputs
+# ---------------------------------------------------------------------------
+
+output "prometheus_scrape_addr" {
+  description = "Prometheus scrape address configured on the ECS tasks (PROMETHEUS_LISTEN_ADDR). This is a container-local bind address; expose it via a dedicated NLB target group or a Prometheus agent running as a sidecar. Empty string when prometheus_enabled=false."
+  value       = var.prometheus_enabled ? var.prometheus_listen_addr : ""
+}
+
+output "otel_endpoint" {
+  description = "OTLP gRPC endpoint the application is configured to export traces and metrics to. Empty string when otel_enabled=false."
+  value       = var.otel_enabled ? var.otel_endpoint : ""
+}
