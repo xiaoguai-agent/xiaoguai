@@ -207,6 +207,22 @@
     "providers": {
       "title": "LLM プロバイダー",
       "placeholder": "プロバイダー一覧エンドポイント（/v1/admin/providers）は v0.6.1 バックログにあります。それまでは CLI を使用してください：xiaoguai provider list。"
+    },
+    "hotl_policies": {
+      "title": "HotL ポリシー",
+      "btn_new": "+ 新しいポリシー",
+      "btn_test": "ポリシーをテスト",
+      "btn_edit": "編集",
+      "btn_delete": "削除",
+      "col_scope": "スコープ",
+      "col_max_count": "最大回数",
+      "col_max_usd": "最大 USD",
+      "col_window": "ウィンドウ",
+      "col_escalate_to": "エスカレーション先",
+      "empty": "HotL ポリシーがありません。",
+      "unavailable_title": "ポリシーストアが利用できません。",
+      "unavailable_body": "PgHotlPolicyStore がまだ接続されていません — API が 503 を返しました。Postgres なしの開発モードでは想定内です。ブリッジの状態を確認してください：",
+      "unavailable_link": "ブリッジ状態 →"
     }
   }
 }

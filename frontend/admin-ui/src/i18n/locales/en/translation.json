@@ -207,6 +207,22 @@
     "providers": {
       "title": "LLM Providers",
       "placeholder": "Provider listing endpoint (`/v1/admin/providers`) is on the v0.6.1 backlog. Until then use the CLI: xiaoguai provider list."
+    },
+    "hotl_policies": {
+      "title": "HotL Policies",
+      "btn_new": "+ New policy",
+      "btn_test": "Test policy",
+      "btn_edit": "Edit",
+      "btn_delete": "Delete",
+      "col_scope": "Scope",
+      "col_max_count": "Max count",
+      "col_max_usd": "Max USD",
+      "col_window": "Window",
+      "col_escalate_to": "Escalate to",
+      "empty": "No HotL policies yet.",
+      "unavailable_title": "Policy store not available.",
+      "unavailable_body": "PgHotlPolicyStore is not yet wired — the API returned 503. This is expected in dev mode without Postgres. Check bridges status:",
+      "unavailable_link": "Bridges status →"
     }
   }
 }

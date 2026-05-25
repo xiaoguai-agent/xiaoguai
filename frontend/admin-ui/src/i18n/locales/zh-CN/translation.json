@@ -207,6 +207,22 @@
     "providers": {
       "title": "LLM 提供商",
       "placeholder": "提供商列表端点（/v1/admin/providers）列入 v0.6.1 计划。目前请使用 CLI：xiaoguai provider list。"
+    },
+    "hotl_policies": {
+      "title": "HotL 策略",
+      "btn_new": "+ 新建策略",
+      "btn_test": "测试策略",
+      "btn_edit": "编辑",
+      "btn_delete": "删除",
+      "col_scope": "作用域",
+      "col_max_count": "最大次数",
+      "col_max_usd": "最大金额（美元）",
+      "col_window": "窗口",
+      "col_escalate_to": "上报目标",
+      "empty": "暂无 HotL 策略。",
+      "unavailable_title": "策略存储不可用。",
+      "unavailable_body": "PgHotlPolicyStore 尚未接入——API 返回了 503。在没有 Postgres 的开发模式下属正常情况。请查看桥接状态：",
+      "unavailable_link": "桥接状态 →"
     }
   }
 }
