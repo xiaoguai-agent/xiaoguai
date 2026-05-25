@@ -1,0 +1,35 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: xiaoguai-hotl
+  namespace: xiaoguai
+  labels:
+    app.kubernetes.io/name: xiaoguai
+    app.kubernetes.io/component: hotl
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  hosts:
+    - xiaoguai
+  http:
+    - name: hotl-routes
+      match:
+        - uri:
+            prefix: /v1/hotl/
+      timeout: 5s
+      retries:
+        attempts: 3
+        perTryTimeout: 1.5s
+        # Only retry on server-side errors; 4xx are real client errors — do not retry
+        retryOn: 5xx,reset,connect-failure,retriable-4xx
+        # retriable-4xx covers only HTTP 409 (conflict); all other 4xx flow through once
+      # mirror block: set mirrorPercentage to 10 during canary; leave 0 (disabled) otherwise
+      mirror:
+        host: xiaoguai-canary
+      mirrorPercentage:
+        value: 0
+      route:
+        - destination:
+            host: xiaoguai
+            port:
+              number: 8080
+          weight: 100

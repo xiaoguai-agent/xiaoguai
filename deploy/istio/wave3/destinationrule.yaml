@@ -1,0 +1,59 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: xiaoguai
+  namespace: xiaoguai
+  labels:
+    app.kubernetes.io/name: xiaoguai
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  host: xiaoguai
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 200
+        idleTimeout: 90s
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 60s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+      splitExternalLocalOriginErrors: false
+  # Canary subset: created by HPA/rollout controller in the xiaoguai-canary service.
+  # VirtualService weight fields reference these subset names.
+  subsets:
+    - name: stable
+      labels:
+        app.kubernetes.io/name: xiaoguai
+    - name: canary
+      labels:
+        app.kubernetes.io/name: xiaoguai-canary
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: xiaoguai-canary
+  namespace: xiaoguai
+  labels:
+    app.kubernetes.io/name: xiaoguai
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  host: xiaoguai-canary
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 200
+        idleTimeout: 90s
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 60s
+      maxEjectionPercent: 50
+      minHealthPercent: 30

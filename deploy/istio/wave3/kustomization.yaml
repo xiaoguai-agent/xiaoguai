@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: xiaoguai
+
+resources:
+  - peerauthentication.yaml
+  - authorizationpolicy.yaml
+  - destinationrule.yaml
+  - virtualservice-hotl.yaml
+  - virtualservice-outcomes.yaml
+  - virtualservice-skills.yaml
+  - telemetry.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: xiaoguai
+      app.kubernetes.io/part-of: xiaoguai
+      app.kubernetes.io/managed-by: kustomize
