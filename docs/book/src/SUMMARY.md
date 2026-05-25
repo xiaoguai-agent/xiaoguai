@@ -38,6 +38,7 @@
 - [Pack install troubleshoot](../../runbooks/pack-install-troubleshoot.md)
 - [IM adapter onboarding](../../runbooks/im-adapter-onboarding.md)
 - [Anomaly false-positive triage](../../runbooks/anomaly-false-positive-triage.md)
+- [Active Wakeup: Watchers & Anomaly Detection](operator/active-wakeup.md)
 
 ---
 
