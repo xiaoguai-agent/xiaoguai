@@ -25,6 +25,7 @@ members = [
     "crates/xiaoguai-im-slack",
     "crates/xiaoguai-cli",
     "crates/xiaoguai-orchestrator",
+    "crates/xiaoguai-observability",
 ]
 
 [workspace.package]
@@ -126,6 +127,14 @@ cron = "0.12"
 notify = "7"
 notify-debouncer-full = "0.4"
 tempfile = "3"
+
+# observability
+prometheus = { version = "0.13", features = ["process"] }
+opentelemetry = { version = "0.27", features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace", "metrics"] }
+opentelemetry-otlp = { version = "0.27", features = ["tonic", "trace", "grpc-tonic"] }
+opentelemetry-semantic-conventions = "0.27"
+tracing-opentelemetry = "0.28"
 
 # misc
 once_cell = "1.20"
