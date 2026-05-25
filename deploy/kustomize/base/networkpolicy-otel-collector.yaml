@@ -1,0 +1,104 @@
+##############################################################################
+# OpenTelemetry Collector NetworkPolicy
+#
+# Ingress:
+#   - xiaoguai-core → 4317/TCP (gRPC OTLP traces + metrics)
+#   - prometheus    → 8889/TCP (otel-collector Prometheus exporter endpoint)
+#
+# Egress:
+#   - DNS
+#   - Prometheus (8889/TCP is scrape-target, otel pushes via remote-write
+#     or the otel prometheus-receiver; actual push port depends on config)
+#   - Grafana Tempo (gRPC 4317 or HTTP 4318) — in-cluster or external
+#   - Grafana Loki  (HTTP 3100) — in-cluster or external
+#   - External observability SaaS (443/TCP) — Honeycomb, Grafana Cloud,
+#     Datadog OTLP, etc.  Restrict to provider CIDRs in prod overlay.
+##############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-collector
+  labels:
+    app.kubernetes.io/name: xiaoguai
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # xiaoguai-core sends OTLP spans/metrics via gRPC.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: xiaoguai
+              app.kubernetes.io/component: core
+      ports:
+        - protocol: TCP
+          port: 4317
+
+    # Prometheus scrapes the otel-collector's Prometheus exporter.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8889
+
+  egress:
+    # DNS.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # In-cluster Prometheus remote-write / push endpoint.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+
+    # In-cluster Grafana Tempo (OTLP gRPC).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+      ports:
+        - protocol: TCP
+          port: 4317
+
+    # In-cluster Grafana Loki (HTTP push).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+      ports:
+        - protocol: TCP
+          port: 3100
+
+    # External observability SaaS (Honeycomb, Grafana Cloud, Datadog, etc.).
+    # Restrict to provider CIDRs in prod overlay.
+    - ports:
+        - protocol: TCP
+          port: 443

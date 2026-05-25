@@ -1,0 +1,69 @@
+##############################################################################
+# Dev-only: relaxed egress NetworkPolicy for xiaoguai-core
+#
+# In dev, engineers need to curl internal services, reach local k3d/kind
+# registries, access local LLM servers (Ollama on host network), and hit
+# arbitrary HTTP endpoints for debugging.
+#
+# This policy is ADDITIVE — it supplements the base xiaoguai-core policy by
+# opening extra egress ports used only in development environments.
+# It must NEVER be applied to staging or prod overlays.
+#
+# Extra egress allowed in dev:
+#   - HTTP (80/TCP)       — internal dev services, local registries
+#   - Alt-HTTPS (8443)    — self-signed local services
+#   - Ollama API (11434)  — local LLM inference server
+#   - Generic high ports (8000–9999) — dev/test services on host network
+#   - All pod-to-pod within namespace (for kubectl exec debugging)
+##############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: xiaoguai-core-dev-egress
+  labels:
+    app.kubernetes.io/name: xiaoguai
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/environment: dev
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: xiaoguai
+      app.kubernetes.io/component: core
+  policyTypes:
+    - Egress
+
+  egress:
+    # HTTP to internal dev services (local registries, test servers).
+    - ports:
+        - protocol: TCP
+          port: 80
+
+    # Alt-HTTPS used by local self-signed services.
+    - ports:
+        - protocol: TCP
+          port: 8443
+
+    # Ollama local inference server (default port).
+    - ports:
+        - protocol: TCP
+          port: 11434
+
+    # Dev/test services running on non-standard ports (8000–9999).
+    - ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8001
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8888
+        - protocol: TCP
+          port: 9000
+        - protocol: TCP
+          port: 9090
+
+    # Intra-namespace pod-to-pod (for kubectl exec curl debugging).
+    - to:
+        - podSelector: {}

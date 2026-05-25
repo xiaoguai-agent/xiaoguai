@@ -6,6 +6,7 @@ namespace: xiaoguai-dev
 
 resources:
   - ../../base
+  - networkpolicy-dev-egress.yaml
 
 # Pin to :dev image tag for local / CI builds
 images:
