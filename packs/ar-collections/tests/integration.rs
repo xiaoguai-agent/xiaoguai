@@ -89,33 +89,12 @@ struct PackPath {
 
 #[derive(Debug)]
 struct WatchSpec {
-    name: String,
-    #[allow(
-        dead_code,
-        reason = "parsed from YAML for structural validation; field value unused in assertions"
-    )]
-    version: String,
-    source: WatchSource,
-    query: String,
-    schedule: WatchSchedule,
-    event: WatchEvent,
-}
-
-#[derive(Debug)]
-struct WatchSource {
-    kind: String,
-    table: String,
-}
-
-#[derive(Debug)]
-struct WatchSchedule {
-    cron: String,
-}
-
-#[derive(Debug)]
-struct WatchEvent {
-    kind: String,
-    cardinality: String,
+    id: String,
+    query: String,      // source.sql.query
+    cron: String,       // schedule.cron.expr
+    action: String,     // on_match.action
+    target: String,     // on_match.target
+    event_kind: String, // on_match.params.event_kind
 }
 
 #[derive(Debug)]
@@ -230,20 +209,12 @@ fn parse_pack_manifest(raw: &str) -> PackManifest {
 fn parse_watch_spec(raw: &str) -> WatchSpec {
     let v: serde_yaml::Value = serde_yaml::from_str(raw).expect("watch spec: invalid YAML");
     WatchSpec {
-        name: parse_str_field(&v, "name"),
-        version: parse_str_field(&v, "version"),
-        source: WatchSource {
-            kind: parse_str_field(&v["source"], "kind"),
-            table: parse_str_field(&v["source"], "table"),
-        },
-        query: parse_str_field(&v, "query"),
-        schedule: WatchSchedule {
-            cron: parse_str_field(&v["schedule"], "cron"),
-        },
-        event: WatchEvent {
-            kind: parse_str_field(&v["event"], "kind"),
-            cardinality: parse_str_field(&v["event"], "cardinality"),
-        },
+        id: parse_str_field(&v, "id"),
+        query: parse_str_field(&v["source"]["sql"], "query"),
+        cron: parse_str_field(&v["schedule"]["cron"], "expr"),
+        action: parse_str_field(&v["on_match"], "action"),
+        target: parse_str_field(&v["on_match"], "target"),
+        event_kind: parse_str_field(&v["on_match"]["params"], "event_kind"),
     }
 }
 
@@ -355,18 +326,21 @@ fn watch_spec_round_trips() {
 
     let spec = parse_watch_spec(&raw);
 
-    assert_eq!(spec.name, "dso-over-60");
-    assert_eq!(spec.source.kind, "sql");
-    assert_eq!(spec.source.table, "ar_aging");
+    assert_eq!(spec.id, "dso-over-60");
+    assert!(
+        spec.query.contains("ar_aging"),
+        "query must select from the ar_aging table"
+    );
     assert!(
         spec.query.contains("INTERVAL '60 days'"),
         "query must reference 60-day threshold"
     );
-    assert_eq!(spec.event.kind, "ar.dso_over_60");
-    assert_eq!(spec.event.cardinality, "per_row");
+    assert_eq!(spec.action, "wakeup");
+    assert_eq!(spec.target, "dunning-drafter");
+    assert_eq!(spec.event_kind, "ar.dso_over_60");
     // Confirm key schedule field round-trips correctly
     assert!(
-        spec.schedule.cron.contains("*/15"),
+        spec.cron.contains("*/15"),
         "default cron should be every 15 minutes"
     );
 }
