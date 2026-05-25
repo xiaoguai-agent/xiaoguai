@@ -131,9 +131,7 @@ mod tests {
     }
 
     impl FakeClient {
-        fn with_responses(
-            responses: Vec<Result<serde_json::Value, String>>,
-        ) -> Arc<Self> {
+        fn with_responses(responses: Vec<Result<serde_json::Value, String>>) -> Arc<Self> {
             Arc::new(Self {
                 responses: Mutex::new(responses.into_iter().collect()),
                 calls: Mutex::new(Vec::new()),
@@ -276,8 +274,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_updates_propagates_transport_error() {
-        let client =
-            FakeClient::with_responses(vec![Err("network failure".to_string())]);
+        let client = FakeClient::with_responses(vec![Err("network failure".to_string())]);
         let state = LongPollState::default();
         let err = fetch_updates(client.as_ref(), &state, 1).await.unwrap_err();
         assert!(matches!(err, ProviderError::Transport(_)));

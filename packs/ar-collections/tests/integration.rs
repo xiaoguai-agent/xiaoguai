@@ -191,8 +191,7 @@ fn parse_seq_paths(v: &serde_yaml::Value, key: &str) -> Vec<PackPath> {
 }
 
 fn parse_pack_manifest(raw: &str) -> PackManifest {
-    let v: serde_yaml::Value =
-        serde_yaml::from_str(raw).expect("pack.yaml: invalid YAML");
+    let v: serde_yaml::Value = serde_yaml::from_str(raw).expect("pack.yaml: invalid YAML");
     PackManifest {
         name: parse_str_field(&v, "name"),
         version: parse_str_field(&v, "version"),
@@ -207,8 +206,7 @@ fn parse_pack_manifest(raw: &str) -> PackManifest {
 }
 
 fn parse_watch_spec(raw: &str) -> WatchSpec {
-    let v: serde_yaml::Value =
-        serde_yaml::from_str(raw).expect("watch spec: invalid YAML");
+    let v: serde_yaml::Value = serde_yaml::from_str(raw).expect("watch spec: invalid YAML");
     WatchSpec {
         name: parse_str_field(&v, "name"),
         version: parse_str_field(&v, "version"),
@@ -228,8 +226,7 @@ fn parse_watch_spec(raw: &str) -> WatchSpec {
 }
 
 fn parse_anomaly_spec(raw: &str) -> AnomalySpec {
-    let v: serde_yaml::Value =
-        serde_yaml::from_str(raw).expect("anomaly spec: invalid YAML");
+    let v: serde_yaml::Value = serde_yaml::from_str(raw).expect("anomaly spec: invalid YAML");
     AnomalySpec {
         name: parse_str_field(&v, "name"),
         version: parse_str_field(&v, "version"),

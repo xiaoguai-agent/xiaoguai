@@ -209,8 +209,7 @@ mod tests {
     #[tokio::test]
     async fn reply_records_into_sink() {
         let sink: Arc<Mutex<Vec<OutgoingReply>>> = Arc::new(Mutex::new(Vec::new()));
-        let provider =
-            TelegramProvider::with_recording_sink("tok", None::<String>, sink.clone());
+        let provider = TelegramProvider::with_recording_sink("tok", None::<String>, sink.clone());
         provider
             .reply(&OutgoingReply {
                 conversation_id: "42".into(),
