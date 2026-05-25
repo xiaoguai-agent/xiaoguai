@@ -120,9 +120,14 @@ fn open_index_in_ram() -> RagResult<IndexState> {
     let (schema, f_id, f_source_uri, f_text, f_collection_id, f_line_start, f_line_end) =
         build_schema();
     let index = Index::create_in_ram(schema.clone());
+    // Use Manual reload for in-RAM indexes so that callers can call
+    // `reader.reload()` immediately after `writer.commit()` — making newly
+    // committed documents visible without waiting for a background timer.
+    // `OnCommitWithDelay` (the default) uses a background thread with a
+    // short sleep that races against the test assertions.
     let reader = index
         .reader_builder()
-        .reload_policy(ReloadPolicy::OnCommitWithDelay)
+        .reload_policy(ReloadPolicy::Manual)
         .try_into()
         .map_err(|e| RagError::Backend(format!("tantivy reader: {e}")))?;
     let writer = index
@@ -258,14 +263,22 @@ impl LexicalStore for TantivyStore {
     }
 
     async fn commit(&self, collection_id: &str) -> RagResult<()> {
-        let guard = self.indexes.lock();
-        let state = guard.get(collection_id).ok_or_else(|| {
-            RagError::NotFound(format!("tantivy collection not found: {collection_id}"))
-        })?;
-        let mut writer = state.writer.lock();
+        let (writer_arc, reader) = {
+            let guard = self.indexes.lock();
+            let state = guard.get(collection_id).ok_or_else(|| {
+                RagError::NotFound(format!("tantivy collection not found: {collection_id}"))
+            })?;
+            (Arc::clone(&state.writer), state.reader.clone())
+        };
+        let mut writer = writer_arc.lock();
         writer
             .commit()
             .map_err(|e| RagError::Backend(format!("tantivy commit: {e}")))?;
+        // Reload the reader to make committed documents visible immediately
+        // (required when using ReloadPolicy::Manual for in-RAM indexes).
+        reader
+            .reload()
+            .map_err(|e| RagError::Backend(format!("tantivy reader reload: {e}")))?;
         Ok(())
     }
 }
@@ -410,11 +423,12 @@ impl RagClient for TantivyStore {
 
         // Build one Tantivy document per chunk (line) so BM25 scoring
         // operates at chunk granularity — mirrors `InMemoryRagClient`.
-        let (writer_arc, f_id, f_source_uri, f_text, f_collection_id, f_line_start, f_line_end) = {
+        let (writer_arc, reader, f_id, f_source_uri, f_text, f_collection_id, f_line_start, f_line_end) = {
             let guard = self.indexes.lock();
             let s = guard.get(&req.collection_id).unwrap();
             (
                 Arc::clone(&s.writer),
+                s.reader.clone(),
                 s.f_id,
                 s.f_source_uri,
                 s.f_text,
@@ -461,6 +475,13 @@ impl RagClient for TantivyStore {
             writer
                 .commit()
                 .map_err(|e| RagError::Backend(format!("tantivy commit: {e}")))?;
+            // Explicitly reload the reader so newly committed documents are
+            // visible immediately. Required when using ReloadPolicy::Manual
+            // (in-RAM indexes) to avoid a race between the commit and the
+            // next search call.
+            reader
+                .reload()
+                .map_err(|e| RagError::Backend(format!("tantivy reader reload: {e}")))?;
             Ok(())
         })
         .await
@@ -547,12 +568,6 @@ mod tests {
             .unwrap()
     }
 
-    // Reader-reload timing in tantivy 0.22 makes the in-memory store
-    // serve stale segments to the search reader unless we wait for the
-    // commit to land. Deferred until the reader-reload settles
-    // synchronously — covered by the integration harness against a
-    // disk-backed index.
-    #[ignore]
     #[tokio::test]
     async fn index_10_docs_top_hit_contains_query_term() {
         let store = TantivyStore::in_memory();
@@ -582,7 +597,6 @@ mod tests {
         );
     }
 
-    #[ignore]
     #[tokio::test]
     async fn bm25_score_sanity_more_occurrences_rank_higher() {
         let store = TantivyStore::in_memory();
@@ -622,8 +636,6 @@ mod tests {
         );
     }
 
-    // Same reader-reload caveat as the other in-memory tantivy tests above.
-    #[ignore]
     #[tokio::test]
     async fn ingest_is_idempotent_replaces_prior_version() {
         let store = TantivyStore::in_memory();
@@ -656,7 +668,6 @@ mod tests {
         assert!(matches!(err, RagError::InvalidArgument(_)));
     }
 
-    #[ignore]
     #[tokio::test]
     async fn citation_contract_full_envelope() {
         let store = TantivyStore::in_memory();
