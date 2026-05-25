@@ -8,6 +8,7 @@ import { MarkdownBody } from './markdown';
 import { HotlBanner } from './HotlBanner';
 import type { HotlPendingState } from './HotlBanner';
 import { AiDisclosureBanner } from './AiDisclosureBanner';
+import { WatchIndicator } from './WatchIndicator';
 
 type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
 
@@ -227,6 +228,12 @@ export function ChatPage({ onSessionCreated }: Props) {
       {hotlPending && <HotlBanner pending={hotlPending} />}
       {/* AI disclosure banner (EU AI Act Art. 50(1)) — always above HotlBanner */}
       <AiDisclosureBanner tenantId={DEV_TENANT_ID} />
+      {/* Chat header — order: AiDisclosureBanner > HotlBanner > WatchIndicator */}
+      <div className="chat-header">
+        {/* AiDisclosureBanner placeholder — wired by feat/chat-ui-ai-disclosure branch */}
+        {/* HotlBanner placeholder — wired by feat/chat-ui-hotl-banner branch */}
+        <WatchIndicator sessionId={sessionId} />
+      </div>
       <div className="messages" ref={scrollRef}>
         {bubbles.map((b, i) => (
           <Bubble key={i} bubble={b} onFork={fork} />

@@ -4,5 +4,21 @@
     "dismiss_label": "Dismiss",
     "learn_more_label": "Learn more",
     "banner_aria_label": "AI transparency notice"
+  "watch": {
+    "badge_label": "{{count}} active watcher",
+    "badge_label_plural": "{{count}} active watchers",
+    "popover_title": "Active Watchers",
+    "pause": "Pause",
+    "resume": "Resume",
+    "status_running": "running",
+    "status_paused": "paused",
+    "status_error": "error",
+    "last_fired": "Last fired {{relative}}",
+    "never_fired": "Never fired",
+    "pause_confirm": "Pause this watcher?",
+    "resume_confirm": "Resume this watcher?",
+    "source_schedule": "schedule",
+    "source_webhook": "webhook",
+    "source_manual": "manual"
   }
 }
