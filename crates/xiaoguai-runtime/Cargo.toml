@@ -13,14 +13,15 @@ xiaoguai-agent = { path = "../xiaoguai-agent" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
 async-trait = { workspace = true }
 futures = { workspace = true }
+parking_lot = { workspace = true }
+rand = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["sync", "rt", "macros"] }
+tokio = { workspace = true, features = ["sync", "rt", "macros", "time"] }
 tokio-stream = { workspace = true }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-parking_lot = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }
 
 [lints]

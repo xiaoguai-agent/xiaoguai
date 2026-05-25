@@ -8243,6 +8243,7 @@ dependencies = [
  "async-trait",
  "futures",
  "parking_lot",
+ "rand 0.8.6",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
