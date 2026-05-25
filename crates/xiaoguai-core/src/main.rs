@@ -17,11 +17,14 @@
 
 mod audit_bridge;
 mod eval_bridge;
+pub mod hotl_bridge;
+pub mod outcomes_bridge;
 #[cfg(feature = "packs")]
 pub mod packs;
 mod scheduler_bridge;
 mod sd_notify_bridge;
 mod sessions_bridge;
+pub mod skills_bridge;
 mod today_bridge;
 mod usage_bridge;
 
@@ -507,16 +510,38 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         webhook_token_admin,
         scheduler_jobs_reader,
         rate_limit_state: Some(RateLimitState::in_memory(RateClass::Standard)),
-        // v1.2.3: HOTL boundary policy — production wires PgHotlPolicyStore
-        // in a follow-up; left unwired here so the routes return 503 until
-        // the bridge crate lands.
-        hotl_policy_store: None,
-        hotl_enforcer: None,
-        // v1.2.4: outcome telemetry — production wires PgOutcomeRecorder
-        // in a follow-up; routes return 503 until then.
-        outcome_writer: None,
-        outcomes_reader: None,
-        skill_packs: None,
+        // v1.2.3: HOTL boundary policy — PgHotlPolicyStore + PgHotlEnforcer
+        // wired here (migration 0011 provides both tables). We build one
+        // PgHotlPolicyStore and share it between the CRUD handle and the
+        // enforcer so both see the same pool.
+        hotl_policy_store: Some({
+            let store: Arc<dyn xiaoguai_api::hotl::policy::HotlPolicyStore> = Arc::new(
+                crate::hotl_bridge::PgHotlPolicyStore::new(pool.clone()),
+            );
+            store
+        }),
+        hotl_enforcer: Some({
+            let store = Arc::new(crate::hotl_bridge::PgHotlPolicyStore::new(pool.clone()));
+            let enforcer: Arc<dyn xiaoguai_api::hotl::enforcer::HotlEnforcer> =
+                Arc::new(crate::hotl_bridge::PgHotlEnforcer::new(pool.clone(), store));
+            enforcer
+        }),
+        // v1.2.4: outcome telemetry — PgOutcomesBackend implements both
+        // writer and reader; construct once and coerce to each trait object.
+        outcome_writer: Some({
+            let backend: Arc<dyn xiaoguai_api::outcomes::OutcomeWriter> = Arc::new(
+                crate::outcomes_bridge::PgOutcomesBackend::new(pool.clone()),
+            );
+            backend
+        }),
+        outcomes_reader: Some({
+            let backend: Arc<dyn xiaoguai_api::outcomes::OutcomesReader> = Arc::new(
+                crate::outcomes_bridge::PgOutcomesBackend::new(pool.clone()),
+            );
+            backend
+        }),
+        // v1.2.28: skill pack install/uninstall — PgSkillPackRepository.
+        skill_packs: Some(crate::skills_bridge::PgSkillPackRepository::arc(pool.clone())),
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by
