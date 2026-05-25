@@ -1,0 +1,76 @@
+---
+# Inbound source — Manual VIP registration add
+#
+# Allows event operators to add VIP registrants directly via the admin UI
+# or the xiaoguai REST API, bypassing the standard registration flow.
+#
+# This source is NOT a webhook — it is a REST API endpoint that the admin UI
+# calls directly. The pack registers it as an inbound route; auth is via
+# the standard operator session token.
+#
+# Mounting: POST /v1/events/inbound/manual-vip/{event_id}
+# Auth:     Operator session token (standard xiaoguai auth middleware).
+#
+# On receipt, the adapter:
+#   1. Validates all required fields.
+#   2. Inserts a registration row with tier = 'vip' and status = 'pending'.
+#   3. Fires an events.vip_registration_needs_handling WatchEvent immediately
+#      (does not wait for the 2-minute cron tick).
+#   4. Returns the new registration UUID to the caller.
+
+name: manual-vip-add
+kind: rest_api
+
+route: POST /v1/events/inbound/manual-vip/{event_id}
+
+auth:
+  kind: operator_session   # standard xiaoguai operator auth
+
+# Request body schema (JSON)
+request_schema:
+  type: object
+  required:
+    - name
+    - email
+  properties:
+    name:
+      type: string
+      description: VIP registrant full name
+    email:
+      type: string
+      format: email
+      description: VIP registrant email address
+    dietary_needs:
+      type: array
+      items:
+        type: string
+      description: >
+        Dietary requirement tags. Normalised by registration-triage;
+        free text is accepted here and normalised downstream.
+    accessibility_needs:
+      type: array
+      items:
+        type: string
+      description: Accessibility requirement tags.
+    notes:
+      type: string
+      description: Free-text notes for the event team (e.g. "CEO of Partner Co").
+
+# The adapter maps validated fields onto the registrations table insert.
+normalize:
+  field_map:
+    name:               "$.name"
+    email:              "$.email"
+    tier:               _const:vip
+    status:             _const:pending
+    dietary_needs:      "$.dietary_needs"
+    accessibility_needs: "$.accessibility_needs"
+
+# Immediate WatchEvent emission (bypasses the 2-minute cron tick)
+emit_event:
+  kind: events.vip_registration_needs_handling
+  immediate: true
+
+# Deferred:
+#   - Bulk VIP import from CSV/XLSX via admin UI upload
+#   - CRM integration (Salesforce / HubSpot contact lookup for bio enrichment)

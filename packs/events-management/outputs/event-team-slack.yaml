@@ -1,0 +1,68 @@
+---
+# Output connector — event-team-slack
+#
+# Sends structured Slack messages to the configured event team channel.
+# Used by: registration-triage (VIP alerts, capacity warnings),
+#          no-show-predictor (flagged registrant list),
+#          session-content-qc (overdue content alerts).
+#
+# Requires: SLACK_BOT_TOKEN + EVENTS_SLACK_CHANNEL in env.
+# Note: xiaoguai-im-slack is planned but not yet merged. In the interim,
+#       the output connector calls the Slack Web API directly via HTTP tool.
+
+output: event-team-slack
+
+slack:
+  bot_token_env: SLACK_BOT_TOKEN
+  channel_env:   EVENTS_SLACK_CHANNEL
+  # Username displayed in Slack for bot messages
+  username:      "Xiaoguai Events"
+  icon_emoji:    ":calendar:"
+
+# Message types and their formatting behaviour
+message_types:
+  vip_alert:
+    # Posted by registration-triage when a VIP is triaged.
+    template: templates/vip-handling-checklist.md.j2
+    # Slack thread: pin VIP alerts so the team can track handling.
+    pin: true
+    urgency: high
+
+  capacity_warning:
+    # Posted by registration-cap-approaching watch subscriber.
+    template: |
+      :warning: *Capacity Alert — {{ event_name }}*
+      Registrations are at {{ (fill_ratio * 100) | round(1) }}% of capacity
+      ({{ confirmed_count }} / {{ capacity }}).
+      Waitlist routing is now active.
+    urgency: medium
+
+  no_show_flagged:
+    # Posted by no-show-predictor after nightly scoring.
+    template: |
+      :crystal_ball: *No-Show Risk Report — {{ event_name }}*
+      {{ flagged_count }} registrant(s) flagged as high risk (≥ {{ (threshold * 100) | round(0) | int }}%):
+      {% for r in flagged_registrants[:5] %}
+      • {{ r.name }} ({{ r.email }}) — {{ (r.no_show_prob * 100) | round(0) | int }}% predicted no-show
+      {% endfor %}
+      {% if flagged_count > 5 %}…and {{ flagged_count - 5 }} more. See admin UI for the full list.{% endif %}
+    urgency: low
+
+  content_overdue:
+    # Posted by session-content-review-overdue watch subscriber.
+    template: |
+      :memo: *Content Review Overdue — {{ session_title }}*
+      Speaker: {{ speaker_name }} ({{ speaker_email }})
+      Days since confirmation: {{ days_since_confirmation }}
+      Current review status: {{ review_status }}
+      Session content QC agent has been triggered to follow up.
+    urgency: medium
+
+# Fallback: if Slack is not configured, write to admin_ui notification bell.
+fallback:
+  kind: admin_ui
+  notify_channel: "${EVENTS_HOTL_CHANNEL:-admin_ui}"
+
+# Deferred:
+#   - xiaoguai-im-slack native adapter (replaces direct HTTP call)
+#   - Slack interactive buttons for HOTL approval (Approve / Reject inline)

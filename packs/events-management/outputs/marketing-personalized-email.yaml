@@ -1,0 +1,96 @@
+---
+# Output connector — marketing-personalized-email
+#
+# Sends personalised transactional and marketing emails to attendees and
+# speakers, segmented by attendee type.
+#
+# Segments:
+#   general    — standard attendees: confirmation, reminders, post-event survey
+#   vip        — VIP attendees: white-glove confirmation, dedicated CTA
+#   speaker    — speakers: content feedback, slide deadline reminders
+#   waitlisted — waitlisted attendees: position update, spot-available alert
+#
+# Backend: SendGrid transactional email (Mail Send API v3).
+# Requires: SENDGRID_API_KEY + EVENTS_FROM_EMAIL + EVENTS_FROM_NAME in env.
+#
+# All email sends are logged to content_reviews (outcome_telemetry) so the
+# speaker-outreach-drafter improvement loop can track open/reply rates.
+
+output: marketing-personalized-email
+
+sendgrid:
+  api_key_env:   SENDGRID_API_KEY
+  from_email_env: EVENTS_FROM_EMAIL
+  from_name_env:  EVENTS_FROM_NAME
+  # Unsubscribe group IDs per segment (configured in SendGrid dashboard)
+  unsubscribe_groups:
+    general:    "${SENDGRID_UNSUB_GENERAL:-}"
+    vip:        "${SENDGRID_UNSUB_VIP:-}"
+    speaker:    "${SENDGRID_UNSUB_SPEAKER:-}"
+    waitlisted: "${SENDGRID_UNSUB_GENERAL:-}"
+
+# Per-segment configuration
+segments:
+  general:
+    description: >
+      Standard confirmed attendees. Receives registration confirmation,
+      event reminders (7-day, 1-day), and post-event survey.
+    templates:
+      confirmation:  templates/speaker-outreach-email.md.j2   # reused for attendee confirm
+      reminder_7d:   null    # deferred — use SendGrid Automation
+      reminder_1d:   null    # deferred
+    send_rate_limit:
+      per_address_per_day: 2
+
+  vip:
+    description: >
+      VIP attendees. Receives personalised white-glove confirmation with
+      dedicated point-of-contact details. No unsubscribe prompt on
+      transactional sends (CAN-SPAM compliant transactional exception).
+    templates:
+      confirmation:  templates/vip-handling-checklist.md.j2   # adapted for email format
+    send_rate_limit:
+      per_address_per_day: 3   # higher — concierge touches
+
+  speaker:
+    description: >
+      Speakers. Receives outreach invitation, confirmation, content feedback,
+      and slide deadline reminders. All outreach sends are HOTL-gated
+      (approved via admin UI before send).
+    templates:
+      invitation:    templates/speaker-outreach-email.md.j2
+      confirmation:  templates/speaker-outreach-email.md.j2
+      content_feedback: templates/session-content-feedback.md.j2
+    send_rate_limit:
+      per_address_per_day: 2
+
+  waitlisted:
+    description: >
+      Waitlisted registrants. Receives position notification and spot-available
+      alerts when confirmed registrants cancel.
+    templates:
+      waitlisted_notification: null    # deferred
+      spot_available:          null    # deferred
+    send_rate_limit:
+      per_address_per_day: 1
+
+# Outcome telemetry: track open/reply/bounce per send for improvement loop
+outcome_telemetry:
+  provider: sendgrid_events    # SendGrid event webhook
+  record_on:
+    - delivered
+    - opened
+    - clicked
+    - bounced
+    - spam_report
+  feedback_table: content_reviews
+
+# Fallback: if SendGrid is not configured, log draft to admin_ui only.
+fallback:
+  kind: admin_ui
+  log_draft: true
+
+# Deferred:
+#   - SendGrid Dynamic Templates (replace Jinja2 render with template_id lookup)
+#   - A/B testing on speaker outreach subject lines
+#   - Multilingual email support

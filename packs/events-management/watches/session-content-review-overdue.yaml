@@ -1,0 +1,100 @@
+# Watch spec — session-content-review-overdue
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent for every confirmed session whose content review has not
+# been completed within the configured number of days after confirmation.
+# Triggers session-content-qc to follow up and notifies the event team.
+#
+# Schema reference: F1 WatchSpec (xiaoguai-watch, >=1.3.1).
+# ---------------------------------------------------------------------------
+
+name: session-content-review-overdue
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each confirmed session whose content_reviews row is
+  still in 'pending' or 'in_progress' status beyond the configured deadline
+  (default 14 days after session confirmation). Triggers session-content-qc
+  to chase the speaker for materials.
+
+# --------------------------------------------------------------------------
+# Data source
+# --------------------------------------------------------------------------
+source:
+  kind: sql
+  table: sessions
+  tenant_column: null
+
+# `{overdue_after_days}` is substituted from pack config.content_review.overdue_after_days.
+query: |
+  SELECT
+      s.id                              AS session_id,
+      s.event_id,
+      s.title                           AS session_title,
+      s.format,
+      s.theme,
+      s.slide_url,
+      sp.name                           AS speaker_name,
+      sp.email                          AS speaker_email,
+      s.updated_at                      AS confirmed_at,
+      EXTRACT(DAY FROM NOW() - s.updated_at)::INT
+                                        AS days_since_confirmation,
+      COALESCE(cr.pass_status, 'never_started')
+                                        AS review_status
+  FROM sessions s
+  LEFT JOIN speakers sp ON sp.session_id = s.id
+  LEFT JOIN LATERAL (
+      SELECT pass_status
+      FROM   content_reviews
+      WHERE  session_id = s.id
+      ORDER  BY created_at DESC
+      LIMIT  1
+  ) cr ON TRUE
+  WHERE s.status IN ('confirmed', 'scheduled')
+    AND EXTRACT(DAY FROM NOW() - s.updated_at) >= {overdue_after_days}
+    AND COALESCE(cr.pass_status, 'never_started')
+        NOT IN ('approved')
+  ORDER BY days_since_confirmation DESC
+
+# --------------------------------------------------------------------------
+# Trigger condition
+# --------------------------------------------------------------------------
+trigger:
+  condition: row_count > 0
+
+# --------------------------------------------------------------------------
+# Schedule
+# --------------------------------------------------------------------------
+schedule:
+  cron: "0 8 * * *"    # daily at 08:00 — avoids alert noise, one per day
+
+# --------------------------------------------------------------------------
+# Output — WatchEvent shape
+# --------------------------------------------------------------------------
+event:
+  kind: events.session_content_review_overdue
+  cardinality: per_row
+  payload_mapping:
+    session_id:              "$.session_id"
+    event_id:                "$.event_id"
+    session_title:           "$.session_title"
+    format:                  "$.format"
+    theme:                   "$.theme"
+    slide_url:               "$.slide_url"
+    speaker_name:            "$.speaker_name"
+    speaker_email:           "$.speaker_email"
+    confirmed_at:            "$.confirmed_at"
+    days_since_confirmation: "$.days_since_confirmation"
+    review_status:           "$.review_status"
+
+# --------------------------------------------------------------------------
+# Downstream
+# --------------------------------------------------------------------------
+downstream:
+  agents:
+    - session-content-qc
+
+# --------------------------------------------------------------------------
+# Deduplication — one alert per session per day
+# --------------------------------------------------------------------------
+dedup:
+  key: "{session_id}"
+  ttl_seconds: 86400
