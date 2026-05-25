@@ -1,0 +1,113 @@
+---
+# Opportunity Sizer Agent
+#
+# Input:  a JTBDMap (from jtbd-clusterer) + survey stats from inbound sources.
+# Output: an OpportunityScorecard — each JTBD scored on evidence volume,
+#         survey respondent count, and configurable strategic-fit weights.
+#
+# Scoring model (0–10 scale per dimension, weighted sum):
+#   evidence_volume  — number of verbatim quotes backing the JTBD        (w=0.35)
+#   participant_reach — unique participant count / total participants      (w=0.30)
+#   survey_signal    — % of survey respondents flagging related pain       (w=0.25)
+#   strategic_fit    — manual weight set in pack config or defaulting to 5 (w=0.10)
+#
+# Final score = weighted sum, rounded to 1 dp.  Opportunities with
+# score ≥ 7.0 are labelled "high"; 5.0–6.9 "medium"; < 5.0 "low".
+
+name: opportunity-sizer
+description: >
+  Scores each JTBD from jtbd-clusterer using evidence volume, participant
+  reach, survey respondent count, and configurable strategic-fit weight.
+  Emits an OpportunityScorecard ranked by final score.
+
+llm:
+  model: ${SIZER_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 4096
+
+# Scoring weights — override via OPPORTUNITY_WEIGHTS env var (JSON string).
+config:
+  weights:
+    evidence_volume: ${OPPORTUNITY_WEIGHT_EVIDENCE:-0.35}
+    participant_reach: ${OPPORTUNITY_WEIGHT_REACH:-0.30}
+    survey_signal: ${OPPORTUNITY_WEIGHT_SURVEY:-0.25}
+    strategic_fit: ${OPPORTUNITY_WEIGHT_STRATEGIC:-0.10}
+  # Default strategic-fit score when no manual value is provided.
+  default_strategic_fit: 5.0
+  # Score thresholds for tier labels.
+  tier_high: 7.0
+  tier_medium: 5.0
+
+# Survey stats injected from inbound survey sources.
+context_steps:
+  - id: survey_stats
+    description: "Aggregated survey stats per pain area."
+    tool: xiaoguai_research_survey_stats
+    params:
+      run_id: "{{ run.id }}"
+
+system_prompt: |
+  You are a product analyst computing opportunity scores for a set of
+  Jobs to Be Done.  You will receive a JTBDMap and survey aggregates.
+
+  For each JTBD compute:
+  1. evidence_volume_score  (0–10): log-scaled from verbatim quote count.
+     Formula: min(10, round(log2(frequency + 1) * 2.5, 1))
+  2. participant_reach_score (0–10): (participant_count / total_participants) * 10
+  3. survey_signal_score    (0–10): pct_respondents_affected * 10
+     (use 5.0 if no survey data available for this JTBD)
+  4. strategic_fit_score    (0–10): from config or default_strategic_fit
+  5. final_score = weighted sum using config weights, rounded to 1 dp
+  6. tier = "high" | "medium" | "low" based on thresholds
+
+  Respond ONLY with valid JSON matching the OpportunityScorecard schema.
+
+  OpportunityScorecard schema:
+  {
+    "opportunities": [
+      {
+        "jtbd_id": "jtbd-001",
+        "jtbd_statement": "When …, I want to …, so I can …",
+        "scores": {
+          "evidence_volume": 8.2,
+          "participant_reach": 7.5,
+          "survey_signal": 6.0,
+          "strategic_fit": 5.0
+        },
+        "final_score": 7.1,
+        "tier": "high",
+        "supporting_quote_count": 19,
+        "participant_count": 8,
+        "survey_respondents_affected_pct": 0.60
+      }
+    ],
+    "total_participants": 14,
+    "total_survey_respondents": 120,
+    "scoring_weights": { "evidence_volume": 0.35, "participant_reach": 0.30, "survey_signal": 0.25, "strategic_fit": 0.10 },
+    "generated_at": "ISO-8601"
+  }
+
+user_prompt: |
+  ## JTBDMap
+  {{ input.jtbd_map | to_json | truncate(8000) }}
+
+  ## Survey stats
+  {{ context.survey_stats | to_json | truncate(4000) }}
+
+  ## Config
+  - Weights: {{ config.weights | to_json }}
+  - Default strategic fit: {{ config.default_strategic_fit }}
+  - Total participants: {{ run.total_participants }}
+  - Total survey respondents: {{ run.total_survey_respondents | default(0) }}
+
+  Compute opportunity scores and return the OpportunityScorecard now.
+
+outputs:
+  - outputs/notion-research-page.yaml
+  - outputs/slack-product-team.yaml
+  - outputs/miro-board-stub.yaml
+
+# Deferred:
+#   - Strategyzer ODI importance × satisfaction gap as alternative
+#     scoring model (needs survey instrument redesign).
+#   - TAM/SAM market data lookup via external enrichment connector.

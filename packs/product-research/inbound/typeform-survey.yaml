@@ -1,0 +1,54 @@
+---
+# Typeform Survey Inbound Source
+#
+# Accepts Typeform form response webhooks.  Free-text answers are
+# normalised to NormalizedSegment records (for thematic analysis).
+# Closed-ended answers (rating, multiple-choice) are aggregated into
+# SurveyStat records consumed by opportunity-sizer.
+#
+# Recommended survey instrument for JTBD sizing:
+#   - One free-text "What is the hardest part of [job area]?" (→ segments)
+#   - One 1-5 importance rating per candidate job (→ survey_stats)
+#   - One 1-5 satisfaction rating per candidate job (→ survey_stats)
+#     (Enables future Strategyzer ODI importance × satisfaction gap.)
+#
+# Mounting: POST /v1/product-research/inbound/typeform/{route_id}
+# Auth:     Bearer token + Typeform-Signature HMAC-SHA256
+
+source: typeform
+route_prefix: /v1/product-research/inbound/typeform
+
+normalize:
+  hmac_secret: ${TYPEFORM_WEBHOOK_SECRET}
+
+  # Free-text field IDs whose answers become NormalizedSegments.
+  # Configure per survey form.
+  free_text_field_ids: ${TYPEFORM_FREE_TEXT_FIELD_IDS}   # comma-separated
+
+  # Closed-ended field IDs whose answers become SurveyStats.
+  # Format: "<field_id>:<pain_area_label>"
+  rating_field_map: ${TYPEFORM_RATING_FIELD_MAP}         # comma-separated pairs
+
+  field_map:
+    id: form_response.token
+    recorded_at: form_response.submitted_at
+    respondent_id: form_response.hidden.respondent_id
+
+# Sample payload (Typeform webhook v3 schema).
+sample_payload: |
+  {
+    "event_id": "evt-abc123",
+    "form_response": {
+      "token": "resp-001",
+      "submitted_at": "2024-05-20T09:15:00Z",
+      "hidden": {"respondent_id": "u-042"},
+      "answers": [
+        {"field": {"id": "fld_freetext1", "type": "long_text"},
+         "type": "text", "text": "I have to manually copy data every morning."},
+        {"field": {"id": "fld_import_importance", "type": "rating"},
+         "type": "number", "number": 4},
+        {"field": {"id": "fld_import_satisfaction", "type": "rating"},
+         "type": "number", "number": 2}
+      ]
+    }
+  }
