@@ -1,0 +1,60 @@
+---
+# Anomaly: mention-volume-spike
+#
+# Detects statistically significant spikes in hourly brand mention volume
+# using a z-score test against a rolling 7-day baseline.
+#
+# Trigger condition: z-score of current hour's mention count >= threshold.
+# Cross-channel: fires if any single channel OR the aggregate count spikes.
+
+name: mention-volume-spike
+description: >
+  Computes the z-score of the current hour's brand mention count against a
+  7-day rolling hourly baseline (same hour-of-day window to control for
+  diurnal patterns). Fires when z-score >= configured threshold on any
+  channel or in aggregate. Feeds crisis-early-warner.
+
+# Algorithm: z-score on same-hour-of-day observations from past N days.
+algorithm: z_score
+params:
+  # Rolling baseline: past 7 days, same hour-of-day.
+  baseline_days: 7
+  # Number of same-hour-of-day observations to include.
+  # 7 days * 1 observation/day = 7 data points (robust to weekly patterns).
+  baseline_window_obs: 7
+  # Z-score threshold for firing.
+  # z=2.0 ≈ top 2.3% — alert on unusual spikes, not routine variation.
+  z_threshold: ${VOLUME_SPIKE_Z_THRESHOLD:-2.5}
+  # Minimum absolute mention count in the current hour to fire.
+  # Prevents alerts on e.g. "5 mentions vs baseline of 2" (low-volume noise).
+  min_absolute_count: ${VOLUME_SPIKE_MIN_COUNT:-20}
+  # Evaluate per-channel AND aggregate.
+  scope:
+    - aggregate
+    - per_channel
+
+# Data source: pre-aggregated hourly mention counts.
+# The watch engine materialises a view: mention_hourly_counts(hour, channel, count).
+data_source: mention_hourly_counts
+
+# Output event fields when anomaly fires.
+event_schema:
+  anomaly_type: mention_volume_spike
+  channel: "Affected channel or 'aggregate'"
+  current_count: "Mention count in the current hour"
+  baseline_mean: "Mean hourly count over baseline window"
+  baseline_stddev: "Standard deviation over baseline window"
+  z_score: "Computed z-score"
+  pct_above_baseline: "Percentage above baseline mean"
+  window_start: "ISO-8601 start of the current hour"
+  window_end: "ISO-8601 end of the current hour"
+
+# Routing: fired events are forwarded to crisis-early-warner for correlation.
+forward_to: agents/crisis-early-warner.yaml
+
+# Cooldown: do not re-fire within 30 minutes for the same channel.
+cooldown_minutes: 30
+
+# Deferred:
+#   - Adaptive threshold (auto-adjusts after sustained elevated periods)
+#   - Channel-specific thresholds (news has higher baseline variance than HN)

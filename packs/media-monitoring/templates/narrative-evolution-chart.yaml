@@ -1,0 +1,107 @@
+---
+# Template: narrative-evolution-chart
+#
+# Declarative chart specification for rendering the narrative evolution
+# visualisation in the daily digest and dashboard.
+#
+# Chart type: stacked area chart showing mention volume per narrative cluster
+# over a 7-day rolling window, colour-coded by dominant sentiment.
+#
+# Rendered by the xiaoguai frontend chart engine (Vega-Lite compatible spec).
+
+name: narrative-evolution-chart
+type: vega_lite
+
+# Data: sourced from the narrative_clusters watch_events table,
+# aggregated per hour per cluster theme.
+data:
+  source: watch_events
+  event_type: narrative_clusters
+  lookback_hours: 168   # 7 days
+  aggregation:
+    group_by: [hour_bucket, theme]
+    metrics:
+      - name: mention_count
+        agg: sum
+      - name: negative_ratio
+        agg: avg
+      - name: positive_ratio
+        agg: avg
+
+# Vega-Lite spec template (rendered with Jinja2 before passing to chart engine).
+spec:
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json"
+  description: "Brand narrative evolution — past 7 days"
+  width: "container"
+  height: 300
+  data:
+    values: "{{ chart_data | json }}"
+  mark:
+    type: area
+    interpolate: monotone
+    opacity: 0.75
+  encoding:
+    x:
+      field: hour_bucket
+      type: temporal
+      title: "Time (UTC)"
+      axis:
+        format: "%b %d %H:%M"
+    y:
+      field: mention_count
+      type: quantitative
+      title: "Mention Volume"
+      stack: "zero"
+    color:
+      field: theme
+      type: nominal
+      title: "Narrative Theme"
+      # Sentiment-influenced colour: themes with high negative_ratio use
+      # red-shifted palette entries; positive use blue-green entries.
+      scale:
+        scheme: "tableau10"
+    tooltip:
+      - field: hour_bucket
+        type: temporal
+        title: "Hour"
+        format: "%Y-%m-%d %H:%M UTC"
+      - field: theme
+        type: nominal
+        title: "Theme"
+      - field: mention_count
+        type: quantitative
+        title: "Mentions"
+      - field: negative_ratio
+        type: quantitative
+        title: "Negative Ratio"
+        format: ".1%"
+      - field: positive_ratio
+        type: quantitative
+        title: "Positive Ratio"
+        format: ".1%"
+
+# Overlay: crisis event markers as vertical rules.
+crisis_overlay:
+  enabled: true
+  mark: rule
+  color: "#d62728"
+  opacity: 0.6
+  data_source: crisis_events
+  lookback_hours: 168
+  tooltip:
+    - field: declared_at
+      title: "Crisis Declared"
+    - field: title
+      title: "Crisis"
+    - field: severity
+      title: "Severity"
+
+# Export formats supported by the chart engine.
+export:
+  - png
+  - svg
+  - vega_json
+
+# Deferred:
+#   - Drill-down interaction (click cluster to see constituent mentions)
+#   - Animated time-lapse mode for presentations

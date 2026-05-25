@@ -1,0 +1,102 @@
+---
+# Agent: sentiment-classifier
+#
+# Input:  a Mention record (body, channel, author, url, reach).
+# Output: a SentimentResult (sentiment label, confidence, key_phrases).
+#
+# Results are written to sentiment_history. Outcome feedback is collected
+# via outcome-telemetry for model drift detection.
+
+name: sentiment-classifier
+description: >
+  Classifies brand mentions as positive, neutral, or negative with a
+  confidence score [0.0–1.0] and extracts up to 5 key phrases. Results
+  are appended to sentiment_history. Designed for high-throughput batch
+  processing with minimal token usage per mention.
+
+# LLM settings — fast, cost-efficient model preferred for high throughput.
+llm:
+  model: ${SENTIMENT_LLM_MODEL:-haiku}
+  temperature: 0.0
+  max_tokens: 256
+
+# Batch processing: group up to 10 mentions per LLM call to reduce cost.
+batch:
+  max_size: 10
+  # Run classification within 2 minutes of mention ingestion.
+  max_delay_seconds: 120
+
+# System prompt: concise to minimise token overhead per batch.
+system_prompt: |
+  You are a brand sentiment classifier. For each mention, output ONLY valid
+  JSON (no prose) matching the schema below.
+
+  Classification rules:
+  - positive: praises the brand, product, or team; expresses satisfaction
+    or excitement; recommends or celebrates.
+  - negative: criticises, complains, expresses anger, disappointment, or
+    calls for boycott; reports a defect or controversy.
+  - neutral: factual reporting, questions, comparison without strong valence,
+    or content where brand is mentioned incidentally.
+
+  Confidence: 0.9+ only when the signal is unmistakable; 0.5–0.7 for
+  ambiguous or ironic content.
+
+  Key phrases: up to 5 short phrases (1–4 words) that best explain the
+  sentiment judgment. If no clear phrase exists, return [].
+
+  Output schema for a batch:
+  [
+    {
+      "external_id": "<mention external_id>",
+      "sentiment": "positive|neutral|negative",
+      "confidence": 0.00,
+      "key_phrases": ["phrase1", "phrase2"]
+    }
+  ]
+
+# User prompt template — rendered per batch.
+user_prompt: |
+  Classify the following {{ mentions | length }} brand mention(s):
+
+  {% for m in mentions %}
+  ---
+  ID: {{ m.external_id }}
+  Channel: {{ m.channel }}
+  Text: {{ m.body | truncate(500) }}
+  {% endfor %}
+
+  Return a JSON array with one object per mention, in the same order.
+
+# Post-processing: write results to sentiment_history.
+on_result:
+  write_table: sentiment_history
+  fields:
+    mention_id: "{{ lookup_mention_id(result.external_id) }}"
+    sentiment: "{{ result.sentiment }}"
+    confidence: "{{ result.confidence }}"
+    key_phrases: "{{ result.key_phrases }}"
+    model_id: "{{ llm.model }}"
+
+# Outcome telemetry: PR team can mark results correct/incorrect via API.
+outcome_telemetry:
+  enabled: true
+  feedback_endpoint: /v1/media-monitoring/sentiment/feedback
+  # Trigger model drift alert if accuracy drops below threshold in a 24h window.
+  accuracy_alert_threshold: 0.75
+
+# Error handling.
+on_error:
+  # Malformed JSON from LLM: retry with stricter prompt.
+  json_parse_failure:
+    retry_max: 1
+    fallback_sentiment: neutral
+    fallback_confidence: 0.0
+  # LLM unavailable: queue mentions for retry within 5 minutes.
+  llm_unavailable:
+    queue: true
+    retry_after_seconds: 300
+
+# Deferred:
+#   - Multilingual sentiment (requires language detection + per-language prompts)
+#   - Irony/sarcasm detection (higher-cost model pass)

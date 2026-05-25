@@ -1,0 +1,64 @@
+---
+# Anomaly: sentiment-crash
+#
+# Detects a statistically significant downward shift in the rolling
+# negative-sentiment ratio, using a rolling-mean-shift test over a
+# configurable lookback window.
+#
+# Trigger condition: the 1-hour rolling negative ratio exceeds the 24-hour
+# baseline negative ratio by more than the configured delta threshold.
+
+name: sentiment-crash
+description: >
+  Computes the rolling negative-sentiment ratio over the last 1 hour and
+  compares it to the 24-hour baseline rolling mean. Fires when the short-term
+  negative ratio exceeds the baseline by >= delta_threshold. Feeds
+  crisis-early-warner for combined volume+sentiment crisis assessment.
+
+# Algorithm: rolling mean shift (short window vs long window comparison).
+algorithm: rolling_mean_shift
+params:
+  # Short window: current sentiment signal.
+  short_window_hours: 1
+  # Long window: baseline sentiment signal.
+  long_window_hours: 24
+  # Minimum number of classified mentions in the short window to fire.
+  # Prevents noise from tiny sample sizes.
+  min_classified_count: ${SENTIMENT_CRASH_MIN_COUNT:-10}
+  # Absolute delta threshold: short_negative_ratio - long_negative_ratio >= delta.
+  # 0.2 = negative ratio jumped 20 percentage points above baseline.
+  delta_threshold: ${SENTIMENT_CRASH_DELTA_THRESHOLD:-0.20}
+  # Absolute minimum negative ratio in the short window to fire.
+  # Even if delta is large, don't fire if absolute ratio is still low.
+  min_negative_ratio: ${SENTIMENT_CRASH_MIN_RATIO:-0.35}
+  # Evaluate per-channel AND aggregate.
+  scope:
+    - aggregate
+    - per_channel
+
+# Data source: pre-aggregated sentiment ratios.
+# The watch engine materialises: mention_sentiment_ratios(hour, channel, positive, neutral, negative, total).
+data_source: mention_sentiment_ratios
+
+# Output event fields when anomaly fires.
+event_schema:
+  anomaly_type: sentiment_crash
+  channel: "Affected channel or 'aggregate'"
+  short_window_negative_ratio: "Negative ratio in the short window [0.0–1.0]"
+  long_window_negative_ratio: "Negative ratio in the long window (baseline)"
+  delta: "Short minus long ratio"
+  short_window_classified_count: "Number of classified mentions in short window"
+  top_negative_phrases: "Top 5 key phrases from negative mentions in short window"
+  window_start: "ISO-8601 start of the short window"
+  window_end: "ISO-8601 end of the short window"
+
+# Routing: fired events are forwarded to crisis-early-warner for correlation.
+forward_to: agents/crisis-early-warner.yaml
+
+# Cooldown: do not re-fire within 60 minutes for the same channel.
+# Sentiment crashes are slower-moving than volume spikes.
+cooldown_minutes: 60
+
+# Deferred:
+#   - Neutral-to-negative flux detection (early-early warning)
+#   - Language-specific sentiment crash (non-English channels)

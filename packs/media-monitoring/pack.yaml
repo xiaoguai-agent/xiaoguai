@@ -1,0 +1,74 @@
+---
+# Media Monitoring Skill Pack — v0.1.0
+#
+# Ingests brand mentions from multiple channels (Twitter/X, Reddit, HN, News,
+# Instagram), classifies sentiment with an LLM agent, detects volume spikes
+# and sentiment crashes via statistical anomaly detection, and triggers
+# crisis early warnings with response-strategy recommendations.
+
+name: media-monitoring
+version: "0.1.0"
+description: >
+  Monitors brand mentions and press coverage across social and news channels.
+  Classifies sentiment (positive/neutral/negative), detects volume spikes and
+  sentiment crashes, clusters emerging narratives, and delivers actionable
+  crisis early warnings with response-strategy recommendations to PR and
+  executive stakeholders.
+
+depends:
+  # Core API for inbound webhook token auth and outcome telemetry.
+  xiaoguai-api: ">=0.12.1"
+  # Watch engine: polls external APIs on configurable schedules.
+  watch: required
+  # Anomaly detection: z-score + rolling-mean-shift algorithms.
+  anomaly: required
+  # LLM backend: sentiment classification and response drafting.
+  llm: required
+  # Outcome telemetry: records classification accuracy feedback.
+  outcome-telemetry: required
+
+# Inbound sources accepted by this pack.
+sources:
+  - inbound/twitter-stream-v2.yaml
+  - inbound/reddit-mention-webhook.yaml
+  - inbound/news-api-poll.yaml
+  - inbound/hackernews-firehose.yaml
+  - inbound/instagram-mention-webhook.yaml
+
+# Watch jobs (polling-based sources).
+watches:
+  - watches/mention-volume-poll.yaml
+  - watches/keyword-emergence.yaml
+
+# Anomaly detectors.
+anomalies:
+  - anomalies/mention-volume-spike.yaml
+  - anomalies/sentiment-crash.yaml
+
+# Agent definitions.
+agents:
+  - agents/sentiment-classifier.yaml
+  - agents/crisis-early-warner.yaml
+  - agents/narrative-tracker.yaml
+  - agents/response-draft-recommender.yaml
+
+# Database migrations.
+migrations:
+  - migrations/0001_mentions.sql
+
+# Output connectors.
+outputs:
+  - outputs/slack-pr-team.yaml
+  - outputs/pagerduty-crisis.yaml
+  - outputs/exec-email-on-crisis.yaml
+  - outputs/archive-to-bigquery.yaml
+
+# Feature flag gating the /v1/media-monitoring route family.
+# Set XIAOGUAI_MEDIA_MONITORING_ENABLED=true in your .env to activate.
+feature_flag: XIAOGUAI_MEDIA_MONITORING_ENABLED
+
+# Deferred / not-yet-implemented:
+#   - LinkedIn company-mention API (requires partner access)
+#   - YouTube comment sentiment (high token cost, low signal)
+#   - Competitive brand tracking (scope: v0.2.0)
+# See docs/plans/media-monitoring-backlog.md for prioritisation.

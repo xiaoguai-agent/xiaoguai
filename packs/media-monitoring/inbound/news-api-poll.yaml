@@ -1,0 +1,75 @@
+---
+# Inbound: news-api-poll
+#
+# Polls NewsAPI.org (primary) and GNews (fallback) for brand mentions in
+# news articles and blog posts. Unlike social channels, news articles have
+# higher reach and lower volume — each article is high-signal.
+#
+# Implemented as a scheduled poll (via mention-volume-poll) rather than
+# a webhook, since news APIs do not support push delivery.
+# This file defines the news-specific normalisation and enrichment config.
+
+source: news-api-poll
+route_prefix: /v1/media-monitoring/inbound/news
+
+# Primary: NewsAPI.org
+primary:
+  provider: newsapi
+  endpoint: https://newsapi.org/v2/everything
+  auth:
+    type: api_key_header
+    header: X-Api-Key
+    key: ${NEWS_API_KEY}
+  params:
+    q: "${BRAND_KEYWORDS_NEWS}"
+    language: en
+    sortBy: publishedAt
+    pageSize: 100
+  poll_interval_minutes: 15
+
+# Fallback: GNews (used when NewsAPI quota is exhausted or returns 429).
+fallback:
+  provider: gnews
+  endpoint: https://gnews.io/api/v4/search
+  auth:
+    type: query_param
+    param: apikey
+    key: ${GNEWS_API_KEY}
+  params:
+    q: "${BRAND_KEYWORDS_NEWS}"
+    lang: en
+    max: 100
+  poll_interval_minutes: 30
+
+# Normalise to Mention schema.
+# News articles: reach is not directly available — estimated from Alexa/SimilarWeb
+# domain rank if available, else default 0.
+normalize:
+  channel: news
+  external_id: "{{ item.url | md5 }}"
+  author: "{{ item.author | default(item.source.name | default('unknown')) }}"
+  body: "{{ (item.title + ' ' + item.description | default('')) | truncate(4096) }}"
+  url: "{{ item.url }}"
+  reach: "{{ domain_reach_estimate(item.source.id | default(item.source.name)) | default(0) }}"
+  engagement: 0
+  matched_keywords: "{{ keywords_matched(item.title + ' ' + item.description | default(''), env.BRAND_KEYWORDS_ARRAY) }}"
+  published_at: "{{ item.publishedAt | default(item.publishedAt) }}"
+
+# Enrichment: attempt to fetch article full-text for better sentiment classification.
+# Only enabled if MEDIA_NEWS_FULL_TEXT_ENABLED=true.
+enrichment:
+  full_text:
+    enabled: ${MEDIA_NEWS_FULL_TEXT_ENABLED:-false}
+    # Fetch via newspaper3k-compatible extractor sidecar.
+    endpoint: ${MEDIA_NEWS_EXTRACTOR_URL}
+    timeout_seconds: 10
+    # If full-text fetch fails, fall back to title + description.
+    on_failure: fallback_to_snippet
+
+# Source exclusion list: outlets consistently producing low-signal or
+# off-topic brand mentions (configurable at deployment time).
+excluded_sources: ${NEWS_EXCLUDED_SOURCES:-[]}
+
+# Deferred:
+#   - Press release detection (PRNewswire/BusinessWire domain matching)
+#   - Earned media value calculation (reach * CPM estimate)

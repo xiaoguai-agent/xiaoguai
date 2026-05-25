@@ -1,0 +1,159 @@
+---
+# Output: archive-to-bigquery
+#
+# Streams mention, sentiment, and crisis event data to BigQuery for
+# long-term analytics, historical trend analysis, and BI dashboarding.
+#
+# Uses the BigQuery Storage Write API (COMMITTED mode) for low-latency
+# streaming inserts without the legacy insertAll quotas.
+# Falls back to batch load (daily) if streaming API is unavailable.
+
+output: archive-to-bigquery
+
+# BigQuery configuration.
+bigquery:
+  project_id: ${BIGQUERY_PROJECT_ID}
+  dataset: ${BIGQUERY_DATASET:-xiaoguai_media_monitoring}
+  # Service account credentials (JSON key file path or Workload Identity).
+  credentials: ${BIGQUERY_CREDENTIALS_PATH:-}
+  # Use Workload Identity if running on GCP.
+  use_workload_identity: ${BIGQUERY_USE_WORKLOAD_IDENTITY:-false}
+  location: ${BIGQUERY_LOCATION:-US}
+
+# Tables and their streaming configuration.
+tables:
+  mentions:
+    table: mentions
+    # Stream in real-time as mentions are ingested.
+    mode: streaming
+    # Schema mirrors the mentions SQL table.
+    schema:
+      - name: id
+        type: STRING
+        mode: REQUIRED
+      - name: channel
+        type: STRING
+        mode: REQUIRED
+      - name: external_id
+        type: STRING
+        mode: REQUIRED
+      - name: author
+        type: STRING
+        mode: NULLABLE
+      - name: body
+        type: STRING
+        mode: REQUIRED
+      - name: url
+        type: STRING
+        mode: NULLABLE
+      - name: reach
+        type: INTEGER
+        mode: REQUIRED
+      - name: engagement
+        type: INTEGER
+        mode: REQUIRED
+      - name: matched_keywords
+        type: STRING
+        mode: REPEATED
+      - name: published_at
+        type: TIMESTAMP
+        mode: REQUIRED
+      - name: ingested_at
+        type: TIMESTAMP
+        mode: REQUIRED
+
+  sentiment_history:
+    table: sentiment_history
+    mode: streaming
+    schema:
+      - name: id
+        type: STRING
+        mode: REQUIRED
+      - name: mention_id
+        type: STRING
+        mode: REQUIRED
+      - name: sentiment
+        type: STRING
+        mode: REQUIRED
+      - name: confidence
+        type: FLOAT
+        mode: REQUIRED
+      - name: key_phrases
+        type: STRING
+        mode: REPEATED
+      - name: model_id
+        type: STRING
+        mode: REQUIRED
+      - name: outcome
+        type: STRING
+        mode: NULLABLE
+      - name: classified_at
+        type: TIMESTAMP
+        mode: REQUIRED
+
+  crisis_events:
+    table: crisis_events
+    # Batch load daily (crisis events are low-volume, high-importance).
+    mode: batch
+    batch_schedule: "0 2 * * *"
+    schema:
+      - name: id
+        type: STRING
+        mode: REQUIRED
+      - name: title
+        type: STRING
+        mode: REQUIRED
+      - name: trigger_type
+        type: STRING
+        mode: REQUIRED
+      - name: severity
+        type: STRING
+        mode: REQUIRED
+      - name: channels
+        type: STRING
+        mode: REPEATED
+      - name: hourly_mention_count
+        type: INTEGER
+        mode: REQUIRED
+      - name: z_score
+        type: FLOAT
+        mode: NULLABLE
+      - name: negative_ratio
+        type: FLOAT
+        mode: NULLABLE
+      - name: influence_weighted_reach
+        type: INTEGER
+        mode: REQUIRED
+      - name: narrative
+        type: STRING
+        mode: NULLABLE
+      - name: status
+        type: STRING
+        mode: REQUIRED
+      - name: pagerduty_incident_id
+        type: STRING
+        mode: NULLABLE
+      - name: declared_at
+        type: TIMESTAMP
+        mode: REQUIRED
+      - name: resolved_at
+        type: TIMESTAMP
+        mode: NULLABLE
+
+# Error handling for streaming failures.
+on_error:
+  # Transient errors: retry up to 3 times with exponential backoff.
+  retry:
+    max_attempts: 3
+    backoff_seconds: [5, 15, 60]
+  # Persistent failures: write to local JSONL dead-letter file.
+  dead_letter:
+    enabled: true
+    path: ${BIGQUERY_DEAD_LETTER_PATH:-/tmp/xiaoguai-bq-dead-letter.jsonl}
+    # Retry dead-letter rows in the next daily batch load.
+    retry_in_batch: true
+
+# Deferred:
+#   - Looker Studio dashboard template (pre-built for media monitoring KPIs)
+#   - Partitioned tables by published_at date (cost optimisation for large tenants)
+#   - Cross-tenant benchmark dataset (opt-in, anonymised industry comparison)
