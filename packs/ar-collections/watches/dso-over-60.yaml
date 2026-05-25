@@ -5,89 +5,50 @@
 # enough context for the dunning-drafter agent to act without a second
 # database round-trip.
 #
-# Schema reference: F1 WatchSpec (xiaoguai-watch, pending merge).
-# This file is valid today and will be wired to the registry once F1 lands.
+# Schema: docs/api/schemas/watch.yaml.schema.json (WatchSpec)
 # ---------------------------------------------------------------------------
 
-name: dso-over-60
-version: "1.0.0"
-description: >
-  Emits a WatchEvent for each customer with overdue invoices older than
-  60 days. Runs on the scheduler tick (default: every 15 minutes).
+id: dso-over-60
 
 # --------------------------------------------------------------------------
 # Data source
 # --------------------------------------------------------------------------
 source:
-  kind: sql
-  table: ar_aging
-  # Tenant column used for row-level scoping
-  tenant_column: tenant_id
-
-# SQL executed per tick (per-tenant; `{tenant_id}` is substituted by the
-# watch runtime before execution).
-query: |
-  SELECT
-      tenant_id,
-      customer_id,
-      COUNT(*)                                   AS overdue_count,
-      SUM(amount)                                AS total_overdue,
-      MIN(due_date)                              AS oldest_due_date,
-      MAX(EXTRACT(DAY FROM NOW() - due_date))    AS max_days_overdue,
-      ARRAY_AGG(invoice_id ORDER BY due_date)    AS invoice_ids,
-      ARRAY_AGG(amount    ORDER BY due_date)     AS invoice_amounts,
-      ARRAY_AGG(currency  ORDER BY due_date)     AS currencies
-  FROM ar_aging
-  WHERE tenant_id = '{tenant_id}'
-    AND paid_at IS NULL
-    AND due_date < NOW() - INTERVAL '60 days'
-  GROUP BY tenant_id, customer_id
-  ORDER BY total_overdue DESC
+  sql:
+    query: |
+      SELECT
+          tenant_id,
+          customer_id,
+          COUNT(*)                                   AS overdue_count,
+          SUM(amount)                                AS total_overdue,
+          MIN(due_date)                              AS oldest_due_date,
+          MAX(EXTRACT(DAY FROM NOW() - due_date))    AS max_days_overdue,
+          ARRAY_AGG(invoice_id ORDER BY due_date)    AS invoice_ids,
+          ARRAY_AGG(amount    ORDER BY due_date)     AS invoice_amounts,
+          ARRAY_AGG(currency  ORDER BY due_date)     AS currencies
+      FROM ar_aging
+      WHERE paid_at IS NULL
+        AND due_date < NOW() - INTERVAL '60 days'
+      GROUP BY tenant_id, customer_id
+      ORDER BY total_overdue DESC
 
 # --------------------------------------------------------------------------
-# Trigger condition
-# --------------------------------------------------------------------------
-trigger:
-  # Fire only when the query returns at least one row
-  condition: row_count > 0
-
-# --------------------------------------------------------------------------
-# Schedule
+# Schedule: every 15 minutes (6-field cron: sec min h dom mon dow)
 # --------------------------------------------------------------------------
 schedule:
-  # Cron: every 15 minutes. Operators can override per-tenant in pack config.
-  cron: "*/15 * * * *"
+  cron:
+    expr: "0 */15 * * * *"
 
 # --------------------------------------------------------------------------
-# Output — WatchEvent shape emitted onto the event bus
+# Action on match
+# Dedup semantics preserved in params: key on customer_id, 24 h TTL,
+# re-fire if total_overdue grows by more than 10 %.
 # --------------------------------------------------------------------------
-event:
-  kind: ar.dso_over_60
-  # Each row from the query becomes one event
-  cardinality: per_row
-  payload_mapping:
-    tenant_id:       "$.tenant_id"
-    customer_id:     "$.customer_id"
-    overdue_count:   "$.overdue_count"
-    total_overdue:   "$.total_overdue"
-    oldest_due_date: "$.oldest_due_date"
-    max_days_overdue: "$.max_days_overdue"
-    invoice_ids:     "$.invoice_ids"
-    invoice_amounts: "$.invoice_amounts"
-    currencies:      "$.currencies"
-
-# --------------------------------------------------------------------------
-# Downstream — which agents subscribe to this event
-# --------------------------------------------------------------------------
-downstream:
-  agents:
-    - dunning-drafter
-
-# --------------------------------------------------------------------------
-# Deduplication: suppress re-fire for the same customer within 24 hours
-# unless total_overdue has increased by more than 10 %.
-# --------------------------------------------------------------------------
-dedup:
-  key: "{tenant_id}:{customer_id}"
-  ttl_seconds: 86400
-  re_fire_if: "payload.total_overdue > prior.total_overdue * 1.10"
+on_match:
+  action: wakeup
+  target: dunning-drafter
+  params:
+    event_kind: ar.dso_over_60
+    dedup_key_fields: ["tenant_id", "customer_id"]
+    dedup_ttl_seconds: 86400
+    dedup_re_fire_if: "payload.total_overdue > prior.total_overdue * 1.10"
