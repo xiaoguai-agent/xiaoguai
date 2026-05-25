@@ -6,21 +6,25 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Durable Kanban-style task board for multi-agent work queues — boards, cards, column transitions, and outcome attribution per ADR-0019."
+description = "Durable Kanban task board (ADR-0019): persistence layer (boards, tasks, column transitions, outcome attribution) plus an auto-dispatcher worker pool (READY→RUNNING→DONE/BLOCKED with claim/execute/retry/timeout)."
 
 [dependencies]
 xiaoguai-audit = { path = "../xiaoguai-audit" }
-async-trait      = { workspace = true }
-serde            = { workspace = true }
-serde_json       = { workspace = true }
-sqlx             = { workspace = true }
-tokio            = { workspace = true, features = ["time", "sync", "macros", "rt"] }
-thiserror        = { workspace = true }
-chrono           = { workspace = true }
-uuid             = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true, features = ["time", "sync", "macros", "rt-multi-thread", "signal"] }
+tokio-util = { workspace = true, features = ["time"] }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+once_cell = { workspace = true }
+prometheus = { workspace = true }
 
 [dev-dependencies]
-tokio              = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }
 tracing-subscriber = { workspace = true }
 
 [lints]
