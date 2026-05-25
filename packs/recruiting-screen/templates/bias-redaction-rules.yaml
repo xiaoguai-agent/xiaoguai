@@ -1,0 +1,125 @@
+# templates/bias-redaction-rules.yaml
+#
+# Declarative redaction rules consumed by the bias-checker agent's
+# prompt builder.  Kept separate so rules can be updated without
+# editing agent YAML or Rust source.
+#
+# Structure
+# ---------
+# Each entry has:
+#   category     — human-readable category name
+#   type         — "direct" (BLOCK trigger) or "proxy" (WARN + redact trigger)
+#   field_names  — exact JSON field names to detect
+#   text_patterns — regex patterns to scan in free-text / evidence strings
+#   redact_action — what to do when detected
+#   replacement   — value to substitute (for "replace" action)
+
+version: "1.0.0"
+
+rules:
+
+  # ── Direct protected-class fields (BLOCK triggers) ────────────────────────
+
+  - category: gender
+    type: direct
+    field_names: [gender, sex, pronouns, salutation, mr_ms_title]
+    text_patterns:
+      - '\b(he|she|his|her|him|hers)\b'
+      - '\b(Mr\.|Ms\.|Mrs\.|Mx\.)\s'
+      - '\b(gentleman|lady|male|female)\b'
+    redact_action: block
+
+  - category: age
+    type: direct
+    field_names: [age, date_of_birth, dob, birth_year, birth_date]
+    text_patterns:
+      - '\b\d{1,2}/\d{1,2}/\d{4}\b'   # date literal
+      - '\bage\s*:\s*\d{2}\b'
+    redact_action: block
+
+  - category: ethnicity_race
+    type: direct
+    field_names: [ethnicity, race, racial_background, ethnic_origin]
+    text_patterns:
+      - '\b(African[- ]American|Hispanic|Latino|Caucasian|Asian[- ]American)\b'
+    redact_action: block
+
+  - category: nationality
+    type: direct
+    field_names: [nationality, citizenship, country_of_origin, passport_country]
+    text_patterns:
+      - '\b(citizen of|national of|born in)\b'
+    redact_action: block
+
+  - category: religion
+    type: direct
+    field_names: [religion, religious_affiliation, faith]
+    text_patterns:
+      - '\b(Christian|Muslim|Jewish|Hindu|Buddhist|Sikh|atheist)\b'
+    redact_action: block
+
+  - category: disability
+    type: direct
+    field_names: [disability, disability_status, accommodation_needed]
+    text_patterns:
+      - '\b(disabled|disability|wheelchair|impairment)\b'
+    redact_action: block
+
+  - category: marital_family
+    type: direct
+    field_names: [marital_status, family_status, number_of_children, pregnant]
+    text_patterns:
+      - '\b(married|single|divorced|widowed|expecting|pregnant)\b'
+    redact_action: block
+
+  # ── Proxy signals (WARN + redact triggers) ────────────────────────────────
+
+  - category: graduation_year_as_age_proxy
+    type: proxy
+    field_names: [graduation_year, grad_year, class_of]
+    text_patterns:
+      - '\bclass of \d{4}\b'
+      - '\bgraduated\s+\d{4}\b'
+    redact_action: replace
+    replacement: "years_experience_delta"
+
+  - category: name_as_ethnicity_proxy
+    type: proxy
+    field_names: [name, full_name, first_name, last_name, candidate_name]
+    text_patterns:
+      - '(?i)\bcandidate name\s*:\s*\S+'
+    redact_action: replace
+    replacement: "[CANDIDATE]"
+
+  - category: address_as_nationality_proxy
+    type: proxy
+    # Only the country component of an address is a proxy risk.
+    field_names: [country, country_of_residence]
+    text_patterns:
+      - '(?i)(India|China|Pakistan|Nigeria|Philippines|Brazil|Mexico)\b'
+    redact_action: replace
+    replacement: "[REGION]"
+
+  - category: institution_prestige_as_proxy
+    type: proxy
+    # Named elite institutions can be socioeconomic / legacy-admit proxies.
+    field_names: [institution, university, college, school]
+    text_patterns:
+      - '(?i)(Harvard|Yale|Princeton|Oxford|Cambridge|Stanford|MIT|Caltech|Ivy\s+League)\b'
+    redact_action: replace
+    replacement: "accredited_university"
+
+  - category: extracurricular_as_religion_proxy
+    type: proxy
+    field_names: [extracurriculars, volunteer, clubs, memberships]
+    text_patterns:
+      - '(?i)(church|mosque|temple|synagogue|bible|quran|faith\s+group|prayer)\b'
+    redact_action: omit
+
+  - category: hobbies_as_demographic_proxy
+    type: proxy
+    field_names: [hobbies, interests, personal_interests]
+    # Hobbies can correlate with age, SES, or physical ability.
+    # Omit entirely — they are not job-relevant.
+    text_patterns: []
+    redact_action: omit

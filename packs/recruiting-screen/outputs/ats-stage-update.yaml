@@ -1,0 +1,71 @@
+# outputs/ats-stage-update.yaml
+#
+# Output adapter — advance candidate stage in the ATS
+#
+# Selects the correct ATS API based on `inbound.ats_source` field.
+# Supports: greenhouse | lever | email (email-ingested CVs are not advanced
+# automatically — they are queued for manual review in the recruiter digest).
+#
+# Stage advancement logic (based on jd-matcher overall_score):
+#   score >= config.jd_matcher.score_threshold_advance  → ADVANCE to "Phone Screen"
+#   score <  config.jd_matcher.score_threshold_reject   → REJECT (move to "Rejected")
+#   otherwise                                           → HOLD (no stage change; add note)
+#
+# This step depends on bias_check, so it only runs when verdict != BLOCK.
+# The bias-checker's fairness_rationale is appended as an internal ATS note.
+
+name: ats-stage-update
+kind: conditional-mcp-tool
+
+# The adapter picks the tool at runtime based on ats_source.
+routing:
+  field: ats_source
+  cases:
+    greenhouse:
+      mcp_server: greenhouse_harvest
+      tool: advance_application
+      params:
+        application_id: "{{ candidate_id }}"
+        to_stage: "{{ target_stage }}"
+    lever:
+      mcp_server: lever_api
+      tool: update_opportunity_stage
+      params:
+        opportunity_id: "{{ candidate_id }}"
+        stage_text: "{{ target_stage }}"
+    email:
+      action: skip
+      note: "Email-ingested CVs require manual ATS entry; queued in recruiter digest."
+
+# Stage name mapping per recommendation.
+stage_map:
+  ADVANCE: "Phone Screen"
+  HOLD:    null          # no stage change
+  REJECT:  "Rejected"
+
+# Internal note appended to the ATS candidate record regardless of stage change.
+# Contains fairness_rationale so it is auditable in the ATS.
+internal_note_template: |
+  [xiaoguai recruiting-screen] Score: {{ overall_score | round(2) }}
+  Recommendation: {{ recommendation }}
+  Bias audit: {{ bias_verdict }}
+  Criteria used: {{ fairness_rationale.criteria_used | join(", ") }}
+  Protected fields absent: {{ fairness_rationale.protected_fields_absent | join(", ") }}
+
+audit:
+  table: recruiting_screen_runs
+  fields:
+    - candidate_id
+    - job_id
+    - ats_source
+    - overall_score
+    - recommendation
+    - target_stage
+    - ats_update_status
+    - bias_verdict
+    - updated_at
+
+requires:
+  env:
+    - GREENHOUSE_API_KEY     # only needed if ats_source == greenhouse
+    - LEVER_API_KEY          # only needed if ats_source == lever
