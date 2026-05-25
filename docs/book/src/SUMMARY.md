@@ -26,6 +26,7 @@
 - [Systemd Hardening](operator/systemd.md)
 - [Security](operator/security.md)
 - [Release Signing](operator/release-signing.md)
+- [Task Board](operator/task-board.md)
 
 ---
 
