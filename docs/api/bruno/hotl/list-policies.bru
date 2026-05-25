@@ -1,0 +1,25 @@
+meta {
+  name: List HOTL Policies
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/hotl/policies?tenant_id={{tenantId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:query {
+  tenant_id: {{tenantId}}
+  ~scope: llm_call
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
