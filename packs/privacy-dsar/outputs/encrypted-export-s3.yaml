@@ -1,0 +1,55 @@
+---
+# Encrypted Export S3 — output connector (HotL-gated; presigned URL delivery)
+#
+# After DPO HotL approval, delivers the encrypted export package to the requester
+# via a time-limited presigned S3 URL. The URL is embedded in a delivery email.
+#
+# Security properties:
+#   - Export objects are SSE-KMS encrypted (key ARN from config)
+#   - Presigned URLs are time-limited (default 48 hours, config.export.presigned_url_ttl_hours)
+#   - URLs are generated fresh at delivery time; no URL is stored in the database
+#   - S3 key (not URL) is stored in dsar_requests.export_package_s3_key for audit
+#   - Delivery generates a dsar_disclosures row with delivery_reference = S3 key
+#
+# Cross-border transfer notice: operators must ensure the S3 bucket is in a
+# jurisdiction permissible under the applicable privacy regulation. This pack
+# does not enforce data residency.
+
+output: encrypted-export-s3
+
+# Activated only for request_type: access, portability
+# For erasure: attestation-writer delivers erasure-checklist to operator instead
+trigger_request_types:
+  - access
+  - portability
+
+s3:
+  bucket: "${DSAR_EXPORT_S3_BUCKET}"
+  kms_key_arn: "${DSAR_KMS_KEY_ARN}"
+  server_side_encryption: aws:kms
+  presigned_url_ttl_hours: "${DSAR_PRESIGNED_URL_TTL_HOURS:-48}"
+  # Objects are tagged for lifecycle policy (auto-delete after retention period)
+  object_tags:
+    dsar_type: "{{ request.request_type }}"
+    tenant_id: "{{ tenant_id }}"
+    dsar_id: "{{ request.id }}"
+
+delivery_email:
+  from: "${DSAR_FROM_EMAIL}"
+  subject: "Your {{ request.request_type | title }} Request — Data Export Ready"
+  body_template: |
+    Dear {{ request.requester_name }},
+
+    Your {{ request.request_type | title }} request (reference: {{ request.id }}) has been
+    processed and approved. Your data export is available for download at the link below.
+
+    Download link (valid for {{ presigned_url_ttl_hours }} hours):
+    {{ presigned_url }}
+
+    This link will expire at {{ presigned_url_expires_at | datetime('YYYY-MM-DD HH:mm UTC') }}.
+    After expiry, please contact {{ dpo_email }} to request a new link.
+
+    For questions about this request, please reference: {{ request.id }}
+
+    Regards,
+    {{ operator_name }} Privacy Team

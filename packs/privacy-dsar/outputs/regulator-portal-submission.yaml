@@ -1,0 +1,51 @@
+---
+# Regulator Portal Submission — output connector
+#
+# Submits the completed DSAR response to a regulator portal when:
+#   - The inbound_source is 'regulator_forwarded', OR
+#   - The operator explicitly requests regulatory filing
+#
+# Activated only after DPO HotL approval.
+# Writes a dsar_disclosures row with disclosure_type = 'regulator_submitted'.
+#
+# Portal submission packages:
+#   - The rendered regulator-attestation document
+#   - A metadata JSON payload (DSAR ID, type, dates, DPO identity)
+#   - For erasure: the erasure plan summary (excluded records with legal-hold notes)
+#
+# Actual portal API integration is operator-configured per regulator.
+# The pack ships with stubs for common DPA APIs; operators wire credentials.
+
+output: regulator-portal-submission
+
+trigger_condition: >
+  inbound_source == 'regulator_forwarded'
+  OR operator_config.always_file_with_regulator == true
+
+regulators:
+  ico_uk:
+    api_base: "https://api.ico.org.uk/dsar/v1"
+    auth: Bearer ${DSAR_ICO_API_KEY}
+    submission_endpoint: /submit
+    status_check_endpoint: /status/{submission_id}
+
+  cnil_fr:
+    api_base: "https://api.cnil.fr/dsar/v1"
+    auth: Bearer ${DSAR_CNIL_API_KEY}
+    submission_endpoint: /submit
+    status_check_endpoint: /status/{submission_id}
+
+# Deferred: additional DPA portal integrations
+# See docs/plans/dsar-regulator-integrations.md
+
+submission_payload_template: |
+  {
+    "case_reference": "{{ regulator_reference_id }}",
+    "operator_id": "{{ tenant_id }}",
+    "dsar_type": "{{ request.request_type }}",
+    "received_at": "{{ request.created_at }}",
+    "completed_at": "{{ request.completed_at }}",
+    "dpo_identity": "{{ request.hotl_approved_by }}",
+    "outcome": "{{ submission_outcome }}",
+    "attestation_reference": "{{ request.attestation_doc_s3_key }}"
+  }

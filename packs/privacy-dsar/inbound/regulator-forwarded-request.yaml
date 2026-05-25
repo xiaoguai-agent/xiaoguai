@@ -1,0 +1,51 @@
+---
+# Regulator-Forwarded Request — inbound source spec
+#
+# Handles DSARs forwarded by a data protection authority (DPA) or regulator.
+# Regulator-forwarded requests:
+#   - Skip identity verification (regulator has already verified identity)
+#   - Have shorter effective deadlines (DPA may impose sub-30-day timelines)
+#   - Are assigned requester_relationship = 'regulator'
+#   - Always produce a regulator-portal-submission output (in addition to normal flow)
+#
+# Mounting: POST /v1/privacy-dsar/inbound/regulator/{tenant_id}
+# Auth:     Regulator-specific API key + mTLS (operator-configured)
+
+source: regulator_forwarded
+route_prefix: /v1/privacy-dsar/inbound/regulator
+
+normalize:
+  field_map:
+    requester_name:         payload.data_subject.name
+    requester_email:        payload.data_subject.email
+    request_type:           payload.right_exercised     # mapped below
+    request_description:    payload.complaint_summary
+    regulator_reference_id: payload.case_reference      # stored in detail JSONB
+
+  # Map regulator right codes to DSAR types
+  right_map:
+    "art15":  access
+    "art16":  rectification
+    "art17":  erasure
+    "art20":  portability
+    "art21":  objection
+    "ccpa100": access
+    "ccpa105": erasure
+    "ccpa110": portability
+
+  # Regulator-forwarded requests bypass identity_pending step
+  skip_identity_verification: true
+
+  # Deadline override: regulators may impose tighter deadlines
+  deadline_override_days: "${DSAR_REGULATOR_DEADLINE_DAYS:-15}"
+
+supported_regulators:
+  # Operator adds entries for regulators they operate under.
+  # Each entry specifies the API key env var for that regulator's system.
+  - id: ico_uk
+    label: "UK Information Commissioner's Office"
+    api_key_env: DSAR_ICO_API_KEY
+  - id: cnil_fr
+    label: "Commission Nationale de l'Informatique et des Libertés (France)"
+    api_key_env: DSAR_CNIL_API_KEY
+  # Add more regulators as needed

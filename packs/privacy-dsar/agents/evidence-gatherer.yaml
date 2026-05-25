@@ -1,0 +1,104 @@
+# packs/privacy-dsar/agents/evidence-gatherer.yaml
+#
+# Evidence Gatherer — assembles the export package for access / portability requests
+#
+# Activates after scope_mapped. Collects the records identified by scope-mapper,
+# formats them per regulator format guidance (JSON-LD for portability, PDF summary
+# for access), and uploads the package to the configured S3 bucket with SSE-KMS
+# encryption. Does NOT send the package to the requester — that is HotL-gated
+# in the attestation-writer step.
+#
+# Format guidance:
+#   access       → human-readable PDF summary + machine-readable JSON appendix
+#   portability  → GDPR-compliant JSON-LD export (schema.org Person + related types)
+#   rectification / objection → structured change-request document (no export package)
+#
+# The S3 key format is: dsar/{tenant_id}/{dsar_request_id}/export-{timestamp}.zip
+# Presigned URL (time-limited) is generated at delivery time, not stored in DB.
+
+name: dsar-evidence-gatherer
+kind: worker
+
+system_prompt: |
+  You are a data export specialist. Given the scope-mapped findings for a DSAR,
+  assemble a complete, accurate export package.
+
+  Rules:
+  - Include ONLY records identified in dsar_data_inventory for this request.
+  - Do not include records from systems with records_found = false.
+  - For records with has_legal_hold = true: include in access/portability exports
+    (the subject has a right to know this data exists) but mark them with a
+    legal_hold notice in the export package README.
+  - Format per request_type:
+      access: human-readable summary + JSON data appendix
+      portability: JSON-LD (schema.org) machine-readable export
+      rectification: change-request document listing fields to correct
+      objection: objection acknowledgement document
+  - Add the export-package-readme template as the top-level README in the zip.
+  - Record the S3 key in dsar_requests.export_package_s3_key.
+  - Never log PII in detail fields — use record counts and system IDs only.
+
+tools:
+  - name: get_inventory_findings
+    description: >
+      Retrieve all dsar_data_inventory rows for this request.
+    kind: sql
+    query: |
+      SELECT system_id, system_label, records_found, record_count,
+             record_refs, data_categories, has_legal_hold, retention_policy
+      FROM dsar_data_inventory
+      WHERE dsar_request_id = '{dsar_request_id}'
+        AND tenant_id       = '{tenant_id}'
+      ORDER BY system_label
+
+  - name: render_export_readme
+    description: >
+      Render the export-package-readme template with request metadata
+      and system-level summary. Returns rendered Markdown string.
+    kind: template
+    template: templates/export-package-readme.md.j2
+
+  - name: upload_export_package
+    description: >
+      Upload the assembled export zip to S3 with SSE-KMS encryption.
+      Returns the S3 key (not a presigned URL).
+    kind: s3_upload
+    bucket_config_key: export.s3_bucket
+    kms_key_config_key: export.kms_key_arn
+    key_template: "dsar/{tenant_id}/{dsar_request_id}/export-{timestamp}.zip"
+    server_side_encryption: aws:kms
+
+  - name: record_export_assembled
+    description: >
+      Store the S3 key and advance status to 'evidence_assembled'.
+    kind: sql
+    query: |
+      UPDATE dsar_requests
+      SET export_package_s3_key = '{s3_key}',
+          export_assembled_at   = NOW(),
+          status                = 'evidence_assembled'
+      WHERE id = '{dsar_request_id}' AND tenant_id = '{tenant_id}'
+
+  - name: record_disclosure
+    description: >
+      Write audit row for evidence assembly.
+    kind: sql
+    query: |
+      INSERT INTO dsar_disclosures (
+          dsar_request_id, tenant_id, disclosure_type,
+          actor_type, actor_id, detail
+      ) VALUES (
+          '{dsar_request_id}', '{tenant_id}', 'status_change',
+          'agent', '{agent_run_id}',
+          '{"from": "scope_mapped", "to": "evidence_assembled", "systems_included": {systems_included_count}, "s3_key": "{s3_key}"}'::jsonb
+      )
+
+hotl:
+  # Evidence assembly is autonomous. The HotL gate fires at attestation-writer
+  # (before the package is ever sent to the requester).
+  budget_usd: 0.20
+  autonomous_actions:
+    get_inventory_findings: unlimited
+    render_export_readme: unlimited
+    upload_export_package: unlimited
+    record_export_assembled: unlimited
