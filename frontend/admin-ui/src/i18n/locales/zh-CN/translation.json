@@ -24,6 +24,7 @@
     "providers": "LLM 提供商",
     "mcp_servers": "MCP 服务器",
     "marketplace": "MCP 市场",
+    "skill_packs": "Skill 包",
     "audit": "审计日志"
   },
   "language": {

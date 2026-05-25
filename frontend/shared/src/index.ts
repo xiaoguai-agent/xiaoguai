@@ -388,6 +388,46 @@ export interface OutcomesTimeseriesResponse {
 
 export type OutcomesRange = '24h' | '7d' | '30d';
 
+// ---- v1.3.x — skill pack types -----------------------------------------
+
+/**
+ * One installed skill pack as returned by `GET /v1/skills/installed`.
+ * The `activation_status` is always `"pending"` until the runtime loader
+ * is wired (planned for a future release).
+ */
+export interface InstalledSkillPackResponse {
+  id: string;
+  pack_id: string;
+  name: string;
+  version: string;
+  description: string | null;
+  /** Agents declared by this pack. Empty until the loader parses pack.yaml. */
+  agents: string[];
+  /** Inbound adapter types declared (e.g. "http", "slack"). */
+  inbound_adapters: string[];
+  /** Output types declared (e.g. "telegram", "email"). */
+  outputs: string[];
+  /** ISO-8601 timestamp when this record was created. */
+  recorded_at: string;
+  /** Always "pending" — loader activation is not yet wired. */
+  activation_status: 'pending';
+}
+
+/** Body for `POST /v1/skills/install`. */
+export interface InstallSkillPackRequest {
+  /** The pack identifier (e.g. "community/web-monitor@1.0.0"). */
+  pack_id: string;
+  /** Optional display name override. */
+  name?: string;
+}
+
+export interface InstallSkillPackResponse {
+  id: string;
+  pack_id: string;
+  name: string;
+  activation_status: 'pending';
+}
+
 // ---- Agent event stream --------------------------------------------------
 
 export type AgentEvent =
@@ -662,6 +702,22 @@ export class XiaoguaiClient {
       '/v1/mcp/marketplace/install',
       req,
     );
+  }
+
+  // ---- v1.3.x — skill pack browser ----------------------------------------
+
+  /** List all recorded (installed) skill packs via `GET /v1/skills/installed`. */
+  listInstalledSkillPacks(): Promise<InstalledSkillPackResponse[]> {
+    return this.request<InstalledSkillPackResponse[]>('GET', '/v1/skills/installed');
+  }
+
+  /**
+   * Record a skill pack installation via `POST /v1/skills/install`.
+   * Note: the runtime loader is not yet wired; packs are recorded but
+   * not activated until a future release.
+   */
+  installSkillPack(req: InstallSkillPackRequest): Promise<InstallSkillPackResponse> {
+    return this.request<InstallSkillPackResponse>('POST', '/v1/skills/install', req);
   }
 
   // ---- v1.2.4 Outcomes --------------------------------------------------

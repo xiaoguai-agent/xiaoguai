@@ -11,6 +11,7 @@ import { AuditPane } from './panes/Audit';
 import { UsagePane } from './panes/Usage';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { OutcomesPane } from './panes/Outcomes';
+import { SkillPacksPane } from './panes/SkillPacks';
 
 /**
  * v0.11.1 — audit-first console. `Today` becomes the default landing
@@ -53,6 +54,9 @@ export function App() {
         <NavLink to="/marketplace" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.marketplace')}
         </NavLink>
+        <NavLink to="/skills" className={({ isActive }) => (isActive ? 'active' : '')}>
+          {t('nav.skill_packs')}
+        </NavLink>
         <NavLink to="/audit" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.audit')}
         </NavLink>
@@ -67,6 +71,7 @@ export function App() {
           <Route path="/usage" element={<UsagePane />} />
           <Route path="/outcomes" element={<OutcomesPane />} />
           <Route path="/marketplace" element={<MarketplacePane />} />
+          <Route path="/skills" element={<SkillPacksPane />} />
           <Route path="/mcp-servers" element={<McpServersPane />} />
           <Route path="/tenants" element={<TenantsPane />} />
           <Route path="/providers" element={<ProvidersPane />} />
