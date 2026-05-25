@@ -103,7 +103,7 @@ pub fn init_otlp() -> Result<TracerProvider> {
 /// Call during graceful shutdown to ensure all buffered spans are
 /// exported before the process exits. Errors are logged but not
 /// propagated — shutdown must always succeed.
-pub fn shutdown_tracer(provider: TracerProvider) {
+pub fn shutdown_tracer(provider: &TracerProvider) {
     if let Err(e) = provider.shutdown() {
         // Non-fatal: the process is exiting anyway.
         eprintln!("OTLP shutdown error: {e}");
