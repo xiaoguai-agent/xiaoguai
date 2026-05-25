@@ -1,0 +1,35 @@
+---
+# Slack Product Team Output Connector
+#
+# Posts a digest of the top-scored opportunities (tier=high) to the
+# configured Slack channel via an incoming webhook.  Includes a link
+# to the generated Notion research page.
+
+output: slack-product-team
+
+slack:
+  # Incoming webhook URL for the #product-research channel.
+  webhook_url: ${SLACK_PRODUCT_WEBHOOK_URL}
+
+  # Only surface opportunities above this tier in the Slack digest.
+  min_tier: high    # "high" | "medium" | "low"
+
+  message_template: |
+    *[Product Research]* {{ run.project_name }} — research run `{{ run.id }}` complete
+
+    *Top opportunities (score ≥ {{ config.tier_high }}):*
+    {% for opp in scorecard.opportunities | selectattr("tier", "equalto", "high") | sort(attribute="final_score", reverse=true) %}
+    • *{{ "%.1f"|format(opp.final_score) }}* — {{ opp.jtbd_statement | truncate(120) }}
+      {{ opp.participant_count }} participants · {{ (opp.survey_respondents_affected_pct * 100) | round | int }}% survey signal
+    {% endfor %}
+
+    *{{ scorecard.opportunities | length }} total opportunities* across {{ run.total_participants }} participants and {{ run.total_survey_respondents | default(0) }} survey respondents.
+
+    :notebook: Full research page: {{ notion_page_url }}
+
+  # Unfurl the Notion link (false keeps the message compact).
+  unfurl_links: false
+
+# Deferred:
+#   - Feishu / DingTalk / WeCom connector.
+#   - Threaded follow-up message when Notion page is reviewed.

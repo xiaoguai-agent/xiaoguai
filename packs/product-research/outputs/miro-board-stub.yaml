@@ -1,0 +1,65 @@
+---
+# Miro Board Stub Output Connector
+#
+# Creates a new Miro board (or appends to an existing one) with:
+#   - A JTBD swimlane frame: one sticky note per JTBD statement,
+#     colour-coded by opportunity tier (high=green, medium=yellow, low=red).
+#   - An Opportunity Scorecard frame: bar-chart-style sticky grid.
+#   - One persona card frame per persona (photo placeholder + traits).
+#
+# This is a *stub* — the board is created with sticky notes and frames
+# but does not use Miro's native widget types beyond stickies and frames.
+# Full widget support (connector lines, shapes) is deferred.
+
+output: miro-board-stub
+
+miro:
+  access_token: ${MIRO_ACCESS_TOKEN}
+  # Team ID where boards are created.
+  team_id: ${MIRO_TEAM_ID}
+  # Board title template.
+  board_title: "Research: {{ run.project_name }} — {{ run.id }}"
+
+  frames:
+    - id: jtbd-board
+      title: "Jobs to Be Done"
+      layout: swimlane           # one column per tier: high / medium / low
+      sticky_template: |
+        {{ jtbd.statement }}
+
+        Score: {{ "%.1f"|format(opp.final_score) }}
+        Participants: {{ opp.participant_count }}
+        Survey signal: {{ (opp.survey_respondents_affected_pct * 100) | round | int }}%
+      color_map:
+        high: "#d5f5e3"    # light green
+        medium: "#fef9e7"  # light yellow
+        low: "#fadbd8"     # light red
+
+    - id: opportunity-scorecard
+      title: "Opportunity Scorecard"
+      layout: grid
+      sticky_template: |
+        #{{ loop.index }} — Score {{ "%.1f"|format(opp.final_score) }}
+        {{ opp.jtbd_statement | truncate(80) }}
+
+    - id: persona-cards
+      title: "Personas"
+      layout: row               # one frame column per persona
+      sticky_template: |
+        {{ persona.name }}
+        "{{ persona.archetype_label }}"
+
+        {{ persona.day_in_the_life | truncate(200) }}
+
+        Goals:
+        {% for g in persona.goals %}- {{ g }}
+        {% endfor %}
+        Frustrations:
+        {% for f in persona.frustrations %}- {{ f }}
+        {% endfor %}
+        Quote: "{{ persona.quote | truncate(100) }}"
+
+# Deferred:
+#   - Miro native card widget with structured fields.
+#   - Connector lines between persona cards and their linked JTBDs.
+#   - FigJam board connector (alternative to Miro).

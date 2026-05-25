@@ -1,0 +1,73 @@
+---
+# Gong Transcript Inbound Source
+#
+# Accepts Gong call exports (JSON or CSV) delivered via the Gong Webhooks
+# API or a manual file upload.  Normalises each call into a list of
+# NormalizedSegment records keyed by participant and timestamp.
+#
+# Mounting: POST /v1/product-research/inbound/gong/{route_id}
+# Auth:     Bearer token from scheduler_webhook_tokens table
+#           (Gong webhook HMAC-SHA256 verified separately — see hmac_secret).
+
+source: gong
+route_prefix: /v1/product-research/inbound/gong
+
+normalize:
+  # Optional: verify Gong-Signature header (HMAC-SHA256 over raw body).
+  hmac_secret: ${GONG_WEBHOOK_SECRET}
+
+  # Mapping: Gong API field path -> NormalizedTranscript field
+  field_map:
+    id: call.id
+    title: call.title
+    recorded_at: call.started
+    duration_seconds: call.duration
+    participants:
+      source: call.parties
+      map:
+        id: emailAddress
+        name: name
+        role: speakerInfo.userId   # "rep" | "prospect" | "unknown"
+    segments:
+      source: call.transcript
+      map:
+        speaker_id: speakerId
+        start_seconds: startTime
+        end_seconds: endTime
+        text: sentences[*].text   # joined with space
+
+  # NormalizedTranscript schema (emitted per call):
+  # {
+  #   "source": "gong",
+  #   "source_ref": "gong:<call_id>",
+  #   "title": "...",
+  #   "recorded_at": "ISO-8601",
+  #   "participants": [{"id": "...", "name": "...", "role": "..."}],
+  #   "segments": [
+  #     {"speaker_id": "...", "start": 12.3, "end": 45.1, "text": "..."}
+  #   ]
+  # }
+
+# Accepted Gong webhook event types.
+accepted_events:
+  - call.completed
+  - call.recording.completed
+
+# Sample payload (truncated — see Gong API docs for full schema).
+sample_payload: |
+  {
+    "call": {
+      "id": "gong-call-001",
+      "title": "Acme Corp — Renewal Discovery",
+      "started": "2024-05-15T14:00:00Z",
+      "duration": 2743,
+      "parties": [
+        {"emailAddress": "rep@company.com", "name": "Alex Rep", "speakerInfo": {"userId": "rep"}},
+        {"emailAddress": "buyer@acme.com",  "name": "Sam Buyer", "speakerInfo": {"userId": "prospect"}}
+      ],
+      "transcript": [
+        {"speakerId": "buyer@acme.com", "startTime": 12.1, "endTime": 28.4,
+         "sentences": [{"text": "The export takes forever at month end."}]}
+      ]
+    }
+  }

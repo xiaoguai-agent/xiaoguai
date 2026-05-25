@@ -1,0 +1,39 @@
+---
+# Dovetail Export Inbound Source
+#
+# Accepts Dovetail project exports (JSON) delivered via the Dovetail
+# Webhooks API or a manual file upload.  Dovetail organises data as
+# notes with highlights; each highlight becomes a NormalizedSegment.
+#
+# Mounting: POST /v1/product-research/inbound/dovetail/{route_id}
+# Auth:     Bearer token from scheduler_webhook_tokens table
+
+source: dovetail
+route_prefix: /v1/product-research/inbound/dovetail
+
+normalize:
+  # Dovetail does not sign webhooks; auth relies on per-tenant bearer token.
+  hmac_secret: ~
+
+  field_map:
+    id: note.id
+    title: note.title
+    recorded_at: note.createdAt
+    participants:
+      source: note.participants
+      map:
+        id: id
+        name: displayName
+        role: _const:interviewee
+    segments:
+      source: note.highlights
+      map:
+        speaker_id: _const:interviewee
+        start_seconds: _const:0
+        end_seconds: _const:0
+        text: content
+
+accepted_events:
+  - note.created
+  - note.updated
+  - highlight.created
