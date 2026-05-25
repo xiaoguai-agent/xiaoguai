@@ -36,6 +36,7 @@ use crate::sessions_ext::SessionForker;
 use crate::skills::SkillPackRepository;
 use crate::today::TodayReader;
 use crate::usage::UsageReader;
+use crate::workspaces::WorkspaceRepository;
 
 /// Registry of cancellation tokens keyed by `session_id`. A single token per
 /// session is enough — the API contract serialises message turns within a
@@ -200,6 +201,13 @@ pub struct AppState {
     /// return 503; production wires `PgSkillPackRepository` from
     /// `xiaoguai-core`.
     pub skill_packs: Option<Arc<dyn SkillPackRepository>>,
+    /// v1.3.x: workspace CRUD backing `GET|POST|PUT|DELETE /v1/workspaces`.
+    /// `None` makes those endpoints return 503; production wires
+    /// `PgWorkspaceRepository` from `xiaoguai-core/src/workspace_bridge.rs`.
+    /// INTEGRATION NOTE: add this field to AppState struct literal in
+    /// `xiaoguai-core/src/main.rs` as `workspace_repository: None` — do NOT
+    /// change any other field; the Pg bridge wiring lands in a follow-up PR.
+    pub workspace_repository: Option<Arc<dyn WorkspaceRepository>>,
 }
 
 impl std::fmt::Debug for AppState {

@@ -24,6 +24,7 @@ mod sd_notify_bridge;
 mod sessions_bridge;
 mod today_bridge;
 mod usage_bridge;
+pub mod workspace_bridge;
 
 use std::path::PathBuf;
 
@@ -517,6 +518,13 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
+        // v1.3.x: workspace CRUD — production wires PgWorkspaceRepository
+        // in workspace_bridge.rs; left unwired here so the routes return 503
+        // until the Pg bridge PR is merged with this branch.
+        // INTEGRATION NOTE: parallel-branch agents (pg-bridges, personas,
+        // memory, tasks) must also add this field = None to their AppState
+        // literals when they merge with this branch.
+        workspace_repository: None,
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by
