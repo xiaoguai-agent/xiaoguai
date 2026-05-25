@@ -1,0 +1,75 @@
+# Output channel — Salesforce account link
+# ---------------------------------------------------------------------------
+# When variance-analyzer flags an adverse variance for a cost-centre that
+# maps to a Salesforce account or opportunity, this output writes a note or
+# activity to the Salesforce record for visibility in the CRM.
+#
+# Use case: revenue shortfalls tied to specific accounts can be surfaced
+# directly to the AE or CSM responsible without a manual lookup.
+# ---------------------------------------------------------------------------
+
+name: salesforce-account-link
+version: "1.0.0"
+description: >
+  Links material revenue variances to Salesforce accounts. Posts a CRM
+  activity note to the relevant account record when a revenue shortfall
+  is flagged. Requires HOTL approval before posting to Salesforce.
+
+kind: output_channel
+type: salesforce
+
+# --------------------------------------------------------------------------
+# Connection
+# --------------------------------------------------------------------------
+connection:
+  instance_url: "${SALESFORCE_INSTANCE_URL}"
+  client_id: "${SALESFORCE_CLIENT_ID}"
+  client_secret: "${SALESFORCE_CLIENT_SECRET}"
+  username: "${SALESFORCE_USERNAME}"
+  password: "${SALESFORCE_PASSWORD}"
+  security_token: "${SALESFORCE_SECURITY_TOKEN}"
+
+# --------------------------------------------------------------------------
+# Trigger condition
+# --------------------------------------------------------------------------
+trigger:
+  # Only fire for revenue variances (not OpEx — those don't map to accounts)
+  event: fpa.variance_threshold_breach
+  condition: "category == 'revenue' AND variance_amount < 0"
+
+# --------------------------------------------------------------------------
+# Account mapping
+# --------------------------------------------------------------------------
+account_mapping:
+  # Maps fpa_actuals.cost_centre to Salesforce Account.Name or external ID
+  # Operators configure this mapping in pack settings
+  strategy: cost_centre_to_account_name
+  # Fallback: search Salesforce for Account matching cost_centre string
+  fallback: search_by_name
+
+# --------------------------------------------------------------------------
+# Activity note template
+# --------------------------------------------------------------------------
+note_template: |
+  [Xiaoguai FP&A] Revenue variance alert for {{ period_label }}:
+  Actuals: {{ actual_amount | currency }} vs. Budget: {{ budget_amount | currency }}
+  Variance: {{ variance_amount | currency }} ({{ variance_pct }}%)
+  Line item: {{ line_item }}
+  Review the full variance report: {{ admin_ui_link }}
+
+# --------------------------------------------------------------------------
+# HOTL: always require approval before posting to Salesforce
+# --------------------------------------------------------------------------
+hotl:
+  require_human_approval: true
+  notify_channel: "${FPA_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  retry_count: 2
+  retry_delay_seconds: 30
+  # If Salesforce is unavailable, do not block the FP&A pipeline
+  fail_silently: true
+  alert_channel: "${FPA_NOTIFY_CHANNEL:-admin_ui}"

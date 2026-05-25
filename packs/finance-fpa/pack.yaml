@@ -1,0 +1,126 @@
+# FP&A Variance & Forecasting Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# Operational FP&A pack: variance analysis, budget rollup, and forecasting
+# commentary. Distinct from packs/rag-finance/ (knowledge RAG); this pack
+# processes live period-close data and produces board-ready narrative.
+#
+# Install:   xiaoguai pack install packs/finance-fpa/
+# Requires:  xiaoguai >= v1.3.1-prep (features: watch, anomaly, llm,
+#            outcome-telemetry)
+# ---------------------------------------------------------------------------
+
+name: finance-fpa
+version: "1.0.0"
+description: >
+  Operational FP&A intelligence: monitors actuals vs. budget, flags
+  material variances, rolls up budget across cost-centres, and drafts
+  board-ready forecast commentary. All narrative output is HOTL-gated —
+  no content is published without human approval.
+  NOT to be confused with packs/rag-finance/ (knowledge RAG).
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - watch              # F1: WatchSpec + WatchEvent bus
+    - anomaly            # F2: AnomalySpec + rolling-window alerting (xg-anomaly)
+    - llm                # core LLM backend (always available)
+    - outcome-telemetry  # F3: draft/approve/publish outcome loop
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_fpa_core.sql
+
+# --------------------------------------------------------------------------
+# Watch specs
+# --------------------------------------------------------------------------
+watches:
+  - path: watches/period-close-trigger.yaml   # fires when a new period close lands
+  - path: watches/variance-threshold.yaml     # fires when actuals exceed budget by threshold
+
+# --------------------------------------------------------------------------
+# Anomaly specs (xg-anomaly integration)
+# --------------------------------------------------------------------------
+anomalies:
+  - path: anomalies/opex-spike.yaml           # rolling-window OpEx anomaly
+  - path: anomalies/revenue-shortfall.yaml    # rolling-window revenue miss
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/variance-analyzer.yaml
+  - path: agents/budget-rollup.yaml
+  - path: agents/forecast-commentator.yaml
+  - path: agents/anomaly-flagger.yaml
+
+# --------------------------------------------------------------------------
+# Inbound connectors (data ingestion specs)
+# --------------------------------------------------------------------------
+inbound:
+  - path: inbound/netsuite-period-close.yaml
+  - path: inbound/anaplan-export.yaml
+  - path: inbound/csv-upload.yaml
+
+# --------------------------------------------------------------------------
+# Output channel definitions
+# --------------------------------------------------------------------------
+outputs:
+  - path: outputs/slack-fpa-team.yaml
+  - path: outputs/board-deck-stub.yaml
+  - path: outputs/salesforce-account-link.yaml
+
+# --------------------------------------------------------------------------
+# Dashboard definitions
+# --------------------------------------------------------------------------
+dashboards:
+  - name: fpa-variance-overview
+    description: "Period variance, budget roll-up, and forecast accuracy"
+    widgets:
+      - type: metric
+        title: "Total Revenue Variance (Period)"
+        query: >
+          SELECT ROUND(SUM(actual_amount - budget_amount), 0) AS revenue_variance
+          FROM fpa_actuals
+          WHERE tenant_id = '{tenant_id}'
+            AND period_id = (SELECT MAX(period_id) FROM fpa_periods WHERE tenant_id = '{tenant_id}')
+            AND category = 'revenue'
+      - type: chart
+        title: "Actuals vs Budget — Rolling 12 Months"
+        query: >
+          SELECT p.period_label,
+                 SUM(a.actual_amount) AS actuals,
+                 SUM(a.budget_amount) AS budget
+          FROM fpa_actuals a
+          JOIN fpa_periods p ON p.id = a.period_id AND p.tenant_id = a.tenant_id
+          WHERE a.tenant_id = '{tenant_id}'
+          GROUP BY p.period_label, p.period_start
+          ORDER BY p.period_start DESC
+          LIMIT 12
+      - type: table
+        title: "Top 10 Adverse Variances"
+        query: >
+          SELECT cost_centre, line_item,
+                 actual_amount, budget_amount,
+                 (actual_amount - budget_amount) AS variance,
+                 ROUND(100.0 * (actual_amount - budget_amount) / NULLIF(budget_amount, 0), 1) AS variance_pct
+          FROM fpa_actuals
+          WHERE tenant_id = '{tenant_id}'
+            AND period_id = (SELECT MAX(period_id) FROM fpa_periods WHERE tenant_id = '{tenant_id}')
+            AND (actual_amount - budget_amount) > 0
+          ORDER BY variance DESC
+          LIMIT 10
+
+# --------------------------------------------------------------------------
+# Schema namespace
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "fpa_"
+  namespace: "finance_fpa"

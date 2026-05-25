@@ -1,0 +1,110 @@
+# Agent definition — budget-rollup
+# ---------------------------------------------------------------------------
+# Triggered by fpa.period_closed. Rolls up actuals and budget from line-item
+# level to cost-centre and entity level, computes YTD totals, and produces
+# a structured rollup table for the board deck.
+#
+# HOTL guardrails: no autonomous publishing; rollup table requires approval.
+# ---------------------------------------------------------------------------
+
+name: budget-rollup
+version: "1.0.0"
+description: >
+  Rolls up actuals and budget from line-item to cost-centre and entity level.
+  Computes current-period and YTD summaries. Drafts a drill-down table for
+  the board pack — requires human approval before publishing.
+
+triggers:
+  - event: fpa.period_closed
+    source: period-close-trigger
+
+system_prompt: |
+  You are an FP&A analyst responsible for producing the budget rollup
+  summary for the board pack.
+
+  Rules:
+  - Compute rollup at two levels: (1) cost-centre totals, (2) entity total.
+  - For each level produce: budget, actuals, variance ($), variance (%).
+  - Add a YTD column that sums all closed periods in the fiscal year.
+  - Flag cost centres where YTD actual exceeds YTD budget by more than 5%
+    with a "[!]" marker.
+  - Output a markdown table formatted for copy-paste into a board deck.
+  - Do not add commentary — that is the forecast-commentator's role.
+  - Use only data returned by the SQL tools. Never invent numbers.
+
+tools:
+  - name: get_rollup_current_period
+    description: >
+      Fetch cost-centre-level rollup for the given period_id.
+      Returns: cost_centre, category, actual_total, budget_total,
+      variance, variance_pct.
+    kind: sql
+    query: |
+      SELECT
+          a.cost_centre,
+          a.category,
+          SUM(a.actual_amount)                                            AS actual_total,
+          SUM(a.budget_amount)                                            AS budget_total,
+          SUM(a.actual_amount - a.budget_amount)                         AS variance,
+          ROUND(100.0 * SUM(a.actual_amount - a.budget_amount)
+                / NULLIF(SUM(a.budget_amount), 0), 2)                    AS variance_pct
+      FROM fpa_actuals a
+      WHERE a.tenant_id = '{tenant_id}'
+        AND a.period_id = '{period_id}'
+      GROUP BY a.cost_centre, a.category
+      ORDER BY a.cost_centre, a.category
+
+  - name: get_rollup_ytd
+    description: >
+      Fetch YTD cost-centre rollup across all closed periods in the same
+      fiscal year as period_id.
+    kind: sql
+    query: |
+      SELECT
+          a.cost_centre,
+          a.category,
+          SUM(a.actual_amount)   AS ytd_actual,
+          SUM(a.budget_amount)   AS ytd_budget,
+          SUM(a.actual_amount - a.budget_amount)                         AS ytd_variance,
+          ROUND(100.0 * SUM(a.actual_amount - a.budget_amount)
+                / NULLIF(SUM(a.budget_amount), 0), 2)                    AS ytd_variance_pct
+      FROM fpa_actuals a
+      JOIN fpa_periods p ON p.id = a.period_id AND p.tenant_id = a.tenant_id
+      WHERE a.tenant_id = '{tenant_id}'
+        AND p.is_closed = TRUE
+        AND EXTRACT(YEAR FROM p.period_start) = (
+            SELECT EXTRACT(YEAR FROM period_start)
+            FROM fpa_periods WHERE id = '{period_id}'
+        )
+      GROUP BY a.cost_centre, a.category
+      ORDER BY a.cost_centre, a.category
+
+  - name: save_rollup_draft
+    description: >
+      Write the rollup table draft to fpa_commentary_log with
+      draft_type = 'drill-down' and status = 'pending_approval'.
+      Returns the draft id.
+    kind: sql
+    query: |
+      INSERT INTO fpa_commentary_log
+          (tenant_id, period_id, agent, draft_type, draft_body)
+      VALUES
+          ('{tenant_id}', '{period_id}', 'budget-rollup',
+           'drill-down', '{draft_body}')
+      RETURNING id
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    publish_rollup: 0
+  require_human_approval:
+    - save_rollup_draft
+  notify_channel: "${FPA_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - draft_created
+    - draft_approved
+    - draft_rejected
+    - rollup_published
+  feedback_table: fpa_commentary_log

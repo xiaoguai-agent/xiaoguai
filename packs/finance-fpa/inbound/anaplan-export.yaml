@@ -1,0 +1,86 @@
+# Inbound connector — Anaplan export
+# ---------------------------------------------------------------------------
+# Pulls budget and actuals exports from Anaplan via the Anaplan Connect
+# API (CloudWorks or bulk data). Maps Anaplan line items to fpa_actuals.
+#
+# Credentials: configured via pack settings or environment variables.
+# ---------------------------------------------------------------------------
+
+name: anaplan-export
+version: "1.0.0"
+description: >
+  Ingests Anaplan budget and actuals exports into fpa_actuals. Supports
+  both CloudWorks scheduled exports and on-demand pull via the Anaplan
+  Bulk Data API. Maps Anaplan dimensions to cost_centre / line_item.
+
+kind: inbound_connector
+source: anaplan
+
+# --------------------------------------------------------------------------
+# Connection
+# --------------------------------------------------------------------------
+connection:
+  type: anaplan_bulk
+  workspace_id: "${ANAPLAN_WORKSPACE_ID}"
+  model_id: "${ANAPLAN_MODEL_ID}"
+  client_id: "${ANAPLAN_CLIENT_ID}"
+  private_key_path: "${ANAPLAN_PRIVATE_KEY_PATH}"
+
+# --------------------------------------------------------------------------
+# Export definitions
+# --------------------------------------------------------------------------
+exports:
+  actuals:
+    export_id: "${ANAPLAN_ACTUALS_EXPORT_ID}"
+    file_format: csv
+    encoding: utf-8
+
+  budget:
+    export_id: "${ANAPLAN_BUDGET_EXPORT_ID}"
+    file_format: csv
+    encoding: utf-8
+
+# --------------------------------------------------------------------------
+# Polling schedule
+# --------------------------------------------------------------------------
+schedule:
+  cron: "0 */4 * * *"   # pull every 4 hours
+
+# --------------------------------------------------------------------------
+# Data mapping
+# --------------------------------------------------------------------------
+mapping:
+  period_column:      "Period"
+  cost_centre_column: "Cost Centre"
+  line_item_column:   "Line Item"
+  category_column:    "P&L Category"
+  actual_column:      "Actuals"
+  budget_column:      "Budget"
+  currency_column:    "Currency"
+
+  category_map:
+    "Revenue":    "revenue"
+    "COGS":       "cogs"
+    "OpEx":       "opex"
+    "CapEx":      "capex"
+    "_default":   "other"
+
+# --------------------------------------------------------------------------
+# Target
+# --------------------------------------------------------------------------
+target:
+  table: fpa_actuals
+  upsert_key: [tenant_id, period_id, cost_centre, line_item]
+  period_table: fpa_periods
+  # Anaplan exports don't carry a "closed" flag; period closure is inferred
+  # from the netsuite-period-close connector or manual trigger.
+  mark_closed_when: null
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  retry_count: 3
+  retry_delay_seconds: 60
+  alert_after_failures: 3
+  alert_channel: "${FPA_NOTIFY_CHANNEL:-admin_ui}"

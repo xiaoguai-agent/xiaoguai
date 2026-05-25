@@ -1,0 +1,88 @@
+# Output channel — Slack FP&A team
+# ---------------------------------------------------------------------------
+# Delivers variance notifications and commentary approval links to the
+# configured Slack channel. Used by anomaly-flagger (auto + HOTL) and
+# as the HOTL notification sink for all three commentary agents.
+# ---------------------------------------------------------------------------
+
+name: slack-fpa-team
+version: "1.0.0"
+description: >
+  Posts FP&A anomaly alerts and commentary draft notifications to the
+  configured Slack channel. Includes approve/reject action buttons for
+  HOTL-gated drafts.
+
+kind: output_channel
+type: slack
+
+# --------------------------------------------------------------------------
+# Connection
+# --------------------------------------------------------------------------
+connection:
+  webhook_url: "${FPA_SLACK_WEBHOOK_URL}"
+  # Optional: use Bot Token + channel ID for richer block kit messages
+  bot_token: "${FPA_SLACK_BOT_TOKEN:-}"
+  channel_id: "${FPA_SLACK_CHANNEL_ID:-}"
+
+# --------------------------------------------------------------------------
+# Message formats
+# --------------------------------------------------------------------------
+message_formats:
+  anomaly_warning:
+    # Short anomaly notification — may be auto-sent for warnings
+    blocks:
+      - type: header
+        text: ":warning: FP&A Anomaly Detected — {{ anomaly_type }}"
+      - type: section
+        text: "{{ message_body }}"
+      - type: context
+        text: "Period: {{ period_label }} | Severity: {{ severity | upper }} | {{ now | datetime }}"
+
+  anomaly_critical:
+    # Critical anomaly — always HOTL-gated; includes approve/reject buttons
+    blocks:
+      - type: header
+        text: ":rotating_light: CRITICAL FP&A Anomaly — {{ anomaly_type }}"
+      - type: section
+        text: "{{ message_body }}"
+      - type: actions
+        elements:
+          - type: button
+            text: "Acknowledge"
+            action_id: "fpa_anomaly_acknowledge"
+            value: "{{ flag_id }}"
+          - type: button
+            text: "Escalate"
+            action_id: "fpa_anomaly_escalate"
+            value: "{{ flag_id }}"
+            style: danger
+
+  commentary_pending:
+    # Notification that a draft is awaiting approval
+    blocks:
+      - type: header
+        text: ":pencil: FP&A Draft Ready for Review — {{ draft_type }}"
+      - type: section
+        text: "A *{{ draft_type }}* draft for period *{{ period_label }}* is ready for your review."
+      - type: actions
+        elements:
+          - type: button
+            text: "Review in Admin UI"
+            url: "${XIAOGUAI_ADMIN_URL}/fpa/commentary/{{ draft_id }}"
+          - type: button
+            text: "Approve"
+            action_id: "fpa_draft_approve"
+            value: "{{ draft_id }}"
+            style: primary
+          - type: button
+            text: "Reject"
+            action_id: "fpa_draft_reject"
+            value: "{{ draft_id }}"
+            style: danger
+
+# --------------------------------------------------------------------------
+# Rate limits
+# --------------------------------------------------------------------------
+rate_limits:
+  per_channel_per_minute: 10
+  per_tenant_per_hour: 60
