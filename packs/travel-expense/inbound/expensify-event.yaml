@@ -1,0 +1,61 @@
+# Inbound adapter — Expensify webhook
+# ---------------------------------------------------------------------------
+# Receives Expensify report export webhooks. Each webhook payload contains
+# one or more expense line items from an exported report.
+#
+# Configuration:
+#   EXPENSIFY_WEBHOOK_SECRET — HMAC-SHA256 secret for payload verification
+#   EXPENSIFY_PARTNER_USER_ID, EXPENSIFY_PARTNER_USER_SECRET — API credentials
+#
+# Expensify docs: https://integrations.expensify.com/Integration-Server/doc/
+# ---------------------------------------------------------------------------
+
+name: expensify-event
+kind: webhook
+version: "1.0.0"
+
+endpoint:
+  path: "/inbound/travel-expense/expensify"
+  method: POST
+  content_type: "application/json"
+
+# --------------------------------------------------------------------------
+# Authentication
+# --------------------------------------------------------------------------
+auth:
+  kind: hmac_sha256
+  secret_env: EXPENSIFY_WEBHOOK_SECRET
+  header: "X-Expensify-Hmac-SHA256"
+
+# --------------------------------------------------------------------------
+# Field mapping — Expensify → te_expenses schema
+# --------------------------------------------------------------------------
+field_mapping:
+  tenant_id: "$.tenantId"             # Must be injected by API gateway
+  employee_id: "$.reportList[*].transactions[*].email"
+  amount: "$.reportList[*].transactions[*].amount"
+  currency: "$.reportList[*].transactions[*].currency"
+  category: "$.reportList[*].transactions[*].category"
+  merchant: "$.reportList[*].transactions[*].merchant"
+  expense_date: "$.reportList[*].transactions[*].created"
+  description: "$.reportList[*].transactions[*].comment"
+  receipt_path: "$.reportList[*].transactions[*].receiptUrl"
+  source_reference_id: "$.reportList[*].transactions[*].transactionID"
+
+category_map:
+  # Normalise Expensify categories to te_expenses category enum
+  "Meals & Entertainment": "meals"
+  "Hotel": "accommodation"
+  "Airfare": "airfare"
+  "Car Rental": "transport"
+  "Taxi/Uber": "transport"
+  "Conference": "conference_registration"
+  "Software": "equipment_purchase"
+  "Other": "other"
+
+# --------------------------------------------------------------------------
+# Output event
+# --------------------------------------------------------------------------
+emits:
+  - event: te.receipt_received
+    source: expensify

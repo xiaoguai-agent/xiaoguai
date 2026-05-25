@@ -1,0 +1,133 @@
+# Output definition — exec-monthly-te-digest
+# ---------------------------------------------------------------------------
+# Generates and delivers a monthly T&E summary to the executive team.
+# Triggered by reimbursement-batcher at the last payroll run of each month.
+# Not HOTL-gated (read-only digest, no financial action).
+#
+# Contents:
+#   - Total spend by category and department
+#   - Policy violation rate and top violation types
+#   - Average days to reimbursement (cycle time KPI)
+#   - Top 10 spend employees (name redacted in digest by default)
+#   - Month-over-month trend
+#   - FX exposure summary (non-USD expenses as % of total)
+#
+# Configuration:
+#   TE_EXEC_DIGEST_CHANNEL — email | slack
+#   TE_EXEC_DIGEST_RECIPIENTS — comma-separated email addresses
+# ---------------------------------------------------------------------------
+
+name: exec-monthly-te-digest
+kind: report
+version: "1.0.0"
+
+# --------------------------------------------------------------------------
+# Trigger
+# --------------------------------------------------------------------------
+triggers:
+  - event: te.month_end_batch_released
+    # Emitted by reimbursement-batcher when is_month_end=true
+
+# --------------------------------------------------------------------------
+# Data queries
+# --------------------------------------------------------------------------
+queries:
+  total_by_category:
+    kind: sql
+    query: |
+      SELECT category,
+             COUNT(*) AS expense_count,
+             SUM(amount_usd) AS total_usd,
+             ROUND(100.0 * SUM(amount_usd) / SUM(SUM(amount_usd)) OVER (), 1) AS pct
+      FROM   te_expenses
+      WHERE  tenant_id = '{tenant_id}'
+        AND  status IN ('approved', 'reimbursed')
+        AND  expense_date BETWEEN '{month_start}' AND '{month_end}'
+      GROUP BY category
+      ORDER BY total_usd DESC
+
+  violation_summary:
+    kind: sql
+    query: |
+      SELECT v.rule_id,
+             COUNT(*) AS total,
+             SUM(CASE WHEN v.resolution = 'approved' THEN 1 ELSE 0 END) AS waived,
+             SUM(CASE WHEN v.resolution = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+             SUM(CASE WHEN v.resolution = 'pending' THEN 1 ELSE 0 END) AS pending
+      FROM   te_policy_violations v
+      JOIN   te_expenses e ON e.id = v.expense_id
+      WHERE  e.tenant_id = '{tenant_id}'
+        AND  e.expense_date BETWEEN '{month_start}' AND '{month_end}'
+      GROUP BY v.rule_id
+      ORDER BY total DESC
+
+  cycle_time:
+    kind: sql
+    query: |
+      SELECT ROUND(AVG(EXTRACT(DAY FROM approved_at - created_at)), 1) AS avg_days_to_approval,
+             ROUND(AVG(EXTRACT(DAY FROM
+               (SELECT released_at FROM te_reimbursements r
+                JOIN te_reimbursement_expenses re ON re.reimbursement_id = r.id
+                WHERE re.expense_id = e.id LIMIT 1) - e.created_at)), 1) AS avg_days_to_reimbursement
+      FROM   te_expenses e
+      WHERE  tenant_id = '{tenant_id}'
+        AND  status = 'reimbursed'
+        AND  expense_date BETWEEN '{month_start}' AND '{month_end}'
+
+  fx_exposure:
+    kind: sql
+    query: |
+      SELECT currency,
+             COUNT(*) AS expense_count,
+             SUM(amount_usd) AS total_usd
+      FROM   te_expenses
+      WHERE  tenant_id = '{tenant_id}'
+        AND  currency != 'USD'
+        AND  status IN ('approved', 'reimbursed')
+        AND  expense_date BETWEEN '{month_start}' AND '{month_end}'
+      GROUP BY currency
+      ORDER BY total_usd DESC
+
+  mom_trend:
+    kind: sql
+    query: |
+      SELECT DATE_TRUNC('month', expense_date) AS month,
+             SUM(amount_usd) AS total_usd,
+             COUNT(*) AS expense_count
+      FROM   te_expenses
+      WHERE  tenant_id = '{tenant_id}'
+        AND  status IN ('approved', 'reimbursed')
+        AND  expense_date >= DATE_TRUNC('month', '{month_end}'::DATE) - INTERVAL '5 months'
+      GROUP BY DATE_TRUNC('month', expense_date)
+      ORDER BY month
+
+# --------------------------------------------------------------------------
+# Template
+# --------------------------------------------------------------------------
+template: templates/reimbursement-batch-report.md.j2
+# The batch report template has a monthly digest section; exec digest
+# extends it with the above queries rendered as additional sections.
+
+# --------------------------------------------------------------------------
+# Delivery
+# --------------------------------------------------------------------------
+delivery:
+  channel: "${TE_EXEC_DIGEST_CHANNEL:-email}"
+
+  email:
+    to_env: TE_EXEC_DIGEST_RECIPIENTS
+    from_env: TE_FROM_EMAIL
+    subject: "T&E Executive Digest — {{ month_name }} {{ year }}"
+    attach_csv: true   # Attach the full batch CSV for the accountant
+
+  slack:
+    token_env: TE_SLACK_BOT_TOKEN
+    channel_env: TE_EXEC_DIGEST_SLACK_CHANNEL
+
+# --------------------------------------------------------------------------
+# Privacy
+# --------------------------------------------------------------------------
+privacy:
+  redact_employee_names: "${TE_DIGEST_REDACT_NAMES:-false}"
+  # When true, top-spender table shows employee IDs only, not names.
+  # Finance admin can cross-reference via the admin UI.

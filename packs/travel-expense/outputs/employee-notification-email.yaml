@@ -1,0 +1,126 @@
+# Output definition — employee-notification-email
+# ---------------------------------------------------------------------------
+# Sends status-update emails to employees throughout the T&E lifecycle:
+#   - Receipt parsed (with summary card to confirm extraction)
+#   - Policy violation detected (with explanation + appeal instructions)
+#   - Expense approved (including auto-approved)
+#   - Expense rejected (with reason + appeal window)
+#   - Reimbursement processed (batch reference + expected pay date)
+#   - Request for information from approver
+#
+# Not HOTL-gated (informational only — no financial or approval action).
+# Employee-facing emails are composed and sent autonomously.
+#
+# Configuration:
+#   TE_EMPLOYEE_CHANNEL — email | slack | feishu | dingtalk | wecom
+#   TE_FROM_EMAIL — sender address (e.g. expenses-noreply@company.com)
+# ---------------------------------------------------------------------------
+
+name: employee-notification-email
+kind: notification
+version: "1.0.0"
+
+# --------------------------------------------------------------------------
+# Triggers and templates per lifecycle event
+# --------------------------------------------------------------------------
+notifications:
+  - trigger_event: te.receipt_parsed
+    template: templates/receipt-summary-card.md.j2
+    subject: "Receipt parsed — {{ expense.merchant | default('expense') }} ({{ expense.expense_date }})"
+    # Only send for low-confidence parses or employee-action-required
+    condition: "parse_confidence == 'low' OR low_confidence_fields | length > 0"
+
+  - trigger_event: te.policy_violation_escalated
+    template: templates/policy-violation-explanation.md.j2
+    subject: "Action needed — T&E policy review for your {{ expense.merchant | default('expense') }}"
+
+  - trigger_event: te.expense_approved
+    template: inline
+    subject: "Approved — {{ expense.merchant | default('expense') }} ({{ expense.expense_date }})"
+    body: |
+      Hi {{ employee.name }},
+
+      Your expense of {{ expense.currency }} {{ "%.2f" | format(expense.amount) }}
+      at {{ expense.merchant | default("merchant") }} on {{ expense.expense_date }}
+      has been **approved** by {{ approved_by | default("your manager") }}.
+
+      It will be included in the next reimbursement batch.
+
+      **Expense ID:** `{{ expense.id }}`
+
+  - trigger_event: te.expense_rejected
+    template: inline
+    subject: "Not approved — {{ expense.merchant | default('expense') }} ({{ expense.expense_date }})"
+    body: |
+      Hi {{ employee.name }},
+
+      Your expense of {{ expense.currency }} {{ "%.2f" | format(expense.amount) }}
+      at {{ expense.merchant | default("merchant") }} on {{ expense.expense_date }}
+      was **not approved**.
+
+      **Reason:** {{ rejection_reason | default("No reason provided.") }}
+
+      You have **14 days** from today to submit an appeal. To appeal, reply to
+      this email or visit the admin UI.
+
+      **Expense ID:** `{{ expense.id }}`
+
+  - trigger_event: te.reimbursement_released
+    template: inline
+    subject: "Reimbursement processed — {{ batch_reference }}"
+    body: |
+      Hi {{ employee.name }},
+
+      Your T&E reimbursement of **USD {{ "%.2f" | format(employee_total_usd) }}**
+      has been submitted to payroll (batch {{ batch_reference }}).
+
+      Expenses included:
+      {% for exp in employee_expenses %}
+      - {{ exp.merchant | default("expense") }} — {{ exp.currency }} {{ "%.2f" | format(exp.amount) }} ({{ exp.expense_date }})
+      {% endfor %}
+
+      Expected payment date: {{ expected_pay_date | default("per your payroll schedule") }}.
+
+  - trigger_event: te.approval_info_requested
+    template: inline
+    subject: "Question about your expense — {{ expense.merchant | default('expense') }}"
+    body: |
+      Hi {{ employee.name }},
+
+      {{ approver.name }} has a question about your expense before approving it:
+
+      > {{ approver_question }}
+
+      **Expense ID:** `{{ expense.id }}`
+
+      Please reply to this email or update the expense in the admin UI.
+
+# --------------------------------------------------------------------------
+# Delivery
+# --------------------------------------------------------------------------
+delivery:
+  channel: "${TE_EMPLOYEE_CHANNEL:-email}"
+
+  email:
+    from_env: TE_FROM_EMAIL
+    from_default: "expenses-noreply@company.com"
+    reply_to_env: TE_FINANCE_REPLY_TO
+
+  # IM adapters (used when TE_EMPLOYEE_CHANNEL != email)
+  slack:
+    token_env: TE_SLACK_BOT_TOKEN
+    recipient_field: employee.slack_id
+  feishu:
+    app_id_env: FEISHU_APP_ID
+    app_secret_env: FEISHU_APP_SECRET
+  dingtalk:
+    enabled_by: "config.im.adapter == dingtalk"
+  wecom:
+    enabled_by: "config.im.adapter == wecom"
+
+# --------------------------------------------------------------------------
+# Rate limiting (avoid spamming employees)
+# --------------------------------------------------------------------------
+rate_limits:
+  per_employee_per_hour: 5
+  per_employee_per_day: 20

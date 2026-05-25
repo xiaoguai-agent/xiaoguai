@@ -1,0 +1,66 @@
+{# packs/travel-expense/templates/approval-routing-card.md.j2
+   Rendered by approval-router for the approver (manager / director / CFO).
+   Delivered via outputs/approval-slack-dm (HOTL-gated for mid+ tiers).
+   Includes one-action approve/reject links pointing to the admin UI.
+#}
+## T&E Approval Request — {{ tier | upper }} Review
+
+**From:** {{ employee.name }} ({{ employee.email }})
+**Submitted:** {{ expense.created_at | datetimeformat("%Y-%m-%d %H:%M UTC") }}
+**Approval required by:** {{ sla_deadline }}
+
+---
+
+### Expense Details
+
+| Field | Value |
+|-------|-------|
+| **Merchant** | {{ expense.merchant | default("—") }} |
+| **Amount** | {{ expense.currency }} {{ "%.2f" | format(expense.amount) }} |
+| **USD Equivalent** | {% if expense.amount_usd is not none %}USD {{ "%.2f" | format(expense.amount_usd) }} (rate {{ expense.fx_rate_used }} / {{ expense.fx_rate_date }}){% else %}**Pending FX rate**{% endif %} |
+| **Date** | {{ expense.expense_date }} |
+| **Category** | {{ expense.category }} |
+| **Description** | {{ expense.description | default("—") | truncate(120) }} |
+| **Receipt** | {% if expense.receipt_path %}[View receipt]({{ receipt_url }}){% else %}**No receipt attached**{% endif %} |
+
+---
+
+{% if violations %}
+### Policy Flags ({{ violations | length }})
+
+{% for v in violations %}
+**{{ v.severity | upper }} — {{ v.rule_id | replace("_", " ") | title }}**
+{{ v.explanation }}
+{% if v.excess_amount_usd is not none %}Amount over limit: USD {{ "%.2f" | format(v.excess_amount_usd) }}{% endif %}
+
+{% endfor %}
+
+> These flags do not automatically reject the expense. As the approver you
+> decide whether to approve (waiving the policy) or reject with a reason.
+
+{% else %}
+**No policy flags.** This expense passed all automated policy checks.
+{% endif %}
+
+{% if appeal_reason %}
+### Employee Appeal
+
+> {{ appeal_reason }}
+
+{% endif %}
+
+---
+
+### Your Decision
+
+**[Approve]({{ approve_url }})** &nbsp;&nbsp; **[Reject]({{ reject_url }})** &nbsp;&nbsp; **[Ask for more info]({{ info_url }})**
+
+Or respond to this message in Slack with:
+- `approve {{ expense.id }}` — approve as submitted
+- `reject {{ expense.id }} <reason>` — reject with reason
+- `info {{ expense.id }} <question>` — request clarification from employee
+
+---
+**Expense ID:** `{{ expense.id }}`
+**Approval tier:** {{ tier | upper }}
+*Powered by xiaoguai T&E Pack — approval-router v{{ router_version }}*

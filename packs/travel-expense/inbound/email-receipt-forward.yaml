@@ -1,0 +1,101 @@
+# Inbound adapter — Email receipt forward
+# ---------------------------------------------------------------------------
+# Employees forward receipt emails to a dedicated inbox
+# (e.g. receipts@expenses.company.com). The adapter parses the email
+# envelope + body/attachments and emits te.receipt_received.
+#
+# Parsing priority:
+#   1. PDF/image attachment → stored as receipt artefact for OCR
+#   2. HTML body → extracted for vendor, amount, date (common for e-receipts)
+#   3. Plain-text body → regex heuristics (fallback)
+#
+# Configuration:
+#   TE_EMAIL_INBOUND_ADDRESS — monitored inbox address
+#   TE_EMAIL_PROVIDER — imap | sendgrid_inbound | mailgun_inbound
+#   TE_EMAIL_API_KEY — provider API key (if webhook-based)
+#
+# Employee identification: matched by From: address against employees table.
+# Unknown senders receive an auto-reply with onboarding instructions.
+# ---------------------------------------------------------------------------
+
+name: email-receipt-forward
+kind: email_inbound
+version: "1.0.0"
+
+# How the pack receives the email (operator chooses one)
+provider:
+  kind: "${TE_EMAIL_PROVIDER:-sendgrid_inbound}"
+  webhook_path: "/inbound/travel-expense/email"
+  # For IMAP polling: checks every 5 minutes
+  imap_poll_interval_seconds: 300
+  imap_host: "${TE_IMAP_HOST:-}"
+  imap_port: 993
+  imap_user_env: TE_IMAP_USER
+  imap_password_env: TE_IMAP_PASSWORD
+
+auth:
+  # Webhook providers use API-key header
+  kind: api_key
+  header: "X-Webhook-Signature"
+  key_env: TE_EMAIL_API_KEY
+
+# --------------------------------------------------------------------------
+# Employee lookup
+# --------------------------------------------------------------------------
+sender_lookup:
+  kind: sql
+  query: |
+    SELECT id AS employee_id, name, manager_id
+    FROM   employees
+    WHERE  email = '{sender_email}'
+      AND  tenant_id = '{tenant_id}'
+  on_not_found: send_auto_reply
+  auto_reply_template: >
+    Your email address is not registered in the T&E system. Please contact
+    your finance team to link your email, or submit expenses via the admin UI.
+
+# --------------------------------------------------------------------------
+# Attachment handling
+# --------------------------------------------------------------------------
+attachments:
+  accepted_types:
+    - "application/pdf"
+    - "image/jpeg"
+    - "image/png"
+    - "image/heic"
+    - "image/webp"
+  max_size_mb: 20
+  storage: "${TE_RECEIPT_STORAGE:-local}"  # local | s3 | gcs
+  storage_bucket_env: TE_RECEIPT_BUCKET
+  # First accepted attachment is used as the primary receipt
+  # Multi-attachment emails: each attachment becomes a separate expense row
+
+# --------------------------------------------------------------------------
+# Body parsing (used when no attachment is present)
+# --------------------------------------------------------------------------
+body_parsing:
+  enabled: true
+  # Common e-receipt patterns (hotel, airline, Uber, Amazon, etc.)
+  patterns:
+    - vendor: "Order from (.+)"
+      amount: "Total: \\$([\\d,]+\\.\\d{2})"
+      currency: "USD"
+    - vendor: "Your receipt from (.+)"
+      amount: "Amount charged: ([A-Z]{3}) ([\\d,]+\\.\\d{2})"
+    - vendor: "Receipt for your (.+) stay"
+      amount: "Total: ([A-Z]{3})([\\d,]+\\.\\d{2})"
+  # Unrecognised body: forward to LLM via receipt-parser
+  fallback: llm_parse
+
+# --------------------------------------------------------------------------
+# Subject line hints
+# --------------------------------------------------------------------------
+subject_hints:
+  # Employee can add hints to guide categorisation, e.g.:
+  # "Fwd: Marriott receipt [accommodation]"
+  pattern: "\\[([a-z_]+)\\]"
+  field: category
+
+emits:
+  - event: te.receipt_received
+    source: email
