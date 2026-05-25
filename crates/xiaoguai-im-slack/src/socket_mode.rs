@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
-use serde_json::{json, Value as JsonValue};
+use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{debug, error, info, warn};
 
@@ -51,13 +51,6 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Returns [`ProviderError::Transport`] on HTTP or JSON errors, or if the
 /// Slack API returns `ok: false`.
 pub async fn open_connection(app_token: &str, base_url: &str) -> Result<String, ProviderError> {
-    let client = reqwest::Client::builder()
-        .timeout(CONNECT_TIMEOUT)
-        .build()
-        .map_err(|e| ProviderError::Transport(format!("build reqwest: {e}")))?;
-
-    let url = format!("{base_url}/api/apps.connections.open");
-
     #[derive(Deserialize)]
     struct Resp {
         ok: bool,
@@ -66,6 +59,13 @@ pub async fn open_connection(app_token: &str, base_url: &str) -> Result<String, 
         #[serde(default)]
         error: Option<String>,
     }
+
+    let client = reqwest::Client::builder()
+        .timeout(CONNECT_TIMEOUT)
+        .build()
+        .map_err(|e| ProviderError::Transport(format!("build reqwest: {e}")))?;
+
+    let url = format!("{base_url}/api/apps.connections.open");
 
     let raw = client
         .post(&url)
@@ -178,7 +178,7 @@ where
                 "disconnect" => {
                     info!("socket_mode: disconnect frame, reconnecting");
                     let ack = json!({"envelope_id": frame.envelope_id});
-                    let _ = write.send(Message::Text(ack.to_string().into())).await;
+                    let _ = write.send(Message::Text(ack.to_string())).await;
                     tokio::time::sleep(RECONNECT_BACKOFF).await;
                     break;
                 }
@@ -186,26 +186,21 @@ where
                     // ACK immediately so Slack doesn't retry.
                     if let Some(ref eid) = frame.envelope_id {
                         let ack = json!({"envelope_id": eid});
-                        if let Err(e) = write.send(Message::Text(ack.to_string().into())).await {
+                        if let Err(e) = write.send(Message::Text(ack.to_string())).await {
                             error!("socket_mode: failed to ACK {eid}: {e}");
                         } else {
                             debug!(%eid, "socket_mode: ACK sent");
                         }
                     }
                     // Extract + parse the inner payload.
-                    let payload_bytes = match frame.payload {
-                        Some(ref v) => serde_json::to_vec(v).unwrap_or_default(),
-                        None => {
-                            warn!("socket_mode: events_api frame missing payload");
-                            continue;
-                        }
+                    let payload_bytes = if let Some(ref v) = frame.payload {
+                        serde_json::to_vec(v).unwrap_or_default()
+                    } else {
+                        warn!("socket_mode: events_api frame missing payload");
+                        continue;
                     };
                     match parse_event(&payload_bytes, None) {
-                        Ok(event) => {
-                            if let Err(e) = handler(event).await {
-                                return Err(e);
-                            }
-                        }
+                        Ok(event) => handler(event).await?,
                         Err(e) => {
                             warn!("socket_mode: parse error: {e}");
                         }
@@ -221,6 +216,11 @@ where
 
 /// Parse a raw Socket Mode JSON frame for unit testing without a live
 /// WebSocket connection.
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if `raw` is not valid JSON or does not match
+/// the [`SocketModePayload`] schema.
 pub fn parse_socket_frame(raw: &str) -> Result<SocketModePayload, serde_json::Error> {
     serde_json::from_str(raw)
 }

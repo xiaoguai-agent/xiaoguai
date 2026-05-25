@@ -68,6 +68,7 @@ struct EventBody {
 #[derive(Deserialize)]
 struct ReactionItem {
     #[serde(rename = "type")]
+    #[allow(dead_code)]
     kind: String,
     #[serde(default)]
     channel: Option<String>,
@@ -88,7 +89,7 @@ struct ReactionItem {
 pub fn parse_event(body: &[u8], retry_num: Option<&str>) -> Result<ImEvent, ProviderError> {
     // Slack retries the delivery if the app takes >3 s to respond.
     // Silently discard retries so we don't process the same message twice.
-    if retry_num.map_or(false, |v| v != "0") {
+    if retry_num.is_some_and(|v| v != "0") {
         return Ok(ImEvent::Ignored);
     }
 
