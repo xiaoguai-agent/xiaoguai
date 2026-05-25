@@ -206,6 +206,24 @@
         "oneOf": [
           { "required": ["path"] },
           { "required": ["ref"] }
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bare file path shorthand (e.g. 'agents/triage-agent.yaml'), relative to pack root."
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string", "description": "File path relative to pack root (used with bare 'path' key)." },
+              "ref":  { "type": "string", "description": "File path relative to pack root (used with 'ref' key)." }
+            },
+            "oneOf": [
+              { "required": ["path"] },
+              { "required": ["ref"] }
+            ]
+          }
         ]
       }
     },
@@ -222,6 +240,24 @@
         "oneOf": [
           { "required": ["path"] },
           { "required": ["ref"] }
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bare file path shorthand, relative to pack root."
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" },
+              "ref":  { "type": "string" }
+            },
+            "oneOf": [
+              { "required": ["path"] },
+              { "required": ["ref"] }
+            ]
+          }
         ]
       }
     },
