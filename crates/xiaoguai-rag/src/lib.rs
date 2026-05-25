@@ -36,6 +36,7 @@ pub mod loaders;
 pub mod memory;
 pub mod presets;
 pub mod r2r;
+pub mod reranker;
 pub mod types;
 
 pub use adapter::RagMcpAdapter;
@@ -47,6 +48,10 @@ pub use loaders::{
 pub use memory::InMemoryRagClient;
 pub use presets::{ChunkingPreset, IngestOptions};
 pub use r2r::R2RClient;
+pub use reranker::{
+    two_stage_retrieve, Candidate, CohereReranker, JinaReranker, LlmReranker, NullReranker,
+    Reranker, RerankerConfig, Scored, VoyageReranker,
+};
 pub use types::{
     Citation, Collection, IngestRequest, IngestResult, SearchHit, SearchRequest, SearchResult,
 };
