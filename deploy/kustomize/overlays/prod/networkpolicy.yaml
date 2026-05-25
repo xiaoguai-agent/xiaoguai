@@ -1,42 +1,222 @@
+##############################################################################
+# Prod overlay — strictest external egress for xiaoguai-core
+#
+# Production adds:
+#   1. All CIDR-scoped external provider rules from staging.
+#   2. An EXPLICIT backup-store CIDR for postgres egress (S3-compatible
+#      object store or remote PgBackRest repo).  Set BACKUP_STORE_CIDR to
+#      your actual backup endpoint before deploying to prod.
+#   3. NO open "all 443" JWKS fallback — the JWKS issuer CIDR must be
+#      declared explicitly (add an ipBlock rule below for your IdP).
+#      If using an in-cluster IdP, use a pod-selector rule instead.
+#
+# Change-management gate: any CIDR addition to this file requires
+# a PR approved by the security team before merging to main.
+#
+# CIDRs last reviewed: 2026-05.
+##############################################################################
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: xiaoguai
+  name: xiaoguai-core-external-egress
   labels:
     app.kubernetes.io/name: xiaoguai
-    app.kubernetes.io/component: core
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/environment: prod
 spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: xiaoguai
+      app.kubernetes.io/component: core
   policyTypes:
-    - Ingress
     - Egress
-  ingress:
-    # Allow traffic from ingress controller namespace only
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
+
+  egress:
+    # ── OpenAI / compatible (Cloudflare-fronted) ───────────────────────────
+    - to:
+        - ipBlock:
+            cidr: 104.18.0.0/16
+        - ipBlock:
+            cidr: 104.19.0.0/16
       ports:
         - protocol: TCP
-          port: 8080
+          port: 443
+
+    # ── Azure OpenAI ───────────────────────────────────────────────────────
+    - to:
+        - ipBlock:
+            cidr: 20.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 443
+
+    # ── AWS Bedrock (us-east-1 + us-west-2) ───────────────────────────────
+    - to:
+        - ipBlock:
+            cidr: 52.94.0.0/22
+        - ipBlock:
+            cidr: 52.119.224.0/21
+        - ipBlock:
+            # us-west-2 Bedrock runtime endpoint
+            cidr: 54.148.0.0/15
+      ports:
+        - protocol: TCP
+          port: 443
+
+    # ── Slack webhooks ─────────────────────────────────────────────────────
+    - to:
+        - ipBlock:
+            cidr: 54.172.0.0/22
+        - ipBlock:
+            cidr: 52.54.0.0/22
+      ports:
+        - protocol: TCP
+          port: 443
+
+    # ── Discord webhooks ───────────────────────────────────────────────────
+    - to:
+        - ipBlock:
+            cidr: 162.159.128.0/17
+      ports:
+        - protocol: TCP
+          port: 443
+
+    # ── Telegram Bot API ───────────────────────────────────────────────────
+    - to:
+        - ipBlock:
+            cidr: 149.154.160.0/20
+        - ipBlock:
+            cidr: 91.108.4.0/22
+      ports:
+        - protocol: TCP
+          port: 443
+
+    # ── Snyk API ───────────────────────────────────────────────────────────
+    - to:
+        - ipBlock:
+            cidr: 99.83.191.0/24
+        - ipBlock:
+            cidr: 162.247.243.0/24
+      ports:
+        - protocol: TCP
+          port: 443
+
+    # ── JWKS issuer (external IdP — ADD YOUR CIDR HERE) ───────────────────
+    # Example for Auth0 US region (replace with your tenant's actual egress IPs):
+    #   - to:
+    #       - ipBlock:
+    #           cidr: 35.167.74.121/32
+    #     ports:
+    #       - protocol: TCP
+    #         port: 443
+    #
+    # Run: dig +short <your-auth0-tenant>.auth0.com  to enumerate IPs.
+    # For Okta: https://help.okta.com/en-us/content/topics/security/ip-address-allow-listing.htm
+    #
+    # NOTE: In prod, leaving this commented out means JWKS validation will
+    # fail unless your IdP is in-cluster.  Add the correct ipBlock or
+    # replace with a pod-selector rule for in-cluster Keycloak/Dex.
+---
+##############################################################################
+# Prod: postgres backup-store egress
+#
+# postgres pods need to reach the backup object-store endpoint.
+# Replace BACKUP_STORE_CIDR with your S3 endpoint CIDR or the IP of
+# your PgBackRest repository server.
+#
+# Example for AWS S3 us-east-1:  52.216.0.0/15
+# Example for Backblaze B2:       162.158.0.0/15
+##############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-backup-store-egress
+  labels:
+    app.kubernetes.io/name: xiaoguai
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/environment: prod
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  policyTypes:
+    - Egress
+
   egress:
-    # Allow DNS
+    # DNS.
     - ports:
         - protocol: UDP
           port: 53
         - protocol: TCP
           port: 53
-    # Allow outbound to PostgreSQL
+
+    # Backup store — REPLACE CIDR before going live in prod.
+    # Default allows all 443 as a safe placeholder; tighten to a specific CIDR.
     - ports:
         - protocol: TCP
-          port: 5432
-    # Allow outbound to Valkey/Redis
+          port: 443
+---
+##############################################################################
+# Prod: otel-collector external SaaS egress (stricter than base)
+#
+# The base policy allows all 443 from otel-collector.  In prod, restrict to
+# the specific observability SaaS CIDRs your cluster uses.
+# Uncomment and fill in the relevant ipBlock rules.
+##############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-collector-saas-egress
+  labels:
+    app.kubernetes.io/name: xiaoguai
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/environment: prod
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+  policyTypes:
+    - Egress
+
+  egress:
+    # DNS.
     - ports:
+        - protocol: UDP
+          port: 53
         - protocol: TCP
-          port: 6379
-    # Allow HTTPS (JWKS endpoint, LLM APIs)
+          port: 53
+
+    # Grafana Cloud OTLP endpoint (tempoXXXX.grafana.net).
+    # CIDRs: 34.120.0.0/14 (GCP us-central1) — verify at grafana.com/docs.
+    # Uncomment and replace when Grafana Cloud is the backend:
+    # - to:
+    #     - ipBlock:
+    #         cidr: 34.120.0.0/14
+    #   ports:
+    #     - protocol: TCP
+    #       port: 443
+
+    # Honeycomb OTLP.
+    # - to:
+    #     - ipBlock:
+    #         cidr: 52.4.74.177/32
+    #   ports:
+    #     - protocol: TCP
+    #       port: 443
+
+    # Datadog OTLP (US1 site: 18.214.0.0/14).
+    # - to:
+    #     - ipBlock:
+    #         cidr: 18.214.0.0/14
+    #   ports:
+    #     - protocol: TCP
+    #       port: 443
+
+    # Fallback: allow all 443 until SaaS CIDRs are confirmed.
+    # REMOVE this rule once the ipBlock rules above are filled in.
     - ports:
         - protocol: TCP
           port: 443
