@@ -1,0 +1,65 @@
+---
+# Inbound source — manual insurance certificate / CAM statement upload
+#
+# Accepts file uploads from the real-estate team for:
+#   a) Renewed insurance certificates (COI) — updates insurance_cert_expiry
+#      on the leases table and clears expiry alerts.
+#   b) Landlord CAM/TICAM reconciliation statements (PDF or CSV) — parsed
+#      and stored in lease_landlord_statements for audit-reconciler.
+#
+# Mounting: POST /v1/leases/inbound/document-upload/{route_id}
+# Auth:     Standard per-tenant bearer token
+# Content-Type: multipart/form-data
+
+source: manual-upload
+route_prefix: /v1/leases/inbound/document-upload
+
+upload_types:
+  insurance_certificate:
+    description: "Certificate of Insurance (COI) renewal"
+    accepted_formats: [pdf, png, jpg]
+    max_size_mb: 10
+    required_fields:
+      - lease_id
+      - insurance_cert_expiry   # new expiry date, YYYY-MM-DD
+      - insurance_provider
+    on_success:
+      update_table: leases
+      fields:
+        insurance_cert_expiry: "{insurance_cert_expiry}"
+        insurance_provider:    "{insurance_provider}"
+      emit_event: lease.insurance_cert_renewed
+      store_document:
+        bucket: "${LEASE_DOCS_BUCKET}"
+        path: "leases/{lease_id}/insurance/{filename}"
+
+  cam_reconciliation_statement:
+    description: "Landlord annual CAM/TICAM reconciliation statement"
+    accepted_formats: [pdf, csv, xlsx]
+    max_size_mb: 25
+    required_fields:
+      - lease_id
+      - statement_year
+    on_success:
+      # PDF: extracted via document-parser microservice (future)
+      # CSV/XLSX: parsed directly by inbound adapter
+      insert_table: lease_landlord_statements
+      conflict_key: [tenant_id, lease_id, statement_year]
+      store_document:
+        bucket: "${LEASE_DOCS_BUCKET}"
+        path: "leases/{lease_id}/cam-statements/{statement_year}/{filename}"
+      emit_event: lease.cam_statement_available
+
+# Document storage requires LEASE_DOCS_BUCKET env var (S3 or GCS bucket name).
+# If unset, documents are stored in the database as binary blobs (dev mode only).
+storage:
+  primary: "${LEASE_DOCS_BUCKET}"
+  fallback: db_blob   # dev/test only — not for production use
+
+notification:
+  on_success:
+    channel: "${LEASE_MGMT_NOTIFY_CHANNEL:-admin_ui}"
+    message: "Document uploaded: {document_type} for {property_name} (lease {lease_id})."
+  on_error:
+    channel: "${LEASE_MGMT_NOTIFY_CHANNEL:-admin_ui}"
+    message: "Upload failed: {error_message}. Please retry or contact support."

@@ -1,0 +1,89 @@
+# Watch spec — renewal-window-approaching
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent at four breakpoints before a lease's expiration date:
+# 180 / 90 / 60 / 30 days. Each breakpoint produces exactly one event per
+# lease per breakpoint (dedup suppresses re-fire within the same window).
+#
+# Downstream: renewal-recommender agent
+# ---------------------------------------------------------------------------
+
+name: renewal-window-approaching
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each active lease entering a renewal-decision window
+  at 180, 90, 60, or 30 days before expiration. Triggers the
+  renewal-recommender agent to produce a decision card for human review.
+
+source:
+  kind: sql
+  table: leases
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      l.id               AS lease_id,
+      l.tenant_id,
+      l.lease_type,
+      l.property_name,
+      l.property_address,
+      l.lessor_name,
+      l.expiration_date,
+      l.base_rent_amount,
+      l.base_rent_currency,
+      l.cam_charges_annual,
+      l.sqft_total,
+      l.sqft_utilized,
+      l.headcount_capacity,
+      l.headcount_current,
+      l.external_lease_id,
+      (l.expiration_date - CURRENT_DATE) AS days_until_expiry,
+      CASE
+          WHEN (l.expiration_date - CURRENT_DATE) <= 30  THEN 30
+          WHEN (l.expiration_date - CURRENT_DATE) <= 60  THEN 60
+          WHEN (l.expiration_date - CURRENT_DATE) <= 90  THEN 90
+          WHEN (l.expiration_date - CURRENT_DATE) <= 180 THEN 180
+      END AS breakpoint_days
+  FROM leases l
+  WHERE l.tenant_id = '{tenant_id}'
+    AND l.status IN ('active', 'pending-renewal')
+    AND (l.expiration_date - CURRENT_DATE) IN (180, 90, 60, 30)
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  # Run once daily at 07:00 UTC so teams see alerts at the start of day.
+  cron: "0 7 * * *"
+
+event:
+  kind: lease.renewal_window_approaching
+  cardinality: per_row
+  payload_mapping:
+    lease_id:           "$.lease_id"
+    tenant_id:          "$.tenant_id"
+    lease_type:         "$.lease_type"
+    property_name:      "$.property_name"
+    property_address:   "$.property_address"
+    lessor_name:        "$.lessor_name"
+    expiration_date:    "$.expiration_date"
+    days_until_expiry:  "$.days_until_expiry"
+    breakpoint_days:    "$.breakpoint_days"
+    base_rent_amount:   "$.base_rent_amount"
+    base_rent_currency: "$.base_rent_currency"
+    cam_charges_annual: "$.cam_charges_annual"
+    sqft_total:         "$.sqft_total"
+    sqft_utilized:      "$.sqft_utilized"
+    headcount_capacity: "$.headcount_capacity"
+    headcount_current:  "$.headcount_current"
+    external_lease_id:  "$.external_lease_id"
+
+downstream:
+  agents:
+    - renewal-recommender
+
+# Dedup: suppress re-fire for the same lease at the same breakpoint.
+# Re-fires if status has changed (e.g. lease moved to pending-renewal).
+dedup:
+  key: "{tenant_id}:{lease_id}:bp{breakpoint_days}"
+  ttl_seconds: 86400   # 24 hours — exactly one event per breakpoint per day
+  re_fire_if: "payload.status != prior.status"

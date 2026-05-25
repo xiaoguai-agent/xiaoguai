@@ -1,0 +1,92 @@
+{#
+  Template: renewal-decision-card.md.j2
+  Used by:  renewal-recommender agent, sublet-feasibility-checker agent
+  Renders:  A structured decision card for real-estate team Slack review.
+            Routed through real-estate-team-slack output (HOTL-gated).
+#}
+---
+## Lease Renewal Decision — {{ property_name }}
+
+**Lease ID:** `{{ lease_id }}`
+**Breakpoint:** {{ breakpoint_days }}-day window
+**Expiration:** {{ expiration_date }}
+**Lessor:** {{ lessor_name }}
+**Type:** {{ lease_type | title }}
+
+---
+
+### Recommendation: {{ recommended_action | upper }}
+
+**Confidence:** {{ (confidence_score * 100) | round(1) }}%
+
+{{ recommendation_rationale }}
+
+---
+
+### Key Metrics
+
+| Metric | Value |
+|---|---|
+| Current rent | {{ base_rent_currency }} {{ "{:,.2f}".format(base_rent_amount) }} / {{ rent_frequency }} |
+| Rent per sqft | {{ base_rent_currency }} {{ "{:,.2f}".format(rent_per_sqft) }} psf |
+| Market median rent | {{ base_rent_currency }} {{ "{:,.2f}".format(market_rent_psf) }} psf ({{ market_data_source }}) |
+| Rent vs. market | {% if rent_per_sqft > market_rent_psf %}+{{ "%.1f"|format(((rent_per_sqft / market_rent_psf) - 1) * 100) }}% above market{% else %}{{ "%.1f"|format(((market_rent_psf / rent_per_sqft) - 1) * 100) }}% below market{% endif %} |
+| Space utilization | {{ (utilization_pct * 100) | round(1) }}% ({{ sqft_utilized | int }} / {{ sqft_total | int }} sqft) |
+| Headcount capacity | {{ headcount_current }} / {{ headcount_capacity }} |
+| Alternatives evaluated | {{ alternatives_count }} |
+
+{% if cam_charges_annual %}
+| Annual CAM charges | {{ base_rent_currency }} {{ "{:,.2f}".format(cam_charges_annual) }} |
+{% endif %}
+
+---
+
+### Prior Audit Summary
+
+{% if audit_history %}
+| Year | Variance | Status |
+|---|---|---|
+{% for a in audit_history %}
+| {{ a.audit_year }} | {{ base_rent_currency }} {{ "{:,.2f}".format(a.total_variance) }} | {{ a.dispute_status | title }} |
+{% endfor %}
+{% else %}
+*No prior CAM/TICAM audits on record.*
+{% endif %}
+
+{% if sublet_feasibility %}
+---
+
+### Sublet Feasibility Analysis
+
+**Verdict:** {{ sublet_feasibility.feasibility_verdict | upper }}
+
+| Component | Amount |
+|---|---|
+| Underutilized sqft | {{ sublet_feasibility.sqft_underutilized | int }} sqft |
+| Head-lease cost (sublet portion) | {{ base_rent_currency }} {{ "{:,.2f}".format(sublet_feasibility.head_lease_cost) }} /mo |
+| Estimated sublet rent | {{ base_rent_currency }} {{ "{:,.2f}".format(sublet_feasibility.sublet_monthly_rent) }} /mo |
+| Net monthly recovery | {{ base_rent_currency }} {{ "{:,.2f}".format(sublet_feasibility.sublet_net_recovery) }} /mo |
+| Early-termination penalty | {{ base_rent_currency }} {{ "{:,.2f}".format(sublet_feasibility.early_term_penalty) }} |
+
+{{ sublet_feasibility.feasibility_rationale }}
+{% endif %}
+
+---
+
+### Actions Required
+
+- [ ] Real-estate team reviews recommendation above
+- [ ] Legal confirms renewal notice obligations ({{ renewal_notice_days }}-day window)
+{% if recommended_action == 'renew' %}
+- [ ] **Approve renewal commitment** — triggers formal notice to lessor
+{% elif recommended_action == 'renegotiate' %}
+- [ ] **Initiate renegotiation** — schedule meeting with {{ lessor_name }}
+{% elif recommended_action == 'vacate' %}
+- [ ] **Approve vacate decision** — triggers notice-to-vacate workflow
+{% endif %}
+- [ ] Finance updates lease accrual model
+
+*Decision card generated {{ generated_at }}. Pending HOTL approval.*
+
+---
+*Xiaoguai Lease Management Pack v{{ pack_version }}*

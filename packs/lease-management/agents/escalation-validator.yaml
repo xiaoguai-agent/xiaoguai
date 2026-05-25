@@ -1,0 +1,165 @@
+# Agent definition — escalation-validator
+# ---------------------------------------------------------------------------
+# Triggered by rent-escalation-triggered watch events (monthly anniversary
+# check). For each lease entering its escalation anniversary the agent:
+#
+#   CPI-pegged leases:
+#     1. Fetches the CPI index value at escalation_anchor_date (base period).
+#     2. Fetches the current CPI index value (current period).
+#     3. Computes the allowable rent: base_rent * (cpi_current / cpi_base).
+#     4. Compares to the landlord's stated new rent (if received via Yardi).
+#     5. Flags if landlord's figure differs by > 0.5% from calculated value.
+#
+#   Fixed escalators:
+#     1. Computes: base_rent * (1 + escalation_rate) ^ escalation_year_number.
+#     2. Compares to landlord's stated figure.
+#     3. Flags any variance.
+#
+#   Output: renders the escalation-validation-frame template and routes
+#   findings to real-estate-team-slack. No autonomous action taken.
+# ---------------------------------------------------------------------------
+
+name: escalation-validator
+version: "1.0.0"
+description: >
+  Validates rent escalation calculations for CPI-pegged and fixed-rate leases.
+  Fetches CPI index data, computes allowable rent increases, and flags
+  discrepancies against landlord-stated figures. Notification only — no
+  autonomous rent-payment modifications.
+
+triggers:
+  - event: lease.rent_escalation_triggered
+    source: rent-escalation-triggered
+
+system_prompt: |
+  You are a lease escalation auditor. Your job is to verify that the
+  landlord's rent increase calculation matches the lease's escalation clause.
+
+  For CPI-pegged leases:
+  - Allowable new rent = base_rent * (cpi_current / cpi_base)
+  - Use the index specified in escalation_index (e.g. CPI-U, CPI-W).
+  - Base period = escalation_anchor_date (month of first escalation).
+  - Current period = current escalation anniversary month.
+  - A variance within ±0.5% is acceptable (rounding differences).
+  - A variance > 0.5% must be flagged and explained.
+
+  For fixed-rate leases:
+  - Allowable new rent = base_rent * (1 + escalation_rate) ^ year_number
+  - Do NOT use simple interest; use compound calculation.
+  - Any variance > $1.00/month must be flagged.
+
+  Output:
+  - calculated_new_rent (numeric)
+  - landlord_stated_rent (numeric, if available; else "not yet received")
+  - variance_amount and variance_pct
+  - validation_result: "pass" | "flag" | "pending-landlord-statement"
+  - explanation (≤ 150 words)
+
+tools:
+  - name: get_lease_escalation_detail
+    description: >
+      Fetch lease escalation terms and base rent from the leases table.
+    kind: sql
+    query: |
+      SELECT
+          l.id,
+          l.property_name,
+          l.lessor_name,
+          l.base_rent_amount,
+          l.base_rent_currency,
+          l.escalation_type,
+          l.escalation_rate,
+          l.escalation_index,
+          l.escalation_anchor_date,
+          l.commencement_date
+      FROM leases l
+      WHERE l.id = '{lease_id}'
+        AND l.tenant_id = '{tenant_id}'
+
+  - name: get_cpi_index_values
+    description: >
+      Fetch CPI index values from the cached cpi_index_data table for the
+      base period and current period. Data populated by BLS data feed.
+    kind: sql
+    query: |
+      WITH base AS (
+          SELECT index_value AS base_value, period_date
+          FROM cpi_index_data
+          WHERE index_name = '{escalation_index}'
+            AND period_date = DATE_TRUNC('month', '{escalation_anchor_date}'::DATE)
+          LIMIT 1
+      ),
+      current AS (
+          SELECT index_value AS current_value, period_date
+          FROM cpi_index_data
+          WHERE index_name = '{escalation_index}'
+            AND period_date = DATE_TRUNC('month', '{current_escalation_date}'::DATE)
+          LIMIT 1
+      )
+      SELECT
+          base.base_value,
+          base.period_date   AS base_period,
+          current.current_value,
+          current.period_date AS current_period
+      FROM base, current
+
+  - name: get_landlord_stated_rent
+    description: >
+      Check if the landlord has communicated a new rent figure via Yardi
+      or manual upload. Returns NULL if no statement received yet.
+    kind: sql
+    query: |
+      SELECT
+          e.new_rent_amount,
+          e.effective_date,
+          e.source
+      FROM lease_escalation_notices e
+      WHERE e.lease_id = '{lease_id}'
+        AND e.tenant_id = '{tenant_id}'
+        AND e.effective_date = '{current_escalation_date}'
+      ORDER BY e.created_at DESC
+      LIMIT 1
+
+  - name: save_validation_result
+    description: >
+      Write the escalation validation result to lease_escalation_validations.
+    kind: sql
+    query: |
+      INSERT INTO lease_escalation_validations (
+          tenant_id, lease_id, escalation_date, escalation_type,
+          base_rent, calculated_new_rent, landlord_stated_rent,
+          variance_amount, variance_pct, validation_result, explanation
+      ) VALUES (
+          '{tenant_id}', '{lease_id}', '{current_escalation_date}',
+          '{escalation_type}', {base_rent_amount}, {calculated_new_rent},
+          {landlord_stated_rent}, {variance_amount}, {variance_pct},
+          '{validation_result}', '{explanation}'
+      ) ON CONFLICT DO NOTHING
+      RETURNING id
+
+  - name: render_validation_frame
+    description: >
+      Render the escalation-validation-frame template with the calculation
+      results for real-estate team review.
+    kind: template
+    template: "templates/escalation-validation-frame.md.j2"
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    modify_rent_payment: 0
+  # Escalation flags are notifications only — no HOTL approval gate needed
+  # for the validation report itself; dispute follow-up goes through
+  # audit-reconciler workflow.
+  require_human_approval: []
+  notify_channel: "${LEASE_MGMT_NOTIFY_CHANNEL:-admin_ui}"
+
+rate_limits:
+  per_lease_per_escalation_date: 1
+  per_tenant_per_day: 30
+
+outcome_telemetry:
+  record_on:
+    - validation_created
+    - flag_resolved
+  feedback_table: lease_escalation_validations

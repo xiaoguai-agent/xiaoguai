@@ -1,0 +1,74 @@
+---
+# Inbound source — Yardi Voyager webhook events
+#
+# Yardi Voyager pushes lease lifecycle events to this endpoint when
+# configured with an outbound integration (Yardi REST API v1.4+).
+# Supported event types: lease_created, lease_amended, lease_expired,
+# escalation_notice, cam_statement_available.
+#
+# Mounting: POST /v1/leases/inbound/yardi/{route_id}
+# Auth:     Per-tenant bearer token (X-Yardi-Signature HMAC verified)
+
+source: yardi
+route_prefix: /v1/leases/inbound/yardi
+
+normalize:
+  hmac_secret: ${YARDI_WEBHOOK_SECRET}
+
+  # Map Yardi event fields onto the internal lease schema.
+  event_type_map:
+    lease_created:           "lease.created"
+    lease_amended:           "lease.amended"
+    lease_expired:           "lease.expired"
+    escalation_notice:       "lease.rent_escalation_triggered"
+    cam_statement_available: "lease.cam_statement_available"
+
+  field_map:
+    # Core lease identity
+    lease_id:          PropertyYardiLeaseId
+    external_lease_id: PropertyYardiLeaseId
+    property_name:     PropertyName
+    property_address:  PropertyAddress
+    lessor_name:       OwnerName
+
+    # Financial
+    base_rent_amount:  LeaseChargeAmount
+    base_rent_currency: ChargeCurrency
+    cam_charges_annual: CAMBudgetAnnual
+
+    # Dates
+    commencement_date: LeaseFromDate
+    expiration_date:   LeaseToDate
+
+    # Escalation notice fields (escalation_notice event only)
+    new_rent_amount:   EscalationNewChargeAmount
+    effective_date:    EscalationEffectiveDate
+
+    # CAM statement (cam_statement_available event only)
+    statement_year:    ReconciliationYear
+    cam_billed:        ReconciliationCAMTotal
+    ticam_billed:      ReconciliationTICAMTotal
+    admin_fee_billed:  ReconciliationAdminFee
+    total_billed:      ReconciliationTotalCharge
+
+accepted_events:
+  - lease_created
+  - lease_amended
+  - lease_expired
+  - escalation_notice
+  - cam_statement_available
+
+# Upsert leases table on lease_created / lease_amended events.
+persistence:
+  on_event:
+    lease_created:
+      upsert_table: leases
+      conflict_key: [tenant_id, external_lease_id]
+    lease_amended:
+      upsert_table: leases
+      conflict_key: [tenant_id, external_lease_id]
+    escalation_notice:
+      insert_table: lease_escalation_notices
+    cam_statement_available:
+      insert_table: lease_landlord_statements
+      conflict_key: [tenant_id, lease_id, statement_year]
