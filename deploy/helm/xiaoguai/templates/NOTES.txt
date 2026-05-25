@@ -50,6 +50,30 @@ The following pre-created Secrets are expected in namespace {{ .Release.Namespac
 {{- if .Values.secrets.llm }}
   - {{ .Values.secrets.llm }}      (LLM provider API keys, all optional)
 {{- end }}
+{{- if .Values.secrets.bedrock }}
+  - {{ .Values.secrets.bedrock }}  (keys: BEDROCK_AWS_ACCESS_KEY_ID, BEDROCK_AWS_SECRET_ACCESS_KEY)
+{{- end }}
+{{- if .Values.secrets.azureOpenai }}
+  - {{ .Values.secrets.azureOpenai }} (key: AZURE_OPENAI_API_KEY)
+{{- end }}
+{{- if .Values.secrets.mistral }}
+  - {{ .Values.secrets.mistral }}  (key: MISTRAL_API_KEY)
+{{- end }}
+{{- if .Values.secrets.groq }}
+  - {{ .Values.secrets.groq }}     (key: GROQ_API_KEY)
+{{- end }}
+{{- if .Values.secrets.discord }}
+  - {{ .Values.secrets.discord }}  (keys: DISCORD_BOT_TOKEN[, DISCORD_WEBHOOK_SECRET])
+{{- end }}
+{{- if .Values.secrets.telegram }}
+  - {{ .Values.secrets.telegram }} (key: TELEGRAM_BOT_TOKEN)
+{{- end }}
+{{- if .Values.secrets.mattermost }}
+  - {{ .Values.secrets.mattermost }} (key: MATTERMOST_BOT_TOKEN)
+{{- end }}
+{{- if .Values.secrets.slack }}
+  - {{ .Values.secrets.slack }}    (keys: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET)
+{{- end }}
 {{- end }}
 
 =============================================================================
