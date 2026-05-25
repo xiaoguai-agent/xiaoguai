@@ -1,0 +1,19 @@
+meta {
+  name: Delete HOTL Policy
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/v1/hotl/policies/{{policyId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 204
+}

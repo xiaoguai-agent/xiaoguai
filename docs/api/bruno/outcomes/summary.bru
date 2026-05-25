@@ -1,0 +1,28 @@
+meta {
+  name: Outcomes Summary (ROI cards)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/v1/outcomes/summary
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:query {
+  tenant_id: tenant_acme
+  range: 7d
+}
+
+assert {
+  res.status: eq 200
+  res.body.tenant_id: eq tenant_acme
+  res.body.range: eq 7d
+  res.body.summary: isDefined
+  res.body.summary.by_kind: isDefined
+}

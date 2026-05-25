@@ -1,0 +1,37 @@
+meta {
+  name: Install Skill Pack
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/skills/install
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "tenant_id": "tenant_acme",
+    "pack_slug": "pr-review",
+    "config": {
+      "max_review_files": 50
+    }
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.tenant_id: eq tenant_acme
+  res.body.pack_slug: eq pr-review
+  res.body.installed_at: isDefined
+}

@@ -1,0 +1,33 @@
+meta {
+  name: HOTL Check (Budget Enforce)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/v1/hotl/check
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "tenant_id": "{{tenantId}}",
+    "scope": "llm_call",
+    "amount": 0.0025
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.verdict: isDefined
+  res.body.verdict: in [allow, escalate, deny]
+}

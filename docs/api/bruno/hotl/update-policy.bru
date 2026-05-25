@@ -1,0 +1,37 @@
+meta {
+  name: Update HOTL Policy
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/v1/hotl/policies/{{policyId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "tenant_id": "{{tenantId}}",
+    "scope": "llm_call",
+    "window_seconds": 7200,
+    "max_count": 200,
+    "max_usd": 10.00,
+    "escalate_to": "ops@example.com"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{policyId}}
+  res.body.window_seconds: eq 7200
+  res.body.max_count: eq 200
+}
