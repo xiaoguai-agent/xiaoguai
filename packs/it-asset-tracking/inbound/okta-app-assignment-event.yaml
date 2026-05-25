@@ -1,0 +1,104 @@
+# packs/it-asset-tracking/inbound/okta-app-assignment-event.yaml
+#
+# Inbound adapter — Okta System Log events for app assignment changes
+#
+# Subscribes to Okta Event Hook for:
+#   application.user_membership.add     — user assigned to app
+#   application.user_membership.remove  — user removed from app
+#   user.session.start                  — user logged into app (last_active_at)
+#   user.lifecycle.deactivate           — user deactivated (offboarding signal)
+#
+# The session.start event is the primary signal for last_active_at and
+# login_count_30d on asset_assignments.  Without it, seat-utilization-low
+# will rely only on the inactivity from last recorded login.
+#
+# Setup: In Okta Admin → Workflow → Event Hooks, create a hook pointing to:
+#   POST https://<xiaoguai-host>/inbound/it-asset-tracking/okta
+# Authentication: Bearer token in Authorization header (set in Okta hook config).
+
+name: okta-app-assignment-event
+version: "1.0.0"
+kind: webhook
+
+endpoint:
+  path: /inbound/it-asset-tracking/okta
+  method: POST
+  auth:
+    kind: bearer_token
+    token_env: OKTA_WEBHOOK_BEARER_TOKEN
+
+events:
+  - okta_event: application.user_membership.add
+    action: record_seat_assignment
+  - okta_event: application.user_membership.remove
+    action: record_seat_return
+  - okta_event: user.session.start
+    action: update_last_active
+  - okta_event: user.lifecycle.deactivate
+    action: flag_user_deactivated
+
+field_mappings:
+  record_seat_assignment:
+    # When Okta assigns a user to an app, ensure there is an asset_assignment row.
+    # Tries to match on the app's name in it_assets.
+    target_table: asset_assignments
+    match_on:
+      employee_email: "$.target[0].alternateId"
+      # Match the asset by Okta app label stored in it_assets.detail->>'okta_app_label'
+    upsert_if_missing:
+      tenant_id:      "${TENANT_ID}"
+      employee_email: "$.target[0].alternateId"
+      employee_name:  "$.target[0].displayName"
+      source:         "'okta'"
+      last_active_at: "now()"
+    also_update_asset:
+      # Increment active_seats on the matching it_asset (soft — may be slightly
+      # out of sync with DB; the audit-reconciler does authoritative reconciliation)
+      table: it_assets
+      match: "detail->>'okta_app_id' = '$.target[1].id'"
+      set:
+        active_seats: "active_seats + 1"
+        updated_at: "now()"
+
+  record_seat_return:
+    target_table: asset_assignments
+    match_on:
+      employee_email: "$.target[0].alternateId"
+      returned_at: null
+    set:
+      returned_at: "now()"
+      updated_at:  "now()"
+    also_update_asset:
+      table: it_assets
+      match: "detail->>'okta_app_id' = '$.target[1].id'"
+      set:
+        active_seats: "GREATEST(0, active_seats - 1)"
+        updated_at:   "now()"
+
+  update_last_active:
+    # A user session start (app login) = they are actively using the seat.
+    # Update last_active_at and increment login_count_30d.
+    target_table: asset_assignments
+    match_on:
+      employee_email: "$.actor.alternateId"
+      returned_at: null
+    set:
+      last_active_at:  "now()"
+      login_count_30d: "login_count_30d + 1"
+      updated_at:      "now()"
+
+  flag_user_deactivated:
+    # User deactivated in Okta = potential offboarding signal.
+    # Update the employees table status if hr-onboarding is installed;
+    # also emit an event for the reclaim-recommender to pick up promptly.
+    target_table: employees
+    match_on:
+      email: "$.target[0].alternateId"
+    set:
+      status:     "'offboarded'"
+      updated_at: "now()"
+    emit_event:
+      kind: it_asset.user_deactivated
+      payload:
+        employee_email: "$.target[0].alternateId"
+        deactivated_at: "$.published"

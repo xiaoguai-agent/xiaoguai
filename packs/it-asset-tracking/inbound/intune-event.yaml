@@ -1,0 +1,111 @@
+# packs/it-asset-tracking/inbound/intune-event.yaml
+#
+# Inbound adapter — Microsoft Intune / Endpoint Manager events
+#
+# Intune delivers compliance and check-in events via Azure Event Hub or
+# direct webhook (Graph API change notifications).
+#
+# Handled notification types:
+#   deviceManagement/managedDevices — device check-in, compliance state
+#   deviceManagement/deviceEnrollmentConfigurations — enrollment / wipe
+#
+# Setup: Register a Graph API subscription pointing to:
+#   POST https://<xiaoguai-host>/inbound/it-asset-tracking/intune
+# Authentication: Azure AD bearer token validated against MICROSOFT_TENANT_ID.
+
+name: intune-event
+version: "1.0.0"
+kind: webhook
+
+endpoint:
+  path: /inbound/it-asset-tracking/intune
+  method: POST
+  auth:
+    kind: azure_ad_bearer
+    tenant_id_env: MICROSOFT_TENANT_ID
+    audience_env: INTUNE_WEBHOOK_AUDIENCE
+
+events:
+  - intune_event: deviceCheckedIn
+    action: upsert_intune_checkin
+  - intune_event: deviceEnrolled
+    action: upsert_intune_enrolled
+  - intune_event: deviceWiped
+    action: upsert_intune_wiped
+  - intune_event: deviceComplianceChanged
+    action: update_compliance_state
+
+field_mappings:
+  upsert_intune_checkin:
+    target_table: it_assets
+    match_on:
+      mdm_device_id: "$.value[0].id"
+      mdm_source: "intune"
+    upsert:
+      mdm_device_id:    "$.value[0].id"
+      mdm_source:       "'intune'"
+      serial_number:    "$.value[0].serialNumber"
+      model:            "$.value[0].model"
+      asset_class:      "'hardware'"
+      asset_type:       "$.value[0].operatingSystem == 'Windows' ? 'laptop' : 'laptop'"
+      name:             "$.value[0].deviceName"
+      vendor:           "$.value[0].manufacturer"
+      procurement_source: "'mdm'"
+      updated_at:       "now()"
+    secondary_update:
+      target_table: asset_assignments
+      match_on:
+        asset_id: "(SELECT id FROM it_assets WHERE mdm_device_id = '$.value[0].id' AND mdm_source = 'intune')"
+        returned_at: null
+      set:
+        mdm_checkin_at:     "now()"
+        employee_email:     "$.value[0].userPrincipalName"
+        updated_at:         "now()"
+
+  upsert_intune_enrolled:
+    target_table: it_assets
+    match_on:
+      mdm_device_id: "$.value[0].id"
+      mdm_source: "intune"
+    upsert:
+      mdm_device_id:    "$.value[0].id"
+      mdm_source:       "'intune'"
+      serial_number:    "$.value[0].serialNumber"
+      model:            "$.value[0].model"
+      asset_class:      "'hardware'"
+      asset_type:       "'laptop'"
+      name:             "$.value[0].deviceName"
+      vendor:           "$.value[0].manufacturer"
+      procurement_source: "'mdm'"
+      status:           "'in_stock'"
+      updated_at:       "now()"
+
+  upsert_intune_wiped:
+    target_table: it_assets
+    match_on:
+      mdm_device_id: "$.value[0].id"
+    set:
+      status:     "'in_stock'"
+      updated_at: "now()"
+    secondary_update:
+      target_table: asset_assignments
+      match_on:
+        asset_id: "(SELECT id FROM it_assets WHERE mdm_device_id = '$.value[0].id')"
+        returned_at: null
+      set:
+        returned_at: "now()"
+        updated_at:  "now()"
+
+  update_compliance_state:
+    target_table: it_assets
+    match_on:
+      mdm_device_id: "$.value[0].id"
+    set:
+      detail: "jsonb_set(detail, '{intune_compliance}', '\"$.value[0].complianceState\"')"
+      updated_at: "now()"
+
+emit_event:
+  kind: it_asset.mdm_checkin_received
+  payload:
+    mdm_source: "intune"
+    mdm_device_id: "$.value[0].id"

@@ -1,0 +1,121 @@
+# packs/it-asset-tracking/inbound/snipe-it-asset-import.yaml
+#
+# Inbound adapter — Snipe-IT asset import
+#
+# Syncs hardware and software assets from the Snipe-IT API into it_assets.
+# Snipe-IT is used by many IT teams as the source of truth for procurement
+# records; this adapter treats it as the procurement_system source.
+#
+# Sync mode: scheduled pull (not webhook) — Snipe-IT does not support
+# outbound webhooks in the free tier.
+#
+# Schedule: daily at 03:00 UTC (before the 08:00 watch runs).
+#
+# Required env vars:
+#   SNIPE_IT_BASE_URL   — e.g. https://snipeit.example.com
+#   SNIPE_IT_API_TOKEN  — Snipe-IT API token (read-only scope is sufficient)
+
+name: snipe-it-asset-import
+version: "1.0.0"
+kind: scheduled_pull
+
+schedule:
+  cron: "0 3 * * *"
+
+source:
+  kind: http_api
+  base_url_env: SNIPE_IT_BASE_URL
+  auth:
+    kind: bearer_token
+    token_env: SNIPE_IT_API_TOKEN
+  endpoints:
+    hardware:
+      path: /api/v1/hardware
+      params:
+        limit: 500
+        sort: id
+        order: asc
+      paginate:
+        kind: offset
+        offset_param: offset
+        limit_param: limit
+        has_more: "$.total > $.offset + $.count"
+    licenses:
+      path: /api/v1/licenses
+      params:
+        limit: 500
+      paginate:
+        kind: offset
+        offset_param: offset
+        limit_param: limit
+        has_more: "$.total > $.offset + $.count"
+
+# Mapping from Snipe-IT fields to it_assets columns
+field_mappings:
+  hardware:
+    asset_class:      "'hardware'"
+    asset_type:       "$.category.name | lower | snipe_category_to_asset_type"
+    name:             "$.name"
+    vendor:           "$.manufacturer.name"
+    model:            "$.model.name"
+    sku:              "$.model.model_number"
+    serial_number:    "$.serial"
+    status:           "$.status_label.status_meta | snipe_status_to_asset_status"
+    purchased_at:     "$.purchase_date.date"
+    warranty_expires_at: "$.warranty_expires"
+    eol_date:         "$.custom_fields.EOL_Date.value"
+    procurement_source: "'snipe_it'"
+    procurement_ref:  "$.asset_tag"
+    detail:           '{"snipe_it_id": "$.id", "asset_tag": "$.asset_tag"}'
+
+  licenses:
+    asset_class:      "'software'"
+    asset_type:       "'license'"
+    name:             "$.name"
+    vendor:           "$.manufacturer.name"
+    sku:              "$.product_key"
+    total_seats:      "$.seats"
+    license_expires_at: "$.expiration_date.date"
+    procurement_source: "'snipe_it'"
+    procurement_ref:  "$.id"
+    detail:           '{"snipe_it_license_id": "$.id"}'
+
+# Upsert logic: match on serial_number for hardware, sku for licenses.
+# If no match found, insert a new row.
+upsert:
+  hardware:
+    match_on: [serial_number, tenant_id]
+  licenses:
+    match_on: [sku, tenant_id]
+
+# After sync, emit an event so the audit-reconciler can react if this
+# is a manual on-demand import.
+emit_event:
+  kind: it_asset.snipe_it_sync_complete
+  payload:
+    hardware_upserted: "{hardware_count}"
+    licenses_upserted: "{license_count}"
+    sync_at: "now()"
+
+# Snipe-IT category → asset_type mapping function (evaluated per row)
+custom_functions:
+  snipe_category_to_asset_type:
+    laptop:      laptop
+    notebook:    laptop
+    desktop:     laptop    # treat desktops as laptops for simplicity
+    monitor:     monitor
+    phone:       phone
+    mobile:      phone
+    tablet:      phone
+    peripheral:  peripheral
+    server:      server
+    networking:  networking
+    _default:    peripheral
+
+  snipe_status_to_asset_status:
+    deployable:  in_stock
+    deployed:    assigned
+    archived:    retired
+    undeployable: in_repair
+    deleted:     retired
+    _default:    in_stock
