@@ -30,7 +30,7 @@ jobs:
             "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}" || true
           sudo docker image prune --all --force 2>/dev/null || true
           df -h /
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
@@ -49,7 +49,7 @@ jobs:
     needs: [build-test]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
       - name: Run ignored migration test
         run: cargo test -p xiaoguai-storage migrations_apply_clean -- --include-ignored
