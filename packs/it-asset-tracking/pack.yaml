@@ -1,0 +1,141 @@
+# packs/it-asset-tracking/pack.yaml
+#
+# IT Asset Tracking Skill Pack — manifest
+#
+# Covers the full lifecycle of hardware and software assets:
+#   hardware : laptops, monitors, phones, peripherals, servers
+#   software : per-seat SaaS subscriptions, volume licenses, ELAs
+#
+# Key capabilities
+# ----------------
+#   • Provisioning  — new-hire → laptop + standard software bundle
+#                     (integrates with packs/hr-onboarding via event bus)
+#   • Reclaim       — idle SaaS seats + offboarded-but-still-licensed employees
+#   • True-up       — annual renewal negotiation with actual-usage evidence
+#   • Audit         — procurement-system vs MDM vs IdP three-way reconciliation
+#
+# Install:   xiaoguai pack install packs/it-asset-tracking/
+# Requires:  xiaoguai >= v1.3.1 (features: watch, llm, outcome-telemetry)
+
+name: it-asset-tracking
+version: "1.0.0"
+description: >
+  Manages the full lifecycle of hardware and software assets — inventory,
+  provisioning, reclaim, license true-up, and audit reconciliation.
+  Integrates with Jamf MDM, Intune, Okta, Snipe-IT, and procurement CSV feeds.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - watch              # WatchSpec + WatchEvent bus (license expiry, seat utilization)
+    - llm                # LLM backend for planning + narrative generation
+    - outcome-telemetry  # records reclaim / true-up outcomes for improvement loop
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_it_assets.sql
+
+# --------------------------------------------------------------------------
+# Watch specs (declarative; registered into the watch registry on load)
+# --------------------------------------------------------------------------
+watches:
+  - path: watches/license-expiring.yaml
+  - path: watches/seat-utilization-low.yaml
+  - path: watches/warranty-expiring.yaml
+  - path: watches/eol-approaching.yaml
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/provisioning-orchestrator.yaml
+  - path: agents/reclaim-recommender.yaml
+  - path: agents/license-true-up-calculator.yaml
+  - path: agents/audit-reconciler.yaml
+
+# --------------------------------------------------------------------------
+# Output templates
+# --------------------------------------------------------------------------
+templates:
+  - path: templates/provisioning-checklist.md.j2
+  - path: templates/reclaim-request-card.md.j2
+  - path: templates/true-up-narrative.md.j2
+  - path: templates/audit-finding-table.md.j2
+
+# --------------------------------------------------------------------------
+# Inbound event adapters (receive external system events onto the event bus)
+# --------------------------------------------------------------------------
+inbound:
+  - path: inbound/jamf-mdm-event.yaml
+  - path: inbound/intune-event.yaml
+  - path: inbound/okta-app-assignment-event.yaml
+  - path: inbound/snipe-it-asset-import.yaml
+  - path: inbound/csv-procurement-feed.yaml
+
+# --------------------------------------------------------------------------
+# Output sinks
+# --------------------------------------------------------------------------
+outputs:
+  - path: outputs/it-team-slack.yaml
+  - path: outputs/jira-asset-task.yaml
+  - path: outputs/okta-deprovision-trigger.yaml
+  - path: outputs/finance-license-true-up-report.yaml
+
+# --------------------------------------------------------------------------
+# Configuration keys (operators override in pack config or env)
+# --------------------------------------------------------------------------
+config:
+  reclaim:
+    # Days of inactivity before a SaaS seat is flagged as reclaim candidate.
+    # Legitimately-idle users (parental leave, sabbatical, etc.) are excluded
+    # via the leave_exclusions query in the reclaim-recommender agent.
+    idle_days_threshold: 60
+    # Minimum days on seat before eligibility for reclaim (avoids flagging
+    # seats provisioned for future-dated projects or onboarding dry-runs).
+    min_seat_age_days: 30
+    # Reclaim is always HOTL-gated — a human must approve before Okta
+    # deprovision is triggered.
+    hotl_required: true
+
+  license:
+    # Warning windows (days before expiry) that the license-expiring watch fires.
+    expiry_windows_days: [90, 60, 30, 7]
+    # Seat utilization rate below which a seat is considered "underused" in
+    # true-up reporting (0.0 – 1.0; 0.25 = used less than 25% of working days).
+    low_utilization_threshold: 0.25
+
+  warranty:
+    # Days before warranty expiry to start alerting.
+    alert_days: 90
+
+  eol:
+    # Days before vendor-announced EOL date to start alerting.
+    alert_days: 180
+
+  audit:
+    table_findings: asset_reconciliation_findings
+    table_assets:   it_assets
+    table_assignments: asset_assignments
+
+  provisioning:
+    # Software bundle applied to every new hire (app ids must exist in
+    # it_assets as type='saas_seat' or 'license').
+    standard_software_bundle:
+      - google-workspace
+      - slack
+      - zoom
+      - 1password
+      - github
+    # Laptop model preference order (first available from inventory is chosen).
+    laptop_preference:
+      - macbook-pro-14
+      - macbook-air-m2
+      - dell-xps-13

@@ -1,0 +1,96 @@
+# packs/it-asset-tracking/outputs/okta-deprovision-trigger.yaml
+#
+# Output sink — Okta app deprovisioning (HOTL-gated)
+#
+# WARNING: This output triggers real Okta group removal, which revokes the
+# user's access to a SaaS application.  It is STRICTLY HOTL-gated:
+#
+#   • This output is NEVER called directly by any agent.
+#   • It is only triggered by the admin UI "Approve reclaim" action or
+#     a Slack ✅ reaction on a reclaim-request-card.
+#   • Every call is logged to reconciliation_findings and it_asset audit log
+#     before execution.
+#   • A dry_run mode is available and is the default for non-critical paths.
+#
+# Required env vars:
+#   OKTA_ORG_URL    — e.g. https://yourorg.okta.com
+#   OKTA_API_TOKEN  — Okta API token with okta.users.manage scope
+#
+# HOTL enforcement:
+#   The xiaoguai harness enforces require_human_approval on every call to
+#   this output.  An agent cannot call this output without a human approval
+#   token in the call context.  Attempts without approval are rejected and
+#   logged as security events.
+
+name: okta-deprovision-trigger
+version: "1.0.0"
+kind: okta_api
+
+# HOTL: every invocation requires human approval token
+hotl:
+  require_human_approval: true
+  approval_token_source: admin_ui_or_slack_reaction
+  # If approval token is missing or expired, reject the call.
+  on_missing_approval: reject_and_log_security_event
+
+connection:
+  org_url_env: OKTA_ORG_URL
+  api_token_env: OKTA_API_TOKEN
+
+# Default to dry_run = true unless the calling context explicitly sets
+# dry_run = false (admin UI "Approve" with the confirmation checkbox).
+dry_run_default: true
+
+# Actions this output supports
+actions:
+  remove_app_assignment:
+    description: >
+      Remove a user's assignment to an Okta application (revoke SaaS access).
+      Writes the action to reconciliation_findings and asset_assignments
+      (returned_at = now()) before calling the Okta API.
+    endpoint: "DELETE /api/v1/apps/{app_id}/users/{user_id}"
+    pre_action:
+      # Update asset_assignments to mark the seat as returned
+      sql: |
+        UPDATE asset_assignments
+        SET returned_at                 = now(),
+            reclaim_exclusion_reason    = NULL,
+            reclaim_exclusion_until     = NULL,
+            updated_at                  = now()
+        WHERE id = '{assignment_id}'
+          AND returned_at IS NULL
+        -- If no row updated, abort — seat may have already been returned
+        RETURNING id
+      # Decrement active_seats
+      also_update: |
+        UPDATE it_assets
+        SET active_seats = GREATEST(0, active_seats - 1),
+            updated_at   = now()
+        WHERE id = '{asset_id}'
+    audit:
+      table: reconciliation_findings
+      insert:
+        finding_type: "reclaim_executed"
+        severity: "info"
+        description: "Seat reclaimed for {{ employee_email }} on {{ asset_name }}"
+        resolution_status: "resolved"
+
+  suspend_user:
+    description: >
+      Suspend an Okta user account (disables all app access).
+      Only available for offboarded employees; requires additional
+      confirmation in the approval flow.
+    endpoint: "POST /api/v1/users/{user_id}/lifecycle/suspend"
+    requires_additional_confirmation: true
+    pre_action:
+      sql: |
+        SELECT id FROM employees
+        WHERE email  = '{employee_email}'
+          AND status = 'offboarded'
+        -- Only proceed if the employee is confirmed offboarded
+
+# Rate limiting: at most 5 real Okta deprovisions per hour to prevent
+# runaway automation even if the HOTL mechanism is somehow bypassed.
+rate_limits:
+  per_tenant_per_hour: 5
+  on_limit: reject_and_alert_slack

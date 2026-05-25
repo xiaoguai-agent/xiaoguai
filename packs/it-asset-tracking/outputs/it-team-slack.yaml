@@ -1,0 +1,55 @@
+# packs/it-asset-tracking/outputs/it-team-slack.yaml
+#
+# Output sink — IT team Slack channel
+#
+# Used by all agents and watches for notifications, reclaim cards,
+# audit summaries, and provisioning checklists.
+#
+# Required env vars:
+#   IT_ASSET_SLACK_WEBHOOK_URL   — Slack incoming webhook URL for the IT channel
+#   IT_ASSET_SLACK_LEADERSHIP_WEBHOOK_URL  — optional, for critical escalations
+
+name: it-team-slack
+version: "1.0.0"
+kind: slack_webhook
+
+channels:
+  default:
+    webhook_url_env: IT_ASSET_SLACK_WEBHOOK_URL
+    username: "Xiaoguai IT Assets"
+    icon_emoji: ":desktop_computer:"
+  leadership:
+    webhook_url_env: IT_ASSET_SLACK_LEADERSHIP_WEBHOOK_URL
+    username: "Xiaoguai IT Assets — CRITICAL"
+    icon_emoji: ":rotating_light:"
+
+# Message routing by event kind
+routing:
+  it_asset.license_expiring:
+    channel: default
+    format: short   # single-line alert with link to admin UI
+  it_asset.seat_utilization_low:
+    channel: default
+    format: card    # full reclaim-request-card template
+  it_asset.warranty_expiring:
+    channel: default
+    format: short
+  it_asset.eol_approaching:
+    channel: default
+    format: short
+  it_asset.audit_critical:
+    channel: leadership
+    format: card    # full audit-finding-table for critical findings
+  it_asset.provisioning_complete:
+    channel: default
+    format: card    # provisioning-checklist template
+  it_asset.csv_import_complete:
+    channel: default
+    format: short
+
+# Rate limiting: max 10 messages per channel per hour to prevent alert fatigue.
+rate_limits:
+  per_channel_per_hour: 10
+  # If rate limit hit, batch remaining messages into a digest at the top of
+  # the next hour.
+  on_limit: batch_digest

@@ -1,0 +1,169 @@
+# packs/it-asset-tracking/agents/license-true-up-calculator.yaml
+#
+# License True-Up Calculator — Worker agent
+#
+# Triggered by license-expiring WatchEvents (windows <= 60 days) and by
+# manual dispatch from the IT admin UI before annual renewal negotiations.
+#
+# For each expiring license contract the agent:
+#   1. Queries actual 90-day and 365-day seat utilization from
+#      asset_assignments (login_count_30d, last_active_at signals).
+#   2. Compares actual peak usage vs. contracted seat count.
+#   3. Calculates the true-up delta (over/under-licensed).
+#   4. Generates a negotiation narrative using the LLM, including:
+#      - Usage evidence (P50 / P90 active seats, idle seat percentage)
+#      - Cost savings opportunity (idle seats × cost_per_seat_usd)
+#      - Recommended action (renew as-is / downsize / upsize / terminate)
+#   5. Outputs:
+#      - true-up-narrative template → finance-license-true-up-report
+#      - Jira task for IT ops to initiate vendor conversation
+#      - Slack notification to IT + Finance channels
+#
+# All outputs are HOTL-gated: the narrative is a draft; no vendor API calls
+# or contract modifications are made autonomously.
+
+name: license-true-up-calculator
+version: "1.0.0"
+description: >
+  Calculates actual vs. contracted seat utilization for expiring software
+  licenses and generates renewal negotiation narratives with usage evidence.
+  All outputs are drafts requiring human approval.
+
+triggers:
+  - event: it_asset.license_expiring
+    source: license-expiring
+    # Only act on 60-day and 30-day windows; 90-day and 7-day are handled
+    # by slack/jira outputs directly without invoking the LLM.
+    filter: "payload.warning_window_days <= 60"
+  - event: it_asset.manual_true_up_request
+
+system_prompt: |
+  You are the IT License True-Up Calculator. For each expiring license you:
+
+  1. Call get_utilization_stats to retrieve 90-day and 365-day seat usage.
+  2. Call get_license_terms for full contract details.
+  3. Analyze:
+     - Peak concurrent active seats (P90 over 365 days)
+     - Average active seats (P50 over 90 days)
+     - Idle seat count = contracted_seats - P90_active
+     - Annual savings if idle seats were reclaimed
+     - Risk of under-provisioning if we reduce (headroom percentage)
+  4. Determine the recommendation:
+     - RENEW_AS_IS     : utilization >= 90% — no meaningful savings
+     - DOWNSIZE        : idle_seats >= 10% of contracted — negotiate fewer seats
+     - UPSIZE          : active_seats > contracted_seats (over-provisioned — urgent)
+     - TERMINATE       : idle_seats > 80% AND annual_cost_usd > 0 — evaluate replacement
+  5. Call render_narrative to produce the Jinja2 true-up report.
+  6. Call submit_to_finance to send to the finance report output.
+
+  Rules:
+  - Use only data from tool results. Never invent utilization numbers.
+  - Include the confidence level of your recommendation (based on data quality
+    and length of observation window).
+  - Recommend DOWNSIZE only if the reduction is >= 10% of contracted seats
+    (smaller reductions are not worth the negotiation overhead).
+  - Flag if the data observation window is < 90 days (new product deployment)
+    and recommend deferring the true-up decision.
+
+tools:
+  - name: get_utilization_stats
+    description: >
+      Compute seat utilization stats for a software asset over the last
+      365 days. Returns: avg_active_30d, avg_active_90d, peak_active_365d,
+      p50_active_365d, p90_active_365d, idle_seat_count (contracted - peak),
+      pct_idle, total_login_events_90d.
+    kind: sql
+    query: |
+      SELECT
+          COUNT(*)                                             AS assigned_seats,
+          COUNT(*) FILTER (
+              WHERE last_active_at >= NOW() - INTERVAL '30 days'
+          )                                                   AS active_30d,
+          COUNT(*) FILTER (
+              WHERE last_active_at >= NOW() - INTERVAL '90 days'
+          )                                                   AS active_90d,
+          COUNT(*) FILTER (
+              WHERE last_active_at >= NOW() - INTERVAL '365 days'
+          )                                                   AS active_365d,
+          SUM(login_count_30d)                                AS total_logins_30d,
+          PERCENTILE_CONT(0.50) WITHIN GROUP (
+              ORDER BY login_count_30d
+          )                                                   AS p50_logins_30d,
+          PERCENTILE_CONT(0.90) WITHIN GROUP (
+              ORDER BY login_count_30d
+          )                                                   AS p90_logins_30d,
+          -- Idle = no activity in 60+ days
+          COUNT(*) FILTER (
+              WHERE last_active_at < NOW() - INTERVAL '60 days'
+                 OR last_active_at IS NULL
+          )                                                   AS idle_seats
+      FROM asset_assignments
+      WHERE tenant_id   = '{tenant_id}'
+        AND asset_id    = '{asset_id}'
+        AND returned_at IS NULL
+
+  - name: get_license_terms
+    description: >
+      Retrieve the full license terms for the contract. Returns contracted_seats,
+      annual_cost_usd, cost_per_seat_usd, term_end_date, auto_renews,
+      renewal_notice_days, last_true_up_date.
+    kind: sql
+    query: |
+      SELECT contracted_seats, annual_cost_usd, cost_per_seat_usd,
+             term_end_date, auto_renews, renewal_notice_days,
+             last_true_up_date, true_up_seats_reported
+      FROM license_terms
+      WHERE tenant_id  = '{tenant_id}'
+        AND contract_id = '{contract_id}'
+      LIMIT 1
+
+  - name: render_narrative
+    description: >
+      Render the true-up-narrative Jinja2 template with all utilization
+      data and the recommendation. Returns the rendered markdown string.
+    kind: template
+    template: templates/true-up-narrative.md.j2
+
+  - name: submit_to_finance
+    description: >
+      Send the rendered narrative to the finance-license-true-up-report output
+      (typically a shared Finance Slack channel or Google Drive document).
+      Returns the output reference ID.
+    kind: output
+    output: finance-license-true-up-report
+
+  - name: create_renewal_ticket
+    description: >
+      Create a Jira task for IT ops to initiate vendor renewal conversation.
+      Links to the true-up narrative. Returns Jira issue key.
+    kind: output
+    output: jira-asset-task
+
+  - name: record_true_up
+    description: >
+      Update license_terms.last_true_up_date and true_up_seats_reported
+      after the report is submitted.
+    kind: sql
+    query: |
+      UPDATE license_terms
+      SET last_true_up_date       = CURRENT_DATE,
+          true_up_seats_reported  = {recommended_seats},
+          updated_at              = now()
+      WHERE tenant_id   = '{tenant_id}'
+        AND contract_id = '{contract_id}'
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    vendor_api_call: 0    # no direct vendor contract modifications
+  require_human_approval:
+    - submit_to_finance   # finance report requires IT manager sign-off
+    - create_renewal_ticket
+
+outcome_telemetry:
+  record_on:
+    - narrative_drafted
+    - narrative_approved
+    - renewal_initiated
+    - downsize_negotiated
+  feedback_table: license_terms

@@ -1,0 +1,153 @@
+# packs/it-asset-tracking/agents/reclaim-recommender.yaml
+#
+# Reclaim Recommender — Worker agent
+#
+# Subscribes to seat_utilization_low WatchEvents.  For each candidate seat
+# it performs a multi-signal confidence check before recommending reclaim,
+# then drafts a reclaim-request card for human review.
+#
+# False-positive avoidance (layered guards)
+# ─────────────────────────────────────────
+# The watch query already filters out the most obvious exclusions
+# (leave records, onboarding status, min seat age).  This agent adds a
+# second layer of checks using additional signals that are too expensive
+# to embed in the watch SQL:
+#
+#   G1. Cross-signal corroboration — idle in Okta AND idle in MDM (for
+#       users with a hardware asset).  A user who isn't logging into a SaaS
+#       app but whose laptop shows regular MDM check-ins is likely using
+#       the app via SSO through a different path; the agent flags this as
+#       LOW_CONFIDENCE and surfaces it for human review rather than
+#       recommending outright reclaim.
+#
+#   G2. Offboarding status check — look up the employee in the employees
+#       table (hr-onboarding).  If status = 'offboarded', the seat is a
+#       high-priority ORPHAN reclaim (ex-employee still holding a license),
+#       not just idle.
+#
+#   G3. Manager confirmation pattern — the reclaim card includes a one-click
+#       "confirm idle / exclude" prompt sent to the employee's manager via
+#       Slack.  The agent does not recommend reclaim without manager context.
+#
+#   G4. Cost threshold — only seats with cost_per_seat_usd >= 1.00/month
+#       are surfaced.  Free-tier seats are not worth the human review time.
+#
+# All reclaim actions are HOTL-gated:
+#   budget_usd = 0 / autonomous Okta deprovisions = 0.
+# The agent writes to asset_assignments.reclaim_exclusion_reason = 'pending_review'
+# as a hold flag; the okta-deprovision-trigger output only fires after a
+# human approves via the admin UI or Slack reaction.
+
+name: reclaim-recommender
+version: "1.0.0"
+description: >
+  Evaluates idle SaaS seat assignments and drafts reclaim recommendations
+  with confidence scoring. All reclaim actions require human approval.
+  Zero autonomous Okta deprovisions.
+
+triggers:
+  - event: it_asset.seat_utilization_low
+    source: seat-utilization-low
+
+system_prompt: |
+  You are the IT Asset Reclaim Recommender. For each idle SaaS seat
+  assignment you receive:
+
+  1. Run get_mdm_activity to check if the employee's hardware shows recent
+     MDM check-ins (corroboration guard G1).
+  2. Run get_employee_status to check if the employee is offboarded (G2).
+  3. Evaluate confidence:
+     - HIGH: employee offboarded OR (Okta idle AND MDM idle AND idle_days > 90)
+     - MEDIUM: Okta idle AND MDM idle AND idle_days 60-90
+     - LOW: Okta idle but MDM recently active (< 14 days ago)
+  4. If confidence is LOW, do not recommend reclaim — draft a note for
+     manual IT review instead.
+  5. If confidence is MEDIUM or HIGH, render the reclaim-request-card template
+     and save it with status = 'pending_approval'.
+  6. Send the card to the it-team-slack output for human review.
+
+  Rules:
+  - Never call the okta-deprovision-trigger directly. That is HOTL-gated.
+  - Do not recommend reclaim if cost_per_seat_usd < 1.00.
+  - Include idle_days, last_active_at, mdm_checkin_at, and confidence level
+    in every card.
+  - Be conservative: a missed reclaim costs money but a false reclaim
+    disrupts a real user.
+
+tools:
+  - name: get_mdm_activity
+    description: >
+      Look up the most recent MDM check-in date for any hardware asset
+      assigned to this employee. Returns mdm_checkin_at (may be NULL if
+      the employee has no hardware asset or MDM is not enrolled).
+    kind: sql
+    query: |
+      SELECT MAX(aa.mdm_checkin_at) AS mdm_checkin_at
+      FROM asset_assignments aa
+      JOIN it_assets a
+          ON a.id = aa.asset_id
+         AND a.asset_class = 'hardware'
+      WHERE aa.tenant_id   = '{tenant_id}'
+        AND aa.employee_id = '{employee_id}'
+        AND aa.returned_at IS NULL
+
+  - name: get_employee_status
+    description: >
+      Look up the employee's current status in the employees table
+      (hr-onboarding pack). Returns status ('active', 'offboarded', etc.)
+      and manager_id. Returns NULL row if hr-onboarding is not installed.
+    kind: sql
+    query: |
+      SELECT status, manager_id, email AS manager_email
+      FROM employees e
+      LEFT JOIN employees mgr ON mgr.id = e.manager_id
+      WHERE e.id = '{employee_id}'
+      LIMIT 1
+
+  - name: save_reclaim_draft
+    description: >
+      Write a reclaim recommendation to the asset_assignments table with
+      a hold flag and status 'pending_approval'. Returns the assignment_id
+      and a Jira task reference.
+    kind: sql
+    query: |
+      UPDATE asset_assignments
+      SET reclaim_exclusion_reason = 'pending_review',
+          updated_at               = now()
+      WHERE id        = '{assignment_id}'
+        AND returned_at IS NULL
+      RETURNING id
+
+  - name: render_reclaim_card
+    description: >
+      Render the reclaim-request-card template with confidence level,
+      idle signals, and manager context.
+    kind: template
+    template: templates/reclaim-request-card.md.j2
+
+  - name: notify_slack
+    description: >
+      Post the rendered reclaim card to the IT Slack channel for human review.
+    kind: output
+    output: it-team-slack
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    okta_deprovision: 0
+    okta_group_remove: 0
+  require_human_approval:
+    - save_reclaim_draft   # hold flag requires human to confirm or dismiss
+
+rate_limits:
+  per_employee_per_week: 1   # at most one reclaim card per employee per week
+  per_tenant_per_day: 50     # cap batch size to avoid overwhelming IT team
+
+outcome_telemetry:
+  record_on:
+    - card_created
+    - card_approved
+    - card_rejected
+    - seat_reclaimed
+    - false_positive_flagged
+  feedback_table: asset_assignments
