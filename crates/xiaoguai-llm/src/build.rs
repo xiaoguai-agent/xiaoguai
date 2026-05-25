@@ -12,8 +12,12 @@ use std::sync::Arc;
 use xiaoguai_types::{LlmProvider, ProviderId, ProviderKind};
 
 use crate::anthropic::AnthropicBackend;
+use crate::azure_openai::AzureOpenAiBackend;
 use crate::backend::LlmBackend;
+use crate::bedrock::BedrockBackend;
 use crate::gemini::GeminiBackend;
+use crate::groq::GroqBackend;
+use crate::mistral::MistralBackend;
 use crate::ollama::OllamaBackend;
 use crate::openai_compat::OpenAiCompatBackend;
 use crate::router::{LlmRouter, RouterConfig};
@@ -129,6 +133,68 @@ pub fn build_router(rows: &[LlmProvider], env: &dyn EnvResolver) -> (LlmRouter, 
             ProviderKind::Gemini => {
                 let api_key = resolve_required_key(row, env, &mut report);
                 Arc::new(GeminiBackend::with_base_url(row.endpoint.clone(), api_key))
+            }
+            ProviderKind::Bedrock => {
+                // For Bedrock the `endpoint` field stores the AWS region.
+                // Credentials come from env vars resolved at build time.
+                let region = if row.endpoint.is_empty() {
+                    "us-east-1".to_string()
+                } else {
+                    row.endpoint.clone()
+                };
+                let access_key = env.get("AWS_ACCESS_KEY_ID").unwrap_or_else(|| {
+                    report.warn(format!(
+                        "provider {} ({}): AWS_ACCESS_KEY_ID unset; Bedrock calls will fail",
+                        row.name,
+                        row.id.as_str()
+                    ));
+                    String::new()
+                });
+                let secret_key = env.get("AWS_SECRET_ACCESS_KEY").unwrap_or_else(|| {
+                    report.warn(format!(
+                        "provider {} ({}): AWS_SECRET_ACCESS_KEY unset; Bedrock calls will fail",
+                        row.name,
+                        row.id.as_str()
+                    ));
+                    String::new()
+                });
+                let session_token = env.get("AWS_SESSION_TOKEN");
+                Arc::new(BedrockBackend::with_config(
+                    region,
+                    access_key,
+                    secret_key,
+                    session_token,
+                    None,
+                ))
+            }
+            ProviderKind::AzureOpenAi => {
+                // For Azure the `endpoint` stores the full deployment URL:
+                // `https://{resource}.openai.azure.com/openai/deployments/{deployment}`
+                let api_key = resolve_required_key(row, env, &mut report);
+                Arc::new(AzureOpenAiBackend::with_endpoint(
+                    row.endpoint.clone(),
+                    api_key,
+                ))
+            }
+            ProviderKind::Mistral => {
+                let api_key = resolve_required_key(row, env, &mut report);
+                // `endpoint` may be empty → use default Mistral base URL.
+                let base_url = if row.endpoint.is_empty() {
+                    crate::mistral::MISTRAL_DEFAULT_BASE.to_string()
+                } else {
+                    row.endpoint.clone()
+                };
+                Arc::new(MistralBackend::with_base_url(base_url, api_key))
+            }
+            ProviderKind::Groq => {
+                let api_key = resolve_required_key(row, env, &mut report);
+                // `endpoint` may be empty → use default Groq base URL.
+                let base_url = if row.endpoint.is_empty() {
+                    crate::groq::GROQ_DEFAULT_BASE.to_string()
+                } else {
+                    row.endpoint.clone()
+                };
+                Arc::new(GroqBackend::with_base_url(base_url, api_key))
             }
         };
         if backends.insert(row.id.clone(), backend).is_some() {
