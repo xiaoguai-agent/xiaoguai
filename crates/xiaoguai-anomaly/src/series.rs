@@ -17,6 +17,7 @@ pub struct TimeSeries {
 
 impl TimeSeries {
     /// Create an empty series with the given retention window.
+    #[must_use]
     pub fn new(window: Duration) -> Self {
         Self {
             points: VecDeque::new(),
@@ -43,11 +44,13 @@ impl TimeSeries {
     }
 
     /// Number of retained points.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.points.len()
     }
 
     /// `true` when no points are retained.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.points.is_empty()
     }

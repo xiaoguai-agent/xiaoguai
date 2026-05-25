@@ -108,7 +108,7 @@ impl SqlSource {
                 pool,
                 query: query.clone(),
             }),
-            other => Err(SourceError::Config(format!(
+            other @ WatchSourceSpec::Http { .. } => Err(SourceError::Config(format!(
                 "SqlSource requires a Sql spec, got: {other:?}"
             ))),
         }
@@ -144,12 +144,12 @@ impl WatchSource for SqlSource {
 // HttpSource
 // ---------------------------------------------------------------------------
 
-/// Polls an HTTP endpoint and extracts matches via a minimal JSONPath
+/// Polls an HTTP endpoint and extracts matches via a minimal `JSONPath`
 /// implementation (direct array element extraction).
 ///
-/// The JSONPath support covers the common `$[*]` (all elements of a
+/// The `JSONPath` support covers the common `$[*]` (all elements of a
 /// top-level array) and `$.key[*]` (all elements of a named key) patterns
-/// that appear in practice.  Full JSONPath is deferred to v1.3.x when a
+/// that appear in practice.  Full `JSONPath` is deferred to v1.3.x when a
 /// dedicated crate is vetted.
 pub struct HttpSource {
     client: reqwest::Client,
@@ -176,20 +176,20 @@ impl HttpSource {
                 jsonpath: jsonpath.clone(),
                 method: method.clone(),
             }),
-            other => Err(SourceError::Config(format!(
+            other @ WatchSourceSpec::Sql { .. } => Err(SourceError::Config(format!(
                 "HttpSource requires an Http spec, got: {other:?}"
             ))),
         }
     }
 
-    /// Apply the stored JSONPath expression to a JSON value.
+    /// Apply the stored `JSONPath` expression to a JSON value.
     ///
     /// Supports:
     /// - `$[*]`    — iterate all elements of a top-level array
     /// - `$.KEY[*]` — iterate all elements of `response[KEY]`
     ///
     /// Any value that is not an array is treated as a single-element array.
-    fn apply_jsonpath(&self, body: Value) -> Result<Vec<Value>, SourceError> {
+    fn apply_jsonpath(&self, body: Value) -> Vec<Value> {
         let path = self.jsonpath.trim();
         if path == "$[*]" || path == "$.*" {
             return Self::to_vec(body);
@@ -203,14 +203,14 @@ impl HttpSource {
             }
         }
         // Fallback: treat the whole body as a single match
-        Ok(vec![body])
+        vec![body]
     }
 
-    fn to_vec(v: Value) -> Result<Vec<Value>, SourceError> {
+    fn to_vec(v: Value) -> Vec<Value> {
         match v {
-            Value::Array(arr) => Ok(arr),
-            Value::Null => Ok(vec![]),
-            other => Ok(vec![other]),
+            Value::Array(arr) => arr,
+            Value::Null => vec![],
+            other => vec![other],
         }
     }
 }
@@ -224,7 +224,7 @@ impl WatchSource for HttpSource {
             _ => self.client.get(&self.url),
         };
         let body: Value = request.send().await?.json().await?;
-        let items = self.apply_jsonpath(body)?;
+        let items = self.apply_jsonpath(body);
         Ok(items.into_iter().map(Match::from_value).collect())
     }
 }
@@ -303,7 +303,7 @@ mod tests {
             method: "GET".into(),
         };
         let src = HttpSource::new(client, &spec).unwrap();
-        let items = src.apply_jsonpath(json!([{"a": 1}, {"a": 2}])).unwrap();
+        let items = src.apply_jsonpath(json!([{"a": 1}, {"a": 2}]));
         assert_eq!(items.len(), 2);
     }
 
@@ -316,9 +316,7 @@ mod tests {
             method: "GET".into(),
         };
         let src = HttpSource::new(client, &spec).unwrap();
-        let items = src
-            .apply_jsonpath(json!({"data": [{"id": 1}, {"id": 2}]}))
-            .unwrap();
+        let items = src.apply_jsonpath(json!({"data": [{"id": 1}, {"id": 2}]}));
         assert_eq!(items.len(), 2);
     }
 
@@ -331,7 +329,7 @@ mod tests {
             method: "GET".into(),
         };
         let src = HttpSource::new(client, &spec).unwrap();
-        let items = src.apply_jsonpath(Value::Null).unwrap();
+        let items = src.apply_jsonpath(Value::Null);
         assert!(items.is_empty());
     }
 

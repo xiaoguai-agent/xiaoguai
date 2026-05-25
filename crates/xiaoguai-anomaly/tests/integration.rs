@@ -185,6 +185,7 @@ fn time_series_prunes_on_push() {
 // ── T7: Registry with EWMA spec ──────────────────────────────────────────
 
 #[test]
+#[allow(clippy::cast_precision_loss)]
 fn registry_ewma_spec_registered_and_fires() {
     let mut reg = AnomalyRegistry::new(Box::new(InMemoryStore::default()));
     reg.register(orders_spec(
@@ -210,6 +211,7 @@ fn registry_ewma_spec_registered_and_fires() {
 // ── T8: Multiple specs coexist independently ─────────────────────────────
 
 #[test]
+#[allow(clippy::cast_precision_loss, clippy::similar_names)]
 fn multiple_specs_are_independent() {
     let mut reg = AnomalyRegistry::new(Box::new(InMemoryStore::default()));
     reg.register(orders_spec(
