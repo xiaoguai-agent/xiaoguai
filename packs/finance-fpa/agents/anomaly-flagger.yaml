@@ -1,0 +1,112 @@
+# Agent definition — anomaly-flagger
+# ---------------------------------------------------------------------------
+# Subscribes to xg-anomaly AnomalyEvents (fpa.opex_spike, fpa.revenue_shortfall)
+# AND to WatchEvents from variance-threshold.
+#
+# For each event it:
+#   1. Enriches the raw anomaly payload with actuals context.
+#   2. Classifies the anomaly severity (warning / critical).
+#   3. Writes an open flag to fpa_variance_flags.
+#   4. Drafts a short Slack notification message.
+#   5. Sends to the configured FPA Slack channel (HOTL: requires approval
+#      for critical; warning-level messages can be auto-sent if operator
+#      opts in via FPA_ANOMALY_AUTO_NOTIFY=true).
+#
+# xg-anomaly integration approach:
+#   This agent subscribes declaratively to AnomalyEvent kinds emitted by
+#   the xg-anomaly engine (opex-spike.yaml + revenue-shortfall.yaml).
+#   The anomaly engine handles metric computation and z-score evaluation;
+#   this agent handles enrichment, persistence, and human notification.
+#   Outcome telemetry from this agent feeds back into the xg-anomaly
+#   improvement loop via the shared fpa_variance_flags table.
+# ---------------------------------------------------------------------------
+
+name: anomaly-flagger
+version: "1.0.0"
+description: >
+  Enriches and persists xg-anomaly AnomalyEvents (OpEx spike, revenue
+  shortfall) and variance-threshold WatchEvents. Drafts Slack notifications
+  for the FP&A team. Warning-level alerts can be auto-sent; critical-level
+  alerts always require human approval.
+
+triggers:
+  - event: fpa.opex_spike
+    source: opex-spike
+  - event: fpa.revenue_shortfall
+    source: revenue-shortfall
+  - event: fpa.variance_threshold_breach
+    source: variance-threshold
+
+system_prompt: |
+  You are an FP&A monitoring assistant. Your job is to draft concise,
+  actionable Slack notifications for the FP&A team when a financial
+  anomaly or material variance is detected.
+
+  Rules:
+  - Lead with the anomaly type and affected area (1 line).
+  - State the magnitude: current value, rolling baseline, and deviation.
+  - Suggest one concrete next step the team should take.
+  - Keep the message under 100 words.
+  - Use Slack markdown (bold, bullet). No code blocks.
+  - Do not include raw SQL output or internal IDs.
+  - Severity WARNING: conversational tone. CRITICAL: urgent, clear escalation path.
+
+tools:
+  - name: get_anomaly_context
+    description: >
+      Fetch supporting actuals for the anomaly period to enrich the
+      notification. Returns top 5 line-items by variance for the period.
+    kind: sql
+    query: |
+      SELECT
+          a.cost_centre, a.line_item, a.category,
+          a.actual_amount, a.budget_amount,
+          (a.actual_amount - a.budget_amount) AS variance_amount
+      FROM fpa_actuals a
+      WHERE a.tenant_id = '{tenant_id}'
+        AND a.period_id = '{period_id}'
+      ORDER BY ABS(a.actual_amount - a.budget_amount) DESC
+      LIMIT 5
+
+  - name: save_anomaly_flag
+    description: >
+      Persist the anomaly as an open variance flag in fpa_variance_flags.
+      Returns the flag id.
+    kind: sql
+    query: |
+      INSERT INTO fpa_variance_flags
+          (tenant_id, period_id, cost_centre, line_item, category,
+           variance_amount, variance_pct, severity)
+      VALUES
+          ('{tenant_id}', '{period_id}', '{cost_centre}', '{line_item}',
+           '{category}', {variance_amount}, {variance_pct}, '{severity}')
+      ON CONFLICT DO NOTHING
+      RETURNING id
+
+  - name: send_slack_notification
+    description: >
+      Post the drafted notification to the FPA Slack channel.
+      WARNING-level: auto-sends if FPA_ANOMALY_AUTO_NOTIFY=true.
+      CRITICAL-level: always requires human approval (HOTL).
+    kind: output
+    output_ref: outputs/slack-fpa-team.yaml
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    # Warning-level auto-send is operator opt-in via env var
+    send_slack_warning: "${FPA_ANOMALY_AUTO_NOTIFY:-0}"
+    # Critical always requires human approval
+    send_slack_critical: 0
+  require_human_approval:
+    - send_slack_critical
+  notify_channel: "${FPA_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - flag_saved
+    - notification_drafted
+    - notification_sent
+    - notification_approved
+    - notification_rejected
+  feedback_table: fpa_variance_flags

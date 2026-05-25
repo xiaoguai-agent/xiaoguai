@@ -1,0 +1,94 @@
+# Anomaly spec — OpEx spike (xg-anomaly, rolling 6-period z-score)
+# ---------------------------------------------------------------------------
+# Detects when total OpEx in the current period exceeds the 6-period rolling
+# baseline by more than n_sigma standard deviations. This catches structural
+# cost growth earlier than a single-period threshold check.
+#
+# Schema reference: F2 AnomalySpec (xg-anomaly engine).
+# Integration: registers via pack manifest `anomalies:` key; xg-anomaly
+# evaluates the metric query on the schedule and emits AnomalyEvent when
+# the alert condition is met.
+# ---------------------------------------------------------------------------
+
+name: opex-spike
+version: "1.0.0"
+description: >
+  Rolling 6-period OpEx anomaly detector. Alerts when the current period's
+  total OpEx exceeds the rolling mean by more than n_sigma standard
+  deviations (default: 2.0), or exceeds an absolute floor threshold.
+
+# --------------------------------------------------------------------------
+# Metric definition
+# --------------------------------------------------------------------------
+metric:
+  name: tenant_opex_period
+  description: "Total OpEx actuals for the most recently closed period"
+  unit: currency_usd
+  query: |
+    SELECT
+        a.tenant_id,
+        SUM(a.actual_amount) AS value
+    FROM fpa_actuals a
+    JOIN fpa_periods p ON p.id = a.period_id AND p.tenant_id = a.tenant_id
+    WHERE a.tenant_id = '{tenant_id}'
+      AND p.is_closed = TRUE
+      AND a.category = 'opex'
+      AND p.period_end >= NOW() - INTERVAL '1 month'
+    GROUP BY a.tenant_id
+  tenant_column: tenant_id
+
+# --------------------------------------------------------------------------
+# Baseline window (6 closed periods)
+# --------------------------------------------------------------------------
+baseline:
+  kind: rolling
+  window_periods: 6
+  min_observations: 3
+
+# --------------------------------------------------------------------------
+# Alert condition
+# --------------------------------------------------------------------------
+alert:
+  kind: n_sigma
+  n_sigma: 2.0
+  direction: high     # only flag upward spikes (cost increase)
+  absolute_threshold:
+    operator: ">"
+    value: 500000     # $500k floor — catches low-variance orgs with high absolute OpEx
+
+# --------------------------------------------------------------------------
+# Schedule: evaluate once per day after the period-close window
+# --------------------------------------------------------------------------
+schedule:
+  cron: "0 9 * * *"
+
+# --------------------------------------------------------------------------
+# Output — AnomalyEvent payload
+# --------------------------------------------------------------------------
+event:
+  kind: fpa.opex_spike
+  payload_mapping:
+    tenant_id:      "$.tenant_id"
+    current_opex:   "$.current_value"
+    rolling_mean:   "$.baseline.mean"
+    rolling_stddev: "$.baseline.stddev"
+    sigma_distance: "$.sigma_distance"
+    window_periods: 6
+
+# --------------------------------------------------------------------------
+# Severity escalation
+# --------------------------------------------------------------------------
+severity:
+  - sigma: 2.0
+    level: warning
+  - sigma: 3.5
+    level: critical
+
+# --------------------------------------------------------------------------
+# Downstream
+# --------------------------------------------------------------------------
+downstream:
+  agents:
+    - anomaly-flagger
+  dashboards:
+    - fpa-variance-overview

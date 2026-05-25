@@ -1,0 +1,58 @@
+# Watch spec — period-close trigger
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent whenever a new period is marked as closed, regardless
+# of the inbound source (NetSuite, Anaplan, or CSV upload). This is the
+# primary entry-point that kicks off the full FP&A pipeline.
+# ---------------------------------------------------------------------------
+
+name: period-close-trigger
+version: "1.0.0"
+description: >
+  Emits a WatchEvent when a fiscal period transitions to is_closed = TRUE.
+  Triggers the variance-analyzer and budget-rollup agents for that period.
+
+source:
+  kind: sql
+  table: fpa_periods
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      tenant_id,
+      id           AS period_id,
+      period_label,
+      period_start,
+      period_end,
+      source,
+      closed_at
+  FROM fpa_periods
+  WHERE tenant_id = '{tenant_id}'
+    AND is_closed = TRUE
+    AND closed_at >= NOW() - INTERVAL '5 minutes'
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  cron: "*/5 * * * *"   # poll every 5 minutes for newly closed periods
+
+event:
+  kind: fpa.period_closed
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:    "$.tenant_id"
+    period_id:    "$.period_id"
+    period_label: "$.period_label"
+    period_start: "$.period_start"
+    period_end:   "$.period_end"
+    source:       "$.source"
+    closed_at:    "$.closed_at"
+
+downstream:
+  agents:
+    - variance-analyzer
+    - budget-rollup
+
+dedup:
+  key: "{tenant_id}:{period_id}"
+  ttl_seconds: 3600   # suppress re-fire for the same period within 1 hour

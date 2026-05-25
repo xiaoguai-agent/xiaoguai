@@ -1,0 +1,76 @@
+# Watch spec — variance threshold breach
+# ---------------------------------------------------------------------------
+# Fires when any cost-centre/line-item combination exceeds the materiality
+# threshold (configurable; default 10% or $50k whichever is larger).
+# Complements the anomaly specs: this fires on the current period only,
+# while anomalies compare against the rolling multi-period baseline.
+# ---------------------------------------------------------------------------
+
+name: variance-threshold
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each cost-centre / line-item with an adverse
+  variance exceeding the materiality threshold in the most recent closed
+  period. Triggers anomaly-flagger for immediate human notification.
+
+source:
+  kind: sql
+  table: fpa_actuals
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      a.tenant_id,
+      a.period_id,
+      p.period_label,
+      a.cost_centre,
+      a.line_item,
+      a.category,
+      a.actual_amount,
+      a.budget_amount,
+      (a.actual_amount - a.budget_amount)                                   AS variance_amount,
+      ROUND(100.0 * (a.actual_amount - a.budget_amount)
+            / NULLIF(a.budget_amount, 0), 2)                                AS variance_pct
+  FROM fpa_actuals a
+  JOIN fpa_periods p ON p.id = a.period_id AND p.tenant_id = a.tenant_id
+  WHERE a.tenant_id = '{tenant_id}'
+    AND p.is_closed = TRUE
+    AND p.period_id = (
+        SELECT id FROM fpa_periods
+        WHERE tenant_id = '{tenant_id}' AND is_closed = TRUE
+        ORDER BY period_end DESC LIMIT 1
+    )
+    AND (
+        ABS(a.actual_amount - a.budget_amount) > 50000
+        OR ABS(100.0 * (a.actual_amount - a.budget_amount)
+               / NULLIF(a.budget_amount, 0)) > 10
+    )
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  cron: "*/15 * * * *"
+
+event:
+  kind: fpa.variance_threshold_breach
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:       "$.tenant_id"
+    period_id:       "$.period_id"
+    period_label:    "$.period_label"
+    cost_centre:     "$.cost_centre"
+    line_item:       "$.line_item"
+    category:        "$.category"
+    actual_amount:   "$.actual_amount"
+    budget_amount:   "$.budget_amount"
+    variance_amount: "$.variance_amount"
+    variance_pct:    "$.variance_pct"
+
+downstream:
+  agents:
+    - anomaly-flagger
+
+dedup:
+  key: "{tenant_id}:{period_id}:{cost_centre}:{line_item}"
+  ttl_seconds: 86400   # once per period per line-item
