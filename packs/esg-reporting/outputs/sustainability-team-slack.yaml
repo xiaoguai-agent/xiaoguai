@@ -1,0 +1,55 @@
+---
+# Sustainability Team Slack — output connector
+# ---------------------------------------------------------------------------
+# Sends notifications to the configured Slack channel for the sustainability
+# team. Used by all ESG agents for status updates, alerts, and gap summaries.
+# Not used for regulatory submissions (that goes through csr-platform-submission).
+#
+# Configuration: ESG_SLACK_CHANNEL env var (e.g. #sustainability-ops)
+# Auth: SLACK_BOT_TOKEN (xoxb-...)
+
+output: sustainability-team-slack
+display_name: "Sustainability Team Slack"
+kind: slack
+
+auth:
+  type: bearer_token
+  token: "${SLACK_BOT_TOKEN}"
+
+channel: "${ESG_SLACK_CHANNEL:-#sustainability-ops}"
+
+# Message templates per event kind
+message_templates:
+  esg.period_closed: |
+    :seedling: *ESG period {{ period_label }} closed.*
+    Metric aggregation and gap detection have started.
+    Check the admin UI for progress.
+
+  esg.data_source_stale: |
+    :warning: *Data source stale: {{ data_source_name }}*
+    Last synced: {{ last_synced_at | default('never') }} ({{ days_since_sync }} days ago)
+    Threshold: {{ staleness_threshold_days }} days
+    {% if contact_email %}Contact: {{ contact_email }}{% endif %}
+    Action: refresh data or escalate to the data owner.
+
+  esg.regulatory_deadline_approaching: |
+    :calendar: *[{{ urgency | upper }}] {{ regulator }} deadline in {{ days_until_deadline }} days*
+    Period: {{ period_label }} | Due: {{ deadline_date }}
+    Status: {{ submission_status }}
+    {% if urgency == 'critical' %}
+    :rotating_light: *CRITICAL* — file immediately or request extension.
+    {% endif %}
+
+  gap_analysis_completed: |
+    :mag: *Gap analysis complete for {{ period_label }}*
+    Coverage: CSRD {{ coverage_pct.CSRD | default('?') }}% | GRI {{ coverage_pct.GRI | default('?') }}% | TCFD {{ coverage_pct.TCFD | default('?') }}%
+    Critical gaps: {{ critical_gap_count }} | High: {{ high_gap_count }}
+    {% if critical_gap_count > 0 %}:rotating_light: Resolve CRITICAL gaps before filing.{% endif %}
+
+  assurance_bundle_ready: |
+    :white_check_mark: *Evidence bundle ready for {{ period_label }}*
+    Readiness score: {{ readiness_score_pct }}%
+    Blockers: {{ blocker_count }} | Warnings: {{ warning_count }}
+
+unfurl_links: false
+unfurl_media: false

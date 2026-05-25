@@ -1,0 +1,62 @@
+---
+# Public Disclosure PDF Stub — output connector
+# ---------------------------------------------------------------------------
+# Renders all approved narrative sections into a single Markdown document
+# intended for conversion to a public-facing sustainability report PDF.
+#
+# This connector is a STUB — it produces a well-structured Markdown file
+# that the sustainability team can import into their PDF toolchain
+# (InDesign, Canva, Word, or a dedicated CSR report builder).
+# It does NOT produce a designed PDF directly (layout/branding is a human task).
+#
+# The rendered document includes:
+#   - All approved narrative sections (Governance, Strategy, Risk Mgmt,
+#     Metrics & Targets) for each framework in scope
+#   - Framework coverage matrix
+#   - GRI Content Index table (if GRI in scope)
+#   - TCFD index table (if TCFD in scope)
+#   - Appendix: data methodology notes (from metric audit trail)
+#
+# Status: sections with status != 'approved' are included with a
+# [DRAFT — NOT FOR PUBLICATION] watermark to prevent accidental release.
+
+output: public-disclosure-pdf-stub
+display_name: "Public Disclosure PDF Stub (Markdown)"
+kind: document
+
+document:
+  format: markdown
+  filename_template: "Sustainability-Report-{{ period_label }}-DRAFT.md"
+  sections_order:
+    - governance
+    - strategy
+    - risk_management
+    - metrics_targets
+    - framework_coverage_matrix
+    - gri_content_index      # only included if GRI in scope
+    - tcfd_index             # only included if TCFD in scope
+    - methodology_appendix
+
+  # Include a prominent draft watermark on all non-approved sections
+  draft_watermark: |
+    > **[DRAFT — PENDING HUMAN REVIEW — NOT FOR PUBLICATION]**
+    > This section has not been approved for public release.
+
+storage:
+  kind: "${ESG_BOARD_STORAGE_KIND:-local}"
+  path: "${ESG_DISCLOSURE_OUTPUT_PATH:-/tmp/esg-disclosure-drafts}"
+  bucket: "${ESG_BOARD_BRIEFING_BUCKET:-}"
+  prefix: "disclosure-drafts/"
+
+notify:
+  output: sustainability-team-slack
+  message: >
+    :newspaper: *Public disclosure stub rendered for {{ period_label }}.*
+    File: {{ document_path }}
+    Sections with status 'draft' are watermarked — approve in admin UI before publishing.
+    Approved sections: {{ approved_section_count }} / {{ total_section_count }}
+
+# Deferred:
+#   - Direct PDF generation via Pandoc or headless browser (future feature)
+#   - Integration with sustainability report authoring platforms
+#     (e.g. Workiva, Salesforce Sustainability Cloud)

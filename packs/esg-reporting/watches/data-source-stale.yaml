@@ -1,0 +1,88 @@
+# Watch spec — data-source-stale
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent for any data source whose last_synced_at is older than
+# the configured staleness threshold (default: 7 days for automated sources,
+# 30 days for manual sources).
+#
+# Regulatory deadlines are unforgiving: a stale emissions feed discovered
+# two days before filing is a material risk. This watch surfaces the problem
+# early enough to re-collect or escalate.
+# ---------------------------------------------------------------------------
+
+name: data-source-stale
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each data source that has not synced within its
+  expected cadence. Automated API sources flag at 7 days; manual/survey
+  sources flag at 30 days. Runs daily at 08:00 UTC.
+
+source:
+  kind: sql
+  table: esg_data_sources
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      ds.id            AS data_source_id,
+      ds.tenant_id,
+      ds.name,
+      ds.kind,
+      ds.connector,
+      ds.last_synced_at,
+      ds.sync_cadence,
+      ds.contact_email,
+      EXTRACT(DAY FROM NOW() - ds.last_synced_at)::INT AS days_since_sync,
+      CASE
+          WHEN ds.kind IN ('api') THEN 7
+          ELSE 30
+      END AS staleness_threshold_days
+  FROM esg_data_sources ds
+  WHERE ds.tenant_id = '{tenant_id}'
+    AND (
+        -- Never synced at all
+        ds.last_synced_at IS NULL
+        -- Automated sources stale after 7 days
+        OR (ds.kind = 'api' AND ds.last_synced_at < NOW() - INTERVAL '7 days')
+        -- Manual/survey sources stale after 30 days
+        OR (ds.kind IN ('csv_upload', 'manual_entry', 'survey')
+            AND ds.last_synced_at < NOW() - INTERVAL '30 days')
+    )
+  ORDER BY ds.last_synced_at ASC NULLS FIRST
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  # Daily at 08:00 UTC — gives data owners a full business day to re-sync
+  cron: "0 8 * * *"
+
+event:
+  kind: esg.data_source_stale
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:                "$.tenant_id"
+    data_source_id:           "$.data_source_id"
+    data_source_name:         "$.name"
+    kind:                     "$.kind"
+    connector:                "$.connector"
+    last_synced_at:           "$.last_synced_at"
+    days_since_sync:          "$.days_since_sync"
+    staleness_threshold_days: "$.staleness_threshold_days"
+    contact_email:            "$.contact_email"
+
+downstream:
+  agents:
+    - metric-aggregator   # re-attempt automated pull if connector is defined
+
+# Notify the data owner + sustainability team via the slack output
+notify:
+  output: sustainability-team-slack
+  message_template: >
+    Data source *{{ data_source_name }}* has not synced in
+    {{ days_since_sync }} days (threshold: {{ staleness_threshold_days }}).
+    {% if contact_email %}Contact: {{ contact_email }}{% endif %}
+
+dedup:
+  key: "{tenant_id}:{data_source_id}"
+  ttl_seconds: 86400   # suppress repeat alerts for the same source within 24h
+  re_fire_if: "payload.days_since_sync > prior.days_since_sync + 3"
