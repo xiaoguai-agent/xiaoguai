@@ -1,0 +1,38 @@
+{# Board Deck Section Frame Template
+   Used by deck-assembler for each agenda section's pre-read material.
+   Variables: section, meeting, tenant_config
+#}
+
+---
+
+## {{ section.title }}
+
+{% if section.kpi_highlights %}
+### Key Highlights
+
+{% for highlight in section.kpi_highlights %}
+- {{ highlight }}
+{% endfor %}
+
+{% endif %}
+{% if section.summary %}
+### Summary
+
+{{ section.summary }}
+
+{% endif %}
+{% if section.source_refs %}
+### Supporting Documents
+
+{% for ref in section.source_refs %}
+- {{ ref }}
+{% endfor %}
+
+{% endif %}
+{% if section.data_gaps %}
+> **Secretary Note — Data Gaps:**
+{% for gap in section.data_gaps %}
+> - {{ gap }}
+{% endfor %}
+
+{% endif %}

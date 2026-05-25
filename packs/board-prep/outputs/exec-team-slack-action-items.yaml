@@ -1,0 +1,60 @@
+---
+# Exec Team Slack Action Items
+# Posts action item reminders and status reports to the configured exec-team
+# Slack channel. This is the only autonomous output in the board-prep pack
+# (low-risk Slack nudges to internal team; not distributed to board members).
+#
+# Escalation messages to the board chair are staged as pending_hotl_approval
+# and only sent after HOTL confirmation (see action-tracker agent).
+
+output: exec-team-slack-action-items
+
+slack:
+  bot_token:  ${BOARD_PREP_SLACK_BOT_TOKEN}
+  # Exec team action item channel (internal, not the board channel)
+  channel_id: ${BOARD_PREP_EXEC_SLACK_CHANNEL_ID}
+
+# Message types and their autonomy level
+message_types:
+  # T-3 day reminder to action item owner — autonomous
+  t_minus_3_reminder:
+    autonomous: true
+    template: |
+      :calendar: *Board Action Item Reminder (3 days remaining)*
+      > {{ item.description }}
+      *Owner:* {{ item.owner }} | *Due:* {{ item.due_date }} | *Priority:* {{ item.priority | title }}
+      Please update status in the board portal or reply to this message.
+
+  # Due-date reminder — autonomous
+  due_date_reminder:
+    autonomous: true
+    template: |
+      :bell: *Board Action Item Due Today*
+      > {{ item.description }}
+      *Owner:* {{ item.owner }} | *Due:* {{ item.due_date }} | *Priority:* {{ item.priority | title }}
+      Mark complete in the board portal or notify the corporate secretary of any delay.
+
+  # Overdue status report posted to channel — autonomous (weekly digest)
+  overdue_digest:
+    autonomous: true
+    schedule: "0 9 * * MON"    # Monday 09:00 tenant time
+    template: templates/action-item-tracker-view.md.j2
+
+  # Escalation to board chair — HOTL-gated (drafted by action-tracker, sent here)
+  chair_escalation:
+    autonomous: false
+    hotl_required: true
+    template: |
+      :rotating_light: *Board Action Item Escalation — Chair Notification*
+      The following action item is {{ item.days_overdue }} days overdue and has been escalated:
+      > {{ item.description }}
+      *Owner:* {{ item.owner }} | *Original Due:* {{ item.due_date }}
+      *Suggested next step:* {{ escalation.suggested_next_step }}
+      Please advise on disposition.
+
+# Rate limits (prevent channel flooding)
+rate_limits:
+  per_item_per_day: 1
+  per_channel_per_hour: 10
+
+emits_event: board.slack_notification_sent

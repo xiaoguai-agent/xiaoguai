@@ -1,0 +1,89 @@
+# Board Prep Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# Assembles board meeting packs (agenda + pre-read deck), drafts minutes,
+# and tracks action items across meetings. All distribution to board members
+# is HOTL-gated — no document leaves the system without corporate-secretary
+# approval.
+#
+# Install:   xiaoguai pack install packs/board-prep/
+# Requires:  xiaoguai >= v1.3.1-prep (features: llm, outcome-telemetry, hotl)
+# ---------------------------------------------------------------------------
+
+name: board-prep
+version: "1.0.0"
+description: >
+  Automates board meeting lifecycle: assembles agendas from open action items
+  and standing items, assembles pre-read decks from KPI digests and exec
+  memos, drafts minutes (resolutions + discussions + new action items), and
+  tracks action items across meetings with overdue escalation to the board
+  chair. All board-member distribution and portal publishing are HOTL-gated.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - llm               # core LLM backend (always available)
+    - outcome-telemetry # F3: records draft/approval outcomes
+    - hotl              # Human on the Loop gates for privileged distribution
+
+# --------------------------------------------------------------------------
+# Privileged content notice
+# --------------------------------------------------------------------------
+# Board materials frequently contain attorney-client privileged communications,
+# material non-public information, and personal data of directors.
+# This pack assumes:
+#   - Storage targets (board portal, corporate-secretary archive) are
+#     approved by the corporate secretary and meet applicable data-protection
+#     requirements.
+#   - PII in director profiles (addresses, national IDs) is held only in the
+#     board_members table and never included in LLM prompts verbatim.
+#   - All HOTL approvers must be identified human approvers on record;
+#     automated bypass is not permitted for any output marked privileged.
+#   - The corporate-secretary-archive output uses immutable WORM storage;
+#     records must not be altered after archival.
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_board.sql
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/agenda-builder.yaml
+  - path: agents/deck-assembler.yaml
+  - path: agents/minutes-drafter.yaml
+  - path: agents/action-tracker.yaml
+
+# --------------------------------------------------------------------------
+# Inbound sources
+# --------------------------------------------------------------------------
+sources:
+  - inbound/manual-agenda-item-submit.yaml
+  - inbound/slack-board-channel-poll.yaml
+  - inbound/dropbox-board-folder-watch.yaml
+  - inbound/calendar-board-meeting-event.yaml
+  - inbound/transcript-from-zoom-recording.yaml
+
+# --------------------------------------------------------------------------
+# Output connectors
+# --------------------------------------------------------------------------
+outputs:
+  - outputs/board-portal-publish.yaml
+  - outputs/board-members-email-distribution.yaml
+  - outputs/corporate-secretary-archive.yaml
+  - outputs/exec-team-slack-action-items.yaml
+
+# --------------------------------------------------------------------------
+# Schema
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "board_"
+  namespace: "board_prep"

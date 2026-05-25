@@ -1,0 +1,46 @@
+---
+# Transcript from Zoom Recording
+# Receives Zoom cloud recording transcripts via Zoom webhook (recording.completed
+# event). Matches the recording to a board meeting by meeting ID, then fires
+# board.transcript_received to trigger minutes-drafter.
+#
+# Privileged content: transcripts may contain attorney-client privileged
+# discussion. Transcripts are stored encrypted at rest and are not sent to
+# the LLM verbatim beyond the context window of the minutes-drafter run.
+# Closed-session portions are flagged and excluded from LLM prompts;
+# only the resolution (if any) is captured.
+
+source: transcript-from-zoom-recording
+route_prefix: /v1/board/inbound/zoom-transcript
+
+zoom:
+  # Zoom webhook verification token (from Zoom App marketplace settings)
+  verification_token: ${BOARD_PREP_ZOOM_VERIFICATION_TOKEN}
+  # Zoom OAuth credentials to download recording files
+  account_id:    ${BOARD_PREP_ZOOM_ACCOUNT_ID}
+  client_id:     ${BOARD_PREP_ZOOM_CLIENT_ID}
+  client_secret: ${BOARD_PREP_ZOOM_CLIENT_SECRET}
+
+# Only process recording.completed events
+accepted_event_types:
+  - recording.completed
+
+# Transcript processing
+transcript:
+  # Maximum transcript length to pass to minutes-drafter LLM (token budget)
+  max_chars_in_context: 40000
+  # Marker phrases that indicate start/end of closed session
+  closed_session_markers:
+    start: ["closed session", "executive session", "in camera"]
+    end:   ["open session", "reconvene", "rejoin the meeting"]
+  # Closed session transcript content is replaced with this placeholder
+  closed_session_placeholder: >
+    [CLOSED SESSION — content excluded from LLM processing.
+     Corporate secretary to record resolution separately if applicable.]
+
+# Encryption at rest for stored transcript content
+storage:
+  encrypt_at_rest: true
+  encryption_key_env: BOARD_PREP_TRANSCRIPT_ENCRYPTION_KEY
+
+emits_event: board.transcript_received

@@ -1,0 +1,75 @@
+{# Board Meeting Minutes Template
+   Rendered by minutes-drafter agent.
+   Variables: meeting, draft, tenant_config
+#}
+---
+**MINUTES OF THE {{ meeting.meeting_type | upper }} MEETING**
+**BOARD OF DIRECTORS — {{ tenant_config.company_name | upper }}**
+
+**Date:** {{ meeting.scheduled_at | format_datetime(tz=tenant_config.timezone, fmt="%B %-d, %Y") }}
+**Time:** Called to order at {{ draft.called_to_order_at | format_datetime(tz=tenant_config.timezone, fmt="%-I:%M %p %Z") | default("[TIME TO BE CONFIRMED]") }}; adjourned at {{ draft.adjourned_at | format_datetime(tz=tenant_config.timezone, fmt="%-I:%M %p %Z") | default("[TIME TO BE CONFIRMED]") }}
+**Location:** {{ meeting.location | default("[LOCATION TO BE CONFIRMED]") }}
+
+*DRAFT — Subject to Approval at Next Board Meeting*
+*CONFIDENTIAL — Attorney-Client Privilege May Apply*
+
+---
+
+### 1. Attendance
+
+**Quorum:** {{ "Achieved" if draft.quorum_achieved else "NOT ACHIEVED — [SECRETARY: VERIFY]" }}
+
+| Name | Role | Present |
+|------|------|:-------:|
+{% for attendee in draft.attendees %}
+| {{ attendee.name }} | {{ attendee.role }} | {{ "✓" if attendee.present else "—" }} |
+{% endfor %}
+
+---
+
+{{ draft.body_markdown }}
+
+---
+
+### Formal Resolutions
+
+{% if draft.resolutions %}
+{% for resolution in draft.resolutions %}
+**Resolution {{ resolution.number }}:**
+
+> RESOLVED, that {{ resolution.text }}
+
+**Outcome:** {{ resolution.outcome | upper }}{% if resolution.vote_for is not none %} (For: {{ resolution.vote_for }}; Against: {{ resolution.vote_against }}; Abstain: {{ resolution.vote_abstain }}){% endif %}
+
+{% endfor %}
+{% else %}
+*No formal resolutions recorded.*
+{% endif %}
+
+---
+
+### Action Items Arising from this Meeting
+
+| # | Description | Owner | Due Date | Priority |
+|---|-------------|-------|----------|----------|
+{% for item in draft.action_items %}
+| {{ loop.index }} | {{ item.description }} | {{ item.owner }} | {{ item.due_date }} | {{ item.priority | title }} |
+{% endfor %}
+
+---
+
+{% if draft.secretary_flags %}
+### Secretary Review Flags
+
+*The following items require secretary verification before minutes are approved:*
+
+{% for flag in draft.secretary_flags %}
+- [ ] {{ flag }}
+{% endfor %}
+
+{% endif %}
+
+---
+*Minutes prepared by the Office of the Corporate Secretary.*
+*These minutes are a draft and subject to approval at the next board meeting.*
+*Approved minutes will be filed in the corporate records.*

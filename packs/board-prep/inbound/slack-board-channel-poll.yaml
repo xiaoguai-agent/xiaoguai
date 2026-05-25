@@ -1,0 +1,34 @@
+---
+# Slack Board Channel Poll
+# Polls the configured Slack channel for messages tagged with a specific
+# keyword (e.g., "#board-item") and converts them into pending agenda item
+# submissions for secretary review.
+#
+# Note: board members' Slack messages may contain privileged content.
+# This source captures metadata only (author, timestamp, text); attachments
+# are not automatically fetched. Corporate secretary must review before
+# any item is added to the agenda.
+
+source: slack-board-channel-poll
+kind: poll              # polls Slack API; not a webhook
+
+slack:
+  # Slack channel to monitor (configure in pack settings)
+  channel_id: ${BOARD_PREP_SLACK_CHANNEL_ID}
+  # Bot token with channels:history scope
+  bot_token: ${BOARD_PREP_SLACK_BOT_TOKEN}
+  # Keyword prefix that marks a message as an agenda item request
+  trigger_keyword: "#board-item"
+  # Poll interval
+  poll_interval_minutes: 30
+
+# Messages are staged as 'pending_secretary_review' — not auto-added to agenda
+staging_status: pending_secretary_review
+
+# PII handling: Slack user IDs resolved to names via Slack API; full names
+# not stored in LLM prompt columns.
+pii_handling:
+  resolve_user_id_to_name: true
+  store_raw_slack_payload: false   # only normalized fields stored
+
+emits_event: board.slack_item_received
