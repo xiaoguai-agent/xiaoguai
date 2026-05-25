@@ -1,0 +1,77 @@
+name: Manifest Validators
+
+on:
+  pull_request:
+    paths:
+      - 'packs/**'
+      - 'recipes/**'
+      - 'examples/hotl-policies/**'
+      - 'docs/api/schemas/**'
+      - 'scripts/validate-*.sh'
+      - 'scripts/validate-*.py'
+  push:
+    branches: [main]
+
+jobs:
+  validate-packs:
+    name: Validate packs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install 'jsonschema[format-nongpl]>=4.18' pyyaml
+      - name: Run pack validator
+        run: bash scripts/validate-pack.sh
+
+  validate-watchers:
+    name: Validate watchers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install 'jsonschema[format-nongpl]>=4.18' pyyaml
+      - name: Run watcher validator
+        run: bash scripts/validate-watcher.sh
+
+  validate-hotl-policies:
+    name: Validate HOTL policies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install 'jsonschema[format-nongpl]>=4.18' pyyaml
+      - name: Run HOTL policy validator
+        run: bash scripts/validate-hotl-policy.sh
+
+  validate-recipes:
+    name: Validate recipes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install 'jsonschema[format-nongpl]>=4.18' pyyaml
+      - name: Run recipe validator
+        run: bash scripts/validate-recipe.sh
+
+  validate-all:
+    name: All manifest validators passed
+    runs-on: ubuntu-latest
+    needs:
+      - validate-packs
+      - validate-watchers
+      - validate-hotl-policies
+      - validate-recipes
+    steps:
+      - run: echo "All manifest validators passed."
