@@ -1,0 +1,83 @@
+# outputs/slack-channel-team.yaml
+# ---------------------------------------------------------------------------
+# Slack channel-team notification output connector.
+#
+# Posts deal-reg routing decisions, co-sell briefs, tier scoring results,
+# and conflict-resolution proposals to the configured Slack channel for the
+# channel management team.
+#
+# Triggered by multiple upstream agents (see triggers below).
+# Not HOTL-gated — this is a read-only notification; no data is mutated.
+# ---------------------------------------------------------------------------
+
+name: slack-channel-team
+kind: output
+version: "1.0.0"
+
+description: >
+  Posts formatted Slack messages to the channel-team workspace for deal-reg
+  decisions, co-sell meeting briefs, tier scoring results, and conflict
+  resolution proposals. Requires SLACK_BOT_TOKEN and SLACK_PARTNER_CHANNEL_ID.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: partner.deal_reg.routed
+    source: agents/deal-reg-router.yaml
+  - event: partner.co_sell.brief_ready
+    source: agents/co-sell-briefer.yaml
+  - event: partner.tier.scored
+    source: agents/partner-tier-scorer.yaml
+  - event: partner.conflict.resolution_proposed
+    source: agents/conflict-mediator.yaml
+
+# --------------------------------------------------------------------------
+# Slack configuration
+# --------------------------------------------------------------------------
+slack:
+  token_env: SLACK_BOT_TOKEN
+  channel_id_env: SLACK_PARTNER_CHANNEL_ID
+  username: "xiaoguai-partner-ops"
+  icon_emoji: ":handshake:"
+
+# --------------------------------------------------------------------------
+# Message templates per event type
+# --------------------------------------------------------------------------
+message_templates:
+  partner.deal_reg.routed: |
+    *Deal Reg {{ routing_decision | upper }}* — {{ deal_reg.account_name }}
+    Partner: *{{ partner.name }}* ({{ partner.tier | upper }}) | ARR: {{ deal_reg.estimated_arr | default('—') | currency }}
+    {% if routing_decision == 'approve' %}Channel manager: {{ assigned_channel_manager_email }}{% endif %}
+    Reason: {{ routing_reason | truncate(200) }}
+    <{{ admin_ui_url }}/deal-regs/{{ deal_reg.id }}|View in admin UI>
+
+  partner.co_sell.brief_ready: |
+    *Co-Sell Brief Ready* — {{ engagement.account_name }}
+    Partner: *{{ partner.name }}* | AE: {{ engagement.direct_ae_email }}
+    ARR: {{ engagement.estimated_arr | default('—') | currency }} | Close: {{ engagement.close_date_target | default('—') }}
+    <{{ admin_ui_url }}/co-sell/{{ engagement.id }}|View full brief>
+
+  partner.tier.scored: |
+    *Tier Scoring Complete* — {{ partner.name }}
+    New tier: *{{ new_tier | upper }}* (score: {{ composite_score | round(1) }}/100)
+    {% if previous_tier != new_tier %}Previously: {{ previous_tier | upper }} — {% if new_tier_rank < previous_tier_rank %}promoted{% else %}tier change{% endif %}{% endif %}
+    Quarterly email queued for HOTL approval.
+    <{{ admin_ui_url }}/partners/{{ partner.id }}/scorecard|View scorecard>
+
+  partner.conflict.resolution_proposed: |
+    :warning: *Pipeline Conflict — Review Required*
+    Account: *{{ conflict.account_name }}* | Partner: {{ partner.name }} vs Direct: {{ direct_ae_email }}
+    Proposed resolution: *{{ conflict.resolution | replace('_', ' ') | title }}*
+    Confidence: {{ conflict.mediator_confidence | title }}
+    *Approval required before any Salesforce changes.*
+    <{{ admin_ui_url }}/conflicts/{{ conflict.id }}|Review conflict resolution>
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  retry: 2
+  backoff_seconds: 5
+  log_level: warn    # Slack failures are non-critical; don't block the pipeline
+  notify_channel: "${PARTNER_HOTL_NOTIFY_CHANNEL:-admin_ui}"

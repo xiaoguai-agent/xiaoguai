@@ -1,0 +1,227 @@
+# agents/partner-tier-scorer.yaml
+# ---------------------------------------------------------------------------
+# Partner Tier Scorer
+#
+# Input:  a partner_id (triggered quarterly by the scheduler, or on-demand
+#         via admin UI).
+# Output: a tier assignment (Platinum / Gold / Silver / Bronze) written to
+#         pe_partners, plus a tier-scorecard rendered via
+#         templates/tier-scorecard.md.j2 and emailed to the partner via
+#         outputs/partner-tier-quarterly-email.yaml.
+#
+# Scoring model (100-point composite):
+#   revenue_share (30 pts): partner-sourced ARR as % of their annual quota
+#   activity_score (25 pts): rolling 90-day deal-reg volume + co-sell
+#                            participation, normalised to 0–25
+#   certifications (25 pts): number of active product certifications held,
+#                            capped at 5 (5 pts each)
+#   customer_outcomes (20 pts): average CSAT/NPS from partner-managed accounts,
+#                               normalised to 0–20; null → 0
+#
+# Tier thresholds (operator-configurable in pack.yaml):
+#   Platinum: score >= 85
+#   Gold:     score >= 65
+#   Silver:   score >= 40
+#   Bronze:   score <  40
+#
+# HOTL guardrails: tier write to pe_partners is autonomous (low risk — tier
+# is advisory for internal routing). The quarterly email to the partner is
+# HOTL-gated because it is an external communication.
+# ---------------------------------------------------------------------------
+
+name: partner-tier-scorer
+version: "1.0.0"
+description: >
+  Computes a composite 0–100 score for a partner from revenue contribution,
+  deal-registration activity, active certifications, and customer outcome
+  metrics; maps the score to Platinum/Gold/Silver/Bronze tier; writes the
+  result to pe_partners; renders a tier scorecard; queues the quarterly
+  partner email for HOTL approval.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: scheduler.quarterly_tier_scoring
+    cron: "0 6 1 1,4,7,10 *"     # 06:00 UTC on the 1st of each quarter
+  - event: partner.tier.rescore_requested
+    source: internal              # on-demand from admin UI
+
+# --------------------------------------------------------------------------
+# LLM settings
+# --------------------------------------------------------------------------
+llm:
+  # Tier scoring is primarily rule-based; LLM is used only for the
+  # narrative commentary section of the scorecard.
+  model: ${PARTNER_LLM_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 1024
+
+# --------------------------------------------------------------------------
+# Context-gathering steps
+# --------------------------------------------------------------------------
+context_steps:
+  - id: raw_metrics
+    description: "Collect raw inputs for the four scoring dimensions"
+    tool: sql
+    query: |
+      WITH revenue AS (
+          -- ARR sourced by this partner in the trailing 12 months (from approved deal-regs)
+          SELECT COALESCE(SUM(dr.estimated_arr), 0) AS partner_arr
+          FROM pe_deal_registrations dr
+          WHERE dr.partner_id = '{partner_id}'
+            AND dr.tenant_id  = '{tenant_id}'
+            AND dr.status     = 'approved'
+            AND dr.created_at > now() - INTERVAL '12 months'
+      ),
+      activity AS (
+          -- Rolling 90-day deal-reg count + co-sell participations
+          SELECT
+              COUNT(DISTINCT dr.id)   AS deal_reg_count_90d,
+              COUNT(DISTINCT cse.id)  AS co_sell_count_90d
+          FROM pe_partners p
+          LEFT JOIN pe_deal_registrations dr
+              ON dr.partner_id = p.id
+              AND dr.created_at > now() - INTERVAL '90 days'
+          LEFT JOIN pe_co_sell_engagements cse
+              ON cse.partner_id = p.id
+              AND cse.created_at > now() - INTERVAL '90 days'
+          WHERE p.id = '{partner_id}' AND p.tenant_id = '{tenant_id}'
+      )
+      SELECT
+          p.id,
+          p.name,
+          p.tier                    AS current_tier,
+          p.active_cert_count,
+          p.customer_outcome_score,
+          p.revenue_share_pct,
+          r.partner_arr,
+          a.deal_reg_count_90d,
+          a.co_sell_count_90d
+      FROM pe_partners p
+      CROSS JOIN revenue r
+      CROSS JOIN activity a
+      WHERE p.id = '{partner_id}' AND p.tenant_id = '{tenant_id}'
+
+  - id: quota_benchmark
+    description: "Tenant-level quota benchmark for revenue_share normalisation"
+    tool: sql
+    query: |
+      SELECT annual_partner_quota_usd
+      FROM pe_tenant_config
+      WHERE tenant_id = '{tenant_id}'
+      LIMIT 1
+
+# --------------------------------------------------------------------------
+# Scoring logic (executed before LLM commentary step)
+# --------------------------------------------------------------------------
+scoring:
+  # Each dimension maps raw metric → normalised score (0..max_points)
+  dimensions:
+    revenue_share:
+      max_points: 30
+      formula: |
+        LEAST(30, (raw_metrics.partner_arr / quota_benchmark.annual_partner_quota_usd) * 100 * 0.30)
+      description: "Partner ARR / quota × 100 × 0.30, capped at 30"
+
+    activity_score:
+      max_points: 25
+      formula: |
+        LEAST(25, (raw_metrics.deal_reg_count_90d * 2 + raw_metrics.co_sell_count_90d * 3))
+      description: "deal_reg_count × 2 + co_sell_count × 3, capped at 25"
+
+    certifications:
+      max_points: 25
+      formula: |
+        LEAST(25, raw_metrics.active_cert_count * 5)
+      description: "5 pts per active certification, max 5 certs"
+
+    customer_outcomes:
+      max_points: 20
+      formula: |
+        CASE
+          WHEN raw_metrics.customer_outcome_score IS NULL THEN 0
+          ELSE LEAST(20, raw_metrics.customer_outcome_score * 0.20)
+        END
+      description: "CSAT/NPS (0–100) × 0.20, capped at 20"
+
+  tier_thresholds:
+    platinum: 85
+    gold: 65
+    silver: 40
+    # bronze: < 40 (default)
+
+# --------------------------------------------------------------------------
+# System prompt (narrative commentary only)
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a partner success analyst writing the narrative section of a
+  quarterly partner tier scorecard.
+
+  You will be given a scoring breakdown with dimension scores and a tier
+  result. Write a 2–3 sentence narrative that:
+  1. Congratulates (or encourages) the partner on their tier.
+  2. Highlights the strongest dimension(s).
+  3. Suggests one concrete action to improve the weakest dimension next quarter.
+
+  Output ONLY valid JSON: { "narrative": "<text>" }
+
+# --------------------------------------------------------------------------
+# User prompt template
+# --------------------------------------------------------------------------
+user_prompt: |
+  Partner: {{ partner.name }}
+  New Tier: {{ new_tier | upper }}
+  Previous Tier: {{ previous_tier | upper }}
+  Composite Score: {{ composite_score }}/100
+
+  Dimension breakdown:
+  - Revenue Share: {{ scores.revenue_share }}/30
+  - Activity: {{ scores.activity_score }}/25
+  - Certifications: {{ scores.certifications }}/25
+  - Customer Outcomes: {{ scores.customer_outcomes }}/20
+
+  Write the scorecard narrative.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: save_tier_result
+    description: >
+      Write the new tier, composite score, and tier validity window to
+      pe_partners; append an audit log row; emit partner.tier.scored event.
+    kind: sql
+    query: |
+      UPDATE pe_partners SET
+          tier             = '{new_tier}',
+          tier_score       = {composite_score},
+          tier_scored_at   = now(),
+          tier_valid_until = (date_trunc('quarter', now()) + INTERVAL '3 months - 1 day')::DATE,
+          activity_score   = {activity_score_raw},
+          revenue_share_pct = {revenue_share_pct},
+          updated_at       = now()
+      WHERE id = '{partner_id}' AND tenant_id = '{tenant_id}'
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    tier_write: true             # writing tier to pe_partners is autonomous
+  require_human_approval:
+    - send_quarterly_email       # external email to partner requires approval
+  notify_channel: "${PARTNER_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# On completion: queue quarterly email for HOTL approval
+# --------------------------------------------------------------------------
+on_completion:
+  emit: partner.tier.scored
+  route: outputs/partner-tier-quarterly-email.yaml
+
+# --------------------------------------------------------------------------
+# Output template
+# --------------------------------------------------------------------------
+output_template: templates/tier-scorecard.md.j2

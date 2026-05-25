@@ -1,0 +1,82 @@
+{# packs/partner-enablement/templates/co-sell-meeting-brief.md.j2
+   Co-sell meeting brief — assembled by co-sell-briefer agent.
+   Rendered and posted to the channel team Slack channel before the joint call.
+   Designed to be readable on mobile (< 600 words).
+#}
+# Co-Sell Brief — {{ engagement.account_name }}
+
+**Partner:** {{ partner.name }} ({{ partner.tier | upper }})
+**Meeting participants:** {{ engagement.direct_ae_email }} · {{ engagement.channel_manager_email }} · {{ engagement.partner_contact_email | default('TBC') }}
+**Estimated ARR:** {{ engagement.estimated_arr | default('—') | currency }}
+**Close Target:** {{ engagement.close_date_target | default('—') }}
+**CRM Stage:** {{ sf_opportunity.stage_name | default('—') }}
+
+---
+
+## 1. Partner Snapshot
+
+| Metric | Value |
+|--------|-------|
+| Tier | {{ partner.tier | upper }} |
+| Tier Score | {{ partner.tier_score | round(1) }}/100 |
+| Revenue Contribution (12 mo) | {{ partner.revenue_share_pct | round(1) }}% of quota |
+| Active Certifications | {{ partner.active_cert_count }} |
+| Customer Outcome Score | {{ partner.customer_outcome_score | default('N/A') }} |
+| Partner Since | {{ partner.joined_at | default('—') }} |
+| 12-mo Deal-Reg Win Rate | {{ approved_regs }}/{{ (approved_regs + rejected_regs) | default(1) }} approved |
+
+---
+
+## 2. Opportunity Summary
+
+**Account:** {{ engagement.account_name }}
+{% if sf_opportunity.next_step %}**CRM Next Step:** {{ sf_opportunity.next_step }}{% endif %}
+{% if sf_opportunity.last_activity_date %}**Last Activity:** {{ sf_opportunity.last_activity_date }}{% endif %}
+
+**Attribution Split (agreed):**
+- Partner: {{ engagement.partner_attribution_pct | default('TBD') }}%
+- Direct: {{ engagement.direct_attribution_pct | default('TBD') }}%
+
+---
+
+## 3. Relationship History
+
+{% if relationship_history %}
+| Account | Status | Closed | Partner Attribution |
+|---------|--------|--------|-------------------|
+{% for h in relationship_history %}
+| {{ h.account_name }} | {{ h.status | title }} | {{ h.close_date_target | default('—') }} | {{ h.partner_attribution_pct | default('—') }}% |
+{% endfor %}
+{% else %}
+*This is the first co-sell engagement with {{ partner.name }} on this account.*
+{% endif %}
+
+---
+
+## 4. Recommended Ask
+
+{{ brief.recommended_ask }}
+
+---
+
+## 5. Talking Points
+
+{{ brief.talking_points }}
+
+---
+
+## 6. Anticipated Objections
+
+{{ brief.objections }}
+
+---
+
+## 7. Attribution Reminder
+
+This engagement is agreed at **{{ engagement.partner_attribution_pct | default('TBD') }}% partner / {{ engagement.direct_attribution_pct | default('TBD') }}% direct**.
+Any change to the split requires channel manager sign-off and a Salesforce update
+(HOTL-gated via xiaoguai partner-enablement).
+
+---
+
+*Generated {{ brief_generated_at | datetimeformat }} by xiaoguai partner-enablement / co-sell-briefer v{{ pack_version }}*
