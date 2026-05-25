@@ -1,0 +1,162 @@
+# packs/facilities-management/agents/work-order-triager.yaml
+#
+# Work Order Triager
+#
+# Input:  a raw work order event (from any inbound source), normalised to the
+#         FacilitiesEvent schema by the inbound connector.
+# Output: a populated work_orders row with category, priority, sla_deadline,
+#         and best-vendor-match set; a DispatchSignal emitted to the
+#         vendor-dispatcher agent.
+#
+# Best-vendor-match algorithm (see config.vendor_match in pack.yaml):
+# ─────────────────────────────────────────────────────────────────────────────
+# For each vendor whose categories array includes the triaged category:
+#
+#   score = (category_coverage  * 0.35)   -- vendor handles this exact category
+#         + (avg_resolution_hrs * 0.25)   -- normalised: best performer = 1.0
+#         + (sla_compliance_rate * 0.20)  -- direct 0.0–1.0
+#         + (1 - load_factor    * 0.10)   -- load_factor = open_orders / capacity
+#         + (cert_validity_score * 0.10)  -- 1.0 if all certs valid, 0.0 if any expired
+#
+# The vendor with the highest score is selected.  If no vendor qualifies
+# (no cert-valid vendor covers the category), the LLM flags the order for
+# manual escalation and sets vendor_id = NULL.
+
+name: work-order-triager
+description: >
+  Classifies an incoming facilities event into category + priority,
+  computes the SLA deadline, selects the best-matched vendor using a
+  weighted scoring model, and emits a DispatchSignal for the
+  vendor-dispatcher agent.
+
+llm:
+  model: ${FACILITIES_TRIAGE_LLM_MODEL:-default}
+  temperature: 0.1      # low temperature — classification should be deterministic
+  max_tokens: 1024
+
+# ── Context steps ─────────────────────────────────────────────────────────────
+
+context_steps:
+  - id: available_vendors
+    description: "Active vendors covering this building, with current cert status"
+    tool: xiaoguai_sql_query
+    query: |
+      SELECT
+        vf.id, vf.name, vf.dispatch_email,
+        vf.categories,
+        COALESCE(vf.avg_resolution_hours, 999) AS avg_resolution_hours,
+        COALESCE(vf.sla_compliance_rate, 0)    AS sla_compliance_rate,
+        vf.open_order_count,
+        -- cert_validity_score: 1.0 if all present + not expired; 0.0 if any expired
+        CASE
+          WHEN vf.workers_comp_expiry > CURRENT_DATE
+           AND vf.coi_expiry          > CURRENT_DATE
+           AND vf.license_expiry      > CURRENT_DATE
+          THEN 1.0
+          WHEN vf.workers_comp_expiry <= CURRENT_DATE
+            OR vf.coi_expiry          <= CURRENT_DATE
+            OR vf.license_expiry      <= CURRENT_DATE
+          THEN 0.0
+          ELSE 0.5   -- one or more docs missing (not expired, but not on file)
+        END AS cert_validity_score
+      FROM vendors_facilities vf
+      WHERE vf.active = true
+      ORDER BY vf.name;
+
+  - id: recent_similar_orders
+    description: "Last 5 closed orders of same category in this building"
+    tool: xiaoguai_sql_query
+    query: |
+      SELECT
+        wo.id, wo.title, wo.category, wo.priority,
+        wo.met_sla, wo.resolved_at, wo.dispatched_at,
+        vf.name AS vendor_name
+      FROM   work_orders wo
+      LEFT JOIN vendors_facilities vf ON vf.id = wo.vendor_id
+      WHERE  wo.building  = '{{ event.building }}'
+        AND  wo.category::TEXT = (
+          -- LLM will fill this after classification; use placeholder for history fetch
+          SELECT wo2.category::TEXT
+          FROM work_orders wo2
+          WHERE wo2.id = '{{ work_order_id | default("00000000-0000-0000-0000-000000000000") }}'
+          LIMIT 1
+        )
+        AND  wo.status = 'closed'
+      ORDER BY wo.resolved_at DESC
+      LIMIT 5;
+
+# ── System prompt ──────────────────────────────────────────────────────────────
+
+system_prompt: |
+  You are a facilities management AI assistant performing work order triage.
+  Your output must be valid JSON matching the TriageResult schema exactly.
+  Do not add commentary outside the JSON block.
+
+  Rules:
+  - category must be one of: hvac, plumbing, electrical, janitorial, security, space
+  - priority must be one of: p1, p2, p3
+  - P1 = life-safety or service-down (no HVAC in extreme weather, flooding, power out)
+  - P2 = significant impact but building functional (intermittent HVAC, single fixture leak)
+  - P3 = minor / cosmetic (routine PM, janitorial top-up, space reconfiguration request)
+  - best_vendor_id must be the UUID of the highest-scoring vendor from the available
+    vendors list, using the weighted scoring formula below.  Set to null if no
+    cert-valid vendor covers the triaged category.
+
+  Vendor scoring formula (weights from pack config):
+    score = (category_covers * 0.35)
+          + (norm_resolution * 0.25)   [1.0 = fastest vendor, 0.0 = slowest]
+          + (sla_compliance  * 0.20)
+          + ((1 - load_factor) * 0.10) [load_factor = open_order_count / 10, capped at 1]
+          + (cert_validity    * 0.10)
+
+  TriageResult schema:
+  {
+    "category": "hvac|plumbing|electrical|janitorial|security|space",
+    "priority": "p1|p2|p3",
+    "title": "concise ≤80-char summary",
+    "sla_hours": 4|24|168,
+    "best_vendor_id": "UUID or null",
+    "vendor_score": 0.00,
+    "escalate_to_manager": false,
+    "escalation_reason": null,
+    "rationale": "1-2 sentence explanation of category + priority assignment"
+  }
+
+# ── User prompt ────────────────────────────────────────────────────────────────
+
+user_prompt: |
+  ## Incoming Facilities Event
+  Source: {{ event.source }}
+  Building: {{ event.building }}{% if event.floor %} / Floor {{ event.floor }}{% endif %}{% if event.room %} / {{ event.room }}{% endif %}
+  Submitted by: {{ event.requestor_name | default('(anonymous)') }} ({{ event.requestor_email | default('no email') }})
+
+  Title: {{ event.title }}
+  Description:
+  {{ event.description | truncate(800) }}
+
+  ## Available Vendors (active, with cert status)
+  {{ context.available_vendors | tojson(indent=2) | truncate(3000) }}
+
+  ## Recent Similar Orders (same building)
+  {{ context.recent_similar_orders | tojson(indent=2) | truncate(1000) }}
+
+  Triage this work order and return the TriageResult JSON now.
+
+# ── Post-processing ────────────────────────────────────────────────────────────
+#
+# After the LLM returns TriageResult, the harness:
+# 1. INSERTs into work_orders with the triaged fields + sla_deadline = now() + sla_hours.
+# 2. UPDATEs vendor open_order_count++ for the selected vendor.
+# 3. Emits a DispatchSignal to vendor-dispatcher agent (unless escalate_to_manager).
+# 4. Writes a row to the outcome-telemetry triage_events table.
+
+post_processing:
+  write_work_order: true
+  emit_dispatch_signal: true
+  skip_dispatch_if: "result.escalate_to_manager == true"
+  notify_manager_if_escalated:
+    output: outputs/facilities-team-slack.yaml
+    channel: "#facilities-ops"
+
+outputs:
+  - outputs/facilities-team-slack.yaml

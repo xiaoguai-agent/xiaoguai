@@ -1,0 +1,114 @@
+# packs/facilities-management/agents/vendor-dispatcher.yaml
+#
+# Vendor Dispatcher
+#
+# Receives a DispatchSignal from the work-order-triager and decides how to
+# route the work order to a vendor:
+#
+#   Simple / known path — vendor has handled ≥3 similar orders in this
+#     building with met_sla=true and cert_validity_score=1.0:
+#     → auto-dispatch: send vendor-dispatch-email immediately, update
+#       work_orders.status = 'dispatched'.
+#
+#   Novel / first-time path — vendor is new to this building, category is
+#     unusual for them, or P1 order being dispatched outside business hours:
+#     → escalate: notify facilities manager via IM with dispatch card for
+#       one-click approval before sending vendor email.
+#
+# Cert guard: if the selected vendor has cert_validity_score < 1.0, the
+# dispatcher blocks dispatch and escalates regardless of order type.
+
+name: vendor-dispatcher
+description: >
+  Routes a triaged work order to the best-matched vendor.  Auto-dispatches
+  simple/familiar scenarios; escalates novel or cert-invalid cases to the
+  facilities manager for approval before sending vendor email.
+
+llm:
+  model: ${FACILITIES_DISPATCH_LLM_MODEL:-default}
+  temperature: 0.0      # pure routing logic — temperature 0
+  max_tokens: 512
+
+context_steps:
+  - id: vendor_history
+    description: "Vendor track record for this building + category"
+    tool: xiaoguai_sql_query
+    query: |
+      SELECT
+        COUNT(*)                                              AS total_orders,
+        SUM(CASE WHEN met_sla = true  THEN 1 ELSE 0 END)    AS met_sla_count,
+        AVG(EXTRACT(EPOCH FROM (resolved_at - created_at))/3600) AS avg_hours,
+        MAX(resolved_at)                                     AS last_completed_at
+      FROM work_orders
+      WHERE vendor_id = '{{ dispatch_signal.vendor_id }}'
+        AND building  = '{{ dispatch_signal.building }}'
+        AND category::TEXT = '{{ dispatch_signal.category }}'
+        AND status    = 'closed';
+
+  - id: vendor_cert_status
+    description: "Current cert validity for the selected vendor"
+    tool: xiaoguai_sql_query
+    query: |
+      SELECT
+        name,
+        workers_comp_expiry,
+        coi_expiry,
+        license_expiry,
+        LEAST(
+          workers_comp_expiry - CURRENT_DATE,
+          coi_expiry          - CURRENT_DATE,
+          license_expiry      - CURRENT_DATE
+        ) AS min_days_left
+      FROM vendors_facilities
+      WHERE id = '{{ dispatch_signal.vendor_id }}';
+
+system_prompt: |
+  You are a facilities dispatch coordinator.  Decide whether to auto-dispatch
+  or escalate to the facilities manager.  Return valid JSON matching DispatchDecision.
+
+  Auto-dispatch criteria (ALL must be true):
+    1. vendor has ≥ 3 closed orders in this building + category
+    2. vendor met_sla_count / total_orders ≥ 0.80
+    3. all compliance certs valid (min_days_left > 0)
+    4. NOT (priority == 'p1' AND current_hour outside 07:00–19:00 local)
+
+  Escalate if ANY criterion fails, or if total_orders == 0 (first time).
+
+  DispatchDecision schema:
+  {
+    "action": "auto_dispatch" | "escalate",
+    "reason": "one sentence",
+    "escalation_severity": null | "info" | "urgent",
+    "facilities_manager_message": null | "message for escalation IM notification"
+  }
+
+user_prompt: |
+  ## Dispatch Signal
+  Work order ID: {{ dispatch_signal.work_order_id }}
+  Title: {{ dispatch_signal.title }}
+  Category: {{ dispatch_signal.category }} | Priority: {{ dispatch_signal.priority }}
+  Building: {{ dispatch_signal.building }}{% if dispatch_signal.floor %} / Floor {{ dispatch_signal.floor }}{% endif %}
+  Vendor: {{ dispatch_signal.vendor_name }} ({{ dispatch_signal.vendor_id }})
+  Current hour (local): {{ now | datetimeformat('%H') }}
+
+  ## Vendor History (this building + category)
+  {{ context.vendor_history | tojson(indent=2) }}
+
+  ## Vendor Cert Status
+  {{ context.vendor_cert_status | tojson(indent=2) }}
+
+  Return DispatchDecision JSON now.
+
+post_processing:
+  on_auto_dispatch:
+    - set_work_order_status: dispatched
+    - send_output: outputs/vendor-dispatch-email.yaml
+    - record_telemetry: dispatch_auto
+  on_escalate:
+    - set_work_order_status: triaged
+    - send_output: outputs/facilities-team-slack.yaml
+    - record_telemetry: dispatch_escalated
+
+outputs:
+  - outputs/vendor-dispatch-email.yaml
+  - outputs/facilities-team-slack.yaml

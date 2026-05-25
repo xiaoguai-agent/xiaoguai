@@ -1,0 +1,91 @@
+# packs/facilities-management/watches/space-utilization-low.yaml
+#
+# Fires when a space (desk or meeting room) has been under-utilised for
+# the past badge_window_days (default 14 working days).
+#
+# Two signals are cross-correlated:
+#   1. badge_swipes — how often the assigned employee actually badged into
+#      the building/floor (from badge-system-poll inbound).
+#   2. room_booking_rate — fraction of working days a meeting room was
+#      booked at least once (from room-booking-system inbound).
+#
+# The watch fires at most once per space per week to avoid notification
+# fatigue.  The space-planner agent is invoked to generate a recommendation.
+
+name: space-utilization-low
+kind: sql_watch
+
+schedule:
+  expression: "0 9 * * 1"      # Monday mornings — weekly space review cadence
+  timezone: "${TZ:-America/New_York}"
+
+query: |
+  WITH
+  -- Badge-based utilisation for assigned desks over the last 14 working days.
+  desk_utilization AS (
+    SELECT
+      sa.id         AS space_id,
+      sa.building,
+      sa.floor,
+      sa.room,
+      sa.desk_id,
+      sa.assignee_email,
+      sa.assignee_name,
+      'desk'        AS space_type,
+      sa.utilization_rate,
+      sa.last_computed_at
+    FROM space_assignments sa
+    WHERE sa.assignee_email IS NOT NULL           -- only assigned desks
+      AND sa.is_hot_desk    = false
+      AND sa.effective_until IS NULL              -- currently active assignment
+      AND COALESCE(sa.utilization_rate, 0)
+          < ${FACILITIES_LOW_UTIL_THRESHOLD:-0.30}
+      AND sa.last_computed_at > now() - INTERVAL '2 days'   -- freshly computed
+  ),
+  -- Meeting-room utilisation based on booking rate.
+  -- room_booking_rate is maintained by the space-planner from room-booking-system feed.
+  room_utilization AS (
+    SELECT
+      sa.id         AS space_id,
+      sa.building,
+      sa.floor,
+      sa.room,
+      NULL::TEXT    AS desk_id,
+      NULL::TEXT    AS assignee_email,
+      NULL::TEXT    AS assignee_name,
+      'meeting_room' AS space_type,
+      sa.utilization_rate,
+      sa.last_computed_at
+    FROM space_assignments sa
+    WHERE sa.assignee_email IS NULL               -- unassigned = meeting room
+      AND sa.is_hot_desk    = false
+      AND sa.effective_until IS NULL
+      AND COALESCE(sa.utilization_rate, 0)
+          < ${FACILITIES_ROOM_BOOKING_THRESHOLD:-0.25}
+      AND sa.last_computed_at > now() - INTERVAL '2 days'
+  )
+  SELECT * FROM desk_utilization
+  UNION ALL
+  SELECT * FROM room_utilization
+  ORDER BY utilization_rate ASC NULLS LAST;
+
+dedup:
+  key_field: space_id
+  cooldown_minutes: 10080    # 7 days — one alert per space per week
+
+outputs:
+  - outputs/facilities-team-slack.yaml
+
+# The space-planner agent is also invoked to generate a recommendation
+# for each under-utilised space surfaced by this watch.
+agent_invoke: agents/space-planner.yaml
+
+message_template: |
+  📊 *Low Space Utilisation* — {{ space_type | replace('_', ' ') | title }}
+  Location: {{ building }} / Floor {{ floor }} / {{ room }}{% if desk_id %} (Desk {{ desk_id }}){% endif %}
+  {% if assignee_name %}Assigned to: {{ assignee_name }} ({{ assignee_email }}){% endif %}
+  Utilisation rate ({{ space_type == 'desk' and '14-day badge' or 'booking' }}): *{{ (utilization_rate * 100) | round(1) }}%*
+  Computed: {{ last_computed_at | datetimeformat('%Y-%m-%d') }}
+
+  The space-planner agent has been invoked to recommend an action
+  (reassign, convert to hot-desk, or reclaim for team expansion).
