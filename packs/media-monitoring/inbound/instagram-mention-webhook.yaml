@@ -1,0 +1,69 @@
+---
+# Inbound: instagram-mention-webhook
+#
+# Receives Instagram mention webhooks via the Instagram Graph API
+# (Webhooks product, mentions field subscription).
+# Requires a verified Business or Creator account.
+#
+# Mounting: POST /v1/media-monitoring/inbound/instagram/{route_id}
+# Auth:     HMAC-SHA256 signature verification (X-Hub-Signature-256 header)
+#           + per-tenant Bearer token from scheduler_webhook_tokens
+#
+# Disabled by default (MEDIA_INSTAGRAM_ENABLED=false) — requires Meta App
+# approval for the mentions permission.
+
+source: instagram-mention-webhook
+route_prefix: /v1/media-monitoring/inbound/instagram
+enabled: ${MEDIA_INSTAGRAM_ENABLED:-false}
+
+# Instagram Graph API auth.
+auth:
+  # App Secret for HMAC signature verification.
+  app_secret: ${INSTAGRAM_APP_SECRET}
+  # Long-lived page access token for API calls to enrich mention payloads.
+  page_access_token: ${INSTAGRAM_PAGE_ACCESS_TOKEN}
+  # Graph API version.
+  api_version: v18.0
+
+# Webhook subscription fields.
+subscription:
+  fields:
+    - mentions
+    - comments
+  # Webhook verify token (set in Meta Developer Portal).
+  verify_token: ${INSTAGRAM_WEBHOOK_VERIFY_TOKEN}
+
+# Signature verification.
+hmac:
+  header: X-Hub-Signature-256
+  algorithm: sha256
+  secret: ${INSTAGRAM_APP_SECRET}
+
+# Enrichment: fetch full media caption via Graph API after receiving webhook.
+# The webhook payload contains only the media ID; the caption requires a
+# separate API call.
+enrichment:
+  fetch_caption:
+    enabled: true
+    endpoint: "https://graph.instagram.com/{{ item.media_id }}"
+    params:
+      fields: "caption,timestamp,like_count,comments_count,permalink"
+      access_token: ${INSTAGRAM_PAGE_ACCESS_TOKEN}
+    timeout_seconds: 5
+    on_failure: use_empty_caption
+
+# Normalise to Mention schema.
+normalize:
+  channel: instagram
+  external_id: "{{ item.media_id }}"
+  author: "{{ item.mentioned_user_id | default('unknown') }}"
+  body: "{{ enriched.caption | default('') | truncate(4096) }}"
+  url: "{{ enriched.permalink | default('') }}"
+  reach: 0
+  engagement: "{{ enriched.like_count | default(0) + enriched.comments_count | default(0) }}"
+  matched_keywords: "{{ keywords_matched(enriched.caption | default(''), env.BRAND_KEYWORDS_ARRAY) }}"
+  published_at: "{{ enriched.timestamp | default(item.time | iso8601_from_unix) }}"
+
+# Deferred:
+#   - Instagram Stories mention tracking (requires different subscription field)
+#   - Influencer tier classification (nano/micro/macro/mega by follower count)

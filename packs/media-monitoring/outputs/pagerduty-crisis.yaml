@@ -1,0 +1,71 @@
+---
+# Output: pagerduty-crisis
+#
+# Creates PagerDuty incidents for brand crises.
+# SEV-1: high urgency — pages on-call PR lead immediately.
+# SEV-2: low urgency — creates an incident without paging (acknowledgeable).
+# SEV-3: not routed to PagerDuty (Slack-only).
+#
+# Incident auto-resolves when the crisis_event status changes to
+# 'resolved' or 'false_positive'.
+
+output: pagerduty-crisis
+
+# PagerDuty Events API v2.
+pagerduty:
+  # Integration key (Events API v2 routing key).
+  routing_key: ${PAGERDUTY_ROUTING_KEY}
+  events_api_endpoint: https://events.pagerduty.com/v2/enqueue
+
+# Incident routing by severity.
+routing:
+  sev1:
+    severity: critical
+    # High urgency = pages the on-call PR lead.
+    urgency: high
+    # Escalation policy for brand crises.
+    escalation_policy_id: ${PAGERDUTY_ESCALATION_POLICY_ID}
+  sev2:
+    severity: warning
+    urgency: low
+    escalation_policy_id: ${PAGERDUTY_ESCALATION_POLICY_ID}
+  # SEV-3: not routed to PagerDuty.
+
+# Incident payload template.
+incident:
+  routing_key: ${PAGERDUTY_ROUTING_KEY}
+  event_action: trigger
+  dedup_key: "media-crisis-{{ crisis.id }}"
+  payload:
+    summary: "[{{ crisis.severity | upper }}] Brand crisis: {{ crisis.title | truncate(80) }}"
+    source: "xiaoguai-media-monitoring"
+    severity: "{{ pd_severity }}"
+    timestamp: "{{ crisis.declared_at }}"
+    custom_details:
+      crisis_id: "{{ crisis.id }}"
+      trigger_type: "{{ crisis.trigger_type }}"
+      channels: "{{ crisis.channels | join(', ') }}"
+      hourly_mention_count: "{{ crisis.hourly_mention_count }}"
+      negative_ratio: "{{ crisis.negative_ratio | default('N/A') }}"
+      influence_weighted_reach: "{{ crisis.influence_weighted_reach }}"
+      narrative: "{{ crisis.narrative | truncate(500) }}"
+      dashboard_url: "{{ dashboard_url }}/crises/{{ crisis.id }}"
+  links:
+    - href: "{{ dashboard_url }}/crises/{{ crisis.id }}"
+      text: "View crisis dashboard"
+
+# Auto-resolution: triggered when crisis_event.status changes.
+auto_resolve:
+  on_status: [resolved, false_positive]
+  event_action: resolve
+  dedup_key: "media-crisis-{{ crisis.id }}"
+
+# Store PagerDuty incident ID back to crisis_events.
+on_created:
+  update_crisis_event:
+    field: pagerduty_incident_id
+    value: "{{ pd_incident_id }}"
+
+# Deferred:
+#   - PagerDuty priority sync (auto-set P1/P2 based on crisis severity)
+#   - On-call schedule lookup (identify who is being paged for context)

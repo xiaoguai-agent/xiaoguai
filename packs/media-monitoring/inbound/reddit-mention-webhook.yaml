@@ -1,0 +1,65 @@
+---
+# Inbound: reddit-mention-webhook
+#
+# Reddit does not offer a native outbound webhook; this source is implemented
+# as a thin adapter that wraps the Reddit PRAW/official search API with a
+# server-sent-event (SSE) bridge, delivering new mentions to the route below.
+#
+# Mounting: POST /v1/media-monitoring/inbound/reddit/{route_id}
+# Auth:     Bearer token from scheduler_webhook_tokens (per-tenant)
+#
+# The SSE bridge is a sidecar process managed by the watch engine.
+# Fallback: mention-volume-poll handles Reddit when the SSE bridge is down.
+
+source: reddit-mention-webhook
+route_prefix: /v1/media-monitoring/inbound/reddit
+
+# Reddit API credentials (OAuth2 application).
+auth:
+  client_id: ${REDDIT_CLIENT_ID}
+  client_secret: ${REDDIT_CLIENT_SECRET}
+  user_agent: "xiaoguai-media-monitoring/0.1.0 (by /u/${REDDIT_BOT_USERNAME})"
+
+# Subreddits and search terms monitored.
+monitors:
+  # Global keyword search across all subreddits.
+  - type: keyword_search
+    keywords: "${BRAND_KEYWORDS_REDDIT}"
+    # Subreddits to focus on (empty = all).
+    subreddits: ${REDDIT_FOCUS_SUBREDDITS:-[]}
+    types: [post, comment]
+  # Direct subreddit monitoring for brand-owned subreddit.
+  - type: subreddit
+    subreddit: "${BRAND_SUBREDDIT}"
+    types: [post, comment]
+
+# Normalise to Mention schema.
+normalize:
+  channel: reddit
+  external_id: "{{ item.id }}"
+  author: "{{ item.author | default('[deleted]') }}"
+  body: "{{ (item.selftext | default(item.body | default(''))) | truncate(4096) }}"
+  url: "https://reddit.com{{ item.permalink }}"
+  reach: "{{ item.subreddit_subscribers | default(0) }}"
+  engagement: "{{ item.score | default(0) }}"
+  matched_keywords: "{{ keywords_matched(item.title + ' ' + item.selftext | default(item.body | default('')), env.BRAND_KEYWORDS_ARRAY) }}"
+  published_at: "{{ item.created_utc | iso8601_from_unix }}"
+
+# Filter: ignore deleted/removed posts.
+filters:
+  - field: author
+    exclude: ["[deleted]", "AutoModerator"]
+  - field: selftext
+    exclude_values: ["[removed]", "[deleted]"]
+
+# Health monitoring.
+health:
+  auto_reconnect: true
+  max_reconnect_attempts: 5
+  reconnect_backoff_seconds: [5, 15, 30, 60, 120]
+  alert_on_disconnect_seconds: 600
+  alert_channel: ${MEDIA_OPS_ALERT_CHANNEL}
+
+# Deferred:
+#   - Reddit Awards tracking (high engagement signal)
+#   - Cross-post detection (viral amplification signal)

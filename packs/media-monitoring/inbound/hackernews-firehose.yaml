@@ -1,0 +1,65 @@
+---
+# Inbound: hackernews-firehose
+#
+# Monitors Hacker News via the Algolia HN Search API (search_by_date)
+# for brand mentions in stories and comments.
+#
+# HN is a high-signal, low-volume channel: a single front-page story
+# or top comment mentioning the brand can generate outsized developer
+# sentiment impact disproportionate to raw mention count.
+#
+# Implemented as a scheduled poll via mention-volume-poll.
+# This file defines HN-specific normalisation and signal-boosting config.
+
+source: hackernews-firehose
+route_prefix: /v1/media-monitoring/inbound/hackernews
+
+# Algolia HN Search API (no auth required).
+endpoint: https://hn.algolia.com/api/v1/search_by_date
+poll_interval_minutes: 15
+
+params:
+  query: "${BRAND_KEYWORDS_HN}"
+  tags: "(story,comment)"
+  hitsPerPage: 100
+  # Algolia numericFilters: only items created in the last poll window.
+  numericFilters: "created_at_i>={{ now_unix_minus_minutes(15) }}"
+
+# Normalise to Mention schema.
+normalize:
+  channel: hackernews
+  external_id: "{{ item.objectID }}"
+  author: "{{ item.author | default('unknown') }}"
+  body: "{{ (item.story_text | default(item.comment_text | default(item.title | default('')))) | striptags | truncate(4096) }}"
+  url: "{{ item.url | default('https://news.ycombinator.com/item?id=' + item.objectID) }}"
+  # HN reach: use story points as proxy (comments have no direct reach metric).
+  reach: 0
+  engagement: "{{ item.points | default(0) }}"
+  matched_keywords: "{{ keywords_matched((item.story_text | default(item.comment_text | default(item.title | default('')))), env.BRAND_KEYWORDS_ARRAY) }}"
+  published_at: "{{ item.created_at }}"
+
+# Signal boosting: HN stories/comments with high points are treated as
+# elevated-reach items regardless of author follower count.
+# Engagement multiplier is higher than other channels in the influence-weighted
+# reach formula, reflecting HN's developer audience quality.
+signal_boost:
+  # If points >= threshold, set synthetic reach to boost_reach_value.
+  # This ensures high-scoring HN items enter crisis-early-warner's reach calculation.
+  points_threshold: ${HN_BOOST_POINTS_THRESHOLD:-50}
+  boost_reach_value: ${HN_BOOST_REACH_VALUE:-100000}
+
+# ASK HN / Show HN detection: tag these specially for narrative-tracker.
+post_type_detection:
+  ask_hn:
+    pattern: "^Ask HN:"
+    tag: ask_hn
+  show_hn:
+    pattern: "^Show HN:"
+    tag: show_hn
+  launch_hn:
+    pattern: "^Launch HN:"
+    tag: launch_hn
+
+# Deferred:
+#   - HN front-page detection (item in top 30 → automatic SEV-2 escalation)
+#   - Cross-reference with GitHub trending (co-incident spike = amplified signal)

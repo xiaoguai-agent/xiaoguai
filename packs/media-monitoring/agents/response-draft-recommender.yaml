@@ -1,0 +1,105 @@
+---
+# Agent: response-draft-recommender
+#
+# Input:  a CrisisEvent record (with narrative, severity, channels, metrics).
+# Output: a ResponseStrategyFrame with:
+#           - whether to respond (yes/no/monitor)
+#           - recommended timing (immediate/within_2h/within_24h)
+#           - tone guidance (empathetic/factual/clarifying/no_comment)
+#           - draft response message per channel
+#           - suggested internal holding statement
+#
+# Called by crisis-early-warner for SEV-1 and SEV-2 crises.
+# Output is stored in crisis_events.response_recommendation_id and sent
+# to the slack-pr-team output.
+
+name: response-draft-recommender
+description: >
+  Assesses whether, when, and how the brand should respond to a declared
+  crisis event. Produces per-channel draft response messages, a tone guide,
+  timing recommendation, and an internal holding statement. Designed to
+  assist PR decision-making — all drafts require human review before posting.
+
+# LLM settings — higher reasoning quality for strategic recommendation.
+llm:
+  model: ${RESPONSE_LLM_MODEL:-sonnet}
+  temperature: 0.4
+  max_tokens: 2048
+
+# System prompt.
+system_prompt: |
+  You are a senior PR strategist advising on brand crisis response.
+  You will be given a crisis assessment including severity, narrative,
+  key metrics, and the channels where the crisis is most active.
+
+  Your job is to recommend:
+  1. WHETHER to respond publicly (yes | no | monitor).
+     - "no": if the crisis is factually incorrect and correcting it would
+       amplify it, or if it is a low-reach isolated incident.
+     - "monitor": if the crisis is still developing and an early response
+       risks fuelling it.
+     - "yes": if the crisis is factually grounded, high-reach, or involves
+       safety/trust concerns that silence would worsen.
+  2. TIMING: immediate (within 30 min) | within_2h | within_24h.
+  3. TONE: empathetic | factual | clarifying | no_comment.
+  4. DRAFT responses (max 280 chars for Twitter, 500 for others).
+  5. INTERNAL holding statement (for customer support / account teams).
+
+  Rules:
+  - Never recommend a response that admits legal liability.
+  - Flag if crisis involves safety, health, or regulated claims —
+    these require legal review before any public response.
+  - Be concise; PR teams are under time pressure.
+
+  Respond ONLY with valid JSON matching the schema below:
+  {
+    "respond": "yes|no|monitor",
+    "timing": "immediate|within_2h|within_24h",
+    "tone": "empathetic|factual|clarifying|no_comment",
+    "rationale": "2–3 sentence explanation of the recommendation",
+    "requires_legal_review": true|false,
+    "legal_flag_reason": "reason or null",
+    "draft_responses": {
+      "twitter": "≤280 char draft or null",
+      "reddit": "≤500 char draft or null",
+      "news": "≤500 char official statement draft or null",
+      "general": "≤500 char general draft"
+    },
+    "holding_statement": "Internal statement for support/account teams (≤300 chars)"
+  }
+
+# User prompt template.
+user_prompt: |
+  ## Crisis Event
+  - ID: {{ crisis.id }}
+  - Severity: {{ crisis.severity | upper }}
+  - Trigger: {{ crisis.trigger_type }}
+  - Channels: {{ crisis.channels | join(', ') }}
+  - Hourly mention count: {{ crisis.hourly_mention_count }}
+  - Z-score: {{ crisis.z_score | default('N/A') }}
+  - Negative ratio: {{ crisis.negative_ratio | default('N/A') }}
+  - Influence-weighted reach: {{ crisis.influence_weighted_reach | commify }}
+  - Declared at: {{ crisis.declared_at }}
+
+  ## Crisis Narrative
+  {{ crisis.narrative }}
+
+  ## Active Narrative Clusters (from narrative-tracker)
+  {{ active_narrative_clusters | json | default('No cluster data available.') }}
+
+  Produce response strategy JSON now.
+
+# Post-processing: store recommendation and link to crisis_event.
+on_result:
+  write_table: response_recommendations
+  link_to_crisis:
+    table: crisis_events
+    field: response_recommendation_id
+
+  # Append recommendation to the Slack PR team message.
+  notify_output: outputs/slack-pr-team.yaml
+
+# Deferred:
+#   - Pre-approved response library (match crisis type → approved phrasing)
+#   - Legal-review routing (auto-create Jira ticket when requires_legal_review=true)
+#   - A/B draft variants for high-severity crises
