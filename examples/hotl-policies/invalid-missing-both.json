@@ -1,0 +1,9 @@
+{
+  "_comment": "This file is INTENTIONALLY invalid — used to test the validator. Neither max_count nor max_usd is set (both are null), which violates the business rule that at least one limit must be present.",
+  "tenant_id": "018e8f2c-1a2b-7000-8000-000000000099",
+  "scope": "llm_call",
+  "window_seconds": 3600,
+  "max_count": null,
+  "max_usd": null,
+  "escalate_to": null
+}
