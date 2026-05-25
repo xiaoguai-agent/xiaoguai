@@ -1,0 +1,60 @@
+# Output adapter — post weekly digest to #devrel Slack channel
+#
+# Sends a formatted Slack Block Kit message to the configured channel.
+# Called by plan_weekly after both community-digest and dx-feedback-synth complete.
+#
+# The message contains two sections:
+#   1. Weekly community digest card (from community-digest output)
+#   2. DX health summary card (from dx-feedback-synth output)
+#
+# Authentication: SLACK_BOT_TOKEN (chat:write scope in the target channel).
+
+name: slack-devrel-channel
+kind: mcp-tool
+
+mcp_server: slack_messenger   # post_message(channel_id, blocks)
+tool: post_message
+
+# Target channel — set SLACK_DEVREL_CHANNEL_ID at deploy time.
+channel_id: "${SLACK_DEVREL_CHANNEL_ID}"
+
+# Message template — rendered as Slack Block Kit JSON.
+# Template file path: templates/digest-frame.md.j2 (produces Block Kit JSON).
+message_template: templates/digest-frame.md.j2
+
+# The Slack message consists of a digest section + a DX health section.
+# Template receives both agent outputs as context variables.
+context:
+  digest: "{{ digest }}"        # community-digest output
+  dx:     "{{ dx_themes }}"     # dx-feedback-synth output
+
+# DX health → Slack emoji mapping.
+dx_health_emoji:
+  green:  ":large_green_circle:"
+  yellow: ":large_yellow_circle:"
+  red:    ":red_circle:"
+
+# If sentiment is negative or dx_health is red, also ping the devrel lead.
+alert_on:
+  conditions:
+    - "digest.sentiment == 'negative'"
+    - "dx.dx_health == 'red'"
+  mention: "${SLACK_DEVREL_LEAD_USER_ID}"   # @-mention if set
+
+# Retry settings.
+retry:
+  max_attempts: 3
+  backoff_seconds: 5
+  on_errors: [429, 503]
+
+# Audit entry.
+audit:
+  table: pack_devrel_digest_runs
+  fields:
+    - week_ending
+    - digest_top_threads_count
+    - dx_health
+    - dx_themes_count
+    - slack_message_ts
+    - alert_triggered
+    - posted_at

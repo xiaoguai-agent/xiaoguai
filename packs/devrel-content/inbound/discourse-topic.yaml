@@ -1,0 +1,50 @@
+# Inbound source — Discourse topics (webhook)
+#
+# Discourse supports outbound webhooks for topic and post events.
+# Configure a webhook in Discourse Admin > API > Web Hooks pointing to:
+#   POST https://<host>/v1/devrel/inbound/discourse/<route_id>
+#
+# The payload is the standard Discourse webhook JSON envelope.
+# Authentication: shared secret verified via X-Discourse-Event-Signature header
+# (HMAC-SHA256, same pattern as Sentry/GitHub).
+
+name: discourse-topic
+kind: webhook
+
+route_id: "discourse-${PACK_INSTANCE_ID}"
+
+# Discourse webhook event types to handle.
+event_filter:
+  header: "X-Discourse-Event"
+  values:
+    - "topic_created"
+    - "post_created"
+
+# Ignore system/staff categories if configured.
+# Set DISCOURSE_EXCLUDE_CATEGORY_IDS to a comma-separated list of category IDs.
+payload_filter:
+  json_path: "$.topic.category_id"
+  exclude_env: DISCOURSE_EXCLUDE_CATEGORY_IDS
+
+# HMAC signature verification.
+signature:
+  algorithm: hmac-sha256
+  header: "X-Discourse-Event-Signature"
+  prefix: "sha256="
+  secret_env: DISCOURSE_WEBHOOK_SECRET
+
+# Fields extracted from the Discourse webhook payload.
+normalize:
+  field_map:
+    event_type:      "$.$.['X-Discourse-Event']"
+    topic_id:        "$.topic.id"
+    topic_title:     "$.topic.title"
+    topic_url:       "{{ 'https://' + env.DISCOURSE_BASE_URL + '/t/' + $.topic.slug + '/' + $.topic.id }}"
+    category_name:   "$.topic.category_slug"
+    post_number:     "$.post.post_number"
+    post_content:    "$.post.cooked"       # HTML; stripped to plain text by adapter
+    author_username: "$.post.username"
+    created_at:      "$.post.created_at"
+    reply_count:     "$.topic.posts_count"
+    views:           "$.topic.views"
+    like_count:      "$.post.like_count"

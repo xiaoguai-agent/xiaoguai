@@ -1,0 +1,48 @@
+# Output adapter — write weekly newsletter Markdown draft
+#
+# Renders a full Markdown newsletter draft from the community-digest and
+# dx-feedback-synth outputs using the weekly-newsletter template.
+#
+# The draft is written to a file on disk (or to a configured CMS integration).
+# A human DevRel author reviews and edits before publishing.
+#
+# Output location: ${DEVREL_DRAFT_OUTPUT_DIR}/newsletter-<week_ending>.md
+# Fallback: written to the xiaoguai audit store if DEVREL_DRAFT_OUTPUT_DIR is unset.
+
+name: weekly-newsletter-draft
+kind: file-writer
+
+# Template that produces the full Markdown document.
+template: templates/digest-frame.md.j2
+
+# Output file path.  Week ending date is injected at runtime.
+output_path: "${DEVREL_DRAFT_OUTPUT_DIR:-/tmp/xiaoguai-devrel}/newsletter-{{ digest.week_ending }}.md"
+
+# Template context variables.
+context:
+  digest:    "{{ digest }}"
+  dx:        "{{ dx_themes }}"
+  pack_ver:  "0.1.0"
+
+# Optional: post a Slack notification with the draft file path when written.
+on_success:
+  slack_notify:
+    channel_id: "${SLACK_DEVREL_CHANNEL_ID}"
+    message: >
+      :memo: Weekly newsletter draft ready:
+      `{{ output_path }}`
+      DX health: {{ dx.dx_health_emoji }} {{ dx.dx_health }}
+      {{ digest.stats.discord_messages }} Discord messages ·
+      {{ digest.stats.discourse_new_topics }} Discourse topics ·
+      {{ digest.stats.github_issues_opened }} issues opened
+
+# Audit entry.
+audit:
+  table: pack_devrel_newsletter_drafts
+  fields:
+    - week_ending
+    - output_path
+    - digest_top_threads_count
+    - dx_health
+    - dx_themes_count
+    - written_at

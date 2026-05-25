@@ -1,0 +1,125 @@
+# Pack manifest: devrel-content
+#
+# Developer Relations content pack — four-agent pipeline for issue triage,
+# community digest, tutorial drafting, and DX feedback synthesis.
+#
+# Inbound sources:
+#   - GitHub issue opened events (webhook)
+#   - Discord messages (webhook / bot integration)
+#   - Discourse topics (webhook)
+#   - Twitter/X mentions (polling adapter)
+#
+# Agents:
+#   - issue-triage         Routes GitHub issues to good-first / bug / RFE / wontfix
+#   - community-digest     Aggregates Discord + Discourse + GitHub into a weekly digest
+#   - tutorial-outline     Drafts a tutorial skeleton from a GitHub issue or request
+#   - dx-feedback-synth    Aggregates pain themes across all community channels
+#
+# Outputs:
+#   - github-comment-bot       Posts triage labels + a welcoming comment on GitHub
+#   - slack-devrel-channel     Posts digest and alerts to the #devrel Slack channel
+#   - weekly-newsletter-draft  Writes a Markdown draft ready for the newsletter tool
+#
+# Runtime dependencies:
+#   - GITHUB_TOKEN              PAT or App token (repo:write, issues:write)
+#   - GITHUB_WEBHOOK_SECRET     HMAC-SHA256 secret for the issue webhook
+#   - DISCORD_BOT_TOKEN         Discord bot token (read messages in configured channels)
+#   - DISCOURSE_API_KEY         Discourse read API key
+#   - DISCOURSE_API_USERNAME    Discourse API username
+#   - TWITTER_BEARER_TOKEN      Twitter v2 API bearer token (read-only)
+#   - SLACK_BOT_TOKEN           Slack bot token (chat:write in #devrel)
+#   - SLACK_DEVREL_CHANNEL_ID   Slack channel ID for the #devrel output
+
+name: devrel-content
+version: "0.1.0"
+description: >
+  Developer Relations content automation pack — GitHub issue triage with
+  good-first/bug/RFE/wontfix routing, weekly community digest aggregated
+  across Discord, Discourse, and GitHub Discussions, tutorial outline
+  generation from issues, and DX pain-theme synthesis across all channels.
+
+depends:
+  xiaoguai-api: ">=0.12.1"
+  llm: required
+  im:
+    any:
+      - slack
+
+# ── Inbound event sources ─────────────────────────────────────────────────────
+inbound:
+  - ref: inbound/github-issue-opened.yaml
+  - ref: inbound/discord-message.yaml
+  - ref: inbound/discourse-topic.yaml
+  - ref: inbound/twitter-mention.yaml
+
+# ── Agent definitions ─────────────────────────────────────────────────────────
+agents:
+  - ref: agents/issue-triage.yaml
+  - ref: agents/community-digest.yaml
+  - ref: agents/tutorial-outline.yaml
+  - ref: agents/dx-feedback-synth.yaml
+
+# ── Output adapters ───────────────────────────────────────────────────────────
+outputs:
+  - ref: outputs/github-comment-bot.yaml
+  - ref: outputs/slack-devrel-channel.yaml
+  - ref: outputs/weekly-newsletter-draft.yaml
+
+# ── Execution plans ───────────────────────────────────────────────────────────
+#
+# Plan A — triggered by github-issue-opened
+#   Triage the issue, optionally draft a tutorial outline, post back to GitHub.
+plan_issue:
+  trigger: inbound/github-issue-opened
+  steps:
+    - id: triage
+      agent: issue-triage
+      description: "Classify the issue and choose a routing label."
+    - id: tutorial_outline
+      agent: tutorial-outline
+      description: "If triage.label == good-first or RFE, draft a tutorial outline."
+      condition: "triage.label in ['good-first', 'RFE']"
+      deps: [triage]
+    - id: post_comment
+      output: github-comment-bot
+      description: "Post triage label + welcome comment; attach tutorial outline if present."
+      deps: [triage, tutorial_outline]
+
+# Plan B — weekly cron (Saturday 08:00 UTC)
+#   Aggregate the week's community activity into digest + newsletter draft.
+plan_weekly:
+  trigger:
+    cron: "0 8 * * 6"   # Saturday 08:00 UTC
+  steps:
+    - id: digest
+      agent: community-digest
+      description: "Collect and summarise Discord + Discourse + GitHub activity."
+    - id: dx_themes
+      agent: dx-feedback-synth
+      description: "Identify recurring DX pain themes from the same window."
+      deps: [digest]
+    - id: post_slack
+      output: slack-devrel-channel
+      description: "Post the digest summary to #devrel."
+      deps: [digest, dx_themes]
+    - id: write_newsletter
+      output: weekly-newsletter-draft
+      description: "Write a Markdown newsletter draft combining digest + DX themes."
+      deps: [digest, dx_themes]
+
+# ── Resource requirements ─────────────────────────────────────────────────────
+requires:
+  env:
+    - GITHUB_TOKEN
+    - GITHUB_WEBHOOK_SECRET
+    - DISCORD_BOT_TOKEN
+    - DISCOURSE_API_KEY
+    - DISCOURSE_API_USERNAME
+    - TWITTER_BEARER_TOKEN
+    - SLACK_BOT_TOKEN
+    - SLACK_DEVREL_CHANNEL_ID
+  llm: true
+
+# ── Feature flag ─────────────────────────────────────────────────────────────
+# Set XIAOGUAI_DEVREL_ENABLED=true in .env to activate all routes.
+feature_flag: XIAOGUAI_DEVREL_ENABLED
