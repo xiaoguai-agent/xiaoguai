@@ -174,7 +174,7 @@ futures-util = "0.3"
 
 # RAG backends
 qdrant-client = { version = "1.13", default-features = false, features = ["serde"] }
-tantivy = "0.22"
+tantivy = "0.26"
 
 # testing
 mockito = "1.6"
