@@ -1,0 +1,98 @@
+# outputs/partner-tier-quarterly-email.yaml
+# ---------------------------------------------------------------------------
+# Partner tier quarterly email output connector — HOTL-gated.
+#
+# Sends the tier-scorecard email to each partner's primary contact at the
+# end of each scoring quarter. Because this is an external communication
+# sent on behalf of the company, it is HOTL-gated: the email is queued as
+# 'pending_approval' and only sent after a channel manager or partner ops
+# admin approves via admin UI or IM reply.
+#
+# Triggered by: partner-tier-scorer (via partner.tier.scored)
+# Template: templates/tier-scorecard.md.j2 (Markdown → rendered HTML)
+# ---------------------------------------------------------------------------
+
+name: partner-tier-quarterly-email
+kind: output
+version: "1.0.0"
+
+description: >
+  Queues and (after HOTL approval) sends a quarterly tier scorecard email
+  to each partner's primary contact. Includes composite score, dimension
+  breakdown, narrative commentary, and next-quarter improvement suggestions.
+  Zero autonomous sends — all outbound emails require human approval.
+
+# --------------------------------------------------------------------------
+# Trigger
+# --------------------------------------------------------------------------
+triggers:
+  - event: partner.tier.scored
+    source: agents/partner-tier-scorer.yaml
+
+# --------------------------------------------------------------------------
+# HOTL gate
+# --------------------------------------------------------------------------
+hotl_gate:
+  # Emails are queued in the pe_pending_emails shadow table.
+  # Channel manager reviews and approves via admin UI before send.
+  check_table: pe_pending_emails
+  check_field: status
+  required_value: approved
+  abort_on_mismatch: true
+  abort_message: >
+    Tier scorecard email for {{ partner.name }} is pending approval.
+    Review in admin UI before it will be sent.
+
+# --------------------------------------------------------------------------
+# Email configuration
+# --------------------------------------------------------------------------
+email:
+  provider: ${PARTNER_EMAIL_PROVIDER:-smtp}   # smtp | sendgrid | ses
+  from_name: "{{ channel_manager_name | default('Partner Operations') }}"
+  from_email: "${PARTNER_EMAIL_FROM}"
+  reply_to:   "${PARTNER_EMAIL_REPLY_TO}"
+
+  to:
+    - address: "{{ partner.primary_contact_email }}"
+      name: "{{ partner.name }}"
+  cc:
+    - address: "{{ channel_manager_email | default('') }}"
+      condition: "channel_manager_email is not none"
+
+  subject: "{{ partner.name }} — Q{{ scoring_quarter_num }} {{ scoring_year }} Partner Tier Scorecard ({{ new_tier | upper }})"
+
+  # Markdown → HTML conversion with xiaoguai's email renderer
+  body_template: templates/tier-scorecard.md.j2
+  body_format: markdown_to_html
+
+  # Plain-text fallback for email clients that block HTML
+  text_fallback: |
+    {{ partner.name }} — Q{{ scoring_quarter_num }} {{ scoring_year }} Partner Tier Scorecard
+    New Tier: {{ new_tier | upper }} (score: {{ composite_score | round(1) }}/100)
+    {{ narrative }}
+    For the full scorecard visit: {{ admin_ui_url }}/partners/{{ partner.id }}/scorecard
+
+# --------------------------------------------------------------------------
+# Queuing — email is staged before HOTL approval
+# --------------------------------------------------------------------------
+queue:
+  table: pe_pending_emails
+  expiry_hours: 72    # auto-discard if not approved within 72 hours
+
+# --------------------------------------------------------------------------
+# Audit
+# --------------------------------------------------------------------------
+audit:
+  log_table: pe_audit_log
+  entity_type: partner
+  entity_id_field: partner.id
+  action: quarterly_email_sent
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  retry: 2
+  backoff_seconds: [10, 60]
+  log_level: error
+  notify_channel: "${PARTNER_HOTL_NOTIFY_CHANNEL:-admin_ui}"

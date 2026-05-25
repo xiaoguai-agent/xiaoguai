@@ -1,0 +1,73 @@
+# outputs/partner-portal-decision-post-back.yaml
+# ---------------------------------------------------------------------------
+# Partner portal decision post-back output connector.
+#
+# After deal-reg-router produces an approved or rejected decision, this
+# connector POSTs the routing decision back to the partner self-service portal
+# so the partner can see their deal-reg status in real time.
+#
+# Triggered by: deal-reg-router on_completion (approve or reject paths)
+# HOTL: not gated — the routing decision itself is autonomous; this is just
+#       a notification to the partner of the decision already recorded.
+# ---------------------------------------------------------------------------
+
+name: partner-portal-decision-post-back
+kind: output
+version: "1.0.0"
+
+description: >
+  POSTs the deal-registration routing decision (approved | rejected | conflict)
+  back to the partner portal so the partner can track their registration status.
+  Includes the routing reason and assigned channel manager (if approved).
+  Not HOTL-gated — this is a notification, not a data mutation.
+
+# --------------------------------------------------------------------------
+# Trigger
+# --------------------------------------------------------------------------
+triggers:
+  - event: partner.deal_reg.routed
+    source: agents/deal-reg-router.yaml
+    filter:
+      routing_decision:
+        in: [approve, reject]   # conflict path goes to salesforce-opportunity-update
+
+# --------------------------------------------------------------------------
+# Delivery
+# --------------------------------------------------------------------------
+delivery:
+  kind: http_post
+  url_template: "${PARTNER_PORTAL_CALLBACK_URL}/api/deal-reg/{{ deal_reg.source_deal_reg_id }}/decision"
+  auth:
+    kind: bearer
+    token_env: PARTNER_PORTAL_API_TOKEN
+  content_type: application/json
+  payload_template: |
+    {
+      "deal_reg_id":     "{{ deal_reg.id }}",
+      "source_deal_reg_id": "{{ deal_reg.source_deal_reg_id }}",
+      "status":          "{{ routing_decision }}",
+      "routing_reason":  "{{ routing_reason | escapejson }}",
+      "assigned_channel_manager_email": {{ assigned_channel_manager_email | tojson }},
+      "decided_at":      "{{ routed_at | iso8601 }}"
+    }
+  timeout_seconds: 10
+
+# --------------------------------------------------------------------------
+# Retry policy
+# --------------------------------------------------------------------------
+retry:
+  max_attempts: 3
+  backoff_seconds: [5, 30, 120]
+  on_exhausted:
+    log_level: error
+    dead_letter_table: pe_inbound_dead_letter
+    notify_channel: "${PARTNER_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# Audit
+# --------------------------------------------------------------------------
+audit:
+  log_table: pe_audit_log
+  entity_type: deal_reg
+  entity_id_field: deal_reg.id
+  action: decision_posted_back

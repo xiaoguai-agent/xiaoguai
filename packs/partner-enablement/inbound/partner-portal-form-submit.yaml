@@ -1,0 +1,134 @@
+# inbound/partner-portal-form-submit.yaml
+# ---------------------------------------------------------------------------
+# Partner self-service portal deal-registration form inbound source.
+#
+# Partners submit deal registrations through the hosted partner portal UI.
+# The portal POSTs the form to this endpoint after the partner authenticates
+# via their portal credentials (session token validated by the portal backend).
+#
+# This source is the "manual / portal" path alongside the PartnerStack and
+# Crossbeam automated paths. It uses a shared HMAC secret (not per-partner)
+# because the portal backend is a trusted first-party service.
+#
+# Mounting: POST /api/v1/packs/partner-enablement/inbound/portal
+# Auth:     HMAC-SHA256 (X-Portal-Signature) — portal backend signs the body
+#           with PARTNER_PORTAL_WEBHOOK_SECRET before forwarding.
+# ---------------------------------------------------------------------------
+
+name: partner-portal-form-submit
+kind: webhook_inbound
+version: "1.0.0"
+
+description: >
+  Receives deal-registration form submissions from the partner self-service
+  portal. The portal backend authenticates the partner session, adds a
+  partner_id field, signs the payload with HMAC-SHA256, and forwards to this
+  endpoint. Normalises to pe_deal_registrations and emits
+  partner.portal.form_submitted to trigger deal-reg-router.
+
+# --------------------------------------------------------------------------
+# HTTP endpoint
+# --------------------------------------------------------------------------
+endpoint:
+  path: /api/v1/packs/partner-enablement/inbound/portal
+  method: POST
+  content_type: application/json
+
+# --------------------------------------------------------------------------
+# Signature verification (trusted portal backend)
+# --------------------------------------------------------------------------
+auth:
+  kind: hmac_sha256
+  header: X-Portal-Signature
+  secret_env: PARTNER_PORTAL_WEBHOOK_SECRET
+  max_age_seconds: 60    # portal submissions are near-real-time; tight window
+
+# --------------------------------------------------------------------------
+# Payload normalisation → pe_deal_registrations
+# --------------------------------------------------------------------------
+normalise:
+  source: "portal"
+  # portal backend resolves the authenticated partner → sends partner_id directly
+  partner_id_field: "$.partner_id"
+  account_name:      "$.account_name"
+  account_domain:    "$.account_domain"
+  estimated_arr:     "$.estimated_arr_usd"
+  close_date_target: "$.close_date"
+  notes:             "$.notes"
+  source_deal_reg_id: "$.submission_id"
+  source_payload:    "_self"
+
+# --------------------------------------------------------------------------
+# Validation — fields required at the form level (before routing)
+# --------------------------------------------------------------------------
+required_fields:
+  - partner_id
+  - account_name
+  - account_domain
+  - estimated_arr_usd
+  - close_date
+on_missing_required:
+  http_status: 422
+  error_message: "Missing required fields. Please complete all required form fields and resubmit."
+
+# --------------------------------------------------------------------------
+# Database write
+# --------------------------------------------------------------------------
+persist:
+  table: pe_deal_registrations
+  on_conflict: ["source", "source_deal_reg_id"]
+  update_fields:
+    - account_name
+    - account_domain
+    - estimated_arr
+    - close_date_target
+    - notes
+
+# --------------------------------------------------------------------------
+# Synchronous response to portal (202 Accepted + deal_reg_id)
+# --------------------------------------------------------------------------
+response:
+  http_status: 202
+  body: |
+    {
+      "status": "accepted",
+      "deal_reg_id": "{{ deal_reg.id }}",
+      "message": "Your deal registration has been received and is being reviewed. You will receive a decision within 1 business day."
+    }
+
+# --------------------------------------------------------------------------
+# Emit event
+# --------------------------------------------------------------------------
+emit:
+  event: partner.portal.form_submitted
+  target: agents/deal-reg-router.yaml
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  log_level: error
+  dead_letter_table: pe_inbound_dead_letter
+  notify_channel: "${PARTNER_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+  # Return a user-friendly error to the portal so the partner can retry
+  error_response:
+    http_status: 500
+    body: |
+      {
+        "status": "error",
+        "message": "An internal error occurred. Please try again or contact your channel manager."
+      }
+
+# --------------------------------------------------------------------------
+# Sample payload (from portal backend)
+# --------------------------------------------------------------------------
+sample_payload: |
+  {
+    "submission_id": "portal-sub-2026-001",
+    "partner_id": "550e8400-e29b-41d4-a716-446655440000",
+    "account_name": "Initech LLC",
+    "account_domain": "initech.com",
+    "estimated_arr_usd": 80000,
+    "close_date": "2026-08-31",
+    "notes": "Interested in the Enterprise tier. POC starting next month."
+  }

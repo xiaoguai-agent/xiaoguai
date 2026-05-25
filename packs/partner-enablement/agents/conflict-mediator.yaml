@@ -1,0 +1,278 @@
+# agents/conflict-mediator.yaml
+# ---------------------------------------------------------------------------
+# Conflict Mediator
+#
+# Input:  a pe_deal_registrations row where status = 'conflict', plus the
+#         matching Salesforce opportunity from the direct pipeline.
+# Output: a resolution proposal written to pe_conflict_resolutions:
+#           direct_wins   — recommend the direct AE retains the opportunity
+#           partner_wins  — recommend the partner takes the deal-reg
+#           co_sell       — recommend a joint motion with agreed attribution
+#
+# Decision model — relationship strength scoring (0–100 per party):
+#
+#   days_since_first_contact (weight 30):
+#     Score = MAX(0, 30 − (days / 10))
+#     Rationale: more recent first contact = stronger momentum.
+#
+#   num_meetings (weight 25):
+#     Score = MIN(25, num_meetings * 5)
+#     Rationale: meeting cadence is a leading indicator of relationship depth.
+#
+#   exec_sponsor_engaged (weight 25):
+#     Score = 25 if true, 0 if false.
+#     Rationale: C-suite access is a binary deal-qualifier.
+#
+#   deal_stage_advancement (weight 20):
+#     Score = stage_index * 5  (stages: 0=Prospect, 1=Discovery, 2=Demo,
+#             3=Proposal, 4=Negotiation; capped at 20).
+#     Rationale: the further along, the stronger the relationship.
+#
+# Resolution decision:
+#   delta = direct_relationship_score − partner_relationship_score
+#
+#   delta > +15  → direct_wins     (direct has meaningfully stronger relationship)
+#   delta < −15  → partner_wins    (partner has meaningfully stronger relationship)
+#   |delta| <= 15 → co_sell        (scores are close — joint motion is best)
+#
+# The LLM step generates the narrative rationale and proposed attribution split
+# (for co_sell resolutions). All resolutions are written as 'proposed' and
+# require HOTL approval before Salesforce opportunity attribution is updated.
+# ---------------------------------------------------------------------------
+
+name: conflict-mediator
+version: "1.0.0"
+description: >
+  When a partner deal-registration conflicts with a direct-sales Salesforce
+  opportunity on the same account, scores both parties' relationship strength
+  and proposes direct_wins, partner_wins, or co_sell. Generates a resolution
+  frame for channel manager review. All Salesforce attribution changes are
+  HOTL-gated.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: partner.deal_reg.conflict_detected
+    source: agents/deal-reg-router.yaml   # emitted when deal-reg-router routes to 'conflict'
+
+# --------------------------------------------------------------------------
+# LLM settings
+# --------------------------------------------------------------------------
+llm:
+  model: ${PARTNER_LLM_MODEL:-default}
+  temperature: 0.15     # low variance: mediation rationale should be consistent
+  max_tokens: 2048
+
+# --------------------------------------------------------------------------
+# Context-gathering steps
+# --------------------------------------------------------------------------
+context_steps:
+  - id: partner_party
+    description: "Partner's relationship signals for the conflicted account"
+    tool: sql
+    query: |
+      SELECT
+          p.name                          AS partner_name,
+          p.tier                          AS partner_tier,
+          p.primary_contact_email,
+          -- Days since partner first registered any deal on this account
+          EXTRACT(DAY FROM now() - MIN(dr.created_at))  AS days_since_first_contact,
+          -- Number of co-sell engagements on this account
+          COUNT(DISTINCT cse.id)          AS num_meetings,
+          -- Exec sponsor: true if any co-sell engagement has exec attribution > 0
+          BOOL_OR(cse.partner_attribution_pct IS NOT NULL
+                  AND cse.partner_attribution_pct > 0)  AS exec_sponsor_engaged,
+          -- Best deal-stage reached by partner on this account (proxy: approved regs)
+          COUNT(dr.id) FILTER (WHERE dr.status = 'approved')  AS stage_proxy
+      FROM pe_partners p
+      JOIN pe_deal_registrations dr
+          ON dr.partner_id = p.id
+          AND dr.account_domain = '{account_domain}'
+          AND dr.tenant_id = '{tenant_id}'
+      LEFT JOIN pe_co_sell_engagements cse
+          ON cse.partner_id = p.id
+          AND cse.account_domain = '{account_domain}'
+          AND cse.tenant_id = '{tenant_id}'
+      WHERE p.id = '{partner_id}' AND p.tenant_id = '{tenant_id}'
+      GROUP BY p.id, p.name, p.tier, p.primary_contact_email
+
+  - id: direct_party
+    description: "Direct sales team's relationship signals for the conflicted account"
+    tool: sql
+    query: |
+      SELECT
+          sf.owner_email                  AS direct_ae_email,
+          sf.stage_name,
+          -- Approximate stage index for deal_stage_advancement scoring
+          CASE sf.stage_name
+              WHEN 'Prospect'     THEN 0
+              WHEN 'Discovery'    THEN 1
+              WHEN 'Demo'         THEN 2
+              WHEN 'Proposal'     THEN 3
+              WHEN 'Negotiation'  THEN 4
+              ELSE 1
+          END                             AS stage_index,
+          EXTRACT(DAY FROM now() - sf.created_at) AS days_since_first_contact,
+          sf.num_contacts                 AS num_meetings,
+          sf.exec_sponsor_engaged,
+          sf.next_step
+      FROM pe_sf_opportunities sf
+      WHERE sf.sf_opportunity_id = '{sf_opportunity_id}'
+        AND sf.tenant_id = '{tenant_id}'
+
+# --------------------------------------------------------------------------
+# Scoring formula (computed before LLM step)
+# --------------------------------------------------------------------------
+scoring:
+  # Applied symmetrically to both direct_party and partner_party.
+  # The formula keys reference fields from the context_steps results.
+  components:
+    days_since_first_contact:
+      weight: 30
+      formula: "MAX(0, 30 - (days_since_first_contact / 10))"
+      note: "Max score at day 0 (just contacted); decays 1 pt per 10 days."
+
+    num_meetings:
+      weight: 25
+      formula: "MIN(25, num_meetings * 5)"
+      note: "5 pts per meeting; capped at 5 meetings (25 pts)."
+
+    exec_sponsor_engaged:
+      weight: 25
+      formula: "IF(exec_sponsor_engaged, 25, 0)"
+      note: "Binary: 25 pts if C-suite engaged, 0 otherwise."
+
+    deal_stage_advancement:
+      weight: 20
+      formula: "MIN(20, stage_index * 5)"
+      note: "5 pts per stage (0=Prospect → 4=Negotiation)."
+
+  resolution_thresholds:
+    direct_wins_delta:  +15    # delta > +15 → direct_wins
+    partner_wins_delta: -15    # delta < -15 → partner_wins
+    # |delta| <= 15 → co_sell
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a partner channel mediator resolving a pipeline conflict between
+  a direct sales opportunity and a partner deal registration on the same account.
+
+  You will be given:
+  - Relationship strength scores (0–100) for the direct party and partner party.
+  - Score component breakdowns for each party.
+  - The computed resolution (direct_wins | partner_wins | co_sell) based on
+    the delta threshold rule.
+
+  Your job is to:
+  1. Write a clear, fair rationale (2–4 sentences) explaining why this
+     resolution was chosen. Reference specific score components.
+  2. If resolution is "co_sell": propose an attribution split (must sum to 100).
+     Default to 50/50 when delta is near 0; skew toward the stronger party
+     by up to 70/30 when delta is 10–15.
+  3. Assign a confidence level: "high" if |delta| > 10, "medium" if 5–10,
+     "low" if < 5.
+
+  Rules:
+  - Be neutral and factual. Both parties will read this rationale.
+  - Do not fabricate evidence not present in the context.
+  - Output ONLY valid JSON matching the schema below.
+
+  {
+    "resolution": "direct_wins" | "partner_wins" | "co_sell",
+    "resolution_rationale": "<2–4 sentences>",
+    "mediator_confidence": "high" | "medium" | "low",
+    "proposed_partner_attribution_pct": <int 0–100 or null>,
+    "proposed_direct_attribution_pct":  <int 0–100 or null>,
+    "direct_score_components":  { "days_since_first_contact": <int>, "num_meetings": <int>, "exec_sponsor_engaged": <int>, "deal_stage_advancement": <int> },
+    "partner_score_components": { "days_since_first_contact": <int>, "num_meetings": <int>, "exec_sponsor_engaged": <int>, "deal_stage_advancement": <int> }
+  }
+
+# --------------------------------------------------------------------------
+# User prompt template
+# --------------------------------------------------------------------------
+user_prompt: |
+  ## Conflict
+  - Account: {{ deal_reg.account_name }} (domain: {{ deal_reg.account_domain }})
+  - Deal Registration: {{ deal_reg.id }} (Partner: {{ partner_party.partner_name }}, tier: {{ partner_party.partner_tier | upper }})
+  - Direct Opportunity: {{ sf_opportunity_id }} (AE: {{ direct_party.direct_ae_email }}, stage: {{ direct_party.stage_name }})
+
+  ## Relationship Scores
+  Direct party total: {{ direct_relationship_score }}/100
+  - Days since first contact: {{ direct_party.days_since_first_contact | int }} days → {{ score_components.direct.days_since_first_contact }} pts
+  - Meetings: {{ direct_party.num_meetings }} → {{ score_components.direct.num_meetings }} pts
+  - Exec sponsor engaged: {{ direct_party.exec_sponsor_engaged }} → {{ score_components.direct.exec_sponsor_engaged }} pts
+  - Deal stage ({{ direct_party.stage_name }}): {{ score_components.direct.deal_stage_advancement }} pts
+
+  Partner party total: {{ partner_relationship_score }}/100
+  - Days since first contact: {{ partner_party.days_since_first_contact | int }} days → {{ score_components.partner.days_since_first_contact }} pts
+  - Meetings / co-sell engagements: {{ partner_party.num_meetings }} → {{ score_components.partner.num_meetings }} pts
+  - Exec sponsor engaged: {{ partner_party.exec_sponsor_engaged }} → {{ score_components.partner.exec_sponsor_engaged }} pts
+  - Stage proxy (approved regs): {{ partner_party.stage_proxy }} → {{ score_components.partner.deal_stage_advancement }} pts
+
+  ## Computed Resolution
+  Delta (direct − partner): {{ delta }}
+  Computed resolution: {{ computed_resolution }}
+
+  Generate the mediation decision now.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: save_conflict_resolution
+    description: >
+      Insert a new row into pe_conflict_resolutions with status='proposed'
+      and link it to the deal-reg row. Returns the conflict_resolution_id.
+    kind: sql
+    query: |
+      WITH ins AS (
+          INSERT INTO pe_conflict_resolutions (
+              tenant_id, deal_reg_id, partner_id, sf_opportunity_id,
+              account_name, account_domain,
+              direct_relationship_score, partner_relationship_score,
+              direct_score_components, partner_score_components,
+              resolution, resolution_rationale, mediator_confidence,
+              proposed_partner_attribution_pct, proposed_direct_attribution_pct,
+              status
+          ) VALUES (
+              '{tenant_id}', '{deal_reg_id}', '{partner_id}', '{sf_opportunity_id}',
+              '{account_name}', '{account_domain}',
+              {direct_relationship_score}, {partner_relationship_score},
+              '{direct_score_components}'::JSONB, '{partner_score_components}'::JSONB,
+              '{resolution}', '{resolution_rationale}', '{mediator_confidence}',
+              {proposed_partner_attribution_pct}, {proposed_direct_attribution_pct},
+              'proposed'
+          ) RETURNING id AS conflict_resolution_id
+      )
+      UPDATE pe_deal_registrations SET
+          conflict_resolution_id = (SELECT conflict_resolution_id FROM ins),
+          updated_at = now()
+      WHERE id = '{deal_reg_id}'
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    conflict_resolution_proposal: true    # writing 'proposed' row is autonomous
+  require_human_approval:
+    - sf_opportunity_update               # Salesforce attribution write requires approval
+    - co_sell_engagement_create           # co-sell engagement stub requires approval
+  notify_channel: "${PARTNER_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# On completion routing
+# --------------------------------------------------------------------------
+on_completion:
+  emit: partner.conflict.resolution_proposed
+  route:
+    all: outputs/salesforce-opportunity-update.yaml   # HOTL-gated; also posts to Slack
+
+# --------------------------------------------------------------------------
+# Output template
+# --------------------------------------------------------------------------
+output_template: templates/conflict-resolution-frame.md.j2

@@ -1,0 +1,198 @@
+# packs/partner-enablement/pack.yaml
+#
+# Partner Enablement Skill Pack — manifest
+#
+# Handles the full partner-channel lifecycle: deal-registration routing and
+# conflict resolution with the direct sales pipeline, co-sell meeting brief
+# assembly, partner tier scoring (Platinum/Gold/Silver/Bronze), and automated
+# conflict mediation when direct and partner pipelines collide.
+#
+# All Salesforce opportunity writes and conflict-resolution decisions that
+# affect pipeline attribution are HOTL-gated (zero autonomous writes without
+# human approval via admin UI or IM reply).
+#
+# Dependency map
+# --------------
+#   xiaoguai-llm              LLM backend (deal-reg router, co-sell briefer,
+#                             conflict-mediator narrative generation)
+#   xiaoguai-outcome-tel      Outcome telemetry (tier-score series, deal-reg
+#                             outcomes, conflict resolution win-rates)
+#   xiaoguai-hotl             Human-on-the-loop gate for SF opportunity updates
+#                             and conflict resolutions affecting attribution
+#   xiaoguai-orchestrator     Supervisor + Worker traits for multi-step workflows
+#   xiaoguai-audit            Audit log writes
+
+name: partner-enablement
+version: "1.0.0"
+description: >
+  Multi-agent skill pack for partner channel management.
+  Routes and validates inbound deal registrations, detects pipeline conflicts
+  between direct sales and partner-sourced opportunities, scores partner tiers
+  (Platinum/Gold/Silver/Bronze) from activity/revenue/cert/outcome metrics,
+  and assembles co-sell meeting briefs. Salesforce opportunity updates and
+  conflict-resolution decisions are HOTL-gated.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - llm                # core LLM backend
+    - outcome-telemetry  # records tier-score series + deal-reg outcomes
+    - hotl               # human approval gate for Salesforce opportunity writes
+
+# --------------------------------------------------------------------------
+# Runtime dependencies
+# --------------------------------------------------------------------------
+dependencies:
+  orchestrator:      { crate: xiaoguai-orchestrator,  feature: default }
+  audit:             { crate: xiaoguai-audit,          feature: default }
+  outcome_telemetry: { crate: xiaoguai-outcome-tel,    feature: default }
+
+# --------------------------------------------------------------------------
+# External system integrations
+# --------------------------------------------------------------------------
+external_systems:
+  crossbeam:
+    status: webhook_inbound
+    real_integration: >
+      Receives partner-overlap and deal-reg events from Crossbeam via webhook
+      (inbound/crossbeam-event.yaml). Requires CROSSBEAM_WEBHOOK_SECRET for
+      HMAC-SHA256 signature verification. Hook point:
+      agents/deal-reg-router.yaml trigger: partner.crossbeam.overlap_detected.
+
+  partnerstack:
+    status: webhook_inbound
+    real_integration: >
+      Receives deal-registration submissions from PartnerStack
+      (inbound/partnerstack-deal-reg.yaml). Requires PARTNERSTACK_WEBHOOK_SECRET.
+      Hook point: agents/deal-reg-router.yaml trigger: partner.partnerstack.deal_reg_submitted.
+
+  salesforce:
+    status: mocked
+    real_integration: >
+      Reads Opportunity records for conflict detection (inbound/salesforce-opportunity-create.yaml)
+      and writes conflict-resolution decisions to Opportunity attribution fields
+      (outputs/salesforce-opportunity-update.yaml, HOTL-gated).
+      Requires SALESFORCE_INSTANCE_URL + SALESFORCE_CLIENT_ID + SALESFORCE_CLIENT_SECRET.
+
+  partner_portal:
+    status: webhook_inbound
+    real_integration: >
+      Receives deal-registration form submissions from the partner self-service portal
+      (inbound/partner-portal-form-submit.yaml). Authenticated via shared HMAC secret.
+      Writes routing decisions back via outputs/partner-portal-decision-post-back.yaml.
+
+  slack:
+    status: mocked
+    real_integration: >
+      Posts deal-reg routing decisions and conflict-resolution outcomes to the
+      configured channel manager Slack channel.
+      Requires SLACK_BOT_TOKEN + SLACK_PARTNER_CHANNEL_ID.
+      Hook point: outputs/slack-channel-team.yaml.
+
+# --------------------------------------------------------------------------
+# Configuration knobs
+# --------------------------------------------------------------------------
+config:
+  tier_scoring:
+    # Minimum weighted score (0–100) to achieve each tier
+    platinum_threshold: 85
+    gold_threshold:     65
+    silver_threshold:   40
+    # Below silver_threshold → Bronze (no minimum)
+    # Scoring weights (must sum to 100)
+    weights:
+      revenue_share:       30    # partner-sourced ARR as % of quota
+      activity_score:      25    # deal-reg volume, co-sell participation
+      certifications:      25    # active product certifications held
+      customer_outcomes:   20    # NPS/CSAT from partner-managed accounts
+    # Quarterly scoring cadence
+    scoring_cadence: quarterly
+
+  deal_reg:
+    # Maximum days a deal-reg is valid without re-submission
+    expiry_days: 90
+    # If direct pipeline has an opportunity on the same account older than
+    # this many days, it wins the conflict automatically (no mediation needed).
+    direct_wins_if_older_than_days: 30
+
+  conflict_mediation:
+    # Relationship strength weights used by conflict-mediator
+    relationship_weights:
+      days_since_first_contact:  30    # recency of first touch with account
+      num_meetings:              25    # meeting cadence (stronger = more meetings)
+      exec_sponsor_engaged:      25    # binary: C-suite contact engaged (yes/no)
+      deal_stage_advancement:    20    # how far along the pipeline is the opportunity
+
+  hotl:
+    notify_channel: "${PARTNER_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+    sf_write_back: true
+
+  audit:
+    table: pe_audit_log
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_partner_state.sql
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/deal-reg-router.yaml
+  - path: agents/co-sell-briefer.yaml
+  - path: agents/partner-tier-scorer.yaml
+  - path: agents/conflict-mediator.yaml
+
+# --------------------------------------------------------------------------
+# Inbound sources
+# --------------------------------------------------------------------------
+sources:
+  - path: inbound/crossbeam-event.yaml
+  - path: inbound/partnerstack-deal-reg.yaml
+  - path: inbound/salesforce-opportunity-create.yaml
+  - path: inbound/partner-portal-form-submit.yaml
+
+# --------------------------------------------------------------------------
+# Output connectors
+# --------------------------------------------------------------------------
+outputs:
+  - path: outputs/partner-portal-decision-post-back.yaml
+  - path: outputs/slack-channel-team.yaml
+  - path: outputs/salesforce-opportunity-update.yaml
+  - path: outputs/partner-tier-quarterly-email.yaml
+
+# --------------------------------------------------------------------------
+# Schema namespace
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "pe_"
+  namespace: "partner_enablement"
+
+# --------------------------------------------------------------------------
+# Outcome telemetry
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - deal_reg_approved
+    - deal_reg_rejected
+    - conflict_resolved_partner_wins
+    - conflict_resolved_direct_wins
+    - conflict_resolved_co_sell
+    - tier_scored
+    - co_sell_brief_generated
+  feedback_table: pe_outcome_log
+
+# --------------------------------------------------------------------------
+# Deferred / not-yet-implemented
+# --------------------------------------------------------------------------
+# - Microsoft Partner Center API integration for cert data pull
+# - Alliances BI dashboard (partner revenue waterfall)
+# - Automated MDF (Market Development Funds) allocation based on tier

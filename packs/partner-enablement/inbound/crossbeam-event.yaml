@@ -1,0 +1,110 @@
+# inbound/crossbeam-event.yaml
+# ---------------------------------------------------------------------------
+# Crossbeam overlap event inbound source.
+#
+# Crossbeam is the partner-ecosystem data platform that surfaces account
+# overlaps between your CRM and your partners' CRMs. When Crossbeam detects
+# a mutual "Customer" or "Opportunity" overlap it can fire a webhook.
+#
+# This source normalises the Crossbeam overlap payload into a deal-registration
+# record in pe_deal_registrations and emits partner.crossbeam.overlap_detected
+# to trigger the deal-reg-router agent.
+#
+# Mounting: POST /api/v1/packs/partner-enablement/inbound/crossbeam
+# Auth:     HMAC-SHA256 (X-Crossbeam-Signature header)
+# ---------------------------------------------------------------------------
+
+name: crossbeam-event
+kind: webhook_inbound
+version: "1.0.0"
+
+description: >
+  Receives Crossbeam account-overlap webhook events (mutual Opportunity or
+  Customer overlaps), validates HMAC signature, normalises to a
+  pe_deal_registrations record, and emits partner.crossbeam.overlap_detected
+  to trigger deal-reg-router.
+
+# --------------------------------------------------------------------------
+# HTTP endpoint
+# --------------------------------------------------------------------------
+endpoint:
+  path: /api/v1/packs/partner-enablement/inbound/crossbeam
+  method: POST
+  content_type: application/json
+
+# --------------------------------------------------------------------------
+# Signature verification
+# --------------------------------------------------------------------------
+auth:
+  kind: hmac_sha256
+  header: X-Crossbeam-Signature
+  secret_env: CROSSBEAM_WEBHOOK_SECRET
+  max_age_seconds: 300
+
+# --------------------------------------------------------------------------
+# Event filtering — only process Opportunity or Customer overlaps
+# --------------------------------------------------------------------------
+filters:
+  - field: "$.overlap_type"
+    operator: in
+    values:
+      - opportunity
+      - customer
+
+# --------------------------------------------------------------------------
+# Payload normalisation → pe_deal_registrations
+# --------------------------------------------------------------------------
+normalise:
+  source: "crossbeam"
+  # Partner is identified by Crossbeam partner_id → look up pe_partners.crossbeam_id
+  partner_lookup:
+    field: "$.partner.id"
+    table: pe_partners
+    match_column: crossbeam_id
+  account_name:    "$.account.name"
+  account_domain:  "$.account.domain"
+  source_deal_reg_id: "$.overlap_id"
+  notes: "Crossbeam overlap type: $.overlap_type. Partner population: $.partner_population_name."
+  source_payload: "_self"
+
+# --------------------------------------------------------------------------
+# Database write (insert; ignore duplicates on source + source_deal_reg_id)
+# --------------------------------------------------------------------------
+persist:
+  table: pe_deal_registrations
+  on_conflict: ["source", "source_deal_reg_id"]
+  action: ignore
+
+# --------------------------------------------------------------------------
+# Emit event
+# --------------------------------------------------------------------------
+emit:
+  event: partner.crossbeam.overlap_detected
+  target: agents/deal-reg-router.yaml
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  log_level: error
+  dead_letter_table: pe_inbound_dead_letter
+  notify_channel: "${PARTNER_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# Sample payload (from Crossbeam webhook docs)
+# --------------------------------------------------------------------------
+sample_payload: |
+  {
+    "overlap_id": "xb-overlap-abc123",
+    "overlap_type": "opportunity",
+    "account": {
+      "name": "Acme Corp",
+      "domain": "acme.com"
+    },
+    "partner": {
+      "id": "xb-partner-789",
+      "name": "GreatPartner Inc"
+    },
+    "partner_population_name": "Open Opportunities",
+    "created_at": "2026-05-01T10:00:00Z"
+  }
