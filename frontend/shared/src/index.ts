@@ -449,6 +449,55 @@ export interface InstallSkillPackResponse {
   pack_id: string;
   name: string;
   activation_status: 'pending';
+// ---- v1.3.x — HotL policy types -----------------------------------------
+
+/**
+ * One row in `hotl_policies` as returned by `GET /v1/hotl/policies` and
+ * `POST /v1/hotl/policies`.
+ */
+export interface HotlPolicy {
+  id: string;
+  tenant_id: string;
+  /** Action category (e.g. `"llm_call"`, `"email_send"`, `"webhook_invoke"`). */
+  scope: string;
+  /** Rolling window width in seconds. Must be > 0. */
+  window_seconds: number;
+  /** Maximum invocation count within the window. `null` = no count limit. */
+  max_count: number | null;
+  /** Maximum cumulative USD cost within the window. `null` = no cost limit. */
+  max_usd: number | null;
+  /** Escalation destination (IM channel / email). `null` = deny on breach. */
+  escalate_to: string | null;
+}
+
+/**
+ * Body for `POST /v1/hotl/policies` and `PUT /v1/hotl/policies/{id}`.
+ * At least one of `max_count` / `max_usd` must be non-null.
+ */
+export interface HotlPolicyCreateRequest {
+  tenant_id: string;
+  scope: string;
+  window_seconds: number;
+  max_count?: number | null;
+  max_usd?: number | null;
+  escalate_to?: string | null;
+}
+
+/** Body for `POST /v1/hotl/check`. */
+export interface HotlCheckRequest {
+  tenant_id: string;
+  scope: string;
+  /** Increment to record. Use 1.0 for count budget; pass USD cost for cost budget. */
+  amount: number;
+}
+
+export type HotlVerdictKind = 'allow' | 'escalate' | 'deny';
+
+/** Result of `POST /v1/hotl/check`. */
+export interface HotlVerdict {
+  verdict: HotlVerdictKind;
+  /** Non-null on `escalate` and `deny`, describing which limit was hit. */
+  reason: string | null;
 }
 
 // ---- Agent event stream --------------------------------------------------
@@ -777,6 +826,59 @@ export class XiaoguaiClient {
       `/v1/outcomes/timeseries?${params.toString()}`,
     );
   }
+
+  // ---- v1.3.x HotL policies -----------------------------------------------
+
+  /**
+   * List HOTL policies for a tenant. Returns 503 when `PgHotlPolicyStore`
+   * is not yet wired (store bridge pending).
+   */
+  listHotlPolicies(opts: { tenant_id: string; scope?: string }): Promise<HotlPolicy[]> {
+    const params = new URLSearchParams({ tenant_id: opts.tenant_id });
+    if (opts.scope) params.set('scope', opts.scope);
+    return this.request<HotlPolicy[]>('GET', `/v1/hotl/policies?${params.toString()}`);
+  }
+
+  /** Create a new HOTL policy. Returns 201 with the persisted row. */
+  createHotlPolicy(req: HotlPolicyCreateRequest): Promise<HotlPolicy> {
+    return this.request<HotlPolicy>('POST', '/v1/hotl/policies', req);
+  }
+
+  /** Full replacement of a HOTL policy by `id`. */
+  updateHotlPolicy(id: string, req: HotlPolicyCreateRequest): Promise<HotlPolicy> {
+    return this.request<HotlPolicy>('PUT', `/v1/hotl/policies/${encodeURIComponent(id)}`, req);
+  }
+
+  /**
+   * Delete a HOTL policy. Returns 204 (no body). Throws ApiError(404) when
+   * the id is unknown.
+   */
+  async deleteHotlPolicy(id: string): Promise<void> {
+    const resp = await this.fetchImpl(
+      `${this.baseUrl}/v1/hotl/policies/${encodeURIComponent(id)}`,
+      { method: 'DELETE', headers: this.headers() },
+    );
+    if (!resp.ok) {
+      let code = 'http_error';
+      let message = `HTTP ${resp.status}`;
+      try {
+        const parsed = (await resp.json()) as { code?: string; message?: string };
+        if (parsed.code) code = parsed.code;
+        if (parsed.message) message = parsed.message;
+      } catch { /* body was not JSON */ }
+      throw new ApiError(resp.status, code, message);
+    }
+  }
+
+  /**
+   * Check budget for `(tenant_id, scope)` and record the action.
+   * Returns `allow` / `escalate` / `deny` verdict.
+   */
+  checkHotlPolicy(req: HotlCheckRequest): Promise<HotlVerdict> {
+    return this.request<HotlVerdict>('POST', '/v1/hotl/check', req);
+  }
+
+  // ---- Streaming ----------------------------------------------------------
 
   /**
    * v1.3.x — raw list of outcome records for a tenant.
