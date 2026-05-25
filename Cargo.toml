@@ -138,7 +138,7 @@ tempfile = "3"
 # vulnerable protobuf 2.28 dep, RUSTSEC-2024-0437). We only use TextEncoder.
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
 xiaoguai-observability = { path = "crates/xiaoguai-observability" }
-opentelemetry = { version = "0.27", features = ["trace", "metrics"] }
+opentelemetry = { version = "0.32", features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace", "metrics"] }
 opentelemetry-otlp = { version = "0.27", features = ["tonic", "trace", "grpc-tonic"] }
 opentelemetry-semantic-conventions = "0.27"
