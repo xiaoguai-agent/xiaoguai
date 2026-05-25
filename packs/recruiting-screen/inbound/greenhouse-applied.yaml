@@ -1,0 +1,44 @@
+# inbound/greenhouse-applied.yaml
+#
+# Inbound webhook source — Greenhouse "candidate applied" event
+#
+# Greenhouse must be configured to send application webhooks to:
+#   POST https://<host>/v1/scheduler/webhooks/<route_id>
+#
+# Signature: Greenhouse signs with a Web Hook Secret Key (SHA256 HMAC over
+# the raw request body); verified against the `X-Grnhse-Signature` header.
+#
+# Docs: https://developers.greenhouse.io/webhooks/application-events
+
+name: greenhouse-applied
+kind: webhook
+ats_source: greenhouse
+
+route_id: "greenhouse-applied-${PACK_INSTANCE_ID}"
+
+event_filter:
+  header: "X-Grnhse-Event"
+  values: ["application_created", "application_updated"]
+
+payload_filter:
+  json_path: "$.payload.application.status"
+  values: ["active"]
+
+signature:
+  algorithm: hmac-sha256
+  header: "X-Grnhse-Signature"
+  prefix: ""     # Greenhouse sends the hex digest without a prefix
+  secret_env: GREENHOUSE_WEBHOOK_SECRET
+
+# Fields extracted from the Greenhouse payload and passed to the plan context.
+# Candidate name is NOT extracted — we use application_id as the opaque token.
+extract:
+  candidate_id:   "$.payload.application.id"           # opaque ATS ID, never a name
+  job_id:         "$.payload.application.jobs[0].id"
+  job_title:      "$.payload.application.jobs[0].name"
+  resume_url:     "$.payload.application.attachments[?(@.type=='resume')].url"
+  ats_source:     "'greenhouse'"                        # literal constant
+
+requires:
+  env:
+    - GREENHOUSE_WEBHOOK_SECRET

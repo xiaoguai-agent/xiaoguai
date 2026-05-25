@@ -1,0 +1,66 @@
+# inbound/email-cv-ingest.yaml
+#
+# Inbound source — email CV ingest
+#
+# Handles plain CV submissions forwarded to a designated ingest mailbox
+# (e.g. careers@example.com) via an SMTP-to-webhook bridge or a
+# SendGrid/Mailgun inbound parse webhook.
+#
+# The ingest adapter:
+#   1. Strips the sender name/email (stores only an opaque ingest_id).
+#   2. Extracts the first PDF/DOCX attachment as the resume document.
+#   3. Attempts to infer job_id from the Subject line using a regex
+#      (e.g. "Application for [Job ID: ENG-042]"); falls back to "UNKNOWN".
+#
+# Because the sender email IS a personally-identifiable field it is hashed
+# (SHA-256) to produce the candidate_id token and the plain email is dropped.
+
+name: email-cv-ingest
+kind: email-ingest
+
+route_id: "email-cv-${PACK_INSTANCE_ID}"
+
+mailbox_env: RECRUITING_INGEST_EMAIL    # e.g. careers@example.com
+
+# Provider options: sendgrid-inbound | mailgun-inbound | smtp-bridge
+provider_env: EMAIL_INGEST_PROVIDER
+
+signature:
+  # SendGrid / Mailgun provide their own HMAC verification header.
+  algorithm: hmac-sha256
+  header: "X-Twilio-Email-Event-Webhook-Signature"   # SendGrid header
+  secret_env: EMAIL_INGEST_WEBHOOK_SECRET
+
+extract:
+  # candidate_id is SHA-256 of sender email — never the plain address.
+  candidate_id:
+    transform: sha256
+    source: "$.envelope.from"
+  # job_id parsed from subject line; regex group 1 = job ID token.
+  job_id:
+    transform: regex
+    source: "$.subject"
+    pattern: '\[Job\s+ID:\s*([A-Z0-9-]+)\]'
+    fallback: "UNKNOWN"
+  job_title:
+    transform: regex
+    source: "$.subject"
+    pattern: 'Application for\s+(.+?)(?:\s*\[|$)'
+    fallback: "Unknown Role"
+  # First PDF or DOCX attachment.
+  resume_url:
+    source: "$.attachments[?(@.type=~/(application\\/pdf|application\\/vnd.openxmlformats)/)].url"
+    index: 0
+  ats_source: "'email'"
+
+# If no resume attachment is found, discard silently and write audit entry.
+on_no_attachment:
+  action: discard
+  audit_table: recruiting_ingest_discards
+  reason: "no_resume_attachment"
+
+requires:
+  env:
+    - RECRUITING_INGEST_EMAIL
+    - EMAIL_INGEST_PROVIDER
+    - EMAIL_INGEST_WEBHOOK_SECRET

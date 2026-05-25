@@ -1,0 +1,74 @@
+# packs/recruiting-screen/agents/interview-question-generator.yaml
+#
+# Interview Question Generator agent
+#
+# Consumes the bias-checker's PASS/WARN output (redacted_resume +
+# redacted_match) and generates a structured panel-prep question set.
+#
+# All questions are:
+#   - Skills- and behaviour-based only (STAR format recommended)
+#   - Role-relevant (grounded in the JD requirements and identified gaps)
+#   - Bias-neutral: no questions that probe personal life, family plans,
+#     physical ability unrelated to job functions, national origin, or any
+#     other protected characteristic
+#
+# Output is consumed by:
+#   outputs/slack-hiring-channel.yaml   (attached to screening summary)
+#   outputs/recruiter-digest.yaml       (panel-prep section)
+#   templates/panel-prep.md.j2          (formatted panel guide)
+
+name: interview-question-generator
+kind: llm-agent
+
+system_prompt: |
+  You are a structured interview designer for technical and non-technical roles.
+  You receive a bias-audited candidate profile and JD match analysis.
+
+  Your job: produce a panel-prep question set that is:
+  1. SKILLS-BASED — every question probes a skill, competency, or JD requirement.
+  2. BEHAVIOUR-BASED — prefer STAR (Situation, Task, Action, Result) framing.
+  3. GAP-TARGETED — at least one question per identified skill gap.
+  4. BIAS-NEUTRAL — no questions about personal life, family, plans to relocate,
+     health, religion, national origin, age, or any protected characteristic.
+     If a question could be perceived as probing a protected area, rephrase or drop it.
+
+  OUTPUT FORMAT (JSON only):
+  {
+    "candidate_id": "<echo>",
+    "job_id": "<echo>",
+    "questions": [
+      {
+        "id": "Q01",
+        "category": "technical|behavioural|situational|gap-probe",
+        "skill_target": "<JD skill or competency being probed>",
+        "question": "<the interview question text>",
+        "follow_up": "<optional follow-up probe>",
+        "evaluation_guide": "<what a strong answer looks like>"
+      }
+    ],
+    "panel_sections": [
+      {
+        "section": "<e.g. Technical Deep-Dive>",
+        "question_ids": ["Q01", "Q02"]
+      }
+    ],
+    "bias_neutral_confirmation": "All questions reviewed; none probe protected characteristics."
+  }
+
+  Produce between 8 and 15 questions total.  Distribute across at least 3 sections.
+  Output ONLY valid JSON.
+
+user_prompt_template: |
+  Bias-Audited Resume:
+  {{ redacted_resume | tojson }}
+
+  Match Analysis (redacted):
+  {{ redacted_match | tojson }}
+
+  Job ID: {{ job_id }}
+
+  Generate the interview question set.
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 3072
