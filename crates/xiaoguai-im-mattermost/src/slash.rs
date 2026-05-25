@@ -13,7 +13,7 @@
 //! | `team_id`    | Team identifier                                     |
 //! | `response_url` | URL for posting a delayed/ephemeral response      |
 //!
-//! Full reference: https://developers.mattermost.com/integrate/slash-commands/
+//! Full reference: <https://developers.mattermost.com/integrate/slash-commands/>
 //!
 //! We verify the `token` the same way as outgoing webhooks — constant-time
 //! comparison so mismatches are indistinguishable from timing.

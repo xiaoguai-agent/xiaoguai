@@ -7,7 +7,7 @@
 //! constant-time comparison before touching any other field so a mis-configured
 //! or malicious peer cannot probe the parser behaviour.
 //!
-//! Full field list: https://developers.mattermost.com/integrate/webhooks/outgoing/
+//! Full field list: <https://developers.mattermost.com/integrate/webhooks/outgoing/>
 //!
 //! Fields we care about (all others are forwarded as-is to the caller):
 //!
@@ -163,9 +163,10 @@ mod tests {
     fn text_with_plus_encoding_is_decoded() {
         let body = format!("token={TOKEN}&channel_id=c&user_name=u&text=hello+there");
         let webhook = make_webhook(&body);
-        match parse(&webhook, TOKEN).expect("ok") {
-            ImEvent::Message(m) => assert_eq!(m.text, "hello there"),
-            _ => panic!(),
+        if let ImEvent::Message(m) = parse(&webhook, TOKEN).expect("ok") {
+            assert_eq!(m.text, "hello there");
+        } else {
+            panic!("unexpected event variant");
         }
     }
 }
