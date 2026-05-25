@@ -13,6 +13,7 @@ import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { OutcomesPane } from './panes/Outcomes';
 import { SkillPacksPane } from './panes/SkillPacks';
 import { HotlPoliciesPane } from './panes/HotlPolicies';
+import { AnomalyPane } from './panes/Anomaly';
 
 /**
  * v0.11.1 — audit-first console. `Today` becomes the default landing
@@ -43,6 +44,11 @@ export function App() {
           {t('pane.outcomes.nav_outcomes')}
         </NavLink>
         <div className="nav-section">{t('nav.manage')}</div>
+        {/* v1.4: Anomaly detector dashboard (planned endpoint; degrades gracefully). */}
+        <NavLink to="/anomaly" className={({ isActive }) => (isActive ? 'active' : '')}>
+          {t('nav.anomaly')}
+        </NavLink>
+        <div className="nav-section">Manage</div>
         <NavLink to="/tenants" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.tenants')}
         </NavLink>
@@ -74,6 +80,7 @@ export function App() {
           <Route path="/eval" element={<EvalPane />} />
           <Route path="/usage" element={<UsagePane />} />
           <Route path="/outcomes" element={<OutcomesPane />} />
+          <Route path="/anomaly" element={<AnomalyPane />} />
           <Route path="/marketplace" element={<MarketplacePane />} />
           <Route path="/skills" element={<SkillPacksPane />} />
           <Route path="/mcp-servers" element={<McpServersPane />} />
