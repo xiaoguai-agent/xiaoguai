@@ -1,0 +1,49 @@
+---
+# outputs/instructor-email-digest.yaml
+#
+# Instructor Email Digest output connector.
+#
+# Renders the instructor-weekly-digest template and delivers it to the
+# course instructor via email (SMTP) and/or the configured IM adapter.
+#
+# Triggered by: instructor-digest-writer agent (weekly schedule)
+
+output: instructor-email-digest
+
+# ── Email delivery ─────────────────────────────────────────────────────────────
+
+email:
+  smtp_host:     ${SMTP_HOST}
+  smtp_port:     ${SMTP_PORT:-587}
+  smtp_user:     ${SMTP_USER}
+  smtp_password: ${SMTP_PASSWORD}
+  from_address:  ${DIGEST_FROM_ADDRESS:-training-feedback@example.com}
+
+  # Recipient resolved from instructor_id → instructor email via
+  # outcome-telemetry instructor lookup.
+  to_address_source: outcome_telemetry_instructor_email
+
+  subject_template: "[Training Feedback] Weekly Digest — {{ course_id }} / {{ cohort_id }}"
+  body_template:    templates/instructor-weekly-digest.md.j2
+  content_type:     text/markdown   # most email clients render Markdown acceptably;
+                                    # HTML rendering is a deferred enhancement
+
+# ── IM delivery (optional) ─────────────────────────────────────────────────────
+
+im:
+  # If an IM adapter is configured, also send a condensed version to the
+  # instructor's DM.  Full digest always goes via email.
+  enabled: ${DIGEST_IM_ENABLED:-false}
+  channel_source: outcome_telemetry_instructor_im_handle
+
+  # Condensed IM message: wins count + issues count + first quick-win.
+  message_template: |
+    **[Feedback Digest] {{ course_id }} — {{ cohort_id }}**
+    {{ digest.wins | length }} wins · {{ digest.issues | length }} issues · {{ digest.quick_wins | length }} quick-wins
+    Top quick-win: {{ digest.quick_wins[0].action | default("none this week") }}
+    Full digest sent to your email.
+
+# ── Deferred ────────────────────────────────────────────────────────────────
+# - HTML email rendering with styled tables
+# - Digest read-receipt tracking
+# - In-app notification (LMS portal push)

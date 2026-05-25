@@ -1,0 +1,84 @@
+---
+# agents/theme-aggregator.yaml
+#
+# Theme Aggregator
+#
+# Input:  classified survey_responses for a course + cohort window.
+# Output: upserted rows in course_themes (is_current = true for latest run;
+#         previous runs flipped to is_current = false for trend tracking).
+#
+# Triggered after response-classifier completes for a cohort batch, and
+# also on-demand when the cohort_lookback_weeks window advances.
+
+name: theme-aggregator
+kind: worker
+description: >
+  Clusters classified survey_responses across one or more cohorts into
+  stable course_themes.  Groups responses by (course_id, theme_label),
+  computes sentiment distribution, selects up to three representative
+  quotes per theme, and writes results to course_themes.  Only themes
+  with at least min_responses_per_theme responses are persisted; sparse
+  signals are discarded to avoid noise in downstream agents.
+
+llm:
+  model: ${TRAINING_AGGREGATOR_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 1024
+
+# ── Aggregation query ─────────────────────────────────────────────────────────
+#
+# The agent first runs this SQL to gather raw counts, then asks the LLM to
+# select representative quotes and assign a human-readable theme summary.
+
+aggregation_query: |
+  SELECT
+    theme_label,
+    COUNT(*)                                      AS response_count,
+    COUNT(*) FILTER (WHERE sentiment = 'positive') AS positive_count,
+    COUNT(*) FILTER (WHERE sentiment = 'neutral')  AS neutral_count,
+    COUNT(*) FILTER (WHERE sentiment = 'negative') AS negative_count,
+    ARRAY_AGG(answer_text ORDER BY confidence DESC) FILTER (
+      WHERE answer_type = 'free_text' AND confidence >= 0.75
+    )                                             AS candidate_quotes
+  FROM survey_responses
+  WHERE course_id = :course_id
+    AND cohort_id = ANY(:cohort_ids)
+    AND theme_label IS NOT NULL
+  GROUP BY theme_label
+  HAVING COUNT(*) >= :min_responses_per_theme
+
+system_prompt: |
+  You are a training programme analyst.  Given aggregated theme data, select
+  the three most informative representative quotes and assign a category.
+
+  Category values:
+    content    — what is taught (topics, depth, relevance, exercises)
+    delivery   — how it is taught (pacing, engagement, clarity of instruction)
+    logistics  — scheduling, platform access, room/technology issues
+    support    — docs, recordings, office-hours, peer interaction
+    assessment — quizzes, exams, grading fairness
+
+  Respond ONLY with valid JSON.
+
+  Response schema:
+  {
+    "category": "<category>",
+    "representative_quotes": ["quote1", "quote2", "quote3"]
+  }
+
+user_prompt: |
+  Course: {{ course_id }}
+  Theme: {{ theme_label }}
+  Response count: {{ response_count }}
+  Sentiment distribution: positive={{ positive_count }}, neutral={{ neutral_count }}, negative={{ negative_count }}
+
+  Candidate quotes (highest-confidence first):
+  {% for q in candidate_quotes[:10] %}
+  - {{ q | truncate(200) }}
+  {% endfor %}
+
+  Select up to 3 representative quotes and assign a category.
+
+on_failure:
+  propagate: false
+  audit: true
