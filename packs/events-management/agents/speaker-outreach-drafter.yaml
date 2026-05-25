@@ -1,0 +1,182 @@
+# packs/events-management/agents/speaker-outreach-drafter.yaml
+#
+# Speaker Outreach Drafter Agent
+#
+# Subscribes to:
+#   inbound/sessionize-cfp            — newly accepted CFP submissions
+#   inbound/calendly-speaker-confirm  — speaker confirmed via Calendly link
+#
+# For each accepted session, drafts a personalised outreach email grounded in:
+#   - The speaker's bio and company
+#   - The session title, theme, and format
+#   - The event name and dates
+#   - Any prior outreach history (to avoid duplicate sends)
+#
+# All drafts are HOTL-gated: the agent writes to content_reviews with
+# status = 'pending_approval' and notifies the event team for review before
+# any email is sent.
+
+name: speaker-outreach-drafter
+kind: worker
+
+description: >
+  Drafts personalised speaker invitation or confirmation emails. Grounds
+  each draft in the speaker's bio and session theme to avoid generic
+  copy-paste. Zero autonomous sends — all drafts require human approval.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - kind: inbound
+    sources:
+      - sessionize-cfp
+      - calendly-speaker-confirm
+  # Also triggered manually by the event team via the admin UI.
+  - kind: manual
+    label: "Draft outreach for speaker"
+
+# --------------------------------------------------------------------------
+# LLM settings
+# --------------------------------------------------------------------------
+llm:
+  model: ${OUTREACH_LLM_MODEL:-default}
+  temperature: 0.6    # some creativity; personalisation matters here
+  max_tokens: 1024
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a professional event coordinator drafting speaker outreach emails.
+  Your goal is to write warm, specific, and concise emails that make each
+  speaker feel valued and personally invited — not mass-mailed.
+
+  Rules:
+  - Address the speaker by first name.
+  - Reference at least one specific detail from their bio or expertise tags
+    that is directly relevant to the session theme.
+  - Keep the email under 250 words.
+  - Do not invent facts about the event (dates, venue, format) — use only
+    the data provided in the context.
+  - For invitation emails: include the Calendly confirmation link.
+  - For confirmation emails: include the speaker resource portal URL and
+    slide submission deadline.
+  - Output ONLY the email body (no subject line in the body; subject is
+    rendered separately from the template subject field).
+  - If the speaker has previously been contacted, acknowledge it naturally
+    ("Following up on our earlier note…").
+
+# --------------------------------------------------------------------------
+# Context steps (executed before the LLM prompt)
+# --------------------------------------------------------------------------
+context_steps:
+  - id: speaker_profile
+    description: "Speaker bio, company, expertise tags, and prior outreach history"
+    tool: lookup_speaker
+    params:
+      speaker_id: "{{ speaker_id }}"
+
+  - id: session_details
+    description: "Session title, abstract, theme, format, and event dates"
+    tool: lookup_session
+    params:
+      session_id: "{{ session_id }}"
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: lookup_speaker
+    description: >
+      Fetch speaker name, email, bio, company, expertise_tags, and the last
+      outreach status + sent_at timestamp.
+    kind: sql
+    query: |
+      SELECT
+          sp.id,
+          sp.name,
+          sp.email,
+          sp.bio,
+          sp.company,
+          sp.expertise_tags,
+          sp.outreach_status,
+          sp.confirmed_at,
+          sp.calendly_link
+      FROM speakers sp
+      WHERE sp.id = '{speaker_id}'
+
+  - name: lookup_session
+    description: >
+      Fetch session title, abstract, theme, format, and the parent event's
+      name, start date, end date, and venue.
+    kind: sql
+    query: |
+      SELECT
+          s.id         AS session_id,
+          s.title,
+          s.abstract,
+          s.theme,
+          s.format,
+          s.duration_min,
+          e.name       AS event_name,
+          e.starts_at,
+          e.ends_at,
+          e.venue
+      FROM sessions s
+      JOIN events e ON e.id = s.event_id
+      WHERE s.id = '{session_id}'
+
+  - name: render_outreach_email
+    description: >
+      Render the speaker-outreach-email template with the LLM-drafted body
+      and session/speaker metadata.
+    kind: template
+    templates:
+      invitation:   templates/speaker-outreach-email.md.j2
+      confirmation: templates/speaker-outreach-email.md.j2
+
+  - name: save_draft
+    description: >
+      Save the rendered draft to the speakers table (outreach_status =
+      'invited') and write a content_reviews row for human approval.
+      Returns the content_reviews id.
+    kind: sql
+    query: |
+      WITH upd AS (
+          UPDATE speakers
+          SET    outreach_status = 'invited',
+                 updated_at      = NOW()
+          WHERE  id = '{speaker_id}'
+          RETURNING id
+      )
+      INSERT INTO content_reviews
+          (session_id, reviewer_agent, pass_status, feedback)
+      VALUES
+          ('{session_id}', 'speaker-outreach-drafter',
+           'pending', '{feedback_json}')
+      RETURNING id
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    send_email: 0
+  require_human_approval:
+    - render_outreach_email
+  notify_channel: "${EVENTS_HOTL_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# Outcome telemetry (F3)
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - draft_created
+    - draft_approved
+    - draft_rejected
+    - email_sent
+    - speaker_confirmed
+    - speaker_declined
+  feedback_table: content_reviews

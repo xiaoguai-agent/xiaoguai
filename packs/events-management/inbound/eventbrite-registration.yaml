@@ -1,0 +1,61 @@
+---
+# Inbound source — Eventbrite registration webhook
+#
+# Eventbrite delivers attendee.registered events via POST to the configured
+# endpoint URL. Payload follows the Eventbrite Webhooks v3 schema
+# (https://www.eventbrite.com/platform/api#/reference/webhooks).
+#
+# Mounting: POST /v1/events/inbound/eventbrite/{route_id}
+# Auth:     Per-tenant bearer token (scheduler_webhook_tokens table).
+#           Eventbrite does not sign payloads with HMAC; rely on bearer auth.
+
+name: eventbrite-registration
+kind: webhook
+
+route_prefix: /v1/events/inbound/eventbrite
+
+# Only handle attendee.registered actions; ignore attendee.updated, order.refunded, etc.
+event_filter:
+  json_path: "$.config.action"
+  values:
+    - attendee.registered
+
+# Fields extracted from the Eventbrite payload and mapped onto the registrations schema.
+normalize:
+  field_map:
+    # registrations.external_id: Eventbrite attendee ID
+    external_id:    "$.api_url"   # URL contains attendee ID; parsed by adapter
+    # events.external_id: Eventbrite event ID
+    event_external_id: "$.config.event_id"
+    # registrant name: Eventbrite splits into first/last
+    name:           "$.attendee.profile.name"
+    email:          "$.attendee.profile.email"
+    # tier: default general; VIP detection done by registration-triage
+    tier:           _const:general
+    # raw payload preserved for agent context
+    raw:            _self
+
+# Sample payload (from Eventbrite docs — used in tests)
+sample_payload: |
+  {
+    "api_url": "https://www.eventbriteapi.com/v3/events/123456/attendees/987654321/",
+    "config": {
+      "action": "attendee.registered",
+      "endpoint_url": "https://example.com/webhooks",
+      "event_id": "123456",
+      "user_id": "111222333"
+    },
+    "attendee": {
+      "profile": {
+        "name": "Jane Smith",
+        "email": "jane.smith@example.com",
+        "first_name": "Jane",
+        "last_name": "Smith"
+      },
+      "answers": []
+    }
+  }
+
+# Deferred:
+#   - Honour Eventbrite order.refunded to cancel registrations automatically
+#   - Pull custom question answers (dietary / accessibility) from attendee.answers

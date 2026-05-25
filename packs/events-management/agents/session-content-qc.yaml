@@ -1,0 +1,194 @@
+# packs/events-management/agents/session-content-qc.yaml
+#
+# Session Content QC Agent
+#
+# Subscribes to:
+#   events.session_content_review_overdue  — watch fires when review is late
+#   inbound/sessionize-cfp                 — new slide_url submitted by speaker
+#
+# For each session with a slide_url, the agent:
+#   1. Fetches the slide deck (URL → text extraction).
+#   2. Reviews slides for: clarity, completeness, and brand alignment.
+#   3. Reviews the abstract for: accuracy to slides, polish, and length.
+#   4. Scores each dimension 0–100.
+#   5. Generates structured, actionable feedback.
+#   6. Writes a content_reviews row (approved | needs_revision).
+#   7. Posts feedback to the speaker via session-content-feedback template.
+#
+# Thresholds: slide_score >= 70 AND abstract_score >= 70 AND brand_score >= 70
+# = 'approved'. Any score below 70 = 'needs_revision'.
+
+name: session-content-qc
+kind: worker
+
+description: >
+  Reviews session slides and abstract for clarity, completeness, and brand
+  alignment. Scores each dimension 0–100. Generates structured feedback for
+  speakers. Writes approved or needs_revision to content_reviews.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: events.session_content_review_overdue
+    source: session-content-review-overdue
+  - kind: inbound
+    sources:
+      - sessionize-cfp     # fires when a new slide_url is submitted
+
+# --------------------------------------------------------------------------
+# LLM settings
+# --------------------------------------------------------------------------
+llm:
+  model: ${QC_LLM_MODEL:-default}
+  temperature: 0.1    # near-deterministic scoring
+  max_tokens: 2048
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a senior content quality reviewer for a professional tech conference.
+  You will receive the text content of a speaker's slide deck and session
+  abstract. Your job is to score and provide actionable feedback.
+
+  Scoring rubric (0–100 for each dimension):
+
+  SLIDES (slide_score)
+  - 90–100: Excellent. Clear narrative, every slide has a purpose, visuals
+    support the message, no walls of text, smooth transitions.
+  - 70–89:  Good. Minor issues (occasional text overload, one unclear slide).
+  - 50–69:  Needs work. Multiple unclear slides, weak narrative arc, or
+    significant text overload.
+  - 0–49:   Major revision required. Missing key sections, confusing structure.
+
+  ABSTRACT (abstract_score)
+  - 90–100: Compelling, accurate to slide content, correct length (100–300 words),
+    strong opening hook.
+  - 70–89:  Mostly accurate, adequate length, minor polish needed.
+  - 50–69:  Inaccurate to slides, too short/long, or generic.
+  - 0–49:   Misleading, absent, or completely disconnected from slides.
+
+  BRAND ALIGNMENT (brand_score)
+  - 90–100: Follows brand guidelines (font, colours, logo placement, tone).
+  - 70–89:  Minor deviations (one off-brand slide, font inconsistency).
+  - 50–69:  Multiple off-brand elements or missing logo.
+  - 0–49:   No adherence to brand guidelines.
+
+  Output ONLY valid JSON matching this schema:
+  {
+    "slide_score":     <int 0-100>,
+    "abstract_score":  <int 0-100>,
+    "brand_score":     <int 0-100>,
+    "pass_status":     "approved" | "needs_revision",
+    "feedback": {
+      "slides":    ["<actionable item>", ...],
+      "abstract":  ["<actionable item>", ...],
+      "brand":     ["<actionable item>", ...]
+    },
+    "summary": "<1-2 sentence overall assessment for the speaker>"
+  }
+
+  Rules:
+  - Be specific and constructive. "Slide 4 has 12 bullet points; aim for ≤ 5"
+    is good feedback. "Slides need work" is not.
+  - If slide_url is missing, set all scores to 0, pass_status to
+    'needs_revision', and instruct the speaker to upload slides.
+  - Brand guideline reference: ${BRAND_GUIDELINES_URL:-not configured}.
+    If not configured, skip brand scoring (set brand_score = null).
+
+# --------------------------------------------------------------------------
+# Context steps
+# --------------------------------------------------------------------------
+context_steps:
+  - id: slide_content
+    description: "Extract text content from the slide deck URL"
+    tool: fetch_slides
+    params:
+      slide_url: "{{ session.slide_url }}"
+    max_chars: 8000    # keep token budget reasonable
+
+  - id: session_meta
+    description: "Session title, abstract, theme, and speaker bio"
+    tool: lookup_session_for_qc
+    params:
+      session_id: "{{ session_id }}"
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: fetch_slides
+    description: >
+      Downloads the slide deck from the given URL and extracts plain text
+      (PDF text extraction or Google Slides export). Returns extracted text
+      truncated to max_chars. Returns an error string if URL is unreachable
+      or format unsupported.
+    kind: http_fetch
+    allowed_mime_types:
+      - application/pdf
+      - application/vnd.google-apps.presentation
+      - application/vnd.openxmlformats-officedocument.presentationml.presentation
+
+  - name: lookup_session_for_qc
+    description: >
+      Fetch session title, abstract, theme, format, and the speaker's name
+      and bio for QC context.
+    kind: sql
+    query: |
+      SELECT
+          s.id,
+          s.title,
+          s.abstract,
+          s.theme,
+          s.format,
+          s.slide_url,
+          sp.name    AS speaker_name,
+          sp.email   AS speaker_email,
+          sp.bio     AS speaker_bio
+      FROM sessions s
+      LEFT JOIN speakers sp ON sp.session_id = s.id
+      WHERE s.id = '{session_id}'
+
+  - name: write_review
+    description: >
+      Insert a content_reviews row with the QC scores and feedback JSON.
+      Returns the review id.
+    kind: sql
+    query: |
+      INSERT INTO content_reviews
+          (session_id, reviewer_agent, pass_status,
+           slide_score, abstract_score, brand_score, feedback, llm_raw,
+           reviewed_at)
+      VALUES
+          ('{session_id}', 'session-content-qc', '{pass_status}',
+           {slide_score}, {abstract_score}, {brand_score},
+           '{feedback_json}', '{llm_raw}', NOW())
+      RETURNING id
+
+  - name: send_feedback
+    description: >
+      Render the session-content-feedback template and dispatch to the
+      speaker via marketing-personalized-email output.
+    kind: template
+    template: templates/session-content-feedback.md.j2
+    output: outputs/marketing-personalized-email.yaml
+
+# --------------------------------------------------------------------------
+# Approval thresholds
+# --------------------------------------------------------------------------
+approval_thresholds:
+  slide_score:    70
+  abstract_score: 70
+  brand_score:    70    # if brand_guidelines_url not set, ignored
+
+# --------------------------------------------------------------------------
+# HOTL — feedback emails are sent autonomously (not gated) since they are
+# constructive and non-financial. Only 'approved' triggers
+# speaker-resource-portal-update (human reviews that separately).
+# --------------------------------------------------------------------------
+hotl:
+  autonomous_actions:
+    send_feedback_email: unlimited
+    update_portal: 0    # human must approve portal update
+  notify_channel: "${EVENTS_HOTL_CHANNEL:-admin_ui}"

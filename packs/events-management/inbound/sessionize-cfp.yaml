@@ -1,0 +1,75 @@
+---
+# Inbound source — Sessionize CFP webhook
+#
+# Sessionize delivers session.status_changed events when a session is
+# accepted, rejected, or updated by the programme committee.
+# Payload follows the Sessionize Webhooks v1 schema.
+#
+# Mounting: POST /v1/events/inbound/sessionize/{route_id}
+# Auth:     Per-tenant bearer token. Sessionize does not sign payloads.
+#
+# On acceptance, the adapter:
+#   1. Upserts the session into the sessions table.
+#   2. Upserts the speaker into the speakers table.
+#   3. Triggers registration-triage for the speaker's own registration.
+#   4. Triggers speaker-outreach-drafter for the invitation email.
+
+name: sessionize-cfp
+kind: webhook
+
+route_prefix: /v1/events/inbound/sessionize
+
+# Only handle sessions that have been accepted by the programme committee
+event_filter:
+  json_path: "$.session.status"
+  values:
+    - Accepted
+
+normalize:
+  field_map:
+    # sessions table fields
+    session_external_id: "$.session.id"
+    session_title:        "$.session.title"
+    session_abstract:     "$.session.description"
+    session_format:       "$.session.format"
+    session_theme:        "$.session.categories[0].name"
+    slide_url:            "$.session.links[?(@.linkType=='Presentation')].url"
+
+    # speakers table fields
+    speaker_name:         "$.session.speakers[0].fullName"
+    speaker_email:        "$.session.speakers[0].email"
+    speaker_bio:          "$.session.speakers[0].bio"
+    speaker_company:      "$.session.speakers[0].tagLine"
+    speaker_expertise:    "$.session.speakers[0].categories"
+
+    # raw payload
+    raw: _self
+
+sample_payload: |
+  {
+    "session": {
+      "id": "sz-session-001",
+      "title": "Building Reliable Multi-Agent Systems",
+      "description": "A deep dive into orchestrating LLM agents at production scale.",
+      "status": "Accepted",
+      "format": "talk",
+      "categories": [{"name": "Architecture"}],
+      "links": [
+        {"linkType": "Presentation", "url": "https://slides.example.com/talk.pdf"}
+      ],
+      "speakers": [
+        {
+          "fullName": "Dr. Alice Chen",
+          "email": "alice@example.com",
+          "bio": "Principal engineer at AgentCo with 10 years building distributed systems.",
+          "tagLine": "AgentCo",
+          "categories": ["distributed-systems", "llm", "architecture"]
+        }
+      ]
+    }
+  }
+
+# Deferred:
+#   - Sessionize session.rejected to update sessions.status = 'rejected'
+#   - Bulk import via Sessionize REST API (GET /api/v2/{apiKey}/sessions)
+#     for initial programme setup
