@@ -1,0 +1,174 @@
+# Agent definition — fairness-auditor
+# ---------------------------------------------------------------------------
+# Triggered by revops.quarterly_planning (inbound: quarterly-planning-trigger)
+# and on a monthly cron.
+#
+# The agent:
+#   1. Loads all reps' quota_usd values for the current period.
+#   2. Computes the Gini coefficient on the quota distribution.
+#   3. Computes P10 / P50 / P90 quota percentiles.
+#   4. Flags inequity when Gini > threshold (default 0.25).
+#   5. Renders a fairness-report template.
+#   6. If inequity is flagged, routes fairness-alert-to-vp-sales output.
+#   7. Writes to rt_fairness_audit.
+#
+# HOTL: fully read-only analysis — no autonomous writes to quota or
+#        assignments. Alerts to VP Sales are autonomous (informational only).
+# ---------------------------------------------------------------------------
+
+name: fairness-auditor
+version: "1.0.0"
+description: >
+  Computes Gini coefficient on quota distribution across reps. Flags
+  inequity when Gini exceeds threshold (default 0.25) and alerts VP Sales.
+  Fully read-only — produces analysis and alerts, no assignment changes.
+
+triggers:
+  - event: revops.quarterly_planning
+    source: quarterly-planning-trigger
+  # Monthly standing audit (independent of planning cycle)
+  schedule:
+    cron: "0 8 1 * *"   # 08:00 UTC on the 1st of every month
+
+llm:
+  model: ${REVOPS_AUDITOR_LLM_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 3072
+
+system_prompt: |
+  You are a RevOps fairness analyst. You receive quota distribution data
+  and must assess equity, explain the Gini coefficient in plain language,
+  and recommend concrete actions to improve fairness.
+
+  Gini coefficient interpretation:
+    < 0.15  — highly equitable, no action needed
+    0.15–0.25 — moderate variation, monitor
+    0.25–0.40 — notable inequity, flag and recommend adjustments
+    > 0.40  — severe inequity, escalate immediately
+
+  Output ONLY valid JSON matching FairnessReport schema.
+
+  FairnessReport schema:
+  {
+    "audit_period":         "string (e.g. 2026-Q2)",
+    "gini_coefficient":     0.0000,
+    "p10_quota_usd":        0.00,
+    "p50_quota_usd":        0.00,
+    "p90_quota_usd":        0.00,
+    "rep_count":            0,
+    "flagged_inequity":     true,
+    "severity":             "none | monitor | flag | escalate",
+    "plain_language_summary": "string",
+    "per_rep_deltas": [
+      {
+        "rep_id":        "string",
+        "rep_name":      "string",
+        "quota_usd":     0.00,
+        "delta_from_p50": 0.00,
+        "delta_pct":     0.0
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action":    "string",
+        "rationale": "string",
+        "priority":  "P0 | P1 | P2"
+      }
+    ]
+  }
+
+tools:
+  - name: load_quota_distribution
+    description: >
+      Fetch all active reps' quota_usd and attainment for the tenant.
+      Returns rep_id, rep_name, quota_usd, attainment_usd, attainment_pct.
+    kind: sql
+    query: |
+      SELECT
+          rep_id,
+          rep_name,
+          quota_usd,
+          attainment_usd,
+          attainment_pct,
+          territory_id
+      FROM rt_rep_capacity
+      WHERE tenant_id = '{tenant_id}'
+        AND is_active  = TRUE
+        AND quota_usd IS NOT NULL
+      ORDER BY quota_usd DESC
+
+  - name: compute_gini
+    description: >
+      Compute Gini coefficient directly in the database for precision.
+      Returns a single row with gini, p10, p50, p90.
+    kind: sql
+    query: |
+      WITH ordered AS (
+          SELECT
+              quota_usd,
+              ROW_NUMBER() OVER (ORDER BY quota_usd) AS rnk,
+              COUNT(*)     OVER ()                   AS n,
+              SUM(quota_usd) OVER ()                 AS total
+          FROM rt_rep_capacity
+          WHERE tenant_id = '{tenant_id}'
+            AND is_active  = TRUE
+            AND quota_usd IS NOT NULL
+      ),
+      gini_calc AS (
+          SELECT
+              1 - (2.0 * SUM((n - rnk + 1) * quota_usd) / (n * total)) AS gini_coefficient,
+              COUNT(*)                                                    AS rep_count,
+              SUM(quota_usd)                                              AS total_quota
+          FROM ordered
+      )
+      SELECT
+          ROUND(g.gini_coefficient::NUMERIC, 4) AS gini_coefficient,
+          g.rep_count,
+          g.total_quota,
+          PERCENTILE_CONT(0.10) WITHIN GROUP (ORDER BY rc.quota_usd) AS p10_quota_usd,
+          PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY rc.quota_usd) AS p50_quota_usd,
+          PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY rc.quota_usd) AS p90_quota_usd
+      FROM gini_calc g
+      CROSS JOIN rt_rep_capacity rc
+      WHERE rc.tenant_id = '{tenant_id}'
+        AND rc.is_active  = TRUE
+        AND rc.quota_usd IS NOT NULL
+      GROUP BY g.gini_coefficient, g.rep_count, g.total_quota
+
+  - name: save_audit_record
+    description: >
+      Write the completed FairnessReport to rt_fairness_audit.
+    kind: sql
+    query: |
+      INSERT INTO rt_fairness_audit
+          (tenant_id, audit_period, gini_coefficient,
+           p10_quota_usd, p50_quota_usd, p90_quota_usd,
+           rep_count, flagged_inequity, inequity_details, recommended_actions)
+      VALUES
+          ('{tenant_id}', '{audit_period}', {gini_coefficient},
+           {p10_quota_usd}, {p50_quota_usd}, {p90_quota_usd},
+           {rep_count}, {flagged_inequity},
+           '{inequity_details}'::JSONB, '{recommended_actions}'::JSONB)
+      RETURNING id
+
+  - name: render_fairness_report
+    description: >
+      Render the fairness-report template for delivery to VP Sales.
+    kind: template
+    template: "templates/fairness-report.md.j2"
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    # Saving the audit record and sending informational alerts are autonomous.
+    save_audit_record: unlimited
+    send_alert: unlimited
+  require_human_approval: []   # read-only agent — no destructive actions
+  notify_channel: "${REVOPS_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - audit_completed
+    - inequity_flagged
+    - alert_sent
+  feedback_table: rt_fairness_audit

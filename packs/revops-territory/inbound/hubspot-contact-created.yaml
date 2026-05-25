@@ -1,0 +1,73 @@
+---
+# Inbound source — HubSpot Contact Created
+#
+# Receives HubSpot webhook when a Contact is created. The pack treats a
+# HubSpot contact as a lightweight account proxy; it stages a pending
+# assignment that the account-router will resolve.
+#
+# Mounting: POST /v1/revops/inbound/hubspot/{route_id}
+# Auth:     per-tenant bearer token + X-HubSpot-Signature-v3 HMAC
+
+source: hubspot-contact-created
+route_prefix: /v1/revops/inbound/hubspot
+
+normalize:
+  hmac_secret: ${HUBSPOT_WEBHOOK_SECRET}
+  hmac_header: X-HubSpot-Signature-v3
+
+  field_map:
+    account_id:   objectId           # HubSpot contact ID used as proxy
+    account_name:
+      source: properties.company
+      fallback: properties.email     # company name missing → use email domain
+    industry:     properties.industry
+    company_size:
+      source: properties.numemployees
+      transform: |
+        n = int(value or 0)
+        if n < 50:    return "SMB"
+        elif n < 500: return "Mid-Market"
+        elif n < 5000: return "Enterprise"
+        else:          return "Strategic"
+    geo_region:   properties.country
+    arr_estimate: properties.annualrevenue
+    crm_source:   _const:hubspot
+
+accepted_events:
+  - contact.creation
+
+event:
+  kind: revops.hubspot_contact
+  payload_mapping:
+    tenant_id:    "{route_tenant_id}"
+    account_id:   "$.account_id"
+    account_name: "$.account_name"
+    industry:     "$.industry"
+    company_size: "$.company_size"
+    geo_region:   "$.geo_region"
+    arr_estimate: "$.arr_estimate"
+    crm_source:   "$.crm_source"
+
+downstream:
+  agents:
+    - account-router
+
+sample_payload: |
+  {
+    "objectId": 451,
+    "changeSource": "CRM",
+    "eventId": 3798957,
+    "subscriptionId": 25,
+    "portalId": 33,
+    "occurredAt": 1461869972,
+    "subscriptionType": "contact.creation",
+    "attemptNumber": 0,
+    "properties": {
+      "company": "Globex Inc",
+      "industry": "Manufacturing",
+      "numemployees": "150",
+      "country": "DE",
+      "annualrevenue": "4200000",
+      "email": "cto@globex.de"
+    }
+  }

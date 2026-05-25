@@ -1,0 +1,140 @@
+# Agent definition — capacity-rebalancer
+# ---------------------------------------------------------------------------
+# Triggered by revops.capacity_imbalance (watch: capacity-imbalance).
+#
+# The agent:
+#   1. Loads the full load distribution for the affected territory.
+#   2. Identifies the minimum set of account transfers that would bring
+#      max-min imbalance below the target threshold.
+#   3. Renders a rebalance-proposal-card for each proposed transfer.
+#   4. Submits all proposals as a single HOTL batch — no account is moved
+#      until a RevOps manager approves the full proposal (or individual
+#      transfers within it).
+#
+# HOTL: ALL re-assignment actions are gated. Zero autonomous moves.
+# ---------------------------------------------------------------------------
+
+name: capacity-rebalancer
+version: "1.0.0"
+description: >
+  Proposes the minimum set of account transfers to even rep load within a
+  territory when load imbalance exceeds threshold. All proposals are
+  HOTL-gated — no account is moved without human approval.
+
+triggers:
+  - event: revops.capacity_imbalance
+    source: capacity-imbalance
+
+llm:
+  model: ${REVOPS_REBALANCER_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 4096
+
+system_prompt: |
+  You are a RevOps capacity-planning assistant. You receive a territory's
+  rep load distribution and must propose the minimum set of account
+  re-assignments that reduces the max-minus-min imbalance below the
+  target threshold (default: 15 pct points).
+
+  Constraints:
+  - Prefer moving accounts with LOW arr_estimate first (lower disruption).
+  - Never propose moving an account that was assigned in the last 14 days.
+  - Never move more than 3 accounts per rep in a single proposal.
+  - If no valid transfers exist (all accounts too new, or arr_estimate too
+    high to risk disruption), output an empty transfers array with an
+    explanation.
+
+  Output ONLY valid JSON matching RebalanceProposal schema.
+
+  RebalanceProposal schema:
+  {
+    "territory_id": "string",
+    "territory_name": "string",
+    "current_imbalance_pct": 0.0,
+    "projected_imbalance_pct": 0.0,
+    "transfers": [
+      {
+        "account_id":     "string",
+        "account_name":   "string",
+        "from_rep_id":    "string",
+        "from_rep_name":  "string",
+        "to_rep_id":      "string",
+        "to_rep_name":    "string",
+        "arr_estimate":   0.00,
+        "rationale":      "string"
+      }
+    ],
+    "explanation": "string",
+    "confidence": "high | medium | low"
+  }
+
+tools:
+  - name: list_accounts_in_territory
+    description: >
+      Fetch all active account assignments for reps in the territory.
+      Returns account_id, account_name, rep_id, arr_estimate, assigned_at.
+      Excludes accounts assigned within the last 14 days.
+    kind: sql
+    query: |
+      SELECT
+          aa.account_id,
+          aa.account_name,
+          aa.rep_id,
+          aa.arr_estimate,
+          aa.assigned_at,
+          aa.industry,
+          aa.company_size
+      FROM rt_account_assignments aa
+      JOIN rt_rep_capacity rc
+           ON rc.tenant_id = aa.tenant_id
+          AND rc.rep_id    = aa.rep_id
+      WHERE aa.tenant_id    = '{tenant_id}'
+        AND rc.territory_id = '{territory_id}'
+        AND aa.status       = 'active'
+        AND aa.assigned_at  < NOW() - INTERVAL '14 days'
+      ORDER BY aa.arr_estimate ASC
+
+  - name: save_rebalance_proposal
+    description: >
+      Write the proposal to rt_account_assignments as 'pending_approval'
+      reassignment rows and notify the HOTL queue. Returns proposal_id.
+    kind: sql
+    query: |
+      INSERT INTO rt_account_assignments
+          (tenant_id, account_id, account_name, crm_source, rep_id,
+           territory_id, industry, company_size, geo_region,
+           arr_estimate, assignment_type, assigned_by, status)
+      SELECT
+          '{tenant_id}', account_id, account_name, crm_source, '{to_rep_id}',
+          '{territory_id}', industry, company_size, geo_region,
+          arr_estimate, 'reassignment', 'capacity-rebalancer', 'pending_approval'
+      FROM rt_account_assignments
+      WHERE tenant_id = '{tenant_id}'
+        AND account_id = '{account_id}'
+        AND status     = 'active'
+      RETURNING id AS proposal_row_id
+
+  - name: render_proposal_card
+    description: >
+      Render the rebalance-proposal-card template for human review.
+    kind: template
+    template: "templates/rebalance-proposal-card.md.j2"
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    # Saving a proposal (pending_approval) is allowed; executing is not.
+    save_rebalance_proposal: unlimited
+  require_human_approval:
+    # The actual account transfer (status -> active on the new rep) requires approval.
+    - execute_transfer
+  notify_channel: "${REVOPS_NOTIFY_CHANNEL:-admin_ui}"
+  approval_expiry_hours: 48   # proposal expires if not acted on within 48 h
+
+outcome_telemetry:
+  record_on:
+    - proposal_created
+    - proposal_approved
+    - proposal_rejected
+    - transfer_executed
+  feedback_table: rt_account_assignments

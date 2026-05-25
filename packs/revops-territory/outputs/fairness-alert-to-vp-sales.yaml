@@ -1,0 +1,50 @@
+---
+# Output connector — fairness alert to VP Sales
+#
+# Sends an email (or IM, if configured) to the VP Sales user when the
+# fairness-auditor flags a Gini coefficient above the threshold.
+# The full fairness-report.md.j2 is attached / inlined.
+#
+# Delivery channel priority:
+#   1. Email (always attempted if REVOPS_VP_SALES_EMAIL is set)
+#   2. IM (feishu / dingtalk / wecom — if an IM provider is configured)
+#   3. Admin UI notification bell (fallback, always attempted)
+#
+# This connector fires ONLY when report.flagged_inequity == true.
+
+output: fairness-alert-to-vp-sales
+
+fire_condition: "report.flagged_inequity == true"
+
+email:
+  to:      ${REVOPS_VP_SALES_EMAIL}
+  from:    ${REVOPS_ALERT_FROM_EMAIL:-noreply@xiaoguai.internal}
+  subject: "[RevOps] Quota fairness alert — {{ report.audit_period }} (Gini {{ '%.4f' | format(report.gini_coefficient) }})"
+  body_template: "templates/fairness-report.md.j2"
+  body_format: markdown   # rendered to HTML by the mailer
+
+im:
+  # Uses whichever IM provider is configured for the tenant.
+  channel: ${REVOPS_VP_SALES_IM_CHANNEL}
+  message_template: |
+    *Quota fairness alert* 🚨 — {{ report.audit_period }}
+    Gini coefficient: {{ "%.4f" | format(report.gini_coefficient) }} ({{ report.severity | upper }})
+    {{ report.plain_language_summary | truncate(300) }}
+    Full report attached / available in admin UI.
+
+admin_ui:
+  notification_level: "{{ report.severity }}"   # none|monitor|flag|escalate → maps to info|warning|error|critical
+  title: "Quota fairness alert — {{ report.audit_period }}"
+  body:  "Gini {{ '%.4f' | format(report.gini_coefficient) }} — {{ report.plain_language_summary | truncate(200) }}"
+
+# Track delivery for audit purposes
+outcome_telemetry:
+  record_on:
+    - alert_sent
+    - alert_delivery_failed
+  feedback_table: rt_fairness_audit
+
+retry:
+  max_attempts: 3
+  backoff_seconds: [10, 60, 300]
+  on_error: log_and_fallback_to_admin_ui
