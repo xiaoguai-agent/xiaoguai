@@ -1,0 +1,96 @@
+# Watch spec — trademark renewal deadline
+# ---------------------------------------------------------------------------
+# US trademarks require a Section 8 & 15 declaration between years 5 and 6
+# post-registration, then renewal every 10 years (Section 8 & 9).
+# Madrid Protocol / Madrid System trademarks renew every 10 years.
+# EUIPO (EU) trademarks renew every 10 years.
+#
+# This watch emits an event for each trademark filing whose next_renewal_date
+# falls within the lookahead window, consolidating all jurisdictions.
+# ---------------------------------------------------------------------------
+
+name: trademark-renewal-deadline
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each trademark filing whose next renewal falls
+  within the lookahead window (default 180 days — trademark lapse timelines
+  are less forgiving than patents once the deadline passes).
+
+source:
+  kind: sql
+  table: ip_filings
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      f.id                            AS filing_id,
+      f.tenant_id,
+      f.jurisdiction,
+      f.local_number                  AS local_filing_number,
+      f.next_renewal_date,
+      f.local_agent,
+      (f.next_renewal_date - CURRENT_DATE) AS days_until_renewal,
+      t.id                            AS trademark_id,
+      t.registration_number,
+      t.mark,
+      t.description,
+      t.nice_classes,
+      t.registration_date,
+      t.revenue_attribution_usd,
+      t.competitive_value_score,
+      t.annual_maintenance_cost_usd,
+      -- Determine renewal cycle type for the event consumer
+      CASE
+          WHEN f.next_renewal_date < t.registration_date + INTERVAL '7 years'
+              THEN '5yr_declaration'   -- first Section 8/15 window
+          ELSE '10yr_renewal'
+      END AS renewal_cycle_type
+  FROM ip_filings   f
+  JOIN ip_trademarks t ON t.id        = f.parent_id
+                      AND t.tenant_id = f.tenant_id
+  WHERE f.tenant_id    = '{tenant_id}'
+    AND f.ip_kind      = 'trademark'
+    AND f.status       = 'registered'
+    AND t.status       = 'registered'
+    AND f.next_renewal_date IS NOT NULL
+    AND f.next_renewal_date <= CURRENT_DATE + INTERVAL '{lookahead_days} days'
+    AND f.next_renewal_date >= CURRENT_DATE
+  ORDER BY f.next_renewal_date ASC
+
+defaults:
+  lookahead_days: 180
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  cron: "0 7 * * *"
+
+event:
+  kind: ip.trademark_renewal_deadline
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:              "$.tenant_id"
+    filing_id:              "$.filing_id"
+    trademark_id:           "$.trademark_id"
+    registration_number:    "$.registration_number"
+    mark:                   "$.mark"
+    jurisdiction:           "$.jurisdiction"
+    local_filing_number:    "$.local_filing_number"
+    local_agent:            "$.local_agent"
+    next_renewal_date:      "$.next_renewal_date"
+    days_until_renewal:     "$.days_until_renewal"
+    renewal_cycle_type:     "$.renewal_cycle_type"
+    nice_classes:           "$.nice_classes"
+    revenue_attribution_usd: "$.revenue_attribution_usd"
+    competitive_value_score: "$.competitive_value_score"
+    annual_maintenance_cost_usd: "$.annual_maintenance_cost_usd"
+
+downstream:
+  agents:
+    - renewal-decision-recommender
+
+dedup:
+  key: "{tenant_id}:{filing_id}:{next_renewal_date}"
+  ttl_seconds: 86400
+  re_fire_if: "payload.days_until_renewal < 30 AND prior.days_until_renewal >= 30"

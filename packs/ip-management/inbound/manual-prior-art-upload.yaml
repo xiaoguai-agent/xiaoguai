@@ -1,0 +1,96 @@
+# Inbound connector — manual prior-art document upload
+# ---------------------------------------------------------------------------
+# Allows IP counsel or inventors to upload prior-art documents (PDFs, patent
+# PDFs, papers) via the admin UI or a direct multipart POST endpoint.
+# The connector extracts text, generates an embedding summary, and inserts
+# a row into ip_prior_art_findings with discovered_by = 'manual-upload',
+# ready for the prior-art-discoverer agent to rank.
+# ---------------------------------------------------------------------------
+
+source: manual-prior-art-upload
+version: "1.0.0"
+description: >
+  Accepts manual prior-art document uploads (PDF or plain text) via the
+  admin UI or REST endpoint, extracts text, and inserts into
+  ip_prior_art_findings for agent analysis.
+
+route_prefix: /v1/ip-management/inbound/prior-art
+
+auth:
+  kind: session   # admin UI session cookie
+  fallback:
+    kind: bearer_token
+    token_env: "${IP_MANAGEMENT_API_TOKEN}"
+
+# File constraints
+upload:
+  max_file_size_mb: 50
+  accepted_mime_types:
+    - "application/pdf"
+    - "text/plain"
+    - "text/html"
+  max_files_per_request: 10
+
+# Text extraction pipeline
+extraction:
+  pdf:
+    engine: pdftotext          # system dependency: poppler-utils
+    fallback: llm_vision       # for scanned / image-only PDFs
+    max_pages: 100
+  html:
+    engine: readability        # strip boilerplate; extract article text
+  plain_text:
+    encoding_detection: true   # chardet for non-UTF-8 files
+
+# Metadata the uploader must provide (form fields)
+required_fields:
+  - name: patent_id
+    description: "The ip_patents.id this prior art applies to"
+    type: text
+  - name: reference_kind
+    description: "patent | paper | product | standard | other"
+    type: enum
+    values: [patent, paper, product, standard, other]
+  - name: reference_id
+    description: "Patent number, DOI, URL, product name, or standard number"
+    type: text
+
+optional_fields:
+  - name: reference_title
+    type: text
+  - name: reference_date
+    type: date
+
+# After extraction, insert a row into ip_prior_art_findings
+insert_mapping:
+  target_table: ip_prior_art_findings
+  field_map:
+    patent_id:        "form.patent_id"
+    reference_kind:   "form.reference_kind"
+    reference_id:     "form.reference_id"
+    reference_title:  "form.reference_title"
+    reference_date:   "form.reference_date"
+    analysis_summary: "_computed:extracted_text_excerpt"   # first 1000 chars
+    source_query:     "_const:manual-upload"
+    discovered_by:    "_const:manual-upload"
+    review_status:    "_const:pending"
+
+# After insert, trigger the prior-art-discoverer agent for ranking
+emit_event:
+  kind: ip.prior_art_search_requested
+  payload:
+    patent_id:  "form.patent_id"
+    tenant_id:  "session.tenant_id"
+    trigger:    "manual_upload"
+
+# Response to the uploader
+response:
+  on_success:
+    status: 202
+    body:
+      message: "Prior art document uploaded. Analysis will be available shortly."
+      finding_id: "{{ inserted.id }}"
+  on_validation_error:
+    status: 400
+    body:
+      error: "{{ validation_errors | join('; ') }}"

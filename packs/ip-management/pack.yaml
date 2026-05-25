@@ -1,0 +1,141 @@
+# IP Management Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# Tracks patent and trademark portfolios, monitors renewal deadlines across
+# jurisdictions, watches competitor filings, and surfaces risk assessments
+# for human review.  All filing and counsel actions are HOTL-gated.
+#
+# Install:   xiaoguai pack install packs/ip-management/
+# Requires:  xiaoguai >= v1.3.1-prep (features: watch, llm, outcome-telemetry)
+# ---------------------------------------------------------------------------
+
+name: ip-management
+version: "1.0.0"
+description: >
+  Tracks patent and trademark portfolios across jurisdictions, fires
+  deadline-aware renewal alerts (USPTO maintenance fees at 3.5 / 7.5 / 11.5
+  years; trademark cycles at 5 and 10 years), monitors USPTO / EPO for
+  competitor filings in our technology classes, flags confusingly similar
+  trademark applications, and produces AI-assisted renewal recommendations,
+  prior-art reports, and infringement-risk assessments — all pending human
+  approval before any external action.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - watch             # F1: WatchSpec + WatchEvent bus (deadline polling)
+    - llm               # core LLM backend for agent reasoning
+    - outcome-telemetry # F3: records decision outcomes for improvement loop
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_ip_portfolio.sql
+
+# --------------------------------------------------------------------------
+# Watch specs (declarative; registered into the watch registry on load)
+# --------------------------------------------------------------------------
+watches:
+  - path: watches/patent-renewal-deadline-approaching.yaml
+  - path: watches/trademark-renewal-deadline.yaml
+  - path: watches/competitor-patent-filing-detected.yaml
+  - path: watches/trademark-confusing-similarity-detected.yaml
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/portfolio-coverage-analyzer.yaml
+  - path: agents/renewal-decision-recommender.yaml
+  - path: agents/prior-art-discoverer.yaml
+  - path: agents/infringement-risk-assessor.yaml
+
+# --------------------------------------------------------------------------
+# Inbound connectors (data import + polling sources)
+# --------------------------------------------------------------------------
+sources:
+  - inbound/uspto-tsdr-poll.yaml
+  - inbound/epo-european-patent-register.yaml
+  - inbound/alt-legal-portfolio-export.yaml
+  - inbound/anaqua-event.yaml
+  - inbound/manual-prior-art-upload.yaml
+
+# --------------------------------------------------------------------------
+# Output connectors
+# --------------------------------------------------------------------------
+outputs:
+  - outputs/ip-counsel-slack.yaml
+  - outputs/jira-ip-task.yaml
+  - outputs/exec-quarterly-ip-portfolio-review.yaml
+  - outputs/outside-counsel-email-with-prior-art-bundle.yaml
+
+# --------------------------------------------------------------------------
+# Dashboard definitions (rendered in admin-ui when the packs UI lands)
+# --------------------------------------------------------------------------
+dashboards:
+  - name: ip-portfolio-overview
+    description: "Patent + trademark health, upcoming deadlines, and open alerts"
+    widgets:
+      - type: metric
+        title: "Active Patents"
+        query: >
+          SELECT COUNT(*) FROM ip_patents
+          WHERE tenant_id = '{tenant_id}'
+            AND status = 'granted'
+            AND expiry_date > NOW()
+      - type: metric
+        title: "Active Trademarks"
+        query: >
+          SELECT COUNT(*) FROM ip_trademarks
+          WHERE tenant_id = '{tenant_id}'
+            AND status = 'registered'
+      - type: table
+        title: "Renewals Due in Next 90 Days"
+        query: >
+          SELECT 'patent' AS kind, patent_number AS identifier,
+                 title, next_renewal_date, primary_jurisdiction
+          FROM ip_patents
+          WHERE tenant_id = '{tenant_id}'
+            AND status = 'granted'
+            AND next_renewal_date <= NOW() + INTERVAL '90 days'
+          UNION ALL
+          SELECT 'trademark', mark, description,
+                 next_renewal_date, primary_jurisdiction
+          FROM ip_trademarks
+          WHERE tenant_id = '{tenant_id}'
+            AND status = 'registered'
+            AND next_renewal_date <= NOW() + INTERVAL '90 days'
+          ORDER BY next_renewal_date ASC
+          LIMIT 50
+      - type: table
+        title: "Open Infringement Alerts"
+        query: >
+          SELECT competitor_name, filing_ref, risk_level, detected_at
+          FROM ip_infringement_alerts
+          WHERE tenant_id = '{tenant_id}'
+            AND resolved_at IS NULL
+          ORDER BY detected_at DESC
+          LIMIT 20
+      - type: chart
+        title: "Portfolio by Jurisdiction (Patents)"
+        query: >
+          SELECT jurisdiction, COUNT(*) AS count
+          FROM ip_filings
+          WHERE tenant_id = '{tenant_id}'
+            AND ip_kind = 'patent'
+            AND status NOT IN ('lapsed', 'abandoned')
+          GROUP BY jurisdiction
+          ORDER BY count DESC
+
+# --------------------------------------------------------------------------
+# Schema migration helper (pack loader wires this into sqlx migrate)
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "ip_"
+  namespace: "ip_management"

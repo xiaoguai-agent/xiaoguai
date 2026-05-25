@@ -1,0 +1,80 @@
+# Watch spec — competitor patent filing detected
+# ---------------------------------------------------------------------------
+# Polls inbound/uspto-tsdr-poll and inbound/epo-european-patent-register
+# normalised results to surface new competitor patent applications in our
+# technology classes (CPC / IPC codes stored in ip_patents.technology_class).
+#
+# Competitor names and CPC classes of interest are configured per-tenant in
+# the ip_watch_config table (managed via the admin UI or pack config).
+# ---------------------------------------------------------------------------
+
+name: competitor-patent-filing-detected
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each new competitor patent application discovered
+  in the technology classes our patents cover.  Fires whenever the inbound
+  polling pipeline inserts new rows into ip_infringement_alerts with
+  trigger_kind = 'competitor_patent_filing'.
+
+source:
+  kind: sql
+  table: ip_infringement_alerts
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      a.id                            AS alert_id,
+      a.tenant_id,
+      a.competitor_name,
+      a.filing_ref,
+      a.filing_date,
+      a.filing_jurisdiction,
+      a.our_patent_id,
+      a.detected_at,
+      -- Pull the related patent details for downstream context
+      p.patent_number,
+      p.title                         AS our_patent_title,
+      p.technology_class,
+      p.revenue_attribution_usd,
+      p.competitive_value_score
+  FROM ip_infringement_alerts a
+  LEFT JOIN ip_patents         p ON p.id        = a.our_patent_id
+                                AND p.tenant_id = a.tenant_id
+  WHERE a.tenant_id     = '{tenant_id}'
+    AND a.trigger_kind  = 'competitor_patent_filing'
+    AND a.resolved_at   IS NULL
+    AND a.detected_at   >= NOW() - INTERVAL '24 hours'
+  ORDER BY a.detected_at DESC
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  # Every 6 hours — USPTO bulk-data feed updates roughly daily; EPO OPS API
+  # can be polled more frequently.  6hr gives a good balance.
+  cron: "0 */6 * * *"
+
+event:
+  kind: ip.competitor_patent_filing_detected
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:              "$.tenant_id"
+    alert_id:               "$.alert_id"
+    competitor_name:        "$.competitor_name"
+    filing_ref:             "$.filing_ref"
+    filing_date:            "$.filing_date"
+    filing_jurisdiction:    "$.filing_jurisdiction"
+    our_patent_id:          "$.our_patent_id"
+    our_patent_title:       "$.our_patent_title"
+    technology_class:       "$.technology_class"
+    revenue_attribution_usd: "$.revenue_attribution_usd"
+    competitive_value_score: "$.competitive_value_score"
+    detected_at:            "$.detected_at"
+
+downstream:
+  agents:
+    - infringement-risk-assessor
+
+dedup:
+  key: "{tenant_id}:{alert_id}"
+  ttl_seconds: 86400
