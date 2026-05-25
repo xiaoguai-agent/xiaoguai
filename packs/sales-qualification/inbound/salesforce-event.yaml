@@ -1,0 +1,87 @@
+# inbound/salesforce-event.yaml
+# ---------------------------------------------------------------------------
+# Salesforce Platform Events listener — subscribes to Lead__e and
+# Opportunity__e via CometD streaming and normalises events into sq_leads.
+#
+# Salesforce setup:
+#   1. Create a Connected App with OAuth2 (client_credentials flow)
+#   2. Grant "Subscribe to Platform Events" permission
+#   3. Set SF_INSTANCE_URL, SF_CLIENT_ID, SF_CLIENT_SECRET in env
+#   4. (Optional) create Lead__e / Opportunity__e custom platform events
+#      if not already present in your org
+# ---------------------------------------------------------------------------
+
+name: salesforce-event
+kind: event_stream_inbound
+version: "1.0.0"
+
+description: >
+  Subscribes to Salesforce Platform Events via CometD streaming.
+  Normalises Lead__e and Opportunity__e payloads into canonical lead records,
+  upserts into sq_leads, and emits crm.salesforce.lead_created to trigger
+  the bant-extractor agent.
+
+# --------------------------------------------------------------------------
+# CometD streaming connection
+# --------------------------------------------------------------------------
+connection:
+  kind: salesforce_cometd
+  instance_url_env:   SF_INSTANCE_URL
+  client_id_env:      SF_CLIENT_ID
+  client_secret_env:  SF_CLIENT_SECRET
+  auth_flow:          client_credentials
+  api_version:        "59.0"
+  reconnect_policy:
+    max_retries: 5
+    backoff_seconds: [1, 2, 4, 8, 16]
+
+# --------------------------------------------------------------------------
+# Subscribed channels
+# --------------------------------------------------------------------------
+channels:
+  - /event/Lead__e
+  - /event/Opportunity__e
+
+# --------------------------------------------------------------------------
+# Payload normalisation per channel
+# --------------------------------------------------------------------------
+normalise:
+  "/event/Lead__e":
+    crm_source:     "salesforce"
+    crm_lead_id:    "$.payload.Id__c"
+    company_name:   "$.payload.Company__c"
+    contact_name:   "$.payload.Name__c"
+    contact_email:  "$.payload.Email__c"
+    raw_notes:      "$.payload.Description__c"
+
+  "/event/Opportunity__e":
+    crm_source:     "salesforce"
+    crm_lead_id:    "$.payload.Id__c"
+    company_name:   "$.payload.AccountName__c"
+    contact_name:   "$.payload.ContactName__c"
+    contact_email:  "$.payload.ContactEmail__c"
+    raw_notes:      "$.payload.Description__c"
+
+# --------------------------------------------------------------------------
+# Database write (upsert)
+# --------------------------------------------------------------------------
+persist:
+  table: sq_leads
+  on_conflict: ["crm_source", "crm_lead_id"]
+  update_fields: ["company_name", "contact_name", "contact_email", "raw_notes"]
+
+# --------------------------------------------------------------------------
+# Emit event to trigger agent pipeline
+# --------------------------------------------------------------------------
+emit:
+  event: crm.salesforce.lead_created
+  target: agents/bant-extractor.yaml
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  log_level: error
+  dead_letter_table: sq_inbound_dead_letter
+  replay_from: "-1"   # Salesforce replay ID; -1 = from now, -2 = all available
+  notify_channel: "${SALES_HOTL_NOTIFY_CHANNEL:-admin_ui}"

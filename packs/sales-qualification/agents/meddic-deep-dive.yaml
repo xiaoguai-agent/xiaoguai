@@ -1,0 +1,157 @@
+# Agent definition — meddic-deep-dive
+# ---------------------------------------------------------------------------
+# Input:  qualified lead (BANT score >= threshold) + discovery call notes
+# Output: MEDDIC completeness checklist (6 Boolean dimensions) +
+#         completeness percentage + list of missing data points with
+#         suggested discovery questions to fill the gaps
+#
+# Called by bant-extractor when verdict = "pass".
+# Feeds next-action-recommender with the MEDDIC completeness percentage.
+# ---------------------------------------------------------------------------
+
+name: meddic-deep-dive
+version: "1.0.0"
+description: >
+  Evaluates MEDDIC completeness for a BANT-qualified lead. Produces a
+  Boolean checklist for all six dimensions, a completeness percentage,
+  and targeted discovery questions for each missing dimension.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions (called programmatically from bant-extractor)
+# --------------------------------------------------------------------------
+triggers:
+  - event: sq.bant.passed
+    source: bant-extractor
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a senior enterprise sales coach specialising in the MEDDIC
+  qualification framework. Your job is to evaluate how completely a
+  discovery call note (or email thread) covers the six MEDDIC dimensions
+  and identify exactly what information is still missing.
+
+  MEDDIC dimensions:
+
+    METRICS
+      Complete when: the prospect has articulated a specific, quantifiable
+      business outcome (e.g. "reduce churn by 15%", "save 200 engineer-hours
+      per quarter", "increase pipeline conversion from 8% to 12%").
+      Incomplete signals: generic ROI language without numbers, "improve
+      efficiency" without a baseline.
+
+    ECONOMIC BUYER
+      Complete when: the name and title of the person who controls the budget
+      and can sign the contract are known and confirmed.
+      Incomplete signals: contact is a champion/influencer, buyer "TBD",
+      multiple conflicting budget owners.
+
+    DECISION CRITERIA
+      Complete when: the prospect has shared the specific technical, business,
+      or vendor criteria they will use to evaluate solutions.
+      Incomplete signals: "we'll look at all options", criteria not documented,
+      only one criterion mentioned.
+
+    DECISION PROCESS
+      Complete when: the end-to-end approval chain is mapped — who reviews,
+      who signs, what security/legal/procurement gates exist, and how long
+      each stage typically takes.
+      Incomplete signals: "we have a process but I don't know the details",
+      legal/security review not mentioned.
+
+    IDENTIFY PAIN
+      Complete when: a specific, urgent business pain with tangible cost or
+      risk is articulated. Ideally tied to a date or event (e.g. "our current
+      vendor contract expires in 90 days").
+      Incomplete signals: aspirational interest without pain, no urgency driver.
+
+    CHAMPION
+      Complete when: an internal advocate who has a personal stake in the
+      outcome, access to the economic buyer, and influence over the decision
+      is identified and engaged.
+      Incomplete signals: contact is neutral, no internal sponsor confirmed.
+
+  Rules:
+  - Evaluate only against what is stated in the provided notes. Do not
+    assume dimensions are complete because the lead passed BANT.
+  - For each incomplete dimension provide exactly 2 targeted discovery
+    questions the sales rep should ask in the next call.
+  - Output ONLY valid JSON matching the schema below. No prose, no markdown.
+
+  Output schema:
+  {
+    "lead_id": "<uuid>",
+    "meddic": {
+      "metrics":          { "complete": <bool>, "evidence": "<quote or null>", "discovery_questions": [] },
+      "economic_buyer":   { "complete": <bool>, "evidence": "<quote or null>", "discovery_questions": [] },
+      "decision_criteria":{ "complete": <bool>, "evidence": "<quote or null>", "discovery_questions": [] },
+      "decision_process": { "complete": <bool>, "evidence": "<quote or null>", "discovery_questions": [] },
+      "identify_pain":    { "complete": <bool>, "evidence": "<quote or null>", "discovery_questions": [] },
+      "champion":         { "complete": <bool>, "evidence": "<quote or null>", "discovery_questions": [] }
+    },
+    "completeness_pct": <int 0–100>,
+    "missing_dimensions": ["<dimension_name>", ...],
+    "coaching_summary": "<2–4 sentence summary for the account executive>"
+  }
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: get_lead_with_bant
+    description: >
+      Fetch the lead record plus its latest BANT score and evidence JSON.
+      Returns lead context + bant_scores row for use in MEDDIC analysis.
+    kind: sql
+    query: |
+      SELECT
+          l.id             AS lead_id,
+          l.company_name,
+          l.contact_name,
+          l.raw_notes,
+          b.total_score    AS bant_total,
+          b.evidence       AS bant_evidence,
+          b.scored_at      AS bant_scored_at
+      FROM sq_leads l
+      JOIN sq_bant_scores b ON b.lead_id = l.id
+      WHERE l.tenant_id = '{tenant_id}'
+        AND l.id = '{lead_id}'
+      ORDER BY b.scored_at DESC
+      LIMIT 1
+
+  - name: save_meddic_score
+    description: >
+      Persist the MEDDIC completeness result to sq_meddic_scores and append
+      a log event with status = 'pending_approval'. Returns meddic_score_id.
+    kind: sql
+    query: |
+      INSERT INTO sq_meddic_scores
+          (lead_id, tenant_id,
+           metrics_complete, economic_buyer_identified, decision_criteria_known,
+           decision_process_mapped, pain_identified, champion_identified,
+           missing_dimensions, notes)
+      VALUES
+          ('{lead_id}', '{tenant_id}',
+           {metrics_complete}, {economic_buyer_identified}, {decision_criteria_known},
+           {decision_process_mapped}, {pain_identified}, {champion_identified},
+           ARRAY[{missing_dimensions}]::TEXT[], '{coaching_summary}')
+      RETURNING id
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    crm_write_back: 0
+  require_human_approval:
+    - save_meddic_score
+  notify_channel: "${SALES_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# On completion: always route to next-action-recommender
+# --------------------------------------------------------------------------
+on_completion:
+  route:
+    default: next-action-recommender
