@@ -1,0 +1,59 @@
+# packs/it-asset-tracking/outputs/finance-license-true-up-report.yaml
+#
+# Output sink — Finance license true-up report
+#
+# Delivers the rendered true-up-narrative to the Finance team via:
+#   1. A Slack message to the Finance channel (brief summary + link)
+#   2. A Google Drive document upload (full narrative as a shared doc)
+#      — optional, enabled when GOOGLE_DRIVE_FOLDER_ID is set
+#
+# The report requires IT manager approval (HOTL) before delivery to Finance.
+# Once approved, it is delivered to both channels simultaneously.
+#
+# Required env vars:
+#   FINANCE_SLACK_WEBHOOK_URL     — Slack webhook for Finance channel
+#   GOOGLE_DRIVE_FOLDER_ID        — optional; Google Drive folder for reports
+#   GOOGLE_SERVICE_ACCOUNT_JSON   — optional; service account for Drive upload
+
+name: finance-license-true-up-report
+version: "1.0.0"
+kind: multi_output
+
+hotl:
+  require_human_approval: true
+  approval_token_source: admin_ui
+  role_required: it_manager   # only IT manager role can approve delivery to Finance
+
+channels:
+  # 1. Finance Slack channel — brief summary
+  slack:
+    kind: slack_webhook
+    webhook_url_env: FINANCE_SLACK_WEBHOOK_URL
+    username: "Xiaoguai IT Assets — License Report"
+    icon_emoji: ":bar_chart:"
+    message_template: |
+      *License True-Up: {{ asset_name }}* ({{ vendor }})
+      Recommendation: *{{ recommendation }}* | Confidence: {{ confidence_level }}
+      {% if recommendation == "DOWNSIZE" %}
+      Potential saving: *${{ "%.0f" | format(annual_saving_usd) }}/yr* ({{ idle_seats }} idle seats)
+      {% endif %}
+      Contract expires: {{ term_end_date }} ({{ days_until_expiry }} days)
+      Full report: {{ admin_ui_report_url }}
+
+  # 2. Google Drive — full narrative document (optional)
+  google_drive:
+    kind: google_drive_upload
+    enabled_if: "env.GOOGLE_DRIVE_FOLDER_ID is set"
+    folder_id_env: GOOGLE_DRIVE_FOLDER_ID
+    service_account_env: GOOGLE_SERVICE_ACCOUNT_JSON
+    filename_template: "License True-Up — {{ asset_name }} — {{ generated_at | date }}.md"
+    content_field: true_up_narrative_markdown
+    share_with:
+      # Share with Finance team drive group
+      email_env: FINANCE_TEAM_EMAIL
+      role: reader
+
+# Retention: keep a copy of every report in the admin UI for 2 years.
+retention:
+  table: reconciliation_findings
+  duration_days: 730

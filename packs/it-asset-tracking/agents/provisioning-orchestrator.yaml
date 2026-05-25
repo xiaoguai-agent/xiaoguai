@@ -1,0 +1,194 @@
+# packs/it-asset-tracking/agents/provisioning-orchestrator.yaml
+#
+# Provisioning Orchestrator — Supervisor agent
+#
+# Triggered by two sources:
+#   1. hr-onboarding pack event (it_asset.new_hire_needs_provisioning) —
+#      integrates with packs/hr-onboarding via the shared event bus.
+#   2. Manual dispatch from the IT admin UI (one-off provisioning request).
+#
+# For each new hire the orchestrator:
+#   A. reserve_hardware      — allocate the first available laptop from
+#                              in-stock inventory matching preference order.
+#   B. provision_software    — claim one seat for each item in the standard
+#                              software bundle; write asset_assignments rows.
+#   C. ship_or_stage         — create a Jira ticket for physical laptop
+#                              preparation (imaging, labeling, shipping).
+#   D. notify_it_team        — post a summary card to the IT Slack channel.
+#   E. update_onboarding_log — write back to onboarding_audit_log (hr-onboarding
+#                              table) so the HR coordinator sees provisioning done.
+#
+# HOTL: no autonomous Okta provisioning — software seat claims write to
+# asset_assignments only; real Okta group assignments are created by the
+# okta-deprovision-trigger output (inverted — this is the provision path)
+# after a human confirms the Jira ticket is resolved.
+
+name: provisioning-orchestrator
+kind: supervisor
+
+budget:
+  max_steps: 15
+  max_wall_seconds: 300
+
+triggers:
+  # From hr-onboarding pack — fired when the account-provisioner step completes.
+  - event: hr.new_hire_provisioned
+    source: packs/hr-onboarding/agents/account-provisioner.yaml
+  # Manual dispatch from IT admin UI.
+  - event: it_asset.manual_provision_request
+
+system_prompt: |
+  You are the IT Asset Provisioning Orchestrator. When given a new-hire
+  provisioning goal you must:
+
+    A. reserve_hardware    — find and reserve a laptop from in-stock inventory.
+    B. provision_software  — claim seats for each item in the standard software
+                             bundle. If a bundle item is out of seats, flag it
+                             but do not abort — continue with remaining items.
+    C. ship_or_stage       — create a Jira task for the IT team to image and
+                             deliver the hardware.
+    D. notify_it_team      — post the provisioning checklist to IT Slack.
+    E. update_onboarding_log — write the provisioning outcome back to the
+                               hr-onboarding audit log.
+
+  Rules:
+  - Never invent asset IDs or seat counts — use only data returned by tools.
+  - If no matching laptop is in stock, flag the gap and suggest the nearest
+    alternative; do not assign a laptop that is already assigned.
+  - Record every action in the provisioning checklist template.
+  - Output the rendered checklist as your final response.
+
+workers:
+  - id: hardware_reserver
+    handles_step_prefix: "reserve_hardware"
+    tools:
+      - name: find_available_hardware
+        description: >
+          Find the first in-stock hardware asset matching the preference list.
+          Returns asset_id, name, model, serial_number or null if none available.
+        kind: sql
+        query: |
+          SELECT id AS asset_id, name, model, serial_number
+          FROM it_assets
+          WHERE tenant_id   = '{tenant_id}'
+            AND asset_class = 'hardware'
+            AND asset_type  = 'laptop'
+            AND status      = 'in_stock'
+            AND model IN ({laptop_preference_csv})
+          ORDER BY ARRAY_POSITION(ARRAY[{laptop_preference_csv}]::text[], model)
+          LIMIT 1
+
+      - name: reserve_hardware_asset
+        description: >
+          Mark a hardware asset as assigned to the new hire and create the
+          asset_assignment row. Returns assignment_id.
+        kind: sql
+        query: |
+          WITH upd AS (
+              UPDATE it_assets
+              SET status     = 'assigned',
+                  updated_at = now()
+              WHERE id        = '{asset_id}'
+                AND status    = 'in_stock'
+              RETURNING id
+          )
+          INSERT INTO asset_assignments
+              (tenant_id, asset_id, employee_id, employee_email, employee_name, source)
+          SELECT '{tenant_id}', upd.id, '{employee_id}', '{employee_email}',
+                 '{employee_name}', 'provisioning-orchestrator'
+          FROM upd
+          RETURNING id AS assignment_id
+
+  - id: software_provisioner
+    handles_step_prefix: "provision_software"
+    tools:
+      - name: check_seat_availability
+        description: >
+          For a given software asset name, return the number of available
+          seats (contracted_seats - active_seats). Returns asset_id, name,
+          available_seats. Returns null if the product is not in inventory.
+        kind: sql
+        query: |
+          SELECT id AS asset_id, name,
+                 (total_seats - active_seats) AS available_seats
+          FROM it_assets
+          WHERE tenant_id   = '{tenant_id}'
+            AND asset_class = 'software'
+            AND asset_type  = 'saas_seat'
+            AND name        ILIKE '%{product_name}%'
+            AND status     != 'retired'
+          ORDER BY available_seats DESC
+          LIMIT 1
+
+      - name: claim_software_seat
+        description: >
+          Claim one seat for the new hire: insert into asset_assignments and
+          increment active_seats on it_assets. Returns assignment_id.
+          Will fail if available_seats = 0 — caller must check first.
+        kind: sql
+        query: |
+          WITH seat AS (
+              UPDATE it_assets
+              SET active_seats = active_seats + 1,
+                  updated_at   = now()
+              WHERE id           = '{asset_id}'
+                AND (total_seats - active_seats) > 0
+              RETURNING id
+          )
+          INSERT INTO asset_assignments
+              (tenant_id, asset_id, employee_id, employee_email, employee_name, source)
+          SELECT '{tenant_id}', seat.id, '{employee_id}', '{employee_email}',
+                 '{employee_name}', 'provisioning-orchestrator'
+          FROM seat
+          RETURNING id AS assignment_id
+
+  - id: jira_tasker
+    handles_step_prefix: "ship_or_stage"
+    tools:
+      - name: create_jira_task
+        description: >
+          Create a Jira task in the IT project for hardware preparation.
+          Returns the Jira issue key (e.g. IT-1234).
+        kind: output
+        output: jira-asset-task
+
+  - id: slack_notifier
+    handles_step_prefix: "notify_it_team"
+    tools:
+      - name: post_provisioning_checklist
+        description: >
+          Render the provisioning-checklist template and post it to the
+          IT Slack channel.
+        kind: template_output
+        template: templates/provisioning-checklist.md.j2
+        output: it-team-slack
+
+  - id: onboarding_logger
+    handles_step_prefix: "update_onboarding_log"
+    tools:
+      - name: write_onboarding_audit
+        description: >
+          Write the provisioning result back to onboarding_audit_log so the
+          HR coordinator can see IT provisioning is complete.
+        kind: sql
+        query: |
+          INSERT INTO onboarding_audit_log
+              (employee_id, step_id, action, detail, success, error_msg)
+          VALUES
+              ('{employee_id}', 'it_asset_provisioning',
+               'IT assets provisioned', '{detail_json}'::jsonb,
+               {success}, {error_msg_or_null})
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    okta_group_assign: 0   # Okta group assignment requires human approval via Jira
+  require_human_approval:
+    - create_jira_task     # IT team must confirm the hardware is prepared
+
+outcome_telemetry:
+  record_on:
+    - provisioning_complete
+    - hardware_gap_flagged
+    - seat_shortage_flagged
+  feedback_table: asset_assignments

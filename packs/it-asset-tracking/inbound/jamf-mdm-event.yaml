@@ -1,0 +1,110 @@
+# packs/it-asset-tracking/inbound/jamf-mdm-event.yaml
+#
+# Inbound adapter — Jamf MDM webhook events
+#
+# Jamf Pro sends webhooks for: DeviceEnrollment, DeviceUnenrollment,
+# ComputerCheckIn, MobileDeviceCheckIn, PatchSoftwareTitle.
+#
+# This adapter maps Jamf payloads to it_assets and asset_assignments rows,
+# keeping MDM check-in timestamps current for the seat-utilization-low watch.
+#
+# Setup: Configure a Jamf Pro webhook pointing to:
+#   POST https://<xiaoguai-host>/inbound/it-asset-tracking/jamf
+# Authentication: HMAC-SHA256 signature in X-Jamf-Webhook-Signature header.
+
+name: jamf-mdm-event
+version: "1.0.0"
+kind: webhook
+
+endpoint:
+  path: /inbound/it-asset-tracking/jamf
+  method: POST
+  auth:
+    kind: hmac_sha256
+    secret_env: JAMF_WEBHOOK_SECRET
+    header: X-Jamf-Webhook-Signature
+
+# Events handled
+events:
+  - jamf_event: ComputerCheckIn
+    action: upsert_mdm_checkin
+  - jamf_event: MobileDeviceCheckIn
+    action: upsert_mdm_checkin
+  - jamf_event: DeviceEnrollment
+    action: upsert_device_enrolled
+  - jamf_event: DeviceUnenrollment
+    action: upsert_device_unenrolled
+
+# Field mappings from Jamf payload to it_assets / asset_assignments
+field_mappings:
+  upsert_mdm_checkin:
+    # Update the asset's MDM check-in timestamp.
+    # If the device is not yet in it_assets, insert a skeleton row with
+    # procurement_source = 'mdm' for the audit-reconciler to flag later.
+    target_table: it_assets
+    match_on:
+      mdm_device_id: "$.event.udid"
+      mdm_source: "jamf"
+    upsert:
+      mdm_device_id:    "$.event.udid"
+      mdm_source:       "'jamf'"
+      serial_number:    "$.event.serialNumber"
+      model:            "$.event.model"
+      asset_class:      "'hardware'"
+      asset_type:       "$.event.deviceType == 'Computer' ? 'laptop' : 'phone'"
+      name:             "$.event.deviceName"
+      vendor:           "'Apple'"  # Jamf manages Apple and some Windows devices
+      status:           "'assigned'"
+      procurement_source: "'mdm'"
+      updated_at:       "now()"
+    # Also update the assignment's MDM check-in time
+    secondary_update:
+      target_table: asset_assignments
+      match_on:
+        asset_id: "(SELECT id FROM it_assets WHERE mdm_device_id = '$.event.udid')"
+        returned_at: null
+      set:
+        mdm_checkin_at: "now()"
+        updated_at:     "now()"
+
+  upsert_device_enrolled:
+    target_table: it_assets
+    match_on:
+      mdm_device_id: "$.event.udid"
+      mdm_source: "jamf"
+    upsert:
+      mdm_device_id:    "$.event.udid"
+      mdm_source:       "'jamf'"
+      serial_number:    "$.event.serialNumber"
+      model:            "$.event.model"
+      asset_class:      "'hardware'"
+      asset_type:       "$.event.deviceType == 'Computer' ? 'laptop' : 'phone'"
+      name:             "$.event.deviceName"
+      vendor:           "'Apple'"
+      procurement_source: "'mdm'"
+      status:           "'in_stock'"
+      updated_at:       "now()"
+
+  upsert_device_unenrolled:
+    target_table: it_assets
+    match_on:
+      mdm_device_id: "$.event.udid"
+    set:
+      status:     "'in_stock'"  # unenrolled = returned or wiped
+      updated_at: "now()"
+    # Return the assignment row if one exists
+    secondary_update:
+      target_table: asset_assignments
+      match_on:
+        asset_id: "(SELECT id FROM it_assets WHERE mdm_device_id = '$.event.udid')"
+        returned_at: null
+      set:
+        returned_at: "now()"
+        updated_at:  "now()"
+
+# Emit an event onto the bus after processing so watches can react in real time
+emit_event:
+  kind: it_asset.mdm_checkin_received
+  payload:
+    mdm_source: "jamf"
+    mdm_device_id: "$.event.udid"

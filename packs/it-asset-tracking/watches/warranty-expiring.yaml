@@ -1,0 +1,83 @@
+# packs/it-asset-tracking/watches/warranty-expiring.yaml
+#
+# Watch spec — hardware warranty approaching expiry
+#
+# Fires at 90 days before warranty_expires_at.  Unlike license-expiring
+# this watch fires once (single window) because the actionable window for
+# extended-warranty purchase or replacement planning is 60-90 days out;
+# closer than that the options narrow significantly.
+#
+# Downstream consumers:
+#   • it-team-slack (prompt to assess replacement vs. extended warranty)
+#   • jira-asset-task (creates a planning ticket assigned to IT ops)
+
+name: warranty-expiring
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each hardware asset whose warranty_expires_at
+  is within 90 days. One event per asset per year; dedup prevents daily
+  re-fire spam.
+
+source:
+  kind: sql
+  table: it_assets
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      a.tenant_id,
+      a.id                                         AS asset_id,
+      a.name                                       AS asset_name,
+      a.vendor,
+      a.model,
+      a.serial_number,
+      a.asset_type,
+      a.warranty_expires_at,
+      (a.warranty_expires_at - CURRENT_DATE)       AS days_until_expiry,
+      a.purchased_at,
+      -- Current assignee (if any)
+      aa.employee_name,
+      aa.employee_email
+  FROM it_assets a
+  LEFT JOIN asset_assignments aa
+      ON aa.asset_id    = a.id
+     AND aa.returned_at IS NULL
+  WHERE a.tenant_id = '{tenant_id}'
+    AND a.asset_class   = 'hardware'
+    AND a.status NOT IN ('retired', 'lost')
+    AND a.warranty_expires_at IS NOT NULL
+    AND (a.warranty_expires_at - CURRENT_DATE) BETWEEN 0 AND 90
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  cron: "0 8 * * *"
+
+event:
+  kind: it_asset.warranty_expiring
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:            "$.tenant_id"
+    asset_id:             "$.asset_id"
+    asset_name:           "$.asset_name"
+    vendor:               "$.vendor"
+    model:                "$.model"
+    serial_number:        "$.serial_number"
+    asset_type:           "$.asset_type"
+    warranty_expires_at:  "$.warranty_expires_at"
+    days_until_expiry:    "$.days_until_expiry"
+    purchased_at:         "$.purchased_at"
+    employee_name:        "$.employee_name"
+    employee_email:       "$.employee_email"
+
+downstream:
+  outputs:
+    - it-team-slack
+    - jira-asset-task
+
+# Dedup: re-fire at most once per 7 days per asset (avoids daily spam
+# while still reminding the team if a ticket goes unactioned).
+dedup:
+  key: "{tenant_id}:{asset_id}:warranty"
+  ttl_seconds: 604800   # 7 days

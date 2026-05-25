@@ -1,0 +1,96 @@
+# packs/it-asset-tracking/watches/license-expiring.yaml
+#
+# Watch spec — software license approaching expiry
+#
+# Fires at four warning windows: 90 / 60 / 30 / 7 days before
+# license_expires_at.  The windows are evaluated in a single query using
+# CASE so each row fires at most once per window per tick.
+#
+# Downstream consumers:
+#   • license-true-up-calculator (when window <= 60 days, renewal negotiation
+#     preparation is triggered)
+#   • it-team-slack (notification)
+#   • jira-asset-task (creates a renewal tracking ticket)
+
+name: license-expiring
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each software asset whose license_expires_at falls
+  within a warning window (90 / 60 / 30 / 7 days). One event per asset per
+  window; dedup prevents re-fire within the same window period.
+
+source:
+  kind: sql
+  table: it_assets
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      a.tenant_id,
+      a.id                                         AS asset_id,
+      a.name                                       AS asset_name,
+      a.vendor,
+      a.asset_type,
+      a.license_expires_at,
+      (a.license_expires_at - CURRENT_DATE)        AS days_until_expiry,
+      a.active_seats,
+      lt.contracted_seats,
+      lt.annual_cost_usd,
+      lt.contract_id,
+      lt.auto_renews,
+      lt.renewal_notice_days,
+      CASE
+          WHEN (a.license_expires_at - CURRENT_DATE) <= 7   THEN 7
+          WHEN (a.license_expires_at - CURRENT_DATE) <= 30  THEN 30
+          WHEN (a.license_expires_at - CURRENT_DATE) <= 60  THEN 60
+          WHEN (a.license_expires_at - CURRENT_DATE) <= 90  THEN 90
+          ELSE NULL
+      END                                          AS warning_window_days
+  FROM it_assets a
+  LEFT JOIN license_terms lt
+      ON lt.asset_id = a.id
+     AND lt.term_end_date = a.license_expires_at
+  WHERE a.tenant_id = '{tenant_id}'
+    AND a.asset_class = 'software'
+    AND a.status NOT IN ('retired')
+    AND a.license_expires_at IS NOT NULL
+    AND (a.license_expires_at - CURRENT_DATE) BETWEEN 0 AND 90
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  # Daily at 08:00 — early enough to catch morning standup.
+  cron: "0 8 * * *"
+
+event:
+  kind: it_asset.license_expiring
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:            "$.tenant_id"
+    asset_id:             "$.asset_id"
+    asset_name:           "$.asset_name"
+    vendor:               "$.vendor"
+    asset_type:           "$.asset_type"
+    license_expires_at:   "$.license_expires_at"
+    days_until_expiry:    "$.days_until_expiry"
+    warning_window_days:  "$.warning_window_days"
+    active_seats:         "$.active_seats"
+    contracted_seats:     "$.contracted_seats"
+    annual_cost_usd:      "$.annual_cost_usd"
+    contract_id:          "$.contract_id"
+    auto_renews:          "$.auto_renews"
+    renewal_notice_days:  "$.renewal_notice_days"
+
+downstream:
+  agents:
+    - license-true-up-calculator
+  outputs:
+    - it-team-slack
+    - jira-asset-task
+
+# Dedup: once per (asset, window) pair; suppress re-fire until the next
+# window threshold is crossed.
+dedup:
+  key: "{tenant_id}:{asset_id}:{warning_window_days}"
+  ttl_seconds: 86400   # 24 hours — fires at most once per day per window

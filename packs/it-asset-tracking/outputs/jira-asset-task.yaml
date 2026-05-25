@@ -1,0 +1,72 @@
+# packs/it-asset-tracking/outputs/jira-asset-task.yaml
+#
+# Output sink — Jira IT asset tasks
+#
+# Creates Jira issues in the configured IT project for:
+#   • Hardware provisioning preparation (from provisioning-orchestrator)
+#   • License renewal tracking (from license-true-up-calculator)
+#   • Audit findings requiring IT action (from audit-reconciler)
+#   • Warranty / EOL replacement planning (from watches)
+#
+# Required env vars:
+#   JIRA_BASE_URL       — e.g. https://yourorg.atlassian.net
+#   JIRA_API_TOKEN      — Jira API token (read/write scope)
+#   JIRA_USER_EMAIL     — email of the service account holding the token
+#   JIRA_IT_PROJECT_KEY — Jira project key (e.g. "IT")
+
+name: jira-asset-task
+version: "1.0.0"
+kind: jira
+
+connection:
+  base_url_env: JIRA_BASE_URL
+  api_token_env: JIRA_API_TOKEN
+  user_email_env: JIRA_USER_EMAIL
+
+project:
+  key_env: JIRA_IT_PROJECT_KEY
+
+# Issue type mapping by event kind
+issue_types:
+  it_asset.provisioning_complete:
+    issue_type: Task
+    summary_template: "IT Provisioning: {{ employee_name }} ({{ start_date }})"
+    description_field: provisioning_checklist_markdown
+    priority: High
+    labels: [it-provisioning, new-hire]
+    assignee: "${IT_OPS_JIRA_ASSIGNEE}"
+
+  it_asset.license_expiring:
+    issue_type: Task
+    summary_template: "License Renewal: {{ asset_name }} — {{ days_until_expiry }} days"
+    description_field: true_up_narrative_markdown
+    priority: "{{ 'Critical' if days_until_expiry <= 7 else ('High' if days_until_expiry <= 30 else 'Medium') }}"
+    labels: [license-renewal, software-asset]
+    due_date: "{{ license_expires_at }}"
+
+  it_asset.warranty_expiring:
+    issue_type: Task
+    summary_template: "Warranty Expiring: {{ asset_name }} ({{ serial_number }}) — {{ days_until_expiry }} days"
+    priority: Medium
+    labels: [warranty, hardware-asset]
+    due_date: "{{ warranty_expires_at }}"
+
+  it_asset.eol_approaching:
+    issue_type: Task
+    summary_template: "EOL Planning: {{ asset_name }} — {{ days_until_eol }} days ({{ assigned_count }} users)"
+    priority: "{{ 'High' if days_until_eol <= 60 else 'Medium' }}"
+    labels: [eol, hardware-refresh]
+
+  it_asset.audit_finding:
+    issue_type: Bug
+    summary_template: "[{{ severity | upper }}] Audit Finding: {{ finding_type }} — {{ asset_name | default('multiple assets') }}"
+    description_field: audit_finding_table_markdown
+    priority: "{{ 'Critical' if severity == 'critical' else ('High' if severity == 'high' else 'Medium') }}"
+    labels: [audit-reconciliation, "{{ severity }}-severity"]
+
+# Dedup: avoid creating duplicate Jira tasks for the same asset+event type
+# within the same sprint (14 days).
+dedup:
+  key: "{project_key}:{event_kind}:{asset_id}"
+  ttl_seconds: 1209600   # 14 days
+  on_duplicate: add_comment   # add a comment to the existing issue instead
