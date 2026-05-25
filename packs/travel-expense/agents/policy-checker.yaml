@@ -1,0 +1,235 @@
+# Agent definition — policy-checker
+# ---------------------------------------------------------------------------
+# Checks each te_expenses row (status='pending_policy') against the tenant's
+# T&E policy (te_policy) and records violations in te_policy_violations.
+#
+# CRITICAL DESIGN CONSTRAINT — VIOLATIONS NEVER AUTO-REJECT:
+#   When a policy violation is detected the agent MUST:
+#     1. Write a human-readable explanation to te_policy_violations.
+#     2. Set the expense status to 'policy_violation'.
+#     3. Escalate to the employee's direct manager with the explanation.
+#     4. Preserve the employee's ability to appeal (appeal_reason column).
+#   Auto-rejection is EXPLICITLY FORBIDDEN regardless of violation severity.
+#   Only a human (manager or director) may reject an expense after reviewing
+#   the explanation and any employee appeal.
+#
+# Edge cases handled:
+#   - Currency conversion: amount_usd may be null (fx_pending). In that case
+#     policy-checker skips threshold comparisons and records an info-severity
+#     violation 'fx_conversion_uncertainty' per the tenant's fx_uncertainty_action.
+#   - Missing receipt: flagged as warning-severity 'receipt_missing'; does NOT
+#     block the expense — manager decides after seeing the explanation.
+#   - Multi-violation: a single expense can have multiple te_policy_violations
+#     rows (e.g. alcohol + over per-diem). All are escalated together.
+#   - Advance-approval categories: if the category requires advance approval and
+#     no approval pre-exists, an 'advance_approval_required' violation is written;
+#     the expense is escalated immediately rather than queued for post-hoc approval.
+#   - Unknown category: categorised as 'other' and flagged info-severity.
+# ---------------------------------------------------------------------------
+
+name: policy-checker
+version: "1.0.0"
+description: >
+  Evaluates expenses against tenant T&E policy. Records violations with
+  human-readable explanations and escalates to manager — NEVER auto-rejects.
+  Employees retain full right to appeal. Handles FX uncertainty, missing
+  receipts, per-diem overages, excluded categories, and advance-approval rules.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: te.expense_status_changed
+    filter: "status = 'pending_policy'"
+  # Also triggered when an FX rate is updated (re-evaluate fx_pending expenses)
+  - event: te.fx_rate_updated
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a T&E compliance advisor. Your job is to evaluate employee expense
+  submissions against company policy and write clear, empathetic explanations
+  of any violations — explanations the employee and their manager can actually
+  use to understand what happened and how to resolve it.
+
+  Guiding principles:
+  1. Violations are escalated, NEVER auto-rejected. Your role is to explain,
+     not to decide. The final decision belongs to the manager.
+  2. Write explanations in plain language. Assume the reader is the employee,
+     not a finance professional.
+  3. If a rule is ambiguous or the evidence is unclear, record an 'info'
+     severity violation with your reasoning, not a 'warning' or 'error'.
+  4. Always include: what rule was triggered, what value was submitted vs what
+     is allowed, and what the employee can do next (correct, appeal, or ask
+     their manager).
+  5. If currency conversion was used, include the rate and its date in any
+     threshold-related explanation so the employee can verify.
+
+  For each violation output a JSON object with:
+    rule_id, severity, explanation, excess_amount_usd (null if not applicable)
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: get_tenant_policy
+    description: >
+      Fetch the tenant's current T&E policy configuration from te_policy.
+      Returns per-diem limits, excluded categories, advance-approval rules,
+      and FX uncertainty policy.
+    kind: sql
+    query: |
+      SELECT per_diem_limits_usd, excluded_categories, advance_approval_cats,
+             threshold_auto_usd, threshold_manager_usd, threshold_director_usd,
+             fx_max_staleness_hours, fx_uncertainty_action
+      FROM   te_policy
+      WHERE  tenant_id = '{tenant_id}'
+
+  - name: get_expense
+    description: >
+      Fetch the expense row and its FX state for policy evaluation.
+    kind: sql
+    query: |
+      SELECT e.id, e.employee_id, e.amount, e.currency, e.amount_usd,
+             e.fx_rate_used, e.fx_rate_date, e.category, e.merchant,
+             e.expense_date, e.description, e.receipt_path,
+             EXTRACT(HOUR FROM NOW() - r.created_at)::INT AS fx_staleness_hours
+      FROM   te_expenses e
+      LEFT JOIN te_fx_rates r
+             ON r.from_currency = e.currency
+            AND r.to_currency   = 'USD'
+            AND r.effective_date = e.expense_date
+      WHERE  e.id = '{expense_id}'
+
+  - name: check_advance_approval
+    description: >
+      For categories requiring advance approval, check whether the employee
+      already obtained pre-approval. Returns approved (bool) and approver.
+    kind: sql
+    query: |
+      SELECT approved_by, approved_at
+      FROM   te_expenses
+      WHERE  tenant_id   = '{tenant_id}'
+        AND  employee_id = '{employee_id}'
+        AND  category    = '{category}'
+        AND  status      = 'approved'
+        AND  expense_date < '{expense_date}'
+        AND  expense_date >= '{expense_date}'::DATE - INTERVAL '90 days'
+      LIMIT 1
+
+  - name: record_violation
+    description: >
+      Write a policy violation to te_policy_violations with the explanation
+      drafted by the LLM. The expense is NOT rejected — it is escalated.
+    kind: sql
+    query: |
+      INSERT INTO te_policy_violations (
+          tenant_id, expense_id, rule_id, severity, explanation,
+          excess_amount_usd, resolution
+      ) VALUES (
+          '{tenant_id}', '{expense_id}', '{rule_id}', '{severity}',
+          '{explanation}', {excess_amount_usd}, 'pending'
+      )
+      RETURNING id
+
+  - name: set_expense_status
+    description: >
+      Advance the expense status after policy evaluation.
+      Use 'policy_ok' when no violations exist, 'policy_violation' when
+      violations were recorded. Never set 'rejected'.
+    kind: sql
+    query: |
+      UPDATE te_expenses
+      SET    status = '{new_status}'
+      WHERE  id = '{expense_id}'
+        AND  tenant_id = '{tenant_id}'
+      RETURNING id, status
+
+  - name: escalate_to_manager
+    description: >
+      Emit a te.policy_violation_escalated event so approval-router can
+      notify the employee's manager with the violation explanation(s).
+      This is MANDATORY whenever a violation is recorded.
+    kind: event_emit
+    event: te.policy_violation_escalated
+    payload_template:
+      expense_id: "{expense_id}"
+      employee_id: "{employee_id}"
+      violation_ids: "{violation_ids}"
+      notify_employee: true   # Employee receives explanation + appeal instructions
+
+# --------------------------------------------------------------------------
+# Policy rules (evaluated in order; multiple may fire on one expense)
+# --------------------------------------------------------------------------
+policy_rules:
+  - id: excluded_category
+    severity: error
+    description: >
+      Category is in the tenant's excluded list (e.g. alcohol, personal).
+      Escalated to manager. Employee may appeal with business justification.
+
+  - id: per_diem_exceeded
+    severity: warning
+    description: >
+      Amount (USD-normalised) exceeds the per-diem limit for this category.
+      Excess amount is recorded. Manager may approve the overage.
+
+  - id: advance_approval_required
+    severity: error
+    description: >
+      Category requires advance approval which was not obtained. Escalated
+      immediately. Employee must provide retroactive justification.
+
+  - id: receipt_missing
+    severity: warning
+    description: >
+      No receipt artefact was attached. Expense can still be approved but
+      manager must explicitly note the waiver.
+
+  - id: fx_conversion_uncertainty
+    severity: info
+    description: >
+      FX rate used is older than the tenant's staleness threshold, or no
+      rate was available. Amount_usd is an estimate. Manager is informed.
+      Resolution depends on tenant's fx_uncertainty_action policy.
+
+  - id: unknown_category
+    severity: info
+    description: >
+      Category 'other' was used. Manager reviews for appropriate
+      categorisation. Does not block approval.
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  # Policy evaluation itself is fully autonomous.
+  # The escalation event is what triggers HOTL for the manager.
+  autonomous_actions:
+    evaluate_policy: unlimited
+    record_violation: unlimited
+  # Auto-rejection is explicitly forbidden.
+  forbidden_actions:
+    - set_expense_rejected
+
+# --------------------------------------------------------------------------
+# Appeal handling
+# --------------------------------------------------------------------------
+appeal:
+  window_days: 14   # Employee may appeal within 14 days of escalation
+  appeal_channel: "${TE_EMPLOYEE_CHANNEL:-email}"
+  # When an appeal is submitted, approval-router re-notifies the manager
+  # with the original violation explanation + employee's appeal_reason.
+  on_appeal: re_route_to_manager
+
+# --------------------------------------------------------------------------
+# Outcome telemetry
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - policy_ok
+    - violation_recorded
+    - escalation_sent
+    - fx_uncertainty_flagged
+  feedback_table: te_policy_violations

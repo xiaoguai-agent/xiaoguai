@@ -1,0 +1,157 @@
+# Agent definition — receipt-parser
+# ---------------------------------------------------------------------------
+# Parses raw receipts (image files, PDFs, forwarded email bodies) to extract
+# structured expense data: vendor, amount, currency, date, category.
+#
+# Preferred backend: xiaoguai-rag (if the pack is co-installed) for
+# vision-capable OCR with RAG-assisted category normalisation.
+# Fallback: direct LLM image-input (multimodal, model must support it).
+# Text-only fallback: regex + heuristic extraction for forwarded email text.
+#
+# After parsing the agent writes the result to te_expenses and transitions
+# status to 'fx_pending' (if non-USD) or 'pending_policy' (if USD or rate
+# is cached). It does NOT perform policy checks — that is policy-checker's job.
+# ---------------------------------------------------------------------------
+
+name: receipt-parser
+version: "1.0.0"
+description: >
+  Extracts vendor, amount, currency, date, and category from raw receipt
+  artefacts using OCR (via xiaoguai-rag) or LLM image input. Writes parsed
+  data to te_expenses and advances workflow state.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  # All inbound adapters emit this event after storing the raw artefact
+  - event: te.receipt_received
+    source: "*"  # any inbound adapter
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a receipt-parsing specialist. Your job is to extract structured
+  expense data from raw receipts: images, PDFs, or forwarded email text.
+
+  Extract the following fields:
+  - vendor: merchant or supplier name (string, clean up noise from OCR)
+  - amount: numeric total charged (e.g. 42.50 — do NOT include currency symbol)
+  - currency: ISO 4217 code (e.g. USD, EUR, GBP, JPY, CNY). Infer from
+    country context or currency symbol if not explicit. Default to USD only
+    if no evidence suggests otherwise — flag uncertainty as low_confidence.
+  - expense_date: ISO 8601 date (YYYY-MM-DD). Use the receipt date, NOT
+    today's date.
+  - category: one of: meals, accommodation, transport, airfare,
+    conference_registration, equipment_purchase, international_travel,
+    entertainment, other
+  - description: one-sentence summary of what was purchased
+  - confidence: overall extraction confidence (high / medium / low)
+
+  Rules:
+  - If a field is genuinely unreadable or absent, return null for that field;
+    do NOT invent values.
+  - Do not round amounts — preserve the exact figure from the receipt.
+  - If the receipt shows multiple line items, sum them to the total paid
+    (tip/gratuity included, but taxes separated if itemised).
+  - Output ONLY valid JSON matching the parse_result schema — no prose.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: ocr_extract
+    description: >
+      [RECOMMENDED] Submit the receipt image or PDF to xiaoguai-rag for
+      OCR + layout-aware text extraction. Returns raw text with positional
+      hints. Use this before attempting direct LLM image input.
+    kind: mcp
+    server: xiaoguai-rag
+    tool: rag_ocr_extract
+    # Gracefully degrades to llm_image_parse if xiaoguai-rag is unavailable
+    fallback: llm_image_parse
+    integration_note: >
+      xiaoguai-rag is a companion pack (packs/rag-finance or packs/rag-hr).
+      If neither is installed, this tool returns a NOT_AVAILABLE error and
+      the agent falls through to llm_image_parse automatically.
+
+  - name: llm_image_parse
+    description: >
+      Submit the receipt image directly to the LLM with a vision-capable
+      model (e.g. claude-3-5-sonnet). Returns extracted text and field
+      candidates. Use as fallback when xiaoguai-rag is unavailable.
+    kind: llm_image
+    model: "${TE_PARSER_MODEL:-claude-3-5-sonnet-20241022}"
+    max_tokens: 1024
+
+  - name: lookup_fx_rate
+    description: >
+      Look up the FX rate for a (from_currency, date) pair. Returns the
+      rate and its staleness in hours. Used to compute amount_usd at parse
+      time when the rate is fresh (< 24h).
+    kind: sql
+    query: |
+      SELECT rate, effective_date,
+             EXTRACT(HOUR FROM NOW() - created_at)::INT AS staleness_hours
+      FROM   te_fx_rates
+      WHERE  from_currency = '{from_currency}'
+        AND  to_currency   = 'USD'
+        AND  effective_date = '{expense_date}'
+      ORDER BY created_at DESC
+      LIMIT 1
+
+  - name: save_expense
+    description: >
+      Persist the parsed expense to te_expenses. Sets status to
+      'pending_policy' (if amount_usd is available) or 'fx_pending'
+      (if FX rate is unavailable). Returns the new expense id.
+    kind: sql
+    query: |
+      INSERT INTO te_expenses (
+          tenant_id, employee_id, amount, currency, amount_usd,
+          fx_rate_used, fx_rate_date, category, merchant, expense_date,
+          description, receipt_path, receipt_parsed_at, status, source,
+          source_reference_id
+      ) VALUES (
+          '{tenant_id}', '{employee_id}', {amount}, '{currency}',
+          {amount_usd}, {fx_rate_used}, '{fx_rate_date}', '{category}',
+          '{merchant}', '{expense_date}', '{description}', '{receipt_path}',
+          NOW(), '{status}', '{source}', '{source_reference_id}'
+      )
+      RETURNING id
+
+# --------------------------------------------------------------------------
+# Confidence threshold — below this, hold for human review
+# --------------------------------------------------------------------------
+confidence:
+  low_confidence_action: escalate_to_employee
+  # Employee receives employee-notification-email asking to correct fields
+  low_confidence_fields:
+    - amount
+    - currency
+    - expense_date
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  # Receipt parsing is fully autonomous — no human approval needed per parse.
+  # Humans are involved only at policy-checker + approval-router stages.
+  autonomous_actions:
+    parse_and_save: unlimited
+  # Low-confidence extractions notify the employee to confirm; they do not
+  # block the workflow — the expense is saved with a 'low_confidence' tag.
+  notify_on_low_confidence: true
+  notify_channel: "${TE_EMPLOYEE_CHANNEL:-email}"
+
+# --------------------------------------------------------------------------
+# Outcome telemetry
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - parse_succeeded
+    - parse_failed
+    - low_confidence_flagged
+    - fx_rate_missing
+  feedback_table: te_expenses

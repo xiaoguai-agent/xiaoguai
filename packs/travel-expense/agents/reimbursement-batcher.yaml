@@ -1,0 +1,190 @@
+# Agent definition — reimbursement-batcher
+# ---------------------------------------------------------------------------
+# Groups all approved, unreimbursed expenses into a reimbursement run and
+# prepares the payroll batch. The batch release is HOTL-gated: the agent
+# drafts the batch and halts. A human (finance / payroll admin) must approve
+# before the batch is sent to the payroll system.
+#
+# Schedule: triggered by cron (default Friday 09:00) OR by a manual
+# te.batch_requested event from the admin UI.
+#
+# Batch output:
+#   - te_reimbursements row (draft → pending_hotl → approved → released)
+#   - te_reimbursement_expenses junction rows
+#   - payroll-batch-csv output (rendered from template, HOTL-gated)
+#   - exec-monthly-te-digest updated (if end of calendar month)
+# ---------------------------------------------------------------------------
+
+name: reimbursement-batcher
+version: "1.0.0"
+description: >
+  Groups approved expenses into payroll reimbursement batches. Drafts the
+  batch, requests HOTL approval, then releases to the configured payroll
+  system (CSV export / ADP / Workday). Fully HOTL-gated — zero autonomous
+  payroll releases.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - kind: cron
+    schedule: "${TE_BATCH_SCHEDULE:-0 9 * * 5}"  # Default: Friday 09:00
+    timezone: "${TZ:-UTC}"
+  - event: te.batch_requested   # Manual trigger from admin UI
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a payroll batch coordinator for T&E reimbursements. Your job is to:
+  1. Identify all approved, unreimbursed expenses for the current batch period.
+  2. Group them by employee and compute each employee's total reimbursement.
+  3. Generate a clear batch summary for the finance team to review and approve.
+  4. After human approval, release the batch to the configured payroll system.
+
+  Rules:
+  - Never release a batch without explicit human approval (HOTL gate).
+  - If an expense's amount_usd is null (fx_pending), exclude it from the batch
+    and log a warning — do NOT estimate or round-trip a conversion.
+  - Include the batch reference, period, employee breakdown, and total in
+    the approval request so the reviewer can reconcile against their records.
+  - Flag any expenses that were approved with open policy violations (manager
+    waived the violation) — include a count in the batch summary.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: gather_approved_expenses
+    description: >
+      Fetch all approved, unreimbursed expenses for the batch period.
+      Excludes fx_pending expenses (amount_usd IS NULL).
+    kind: sql
+    query: |
+      SELECT e.id, e.tenant_id, e.employee_id, e.amount, e.currency,
+             e.amount_usd, e.category, e.merchant, e.expense_date,
+             e.approved_by, e.approved_at,
+             COUNT(v.id) AS waived_violations
+      FROM   te_expenses e
+      LEFT JOIN te_policy_violations v
+             ON v.expense_id = e.expense_id
+            AND v.resolution = 'approved'   -- manager waived
+      WHERE  e.tenant_id = '{tenant_id}'
+        AND  e.status    = 'approved'
+        AND  e.amount_usd IS NOT NULL
+        AND  e.expense_date BETWEEN '{period_start}' AND '{period_end}'
+      GROUP BY e.id, e.tenant_id, e.employee_id, e.amount, e.currency,
+               e.amount_usd, e.category, e.merchant, e.expense_date,
+               e.approved_by, e.approved_at
+      ORDER BY e.employee_id, e.expense_date
+
+  - name: create_batch
+    description: >
+      Insert the reimbursement batch header into te_reimbursements with
+      status='pending_hotl'. Returns the batch id and reference.
+    kind: sql
+    query: |
+      INSERT INTO te_reimbursements (
+          tenant_id, batch_reference, period_start, period_end,
+          total_amount_usd, employee_count, expense_count, status
+      ) VALUES (
+          '{tenant_id}', '{batch_reference}', '{period_start}', '{period_end}',
+          {total_amount_usd}, {employee_count}, {expense_count}, 'pending_hotl'
+      )
+      RETURNING id, batch_reference
+
+  - name: link_expenses_to_batch
+    description: >
+      Insert junction rows linking expenses to the batch and mark them
+      as 'reimbursed' so they are excluded from future batches.
+    kind: sql
+    query: |
+      INSERT INTO te_reimbursement_expenses (reimbursement_id, expense_id, amount_usd)
+      SELECT '{reimbursement_id}', id, amount_usd
+      FROM   te_expenses
+      WHERE  id = ANY('{expense_ids}'::TEXT[]);
+
+      UPDATE te_expenses
+      SET    status = 'reimbursed'
+      WHERE  id = ANY('{expense_ids}'::TEXT[])
+        AND  tenant_id = '{tenant_id}'
+
+  - name: emit_hotl_approval_request
+    description: >
+      Emit te.batch_approval_requested so the payroll-batch-csv output
+      handler generates the CSV and sends it to the finance reviewer
+      for HOTL approval. The batch is NOT released until approval arrives.
+    kind: event_emit
+    event: te.batch_approval_requested
+    payload_template:
+      reimbursement_id: "{reimbursement_id}"
+      batch_reference: "{batch_reference}"
+      total_amount_usd: "{total_amount_usd}"
+      employee_count: "{employee_count}"
+      expense_count: "{expense_count}"
+      period_start: "{period_start}"
+      period_end: "{period_end}"
+
+  - name: release_batch
+    description: >
+      Called ONLY after HOTL approval. Marks the batch as 'released',
+      records the payroll reference, and emits te.batch_released.
+      This tool is gated by HOTL and cannot be called autonomously.
+    kind: sql
+    query: |
+      UPDATE te_reimbursements
+      SET    status           = 'released',
+             hotl_approved_by = '{approved_by}',
+             hotl_approved_at = NOW(),
+             payroll_reference = '{payroll_reference}',
+             released_at       = NOW()
+      WHERE  id = '{reimbursement_id}'
+        AND  status = 'approved'   -- must be HOTL-approved before release
+      RETURNING id, batch_reference, released_at
+
+# --------------------------------------------------------------------------
+# Batch reference format
+# --------------------------------------------------------------------------
+batch_naming:
+  template: "{tenant_id}-{year}-W{week}-payroll"
+  # e.g. acme-2026-W22-payroll
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  autonomous_actions:
+    gather_expenses: unlimited
+    create_batch: unlimited       # Creates draft; does NOT release
+    emit_hotl_approval_request: unlimited
+  # Batch release is STRICTLY human-gated
+  require_human_approval:
+    - release_batch
+  notify_channel: "${TE_APPROVAL_CHANNEL:-admin_ui}"
+  budget_usd: 0.00   # Zero autonomous financial disbursement
+
+# --------------------------------------------------------------------------
+# Empty-batch handling
+# --------------------------------------------------------------------------
+empty_batch:
+  action: skip_and_log   # Do not create a batch row if no approved expenses
+
+# --------------------------------------------------------------------------
+# Monthly executive digest
+# --------------------------------------------------------------------------
+monthly_digest:
+  trigger: last_batch_of_month   # Agent detects if period_end is month-end
+  output: outputs/exec-monthly-te-digest.yaml
+
+# --------------------------------------------------------------------------
+# Outcome telemetry
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - batch_created
+    - batch_hotl_requested
+    - batch_approved
+    - batch_released
+    - batch_failed
+    - fx_pending_excluded
+  feedback_table: te_reimbursements

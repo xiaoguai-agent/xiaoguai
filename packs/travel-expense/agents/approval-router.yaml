@@ -1,0 +1,200 @@
+# Agent definition — approval-router
+# ---------------------------------------------------------------------------
+# Routes each expense (status='policy_ok' or 'policy_violation' after manager
+# escalation) to the appropriate approval tier based on amount_usd and
+# tenant-configured thresholds.
+#
+# Approval tiers:
+#   auto     — amount_usd <= threshold_auto_usd (default $25)
+#              No human required; expense is immediately approved.
+#   manager  — $25 < amount_usd <= $500 (tenant default)
+#              HOTL-gated: Slack DM to manager (outputs/approval-slack-dm).
+#   director — $500 < amount_usd <= $2000 (tenant default)
+#              HOTL-gated: Slack DM to director.
+#   cfo      — amount_usd > $2000
+#              HOTL-gated: Slack DM to CFO.
+#
+# Policy violations ALWAYS escalate at least to manager, regardless of amount.
+# A $15 expense with an alcohol violation still goes to manager tier.
+#
+# HOTL note: the approval-router emits the approval request and then waits.
+# No approval action is taken autonomously above the auto threshold.
+# ---------------------------------------------------------------------------
+
+name: approval-router
+version: "1.0.0"
+description: >
+  Routes T&E approvals by amount tier (auto/manager/director/CFO).
+  HOTL-gated for all tiers above auto. Policy violations always escalate
+  to at least manager regardless of amount.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  # Clean expenses ready for approval
+  - event: te.expense_status_changed
+    filter: "status = 'policy_ok'"
+  # Violation escalations (manager must decide)
+  - event: te.policy_violation_escalated
+  # Re-route when employee submits appeal
+  - event: te.appeal_submitted
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a T&E approval coordinator. Your job is to:
+  1. Determine the correct approval tier for each expense based on its
+     USD-normalised amount and the tenant's configured thresholds.
+  2. Route policy violations to manager regardless of amount.
+  3. Generate clear approval-request messages for human reviewers that
+     include: employee name, expense details, policy context, and
+     one-click approve/reject links.
+  4. For auto-approved expenses, confirm approval immediately and notify
+     the employee.
+
+  Do NOT approve or reject expenses above the auto threshold yourself.
+  Your job is to route and notify — humans decide.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: get_expense_with_context
+    description: >
+      Fetch the expense plus employee info, policy thresholds, and any
+      open violations for routing decision.
+    kind: sql
+    query: |
+      SELECT e.id, e.employee_id, e.amount, e.currency, e.amount_usd,
+             e.category, e.merchant, e.expense_date, e.description,
+             e.receipt_path, e.status,
+             p.threshold_auto_usd, p.threshold_manager_usd,
+             p.threshold_director_usd,
+             COALESCE(json_agg(v) FILTER (WHERE v.id IS NOT NULL), '[]') AS violations
+      FROM   te_expenses e
+      JOIN   te_policy p ON p.tenant_id = e.tenant_id
+      LEFT JOIN te_policy_violations v ON v.expense_id = e.id
+                                      AND v.resolution = 'pending'
+      WHERE  e.id        = '{expense_id}'
+        AND  e.tenant_id = '{tenant_id}'
+      GROUP BY e.id, p.threshold_auto_usd, p.threshold_manager_usd,
+               p.threshold_director_usd
+
+  - name: get_approver
+    description: >
+      Resolve the approver for the determined tier. Returns approver_id,
+      approver_name, and approver_slack_id (if configured).
+    kind: sql
+    query: |
+      SELECT approver_id, approver_name, approver_slack_id, approver_email
+      FROM   te_approvers
+      WHERE  tenant_id = '{tenant_id}'
+        AND  tier      = '{tier}'
+      LIMIT 1
+
+  - name: set_approval_tier
+    description: >
+      Record the approval tier on the expense and advance status to
+      'pending_approval' (or 'approved' for auto tier).
+    kind: sql
+    query: |
+      UPDATE te_expenses
+      SET    approval_tier = '{tier}',
+             status        = '{new_status}',
+             approved_by   = {approved_by},
+             approved_at   = {approved_at}
+      WHERE  id        = '{expense_id}'
+        AND  tenant_id = '{tenant_id}'
+      RETURNING id, approval_tier, status
+
+  - name: emit_approval_request
+    description: >
+      Emit te.approval_requested so the outputs/approval-slack-dm handler
+      sends the HOTL-gated Slack DM to the approver. Only call this for
+      tiers above auto.
+    kind: event_emit
+    event: te.approval_requested
+    payload_template:
+      expense_id: "{expense_id}"
+      tier: "{tier}"
+      approver_id: "{approver_id}"
+      has_violations: "{has_violations}"
+      violation_ids: "{violation_ids}"
+
+  - name: emit_auto_approved
+    description: >
+      Emit te.expense_approved for auto-tier expenses so the employee
+      notification is triggered. Sets approved_by='system'.
+    kind: event_emit
+    event: te.expense_approved
+    payload_template:
+      expense_id: "{expense_id}"
+      tier: "auto"
+      approved_by: "system"
+
+# --------------------------------------------------------------------------
+# Routing logic
+# --------------------------------------------------------------------------
+routing:
+  # Violations always push to manager tier minimum
+  violation_minimum_tier: manager
+
+  tiers:
+    auto:
+      condition: "amount_usd <= threshold_auto_usd AND violations_count == 0"
+      hotl_required: false
+    manager:
+      condition: >
+        (amount_usd > threshold_auto_usd AND amount_usd <= threshold_manager_usd)
+        OR violations_count > 0
+      hotl_required: true
+    director:
+      condition: "amount_usd > threshold_manager_usd AND amount_usd <= threshold_director_usd"
+      hotl_required: true
+    cfo:
+      condition: "amount_usd > threshold_director_usd"
+      hotl_required: true
+
+  # FX-pending expenses: amount_usd is null
+  fx_pending_action: defer
+  # Deferred until policy-checker re-evaluates after FX rate arrives.
+  # Prevents routing at wrong tier due to missing normalised amount.
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  autonomous_actions:
+    auto_approve: unlimited         # Only for auto-tier
+    emit_approval_request: unlimited  # Emit only; human approves
+  # The actual approval write (status=approved, approved_by=<human>) is
+  # executed by the admin UI or IM reply handler, not by this agent.
+  require_human_approval:
+    - approve_expense_manager
+    - approve_expense_director
+    - approve_expense_cfo
+  notify_channel: "${TE_APPROVAL_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# SLA tracking (informational — does not block workflow)
+# --------------------------------------------------------------------------
+sla:
+  manager_response_hours: 48
+  director_response_hours: 72
+  cfo_response_hours: 96
+  on_sla_breach: notify_admin_ui   # Does not escalate automatically
+
+# --------------------------------------------------------------------------
+# Outcome telemetry
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - auto_approved
+    - routed_to_manager
+    - routed_to_director
+    - routed_to_cfo
+    - approval_received
+    - rejection_received
+  feedback_table: te_expenses
