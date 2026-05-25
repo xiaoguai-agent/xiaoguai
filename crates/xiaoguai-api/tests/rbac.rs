@@ -59,6 +59,7 @@ async fn build_state(roles: Vec<&str>) -> AppState {
         hotl_enforcer: None,
         outcome_writer: None,
         outcomes_reader: None,
+        skill_packs: None,
     }
 }
 

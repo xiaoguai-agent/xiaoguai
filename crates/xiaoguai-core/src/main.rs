@@ -514,6 +514,7 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // in a follow-up; routes return 503 until then.
         outcome_writer: None,
         outcomes_reader: None,
+        skill_packs: None,
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

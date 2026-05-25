@@ -269,6 +269,7 @@ fn build_state(
         hotl_enforcer: None,
         outcome_writer: None,
         outcomes_reader: None,
+        skill_packs: None,
     };
     (state, sessions, messages)
 }

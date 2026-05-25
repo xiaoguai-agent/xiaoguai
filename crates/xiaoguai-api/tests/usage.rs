@@ -56,6 +56,7 @@ fn build_state(usage_reader: Option<Arc<dyn UsageReader>>) -> AppState {
         hotl_enforcer: None,
         outcome_writer: None,
         outcomes_reader: None,
+        skill_packs: None,
     }
 }
 

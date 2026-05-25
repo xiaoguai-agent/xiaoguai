@@ -87,6 +87,7 @@ fn build_state_with_toolbox(toolbox: Toolbox, publish: bool) -> AppState {
         hotl_enforcer: None,
         outcome_writer: None,
         outcomes_reader: None,
+        skill_packs: None,
     }
 }
 

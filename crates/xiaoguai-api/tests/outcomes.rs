@@ -60,6 +60,7 @@ fn minimal_state() -> AppState {
         hotl_enforcer: None,
         outcome_writer: None,
         outcomes_reader: None,
+        skill_packs: None,
     }
 }
 

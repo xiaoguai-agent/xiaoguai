@@ -13,6 +13,8 @@ use axum::Router;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::skills;
+
 use crate::auth::require_bearer;
 use crate::rate_limit::{rate_limit, rate_limit_middleware};
 use crate::rbac::require_authorized;
@@ -100,7 +102,15 @@ pub fn router(state: AppState) -> Router {
         // v1.2.4 — outcome telemetry (revenue-not-time ROI tracking).
         .route("/v1/outcomes", post(outcomes::record_outcome))
         .route("/v1/outcomes/summary", get(outcomes::outcomes_summary))
-        .route("/v1/outcomes/timeseries", get(outcomes::outcomes_timeseries));
+        .route("/v1/outcomes/timeseries", get(outcomes::outcomes_timeseries))
+        // v1.2.28 — skill pack marketplace.
+        .route("/v1/skills/catalog", get(skills::list_catalog))
+        .route("/v1/skills/installed", get(skills::list_installed))
+        .route("/v1/skills/install", post(skills::install_pack))
+        .route(
+            "/v1/skills/install/:id",
+            delete(skills::uninstall_pack),
+        );
 
     // Layer order (inner → outer, since `route_layer` adds outward):
     //   handler → rate_limit → rbac → require_bearer

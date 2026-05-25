@@ -63,6 +63,7 @@ fn build_state_with_auth() -> AppState {
         hotl_enforcer: None,
         outcome_writer: None,
         outcomes_reader: None,
+        skill_packs: None,
     }
 }
 
