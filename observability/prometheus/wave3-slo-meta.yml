@@ -1,0 +1,175 @@
+---
+# Wave-3 SLO Meta — 28-day error-budget remaining recording rules
+#
+# These rules compute the fraction of each SLO's 28-day error budget that
+# is still available, using the current burn rate projected over a 28-day
+# window.  Used as Grafana single-stat / gauge panels.
+#
+# Formula:
+#   budget_remaining = 1 - (burn_consumed_fraction)
+#   burn_consumed_fraction = (current_error_ratio / slo_error_ratio)
+#
+# The 28-day long-term SLI is approximated from the longest recording-rule
+# windows available (3d).  For a true 28d window you need the raw
+# histogram_over_time range query in Grafana.
+#
+# Metric naming: slo:wave3:<slo_name>:budget_remaining_ratio
+# Value: 0.0 (fully consumed) → 1.0 (fully intact)
+# Negative values mean the budget was already over-spent.
+
+groups:
+  - name: wave3-slo-meta
+    interval: 5m
+    rules:
+
+      # hotl_check_latency — 99.9% (error_ratio = 0.001)
+      # budget_remaining = 1 - (current_error_ratio / 0.001)
+      # Using 3d rolling window as best available long-window proxy.
+      - record: slo:wave3:hotl_check_latency:budget_remaining_ratio
+        expr: |
+          1 - (
+            (1 - sli:hotl_check_latency:fast_ratio:rate3d) / 0.001
+          )
+        labels:
+          slo: hotl_check_latency
+          slo_target: "0.999"
+          budget_window: 28d
+
+      # outcomes_record — 99.9% (error_ratio = 0.001)
+      - record: slo:wave3:outcomes_record:budget_remaining_ratio
+        expr: |
+          1 - (
+            (1 - sli:outcomes_record:fast_ratio:rate3d) / 0.001
+          )
+        labels:
+          slo: outcomes_record
+          slo_target: "0.999"
+          budget_window: 28d
+
+      # outcomes_summary — 99% (error_ratio = 0.01)
+      - record: slo:wave3:outcomes_summary:budget_remaining_ratio
+        expr: |
+          1 - (
+            (1 - sli:outcomes_summary:fast_ratio:rate3d) / 0.01
+          )
+        labels:
+          slo: outcomes_summary
+          slo_target: "0.99"
+          budget_window: 28d
+
+      # outcomes_timeseries — 99% (error_ratio = 0.01)
+      - record: slo:wave3:outcomes_timeseries:budget_remaining_ratio
+        expr: |
+          1 - (
+            (1 - sli:outcomes_timeseries:fast_ratio:rate3d) / 0.01
+          )
+        labels:
+          slo: outcomes_timeseries
+          slo_target: "0.99"
+          budget_window: 28d
+
+      # skills_installed — 99% (error_ratio = 0.01)
+      - record: slo:wave3:skills_installed:budget_remaining_ratio
+        expr: |
+          1 - (
+            (1 - sli:skills_installed:fast_ratio:rate3d) / 0.01
+          )
+        labels:
+          slo: skills_installed
+          slo_target: "0.99"
+          budget_window: 28d
+
+      # hotl_policies_write — 99% (error_ratio = 0.01)
+      - record: slo:wave3:hotl_policies_write:budget_remaining_ratio
+        expr: |
+          1 - (
+            (1 - sli:hotl_policies_write:fast_ratio:rate3d) / 0.01
+          )
+        labels:
+          slo: hotl_policies_write
+          slo_target: "0.99"
+          budget_window: 28d
+
+      # hotl_availability — 99.9% (error_ratio = 0.001)
+      - record: slo:wave3:hotl_availability:budget_remaining_ratio
+        expr: |
+          1 - (
+            (1 - sli:hotl_availability:success_ratio:rate3d) / 0.001
+          )
+        labels:
+          slo: hotl_availability
+          slo_target: "0.999"
+          budget_window: 28d
+
+      # outcomes_availability — 99.95% (error_ratio = 0.0005)
+      - record: slo:wave3:outcomes_availability:budget_remaining_ratio
+        expr: |
+          1 - (
+            (1 - sli:outcomes_availability:success_ratio:rate3d) / 0.0005
+          )
+        labels:
+          slo: outcomes_availability
+          slo_target: "0.9995"
+          budget_window: 28d
+
+      # ---------------------------------------------------------------------------
+      # Derived: current burn rate multiplier (relative to steady-state budget use)
+      # burn_rate = current_error_ratio / slo_error_ratio
+      # 1.0 = exactly on budget; 14.4 = pair-1 critical threshold
+      # ---------------------------------------------------------------------------
+
+      - record: slo:wave3:hotl_check_latency:burn_rate_1h
+        expr: |
+          (1 - sli:hotl_check_latency:fast_ratio:rate1h) / 0.001
+        labels:
+          slo: hotl_check_latency
+          window: 1h
+
+      - record: slo:wave3:outcomes_record:burn_rate_1h
+        expr: |
+          (1 - sli:outcomes_record:fast_ratio:rate1h) / 0.001
+        labels:
+          slo: outcomes_record
+          window: 1h
+
+      - record: slo:wave3:outcomes_summary:burn_rate_1h
+        expr: |
+          (1 - sli:outcomes_summary:fast_ratio:rate1h) / 0.01
+        labels:
+          slo: outcomes_summary
+          window: 1h
+
+      - record: slo:wave3:outcomes_timeseries:burn_rate_1h
+        expr: |
+          (1 - sli:outcomes_timeseries:fast_ratio:rate1h) / 0.01
+        labels:
+          slo: outcomes_timeseries
+          window: 1h
+
+      - record: slo:wave3:skills_installed:burn_rate_1h
+        expr: |
+          (1 - sli:skills_installed:fast_ratio:rate1h) / 0.01
+        labels:
+          slo: skills_installed
+          window: 1h
+
+      - record: slo:wave3:hotl_policies_write:burn_rate_1h
+        expr: |
+          (1 - sli:hotl_policies_write:fast_ratio:rate1h) / 0.01
+        labels:
+          slo: hotl_policies_write
+          window: 1h
+
+      - record: slo:wave3:hotl_availability:burn_rate_1h
+        expr: |
+          (1 - sli:hotl_availability:success_ratio:rate1h) / 0.001
+        labels:
+          slo: hotl_availability
+          window: 1h
+
+      - record: slo:wave3:outcomes_availability:burn_rate_1h
+        expr: |
+          (1 - sli:outcomes_availability:success_ratio:rate1h) / 0.0005
+        labels:
+          slo: outcomes_availability
+          window: 1h
