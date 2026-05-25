@@ -1,0 +1,61 @@
+# packs/research-paper-survey/inbound/semantic-scholar-citation-event.yaml
+#
+# Inbound event: semantic-scholar-citation-event
+#
+# Emitted by the citation-update-poll watch whenever a tracked paper's
+# citation count increases by >= citation_delta_threshold (default 10).
+# Signals an impact event — the paper is being cited more rapidly than before.
+
+name: semantic-scholar-citation-event
+kind: watch-event
+
+source_watch: watches/citation-update-poll.yaml
+
+# ── Payload schema ────────────────────────────────────────────────────────────
+
+schema:
+  paper_id:
+    type: string
+    format: uuid
+    required: true
+    description: "Internal papers.id UUID."
+  semantic_scholar_id:
+    type: string
+    required: true
+    description: "Semantic Scholar 40-char hex paper ID."
+  title:
+    type: string
+    required: true
+  old_citation_count:
+    type: integer
+    required: true
+  new_citation_count:
+    type: integer
+    required: true
+  delta:
+    type: integer
+    required: true
+    description: "new_citation_count - old_citation_count. Always >= citation_delta_threshold."
+  inbound_source:
+    type: string
+    const: semantic_scholar
+
+# ── Routing ───────────────────────────────────────────────────────────────────
+
+routes:
+  # Re-walk citations to discover newly citing papers.
+  - agent: agents/citation-graph-walker.yaml
+    description: "Expand citation graph from this newly-impactful paper."
+    payload_mapping:
+      semantic_scholar_id: "{{ event.semantic_scholar_id }}"
+      title:               "{{ event.title }}"
+    payload_as: paper
+
+  # Notify the research team via the digest output.
+  - output: outputs/slack-research-team-digest.yaml
+    description: "Post a citation-spike notification to the research Slack channel."
+    payload_as: citation_event
+    template: |
+      *Citation spike detected* — {{ event.delta }} new citations in 24h
+      Paper: {{ event.title | truncate(80) }}
+      Total citations: {{ event.new_citation_count }}

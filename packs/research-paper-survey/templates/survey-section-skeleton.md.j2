@@ -1,0 +1,36 @@
+{# packs/research-paper-survey/templates/survey-section-skeleton.md.j2
+   Wraps the LLM-drafted section body with structured metadata and
+   citation list. Output is valid Markdown / LaTeX-compatible Markdown.
+   Variables:
+     cluster_label    — string
+     cluster_keywords — list[string]
+     paper_count      — int
+     sparsity_score   — float
+     survey_topic     — string
+     section_body     — string (raw LLM output)
+     papers           — list of papers rows used as input
+     generated_at     — ISO-8601 timestamp
+#}
+
+## {{ cluster_label }}
+
+<!-- meta: cluster_keywords={{ cluster_keywords | join(', ') }} -->
+<!-- meta: papers={{ paper_count }}, sparsity={{ (sparsity_score * 100) | round | int }}% -->
+
+{{ section_body }}
+
+### References
+
+{% for p in papers | sort(attribute='published_date') -%}
+{% set key = (p.authors[0].split(' ')[-1] if p.authors else 'Unknown') + (p.published_date[:4] if p.published_date else '') -%}
+- [{{ key }}] {% if p.authors %}{{ p.authors | join(', ') | truncate(100) }}{% else %}Unknown authors{% endif %}.
+  *{{ p.title }}*.
+  {% if p.venue %}{{ p.venue }}, {% endif %}{% if p.published_date %}{{ p.published_date[:4] }}.{% endif %}
+  {% if p.arxiv_id %}arXiv:{{ p.arxiv_id }}.{% elif p.doi %}doi:{{ p.doi }}.{% elif p.url %}{{ p.url }}.{% endif %}
+
+{% endfor %}
+
+---
+
+<sub>Section drafted by xiaoguai research-paper-survey pack · {{ generated_at }}
+Survey: {{ survey_topic | truncate(60) }} · Source papers: {{ paper_count }}</sub>

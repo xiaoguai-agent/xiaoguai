@@ -1,0 +1,58 @@
+# packs/research-paper-survey/inbound/arxiv-new-paper.yaml
+#
+# Inbound event: arxiv-new-paper
+#
+# Emitted by the new-paper-arxiv-poll watch whenever a new paper is discovered
+# on an arXiv RSS feed that is not yet in the papers table.
+#
+# This spec defines the schema of the event payload and the routing to the
+# paper-classifier agent.
+
+name: arxiv-new-paper
+kind: watch-event
+
+# Emitted by:
+source_watch: watches/new-paper-arxiv-poll.yaml
+
+# ── Payload schema ────────────────────────────────────────────────────────────
+
+schema:
+  arxiv_id:
+    type: string
+    required: true
+    description: "arXiv paper ID, e.g. '2310.06825'"
+  title:
+    type: string
+    required: true
+  abstract:
+    type: string
+    required: false
+    description: "Paper abstract, truncated to 2000 chars by the watch."
+  authors:
+    type: array
+    items: string
+    required: false
+    default: []
+  published_date:
+    type: string
+    format: date
+    required: false
+    description: "Submission date in YYYY-MM-DD format."
+  url:
+    type: string
+    required: false
+    description: "arXiv abstract page URL."
+  category:
+    type: string
+    required: true
+    description: "arXiv category code that this paper appeared in, e.g. 'cs.LG'."
+  inbound_source:
+    type: string
+    const: arxiv
+
+# ── Routing ───────────────────────────────────────────────────────────────────
+
+routes:
+  - agent: agents/paper-classifier.yaml
+    description: "Classify relevance and paper type; embed abstract; upsert to papers table."
+    payload_as: paper

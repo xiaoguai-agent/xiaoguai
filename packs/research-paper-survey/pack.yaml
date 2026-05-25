@@ -1,0 +1,178 @@
+# packs/research-paper-survey/pack.yaml
+#
+# Research Paper Survey Skill Pack — v0.1.0
+#
+# Automates literature review end-to-end:
+#   - Polls arXiv RSS feeds and Semantic Scholar citation events
+#   - Classifies papers by relevance + type (empirical/theoretical/survey/position)
+#   - Walks citation graphs up to N hops to surface central works
+#   - Identifies under-explored topic clusters (research gaps)
+#   - Drafts survey sections from paper clusters + extracted claims
+#   - Publishes to Notion, exports LaTeX snippets, sends weekly digests
+#
+# Dependency notes
+# ----------------
+#   llm:              Required. Used by classifier, gap-synthesizer, and
+#                     survey-section-drafter agents.
+#   outcome-telemetry: Required. Records per-run classification accuracy and
+#                     section quality scores for continuous improvement.
+#   watch:            Required. Drives the arXiv RSS poll and Semantic Scholar
+#                     citation-count polling watches.
+
+name: research-paper-survey
+version: "0.1.0"
+description: >
+  Automates literature review: polls arXiv for new papers, walks citation
+  graphs to find central works, clusters topics to surface research gaps,
+  and drafts structured survey sections. Publishes results to Notion,
+  exports LaTeX snippets, and sends weekly progress digests.
+
+# ── Runtime dependencies ──────────────────────────────────────────────────────
+
+dependencies:
+  llm:
+    required: true
+    note: >
+      Used by paper-classifier, gap-synthesizer, and survey-section-drafter.
+      Override per-agent with the agent's `llm.model` key.
+
+  outcome-telemetry:
+    required: true
+    note: >
+      Records classification labels, gap confidence scores, and section
+      quality ratings. Powers the continuous-improvement feedback loop.
+
+  watch:
+    required: true
+    note: >
+      Drives arXiv RSS polling and Semantic Scholar citation-update polling.
+      Watches are defined in packs/research-paper-survey/watches/.
+
+# ── Inbound event sources ─────────────────────────────────────────────────────
+
+inbound:
+  - ref: inbound/arxiv-new-paper.yaml
+  - ref: inbound/semantic-scholar-citation-event.yaml
+  - ref: inbound/manual-paper-pdf-upload.yaml
+  - ref: inbound/zotero-collection-update.yaml
+
+# ── Watch definitions (polled sources) ────────────────────────────────────────
+
+watches:
+  - ref: watches/new-paper-arxiv-poll.yaml
+  - ref: watches/citation-update-poll.yaml
+
+# ── Agent definitions ─────────────────────────────────────────────────────────
+
+agents:
+  - ref: agents/paper-classifier.yaml
+  - ref: agents/citation-graph-walker.yaml
+  - ref: agents/gap-synthesizer.yaml
+  - ref: agents/survey-section-drafter.yaml
+
+# ── Templates ─────────────────────────────────────────────────────────────────
+
+templates:
+  - templates/paper-summary-card.md.j2
+  - templates/citation-graph-narrative.md.j2
+  - templates/gap-analysis-frame.md.j2
+  - templates/survey-section-skeleton.md.j2
+
+# ── Output connectors ─────────────────────────────────────────────────────────
+
+outputs:
+  - ref: outputs/notion-research-page.yaml
+  - ref: outputs/latex-section-snippet-export.yaml
+  - ref: outputs/slack-research-team-digest.yaml
+  - ref: outputs/weekly-survey-progress-email.yaml
+
+# ── Execution plan ────────────────────────────────────────────────────────────
+#
+# On new-paper event: classify → walk citations → synthesize gaps → draft section
+# On citation-update event: re-rank impactful papers → notify team
+# On manual upload: ingest → classify (same as new-paper path)
+# On Zotero update: batch import → classify all new entries
+
+plan:
+  - id: classify
+    agent: paper-classifier
+    description: "Classify incoming paper by relevance and type; embed abstract."
+    triggers:
+      - arxiv-new-paper
+      - manual-paper-pdf-upload
+      - zotero-collection-update
+
+  - id: walk_citations
+    agent: citation-graph-walker
+    description: "Follow references and citing papers up to max_hops; compute centrality."
+    deps: [classify]
+
+  - id: synthesize_gaps
+    agent: gap-synthesizer
+    description: "Detect under-explored topic clusters from sparsity in embedding space."
+    deps: [walk_citations]
+
+  - id: draft_section
+    agent: survey-section-drafter
+    description: "Write one survey section per dense topic cluster."
+    deps: [synthesize_gaps]
+
+# ── Database migrations ───────────────────────────────────────────────────────
+
+migrations:
+  - migrations/0001_lit_review.sql
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+
+config:
+  arxiv:
+    # Space-separated arXiv category codes to poll.
+    # Default covers ML + NLP + CV + Robotics.
+    categories: "cs.LG cs.CL cs.CV cs.RO stat.ML"
+    poll_interval_minutes: 60
+
+  citation_graph:
+    max_hops: 3
+    max_breadth_per_hop: 50   # at most 50 references/citations explored per paper per hop
+    centrality_metric: pagerank  # pagerank | betweenness | degree
+
+  topic_clustering:
+    algorithm: hdbscan         # hdbscan | kmeans | agglomerative
+    min_cluster_size: 5
+    embedding_model: text-embedding-3-small
+
+  survey:
+    min_papers_per_section: 4  # draft section only when cluster has >= 4 papers
+    section_max_tokens: 2000
+
+  outputs:
+    notion_database_id: ${NOTION_RESEARCH_DATABASE_ID}
+    slack_channel: ${SLACK_RESEARCH_CHANNEL:-#research}
+    weekly_digest_recipients: ${SURVEY_DIGEST_RECIPIENTS}
+
+# ── Required environment variables ───────────────────────────────────────────
+
+requires:
+  env:
+    - SEMANTIC_SCHOLAR_API_KEY   # Semantic Scholar Open Research API
+    - NOTION_API_TOKEN           # Notion integration token
+    - NOTION_RESEARCH_DATABASE_ID
+  env_optional:
+    - ARXIV_POLL_CATEGORIES      # override config.arxiv.categories
+    - SLACK_BOT_TOKEN            # required if slack-research-team-digest output is enabled
+    - SLACK_RESEARCH_CHANNEL
+    - SURVEY_DIGEST_RECIPIENTS   # comma-separated email list for weekly digest
+    - ZOTERO_API_KEY             # required if zotero-collection-update inbound is enabled
+    - ZOTERO_USER_ID
+
+# ── Feature flag ─────────────────────────────────────────────────────────────
+
+feature_flag: XIAOGUAI_RESEARCH_SURVEY_ENABLED
+
+# ── Deferred / not-yet-implemented ───────────────────────────────────────────
+#
+#   - PubMed / bioRxiv RSS inbound source
+#   - Full-text PDF extraction via Grobid MCP tool
+#   - Cross-lingual abstract embedding (multilingual-e5-large)
+#   - Overleaf direct export (requires Overleaf API access)
+#   - Interactive gap map UI (D3 force-directed citation graph)

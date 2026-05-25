@@ -1,0 +1,123 @@
+# packs/research-paper-survey/outputs/slack-research-team-digest.yaml
+#
+# Output connector: Slack Research Team Digest
+#
+# Posts notifications and digests to a configured Slack channel.
+# Three message types:
+#
+#   1. new-paper-alert  — posted immediately when a highly-relevant new paper
+#                         is classified (relevance_score >= alert_threshold).
+#   2. citation-spike   — posted when citation-update-poll detects a paper
+#                         gaining 10+ citations in 24 hours.
+#   3. weekly-digest    — summary of the week's new papers, gaps, and drafted
+#                         sections. Triggered by weekly-survey-progress-email output
+#                         (both fire on the same weekly schedule).
+#
+# Requires: SLACK_BOT_TOKEN (Bot User OAuth Token, xoxb-...) and
+#           SLACK_RESEARCH_CHANNEL (channel ID or name, e.g. #research).
+
+output: slack-research-team-digest
+
+slack:
+  bot_token: "${SLACK_BOT_TOKEN}"
+  channel:   "${SLACK_RESEARCH_CHANNEL:-#research}"
+  # Unfurl links for arXiv and Semantic Scholar URLs.
+  unfurl_links: true
+  unfurl_media: false
+
+# ── Message type: new-paper-alert ─────────────────────────────────────────────
+
+new_paper_alert:
+  # Only post if relevance_score >= threshold (avoid noise from tangential papers).
+  relevance_threshold: "${SLACK_ALERT_RELEVANCE_THRESHOLD:-0.7}"
+  blocks:
+    - type: section
+      text: |
+        :new: *New highly-relevant paper detected*
+        *{{ paper.title | truncate(100) }}*
+        {{ paper.authors | join(', ') | truncate(80) }} · {{ paper.venue | default('Preprint') }} · {{ paper.published_date | default('n.d.') }}
+    - type: section
+      fields:
+        - "*Type:* {{ paper.paper_type | title }}"
+        - "*Relevance:* {{ (paper.relevance_score * 100) | round | int }}%"
+        - "*Cluster:* {{ paper.cluster_label | default('Unclustered') }}"
+        - "*arXiv:* {% if paper.arxiv_id %}<https://arxiv.org/abs/{{ paper.arxiv_id }}|{{ paper.arxiv_id }}>{% else %}N/A{% endif %}"
+    - type: section
+      text: |
+        > {{ paper.abstract | truncate(400) }}
+    - type: divider
+
+# ── Message type: citation-spike ─────────────────────────────────────────────
+
+citation_spike:
+  blocks:
+    - type: section
+      text: |
+        :chart_with_upwards_trend: *Citation spike detected*
+        *{{ citation_event.title | truncate(100) }}*
+        +{{ citation_event.delta }} new citations in 24h (total: {{ citation_event.new_citation_count }})
+        {% if citation_event.semantic_scholar_id %}<https://www.semanticscholar.org/paper/{{ citation_event.semantic_scholar_id }}|View on Semantic Scholar>{% endif %}
+    - type: divider
+
+# ── Message type: weekly-digest ──────────────────────────────────────────────
+#
+# Posted every Monday at 09:00 (server local time) by the weekly digest schedule.
+# Summarises the previous 7 days of activity.
+
+weekly_digest:
+  schedule:
+    expression: "0 9 * * 1"   # Monday 09:00
+    timezone: "${TZ:-UTC}"
+  query: |
+    SELECT
+        COUNT(*)                                          AS new_papers,
+        COUNT(*) FILTER (WHERE paper_type = 'empirical') AS empirical_count,
+        COUNT(*) FILTER (WHERE paper_type = 'survey')    AS survey_count,
+        AVG(relevance_score)                             AS avg_relevance
+    FROM papers
+    WHERE created_at >= now() - INTERVAL '7 days'
+  gap_query: |
+    SELECT label, sparsity_score
+    FROM topic_clusters
+    WHERE updated_at >= now() - INTERVAL '7 days'
+    ORDER BY sparsity_score DESC
+    LIMIT 3
+  section_query: |
+    SELECT tc.label, COUNT(p.id) AS paper_count
+    FROM topic_clusters tc
+    JOIN papers p ON p.topic_cluster_id = tc.id
+    WHERE p.status = 'surveyed'
+      AND p.updated_at >= now() - INTERVAL '7 days'
+    GROUP BY tc.label
+    ORDER BY paper_count DESC
+    LIMIT 3
+  blocks:
+    - type: header
+      text: ":books: Weekly Research Survey Digest"
+    - type: section
+      text: |
+        *Past 7 days:*
+        {{ stats.new_papers }} new papers ingested · Avg relevance: {{ (stats.avg_relevance * 100) | round | int }}%
+        Breakdown: {{ stats.empirical_count }} empirical, {{ stats.survey_count }} surveys/reviews
+    - type: section
+      text: |
+        *Top research gaps identified:*
+        {% for gap in top_gaps -%}
+        • *{{ gap.label }}* — {{ (gap.sparsity_score * 100) | round | int }}% under-explored
+        {% endfor %}
+    - type: section
+      text: |
+        *Sections drafted this week:*
+        {% for sec in drafted_sections -%}
+        • {{ sec.label }} ({{ sec.paper_count }} papers)
+        {% endfor %}
+    - type: divider
+
+# ── Error handling ────────────────────────────────────────────────────────────
+
+on_error:
+  retry:
+    max_attempts: 2
+    backoff_seconds: 10
+  action: log_warning
+  message: "Slack digest post failed (channel {{ slack.channel }}): {{ error }}"

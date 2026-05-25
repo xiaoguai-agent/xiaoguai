@@ -1,0 +1,117 @@
+# packs/research-paper-survey/inbound/manual-paper-pdf-upload.yaml
+#
+# Inbound event: manual-paper-pdf-upload
+#
+# Triggered when a researcher uploads a PDF directly to the xiaoguai API
+# endpoint POST /v1/research-survey/papers/upload.
+#
+# The API handler:
+#   1. Accepts multipart/form-data with a PDF file field.
+#   2. Extracts text using the xiaoguai-pdf-extract tool (Grobid-backed if
+#      configured, otherwise pdfmium fallback).
+#   3. Parses title, authors, abstract, venue, and year from the structured
+#      extraction output.
+#   4. Emits this event with the extracted metadata.
+#
+# This allows researchers to add papers not yet on arXiv or Semantic Scholar
+# (e.g. workshop papers, technical reports, book chapters).
+
+name: manual-paper-pdf-upload
+kind: api-webhook
+
+# Mounting: POST /v1/research-survey/papers/upload
+route: /v1/research-survey/papers/upload
+method: POST
+content_type: multipart/form-data
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+#
+# Standard xiaoguai API authentication (Bearer token or API key).
+# No per-pack secret required — the upload endpoint is gated by the
+# XIAOGUAI_RESEARCH_SURVEY_ENABLED feature flag.
+
+auth:
+  type: bearer
+  env: XIAOGUAI_API_TOKEN
+
+# ── Request fields ────────────────────────────────────────────────────────────
+
+request_fields:
+  file:
+    type: file
+    mime_types: [application/pdf]
+    max_size_mb: 20
+    required: true
+  title_override:
+    type: string
+    required: false
+    description: "Optional: override the extracted title."
+  topic_hint:
+    type: string
+    required: false
+    description: "Optional: hint to the classifier about which survey topic this paper belongs to."
+
+# ── Pre-processing ────────────────────────────────────────────────────────────
+
+pre_process:
+  - id: extract_metadata
+    tool: xiaoguai_pdf_extract
+    params:
+      file: "{{ request.file }}"
+      fields: [title, authors, abstract, venue, year, doi, arxiv_id]
+      backend: "${PDF_EXTRACT_BACKEND:-grobid}"
+      grobid_url: "${GROBID_URL:-http://localhost:8070}"
+    store_as: extracted
+
+# ── Payload schema (after pre-processing) ─────────────────────────────────────
+
+schema:
+  title:
+    type: string
+    required: true
+    source: "{{ request.title_override | default(extracted.title) }}"
+  authors:
+    type: array
+    items: string
+    source: "{{ extracted.authors | default([]) }}"
+  abstract:
+    type: string
+    source: "{{ extracted.abstract | default('') }}"
+  venue:
+    type: string
+    source: "{{ extracted.venue }}"
+  published_date:
+    type: string
+    format: date
+    source: "{{ extracted.year | format_year_to_date }}"
+  doi:
+    type: string
+    source: "{{ extracted.doi }}"
+  arxiv_id:
+    type: string
+    source: "{{ extracted.arxiv_id }}"
+  topic_hint:
+    type: string
+    source: "{{ request.topic_hint }}"
+  inbound_source:
+    type: string
+    const: manual
+
+# ── Routing ───────────────────────────────────────────────────────────────────
+
+routes:
+  - agent: agents/paper-classifier.yaml
+    description: "Classify relevance and paper type; embed abstract."
+    payload_as: paper
+
+# ── Response ─────────────────────────────────────────────────────────────────
+
+response:
+  status: 202
+  body: |
+    {
+      "status": "accepted",
+      "message": "Paper '{{ extracted.title | truncate(80) }}' queued for classification.",
+      "paper_id": null
+    }
+  note: "paper_id is populated asynchronously; poll GET /v1/research-survey/papers?title=... to retrieve it."

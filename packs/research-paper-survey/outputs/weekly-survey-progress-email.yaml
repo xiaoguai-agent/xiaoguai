@@ -1,0 +1,177 @@
+# packs/research-paper-survey/outputs/weekly-survey-progress-email.yaml
+#
+# Output connector: Weekly Survey Progress Email
+#
+# Sends a structured weekly progress email to the configured recipient list.
+# Fires on the same Monday 09:00 schedule as the Slack weekly digest.
+#
+# Email content:
+#   - Papers ingested this week (count + top-5 by relevance)
+#   - Top research gaps (from gap-analysis-frame template)
+#   - Survey sections drafted (titles + word counts)
+#   - Citation spikes (papers that gained 10+ citations)
+#   - Next steps / open items
+#
+# Requires: SURVEY_DIGEST_RECIPIENTS (comma-separated email list)
+# Email transport: configured xiaoguai-mailer (SMTP or API-based).
+
+output: weekly-survey-progress-email
+
+# ── Schedule ──────────────────────────────────────────────────────────────────
+
+schedule:
+  expression: "0 9 * * 1"   # Monday 09:00
+  timezone: "${TZ:-UTC}"
+
+# ── Recipients ────────────────────────────────────────────────────────────────
+
+recipients:
+  to:    "${SURVEY_DIGEST_RECIPIENTS}"
+  from:  "${SURVEY_EMAIL_FROM:-noreply@xiaoguai.local}"
+  reply_to: "${SURVEY_EMAIL_REPLY_TO:-}"
+
+# ── Data queries ──────────────────────────────────────────────────────────────
+#
+# Executed before rendering the email body. Results injected into the template.
+
+queries:
+  weekly_stats: |
+    SELECT
+        COUNT(*)                                              AS total_papers,
+        COUNT(*) FILTER (WHERE paper_type = 'empirical')    AS empirical,
+        COUNT(*) FILTER (WHERE paper_type = 'theoretical')  AS theoretical,
+        COUNT(*) FILTER (WHERE paper_type = 'survey')       AS surveys,
+        COUNT(*) FILTER (WHERE paper_type = 'position')     AS position,
+        ROUND(AVG(relevance_score)::numeric, 2)             AS avg_relevance,
+        COUNT(*) FILTER (WHERE status = 'surveyed')         AS surveyed
+    FROM papers
+    WHERE created_at >= now() - INTERVAL '7 days'
+
+  top_papers: |
+    SELECT title, authors, arxiv_id, relevance_score, paper_type, citation_count
+    FROM papers
+    WHERE created_at >= now() - INTERVAL '7 days'
+    ORDER BY relevance_score DESC, citation_count DESC
+    LIMIT 5
+
+  top_gaps: |
+    SELECT label, sparsity_score, gap_description, paper_count, keywords
+    FROM topic_clusters
+    WHERE updated_at >= now() - INTERVAL '7 days'
+      AND sparsity_score >= ${GAP_SPARSITY_THRESHOLD:-0.6}
+    ORDER BY sparsity_score DESC
+    LIMIT 5
+
+  drafted_sections: |
+    SELECT
+        tc.label              AS cluster_label,
+        COUNT(p.id)           AS paper_count,
+        sr.notion_page_url,
+        sr.latex_export_path
+    FROM topic_clusters tc
+    JOIN papers p ON p.topic_cluster_id = tc.id AND p.status = 'surveyed'
+                 AND p.updated_at >= now() - INTERVAL '7 days'
+    JOIN survey_runs sr ON sr.id = tc.survey_run_id
+    GROUP BY tc.label, sr.notion_page_url, sr.latex_export_path
+    ORDER BY paper_count DESC
+
+  citation_spikes: |
+    SELECT title, citation_count, citation_count_updated_at, arxiv_id, semantic_scholar_id
+    FROM papers
+    WHERE citation_count_updated_at >= now() - INTERVAL '7 days'
+      AND citation_count >= ${CITATION_DELTA_THRESHOLD:-10}
+    ORDER BY citation_count DESC
+    LIMIT 10
+
+# ── Email template ────────────────────────────────────────────────────────────
+
+subject: "Weekly Research Survey Progress — {{ now() | datetime_format('%b %d, %Y') }}"
+
+body_format: html     # html | plaintext
+body_template: |
+  <!DOCTYPE html>
+  <html>
+  <body style="font-family: sans-serif; max-width: 700px; margin: auto; color: #222;">
+
+  <h2>Weekly Research Survey Progress</h2>
+  <p style="color: #666;">{{ now() | datetime_format('%A, %B %d, %Y') }}</p>
+
+  <h3>This Week's Numbers</h3>
+  <table border="0" cellpadding="4">
+    <tr><td><b>New papers ingested</b></td><td>{{ stats.total_papers }}</td></tr>
+    <tr><td><b>Avg relevance</b></td><td>{{ (stats.avg_relevance * 100) | round | int }}%</td></tr>
+    <tr><td><b>Papers drafted into sections</b></td><td>{{ stats.surveyed }}</td></tr>
+    <tr><td><b>By type</b></td>
+        <td>{{ stats.empirical }} empirical · {{ stats.theoretical }} theoretical ·
+            {{ stats.surveys }} surveys · {{ stats.position }} position</td></tr>
+  </table>
+
+  <h3>Top New Papers</h3>
+  <ol>
+  {% for p in top_papers -%}
+  <li>
+    <b>{% if p.arxiv_id %}<a href="https://arxiv.org/abs/{{ p.arxiv_id }}">{{ p.title | truncate(90) }}</a>{% else %}{{ p.title | truncate(90) }}{% endif %}</b><br/>
+    {{ p.authors | join(', ') | truncate(80) }} ·
+    {{ p.paper_type | title }} · Relevance: {{ (p.relevance_score * 100) | round | int }}%
+  </li>
+  {% endfor %}
+  </ol>
+
+  <h3>Research Gaps Identified</h3>
+  {% if top_gaps -%}
+  {% for gap in top_gaps -%}
+  <div style="border-left: 3px solid #e55; padding-left: 12px; margin-bottom: 12px;">
+    <b>{{ gap.label }}</b> ({{ (gap.sparsity_score * 100) | round | int }}% under-explored, {{ gap.paper_count }} papers)<br/>
+    <i>Keywords: {{ gap.keywords | join(', ') }}</i><br/>
+    {{ gap.gap_description | default('') | truncate(300) }}
+  </div>
+  {% endfor %}
+  {%- else -%}
+  <p><i>No new gaps identified this week.</i></p>
+  {%- endif %}
+
+  <h3>Survey Sections Drafted</h3>
+  {% if drafted_sections -%}
+  <ul>
+  {% for sec in drafted_sections -%}
+  <li>{{ sec.cluster_label }} ({{ sec.paper_count }} papers)
+    {% if sec.notion_page_url %} · <a href="{{ sec.notion_page_url }}">View in Notion</a>{% endif %}
+  </li>
+  {% endfor %}
+  </ul>
+  {%- else -%}
+  <p><i>No sections drafted this week.</i></p>
+  {%- endif %}
+
+  <h3>Citation Spikes</h3>
+  {% if citation_spikes -%}
+  <ul>
+  {% for p in citation_spikes -%}
+  <li>
+    {% if p.arxiv_id %}<a href="https://arxiv.org/abs/{{ p.arxiv_id }}">{% endif %}
+    {{ p.title | truncate(80) }}
+    {% if p.arxiv_id %}</a>{% endif %}
+    — {{ p.citation_count }} total citations
+  </li>
+  {% endfor %}
+  </ul>
+  {%- else -%}
+  <p><i>No significant citation spikes this week.</i></p>
+  {%- endif %}
+
+  <hr style="margin-top: 32px;"/>
+  <p style="color: #999; font-size: 0.85em;">
+    Sent by xiaoguai research-paper-survey pack v0.1.0.<br/>
+    To unsubscribe, remove your address from SURVEY_DIGEST_RECIPIENTS.
+  </p>
+  </body>
+  </html>
+
+# ── Error handling ────────────────────────────────────────────────────────────
+
+on_error:
+  retry:
+    max_attempts: 2
+    backoff_seconds: 30
+  action: log_warning
+  message: "Weekly survey digest email failed: {{ error }}"
