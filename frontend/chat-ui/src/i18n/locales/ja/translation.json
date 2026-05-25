@@ -4,5 +4,21 @@
     "dismiss_label": "閉じる",
     "learn_more_label": "詳細を見る",
     "banner_aria_label": "AI 透明性に関するお知らせ"
+  "watch": {
+    "badge_label": "アクティブなウォッチャー {{count}} 件",
+    "badge_label_plural": "アクティブなウォッチャー {{count}} 件",
+    "popover_title": "アクティブなウォッチャー",
+    "pause": "一時停止",
+    "resume": "再開",
+    "status_running": "実行中",
+    "status_paused": "一時停止中",
+    "status_error": "エラー",
+    "last_fired": "最終起動: {{relative}}",
+    "never_fired": "未起動",
+    "pause_confirm": "このウォッチャーを一時停止しますか？",
+    "resume_confirm": "このウォッチャーを再開しますか？",
+    "source_schedule": "スケジュール",
+    "source_webhook": "Webhook",
+    "source_manual": "手動"
   }
 }
