@@ -22,6 +22,7 @@ members = [
     "crates/xiaoguai-im-discord",
     "crates/xiaoguai-im-telegram",
     "crates/xiaoguai-im-mattermost",
+    "crates/xiaoguai-im-slack",
     "crates/xiaoguai-cli",
     "crates/xiaoguai-orchestrator",
 ]
