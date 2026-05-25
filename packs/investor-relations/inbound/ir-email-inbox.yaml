@@ -1,0 +1,77 @@
+# Inbound connector — ir-email-inbox
+# ---------------------------------------------------------------------------
+# Monitors the IR team's inbound email inbox for analyst questions and
+# shareholder inquiries. Classifies sender as analyst or shareholder
+# based on domain / registry lookup, then emits the appropriate event.
+#
+# Events emitted:
+#   ir.analyst_question.received   — sender identified as analyst/institution
+#   ir.shareholder_inquiry.received — sender identified as retail shareholder
+# ---------------------------------------------------------------------------
+
+name: ir-email-inbox
+version: "1.0.0"
+description: >
+  Monitors the IR email inbox (IMAP or email relay webhook). Routes to
+  analyst-question-classifier or shareholder-inquiry-router based on
+  sender classification. All emails are stored as-received; no auto-reply.
+
+kind: email_relay
+# Operators can configure either IMAP polling or a relay webhook
+mode: "${IR_EMAIL_MODE:-imap}"   # 'imap' | 'webhook'
+
+imap:
+  host_env: IR_EMAIL_IMAP_HOST
+  port: 993
+  tls: true
+  username_env: IR_EMAIL_USERNAME
+  password_env: IR_EMAIL_PASSWORD
+  folder: "INBOX"
+  poll_interval_seconds: 60
+  mark_processed: true
+  processed_label: "xiaoguai-processed"
+
+webhook:
+  endpoint: "/inbound/ir-email"
+  auth:
+    type: hmac_sha256
+    secret_env: IR_EMAIL_WEBHOOK_SECRET
+
+# Sender classification rules (checked in order; first match wins)
+sender_classification:
+  - match: domain_in_list
+    list_env: IR_ANALYST_DOMAIN_LIST    # e.g. "morganstanley.com,gs.com"
+    emit_event: ir.analyst_question.received
+    source: "email"
+    audience: "institutional"
+  - match: domain_in_list
+    list_env: IR_INSTITUTIONAL_DOMAIN_LIST
+    emit_event: ir.analyst_question.received
+    source: "email"
+    audience: "institutional"
+  - match: registry_lookup
+    table: ir_shareholder_registry
+    field: email
+    match_value: "{sender_email}"
+    emit_event: ir.shareholder_inquiry.received
+    source: "email"
+  - match: default
+    emit_event: ir.shareholder_inquiry.received
+    source: "email"
+    audience: "retail"
+
+# Auto-reply: disabled. All responses are HotL-gated.
+auto_reply: false
+
+persist:
+  table: ir_email_raw_log   # optional audit table; operators may add via migration 0002
+  fields:
+    tenant_id:    "{tenant_id}"
+    sender_email: "{sender_email}"
+    sender_name:  "{sender_name}"
+    subject:      "{subject}"
+    body_preview: "{body_preview_200_chars}"
+    received_at:  "{received_at}"
+
+rate_limit:
+  per_minute: 60

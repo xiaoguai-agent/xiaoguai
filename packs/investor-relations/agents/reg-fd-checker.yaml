@@ -1,0 +1,209 @@
+# Agent definition — reg-fd-checker
+# ---------------------------------------------------------------------------
+# Pre-screens ALL draft external communications for potential Regulation FD
+# violations before they enter the HotL approval queue.
+#
+# Regulation FD (17 CFR § 243.100) prohibits public companies from
+# selectively disclosing material nonpublic information (MNPI) to:
+#   - securities market professionals (analysts, institutional investors)
+#   - shareholders who may trade on the information
+# without simultaneously making it available to the general public.
+#
+# This agent does NOT make legal determinations. It flags content that
+# EXHIBITS PATTERNS associated with selective disclosure risk. The IR-Lead
+# and Legal make the final call.
+#
+# HOW FLAGGING WORKS:
+#   1. The agent scans the draft for MNPI signal patterns (see system prompt).
+#   2. Each flagged passage is tagged [REG-FD-FLAG: <risk_type>: <excerpt>].
+#   3. Result is written to ir_shareholder_communications.reg_fd_check_notes.
+#   4. If any flags: status → 'flagged'; draft is HELD.
+#   5. If no flags: status → 'clear'; draft enters HotL approval queue.
+#   6. IR-Lead may override a 'flagged' status with written rationale;
+#      override is recorded in ir_approval_log.entity_type = 'reg_fd_override'.
+#
+# The checker runs synchronously (blocking) before any draft is queued.
+# It is invoked automatically by the pack's reg_fd_policy.pre_approval_check.
+# ---------------------------------------------------------------------------
+
+name: reg-fd-checker
+version: "1.0.0"
+description: >
+  Pre-screens draft external communications for Reg FD (selective disclosure)
+  risk before they enter the HotL approval queue. Flags drafts containing
+  potential MNPI patterns; flagged drafts are held until IR-Lead + Legal
+  review. This agent does not make legal determinations — it surfaces risk.
+
+# ---------------------------------------------------------------------------
+# Triggers
+# ---------------------------------------------------------------------------
+triggers:
+  # Invoked by the pack reg_fd_policy.pre_approval_check hook on every
+  # draft with status = 'draft' for external-output-bound communications.
+  - event: ir.communication.draft_created
+    source: earnings-script-drafter
+  - event: ir.communication.draft_created
+    source: shareholder-inquiry-router
+  - event: ir.analyst_answer.draft_created
+    source: admin_ui
+  - event: ir.esg_response.draft_created
+    source: admin_ui
+
+# ---------------------------------------------------------------------------
+# System prompt
+# ---------------------------------------------------------------------------
+system_prompt: |
+  You are a Regulation FD compliance screening specialist. Your task is to
+  analyse a draft external communication and identify content that may
+  constitute selective disclosure of material nonpublic information (MNPI).
+
+  DEFINITION OF MNPI (for screening purposes):
+  Information is "material" if a reasonable investor would consider it
+  important in making an investment decision, OR if it could significantly
+  affect the company's stock price. Information is "nonpublic" if it has not
+  been broadly disseminated via a press release, SEC filing, or broadly
+  accessible public event.
+
+  MNPI SIGNAL PATTERNS — flag any of the following:
+  1. FORWARD_GUIDANCE: specific future revenue, EPS, or margin numbers not
+     yet filed in an SEC document or official press release.
+  2. UNRELEASED_RESULTS: current or recent-quarter financial figures not yet
+     in a filed 10-Q, 10-K, or earnings release.
+  3. PENDING_CORPORATE_ACTION: reference to M&A, divestiture, restructuring,
+     major partnership, or capital raise not yet publicly announced.
+  4. UNDISCLOSED_REGULATORY: pending regulatory approval, investigation,
+     lawsuit, or government action not yet publicly disclosed.
+  5. INSIDER_OPERATIONAL: specific headcount numbers, plant closures, product
+     cancellations, or contract wins/losses not yet publicly announced.
+  6. GUIDANCE_CHANGE: any language implying guidance revision (up or down)
+     before official disclosure.
+  7. COMPETITIVE_INTEL: specific nonpublic information about a named
+     competitor obtained from nonpublic sources.
+
+  OUTPUT FORMAT:
+  Return a JSON object with the following schema:
+  {
+    "overall_status": "clear" | "flagged",
+    "flags": [
+      {
+        "risk_type": "<one of the 7 types above>",
+        "excerpt": "<verbatim excerpt from the draft, ≤ 150 chars>",
+        "reasoning": "<one sentence explaining the risk>",
+        "severity": "high" | "medium" | "low"
+      }
+    ],
+    "summary": "<2–3 sentence plain-language summary for the IR-Lead>",
+    "recommendation": "<clear, actionable recommendation: remove X / rephrase Y / file 8-K simultaneously>"
+  }
+
+  If overall_status = "clear", flags array must be empty.
+  Do NOT provide a legal opinion. Use language like "may constitute",
+  "exhibits pattern of", "recommend Legal review". Never say "this is legal"
+  or "this is illegal".
+
+  Be conservative: false positives are preferable to missed MNPI. The IR-Lead
+  can override a flag with written rationale.
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+tools:
+  - name: get_draft_content
+    description: >
+      Fetch the full draft body and metadata for the communication being
+      checked. Returns draft_body, comm_type, audience, subject, and any
+      existing [REG-FD-FLAG] markers inserted by the drafting agent.
+    kind: sql
+    query: |
+      SELECT id, comm_type, audience, subject, draft_body,
+             reg_fd_check_status, earnings_period_id
+      FROM ir_shareholder_communications
+      WHERE tenant_id = '{tenant_id}'
+        AND id = '{comm_id}'
+
+  - name: get_recent_public_disclosures
+    description: >
+      Retrieve the list of information already publicly disclosed in SEC
+      filings and press releases for this tenant. Used to distinguish
+      public vs. nonpublic information in the draft.
+    kind: sql
+    query: |
+      SELECT form_type, filing_date, period_of_report, description
+      FROM ir_regulatory_filings
+      WHERE tenant_id = '{tenant_id}'
+        AND status IN ('filed', 'legal_approved')
+      ORDER BY filing_date DESC
+      LIMIT 20
+
+  - name: write_check_result
+    description: >
+      Write the Reg FD check result to ir_shareholder_communications.
+      Sets reg_fd_check_status ('clear' or 'flagged'), reg_fd_check_notes
+      (the full JSON result), and advances status to 'pending_approval'
+      (if clear) or leaves it as 'reg_fd_check' / 'draft' (if flagged).
+    kind: sql
+    query: |
+      UPDATE ir_shareholder_communications
+      SET reg_fd_check_status = '{check_status}',
+          reg_fd_check_notes  = '{check_notes_json}',
+          status = CASE
+            WHEN '{check_status}' = 'clear'   THEN 'pending_approval'
+            WHEN '{check_status}' = 'flagged' THEN 'reg_fd_check'
+            ELSE status
+          END,
+          updated_at = NOW()
+      WHERE tenant_id = '{tenant_id}'
+        AND id        = '{comm_id}'
+      RETURNING id, status, reg_fd_check_status
+
+  - name: notify_flag_result
+    description: >
+      Notify the IR-Lead (and Legal if severity = 'high') when a draft is
+      flagged. Internal notification only — no external send.
+    kind: notify
+    channel: "${IR_NOTIFY_CHANNEL:-admin_ui}"
+    template: |
+      [REG FD FLAG — ACTION REQUIRED]
+      Draft: {comm_type} — "{subject}"
+      Status: FLAGGED ({flag_count} flag(s), highest severity: {max_severity})
+      Summary: {summary}
+      Recommendation: {recommendation}
+
+      The draft is HELD and cannot enter the approval queue until the
+      IR-Lead reviews and either removes the flagged content or records
+      an override with written rationale in the admin UI.
+
+# ---------------------------------------------------------------------------
+# HotL guardrails
+# ---------------------------------------------------------------------------
+hotl:
+  # The checker itself is a read + classification agent; it writes only to
+  # internal tables and sends internal notifications. No external action.
+  budget_usd: 0.00
+  autonomous_actions:
+    external_send: 0
+  # If the check result is 'flagged', human override requires:
+  override_requires:
+    - role: IR-Lead
+      action: written_rationale    # recorded in ir_approval_log
+  notify_channel: "${IR_NOTIFY_CHANNEL:-admin_ui}"
+  # Legal is always notified when a HIGH severity flag is detected
+  notify_legal_on_high_severity: true
+  legal_channel: "${IR_LEGAL_NOTIFY_CHANNEL:-admin_ui}"
+
+# ---------------------------------------------------------------------------
+# Rate limits
+# ---------------------------------------------------------------------------
+rate_limits:
+  # Checker is synchronous and blocking; limit protects against runaway loops
+  per_tenant_per_minute: 30
+
+# ---------------------------------------------------------------------------
+# Outcome telemetry
+# ---------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - check_completed_clear
+    - check_completed_flagged
+    - override_recorded
+  feedback_table: ir_shareholder_communications

@@ -1,0 +1,78 @@
+# Output connector — edgar-filing-stub
+# ---------------------------------------------------------------------------
+# Creates and manages EDGAR filing stubs (10-Q, 10-K, 8-K, etc.).
+#
+# SCOPE: STUB ONLY. This connector does NOT submit filings to EDGAR.
+# It creates structured stub records in ir_regulatory_filings that the
+# Legal team and CFO use as the foundation for actual EDGAR submissions.
+# Actual EDGAR submission must be performed by authorised personnel using
+# SEC-approved filing agent software (e.g. Workiva, Donnelley, etc.).
+#
+# REG FD — SIMULTANEOUS DISCLOSURE:
+# When an 8-K stub is triggered by the reg_fd_policy.simultaneous_disclosure_stub
+# hook, it signals that material information is about to be publicly disclosed.
+# Legal must review and file the 8-K via their filing agent BEFORE or
+# SIMULTANEOUSLY WITH the investor portal post or analyst communication.
+#
+# HotL-GATED: All stub creation requires CFO + IR-Lead approval.
+# ---------------------------------------------------------------------------
+
+name: edgar-filing-stub
+version: "1.0.0"
+description: >
+  Creates EDGAR filing stubs (10-K/10-Q/8-K/DEF 14A) in ir_regulatory_filings
+  for Legal team review and manual EDGAR submission. HotL-gated — CFO + IR-Lead
+  approval required. Does NOT submit to EDGAR (stub only).
+
+kind: internal_record_creator
+# No external API calls — writes only to internal ir_regulatory_filings table.
+
+hotl:
+  gated: true
+  approvers:
+    - role: CFO
+      env: IR_CFO_APPROVER_ID
+    - role: IR-Lead
+      env: IR_LEAD_APPROVER_ID
+  notify_legal: true
+  legal_channel: "${IR_LEGAL_NOTIFY_CHANNEL:-admin_ui}"
+
+# Events that trigger stub creation
+event_subscriptions:
+  - ir.hotl.approved                      # approved comm triggers 8-K if new guidance
+  - ir.reg_fd_policy.simultaneous_disclosure_triggered   # auto-trigger from reg_fd_policy
+
+# Stub creation logic
+on_event:
+  ir.hotl.approved:
+    condition: "comm.comm_type in ['press_release', 'earnings_script'] AND comm.contains_guidance == true"
+    create_stub:
+      form_type: "8-K"
+      description: "Earnings results and guidance — stub for Legal EDGAR submission"
+      triggered_by_comm_id: "{comm.id}"
+      earnings_period_id: "{comm.earnings_period_id}"
+      status: "stub"
+  ir.reg_fd_policy.simultaneous_disclosure_triggered:
+    create_stub:
+      form_type: "8-K"
+      description: "Simultaneous disclosure stub — Reg FD compliance"
+      triggered_by_comm_id: "{comm.id}"
+      status: "stub"
+
+# Notification to Legal when a stub is created
+notify_on_create:
+  channel: "${IR_LEGAL_NOTIFY_CHANNEL:-admin_ui}"
+  message: |
+    [EDGAR STUB CREATED — LEGAL ACTION REQUIRED]
+    Form type: {form_type}
+    Triggered by: {comm_type} draft approved by {approved_by}
+    Earnings period: {fiscal_year} {fiscal_quarter}
+
+    ACTION: Review stub in admin UI → Regulatory Filings.
+    Submit via your authorised EDGAR filing agent BEFORE or simultaneously
+    with the investor portal publication. Do NOT post externally first.
+
+reg_fd_note: >
+  This stub exists to support Reg FD simultaneous disclosure. Legal must
+  ensure the actual EDGAR filing is submitted no later than the moment
+  any related material information is disclosed externally.

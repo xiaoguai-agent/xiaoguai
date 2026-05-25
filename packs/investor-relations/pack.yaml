@@ -1,0 +1,136 @@
+# Investor Relations Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# Earnings prep, analyst Q&A library, and shareholder communication digest.
+#
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# REG FD CRITICAL — REGULATION FAIR DISCLOSURE (17 CFR § 243.100)
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#
+# ANY material nonpublic information (MNPI) disclosed to one party MUST be
+# simultaneously disclosed to the general public or not disclosed at all.
+# Selective disclosure is a federal securities violation.
+#
+# EVERY output that leaves the internal perimeter (email, portal post,
+# EDGAR filing, analyst answer, shareholder letter) is HotL-GATED.
+# The CFO or designated IR-Lead MUST approve before any external send.
+# The reg-fd-checker agent runs on ALL drafts before the approval queue.
+#
+# "Internal perimeter" = IR team Slack (internal channel only).
+# Everything else = HotL gate required, no exceptions.
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#
+# Install:   xiaoguai pack install packs/investor-relations/
+# Requires:  xiaoguai >= v1.3.1-prep (features: llm, outcome-telemetry, hotl)
+# ---------------------------------------------------------------------------
+
+name: investor-relations
+version: "1.0.0"
+description: >
+  Earnings call preparation, analyst Q&A classification + routing, and
+  shareholder communication digest. All external-facing outputs are
+  HotL-gated (CFO/IR-Lead approval required) to enforce Regulation FD.
+  The reg-fd-checker agent pre-screens every draft for potential selective
+  disclosure before it enters the approval queue.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# ---------------------------------------------------------------------------
+# Required platform features
+# ---------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - llm               # core LLM backend
+    - outcome-telemetry # F3: records draft/approve/reject for improvement loop
+    - hotl              # Human-on-the-Loop gate — MANDATORY for Reg FD
+
+# ---------------------------------------------------------------------------
+# Reg FD enforcement policy (applied globally to this pack)
+# ---------------------------------------------------------------------------
+reg_fd_policy:
+  # reg-fd-checker runs synchronously on every draft before it is enqueued
+  # for human approval. If the checker flags MNPI risk, the draft is held
+  # and the IR-Lead + Legal are notified. The draft cannot enter the
+  # approval queue until the flag is resolved or explicitly overridden by
+  # the IR-Lead with a written rationale.
+  pre_approval_check: reg-fd-checker
+  # Outputs that cross the internal perimeter — ALL must be HotL-gated.
+  external_outputs:
+    - ir-team-slack          # only the external-facing channel variant
+    - edgar-filing-stub
+    - investor-portal-publish
+    - cfo-quarterly-briefing
+  # Simultaneous disclosure requirement: if a non-public fact is shared
+  # in any external output, an 8-K / press-release stub must be
+  # created at the same time (stub only — Legal/CFO triggers actual filing).
+  simultaneous_disclosure_stub: edgar-filing-stub
+
+# ---------------------------------------------------------------------------
+# Database migrations
+# ---------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_ir_state.sql
+
+# ---------------------------------------------------------------------------
+# Agents
+# ---------------------------------------------------------------------------
+agents:
+  - path: agents/earnings-script-drafter.yaml
+  - path: agents/analyst-question-classifier.yaml
+  - path: agents/shareholder-inquiry-router.yaml
+  - path: agents/reg-fd-checker.yaml
+
+# ---------------------------------------------------------------------------
+# Templates
+# ---------------------------------------------------------------------------
+templates:
+  - path: templates/earnings-script-frame.md.j2
+  - path: templates/qa-response-templates.md.j2
+  - path: templates/shareholder-letter-template.md.j2
+  - path: templates/fact-sheet-quarterly.md.j2
+
+# ---------------------------------------------------------------------------
+# Inbound connectors (event sources)
+# ---------------------------------------------------------------------------
+inbound:
+  - path: inbound/bloomberg-terminal-event.yaml
+  - path: inbound/factset-poll.yaml
+  - path: inbound/ir-email-inbox.yaml
+  - path: inbound/analyst-portal-question-submit.yaml
+  - path: inbound/shareholder-meeting-survey.yaml
+
+# ---------------------------------------------------------------------------
+# Output connectors (all external ones are HotL-gated)
+# ---------------------------------------------------------------------------
+outputs:
+  - path: outputs/ir-team-slack.yaml
+  - path: outputs/edgar-filing-stub.yaml
+  - path: outputs/investor-portal-publish.yaml
+  - path: outputs/cfo-quarterly-briefing.yaml
+
+# ---------------------------------------------------------------------------
+# Schema namespace
+# ---------------------------------------------------------------------------
+schema:
+  table_prefix: "ir_"
+  namespace: "investor_relations"
+
+# ---------------------------------------------------------------------------
+# Global HotL settings for this pack
+# ---------------------------------------------------------------------------
+hotl:
+  # Approvers for external IR communications (Reg FD gate)
+  approvers:
+    - role: CFO
+      env: IR_CFO_APPROVER_ID
+    - role: IR-Lead
+      env: IR_LEAD_APPROVER_ID
+  # Legal is notified (not required to approve) on every external output
+  notify_legal_on_external: true
+  legal_channel: "${IR_LEGAL_NOTIFY_CHANNEL:-admin_ui}"
+  # Escalation: if no approval within 4 hours, auto-escalate to CFO
+  escalation_timeout_hours: 4
+  escalation_role: CFO
+  # Audit log: every approval/rejection/override is written to ir_approval_log
+  audit_table: ir_approval_log

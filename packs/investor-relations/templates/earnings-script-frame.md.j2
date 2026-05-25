@@ -1,0 +1,155 @@
+{# Jinja2 template — earnings-script-frame
+   Used by: earnings-script-drafter agent
+   Variables: fiscal_year, fiscal_quarter, period_end_date, earnings_date,
+              ceo_name, cfo_name, company_name, operator_name,
+              financial_summary (dict), narrative_bullets (list),
+              anticipated_qa (list of {question, category, answer, status})
+   Reg FD note: This is a DRAFT INTERNAL document until CFO/IR-Lead approval.
+#}
+<!-- DRAFT — INTERNAL USE ONLY — NOT APPROVED FOR EXTERNAL DISTRIBUTION -->
+<!-- Reg FD: Do not share outside the IR/Finance/Legal team without approval -->
+
+# {{ company_name }} — {{ fiscal_year }} {{ fiscal_quarter }} Earnings Call Script
+**Call Date:** {{ earnings_date | default("TBD") }}
+**Period End:** {{ period_end_date }}
+**Status:** DRAFT — Pending Reg FD Review + CFO/IR-Lead Approval
+
+---
+
+## PART 1 — OPERATOR OPENING
+
+**[OPERATOR]:**
+Good [morning/afternoon/evening], everyone. Welcome to {{ company_name }}'s
+{{ fiscal_year }} {{ fiscal_quarter }} earnings conference call. At this time,
+all participants are in a listen-only mode. After management's prepared remarks,
+we will conduct a question-and-answer session.
+
+Please note that this call contains forward-looking statements within the meaning
+of the Private Securities Litigation Reform Act of 1995. These statements involve
+risks and uncertainties that could cause actual results to differ materially.
+Please refer to the risk factors described in our most recent annual report on
+Form 10-K and subsequent filings with the SEC.
+
+I will now turn the call over to {{ ir_contact_name | default("[IR Contact]") }},
+Head of Investor Relations.
+
+---
+
+## PART 2 — IR OPENING REMARKS
+
+**[IR-CONTACT]:**
+Thank you, {{ operator_name | default("[Operator]") }}, and welcome, everyone.
+
+Joining me today are {{ ceo_name }}, Chief Executive Officer, and {{ cfo_name }},
+Chief Financial Officer.
+
+Before we begin, a reminder that today's discussion includes forward-looking
+statements. A full safe harbor statement is available in our earnings press
+release, which was issued earlier today and is posted to our investor relations
+website at [IR website URL].
+
+With that, I'll turn the call over to {{ ceo_name }}.
+
+---
+
+## PART 3 — CEO STRATEGIC COMMENTARY
+
+**[{{ ceo_name | upper }}]:**
+
+<!-- DRAFT — agent-generated from narrative bullets; review all claims -->
+{% for bullet in narrative_bullets if bullet.section == 'ceo' %}
+- {{ bullet.bullet_text }}{% if bullet.reg_fd_flag is defined %} **[REG-FD-FLAG: {{ bullet.reg_fd_flag }}]**{% endif %}
+
+{% endfor %}
+
+<!-- Standard transition to CFO -->
+I'll now turn the call over to {{ cfo_name }} to walk through our financial results
+in detail.
+
+---
+
+## PART 4 — CFO FINANCIAL REVIEW
+
+**[{{ cfo_name | upper }}]:**
+
+Thank you, {{ ceo_name }}.
+
+### Revenue
+{% if financial_summary %}
+For {{ fiscal_year }} {{ fiscal_quarter }}, we reported revenue of
+**{{ financial_summary.revenue | default("[PLACEHOLDER]") }}**,
+representing {{ financial_summary.revenue_yoy_growth | default("[YoY%]") }} year-over-year growth.
+{% else %}
+**[FINANCIAL DATA NOT LOADED — contact Finance team]**
+{% endif %}
+
+### Gross Margin
+Gross margin was **{{ financial_summary.gross_margin_pct | default("[PLACEHOLDER]%") }}**,
+compared to {{ financial_summary.gross_margin_prior_pct | default("[PRIOR PERIOD%]") }}
+in the prior year period.
+
+### Operating Income
+Operating income was **{{ financial_summary.operating_income | default("[PLACEHOLDER]") }}**,
+or {{ financial_summary.operating_margin_pct | default("[PLACEHOLDER]%") }} of revenue.
+
+### Earnings Per Share
+GAAP EPS was **{{ financial_summary.eps_gaap | default("[PLACEHOLDER]") }}**;
+non-GAAP EPS was **{{ financial_summary.eps_non_gaap | default("[PLACEHOLDER]") }}**.
+
+### Cash Flow
+Cash flow from operations was **{{ financial_summary.cfo | default("[PLACEHOLDER]") }}**,
+ending the quarter with **{{ financial_summary.cash_and_equivalents | default("[PLACEHOLDER]") }}**
+in cash and equivalents.
+
+{% for bullet in narrative_bullets if bullet.section == 'cfo' %}
+{{ bullet.bullet_text }}{% if bullet.reg_fd_flag is defined %} **[REG-FD-FLAG: {{ bullet.reg_fd_flag }}]**{% endif %}
+
+{% endfor %}
+
+<!-- Guidance block — ALL guidance language must be pre-cleared by Legal + CFO -->
+### Outlook
+**[GUIDANCE PLACEHOLDER — DO NOT RELEASE WITHOUT CFO + LEGAL SIGN-OFF]**
+<!-- Insert approved guidance language here -->
+
+---
+
+## PART 5 — ANTICIPATED Q&A
+
+*The following questions are drawn from the analyst-questions library.
+Questions marked [ANSWER PENDING APPROVAL] do not yet have an approved answer.*
+
+{% for qa in anticipated_qa %}
+---
+**Q ({{ qa.category | upper }}):** {{ qa.question }}
+
+{% if qa.status == 'answered' and qa.answer %}
+**A:** {{ qa.answer }}
+{% else %}
+**A:** [ANSWER PENDING APPROVAL]
+{% endif %}
+
+{% endfor %}
+
+---
+
+## PART 6 — CLOSING REMARKS
+
+**[{{ ceo_name | upper }}]:**
+
+Thank you all for joining us today. We remain focused on [key strategic priority]
+and are confident in our ability to execute against our long-term objectives.
+We look forward to updating you on our progress next quarter.
+
+**[OPERATOR]:**
+Thank you. This concludes today's conference call. You may now disconnect.
+
+---
+<!-- END OF DRAFT SCRIPT -->
+<!-- Reg FD checklist before release:
+  [ ] All financial figures match the filed/released earnings press release
+  [ ] No guidance language beyond what has been publicly filed
+  [ ] No MNPI in strategic commentary or Q&A answers
+  [ ] CFO has reviewed and approved the financial review section
+  [ ] IR-Lead has approved the full script
+  [ ] Legal has cleared any guidance or forward-looking statements
+-->
