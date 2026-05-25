@@ -63,10 +63,22 @@ resource "aws_iam_role_policy" "task_execution_secrets" {
       {
         Effect = "Allow"
         Action = ["secretsmanager:GetSecretValue"]
-        Resource = [
+        # Core secrets are always included. Wave-3 secrets are included only
+        # when their ARN is non-empty to avoid granting access to "" ARNs.
+        Resource = compact([
           var.db_secret_arn,
           var.llm_secrets_arn,
-        ]
+          # Wave-3 cloud LLM providers.
+          var.bedrock_auth_mode == "env-keys" ? var.bedrock_secrets_arn : "",
+          var.azure_openai_secrets_arn,
+          var.mistral_secrets_arn,
+          var.groq_secrets_arn,
+          # Wave-3 IM adapters.
+          var.im_discord_secrets_arn,
+          var.im_telegram_secrets_arn,
+          var.im_mattermost_secrets_arn,
+          var.im_slack_secrets_arn,
+        ])
       }
     ]
   })
@@ -283,46 +295,142 @@ resource "aws_ecs_task_definition" "app" {
         }
       ]
 
-      environment = [
-        {
-          name  = "XIAOGUAI_SERVER__HOST"
-          value = "0.0.0.0"
-        },
-        {
-          name  = "XIAOGUAI_SERVER__PORT"
-          value = "8080"
-        },
-        {
-          name = "XIAOGUAI_DATABASE__URL"
-          # Assembled at task startup from secrets; placeholder used for
-          # static task def. ECS secrets injection fills the real password.
-          value = "postgres://${var.db_name}@${var.db_host}:${var.db_port}/${var.db_name}"
-        },
-        {
-          name  = "XIAOGUAI_CACHE__URL"
-          value = "rediss://${var.redis_endpoint}"
-        },
-        {
-          name  = "RUST_LOG"
-          value = "info,sqlx=warn"
-        }
-      ]
+      environment = concat(
+        [
+          {
+            name  = "XIAOGUAI_SERVER__HOST"
+            value = "0.0.0.0"
+          },
+          {
+            name  = "XIAOGUAI_SERVER__PORT"
+            value = "8080"
+          },
+          {
+            name = "XIAOGUAI_DATABASE__URL"
+            # Assembled at task startup from secrets; placeholder used for
+            # static task def. ECS secrets injection fills the real password.
+            value = "postgres://${var.db_name}@${var.db_host}:${var.db_port}/${var.db_name}"
+          },
+          {
+            name  = "XIAOGUAI_CACHE__URL"
+            value = "rediss://${var.redis_endpoint}"
+          },
+          {
+            name  = "RUST_LOG"
+            value = "info,sqlx=warn"
+          },
+          # --- Wave-3: HotL ---
+          { name = "HOTL_ENABLED", value = tostring(var.hotl_enabled) },
+          { name = "HOTL_POLICY_STORE_BACKEND", value = var.hotl_policy_store_backend },
+          { name = "HOTL_ENFORCEMENT_ENABLED", value = tostring(var.hotl_enforcement_enabled) },
+          { name = "HOTL_SLACK_ESCALATION_WEBHOOK_URL", value = var.hotl_slack_escalation_webhook_url },
+          { name = "HOTL_EMAIL_ESCALATION_ADDRESS", value = var.hotl_email_escalation_address },
+          { name = "HOTL_WEBHOOK_ESCALATION_URL", value = var.hotl_webhook_escalation_url },
+          # --- Wave-3: Outcomes ---
+          { name = "OUTCOMES_BACKEND", value = var.outcomes_backend },
+          { name = "OUTCOMES_RETENTION_DAYS", value = tostring(var.outcomes_retention_days) },
+          { name = "OUTCOMES_TIMESERIES_BUCKET_SECONDS", value = tostring(var.outcomes_timeseries_bucket_seconds) },
+          # --- Wave-3: Skills / packs ---
+          { name = "SKILLS_PACKS_CONFIG_PATH", value = var.skills_packs_config_path },
+          { name = "SKILLS_INSTALL_ALLOWLIST", value = var.skills_install_allowlist },
+          { name = "SKILLS_AUTO_INSTALL_ON_STARTUP", value = tostring(var.skills_auto_install_on_startup) },
+          # --- Wave-3: Rate limiting ---
+          { name = "RATE_LIMIT_ENABLED", value = tostring(var.rate_limit_enabled) },
+          { name = "RATE_LIMIT_BACKEND", value = var.rate_limit_backend },
+          { name = "RATE_LIMIT_PER_TENANT_REQUESTS", value = tostring(var.rate_limit_per_tenant_requests) },
+          { name = "RATE_LIMIT_PER_TENANT_WINDOW_SECONDS", value = tostring(var.rate_limit_per_tenant_window_seconds) },
+          { name = "RATE_LIMIT_PER_ROUTE_REQUESTS", value = tostring(var.rate_limit_per_route_requests) },
+          { name = "RATE_LIMIT_PER_ROUTE_WINDOW_SECONDS", value = tostring(var.rate_limit_per_route_window_seconds) },
+          # --- Wave-3: Bedrock (non-secret config) ---
+          { name = "BEDROCK_REGION", value = var.bedrock_region },
+          { name = "BEDROCK_AUTH_MODE", value = var.bedrock_auth_mode },
+          # --- Wave-3: Azure OpenAI (non-secret config) ---
+          { name = "AZURE_OPENAI_ENDPOINT", value = var.azure_openai_endpoint },
+          { name = "AZURE_OPENAI_DEPLOYMENT_ID", value = var.azure_openai_deployment_id },
+          { name = "AZURE_OPENAI_API_VERSION", value = var.azure_openai_api_version },
+          # --- Wave-3: Mistral (non-secret config) ---
+          { name = "MISTRAL_API_BASE", value = var.mistral_api_base },
+          # --- Wave-3: Groq (non-secret config) ---
+          { name = "GROQ_API_BASE", value = var.groq_api_base },
+          # --- Wave-3: Observability ---
+          { name = "OTEL_ENABLED", value = tostring(var.otel_enabled) },
+          { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = var.otel_endpoint },
+          { name = "OTEL_TRACES_SAMPLER_ARG", value = var.otel_traces_sampling_ratio },
+          { name = "OTEL_SERVICE_NAME", value = var.otel_service_name },
+          { name = "PROMETHEUS_ENABLED", value = tostring(var.prometheus_enabled) },
+          { name = "PROMETHEUS_LISTEN_ADDR", value = var.prometheus_listen_addr },
+          # --- Wave-3: IM adapters (non-secret config) ---
+          { name = "DISCORD_ENABLED", value = tostring(var.im_discord_enabled) },
+          { name = "DISCORD_CHANNEL_ALLOWLIST", value = var.im_discord_channel_allowlist },
+          { name = "DISCORD_WEBHOOK_SIGNING_ENABLED", value = tostring(var.im_discord_webhook_signing_enabled) },
+          { name = "TELEGRAM_ENABLED", value = tostring(var.im_telegram_enabled) },
+          { name = "TELEGRAM_CHAT_ALLOWLIST", value = var.im_telegram_chat_allowlist },
+          { name = "MATTERMOST_ENABLED", value = tostring(var.im_mattermost_enabled) },
+          { name = "MATTERMOST_SERVER_URL", value = var.im_mattermost_server_url },
+          { name = "MATTERMOST_CHANNEL_ALLOWLIST", value = var.im_mattermost_channel_allowlist },
+          { name = "SLACK_ENABLED", value = tostring(var.im_slack_enabled) },
+          { name = "SLACK_CHANNEL_ALLOWLIST", value = var.im_slack_channel_allowlist },
+        ],
+        # Prometheus scrape port — only expose in environment when enabled so
+        # the value is always present for the app startup check.
+        var.prometheus_enabled ? [{ name = "PROMETHEUS_PORT", value = "9090" }] : []
+      )
 
       # Inject secrets from Secrets Manager as environment variables.
-      secrets = [
-        {
-          name      = "XIAOGUAI_DB_PASSWORD"
-          valueFrom = "${var.db_secret_arn}:password::"
-        },
-        {
-          name      = "OPENAI_API_KEY"
-          valueFrom = "${var.llm_secrets_arn}:OPENAI_API_KEY::"
-        },
-        {
-          name      = "ANTHROPIC_API_KEY"
-          valueFrom = "${var.llm_secrets_arn}:ANTHROPIC_API_KEY::"
-        }
-      ]
+      # Conditional secrets use concat + ternary to avoid mounting empty ARNs.
+      secrets = concat(
+        [
+          {
+            name      = "XIAOGUAI_DB_PASSWORD"
+            valueFrom = "${var.db_secret_arn}:password::"
+          },
+          {
+            name      = "OPENAI_API_KEY"
+            valueFrom = "${var.llm_secrets_arn}:OPENAI_API_KEY::"
+          },
+          {
+            name      = "ANTHROPIC_API_KEY"
+            valueFrom = "${var.llm_secrets_arn}:ANTHROPIC_API_KEY::"
+          },
+        ],
+        # Bedrock access keys — only when auth mode is env-keys and ARN is set.
+        var.bedrock_auth_mode == "env-keys" && var.bedrock_secrets_arn != "" ? [
+          { name = "BEDROCK_AWS_ACCESS_KEY_ID", valueFrom = "${var.bedrock_secrets_arn}:BEDROCK_AWS_ACCESS_KEY_ID::" },
+          { name = "BEDROCK_AWS_SECRET_ACCESS_KEY", valueFrom = "${var.bedrock_secrets_arn}:BEDROCK_AWS_SECRET_ACCESS_KEY::" },
+        ] : [],
+        # Azure OpenAI API key.
+        var.azure_openai_secrets_arn != "" ? [
+          { name = "AZURE_OPENAI_API_KEY", valueFrom = "${var.azure_openai_secrets_arn}:AZURE_OPENAI_API_KEY::" },
+        ] : [],
+        # Mistral API key.
+        var.mistral_secrets_arn != "" ? [
+          { name = "MISTRAL_API_KEY", valueFrom = "${var.mistral_secrets_arn}:MISTRAL_API_KEY::" },
+        ] : [],
+        # Groq API key.
+        var.groq_secrets_arn != "" ? [
+          { name = "GROQ_API_KEY", valueFrom = "${var.groq_secrets_arn}:GROQ_API_KEY::" },
+        ] : [],
+        # Discord bot token (+ optional webhook secret).
+        var.im_discord_secrets_arn != "" ? [
+          { name = "DISCORD_BOT_TOKEN", valueFrom = "${var.im_discord_secrets_arn}:DISCORD_BOT_TOKEN::" },
+        ] : [],
+        var.im_discord_secrets_arn != "" && var.im_discord_webhook_signing_enabled ? [
+          { name = "DISCORD_WEBHOOK_SECRET", valueFrom = "${var.im_discord_secrets_arn}:DISCORD_WEBHOOK_SECRET::" },
+        ] : [],
+        # Telegram bot token.
+        var.im_telegram_secrets_arn != "" ? [
+          { name = "TELEGRAM_BOT_TOKEN", valueFrom = "${var.im_telegram_secrets_arn}:TELEGRAM_BOT_TOKEN::" },
+        ] : [],
+        # Mattermost bot token.
+        var.im_mattermost_secrets_arn != "" ? [
+          { name = "MATTERMOST_BOT_TOKEN", valueFrom = "${var.im_mattermost_secrets_arn}:MATTERMOST_BOT_TOKEN::" },
+        ] : [],
+        # Slack bot token + signing secret.
+        var.im_slack_secrets_arn != "" ? [
+          { name = "SLACK_BOT_TOKEN", valueFrom = "${var.im_slack_secrets_arn}:SLACK_BOT_TOKEN::" },
+          { name = "SLACK_SIGNING_SECRET", valueFrom = "${var.im_slack_secrets_arn}:SLACK_SIGNING_SECRET::" },
+        ] : [],
+      )
 
       logConfiguration = {
         logDriver = "awslogs"
