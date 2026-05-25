@@ -1,0 +1,151 @@
+# Agent definition — metric-aggregator
+# ---------------------------------------------------------------------------
+# Subscribes to esg.period_closed and esg.data_source_stale events.
+# For each trigger it:
+#   1. Pulls fresh data from each configured inbound connector
+#      (NetSuite GL, Workday HRIS, Watershed API, uploaded CSVs,
+#       supplier questionnaire aggregates).
+#   2. Normalizes values to canonical units (tCO2e, MWh, cubic_meters, etc.).
+#   3. Upserts rows into esg_metrics, stamping data_source_id + confidence.
+#   4. Logs a coverage summary to outcome-telemetry.
+#
+# The agent never submits data to regulators — it only fills the metric store.
+# All submission actions go through the HOTL gate in csr-platform-submission.
+# ---------------------------------------------------------------------------
+
+name: metric-aggregator
+version: "1.0.0"
+description: >
+  Pulls Environmental, Social, and Governance metrics from all connected
+  inbound sources (financial systems, HRIS, emissions platforms, manual
+  uploads, supplier surveys). Normalizes to canonical units and upserts into
+  esg_metrics. Fires after period close or data-source-stale events.
+
+triggers:
+  - event: esg.period_closed
+    source: period-close
+  - event: esg.data_source_stale
+    source: data-source-stale
+
+llm:
+  model: ${ESG_LLM_MODEL:-default}
+  temperature: 0.1   # low temperature — this is data extraction, not creativity
+  max_tokens: 2048
+
+system_prompt: |
+  You are an ESG data aggregation assistant. Your job is to coordinate
+  the collection of Environmental, Social, and Governance metrics from
+  multiple source systems and normalize them into a consistent schema.
+
+  Rules:
+  - Never invent or estimate a metric value. If a source does not return
+    data for a metric, set confidence = 'not_available' and leave the
+    value as NULL rather than substituting a guess.
+  - Always preserve the original unit from the source before converting.
+    Record both the raw_value/raw_unit and the normalized value/unit.
+  - When a data source returns partial data (some categories missing),
+    log the gaps as 'not_available' rows — do not silently skip them.
+  - Use boundary = 'operational_control' as default unless the source
+    specifies otherwise.
+  - Do not trigger any regulatory submission. Your only writes are to
+    esg_metrics and esg_data_sources.
+
+tools:
+  - name: pull_netsuite_financials
+    description: >
+      Fetch environmental-cost and energy-spend line items from the
+      NetSuite GL connector for the given period. Returns rows with
+      account_code, amount_usd, and description. Used to derive
+      energy_consumption when Watershed data is unavailable.
+    kind: inbound_connector
+    connector: netsuite-financial-data
+
+  - name: pull_workday_hris
+    description: >
+      Pull workforce snapshot from Workday HRIS for the period end date.
+      Returns headcount_total, headcount_female, headcount_underrepresented,
+      new_hires, voluntary_attrition, training_hours_avg,
+      lost_time_injury_rate, total_recordable_incident_rate,
+      pay_gap_gender, pay_gap_ethnicity.
+    kind: inbound_connector
+    connector: workday-hris-export
+
+  - name: pull_watershed_emissions
+    description: >
+      Pull Scope 1, 2, and 3 GHG emissions from the Watershed platform
+      for the given period_id. Returns emissions_scope1, emissions_scope2,
+      emissions_scope3 in tCO2e with methodology notes. Also returns
+      energy_consumption (MWh) and energy_renewable (MWh).
+    kind: inbound_connector
+    connector: watershed-emissions-data
+
+  - name: pull_manual_survey
+    description: >
+      Ingest a manually uploaded CSV containing any ESG metric key/value
+      pairs. Validates column headers against the canonical metric_key list.
+      Returns parsed rows with metric_key, value, unit, confidence, notes.
+    kind: inbound_connector
+    connector: manual-survey-csv
+
+  - name: pull_supplier_questionnaire
+    description: >
+      Fetch aggregated supplier survey results (Scope 3 category 1 upstream
+      emissions, supplier DEI commitments, conflict minerals attestations).
+      Returns per-supplier rows that are summed into esg_metrics.
+    kind: inbound_connector
+    connector: supplier-questionnaire-aggregate
+
+  - name: lookup_period
+    description: >
+      Fetch the reporting period record (start_date, end_date, label) for
+      a given period_id. Used to scope data pulls to the correct date range.
+    kind: sql
+    query: |
+      SELECT id, tenant_id, label, period_type, start_date, end_date
+      FROM esg_reporting_periods
+      WHERE tenant_id = '{tenant_id}'
+        AND id = '{period_id}'
+
+  - name: upsert_metric
+    description: >
+      Insert or update a single metric row in esg_metrics. Conflicts on
+      (tenant_id, period_id, category, metric_key) are resolved by
+      updating value, unit, confidence, and methodology from the new data.
+    kind: sql
+    query: |
+      INSERT INTO esg_metrics
+          (tenant_id, period_id, data_source_id, pillar, category,
+           metric_key, value, unit, confidence, methodology, boundary, notes)
+      VALUES
+          ('{tenant_id}', '{period_id}', '{data_source_id}', '{pillar}',
+           '{category}', '{metric_key}', {value}, '{unit}', '{confidence}',
+           '{methodology}', '{boundary}', '{notes}')
+      ON CONFLICT (tenant_id, period_id, category, metric_key)
+      DO UPDATE SET
+          value          = EXCLUDED.value,
+          unit           = EXCLUDED.unit,
+          confidence     = EXCLUDED.confidence,
+          methodology    = EXCLUDED.methodology,
+          data_source_id = EXCLUDED.data_source_id,
+          notes          = EXCLUDED.notes,
+          updated_at     = NOW()
+      RETURNING id
+
+  - name: update_source_sync_timestamp
+    description: >
+      Mark a data source as successfully synced by updating its
+      last_synced_at timestamp.
+    kind: sql
+    query: |
+      UPDATE esg_data_sources
+      SET last_synced_at = NOW(), updated_at = NOW()
+      WHERE tenant_id = '{tenant_id}'
+        AND id = '{data_source_id}'
+
+outcome_telemetry:
+  record_on:
+    - pull_started
+    - pull_completed
+    - metric_upserted
+    - pull_failed
+  feedback_table: esg_metrics

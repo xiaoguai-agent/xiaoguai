@@ -1,0 +1,63 @@
+---
+# Manual Survey CSV — inbound connector
+# ---------------------------------------------------------------------------
+# Accepts manually uploaded CSV files containing ESG metric values.
+# Used for metrics that cannot be sourced from automated connectors:
+# facilities meter data, board composition updates, regulatory fines, etc.
+#
+# Upload endpoint: POST /v1/esg/inbound/manual-survey-csv
+# Auth: per-tenant bearer token (same as other xiaoguai webhook endpoints)
+#
+# Expected CSV format:
+#   metric_key, value, unit, confidence, methodology, boundary, notes
+#   emissions_scope1, 12500.5, tCO2e, measured, "GHG Protocol", operational_control, ""
+#
+# Validation: metric_key must be in the canonical list (esg_framework_mappings);
+# confidence must be one of: measured, estimated, modeled, not_available.
+
+source: manual-survey-csv
+display_name: "Manual CSV Upload"
+kind: csv_upload
+
+route_prefix: /v1/esg/inbound/manual-survey-csv
+
+auth:
+  type: bearer_token
+  token_from: x-xiaoguai-token   # per-tenant token from scheduler_webhook_tokens
+
+csv_schema:
+  required_columns:
+    - metric_key
+    - value
+    - unit
+    - confidence
+  optional_columns:
+    - methodology
+    - boundary
+    - notes
+
+validation:
+  metric_key:
+    allowed_values: "SELECT DISTINCT metric_key FROM esg_framework_mappings"
+    on_invalid: reject_row_with_error
+  confidence:
+    allowed_values: ["measured", "estimated", "modeled", "not_available"]
+    on_invalid: reject_row_with_error
+  value:
+    type: numeric
+    on_invalid: reject_row_with_error
+
+# Uploaded files are stored in esg_data_sources with kind = 'csv_upload'
+# and a generated source name "CSV Upload — {filename} — {uploaded_at}".
+data_source:
+  kind: csv_upload
+  name_template: "CSV Upload — {{ filename }} — {{ uploaded_at }}"
+
+error_response:
+  format: json
+  include_row_errors: true
+  max_errors_reported: 50
+
+rate_limits:
+  uploads_per_tenant_per_hour: 10
+  max_file_size_mb: 10

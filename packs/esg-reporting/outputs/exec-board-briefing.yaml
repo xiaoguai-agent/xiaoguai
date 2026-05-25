@@ -1,0 +1,42 @@
+---
+# Exec Board Briefing — output connector
+# ---------------------------------------------------------------------------
+# Generates a concise executive briefing document (PDF-ready Markdown) for
+# the board's quarterly or annual ESG review. Includes:
+#   - headline KPIs (emissions, DEI, governance scores)
+#   - framework coverage matrix (from framework-mapper)
+#   - gap summary (from gap-detector)
+#   - upcoming regulatory deadlines
+#
+# Delivered as:
+#   1. A rendered Markdown document saved to the configured storage bucket
+#      or document management system.
+#   2. An email notification to board members (operator-configured; no
+#      autonomous send — email requires admin approval or uses BCC to a
+#      sustainability team distribution list for human forward).
+
+output: exec-board-briefing
+display_name: "Executive Board ESG Briefing"
+kind: document
+
+document:
+  format: markdown
+  template: "templates/framework-coverage-matrix.md.j2"
+  filename_template: "ESG-Board-Briefing-{{ period_label }}-{{ generated_at | date('YYYY-MM-DD') }}.md"
+
+storage:
+  # Optional: upload rendered document to S3, GCS, or SharePoint
+  kind: "${ESG_BOARD_STORAGE_KIND:-local}"  # 'local', 's3', 'gcs', 'sharepoint'
+  path: "${ESG_BOARD_BRIEFING_PATH:-/tmp/esg-briefings}"
+  # S3 / GCS: bucket + prefix
+  bucket: "${ESG_BOARD_BRIEFING_BUCKET:-}"
+  prefix: "board-briefings/"
+
+# Notification (no autonomous email send — inform the sustainability team
+# who then forwards to the board via their own email system)
+notify:
+  output: sustainability-team-slack
+  message: >
+    :page_facing_up: *Board ESG briefing ready for {{ period_label }}.*
+    Saved to: {{ document_path }}
+    Please review and forward to board members via your document management system.

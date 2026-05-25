@@ -1,0 +1,124 @@
+{# GRI Standards Narrative Template
+   GRI 2: General Disclosures (2021) + topical standards GRI 300 (Environmental),
+   GRI 400 (Social), GRI 200 (Economic).
+   For EU CSRD reporters with overlap_resolution = 'csrd_primary', most
+   sections render as cross-references to avoid duplicating ESRS disclosures.
+   The framework-mapper agent controls routing.
+#}
+
+{% if section == 'governance' %}
+## GRI 2 — Governance
+
+{% if gri_routing == 'cross_reference' %}
+> **Cross-reference (GRI 2-9 to 2-20)**: The Company's governance structure,
+> board composition, and remuneration disclosures are reported in full under
+> CSRD ESRS 2 GOV-1 (para 21–26) and ESRS G1-1 (para 22). This section
+> satisfies GRI 2-9 (Governance structure), 2-11 (Chair of the Board),
+> 2-17 (Collective knowledge), 2-18 (Evaluation of performance), and
+> 2-19 (Remuneration policies) by reference to the CSRD disclosure.
+{% else %}
+### GRI 2-9 — Governance Structure and Composition
+
+The Company's Board of Directors comprised {{ metrics.board_size | int }} members
+as of {{ period_end_date }}, of whom:
+
+- {{ metrics.board_independent | int }} ({{ "%.0f"|format(metrics.board_independent / metrics.board_size * 100) }}%) were independent non-executive directors
+- {{ metrics.board_female | int }} ({{ "%.0f"|format(metrics.board_female / metrics.board_size * 100) }}%) were women
+- {{ metrics.board_underrepresented | default('[not collected]') }} identified as members of underrepresented groups
+
+The Board is chaired by a {{ board_chair_type | default("non-executive") }} director.
+
+### GRI 2-19 — Remuneration Policies
+
+Executive remuneration includes sustainability-linked KPIs. The CEO pay ratio
+(CEO total compensation to median employee total compensation) for {{ period_label }}
+was {{ metrics.ceo_pay_ratio }}:1.
+
+*GRI reference: GRI 2-9, 2-11, 2-19, 2-21.*
+{% endif %}
+
+{% elif section == 'risk_management' %}
+## GRI 2 — Strategy, Policies, and Practices (Risk Management)
+
+{% if gri_routing == 'cross_reference' %}
+> **Cross-reference (GRI 2-22 to 2-28)**: The Company's approach to managing
+> sustainability risks, including stakeholder engagement and due diligence,
+> is disclosed under CSRD ESRS 2 IRO-1 (para 53) and ESRS 2 SBM-2 (para 43).
+> This section satisfies GRI 2-22 (Statement on sustainable development),
+> 2-25 (Processes to remediate negative impacts), 2-26 (Mechanisms for seeking
+> advice), and 2-28 (Membership associations) by reference.
+{% else %}
+### GRI 2-22 — Statement on Sustainable Development Strategy
+
+[Drafted by narrative-drafter from operator-provided sustainability strategy
+statement. Configure ESG_SUSTAINABILITY_STRATEGY_STATEMENT in pack settings.]
+
+### GRI 2-25 — Processes to Remediate Negative Impacts
+
+The Company maintains a grievance mechanism accessible to all stakeholders
+(employees, suppliers, affected communities) via {{ grievance_channel | default("[configure grievance_channel]") }}.
+Material remediation actions taken during {{ period_label }} are described in
+the ESRS S1 and S2 disclosures.
+{% endif %}
+
+{% elif section == 'metrics_targets' %}
+## GRI 300 / 400 — Environmental and Social Disclosures
+
+{% if gri_routing == 'cross_reference' %}
+> **Cross-reference (GRI 302, 303, 305, 306, 401–405, 403)**: Quantitative
+> environmental and social metrics are disclosed in full under CSRD ESRS E1,
+> E3, E5, S1, and G1 topical standards. The following table maps GRI
+> disclosure items to the corresponding CSRD ESRS paragraphs to avoid
+> duplication. GRI 2021 standards are satisfied by reference.
+
+| GRI Disclosure | Topic | CSRD Cross-Reference |
+|---------------|-------|---------------------|
+| GRI 302-1 | Energy consumption within org | ESRS E1-5 para 40 |
+| GRI 302-3 | Energy intensity | ESRS E1-5 para 42 |
+| GRI 303-3 | Water withdrawal | ESRS E3-4 para 28 |
+| GRI 303-4 | Water discharge / recycled | ESRS E3-4 para 29 |
+| GRI 305-1 | Scope 1 GHG emissions | ESRS E1-6 para 56(a) |
+| GRI 305-2 | Scope 2 GHG emissions | ESRS E1-6 para 56(b) |
+| GRI 305-3 | Scope 3 GHG emissions | ESRS E1-6 para 56(c) |
+| GRI 306-3 | Waste generated | ESRS E5-5 para 37 |
+| GRI 306-4 | Waste diverted from disposal | ESRS E5-5 para 38 |
+| GRI 401-1 | New hires and turnover | ESRS S1-1 para 9 |
+| GRI 403-9 | Work-related injuries | ESRS S1-14 para 88 |
+| GRI 405-1 | Diversity of governance bodies | ESRS G1-1 para 22(a) / S1-9 |
+| GRI 405-2 | Ratio of basic salary by gender | ESRS S1-16 para 97 |
+
+{% else %}
+### GRI 302 — Energy
+
+| Indicator | Value | Unit |
+|-----------|------:|------|
+| GRI 302-1 — Energy consumption within org | {{ metrics.energy_consumption }} | MWh |
+| GRI 302-3 — Energy intensity (per FTE) | {{ (metrics.energy_consumption / metrics.headcount_total) | round(2) }} | MWh/FTE |
+| Renewable energy share | {{ "%.1f"|format(metrics.energy_renewable / metrics.energy_consumption * 100) }}% | % |
+
+### GRI 305 — Emissions
+
+| Indicator | Value | Unit | Confidence |
+|-----------|------:|------|------------|
+| GRI 305-1 — Scope 1 | {{ metrics.emissions_scope1 }} | tCO₂e | {{ confidences.emissions_scope1 }} |
+| GRI 305-2 — Scope 2 (market-based) | {{ metrics.emissions_scope2 }} | tCO₂e | {{ confidences.emissions_scope2 }} |
+| GRI 305-3 — Scope 3 | {{ metrics.emissions_scope3 }} | tCO₂e | {{ confidences.emissions_scope3 }}{% if confidences.emissions_scope3 in ['modeled', 'estimated'] %} [ESTIMATE]{% endif %} |
+
+### GRI 401 / 403 / 405 — Social
+
+| Indicator | Value | Unit |
+|-----------|------:|------|
+| GRI 401-1 — New hires | {{ metrics.new_hires | int }} | headcount |
+| GRI 401-1 — Voluntary attrition | {{ metrics.voluntary_attrition }}% | % |
+| GRI 403-9 — Lost-time injury rate | {{ metrics.lost_time_injury_rate }} | per 200k hrs |
+| GRI 405-1 — Women in workforce | {{ "%.1f"|format(metrics.headcount_female / metrics.headcount_total * 100) }}% | % |
+| GRI 405-2 — Gender pay gap | {{ metrics.pay_gap_gender }}% | % |
+{% endif %}
+
+{% endif %}
+
+---
+*Prepared in accordance with GRI Standards (2021). GRI Content Index available
+upon request. This report has been prepared using the GRI Standards.*
+*Draft generated by xiaoguai esg-reporting pack v{{ pack_version }}.*
+*Status: PENDING HUMAN REVIEW.*

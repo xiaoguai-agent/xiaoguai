@@ -1,0 +1,144 @@
+{# TCFD Recommendations Narrative Template
+   Covers all four TCFD pillars: Governance, Strategy, Risk Management,
+   Metrics & Targets.
+   Note: For EU CSRD reporters, TCFD disclosures are largely satisfied
+   through CSRD ESRS E1 alignment. Where overlap_resolution = 'csrd_primary',
+   this template renders cross-reference paragraphs only (not full narratives).
+   The framework-mapper agent controls which section receives 'primary' routing.
+#}
+
+{% if section == 'governance' %}
+## TCFD — Governance
+
+{% if tcfd_routing == 'cross_reference' %}
+> **Cross-reference**: The Company's governance of climate-related risks and
+> opportunities is disclosed in full under CSRD ESRS 2 GOV-1 (Board oversight)
+> and GOV-3 (Management roles). This section satisfies TCFD Governance
+> Recommendations (a) and (b) by reference to those disclosures.
+{% else %}
+### (a) Board Oversight
+
+The Board of Directors is responsible for oversight of climate-related risks
+and opportunities. The {{ board_committee_name | default("Audit and Sustainability Committee") }}
+reviews climate-related matters at least quarterly and reports findings to
+the full Board.
+
+### (b) Management's Role
+
+The Chief Sustainability Officer (CSO) leads the Company's climate strategy
+and reports directly to the CEO. Climate risk and opportunity assessment is
+integrated into the annual strategic planning cycle.
+{% endif %}
+
+{% elif section == 'strategy' %}
+## TCFD — Strategy
+
+{% if tcfd_routing == 'cross_reference' %}
+> **Cross-reference**: The Company's climate-related strategy, including
+> scenario analysis and resilience assessment, is disclosed under CSRD ESRS
+> E1-1 (transition plan) and ESRS 2 SBM-3 (material impacts, risks,
+> opportunities). This section satisfies TCFD Strategy Recommendations
+> (a), (b), and (c) by reference.
+{% else %}
+### (a) Climate-Related Risks and Opportunities
+
+Identified over the short (< 3 years), medium (3–10 years), and long
+(> 10 years) term:
+
+**Transition risks**: Policy and legal (carbon pricing, CBAM), technology
+(stranded assets), market (demand shift), reputational (ESG ratings).
+
+**Physical risks**: Acute (extreme weather events), chronic (sea-level rise,
+chronic heat stress on operations).
+
+**Opportunities**: Energy efficiency, renewable energy adoption, green
+product/service development.
+
+### (b) Impact on Strategy and Financial Planning
+
+Climate-related scenarios assessed: IEA Net Zero 2050 (1.5°C), IEA
+Stated Policies (2.5–3°C). Material financial impacts are incorporated into
+the {{ planning_horizon | default("5-year") }} financial plan and disclosed
+in the ESRS 2 SBM-3 impact table.
+
+### (c) Resilience of Strategy
+
+Under both scenarios, the Company's core business model is assessed as
+resilient, subject to continued execution of the transition plan. The
+principal residual risk is Scope 3 (category 11 use-of-sold-products)
+emissions trajectory.
+{% endif %}
+
+{% elif section == 'risk_management' %}
+## TCFD — Risk Management
+
+{% if tcfd_routing == 'cross_reference' %}
+> **Cross-reference**: The Company's ESG risk identification, assessment,
+> and management processes are disclosed under CSRD ESRS 2 IRO-1 and
+> IRO-2. This section satisfies TCFD Risk Management Recommendations
+> (a), (b), and (c) by reference.
+{% else %}
+### (a) Risk Identification and Assessment
+
+Climate-related risks are identified through a structured double-materiality
+assessment conducted {{ risk_assessment_cadence | default("bi-annually") }}.
+Physical risk exposure is mapped using {{ climate_data_provider | default("third-party climate analytics") }}
+under RCP 2.6 and RCP 4.5 scenarios.
+
+### (b) Risk Management Processes
+
+Identified material climate risks are assigned owners, tracked in the
+enterprise risk register, and reviewed by the {{ risk_committee_name | default("Risk Committee") }}.
+Mitigation actions are included in departmental KPIs.
+
+### (c) Integration into Overall Risk Management
+
+Climate risk is integrated into the Company's ERM framework alongside
+financial, operational, and cyber risks. The ERM framework is reviewed
+annually by the Board.
+{% endif %}
+
+{% elif section == 'metrics_targets' %}
+## TCFD — Metrics and Targets
+
+{% if tcfd_routing == 'cross_reference' %}
+> **Cross-reference**: GHG emissions, energy, water, and climate-related
+> financial metrics are disclosed under CSRD ESRS E1-5, E1-6, E1-9, and
+> related topical standards. Targets are disclosed under ESRS E1-4.
+> This section satisfies TCFD Metrics & Targets Recommendations (a), (b),
+> and (c) by reference.
+{% else %}
+### (a) Metrics Used to Assess Climate-Related Risks
+
+| Metric | {{ period_label }} | Unit | Confidence |
+|--------|-------------------:|------|------------|
+| Scope 1 GHG emissions | {{ metrics.emissions_scope1 }} | tCO₂e | {{ confidences.emissions_scope1 }} |
+| Scope 2 GHG emissions (market-based) | {{ metrics.emissions_scope2 }} | tCO₂e | {{ confidences.emissions_scope2 }} |
+| Scope 3 GHG emissions | {{ metrics.emissions_scope3 }} | tCO₂e | {{ confidences.emissions_scope3 }}{% if confidences.emissions_scope3 in ['modeled', 'estimated'] %} [ESTIMATE]{% endif %} |
+| Total energy consumption | {{ metrics.energy_consumption }} | MWh | {{ confidences.energy_consumption }} |
+
+### (b) Scope 1, 2, 3 Emissions and Related Risks
+
+Emissions are calculated in accordance with the GHG Protocol Corporate
+Standard ({{ boundary | default("operational control boundary") }}).
+Methodology notes are available in the assurance evidence bundle.
+
+### (c) Climate-Related Targets
+
+The Company has committed to:
+- Net-zero Scope 1 + 2 by {{ net_zero_scope12_year | default("[year]") }}
+- Net-zero Scope 3 (all categories) by {{ net_zero_scope3_year | default("[year]") }}
+- {{ renewable_energy_target_pct | default("[X]") }}% renewable electricity by {{ renewable_target_year | default("[year]") }} (RE100 commitment)
+- SBTi-validated interim targets: {{ sbti_interim_target | default("[describe target]") }}
+
+Progress against targets is tracked quarterly and reported to the Board.
+{% endif %}
+
+{% endif %}
+
+---
+*TCFD recommendations are voluntary. This disclosure aligns with the Task
+Force on Climate-related Financial Disclosures Final Report (2017) and
+2021 Guidance.*
+*Draft generated by xiaoguai esg-reporting pack v{{ pack_version }}.*
+*Status: PENDING HUMAN REVIEW.*

@@ -1,0 +1,109 @@
+---
+# Workday HRIS Export — inbound connector
+# ---------------------------------------------------------------------------
+# Pulls workforce metrics from Workday via the Workday REST API (WDK).
+# Returns headcount, DEI breakdown, attrition, training hours, safety
+# incident rates, and pay gap ratios as of the period end date.
+#
+# Authentication: Workday OAuth 2.0 (ISU service account).
+# Credentials: WORKDAY_TENANT_NAME, WORKDAY_CLIENT_ID,
+#              WORKDAY_CLIENT_SECRET, WORKDAY_REFRESH_TOKEN
+
+source: workday-hris-export
+display_name: "Workday HRIS — Workforce Metrics"
+kind: api
+
+auth:
+  type: oauth2_refresh_token
+  token_url: "https://{{ env.WORKDAY_TENANT_NAME }}.workday.com/ccx/oauth2/{{ env.WORKDAY_TENANT_NAME }}/token"
+  client_id: "${WORKDAY_CLIENT_ID}"
+  client_secret: "${WORKDAY_CLIENT_SECRET}"
+  refresh_token: "${WORKDAY_REFRESH_TOKEN}"
+
+endpoint:
+  # Workday Prism Analytics or RaaS (Report as a Service) endpoint
+  base_url: "https://{{ env.WORKDAY_TENANT_NAME }}.workday.com/ccx/service/customreport2/{{ env.WORKDAY_TENANT_NAME }}"
+  report_path: "${WORKDAY_ESG_REPORT_PATH:-ESG_Headcount_Snapshot}"
+  method: GET
+  params:
+    format: json
+    asOfDate: "{{ period_end_date }}"
+
+# Field mappings → esg_metrics
+output_mapping:
+  - source_field: total_headcount
+    metric_key: headcount_total
+    pillar: social
+    category: headcount_total
+    unit: count
+    confidence: measured
+
+  - source_field: female_headcount
+    metric_key: headcount_female
+    pillar: social
+    category: headcount_female
+    unit: count
+    confidence: measured
+
+  - source_field: underrepresented_headcount
+    metric_key: headcount_underrepresented
+    pillar: social
+    category: headcount_underrepresented
+    unit: count
+    confidence: measured
+    methodology: "Self-identified underrepresented group membership per Workday DEI profile"
+
+  - source_field: new_hires_ytd
+    metric_key: new_hires
+    pillar: social
+    category: new_hires
+    unit: count
+    confidence: measured
+
+  - source_field: voluntary_attrition_rate_pct
+    metric_key: voluntary_attrition
+    pillar: social
+    category: voluntary_attrition
+    unit: "%"
+    confidence: measured
+
+  - source_field: avg_training_hours
+    metric_key: training_hours
+    pillar: social
+    category: training_hours
+    unit: hours
+    confidence: measured
+
+  - source_field: ltir
+    metric_key: lost_time_injury_rate
+    pillar: social
+    category: lost_time_injury_rate
+    unit: "per 200k hours"
+    confidence: measured
+
+  - source_field: trir
+    metric_key: total_recordable_incident_rate
+    pillar: social
+    category: total_recordable_incident_rate
+    unit: "per 200k hours"
+    confidence: measured
+
+  - source_field: gender_pay_gap_pct
+    metric_key: pay_gap_gender
+    pillar: social
+    category: pay_gap_gender
+    unit: "%"
+    confidence: measured
+    methodology: "Median pay gap calculated as (male median − female median) / male median × 100"
+
+  - source_field: ethnicity_pay_gap_pct
+    metric_key: pay_gap_ethnicity
+    pillar: social
+    category: pay_gap_ethnicity
+    unit: "%"
+    confidence: measured
+
+error_handling:
+  on_auth_failure: return_error
+  on_timeout: retry_once
+  timeout_seconds: 45
