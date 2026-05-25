@@ -50,6 +50,7 @@
 # Skills Catalog
 
 - [Overview](skills/overview.md)
+- [Skill Packs](skills/skill-packs.md)
 
 ---
 
