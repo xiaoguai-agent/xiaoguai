@@ -36,9 +36,6 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-# Matches the pinned toolchain in rust-toolchain.toml. The codebase compiles
-# and passes its tests on 1.88, so 1.88 is the true MSRV; the previous "1.91"
-# was inconsistent with the pin and broke CI (cargo errored before clippy).
 rust-version = "1.88"
 license = "BUSL-1.1"
 authors = ["Xiaoguai Maintainers"]
@@ -155,11 +152,6 @@ pulldown-cmark = { version = "0.13", default-features = false }
 
 # caching / watch dedup
 moka = { version = "0.12", features = ["future"] }
-
-# audit S3 export — pin to versions whose rust-version stays at 1.88.
-# When the toolchain bumps to ≥ 1.91, drop the upper-bound pins.
-aws-config = { version = "~1.8.13", default-features = false, features = ["behavior-version-latest"] }
-aws-sdk-s3 = { version = "~1.122", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
 
 # rate limiting
 governor = "0.7"

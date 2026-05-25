@@ -4,8 +4,8 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
-    anomaly, audit, backup, chat, completions, eval, hotl, manpages, mcp, outcomes, provider,
-    remote, self_update, skills, tasks, watch,
+    anomaly, backup, chat, completions, eval, hotl, manpages, mcp, outcomes, provider, remote,
+    self_update, skills, tasks, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -124,12 +124,6 @@ enum Cmd {
         /// Only report whether an update is available; do not download.
         #[arg(long)]
         check: bool,
-    },
-
-    /// Audit log management (export, verify).
-    Audit {
-        #[command(subcommand)]
-        action: AuditCmd,
     },
 
     // ------------------------------------------------------------------
@@ -472,48 +466,6 @@ enum AnomalyCmd {
 // ---------------------------------------------------------------------------
 // Existing sub-enums (unchanged)
 // ---------------------------------------------------------------------------
-
-#[derive(Subcommand)]
-enum AuditCmd {
-    /// Export new audit rows to a remote sink (S3-compatible).
-    Export {
-        /// Sink type. Currently only `s3` is supported.
-        #[arg(long, default_value = "s3")]
-        sink: String,
-
-        /// S3 bucket name.
-        #[arg(long, env = "AUDIT_S3_BUCKET")]
-        bucket: String,
-
-        /// S3 key prefix (no trailing slash).
-        #[arg(long, default_value = "audit")]
-        prefix: String,
-
-        /// AWS region.
-        #[arg(long, default_value = "us-east-1", env = "AWS_DEFAULT_REGION")]
-        region: String,
-
-        /// Optional endpoint URL for `MinIO` / localstack.
-        #[arg(long, env = "AUDIT_S3_ENDPOINT")]
-        endpoint_url: Option<String>,
-
-        /// Logical sink name stored in `audit_export_state`.
-        #[arg(long, default_value = "default")]
-        sink_name: String,
-
-        /// Daemon export interval in seconds (ignored with `--once`).
-        #[arg(long, default_value_t = 3600)]
-        interval_secs: u64,
-
-        /// Run one cycle then exit instead of looping.
-        #[arg(long)]
-        once: bool,
-
-        /// Postgres connection URL. Falls back to `DATABASE_URL` env var.
-        #[arg(long, env = "DATABASE_URL")]
-        database_url: String,
-    },
-}
 
 #[derive(Subcommand)]
 enum EvalCmd {
@@ -959,39 +911,6 @@ async fn handle_eval(action: EvalCmd) -> Result<()> {
             print!("{}", xiaoguai_eval::pretty_summary(&report));
             if report.failed() > 0 {
                 std::process::exit(1);
-            }
-            Ok(())
-        }
-    }
-}
-
-async fn handle_audit(action: AuditCmd) -> Result<()> {
-    match action {
-        AuditCmd::Export {
-            sink,
-            bucket,
-            prefix,
-            region,
-            endpoint_url,
-            sink_name,
-            interval_secs,
-            once,
-            database_url,
-        } => {
-            let n = audit::run_export(audit::ExportArgs {
-                sink,
-                bucket,
-                prefix,
-                region,
-                endpoint_url,
-                sink_name,
-                interval_secs,
-                once,
-                database_url,
-            })
-            .await?;
-            if once {
-                println!("exported {n} row(s)");
             }
             Ok(())
         }
@@ -1446,7 +1365,6 @@ async fn main() -> Result<()> {
             })
             .await
         }
-        Cmd::Audit { action } => handle_audit(action).await,
         // Wave-3
         Cmd::Hotl {
             api_base,
