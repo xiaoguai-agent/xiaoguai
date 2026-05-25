@@ -1,0 +1,52 @@
+# Output channel — board deck stub
+# ---------------------------------------------------------------------------
+# Exports approved FP&A commentary and rollup tables as a structured stub
+# that can be imported into the operator's board deck tool (Google Slides,
+# PowerPoint, Notion, Confluence, etc.).
+#
+# This is a "stub" output: it produces a structured markdown/JSON export
+# for the operator to copy-paste or import. It does NOT produce a finished
+# slide deck — that is out of scope for v1.0.0.
+# ---------------------------------------------------------------------------
+
+name: board-deck-stub
+version: "1.0.0"
+description: >
+  Exports approved board commentary and drill-down rollup table as a
+  structured markdown stub for import into the operator's board deck tool.
+  Triggered automatically when a commentary draft is approved.
+
+kind: output_channel
+type: file_export
+
+# --------------------------------------------------------------------------
+# Trigger: fires when a commentary draft transitions to 'published'
+# --------------------------------------------------------------------------
+trigger:
+  event: fpa_commentary_log.status
+  condition: "status == 'published'"
+
+# --------------------------------------------------------------------------
+# Export format
+# --------------------------------------------------------------------------
+export:
+  format: markdown      # markdown | json | html (operator-configurable)
+  include_sections:
+    - board-commentary  # from forecast-commentator
+    - drill-down        # from budget-rollup
+    - variance-narrative  # from variance-analyzer (optional, operator can exclude)
+  filename_pattern: "board-pack-{{ period_label }}-{{ now | date }}.md"
+
+# --------------------------------------------------------------------------
+# Delivery
+# --------------------------------------------------------------------------
+delivery:
+  # Write to a local directory (mounted volume or object storage prefix)
+  kind: local_path
+  path: "${FPA_BOARD_DECK_EXPORT_PATH:-/tmp/xiaoguai/fpa/board-packs/}"
+
+  # Optional: also post a download link to Slack
+  slack_notify:
+    enabled: "${FPA_BOARD_DECK_SLACK_NOTIFY:-false}"
+    channel: "${FPA_SLACK_CHANNEL_ID:-}"
+    message: "Board pack stub for {{ period_label }} is ready: {{ download_link }}"

@@ -1,0 +1,75 @@
+# Inbound connector — NetSuite period close
+# ---------------------------------------------------------------------------
+# Polls the NetSuite SuiteAnalytics Connect (JDBC/ODBC) or REST endpoint
+# for newly closed accounting periods and syncs actuals into fpa_actuals.
+#
+# Credentials: configured via pack settings or environment variables.
+# Never stored in this file.
+# ---------------------------------------------------------------------------
+
+name: netsuite-period-close
+version: "1.0.0"
+description: >
+  Syncs actuals from NetSuite when a period is closed. Maps NetSuite GL
+  segments to fpa_actuals (cost_centre, line_item, category). Creates or
+  updates fpa_periods record and marks is_closed = TRUE on period end.
+
+kind: inbound_connector
+source: netsuite
+
+# --------------------------------------------------------------------------
+# Connection (credentials via env vars; never in this file)
+# --------------------------------------------------------------------------
+connection:
+  type: netsuite_rest
+  account_id: "${NETSUITE_ACCOUNT_ID}"
+  consumer_key: "${NETSUITE_CONSUMER_KEY}"
+  consumer_secret: "${NETSUITE_CONSUMER_SECRET}"
+  token_id: "${NETSUITE_TOKEN_ID}"
+  token_secret: "${NETSUITE_TOKEN_SECRET}"
+
+# --------------------------------------------------------------------------
+# Polling schedule
+# --------------------------------------------------------------------------
+schedule:
+  cron: "*/10 * * * *"   # poll every 10 minutes for new closes
+
+# --------------------------------------------------------------------------
+# Data mapping
+# --------------------------------------------------------------------------
+mapping:
+  source_period_field: "accountingPeriod.name"
+  source_start_field:  "accountingPeriod.startDate"
+  source_end_field:    "accountingPeriod.endDate"
+  source_closed_field: "accountingPeriod.closed"
+
+  line_item_fields:
+    cost_centre: "department.name"
+    line_item:   "account.name"
+    category_map:
+      "Income":   "revenue"
+      "COGS":     "cogs"
+      "Expense":  "opex"
+      "Fixed Asset": "capex"
+      "_default": "other"
+    actual_amount: "netAmount"
+    budget_amount: "budgetAmount"
+    currency:      "currency.symbol"
+
+# --------------------------------------------------------------------------
+# Target table
+# --------------------------------------------------------------------------
+target:
+  table: fpa_actuals
+  upsert_key: [tenant_id, period_id, cost_centre, line_item]
+  period_table: fpa_periods
+  mark_closed_when: "accountingPeriod.closed == true"
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  retry_count: 3
+  retry_delay_seconds: 30
+  alert_after_failures: 3
+  alert_channel: "${FPA_NOTIFY_CHANNEL:-admin_ui}"

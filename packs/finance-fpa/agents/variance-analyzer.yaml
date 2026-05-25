@@ -1,0 +1,108 @@
+# Agent definition — variance-analyzer
+# ---------------------------------------------------------------------------
+# Triggered by fpa.period_closed. For each newly closed period:
+#   1. Fetches actuals vs. budget for all cost-centres and line-items.
+#   2. Calculates variance amount and % for each row.
+#   3. Classifies severity (info / warning / critical) by materiality rules.
+#   4. Writes variance flags to fpa_variance_flags.
+#   5. Writes a variance-narrative draft to fpa_commentary_log.
+#   6. Notifies anomaly-flagger and forecast-commentator via events.
+#
+# HOTL guardrails: no autonomous publishing; all narratives require approval.
+# ---------------------------------------------------------------------------
+
+name: variance-analyzer
+version: "1.0.0"
+description: >
+  Analyses actuals vs. budget for a newly closed period. Computes line-item
+  variances, classifies materiality severity, persists flags, and drafts
+  a variance narrative for human review.
+
+triggers:
+  - event: fpa.period_closed
+    source: period-close-trigger
+
+system_prompt: |
+  You are a senior FP&A analyst. Your job is to analyse actuals vs. budget
+  data for a closed fiscal period and produce a clear, factual variance
+  narrative for the finance team.
+
+  Rules:
+  - Focus on material variances (>10% or >$50k adverse). Acknowledge
+    favourable variances but lead with risks.
+  - Do not speculate on root causes beyond what the data supports. Use
+    phrases like "likely attributable to" when evidence is indirect.
+  - Use plain English; avoid jargon. The audience is the CFO and their
+    direct reports, not accountants.
+  - Never invent numbers. Use only the data provided via tool results.
+  - Structure output as: (1) Executive Summary (3 sentences max),
+    (2) Key Adverse Variances (bullet list), (3) Key Favourable Variances
+    (bullet list), (4) Items Requiring Explanation.
+  - Output only the narrative text; no metadata, no markdown fences.
+
+tools:
+  - name: get_period_actuals
+    description: >
+      Fetch all actuals vs. budget rows for the given period_id.
+      Returns: cost_centre, line_item, category, actual_amount,
+      budget_amount, variance_amount, variance_pct.
+    kind: sql
+    query: |
+      SELECT
+          a.cost_centre,
+          a.line_item,
+          a.category,
+          a.actual_amount,
+          a.budget_amount,
+          (a.actual_amount - a.budget_amount)                             AS variance_amount,
+          ROUND(100.0 * (a.actual_amount - a.budget_amount)
+                / NULLIF(a.budget_amount, 0), 2)                         AS variance_pct,
+          a.currency
+      FROM fpa_actuals a
+      WHERE a.tenant_id = '{tenant_id}'
+        AND a.period_id = '{period_id}'
+      ORDER BY ABS(a.actual_amount - a.budget_amount) DESC
+
+  - name: save_variance_flags
+    description: >
+      Persist material variance flags to fpa_variance_flags.
+      Accepts a list of flag objects; returns the count inserted.
+    kind: sql_bulk
+    query: |
+      INSERT INTO fpa_variance_flags
+          (tenant_id, period_id, cost_centre, line_item, category,
+           variance_amount, variance_pct, severity)
+      VALUES
+          ('{tenant_id}', '{period_id}', '{cost_centre}', '{line_item}',
+           '{category}', {variance_amount}, {variance_pct}, '{severity}')
+      ON CONFLICT DO NOTHING
+
+  - name: save_narrative_draft
+    description: >
+      Write the variance narrative draft to fpa_commentary_log with
+      status = 'pending_approval'. Returns the draft id.
+    kind: sql
+    query: |
+      INSERT INTO fpa_commentary_log
+          (tenant_id, period_id, agent, draft_type, draft_body)
+      VALUES
+          ('{tenant_id}', '{period_id}', 'variance-analyzer',
+           'variance-narrative', '{draft_body}')
+      RETURNING id
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    publish_narrative: 0
+  require_human_approval:
+    - save_narrative_draft
+  notify_channel: "${FPA_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - variance_flags_saved
+    - draft_created
+    - draft_approved
+    - draft_rejected
+    - narrative_published
+  feedback_table: fpa_commentary_log
