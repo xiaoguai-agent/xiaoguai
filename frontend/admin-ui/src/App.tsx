@@ -11,6 +11,7 @@ import { AuditPane } from './panes/Audit';
 import { UsagePane } from './panes/Usage';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { OutcomesPane } from './panes/Outcomes';
+import { HotlPoliciesPane } from './panes/HotlPolicies';
 
 /**
  * v0.11.1 — audit-first console. `Today` becomes the default landing
@@ -53,6 +54,10 @@ export function App() {
         <NavLink to="/marketplace" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.marketplace')}
         </NavLink>
+        {/* v1.3.x: HotL Policies — budget boundary editor. */}
+        <NavLink to="/hotl-policies" className={({ isActive }) => (isActive ? 'active' : '')}>
+          {t('pane.hotl_policies.title')}
+        </NavLink>
         <NavLink to="/audit" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.audit')}
         </NavLink>
@@ -70,6 +75,7 @@ export function App() {
           <Route path="/mcp-servers" element={<McpServersPane />} />
           <Route path="/tenants" element={<TenantsPane />} />
           <Route path="/providers" element={<ProvidersPane />} />
+          <Route path="/hotl-policies" element={<HotlPoliciesPane />} />
           <Route path="/audit" element={<AuditPane />} />
         </Routes>
       </main>
