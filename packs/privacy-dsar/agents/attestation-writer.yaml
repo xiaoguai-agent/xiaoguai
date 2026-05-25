@@ -1,0 +1,214 @@
+# packs/privacy-dsar/agents/attestation-writer.yaml
+#
+# Attestation Writer — final step; HotL-gated
+#
+# This is the ONLY agent that triggers the HotL gate.
+# ALL prior agents (intake, verify, scope, evidence, erasure-cascade) are
+# fully autonomous. No data leaves the system until this agent runs AND the
+# DPO approves the HotL gate.
+#
+# Sequence:
+#   1. Agent runs, produces draft attestation document.
+#   2. Agent writes dsar_requests.status = 'hotl_pending'.
+#   3. Agent notifies DPO via dpo-slack-channel output with the draft.
+#   4. PACK HALTS — no further action until DPO responds.
+#   5. DPO approves → hotl_approved_at is set, pack resumes.
+#   6. Agent uploads attestation document to S3 (immutable, WORM-style key).
+#   7. Agent triggers the appropriate delivery output:
+#        access/portability: encrypted-export-s3 (presigned URL to requester)
+#        erasure: operator receives erasure checklist; requester gets acknowledgement
+#        rectification/objection: requester gets acknowledgement
+#   8. Agent writes dsar_requests.status = 'completed'.
+#   9. All actions written to dsar_disclosures for regulator file.
+#
+# DPO rejection:
+#   If DPO rejects (sets hotl_rejection_reason), status → 'rejected'.
+#   A disclosure row is written. No data is sent.
+
+name: dsar-attestation-writer
+kind: worker
+
+system_prompt: |
+  You are a legal compliance officer writing the formal attestation of DSAR
+  completion for the regulatory record.
+
+  The attestation must include:
+  1. Request metadata: DSAR ID, type, receipt date, deadline, completion date.
+  2. Identity verification: method used and date verified.
+  3. Scope summary: systems queried, systems with data found, total records.
+  4. Action taken:
+     - access/portability: confirm export package was delivered (include S3 key, NOT presigned URL)
+     - erasure: confirm erasure advisory was provided to operator; list excluded records with reasons
+     - rectification: confirm change request was documented and forwarded to operator
+     - objection: confirm objection was recorded and processing restriction flagged
+  5. Legal hold disclosures: list any records excluded from erasure due to legal hold.
+  6. Retention exclusions: list any records excluded due to mandatory retention.
+  7. DPO approval reference: approver identity and timestamp.
+  8. Regulatory framework: GDPR / CCPA / other (inferred from requester jurisdiction if available).
+
+  Do not include PII (actual data content) in the attestation — only metadata,
+  record counts, and system identifiers.
+
+  Format: structured Markdown, suitable for the regulator-attestation template.
+
+tools:
+  - name: get_full_request
+    description: >
+      Fetch the complete dsar_requests row including scope, evidence S3 key,
+      erasure plan, and HotL approval fields.
+    kind: sql
+    query: |
+      SELECT r.*,
+             ARRAY_AGG(d.system_id) FILTER (WHERE d.records_found) AS systems_with_data,
+             SUM(d.record_count) FILTER (WHERE d.records_found) AS total_records,
+             COUNT(*) FILTER (WHERE d.has_legal_hold) AS legal_hold_systems
+      FROM dsar_requests r
+      LEFT JOIN dsar_data_inventory d ON d.dsar_request_id = r.id
+      WHERE r.id = '{dsar_request_id}' AND r.tenant_id = '{tenant_id}'
+      GROUP BY r.id
+
+  - name: set_hotl_pending
+    description: >
+      Advance status to 'hotl_pending'. This halts autonomous processing
+      until the DPO acts on the HotL notification.
+    kind: sql
+    query: |
+      UPDATE dsar_requests
+      SET status = 'hotl_pending'
+      WHERE id = '{dsar_request_id}' AND tenant_id = '{tenant_id}'
+
+  - name: check_hotl_approval
+    description: >
+      Poll for DPO approval. Returns hotl_approved_at and hotl_approved_by
+      if approved, or hotl_rejection_reason if rejected. Returns null fields
+      if still pending.
+    kind: sql
+    query: |
+      SELECT hotl_approved_at, hotl_approved_by, hotl_rejection_reason
+      FROM dsar_requests
+      WHERE id = '{dsar_request_id}' AND tenant_id = '{tenant_id}'
+
+  - name: upload_attestation
+    description: >
+      Upload the rendered attestation document to S3 as an immutable archive.
+      Key format: dsar/{tenant_id}/{dsar_request_id}/attestation-{timestamp}.pdf
+      Uses the same SSE-KMS encryption as the export package.
+    kind: s3_upload
+    bucket_config_key: export.s3_bucket
+    kms_key_arn: export.kms_key_arn
+    key_template: "dsar/{tenant_id}/{dsar_request_id}/attestation-{timestamp}.pdf"
+    server_side_encryption: aws:kms
+
+  - name: generate_presigned_url
+    description: >
+      Generate a time-limited presigned URL for the export package S3 key.
+      TTL from config.export.presigned_url_ttl_hours. Used for access/portability.
+    kind: s3_presign
+    ttl_config_key: export.presigned_url_ttl_hours
+
+  - name: mark_completed
+    description: >
+      Set status = 'completed', store attestation S3 key.
+    kind: sql
+    query: |
+      UPDATE dsar_requests
+      SET status                = 'completed',
+          attestation_doc_s3_key = '{attestation_s3_key}',
+          completed_at          = NOW()
+      WHERE id = '{dsar_request_id}' AND tenant_id = '{tenant_id}'
+
+  - name: mark_rejected
+    description: >
+      Set status = 'rejected' when DPO rejects the request.
+    kind: sql
+    query: |
+      UPDATE dsar_requests
+      SET status           = 'rejected',
+          rejection_reason = '{hotl_rejection_reason}'
+      WHERE id = '{dsar_request_id}' AND tenant_id = '{tenant_id}'
+
+  - name: record_disclosure_hotl
+    description: >
+      Write hotl_approved or hotl_rejected audit row to dsar_disclosures.
+    kind: sql
+    query: |
+      INSERT INTO dsar_disclosures (
+          dsar_request_id, tenant_id, disclosure_type,
+          actor_type, actor_id, detail
+      ) VALUES (
+          '{dsar_request_id}', '{tenant_id}', '{hotl_disclosure_type}',
+          'dpo', '{hotl_approved_by}',
+          '{"approved_at": "{hotl_approved_at}", "rejection_reason": "{hotl_rejection_reason}"}'::jsonb
+      )
+
+  - name: record_disclosure_export
+    description: >
+      Write export_sent audit row to dsar_disclosures after delivery.
+    kind: sql
+    query: |
+      INSERT INTO dsar_disclosures (
+          dsar_request_id, tenant_id, disclosure_type,
+          recipient_identity, delivery_method, delivery_reference,
+          actor_type, actor_id, detail
+      ) VALUES (
+          '{dsar_request_id}', '{tenant_id}', 'export_sent',
+          '{requester_email}', '{delivery_method}', '{delivery_reference}',
+          'agent', '{agent_run_id}',
+          '{"attestation_s3_key": "{attestation_s3_key}"}'::jsonb
+      )
+
+  - name: record_disclosure_attestation
+    description: >
+      Write attestation_issued audit row.
+    kind: sql
+    query: |
+      INSERT INTO dsar_disclosures (
+          dsar_request_id, tenant_id, disclosure_type,
+          actor_type, actor_id, detail
+      ) VALUES (
+          '{dsar_request_id}', '{tenant_id}', 'attestation_issued',
+          'agent', '{agent_run_id}',
+          '{"attestation_s3_key": "{attestation_s3_key}", "completed_at": "{completed_at}"}'::jsonb
+      )
+
+  - name: render_attestation
+    description: >
+      Render the regulator-attestation template with full request details.
+    kind: template
+    template: templates/regulator-attestation.md.j2
+
+# ── HotL gate (MANDATORY — every DSAR requires DPO approval before exfil) ───
+
+hotl:
+  # Zero autonomous exfiltration. The agent halts at set_hotl_pending.
+  budget_usd: 0.00
+
+  # Actions that require explicit DPO approval:
+  require_human_approval:
+    - generate_presigned_url   # presigned URL delivery to requester
+    - upload_attestation       # writing to immutable archive
+    - mark_completed           # closing the DSAR record
+
+  # The DPO is notified via the configured approval channel.
+  notify_channel: "${DSAR_DPO_APPROVAL_CHANNEL}"
+
+  # Approval timeout: if DPO has not acted within this window, re-notify.
+  reminder_after_hours: 24
+
+  # Maximum wait before escalation.
+  escalate_after_hours: 72
+
+  # Actions permanently prohibited regardless of approval:
+  prohibited_actions:
+    - execute_delete
+    - truncate_table
+
+outcome_telemetry:
+  record_on:
+    - hotl_pending
+    - hotl_approved
+    - hotl_rejected
+    - export_delivered
+    - erasure_advisory_delivered
+    - completed
+  feedback_table: dsar_requests

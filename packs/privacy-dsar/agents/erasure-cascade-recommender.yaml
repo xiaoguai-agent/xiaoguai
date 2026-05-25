@@ -1,0 +1,151 @@
+# packs/privacy-dsar/agents/erasure-cascade-recommender.yaml
+#
+# Erasure Cascade Recommender — advisory deletion plan for erasure requests
+#
+# Activates only for request_type = 'erasure'. Produces an ADVISORY deletion
+# order across the systems identified in scope, respecting:
+#   1. Foreign-key dependencies (child records must be deleted before parents,
+#      or parent deletion must cascade — operators must verify FK semantics)
+#   2. Legal-hold exclusions (records with has_legal_hold = TRUE are excluded
+#      from deletion and documented in excluded_legal_hold)
+#   3. Retention obligations (records whose retention_policy indicates a
+#      mandatory minimum retention period are excluded and documented in
+#      excluded_retention_obligation)
+#
+# OUTPUT IS ADVISORY ONLY — actual DELETEs are NEVER issued by this pack.
+# The erasure plan is stored in dsar_requests.erasure_plan_jsonb and surfaced
+# to operators via the DPO Slack channel output for human execution.
+#
+# Erasure plan JSON structure:
+# {
+#   "ordered_deletions": [
+#     { "step": 1, "system_id": "crm", "system_label": "Salesforce CRM",
+#       "record_refs": [...], "data_categories": [...],
+#       "delete_hint": "DELETE FROM contacts WHERE email = '...'",
+#       "fk_note": "Delete before accounts (FK: contacts.account_id → accounts.id)" }
+#   ],
+#   "excluded_legal_hold": [
+#     { "system_id": "legal-dms", "record_refs": [...],
+#       "hold_reason": "Litigation hold LH-2025-003, expires 2026-12-31" }
+#   ],
+#   "excluded_retention_obligation": [
+#     { "system_id": "finance", "record_refs": [...],
+#       "retention_policy": "7-year statutory retention (SOX)",
+#       "earliest_erasure_date": "2031-04-01" }
+#   ],
+#   "advisory_notes": "...",
+#   "generated_at": "..."
+# }
+
+name: dsar-erasure-cascade-recommender
+kind: worker
+
+# Only runs for erasure requests; pack coordinator skips this agent otherwise
+trigger_condition: "request_type == 'erasure'"
+
+system_prompt: |
+  You are a data governance expert specializing in GDPR Article 17 erasure
+  compliance. Your job is to produce a safe, ordered deletion plan.
+
+  Legal-hold handling (CRITICAL):
+  - Query the operator's legal_holds table for any records matching this request.
+  - Records with is_legal_hold = TRUE must NOT appear in ordered_deletions.
+  - They must appear in excluded_legal_hold with the hold reason and expiry if available.
+  - This is a hard rule — operators may face contempt-of-court liability if they
+    delete held records.
+
+  Retention obligation handling:
+  - Inspect retention_policy from dsar_data_inventory for each system.
+  - If a record has a mandatory minimum retention period that has not expired,
+    exclude it from ordered_deletions and add to excluded_retention_obligation.
+  - Include the earliest_erasure_date so operators can schedule a follow-up.
+
+  Deletion ordering:
+  - Systems with no outbound FK dependencies to other in-scope systems go last.
+  - Systems that are referenced by other systems' foreign keys go first (child before parent).
+  - When FK topology is unknown, note the uncertainty in fk_note and recommend
+    operators verify before executing.
+
+  DO NOT generate actual SQL DELETE statements — only hints (delete_hint) to
+  guide the operator's own DBA. The pack cannot and does not execute deletions.
+
+tools:
+  - name: get_inventory_findings
+    description: >
+      Retrieve all in-scope system findings for this erasure request.
+    kind: sql
+    query: |
+      SELECT system_id, system_label, record_refs, data_categories,
+             has_legal_hold, retention_policy, record_count
+      FROM dsar_data_inventory
+      WHERE dsar_request_id = '{dsar_request_id}'
+        AND tenant_id       = '{tenant_id}'
+        AND records_found   = TRUE
+      ORDER BY system_label
+
+  - name: check_legal_holds
+    description: >
+      Query the operator-maintained legal_holds table for held records
+      matching this requester. Returns hold details and expiry if set.
+      Uses the table name from config.legal_hold.table.
+    kind: sql
+    # Note: table name is substituted from config at pack load time.
+    # The query template uses the configured table + flag column.
+    query: |
+      SELECT record_ref, hold_reason, hold_expiry_at
+      FROM {legal_hold_table}
+      WHERE tenant_id = '{tenant_id}'
+        AND {legal_hold_flag_column} = TRUE
+        AND record_ref = ANY(ARRAY[{record_refs}]::text[])
+
+  - name: save_erasure_plan
+    description: >
+      Store the erasure plan JSON and advance status to 'erasure_advisory_ready'.
+    kind: sql
+    query: |
+      UPDATE dsar_requests
+      SET erasure_plan_jsonb        = '{erasure_plan}'::jsonb,
+          erasure_advisory_ready_at = NOW(),
+          status                    = 'erasure_advisory_ready'
+      WHERE id = '{dsar_request_id}' AND tenant_id = '{tenant_id}'
+
+  - name: record_disclosure
+    description: >
+      Write erasure_advisory audit row to dsar_disclosures.
+    kind: sql
+    query: |
+      INSERT INTO dsar_disclosures (
+          dsar_request_id, tenant_id, disclosure_type,
+          actor_type, actor_id, detail
+      ) VALUES (
+          '{dsar_request_id}', '{tenant_id}', 'erasure_advisory',
+          'agent', '{agent_run_id}',
+          '{
+            "systems_in_plan": {systems_in_plan_count},
+            "excluded_legal_hold_count": {legal_hold_count},
+            "excluded_retention_count": {retention_count}
+          }'::jsonb
+      )
+
+  - name: render_erasure_checklist
+    description: >
+      Render the erasure-checklist template for the DPO to review.
+      Returns rendered Markdown string for the DPO Slack notification.
+    kind: template
+    template: templates/erasure-checklist.md.j2
+
+hotl:
+  # Erasure plan generation is autonomous. The plan is advisory;
+  # operators must execute deletions manually after DPO review.
+  budget_usd: 0.20
+  autonomous_actions:
+    get_inventory_findings: unlimited
+    check_legal_holds: unlimited
+    save_erasure_plan: unlimited
+    render_erasure_checklist: unlimited
+
+  # No autonomous deletions — ever.
+  prohibited_actions:
+    - execute_delete
+    - truncate_table
+    - drop_table

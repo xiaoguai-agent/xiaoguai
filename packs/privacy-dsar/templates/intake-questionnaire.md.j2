@@ -1,0 +1,35 @@
+{# packs/privacy-dsar/templates/intake-questionnaire.md.j2 #}
+{# Sent to the requester when the intake-classifier cannot confidently classify the request. #}
+Subject: We received your privacy request — a few clarifying questions (Ref: {{ request_id }})
+
+Dear {{ requester_name | default('Privacy Rights Requester') }},
+
+Thank you for contacting us about your privacy rights. We have received your request
+(reference: **{{ request_id }}**) and are committed to responding within the required
+regulatory timeframe.
+
+To process your request accurately, we need a few clarifying answers:
+
+{% for question in clarification_questions %}
+**{{ loop.index }}. {{ question }}**
+
+_Your answer:_ _______________________________________________
+
+{% endfor %}
+
+**How to reply:** Please respond to this email with your answers. You may also use
+our [Privacy Portal]({{ privacy_portal_url }}) to update your request directly.
+
+**Your deadline:** We are required to respond to your request by **{{ deadline_at | date('MMMM D, YYYY') }}**.
+Your clarifications must reach us by **{{ clarification_due_date | date('MMMM D, YYYY') }}** to allow
+sufficient processing time.
+
+If you have questions, please contact our Data Protection Officer at {{ dpo_email }}.
+
+Regards,
+{{ operator_name }} Privacy Team
+
+---
+*This message was sent regarding your privacy rights request. Reference: {{ request_id }}.*
+*Do not reply if you did not submit a privacy request. Contact {{ dpo_email }} to report
+unsolicited contact.*

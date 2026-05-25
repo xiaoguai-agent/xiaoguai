@@ -1,0 +1,112 @@
+# packs/privacy-dsar/agents/identity-verifier.yaml
+#
+# Identity Verifier — proposes verification method; does NOT perform it
+#
+# After intake classification, this agent:
+#   1. Reads the requester relationship and DSAR type to determine risk tier.
+#   2. Selects the appropriate verification method.
+#   3. Renders verification-instructions template.
+#   4. Marks dsar_requests.status = 'identity_pending'.
+#   5. Writes a dsar_disclosures row for audit trail.
+#
+# HONEST CAVEAT: This agent PROPOSES the verification method and sends
+# instructions. The actual verification exchange (e.g. clicking an email
+# link, uploading ID) occurs outside the pack. The operator sets
+# identity_verified_at after confirmation.
+#
+# Verification method selection:
+#   - data_subject + access/rectification/objection → email_link (low risk)
+#   - data_subject + erasure/portability → email_link + confirmation callback
+#   - authorized_agent → notarized_id or signed_authorization_letter
+#   - regulator → no verification required (regulator_forwarded source)
+#   - legal_counsel → bar_association_verification
+
+name: dsar-identity-verifier
+kind: worker
+
+system_prompt: |
+  You are a privacy compliance officer responsible for verifying the identity
+  of data subjects making privacy rights requests.
+
+  Select verification method based on:
+  1. Requester relationship (data_subject / authorized_agent / regulator / legal_counsel)
+  2. DSAR type (higher-impact requests require stronger verification)
+  3. Requester's prior interaction history with this tenant (if available)
+
+  Verification methods ranked by strength (weakest to strongest):
+    email_link         — send a verification link to the email on file
+    knowledge_based    — ask questions only the real subject would know
+    video_call         — live video call with a human reviewer
+    notarized_id       — require notarized government ID copy
+    signed_authorization — for authorized agents: signed letter from subject
+
+  Never propose verification that would itself require disclosing PII
+  (e.g. "confirm your home address" sent to an unverified email).
+
+  Output the selected method and rendered instructions. If the relationship
+  is 'regulator' (inbound_source = 'regulator_forwarded'), skip verification
+  and emit verification_skipped = true.
+
+tools:
+  - name: get_request
+    description: >
+      Fetch the dsar_request row to access type, relationship, and source.
+    kind: sql
+    query: |
+      SELECT id, requester_name, requester_email, requester_relationship,
+             request_type, inbound_source, deadline_at
+      FROM dsar_requests
+      WHERE id = '{dsar_request_id}' AND tenant_id = '{tenant_id}'
+
+  - name: set_identity_pending
+    description: >
+      Update dsar_requests status to 'identity_pending' and record the
+      proposed verification method.
+    kind: sql
+    query: |
+      UPDATE dsar_requests
+      SET status = 'identity_pending',
+          identity_verification_method = '{verification_method}',
+          identity_verifier_agent_id   = '{agent_run_id}'
+      WHERE id = '{dsar_request_id}' AND tenant_id = '{tenant_id}'
+
+  - name: set_identity_verified
+    description: >
+      Mark identity as verified (used when requester_relationship = 'regulator'
+      and verification can be skipped automatically).
+    kind: sql
+    query: |
+      UPDATE dsar_requests
+      SET status = 'identity_verified',
+          identity_verified_at = NOW()
+      WHERE id = '{dsar_request_id}' AND tenant_id = '{tenant_id}'
+
+  - name: send_verification_instructions
+    description: >
+      Render and send the verification-instructions template to the requester.
+    kind: template
+    template: templates/verification-instructions.md.j2
+    delivery: requester_email
+
+  - name: record_disclosure
+    description: >
+      Write an audit row to dsar_disclosures for the status transition.
+    kind: sql
+    query: |
+      INSERT INTO dsar_disclosures (
+          dsar_request_id, tenant_id, disclosure_type,
+          actor_type, actor_id, detail
+      ) VALUES (
+          '{dsar_request_id}', '{tenant_id}', 'status_change',
+          'agent', '{agent_run_id}',
+          '{"from": "intake_received", "to": "{new_status}", "verification_method": "{verification_method}"}'::jsonb
+      )
+
+hotl:
+  # Identity verifier is autonomous for method selection + instruction send.
+  # No human approval needed at this step.
+  budget_usd: 0.05
+  autonomous_actions:
+    set_identity_pending: unlimited
+    set_identity_verified: unlimited
+    send_verification_instructions: unlimited

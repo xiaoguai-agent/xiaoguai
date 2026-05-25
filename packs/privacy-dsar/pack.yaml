@@ -1,0 +1,192 @@
+# packs/privacy-dsar/pack.yaml
+#
+# Privacy DSAR Skill Pack — manifest
+#
+# Orchestrates the full lifecycle of a Data Subject Access Request (DSAR)
+# under GDPR (Arts. 15–22), CCPA, and similar privacy regulations.
+#
+# ORCHESTRATION ONLY — honest scope boundary
+# ------------------------------------------
+# This pack manages workflow, audit trail, and workflow completeness.
+# The underlying data inventory (which systems hold PII, their schemas,
+# and access credentials) is OPERATOR-PROVIDED via the dsar_data_inventory
+# table and the connected-systems config block below.
+# Actual data deletion (erasure requests) is performed by operators acting
+# on the erasure-cascade-recommender's advisory output — the pack NEVER
+# issues DELETEs autonomously.
+#
+# HotL gate
+# ---------
+# Every export or regulator submission requires explicit DPO approval via
+# the Human-on-the-Loop gate before any data leaves the system. The pack
+# halts at the attestation-writer step until approval is recorded in
+# dsar_disclosures.hotl_approved_at.
+#
+# Dependency map
+# --------------
+#   xiaoguai-orchestrator   Supervisor + Worker + Planner traits (in-workspace)
+#   xiaoguai-llm            LLM backend for classifier, scope-mapper, evidence-gatherer
+#   xiaoguai-audit          Audit log writes (mocked in tests)
+#   outcome-telemetry       F3 outcome recording for DSAR completion loop
+#   hotl                    Human-on-the-Loop approval gate (DPO sign-off)
+
+name: privacy-dsar
+version: "1.3.4-prep"
+description: >
+  Multi-agent skill pack for end-to-end DSAR lifecycle management.
+  Handles intake, identity verification, data scope mapping, evidence
+  assembly, erasure cascade advisory, and legal attestation.
+  All data exports and regulator submissions are HotL-gated — zero
+  exfiltration without explicit DPO approval.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.4"
+  features:
+    - llm              # classifier, scope-mapper, evidence-gatherer, attestation-writer
+    - outcome-telemetry  # records DSAR outcome for regulatory improvement loop
+    - hotl             # Human-on-the-Loop approval gate (DPO sign-off before exfil)
+    - audit            # immutable audit writes for regulator trail
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_dsar_state.sql
+
+# --------------------------------------------------------------------------
+# Inbound sources
+# --------------------------------------------------------------------------
+sources:
+  - inbound/privacy-portal-form.yaml
+  - inbound/email-dpo-inbox.yaml
+  - inbound/regulator-forwarded-request.yaml
+  - inbound/csv-batch-upload.yaml
+
+# --------------------------------------------------------------------------
+# Agent definitions (load order matches typical lifecycle sequence)
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/intake-classifier.yaml
+  - path: agents/identity-verifier.yaml
+  - path: agents/scope-mapper.yaml
+  - path: agents/evidence-gatherer.yaml
+  - path: agents/erasure-cascade-recommender.yaml
+  - path: agents/attestation-writer.yaml
+
+# --------------------------------------------------------------------------
+# Output connectors
+# --------------------------------------------------------------------------
+outputs:
+  - outputs/dpo-slack-channel.yaml
+  - outputs/encrypted-export-s3.yaml
+  - outputs/regulator-portal-submission.yaml
+  - outputs/audit-trail-archive.yaml
+
+# --------------------------------------------------------------------------
+# Templates
+# --------------------------------------------------------------------------
+templates:
+  - templates/intake-questionnaire.md.j2
+  - templates/verification-instructions.md.j2
+  - templates/export-package-readme.md.j2
+  - templates/erasure-checklist.md.j2
+  - templates/regulator-attestation.md.j2
+
+# --------------------------------------------------------------------------
+# Honest caveats (scope boundaries operators must understand)
+# --------------------------------------------------------------------------
+caveats:
+  data_inventory:
+    summary: >
+      The scope-mapper queries dsar_data_inventory, which is populated by the
+      operator — not this pack. Records in that table reflect what operators
+      have configured. If a system is not listed in the inventory, the pack
+      cannot find data held there. Operators are responsible for maintaining
+      an accurate inventory of all systems processing personal data.
+
+  erasure_execution:
+    summary: >
+      The erasure-cascade-recommender produces an ADVISORY deletion order
+      (respecting foreign keys, legal holds, and retention obligations).
+      Actual DELETE statements are executed by operators or their downstream
+      automation, not by this pack. The pack records the advisory output in
+      dsar_requests.erasure_plan_jsonb and sets status = 'erasure_advisory_ready'
+      to signal operators.
+
+  identity_verification:
+    summary: >
+      The identity-verifier proposes a verification method based on requester
+      relationship and risk level. The actual verification exchange (e.g.
+      confirming a government ID) occurs outside this pack, and operators
+      mark the request verified in dsar_requests.identity_verified_at.
+
+  cross_border_transfers:
+    summary: >
+      For portability and regulator submission outputs, operators must ensure
+      the target S3 bucket or regulator portal is in a permissible jurisdiction.
+      The pack does not enforce data residency requirements.
+
+# --------------------------------------------------------------------------
+# Configuration keys
+# --------------------------------------------------------------------------
+config:
+  dpo:
+    notify_channel: "${DSAR_DPO_NOTIFY_CHANNEL:-admin_ui}"
+    email: "${DSAR_DPO_EMAIL}"
+    # Slack / IM channel for HotL approval notifications
+    approval_channel: "${DSAR_DPO_APPROVAL_CHANNEL}"
+
+  deadlines:
+    # Regulatory response window (calendar days). GDPR = 30; CCPA = 45.
+    default_days: 30
+    # Alert DPO at this many days before deadline
+    warn_days_before: 5
+
+  identity_verification:
+    # Risk tiers that require stronger verification (e.g. video call vs email)
+    high_risk_types:
+      - erasure
+      - portability
+    default_method: email_link
+
+  export:
+    s3_bucket: "${DSAR_EXPORT_S3_BUCKET}"
+    presigned_url_ttl_hours: 48
+    # Encryption: server-side S3 SSE-KMS. Key ARN configured by operator.
+    kms_key_arn: "${DSAR_KMS_KEY_ARN}"
+
+  legal_hold:
+    # Table where legal hold markers are stored (operator-maintained).
+    # Erasure-cascade-recommender reads this to exclude held records.
+    table: legal_holds
+    # Column that marks a record as under legal hold (boolean)
+    flag_column: is_legal_hold
+
+  connected_systems:
+    # Operator lists all systems that may hold personal data.
+    # The scope-mapper uses this to drive its inventory queries.
+    # Example entry:
+    #   - id: crm
+    #     label: "Salesforce CRM"
+    #     inventory_table: dsar_data_inventory  # standard; use default
+    # Systems NOT listed here are invisible to the scope-mapper.
+    systems: []    # operator populates on install
+
+  coordinator:
+    max_steps: 20
+    max_wall_seconds: 600
+
+  audit:
+    # dsar_disclosures is the immutable WORM-style audit trail.
+    disclosures_table: dsar_disclosures
+
+# --------------------------------------------------------------------------
+# Feature flag
+# --------------------------------------------------------------------------
+feature_flag: XIAOGUAI_PRIVACY_DSAR_ENABLED

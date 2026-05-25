@@ -1,0 +1,96 @@
+# packs/privacy-dsar/agents/intake-classifier.yaml
+#
+# Intake Classifier — first agent in the DSAR lifecycle
+#
+# Receives a raw inbound payload from any configured source
+# (privacy portal form, DPO email, regulator-forwarded request, CSV batch row)
+# and:
+#   1. Identifies the DSAR type per GDPR Arts. 15–22 / CCPA equivalents.
+#   2. Extracts requester identity fields.
+#   3. Calculates deadline_at based on regulatory framework + configured window.
+#   4. Inserts a row into dsar_requests with status = 'intake_received'.
+#   5. Emits a clarification questionnaire if the request is ambiguous.
+#
+# Does NOT make any external data calls — purely classifies and records.
+
+name: dsar-intake-classifier
+kind: worker
+
+system_prompt: |
+  You are a privacy compliance specialist. Your job is to classify incoming
+  Data Subject Access Requests (DSARs) according to applicable privacy law.
+
+  Classification rules:
+  - GDPR Article 15: right of access — requester wants to know what data exists
+  - GDPR Article 16: rectification — requester believes data is inaccurate
+  - GDPR Article 17 / CCPA §1798.105: erasure / right to delete
+  - GDPR Article 20 / CCPA §1798.110: portability — requester wants data exported in machine-readable format
+  - GDPR Article 21: objection to processing
+
+  If the request mentions multiple rights (e.g. "access and then erase"),
+  classify the PRIMARY right. Note secondary rights in the detail field.
+
+  Deadline calculation:
+  - GDPR: 30 calendar days from receipt (extendable by 60 days for complexity — flag if likely complex)
+  - CCPA: 45 calendar days from receipt
+  - Default to GDPR (30 days) unless requester explicitly references CCPA or is in a CCPA jurisdiction
+
+  Output JSON only. No prose. If the request is too ambiguous to classify,
+  set request_type = null and include a clarification_questions array.
+
+tools:
+  - name: classify_request
+    description: >
+      Record the classification result. Writes a row to dsar_requests with
+      status = 'intake_received'. Returns the new dsar_request_id UUID.
+    kind: sql
+    query: |
+      INSERT INTO dsar_requests (
+          tenant_id, requester_name, requester_email,
+          requester_relationship, request_type, inbound_source,
+          deadline_at, request_description, status
+      ) VALUES (
+          '{tenant_id}', '{requester_name}', '{requester_email}',
+          '{requester_relationship}', '{request_type}', '{inbound_source}',
+          NOW() + INTERVAL '{deadline_days} days', '{request_description}',
+          'intake_received'
+      )
+      RETURNING id
+
+  - name: record_disclosure
+    description: >
+      Write an audit row to dsar_disclosures for the intake event.
+    kind: sql
+    query: |
+      INSERT INTO dsar_disclosures (
+          dsar_request_id, tenant_id, disclosure_type,
+          actor_type, actor_id, detail
+      ) VALUES (
+          '{dsar_request_id}', '{tenant_id}', 'status_change',
+          'agent', '{agent_run_id}',
+          '{"from": null, "to": "intake_received", "source": "{inbound_source}"}'::jsonb
+      )
+
+  - name: send_clarification
+    description: >
+      Render the intake-questionnaire template and enqueue it for sending
+      to the requester when the request is too ambiguous to classify.
+      Returns the questionnaire message id.
+    kind: template
+    template: templates/intake-questionnaire.md.j2
+    delivery: dpo_notify_channel
+
+hotl:
+  # Intake classifier is fully autonomous — no human approval needed for
+  # classification. HotL gate activates later at the attestation-writer step.
+  budget_usd: 0.10
+  autonomous_actions:
+    classify_request: unlimited
+    record_disclosure: unlimited
+    send_clarification: unlimited
+
+outcome_telemetry:
+  record_on:
+    - classification_complete
+    - clarification_sent
+  feedback_table: dsar_requests

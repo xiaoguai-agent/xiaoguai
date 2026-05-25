@@ -1,0 +1,115 @@
+# packs/privacy-dsar/agents/scope-mapper.yaml
+#
+# Scope Mapper — queries the operator's data inventory to identify affected records
+#
+# Activates after identity_verified_at is set. For each system registered in
+# config.connected_systems, queries dsar_data_inventory (operator-maintained)
+# to find records matching the requester.
+#
+# HONEST CAVEAT: This agent is only as good as the operator's inventory.
+# If a system is not registered in connected_systems, or the inventory table
+# does not have entries for it, no records from that system will appear
+# in scope. Operators bear responsibility for maintaining a complete
+# and accurate data inventory. This pack cannot discover systems it has
+# not been told about.
+#
+# Outputs:
+#   - Populates dsar_data_inventory with per-system findings
+#   - Updates dsar_requests.systems_in_scope and status = 'scope_mapped'
+
+name: dsar-scope-mapper
+kind: worker
+
+system_prompt: |
+  You are a data mapping specialist. Given a verified DSAR and a list of
+  registered systems, identify which systems hold personal data for the
+  requester.
+
+  For each system in the connected_systems config:
+  1. Query the dsar_data_inventory table for records matching the requester's
+     email (primary) and any additional identifiers available.
+  2. Record findings (records_found, record_count, record_refs, data_categories).
+  3. Note any legal hold flags — records under legal hold are OUT OF SCOPE
+     for erasure but still IN SCOPE for access/portability.
+
+  Be precise about what you found vs. what you could not determine. If a
+  system's inventory entry is stale (mapped_at > 90 days ago), flag it as
+  potentially outdated.
+
+  Do not fabricate record references. If a system has no inventory entry,
+  record records_found = false and add a note that the system has no
+  inventory data configured.
+
+tools:
+  - name: list_connected_systems
+    description: >
+      Retrieve the list of systems registered in config.connected_systems
+      for this tenant. Returns system_id and system_label.
+    kind: config_read
+    config_key: connected_systems.systems
+
+  - name: query_inventory_for_system
+    description: >
+      Query dsar_data_inventory for existing entries for this requester
+      email + system combination.
+    kind: sql
+    query: |
+      SELECT system_id, system_label, records_found, record_count,
+             record_refs, data_categories, legal_basis, retention_policy,
+             has_legal_hold, mapped_at
+      FROM dsar_data_inventory
+      WHERE tenant_id = '{tenant_id}'
+        AND system_id = '{system_id}'
+        AND '{requester_email}' = ANY (
+            SELECT jsonb_array_elements_text(record_refs->'emails')
+        )
+      ORDER BY mapped_at DESC
+      LIMIT 1
+
+  - name: record_system_finding
+    description: >
+      Insert a new dsar_data_inventory row for this DSAR + system combination.
+    kind: sql
+    query: |
+      INSERT INTO dsar_data_inventory (
+          dsar_request_id, tenant_id, system_id, system_label,
+          records_found, record_count, record_refs, data_categories,
+          legal_basis, retention_policy, has_legal_hold, mapped_by_agent_id
+      ) VALUES (
+          '{dsar_request_id}', '{tenant_id}', '{system_id}', '{system_label}',
+          {records_found}, {record_count}, '{record_refs}'::jsonb,
+          ARRAY[{data_categories}], '{legal_basis}', '{retention_policy}',
+          {has_legal_hold}, '{agent_run_id}'
+      )
+
+  - name: update_scope_mapped
+    description: >
+      Set dsar_requests.systems_in_scope and advance status to 'scope_mapped'.
+    kind: sql
+    query: |
+      UPDATE dsar_requests
+      SET systems_in_scope = ARRAY[{systems_in_scope}],
+          scope_mapped_at  = NOW(),
+          status           = 'scope_mapped'
+      WHERE id = '{dsar_request_id}' AND tenant_id = '{tenant_id}'
+
+  - name: record_disclosure
+    description: >
+      Write status_change audit row.
+    kind: sql
+    query: |
+      INSERT INTO dsar_disclosures (
+          dsar_request_id, tenant_id, disclosure_type,
+          actor_type, actor_id, detail
+      ) VALUES (
+          '{dsar_request_id}', '{tenant_id}', 'status_change',
+          'agent', '{agent_run_id}',
+          '{"from": "identity_verified", "to": "scope_mapped", "systems_queried": {systems_queried_count}}'::jsonb
+      )
+
+hotl:
+  budget_usd: 0.15
+  autonomous_actions:
+    query_inventory_for_system: unlimited
+    record_system_finding: unlimited
+    update_scope_mapped: unlimited

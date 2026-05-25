@@ -1,0 +1,48 @@
+---
+# Email DPO Inbox — inbound source spec
+#
+# Parses DSAR requests received via email to the DPO inbox.
+# Integration: IMAP polling or webhook from email provider (SendGrid Inbound Parse,
+# Postmark, or similar). Raw email is parsed by the intake-classifier LLM agent.
+#
+# Auth: IMAP credentials / SendGrid webhook signing secret
+# Mounting: POST /v1/privacy-dsar/inbound/email/{tenant_id}
+
+source: email_dpo
+route_prefix: /v1/privacy-dsar/inbound/email
+
+normalize:
+  # Email fields extracted before passing to LLM classifier
+  field_map:
+    requester_email:     email.from_address
+    requester_name:      email.from_name
+    request_description: email.text_body    # LLM classifies request_type from body
+    # request_type is derived by the intake-classifier LLM; not extracted from email headers
+
+  # Spam / noise filter: ignore emails from known no-reply addresses
+  ignore_patterns:
+    from_address:
+      - "noreply@*"
+      - "no-reply@*"
+      - "donotreply@*"
+
+  # If from_name cannot be parsed from email headers, LLM extracts from body
+  fallback_name_extraction: llm
+
+  # Acknowledged immediately; actual classification is async
+  ack_response: >
+    We have received your privacy request. You will receive a follow-up email
+    within 2 business days confirming receipt and next steps.
+
+provider_config:
+  # Operator configures ONE of these providers
+  sendgrid:
+    webhook_secret: "${DSAR_SENDGRID_WEBHOOK_SECRET}"
+    inbound_parse_url: /v1/privacy-dsar/inbound/email/{tenant_id}
+  imap:
+    host: "${DSAR_IMAP_HOST}"
+    port: 993
+    username: "${DSAR_IMAP_USERNAME}"
+    password: "${DSAR_IMAP_PASSWORD}"
+    poll_interval_seconds: 60
+    mailbox: "INBOX"
