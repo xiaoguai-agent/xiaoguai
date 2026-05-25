@@ -1,0 +1,79 @@
+---
+# JTBD Clusterer Agent
+#
+# Input:  a ThemeSet (from transcript-themer).
+# Output: a JTBDMap — a list of JTBD statements in Christensen format,
+#         each linked back to the source themes that support it.
+#
+# JTBD format (Christensen "Jobs to Be Done"):
+#   "When [situation], I want to [motivation], so I can [expected outcome]."
+#
+# Strategyzer ODI format (importance × satisfaction gap) is deferred.
+# See pack.yaml deferred section.
+
+name: jtbd-clusterer
+description: >
+  Groups themes from transcript-themer into Christensen-style JTBD
+  statements.  Each JTBD bundles related themes, carries a situation
+  context, a core motivation, and an expected outcome.  Emits a JTBDMap
+  for opportunity-sizer and persona-synthesizer downstream.
+
+llm:
+  model: ${JTBD_LLM_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 6144
+
+system_prompt: |
+  You are a product strategist expert in Jobs to Be Done theory
+  (Christensen / Ulwick tradition).  You will be given a set of
+  verbatim-grounded themes from customer interviews.
+
+  Your task is to cluster related themes into JTBD statements.
+
+  JTBD statement format (strict):
+    "When [situation], I want to [core motivation / functional job],
+     so I can [expected outcome / progress definition]."
+
+  Rules:
+  - One JTBD per distinct job — do not merge unrelated functional jobs.
+  - Each JTBD must be supported by ≥ 2 themes.
+  - Include "emotional" and "social" job dimensions as optional sub-fields
+    if the evidence supports them — do not invent them.
+  - Use the participants' vocabulary, not product/feature language.
+  - Respond ONLY with valid JSON matching the JTBDMap schema below.
+
+  JTBDMap schema:
+  {
+    "jobs": [
+      {
+        "id": "jtbd-001",
+        "statement": "When …, I want to …, so I can …",
+        "situation": "context triggering the job",
+        "motivation": "core functional motivation",
+        "outcome": "progress the customer wants to make",
+        "emotional_job": "how they want to feel (optional)",
+        "social_job": "how they want to be perceived (optional)",
+        "supporting_theme_ids": ["theme-003", "theme-007"],
+        "participant_count": 8,
+        "frequency": 19
+      }
+    ],
+    "unmapped_theme_ids": ["theme-012"],
+    "total_jobs": 6
+  }
+
+user_prompt: |
+  ## ThemeSet
+  {{ input.theme_set | to_json | truncate(16000) }}
+
+  Cluster these themes into JTBD statements now.
+
+outputs:
+  - agents/opportunity-sizer.yaml
+  - agents/persona-synthesizer.yaml
+
+# Deferred:
+#   - Strategyzer ODI importance × satisfaction gap scoring (needs
+#     a paired survey instrument — see inbound/typeform-survey.yaml
+#     for the recommended question format).
+#   - Automatic de-duplication of JTBDs across research sprints.
