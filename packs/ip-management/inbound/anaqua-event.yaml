@@ -1,0 +1,101 @@
+# Inbound connector — Anaqua IP Management webhook events
+# ---------------------------------------------------------------------------
+# Anaqua can POST webhook events when docket items change status, deadlines
+# are updated, or renewal instructions are logged.  This connector normalises
+# those events and upserts the relevant ip_* tables.
+#
+# Mounting: POST /v1/ip-management/inbound/anaqua/{route_id}
+# Auth:     Per-tenant bearer token (X-Anaqua-Signature HMAC optional)
+#
+# Supported Anaqua event types:
+#   - matter.status_changed   → update ip_patents / ip_trademarks
+#   - deadline.updated        → update ip_filings.next_renewal_date
+#   - renewal.instructed      → update ip_renewal_fees.status
+#   - matter.created          → insert new ip_patents or ip_trademarks row
+# ---------------------------------------------------------------------------
+
+source: anaqua-event
+version: "1.0.0"
+description: >
+  Receives Anaqua IP management system webhook events and normalises them
+  into ip_patents, ip_trademarks, ip_filings, and ip_renewal_fees.
+
+route_prefix: /v1/ip-management/inbound/anaqua
+
+auth:
+  kind: bearer_token
+  header: "Authorization"
+  token_env: "${IP_ANAQUA_WEBHOOK_TOKEN}"
+
+hmac:
+  # Optional: verify X-Anaqua-Signature-256 header if Anaqua signing is enabled.
+  secret_env: "${IP_ANAQUA_HMAC_SECRET}"
+  algorithm: sha256
+  header: "X-Anaqua-Signature-256"
+  required: false   # set to true once Anaqua signing is configured
+
+event_handlers:
+  - event_type: "matter.status_changed"
+    target_table: ip_patents   # connector selects table based on matter_type field
+    upsert_key: [application_number, tenant_id]
+    field_map:
+      application_number: "$.matter.applicationNumber"
+      status:             "$.matter.status"       # normalised by connector
+      updated_at:         "$.eventTimestamp"
+
+  - event_type: "matter.status_changed"
+    # Trademark variant — dispatched when matter_type == 'TRADEMARK'
+    target_table: ip_trademarks
+    condition: "payload.matter.matterType == 'TRADEMARK'"
+    upsert_key: [application_number, tenant_id]
+    field_map:
+      application_number: "$.matter.applicationNumber"
+      status:             "$.matter.status"
+      updated_at:         "$.eventTimestamp"
+
+  - event_type: "deadline.updated"
+    target_table: ip_filings
+    upsert_key: [local_number, jurisdiction, tenant_id]
+    field_map:
+      local_number:      "$.matter.applicationNumber"
+      jurisdiction:      "$.matter.country"
+      next_renewal_date: "$.deadline.dueDate"
+      updated_at:        "$.eventTimestamp"
+
+  - event_type: "renewal.instructed"
+    target_table: ip_renewal_fees
+    upsert_key: [filing_id, due_date]
+    field_map:
+      due_date:    "$.renewal.dueDate"
+      status:      "_computed:anaqua_renewal_status"   # maps Anaqua codes → scheduled|paid|waived
+      paid_at:     "$.renewal.paidDate"
+      paid_by:     "$.renewal.instructedBy"
+      amount_usd:  "$.renewal.feeAmount"
+
+  - event_type: "matter.created"
+    # New matters are inserted; alt-legal-portfolio-export handles bulk sync.
+    target_table: ip_patents
+    condition: "payload.matter.matterType IN ('PATENT', 'UTILITY', 'DESIGN')"
+    upsert_key: [application_number, tenant_id]
+    field_map:
+      application_number:   "$.matter.applicationNumber"
+      title:                "$.matter.title"
+      status:               "_const:pending"
+      filing_date:          "$.matter.filingDate"
+      primary_jurisdiction: "$.matter.country"
+
+# Emit downstream events so watches and agents can react immediately
+# (rather than waiting for the next scheduled poll).
+emit_events:
+  - on: "deadline.updated"
+    emit: "ip.filing_deadline_updated"
+  - on: "matter.status_changed"
+    emit: "ip.matter_status_changed"
+
+error_handling:
+  on_parse_error:
+    action: http_400   # tell Anaqua the payload was malformed
+  on_upsert_conflict:
+    strategy: update   # last-write wins (Anaqua is source of truth)
+  on_unknown_event_type:
+    action: http_200_log_only   # ack + log; do not fail

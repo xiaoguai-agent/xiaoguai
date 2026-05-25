@@ -1,0 +1,183 @@
+# Agent definition — prior-art-discoverer
+# ---------------------------------------------------------------------------
+# Triggered when a new patent application is drafted (event from the admin UI
+# or via the manual-prior-art-upload inbound connector).  Searches USPTO
+# full-text databases, EPO Espacenet, Google Patents, and semantic scholar
+# (via the inbound polling connectors) for prior art that could affect the
+# novelty or non-obviousness of the claims.
+#
+# Output: a prior-art report rendered from templates/prior-art-report.md.j2,
+# plus database rows in ip_prior_art_findings, all HOTL-gated.
+# ---------------------------------------------------------------------------
+
+name: prior-art-discoverer
+version: "1.0.0"
+description: >
+  Given a draft patent application, discovers prior art across USPTO, EPO
+  Espacenet, and academic databases, scores each reference for novelty impact,
+  and drafts a prior-art report for outside counsel review.
+
+triggers:
+  - event: ip.prior_art_search_requested
+    source: manual
+  # Also triggered when a new patent row appears with status = 'pending'
+  - event: ip.patent_application_ingested
+    source: alt-legal-portfolio-export
+
+llm:
+  model: ${IP_PRIOR_ART_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 8192
+
+context_steps:
+  - id: application_details
+    description: "Fetch the draft application claims and abstract"
+    tool: sql
+    query: |
+      SELECT
+          id, application_number, title, abstract,
+          technology_class, inventors, filing_date
+      FROM ip_patents
+      WHERE id        = '{patent_id}'
+        AND tenant_id = '{tenant_id}'
+
+  - id: existing_findings
+    description: "Check if we already have prior art findings for this application"
+    tool: sql
+    query: |
+      SELECT reference_id, reference_title, relevance_score,
+             novelty_impact, review_status
+      FROM ip_prior_art_findings
+      WHERE patent_id  = '{patent_id}'
+        AND tenant_id  = '{tenant_id}'
+      ORDER BY relevance_score DESC
+      LIMIT 20
+
+  - id: search_results
+    description: "Pull normalised search results from the inbound connectors"
+    tool: sql
+    query: |
+      -- Inbound connectors write to ip_prior_art_findings with
+      -- discovered_by = 'inbound-poll' and review_status = 'pending'.
+      -- This step retrieves those raw candidates for the LLM to rank.
+      SELECT
+          id, reference_kind, reference_id, reference_title,
+          reference_date, source_query, analysis_summary
+      FROM ip_prior_art_findings
+      WHERE patent_id      = '{patent_id}'
+        AND tenant_id      = '{tenant_id}'
+        AND discovered_by  = 'inbound-poll'
+        AND review_status  = 'pending'
+      ORDER BY reference_date DESC
+      LIMIT 50
+
+system_prompt: |
+  You are an expert patent analyst.  Given a draft patent application and a
+  list of candidate prior-art references (already gathered by the search
+  pipeline), your job is to:
+
+  1. Rank each reference by relevance_score (0.0 = irrelevant, 1.0 = directly
+     anticipates a claim).
+  2. Classify novelty_impact for each reference:
+     - "anticipates":    the reference discloses every element of at least one
+                         independent claim → the claim is anticipated (§102)
+     - "obvious":        the reference combined with common knowledge renders
+                         the claim obvious (§103)
+     - "distinguishable": the reference is related but does not threaten claims
+     - "unknown":        insufficient detail to judge
+  3. For the top-5 references (relevance >= 0.60), write a brief analysis
+     explaining which specific claim element(s) are at risk.
+  4. Suggest claim narrowing strategies for "anticipates" and "obvious" refs.
+
+  Rules:
+  - Use only the reference text provided.  Do not invent prior art.
+  - If the search results are sparse, explicitly flag that additional manual
+    search is warranted.
+  - Output valid JSON matching the PriorArtReport schema.
+
+  PriorArtReport schema:
+  {
+    "application_number": "...",
+    "search_date": "ISO-8601",
+    "ranked_references": [
+      {
+        "reference_id": "...",
+        "reference_title": "...",
+        "relevance_score": 0.000,
+        "novelty_impact": "anticipates|obvious|distinguishable|unknown",
+        "affected_claims": ["claim 1", "claim 3"],
+        "analysis": "2-4 sentence explanation",
+        "claim_narrowing_suggestion": "..."   // omit if distinguishable/unknown
+      }
+    ],
+    "overall_risk": "high|medium|low",
+    "search_adequacy": "adequate|needs_supplement",
+    "recommended_actions": ["..."],
+    "confidence": "high|medium|low"
+  }
+
+user_prompt: |
+  ## Application under review
+  - Application number: {{ context.application_details.application_number }}
+  - Title: {{ context.application_details.title }}
+  - Filing date: {{ context.application_details.filing_date }}
+  - Technology class: {{ context.application_details.technology_class }}
+
+  ## Abstract
+  {{ context.application_details.abstract | truncate(2000) }}
+
+  ## Candidate prior-art references ({{ context.search_results | length }} results)
+  {{ context.search_results | tojson(indent=2) | truncate(6000) }}
+
+  {% if context.existing_findings %}
+  ## Previously confirmed findings (skip re-analysis)
+  {{ context.existing_findings | tojson(indent=2) | truncate(1000) }}
+  {% endif %}
+
+  Produce the PriorArtReport JSON now.
+
+tools:
+  - name: update_finding_scores
+    description: >
+      Bulk-update ip_prior_art_findings rows with the LLM-assigned
+      relevance_score and novelty_impact.
+    kind: sql
+    query: |
+      UPDATE ip_prior_art_findings
+      SET relevance_score  = {relevance_score},
+          novelty_impact   = '{novelty_impact}',
+          analysis_summary = '{analysis_summary}',
+          discovered_by    = 'prior-art-discoverer'
+      WHERE id        = '{finding_id}'
+        AND tenant_id = '{tenant_id}'
+
+  - name: render_prior_art_report
+    description: >
+      Render templates/prior-art-report.md.j2 with the ranked findings for
+      outside counsel review.
+    kind: template
+    template: "templates/prior-art-report.md.j2"
+
+  - name: send_to_outside_counsel
+    description: >
+      Package the prior-art report and reference PDFs and route to
+      outputs/outside-counsel-email-with-prior-art-bundle.yaml.
+      Requires human approval.
+    kind: output
+    connector: "outputs/outside-counsel-email-with-prior-art-bundle.yaml"
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    send_to_counsel: 0
+  require_human_approval:
+    - render_prior_art_report
+    - send_to_outside_counsel
+  notify_channel: "${IP_MANAGEMENT_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - search_completed
+    - report_approved
+    - report_sent_to_counsel
+  feedback_table: ip_prior_art_findings

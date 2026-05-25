@@ -1,0 +1,158 @@
+# Inbound connector — Alt Legal / docketing system portfolio export
+# ---------------------------------------------------------------------------
+# Polls the Alt Legal API (or accepts a SFTP-dropped CSV export from any
+# docketing system: Anaqua, CPA Global, Dennemeyer, Clarivate, etc.) and
+# bulk-imports the canonical patent + trademark + filing records.
+#
+# Alt Legal API: https://api.altlegal.com/v2/
+# Auth: Bearer token (${ALT_LEGAL_API_KEY})
+#
+# This connector is the primary way to seed or refresh the ip_patents /
+# ip_trademarks / ip_filings tables from an existing docketing system.
+# ---------------------------------------------------------------------------
+
+source: alt-legal-portfolio-export
+version: "1.0.0"
+description: >
+  Imports or refreshes patent and trademark portfolio records from Alt Legal
+  (or a compatible CSV export) into ip_patents, ip_trademarks, and ip_filings.
+  Supports incremental sync (last_modified filter) and full-refresh mode.
+
+# Config: choose either alt_legal_api (default) or sftp_csv.
+mode: "${ALT_LEGAL_MODE:-alt_legal_api}"
+
+alt_legal_api:
+  base_url: "https://api.altlegal.com/v2"
+  auth:
+    kind: bearer
+    token: "${ALT_LEGAL_API_KEY}"
+
+  endpoints:
+    - id: patent_sync
+      path: "/matters"
+      method: GET
+      schedule:
+        cron: "0 5 * * *"   # Daily 05:00 UTC (before USPTO + EPO polls)
+      params:
+        type: "Patent"
+        modified_since: "{{ last_sync_at | iso8601 }}"
+        limit: 500
+      pagination:
+        kind: cursor
+        next_cursor_field: "$.nextCursor"
+      response_mapping:
+        target_table: ip_patents
+        upsert_key: [application_number, tenant_id]
+        field_map:
+          application_number:          "$.applicationNumber"
+          patent_number:               "$.registrationNumber"
+          title:                       "$.title"
+          status:                      "$.status"
+          filing_date:                 "$.filingDate"
+          grant_date:                  "$.registrationDate"
+          expiry_date:                 "$.expirationDate"
+          next_renewal_date:           "$.nextActionDate"
+          primary_jurisdiction:        "$.country"
+          inventors:                   "$.inventors[*].name"
+          assignee:                    "$.client.name"
+          technology_class:            "$.classifications[*].code"
+          annual_maintenance_cost_usd: "$.estimatedRenewalCost"
+
+    - id: trademark_sync
+      path: "/matters"
+      method: GET
+      schedule:
+        cron: "0 5 * * *"
+      params:
+        type: "Trademark"
+        modified_since: "{{ last_sync_at | iso8601 }}"
+        limit: 500
+      pagination:
+        kind: cursor
+        next_cursor_field: "$.nextCursor"
+      response_mapping:
+        target_table: ip_trademarks
+        upsert_key: [application_number, tenant_id]
+        field_map:
+          application_number:     "$.applicationNumber"
+          registration_number:    "$.registrationNumber"
+          mark:                   "$.mark"
+          description:            "$.goodsAndServices"
+          nice_classes:           "$.niceClasses[*]"
+          status:                 "$.status"
+          filing_date:            "$.filingDate"
+          registration_date:      "$.registrationDate"
+          next_renewal_date:      "$.nextActionDate"
+          primary_jurisdiction:   "$.country"
+
+    - id: filing_sync
+      path: "/matters/{matter_id}/jurisdictions"
+      method: GET
+      schedule:
+        cron: "0 5 * * *"
+      iteration:
+        source: sql
+        query: |
+          SELECT id AS matter_id, 'patent' AS ip_kind
+          FROM ip_patents WHERE tenant_id = '{tenant_id}'
+          UNION ALL
+          SELECT id, 'trademark'
+          FROM ip_trademarks WHERE tenant_id = '{tenant_id}'
+      response_mapping:
+        target_table: ip_filings
+        upsert_key: [parent_id, jurisdiction, tenant_id]
+        field_map:
+          jurisdiction:       "$.country"
+          local_number:       "$.localApplicationNumber"
+          status:             "$.status"
+          filing_date:        "$.filingDate"
+          grant_date:         "$.registrationDate"
+          expiry_date:        "$.expirationDate"
+          next_renewal_date:  "$.nextActionDate"
+          local_agent:        "$.agent.name"
+
+sftp_csv:
+  # Fallback mode for docketing systems without REST APIs.
+  # Place exported CSV files into the configured SFTP drop directory.
+  host:        "${IP_SFTP_HOST}"
+  port:        22
+  user:        "${IP_SFTP_USER}"
+  private_key: "${IP_SFTP_KEY_PATH}"
+  remote_path: "/ip-exports/"
+  schedule:
+    cron: "30 4 * * *"   # 30 min before the API polls
+  file_patterns:
+    - "patent_export_*.csv"
+    - "trademark_export_*.csv"
+    - "filing_export_*.csv"
+  column_maps:
+    patent_export:
+      application_number: "App No"
+      patent_number:      "Patent No"
+      title:              "Title"
+      status:             "Status"
+      filing_date:        "Filing Date"
+      grant_date:         "Grant Date"
+      expiry_date:        "Expiry Date"
+      next_renewal_date:  "Next Renewal"
+      primary_jurisdiction: "Country"
+    trademark_export:
+      application_number:  "App No"
+      registration_number: "Reg No"
+      mark:                "Mark"
+      description:         "Goods/Services"
+      nice_classes:        "Nice Classes"   # semicolon-separated
+      status:              "Status"
+      filing_date:         "Filing Date"
+      registration_date:   "Reg Date"
+      next_renewal_date:   "Next Renewal"
+      primary_jurisdiction: "Country"
+
+error_handling:
+  on_parse_error:
+    log_and_skip: true
+  on_connection_error:
+    strategy: retry_once
+    delay_seconds: 60
+  on_duplicate:
+    strategy: upsert   # overwrite existing rows on upsert_key match

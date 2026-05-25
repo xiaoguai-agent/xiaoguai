@@ -1,0 +1,114 @@
+# Output connector — Jira IP task creation
+# ---------------------------------------------------------------------------
+# Creates Jira issues in the configured IP project for:
+#   - Renewal decisions requiring action (renew / let_lapse / defer)
+#   - Coverage gap remediation items (HIGH priority)
+#   - Infringement alerts requiring outside counsel engagement
+#
+# All Jira issues are created in 'draft' status; a human must transition
+# them to 'In Progress' or 'Backlog' in Jira.
+# ---------------------------------------------------------------------------
+
+output: jira-ip-task
+version: "1.0.0"
+description: >
+  Creates Jira tasks in the IP project for renewal actions, coverage gap
+  remediation, and infringement alert follow-up.  Requires human approval
+  before creation (HOTL-gated by the calling agent).
+
+jira:
+  base_url:  "${JIRA_BASE_URL}"
+  auth:
+    kind: basic
+    email:    "${JIRA_USER_EMAIL}"
+    api_token: "${JIRA_API_TOKEN}"
+  project_key: "${IP_JIRA_PROJECT_KEY:-IP}"
+  default_issue_type: "Task"
+  default_priority:   "Medium"
+
+# Issue templates per event kind.
+issue_templates:
+  ip.patent_renewal_deadline_approaching:
+    summary: "[Patent Renewal] {{ payload.patent_number }} / {{ payload.jurisdiction }} — due {{ payload.due_date }}"
+    description: |
+      h2. Renewal Decision Required
+
+      *Patent:* {{ payload.patent_number }} — {{ payload.patent_title }}
+      *Jurisdiction:* {{ payload.jurisdiction }}
+      *Milestone:* {{ payload.milestone_label }}
+      *Due date:* {{ payload.due_date }} ({{ payload.days_until_due }} days)
+      *Renewal fee:* ${{ payload.amount_usd | int | commify }}
+
+      h3. AI Recommendation: {{ payload.recommendation | upper }}
+      Score: {{ payload.weighted_score }}
+      {{ payload.reasoning_summary }}
+
+      [Review in Xiaoguai Admin UI|{{ admin_ui_url }}/ip/decisions/{{ payload.decision_id }}]
+    priority: "{{ 'High' if payload.days_until_due < 30 else 'Medium' }}"
+    labels:
+      - "ip-renewal"
+      - "{{ payload.jurisdiction | lower }}"
+
+  ip.trademark_renewal_deadline:
+    summary: "[TM Renewal] {{ payload.mark }} / {{ payload.jurisdiction }} — due {{ payload.next_renewal_date }}"
+    description: |
+      h2. Trademark Renewal Decision Required
+
+      *Mark:* {{ payload.mark }}
+      *Jurisdiction:* {{ payload.jurisdiction }}
+      *Cycle:* {{ payload.renewal_cycle_type | replace('_', ' ') }}
+      *Due date:* {{ payload.next_renewal_date }} ({{ payload.days_until_renewal }} days)
+
+      h3. AI Recommendation: {{ payload.recommendation | upper }}
+      [Review in Xiaoguai Admin UI|{{ admin_ui_url }}/ip/decisions/{{ payload.decision_id }}]
+    priority: "{{ 'High' if payload.days_until_renewal < 60 else 'Medium' }}"
+    labels:
+      - "ip-trademark"
+      - "{{ payload.jurisdiction | lower }}"
+
+  coverage_gap:
+    summary: "[IP Gap] {{ item.gap_type | title }} coverage missing — {{ item.jurisdiction }}"
+    description: |
+      h2. IP Coverage Gap — {{ item.priority }} Priority
+
+      *Type:* {{ item.gap_type | title }}
+      *Jurisdiction:* {{ item.jurisdiction }}
+      *Rationale:* {{ item.rationale }}
+
+      h3. Recommended action
+      File {{ item.gap_type }} application in {{ item.jurisdiction }}.
+    priority: "{{ 'High' if item.priority == 'HIGH' else 'Medium' }}"
+    labels:
+      - "ip-coverage-gap"
+      - "{{ item.gap_type | lower }}"
+
+  infringement_alert:
+    summary: "[IP Risk] {{ payload.risk_level | upper }} — {{ payload.competitor_name }} filing {{ payload.filing_ref }}"
+    description: |
+      h2. Infringement Risk Alert
+
+      *Competitor:* {{ payload.competitor_name }}
+      *Filing:* {{ payload.filing_ref }} ({{ payload.filing_jurisdiction }})
+      *Risk level:* {{ payload.risk_level | upper }}
+
+      {{ payload.risk_summary }}
+
+      [View full assessment|{{ admin_ui_url }}/ip/alerts/{{ payload.alert_id }}]
+    priority: "{{ 'Critical' if payload.risk_level == 'critical' else ('High' if payload.risk_level == 'high' else 'Medium') }}"
+    labels:
+      - "ip-infringement"
+      - "{{ payload.trigger_kind | replace('_', '-') }}"
+
+# Link created issues back to the triggering record.
+link_back:
+  on_create: update_record
+  tables:
+    ip_renewal_decisions: jira_issue_key
+    ip_infringement_alerts: jira_issue_key
+
+error_handling:
+  on_duplicate:
+    strategy: skip   # do not create a second issue for the same event
+    dedup_key: "labels + summary prefix"
+  on_jira_error:
+    fallback: admin_ui_notification
