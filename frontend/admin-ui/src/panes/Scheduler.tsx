@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type {
   CompileScheduledJobResponse,
   ScheduledJobSummary,
@@ -27,16 +28,13 @@ import { client } from '../client';
 type Tab = 'jobs' | 'create';
 
 export function SchedulerPane() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>('jobs');
   return (
     <>
       <header className="scheduler-header">
-        <h1>Scheduler</h1>
-        <p className="muted">
-          Cron / interval / webhook / file-watch / proactive jobs.
-          The runner picks up every change on the next tick (default
-          30s).
-        </p>
+        <h1>{t('pane.scheduler.title')}</h1>
+        <p className="muted">{t('pane.scheduler.description')}</p>
       </header>
       <div className="scheduler-tabs" role="tablist">
         <button
@@ -46,7 +44,7 @@ export function SchedulerPane() {
           className={tab === 'jobs' ? 'active' : ''}
           onClick={() => setTab('jobs')}
         >
-          Jobs
+          {t('pane.scheduler.tab_jobs')}
         </button>
         <button
           type="button"
@@ -55,7 +53,7 @@ export function SchedulerPane() {
           className={tab === 'create' ? 'active' : ''}
           onClick={() => setTab('create')}
         >
-          Create from description
+          {t('pane.scheduler.tab_create')}
         </button>
       </div>
       {tab === 'jobs' ? <JobsTab /> : <CreateTab />}
@@ -66,6 +64,7 @@ export function SchedulerPane() {
 // ---- Jobs tab -----------------------------------------------------------
 
 function JobsTab(): JSX.Element {
+  const { t } = useTranslation();
   const [jobs, setJobs] = useState<ScheduledJobSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -95,39 +94,39 @@ function JobsTab(): JSX.Element {
       setFireMsg(null);
       try {
         await client.fireScheduledJob(id);
-        setFireMsg(`Fired ${id}. It will run shortly.`);
+        setFireMsg(t('pane.scheduler.fired_ok', { id }));
       } catch (err) {
-        setFireMsg(`Failed: ${(err as Error).message}`);
+        setFireMsg(t('common.failed', { message: (err as Error).message }));
       } finally {
         setFireBusy(null);
       }
     },
-    [],
+    [t],
   );
 
   return (
     <>
       <div className="scheduler-actions">
         <button type="button" onClick={() => void refresh()} disabled={loading}>
-          {loading ? 'Loading…' : 'Refresh'}
+          {loading ? t('common.loading') : t('common.refresh')}
         </button>
         {fireMsg && <span className="muted">{fireMsg}</span>}
       </div>
-      {error && <div className="error">Failed: {error}</div>}
+      {error && <div className="error">{t('common.failed', { message: error })}</div>}
       {jobs === null ? (
-        <div className="empty">Loading…</div>
+        <div className="empty">{t('pane.scheduler.jobs_empty_loading')}</div>
       ) : jobs.length === 0 ? (
-        <div className="empty">No scheduled jobs yet.</div>
+        <div className="empty">{t('pane.scheduler.jobs_empty_none')}</div>
       ) : (
         <table className="scheduler-table">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Name</th>
-              <th>Trigger</th>
-              <th>Enabled</th>
-              <th>Last fired</th>
-              <th>Next fire</th>
+              <th>{t('pane.scheduler.col_id')}</th>
+              <th>{t('pane.scheduler.col_name')}</th>
+              <th>{t('pane.scheduler.col_trigger')}</th>
+              <th>{t('pane.scheduler.col_enabled')}</th>
+              <th>{t('pane.scheduler.col_last_fired')}</th>
+              <th>{t('pane.scheduler.col_next_fire')}</th>
               <th></th>
             </tr>
           </thead>
@@ -141,7 +140,7 @@ function JobsTab(): JSX.Element {
                 <td>
                   <code>{j.trigger_summary}</code>
                 </td>
-                <td>{j.enabled ? 'yes' : 'no'}</td>
+                <td>{j.enabled ? t('pane.scheduler.enabled_yes') : t('pane.scheduler.enabled_no')}</td>
                 <td>{formatTs(j.last_fire_at)}</td>
                 <td>{formatTs(j.next_fire_at)}</td>
                 <td>
@@ -150,7 +149,7 @@ function JobsTab(): JSX.Element {
                     onClick={() => void fireNow(j.id)}
                     disabled={fireBusy === j.id}
                   >
-                    {fireBusy === j.id ? 'Firing…' : 'Run now'}
+                    {fireBusy === j.id ? t('pane.scheduler.btn_firing') : t('pane.scheduler.btn_run_now')}
                   </button>
                 </td>
               </tr>
@@ -166,6 +165,7 @@ function JobsTab(): JSX.Element {
 }
 
 function TokensSection(): JSX.Element {
+  const { t } = useTranslation();
   const [tokens, setTokens] = useState<WebhookToken[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tenantFilter, setTenantFilter] = useState('');
@@ -220,22 +220,18 @@ function TokensSection(): JSX.Element {
 
   return (
     <section className="tokens-section">
-      <h2>Webhook tokens</h2>
-      <p className="muted">
-        Per-tenant tokens for the public webhook endpoint at{' '}
-        <code>POST /v1/scheduler/webhooks/:route_id</code>. Pass via
-        <code> X-Xiaoguai-Token</code> header.
-      </p>
+      <h2>{t('pane.scheduler.tokens_title')}</h2>
+      <p className="muted">{t('pane.scheduler.tokens_description')}</p>
       <div className="tokens-create">
         <input
           type="text"
-          placeholder="tenant_id"
+          placeholder={t('pane.scheduler.tokens_placeholder_tenant')}
           value={createTenant}
           onChange={(e) => setCreateTenant(e.target.value)}
         />
         <input
           type="text"
-          placeholder="route_id"
+          placeholder={t('pane.scheduler.tokens_placeholder_route')}
           value={createRoute}
           onChange={(e) => setCreateRoute(e.target.value)}
         />
@@ -244,56 +240,56 @@ function TokensSection(): JSX.Element {
           onClick={() => void create()}
           disabled={!createTenant.trim() || !createRoute.trim()}
         >
-          Mint token
+          {t('pane.scheduler.tokens_btn_mint')}
         </button>
         <input
           type="text"
-          placeholder="filter by tenant_id"
+          placeholder={t('pane.scheduler.tokens_placeholder_filter')}
           value={tenantFilter}
           onChange={(e) => setTenantFilter(e.target.value)}
         />
       </div>
       {createdToken && (
         <div className="token-mint">
-          <strong>New token (capture now — won't be shown again):</strong>{' '}
+          <strong>{t('pane.scheduler.tokens_new_token')}</strong>{' '}
           <code>{createdToken.token}</code>{' '}
           <button type="button" onClick={() => setCreatedToken(null)}>
-            Dismiss
+            {t('pane.scheduler.tokens_btn_dismiss')}
           </button>
         </div>
       )}
-      {error && <div className="error">Failed: {error}</div>}
+      {error && <div className="error">{t('common.failed', { message: error })}</div>}
       {tokens === null ? (
-        <div className="empty">Loading…</div>
+        <div className="empty">{t('pane.scheduler.tokens_empty_loading')}</div>
       ) : tokens.length === 0 ? (
-        <div className="empty">No tokens yet.</div>
+        <div className="empty">{t('pane.scheduler.tokens_empty_none')}</div>
       ) : (
         <table className="tokens-table">
           <thead>
             <tr>
-              <th>Token</th>
-              <th>Tenant</th>
-              <th>Route</th>
-              <th>Created</th>
-              <th>Last used</th>
+              <th>{t('pane.scheduler.tokens_col_token')}</th>
+              <th>{t('pane.scheduler.tokens_col_tenant')}</th>
+              <th>{t('pane.scheduler.tokens_col_route')}</th>
+              <th>{t('pane.scheduler.tokens_col_created')}</th>
+              <th>{t('pane.scheduler.tokens_col_last_used')}</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {tokens.map((t) => (
-              <tr key={t.token}>
+            {tokens.map((tok) => (
+              <tr key={tok.token}>
                 <td>
-                  <code>{shortToken(t.token)}</code>
+                  <code>{shortToken(tok.token)}</code>
                 </td>
-                <td>{t.tenant_id}</td>
+                <td>{tok.tenant_id}</td>
                 <td>
-                  <code>{t.route_id}</code>
+                  <code>{tok.route_id}</code>
                 </td>
-                <td>{formatTs(t.created_at)}</td>
-                <td>{formatTs(t.last_used_at ?? null)}</td>
+                <td>{formatTs(tok.created_at)}</td>
+                <td>{formatTs(tok.last_used_at ?? null)}</td>
                 <td>
-                  <button type="button" onClick={() => void revoke(t.token)}>
-                    Revoke
+                  <button type="button" onClick={() => void revoke(tok.token)}>
+                    {t('pane.scheduler.tokens_btn_revoke')}
                   </button>
                 </td>
               </tr>
@@ -308,6 +304,7 @@ function TokensSection(): JSX.Element {
 // ---- Create tab ---------------------------------------------------------
 
 function CreateTab(): JSX.Element {
+  const { t } = useTranslation();
   const [description, setDescription] = useState('');
   const [tenant, setTenant] = useState('');
   const [preview, setPreview] = useState<CompileScheduledJobResponse | null>(
@@ -343,32 +340,32 @@ function CreateTab(): JSX.Element {
     setSaveMsg(null);
     try {
       const r = await client.upsertScheduledJob(preview.suggested_job);
-      setSaveMsg(`Saved as ${r.id}.`);
+      setSaveMsg(t('pane.scheduler.create_saved', { id: r.id }));
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy(null);
     }
-  }, [preview]);
+  }, [preview, t]);
 
   return (
     <div className="scheduler-create">
       <label>
-        Description
+        {t('pane.scheduler.create_label_description')}
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           rows={4}
-          placeholder='e.g. 每天 8 点扫 r/LocalLLaMA + HN，结果推 Telegram'
+          placeholder={t('pane.scheduler.create_placeholder_description')}
         />
       </label>
       <label>
-        Tenant (optional)
+        {t('pane.scheduler.create_label_tenant')}
         <input
           type="text"
           value={tenant}
           onChange={(e) => setTenant(e.target.value)}
-          placeholder="tenant_id"
+          placeholder={t('pane.scheduler.create_placeholder_tenant')}
         />
       </label>
       <div className="scheduler-create-actions">
@@ -377,18 +374,18 @@ function CreateTab(): JSX.Element {
           onClick={() => void compile()}
           disabled={busy !== null || !description.trim()}
         >
-          {busy === 'compile' ? 'Compiling…' : 'Compile'}
+          {busy === 'compile' ? t('pane.scheduler.create_btn_compiling') : t('pane.scheduler.create_btn_compile')}
         </button>
         <button
           type="button"
           onClick={() => void save()}
           disabled={busy !== null || preview === null}
         >
-          {busy === 'save' ? 'Saving…' : 'Save'}
+          {busy === 'save' ? t('pane.scheduler.create_btn_saving') : t('pane.scheduler.create_btn_save')}
         </button>
         {saveMsg && <span className="muted">{saveMsg}</span>}
       </div>
-      {error && <div className="error">Failed: {error}</div>}
+      {error && <div className="error">{t('common.failed', { message: error })}</div>}
       {preview && (
         <div className="scheduler-preview">
           <p className="muted">{preview.rationale}</p>
@@ -412,7 +409,7 @@ function formatTs(iso: string | null): string {
   }
 }
 
-function shortToken(t: string): string {
-  if (t.length <= 12) return t;
-  return `${t.slice(0, 6)}…${t.slice(-4)}`;
+function shortToken(tok: string): string {
+  if (tok.length <= 12) return tok;
+  return `${tok.slice(0, 6)}…${tok.slice(-4)}`;
 }

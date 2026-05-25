@@ -7,6 +7,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { ReactNode } from 'react';
 
 interface CopyButtonProps {
@@ -14,7 +15,9 @@ interface CopyButtonProps {
   label?: ReactNode;
 }
 
-export function CopyButton({ text, label = 'Copy' }: CopyButtonProps) {
+export function CopyButton({ text, label }: CopyButtonProps) {
+  const { t } = useTranslation();
+  const defaultLabel = label ?? t('common.copy');
   const [copied, setCopied] = useState(false);
 
   async function onClick() {
@@ -34,9 +37,9 @@ export function CopyButton({ text, label = 'Copy' }: CopyButtonProps) {
       type="button"
       className="copy-btn"
       onClick={onClick}
-      aria-label={copied ? 'Copied to clipboard' : 'Copy to clipboard'}
+      aria-label={copied ? t('common.copied_aria') : t('common.copy_aria')}
     >
-      {copied ? 'Copied!' : label}
+      {copied ? t('common.copied') : defaultLabel}
     </button>
   );
 }

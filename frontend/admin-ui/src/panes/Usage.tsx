@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type {
   TenantResponse,
   UsageGroupBy,
@@ -45,7 +46,30 @@ function toIsoEnd(date: string): string {
   return `${date}T23:59:59Z`;
 }
 
+function groupByLabel(g: UsageGroupBy, t: (key: string) => string): string {
+  switch (g) {
+    case 'day':
+      return t('pane.usage.group_day');
+    case 'provider':
+      return t('pane.usage.group_provider');
+    case 'model':
+      return t('pane.usage.group_model');
+  }
+}
+
+function groupByColHeader(groupBy: UsageGroupBy, t: (key: string) => string): string {
+  switch (groupBy) {
+    case 'day':
+      return t('pane.usage.col_date');
+    case 'provider':
+      return t('pane.usage.col_provider');
+    case 'model':
+      return t('pane.usage.col_model');
+  }
+}
+
 export function UsagePane(): JSX.Element {
+  const { t } = useTranslation();
   const [tenants, setTenants] = useState<TenantResponse[]>([]);
   const [tenantId, setTenantId] = useState<string>('');
   const [since, setSince] = useState<string>(defaultSince());
@@ -106,42 +130,42 @@ export function UsagePane(): JSX.Element {
   return (
     <>
       <header className="today-header">
-        <h1>Token Usage</h1>
+        <h1>{t('pane.usage.title')}</h1>
         <div className="today-meta">
           <button onClick={() => void refresh()} disabled={loading}>
-            {loading ? 'Loading…' : 'Refresh'}
+            {loading ? t('common.loading') : t('common.refresh')}
           </button>
         </div>
       </header>
 
-      <div className="today-filters" role="group" aria-label="Usage filters">
+      <div className="today-filters" role="group" aria-label={t('pane.usage.filter_aria')}>
         <label>
-          Tenant{' '}
+          {t('pane.usage.label_tenant')}{' '}
           <input
             list="usage-tenant-list"
             value={tenantId}
             onChange={(e) => setTenantId(e.target.value)}
-            placeholder="(all tenants)"
+            placeholder={t('pane.usage.placeholder_all_tenants')}
             className="search"
           />
           <datalist id="usage-tenant-list">
-            {tenants.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.display_name}
+            {tenants.map((ten) => (
+              <option key={ten.id} value={ten.id}>
+                {ten.display_name}
               </option>
             ))}
           </datalist>
         </label>
         <label>
-          Since{' '}
+          {t('pane.usage.label_since')}{' '}
           <input type="date" value={since} onChange={(e) => setSince(e.target.value)} />
         </label>
         <label>
-          Until{' '}
+          {t('pane.usage.label_until')}{' '}
           <input type="date" value={until} onChange={(e) => setUntil(e.target.value)} />
         </label>
         <label>
-          Group by{' '}
+          {t('pane.usage.label_group_by')}{' '}
           <select
             className="range"
             value={groupBy}
@@ -149,22 +173,22 @@ export function UsagePane(): JSX.Element {
           >
             {GROUP_BY_OPTIONS.map((g) => (
               <option key={g} value={g}>
-                {g.charAt(0).toUpperCase() + g.slice(1)}
+                {groupByLabel(g, t)}
               </option>
             ))}
           </select>
         </label>
       </div>
 
-      {error && <div className="error">Failed: {error}</div>}
+      {error && <div className="error">{t('common.failed', { message: error })}</div>}
 
       {totalRow && (
-        <div className="timeline-card timeline-card-chat" aria-label="Usage totals">
+        <div className="timeline-card timeline-card-chat" aria-label={t('pane.usage.totals_label')}>
           <div className="timeline-card-body">
             <div className="timeline-card-row">
-              <span className="kind-tag kind-tag-chat">Totals</span>
+              <span className="kind-tag kind-tag-chat">{t('pane.usage.totals_tag')}</span>
               <span className="tenant">
-                {tenantId.trim() || '(all tenants)'}
+                {tenantId.trim() || t('pane.usage.placeholder_all_tenants')}
               </span>
             </div>
             <div className="timeline-card-headline">
@@ -173,27 +197,25 @@ export function UsagePane(): JSX.Element {
             </div>
             <div className="timeline-card-meta">
               {totalRow.cost === null
-                ? 'cost: — (rates not yet configured)'
-                : `cost: ${formatCents(totalRow.cost)}`}
+                ? t('pane.usage.cost_not_configured')
+                : t('pane.usage.cost', { amount: formatCents(totalRow.cost) })}
             </div>
           </div>
         </div>
       )}
 
       {report === null ? (
-        <div className="empty">Loading…</div>
+        <div className="empty">{t('pane.usage.empty_loading')}</div>
       ) : report.rows.length === 0 ? (
-        <div className="empty">
-          No usage in this range. Widen the date range or pick a different tenant.
-        </div>
+        <div className="empty">{t('pane.usage.empty_no_rows')}</div>
       ) : (
         <table className="usage-table">
           <thead>
             <tr>
-              <th scope="col">{groupBy === 'day' ? 'Date' : groupBy === 'provider' ? 'Provider' : 'Model'}</th>
-              <th scope="col">Input tokens</th>
-              <th scope="col">Output tokens</th>
-              <th scope="col">Cost (USD)</th>
+              <th scope="col">{groupByColHeader(groupBy, t)}</th>
+              <th scope="col">{t('pane.usage.col_input_tokens')}</th>
+              <th scope="col">{t('pane.usage.col_output_tokens')}</th>
+              <th scope="col">{t('pane.usage.col_cost_usd')}</th>
             </tr>
           </thead>
           <tbody>
@@ -209,7 +231,7 @@ export function UsagePane(): JSX.Element {
           <tfoot>
             <tr className="usage-table-total">
               <td>
-                <strong>Total</strong>
+                <strong>{t('pane.usage.row_total')}</strong>
               </td>
               <td>
                 <strong>{report.total_input_tokens.toLocaleString()}</strong>
@@ -229,4 +251,3 @@ export function UsagePane(): JSX.Element {
     </>
   );
 }
-
