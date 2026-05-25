@@ -1,0 +1,8 @@
+{
+  "tenant_id": "018e8f2c-1a2b-7000-8000-000000000002",
+  "scope": "usd_spend",
+  "window_seconds": 604800,
+  "max_count": null,
+  "max_usd": 500.0,
+  "escalate_to": "tier-3@example.com"
+}
