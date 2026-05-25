@@ -1,0 +1,97 @@
+---
+# Wave-3 Latency / SLO alerts
+# Metric sources:
+#   xiaoguai_hotl_check_duration_seconds   — p95 SLO: 25ms
+#   xiaoguai_outcomes_record_duration_seconds — p95 SLO: 50ms
+#   xiaoguai_llm_call_duration_seconds     — emitted; degradation vs 7d baseline handled in wave3-llm.yml
+#
+# Alert fires when p95 exceeds the SLO for N consecutive 5-minute evaluation windows.
+# severity=warning  → 3 windows (15 min breach)
+# severity=critical → 6 windows (30 min breach)
+
+groups:
+  - name: wave3.latency.hotl
+    interval: 1m
+    rules:
+      - alert: HotLCheckLatencyWarning
+        expr: >
+          histogram_quantile(0.95,
+            sum(rate(xiaoguai_hotl_check_duration_seconds_bucket[5m])) by (le)
+          ) > 0.025
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: hotl
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md
+        annotations:
+          summary: "HotL check p95 latency breaching 25 ms SLO (warning)"
+          description: >
+            The p95 latency for xiaoguai_hotl_check_duration_seconds has exceeded
+            25 ms for 3 consecutive 5-minute windows.
+            Current value: {{ $value | humanizeDuration }}.
+            Approvals may be delayed. Check HotL queue depth and policy store performance.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=hotl
+
+      - alert: HotLCheckLatencyCritical
+        expr: >
+          histogram_quantile(0.95,
+            sum(rate(xiaoguai_hotl_check_duration_seconds_bucket[5m])) by (le)
+          ) > 0.025
+        for: 30m
+        labels:
+          severity: critical
+          team: platform
+          subsystem: hotl
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md
+        annotations:
+          summary: "HotL check p95 latency breaching 25 ms SLO (critical)"
+          description: >
+            The p95 latency for xiaoguai_hotl_check_duration_seconds has exceeded
+            25 ms for 6 consecutive 5-minute windows (30 min sustained breach).
+            Current value: {{ $value | humanizeDuration }}.
+            Immediate investigation required — HotL may be causing cascading agent stalls.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=hotl
+
+  - name: wave3.latency.outcomes
+    interval: 1m
+    rules:
+      - alert: OutcomesRecordLatencyWarning
+        expr: >
+          histogram_quantile(0.95,
+            sum(rate(xiaoguai_outcomes_record_duration_seconds_bucket[5m])) by (le)
+          ) > 0.050
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: outcomes
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md
+        annotations:
+          summary: "Outcomes record p95 latency breaching 50 ms SLO (warning)"
+          description: >
+            The p95 latency for xiaoguai_outcomes_record_duration_seconds has exceeded
+            50 ms for 3 consecutive 5-minute windows.
+            Current value: {{ $value | humanizeDuration }}.
+            Verify database/store write throughput and connection pool health.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=outcomes
+
+      - alert: OutcomesRecordLatencyCritical
+        expr: >
+          histogram_quantile(0.95,
+            sum(rate(xiaoguai_outcomes_record_duration_seconds_bucket[5m])) by (le)
+          ) > 0.050
+        for: 30m
+        labels:
+          severity: critical
+          team: platform
+          subsystem: outcomes
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md
+        annotations:
+          summary: "Outcomes record p95 latency breaching 50 ms SLO (critical)"
+          description: >
+            The p95 latency for xiaoguai_outcomes_record_duration_seconds has exceeded
+            50 ms for 6 consecutive 5-minute windows (30 min sustained breach).
+            Current value: {{ $value | humanizeDuration }}.
+            Outcome persistence backlog may be growing; agents may lose result context.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=outcomes

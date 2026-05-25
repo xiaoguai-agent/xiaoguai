@@ -1,0 +1,130 @@
+---
+# Wave-3 LLM Provider alerts
+# Metric source:
+#   xiaoguai_llm_call_duration_seconds{provider, model, status}
+#     provider examples: "anthropic", "openai", "bedrock", "azure"
+#     status values:    "ok", "error", "timeout", "rate_limited"
+#
+# This is the ONE metric confirmed to be emitted in wave-3.
+#
+# Alerts:
+#   1. Provider p95 latency > 50% above 7-day rolling baseline
+#   2. Per-provider error rate elevated
+
+groups:
+  - name: wave3.llm.latency
+    interval: 1m
+    rules:
+      - alert: LLMProviderLatencyDegradationWarning
+        # Compare current 5-min p95 against the 7-day rolling p95 baseline.
+        # Fires when the current value is > 50% higher than the 7d baseline.
+        expr: >
+          (
+            histogram_quantile(0.95,
+              sum by(provider, le) (rate(xiaoguai_llm_call_duration_seconds_bucket[5m]))
+            )
+          )
+          >
+          1.5 *
+          (
+            histogram_quantile(0.95,
+              sum by(provider, le) (rate(xiaoguai_llm_call_duration_seconds_bucket[7d]))
+            )
+          )
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: llm
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/observability.md
+        annotations:
+          summary: "LLM provider {{ $labels.provider }} p95 latency >50% above 7d baseline (warning)"
+          description: >
+            The p95 call duration for provider {{ $labels.provider }} has been more than
+            50% above its 7-day rolling baseline for 15 consecutive minutes.
+            Current p95: {{ $value | humanizeDuration }}.
+            This may indicate provider-side degradation, increased token volume, or
+            network issues between xiaoguai and the LLM endpoint.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=llm
+
+      - alert: LLMProviderLatencyDegradationCritical
+        expr: >
+          (
+            histogram_quantile(0.95,
+              sum by(provider, le) (rate(xiaoguai_llm_call_duration_seconds_bucket[5m]))
+            )
+          )
+          >
+          1.5 *
+          (
+            histogram_quantile(0.95,
+              sum by(provider, le) (rate(xiaoguai_llm_call_duration_seconds_bucket[7d]))
+            )
+          )
+        for: 30m
+        labels:
+          severity: critical
+          team: platform
+          subsystem: llm
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/observability.md
+        annotations:
+          summary: "LLM provider {{ $labels.provider }} p95 latency >50% above 7d baseline (critical)"
+          description: >
+            Provider {{ $labels.provider }} p95 latency has been more than 50% above
+            its 7-day baseline for 30 consecutive minutes.
+            Current p95: {{ $value | humanizeDuration }}.
+            Consider failing over to an alternate provider or reducing inference load.
+            Check the provider's status page and the LLM router configuration.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=llm
+
+  - name: wave3.llm.errors
+    interval: 1m
+    rules:
+      - alert: LLMProviderErrorRateWarning
+        expr: >
+          (
+            sum by(provider) (rate(xiaoguai_llm_call_duration_seconds_count{status=~"error|timeout"}[5m]))
+          )
+          /
+          (
+            sum by(provider) (rate(xiaoguai_llm_call_duration_seconds_count[5m])) > 0
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: llm
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/observability.md
+        annotations:
+          summary: "LLM provider {{ $labels.provider }} error rate above 5% for 10 minutes"
+          description: >
+            Provider {{ $labels.provider }} is returning errors or timeouts for more
+            than 5% of calls over the last 10 minutes.
+            Current error fraction: {{ $value | humanizePercentage }}.
+            Agent tasks relying on this provider may be failing or retrying excessively.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=llm
+
+      - alert: LLMProviderErrorRateCritical
+        expr: >
+          (
+            sum by(provider) (rate(xiaoguai_llm_call_duration_seconds_count{status=~"error|timeout"}[5m]))
+          )
+          /
+          (
+            sum by(provider) (rate(xiaoguai_llm_call_duration_seconds_count[5m])) > 0
+          ) > 0.20
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+          subsystem: llm
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/observability.md
+        annotations:
+          summary: "LLM provider {{ $labels.provider }} error rate above 20% (critical)"
+          description: >
+            Provider {{ $labels.provider }} error/timeout rate has exceeded 20% for
+            5 consecutive minutes.
+            Current error fraction: {{ $value | humanizePercentage }}.
+            Immediate action needed: verify provider status, check API keys and
+            quota, and consider routing all traffic to an alternate provider.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=llm
