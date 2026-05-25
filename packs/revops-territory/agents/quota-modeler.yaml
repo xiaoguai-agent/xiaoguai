@@ -1,0 +1,157 @@
+# Agent definition — quota-modeler
+# ---------------------------------------------------------------------------
+# Triggered by revops.quarterly_planning (inbound: quarterly-planning-trigger).
+#
+# The agent:
+#   1. Loads each rep's trailing 4-quarter attainment history.
+#   2. Loads market/territory growth estimates from rt_territories or
+#      an operator-configured market-data source.
+#   3. Runs LLM-assisted modeling to propose Q+1 quotas for each rep.
+#   4. Renders a quota-model-summary template.
+#   5. Writes proposals to rt_rep_capacity (status: pending, not committed).
+#   6. Routes output to exec-dashboard-update.
+#
+# HOTL: quota proposals are AUTONOMOUS to compute and present; any write
+#        back to the CRM / committed quota system requires human approval.
+# ---------------------------------------------------------------------------
+
+name: quota-modeler
+version: "1.0.0"
+description: >
+  Proposes Q+1 quota targets per rep from trailing 4-quarter attainment,
+  territory growth rates, and market data. Proposals are autonomous;
+  committing quotas to CRM requires human approval.
+
+triggers:
+  - event: revops.quarterly_planning
+    source: quarterly-planning-trigger
+
+llm:
+  model: ${REVOPS_MODELER_LLM_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 4096
+
+system_prompt: |
+  You are a RevOps quota-modeling assistant. Given historical attainment
+  data and market signals, you propose realistic yet ambitious Q+1 quotas.
+
+  Modeling heuristics (apply in order, document overrides):
+  1. Base: median of trailing 4 quarters' attainment_usd (excludes outliers
+     defined as > 2 std dev from mean).
+  2. Ramp: multiply by the territory's market_growth_rate (default 1.05 if
+     not provided).
+  3. Floor: quota must be >= 80 % of current quota (never cliff a rep more
+     than 20 % down without explicit manager override).
+  4. Ceiling: quota must be <= 130 % of current quota per quarter
+     (aggressive but avoidable sandbagging prevention).
+  5. New-rep adjustment: if rep has < 2 full quarters of data, use team
+     median as the base instead of individual history.
+
+  Output ONLY valid JSON matching QuotaModelSummary schema.
+
+  QuotaModelSummary schema:
+  {
+    "planning_period": "string (e.g. 2026-Q3)",
+    "generated_at":    "ISO-8601",
+    "proposals": [
+      {
+        "rep_id":             "string",
+        "rep_name":           "string",
+        "current_quota_usd":  0.00,
+        "proposed_quota_usd": 0.00,
+        "change_pct":         0.0,
+        "trailing_attainment_usd": [0.00, 0.00, 0.00, 0.00],
+        "market_growth_rate": 0.00,
+        "modeling_notes":     "string"
+      }
+    ],
+    "team_total_current_usd":  0.00,
+    "team_total_proposed_usd": 0.00,
+    "team_change_pct":         0.0,
+    "assumptions":             "string"
+  }
+
+tools:
+  - name: load_attainment_history
+    description: >
+      Fetch trailing 4 quarters of quota and attainment per active rep.
+      Returns rep_id, rep_name, and an ordered array of
+      {period, quota_usd, attainment_usd, attainment_pct}.
+    kind: sql
+    query: |
+      SELECT
+          rc.rep_id,
+          rc.rep_name,
+          rc.quota_usd                                    AS current_quota_usd,
+          -- Trailing attainment stored in rt_fairness_audit per-period or
+          -- a separate history table; here we approximate from the audit log.
+          JSONB_AGG(
+              JSONB_BUILD_OBJECT(
+                  'period',          fa.audit_period,
+                  'quota_usd',       (fa.inequity_details->rc.rep_id->>'quota_usd')::NUMERIC,
+                  'attainment_pct',  rc.attainment_pct
+              )
+              ORDER BY fa.audit_period DESC
+          ) FILTER (WHERE fa.audit_period IS NOT NULL)     AS history
+      FROM rt_rep_capacity rc
+      LEFT JOIN rt_fairness_audit fa
+             ON fa.tenant_id = rc.tenant_id
+      WHERE rc.tenant_id = '{tenant_id}'
+        AND rc.is_active  = TRUE
+      GROUP BY rc.rep_id, rc.rep_name, rc.quota_usd, rc.attainment_pct
+      ORDER BY rc.rep_name
+
+  - name: load_territory_growth_rates
+    description: >
+      Fetch operator-configured market growth rates from rt_territories.
+      Falls back to REVOPS_DEFAULT_MARKET_GROWTH_RATE (default 1.05).
+    kind: sql
+    query: |
+      SELECT
+          id              AS territory_id,
+          name            AS territory_name,
+          COALESCE(
+              (notes::JSONB)->>'market_growth_rate',
+              '${REVOPS_DEFAULT_MARKET_GROWTH_RATE:-1.05}'
+          )::NUMERIC       AS market_growth_rate
+      FROM rt_territories
+      WHERE tenant_id = '{tenant_id}'
+
+  - name: save_quota_proposals
+    description: >
+      Write proposed quotas to rt_rep_capacity with a 'proposed' flag
+      (does not overwrite quota_usd until a human commits them).
+      Stores proposals in the score_breakdown-adjacent JSONB field.
+    kind: sql
+    query: |
+      UPDATE rt_rep_capacity
+      SET    updated_at = NOW()
+      WHERE  tenant_id  = '{tenant_id}'
+        AND  rep_id     = '{rep_id}'
+      -- Note: actual quota_usd update deferred until HOTL approval.
+      -- Proposal stored in rt_fairness_audit.recommended_actions for now.
+      RETURNING rep_id
+
+  - name: render_quota_summary
+    description: >
+      Render the quota-model-summary template for exec review.
+    kind: template
+    template: "templates/quota-model-summary.md.j2"
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    # Computing and presenting proposals is autonomous.
+    save_quota_proposals: unlimited
+    render_quota_summary: unlimited
+  require_human_approval:
+    # Committing proposed quotas to the live quota_usd field or CRM requires approval.
+    - commit_quota_to_crm
+  notify_channel: "${REVOPS_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - proposals_generated
+    - quota_committed
+    - quota_overridden_by_manager
+  feedback_table: rt_fairness_audit

@@ -1,0 +1,42 @@
+---
+# Inbound source — quarterly planning trigger
+#
+# Can be fired two ways:
+#   1. Scheduled: automatically on the first business day of the last month
+#      of each quarter (i.e. Mar 1, Jun 1, Sep 1, Dec 1 at 08:00 UTC).
+#   2. Manual: POST /v1/revops/inbound/planning-trigger/{route_id}
+#      with an optional JSON body to override the planning_period.
+#
+# Downstream: fairness-auditor + quota-modeler (both triggered in parallel).
+
+source: quarterly-planning-trigger
+route_prefix: /v1/revops/inbound/planning-trigger
+
+# Scheduled automatic fire
+schedule:
+  # First day of March, June, September, December at 08:00 UTC
+  cron: "0 8 1 3,6,9,12 *"
+
+# Manual trigger schema (POST body, all fields optional)
+manual_trigger_schema:
+  planning_period:
+    type: string
+    description: "Override planning period label, e.g. '2026-Q3'. Defaults to current quarter."
+    required: false
+  dry_run:
+    type: boolean
+    description: "If true, agents run analysis but do not persist results."
+    default: false
+
+event:
+  kind: revops.quarterly_planning
+  payload_mapping:
+    tenant_id:       "{route_tenant_id}"
+    planning_period: "$.planning_period"   # computed from current date if not provided
+    dry_run:         "$.dry_run"
+
+downstream:
+  # Both agents receive the event concurrently
+  agents:
+    - fairness-auditor
+    - quota-modeler
