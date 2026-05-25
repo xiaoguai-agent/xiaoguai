@@ -1,0 +1,56 @@
+---
+# Inbound connector: BigQuery Scheduled Query completion webhook
+#
+# BigQuery Scheduled Queries can POST a Pub/Sub notification when a run
+# completes (via a Pub/Sub topic + push subscription to this endpoint).
+# This connector normalises that notification into a KpiSourceRefreshEvent.
+#
+# Route: POST /v1/exec-briefing/inbound/bigquery/{route_id}
+# Auth:  Bearer token from scheduler_webhook_tokens table.
+#        Additionally validates the Google-provided OIDC token in the
+#        Authorization header (audience == ${BQ_PUBSUB_AUDIENCE}).
+
+source: bigquery-scheduled-query
+route_prefix: /v1/exec-briefing/inbound/bigquery
+
+normalize:
+  # OIDC token validation — verifies the push message came from Google Pub/Sub.
+  oidc_audience: ${BQ_PUBSUB_AUDIENCE}
+
+  # Pub/Sub push envelope → KpiSourceRefreshEvent field mapping.
+  field_map:
+    # The Pub/Sub message data is base64-encoded JSON with BigQuery job metadata.
+    close_date:
+      source: message.attributes.jobStartTime
+      transform: date_from_iso8601
+    period_type:
+      source: message.attributes.scheduledQueryName
+      transform: extract_period_type   # "daily_close" → "daily", etc.
+    source_system: _const:bigquery
+    completed_at:
+      source: message.publishTime
+      transform: parse_iso8601
+    is_synthetic: _const:false
+
+# BigQuery dataset and table patterns that qualify as period-close signals.
+# Only scheduled queries whose name matches one of these patterns trigger ingestion.
+accepted_query_patterns:
+  - "*_daily_kpi_close"
+  - "*_weekly_kpi_close"
+  - "*_monthly_kpi_close"
+
+# Sample Pub/Sub push payload for integration tests.
+sample_payload: |
+  {
+    "message": {
+      "data": "eyJqb2JJZCI6Impvb2ItMTIzNDUiLCJzdGF0dXMiOiJET05FIn0=",
+      "attributes": {
+        "scheduledQueryName": "projects/my-project/locations/us/transferConfigs/daily_kpi_close",
+        "jobStartTime": "2026-05-25T00:00:00.000Z",
+        "dataSourceId": "scheduled_query"
+      },
+      "messageId": "msg-abc-789",
+      "publishTime": "2026-05-25T06:01:23.456Z"
+    },
+    "subscription": "projects/my-project/subscriptions/exec-briefing-bq-sub"
+  }

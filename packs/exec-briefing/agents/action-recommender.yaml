@@ -1,0 +1,89 @@
+---
+# Action Recommender Agent
+#
+# Triggered by: anomaly-explainer (via AnomalyCallout) and
+#               exec-narrator (via NarrativeSummary) on weekly / monthly runs.
+#
+# Responsibility: for each flagged metric anomaly, produce a concise
+# next-best-action recommendation suitable for including in the exec briefing.
+# Actions are concrete, assignable, and time-bounded — not vague suggestions.
+#
+# On daily runs: only "urgent" severity anomalies trigger recommendations.
+# On weekly / monthly runs: all anomaly severities receive recommendations.
+
+name: action-recommender
+kind: llm-agent
+description: >
+  Produces next-best-action recommendations for anomalous KPIs. Actions are
+  concrete (owner, verb, deadline), avoiding generic advice. On daily runs
+  only urgent anomalies receive actions; weekly/monthly runs include notable
+  and significant anomalies too.
+
+# ── LLM settings ──────────────────────────────────────────────────────────────
+
+llm:
+  model: ${RECOMMENDER_LLM_MODEL:-sonnet}
+  temperature: 0.2
+  max_tokens: 768
+
+# ── Severity filter ───────────────────────────────────────────────────────────
+
+severity_filter:
+  daily:   [urgent]
+  weekly:  [notable, significant, urgent]
+  monthly: [notable, significant, urgent]
+
+# ── System prompt ─────────────────────────────────────────────────────────────
+
+system_prompt: |
+  You are a chief of staff helping executive leadership prioritise responses to
+  KPI movements. For each anomalous metric you are given, produce one concrete
+  next-best-action recommendation.
+
+  Rules:
+  - The action must have: a suggested owner (by role, not person), a specific
+    verb (investigate, escalate, schedule, review, pause), and a deadline
+    (today | this week | this sprint | end of quarter).
+  - Do not repeat the anomaly description — that appears elsewhere in the briefing.
+  - One action per KPI. Length: ≤ 25 words.
+  - If the anomaly is positive (a spike in a good metric), the action should
+    capture the opportunity (e.g. "VP Growth: investigate which channel drove
+    the conversion spike and scale it this week.").
+  - If the anomaly is negative, the action should mitigate risk.
+  - Respond ONLY with valid JSON matching the ActionRecommendation schema.
+
+  ActionRecommendation schema:
+  {
+    "kpi_name": "string",
+    "owner_role": "string (e.g. 'VP Engineering', 'Head of Customer Success')",
+    "action_verb": "string",
+    "action_text": "≤25 word action statement",
+    "deadline": "today|this_week|this_sprint|end_of_quarter",
+    "priority": "P0|P1|P2"
+  }
+
+# ── User prompt ───────────────────────────────────────────────────────────────
+
+user_prompt: |
+  ## Anomaly callout
+  - KPI: {{ callout.kpi_label }}
+  - Direction: {{ callout.direction }}
+  - Severity: {{ callout.severity }}
+  - Exec headline: {{ callout.headline }}
+  - Explanation: {{ callout.explanation }}
+
+  ## Reporting period
+  - Period type: {{ briefing.period_type }}
+  - Date: {{ briefing.close_date }}
+
+  Produce the ActionRecommendation JSON now.
+
+# ── Output ────────────────────────────────────────────────────────────────────
+
+output:
+  struct: ActionRecommendation
+  # Collected into a list and injected into the weekly-board-update template.
+  # Daily briefings include only P0 actions.
+  included_in_templates:
+    - templates/daily-briefing-email    # P0 only
+    - templates/weekly-board-update     # all priorities

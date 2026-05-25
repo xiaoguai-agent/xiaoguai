@@ -1,0 +1,76 @@
+---
+# Inbound connector: Manual KPI CSV upload
+#
+# Allows ops / finance teams to manually upload a CSV of KPI values via a
+# multipart POST to the briefing inbound endpoint. Useful for metrics that
+# live in spreadsheets or systems without a webhook-capable API.
+#
+# Route: POST /v1/exec-briefing/inbound/csv/{route_id}
+# Auth:  Bearer token from scheduler_webhook_tokens table.
+#        Caller must also supply a valid CSV format matching the schema below.
+#
+# The connector validates, normalises, and writes rows directly to the
+# metrics_warehouse.kpi_observations table, then emits a KpiSourceRefreshEvent
+# with source_system=manual so downstream agents treat it the same as
+# warehouse-sourced data.
+
+source: manual-kpi-csv
+route_prefix: /v1/exec-briefing/inbound/csv
+
+# ── CSV schema (required columns) ─────────────────────────────────────────────
+
+csv_schema:
+  delimiter: ","
+  has_header: true
+  required_columns:
+    - name: metric_name
+      type: string
+      description: "Snake_case metric identifier e.g. weekly_active_users"
+    - name: metric_label
+      type: string
+      description: "Human-readable label e.g. 'Weekly Active Users'"
+    - name: category
+      type: string
+      enum: [north_star, revenue, growth, retention, ops]
+    - name: period_date
+      type: date
+      format: "YYYY-MM-DD"
+    - name: current_value
+      type: float
+    - name: prior_period_value
+      type: float
+
+  optional_columns:
+    - name: ytd_value
+      type: float
+    - name: context_note
+      type: string
+      max_length: 200
+
+# ── Validation rules ──────────────────────────────────────────────────────────
+
+validation:
+  max_rows: 50             # reject uploads with > 50 rows (likely a mistake)
+  max_file_size_kb: 256
+  reject_future_dates: true
+  reject_if_period_already_closed: true  # prevent duplicate submissions
+
+# ── Normalisation ─────────────────────────────────────────────────────────────
+
+normalize:
+  # Derive period_type from the period_date relative to today.
+  # A row with period_date == Monday of current week → weekly, etc.
+  auto_detect_period_type: true
+
+  # period_over_period_pct computed automatically from current/prior values.
+  compute_period_over_period: true
+
+# ── Sample CSV (for documentation and integration tests) ──────────────────────
+
+sample_csv: |
+  metric_name,metric_label,category,period_date,current_value,prior_period_value
+  weekly_active_users,Weekly Active Users,north_star,2026-05-25,148231,141022
+  arr_usd,ARR (USD),revenue,2026-05-25,4820000,4650000
+  new_signups,New Signups,growth,2026-05-25,3241,3018
+  churn_rate_pct,Monthly Churn Rate (%),retention,2026-05-25,1.8,2.1
+  p99_latency_ms,p99 API Latency (ms),ops,2026-05-25,142,138

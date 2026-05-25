@@ -1,0 +1,132 @@
+---
+# KPI Collator Agent
+#
+# Triggered by: KpiSourceRefreshEvent (from watches/kpi-source-refresh.yaml)
+#               or directly by the daily/weekly/monthly scheduler.
+#
+# Responsibility: gather north-star + functional KPIs from all configured
+# sources (BigQuery, Looker, Snowflake), normalise them into a unified
+# KpiSnapshot, and write the snapshot to the metrics store for downstream
+# agents.
+#
+# This agent performs only data collection — no LLM calls.
+
+name: kpi-collator
+kind: worker              # no LLM; purely tool-call driven
+description: >
+  Collects north-star and functional KPIs from BigQuery, Looker, and Snowflake
+  for the current reporting period. Normalises values into a KpiSnapshot struct
+  and writes it to the metrics store. Triggers exec-narrator on completion.
+
+# ── Collection steps ──────────────────────────────────────────────────────────
+#
+# Steps are executed in parallel where source dependencies allow.
+# Each step emits a list of KpiObservation records into the snapshot.
+
+collection_steps:
+  - id: north_star_kpis
+    description: "Fetch north-star metric (e.g. Weekly Active Users, Activated Accounts)"
+    tool: bigquery_run_query
+    params:
+      project: ${BQ_PROJECT_ID}
+      query: |
+        SELECT
+          metric_name,
+          metric_label,
+          'north_star'   AS category,
+          period_date,
+          current_value,
+          prior_period_value,
+          SAFE_DIVIDE(current_value - prior_period_value, prior_period_value) AS period_over_period_pct
+        FROM `{{ config.kpi_sources.bigquery_project }}.metrics_warehouse.north_star_metrics`
+        WHERE period_date = '{{ event.close_date }}'
+        ORDER BY metric_name
+    max_rows: 10
+
+  - id: revenue_kpis
+    description: "Fetch revenue KPIs (ARR, MRR, NRR, bookings)"
+    tool: snowflake_execute
+    params:
+      account: ${SNOWFLAKE_ACCOUNT}
+      query: |
+        SELECT
+          metric_name,
+          metric_label,
+          'revenue'      AS category,
+          period_date,
+          current_value,
+          prior_period_value,
+          period_over_period_pct,
+          ytd_value
+        FROM METRICS.WAREHOUSE.REVENUE_METRICS
+        WHERE period_date = '{{ event.close_date }}'
+        ORDER BY metric_name
+    max_rows: 15
+
+  - id: growth_kpis
+    description: "Fetch growth KPIs (new signups, trial conversions, pipeline)"
+    tool: looker_run_look
+    params:
+      base_url: ${LOOKER_BASE_URL}
+      look_id: ${LOOKER_GROWTH_LOOK_ID}
+      filters:
+        date: "{{ event.close_date }}"
+      result_format: json_detail
+    max_rows: 10
+
+  - id: retention_kpis
+    description: "Fetch retention + engagement KPIs (churn rate, DAU/MAU, feature adoption)"
+    tool: bigquery_run_query
+    params:
+      project: ${BQ_PROJECT_ID}
+      query: |
+        SELECT
+          metric_name,
+          metric_label,
+          'retention'    AS category,
+          period_date,
+          current_value,
+          prior_period_value,
+          period_over_period_pct
+        FROM `{{ config.kpi_sources.bigquery_project }}.metrics_warehouse.retention_metrics`
+        WHERE period_date = '{{ event.close_date }}'
+        ORDER BY metric_name
+    max_rows: 10
+
+  - id: ops_kpis
+    description: "Fetch operational KPIs (p99 latency, error rate, support ticket volume)"
+    tool: bigquery_run_query
+    params:
+      project: ${BQ_PROJECT_ID}
+      query: |
+        SELECT
+          metric_name,
+          metric_label,
+          'ops'          AS category,
+          period_date,
+          current_value,
+          prior_period_value,
+          period_over_period_pct
+        FROM `{{ config.kpi_sources.bigquery_project }}.metrics_warehouse.ops_metrics`
+        WHERE period_date = '{{ event.close_date }}'
+        ORDER BY metric_name
+    max_rows: 10
+
+# ── Output ────────────────────────────────────────────────────────────────────
+
+output:
+  # KpiSnapshot written to the metrics store; schema auto-inferred from steps.
+  write_snapshot: true
+  snapshot_table: "{{ config.kpi_sources.bigquery_project }}.metrics_warehouse.kpi_snapshots"
+
+  # On completion, hand off the snapshot to exec-narrator.
+  triggers:
+    - agents/exec-narrator.yaml
+
+# ── Error handling ────────────────────────────────────────────────────────────
+
+on_error:
+  # If one source fails, continue with others and flag missing sources in
+  # the KpiSnapshot. exec-narrator will note data gaps in its narrative.
+  strategy: partial_continue
+  alert_channel: ${OPS_ALERT_CHANNEL:-""}

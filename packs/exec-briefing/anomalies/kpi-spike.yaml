@@ -1,0 +1,74 @@
+---
+# Anomaly Detector: kpi-spike
+#
+# Detects upward anomalies (unexpected spikes) in any tracked KPI.
+# Uses xg-anomaly's z-score engine over a rolling 90-day baseline window.
+#
+# When |z| crosses a configured threshold and direction == "up", emits a
+# KpiAnomalyEvent with severity derived from the z-score magnitude.
+# The anomaly-explainer agent subscribes to this event to produce
+# exec-friendly language.
+
+name: kpi-spike
+kind: anomaly
+detector: xg-anomaly          # delegates computation to the xg-anomaly crate
+
+description: >
+  Flags unexpected upward movements in tracked KPIs using z-score analysis
+  over a 90-day rolling baseline. Emits KpiAnomalyEvent with business-readable
+  severity so the anomaly-explainer agent can narrate the finding in plain
+  English without requiring the exec audience to interpret statistical terms.
+
+# ── Detection parameters ───────────────────────────────────────────────────────
+
+detection:
+  direction: up               # "up" | "down" | "both" — spike is upward only
+  baseline_window_days: 90    # rolling window for mean + std computation
+  min_data_points: 14         # require at least 2 weeks of history before firing
+
+  # z-score thresholds mapped to severity labels.
+  # These mirror config.anomaly thresholds so pack.yaml is the single source.
+  thresholds:
+    - z_score: 2.0
+      severity: notable        # "X is running above its typical range"
+    - z_score: 3.0
+      severity: significant    # "X is materially above baseline"
+    - z_score: 4.0
+      severity: urgent         # "X requires immediate exec attention"
+
+  # Suppression: do not re-fire for the same KPI within this window
+  # (prevents alert fatigue during sustained elevated periods).
+  cooldown_minutes: 60
+
+# ── KPIs subscribed ──────────────────────────────────────────────────────────
+#
+# The kpi-collator agent writes all collected metrics to the
+# metrics_warehouse.kpi_observations table. This detector reads from it.
+# "all_tracked" means the detector applies to every KPI the collator emits.
+
+kpis: all_tracked
+
+# ── Emitted event ─────────────────────────────────────────────────────────────
+
+emits:
+  event: KpiAnomalyEvent
+  schema:
+    kpi_name: string          # e.g. "weekly_active_users"
+    kpi_label: string         # human-readable e.g. "Weekly Active Users"
+    kpi_category: string      # "north_star" | "growth" | "retention" | "revenue" | "ops"
+    direction: string         # "spike" | "trough"
+    current_value: float
+    baseline_mean: float
+    baseline_std: float
+    z_score: float            # raw z-score from xg-anomaly
+    severity: string          # "notable" | "significant" | "urgent"
+    severity_label: string    # exec-friendly label (set by anomaly-explainer)
+    period_date: date         # the period this observation covers
+    detected_at: datetime     # ISO-8601 UTC
+    context_note: string      # optional free-text from the detector
+
+# ── Subscribers ───────────────────────────────────────────────────────────────
+
+subscribers:
+  - agents/anomaly-explainer.yaml   # translates z-score into exec language
+  - agents/action-recommender.yaml  # surfaces next-best-action for the metric

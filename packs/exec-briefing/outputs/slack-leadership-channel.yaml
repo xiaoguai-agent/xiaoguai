@@ -1,0 +1,74 @@
+---
+# Output connector: Slack Leadership Channel
+#
+# Posts a condensed version of the exec briefing to the configured Slack
+# leadership channel. Uses Slack Block Kit for structured layout.
+#
+# On daily runs: posts north-star bullet + urgent anomalies only (≤ 400 chars).
+# On weekly runs: posts all 5 bullets + anomaly callouts + action list.
+
+output: slack-leadership-channel
+
+slack:
+  bot_token: ${SLACK_BOT_TOKEN}
+  channel: ${SLACK_LEADERSHIP_CHANNEL}
+
+  # Thread strategy: weekly briefings start a new thread; daily updates are
+  # posted as replies to the current week's thread to reduce channel noise.
+  thread_strategy: weekly_thread   # top_level | weekly_thread
+
+  # Slack Block Kit message structure.
+  # Rendered from NarrativeSummary + AnomalyCallout list.
+  blocks:
+    - type: header
+      text: "{{ '📊' }} {{ narrative.subject_line }}"
+
+    - type: context
+      elements:
+        - type: mrkdwn
+          text: "{{ narrative.period_label }} · Generated {{ generated_at | format_datetime_slack }}"
+
+    - type: divider
+
+    # 5-bullet narrative (weekly) or north-star only (daily).
+    - type: section
+      text: |
+        {% if briefing.period_type == 'daily' %}
+        {{ narrative.bullets | selectattr('theme', 'equalto', 'north_star') | map(attribute='text') | first }}
+        {% else %}
+        {% for bullet in narrative.bullets %}
+        • {{ bullet.text }}
+        {% endfor %}
+        {% endif %}
+
+    # Anomaly callouts (inline, compact for Slack).
+    {% for callout in callouts %}
+    {% if briefing.period_type != 'daily' or callout.severity == 'urgent' %}
+    - type: section
+      text: |
+        *{{ callout.exec_severity_label | upper }}* · {{ callout.kpi_label }}
+        {{ callout.headline }}
+    {% endif %}
+    {% endfor %}
+
+    # P0 actions only (all cadences).
+    {% set p0 = actions | selectattr('priority', 'equalto', 'P0') | list %}
+    {% if p0 %}
+    - type: divider
+    - type: section
+      text: |
+        *Actions Required*
+        {% for action in p0 %}
+        • *{{ action.owner_role }}*: {{ action.action_text }}
+        {% endfor %}
+    {% endif %}
+
+    - type: context
+      elements:
+        - type: mrkdwn
+          text: "<{{ briefing_url }}|View full briefing> · xiaoguai exec-briefing v{{ pack_version }}"
+
+# ── Deferred ─────────────────────────────────────────────────────────────────
+# - Feishu / DingTalk output connectors (same blocks, different SDK)
+# - @-mention owner on P0 action items (needs Slack user ID mapping)
+# - Emoji reaction tracking for outcome-telemetry engagement signal

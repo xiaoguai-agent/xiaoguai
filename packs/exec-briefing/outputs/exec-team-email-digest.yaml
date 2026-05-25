@@ -1,0 +1,55 @@
+---
+# Output connector: Executive Team Email Digest
+#
+# Sends the rendered daily-briefing-email or weekly-board-update HTML to the
+# configured exec team email list via the workspace SMTP / transactional email
+# provider (SendGrid by default).
+#
+# Daily: sent on weekday mornings after kpi-collator + exec-narrator complete.
+# Weekly: sent Monday mornings with the extended weekly-board-update template.
+# Monthly: sent on the 1st of each month.
+
+output: exec-team-email-digest
+
+email:
+  provider: ${EMAIL_PROVIDER:-sendgrid}   # sendgrid | ses | smtp
+  api_key: ${SENDGRID_API_KEY}            # used when provider=sendgrid
+  smtp_url: ${SMTP_URL}                   # used when provider=smtp
+
+  from:
+    name: "Exec Briefing"
+    address: ${BRIEFING_FROM_EMAIL:-briefing@company.com}
+
+  # Recipients resolved from pack config at send time.
+  to:
+    daily: ${EXEC_TEAM_EMAIL_LIST}
+    weekly: ${EXEC_TEAM_EMAIL_LIST}
+    monthly: ${BOARD_EMAIL_LIST}
+
+  subject:
+    daily: "{{ narrative.subject_line }} — {{ narrative.period_label }}"
+    weekly: "[Weekly] {{ narrative.subject_line }} — {{ narrative.period_label }}"
+    monthly: "[Monthly Board Update] {{ narrative.subject_line }} — {{ narrative.period_label }}"
+
+  # Reply-to address for exec replies (e.g. a shared inbox monitored by ops).
+  reply_to: ${BRIEFING_REPLY_TO:-ops@company.com}
+
+  # Tracking — used by outcome-telemetry to measure engagement.
+  tracking:
+    open_tracking: true
+    click_tracking: true
+    tracking_domain: ${EMAIL_TRACKING_DOMAIN:-""}
+
+# ── Delivery guarantees ───────────────────────────────────────────────────────
+
+delivery:
+  # Retry on transient provider errors (rate limits, 5xx).
+  max_retries: 3
+  retry_backoff_seconds: [30, 120, 300]
+  # If all retries fail, write failure to outcome-telemetry and alert ops.
+  on_failure: alert_ops_channel
+
+# ── Deferred ─────────────────────────────────────────────────────────────────
+# - Per-recipient personalisation (name substitution in subject line)
+# - Unsubscribe management (currently a static link; needs list-unsubscribe header)
+# - A/B subject line testing via outcome-telemetry
