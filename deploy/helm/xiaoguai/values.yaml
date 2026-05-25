@@ -82,6 +82,31 @@ secrets:
   # read-replica routing (v1.1.4.1+).
   databaseRead: ""               # keys: url
 
+  # ---------------------------------------------------------------------------
+  # Wave-3 secrets — all optional, leave "" to skip mounting the env var.
+  # Pre-create the referenced Secret with the keys listed in the comment.
+  # ---------------------------------------------------------------------------
+
+  # Cloud LLM v2 providers
+  # Key: BEDROCK_AWS_ACCESS_KEY_ID, BEDROCK_AWS_SECRET_ACCESS_KEY
+  bedrock: ""
+  # Key: AZURE_OPENAI_API_KEY
+  azureOpenai: ""
+  # Key: MISTRAL_API_KEY
+  mistral: ""
+  # Key: GROQ_API_KEY
+  groq: ""
+
+  # IM adapter bot tokens / signing secrets
+  # Key: DISCORD_BOT_TOKEN
+  discord: ""
+  # Key: TELEGRAM_BOT_TOKEN
+  telegram: ""
+  # Key: MATTERMOST_BOT_TOKEN
+  mattermost: ""
+  # Key: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET
+  slack: ""
+
 # ---------------------------------------------------------------------------
 # createSecret — convenience for non-production / CI environments.
 # When true, the chart creates a Secret from the plaintext values below.
@@ -198,3 +223,151 @@ networkPolicy:
 # ---------------------------------------------------------------------------
 podAnnotations: {}
 commonLabels: {}
+
+# =============================================================================
+# Wave-3 subsystem configuration
+# All subsystems are disabled by default; enable individually as needed.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# HotL — policy store and enforcement engine.
+# HOTL_* env vars.
+# ---------------------------------------------------------------------------
+hotl:
+  # Enable the HotL enforcement engine.
+  enabled: false
+  # Backend for the policy store: "pg" (Postgres, recommended) or "in-mem".
+  policyStoreBackend: "pg"
+  # Whether enforcement decisions are applied (true) or audit-only (false).
+  enforcementEnabled: false
+  # Escalation channels — set to non-empty strings to activate.
+  # Slack workspace hook URL for policy violations (non-secret, a channel URL).
+  slackEscalationWebhookUrl: ""
+  # E-mail address to send escalation alerts to.
+  emailEscalationAddress: ""
+  # Generic webhook URL for policy violation events.
+  webhookEscalationUrl: ""
+
+# ---------------------------------------------------------------------------
+# Outcomes — recorder for agent run results and metrics.
+# OUTCOMES_* env vars.
+# ---------------------------------------------------------------------------
+outcomes:
+  # Recorder backend: "pg" (Postgres) or "in-mem" (ephemeral, non-HA).
+  backend: "in-mem"
+  # How many days to retain outcome records before expiry.
+  retentionDays: 30
+  # Bucket size (seconds) for time-series aggregation windows.
+  timeseriesBucketSeconds: 300
+
+# ---------------------------------------------------------------------------
+# Skills / packs — skill pack management.
+# SKILLS_* env vars.
+# ---------------------------------------------------------------------------
+skills:
+  # Absolute path (in the container) to the packs config file.
+  # Mount a ConfigMap / PVC there if you need custom packs.
+  packsConfigPath: ""
+  # Comma-separated list of pack IDs allowed to be installed.
+  # Empty string = allow all packs in packsConfigPath.
+  installAllowlist: ""
+  # Auto-install packs from the allow-list on startup.
+  autoInstallOnStartup: false
+
+# ---------------------------------------------------------------------------
+# Rate limiting.
+# RATE_LIMIT_* env vars.
+# ---------------------------------------------------------------------------
+rateLimit:
+  # Enable the rate-limit middleware.
+  enabled: false
+  # Backend: "in-mem" (single-replica only) or "redis" (uses secrets.cache URL).
+  backend: "in-mem"
+  # Per-tenant limits
+  perTenantRequests: 100       # requests per window
+  perTenantWindowSeconds: 60
+  # Per-route limits (overrides per-tenant for matching routes)
+  perRouteRequests: 30
+  perRouteWindowSeconds: 10
+
+# ---------------------------------------------------------------------------
+# Cloud LLM v2 providers.
+# Credentials are always loaded from secrets.* above (never put keys here).
+# BEDROCK_*, AZURE_OPENAI_*, MISTRAL_*, GROQ_* env vars.
+# ---------------------------------------------------------------------------
+bedrock:
+  # AWS region for Bedrock API calls.
+  region: "us-east-1"
+  # Auth mode: "env-keys" (BEDROCK_AWS_ACCESS_KEY_ID/SECRET) or "irsa" (pod IRSA).
+  authMode: "irsa"
+
+azureOpenai:
+  # Azure OpenAI resource endpoint, e.g. https://<resource>.openai.azure.com/
+  endpoint: ""
+  # Deployment ID / model deployment name in the Azure OpenAI resource.
+  deploymentId: ""
+  # API version string, e.g. "2024-02-01".
+  apiVersion: "2024-02-01"
+
+mistral:
+  # Mistral API base URL (leave empty to use the default public endpoint).
+  apiBase: ""
+
+groq:
+  # Groq API base URL (leave empty to use the default public endpoint).
+  apiBase: ""
+
+# ---------------------------------------------------------------------------
+# Observability — OpenTelemetry + Prometheus.
+# OTEL_*, PROMETHEUS_* env vars.
+# ---------------------------------------------------------------------------
+observability:
+  otel:
+    # Enable OTLP trace/metric export.
+    enabled: false
+    # OTLP gRPC endpoint, e.g. http://otel-collector:4317
+    endpoint: ""
+    # Fraction of traces to sample (0.0 – 1.0).
+    tracesSamplingRatio: "0.1"
+    # Service name reported in spans.
+    serviceName: "xiaoguai"
+  prometheus:
+    # Expose a /metrics endpoint on the given address.
+    enabled: false
+    # Bind address for the Prometheus scrape listener.
+    listenAddr: "0.0.0.0:9090"
+
+# ---------------------------------------------------------------------------
+# IM adapters — wave-3 additions: Discord, Telegram, Mattermost.
+# Slack bot-token support (secrets.slack) is also new in wave-3.
+# Credentials are loaded from secrets.* above.
+# ---------------------------------------------------------------------------
+discord:
+  # Enable the Discord bot adapter.
+  enabled: false
+  # Comma-separated list of channel IDs the bot is allowed to post in.
+  # Empty = all channels the bot has access to.
+  channelAllowlist: ""
+  # Webhook signing secret for Discord interaction events (non-token secret).
+  # If non-empty the chart mounts DISCORD_WEBHOOK_SECRET from secrets.discord.
+  webhookSigningEnabled: false
+
+telegram:
+  # Enable the Telegram bot adapter.
+  enabled: false
+  # Comma-separated list of chat IDs (groups or users) the bot is allowed to join.
+  chatAllowlist: ""
+
+mattermost:
+  # Enable the Mattermost bot adapter.
+  enabled: false
+  # Mattermost server URL, e.g. https://mattermost.example.com
+  serverUrl: ""
+  # Comma-separated list of channel IDs the bot is allowed to post in.
+  channelAllowlist: ""
+
+slack:
+  # Enable the Slack bot adapter (wave-3 bot-token flow).
+  enabled: false
+  # Comma-separated list of Slack channel IDs the bot is allowed to post in.
+  channelAllowlist: ""
