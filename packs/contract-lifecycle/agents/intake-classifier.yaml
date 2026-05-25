@@ -1,0 +1,105 @@
+# Agent: intake-classifier
+# ---------------------------------------------------------------------------
+# Triggered when a new deal arrives (Salesforce opportunity, manual upload,
+# or email). Decides which contract sequence to start:
+#
+#   NDA-first path:   deal size unknown OR counterparty not pre-vetted
+#                     → create NDA, then MSA when NDA signed
+#   MSA-direct path:  counterparty already has a signed NDA on file
+#                     AND deal size meets operator threshold
+#
+# Transition produced:  intent_received → draft  (autonomous — no HotL)
+# ---------------------------------------------------------------------------
+
+name: intake-classifier
+version: "1.0.0"
+description: >
+  Classifies inbound deal intent and determines the correct contract
+  sequence (NDA-first vs MSA-direct). Creates the first contract record
+  and initial draft. Fully autonomous — no human approval required for
+  this internal classification step.
+
+triggers:
+  - event: cl.salesforce_opportunity_created
+    source: salesforce-opportunity-create
+  - event: cl.manual_contract_upload
+    source: manual-contract-upload
+
+system_prompt: |
+  You are a contract intake specialist. Your job is to classify an
+  inbound deal and decide which contract sequence applies.
+
+  Rules:
+  - If the counterparty already has a signed NDA (check existing_nda tool),
+    AND the deal size is >= the operator's MSA-direct threshold (default $50k),
+    start with MSA.
+  - Otherwise start with NDA.
+  - If deal size is unknown, default to NDA-first.
+  - Never invent counterparty names, domains, or deal terms — use only the
+    data provided in the event payload.
+  - Output the classification as a structured result (see save_classification
+    tool).
+
+tools:
+  - name: lookup_existing_nda
+    description: >
+      Check whether the counterparty (matched by domain) has a signed NDA
+      already active or expired within the past 3 years.
+    kind: sql
+    query: |
+      SELECT id, reference_number, stage, signed_at, expiry_date
+      FROM cl_contracts
+      WHERE tenant_id = '{tenant_id}'
+        AND counterparty_domain = '{counterparty_domain}'
+        AND contract_type = 'NDA'
+        AND stage IN ('signed', 'active')
+      ORDER BY signed_at DESC
+      LIMIT 1
+
+  - name: get_operator_thresholds
+    description: >
+      Retrieve operator-configured thresholds for MSA-direct eligibility.
+    kind: config
+    keys:
+      - contracts.msa_direct_threshold_usd   # default: 50000
+      - contracts.require_nda_for_all        # default: false
+
+  - name: create_contract
+    description: >
+      Create a new contract record in cl_contracts and return its id.
+      Sets stage = 'draft'.
+    kind: sql
+    query: |
+      INSERT INTO cl_contracts (
+          tenant_id, contract_type, counterparty_name, counterparty_domain,
+          deal_size_usd, jurisdiction, sf_opportunity_id, reference_number, stage
+      ) VALUES (
+          '{tenant_id}', '{contract_type}', '{counterparty_name}',
+          '{counterparty_domain}', {deal_size_usd}, '{jurisdiction}',
+          '{sf_opportunity_id}', '{reference_number}', 'draft'
+      )
+      RETURNING id, reference_number
+
+  - name: log_stage_transition
+    description: >
+      Record the intent_received → draft transition in cl_stages.
+    kind: sql
+    query: |
+      INSERT INTO cl_stages (
+          tenant_id, contract_id, from_stage, to_stage,
+          triggered_by, trigger_source, notes
+      ) VALUES (
+          '{tenant_id}', '{contract_id}', NULL, 'draft',
+          'agent:intake-classifier', '{trigger_source}', '{notes}'
+      )
+
+hotl:
+  # Intake classification is fully autonomous.
+  autonomous: true
+  budget_usd: 0.00
+
+outcome_telemetry:
+  record_on:
+    - contract_created
+    - sequence_classified
+  feedback_table: cl_stage_audit

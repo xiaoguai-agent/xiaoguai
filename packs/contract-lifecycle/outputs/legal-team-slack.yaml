@@ -1,0 +1,65 @@
+---
+# Output: legal-team-slack
+# ---------------------------------------------------------------------------
+# Sends HotL approval requests and legal review notifications to the
+# configured Slack channel (or IM adapter: Feishu / DingTalk / WeCom).
+#
+# HOTL-GATED: this output is only triggered after a HotL approval record
+# has been created by an agent. The platform verifies that an approval_id
+# is present and status = 'pending' before dispatching the message.
+#
+# Triggered by:
+#   - redline-router (counterparty_review → legal_review gate)
+#   - renewal-detector (active → expired gate)
+#   - pack.yaml gated_transition: active → terminated
+#
+# Zero autonomous sends — every message requires an upstream HotL approval
+# record to be created first.
+# ---------------------------------------------------------------------------
+
+output: legal-team-slack
+version: "1.0.0"
+
+hotl:
+  # This output connector verifies HotL gate before sending.
+  require_pending_approval: true
+  approval_fields:
+    - approval_id
+    - gate_from_stage
+    - gate_to_stage
+
+channel:
+  # Operators configure the channel ID via env var.
+  # Falls back to admin_ui notification bell if not set.
+  slack_channel: "${CONTRACTS_LEGAL_SLACK_CHANNEL}"
+  im_adapter: "${IM_ADAPTER:-slack}"   # slack | feishu | dingtalk | wecom
+
+message:
+  # Short summary message; full approval card is attached as a block.
+  summary_template: |
+    *[Contract Lifecycle]* Approval needed for **{{ contract.reference_number }}**
+    Stage: `{{ gate_from_stage }}` → `{{ gate_to_stage }}`
+    Counterparty: {{ contract.counterparty_name }}
+    {% if risk_score %}Risk: **{{ risk_score | upper }}**{% endif %}
+    Approval ID: `{{ approval_id }}`
+
+  # Full card (rendered from stage-transition-card or legal-review-summary)
+  # attached as a Slack Block Kit section.
+  card_field: approval_card
+
+  # Interactive approval buttons (Slack interactive components).
+  # On click → POST /v1/contracts/hotl/respond with approval_id + decision.
+  actions:
+    - label: "Approve"
+      style: primary
+      action_id: "cl_hotl_approve"
+      payload_fields: [approval_id, contract_id, gate_to_stage]
+    - label: "Reject"
+      style: danger
+      action_id: "cl_hotl_reject"
+      payload_fields: [approval_id, contract_id]
+      requires_reason: true
+
+rate_limits:
+  per_contract_per_hour: 3    # prevent notification spam for the same contract
+  per_channel_per_minute: 10  # protect Slack rate limits

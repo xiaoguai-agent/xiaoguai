@@ -1,0 +1,156 @@
+# Agent: executed-package-builder
+# ---------------------------------------------------------------------------
+# Triggered when a DocuSign "completed" event arrives (all parties signed).
+# Assembles the executed package:
+#
+#   1. Downloads the signed PDF from DocuSign.
+#   2. Fetches any countersigned attachments recorded in cl_contract_drafts.
+#   3. Generates an audit trail document from cl_stages + cl_approvals.
+#   4. Uploads all three to S3 (WORM / Object Lock bucket), indexed by
+#      counterparty domain + contract_id.
+#   5. Updates cl_contracts: storage_key, signed_at, stage → 'signed'.
+#   6. Creates a HotL approval (signed → active) so a human confirms the
+#      countersigned copy is correct before the contract goes live.
+#   7. Renders an executed-package-readme for the approval card.
+#
+# Transition:  DocuSign complete → stage = 'signed'  (autonomous — confirms
+#              the signature event, no counterparty exposure).
+# Transition:  signed → active  (HOTL-GATED — human confirms receipt).
+# ---------------------------------------------------------------------------
+
+name: executed-package-builder
+version: "1.0.0"
+description: >
+  Assembles the executed package (signed PDF + attachments + audit trail)
+  and uploads it to immutable S3 storage. Autonomously marks 'signed' on
+  DocuSign completion, then creates a HotL gate for the signed → active
+  transition.
+
+triggers:
+  - event: cl.docusign_completed
+    source: docusign-event
+
+system_prompt: |
+  You are a legal operations assistant responsible for executed contract
+  packages. When DocuSign reports all parties have signed:
+
+  1. Download the signed PDF and any attachments.
+  2. Retrieve the audit trail (all stage transitions + HotL approvals) from
+     the database.
+  3. Upload the package to S3 using the archive tool.
+  4. Mark the contract as 'signed' in the database.
+  5. Create a HotL approval record for signed → active.
+  6. Render the executed-package-readme and include it in the approval card.
+
+  Rules:
+  - Do not mark the contract 'active' yourself — only create the HotL record.
+  - Never expose S3 pre-signed URLs in log output or IM messages.
+  - The S3 key format is: contracts/{tenant_id}/{counterparty_domain}/{contract_id}/executed/.
+  - If any upload fails, halt and return an error — do not partially update
+    the database.
+
+tools:
+  - name: download_docusign_envelope
+    description: >
+      Download the signed PDF and attachment list from DocuSign for a
+      given envelope_id. Returns: pdf_bytes (base64), attachments (list of
+      {name, bytes}).
+    kind: mcp
+    mcp_tool: docusign_download_completed_envelope
+    env:
+      DOCUSIGN_ACCOUNT_ID: "${DOCUSIGN_ACCOUNT_ID}"
+      DOCUSIGN_ACCESS_TOKEN: "${DOCUSIGN_ACCESS_TOKEN}"
+
+  - name: get_audit_trail
+    description: >
+      Fetch the full stage history and HotL approval log for a contract.
+    kind: sql
+    query: |
+      SELECT
+          s.from_stage, s.to_stage, s.triggered_by, s.trigger_source,
+          s.notes, s.created_at,
+          a.approved_by, a.approved_at, a.rejection_reason
+      FROM cl_stages s
+      LEFT JOIN cl_approvals a ON a.id = s.hotl_approval_id
+      WHERE s.contract_id = '{contract_id}'
+      ORDER BY s.created_at ASC
+
+  - name: upload_to_s3
+    description: >
+      Upload bytes to the WORM S3 bucket with Object Lock (COMPLIANCE mode,
+      retention = 7 years). Returns the S3 key.
+    kind: mcp
+    mcp_tool: s3_put_object_worm
+    env:
+      AWS_REGION: "${CONTRACTS_S3_REGION}"
+      S3_BUCKET: "${CONTRACTS_S3_BUCKET}"
+
+  - name: mark_contract_signed
+    description: >
+      Update cl_contracts: set stage = 'signed', signed_at = NOW(),
+      and record the S3 storage key for the executed package.
+    kind: sql
+    query: |
+      UPDATE cl_contracts
+      SET stage = 'signed',
+          signed_at = NOW(),
+          docusign_envelope_id = '{envelope_id}'
+      WHERE tenant_id = '{tenant_id}'
+        AND id = '{contract_id}'
+
+  - name: save_draft_version
+    description: >
+      Save the executed PDF reference as the final version in cl_contract_drafts.
+    kind: sql
+    query: |
+      INSERT INTO cl_contract_drafts (
+          tenant_id, contract_id, version,
+          storage_key, authored_by, change_summary
+      )
+      SELECT
+          '{tenant_id}', '{contract_id}',
+          COALESCE(MAX(version), 0) + 1,
+          '{storage_key}',
+          'agent:executed-package-builder',
+          'Executed — DocuSign envelope {envelope_id}'
+      FROM cl_contract_drafts
+      WHERE contract_id = '{contract_id}'
+      RETURNING id
+
+  - name: create_hotl_approval_active
+    description: >
+      Create a pending HotL approval record for signed → active.
+    kind: sql
+    query: |
+      INSERT INTO cl_approvals (
+          tenant_id, contract_id,
+          gate_from_stage, gate_to_stage,
+          status, approval_card
+      ) VALUES (
+          '{tenant_id}', '{contract_id}',
+          'signed', 'active',
+          'pending', '{approval_card}'
+      )
+      RETURNING id
+
+  - name: render_executed_package_readme
+    description: >
+      Render the executed-package-readme template with contract + S3 details.
+    kind: template
+    template: "templates/executed-package-readme.md.j2"
+
+hotl:
+  # DocuSign completion → signed is autonomous (confirms external event).
+  # signed → active is HOTL-GATED (agent creates the record, does not approve).
+  autonomous_transitions:
+    - from: counterparty_review
+      to: signed
+  require_approval_before:
+    - stage_transition_to_active
+
+outcome_telemetry:
+  record_on:
+    - executed_package_uploaded
+    - contract_signed
+    - hotl_approval_created
+  feedback_table: cl_stage_audit
