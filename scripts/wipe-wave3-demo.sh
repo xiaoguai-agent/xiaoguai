@@ -12,6 +12,11 @@
 #
 # Usage:
 #   bash scripts/wipe-wave3-demo.sh [--api-base URL] [--token TOKEN]
+#   bash scripts/wipe-wave3-demo.sh [--api-base URL] [--token TOKEN] [--dry-run|-n]
+#
+# Flags:
+#   --dry-run, -n   Print each curl command to stdout WITHOUT sending any
+#                   HTTP request. Shows expected status codes.
 
 set -euo pipefail
 
@@ -24,6 +29,19 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --api-base) API_BASE="$2"; shift 2 ;;
     --token)    TOKEN="$2";    shift 2 ;;
+DRY_RUN=false
+
+usage() {
+  grep '^#' "$0" | grep -v '^#!/' | sed 's/^# \{0,1\}//'
+  exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --api-base)   API_BASE="$2"; shift 2 ;;
+    --token)      TOKEN="$2";    shift 2 ;;
+    --dry-run|-n) DRY_RUN=true;  shift   ;;
+    --help|-h)    usage ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
 done
@@ -37,6 +55,23 @@ red()    { printf "\033[31m%s\033[0m\n" "$*" >&2; }
 
 xg_curl() {
   local method="$1"; shift
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    local display_cmd="curl -fsS -X ${method}"
+    [[ -n "${TOKEN}" ]] && display_cmd="${display_cmd} -H 'Authorization: Bearer ${TOKEN}'"
+    for arg in "$@"; do
+      display_cmd="${display_cmd} $(printf '%q' "${arg}")"
+    done
+    echo "  would ${method}: ${display_cmd}"
+    # Return stub values that callers can safely inspect.
+    if [[ "${method}" == "DELETE" ]]; then
+      echo "204"
+    else
+      echo '{"id":"dry-run-id","dry_run":true}'
+    fi
+    return 0
+  fi
+
   if [[ -n "${TOKEN}" ]]; then
     curl -fsS -X "${method}" -H "Authorization: Bearer ${TOKEN}" "$@"
   else
@@ -69,6 +104,20 @@ if [[ "${health}" != "ok" ]]; then
   exit 1
 fi
 green "Server ok"
+if [[ "${DRY_RUN}" == "true" ]]; then
+  bold "DRY-RUN mode — no HTTP requests will be sent"
+  bold "API base: ${API_BASE}"
+  [[ -n "${TOKEN}" ]] && bold "Token:    ${TOKEN:0:8}…(redacted)"
+  echo ""
+else
+  bold "Preflight: checking ${API_BASE}/healthz"
+  health=$(xg_curl GET "${API_BASE}/healthz" 2>/dev/null || true)
+  if [[ "${health}" != "ok" ]]; then
+    red "Server is not healthy. Cannot wipe."
+    exit 1
+  fi
+  green "Server ok"
+fi
 
 # ── demo tenants ──────────────────────────────────────────────────────────────
 
@@ -83,6 +132,12 @@ TENANTS=("${TENANT_ALPHA}" "${TENANT_BETA}" "${TENANT_GAMMA}")
 bold "Section 1/3 — Delete HotL policies"
 
 for tenant in "${TENANTS[@]}"; do
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    echo "  would GET:    GET ${API_BASE}/v1/hotl/policies?tenant_id=${tenant}  [expected: 200]"
+    echo "  would DELETE: DELETE ${API_BASE}/v1/hotl/policies/<id>  [expected: 204]  (for each policy found)"
+    continue
+  fi
+
   policies=$(xg_curl GET \
     "${API_BASE}/v1/hotl/policies?tenant_id=${tenant}" \
     -H 'accept: application/json' 2>/dev/null || echo "[]")
@@ -113,6 +168,12 @@ green "HotL policies wiped"
 bold "Section 2/3 — Uninstall skill packs"
 
 for tenant in "${TENANTS[@]}"; do
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    echo "  would GET:    GET ${API_BASE}/v1/skills/installed?tenant=${tenant}  [expected: 200]"
+    echo "  would DELETE: DELETE ${API_BASE}/v1/skills/install/<id>  [expected: 200]  (for each pack found)"
+    continue
+  fi
+
   installed=$(xg_curl GET \
     "${API_BASE}/v1/skills/installed?tenant=${tenant}" \
     -H 'accept: application/json' 2>/dev/null || echo "[]")
@@ -150,6 +211,11 @@ WATCHER_IDS=(
 )
 
 for job_id in "${WATCHER_IDS[@]}"; do
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    echo "  would DELETE: DELETE ${API_BASE}/v1/admin/scheduler/jobs/${job_id}  [expected: 200/204]"
+    continue
+  fi
+
   # The scheduler jobs endpoint uses DELETE /v1/admin/scheduler/jobs/:id
   # (introduced alongside POST upsert). Return 404 is fine — already gone.
   status=$(xg_curl DELETE "${API_BASE}/v1/admin/scheduler/jobs/${job_id}" \
@@ -168,6 +234,24 @@ green "Watcher jobs wiped"
 
 bold "Wipe complete"
 cat <<EOF
+if [[ "${DRY_RUN}" == "true" ]]; then
+  cat <<EOF
+
+  DRY-RUN summary — no data was deleted.
+
+  Would wipe:
+    HotL policies:  all for tenants alpha/beta/gamma
+    Skill packs:    all installed for tenants alpha/beta/gamma
+    Watcher jobs:   4 deterministic job IDs
+
+  NOT wiped (no bulk-delete endpoint in v1.2):
+    Outcome records (50 + 1 anomaly spike)
+
+  To wipe for real:
+    bash scripts/wipe-wave3-demo.sh [--api-base URL] [--token TOKEN]
+EOF
+else
+  cat <<EOF
 
   Wiped:
     HotL policies:  all for tenants alpha/beta/gamma
@@ -183,3 +267,4 @@ cat <<EOF
   Re-seed cleanly:
     bash scripts/seed-wave3-demo.sh [--api-base URL] [--token TOKEN]
 EOF
+fi
