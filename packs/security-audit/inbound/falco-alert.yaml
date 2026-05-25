@@ -1,0 +1,66 @@
+---
+# Falco alert inbound source.
+#
+# Falco delivers runtime security alerts via webhook (HTTP POST).
+# See: https://falco.org/docs/alerts/channels/webhook/
+#
+# Mounting: POST /v1/security-audit/inbound/falco/{route_id}
+# Auth:     Bearer token from scheduler_webhook_tokens table.
+#           Optional HMAC-SHA256 over raw body via X-Falco-Signature.
+
+source: falco
+route_prefix: /v1/security-audit/inbound/falco
+
+normalize:
+  # Optional HMAC verification (Falco webhook plugin supports custom headers).
+  hmac_secret: ${FALCO_WEBHOOK_SECRET}
+
+  # Map Falco alert fields onto the common SecurityEvent schema.
+  field_map:
+    id: uuid
+    title: rule
+    occurred_at: time
+    severity:
+      source: priority
+      map:
+        EMERGENCY: critical
+        ALERT: critical
+        CRITICAL: critical
+        ERROR: high
+        WARNING: high
+        NOTICE: medium
+        INFORMATIONAL: low
+        DEBUG: info
+        _default: medium
+    source: _const:falco
+    category: _const:auth_anomaly
+    tenant_id: output_fields["k8s.ns.name"] | output_fields["container.id"] | _const:default
+    raw: _self
+
+# Only forward these Falco priority levels; lower priorities are
+# acknowledged (HTTP 200) but silently discarded.
+accepted_priorities:
+  - EMERGENCY
+  - ALERT
+  - CRITICAL
+  - ERROR
+  - WARNING
+
+# Forward to auth-log-triage agent.
+route_to_agent: auth-log-triage
+
+# Sample payload (Falco webhook format).
+sample_payload: |
+  {
+    "uuid": "d3248ba0-3e87-4c9f-b9e7-123456789abc",
+    "output": "Warning Sensitive file opened for reading by non-trusted program (user=root command=cat /etc/shadow)",
+    "priority": "WARNING",
+    "rule": "Read sensitive file untrusted",
+    "time": "2024-05-24T10:15:00.000000000Z",
+    "output_fields": {
+      "container.id": "a1b2c3d4e5f6",
+      "k8s.ns.name": "production",
+      "proc.cmdline": "cat /etc/shadow",
+      "user.name": "root"
+    }
+  }

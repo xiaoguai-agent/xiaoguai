@@ -1,0 +1,131 @@
+---
+# Security Audit Skill Pack — v0.1.0
+#
+# Four-agent pack covering the core SOC/compliance workflow:
+#   1. auth-log-triage    — anomaly detection in authentication logs
+#   2. cve-prioritizer    — CVE scoring with blast-radius context
+#   3. soc2-evidence-collator — evidence bundles per SOC 2 control
+#   4. secret-leak-scanner — entropy-based secret detection in git diffs
+#
+# Runtime: all agents require an LLM backend; write agents also need
+# an audit-trail sink (S3/GCS/local) and optional ticketing integration.
+
+name: security-audit
+version: "0.1.0"
+description: >
+  Security operations pack — auth log anomaly triage, dependency CVE
+  prioritization with blast-radius scoring, SOC 2 evidence collation
+  per control ID, and entropy-based secret leak scanning over git diffs.
+  Outputs route to PagerDuty security channel, Jira security tickets,
+  and an immutable audit-trail archive.
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+depends:
+  xiaoguai-api: ">=0.12.1"
+  llm: required
+  # At least one ticketing/alerting sink required for write agents.
+  alerting:
+    any:
+      - pagerduty
+      - opsgenie
+  ticketing:
+    any:
+      - jira
+      - linear
+      - github-issues
+
+# ── Inbound event sources ─────────────────────────────────────────────────────
+inbound:
+  - ref: inbound/falco-alert.yaml
+  - ref: inbound/snyk-cve-feed.yaml
+  - ref: inbound/github-push-hook.yaml
+
+# ── Agent definitions ─────────────────────────────────────────────────────────
+agents:
+  - ref: agents/auth-log-triage.yaml
+  - ref: agents/cve-prioritizer.yaml
+  - ref: agents/soc2-evidence-collator.yaml
+  - ref: agents/secret-leak-scanner.yaml
+
+# ── Output adapters ───────────────────────────────────────────────────────────
+outputs:
+  - ref: outputs/pagerduty-sec-channel.yaml
+  - ref: outputs/jira-sec-ticket.yaml
+  - ref: outputs/audit-trail-archive.yaml
+
+# ── Execution plans ───────────────────────────────────────────────────────────
+# Plan A: auth anomaly flow (Falco alert → triage → PD + Jira + archive)
+plans:
+  auth-anomaly:
+    trigger: inbound/falco-alert
+    steps:
+      - id: triage
+        agent: auth-log-triage
+        description: "Classify Falco alert against auth baseline; emit suspicious-events list."
+      - id: alert
+        output: pagerduty-sec-channel
+        description: "Page on-call if any event severity >= high."
+        deps: [triage]
+      - id: ticket
+        output: jira-sec-ticket
+        description: "Open Jira SEC ticket with triage findings."
+        deps: [triage]
+      - id: archive
+        output: audit-trail-archive
+        description: "Write immutable audit record."
+        deps: [triage, alert, ticket]
+
+  # Plan B: CVE intake (Snyk feed → prioritize → Jira + archive)
+  cve-intake:
+    trigger: inbound/snyk-cve-feed
+    steps:
+      - id: prioritize
+        agent: cve-prioritizer
+        description: "Score CVEs by exploitability + blast radius; propose upgrade paths."
+      - id: ticket
+        output: jira-sec-ticket
+        description: "Open Jira SEC ticket per CVE group."
+        deps: [prioritize]
+      - id: archive
+        output: audit-trail-archive
+        description: "Write immutable audit record."
+        deps: [prioritize, ticket]
+
+  # Plan C: secret scan (GitHub push → scan → PD + Jira + archive)
+  secret-scan:
+    trigger: inbound/github-push-hook
+    steps:
+      - id: scan
+        agent: secret-leak-scanner
+        description: "Detect secrets in pushed diff; rank by rotation urgency."
+      - id: alert
+        output: pagerduty-sec-channel
+        description: "Page on-call if any secret severity == critical."
+        deps: [scan]
+      - id: ticket
+        output: jira-sec-ticket
+        description: "Open Jira SEC ticket with rotation checklist."
+        deps: [scan]
+      - id: archive
+        output: audit-trail-archive
+        description: "Write immutable audit record."
+        deps: [scan, alert, ticket]
+
+# ── Resource requirements ─────────────────────────────────────────────────────
+requires:
+  env:
+    - SECURITY_AUDIT_PAGERDUTY_KEY   # PagerDuty Events API v2 routing key
+    - SECURITY_AUDIT_JIRA_TOKEN      # Jira API token (write access to SEC project)
+    - SECURITY_AUDIT_JIRA_PROJECT    # Jira project key (e.g. SEC)
+    - SECURITY_AUDIT_ARCHIVE_BUCKET  # S3/GCS URI for immutable audit trail
+    - GITHUB_WEBHOOK_SECRET          # HMAC-SHA256 secret for push hook verification
+  llm: true
+
+# Feature flag — gates /v1/security-audit route family.
+# Set XIAOGUAI_SECURITY_AUDIT_ENABLED=true in .env to activate.
+feature_flag: XIAOGUAI_SECURITY_AUDIT_ENABLED
+
+# Deferred / not-yet-implemented:
+#   - Automated IP-block via WAF API (Cloudflare / AWS WAF)
+#   - SOC 2 Type II continuous evidence streaming (no manual trigger)
+#   - SBOM ingestion from CycloneDX / SPDX for CVE matching

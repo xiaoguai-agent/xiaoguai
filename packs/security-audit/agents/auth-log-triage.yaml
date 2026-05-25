@@ -1,0 +1,140 @@
+---
+# Auth Log Triage Agent
+#
+# Input:  a batch of authentication log lines + a baseline behavior profile
+#         (normal login hours, known IPs, expected user-agent patterns).
+# Output: suspicious-events list with severity, recommended response per event
+#         (block IP / force MFA / suspend account / alert only), and a
+#         rendered alert-summary for the security channel.
+
+name: auth-log-triage
+description: >
+  Given an auth log batch and a baseline behavior profile, identify
+  anomalous events (off-hours logins, impossible travel, credential
+  stuffing patterns, MFA bypass attempts), score each by severity, and
+  emit a recommended response per event. Renders output via
+  templates/alert-summary.md.j2.
+
+# LLM settings.
+llm:
+  model: ${AUTH_TRIAGE_LLM_MODEL:-default}
+  temperature: 0.1   # Low temperature — factual classification task.
+  max_tokens: 8192
+
+# Context enrichment before LLM prompt.
+context_steps:
+  - id: baseline
+    description: "Load baseline behavior profile for the affected tenant/user set."
+    tool: xiaoguai_kv_get
+    params:
+      key: "security:baseline:{{ tenant_id }}"
+      fallback: "{}"
+
+  - id: threat_intel
+    description: "Check source IPs against threat-intel feed (AbuseIPDB / Shodan)."
+    tool: xiaoguai_http_get
+    params:
+      url: "${THREAT_INTEL_API_URL}/batch"
+      body: '{"ips": {{ log_batch | extract_field("src_ip") | unique | tojson }}}'
+      auth_header: "Key ${THREAT_INTEL_API_KEY}"
+    # Non-fatal — triage proceeds even if threat-intel is unavailable.
+    optional: true
+    max_lines: 200
+
+  - id: recent_incidents
+    description: "Recent security incidents for the same tenant (last 7 days)."
+    tool: xiaoguai_audit_search
+    params:
+      filter: 'category=security AND tenant_id="{{ tenant_id }}"'
+      since: "{{ now() | minus('7d') | iso8601 }}"
+      limit: 50
+
+system_prompt: |
+  You are a security analyst triaging authentication log anomalies.
+  You will receive a batch of auth log entries and a baseline profile
+  describing normal behavior for the affected users/tenant.
+
+  Classify each anomalous event and produce a structured JSON response.
+
+  Anomaly categories:
+  - off_hours_login: login outside normal working hours
+  - impossible_travel: two logins from geographically distant IPs within <2h
+  - credential_stuffing: >20 failed logins from the same IP within 5 minutes
+  - mfa_bypass_attempt: successful login with no MFA where MFA is required
+  - new_device: first login from an unrecognized device fingerprint
+  - privilege_escalation: role change within 10 minutes of login
+  - known_bad_ip: source IP matches threat-intel feed
+
+  Severity levels: critical | high | medium | low | info
+
+  Recommended responses (one per event, most restrictive wins):
+  - block_ip: add source IP to firewall deny list
+  - force_mfa: require MFA re-enrollment before next login
+  - suspend_account: disable account pending human review
+  - require_password_reset: force password change at next login
+  - alert_only: log and notify; no automated action
+
+  Rules:
+  - An event may match multiple categories; list all matches.
+  - If evidence is ambiguous, prefer lower severity and alert_only.
+  - Do NOT recommend block_ip for IPv6 /48 ranges without ≥3 events.
+  - Respond ONLY with valid JSON matching the AuthTriageResult schema.
+
+  AuthTriageResult schema:
+  {
+    "tenant_id": "string",
+    "window_start": "ISO-8601",
+    "window_end": "ISO-8601",
+    "total_events_analyzed": integer,
+    "suspicious_events": [
+      {
+        "event_id": "string",
+        "timestamp": "ISO-8601",
+        "user": "string",
+        "src_ip": "string",
+        "categories": ["string"],
+        "severity": "critical|high|medium|low|info",
+        "evidence": "brief factual description",
+        "recommended_response": "block_ip|force_mfa|suspend_account|require_password_reset|alert_only",
+        "threat_intel_hit": true | false
+      }
+    ],
+    "summary": "2-3 sentence executive summary",
+    "overall_severity": "critical|high|medium|low|info",
+    "confidence": "high|medium|low"
+  }
+
+user_prompt: |
+  ## Tenant
+  {{ tenant_id }}
+
+  ## Analysis window
+  {{ window_start }} — {{ window_end }}
+
+  ## Baseline behavior profile
+  {{ context.baseline | truncate(1000) }}
+
+  ## Threat-intel results
+  {{ context.threat_intel | default("unavailable") | truncate(500) }}
+
+  ## Recent incidents (last 7d)
+  {{ context.recent_incidents | truncate(500) }}
+
+  ## Auth log batch ({{ log_batch | length }} entries)
+  {{ log_batch | tojson | truncate(6000) }}
+
+  Analyze the log batch and respond with AuthTriageResult JSON.
+
+# Output routing.
+outputs:
+  - outputs/pagerduty-sec-channel.yaml
+  - outputs/jira-sec-ticket.yaml
+  - outputs/audit-trail-archive.yaml
+
+# Template for rendered alert summary.
+template: templates/alert-summary.md.j2
+
+# Deferred:
+#   - Automated IP-block via WAF API when severity == critical
+#   - ML-based baseline drift detection (currently rule-based only)
+#   - UEBA integration for entity behavior scoring

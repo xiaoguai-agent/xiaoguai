@@ -1,0 +1,167 @@
+---
+# SOC 2 Evidence Collator Agent
+#
+# Input:  SOC 2 control ID (e.g. CC6.1) + audit window (start/end ISO-8601).
+# Output: evidence bundle — log excerpts proving control operation, config
+#         snapshots, access-review results — formatted for an auditor using
+#         templates/soc2-evidence-frame.md.j2.
+#
+# Supports SOC 2 Trust Services Criteria:
+#   CC (Common Criteria), A (Availability), C (Confidentiality),
+#   PI (Processing Integrity), P (Privacy).
+
+name: soc2-evidence-collator
+description: >
+  Given a SOC 2 control ID and audit window, gather supporting evidence
+  from audit logs, config snapshots, access reviews, and change records.
+  Produces a structured evidence bundle suitable for external auditor
+  review, formatted via templates/soc2-evidence-frame.md.j2.
+
+# LLM settings — higher token budget for evidence synthesis.
+llm:
+  model: ${SOC2_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 16384
+
+# Context enrichment — gather raw evidence before LLM synthesis.
+context_steps:
+  - id: control_definition
+    description: "Load control definition and evidence requirements for the requested control."
+    tool: xiaoguai_kv_get
+    params:
+      key: "soc2:controls:{{ control_id }}"
+      # Fallback: minimal placeholder so agent can still run.
+      fallback: '{"id":"{{ control_id }}","title":"Unknown control","evidence_types":[]}'
+
+  - id: audit_logs
+    description: "Audit log entries in the audit window relevant to this control."
+    tool: xiaoguai_audit_search
+    params:
+      filter: 'soc2_controls CONTAINS "{{ control_id }}" AND tenant_id="{{ tenant_id }}"'
+      since: "{{ window_start }}"
+      until: "{{ window_end }}"
+      limit: 500
+
+  - id: config_snapshots
+    description: "Configuration snapshots taken during the audit window."
+    tool: xiaoguai_config_history
+    params:
+      tenant_id: "{{ tenant_id }}"
+      since: "{{ window_start }}"
+      until: "{{ window_end }}"
+      # Only fetch configs tagged as relevant to this control.
+      tags: ["soc2:{{ control_id }}"]
+    optional: true
+    max_lines: 300
+
+  - id: access_reviews
+    description: "Access review records completed during the audit window."
+    tool: xiaoguai_access_reviews
+    params:
+      tenant_id: "{{ tenant_id }}"
+      since: "{{ window_start }}"
+      until: "{{ window_end }}"
+    optional: true
+    max_lines: 200
+
+  - id: change_records
+    description: "Change management records (deploys, schema migrations) in the window."
+    tool: xiaoguai_audit_search
+    params:
+      filter: 'category=change_management AND tenant_id="{{ tenant_id }}"'
+      since: "{{ window_start }}"
+      until: "{{ window_end }}"
+      limit: 200
+
+system_prompt: |
+  You are a compliance engineer preparing SOC 2 audit evidence.
+  You will receive raw evidence (audit logs, config snapshots, access
+  reviews, change records) and must synthesize a structured evidence
+  bundle that directly addresses the requested control.
+
+  SOC 2 evidence bundle requirements:
+  - Each piece of evidence must be traceable to a specific log entry,
+    config snapshot, or document (include reference IDs).
+  - Evidence must cover the FULL audit window — flag any gaps.
+  - For access reviews: list reviewer, review date, outcome, and
+    any exceptions noted.
+  - Config snapshots: note the snapshot timestamp and any drift from
+    the previous snapshot.
+  - Never fabricate evidence — if a control cannot be demonstrated,
+    say so explicitly and list what is missing.
+
+  Respond ONLY with valid JSON matching the Soc2EvidenceBundle schema.
+
+  Soc2EvidenceBundle schema:
+  {
+    "tenant_id": "string",
+    "control_id": "string",
+    "control_title": "string",
+    "audit_window": {"start": "ISO-8601", "end": "ISO-8601"},
+    "prepared_at": "ISO-8601",
+    "prepared_by": "xiaoguai-soc2-evidence-collator",
+    "coverage_status": "full|partial|insufficient",
+    "coverage_gaps": ["string"],
+    "evidence_items": [
+      {
+        "item_id": "string",
+        "type": "audit_log|config_snapshot|access_review|change_record|policy_document",
+        "title": "string",
+        "reference_id": "string",
+        "timestamp": "ISO-8601",
+        "description": "string",
+        "excerpt": "string (≤ 500 chars)",
+        "relevance": "string (how this item satisfies the control)"
+      }
+    ],
+    "access_review_summary": {
+      "reviews_completed": integer,
+      "exceptions_noted": integer,
+      "exceptions": [{"user": "string", "exception": "string", "remediation": "string"}]
+    },
+    "config_drift_summary": {
+      "snapshots_compared": integer,
+      "drift_items": [{"timestamp": "ISO-8601", "component": "string", "change": "string"}]
+    },
+    "auditor_notes": "string",
+    "overall_assessment": "satisfactory|needs_remediation|insufficient_evidence"
+  }
+
+user_prompt: |
+  ## Tenant
+  {{ tenant_id }}
+
+  ## Control requested
+  {{ control_id }} — {{ context.control_definition.title | default("see definition") }}
+
+  ## Audit window
+  {{ window_start }} to {{ window_end }}
+
+  ## Control definition and evidence requirements
+  {{ context.control_definition | tojson | truncate(1000) }}
+
+  ## Audit log entries ({{ context.audit_logs | length }} entries)
+  {{ context.audit_logs | tojson | truncate(5000) }}
+
+  ## Configuration snapshots
+  {{ context.config_snapshots | default("none available") | truncate(2000) }}
+
+  ## Access reviews
+  {{ context.access_reviews | default("none available") | truncate(2000) }}
+
+  ## Change records
+  {{ context.change_records | tojson | truncate(2000) }}
+
+  Synthesize and respond with Soc2EvidenceBundle JSON.
+
+# Output routing.
+outputs:
+  - outputs/audit-trail-archive.yaml
+
+# Template for rendered evidence frame.
+template: templates/soc2-evidence-frame.md.j2
+
+# Deferred:
+#   - Continuous evidence streaming (webhook per control, not on-demand only)
+#   - PDF rendering of evidence bundles for formal submission
+#   - Multi-framework support (ISO 27001, HIPAA, PCI-DSS)

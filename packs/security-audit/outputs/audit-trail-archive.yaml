@@ -1,0 +1,98 @@
+---
+# Audit trail archive output adapter.
+#
+# Writes every security finding to an immutable audit trail for
+# compliance and forensic purposes.  Records are append-only:
+# existing entries are never overwritten or deleted.
+#
+# Storage backends supported (configured via SECURITY_AUDIT_ARCHIVE_BUCKET):
+#   s3://bucket/prefix      — AWS S3 (standard or S3-compatible)
+#   gs://bucket/prefix      — Google Cloud Storage
+#   file:///path/to/dir     — Local filesystem (dev/test only)
+#
+# Record format: newline-delimited JSON (NDJSON), gzip-compressed,
+# one file per day per tenant.
+#
+# Retention: controlled by bucket lifecycle policy (not by this adapter).
+# Recommended minimum: 7 years for SOC 2 Type II compliance.
+
+output: audit-trail-archive
+
+storage:
+  # Destination URI — must be set in environment.
+  bucket: ${SECURITY_AUDIT_ARCHIVE_BUCKET}
+
+  # Path template within the bucket.
+  # Partitioned by date + tenant for efficient range queries.
+  path_template: >
+    security-audit/year={{ now() | format('%Y') }}/month={{ now() | format('%m') }}/day={{ now() | format('%d') }}/tenant={{ tenant_id }}/{{ agent_name }}-{{ now() | format('%H%M%S') }}-{{ result_id | truncate(8, end='') }}.ndjson.gz
+
+  # Compression: gzip (level 6).
+  compression: gzip
+
+  # Object storage settings.
+  s3:
+    region: ${AWS_REGION:-us-east-1}
+    # SSE-KMS encryption (recommended for compliance).
+    sse: aws:kms
+    kms_key_id: ${SECURITY_AUDIT_KMS_KEY_ID}
+    # Object ACL: bucket-owner-full-control (for cross-account buckets).
+    acl: bucket-owner-full-control
+
+  gcs:
+    # CMEK encryption key resource name (optional).
+    kms_key_name: ${SECURITY_AUDIT_GCS_KMS_KEY}
+
+# Record schema written to the archive.
+# Each agent result produces one record.
+record:
+  schema_version: "1.0"
+  fields:
+    - name: event_id
+      description: "UUID v4 — unique per archive record."
+    - name: written_at
+      description: "ISO-8601 UTC timestamp when the record was written."
+    - name: pack_version
+      description: "security-audit pack version (e.g. 0.1.0)."
+    - name: agent_name
+      description: "Name of the agent that produced the result."
+    - name: tenant_id
+      description: "Tenant identifier."
+    - name: trigger_source
+      description: "Inbound source that triggered this run (falco/snyk/github-push/manual)."
+    - name: result_id
+      description: "Unique ID for this agent result."
+    - name: overall_severity
+      description: "Overall severity classification from the agent."
+    - name: finding_count
+      description: "Number of findings (suspicious_events / ranked_cves / detected_secrets / evidence_items)."
+    - name: result_json
+      description: "Full agent result as a JSON object."
+    - name: pagerduty_incident_id
+      description: "PagerDuty incident ID if an alert was raised; null otherwise."
+    - name: jira_issue_key
+      description: "Jira issue key if a ticket was opened; null otherwise."
+
+# Integrity verification.
+integrity:
+  # Compute SHA-256 of each record and store alongside the NDJSON.
+  checksum: sha256
+  # Path for checksum file (same directory, .sha256 extension).
+  checksum_path_template: >
+    security-audit/year={{ now() | format('%Y') }}/month={{ now() | format('%m') }}/day={{ now() | format('%d') }}/tenant={{ tenant_id }}/{{ agent_name }}-{{ now() | format('%H%M%S') }}-{{ result_id | truncate(8, end='') }}.ndjson.gz.sha256
+
+# Alerting on write failures.
+# If archive write fails, log to stderr and emit a PagerDuty
+# low-priority alert (does not block the security finding alert).
+on_failure:
+  log_level: error
+  fallback_alert:
+    enabled: true
+    pagerduty_routing_key: ${SECURITY_AUDIT_PAGERDUTY_KEY}
+    severity: warning
+    summary: "Audit trail archive write failed — compliance gap risk"
+
+# Deferred:
+#   - WORM (Write Once Read Many) bucket policy enforcement via S3 Object Lock
+#   - OpenTelemetry metrics: archive_write_latency_ms, archive_write_failures_total
+#   - Evidence retrieval API for SOC 2 auditor portal
