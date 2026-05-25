@@ -1,0 +1,81 @@
+# Watch spec — renewal-window-approaching
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent for every vendor contract whose renewal_date falls
+# within the next 90 days and whose decision is still 'pending'.
+# Gives procurement enough lead time to gather usage data, negotiate, or
+# source alternatives before auto-renew deadlines.
+# ---------------------------------------------------------------------------
+
+name: renewal-window-approaching
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each vendor renewal due within 90 days that
+  has not yet received a renew/renegotiate/replace/cancel decision.
+  Runs every 6 hours. Triggers the renewal-decision-recommender agent.
+
+source:
+  kind: sql
+  table: vendor_renewals
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      r.tenant_id,
+      r.id                                              AS renewal_id,
+      r.vendor_id,
+      v.name                                            AS vendor_name,
+      v.category,
+      v.tier,
+      v.risk_score,
+      v.annual_spend_usd,
+      r.renewal_date,
+      r.contract_value_usd,
+      r.contract_ref,
+      (r.renewal_date - CURRENT_DATE)                   AS days_until_renewal,
+      r.renewal_status
+  FROM vendor_renewals r
+  JOIN vendors v ON v.id = r.vendor_id
+  WHERE r.tenant_id = '{tenant_id}'
+    AND r.renewal_status IN ('upcoming', 'decision_pending')
+    AND r.decision = 'pending'
+    AND r.renewal_date <= CURRENT_DATE + INTERVAL '90 days'
+    AND v.status = 'active'
+  ORDER BY r.renewal_date ASC
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  cron: "0 */6 * * *"   # every 6 hours
+
+event:
+  kind: vendor.renewal_window_approaching
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:           "$.tenant_id"
+    renewal_id:          "$.renewal_id"
+    vendor_id:           "$.vendor_id"
+    vendor_name:         "$.vendor_name"
+    category:            "$.category"
+    tier:                "$.tier"
+    risk_score:          "$.risk_score"
+    annual_spend_usd:    "$.annual_spend_usd"
+    renewal_date:        "$.renewal_date"
+    contract_value_usd:  "$.contract_value_usd"
+    contract_ref:        "$.contract_ref"
+    days_until_renewal:  "$.days_until_renewal"
+
+downstream:
+  agents:
+    - renewal-decision-recommender
+
+dedup:
+  # Re-fire at most once per renewal_id per day unless days_until_renewal
+  # has crossed a new urgency threshold (60 days, 30 days, 14 days, 7 days).
+  key: "{tenant_id}:{renewal_id}"
+  ttl_seconds: 86400
+  re_fire_if: >
+    payload.days_until_renewal <= 60 AND prior.days_until_renewal > 60
+    OR payload.days_until_renewal <= 30 AND prior.days_until_renewal > 30
+    OR payload.days_until_renewal <= 14 AND prior.days_until_renewal > 14
+    OR payload.days_until_renewal <= 7  AND prior.days_until_renewal > 7
