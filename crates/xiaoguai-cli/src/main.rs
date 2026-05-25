@@ -4,7 +4,8 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
-    audit, backup, chat, completions, eval, manpages, mcp, provider, remote, self_update,
+    anomaly, audit, backup, chat, completions, eval, hotl, manpages, mcp, outcomes, provider,
+    remote, self_update, skills, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -130,7 +131,319 @@ enum Cmd {
         #[command(subcommand)]
         action: AuditCmd,
     },
+
+    // ------------------------------------------------------------------
+    // Wave-3 subcommands
+    // ------------------------------------------------------------------
+
+    /// Administer Human-on-the-Loop (HOTL) budget policies.
+    ///
+    /// Manages spend/count caps per tenant and action scope. Enforcer
+    /// integration ships in v1.3; on 503 a friendly message is printed.
+    Hotl {
+        /// Base URL of the `xiaoguai-api` server.
+        #[arg(long, env = "XIAOGUAI_API_BASE", default_value = "http://localhost:8080")]
+        api_base: String,
+        /// Output format.
+        #[arg(long, default_value = "table")]
+        output: String,
+        #[command(subcommand)]
+        action: HotlCmd,
+    },
+
+    /// Manage agent outcome telemetry (ROI tracking).
+    ///
+    /// Records and queries business-value attributions (`revenue_usd`,
+    /// `hours_saved`, etc.). Pg bridge ships in v1.3; on 503 a friendly
+    /// message is printed.
+    Outcomes {
+        /// Base URL of the `xiaoguai-api` server.
+        #[arg(long, env = "XIAOGUAI_API_BASE", default_value = "http://localhost:8080")]
+        api_base: String,
+        /// Output format.
+        #[arg(long, default_value = "table")]
+        output: String,
+        #[command(subcommand)]
+        action: OutcomesCmd,
+    },
+
+    /// Manage the skill-pack marketplace.
+    ///
+    /// Lists catalog packs, installs or uninstalls packs for a tenant.
+    /// Pg bridge ships in v1.3; on 503 a friendly message is printed.
+    Skills {
+        /// Base URL of the `xiaoguai-api` server.
+        #[arg(long, env = "XIAOGUAI_API_BASE", default_value = "http://localhost:8080")]
+        api_base: String,
+        /// Output format.
+        #[arg(long, default_value = "table")]
+        output: String,
+        #[command(subcommand)]
+        action: SkillsCmd,
+    },
+
+    /// Manage declarative active-wakeup watchers.
+    ///
+    /// Registers SQL/HTTP watchers that fire when query rows match or a
+    /// JSONPath expression hits. Pg bridge ships in v1.3; on 503 a
+    /// friendly message is printed.
+    Watch {
+        /// Base URL of the `xiaoguai-api` server.
+        #[arg(long, env = "XIAOGUAI_API_BASE", default_value = "http://localhost:8080")]
+        api_base: String,
+        /// Output format.
+        #[arg(long, default_value = "table")]
+        output: String,
+        #[command(subcommand)]
+        action: WatchCmd,
+    },
+
+    /// Manage time-series anomaly monitors (Z-score / EWMA).
+    ///
+    /// Registers anomaly specs that fire when a KPI deviates statistically.
+    /// Pg bridge ships in v1.3; on 503 a friendly message is printed.
+    Anomaly {
+        /// Base URL of the `xiaoguai-api` server.
+        #[arg(long, env = "XIAOGUAI_API_BASE", default_value = "http://localhost:8080")]
+        api_base: String,
+        /// Output format.
+        #[arg(long, default_value = "table")]
+        output: String,
+        #[command(subcommand)]
+        action: AnomalyCmd,
+    },
 }
+
+// ---------------------------------------------------------------------------
+// Wave-3 sub-enums
+// ---------------------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum HotlCmd {
+    /// HOTL policy administration.
+    Policy {
+        #[command(subcommand)]
+        action: HotlPolicyCmd,
+    },
+    /// Run a one-shot budget check against the live enforcer.
+    Check {
+        /// Tenant context.
+        #[arg(long)]
+        tenant_id: String,
+        /// Action category (e.g. `llm_call`, `email_send`).
+        #[arg(long)]
+        scope: String,
+        /// Simulated cost/count increment.
+        #[arg(long)]
+        amount: f64,
+    },
+}
+
+#[derive(Subcommand)]
+enum HotlPolicyCmd {
+    /// Create a new HOTL budget policy.
+    Create {
+        /// Tenant the policy applies to.
+        #[arg(long)]
+        tenant_id: String,
+        /// Action category.
+        #[arg(long)]
+        scope: String,
+        /// Rolling window width in seconds.
+        #[arg(long)]
+        window_secs: u64,
+        /// Maximum invocation count within the window.
+        #[arg(long)]
+        max_count: Option<u64>,
+        /// Maximum cumulative USD cost within the window.
+        #[arg(long)]
+        max_usd: Option<f64>,
+        /// IM channel / email to notify on breach; absent = deny.
+        #[arg(long)]
+        escalate_to: Option<String>,
+    },
+    /// List policies for a tenant.
+    List {
+        /// Tenant to filter.
+        #[arg(long)]
+        tenant_id: String,
+        /// Further filter by action category.
+        #[arg(long)]
+        scope: Option<String>,
+    },
+    /// Fetch a single policy by id.
+    Get {
+        /// Policy id.
+        #[arg(long)]
+        id: String,
+    },
+    /// Update mutable fields of an existing policy.
+    Update {
+        /// Policy id.
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        max_count: Option<u64>,
+        #[arg(long)]
+        max_usd: Option<f64>,
+        #[arg(long)]
+        escalate_to: Option<String>,
+        #[arg(long)]
+        window_secs: Option<u64>,
+    },
+    /// Delete a policy by id.
+    Delete {
+        /// Policy id.
+        #[arg(long)]
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum OutcomesCmd {
+    /// Record one outcome attribution.
+    Record {
+        #[arg(long)]
+        tenant_id: String,
+        #[arg(long)]
+        agent_name: String,
+        /// One of: revenue_usd, cost_saved_usd, hours_saved, deals_closed,
+        /// tickets_resolved, custom.
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        value: f64,
+        #[arg(long)]
+        session_id: Option<String>,
+        /// Unit label for `custom` kind.
+        #[arg(long)]
+        unit: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// List raw outcome records.
+    List {
+        #[arg(long)]
+        tenant_id: String,
+        /// Time range shorthand: `24h`, `7d`, `30d` (default: `30d`).
+        #[arg(long, default_value = "30d")]
+        range: String,
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+    },
+    /// Aggregated ROI summary.
+    Summary {
+        #[arg(long)]
+        tenant_id: String,
+        #[arg(long, default_value = "30d")]
+        range: String,
+    },
+    /// Day-by-day breakdown of outcome values.
+    Timeseries {
+        #[arg(long)]
+        tenant_id: String,
+        #[arg(long, default_value = "30d")]
+        range: String,
+        #[arg(long)]
+        kind: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillsCmd {
+    /// List catalog packs or installed packs.
+    List {
+        #[arg(long)]
+        tenant_id: Option<String>,
+        /// Filter catalog by category.
+        #[arg(long)]
+        category: Option<String>,
+        /// Show installed packs instead of full catalog.
+        #[arg(long)]
+        installed: bool,
+    },
+    /// Install a catalog pack for a tenant.
+    Install {
+        #[arg(long)]
+        tenant_id: String,
+        /// Catalog slug (see `xiaoguai skills list`).
+        #[arg(long)]
+        pack: String,
+        /// Operator knob overrides as inline JSON.
+        #[arg(long)]
+        config: Option<String>,
+    },
+    /// Install a local pack definition (planned for v1.3).
+    InstallFromFile {
+        #[arg(long)]
+        tenant_id: String,
+        #[arg(long)]
+        file: String,
+    },
+    /// Uninstall a pack by installed-row id.
+    Uninstall {
+        #[arg(long)]
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum WatchCmd {
+    /// List registered watch specs.
+    List {
+        #[arg(long)]
+        tenant_id: Option<String>,
+    },
+    /// Register and activate a watch spec from a YAML file.
+    Start {
+        /// Path to `WatchSpec` YAML file.
+        #[arg(long)]
+        file: String,
+        #[arg(long)]
+        tenant_id: Option<String>,
+    },
+    /// Deactivate a watcher by id.
+    Stop {
+        #[arg(long)]
+        id: String,
+    },
+    /// Run one poll cycle and print matched rows (no side effects).
+    Test {
+        #[arg(long)]
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum AnomalyCmd {
+    /// Register an anomaly spec from a YAML file and arm it.
+    Run {
+        /// Path to `AnomalySpec` YAML file.
+        #[arg(long)]
+        file: String,
+    },
+    /// Back-test a detector spec against a CSV of historical observations.
+    Test {
+        /// Path to `AnomalySpec` YAML file.
+        #[arg(long)]
+        file: String,
+        /// CSV file with timestamp and value columns.
+        #[arg(long)]
+        data: String,
+        /// Timestamp column name.
+        #[arg(long, default_value = "ts")]
+        ts_col: String,
+        /// Value column name.
+        #[arg(long, default_value = "value")]
+        val_col: String,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Existing sub-enums (unchanged)
+// ---------------------------------------------------------------------------
 
 #[derive(Subcommand)]
 enum AuditCmd {
@@ -306,6 +619,10 @@ enum ProviderCmd {
         id: String,
     },
 }
+
+// ---------------------------------------------------------------------------
+// Handlers — existing
+// ---------------------------------------------------------------------------
 
 fn load_settings(config: Option<&str>) -> Result<Settings> {
     match config {
@@ -579,6 +896,302 @@ async fn handle_audit(action: AuditCmd) -> Result<()> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Handlers — wave-3
+// ---------------------------------------------------------------------------
+
+async fn handle_hotl(api_base: String, output: String, action: HotlCmd) -> Result<()> {
+    match action {
+        HotlCmd::Policy { action } => match action {
+            HotlPolicyCmd::Create {
+                tenant_id,
+                scope,
+                window_secs,
+                max_count,
+                max_usd,
+                escalate_to,
+            } => {
+                let v = hotl::policy_create(hotl::PolicyCreateArgs {
+                    api_base,
+                    tenant_id,
+                    scope,
+                    window_secs,
+                    max_count,
+                    max_usd,
+                    escalate_to,
+                })
+                .await?;
+                print_value(&v, &output)?;
+            }
+            HotlPolicyCmd::List { tenant_id, scope } => {
+                let rows = hotl::policy_list(hotl::PolicyListArgs {
+                    api_base,
+                    tenant_id,
+                    scope,
+                })
+                .await?;
+                if output == "table" {
+                    print!("{}", hotl::format_policy_table(&rows));
+                } else {
+                    print_value(&serde_json::to_value(&rows)?, &output)?;
+                }
+            }
+            HotlPolicyCmd::Get { id } => {
+                let v = hotl::policy_get(hotl::PolicyGetArgs { api_base, id }).await?;
+                print_value(&v, &output)?;
+            }
+            HotlPolicyCmd::Update {
+                id,
+                max_count,
+                max_usd,
+                escalate_to,
+                window_secs,
+            } => {
+                let v = hotl::policy_update(hotl::PolicyUpdateArgs {
+                    api_base,
+                    id,
+                    max_count,
+                    max_usd,
+                    escalate_to,
+                    window_secs,
+                })
+                .await?;
+                print_value(&v, &output)?;
+            }
+            HotlPolicyCmd::Delete { id } => {
+                let id_clone = id.clone();
+                hotl::policy_delete(hotl::PolicyDeleteArgs { api_base, id }).await?;
+                println!("deleted {id_clone}");
+            }
+        },
+        HotlCmd::Check {
+            tenant_id,
+            scope,
+            amount,
+        } => {
+            let resp = hotl::check(hotl::CheckArgs {
+                api_base,
+                tenant_id,
+                scope,
+                amount,
+            })
+            .await?;
+            println!("verdict: {}", resp.verdict);
+            if let Some(reason) = resp.reason {
+                println!("reason: {reason:?}");
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn handle_outcomes(api_base: String, output: String, action: OutcomesCmd) -> Result<()> {
+    match action {
+        OutcomesCmd::Record {
+            tenant_id,
+            agent_name,
+            kind,
+            value,
+            session_id,
+            unit,
+            description,
+        } => {
+            let v = outcomes::record(outcomes::RecordArgs {
+                api_base,
+                tenant_id,
+                agent_name,
+                kind,
+                value,
+                session_id,
+                unit,
+                description,
+            })
+            .await?;
+            print_value(&v, &output)?;
+        }
+        OutcomesCmd::List {
+            tenant_id,
+            range,
+            kind,
+            limit,
+        } => {
+            let rows = outcomes::list(outcomes::ListArgs {
+                api_base,
+                tenant_id,
+                range,
+                kind,
+                limit,
+            })
+            .await?;
+            if output == "table" {
+                print!("{}", outcomes::format_list_table(&rows));
+            } else {
+                print_value(&serde_json::to_value(&rows)?, &output)?;
+            }
+        }
+        OutcomesCmd::Summary { tenant_id, range } => {
+            let rows = outcomes::summary(outcomes::SummaryArgs {
+                api_base,
+                tenant_id,
+                range,
+            })
+            .await?;
+            if output == "table" {
+                print!("{}", outcomes::format_summary_table(&rows));
+            } else {
+                print_value(&serde_json::to_value(&rows)?, &output)?;
+            }
+        }
+        OutcomesCmd::Timeseries {
+            tenant_id,
+            range,
+            kind,
+        } => {
+            let v = outcomes::timeseries(outcomes::TimeseriesArgs {
+                api_base,
+                tenant_id,
+                range,
+                kind,
+            })
+            .await?;
+            print_value(&v, &output)?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_skills(api_base: String, output: String, action: SkillsCmd) -> Result<()> {
+    match action {
+        SkillsCmd::List {
+            tenant_id,
+            category,
+            installed,
+        } => {
+            let rows = skills::list(skills::ListArgs {
+                api_base,
+                tenant_id,
+                category,
+                installed,
+            })
+            .await?;
+            if output == "table" {
+                if installed {
+                    print!("{}", skills::format_installed_table(&rows));
+                } else {
+                    print!("{}", skills::format_catalog_table(&rows));
+                }
+            } else {
+                print_value(&serde_json::to_value(&rows)?, &output)?;
+            }
+        }
+        SkillsCmd::Install {
+            tenant_id,
+            pack,
+            config,
+        } => {
+            let v = skills::install(skills::InstallArgs {
+                api_base,
+                tenant_id,
+                pack,
+                config,
+            })
+            .await?;
+            print_value(&v, &output)?;
+        }
+        SkillsCmd::InstallFromFile { .. } => {
+            skills::install_from_file_not_implemented()?;
+        }
+        SkillsCmd::Uninstall { id } => {
+            skills::uninstall(skills::UninstallArgs { api_base, id: id.clone() }).await?;
+            println!("{}", serde_json::json!({"ok": true}));
+        }
+    }
+    Ok(())
+}
+
+async fn handle_watch(api_base: String, output: String, action: WatchCmd) -> Result<()> {
+    match action {
+        WatchCmd::List { tenant_id } => {
+            let rows = watch::list(watch::ListArgs { api_base, tenant_id }).await?;
+            if output == "table" {
+                print!("{}", watch::format_list_table(&rows));
+            } else {
+                print_value(&serde_json::to_value(&rows)?, &output)?;
+            }
+        }
+        WatchCmd::Start { file, tenant_id } => {
+            let v = watch::start(watch::StartArgs {
+                api_base,
+                file: std::path::PathBuf::from(file),
+                tenant_id,
+            })
+            .await?;
+            print_value(&v, &output)?;
+        }
+        WatchCmd::Stop { id } => {
+            let id_clone = id.clone();
+            watch::stop(watch::StopArgs { api_base, id }).await?;
+            println!("stopped: {id_clone}");
+        }
+        WatchCmd::Test { id } => {
+            let v = watch::test(watch::TestArgs { api_base, id }).await?;
+            print_value(&v, &output)?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_anomaly(api_base: String, output: String, action: AnomalyCmd) -> Result<()> {
+    match action {
+        AnomalyCmd::Run { file } => {
+            let v = anomaly::run(anomaly::RunArgs {
+                api_base,
+                file: std::path::PathBuf::from(file),
+            })
+            .await?;
+            print_value(&v, &output)?;
+        }
+        AnomalyCmd::Test {
+            file,
+            data,
+            ts_col,
+            val_col,
+        } => {
+            let result = anomaly::backtest(anomaly::BacktestArgs {
+                api_base,
+                file: std::path::PathBuf::from(file),
+                data: std::path::PathBuf::from(data),
+                ts_col,
+                val_col,
+            })
+            .await?;
+            if output == "table" {
+                print!("{}", anomaly::format_backtest_table(&result));
+            } else {
+                print_value(&result, &output)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Output helper
+// ---------------------------------------------------------------------------
+
+fn print_value(v: &serde_json::Value, format: &str) -> Result<()> {
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(v)?),
+        "yaml" => print!("{}", serde_yaml::to_string(v)?),
+        _ => println!("{}", serde_json::to_string_pretty(v)?),
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -643,5 +1256,31 @@ async fn main() -> Result<()> {
             .await
         }
         Cmd::Audit { action } => handle_audit(action).await,
+        // Wave-3
+        Cmd::Hotl {
+            api_base,
+            output,
+            action,
+        } => handle_hotl(api_base, output, action).await,
+        Cmd::Outcomes {
+            api_base,
+            output,
+            action,
+        } => handle_outcomes(api_base, output, action).await,
+        Cmd::Skills {
+            api_base,
+            output,
+            action,
+        } => handle_skills(api_base, output, action).await,
+        Cmd::Watch {
+            api_base,
+            output,
+            action,
+        } => handle_watch(api_base, output, action).await,
+        Cmd::Anomaly {
+            api_base,
+            output,
+            action,
+        } => handle_anomaly(api_base, output, action).await,
     }
 }
