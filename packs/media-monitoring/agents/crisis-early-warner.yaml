@@ -1,0 +1,189 @@
+---
+# Agent: crisis-early-warner
+#
+# Triggered by: mention-volume-spike OR sentiment-crash anomaly events.
+# Also triggered by: keyword-emergence events with high negative ratio.
+#
+# Trigger logic:
+#   SEV-1 (immediate PagerDuty + exec email):
+#     (volume_spike.z_score >= 4.0 AND sentiment_crash.delta >= 0.30)
+#     OR (influence_weighted_reach >= REACH_SEV1_THRESHOLD AND negative_ratio >= 0.50)
+#
+#   SEV-2 (Slack PR team + PagerDuty low-urgency):
+#     (volume_spike.z_score >= 2.5 AND sentiment_crash.delta >= 0.20)
+#     OR (influence_weighted_reach >= REACH_SEV2_THRESHOLD AND negative_ratio >= 0.40)
+#     OR (keyword_emergence.lift >= 5.0 AND keyword_emergence.negative_ratio >= 0.50)
+#
+#   SEV-3 (Slack PR team only, informational):
+#     volume_spike.z_score >= 2.5
+#     OR sentiment_crash.delta >= 0.20
+#     OR keyword_emergence.lift >= 3.0 AND negative_ratio >= 0.40
+#
+# The agent does NOT fire if status of any matching open crisis_event is
+# already 'open' or 'monitoring' for the same channel within the cooldown.
+
+name: crisis-early-warner
+description: >
+  Correlates volume-spike and sentiment-crash anomaly events plus emergent
+  keyword signals to assess crisis severity. Computes an influence-weighted
+  reach score (reach * engagement_multiplier) to distinguish high-impact
+  viral moments from low-reach noise. Inserts a crisis_event record and
+  routes to the appropriate output connectors (Slack, PagerDuty, exec email).
+  Calls response-draft-recommender for SEV-1 and SEV-2 crises.
+
+# LLM settings — used to generate the narrative summary only.
+llm:
+  model: ${CRISIS_LLM_MODEL:-sonnet}
+  temperature: 0.2
+  max_tokens: 1024
+
+# Trigger: called by the anomaly engine when a volume-spike or sentiment-crash
+# fires, and by the keyword-emergence watch when negative_ratio >= threshold.
+# Input: one or more AnomalyEvent or KeywordEmergenceEvent structs.
+inputs:
+  - type: anomaly_event
+    sources: [mention-volume-spike, sentiment-crash]
+  - type: keyword_emergence_event
+    sources: [keyword-emergence]
+
+# Influence-weighted reach calculation.
+# reach_score = sum(mention.reach * engagement_weight) over the spike window.
+# engagement_weight = log10(1 + mention.engagement) + 1.0 (floors at 1.0 for zero-engagement).
+influence_scoring:
+  formula: "sum(reach * (log10(1 + engagement) + 1.0))"
+  window_hours: 1
+
+# Severity thresholds.
+thresholds:
+  sev1:
+    # Combined volume + sentiment crash condition.
+    combined:
+      volume_z_score: ${CRISIS_SEV1_Z_SCORE:-4.0}
+      sentiment_delta: ${CRISIS_SEV1_SENTIMENT_DELTA:-0.30}
+    # OR high-influence reach condition.
+    reach:
+      influence_weighted_reach: ${CRISIS_SEV1_REACH:-5000000}
+      negative_ratio: ${CRISIS_SEV1_REACH_NEG_RATIO:-0.50}
+
+  sev2:
+    combined:
+      volume_z_score: ${CRISIS_SEV2_Z_SCORE:-2.5}
+      sentiment_delta: ${CRISIS_SEV2_SENTIMENT_DELTA:-0.20}
+    reach:
+      influence_weighted_reach: ${CRISIS_SEV2_REACH:-1000000}
+      negative_ratio: ${CRISIS_SEV2_REACH_NEG_RATIO:-0.40}
+    keyword_emergence:
+      lift: ${CRISIS_SEV2_KW_LIFT:-5.0}
+      negative_ratio: ${CRISIS_SEV2_KW_NEG_RATIO:-0.50}
+
+  sev3:
+    volume_z_score: ${CRISIS_SEV3_Z_SCORE:-2.5}
+    sentiment_delta: ${CRISIS_SEV3_SENTIMENT_DELTA:-0.20}
+    keyword_emergence:
+      lift: ${CRISIS_SEV3_KW_LIFT:-3.0}
+      negative_ratio: ${CRISIS_SEV3_KW_NEG_RATIO:-0.40}
+
+# Deduplication: suppress new crisis_event if an open or monitoring event
+# already exists for the same channel within the suppression window.
+deduplication:
+  suppression_window_minutes: 60
+  match_on: [channel]
+
+# Context steps: gather top negative mentions for the narrative prompt.
+context_steps:
+  - id: top_negative_mentions
+    description: "Top 10 most-reached negative mentions in the spike window"
+    tool: db_query
+    query: |
+      SELECT m.body, m.url, m.reach, m.channel, s.key_phrases
+      FROM mentions m
+      JOIN LATERAL (
+        SELECT key_phrases FROM sentiment_history
+        WHERE mention_id = m.id ORDER BY classified_at DESC LIMIT 1
+      ) s ON true
+      WHERE m.published_at >= '{{ window_start }}'
+        AND m.published_at <  '{{ window_end }}'
+        AND s.sentiment = 'negative'
+      ORDER BY m.reach DESC
+      LIMIT 10
+
+  - id: emergent_keywords
+    description: "Emergent keywords from keyword-emergence in the same window"
+    source: "{{ input_events | select('type', 'keyword_emergence_event') | list }}"
+
+# System prompt for narrative generation.
+system_prompt: |
+  You are a PR crisis analyst. You will be given signals of a potential brand
+  crisis: anomaly metrics, top negative mentions, and emergent keywords.
+  Produce a concise crisis narrative (3–5 sentences) describing:
+  1. What is being said and why it may be escalating.
+  2. The most influential channels and voices involved.
+  3. The core concern or grievance expressed in the mentions.
+
+  Be factual. Do not speculate beyond the evidence. Do not include
+  response recommendations — those come from a separate agent.
+
+  Respond ONLY with valid JSON:
+  {
+    "title": "Short crisis title (≤10 words)",
+    "narrative": "3–5 sentence narrative"
+  }
+
+# User prompt template.
+user_prompt: |
+  ## Anomaly signals
+  {% for event in input_events %}
+  - {{ event.anomaly_type | default('keyword_emergence') }}: {{ event | json_summary }}
+  {% endfor %}
+
+  ## Top negative mentions (by reach)
+  {% for m in context.top_negative_mentions %}
+  - [{{ m.channel }}] reach={{ m.reach }} | {{ m.body | truncate(200) }}
+    URL: {{ m.url }} | Key phrases: {{ m.key_phrases | join(', ') }}
+  {% endfor %}
+
+  ## Emergent keywords
+  {% for kw in context.emergent_keywords %}
+  - "{{ kw.keyword }}" — lift={{ kw.lift }}, negative_ratio={{ kw.negative_ratio }}
+  {% endfor %}
+
+  Assess and produce crisis JSON now.
+
+# Post-processing: insert crisis_event, route outputs.
+on_result:
+  insert_crisis_event:
+    title: "{{ result.title }}"
+    trigger_type: "{{ trigger_type_from_inputs(input_events) }}"
+    severity: "{{ computed_severity }}"
+    channels: "{{ affected_channels(input_events) }}"
+    hourly_mention_count: "{{ volume_spike_event.current_count | default(0) }}"
+    z_score: "{{ volume_spike_event.z_score | default(null) }}"
+    negative_ratio: "{{ sentiment_crash_event.short_window_negative_ratio | default(null) }}"
+    influence_weighted_reach: "{{ computed_influence_weighted_reach }}"
+    narrative: "{{ result.narrative }}"
+
+  # Call response-draft-recommender for SEV-1 and SEV-2.
+  call_agent:
+    condition: "{{ computed_severity in ['sev1', 'sev2'] }}"
+    agent: agents/response-draft-recommender.yaml
+    input: "{{ crisis_event }}"
+
+  # Route outputs by severity.
+  route_outputs:
+    sev1:
+      - outputs/slack-pr-team.yaml
+      - outputs/pagerduty-crisis.yaml
+      - outputs/exec-email-on-crisis.yaml
+      - outputs/archive-to-bigquery.yaml
+    sev2:
+      - outputs/slack-pr-team.yaml
+      - outputs/pagerduty-crisis.yaml
+      - outputs/archive-to-bigquery.yaml
+    sev3:
+      - outputs/slack-pr-team.yaml
+      - outputs/archive-to-bigquery.yaml
+
+# Deferred:
+#   - Influencer identification (map author handles to verified accounts)
+#   - Geo-clustering (region-specific crisis detection)
+#   - Auto-suppression learning (mark false_positives → adjust thresholds)

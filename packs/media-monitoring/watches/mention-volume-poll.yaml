@@ -1,0 +1,136 @@
+---
+# Watch: mention-volume-poll
+#
+# Polls each configured channel for new brand mentions on a schedule.
+# Normalises raw API payloads to the common Mention schema and inserts
+# into the mentions table (upsert on channel + external_id).
+#
+# Channels: twitter (v2 recent-search), reddit (pushshift + official search),
+#           hackernews (Algolia HN search API), news (NewsAPI.org / GNews),
+#           instagram (Basic Display API mentions).
+
+name: mention-volume-poll
+description: >
+  Polls brand mention APIs across all configured channels every 15 minutes,
+  normalises results into the common Mention schema, and upserts into the
+  mentions table. Feeds the mention-volume-spike anomaly detector.
+
+# Cron schedule — every 15 minutes.
+schedule: "*/15 * * * *"
+
+# Per-channel polling configuration.
+channels:
+  twitter:
+    enabled: ${MEDIA_TWITTER_ENABLED:-true}
+    endpoint: https://api.twitter.com/2/tweets/search/recent
+    auth:
+      type: bearer
+      token: ${TWITTER_BEARER_TOKEN}
+    params:
+      query: "${BRAND_KEYWORDS_TWITTER} -is:retweet lang:en"
+      max_results: 100
+      tweet.fields: "created_at,author_id,public_metrics,entities"
+      expansions: "author_id"
+      user.fields: "public_metrics"
+    # Pagination: poll window = last 15 minutes with start_time backfill.
+    window_minutes: 15
+    # Reach = author follower_count from expanded user object.
+    reach_field: "includes.users[?(@.id==author_id)].public_metrics.followers_count"
+    # Engagement = like_count + retweet_count + reply_count.
+    engagement_field: "public_metrics.like_count + public_metrics.retweet_count + public_metrics.reply_count"
+
+  reddit:
+    enabled: ${MEDIA_REDDIT_ENABLED:-true}
+    endpoint: https://www.reddit.com/search.json
+    auth:
+      type: none
+    params:
+      q: "${BRAND_KEYWORDS_REDDIT}"
+      sort: new
+      limit: 100
+      t: hour
+    window_minutes: 15
+    reach_field: "subreddit_subscribers"
+    engagement_field: "score"
+
+  hackernews:
+    enabled: ${MEDIA_HN_ENABLED:-true}
+    endpoint: https://hn.algolia.com/api/v1/search_by_date
+    auth:
+      type: none
+    params:
+      query: "${BRAND_KEYWORDS_HN}"
+      tags: "(story,comment)"
+      # Algolia numericFilters: created_at_i >= (now - 15m)
+      numericFilters: "created_at_i>={{ now_unix_minus_minutes(15) }}"
+      hitsPerPage: 100
+    window_minutes: 15
+    reach_field: "_const:0"
+    engagement_field: "points"
+
+  news:
+    enabled: ${MEDIA_NEWS_ENABLED:-true}
+    endpoint: https://newsapi.org/v2/everything
+    auth:
+      type: api_key_header
+      header: X-Api-Key
+      key: ${NEWS_API_KEY}
+    params:
+      q: "${BRAND_KEYWORDS_NEWS}"
+      sortBy: publishedAt
+      pageSize: 100
+      language: en
+      from: "{{ now_iso_minus_minutes(15) }}"
+    window_minutes: 15
+    reach_field: "source.id"
+    engagement_field: "_const:0"
+
+  instagram:
+    enabled: ${MEDIA_INSTAGRAM_ENABLED:-false}
+    endpoint: https://graph.instagram.com/v18.0/me/tags
+    auth:
+      type: bearer
+      token: ${INSTAGRAM_ACCESS_TOKEN}
+    params:
+      fields: "id,caption,timestamp,like_count,comments_count,permalink"
+      limit: 50
+    window_minutes: 15
+    reach_field: "_const:0"
+    engagement_field: "like_count + comments_count"
+
+# Normalisation: maps channel-specific fields onto the common Mention schema.
+normalize:
+  id: _generated_uuid
+  channel: _source_channel
+  external_id: "{{ item.id }}"
+  author: "{{ item.author_username | default(item.author | default('unknown')) }}"
+  body: "{{ item.text | default(item.selftext | default(item.story_text | default(item.description | default(item.caption | default(''))))) | truncate(4096) }}"
+  url: "{{ item.url | default(item.permalink | default('')) }}"
+  reach: "{{ item._reach | int | default(0) }}"
+  engagement: "{{ item._engagement | int | default(0) }}"
+  matched_keywords: "{{ keywords_matched(item, env.BRAND_KEYWORDS_ARRAY) }}"
+  published_at: "{{ item.created_at | default(item.created_utc | iso8601_from_unix | default(item.publishedAt | default(item.timestamp))) }}"
+
+# Insert strategy: upsert on (channel, external_id); update reach/engagement only.
+upsert:
+  conflict_target: [channel, external_id]
+  update_fields: [reach, engagement]
+
+# Error handling.
+on_error:
+  # Transient network errors: retry once after 30s.
+  retry:
+    max_attempts: 2
+    backoff_seconds: 30
+  # Rate-limit (HTTP 429): back off for the duration specified in Retry-After header.
+  rate_limit:
+    respect_retry_after: true
+    fallback_backoff_seconds: 60
+  # Auth failure (HTTP 401/403): alert ops, stop polling this channel.
+  auth_failure:
+    alert_channel: ${MEDIA_OPS_ALERT_CHANNEL}
+    disable_channel: true
+
+# Deferred:
+#   - LinkedIn company mention polling (requires partner API access)
+#   - YouTube comment polling (high cost)
