@@ -1,0 +1,64 @@
+{# packs/facilities-management/templates/after-hours-incident.md.j2
+   Used when the incident-classifier raises a full_failure or safety_concern
+   outside normal business hours (18:00–07:00 or weekends).
+   Sent to the facilities team IM channel AND the property manager.
+#}
+# 🚨 After-Hours Facilities Incident — {{ wo.priority | upper }}
+
+**Time:** {{ now | datetimeformat('%Y-%m-%d %H:%M %Z') }}
+**Building:** {{ wo.building }}{% if wo.floor %} / Floor {{ wo.floor }}{% endif %}
+
+---
+
+## Incident Summary
+
+**{{ wo.title }}**
+
+Failure type: **{{ classification.failure_type | replace('_', ' ') | upper }}**
+
+{{ wo.description | truncate(500) }}
+
+---
+
+## Classification
+
+| Field | Value |
+|-------|-------|
+| Priority | {{ wo.priority | upper }} |
+| Category | {{ wo.category | upper }} |
+| Failure type | {{ classification.failure_type | replace('_', ' ') | title }} |
+| Affected scope | {{ classification.affected_scope }} |
+| Rationale | {{ classification.rationale }} |
+
+{% if classification.failure_type == 'safety_concern' %}
+## ⚠️ Safety Alert
+
+This incident has been classified as a **safety concern**.
+The following immediate actions are required:
+
+- [ ] Contact building security immediately
+- [ ] Initiate evacuation protocol if occupants are present
+- [ ] Call emergency services if CO, smoke, or fire is confirmed
+- [ ] Notify property manager: {{ property_manager_name }} ({{ property_manager_phone }})
+
+**Do not re-enter the affected area until cleared by emergency responders.**
+{% elif classification.failure_type == 'full_failure' %}
+## Full System Failure
+
+HVAC / power / plumbing is unavailable for the entire affected area.
+After-hours emergency vendor dispatch is being initiated.
+
+- On-call vendor: {% if vendor %}{{ vendor.name }} — {{ vendor.contact_phone }}{% else %}*No on-call vendor configured — manual dispatch required*{% endif %}
+- SLA deadline: {{ wo.sla_deadline | datetimeformat('%H:%M %Z') }} ({{ (wo.sla_deadline - now) | duration_humanize }} from now)
+{% endif %}
+
+---
+
+## Work Order Reference
+
+Order ID: `{{ wo.id }}`
+Requestor: {{ wo.requestor_name | default('(anonymous)') }}{% if wo.requestor_phone %} — {{ wo.requestor_phone }}{% endif %}
+
+---
+*xiaoguai Facilities Management Pack — automated after-hours incident notification*
+*To suppress: set XIAOGUAI_FACILITIES_ENABLED=false or adjust incident-classifier trigger_keywords*

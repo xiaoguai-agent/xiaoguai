@@ -1,0 +1,52 @@
+{# packs/facilities-management/templates/vendor-dispatch-card.md.j2
+   Used in two places:
+   1. As the body of the vendor-dispatch-email output (plain-text friendly).
+   2. As a Slack attachment card posted to #facilities-ops for human review
+      when the dispatcher escalates rather than auto-dispatching.
+#}
+# Dispatch Request — {{ wo.category | upper }} Work Order
+
+**To:** {{ vendor.contact_name }} <{{ vendor.dispatch_email }}>
+**Sent:** {{ now | datetimeformat('%Y-%m-%d %H:%M %Z') }}
+
+---
+
+## Work Order Details
+
+| | |
+|--|--|
+| **Order ID** | {{ wo.id }} |
+| **Title** | {{ wo.title }} |
+| **Priority** | {{ wo.priority | upper }}{% if wo.priority == 'p1' %} — URGENT{% endif %} |
+| **Category** | {{ wo.category | upper }} |
+| **Location** | {{ wo.building }}{% if wo.floor %} / Floor {{ wo.floor }}{% endif %}{% if wo.room %} / Room {{ wo.room }}{% endif %} |
+| **SLA deadline** | {{ wo.sla_deadline | datetimeformat('%a %b %-d %H:%M %Z') }} |
+| **Requestor** | {% if wo.requestor_name %}{{ wo.requestor_name }}{% if wo.requestor_phone %} · {{ wo.requestor_phone }}{% endif %}{% else %}Facilities Team{% endif %} |
+
+**Description:**
+{{ wo.description | truncate(600) }}
+
+---
+
+## Instructions
+
+Please confirm receipt of this work order by replying to this email or
+contacting the facilities team at {{ facilities_contact_email }}.
+
+**Expected actions:**
+1. Acknowledge receipt within {% if wo.priority == 'p1' %}1 hour{% elif wo.priority == 'p2' %}4 hours{% else %}1 business day{% endif %}.
+2. Provide an ETA before arriving on site.
+3. On completion, submit your service report and invoice to
+   {{ finance_invoice_email }}.
+
+SLA deadline: **{{ wo.sla_deadline | datetimeformat('%A, %B %-d at %H:%M %Z') }}**
+
+{% if wo.priority == 'p1' %}
+⚠️ **This is a PRIORITY 1 order.** Please treat as an emergency.
+If you cannot respond within 1 hour, notify us immediately so we can
+engage an alternate vendor.
+{% endif %}
+
+---
+*Dispatched by xiaoguai Facilities Management Pack*
+*Order reference: {{ wo.id }}*

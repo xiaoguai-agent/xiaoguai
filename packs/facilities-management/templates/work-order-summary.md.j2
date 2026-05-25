@@ -1,0 +1,34 @@
+{# packs/facilities-management/templates/work-order-summary.md.j2
+   Rendered by the work-order-triager after a work order is created/updated.
+   Sent to the facilities-team Slack channel and stored in outcome-telemetry.
+#}
+# Work Order — {{ wo.id | truncate(8, end='') }}
+
+**{{ wo.title }}**
+
+| Field | Value |
+|-------|-------|
+| Status | {{ wo.status | upper }} |
+| Category | {{ wo.category | upper }} |
+| Priority | {{ wo.priority | upper }} |
+| Building | {{ wo.building }}{% if wo.floor %} / Floor {{ wo.floor }}{% endif %}{% if wo.room %} / {{ wo.room }}{% endif %} |
+| SLA deadline | {{ wo.sla_deadline | datetimeformat('%a %b %-d %H:%M %Z') }} |
+| Requestor | {% if wo.requestor_name %}{{ wo.requestor_name }} ({{ wo.requestor_email }}){% else %}—{% endif %} |
+| Vendor | {% if wo.vendor_name %}{{ wo.vendor_name }}{% else %}*Not assigned*{% endif %} |
+| Source | {{ wo.source }} |
+| Created | {{ wo.created_at | datetimeformat('%Y-%m-%d %H:%M %Z') }} |
+
+{% if wo.description %}
+**Description:**
+{{ wo.description | truncate(400) }}
+{% endif %}
+
+{% if wo.triage_rationale %}
+**Triage rationale:** {{ wo.triage_rationale }}
+{% endif %}
+
+{% if wo.status == 'resolved' or wo.status == 'closed' %}
+---
+**Resolution:** {% if wo.met_sla %}✅ Met SLA{% else %}❌ Missed SLA{% endif %}
+Resolved at: {{ wo.resolved_at | datetimeformat('%Y-%m-%d %H:%M %Z') }}
+{% endif %}

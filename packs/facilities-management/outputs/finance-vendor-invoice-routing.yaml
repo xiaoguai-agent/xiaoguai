@@ -1,0 +1,98 @@
+# packs/facilities-management/outputs/finance-vendor-invoice-routing.yaml
+#
+# Finance vendor invoice routing output.
+#
+# Triggered when a work order transitions to 'closed'.  Packages the WO
+# metadata (vendor, category, building, cost-center) and routes it to the
+# finance system so the AP team can match the invoice to the correct GL code.
+#
+# Supported finance adapters (set FINANCE_ADAPTER):
+#   - email_ap       — sends structured email to AP mailbox (default)
+#   - netsuite       — posts to NetSuite REST API (requires NETSUITE_* creds)
+#   - quickbooks     — posts to QuickBooks Online API
+#   - webhook        — generic JSON POST to FINANCE_WEBHOOK_URL
+
+name: finance-vendor-invoice-routing
+kind: finance_routing
+
+adapter: "${FINANCE_ADAPTER:-email_ap}"
+
+# Cost-center mapping by work order category.
+# Values match pack.yaml config.finance cost centers.
+cost_center_map:
+  hvac:       "${FINANCE_CC_HVAC:-FAC-HVAC}"
+  plumbing:   "${FINANCE_CC_PLUMBING:-FAC-GEN}"
+  electrical: "${FINANCE_CC_ELEC:-FAC-GEN}"
+  janitorial: "${FINANCE_CC_JANITORIAL:-FAC-GEN}"
+  security:   "${FINANCE_CC_SECURITY:-FAC-SEC}"
+  space:      "${FINANCE_CC_SPACE:-FAC-SPACE}"
+
+# ── Email AP adapter ─────────────────────────────────────────────────────────
+
+email_ap:
+  smtp:
+    host_env:     SMTP_HOST
+    port_env:     SMTP_PORT
+    username_env: SMTP_USERNAME
+    password_env: SMTP_PASSWORD
+    tls: true
+  from:
+    address: "${FACILITIES_EMAIL_FROM:-facilities-dispatch@company.com}"
+  to: "${FINANCE_AP_EMAIL}"
+  subject_template: |
+    Invoice Routing — WO {{ wo.id | truncate(8, end='') }} | {{ vendor.name }} | {{ cost_center }}
+  body_template: |
+    Work Order Closed — Invoice Routing Notice
+
+    Work Order ID:    {{ wo.id }}
+    Vendor:           {{ vendor.name }}
+    Dispatch Email:   {{ vendor.dispatch_email }}
+    Category:         {{ wo.category | upper }}
+    Building:         {{ wo.building }}{% if wo.floor %} / Floor {{ wo.floor }}{% endif %}
+    GL Cost Center:   {{ cost_center }}
+    Closed At:        {{ wo.resolved_at | datetimeformat('%Y-%m-%d %H:%M %Z') }}
+    Met SLA:          {% if wo.met_sla %}Yes{% else %}No{% endif %}
+
+    Please match the incoming invoice from {{ vendor.name }} to the above
+    work order reference and route to cost center {{ cost_center }}.
+
+    —
+    xiaoguai Facilities Management Pack
+
+# ── NetSuite adapter ─────────────────────────────────────────────────────────
+
+netsuite:
+  account_id_env:     NETSUITE_ACCOUNT_ID
+  consumer_key_env:   NETSUITE_CONSUMER_KEY
+  consumer_secret_env: NETSUITE_CONSUMER_SECRET
+  token_id_env:       NETSUITE_TOKEN_ID
+  token_secret_env:   NETSUITE_TOKEN_SECRET
+  vendor_bill_record: vendorBill
+  field_mapping:
+    entity:     "vendor.netsuite_id"     # must be pre-populated in vendors_facilities.notes or a lookup
+    memo:       "WO {{ wo.id }} — {{ wo.title | truncate(60) }}"
+    department: cost_center
+    location:   "wo.building"
+
+# ── Generic webhook adapter ──────────────────────────────────────────────────
+
+webhook:
+  url_env: FINANCE_WEBHOOK_URL
+  method:  POST
+  headers:
+    Authorization: "Bearer ${FINANCE_WEBHOOK_TOKEN}"
+    Content-Type:  application/json
+  payload_template: |
+    {
+      "work_order_id":  "{{ wo.id }}",
+      "vendor_id":      "{{ vendor.id }}",
+      "vendor_name":    "{{ vendor.name }}",
+      "category":       "{{ wo.category }}",
+      "building":       "{{ wo.building }}",
+      "cost_center":    "{{ cost_center }}",
+      "closed_at":      "{{ wo.resolved_at | iso8601 }}",
+      "met_sla":        {{ wo.met_sla | lower }}
+    }
+  retry:
+    max_attempts: 5
+    backoff_seconds: 60

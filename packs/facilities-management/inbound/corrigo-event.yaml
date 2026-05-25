@@ -1,0 +1,59 @@
+# packs/facilities-management/inbound/corrigo-event.yaml
+#
+# Corrigo CMMS webhook inbound source.
+#
+# Corrigo posts a JSON payload to the xiaoguai webhook endpoint whenever
+# a work order is created or status-changed in Corrigo Enterprise.
+# The endpoint is: POST /v1/facilities/inbound/corrigo
+#
+# Authentication: per-tenant HMAC-SHA256 signature in X-Corrigo-Signature header.
+# xiaoguai verifies the signature using CORRIGO_WEBHOOK_SECRET before processing.
+
+name: corrigo-event
+kind: webhook
+endpoint: /v1/facilities/inbound/corrigo
+
+auth:
+  method: hmac_sha256
+  header: X-Corrigo-Signature
+  secret_env: CORRIGO_WEBHOOK_SECRET
+
+# Corrigo sends events for many lifecycle transitions; only process these:
+filter:
+  event_types:
+    - work_order.created
+    - work_order.status_changed
+    - work_order.assigned
+
+# Field mapping from Corrigo payload → FacilitiesEvent schema.
+# Corrigo uses camelCase field names.
+field_mapping:
+  source:          '"corrigo"'
+  external_id:     "$.workOrderId"
+  building:        "$.location.buildingName"
+  floor:           "$.location.floorName"
+  room:            "$.location.roomName"
+  title:           "$.subject"
+  description:     "$.description"
+  requestor_name:  "$.requestedBy.displayName"
+  requestor_email: "$.requestedBy.email"
+  requestor_phone: "$.requestedBy.phone"
+  # Corrigo priority codes: 1=Emergency → p1, 2=Urgent → p1, 3=Normal → p2, 4=Low → p3
+  priority_raw:    "$.priority"
+  status_raw:      "$.status"
+
+priority_map:
+  "1": p1    # Emergency
+  "2": p1    # Urgent
+  "3": p2    # Normal
+  "4": p3    # Low
+  "5": p3    # Planned PM
+
+# After mapping, pass to the work-order-triager agent for LLM classification.
+next_agent: agents/work-order-triager.yaml
+
+# Dedup: if Corrigo re-delivers a webhook for an already-triaged order,
+# update the status only — do not re-triage.
+dedup:
+  key: "corrigo:{{ external_id }}"
+  on_duplicate: update_status_only

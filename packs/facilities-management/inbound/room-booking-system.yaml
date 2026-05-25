@@ -1,0 +1,54 @@
+# packs/facilities-management/inbound/room-booking-system.yaml
+#
+# Meeting-room booking system inbound source.
+#
+# Polls the booking system to update meeting-room utilisation rates in
+# space_assignments.  Also detects perpetually-booked-but-empty rooms
+# (ghost meetings) to avoid over-counting utilisation.
+#
+# Supported adapters (set ROOM_BOOKING_ADAPTER):
+#   - google_calendar   (Google Workspace Calendar Resources API)
+#   - microsoft_365     (MS Graph Calendar Rooms)
+#   - robin             (Robin Powered API)
+#   - condeco           (Condeco REST API)
+
+name: room-booking-system
+kind: poll
+
+schedule:
+  expression: "0 */4 * * *"     # every 4 hours — bookings don't change minute-by-minute
+  timezone: "${TZ:-America/New_York}"
+
+adapter:
+  name: "${ROOM_BOOKING_ADAPTER:-google_calendar}"
+  credentials_env: ROOM_BOOKING_CREDENTIALS   # JSON service-account key or OAuth token
+  lookback_days: "${FACILITIES_BADGE_WINDOW_DAYS:-14}"
+
+# Compute booking_rate = (days_with_at_least_one_booking / lookback_working_days)
+# and store in space_assignments.utilization_rate for meeting_room rows.
+utilization_update:
+  target_table: space_assignments
+  match_by: room              # matched against space_assignments.room
+  filter_where: "assignee_email IS NULL AND is_hot_desk = false"
+  recompute_sql: |
+    UPDATE space_assignments
+    SET
+      utilization_rate = $1,   -- computed booking_rate passed from adapter
+      last_computed_at = now()
+    WHERE room     = $2
+      AND building = $3
+      AND assignee_email IS NULL
+      AND is_hot_desk = false;
+
+# Ghost-meeting detection: rooms that are booked but badge data shows
+# no one actually entered within 30 minutes of the booking start.
+# Flagging helps avoid over-stating utilisation.
+ghost_meeting_detection:
+  enabled: "${FACILITIES_GHOST_MEETING_DETECTION:-true}"
+  badge_match_window_minutes: 30
+  # If ghost rate > 40% for a room, add a note to the space_assignment.
+  ghost_rate_threshold: 0.40
+  # Deduct ghost meetings from the utilization_rate calculation.
+  deduct_ghost_bookings: true
+
+next_agent: null    # updates utilisation only; space-planner is invoked by the watch

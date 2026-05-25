@@ -1,0 +1,63 @@
+# packs/facilities-management/watches/preventive-maintenance-due.yaml
+#
+# Fires when a preventive-maintenance (PM) work order is due within the
+# next 7 days and has not yet been scheduled (status = 'new').
+#
+# PM work orders are created by the CMMS (Corrigo / Fexa) on a fixed
+# schedule and arrive via the corrigo-event or fexa-cmms-webhook inbound
+# sources with category set and a future sla_deadline.  This watch ensures
+# they don't fall through the cracks before the scheduler acts.
+
+name: preventive-maintenance-due
+kind: sql_watch
+
+schedule:
+  expression: "0 8 * * 1-5"    # weekdays at 08:00 — daily morning briefing cadence
+  timezone: "${TZ:-America/New_York}"
+
+query: |
+  SELECT
+    wo.id,
+    wo.title,
+    wo.category::TEXT,
+    wo.building,
+    wo.floor,
+    wo.sla_deadline  AS due_date,
+    wo.created_at,
+    wo.status::TEXT,
+    -- How many days until PM is due
+    EXTRACT(DAY FROM (wo.sla_deadline - now()))::INT AS days_until_due,
+    -- Last time this same category + location had a PM completed
+    latest_pm.resolved_at AS last_pm_completed_at
+  FROM work_orders wo
+  LEFT JOIN LATERAL (
+    SELECT resolved_at
+    FROM   work_orders
+    WHERE  building  = wo.building
+      AND  category  = wo.category
+      AND  status    = 'closed'
+      AND  met_sla   = true
+    ORDER BY resolved_at DESC
+    LIMIT 1
+  ) latest_pm ON true
+  WHERE wo.status IN ('new', 'triaged')
+    AND wo.sla_deadline BETWEEN now() AND now() + INTERVAL '7 days'
+    -- Title convention: CMMS systems prefix PM orders with 'PM:' or 'Preventive'
+    AND (wo.title ILIKE 'pm:%' OR wo.title ILIKE 'preventive%')
+  ORDER BY wo.sla_deadline ASC;
+
+dedup:
+  key_field: id
+  cooldown_minutes: 1440    # once per day per WO is sufficient for PM reminders
+
+outputs:
+  - outputs/facilities-team-slack.yaml
+
+message_template: |
+  🔧 *Preventive Maintenance Due* — {{ days_until_due }} day(s)
+  *{{ title }}*
+  Category: {{ category | upper }}  |  Location: {{ building }}{% if floor %} / Floor {{ floor }}{% endif %}
+  Due: {{ due_date | datetimeformat('%a %b %-d') }}  |  Status: {{ status }}
+  {% if last_pm_completed_at %}Last completed: {{ last_pm_completed_at | datetimeformat('%Y-%m-%d') }}{% else %}No prior PM record found for this location + category{% endif %}
+
+  Please assign a vendor and dispatch before the due date.
