@@ -1,0 +1,29 @@
+[package]
+name = "xiaoguai-im-mattermost"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Mattermost IM adapter — outgoing webhook + slash command + REST API replies."
+
+[dependencies]
+xiaoguai-im-gateway = { path = "../xiaoguai-im-gateway" }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_urlencoded = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+mockito = { workspace = true }
+
+[lints]
+workspace = true
