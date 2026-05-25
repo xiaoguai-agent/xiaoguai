@@ -7,6 +7,7 @@ import { CopyButton } from './codeblock';
 import { MarkdownBody } from './markdown';
 import { HotlBanner } from './HotlBanner';
 import type { HotlPendingState } from './HotlBanner';
+import { AiDisclosureBanner } from './AiDisclosureBanner';
 
 type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
 
@@ -224,6 +225,8 @@ export function ChatPage({ onSessionCreated }: Props) {
     <>
       {/* v1.3.x — HotL escalation banner: non-dismissible, shown above messages. */}
       {hotlPending && <HotlBanner pending={hotlPending} />}
+      {/* AI disclosure banner (EU AI Act Art. 50(1)) — always above HotlBanner */}
+      <AiDisclosureBanner tenantId={DEV_TENANT_ID} />
       <div className="messages" ref={scrollRef}>
         {bubbles.map((b, i) => (
           <Bubble key={i} bubble={b} onFork={fork} />

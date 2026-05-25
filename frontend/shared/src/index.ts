@@ -759,6 +759,71 @@ export interface SessionOutcomesSummary {
     description: string | null;
     ts: string;
   }>;
+// ---- v1.3.x — AI disclosure banner (EU AI Act Art. 50(1)) ---------------
+
+/**
+ * Per-tenant configuration for the AI disclosure banner.
+ *
+ * Backend endpoint (required follow-up, separate task):
+ *   GET /v1/tenants/:id/config  →  field `ai_disclosure_banner: AiDisclosureConfig`
+ *
+ * Until the backend field is wired, the client falls back to the defaults
+ * documented below (enabled=true, dismissible=true, no text_override, no link).
+ */
+export interface AiDisclosureConfig {
+  /** When false the banner is hidden entirely. Default: true. */
+  enabled: boolean;
+  /**
+   * Custom locale text for the banner body. When omitted the built-in
+   * translated strings from the i18n locale files are used.
+   */
+  text_override?: string | null;
+  /**
+   * When false the dismiss button is hidden and the banner is always
+   * visible — intended for regulated tenants (e.g. financial services
+   * subject to stricter AI Act obligations). Default: true.
+   */
+  dismissible: boolean;
+  /**
+   * URL to the operator's full transparency note / AI disclosure page.
+   * When provided a "Learn more" link is rendered at the end of the banner.
+   */
+  link_to_disclosure?: string | null;
+}
+
+const AI_DISCLOSURE_CONFIG_DEFAULTS: AiDisclosureConfig = {
+  enabled: true,
+  dismissible: true,
+};
+
+/**
+ * Fetch the AI disclosure banner config for a tenant.
+ *
+ * NOTE: The backend field `ai_disclosure_banner` on
+ * `GET /v1/tenants/:id/config` does not yet exist (separate task).
+ * This function hits the endpoint and extracts the field when present;
+ * if the field is absent or the request fails, defaults are returned.
+ */
+export async function getAiDisclosureConfig(
+  tenantId: string,
+  opts?: { baseUrl?: string; token?: string; fetchImpl?: typeof fetch },
+): Promise<AiDisclosureConfig> {
+  const base = (opts?.baseUrl ?? '').replace(/\/+$/, '');
+  const fetchImpl = opts?.fetchImpl ?? fetch;
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (opts?.token) headers['authorization'] = `Bearer ${opts.token}`;
+  try {
+    const resp = await fetchImpl(
+      `${base}/v1/tenants/${encodeURIComponent(tenantId)}/config`,
+      { headers },
+    );
+    if (!resp.ok) return AI_DISCLOSURE_CONFIG_DEFAULTS;
+    const body = (await resp.json()) as { ai_disclosure_banner?: AiDisclosureConfig };
+    if (!body.ai_disclosure_banner) return AI_DISCLOSURE_CONFIG_DEFAULTS;
+    return { ...AI_DISCLOSURE_CONFIG_DEFAULTS, ...body.ai_disclosure_banner };
+  } catch {
+    return AI_DISCLOSURE_CONFIG_DEFAULTS;
+  }
 }
 
 // ---- Agent event stream --------------------------------------------------

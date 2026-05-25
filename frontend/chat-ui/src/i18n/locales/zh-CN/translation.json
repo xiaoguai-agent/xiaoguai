@@ -1,0 +1,8 @@
+{
+  "ai_disclosure": {
+    "banner_text": "您正在与 AI 助手交互。回答可能不准确，请核实重要信息。",
+    "dismiss_label": "关闭",
+    "learn_more_label": "了解更多",
+    "banner_aria_label": "AI 透明度说明"
+  }
+}

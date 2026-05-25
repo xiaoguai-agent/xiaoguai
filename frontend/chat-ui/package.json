@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
+    "test": "vitest run"
   },
   "dependencies": {
     "@xiaoguai/shared": "workspace:*",
@@ -24,6 +25,7 @@
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.0.0",
+    "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.5.2",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
@@ -34,5 +36,9 @@
     "typescript": "^5.6.0",
     "vite": "^5.4.8",
     "vitest": "^2.1.4"
+    "jsdom": "^25.0.1",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.8",
+    "vitest": "^2.1.8"
   }
 }
