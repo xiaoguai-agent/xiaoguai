@@ -25,6 +25,8 @@ use xiaoguai_storage::repositories::{
 use crate::audit::{AuditReader, AuditVerifier};
 use crate::auth::TokenValidator;
 use crate::eval::EvalService;
+use crate::hotl::enforcer::HotlEnforcer;
+use crate::hotl::policy::HotlPolicyStore;
 use crate::scheduler::{
     NlJobCompiler, ScheduledJobUpserter, ScheduledJobsReader, WebhookPusher, WebhookTokenAdmin,
     WebhookTokenValidator,
@@ -168,6 +170,15 @@ pub struct AppState {
     /// `GET /v1/admin/scheduler/jobs` and the matching `/fire-now`
     /// endpoint return 503.
     pub scheduler_jobs_reader: Option<Arc<dyn ScheduledJobsReader>>,
+    /// v1.2.3: HOTL boundary policy store — backs
+    /// `GET|POST|DELETE /v1/hotl/policies`. `None` makes the endpoints
+    /// return 503; production wires a `PgHotlPolicyStore` in
+    /// `xiaoguai-core`.
+    pub hotl_policy_store: Option<Arc<dyn HotlPolicyStore>>,
+    /// v1.2.3: HOTL budget enforcer called from gated action sites
+    /// (LLM call path wired; email/webhook deferred). `None` disables
+    /// enforcement (allow-all passthrough).
+    pub hotl_enforcer: Option<Arc<dyn HotlEnforcer>>,
 }
 
 impl std::fmt::Debug for AppState {

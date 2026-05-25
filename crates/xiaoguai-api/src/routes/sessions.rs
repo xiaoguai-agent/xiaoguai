@@ -247,11 +247,39 @@ pub async fn send_message(
     .with_tenant(Some(session_tenant.clone()));
     let cancel = state.cancels.register(&session_id_str);
 
-    // 4. Launch the loop via the runtime. `events` closes naturally when
+    // 4. HOTL budget check — gated on the "llm_call" scope.
+    //    Fail-closed: if the enforcer returns Deny, abort before spawning the
+    //    agent loop. Escalate is logged and the call proceeds (async review).
+    //    When `hotl_enforcer` is None (dev / tests without budget), skip.
+    if let Some(enforcer) = &state.hotl_enforcer {
+        if let Ok(tid) = session_tenant.parse::<uuid::Uuid>() {
+            match enforcer.check(tid, "llm_call", 1.0).await {
+                Ok(crate::hotl::enforcer::HotlVerdict::Allow) => {}
+                Ok(crate::hotl::enforcer::HotlVerdict::Escalate(reason)) => {
+                    tracing::warn!(tenant_id = %tid, %reason, "HOTL escalation triggered");
+                }
+                Ok(crate::hotl::enforcer::HotlVerdict::Deny(reason)) => {
+                    tracing::warn!(tenant_id = %tid, %reason, "HOTL denied LLM call");
+                    return Err(ApiError::ServiceUnavailable(format!(
+                        "LLM call denied by HOTL policy: {reason}"
+                    )));
+                }
+                Err(e) => {
+                    // Enforcer itself errored — fail-closed.
+                    tracing::error!(?e, "HOTL enforcer error — denying LLM call (fail-closed)");
+                    return Err(ApiError::ServiceUnavailable(
+                        "LLM call denied: HOTL enforcer unavailable".into(),
+                    ));
+                }
+            }
+        }
+    }
+
+    // 5. Launch the loop via the runtime. `events` closes naturally when
     //    the loop terminates; `join` resolves with the enriched outcome.
     let (join, events) = run_streamed(&ctx, messages, cancel);
 
-    // 5. Spawn the finalisation task — it runs concurrently with the SSE
+    // 6. Spawn the finalisation task — it runs concurrently with the SSE
     //    stream and persists anything the loop produced once the join
     //    handle resolves.
     spawn_finalize_task(

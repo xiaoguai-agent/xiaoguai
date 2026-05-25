@@ -58,6 +58,8 @@ fn build_state_with_auth() -> AppState {
         webhook_token_validator: None,
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
+        hotl_policy_store: None,
+        hotl_enforcer: None,
     }
 }
 

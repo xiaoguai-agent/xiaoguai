@@ -12,6 +12,7 @@ pub mod auth;
 pub mod convert;
 pub mod error;
 pub mod eval;
+pub mod hotl;
 pub mod marketplace;
 pub mod mcp_serve;
 pub mod rate_limit;
@@ -35,6 +36,10 @@ pub use eval::{
     build_case_yaml, list_suites_in, CaseFromSessionRequest, CaseFromSessionResponse,
     CaseFromSessionSource, EvalService, EvalServiceError, EvalSuiteListItem, RunEvalRequest,
     SessionForCase, StaticCaseFromSessionSource, ToolInvocationRecord,
+};
+pub use hotl::{
+    CreateHotlPolicyRequest, HotlEnforcer, HotlPolicy, HotlPolicyStore, HotlPolicyStoreError,
+    HotlVerdictResult, InMemoryHotlPolicyStore, StaticHotlEnforcer,
 };
 pub use marketplace::{MarketplaceEntry, MarketplaceResponse};
 pub use mcp_serve::XiaoguaiMcpServer;
