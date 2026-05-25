@@ -1,0 +1,54 @@
+# Reusable hook definitions for xiaoguai validators.
+# Other repositories can consume these via:
+#
+#   - repo: https://github.com/xiaoguai-agent/xiaoguai
+#     rev: <tag>
+#     hooks:
+#       - id: validate-pack
+#       - id: validate-watcher
+#       - id: validate-hotl-policy
+#       - id: validate-recipe
+
+- id: validate-pack
+  name: validate pack.yaml manifests
+  description: >
+    Validates pack.yaml files under packs/*/pack.yaml against the xiaoguai
+    pack schema. Fails on missing required fields or unknown keys.
+  language: python
+  entry: python3 scripts/hooks/validate_manifest.py pack
+  files: ^packs/[^/]+/pack\.yaml$
+  pass_filenames: true
+  require_serial: false
+
+- id: validate-watcher
+  name: validate watcher manifests
+  description: >
+    Validates watcher YAML files under packs/*/watches/ against the xiaoguai
+    watcher schema.
+  language: python
+  entry: python3 scripts/hooks/validate_manifest.py watcher
+  files: ^packs/[^/]+/watches/.*\.ya?ml$
+  pass_filenames: true
+  require_serial: false
+
+- id: validate-hotl-policy
+  name: validate hotl-policy manifests
+  description: >
+    Validates HoTL policy YAML files under examples/hotl-policies/ against the
+    xiaoguai hotl-policy schema.
+  language: python
+  entry: python3 scripts/hooks/validate_manifest.py hotl-policy
+  files: ^examples/hotl-policies/.*\.ya?ml$
+  pass_filenames: true
+  require_serial: false
+
+- id: validate-recipe
+  name: validate recipe manifests
+  description: >
+    Validates recipe YAML files under recipes/ against the xiaoguai recipe
+    schema.
+  language: python
+  entry: python3 scripts/hooks/validate_manifest.py recipe
+  files: ^recipes/.*\.ya?ml$
+  pass_filenames: true
+  require_serial: false
