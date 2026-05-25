@@ -11,6 +11,7 @@ import { AuditPane } from './panes/Audit';
 import { UsagePane } from './panes/Usage';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { OutcomesPane } from './panes/Outcomes';
+import { AnomalyPane } from './panes/Anomaly';
 
 /**
  * v0.11.1 — audit-first console. `Today` becomes the default landing
@@ -40,6 +41,10 @@ export function App() {
         <NavLink to="/outcomes" className={({ isActive }) => (isActive ? 'active' : '')}>
           Outcomes
         </NavLink>
+        {/* v1.4: Anomaly detector dashboard (planned endpoint; degrades gracefully). */}
+        <NavLink to="/anomaly" className={({ isActive }) => (isActive ? 'active' : '')}>
+          {t('nav.anomaly')}
+        </NavLink>
         <div className="nav-section">Manage</div>
         <NavLink to="/tenants" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.tenants')}
@@ -66,6 +71,7 @@ export function App() {
           <Route path="/eval" element={<EvalPane />} />
           <Route path="/usage" element={<UsagePane />} />
           <Route path="/outcomes" element={<OutcomesPane />} />
+          <Route path="/anomaly" element={<AnomalyPane />} />
           <Route path="/marketplace" element={<MarketplacePane />} />
           <Route path="/mcp-servers" element={<McpServersPane />} />
           <Route path="/tenants" element={<TenantsPane />} />
