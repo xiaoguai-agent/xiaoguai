@@ -1,0 +1,66 @@
+# Output connector — ir-team-slack
+# ---------------------------------------------------------------------------
+# Posts IR workflow notifications to the IR team's internal Slack workspace.
+#
+# TWO CHANNELS, DIFFERENT RULES:
+#
+#   ir-internal (${IR_SLACK_INTERNAL_CHANNEL}):
+#     Internal-only coordination. Drafts, classification results, MNPI holds,
+#     approval requests. NOT HotL-gated — these are internal team messages.
+#     Never contains approved external content in final form.
+#
+#   ir-announcements (${IR_SLACK_EXTERNAL_ANNOUNCE_CHANNEL}):
+#     Mirrors approved external disclosures AFTER they have been published
+#     elsewhere (investor portal, EDGAR). HotL-GATED — requires CFO/IR-Lead
+#     approval. Posting here before the public disclosure violates Reg FD.
+#
+# REG FD: Do NOT post material information to ir-announcements before it
+# has been simultaneously posted to the investor portal or filed with EDGAR.
+# Slack is not a method of "broad, non-exclusionary disclosure" under Reg FD.
+# ---------------------------------------------------------------------------
+
+name: ir-team-slack
+version: "1.0.0"
+description: >
+  Posts IR workflow events to internal Slack channels. Internal coordination
+  channel is not HotL-gated. The announcements channel (mirroring approved
+  external disclosures) IS HotL-gated — Slack is not a Reg FD disclosure
+  method; content must be publicly filed/posted first.
+
+kind: slack
+
+channels:
+  internal:
+    channel_env: IR_SLACK_INTERNAL_CHANNEL
+    hotl_gated: false
+    # Events routed to internal channel
+    event_subscriptions:
+      - ir.analyst_question.received
+      - ir.analyst_question.classified
+      - ir.communication.draft_created
+      - ir.reg_fd_check.flagged
+      - ir.reg_fd_check.clear
+      - ir.hotl.pending_approval
+      - ir.hotl.approved
+      - ir.hotl.rejected
+      - ir.activist_escalation.triggered
+
+  announcements:
+    channel_env: IR_SLACK_EXTERNAL_ANNOUNCE_CHANNEL
+    hotl_gated: true
+    hotl_approvers:
+      - role: CFO
+        env: IR_CFO_APPROVER_ID
+      - role: IR-Lead
+        env: IR_LEAD_APPROVER_ID
+    # IMPORTANT: Only post AFTER content is live on investor portal or EDGAR.
+    # This channel is a mirror/notification, NOT the primary disclosure channel.
+    post_condition: "comm.status == 'sent' AND comm.investor_portal_published == true"
+    event_subscriptions:
+      - ir.communication.sent
+
+auth:
+  type: bot_token
+  token_env: IR_SLACK_BOT_TOKEN
+
+message_format: markdown

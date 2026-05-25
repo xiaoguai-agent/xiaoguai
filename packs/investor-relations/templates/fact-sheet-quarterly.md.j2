@@ -1,0 +1,84 @@
+{# Jinja2 template — fact-sheet-quarterly
+   Used by: admin UI manual drafts; investor-portal-publish output (HotL-gated)
+   Variables: fiscal_year, fiscal_quarter, period_end_date, company_name,
+              ticker, exchange, financial_summary (dict), kpis (list),
+              ir_website_url, ir_email, safe_harbor_url
+   Reg FD note: DRAFT — HotL-gated. All data must match filed public disclosures.
+#}
+<!-- DRAFT — INTERNAL USE ONLY — NOT APPROVED FOR EXTERNAL DISTRIBUTION -->
+<!-- Reg FD: All figures must match the filed earnings press release.
+     Do not add any data not already publicly disclosed. -->
+
+---
+
+# {{ company_name }} — Quarterly Fact Sheet
+**{{ fiscal_year }} {{ fiscal_quarter }}** | Period end: {{ period_end_date }}
+**Ticker:** {{ ticker | default("[TICKER]") }} | **Exchange:** {{ exchange | default("[EXCHANGE]") }}
+
+*Updated: {{ today }} — DRAFT pending CFO/IR-Lead approval*
+
+---
+
+## Financial Highlights
+
+| Metric | {{ fiscal_year }} {{ fiscal_quarter }} | Prior Year {{ fiscal_quarter }} | YoY Change |
+|--------|---------|------------|------------|
+| Revenue | {{ financial_summary.revenue | default("—") }} | {{ financial_summary.revenue_prior | default("—") }} | {{ financial_summary.revenue_yoy_growth | default("—") }} |
+| Gross Margin | {{ financial_summary.gross_margin_pct | default("—") }} | {{ financial_summary.gross_margin_prior_pct | default("—") }} | — |
+| Operating Income | {{ financial_summary.operating_income | default("—") }} | {{ financial_summary.operating_income_prior | default("—") }} | — |
+| GAAP EPS | {{ financial_summary.eps_gaap | default("—") }} | {{ financial_summary.eps_gaap_prior | default("—") }} | — |
+| Non-GAAP EPS | {{ financial_summary.eps_non_gaap | default("—") }} | {{ financial_summary.eps_non_gaap_prior | default("—") }} | — |
+| Cash & Equivalents | {{ financial_summary.cash_and_equivalents | default("—") }} | — | — |
+| Cash Flow from Ops | {{ financial_summary.cfo | default("—") }} | {{ financial_summary.cfo_prior | default("—") }} | — |
+
+---
+
+## Key Operating Metrics
+
+{% if kpis %}
+| Metric | Value | Notes |
+|--------|-------|-------|
+{% for kpi in kpis %}
+| {{ kpi.name }} | {{ kpi.value }} | {{ kpi.notes | default("") }} |
+{% endfor %}
+{% else %}
+*[Key operating metrics to be provided by Finance / Business Intelligence team]*
+{% endif %}
+
+---
+
+## Guidance
+
+**[GUIDANCE PLACEHOLDER]**
+*CFO + Legal must approve any forward-looking statements before this section
+is populated. Insert only guidance that has been filed or simultaneously
+disclosed publicly.*
+
+---
+
+## About {{ company_name }}
+
+[Standard company description — use approved boilerplate from Legal]
+
+---
+
+## Investor Relations Contact
+
+{{ ir_contact_name | default("[IR Contact Name]") }}
+{{ ir_email | default("[ir@company.com]") }}
+{{ ir_website_url | default("[IR website URL]") }}
+
+---
+
+*This fact sheet contains forward-looking statements. Please see the full
+safe harbor disclosure at {{ safe_harbor_url | default(ir_website_url ~ "/safe-harbor") }}.*
+
+<!-- Reg FD approval checklist:
+  [ ] All figures sourced from filed earnings press release
+  [ ] KPIs are publicly disclosed metrics only
+  [ ] No guidance beyond what is filed/publicly disclosed
+  [ ] IR-Lead approved
+  [ ] CFO approved
+-->
+---
+<!-- END DRAFT -->

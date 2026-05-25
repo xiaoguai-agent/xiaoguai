@@ -1,0 +1,59 @@
+# Inbound connector — analyst-portal-question-submit
+# ---------------------------------------------------------------------------
+# Receives question submissions from the company's own investor portal
+# "Ask a Question" form. Authenticated submissions are tagged with the
+# investor's registered profile (retail or institutional).
+#
+# Events emitted:
+#   ir.analyst_question.received    — for registered institutional submitters
+#   ir.shareholder_inquiry.received — for registered retail submitters
+# ---------------------------------------------------------------------------
+
+name: analyst-portal-question-submit
+version: "1.0.0"
+description: >
+  Receives authenticated question submissions from the investor portal.
+  Routes to analyst-question-classifier or shareholder-inquiry-router
+  based on the submitter's registered audience type.
+
+kind: webhook
+endpoint: "/inbound/investor-portal/question"
+auth:
+  type: bearer_token
+  token_env: IR_PORTAL_INBOUND_TOKEN
+
+field_map:
+  submitter_id:   "$.user.id"
+  submitter_name: "$.user.display_name"
+  submitter_email: "$.user.email"
+  audience_type:  "$.user.audience_type"  # 'retail' | 'institutional'
+  question_text:  "$.question.body"
+  received_at:    "$.question.submitted_at"
+  source_ref:     "$.question.id"
+
+# Routing based on audience_type field from portal auth
+routing:
+  - condition: "audience_type == 'institutional'"
+    emit_event: ir.analyst_question.received
+    source: "analyst_portal"
+  - condition: "audience_type == 'retail'"
+    emit_event: ir.shareholder_inquiry.received
+    source: "analyst_portal"
+  - condition: default
+    emit_event: ir.shareholder_inquiry.received
+    source: "analyst_portal"
+
+persist:
+  table: ir_analyst_questions
+  fields:
+    tenant_id:    "{tenant_id}"
+    source:       "analyst_portal"
+    analyst_name: "{submitter_name}"
+    question_text: "{question_text}"
+    received_at:  "{received_at}"
+    status:       "received"
+  dedup_key: source_ref
+
+rate_limit:
+  per_minute: 30
+  per_submitter_per_hour: 5   # prevent form abuse

@@ -1,0 +1,55 @@
+# Inbound connector — factset-poll
+# ---------------------------------------------------------------------------
+# Polls the FactSet IR Solutions API for new analyst questions submitted via
+# the FactSet analyst portal. Runs on a configurable interval.
+#
+# Events emitted:
+#   ir.analyst_question.received — with source = 'factset'
+# ---------------------------------------------------------------------------
+
+name: factset-poll
+version: "1.0.0"
+description: >
+  Polls FactSet IR Solutions for new analyst questions. Normalises question
+  metadata and emits ir.analyst_question.received events. Requires a valid
+  FactSet API key configured in IR_FACTSET_API_KEY.
+
+kind: poll
+poll_interval_seconds: 300    # poll every 5 minutes; configurable via env
+
+auth:
+  type: api_key
+  header: "X-FactSet-Api-Key"
+  key_env: IR_FACTSET_API_KEY
+
+endpoint:
+  base_url_env: IR_FACTSET_BASE_URL
+  path: "/ir/questions"
+  params:
+    status: "new"
+    limit: 50
+
+# Field mapping from FactSet API response items → internal schema
+field_map:
+  analyst_name:  "$.analyst.name"
+  analyst_firm:  "$.analyst.firm"
+  question_text: "$.question"
+  received_at:   "$.submitted_at"
+  source_ref:    "$.question_id"
+
+emit_event: ir.analyst_question.received
+
+persist:
+  table: ir_analyst_questions
+  fields:
+    tenant_id:    "{tenant_id}"
+    source:       "factset"
+    analyst_name: "{analyst_name}"
+    analyst_firm: "{analyst_firm}"
+    question_text: "{question_text}"
+    received_at:  "{received_at}"
+    status:       "received"
+  dedup_key: source_ref   # skip if question_id already seen
+
+rate_limit:
+  per_poll_max_records: 200

@@ -1,0 +1,115 @@
+{# Jinja2 template — qa-response-templates
+   Used by: shareholder-inquiry-router and analyst-question-classifier agents
+   Variables: audience (retail|institutional), question_category, analyst_name,
+              analyst_firm, question_text, approved_answer (may be empty),
+              ir_contact_name, company_name, ir_website_url
+   Reg FD note: DRAFT — all responses are internal until HotL-approved.
+#}
+<!-- DRAFT — INTERNAL USE ONLY — NOT APPROVED FOR EXTERNAL DISTRIBUTION -->
+
+{% if audience == 'retail' %}
+---
+**To:** {{ sender_name | default("Investor") }}
+**From:** {{ ir_contact_name | default("[IR Contact]") }}, Investor Relations
+**Re:** Your inquiry regarding {{ company_name }}
+**Date:** {{ today }}
+
+Dear {{ sender_name | default("Investor") }},
+
+Thank you for your interest in {{ company_name }}. We appreciate you reaching out
+to our Investor Relations team.
+
+{% if approved_answer %}
+{{ approved_answer }}
+{% else %}
+[APPROVED ANSWER REQUIRED — do not send without content from IR team]
+{% endif %}
+
+For additional information, we invite you to visit our investor relations website
+at {{ ir_website_url | default("[IR website URL]") }}, where you will find our
+most recent earnings releases, SEC filings, investor presentations, and FAQs.
+
+If you have further questions, please don't hesitate to contact us at
+{{ ir_email | default("[ir@company.com]") }}.
+
+Best regards,
+{{ ir_contact_name | default("[IR Contact Name]") }}
+Investor Relations
+{{ company_name }}
+
+---
+{% endif %}
+
+{% if audience == 'institutional' %}
+---
+**To:** {{ analyst_name | default("[Analyst Name]") }}, {{ analyst_firm | default("[Firm]") }}
+**From:** {{ ir_contact_name | default("[IR Contact]") }}, Investor Relations — {{ company_name }}
+**Re:** Response to your inquiry — {{ question_category | upper }} matter
+**Date:** {{ today }}
+**Classification:** Institutional Investor Response — IR-Lead Review Required
+
+Dear {{ analyst_name | default("[Analyst Name]") }},
+
+Thank you for your question regarding {{ company_name }}. We appreciate your
+continued engagement as an institutional shareholder.
+
+{% if question_category == 'financial' %}
+**Category: Financial**
+Our response is based solely on publicly disclosed financial information in our
+most recent SEC filings and earnings releases. We are unable to comment on
+information beyond what has been publicly disclosed.
+
+{% elif question_category == 'strategic' %}
+**Category: Strategic**
+We appreciate your interest in our strategic direction. Our response is limited
+to information already disclosed in public communications.
+
+{% elif question_category == 'operational' %}
+**Category: Operational**
+We are pleased to address your operational question within the bounds of
+publicly available information.
+
+{% elif question_category == 'competitive' %}
+**Category: Competitive**
+We do not comment on competitor-specific information. Our response focuses
+on our own publicly disclosed operational and financial data.
+
+{% elif question_category == 'esg' %}
+**Category: ESG**
+Thank you for your focus on our ESG performance. Our response draws from our
+most recent ESG/sustainability report and public disclosures.
+{% endif %}
+
+{% if approved_answer %}
+{{ approved_answer }}
+{% else %}
+[APPROVED ANSWER REQUIRED — this section must be completed by the
+responsible team ({{ routed_to | default("IR-Lead") }}) and approved before send]
+{% endif %}
+
+Please note that this communication does not constitute selective disclosure.
+Any material information referenced herein is available to the general public
+through our SEC filings and investor relations website.
+
+We welcome further dialogue. Please feel free to schedule a call with our IR team.
+
+Best regards,
+{{ ir_contact_name | default("[IR Contact Name]") }}
+Investor Relations — {{ company_name }}
+{{ ir_website_url | default("[IR website URL]") }}
+
+<!-- IR-Lead: please confirm this response does not contain MNPI before approving -->
+---
+{% endif %}
+
+{% if audience == 'activist' %}
+<!-- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+     ACTIVIST INQUIRY — DO NOT DRAFT A RESPONSE HERE
+     This template block must never be rendered for activist inquiries.
+     The shareholder-inquiry-router agent is configured to escalate
+     activist inquiries directly to CFO + Legal without creating a draft.
+     If you see this block rendered, something went wrong — alert Legal.
+     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! -->
+[ERROR: Activist response template rendered — this should not happen.
+Alert IR-Lead and Legal immediately.]
+{% endif %}

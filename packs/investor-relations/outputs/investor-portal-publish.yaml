@@ -1,0 +1,76 @@
+# Output connector — investor-portal-publish
+# ---------------------------------------------------------------------------
+# Publishes approved IR content to the company's investor relations portal.
+#
+# REG FD: The investor portal IS an acceptable method of broad, non-exclusionary
+# public disclosure (if broadly accessible without login barriers). However:
+#   1. Material information must NEVER be posted to a restricted/login-only
+#      portal as the primary disclosure method — that is selective disclosure.
+#   2. If the portal requires login, simultaneous disclosure via press release
+#      or SEC filing (8-K) is required.
+#   3. This connector checks portal_requires_login from config; if true,
+#      it blocks publication until the edgar-filing-stub is in 'filed' status.
+#
+# HotL-GATED: CFO + IR-Lead must approve before any content is published.
+# ---------------------------------------------------------------------------
+
+name: investor-portal-publish
+version: "1.0.0"
+description: >
+  Publishes approved IR communications to the investor portal (press releases,
+  fact sheets, earnings scripts, shareholder letters). HotL-gated (CFO +
+  IR-Lead). If portal requires login, blocks until EDGAR 8-K stub is filed.
+
+kind: http_post
+
+hotl:
+  gated: true
+  approvers:
+    - role: CFO
+      env: IR_CFO_APPROVER_ID
+    - role: IR-Lead
+      env: IR_LEAD_APPROVER_ID
+
+auth:
+  type: bearer_token
+  token_env: IR_PORTAL_PUBLISH_TOKEN
+
+endpoint:
+  base_url_env: IR_PORTAL_BASE_URL
+  path: "/api/content/publish"
+  method: POST
+
+# Reg FD access-control check
+pre_publish_check:
+  portal_requires_login_env: IR_PORTAL_REQUIRES_LOGIN   # 'true' | 'false'
+  if_login_required:
+    # Block publication until the related 8-K stub shows status = 'filed'
+    require_condition: >
+      SELECT COUNT(*) > 0
+      FROM ir_regulatory_filings
+      WHERE triggered_by_comm_id = '{comm_id}'
+        AND form_type = '8-K'
+        AND status = 'filed'
+    block_message: >
+      Investor portal requires login (restricted access). Cannot publish
+      material information without simultaneous public disclosure.
+      Ensure the EDGAR 8-K is filed first, then re-submit for publication.
+
+# Payload mapping
+payload:
+  content_type: "{comm_type}"
+  title:        "{subject}"
+  body:         "{draft_body}"
+  audience:     "{audience}"
+  publish_at:   "NOW()"
+
+# Post-publish: update ir_shareholder_communications
+on_success:
+  update_comm_status: "sent"
+  set_fields:
+    sent_at: "NOW()"
+    investor_portal_published: true
+  emit_event: ir.communication.sent
+
+event_subscriptions:
+  - ir.hotl.approved   # only runs after HotL approval
