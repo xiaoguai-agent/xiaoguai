@@ -48,6 +48,16 @@ Incremental shipping-readiness and product features:
 - rustdoc CI artifact alongside this handbook
 - Public-cloud LLM providers (Anthropic, Gemini, 通义, DeepSeek, 智谱)
 
+## v1.4 — candidates (ADR-0019)
+
+- **Task Board** (`xiaoguai-tasks` crate) — durable multi-agent Kanban queue
+  - Columns: TRIAGE / TO-DO / READY / RUNNING / BLOCKED / DONE
+  - Configurable dispatch policy (FIFO / priority / round-robin) + pool sizing
+  - Multi-board per tenant; HotL approval integration; outcome-telemetry attribution chain
+  - Admin UI swimlane view + `xg tasks` CLI; REST `/v1/boards` + `/v1/boards/{id}/cards`
+  - Pack integration: devops-oncall + incident-triage auto-create TRIAGE cards
+  - See ADR-0019 for open questions (workspace scoping, auto-triage, card expiry, affinity fallback)
+
 ## Stability policy
 
 - **Patch** (x.y.Z) — bug fixes, documentation, CI
