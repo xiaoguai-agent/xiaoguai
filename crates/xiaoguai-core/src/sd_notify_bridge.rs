@@ -80,11 +80,11 @@ pub fn spawn_watchdog_ticker() -> Option<tokio::task::JoinHandle<()>> {
                 "sd_notify: watchdog enabled — spawning ping task"
             );
             let handle = tokio::spawn(async move {
+                use sd_notify::NotifyState;
                 let mut ticker = tokio::time::interval(ping_interval);
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 loop {
                     ticker.tick().await;
-                    use sd_notify::NotifyState;
                     if let Err(e) = sd_notify::notify(false, &[NotifyState::Watchdog]) {
                         tracing::warn!(
                             error = %e,
