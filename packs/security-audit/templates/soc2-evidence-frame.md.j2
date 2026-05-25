@@ -1,0 +1,94 @@
+# SOC 2 Evidence — Control {{ result.control_id }}: {{ result.control_title }}
+
+> **Tenant**: `{{ result.tenant_id }}`
+> **Control ID**: {{ result.control_id }}
+> **Audit window**: {{ result.audit_window.start }} — {{ result.audit_window.end }}
+> **Prepared at**: {{ result.prepared_at }}
+> **Prepared by**: {{ result.prepared_by }}
+> **Coverage**: {{ result.coverage_status | upper }}
+> **Assessment**: {{ result.overall_assessment | replace('_', ' ') | title }}
+
+---
+
+## Coverage Status
+
+{% if result.coverage_status == 'full' %}
+All required evidence types were collected for the full audit window.
+{% elif result.coverage_status == 'partial' %}
+**Partial coverage** — the following gaps were identified:
+{% for gap in result.coverage_gaps %}
+- {{ gap }}
+{% endfor %}
+{% else %}
+**Insufficient evidence** — this control cannot be demonstrated with the available data:
+{% for gap in result.coverage_gaps %}
+- {{ gap }}
+{% endfor %}
+{% endif %}
+
+---
+
+## Auditor Notes
+
+{{ result.auditor_notes }}
+
+---
+
+## Evidence Items ({{ result.evidence_items | length }})
+
+{% for item in result.evidence_items %}
+### {{ loop.index }}. {{ item.title }}
+
+| Field | Value |
+|---|---|
+| **Type** | {{ item.type | replace('_', ' ') | title }} |
+| **Reference ID** | `{{ item.reference_id }}` |
+| **Timestamp** | {{ item.timestamp }} |
+| **Relevance** | {{ item.relevance }} |
+
+**Description**: {{ item.description }}
+
+**Excerpt**:
+```
+{{ item.excerpt }}
+```
+
+---
+
+{% endfor %}
+
+## Access Review Summary
+
+- Reviews completed: {{ result.access_review_summary.reviews_completed }}
+- Exceptions noted: {{ result.access_review_summary.exceptions_noted }}
+
+{% if result.access_review_summary.exceptions_noted > 0 %}
+### Exceptions
+
+| User | Exception | Remediation |
+|---|---|---|
+{% for exc in result.access_review_summary.exceptions %}
+| `{{ exc.user }}` | {{ exc.exception }} | {{ exc.remediation }} |
+{% endfor %}
+{% endif %}
+
+---
+
+## Configuration Drift Summary
+
+- Snapshots compared: {{ result.config_drift_summary.snapshots_compared }}
+- Drift items: {{ result.config_drift_summary.drift_items | length }}
+
+{% if result.config_drift_summary.drift_items | length > 0 %}
+| Timestamp | Component | Change |
+|---|---|---|
+{% for drift in result.config_drift_summary.drift_items %}
+| {{ drift.timestamp }} | `{{ drift.component }}` | {{ drift.change }} |
+{% endfor %}
+{% endif %}
+
+---
+
+*Generated automatically by xiaoguai security-audit pack v{{ pack_version }}.*
+*Auditor review: <!-- @auditor name and firm -->*
+*Evidence accepted: <!-- YYYY-MM-DD -->*
