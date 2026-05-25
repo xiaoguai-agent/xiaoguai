@@ -31,6 +31,16 @@
 
 ---
 
+# Runbooks — wave-3
+
+- [HotL escalation stuck](../../runbooks/hotl-escalation-stuck.md)
+- [Outcome chain debug](../../runbooks/outcome-chain-debug.md)
+- [Pack install troubleshoot](../../runbooks/pack-install-troubleshoot.md)
+- [IM adapter onboarding](../../runbooks/im-adapter-onboarding.md)
+- [Anomaly false-positive triage](../../runbooks/anomaly-false-positive-triage.md)
+
+---
+
 # Developer Guide
 
 - [Contributing](developer/contributing.md)
