@@ -1,0 +1,77 @@
+---
+# Output connector — audit-trail-archive
+# ---------------------------------------------------------------------------
+# WORM-style (Write Once, Read Many) archive for all filing-related records.
+# Satisfies IRS 7-year retention requirement (§ 6501) and state equivalents.
+#
+# "WORM-style" here means: records written to this archive are immutable.
+# No update or delete operations are permitted on archived records. New
+# versions of a document create a new archive entry; old entries are
+# preserved. Implemented via append-only table + row-level delete permissions
+# revoked for the pack's DB role.
+#
+# Stores:
+#   - Rendered return drafts (Markdown + structured JSON)
+#   - HotL approval trails (who approved, when, signature ref)
+#   - State portal submission records (payload + confirmation)
+#   - Audit defense packages assembled by audit-defense-package-builder
+#   - Exemption certificate scan references
+# ---------------------------------------------------------------------------
+
+output: audit-trail-archive
+description: >
+  Append-only WORM-style archive for all tax filing records, HotL approval
+  trails, portal submissions, and audit defense packages. 7-year minimum
+  retention per IRS § 6501. No deletes permitted.
+
+storage:
+  # Primary: append-only Postgres table (pack DB role has INSERT only)
+  kind: postgres_append_only
+  table: tax_archive_records
+
+  # Optional: also write to object storage for long-term retention
+  object_storage:
+    enabled: "${TAX_ARCHIVE_OBJECT_STORAGE_ENABLED:-false}"
+    provider: "${TAX_ARCHIVE_STORAGE_PROVIDER:-s3}"  # s3 | gcs | azure_blob
+    bucket: "${TAX_ARCHIVE_BUCKET:-}"
+    path_prefix: "tax-prep/{tenant_id}/{year}/"
+    # Object lock / WORM policy must be configured at the bucket level
+    object_lock: true
+
+  # Schema for tax_archive_records (created in migration 0001 or here)
+  # Note: no DELETE or UPDATE grants are given to the pack DB role.
+  schema_fragment: |
+    CREATE TABLE IF NOT EXISTS tax_archive_records (
+        id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+        tenant_id       TEXT NOT NULL,
+        record_type     TEXT NOT NULL
+                        CHECK (record_type IN (
+                            'filing_draft', 'hotl_approval', 'portal_submission',
+                            'audit_defense_package', 'exemption_cert_scan',
+                            'nexus_snapshot'
+                        )),
+        filing_id       TEXT,           -- FK to tax_filings.id (nullable)
+        state_code      CHAR(2),
+        period_start    DATE,
+        period_end      DATE,
+        content_md      TEXT,           -- rendered Markdown content
+        content_json    JSONB,          -- structured data
+        object_ref      TEXT,           -- object storage path (if enabled)
+        created_by      TEXT NOT NULL,  -- agent name or user ID
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        -- NO updated_at, NO deleted_at — immutable
+    );
+    CREATE INDEX IF NOT EXISTS tax_archive_tenant_type
+        ON tax_archive_records (tenant_id, record_type, created_at DESC);
+    -- Row-level security: pack role has INSERT + SELECT only
+    -- REVOKE UPDATE, DELETE ON tax_archive_records FROM tax_prep_role;
+
+retention:
+  minimum_years: 7        # IRS § 6501 standard; some states require longer
+  # States requiring >7 years (operators may override):
+  extended_retention:
+    CA: 8                 # California: 4 years from filing date (often longer with nexus)
+    NY: 6                 # New York: 3 years from filing, but 6 from assessment
+  # No automatic purge: expired records are flagged for legal review,
+  # not automatically deleted.
+  purge_policy: manual_review_only

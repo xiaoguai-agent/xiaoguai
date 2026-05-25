@@ -1,0 +1,75 @@
+{# exemption-cert-checklist.md.j2 — Exemption certificate validation report #}
+# Exemption Certificate Checklist
+
+**Generated:** {{ generated_at | format_datetime }}
+**Tenant:** {{ tenant_name | default("—") }}
+**Validated By:** exemption-validator (automated)
+
+---
+
+## Summary
+
+| Category | Count |
+|----------|-------|
+| Active certs verified | {{ active_count | default(0) }} |
+| Expiring within 60 days | {{ expiring_count | default(0) }} |
+| Already expired (active period) | {{ expired_count | default(0) }} |
+| Transactions with missing certs | {{ missing_count | default(0) }} |
+| State-mismatched certs | {{ mismatched_count | default(0) }} |
+
+---
+
+## Expiring Soon (Action Required)
+
+{% if expiring_certs %}
+| State | Customer | Cert # | Type | Expiry Date | Days Left |
+|-------|----------|--------|------|-------------|-----------|
+{% for c in expiring_certs %}
+| {{ c.state_code }} | {{ c.customer_id }} | {{ c.cert_number | default("—") }} | {{ c.exemption_type | title }} | {{ c.expiry_date | format_date }} | {{ c.days_until_expiry }} |
+{% endfor %}
+
+**Action:** Contact these customers to obtain renewed exemption certificates
+before their current cert expires to avoid taxability exposure on future sales.
+{% else %}
+_No certificates expiring within 60 days._
+{% endif %}
+
+---
+
+## Expired Certificates Used in Transactions (Audit Risk)
+
+{% if expired_in_use %}
+| State | Customer | Cert # | Expiry | Transactions | Exempt Amount |
+|-------|----------|--------|--------|-------------|--------------|
+{% for c in expired_in_use %}
+| {{ c.state_code }} | {{ c.customer_id }} | {{ c.cert_number | default("—") }} | {{ c.expiry_date | format_date }} | {{ c.txn_count }} | ${{ c.total_amount | format_currency }} |
+{% endfor %}
+
+> **AUDIT RISK:** These transactions used certificates that were expired at
+> transaction time. Consult tax counsel on whether amended returns or
+> back-taxes may be due.
+{% else %}
+_No expired certificates used in active-period transactions._
+{% endif %}
+
+---
+
+## Transactions with Missing Certificates (Audit Risk)
+
+{% if missing_certs %}
+| State | Customer | Transactions | Total Exempt Amount | Earliest | Latest |
+|-------|----------|-------------|--------------------|---------|----|
+{% for g in missing_certs %}
+| {{ g.dest_state }} | {{ g.customer_id }} | {{ g.txn_count }} | ${{ g.total_exempt_amount | format_currency }} | {{ g.earliest_txn | format_date }} | {{ g.latest_txn | format_date }} |
+{% endfor %}
+
+> **ACTION REQUIRED:** Obtain valid exemption certificates retroactively
+> from these customers, or reclassify as taxable and remit tax due.
+{% else %}
+_All exempt transactions have matching certificates on file._
+{% endif %}
+
+---
+
+_This checklist is for internal compliance review only. Consult a qualified
+tax professional for determinations of taxability or audit exposure._

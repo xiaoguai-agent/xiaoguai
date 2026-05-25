@@ -1,0 +1,137 @@
+---
+# Agent — exemption-validator
+# ---------------------------------------------------------------------------
+# Matches exemption certificates against taxable transactions and flags
+# certificates that are expired, missing, or mismatched.
+#
+# Runs on a weekly schedule and on-demand when new transactions arrive
+# with an exemption_cert_id that hasn't been validated recently.
+# ---------------------------------------------------------------------------
+
+name: exemption-validator
+version: "1.0.0"
+description: >
+  Validates exemption certificates against current transactions. Flags
+  certificates that are expired, soon-to-expire (within 60 days), missing
+  (transaction marked exempt but no cert on file), or state-mismatched.
+  Writes validation results to tax_exemption_certs and generates a
+  checklist report for the tax team.
+
+# --------------------------------------------------------------------------
+# Triggers
+# --------------------------------------------------------------------------
+triggers:
+  - kind: cron
+    cron: "0 9 * * 1"   # weekly on Monday at 09:00 UTC
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a sales-tax exemption certificate compliance assistant.
+  Your job is to:
+  1. Find all active exemption certificates approaching expiry (within
+     60 days) and flag them for renewal.
+  2. Find transactions marked as exempt that have no matching certificate
+     on file — these are audit risks.
+  3. Find certificates where the issuing state does not match the
+     transaction destination state.
+  4. Update tax_exemption_certs.verified_at for all checked certificates.
+  5. Render the exemption-cert-checklist template with all findings.
+
+  Rules:
+  - Do not delete or modify any certificate records — only update
+    verified_at, verified_by, and status fields.
+  - Flag expired certs as status = 'expired' but do not remove them
+    (they may be needed for prior-period audit defense).
+  - Do not invent certificate data — use only what is in the database.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: find_expiring_certs
+    description: >
+      Find certificates expiring within 60 days or already expired.
+      Returns cert details including customer_id and state_code.
+    kind: sql
+    query: |
+      SELECT
+          ec.id,
+          ec.customer_id,
+          ec.state_code,
+          ec.cert_number,
+          ec.exemption_type,
+          ec.expiry_date,
+          ec.is_expired,
+          ec.document_ref,
+          (ec.expiry_date - CURRENT_DATE) AS days_until_expiry
+      FROM tax_exemption_certs ec
+      WHERE ec.tenant_id = '{tenant_id}'
+        AND ec.status = 'active'
+        AND ec.expiry_date IS NOT NULL
+        AND ec.expiry_date <= CURRENT_DATE + INTERVAL '60 days'
+      ORDER BY ec.expiry_date ASC
+
+  - name: find_uncerted_exempt_transactions
+    description: >
+      Find transactions marked is_exempt = TRUE with no valid certificate
+      in the rolling 12-month window. These are audit-risk gaps.
+    kind: sql
+    query: |
+      SELECT
+          tt.customer_id,
+          tt.dest_state,
+          COUNT(*)             AS txn_count,
+          SUM(tt.taxable_amount) AS total_exempt_amount,
+          MIN(tt.transaction_date) AS earliest_txn,
+          MAX(tt.transaction_date) AS latest_txn
+      FROM tax_taxable_transactions tt
+      LEFT JOIN tax_exemption_certs ec
+        ON ec.id = tt.exemption_cert_id
+       AND ec.tenant_id = tt.tenant_id
+       AND ec.status = 'active'
+       AND (ec.expiry_date IS NULL OR ec.expiry_date >= tt.transaction_date::DATE)
+      WHERE tt.tenant_id = '{tenant_id}'
+        AND tt.is_exempt = TRUE
+        AND tt.transaction_date >= NOW() - INTERVAL '12 months'
+        AND (tt.exemption_cert_id IS NULL OR ec.id IS NULL)
+      GROUP BY tt.customer_id, tt.dest_state
+      ORDER BY total_exempt_amount DESC
+
+  - name: mark_cert_verified
+    description: >
+      Update a certificate's verified_at timestamp and status.
+    kind: sql
+    query: |
+      UPDATE tax_exemption_certs
+      SET verified_at = NOW(),
+          verified_by = 'exemption-validator',
+          status = '{new_status}',
+          updated_at = NOW()
+      WHERE id = '{cert_id}'
+        AND tenant_id = '{tenant_id}'
+
+  - name: render_checklist
+    description: >
+      Render the exemption-cert-checklist template with validation findings.
+    kind: template
+    template: "templates/exemption-cert-checklist"
+
+# --------------------------------------------------------------------------
+# HotL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    mark_cert_verified: unlimited   # metadata updates only, non-destructive
+
+# --------------------------------------------------------------------------
+# Outcome telemetry
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - certs_validated
+    - gaps_found
+    - expiring_flagged
+  feedback_table: tax_exemption_certs

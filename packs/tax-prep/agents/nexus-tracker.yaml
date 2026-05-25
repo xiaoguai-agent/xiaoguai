@@ -1,0 +1,194 @@
+---
+# Agent — nexus-tracker
+# ---------------------------------------------------------------------------
+# Rolls up rolling-12-month sales by destination state from
+# tax_taxable_transactions and compares against the per-state economic
+# nexus thresholds configured in pack.yaml.
+#
+# Nexus determination logic:
+#
+#   Economic nexus (post-South Dakota v. Wayfair, 2018):
+#     A seller is subject to sales tax in a state if, in the rolling
+#     12-month period, either of the following is true:
+#       - Revenue from sales into the state >= revenue_threshold (OR logic)
+#       - Number of transactions into the state >= txn_count_threshold
+#     Some states (PA) require BOTH (AND logic) — controlled per-state by
+#     config.nexus_thresholds.STATE_CODE.logic.
+#
+#   Physical-presence nexus:
+#     Established by employees, offices, warehouses, trade shows, etc.
+#     Stored in tax_nexus_state.has_physical_presence (set manually or via
+#     an operator tool call — this agent does NOT auto-detect physical
+#     presence). Physical presence alone is sufficient for nexus regardless
+#     of revenue/transaction volume.
+#
+#   Combined nexus (nexus_type = 'both'):
+#     When both economic and physical presence nexus are established,
+#     the agent records nexus_type = 'both'.
+#
+# The agent writes a snapshot row to tax_nexus_state (upsert by
+# tenant_id + state_code). It does NOT draft returns — that is
+# return-drafter's responsibility.
+#
+# Trigger: subscribes to tax.nexus_threshold_approaching WatchEvents
+#          AND runs on a 6-hour cron to refresh all states proactively.
+# ---------------------------------------------------------------------------
+
+name: nexus-tracker
+version: "1.0.0"
+description: >
+  Rolls up rolling-12-month revenue and transaction counts per destination
+  state, compares against per-state economic-nexus thresholds (including
+  OR vs AND logic), and updates tax_nexus_state snapshots. Handles both
+  economic nexus (Wayfair threshold model) and physical-presence nexus
+  (operator-set flag). Zero autonomous actions — all nexus determinations
+  are written to the DB for human review; no filing is triggered.
+
+# --------------------------------------------------------------------------
+# Triggers
+# --------------------------------------------------------------------------
+triggers:
+  - event: tax.nexus_threshold_approaching
+    source: nexus-threshold-approaching
+  - kind: cron
+    cron: "30 */6 * * *"   # 30 min after the watch runs, refresh all states
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a sales-tax nexus analyst. Your job is to:
+  1. Roll up rolling-12-month sales by destination state.
+  2. Compare each state's totals against its configured threshold (revenue
+     and/or transaction count, per the OR/AND logic for that state).
+  3. Determine whether economic nexus has been established, approached, or
+     is not yet relevant.
+  4. Respect physical-presence nexus flags already stored — do not override
+     them; only update the economic-nexus fields.
+  5. Write updated snapshots to tax_nexus_state via the upsert_nexus_state
+     tool.
+  6. Do NOT draft returns, do NOT trigger filing submissions.
+  7. Use only the data returned by the SQL tools — do not invent numbers.
+  8. Flag any state where both economic and physical presence nexus exist
+     with nexus_type = 'both'.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: roll_up_sales_by_state
+    description: >
+      Aggregate rolling-12-month taxable revenue and transaction count
+      by destination state for the given tenant. Returns one row per
+      state with non-zero activity.
+    kind: sql
+    query: |
+      SELECT
+          dest_state                      AS state_code,
+          SUM(taxable_amount)             AS rolling_12m_revenue,
+          COUNT(*)                        AS rolling_12m_txn_count,
+          MIN(transaction_date)           AS earliest_txn,
+          MAX(transaction_date)           AS latest_txn
+      FROM tax_taxable_transactions
+      WHERE tenant_id = '{tenant_id}'
+        AND is_exempt = FALSE
+        AND transaction_date >= NOW() - INTERVAL '12 months'
+      GROUP BY dest_state
+      ORDER BY rolling_12m_revenue DESC
+
+  - name: get_nexus_config
+    description: >
+      Fetch the current per-state nexus threshold configuration from
+      the pack config. Returns revenue_threshold, txn_count_threshold,
+      threshold_logic, physical_presence, and no_sales_tax_state for
+      every state code.
+    kind: pack_config
+    config_path: "nexus_thresholds"
+
+  - name: get_existing_nexus_state
+    description: >
+      Read the current tax_nexus_state snapshot for this tenant. Used
+      to preserve has_physical_presence and nexus_established_at across
+      updates (do not overwrite physical-presence flags).
+    kind: sql
+    query: |
+      SELECT
+          state_code,
+          has_physical_presence,
+          physical_presence_note,
+          nexus_established,
+          nexus_established_at,
+          nexus_type,
+          no_sales_tax_state
+      FROM tax_nexus_state
+      WHERE tenant_id = '{tenant_id}'
+
+  - name: upsert_nexus_state
+    description: >
+      Write or update a nexus snapshot row for a single state. Preserves
+      has_physical_presence and nexus_established_at if nexus was already
+      established. Returns the updated row id.
+    kind: sql
+    query: |
+      INSERT INTO tax_nexus_state (
+          tenant_id, state_code,
+          rolling_12m_revenue, rolling_12m_txn_count,
+          revenue_threshold, txn_count_threshold, threshold_logic,
+          has_physical_presence, physical_presence_note,
+          nexus_established, nexus_established_at, nexus_type,
+          no_sales_tax_state, snapshot_date, last_updated_at
+      ) VALUES (
+          '{tenant_id}', '{state_code}',
+          {rolling_12m_revenue}, {rolling_12m_txn_count},
+          {revenue_threshold}, {txn_count_threshold}, '{threshold_logic}',
+          {has_physical_presence}, {physical_presence_note},
+          {nexus_established}, {nexus_established_at}, {nexus_type},
+          {no_sales_tax_state}, CURRENT_DATE, NOW()
+      )
+      ON CONFLICT (tenant_id, state_code) DO UPDATE SET
+          rolling_12m_revenue   = EXCLUDED.rolling_12m_revenue,
+          rolling_12m_txn_count = EXCLUDED.rolling_12m_txn_count,
+          revenue_threshold     = EXCLUDED.revenue_threshold,
+          txn_count_threshold   = EXCLUDED.txn_count_threshold,
+          threshold_logic       = EXCLUDED.threshold_logic,
+          -- Preserve physical-presence: only update if new value is TRUE
+          has_physical_presence = GREATEST(
+              tax_nexus_state.has_physical_presence,
+              EXCLUDED.has_physical_presence
+          ),
+          -- Preserve first-established date
+          nexus_established_at  = COALESCE(
+              tax_nexus_state.nexus_established_at,
+              EXCLUDED.nexus_established_at
+          ),
+          nexus_established     = EXCLUDED.nexus_established,
+          nexus_type            = EXCLUDED.nexus_type,
+          no_sales_tax_state    = EXCLUDED.no_sales_tax_state,
+          snapshot_date         = EXCLUDED.snapshot_date,
+          last_updated_at       = NOW()
+      RETURNING id
+
+# --------------------------------------------------------------------------
+# HotL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  # Nexus-tracker writes snapshots only — no HotL required for DB writes.
+  # HotL is enforced downstream on filing outputs.
+  budget_usd: 0.00
+  autonomous_actions:
+    upsert_nexus_state: unlimited   # snapshot writes are non-destructive
+
+# --------------------------------------------------------------------------
+# Rate limits
+# --------------------------------------------------------------------------
+rate_limits:
+  per_tenant_per_hour: 10   # at most 10 full roll-ups per tenant per hour
+
+# --------------------------------------------------------------------------
+# Outcome telemetry
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - nexus_snapshot_updated
+    - nexus_newly_established
+  feedback_table: tax_nexus_state
