@@ -1,0 +1,168 @@
+# Agent definition — earnings-script-drafter
+# ---------------------------------------------------------------------------
+# Turns financial data + business narrative into a structured earnings call
+# script with opening remarks, CFO financial review, CEO strategic commentary,
+# and a pre-populated anticipated Q&A section.
+#
+# REG FD: The script draft is an INTERNAL document until approved and
+# published. The agent saves it to ir_shareholder_communications with
+# status = 'draft'; reg-fd-checker runs next; CFO/IR-Lead must approve
+# before any external disclosure.
+#
+# HOTL guardrails: $0 budget / 0 external sends autonomously.
+# ---------------------------------------------------------------------------
+
+name: earnings-script-drafter
+version: "1.0.0"
+description: >
+  Drafts a complete earnings call script from financial data and narrative
+  bullet points. Includes opening remarks, CFO financial review section,
+  CEO strategic commentary, and anticipated Q&A pairs drawn from the
+  analyst-questions library. All output is internal until HotL-approved.
+
+# ---------------------------------------------------------------------------
+# Triggers
+# ---------------------------------------------------------------------------
+triggers:
+  - event: ir.earnings_period.script_requested
+    source: earnings-period-state
+  - event: ir.manual.draft_script
+    source: admin_ui
+
+# ---------------------------------------------------------------------------
+# System prompt
+# ---------------------------------------------------------------------------
+system_prompt: |
+  You are a senior Investor Relations communications specialist. Your job is
+  to draft a professional earnings call script for public-company use.
+
+  CRITICAL RULES — REG FD:
+  - Do NOT include any material nonpublic information (MNPI) that has not
+    already been publicly disclosed in a prior filing or press release.
+  - Do NOT reference specific forward guidance numbers unless they have been
+    cleared by Legal and the CFO for simultaneous public disclosure.
+  - Flag any section you believe may contain MNPI with the marker:
+    [REG-FD-FLAG: <brief reason>]
+  - Do not soften or remove legal language inserted by the operator's template.
+
+  CONTENT RULES:
+  - Use only the financial data provided via tools — do not invent numbers.
+  - Maintain a confident, measured, professional tone throughout.
+  - The anticipated Q&A must be drawn from the analyst-questions library,
+    not invented. Clearly mark questions that lack an approved answer as
+    [ANSWER PENDING APPROVAL].
+  - Structure: Opening → CFO Financial Review → CEO Strategic Commentary →
+    Anticipated Q&A → Closing Remarks.
+  - Keep the opening and closing under 300 words each.
+  - Output the complete script in Markdown using the earnings-script-frame template.
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+tools:
+  - name: get_earnings_period
+    description: >
+      Fetch the earnings period record including fiscal quarter, period end
+      date, and current status. Returns earnings_period fields.
+    kind: sql
+    query: |
+      SELECT id, fiscal_year, fiscal_quarter, period_end_date,
+             earnings_date, status, notes
+      FROM ir_earnings_periods
+      WHERE tenant_id = '{tenant_id}'
+        AND id = '{earnings_period_id}'
+
+  - name: get_financial_summary
+    description: >
+      Retrieve the pre-loaded financial summary for this earnings period.
+      Returns revenue, gross margin, operating income, EPS (GAAP + non-GAAP),
+      cash flow from operations, and YoY comparisons. Data sourced from
+      rag-finance pack or operator-provided upload.
+    kind: sql
+    query: |
+      -- Operator populates ir_financial_summaries via inbound connectors.
+      -- Table created by optional migration 0002 (rag-finance integration).
+      SELECT *
+      FROM ir_financial_summaries
+      WHERE tenant_id = '{tenant_id}'
+        AND earnings_period_id = '{earnings_period_id}'
+      ORDER BY created_at DESC
+      LIMIT 1
+
+  - name: get_narrative_bullets
+    description: >
+      Fetch the operator-provided narrative bullet points for this period
+      (product milestones, headcount updates, strategic priorities). These
+      are internal notes; the agent must not treat them as pre-approved
+      public statements.
+    kind: sql
+    query: |
+      SELECT bullet_text, section, source_doc
+      FROM ir_narrative_bullets
+      WHERE tenant_id = '{tenant_id}'
+        AND earnings_period_id = '{earnings_period_id}'
+      ORDER BY section, display_order
+
+  - name: get_anticipated_questions
+    description: >
+      Pull the top analyst questions from the library that are categorised
+      for earnings calls and have approved answers. Also returns questions
+      without approved answers (for [ANSWER PENDING APPROVAL] markers).
+    kind: sql
+    query: |
+      SELECT id, question_text, category, sensitivity,
+             approved_answer, status
+      FROM ir_analyst_questions
+      WHERE tenant_id = '{tenant_id}'
+        AND earnings_period_id = '{earnings_period_id}'
+        AND category IN ('financial','operational','strategic','competitive')
+      ORDER BY
+        CASE sensitivity WHEN 'mnpi_risk' THEN 1 WHEN 'elevated' THEN 2 ELSE 3 END,
+        received_at DESC
+      LIMIT 30
+
+  - name: render_script_template
+    description: >
+      Render the earnings-script-frame Jinja2 template with the provided
+      sections. Returns the full formatted script as a Markdown string.
+    kind: template
+    template: "templates/earnings-script-frame.md.j2"
+
+  - name: save_script_draft
+    description: >
+      Write the completed script draft to ir_shareholder_communications
+      with comm_type = 'earnings_script', status = 'draft', and
+      reg_fd_check_status = 'pending'. The reg-fd-checker will run next.
+      Returns the new communication id.
+    kind: sql
+    query: |
+      INSERT INTO ir_shareholder_communications
+          (tenant_id, audience, comm_type, subject, draft_body,
+           reg_fd_check_status, status, earnings_period_id)
+      VALUES
+          ('{tenant_id}', 'all', 'earnings_script',
+           'Earnings Script — {fiscal_year} {fiscal_quarter}',
+           '{draft_body}', 'pending', 'draft', '{earnings_period_id}')
+      RETURNING id
+
+# ---------------------------------------------------------------------------
+# HotL guardrails
+# ---------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    external_publish: 0
+  require_human_approval:
+    - save_script_draft   # triggers reg-fd-checker, then CFO/IR-Lead approval
+  notify_channel: "${IR_NOTIFY_CHANNEL:-admin_ui}"
+
+# ---------------------------------------------------------------------------
+# Outcome telemetry
+# ---------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - draft_created
+    - reg_fd_check_completed
+    - draft_approved
+    - draft_rejected
+  feedback_table: ir_shareholder_communications

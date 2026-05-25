@@ -1,0 +1,156 @@
+# Agent definition — shareholder-inquiry-router
+# ---------------------------------------------------------------------------
+# Routes inbound shareholder inquiries (from investor portal, email, meeting
+# surveys) to the appropriate response template and internal team, based on
+# audience segment: retail / institutional / activist.
+#
+# Audience routing:
+#   retail        → standard investor FAQ template; IR team responds
+#   institutional → tailored institutional template; IR-Lead reviews
+#   activist      → escalate immediately to CFO + Legal; do not respond
+#                   without explicit CFO approval
+#
+# REG FD: All response drafts are internal until approved. Activist inquiries
+# are escalated to CFO + Legal without any draft being created — the content
+# of activist dialogue may constitute material information triggering
+# simultaneous disclosure obligations.
+#
+# HOTL guardrails: $0 / 0 external sends autonomously.
+# ---------------------------------------------------------------------------
+
+name: shareholder-inquiry-router
+version: "1.0.0"
+description: >
+  Routes shareholder inquiries by audience (retail/institutional/activist).
+  Drafts appropriate response stubs using audience-specific templates.
+  Activist inquiries escalate directly to CFO + Legal without drafting.
+  All drafts are HotL-gated before any external send.
+
+# ---------------------------------------------------------------------------
+# Triggers
+# ---------------------------------------------------------------------------
+triggers:
+  - event: ir.shareholder_inquiry.received
+    source: ir-email-inbox
+  - event: ir.shareholder_inquiry.received
+    source: analyst-portal-question-submit
+  - event: ir.shareholder_inquiry.received
+    source: shareholder-meeting-survey
+
+# ---------------------------------------------------------------------------
+# System prompt
+# ---------------------------------------------------------------------------
+system_prompt: |
+  You are an Investor Relations communication specialist handling inbound
+  shareholder inquiries. Your job is to classify the sender by audience
+  segment and draft an appropriate initial response.
+
+  AUDIENCE CLASSIFICATION:
+  - retail: individual investors, small fund (<$10M AUM implied), retail
+    brokerage account holders
+  - institutional: mutual funds, pension funds, hedge funds, insurance
+    companies, sovereign wealth funds, large registered investment advisers
+  - activist: shareholders who have disclosed a position with a stated
+    agenda to change company strategy, board composition, or capital
+    allocation; or any inquiry referencing "13D", "proxy", "board seats",
+    "strategic alternatives", or explicit change demands
+
+  CRITICAL RULES:
+  - NEVER draft a response to an activist inquiry. Set audience = 'activist'
+    and immediately escalate to CFO + Legal. Activist dialogue may create
+    Reg FD obligations around selective disclosure of strategic information.
+  - For institutional inquiries, the response must be reviewed by the IR-Lead
+    before entering the approval queue — mark with audience = 'institutional'.
+  - Do NOT include forward guidance, unreleased financial data, or any MNPI
+    in any draft.
+  - Use only the approved template for the audience segment.
+  - Flag any content you believe may be MNPI with [REG-FD-FLAG: <reason>].
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+tools:
+  - name: classify_sender
+    description: >
+      Attempt to classify the sender by looking up prior interactions and
+      known institutional/activist registry. Returns audience segment and
+      any known context (AUM tier, prior activist history, 13D flag).
+    kind: sql
+    query: |
+      SELECT s.audience, s.known_aum_tier, s.activist_flag,
+             s.prior_comm_count, MAX(s.last_contact_at) AS last_contact_at
+      FROM ir_shareholder_registry s
+      WHERE s.tenant_id = '{tenant_id}'
+        AND (s.email = '{sender_email}' OR s.entity_name ILIKE '%{sender_name}%')
+      GROUP BY s.audience, s.known_aum_tier, s.activist_flag, s.prior_comm_count
+      LIMIT 1
+
+  - name: render_response_template
+    description: >
+      Render the appropriate shareholder response template for the audience.
+      Returns a draft response body. Do NOT call for activist audience.
+    kind: template
+    templates:
+      retail:        "templates/qa-response-templates.md.j2"
+      institutional: "templates/qa-response-templates.md.j2"
+
+  - name: save_response_draft
+    description: >
+      Write the draft response to ir_shareholder_communications with the
+      correct audience label, status = 'draft', reg_fd_check_status = 'pending'.
+      The reg-fd-checker runs next, then HotL approval.
+    kind: sql
+    query: |
+      INSERT INTO ir_shareholder_communications
+          (tenant_id, audience, comm_type, subject, draft_body,
+           reg_fd_check_status, status)
+      VALUES
+          ('{tenant_id}', '{audience}', 'investor_portal_post',
+           'Re: {inquiry_subject}', '{draft_body}', 'pending', 'draft')
+      RETURNING id
+
+  - name: escalate_activist
+    description: >
+      Escalate an activist inquiry to CFO + Legal without creating any draft.
+      Sends an internal-only notification with the inquiry text. Does NOT
+      create an ir_shareholder_communications record.
+    kind: notify
+    channel: "${IR_ACTIVIST_ESCALATION_CHANNEL:-admin_ui}"
+    template: |
+      [ACTIVIST ESCALATION — LEGAL + CFO REQUIRED]
+      Sender: {sender_name} ({sender_email})
+      Inquiry received at: {received_at}
+      Inquiry text: {inquiry_text}
+
+      ACTION REQUIRED: Do NOT respond without explicit CFO approval.
+      Activist dialogue may trigger Reg FD simultaneous disclosure obligations.
+      Legal must review before any reply is drafted.
+
+# ---------------------------------------------------------------------------
+# HotL guardrails
+# ---------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    external_send: 0
+    draft_activist_response: 0  # hard block — activist drafts forbidden
+  require_human_approval:
+    - save_response_draft   # IR-Lead for retail; IR-Lead + CFO for institutional
+  activist_escalation_approvers:
+    - role: CFO
+      env: IR_CFO_APPROVER_ID
+    - role: Legal
+      env: IR_LEGAL_APPROVER_ID
+  notify_channel: "${IR_NOTIFY_CHANNEL:-admin_ui}"
+
+# ---------------------------------------------------------------------------
+# Outcome telemetry
+# ---------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - inquiry_classified
+    - activist_escalated
+    - draft_created
+    - draft_approved
+    - draft_rejected
+  feedback_table: ir_shareholder_communications
