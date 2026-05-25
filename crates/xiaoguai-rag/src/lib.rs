@@ -32,26 +32,32 @@
 
 pub mod adapter;
 pub mod client;
+pub mod hybrid;
 pub mod loaders;
 pub mod memory;
 pub mod presets;
+pub mod qdrant;
 pub mod r2r;
 pub mod reranker;
+pub mod tantivy_backend;
 pub mod types;
 
 pub use adapter::RagMcpAdapter;
 pub use client::{RagClient, RagError, RagResult};
+pub use hybrid::{rrf_fuse, HybridConfig, HybridRetriever, RankedHit};
 pub use loaders::{
     detect, DocxLoader, HtmlLoader, LoadError, LoadResult, LoadedDoc, Loader, MarkdownLoader,
     PageMeta, PdfLoader, PptxLoader,
 };
 pub use memory::InMemoryRagClient;
 pub use presets::{ChunkingPreset, IngestOptions};
+pub use qdrant::{point_id_for, QdrantDistance, QdrantPoint, QdrantStore, VectorStore};
 pub use r2r::R2RClient;
 pub use reranker::{
     two_stage_retrieve, Candidate, CohereReranker, JinaReranker, LlmReranker, NullReranker,
     Reranker, RerankerConfig, Scored, VoyageReranker,
 };
+pub use tantivy_backend::{LexicalStore, TantivyStore};
 pub use types::{
     Citation, Collection, IngestRequest, IngestResult, SearchHit, SearchRequest, SearchResult,
 };
