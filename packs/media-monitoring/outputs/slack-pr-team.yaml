@@ -1,0 +1,59 @@
+---
+# Output: slack-pr-team
+#
+# Sends colour-coded Slack Block Kit notifications to the PR/comms team
+# channel. Used for all crisis severity levels and the daily digest summary.
+#
+# Colour coding:
+#   SEV-1: danger (red)
+#   SEV-2: warning (yellow)
+#   SEV-3: good (orange)
+#   Daily digest: (no colour bar — informational)
+
+output: slack-pr-team
+
+# Slack configuration.
+slack:
+  # OAuth Bot Token (chat:write scope required).
+  token: ${SLACK_BOT_TOKEN}
+  # Primary PR/comms team channel.
+  channel: ${SLACK_PR_TEAM_CHANNEL}
+  # Optional: secondary channel for SEV-1 only (e.g. #crisis-war-room).
+  sev1_channel: ${SLACK_CRISIS_CHANNEL:-}
+
+# Message routing by event type.
+messages:
+  crisis_event:
+    # Use the Block Kit template for rich formatting.
+    template: templates/crisis-alert-blockKit.json.j2
+    # Attachment colour bar (Slack legacy attachments — still widely used for colour).
+    color:
+      sev1: "#d62728"   # Red
+      sev2: "#ff7f0e"   # Orange
+      sev3: "#f7c948"   # Yellow
+    # Thread responses and updates under the original alert message.
+    thread_updates: true
+    # Post to sev1_channel as well if configured.
+    cross_post_sev1: true
+
+  response_recommendation:
+    # Appended as a threaded reply to the crisis alert message.
+    template: templates/response-strategy-frame.md.j2
+    as_thread_reply: true
+    # Truncate to Slack's block character limit.
+    max_chars: 3000
+
+  daily_digest:
+    # Plain markdown summary (first 500 chars of the digest template).
+    text_template: |
+      *Daily Brand Mention Digest — {{ digest_date }}*
+      {{ stats.total_mentions | commify }} mentions | {{ stats.negative_ratio | pct }} negative | Reach: {{ stats.influence_weighted_reach | commify }}
+      {% if crisis_events %}⚠️ {{ crisis_events | length }} crisis event(s) — see digest for details.{% endif %}
+      Full digest: {{ digest_url }}
+    channel: ${SLACK_PR_TEAM_CHANNEL}
+    # Send at 08:00 workspace timezone.
+    schedule: "0 8 * * *"
+
+# Deferred:
+#   - Slack workflow trigger for SEV-1 (trigger PR response checklist workflow)
+#   - Interactive sentiment feedback buttons in the daily digest message

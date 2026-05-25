@@ -1,0 +1,119 @@
+---
+# Agent: narrative-tracker
+#
+# Input:  recent mentions (past 24h) + emergent keyword events.
+# Output: a list of NarrativeCluster records (theme, representative quotes,
+#         sentiment breakdown, trajectory, top channels).
+#
+# Runs hourly. Clusters are stored in the watch_events table under the
+# 'narrative_clusters' event type and surfaced in the daily-mention-digest.
+
+name: narrative-tracker
+description: >
+  Groups brand mentions into evolving narrative themes using LLM-assisted
+  clustering. Each cluster is characterised by a theme label, representative
+  quotes, sentiment breakdown, trajectory (rising/stable/fading), and the
+  channels where it is most active. Runs hourly and drives the narrative
+  evolution chart in the daily digest.
+
+# Schedule: runs every hour, slightly offset from mention-volume-poll.
+schedule: "10 * * * *"
+
+# LLM settings.
+llm:
+  model: ${NARRATIVE_LLM_MODEL:-sonnet}
+  temperature: 0.3
+  max_tokens: 2048
+
+# Context: fetch recent mentions with their latest sentiment classifications.
+context_steps:
+  - id: recent_classified_mentions
+    description: "Up to 200 most-reached mentions from the past 24h with sentiment"
+    tool: db_query
+    query: |
+      SELECT
+        m.external_id, m.channel, m.body, m.url, m.reach,
+        s.sentiment, s.key_phrases
+      FROM mentions m
+      JOIN LATERAL (
+        SELECT sentiment, key_phrases
+        FROM sentiment_history
+        WHERE mention_id = m.id
+        ORDER BY classified_at DESC LIMIT 1
+      ) s ON true
+      WHERE m.published_at >= now() - INTERVAL '24 hours'
+      ORDER BY m.reach DESC
+      LIMIT 200
+
+  - id: current_emergent_keywords
+    description: "Emergent keywords from the last 6 hours"
+    tool: db_query
+    query: |
+      SELECT keyword, lift, negative_ratio, sentiment_breakdown
+      FROM watch_events
+      WHERE event_type = 'keyword_emergence'
+        AND created_at >= now() - INTERVAL '6 hours'
+      ORDER BY lift DESC
+      LIMIT 20
+
+  - id: previous_clusters
+    description: "Clusters from the previous hourly run for trajectory calculation"
+    tool: db_query
+    query: |
+      SELECT theme, mention_count, sentiment_breakdown
+      FROM watch_events
+      WHERE event_type = 'narrative_clusters'
+        AND created_at >= now() - INTERVAL '2 hours'
+        AND created_at <  now() - INTERVAL '30 minutes'
+      ORDER BY created_at DESC
+      LIMIT 1
+
+# System prompt.
+system_prompt: |
+  You are a PR narrative analyst. Given a set of brand mentions and emergent
+  keywords, identify 3–7 distinct narrative themes. For each theme:
+  - Assign a concise label (≤6 words).
+  - Select 2–3 representative quotes (verbatim, ≤80 chars each).
+  - Summarise the core concern or praise in one sentence.
+  - Assess trajectory vs the previous run: rising | stable | fading | new.
+
+  Respond ONLY with valid JSON:
+  [
+    {
+      "theme": "Short theme label",
+      "summary": "One sentence",
+      "sentiment": {"positive": 0.0, "neutral": 0.0, "negative": 0.0},
+      "trajectory": "rising|stable|fading|new",
+      "representative_quotes": ["quote1", "quote2"],
+      "top_channels": ["channel1", "channel2"],
+      "mention_count": 0
+    }
+  ]
+
+# User prompt template.
+user_prompt: |
+  ## Recent brand mentions (top 200 by reach, past 24h)
+  {% for m in context.recent_classified_mentions %}
+  [{{ m.channel }}][{{ m.sentiment }}] {{ m.body | truncate(120) }}
+  Key phrases: {{ m.key_phrases | join(', ') }}
+  {% endfor %}
+
+  ## Emergent keywords (past 6h)
+  {% for kw in context.current_emergent_keywords %}
+  - "{{ kw.keyword }}" lift={{ kw.lift }} neg={{ kw.negative_ratio }}
+  {% endfor %}
+
+  ## Previous clusters (for trajectory reference)
+  {{ context.previous_clusters | json | default('No previous clusters.') }}
+
+  Identify 3–7 narrative clusters now.
+
+# Post-processing: store clusters as a watch_event.
+on_result:
+  write_watch_event:
+    event_type: narrative_clusters
+    payload: "{{ result }}"
+
+# Deferred:
+#   - Cross-session cluster identity tracking (stable cluster IDs over time)
+#   - Automated escalation when a 'rising' negative cluster exceeds reach threshold

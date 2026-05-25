@@ -1,0 +1,86 @@
+---
+# Watch: keyword-emergence
+#
+# Periodically analyses recent mentions to surface new terms that are
+# co-occurring with the brand at an unusual frequency — early signal of
+# a developing narrative (positive or negative) before it becomes a crisis.
+#
+# Algorithm: sliding 6-hour window, TF-IDF over mention bodies excluding
+# known brand keywords, rank by frequency lift vs. prior 48h baseline.
+# Emits emergent-keyword events when lift > threshold.
+
+name: keyword-emergence
+description: >
+  Analyses brand mentions on a rolling 6-hour window to detect new keywords
+  and phrases co-occurring with the brand at significantly elevated frequency
+  (lift >= configured threshold vs 48h baseline). Feeds the narrative-tracker
+  agent for clustering and the crisis-early-warner for lexical drift signals.
+
+# Runs hourly — frequent enough to catch fast-moving narratives.
+schedule: "0 * * * *"
+
+# Analysis window configuration.
+window:
+  # Current period to analyse.
+  current_hours: 6
+  # Baseline period used to compute expected term frequency.
+  baseline_hours: 48
+  # Minimum mentions in the current window to consider a keyword.
+  min_mention_count: 5
+  # Lift threshold: current_freq / baseline_freq >= lift_threshold to emit.
+  lift_threshold: ${KEYWORD_EMERGENCE_LIFT_THRESHOLD:-3.0}
+  # Maximum keywords to emit per run (ranked by lift descending).
+  max_keywords: 20
+
+# Text processing settings.
+text:
+  # Language model for tokenisation and stopword removal.
+  language: en
+  # Always-excluded terms (brand names themselves, product names, etc.).
+  stopwords_extra: ${BRAND_KEYWORDS_ARRAY}
+  # Minimum n-gram size: catches "product recall" not just "recall".
+  ngram_min: 1
+  ngram_max: 3
+  # Minimum character length for a keyword token.
+  min_token_length: 3
+
+# Channels included in the analysis.
+channels:
+  - twitter
+  - reddit
+  - hackernews
+  - news
+  - instagram
+
+# Output: each emergent keyword event is stored in the watch_events table
+# (managed by the watch engine) with the following fields.
+event_schema:
+  keyword: "Emergent keyword or phrase"
+  lift: "Frequency lift ratio (current / baseline)"
+  current_count: "Occurrences in current window"
+  baseline_count: "Occurrences in baseline window (normalised to same duration)"
+  sentiment_breakdown:
+    positive: "Fraction of co-occurring mentions classified positive"
+    neutral: "Fraction neutral"
+    negative: "Fraction negative"
+  top_example_urls:
+    type: list
+    max_items: 3
+    description: "URLs of highest-reach mentions containing this keyword"
+
+# Threshold to route emergent keywords to the crisis-early-warner.
+# Applied after emission: if negative sentiment fraction > crisis_negative_ratio,
+# the keyword event is forwarded to the crisis pipeline.
+crisis_routing:
+  negative_ratio_threshold: ${KEYWORD_EMERGENCE_CRISIS_NEGATIVE_THRESHOLD:-0.5}
+  forward_to: agents/crisis-early-warner.yaml
+
+# Error handling.
+on_error:
+  retry:
+    max_attempts: 2
+    backoff_seconds: 60
+
+# Deferred:
+#   - Multilingual keyword emergence (requires per-language NLP pipelines)
+#   - Named-entity extraction (persons, orgs) for targeted narrative tracking

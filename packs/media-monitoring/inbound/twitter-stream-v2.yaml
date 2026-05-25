@@ -1,0 +1,61 @@
+---
+# Inbound: twitter-stream-v2
+#
+# Twitter API v2 filtered stream — real-time mention delivery.
+# Complements the mention-volume-poll watch (which handles backfill).
+# Stream rules are managed via the /v1/media-monitoring/twitter/rules API.
+#
+# Mounting: POST /v1/media-monitoring/inbound/twitter/stream/{route_id}
+# Auth:     Bearer token from scheduler_webhook_tokens (per-tenant)
+
+source: twitter-stream-v2
+route_prefix: /v1/media-monitoring/inbound/twitter/stream
+
+# Twitter API v2 Bearer token for stream authentication.
+auth:
+  type: bearer
+  token: ${TWITTER_BEARER_TOKEN}
+
+# Stream filter rules (managed via Twitter Filtered Stream API).
+# These are synced to the Twitter API on pack activation.
+stream_rules:
+  - tag: brand_mentions
+    value: "${BRAND_KEYWORDS_TWITTER} -is:retweet lang:en"
+  - tag: brand_handles
+    value: "@${BRAND_TWITTER_HANDLE} -is:retweet"
+
+# Fields requested from the stream.
+tweet_fields: "created_at,author_id,public_metrics,entities,lang"
+expansions: "author_id"
+user_fields: "public_metrics,username"
+
+# Normalise to Mention schema.
+normalize:
+  channel: twitter
+  external_id: "{{ tweet.id }}"
+  author: "{{ tweet.author.username | default('unknown') }}"
+  body: "{{ tweet.text | truncate(4096) }}"
+  url: "https://twitter.com/i/web/status/{{ tweet.id }}"
+  reach: "{{ tweet.author.public_metrics.followers_count | default(0) }}"
+  engagement: "{{ tweet.public_metrics.like_count + tweet.public_metrics.retweet_count + tweet.public_metrics.reply_count | default(0) }}"
+  matched_keywords: "{{ keywords_matched(tweet.text, env.BRAND_KEYWORDS_ARRAY) }}"
+  published_at: "{{ tweet.created_at }}"
+
+# Stream health monitoring.
+health:
+  # Reconnect automatically on disconnection.
+  auto_reconnect: true
+  max_reconnect_attempts: 10
+  reconnect_backoff_seconds: [1, 2, 5, 10, 30, 60]
+  # Alert ops channel if stream disconnects for more than 5 minutes.
+  alert_on_disconnect_seconds: 300
+  alert_channel: ${MEDIA_OPS_ALERT_CHANNEL}
+
+# Rate limit guard: if Twitter returns 429, fall back to polling-only mode.
+on_rate_limit:
+  fallback: mention-volume-poll
+  resume_after_minutes: 15
+
+# Deferred:
+#   - Conversation threading (track reply chains to brand crisis tweets)
+#   - Quote-tweet expansion (capture retweeted content context)

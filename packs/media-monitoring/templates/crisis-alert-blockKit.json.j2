@@ -1,0 +1,112 @@
+{
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "🚨 [{{ crisis.severity | upper }}] Brand Crisis Alert: {{ crisis.title }}",
+        "emoji": true
+      }
+    },
+    {
+      "type": "section",
+      "fields": [
+        {
+          "type": "mrkdwn",
+          "text": "*Severity:*\n{{ crisis.severity | upper }}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Trigger:*\n{{ crisis.trigger_type | replace('_', ' ') | title }}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Declared:*\n{{ crisis.declared_at | slack_ts }}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Channels:*\n{{ crisis.channels | join(', ') | title }}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Hourly mentions:*\n{{ crisis.hourly_mention_count | commify }}{% if crisis.z_score %} (z={{ crisis.z_score | round(1) }}){% endif %}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Negative ratio:*\n{% if crisis.negative_ratio %}{{ crisis.negative_ratio | pct }}{% else %}N/A{% endif %}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Influence reach:*\n{{ crisis.influence_weighted_reach | commify }}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Status:*\n{{ crisis.status | title }}"
+        }
+      ]
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Narrative:*\n{{ crisis.narrative | truncate(300) }}"
+      }
+    },
+    {% if response_recommendation %}
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Response recommendation:* {{ response_recommendation.respond | upper }} ({{ response_recommendation.timing | replace('_', ' ') }})\n_{{ response_recommendation.rationale | truncate(200) }}_{% if response_recommendation.requires_legal_review %}\n⚠️ *Legal review required*: {{ response_recommendation.legal_flag_reason }}{% endif %}"
+      }
+    },
+    {% endif %}
+    {
+      "type": "divider"
+    },
+    {
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "View Crisis Details",
+            "emoji": false
+          },
+          "url": "{{ dashboard_url }}/crises/{{ crisis.id }}",
+          "style": "danger"
+        },
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "Mark Monitoring",
+            "emoji": false
+          },
+          "value": "{{ crisis.id }}",
+          "action_id": "crisis_set_monitoring"
+        },
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "Mark False Positive",
+            "emoji": false
+          },
+          "value": "{{ crisis.id }}",
+          "action_id": "crisis_set_false_positive"
+        }
+      ]
+    },
+    {
+      "type": "context",
+      "elements": [
+        {
+          "type": "mrkdwn",
+          "text": "Crisis ID: `{{ crisis.id }}` | xiaoguai media-monitoring v{{ pack_version }}"
+        }
+      ]
+    }
+  ]
+}
