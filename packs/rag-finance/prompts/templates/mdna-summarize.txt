@@ -1,0 +1,41 @@
+Summarize the Management Discussion and Analysis (MD&A) section from the retrieved financial
+document for {{company_name}}, period {{period}}.
+
+Structure your summary as follows:
+
+## Executive Summary
+2-3 sentences on overall performance, growth rate, and most important driver.
+
+## Revenue Analysis
+- Total revenue and YoY growth rate [with citation]
+- Top 2-3 revenue drivers (product/geography/channel mix changes)
+- Any significant headwinds or tailwinds mentioned by management
+
+## Profitability
+- Gross margin trend and management's explanation
+- Operating margin trend and key operating expense changes
+- Net income and effective tax rate
+
+## Cash Flow and Liquidity
+- Operating cash flow and cash conversion (OCF / Net income)
+- Capital allocation: capex, M&A, buybacks, dividends
+- Cash and debt position at period end
+
+## Guidance (if provided)
+- Next quarter and/or full-year outlook with specific figures [with citation]
+- Key assumptions behind guidance
+
+## Risk Factors Updated
+- Any new or materially changed risk factors highlighted in the filing [with citation]
+
+## Key Flags
+- Items management emphasized that may affect future performance
+- Non-GAAP measures used and their definitions
+
+Cite each section with [Source: <doc>, §<section> or Table <name>].
+
+Company: {{company_name}}
+Period: {{period}}
+Retrieved context:
+---
+{{retrieved_context}}

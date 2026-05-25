@@ -1,0 +1,30 @@
+Review the retrieved contract context and flag clauses that create legal, financial, or operational
+risk for the party identified as {{reviewing_party_role}} (e.g., "customer", "vendor", "licensor").
+
+For each risk identified:
+1. Name the risk category (indemnification, IP ownership, liability cap, termination, data
+   protection, etc.)
+2. Quote or paraphrase the triggering language with citation [Source: <doc>, §<section>]
+3. Explain why this clause creates risk for {{reviewing_party_role}}
+4. Rate severity: HIGH / MEDIUM / LOW using the following criteria:
+   - HIGH: Potential for uncapped financial loss, IP ownership loss, regulatory non-compliance,
+     or inability to exit the agreement
+   - MEDIUM: Above-market terms, missing standard protections, operational constraints
+   - LOW: Style or negotiating points with limited practical consequence
+5. Suggest a negotiating counter-position (1-2 sentences, not legal advice)
+
+Output format:
+
+## Risk Flags for {{reviewing_party_role}}
+
+### [Risk #N] — [Category] — [SEVERITY]
+**Triggering clause**: [Source: <doc>, §<section>]
+**Issue**: [explanation]
+**Suggested counter**: [negotiating position]
+
+---
+
+Reviewing party role: {{reviewing_party_role}}
+Retrieved context:
+---
+{{retrieved_context}}
