@@ -1,0 +1,129 @@
+# Watch spec — eval suite pass-rate
+# ---------------------------------------------------------------------------
+# Triggered by a CI webhook (POST from the CI pipeline after each eval run)
+# rather than on a poll schedule. The CI system calls the xiaoguai inbound
+# endpoint; this watch normalises the payload, writes a row to mlops_eval_runs,
+# and fires a WatchEvent if the pass rate has dropped below the floor.
+#
+# Two event paths:
+#   1. Pass rate fell below config.eval_pass_rate_floor → urgent signal
+#   2. Pass rate recovered above floor after a prior failure → resolution signal
+#
+# Schema reference: F1 WatchSpec (xiaoguai-watch).
+# ---------------------------------------------------------------------------
+
+name: eval-suite-pass-rate
+version: "0.1.0"
+description: >
+  Monitors eval suite pass rates delivered via CI webhook. Fires a WatchEvent
+  when pass rate drops below the configured floor (default 0.85). Also fires
+  a resolution event when pass rate recovers, closing the associated
+  retrain_job if one exists.
+
+# --------------------------------------------------------------------------
+# Source — inbound CI webhook (push-based, not polled)
+# --------------------------------------------------------------------------
+source:
+  kind: webhook
+  # Mounted automatically by the pack loader.
+  # CI pipeline POSTs to: POST /v1/ml-ops/inbound/eval-suite/{route_id}
+  route_prefix: /v1/ml-ops/inbound/eval-suite
+  # HMAC-SHA256 validation on X-Eval-Signature header.
+  hmac_secret: "${EVAL_WEBHOOK_SECRET}"
+  # Expected payload shape (CI-agnostic; adapters normalise to this).
+  payload_schema:
+    type: object
+    required: [model_name, model_version, eval_type, suite_name,
+                pass_rate, total_cases, passed_cases, source_url,
+                run_started_at, run_finished_at]
+    properties:
+      tenant_id:       { type: string }
+      model_name:      { type: string }
+      model_version:   { type: string }
+      eval_type:
+        type: string
+        enum: [regression, capability, shadow_comparison, safety, custom]
+      suite_name:      { type: string }
+      pass_rate:
+        type: number
+        minimum: 0
+        maximum: 1
+      total_cases:     { type: integer, minimum: 1 }
+      passed_cases:    { type: integer, minimum: 0 }
+      category_breakdown: { type: object }
+      source_url:      { type: string }
+      run_started_at:  { type: string, format: date-time }
+      run_finished_at: { type: string, format: date-time }
+
+# --------------------------------------------------------------------------
+# Persist to DB on every inbound event (regardless of pass rate)
+# --------------------------------------------------------------------------
+persist:
+  table: mlops_eval_runs
+  mapping:
+    tenant_id:          "$.tenant_id"
+    model_name:         "$.model_name"
+    model_version:      "$.model_version"
+    eval_type:          "$.eval_type"
+    suite_name:         "$.suite_name"
+    pass_rate:          "$.pass_rate"
+    total_cases:        "$.total_cases"
+    passed_cases:       "$.passed_cases"
+    category_breakdown: "$.category_breakdown"
+    source_url:         "$.source_url"
+    run_started_at:     "$.run_started_at"
+    run_finished_at:    "$.run_finished_at"
+
+# --------------------------------------------------------------------------
+# Trigger condition
+# --------------------------------------------------------------------------
+trigger:
+  condition: >
+    payload.pass_rate < coalesce(config.eval_pass_rate_floor, 0.85)
+
+# --------------------------------------------------------------------------
+# Resolution condition (close open drift signal / retrain job)
+# --------------------------------------------------------------------------
+resolution:
+  condition: >
+    payload.pass_rate >= coalesce(config.eval_pass_rate_floor, 0.85)
+    AND prior_event.kind == 'mlops.eval_pass_rate_drop'
+  action: resolve_prior_event
+
+# --------------------------------------------------------------------------
+# Output — WatchEvent shape
+# --------------------------------------------------------------------------
+event:
+  kind: mlops.eval_pass_rate_drop
+  cardinality: per_event
+  payload_mapping:
+    tenant_id:      "$.tenant_id"
+    model_name:     "$.model_name"
+    model_version:  "$.model_version"
+    eval_type:      "$.eval_type"
+    suite_name:     "$.suite_name"
+    pass_rate:      "$.pass_rate"
+    total_cases:    "$.total_cases"
+    passed_cases:   "$.passed_cases"
+    failed_cases:
+      expr: "total_cases - passed_cases"
+    category_breakdown: "$.category_breakdown"
+    source_url:     "$.source_url"
+    signal_source:  "_const:eval-suite-pass-rate"
+
+# --------------------------------------------------------------------------
+# Downstream
+# --------------------------------------------------------------------------
+downstream:
+  agents:
+    - eval-result-summarizer
+    - retrain-recommender
+
+# --------------------------------------------------------------------------
+# Deduplication — suppress repeat fires for the same model+suite within
+# 6 hours unless pass_rate has dropped a further 5 pp.
+# --------------------------------------------------------------------------
+dedup:
+  key: "{tenant_id}:{model_name}:{suite_name}"
+  ttl_seconds: 21600
+  re_fire_if: "payload.pass_rate < prior.pass_rate - 0.05"

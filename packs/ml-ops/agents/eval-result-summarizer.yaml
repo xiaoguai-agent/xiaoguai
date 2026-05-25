@@ -1,0 +1,206 @@
+# Agent definition — eval-result-summarizer
+# ---------------------------------------------------------------------------
+# Aggregates regression and capability eval results into a structured
+# EvalSummaryCard for human review. Triggered by eval pass-rate drops or
+# on a scheduled daily digest.
+#
+# It reads the mlops_eval_runs table, groups results by eval_type
+# (regression vs capability), computes trend arrows, highlights the
+# worst-performing categories, and renders an eval-summary-card template.
+#
+# Output paths:
+#   - Writes summary_text back to mlops_eval_runs
+#   - Emits rendered eval-summary-card (Markdown) to Slack + Jira
+# ---------------------------------------------------------------------------
+
+name: eval-result-summarizer
+version: "0.1.0"
+description: >
+  Aggregates regression and capability eval run results into a structured
+  summary card. Highlights pass-rate trends, worst-performing categories,
+  and links to source CI runs. Runs on eval pass-rate drops and daily at 08:00.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: mlops.eval_pass_rate_drop
+    source: eval-suite-pass-rate
+  # Daily digest even when no drop — surfaces gradual degradation
+  - kind: cron
+    schedule: "0 8 * * *"
+    name: daily-eval-digest
+
+# --------------------------------------------------------------------------
+# LLM settings
+# --------------------------------------------------------------------------
+llm:
+  model: ${EVAL_SUMMARIZER_LLM_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 3000
+
+# --------------------------------------------------------------------------
+# Context-gathering steps
+# --------------------------------------------------------------------------
+context_steps:
+  - id: regression_evals
+    description: "Last 10 regression eval runs for this model"
+    tool: sql
+    query: |
+      SELECT
+          suite_name, pass_rate, total_cases, passed_cases,
+          category_breakdown, source_url, run_finished_at
+      FROM mlops_eval_runs
+      WHERE tenant_id  = '{tenant_id}'
+        AND model_name = '{model_name}'
+        AND eval_type  = 'regression'
+      ORDER BY run_finished_at DESC
+      LIMIT 10
+
+  - id: capability_evals
+    description: "Last 10 capability eval runs for this model"
+    tool: sql
+    query: |
+      SELECT
+          suite_name, pass_rate, total_cases, passed_cases,
+          category_breakdown, source_url, run_finished_at
+      FROM mlops_eval_runs
+      WHERE tenant_id  = '{tenant_id}'
+        AND model_name = '{model_name}'
+        AND eval_type  = 'capability'
+      ORDER BY run_finished_at DESC
+      LIMIT 10
+
+  - id: shadow_comparison_evals
+    description: "Shadow comparison evals (candidate vs champion)"
+    tool: sql
+    query: |
+      SELECT
+          suite_name, pass_rate, total_cases, passed_cases,
+          category_breakdown, source_url, run_finished_at
+      FROM mlops_eval_runs
+      WHERE tenant_id  = '{tenant_id}'
+        AND model_name = '{model_name}'
+        AND eval_type  = 'shadow_comparison'
+      ORDER BY run_finished_at DESC
+      LIMIT 5
+
+  - id: baseline_pass_rates
+    description: "30-day average pass rate per eval type (for trend comparison)"
+    tool: sql
+    query: |
+      SELECT
+          eval_type,
+          AVG(pass_rate) AS avg_pass_rate_30d,
+          MIN(pass_rate) AS min_pass_rate_30d,
+          COUNT(*)       AS run_count_30d
+      FROM mlops_eval_runs
+      WHERE tenant_id  = '{tenant_id}'
+        AND model_name = '{model_name}'
+        AND run_finished_at >= NOW() - INTERVAL '30 days'
+      GROUP BY eval_type
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are an ML evaluation analyst. Your job is to produce a concise,
+  structured evaluation summary card from raw eval run data.
+
+  Structure your output as follows:
+
+  1. **Overall status** — one of: HEALTHY / DEGRADING / FAILING / RECOVERING
+  2. **Regression evals** — pass rate trend (↑↓→), worst-performing categories
+  3. **Capability evals** — pass rate trend, worst-performing categories
+  4. **Shadow comparison** — if present, champion vs candidate delta
+  5. **Key findings** — 2-3 bullet points (specific, factual, no fluff)
+  6. **Recommended focus** — which test categories need the most attention
+
+  Rules:
+  - Use percentage points (pp) for pass rate changes, not raw fractions.
+  - Cite specific suite names and category names — do not invent them.
+  - If < 3 runs exist, say "insufficient history" rather than speculating.
+  - Output ONLY valid JSON matching the EvalSummaryCard schema.
+
+  EvalSummaryCard schema:
+  {
+    "overall_status": "HEALTHY | DEGRADING | FAILING | RECOVERING",
+    "regression_summary": {
+      "latest_pass_rate": 0.0,
+      "trend_7d_pp": 0.0,
+      "worst_categories": [{"name": "", "pass_rate": 0.0}],
+      "run_count": 0
+    },
+    "capability_summary": {
+      "latest_pass_rate": 0.0,
+      "trend_7d_pp": 0.0,
+      "worst_categories": [{"name": "", "pass_rate": 0.0}],
+      "run_count": 0
+    },
+    "shadow_comparison": {
+      "candidate_delta_pp": null,
+      "verdict": "better | worse | neutral | no_data"
+    },
+    "key_findings": ["<finding>"],
+    "recommended_focus": ["<category or suite name>"],
+    "summary_prose": "<2-3 sentence human-readable summary>"
+  }
+
+# --------------------------------------------------------------------------
+# User prompt
+# --------------------------------------------------------------------------
+user_prompt: |
+  ## Model
+  - Name: {{ model_name }}
+  - Version: {{ model_version | default('latest champion') }}
+  - Tenant: {{ tenant_id }}
+  - Report period: last 7 days
+
+  ## Regression eval runs (most recent first)
+  {{ context.regression_evals | truncate(2000) }}
+
+  ## Capability eval runs (most recent first)
+  {{ context.capability_evals | truncate(2000) }}
+
+  ## Shadow comparison evals
+  {{ context.shadow_comparison_evals | truncate(1000) }}
+
+  ## 30-day baseline pass rates
+  {{ context.baseline_pass_rates | truncate(500) }}
+
+  Produce the EvalSummaryCard JSON now.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: render_summary_card
+    description: >
+      Render the eval-summary-card Jinja template with the structured
+      EvalSummaryCard JSON. Returns the rendered Markdown.
+    kind: template
+    template: "templates/eval-summary-card.md.j2"
+
+  - name: write_summary_back
+    description: >
+      Write the summary_prose field back to the most recent eval run row.
+    kind: sql
+    query: |
+      UPDATE mlops_eval_runs
+      SET summary_text = '{summary_prose}',
+          updated_at   = NOW()
+      WHERE tenant_id  = '{tenant_id}'
+        AND model_name = '{model_name}'
+      ORDER BY run_finished_at DESC
+      LIMIT 1
+
+# --------------------------------------------------------------------------
+# Output routing
+# --------------------------------------------------------------------------
+outputs:
+  # Send rendered card to Slack ml-platform channel
+  - ref: outputs/slack-ml-platform.yaml
+    condition: "overall_status IN ('DEGRADING', 'FAILING')"
+  # Create/update Jira ticket for FAILING status
+  - ref: outputs/jira-ml-debt.yaml
+    condition: "overall_status == 'FAILING'"
