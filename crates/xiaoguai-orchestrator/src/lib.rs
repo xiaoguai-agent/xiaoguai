@@ -28,6 +28,7 @@ pub mod challenger;
 pub mod error;
 pub mod plan;
 pub mod planner;
+pub mod registry;
 pub mod supervisor;
 pub mod worker;
 pub mod worker_handle;
@@ -37,5 +38,11 @@ pub use challenger::{Challenger, Critique, MockChallenger, Verdict};
 pub use error::OrchestratorError;
 pub use plan::{Plan, PlanStep, RiskLevel, StepStatus};
 pub use planner::Planner;
+pub use registry::conflict::{AgentConflict, ConflictArbitrator, ConflictPolicy, ResourceKey};
+pub use registry::router::{CapabilityRouter, Dispatch, Intent};
+pub use registry::store::{InMemoryStore, PgStore, RegistryStore};
+pub use registry::{
+    Agent, AgentRef, AgentRegistry, AgentSpec, Capability, ResultShape, TaskShape, TenantScope,
+};
 pub use supervisor::{RunOutcome, RunReport, StepResult, Supervisor};
 pub use worker::{Task, Worker, WorkerResult};
