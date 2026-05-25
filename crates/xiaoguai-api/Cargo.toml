@@ -16,6 +16,7 @@ xiaoguai-llm = { path = "../xiaoguai-llm" }
 xiaoguai-mcp = { path = "../xiaoguai-mcp" }
 xiaoguai-auth = { path = "../xiaoguai-auth" }
 xiaoguai-agent = { path = "../xiaoguai-agent" }
+xiaoguai-memory = { path = "../xiaoguai-memory", default-features = false }
 # v0.12.0: shared agent-loop runtime used by REST + IM + scheduler.
 xiaoguai-runtime = { path = "../xiaoguai-runtime" }
 # v0.11.2: eval pane endpoints reuse the EvalRunner / EvalSuite types

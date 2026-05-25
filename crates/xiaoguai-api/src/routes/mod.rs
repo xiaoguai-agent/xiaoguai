@@ -3,12 +3,13 @@
 pub mod admin;
 pub mod hotl;
 pub mod mcp;
+pub mod memory;
 pub mod outcomes;
 pub mod scheduler_public;
 pub mod sessions;
 pub mod usage;
 
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::Router;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -110,6 +111,25 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/skills/install/:id",
             delete(skills::uninstall_pack),
+        )
+        // v1.3.x — long-term memory CRUD + semantic recall.
+        .route(
+            "/v1/memories",
+            get(memory::list_memories).post(memory::create_memory),
+        )
+        .route(
+            "/v1/memories/recall",
+            post(memory::recall_memories),
+        )
+        .route(
+            "/v1/memories/similar/:id",
+            get(memory::find_similar),
+        )
+        .route(
+            "/v1/memories/:id",
+            get(memory::get_memory)
+                .put(memory::update_memory)
+                .delete(memory::delete_memory),
         );
 
     // Layer order (inner → outer, since `route_layer` adds outward):
