@@ -1,0 +1,54 @@
+# Inbound trigger — Contentful entry publish event
+#
+# Fires when a "ContentBrief" content type entry is published in Contentful.
+# Use this integration when the content calendar lives in Contentful CMS.
+#
+# Contentful webhook setup:
+#   Space → Settings → Webhooks → Add webhook
+#   URL:     https://<host>/v1/scheduler/webhooks/<route_id>
+#   Events:  Entry → Publish
+#   Filters: Content type = ContentBrief
+#   Secret:  set CONTENTFUL_WEBHOOK_SECRET in your .env
+#
+# The Contentful webhook sends the full Entry body as JSON with
+# `X-Contentful-Webhook-Name` and `X-Contentful-Topic` headers.
+
+name: contentful-publish
+kind: webhook
+
+route_id: "marketing-content-contentful-${PACK_INSTANCE_ID}"
+
+# Signature verification (Contentful signs with HMAC-SHA256).
+signature:
+  algorithm: hmac-sha256
+  header: X-Contentful-Signature
+  # Contentful does not use a prefix — raw hex digest.
+  secret_env: CONTENTFUL_WEBHOOK_SECRET
+
+# Only handle Entry.publish events for the ContentBrief content type.
+event_filter:
+  header: X-Contentful-Topic
+  values: ["ContentManagement.Entry.publish"]
+
+payload_filter:
+  json_path: "$.sys.contentType.sys.id"
+  values: ["contentBrief"]
+
+# Fields extracted from the Contentful Entry payload.
+# Contentful localizes fields: use "en-US" locale key by default.
+extract:
+  brief_title:      "$.fields.title.en-US"
+  brief_summary:    "$.fields.summary.en-US"
+  target_audience:  "$.fields.targetAudience.en-US"
+  desired_action:   "$.fields.desiredAction.en-US"
+  word_count_target: "$.fields.wordCountTarget.en-US"
+  brand_voice_ref:  "$.fields.brandVoice.en-US"
+  list_segment:     "$.fields.emailListSegment.en-US"
+  contentful_entry_id: "$.sys.id"
+  contentful_space_id: "$.sys.space.sys.id"
+
+extract_list:
+  key_messages:
+    json_path: "$.fields.keyMessages.en-US[*]"
+  seo_keywords:
+    json_path: "$.fields.seoKeywords.en-US[*]"
