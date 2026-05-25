@@ -1,0 +1,54 @@
+# Output: inbox label update
+#
+# Applies priority label (P0–P3) and sender-class tag to the message
+# in the user's inbox using the source provider's API.
+#
+# Supported providers (auto-detected from inbound connector):
+#   gmail        — labels applied via gmail.users.messages.modify
+#   microsoft365 — categories applied via PATCH /me/messages/{id}
+#   imap         — custom flags or folder move via IMAP STORE + COPY
+#
+# Labels created on first use if they do not exist.
+# Label name format: xiaoguai/P0, xiaoguai/P1, xiaoguai/P2, xiaoguai/P3
+#                    xiaoguai/internal, xiaoguai/customer, etc.
+
+name: inbox-label-update
+kind: email-api
+
+# Provider is inherited from the inbound connector that triggered the run.
+provider: "${email.inbound_provider}"
+
+actions:
+  apply_labels:
+    - "xiaoguai/{{ score.priority }}"
+    - "xiaoguai/{{ classify.sender_class }}"
+  remove_labels:
+    # Remove any previously set priority labels before applying the new one.
+    - "xiaoguai/P0"
+    - "xiaoguai/P1"
+    - "xiaoguai/P2"
+    - "xiaoguai/P3"
+    # Remove only the priority labels we might overwrite; do not remove class labels.
+    exclude_current: true    # skip removing the label we're about to add
+
+# For newsletter and spam results from the router:
+route_overrides:
+  newsletter:
+    apply_labels: ["xiaoguai/newsletter"]
+    archive: true
+  spam:
+    move_to_spam: true
+
+# Audit entry: records only the label operation, not the email body.
+audit:
+  table: pack_email_triage_label_ops
+  fields:
+    - message_id
+    - subject_truncated    # first 200 chars
+    - sender_email
+    - received_at
+    - priority
+    - sender_class
+    - route_result
+    - labels_applied
+    - labeled_at

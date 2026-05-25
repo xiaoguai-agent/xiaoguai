@@ -1,0 +1,24 @@
+{# Casual response frame template
+   Used by draft-generator when tone=casual.
+   Variables: same as response-frame-formal.md.j2
+#}
+Hi {{ sender_display_name | default("there") }},
+
+{% if priority == "P0" %}
+Got your message — on it right now.
+
+{% elif priority == "P1" %}
+Thanks for reaching out — I'll get back to you shortly.
+
+{% endif %}
+{{ draft_body }}
+
+{% if scheduling_request and proposed_times | length > 0 %}
+For the scheduling part: you mentioned {{ proposed_times | join(", ") }} —
+does one of those work, or should we find another time?
+
+{% endif %}
+{{ user_display_name }}
+
+---
+*Draft by xiaoguai email-triage v{{ pack_version }} · {{ priority }} · {{ sender_class }}*
