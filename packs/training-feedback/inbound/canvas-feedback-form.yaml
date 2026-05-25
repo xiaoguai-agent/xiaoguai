@@ -1,0 +1,73 @@
+---
+# inbound/canvas-feedback-form.yaml
+#
+# Canvas LMS feedback form inbound adapter.
+#
+# Uses Canvas's Submission webhook (submission_created event from the
+# Canvas Data 2 / Live Events stream or the Outbound Webhooks feature).
+# Supports both assignment submissions (essay) and course survey
+# forms built via Canvas Quizzes.
+#
+# Mounting: POST /v1/training-feedback/inbound/canvas/{route_id}
+# Auth:     Per-tenant bearer token + optional Canvas HMAC header
+#           (X-Canvas-Hook-Hmac-Sha256 verified if hmac_secret is set)
+
+source: canvas
+route_prefix: /v1/training-feedback/inbound/canvas
+
+normalize:
+  hmac_secret: ${CANVAS_WEBHOOK_HMAC_SECRET}
+
+  field_map:
+    source_event_id: data.object.id
+    course_id:       data.object.course_id
+    learner_id:      data.object.user_id      # hashed for GDPR
+    submitted_at:    data.object.submitted_at
+
+  # Canvas quiz responses are in data.object.quiz_submissions_url;
+  # the adapter fetches the answers via Canvas REST API on ingestion.
+  answers_fetch:
+    enabled: true
+    api_base: ${CANVAS_API_BASE}              # e.g. https://institution.instructure.com
+    api_token: ${CANVAS_API_TOKEN}
+    endpoint: /api/v1/quiz_submissions/{quiz_submission_id}/questions
+
+  question_id_field:   id
+  question_text_field: question_name
+  answer_text_field:   answer
+  answer_type_rules:
+    essay:            free_text
+    short_answer:     free_text
+    numerical_answer: rating
+    multiple_choice:  multiple_choice
+    true_false:       multiple_choice
+    matching:         ranking
+    _default:         free_text
+
+  cohort_id_source: outcome_telemetry_lookup
+  instructor_id_source: outcome_telemetry_lookup
+
+# Canvas sends submission events for all assignment types; only process
+# submissions for surveys (identified by assignment tag or category).
+filter:
+  # Only process if the Canvas assignment has one of these tags.
+  # Configure per-course in the LMS.
+  assignment_tags:
+    - feedback-survey
+    - post-course-survey
+    - session-feedback
+
+sample_payload: |
+  {
+    "event_type": "submission_created",
+    "data": {
+      "object": {
+        "id": "sub-9988",
+        "course_id": "course-202",
+        "user_id": "u-xyz789",
+        "submitted_at": "2026-05-20T14:30:00Z",
+        "assignment_id": "asgn-555",
+        "quiz_submissions_url": "/api/v1/courses/202/quizzes/12/submissions/9988"
+      }
+    }
+  }
