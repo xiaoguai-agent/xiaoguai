@@ -13,6 +13,7 @@ pub struct WelfordStats {
 
 impl WelfordStats {
     /// Create a fresh accumulator.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -30,16 +31,19 @@ impl WelfordStats {
     }
 
     /// Number of observations seen so far.
+    #[must_use]
     pub fn count(&self) -> u64 {
         self.count
     }
 
     /// Current mean.  Returns 0.0 when no observations have been seen.
+    #[must_use]
     pub fn mean(&self) -> f64 {
         self.mean
     }
 
     /// Population variance (divide by N).  Returns 0.0 for < 2 observations.
+    #[must_use]
     #[allow(clippy::cast_precision_loss)]
     pub fn variance(&self) -> f64 {
         if self.count < 2 {
@@ -50,11 +54,13 @@ impl WelfordStats {
     }
 
     /// Population standard deviation.
+    #[must_use]
     pub fn std_dev(&self) -> f64 {
         self.variance().sqrt()
     }
 
     /// Sample variance (divide by N-1, Bessel-corrected).
+    #[must_use]
     #[allow(clippy::cast_precision_loss)]
     pub fn sample_variance(&self) -> f64 {
         if self.count < 2 {
@@ -65,6 +71,7 @@ impl WelfordStats {
     }
 
     /// Sample standard deviation.
+    #[must_use]
     pub fn sample_std_dev(&self) -> f64 {
         self.sample_variance().sqrt()
     }

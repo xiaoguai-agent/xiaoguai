@@ -40,7 +40,7 @@
 //! `"create_task"` → `RuntimeJobExecutor`).  This keeps `xiaoguai-watch` free
 //! of direct scheduler / IM crate dependencies.
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -150,15 +150,18 @@ impl WatchRunner {
     /// # Panics
     ///
     /// Panics if two registered slots share the same `spec.id`.
+    #[must_use]
     pub fn run(self) -> mpsc::Receiver<WatchEvent> {
         let (tx, rx) = mpsc::channel(self.channel_capacity);
 
         // Validate uniqueness of IDs before spawning.
-        let mut seen_ids: HashMap<&str, bool> = HashMap::new();
+        let mut seen_ids: HashSet<&str> = HashSet::new();
         for slot in &self.slots {
-            if seen_ids.insert(slot.spec.id.as_str(), true).is_some() {
-                panic!("duplicate WatchSpec id: {}", slot.spec.id);
-            }
+            assert!(
+                seen_ids.insert(slot.spec.id.as_str()),
+                "duplicate WatchSpec id: {}",
+                slot.spec.id
+            );
         }
 
         let dedup = Arc::new(self.dedup);
