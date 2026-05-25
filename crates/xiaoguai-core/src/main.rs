@@ -517,6 +517,9 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
+        // v1.3.x: long-term memory — wire PgMemoryStore here once the
+        // memory bridge crate lands; `None` makes /v1/memories return 503.
+        memory_store: None,
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

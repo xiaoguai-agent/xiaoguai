@@ -1,0 +1,47 @@
+[package]
+name = "xiaoguai-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Long-term memory with semantic retrieval — pgvector HNSW + in-memory deterministic backend."
+# Requires pgvector extension to be installed in Postgres:
+#   CREATE EXTENSION IF NOT EXISTS vector;
+# Migration 0019_memories.sql creates the tables; run `db::migrate` as usual.
+
+[features]
+default = ["pg"]
+# pg: full PgMemoryStore + pgvector HNSW similarity (requires pgvector extension).
+pg = ["sqlx"]
+# openai: OpenAIEmbedder via async-openai.
+openai = ["async-openai"]
+# local: ONNX-based local embedder (future; trait stub only).
+local = []
+
+[dependencies]
+xiaoguai-types = { path = "../xiaoguai-types" }
+
+async-trait  = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+uuid         = { workspace = true }
+chrono       = { workspace = true }
+tokio        = { workspace = true }
+parking_lot  = { workspace = true }
+
+# pg feature: sqlx for Postgres + pgvector queries.
+sqlx = { workspace = true, optional = true }
+
+# openai feature: embedding via OpenAI API.
+async-openai = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
