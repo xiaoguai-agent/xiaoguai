@@ -1,0 +1,28 @@
+[package]
+name = "xiaoguai-tasks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Kanban-style task board dispatcher — READY→RUNNING→DONE/BLOCKED worker pool with claim/execute/retry/timeout semantics (ADR-0019)."
+
+[dependencies]
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["time", "sync", "macros", "rt-multi-thread", "signal"] }
+tokio-util = { workspace = true, features = ["time"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+once_cell = { workspace = true }
+prometheus = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }
+
+[lints]
+workspace = true
