@@ -135,7 +135,7 @@ prometheus = { version = "0.13", features = ["process"] }
 opentelemetry = { version = "0.27", features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace", "metrics"] }
 opentelemetry-otlp = { version = "0.27", features = ["tonic", "trace", "grpc-tonic"] }
-opentelemetry-semantic-conventions = "0.27"
+opentelemetry-semantic-conventions = "0.32"
 tracing-opentelemetry = "0.28"
 
 # document loaders (RAG)
