@@ -15,7 +15,7 @@ use xiaoguai_llm::{LlmBackend, Message, MockBackend, ToolCallSpec};
 
 use common::{MockMcpClient, ToolResponse};
 
-fn make_call(id: &str, name: &str, args: serde_json::Value) -> ToolCallSpec {
+fn make_call(id: &str, name: &str, args: &serde_json::Value) -> ToolCallSpec {
     ToolCallSpec {
         id: id.into(),
         name: name.into(),
@@ -69,7 +69,7 @@ async fn single_tool_call_then_final_text() {
             ScriptStep::tool_calls(vec![make_call(
                 "c1",
                 "search",
-                serde_json::json!({"q": "x"}),
+                &serde_json::json!({"q": "x"}),
             )]),
             ScriptStep::text("answer: found A"),
         ],
@@ -131,8 +131,8 @@ async fn parallel_tool_dispatch_is_actually_parallel() {
     let agent = make_agent(
         vec![
             ScriptStep::tool_calls(vec![
-                make_call("c1", "a", serde_json::json!({})),
-                make_call("c2", "b", serde_json::json!({})),
+                make_call("c1", "a", &serde_json::json!({})),
+                make_call("c2", "b", &serde_json::json!({})),
             ]),
             ScriptStep::text("done"),
         ],
@@ -158,7 +158,7 @@ async fn tool_error_surfaces_as_error_event_and_keeps_loop_alive() {
     let toolbox = Toolbox::from_server(mock.clone(), mock.descriptors.clone()).expect("toolbox");
     let agent = make_agent(
         vec![
-            ScriptStep::tool_calls(vec![make_call("c1", "broken", serde_json::json!({}))]),
+            ScriptStep::tool_calls(vec![make_call("c1", "broken", &serde_json::json!({}))]),
             ScriptStep::text("apology"),
         ],
         toolbox,
@@ -193,7 +193,7 @@ async fn max_iterations_stops_the_loop() {
     let toolbox = Toolbox::from_server(mock.clone(), mock.descriptors.clone()).expect("toolbox");
     let backend: Arc<dyn LlmBackend> =
         Arc::new(MockBackend::with_script(vec![ScriptStep::tool_calls(
-            vec![make_call("c", "loop_tool", serde_json::json!({}))],
+            vec![make_call("c", "loop_tool", &serde_json::json!({}))],
         )]));
     let mut cfg = AgentConfig::new("mock");
     cfg.max_iterations = 3;
@@ -218,7 +218,7 @@ async fn cancellation_token_stops_between_iterations() {
     let toolbox = Toolbox::from_server(mock.clone(), mock.descriptors.clone()).expect("toolbox");
     let backend: Arc<dyn LlmBackend> =
         Arc::new(MockBackend::with_script(vec![ScriptStep::tool_calls(
-            vec![make_call("c", "slow", serde_json::json!({}))],
+            vec![make_call("c", "slow", &serde_json::json!({}))],
         )]));
     let agent = ReactAgent::new(backend, toolbox, AgentConfig::new("mock"));
     let cancel = CancellationToken::new();
@@ -245,7 +245,7 @@ async fn streaming_events_are_emitted_in_order() {
     let toolbox = Toolbox::from_server(mock.clone(), mock.descriptors.clone()).expect("toolbox");
     let agent = make_agent(
         vec![
-            ScriptStep::tool_calls(vec![make_call("c1", "tool", serde_json::json!({}))]),
+            ScriptStep::tool_calls(vec![make_call("c1", "tool", &serde_json::json!({}))]),
             ScriptStep::text("hi"),
         ],
         toolbox,
@@ -284,8 +284,8 @@ async fn sliding_window_keeps_system_message() {
     let mock = MockMcpClient::new(vec![("noop", ToolResponse::Ok("ok".into()))]);
     let toolbox = Toolbox::from_server(mock.clone(), mock.descriptors.clone()).expect("toolbox");
     let backend: Arc<dyn LlmBackend> = Arc::new(MockBackend::with_script(vec![
-        ScriptStep::tool_calls(vec![make_call("c", "noop", serde_json::json!({}))]),
-        ScriptStep::tool_calls(vec![make_call("c", "noop", serde_json::json!({}))]),
+        ScriptStep::tool_calls(vec![make_call("c", "noop", &serde_json::json!({}))]),
+        ScriptStep::tool_calls(vec![make_call("c", "noop", &serde_json::json!({}))]),
         ScriptStep::text("final"),
     ]));
     let mut cfg = AgentConfig::new("mock");
@@ -317,7 +317,7 @@ async fn unknown_tool_name_marks_call_failed() {
     let toolbox = Toolbox::from_server(mock.clone(), mock.descriptors.clone()).expect("toolbox");
     let agent = make_agent(
         vec![
-            ScriptStep::tool_calls(vec![make_call("c1", "ghost", serde_json::json!({}))]),
+            ScriptStep::tool_calls(vec![make_call("c1", "ghost", &serde_json::json!({}))]),
             ScriptStep::text("fallback"),
         ],
         toolbox,

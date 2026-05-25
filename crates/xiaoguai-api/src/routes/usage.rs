@@ -28,6 +28,8 @@ pub struct ListUsageQuery {
     pub group_by: Option<UsageGroupBy>,
 }
 
+/// # Errors
+/// Returns an error if the usage reader is not wired, the date range is invalid, or the query fails.
 pub async fn list_usage(
     State(state): State<AppState>,
     Query(q): Query<ListUsageQuery>,

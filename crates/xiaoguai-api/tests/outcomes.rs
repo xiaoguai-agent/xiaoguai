@@ -198,11 +198,11 @@ async fn record_outcome_503_when_unwired() {
 
 #[tokio::test]
 async fn summary_returns_by_kind_map() {
+    use xiaoguai_api::outcomes::RecordOutcomeRequest;
     let backend = fresh_backend();
     // Pre-populate two kinds.
     let state = state_with_backend(backend.clone());
     // Write directly via the backend to avoid another HTTP round-trip.
-    use xiaoguai_api::outcomes::RecordOutcomeRequest;
     backend
         .record(RecordOutcomeRequest {
             tenant_id: "ten".into(),
@@ -304,8 +304,8 @@ async fn summary_rejects_unknown_range() {
 
 #[tokio::test]
 async fn timeseries_returns_day_buckets() {
-    let backend = fresh_backend();
     use xiaoguai_api::outcomes::RecordOutcomeRequest;
+    let backend = fresh_backend();
     for _ in 0..3 {
         backend
             .record(RecordOutcomeRequest {

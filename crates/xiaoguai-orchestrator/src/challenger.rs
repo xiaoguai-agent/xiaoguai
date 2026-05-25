@@ -52,6 +52,7 @@ pub struct Critique {
 
 impl Critique {
     /// Convenience: build an Accept critique with no reasons and zero risk.
+    #[must_use]
     pub fn accept() -> Self {
         Self {
             verdict: Verdict::Accept,
@@ -61,6 +62,7 @@ impl Critique {
     }
 
     /// Convenience: build a Reject critique.
+    #[must_use]
     pub fn reject(reasons: Vec<String>, risk_score: f64) -> Self {
         Self {
             verdict: Verdict::Reject,
@@ -70,6 +72,7 @@ impl Critique {
     }
 
     /// Convenience: build a `RequestRevision` critique.
+    #[must_use]
     pub fn revise(reasons: Vec<String>, risk_score: f64) -> Self {
         Self {
             verdict: Verdict::RequestRevision,
@@ -79,6 +82,7 @@ impl Critique {
     }
 
     /// Format the critique as a short context string for the planner.
+    #[must_use]
     pub fn to_context_string(&self) -> String {
         format!(
             "[CRITIQUE risk={:.2}] {}",
@@ -109,6 +113,7 @@ pub struct MockChallenger {
 
 impl MockChallenger {
     /// Create with an empty queue (all calls default to Accept).
+    #[must_use]
     pub fn new() -> Self {
         Self {
             responses: Mutex::new(VecDeque::new()),
@@ -116,6 +121,9 @@ impl MockChallenger {
     }
 
     /// Push a scripted `Critique` to the back of the FIFO queue.
+    ///
+    /// # Panics
+    /// Panics if the internal mutex is poisoned.
     #[must_use]
     pub fn push(self, critique: Critique) -> Self {
         self.responses.lock().unwrap().push_back(critique);

@@ -14,6 +14,10 @@ use std::path::{Path, PathBuf};
 /// Generate man pages into `outdir`, creating it if it does not exist.
 ///
 /// Returns the list of files written.
+///
+/// # Errors
+/// Returns an error if the output directory cannot be created or a man page
+/// file cannot be written.
 pub fn run(cmd: &mut clap::Command, outdir: &Path) -> Result<Vec<PathBuf>> {
     std::fs::create_dir_all(outdir)
         .with_context(|| format!("create output directory {}", outdir.display()))?;

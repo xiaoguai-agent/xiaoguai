@@ -50,6 +50,9 @@ pub struct ExportArgs {
 ///
 /// Returns `Ok(rows_exported)` for `--once` mode.  In daemon mode this
 /// function never returns under normal operation.
+///
+/// # Errors
+/// Returns an error if the database connection or S3 upload fails.
 pub async fn run_export(args: ExportArgs) -> Result<usize> {
     anyhow::ensure!(
         args.sink == "s3",

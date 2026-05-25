@@ -69,6 +69,10 @@ impl McpSupervisor {
 
     /// Register a client under `key`. If a client is already registered under
     /// that key it's replaced and best-effort-shutdown.
+    ///
+    /// # Errors
+    /// This function currently always returns `Ok(())`. The signature is
+    /// `McpResult` for forward-compatibility with richer start logic.
     pub async fn start(&self, key: McpKey, client: Arc<dyn McpClient>) -> McpResult<()> {
         let prev = self.clients.lock().insert(key, client);
         if let Some(p) = prev {
@@ -88,6 +92,9 @@ impl McpSupervisor {
     }
 
     /// Remove and shut down. Idempotent: missing key is a successful no-op.
+    ///
+    /// # Errors
+    /// Returns `McpError` if the client's shutdown implementation fails.
     pub async fn stop(&self, key: &McpKey) -> McpResult<()> {
         let removed = self.clients.lock().remove(key);
         if let Some(c) = removed {
@@ -115,6 +122,11 @@ impl McpSupervisor {
     /// dropped, but the reload completes. Start failures bubble up so the
     /// caller (today: the marketplace install handler) can surface them
     /// in the API response.
+    ///
+    /// # Errors
+    /// Returns `McpError::Transport` if the repository query fails, or
+    /// propagates `McpError` from `start` if a newly-spawned client fails
+    /// to register.
     pub async fn reload_from_db(
         &self,
         repo: &dyn McpServerRepository,

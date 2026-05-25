@@ -84,6 +84,7 @@ impl PlanStep {
     }
 
     /// Returns `true` if all `deps` appear in `completed_ids`.
+    #[must_use]
     pub fn deps_met(&self, completed_ids: &[String]) -> bool {
         self.deps.iter().all(|d| completed_ids.contains(d))
     }
@@ -109,6 +110,7 @@ impl Plan {
     }
 
     /// Returns steps whose deps are all in `completed`.
+    #[must_use]
     pub fn ready(&self, completed: &[String]) -> Vec<&PlanStep> {
         self.steps
             .iter()

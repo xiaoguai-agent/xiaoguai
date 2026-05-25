@@ -29,6 +29,11 @@ pub struct RegisterArgs {
 
 /// Insert a new provider row and return the persisted record (with the
 /// freshly-allocated id and timestamps).
+///
+/// # Errors
+/// Returns an error if the provider kind string is not recognised, if
+/// `--endpoint` or `--name` are empty, or if the repository `create` call
+/// fails.
 pub async fn register(repo: &dyn LlmProviderRepository, args: RegisterArgs) -> Result<LlmProvider> {
     let kind = ProviderKind::parse(&args.kind).ok_or_else(|| {
         anyhow!(
@@ -73,6 +78,10 @@ pub struct ListArgs {
     pub tenant: Option<String>,
 }
 
+/// List LLM providers from the repository.
+///
+/// # Errors
+/// Returns an error if the repository query fails.
 pub async fn list(repo: &dyn LlmProviderRepository, args: ListArgs) -> Result<Vec<LlmProvider>> {
     let rows = match args.tenant {
         Some(t) => repo.list_for_tenant(&t).await?,
@@ -86,6 +95,11 @@ pub struct RemoveArgs {
     pub id: String,
 }
 
+/// Remove an LLM provider by ID.
+///
+/// # Errors
+/// Returns an error if `--id` is empty or if the repository `delete` call
+/// fails.
 pub async fn remove(repo: &dyn LlmProviderRepository, args: RemoveArgs) -> Result<()> {
     if args.id.trim().is_empty() {
         return Err(anyhow!("--id must not be empty"));

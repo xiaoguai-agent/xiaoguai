@@ -75,7 +75,7 @@ async fn with_replicas_reader_round_robins() {
     );
 
     // Call reader() 6 times.
-    let seq: Vec<*const sqlx::PgPool> = (0..6).map(|_| rwp.reader() as *const _).collect();
+    let seq: Vec<*const sqlx::PgPool> = (0..6).map(|_| std::ptr::from_ref(rwp.reader())).collect();
 
     // Period must equal replica count (3).
     assert_eq!(seq[0], seq[3], "reader cycle should have period 3");
@@ -83,7 +83,7 @@ async fn with_replicas_reader_round_robins() {
     assert_eq!(seq[2], seq[5]);
 
     // All three replicas must appear in the first lap.
-    let unique: std::collections::HashSet<*const sqlx::PgPool> = seq[..3].iter().cloned().collect();
+    let unique: std::collections::HashSet<*const sqlx::PgPool> = seq[..3].iter().copied().collect();
     assert_eq!(unique.len(), 3, "all 3 replicas must appear in first lap");
 }
 

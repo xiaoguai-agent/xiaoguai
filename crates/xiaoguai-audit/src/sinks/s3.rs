@@ -641,7 +641,7 @@ mod tests {
     // logic by exercising `upload_with_retry` behaviour patterns.
     // -----------------------------------------------------------------------
 
-    /// Verify that after MAX_UPLOAD_RETRIES failures the error is returned.
+    /// Verify that after `MAX_UPLOAD_RETRIES` failures the error is returned.
     /// We do this by testing the retry count constant and the spool behaviour
     /// in an isolated scenario that doesn't require a live S3 endpoint.
     #[test]

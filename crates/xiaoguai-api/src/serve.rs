@@ -14,6 +14,9 @@ use crate::state::AppState;
 /// Bind `addr`, serve until the future is dropped or the OS reports an
 /// error. Returns the actual bound address (useful when `addr.port() == 0`
 /// for ephemeral test ports) and a future that drives the server.
+///
+/// # Errors
+/// Returns an error if the TCP listener cannot bind to `addr`.
 pub async fn serve_with_state(
     addr: SocketAddr,
     state: AppState,

@@ -63,6 +63,7 @@ async fn body_json(body: Body) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+#[allow(clippy::needless_pass_by_value, reason = "test helper — caller owns the Value")]
 fn post_json(uri: &str, body: Value) -> Request<Body> {
     Request::builder()
         .method(Method::POST)
@@ -157,7 +158,7 @@ async fn install_then_list_then_uninstall() {
     assert_eq!(installed["version"], "1.0.0");
 
     // List — must see the installed row.
-    let list_resp = app
+    let after_install_resp = app
         .clone()
         .oneshot(
             Request::builder()
@@ -167,8 +168,8 @@ async fn install_then_list_then_uninstall() {
         )
         .await
         .unwrap();
-    assert_eq!(list_resp.status(), StatusCode::OK);
-    let listed = body_json(list_resp.into_body()).await;
+    assert_eq!(after_install_resp.status(), StatusCode::OK);
+    let listed = body_json(after_install_resp.into_body()).await;
     let arr = listed.as_array().unwrap();
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["id"], id);
@@ -185,7 +186,7 @@ async fn install_then_list_then_uninstall() {
     assert_eq!(del_body["deleted"], id);
 
     // List again — must be empty.
-    let list2_resp = app
+    let after_uninstall_resp = app
         .oneshot(
             Request::builder()
                 .uri("/v1/skills/installed?tenant=t1")
@@ -194,9 +195,9 @@ async fn install_then_list_then_uninstall() {
         )
         .await
         .unwrap();
-    assert_eq!(list2_resp.status(), StatusCode::OK);
-    let listed2 = body_json(list2_resp.into_body()).await;
-    assert!(listed2.as_array().unwrap().is_empty());
+    assert_eq!(after_uninstall_resp.status(), StatusCode::OK);
+    let after_uninstall = body_json(after_uninstall_resp.into_body()).await;
+    assert!(after_uninstall.as_array().unwrap().is_empty());
 }
 
 // ── duplicate install returns 409 ───────────────────────────────────────────

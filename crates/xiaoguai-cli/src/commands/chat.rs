@@ -15,6 +15,9 @@ pub struct ChatArgs {
 /// Execute a single `chat` invocation and return the assistant reply.
 ///
 /// Kept testable: the binary entry point in `main.rs` just delegates here.
+///
+/// # Errors
+/// Returns an error if the LLM backend cannot be constructed or the API call fails.
 pub async fn run(args: ChatArgs) -> Result<String> {
     let backend: Box<dyn LlmBackend> = if args.mock {
         Box::new(MockBackend::with_response("Hello from Xiaoguai!"))

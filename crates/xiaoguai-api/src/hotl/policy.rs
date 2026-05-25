@@ -118,7 +118,7 @@ impl HotlPolicyStore for InMemoryHotlPolicyStore {
         let guard = self.inner.lock();
         let rows = guard
             .iter()
-            .filter(|p| p.tenant_id == tenant_id && scope.map_or(true, |s| p.scope == s))
+            .filter(|p| p.tenant_id == tenant_id && scope.is_none_or(|s| p.scope == s))
             .cloned()
             .collect();
         Ok(rows)

@@ -25,6 +25,11 @@ impl RemoteClient {
         }
     }
 
+    /// Check the server health endpoint.
+    ///
+    /// # Errors
+    /// Returns an error if the HTTP request fails or the server returns a
+    /// non-2xx status.
     pub async fn healthz(&self) -> Result<String> {
         let resp = self
             .http
@@ -38,6 +43,11 @@ impl RemoteClient {
         Ok(resp.text().await.unwrap_or_default())
     }
 
+    /// Create a new chat session on the remote server.
+    ///
+    /// # Errors
+    /// Returns an error if the HTTP request fails, the server returns a
+    /// non-2xx status, or the response body cannot be decoded.
     pub async fn create_session(&self, req: &CreateSessionRequest) -> Result<SessionResponse> {
         let resp = self
             .http
@@ -51,6 +61,11 @@ impl RemoteClient {
         Ok(parsed)
     }
 
+    /// Retrieve the message history for a session.
+    ///
+    /// # Errors
+    /// Returns an error if the HTTP request fails, the server returns a
+    /// non-2xx status, or the response body cannot be decoded.
     pub async fn list_messages(&self, session_id: &str) -> Result<Vec<JsonValue>> {
         let resp = self
             .http
@@ -66,6 +81,12 @@ impl RemoteClient {
         Ok(v)
     }
 
+    /// Cancel an in-flight session. Returns `true` if the server confirmed
+    /// cancellation.
+    ///
+    /// # Errors
+    /// Returns an error if the HTTP request fails, the server returns a
+    /// non-2xx status, or the response body cannot be decoded.
     pub async fn cancel(&self, session_id: &str) -> Result<bool> {
         let resp = self
             .http
@@ -85,6 +106,11 @@ impl RemoteClient {
     /// `POST /v1/sessions/:id/messages` — drain the SSE stream into the
     /// provided sink. The sink receives one `RemoteEvent` per line and may
     /// stop the stream by returning `Err`.
+    ///
+    /// # Errors
+    /// Returns an error if the HTTP request fails, the server returns a
+    /// non-2xx status, an SSE frame cannot be decoded, or `on_event` returns
+    /// an error.
     pub async fn send_message<F>(
         &self,
         session_id: &str,

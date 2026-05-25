@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 /// Resolve the xiaoguai config directory.
 ///
 /// Priority: `$XIAOGUAI_CONFIG_DIR` → `~/.xiaoguai`.
+#[must_use]
 pub fn config_dir() -> PathBuf {
     if let Ok(d) = std::env::var("XIAOGUAI_CONFIG_DIR") {
         return PathBuf::from(d);
@@ -89,6 +90,10 @@ fn which_in_path(name: &str) -> Option<PathBuf> {
 /// `database_url` is passed via `PGPASSWORD` / `PGHOST` / … env vars (or a
 /// full connection URI).  We spawn `pg_dump` with `--format=plain` so the dump
 /// is a human-readable SQL file.
+///
+/// # Errors
+/// Returns an error if `pg_dump` cannot be spawned, exits non-zero, or the
+/// output is not valid UTF-8.
 pub fn run_pg_dump(pg_dump_path: &Path, database_url: &str) -> Result<Vec<u8>> {
     // Parse the URL to extract components pg_dump understands.
     // Simplest approach: pass the full URL via the `--dbname` flag, which
@@ -124,6 +129,9 @@ pub struct ArchiveEntry {
 }
 
 /// Build an uncompressed tar in memory and then gzip it.
+///
+/// # Errors
+/// Returns an error if tar header construction or gzip compression fails.
 pub fn build_tar_gz(entries: &[ArchiveEntry]) -> Result<Vec<u8>> {
     // Build tar in a Vec<u8>.
     let mut tar_bytes = Vec::new();
@@ -164,6 +172,13 @@ pub fn build_tar_gz(entries: &[ArchiveEntry]) -> Result<Vec<u8>> {
 ///
 /// `recipient_path` must be a file containing one or more age public keys
 /// (one per line, X25519 or SSH).
+///
+/// # Errors
+/// Returns an error if the recipient file cannot be read, parsed, or the
+/// encryption step fails.
+///
+/// # Panics
+/// Panics if the in-memory age encryption writer panics internally.
 pub fn age_encrypt(plaintext: &[u8], recipient_path: &Path) -> Result<Vec<u8>> {
     let recipient_str = std::fs::read_to_string(recipient_path)
         .with_context(|| format!("read recipient file {}", recipient_path.display()))?;
@@ -210,6 +225,10 @@ pub fn age_encrypt(plaintext: &[u8], recipient_path: &Path) -> Result<Vec<u8>> {
 /// Decrypt an age-encrypted blob using the identity file at `identity_path`.
 ///
 /// The identity file must contain age X25519 secret keys (AGE-SECRET-KEY-… lines).
+///
+/// # Errors
+/// Returns an error if the identity file cannot be read, parsed, or the
+/// decryption step fails.
 pub fn age_decrypt(ciphertext: &[u8], identity_path: &Path) -> Result<Vec<u8>> {
     let id_str = std::fs::read_to_string(identity_path)
         .with_context(|| format!("read identity file {}", identity_path.display()))?;
@@ -263,6 +282,10 @@ pub struct BackupArgs {
 /// Run `xiaoguai backup`.
 ///
 /// Returns the final output path written.
+///
+/// # Errors
+/// Returns an error if any step (`pg_dump`, tar, age encrypt, file write) fails.
+#[allow(clippy::needless_pass_by_value, reason = "public API — callers construct and pass by value")]
 pub fn run_backup(args: BackupArgs) -> Result<PathBuf> {
     let pg_dump_bin = find_pg_dump()?;
 
@@ -390,6 +413,10 @@ pub struct RestoreArgs {
 }
 
 /// Run `xiaoguai restore`.
+///
+/// # Errors
+/// Returns an error if extraction, decryption, or file writes fail.
+#[allow(clippy::needless_pass_by_value, reason = "public API — callers construct and pass by value")]
 pub fn run_restore(args: RestoreArgs) -> Result<()> {
     if args.outdir.exists() && !args.force {
         bail!(
