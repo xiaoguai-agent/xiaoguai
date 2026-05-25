@@ -1,0 +1,75 @@
+# packs/hr-onboarding/agents/account-provisioner.yaml
+#
+# SubTask A — Account Provisioner
+#
+# Creates accounts for the new hire in each identity system.
+#
+# MOCK: writes audit log entries to `onboarding_audit_log`.
+# REAL (deferred): calls Okta + Google Workspace MCP tools.
+
+name: hr-account-provisioner
+kind: worker
+
+description: >
+  Given an employee's name and email, provisions accounts in all identity
+  systems and records each action in the audit log. On success returns a
+  summary string listing the systems provisioned. On failure (e.g. duplicate
+  email in Okta) returns a failure result — the Supervisor records it and
+  continues with remaining steps.
+
+# ── Mock behaviour ────────────────────────────────────────────────────────────
+#
+# When real_integrations: false (default in tests and development), the worker:
+#   1. Parses employee_id and email from task.description.
+#   2. Writes one audit log row per system with action = "account_created".
+#   3. Returns WorkerResult { success: true, output: "Accounts created: okta, google_workspace, github" }
+#
+# The mock does NOT call any external API.
+
+real_integrations: false
+
+mock_systems:
+  - name: okta
+    action: account_created
+    detail_template: '{"system":"okta","email":"$email","status":"active"}'
+
+  - name: google_workspace
+    action: account_created
+    detail_template: '{"system":"google_workspace","email":"$email","org_unit":"/Engineering"}'
+
+  - name: github
+    action: account_created
+    detail_template: '{"system":"github","email":"$email","org":"xiaoguai-agent","role":"member"}'
+
+# ── Real integration hooks (deferred) ────────────────────────────────────────
+#
+# Uncomment and configure when Okta / Google Workspace MCP tools are available.
+#
+# real_integrations: true
+# integrations:
+#   okta:
+#     mcp_tool: okta_create_user
+#     config:
+#       org_url: "${OKTA_ORG_URL}"
+#       api_token: "${OKTA_API_TOKEN}"
+#       groups: ["Everyone", "Engineering"]
+#
+#   google_workspace:
+#     mcp_tool: google_workspace_create_user
+#     config:
+#       service_account_key: "${GOOGLE_SA_KEY_PATH}"
+#       domain: "${GOOGLE_WORKSPACE_DOMAIN}"
+#       org_unit: /Engineering
+#
+#   github:
+#     mcp_tool: github_add_org_member
+#     config:
+#       token: "${GITHUB_ADMIN_TOKEN}"
+#       org: xiaoguai-agent
+#       role: member
+
+# ── Error handling ────────────────────────────────────────────────────────────
+
+on_failure:
+  audit: true          # always write audit row even on failure
+  propagate: false     # Supervisor continues; coordinator flags in report

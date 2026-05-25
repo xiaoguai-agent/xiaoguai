@@ -1,0 +1,105 @@
+# packs/hr-onboarding/pack.yaml
+#
+# HR Onboarding Skill Pack — manifest
+#
+# This pack wires together the xiaoguai-orchestrator Supervisor pattern
+# (v1.1.5b primitives) with four specialist worker agents to fully automate
+# new-hire onboarding on the employee's start date.
+#
+# Dependency map
+# --------------
+#   xiaoguai-orchestrator   Supervisor + Worker + Planner traits (in-workspace crate)
+#   xiaoguai-scheduler      Cron / start-date trigger
+#   xiaoguai-im-feishu      Welcome message + buddy notification (real, post-C2-merge)
+#   xiaoguai-im-dingtalk    Alternate IM adapter (enabled by config)
+#   xiaoguai-im-wecom       Alternate IM adapter (enabled by config)
+#   xiaoguai-llm            LLM backend for the coordinator's planning turn
+#   xiaoguai-audit          Audit log writes (mocked in tests)
+
+name: hr-onboarding
+version: "1.3.4-prep"
+description: >
+  Multi-agent skill pack for automating new-hire onboarding.
+  On an employee's start date the scheduler kicks off an orchestrator
+  Supervisor that decomposes "onboard <name>" into four subtasks:
+  account provisioning, first-week meeting scheduling, welcome messaging,
+  and buddy assignment.
+
+# ── Runtime dependencies ─────────────────────────────────────────────────────
+
+dependencies:
+  # Supervisor + Worker traits (in-workspace, no network dependency)
+  orchestrator: { crate: xiaoguai-orchestrator, feature: default }
+
+  # Scheduler — start-date cron trigger
+  scheduler: { crate: xiaoguai-scheduler, feature: default }
+
+  # IM adapters — at least one must be configured; Feishu is the default
+  im_feishu:
+    crate: xiaoguai-im-feishu
+    real: true
+    note: >
+      Real sends after C2-merge added the post_message / create_chat APIs.
+      Requires FEISHU_APP_ID + FEISHU_APP_SECRET in env.
+  im_dingtalk:
+    crate: xiaoguai-im-dingtalk
+    real: true
+    enabled_by: "config.im.adapter == dingtalk"
+  im_wecom:
+    crate: xiaoguai-im-wecom
+    real: true
+    enabled_by: "config.im.adapter == wecom"
+
+  # LLM — used only by the coordinator's single planning turn
+  llm: { crate: xiaoguai-llm, feature: default }
+
+  # Audit sink
+  audit: { crate: xiaoguai-audit, feature: default }
+
+# ── External system hooks (mock vs real) ────────────────────────────────────
+#
+# Each subtask documents the real MCP integration it would call in production.
+# Tests use in-process mocks that record calls to the audit table instead.
+
+external_systems:
+  okta:
+    status: mocked
+    real_integration: >
+      Would call Okta Users API (POST /api/v1/users) via an MCP tool
+      "okta_create_user". Requires OKTA_ORG_URL + OKTA_API_TOKEN.
+      Hook point: account_provisioner::provision() in agents/account-provisioner.yaml.
+
+  google_workspace:
+    status: mocked
+    real_integration: >
+      Would call Google Admin SDK Directory API to create the Google account
+      and add the user to the relevant Groups. Requires a service account with
+      domain-wide delegation. Hook point: same as Okta above.
+
+  google_calendar:
+    status: mocked
+    real_integration: >
+      Would call Google Calendar API (POST /calendars/{calendarId}/events) via
+      an MCP Calendar tool. Requires the Google OAuth2 token for the hiring
+      manager's calendar. Hook point: meeting_scheduler::schedule() in
+      agents/meeting-scheduler.yaml.
+
+  im_feishu_send:
+    status: real
+    note: >
+      Feishu post_message and create_group_chat are real after C2-merge.
+      In tests the IM adapter is swapped for MockImAdapter.
+
+# ── Configuration keys ───────────────────────────────────────────────────────
+
+config:
+  im:
+    adapter: feishu          # feishu | dingtalk | wecom
+  coordinator:
+    max_steps: 10            # passed to Budget::with_max_steps
+    max_wall_seconds: 300    # passed to Budget::with_max_wall_secs
+  buddy_pool:
+    strategy: round_robin    # round_robin | least_recently_assigned
+  audit:
+    table: onboarding_audit_log   # written by mocked external calls
+    meetings_table: scheduled_meetings
