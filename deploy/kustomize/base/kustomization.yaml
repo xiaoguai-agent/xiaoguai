@@ -7,6 +7,12 @@ resources:
   - configmap.yaml
   - secret.yaml
   - ingress.yaml
+  # NetworkPolicy resources (wave-3)
+  - networkpolicy-default-deny.yaml
+  - networkpolicy-core.yaml
+  - networkpolicy-redis.yaml
+  - networkpolicy-postgres.yaml
+  - networkpolicy-otel-collector.yaml
 
 labels:
   - pairs:
