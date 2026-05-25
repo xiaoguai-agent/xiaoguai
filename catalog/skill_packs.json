@@ -1,0 +1,219 @@
+{
+  "version": 1,
+  "packs": [
+    {
+      "slug": "ar-collections",
+      "name": "AR Collections Assistant",
+      "description": "Automates accounts-receivable collections workflows: overdue invoice detection, reminder drafting, escalation routing, and payment reconciliation. Integrates with ERP systems via MCP tools. Requires AR_ERP_URL and AR_ERP_TOKEN environment variables.",
+      "version": "1.0.0",
+      "category": "finance",
+      "requires": {
+        "feature_flags": ["rag", "scheduler"],
+        "env_keys": ["AR_ERP_URL", "AR_ERP_TOKEN"]
+      },
+      "knobs": {
+        "overdue_days_threshold": {
+          "type": "integer",
+          "default": 30,
+          "description": "Days past due before sending first reminder"
+        },
+        "escalation_days_threshold": {
+          "type": "integer",
+          "default": 60,
+          "description": "Days past due before escalating to collections team"
+        },
+        "reminder_tone": {
+          "type": "string",
+          "enum": ["friendly", "firm", "formal"],
+          "default": "friendly",
+          "description": "Tone for automated reminder emails"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/ar-collections.png"
+    },
+    {
+      "slug": "incident-triage",
+      "name": "Incident Triage",
+      "description": "On-call incident triage assistant: classifies severity, correlates related alerts, drafts runbooks, and pages the right team. Connects to PagerDuty, Opsgenie, or webhooks. Reduces mean-time-to-acknowledge by surfacing context from past incidents.",
+      "version": "1.0.0",
+      "category": "ops",
+      "requires": {
+        "feature_flags": ["rag", "scheduler"],
+        "env_keys": ["PAGERDUTY_TOKEN"]
+      },
+      "knobs": {
+        "severity_model": {
+          "type": "string",
+          "enum": ["rule_based", "llm_assisted"],
+          "default": "llm_assisted",
+          "description": "How severity is classified"
+        },
+        "auto_page_threshold": {
+          "type": "string",
+          "enum": ["sev1", "sev2", "never"],
+          "default": "sev1",
+          "description": "Minimum severity level for automatic paging"
+        },
+        "context_window_hours": {
+          "type": "integer",
+          "default": 24,
+          "description": "Hours of past incidents to include as context"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/incident-triage.png"
+    },
+    {
+      "slug": "pr-review",
+      "name": "PR Review Assistant",
+      "description": "Automated pull-request review: checks for style violations, security anti-patterns, missing tests, and documentation gaps. Posts inline comments via the GitHub or GitLab API. Configurable checklist per repository.",
+      "version": "1.0.0",
+      "category": "dev",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": ["GITHUB_TOKEN"]
+      },
+      "knobs": {
+        "review_scope": {
+          "type": "string",
+          "enum": ["full", "diff_only"],
+          "default": "diff_only",
+          "description": "Whether to review the full file or only changed lines"
+        },
+        "security_checks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run OWASP-aligned security pattern checks"
+        },
+        "require_tests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Flag PRs that reduce test coverage"
+        },
+        "max_files_per_review": {
+          "type": "integer",
+          "default": 50,
+          "description": "Skip review if PR touches more files than this"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/pr-review.png"
+    },
+    {
+      "slug": "hr-onboarding",
+      "name": "HR Onboarding",
+      "description": "Guided employee onboarding assistant: answers policy questions, schedules orientation meetings, tracks completion of required readings, and generates personalised 30/60/90-day plans. Integrates with HRIS and calendar systems.",
+      "version": "1.0.0",
+      "category": "hr",
+      "requires": {
+        "feature_flags": ["rag", "scheduler"],
+        "env_keys": ["HRIS_API_KEY", "CALENDAR_API_KEY"]
+      },
+      "knobs": {
+        "onboarding_duration_days": {
+          "type": "integer",
+          "default": 90,
+          "description": "Length of the structured onboarding period"
+        },
+        "send_welcome_email": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically send welcome email on first login"
+        },
+        "checklist_template": {
+          "type": "string",
+          "enum": ["engineering", "sales", "ops", "default"],
+          "default": "default",
+          "description": "Which onboarding checklist template to use"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/hr-onboarding.png"
+    },
+    {
+      "slug": "rag-legal",
+      "name": "Legal Document RAG",
+      "description": "Retrieval-augmented Q&A over a legal document corpus: contracts, policies, court opinions, and regulatory filings. Answers questions with source citations and confidence scores. Index your documents via the CLI before enabling.",
+      "version": "1.0.0",
+      "category": "rag",
+      "requires": {
+        "feature_flags": ["rag"],
+        "env_keys": []
+      },
+      "knobs": {
+        "collection_id": {
+          "type": "string",
+          "default": "legal",
+          "description": "RAG collection slug to search (must be indexed first)"
+        },
+        "top_k": {
+          "type": "integer",
+          "default": 8,
+          "description": "Number of chunks to retrieve per query"
+        },
+        "citation_style": {
+          "type": "string",
+          "enum": ["inline", "footnote", "none"],
+          "default": "inline",
+          "description": "How citations appear in the response"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/rag-legal.png"
+    },
+    {
+      "slug": "rag-finance",
+      "name": "Finance Document RAG",
+      "description": "Retrieval-augmented Q&A over financial documents: annual reports, earnings calls, 10-K/10-Q filings, analyst notes, and internal finance policies. Ideal for FP&A teams doing research across large document sets.",
+      "version": "1.0.0",
+      "category": "rag",
+      "requires": {
+        "feature_flags": ["rag"],
+        "env_keys": []
+      },
+      "knobs": {
+        "collection_id": {
+          "type": "string",
+          "default": "finance",
+          "description": "RAG collection slug to search (must be indexed first)"
+        },
+        "top_k": {
+          "type": "integer",
+          "default": 6,
+          "description": "Number of chunks to retrieve per query"
+        },
+        "fiscal_year_filter": {
+          "type": "boolean",
+          "default": false,
+          "description": "Restrict results to the current fiscal year by default"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/rag-finance.png"
+    },
+    {
+      "slug": "rag-hr",
+      "name": "HR Policy RAG",
+      "description": "Retrieval-augmented Q&A over HR documents: employee handbook, benefits guides, PTO policy, code of conduct, and org charts. Employees ask natural-language questions; the assistant cites the exact policy paragraph.",
+      "version": "1.0.0",
+      "category": "rag",
+      "requires": {
+        "feature_flags": ["rag"],
+        "env_keys": []
+      },
+      "knobs": {
+        "collection_id": {
+          "type": "string",
+          "default": "hr",
+          "description": "RAG collection slug to search (must be indexed first)"
+        },
+        "top_k": {
+          "type": "integer",
+          "default": 5,
+          "description": "Number of chunks to retrieve per query"
+        },
+        "strict_policy_only": {
+          "type": "boolean",
+          "default": true,
+          "description": "Decline to answer questions not grounded in retrieved policy text"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/rag-hr.png"
+    }
+  ]
+}

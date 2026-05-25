@@ -104,6 +104,7 @@ fn build_state(forker: Option<Arc<dyn SessionForker>>) -> (AppState, Arc<InMemor
         hotl_enforcer: None,
         outcome_writer: None,
         outcomes_reader: None,
+        skill_packs: None,
     };
     (state, sessions)
 }

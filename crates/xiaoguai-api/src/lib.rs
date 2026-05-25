@@ -22,6 +22,7 @@ pub mod routes;
 pub mod scheduler;
 pub mod serve;
 pub mod sessions_ext;
+pub mod skills;
 pub mod sse;
 pub mod state;
 pub mod today;
@@ -64,6 +65,10 @@ pub use scheduler::{
 };
 pub use serve::serve_with_state;
 pub use sessions_ext::{SessionForkError, SessionForker};
+pub use skills::{
+    CatalogFile, InMemorySkillPackRepository, InstalledPackRow, KnobSchema, PackRequires,
+    SkillPackEntry, SkillPackError, SkillPackRepository,
+};
 pub use state::{AppState, CancelRegistry};
 pub use today::{StaticTodayReader, TodayError, TodayItem, TodayKind, TodayQuery, TodayReader};
 pub use usage::{
