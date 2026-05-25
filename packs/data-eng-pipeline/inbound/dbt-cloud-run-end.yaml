@@ -1,0 +1,80 @@
+# Inbound connector — dbt Cloud run completion webhook
+# ---------------------------------------------------------------------------
+# Accepts dbt Cloud job run completion webhooks. dbt Cloud sends an HTTP POST
+# to the configured endpoint when a job run completes (success or error).
+#
+# Webhook endpoint: POST /api/packs/data-eng-pipeline/inbound/dbt-cloud
+# Auth: Authorization: Bearer ${DBT_CLOUD_WEBHOOK_SECRET}
+# dbt Cloud docs: https://docs.getdbt.com/docs/deploy/webhooks
+# ---------------------------------------------------------------------------
+
+name: dbt-cloud-run-end
+version: "1.0.0"
+description: >
+  Accepts dbt Cloud job run completion webhooks (run_completed, run_errored).
+  Normalises the payload to de_pipeline_runs. Triggers lineage-breadcrumb-writer
+  on success and freshness-investigator on error.
+
+kind: inbound_connector
+source: webhook
+
+endpoint:
+  path: /api/packs/data-eng-pipeline/inbound/dbt-cloud
+  method: POST
+  max_payload_bytes: 131072
+
+auth:
+  kind: bearer_token
+  header: Authorization
+  secret_env: DBT_CLOUD_WEBHOOK_SECRET
+
+schema:
+  required_fields:
+    - eventType      # run_completed | run_errored | run_cancelled
+    - runId
+    - jobId
+    - jobName
+    - environmentId
+    - runStatus      # Success | Error | Cancelled
+    - runStartedAt
+  optional_fields:
+    - runFinishedAt
+    - runDurationHumanReadable
+    - runReason
+    - runGeneratedAt  # ISO timestamp of dbt Cloud webhook delivery
+
+validations:
+  - field: eventType
+    rule: enum
+    values: [run_completed, run_errored, run_cancelled]
+
+mapping:
+  pipeline_id:  "dbt_cloud:{{ jobId }}"    # prefix to avoid collision with Airflow dag_ids
+  run_id:       "$.runId | string"
+  status:       "{{ 'success' if runStatus == 'Success' else ('cancelled' if runStatus == 'Cancelled' else 'failed') }}"
+  run_date:     "$.runStartedAt | date"
+  started_at:   "$.runStartedAt"
+  finished_at:  "$.runFinishedAt"
+  source:       "dbt_cloud"
+  raw_payload:  "$"
+
+target:
+  table: de_pipeline_runs
+  upsert_key: [tenant_id, pipeline_id, run_id]
+
+post_ingest:
+  emit_events:
+    - condition: "{{ status == 'success' }}"
+      event: de.pipeline_run_succeeded
+    - condition: "{{ status == 'failed' }}"
+      event: de.pipeline_run_failed
+  trigger_agents:
+    - condition: "{{ status == 'failed' }}"
+      agent: freshness-investigator
+    - condition: "{{ status == 'success' }}"
+      agent: lineage-breadcrumb-writer
+
+on_error:
+  response_format: json
+  invalid_token: 401
+  invalid_payload: 400

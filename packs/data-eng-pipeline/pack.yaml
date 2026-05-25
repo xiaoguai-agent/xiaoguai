@@ -1,0 +1,147 @@
+# Pack manifest: data-eng-pipeline
+# ---------------------------------------------------------------------------
+# Freshness SLA monitoring and lineage breadcrumb tracking for ETL/ELT
+# pipelines. Watches dataset last-updated timestamps and DAG run states,
+# detects row-count drops and latency spikes via xg-anomaly, and dispatches
+# agents to investigate, annotate lineage, notify on-call, and recommend
+# retries — all within HOTL guardrails.
+#
+# Install:   xiaoguai pack install packs/data-eng-pipeline/
+# Requires:  xiaoguai >= v1.3.1-prep (features: watch, anomaly, llm,
+#            outcome-telemetry)
+# ---------------------------------------------------------------------------
+
+name: data-eng-pipeline
+version: "1.0.0"
+description: >
+  Data freshness SLA monitoring and lineage breadcrumb tracking for
+  ETL/ELT pipelines. Polls dataset freshness via SQL and Airflow API,
+  detects row-count drops and latency spikes with xg-anomaly rolling
+  windows, and orchestrates investigation, lineage annotation, SLA
+  breach notification, and retry recommendations — all HOTL-gated.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - watch              # F1: WatchSpec + WatchEvent bus (table-freshness-check, dag-run-failure)
+    - anomaly            # F2: AnomalySpec + rolling-window alerting (row-count-drop, latency-spike)
+    - llm                # core LLM backend
+    - outcome-telemetry  # F3: draft/approve/publish outcome loop
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_pipeline_state.sql
+
+# --------------------------------------------------------------------------
+# Watch specs (xg-watch integration)
+# --------------------------------------------------------------------------
+watches:
+  - path: watches/table-freshness-check.yaml    # SQL poll on dataset last-updated timestamp
+  - path: watches/dag-run-failure.yaml          # HTTP poll on Airflow DAG run status
+
+# --------------------------------------------------------------------------
+# Anomaly specs (xg-anomaly integration)
+# --------------------------------------------------------------------------
+anomalies:
+  - path: anomalies/row-count-drop.yaml         # z-score on daily row volume
+  - path: anomalies/latency-spike.yaml          # rolling p95 pipeline duration
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/freshness-investigator.yaml    # root-cause: upstream dag failed? source delay?
+  - path: agents/lineage-breadcrumb-writer.yaml # annotates lineage_edges with run context
+  - path: agents/sla-breach-notifier.yaml       # pages on-call, writes breach record
+  - path: agents/retry-recommender.yaml         # recommends manual or auto retry strategy
+
+# --------------------------------------------------------------------------
+# Inbound connectors (data ingestion / event sources)
+# --------------------------------------------------------------------------
+inbound:
+  - path: inbound/airflow-dag-event.yaml        # Airflow webhook or polling
+  - path: inbound/dbt-cloud-run-end.yaml        # dbt Cloud webhook (run completion)
+  - path: inbound/snowflake-task-event.yaml     # Snowflake task history polling
+  - path: inbound/csv-manual-upload.yaml        # manual pipeline run log upload
+
+# --------------------------------------------------------------------------
+# Output channel definitions
+# --------------------------------------------------------------------------
+outputs:
+  - path: outputs/pagerduty-data-team.yaml      # page data on-call for SLA breaches
+  - path: outputs/slack-data-eng-channel.yaml   # post alerts + investigation summaries
+  - path: outputs/datadog-event.yaml            # emit custom event to Datadog
+  - path: outputs/lineage-graph-update.yaml     # write lineage edges to graph store
+
+# --------------------------------------------------------------------------
+# Message templates
+# --------------------------------------------------------------------------
+templates:
+  - path: templates/breach-summary.md           # SLA breach notification body
+  - path: templates/lineage-trace.md            # lineage path summary for incidents
+  - path: templates/postmortem-stub.md          # postmortem starter from breach context
+
+# --------------------------------------------------------------------------
+# Dashboard definitions
+# --------------------------------------------------------------------------
+dashboards:
+  - name: pipeline-freshness-overview
+    description: "SLA breach status, freshness heatmap, and pipeline run health"
+    widgets:
+      - type: metric
+        title: "Open SLA Breaches"
+        query: >
+          SELECT COUNT(*) AS open_breaches
+          FROM de_freshness_breaches
+          WHERE tenant_id = '{tenant_id}'
+            AND status = 'open'
+
+      - type: chart
+        title: "Daily Row Volume — Rolling 30 Days"
+        query: >
+          SELECT
+              run_date,
+              pipeline_id,
+              SUM(row_count) AS total_rows
+          FROM de_pipeline_runs
+          WHERE tenant_id = '{tenant_id}'
+            AND run_date >= CURRENT_DATE - INTERVAL '30 days'
+          GROUP BY run_date, pipeline_id
+          ORDER BY run_date DESC
+
+      - type: table
+        title: "Stale Datasets (Freshness SLA Breached)"
+        query: >
+          SELECT
+              dataset_id,
+              pipeline_id,
+              sla_max_age_minutes,
+              EXTRACT(EPOCH FROM (NOW() - last_updated_at)) / 60 AS age_minutes,
+              breach_started_at
+          FROM de_freshness_breaches b
+          JOIN de_pipeline_runs r ON r.pipeline_id = b.pipeline_id
+                                  AND r.tenant_id = b.tenant_id
+          WHERE b.tenant_id = '{tenant_id}'
+            AND b.status = 'open'
+          ORDER BY age_minutes DESC
+          LIMIT 20
+
+# --------------------------------------------------------------------------
+# Schema namespace
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "de_"
+  namespace: "data_eng_pipeline"
+
+# --------------------------------------------------------------------------
+# Feature flag
+# --------------------------------------------------------------------------
+feature_flag: XIAOGUAI_DATA_ENG_PIPELINE_ENABLED

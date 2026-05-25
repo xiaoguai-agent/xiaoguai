@@ -1,0 +1,101 @@
+# Watch spec — table freshness check (xg-watch, SQL poll)
+# ---------------------------------------------------------------------------
+# Polls de_pipeline_runs to detect datasets whose last_updated_at has
+# exceeded their configured SLA window. One WatchEvent per stale dataset,
+# deduped per breach until freshness is restored.
+#
+# Schema reference: F1 WatchSpec (xg-watch engine).
+# Integration: registers via pack manifest `watches:` key; xg-watch evaluates
+# the query on the schedule and emits WatchEvent when condition is met.
+# ---------------------------------------------------------------------------
+
+name: table-freshness-check
+version: "1.0.0"
+description: >
+  SQL poll detecting datasets that have not been refreshed within their SLA
+  window (sla_max_age_minutes). Emits de.dataset_stale per stale dataset,
+  deduped until the dataset is next refreshed.
+
+source:
+  kind: sql
+  table: de_pipeline_runs
+  tenant_column: tenant_id
+
+# Fetch the latest run per dataset and flag those exceeding the SLA window.
+# sla_max_age_minutes is configured per-pipeline in the pipeline registry;
+# fall back to 60 minutes if not configured.
+query: |
+  WITH latest_runs AS (
+      SELECT DISTINCT ON (tenant_id, dataset_id)
+          tenant_id,
+          pipeline_id,
+          dataset_id,
+          last_updated_at,
+          status,
+          error_message
+      FROM de_pipeline_runs
+      WHERE tenant_id = '{tenant_id}'
+        AND dataset_id IS NOT NULL
+      ORDER BY tenant_id, dataset_id, finished_at DESC NULLS LAST
+  ),
+  pipeline_sla AS (
+      -- Inline SLA configuration; operators extend this via de_pipeline_sla_config
+      -- if the optional config table exists, else default 60 minutes.
+      SELECT
+          lr.tenant_id,
+          lr.pipeline_id,
+          lr.dataset_id,
+          lr.last_updated_at,
+          lr.status,
+          lr.error_message,
+          COALESCE(cfg.sla_max_age_minutes, 60) AS sla_max_age_minutes
+      FROM latest_runs lr
+      LEFT JOIN de_pipeline_sla_config cfg
+             ON cfg.tenant_id = lr.tenant_id
+            AND cfg.pipeline_id = lr.pipeline_id
+  )
+  SELECT
+      tenant_id,
+      pipeline_id,
+      dataset_id,
+      last_updated_at,
+      status             AS last_run_status,
+      error_message      AS last_error,
+      sla_max_age_minutes,
+      EXTRACT(EPOCH FROM (NOW() - last_updated_at)) / 60 AS age_minutes
+  FROM pipeline_sla
+  WHERE last_updated_at IS NULL
+     OR EXTRACT(EPOCH FROM (NOW() - last_updated_at)) / 60 > sla_max_age_minutes
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  cron: "*/5 * * * *"   # poll every 5 minutes
+
+event:
+  kind: de.dataset_stale
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:          "$.tenant_id"
+    pipeline_id:        "$.pipeline_id"
+    dataset_id:         "$.dataset_id"
+    last_updated_at:    "$.last_updated_at"
+    last_run_status:    "$.last_run_status"
+    last_error:         "$.last_error"
+    sla_max_age_minutes: "$.sla_max_age_minutes"
+    age_minutes:        "$.age_minutes"
+
+downstream:
+  agents:
+    - freshness-investigator
+    - sla-breach-notifier
+
+dedup:
+  # One breach notification per dataset until it refreshes (last_updated_at changes)
+  key: "{tenant_id}:{dataset_id}"
+  ttl_seconds: 300   # re-fire every 5 minutes if still stale (aligned to cron)
+  reset_on:
+    # Cancel dedup when the dataset is next successfully refreshed
+    event: de.pipeline_run_succeeded
+    match: "{tenant_id}:{dataset_id}"

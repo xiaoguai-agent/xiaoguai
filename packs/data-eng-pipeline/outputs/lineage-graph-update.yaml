@@ -1,0 +1,68 @@
+# Output channel — lineage graph update
+# ---------------------------------------------------------------------------
+# Writes finalised lineage edges and breadcrumbs to an external lineage
+# graph store (OpenLineage-compatible HTTP endpoint or internal xg store).
+# Used by lineage-breadcrumb-writer after each successful pipeline run.
+#
+# Supports two modes:
+#   internal: write to de_lineage_edges (default; always available)
+#   openlineage: emit OpenLineage RunEvent to external Marquez / Atlan / etc.
+# ---------------------------------------------------------------------------
+
+name: lineage-graph-update
+version: "1.0.0"
+description: >
+  Writes lineage edges and breadcrumbs to the lineage store after each
+  pipeline run. Supports internal (de_lineage_edges SQL) and OpenLineage
+  HTTP modes. Used by lineage-breadcrumb-writer.
+
+kind: output_channel
+type: lineage_graph
+
+# --------------------------------------------------------------------------
+# Mode selection
+# --------------------------------------------------------------------------
+mode: "${DE_LINEAGE_MODE:-internal}"   # internal | openlineage
+
+# --------------------------------------------------------------------------
+# Internal mode: write to de_lineage_edges (default)
+# --------------------------------------------------------------------------
+internal:
+  table: de_lineage_edges
+  upsert_key: [tenant_id, run_id, upstream_id, downstream_id]
+
+# --------------------------------------------------------------------------
+# OpenLineage mode: emit to external HTTP endpoint
+# --------------------------------------------------------------------------
+openlineage:
+  endpoint_env: DE_OPENLINEAGE_URL     # e.g. http://marquez:5000/api/v1/lineage
+  api_key_env: DE_OPENLINEAGE_API_KEY  # optional; omit for open endpoints
+  namespace_env: DE_OPENLINEAGE_NAMESPACE  # e.g. "xiaoguai-prod"
+
+  # Map xiaoguai edge fields to OpenLineage RunEvent schema
+  event_template:
+    eventType: "{{ 'COMPLETE' if run_status == 'success' else 'FAIL' }}"
+    eventTime: "{{ recorded_at | iso8601 }}"
+    run:
+      runId: "{{ run_id }}"
+    job:
+      namespace: "{{ openlineage_namespace }}"
+      name: "{{ pipeline_id }}"
+    inputs:
+      - namespace: "{{ openlineage_namespace }}"
+        name: "{{ upstream_id }}"
+    outputs:
+      - namespace: "{{ openlineage_namespace }}"
+        name: "{{ downstream_id }}"
+    producer: "https://github.com/xiaoguai/xiaoguai"
+    schemaURL: "https://openlineage.io/spec/1-0-5/OpenLineage.json#/$defs/RunEvent"
+
+# --------------------------------------------------------------------------
+# Retry on transient HTTP errors (OpenLineage mode only)
+# --------------------------------------------------------------------------
+retry:
+  max_attempts: 3
+  backoff_seconds: 5
+
+on_error:
+  action: log_and_skip    # lineage write failure must not block pipeline operations

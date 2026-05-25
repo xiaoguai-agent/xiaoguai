@@ -1,0 +1,75 @@
+# Watch spec — DAG run failure (xg-watch, HTTP poll on Airflow API)
+# ---------------------------------------------------------------------------
+# Polls the Airflow REST API for DAG runs that have transitioned to 'failed'
+# or 'upstream_failed' since the last check. Emits de.dag_run_failed per
+# affected DAG run, deduped by run_id.
+#
+# Schema reference: F1 WatchSpec (xg-watch engine), HTTP source variant.
+# Requires: AIRFLOW_API_BASE_URL + AIRFLOW_API_TOKEN env vars.
+# ---------------------------------------------------------------------------
+
+name: dag-run-failure
+version: "1.0.0"
+description: >
+  HTTP poll on the Airflow REST API detecting DAG runs in 'failed' or
+  'upstream_failed' state updated within the last poll window. Emits
+  de.dag_run_failed per run. Deduped by dag_id + run_id.
+
+source:
+  kind: http
+  method: GET
+  url: "${AIRFLOW_API_BASE_URL}/api/v1/dags/~/dagRuns"
+  headers:
+    Authorization: "Bearer ${AIRFLOW_API_TOKEN}"
+    Content-Type: "application/json"
+  params:
+    state: "failed,upstream_failed"
+    updated_at_gte: "{{ last_check_at | iso8601 }}"
+    order_by: "-start_date"
+    limit: 100
+
+# Extract failed runs from the Airflow response envelope
+response_path: "$.dag_runs[*]"
+
+# Map Airflow response fields to the WatchEvent payload
+field_mapping:
+  dag_id:         "$.dag_id"
+  run_id:         "$.dag_run_id"
+  state:          "$.state"
+  logical_date:   "$.logical_date"
+  start_date:     "$.start_date"
+  end_date:       "$.end_date"
+  external_trigger: "$.external_trigger"
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  cron: "*/2 * * * *"   # poll every 2 minutes — DAG failures need fast detection
+
+event:
+  kind: de.dag_run_failed
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:        "{{ tenant_id }}"   # injected by xg-watch from tenant context
+    dag_id:           "$.dag_id"
+    run_id:           "$.run_id"
+    state:            "$.state"
+    logical_date:     "$.logical_date"
+    started_at:       "$.start_date"
+    finished_at:      "$.end_date"
+    external_trigger: "$.external_trigger"
+
+downstream:
+  agents:
+    - freshness-investigator
+    - retry-recommender
+
+dedup:
+  key: "{tenant_id}:{dag_id}:{run_id}"
+  ttl_seconds: 86400   # suppress duplicate alerts for the same run_id for 24 hours
+
+on_error:
+  # Airflow API auth failure or 5xx — log and retry on next poll cycle; do not page
+  action: log_and_skip
+  notify_channel: "${DE_NOTIFY_CHANNEL:-admin_ui}"
