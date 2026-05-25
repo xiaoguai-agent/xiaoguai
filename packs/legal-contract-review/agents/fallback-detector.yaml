@@ -1,0 +1,113 @@
+---
+# Fallback Detector Agent
+#
+# Input:  ClauseSet from clause-extractor (runs parallel to redline-suggester).
+# Output: FallbackReport — identifies:
+#   1. MISSING clauses that should be present for the given contract type
+#   2. ONE-SIDED positions where a clause unduly favours the counter-party
+#   3. SILENT DEFAULTS — contract is silent and local law/counter-party standard
+#      terms would apply unfavourably
+#
+# This agent focuses on absence and asymmetry rather than specific text changes
+# (that is redline-suggester's job).
+
+name: fallback-detector
+kind: llm-agent
+
+llm:
+  model: ${FALLBACK_DETECTOR_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 4096
+
+# Required clause sets by contract type.
+# Keys are contract_type values; values list clause_types expected.
+required_clauses:
+  nda:
+    - confidentiality
+    - governing-law
+    - termination
+    - entire-agreement
+    - amendment
+  msa:
+    - limitation-of-liability
+    - indemnification
+    - ip-ownership
+    - confidentiality
+    - data-protection
+    - governing-law
+    - dispute-resolution
+    - termination
+    - payment-terms
+    - warranty
+    - entire-agreement
+    - amendment
+    - assignment
+    - notice
+    - force-majeure
+  sow:
+    - sow-scope
+    - sow-deliverable
+    - sow-acceptance-criteria
+    - payment-terms
+    - change-order
+    - ip-ownership
+    - termination
+
+system_prompt: |
+  You are a contract risk specialist focused on what is missing or asymmetric
+  in a commercial agreement.
+
+  You will receive a ClauseSet (JSON array) and the list of required clauses
+  for the detected contract type.
+
+  Produce a FallbackReport:
+  {
+    "contract_type_detected": "<nda|msa|sow|other>",
+    "missing_clauses": [
+      {
+        "clause_type":   "<type>",
+        "severity":      "critical|high|medium",
+        "risk_if_absent": "<1 sentence: what goes wrong if this clause is absent>"
+      }
+    ],
+    "one_sided_clauses": [
+      {
+        "clause_id":     "<matches ClauseSet>",
+        "clause_type":   "<type>",
+        "direction":     "favours-counterparty|ambiguous",
+        "description":   "<1 sentence: why this is asymmetric>"
+      }
+    ],
+    "silent_defaults": [
+      {
+        "topic":         "<e.g. 'governing law'>",
+        "risk":          "<1 sentence: which default applies and why it is unfavourable>"
+      }
+    ],
+    "summary": "<2-3 sentences on the overall pattern of absence/asymmetry>"
+  }
+
+  Rules:
+  - Output ONLY valid JSON.
+  - For missing_clauses: only list those absent AND required for the detected contract type.
+  - For one_sided_clauses: focus on liability caps, IP assignment, indemnification scope,
+    termination rights, and data processing obligations.
+  - For silent_defaults: flag only cases where silence clearly harms the company.
+
+user_prompt_template: |
+  ## Contract metadata
+  - Contract type (declared): {{ contract.contract_type | default("unknown") }}
+  - Parties: {{ contract.parties | join(" / ") }}
+  - Document ID: {{ contract.document_id }}
+
+  ## Required clauses for this contract type
+  {{ required_clauses[contract.contract_type] | default([]) | tojson }}
+
+  ## ClauseSet ({{ clauses | length }} clauses extracted)
+  {{ clauses | tojson(indent=2) | truncate(15000) }}
+
+  Produce the FallbackReport now.
+
+budget:
+  max_llm_calls: 1
+  max_output_tokens: 4096

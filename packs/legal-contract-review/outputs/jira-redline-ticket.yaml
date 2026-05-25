@@ -1,0 +1,78 @@
+---
+# Jira redline ticket output adapter.
+#
+# Creates a Jira issue in the configured project with:
+#   - Issue type: "Legal Review" (custom) or falls back to "Task"
+#   - Summary: "[REDLINE] <contract type> — <document id>"
+#   - Description: rendered redline-summary template (full redline markup)
+#   - Priority: derived from RiskAssessment.overall_tier
+#   - Labels: contract type, risk tier, source (docusign/drive/manual)
+#   - Attachment: original contract PDF (if available and size ≤ 10 MB)
+#
+# Sub-tasks are created for each must-fix RedlineSuggestion to enable
+# per-clause assignment and tracking.
+
+output: jira-redline-ticket
+
+jira:
+  base_url: ${JIRA_BASE_URL}
+  api_token: ${JIRA_API_TOKEN}
+  user_email: ${JIRA_USER_EMAIL}
+  project_key: ${JIRA_PROJECT_KEY}
+
+  # Issue type to use.  Falls back to "Task" if "Legal Review" does not exist.
+  issue_type: "Legal Review"
+  issue_type_fallback: "Task"
+
+  # Summary template.
+  summary_template: "[REDLINE] {{ contract.contract_type | upper }} — {{ contract.document_id | truncate(60) }}"
+
+  # Priority mapping from RiskAssessment tier.
+  priority_map:
+    CRITICAL: Highest
+    HIGH:     High
+    MEDIUM:   Medium
+    LOW:      Low
+
+  # Labels applied to the parent ticket.
+  labels:
+    - "contract-review"
+    - "{{ contract.contract_type }}"
+    - "risk-{{ risk.overall_tier | lower }}"
+    - "source-{{ contract.source }}"
+
+  # Description rendered from the redline-summary template.
+  description_template_ref: templates/redline-summary.md.j2
+
+  # Attach original contract PDF if available and ≤ 10 MB.
+  attachment:
+    source_url: "{{ contract.source_url }}"
+    max_size_mb: 10
+    filename_template: "{{ contract.document_id }}_original.pdf"
+
+  # Create a sub-task for each must-fix redline suggestion.
+  subtasks:
+    enabled: true
+    trigger_urgency: must-fix
+    subtask_summary_template: "[CLAUSE] {{ suggestion.clause_type | upper }}: {{ suggestion.rationale | truncate(80) }}"
+    subtask_description_template: |
+      **Clause:** {{ suggestion.clause_id }}
+      **Issue category:** {{ suggestion.issue_category }}
+      **Urgency:** {{ suggestion.urgency }}
+
+      **Original:**
+      > {{ suggestion.original | default("(clause absent)") }}
+
+      **Proposed:**
+      > {{ suggestion.proposed }}
+
+      **Rationale:**
+      {{ suggestion.rationale }}
+
+      {% if suggestion.precedent_ref %}
+      **Precedent reference:** {{ suggestion.precedent_ref }}
+      {% endif %}
+
+# Deferred:
+#   - Auto-assign sub-tasks to specific legal team members by clause type
+#   - Two-way sync: update ticket status when contract is countersigned
