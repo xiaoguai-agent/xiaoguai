@@ -1,0 +1,60 @@
+{# templates/renewal-decision-card.md.j2
+   Rendered by renewal-detector and surfaced in the HotL approval card.
+   Variables: contract, days_until_expiry, sow_count, total_sow_value,
+              latest_sow_date, open_redlines (bool), terminated_contracts (int),
+              approval_id
+#}
+## Renewal Decision — {{ contract.reference_number }}
+
+> **Action required within {{ days_until_expiry }} days.**
+> This MSA expires on {{ contract.expiry_date }}. A decision is needed.
+
+---
+
+### Contract Summary
+
+| Field | Value |
+|-------|-------|
+| Reference | {{ contract.reference_number }} |
+| Counterparty | {{ contract.counterparty_name }} |
+| Effective Date | {{ contract.effective_date }} |
+| Expiry Date | {{ contract.expiry_date }} |
+| Days Remaining | **{{ days_until_expiry }}** |
+
+### Relationship History
+
+| Metric | Value |
+|--------|-------|
+| SOWs under this MSA | {{ sow_count }} |
+| Total SOW value | ${{ "{:,.0f}".format(total_sow_value) }} |
+| Latest SOW | {{ latest_sow_date | default("None") }} |
+
+{% if open_redlines %}
+> **Note:** There are open/unresolved redlines on record for this counterparty.
+> Consider legal review before initiating renewal.
+{% endif %}
+
+{% if terminated_contracts > 0 %}
+> **Note:** {{ terminated_contracts }} previously terminated contract(s)
+> exist with this counterparty. Review termination history before renewal.
+{% endif %}
+
+---
+
+### Decision Options
+
+**Option A — Renew:** Initiate a new MSA draft (child contract linked to
+this one). The deal team will be notified to confirm terms.
+
+**Option B — Let Lapse:** Allow the MSA to expire. Linked SOWs in 'active'
+stage will need individual review.
+
+**Option C — Escalate:** Flag for senior review. No action taken until
+escalation is resolved.
+
+---
+
+Approval ID: `{{ approval_id }}`
+
+*No action will be taken without your explicit approval.
+Notification sent {{ detected_at | datetimeformat("%Y-%m-%d %H:%M UTC") }}.*

@@ -1,0 +1,64 @@
+{# templates/stage-transition-card.md.j2
+   HotL approval card rendered for every gated stage transition.
+   Variables: contract (id, reference_number, contract_type,
+              counterparty_name, stage),
+              gate_from, gate_to, triggered_by, context (dict),
+              approval_id
+#}
+## Approval Required — {{ contract.reference_number }}
+
+> **Action needed:** Approve or reject the stage transition below.
+> This is a HotL-gated step — no action will proceed without your decision.
+
+---
+
+### Contract
+
+| Field | Value |
+|-------|-------|
+| Reference | {{ contract.reference_number }} |
+| Type | {{ contract.contract_type }} |
+| Counterparty | {{ contract.counterparty_name }} |
+| Current Stage | `{{ gate_from }}` |
+| Requested Stage | `{{ gate_to }}` |
+| Triggered By | {{ triggered_by }} |
+
+### What This Transition Does
+
+{% if gate_from == "legal_review" and gate_to == "counterparty_review" %}
+**Sending the contract to the counterparty for review.**
+This will expose the current draft to {{ contract.counterparty_name }}.
+{% if context.docusign_envelope_preview %}
+DocuSign envelope preview: {{ context.docusign_envelope_preview }}
+{% endif %}
+{% elif gate_from == "counterparty_review" and gate_to == "legal_review" %}
+**Counterparty redline received — returning to legal review.**
+Risk score: **{{ context.risk_score | upper }}**
+See the legal-review-summary card for clause-level detail.
+{% elif gate_from == "legal_review" and gate_to == "signed" %}
+**Triggering DocuSign e-signature envelope.**
+Once sent, the counterparty will receive the signing request.
+This creates a binding commitment when all parties sign.
+{% elif gate_from == "signed" and gate_to == "active" %}
+**Marking the contract as ACTIVE.**
+Confirm that the countersigned copy has been received and archived.
+S3 package: `{{ context.s3_key | default("pending upload") }}`
+{% elif gate_from == "active" and gate_to == "terminated" %}
+**EARLY TERMINATION — this action is irreversible.**
+Reason provided: {{ context.termination_reason | default("Not specified") }}
+{% elif gate_from == "active" and gate_to == "expired" %}
+**Contract approaching expiry — renewal decision required.**
+Days remaining: {{ context.days_until_expiry }}
+See renewal-decision-card for deal history.
+{% endif %}
+
+### Decision
+
+Approval ID: `{{ approval_id }}`
+
+- **Approve** → stage advances to `{{ gate_to }}`
+- **Reject** → stage stays at `{{ gate_from }}`, reason required
+
+{% if context.notes %}
+**Notes from agent:** {{ context.notes }}
+{% endif %}

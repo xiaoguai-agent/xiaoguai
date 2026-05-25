@@ -1,0 +1,56 @@
+---
+# Inbound: manual-contract-upload
+# ---------------------------------------------------------------------------
+# Handles manual contract uploads via the admin UI or API.
+# A user uploads a contract file (PDF, DOCX, or plain text) along with
+# metadata (counterparty name, type, deal size). The inbound handler:
+#
+#   1. Validates the file type and size (max 25 MB).
+#   2. Saves the file to the staging S3 bucket.
+#   3. Extracts text content for LLM processing.
+#   4. Emits cl.manual_contract_upload — intake-classifier subscribes.
+#
+# Mounting: POST /v1/contracts/inbound/upload
+# Auth:     Standard session token (admin UI user must be authenticated).
+# ---------------------------------------------------------------------------
+
+source: manual-upload
+route_prefix: /v1/contracts/inbound/upload
+
+auth:
+  session_token: true   # admin UI session — no external webhook auth needed
+
+upload:
+  accepted_types:
+    - application/pdf
+    - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+    - text/plain
+  max_size_bytes: 26214400   # 25 MB
+
+  staging_bucket: "${CONTRACTS_STAGING_BUCKET}"
+  staging_prefix: "staging/{tenant_id}/{upload_id}/"
+
+  # Extract text from PDF/DOCX for LLM context.
+  # Uses the platform's document extraction pipeline.
+  extract_text: true
+
+required_fields:
+  - counterparty_name
+  - contract_type    # NDA | MSA | SOW | AMENDMENT | OTHER
+
+optional_fields:
+  - counterparty_domain
+  - deal_size_usd
+  - jurisdiction
+  - sf_opportunity_id
+  - notes
+
+emits:
+  event: cl.manual_contract_upload
+
+# For manual uploads where the document is an existing executed contract
+# (not a new draft), set upload_type = 'executed' to skip the drafting
+# pipeline and go directly to 'signed' or 'active' stage.
+upload_type_routing:
+  new_draft:  intake-classifier   # default: classify and draft
+  executed:   executed-package-builder  # archive directly

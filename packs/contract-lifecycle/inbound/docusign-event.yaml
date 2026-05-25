@@ -1,0 +1,67 @@
+---
+# Inbound: docusign-event
+# ---------------------------------------------------------------------------
+# Receives DocuSign Connect webhook events (envelope status updates).
+# Normalises to the DocuSignEvent schema and routes to the appropriate
+# agent based on status:
+#
+#   completed  → cl.docusign_completed    (executed-package-builder)
+#   declined   → cl.docusign_decline      (redline-router, as a redline signal)
+#   voided     → cl.docusign_voided       (logged, no agent triggered)
+#   sent       → cl.docusign_sent         (logged for audit only)
+#
+# Authentication: DocuSign sends an HMAC-SHA256 signature in the
+# X-DocuSign-Signature-1 header.
+#
+# Mounting: POST /v1/contracts/inbound/docusign/{route_id}
+# ---------------------------------------------------------------------------
+
+source: docusign
+route_prefix: /v1/contracts/inbound/docusign
+
+auth:
+  bearer_token: true
+  hmac_secret: ${DOCUSIGN_WEBHOOK_HMAC_SECRET}
+  hmac_header: X-DocuSign-Signature-1
+
+normalize:
+  field_map:
+    envelope_id:      EnvelopeStatus.EnvelopeID
+    status:           EnvelopeStatus.Status
+    contract_ref:
+      source: EnvelopeStatus.CustomFields.TextField
+      filter: "item.Name == 'contract_reference_number'"
+      extract: value
+    signed_at:        EnvelopeStatus.CompletedDateTime
+    declined_reason:  EnvelopeStatus.DeclinedReason
+    signers:          EnvelopeStatus.RecipientStatuses.RecipientStatus
+
+event_routing:
+  Completed: cl.docusign_completed
+  Declined:  cl.docusign_decline
+  Voided:    cl.docusign_voided
+  Sent:      cl.docusign_sent
+
+# Events that reach agents (others are acknowledged + logged only)
+active_events:
+  - cl.docusign_completed
+  - cl.docusign_decline
+
+sample_payload: |
+  {
+    "EnvelopeStatus": {
+      "EnvelopeID": "abc123-def456-ghi789",
+      "Status": "Completed",
+      "CompletedDateTime": "2026-05-25T14:32:00.000Z",
+      "CustomFields": {
+        "TextField": [
+          {"Name": "contract_reference_number", "Value": "NDA-2026-ACME-001"}
+        ]
+      },
+      "RecipientStatuses": {
+        "RecipientStatus": [
+          {"Type": "Signer", "Email": "ceo@acme.com", "Status": "Completed"}
+        ]
+      }
+    }
+  }
