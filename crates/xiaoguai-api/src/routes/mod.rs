@@ -2,6 +2,7 @@
 
 pub mod admin;
 pub mod mcp;
+pub mod outcomes;
 pub mod scheduler_public;
 pub mod sessions;
 pub mod usage;
@@ -85,7 +86,11 @@ pub fn router(state: AppState) -> Router {
         // v1.1.2: conversation fork.
         .route("/v1/sessions/:id/fork", post(sessions::fork_session))
         // v1.1.1 — token-usage aggregation.
-        .route("/v1/usage", get(usage::list_usage));
+        .route("/v1/usage", get(usage::list_usage))
+        // v1.2.4 — outcome telemetry (revenue-not-time ROI tracking).
+        .route("/v1/outcomes", post(outcomes::record_outcome))
+        .route("/v1/outcomes/summary", get(outcomes::outcomes_summary))
+        .route("/v1/outcomes/timeseries", get(outcomes::outcomes_timeseries));
 
     // Layer order (inner → outer, since `route_layer` adds outward):
     //   handler → rate_limit → rbac → require_bearer
