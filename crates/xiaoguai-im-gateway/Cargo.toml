@@ -30,6 +30,7 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 parking_lot = { workspace = true }
+xiaoguai-observability = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

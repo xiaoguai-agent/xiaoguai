@@ -212,20 +212,34 @@ async fn watch_task(
             Ok(m) => m,
             Err(SourceError::Sql(e)) => {
                 error!(spec_id = %spec.id, error = %e, "sql poll error");
+                if let Some(ctr) = xiaoguai_observability::watch_wakeups_total() {
+                    ctr.with_label_values(&[spec.id.as_str(), "error"]).inc();
+                }
                 continue;
             }
             Err(SourceError::Http(e)) => {
                 error!(spec_id = %spec.id, error = %e, "http poll error");
+                if let Some(ctr) = xiaoguai_observability::watch_wakeups_total() {
+                    ctr.with_label_values(&[spec.id.as_str(), "error"]).inc();
+                }
                 continue;
             }
             Err(e) => {
                 error!(spec_id = %spec.id, error = %e, "poll error");
+                if let Some(ctr) = xiaoguai_observability::watch_wakeups_total() {
+                    ctr.with_label_values(&[spec.id.as_str(), "error"]).inc();
+                }
                 continue;
             }
         };
 
+        // Count this wakeup: "empty" if no matches, "match" for each non-dedup event sent.
+        let mut sent_any = false;
         for m in matches {
             if dedup.is_duplicate(&spec.id, &m).await {
+                if let Some(ctr) = xiaoguai_observability::watch_wakeups_total() {
+                    ctr.with_label_values(&[spec.id.as_str(), "duplicate"]).inc();
+                }
                 continue;
             }
             dedup.record(&spec.id, &m).await;
@@ -238,6 +252,15 @@ async fn watch_task(
             if let Err(e) = tx.send(event).await {
                 warn!(spec_id = %spec.id, error = %e, "event channel closed; stopping watch task");
                 return;
+            }
+            if let Some(ctr) = xiaoguai_observability::watch_wakeups_total() {
+                ctr.with_label_values(&[spec.id.as_str(), "match"]).inc();
+            }
+            sent_any = true;
+        }
+        if !sent_any {
+            if let Some(ctr) = xiaoguai_observability::watch_wakeups_total() {
+                ctr.with_label_values(&[spec.id.as_str(), "empty"]).inc();
             }
         }
     }

@@ -134,25 +134,28 @@ impl InMemoryHotlEnforcer {
 #[async_trait]
 impl HotlEnforcer for InMemoryHotlEnforcer {
     async fn check(&self, tenant_id: Uuid, scope: &str, amount: f64) -> HotlVerdictResult {
+        let _timer_start = Instant::now();
+
         // Fail-closed: if the policy store is simulated as broken, deny.
         if self.fail_store {
-            return Ok(HotlVerdict::Deny(
-                "policy store unavailable (fail-closed)".into(),
-            ));
+            let verdict = HotlVerdict::Deny("policy store unavailable (fail-closed)".into());
+            emit_hotl_metrics(&tenant_id, scope, &verdict, _timer_start);
+            return Ok(verdict);
         }
 
         let policies = match self.store.policies_for(tenant_id, scope).await {
             Ok(p) => p,
             Err(e) => {
                 tracing::error!(?e, "HOTL policy store error — fail-closed");
-                return Ok(HotlVerdict::Deny(format!(
-                    "policy store error: {e} (fail-closed)"
-                )));
+                let verdict = HotlVerdict::Deny(format!("policy store error: {e} (fail-closed)"));
+                emit_hotl_metrics(&tenant_id, scope, &verdict, _timer_start);
+                return Ok(verdict);
             }
         };
 
         // If no policy is declared for this scope, allow unconditionally.
         if policies.is_empty() {
+            emit_hotl_metrics(&tenant_id, scope, &HotlVerdict::Allow, _timer_start);
             return Ok(HotlVerdict::Allow);
         }
 
@@ -197,7 +200,27 @@ impl HotlEnforcer for InMemoryHotlEnforcer {
             }
         }
 
+        emit_hotl_metrics(&tenant_id, scope, &verdict, _timer_start);
         Ok(verdict)
+    }
+}
+
+fn verdict_label(v: &HotlVerdict) -> &'static str {
+    match v {
+        HotlVerdict::Allow => "allow",
+        HotlVerdict::Escalate(_) => "escalate",
+        HotlVerdict::Deny(_) => "deny",
+    }
+}
+
+fn emit_hotl_metrics(tenant_id: &Uuid, scope: &str, verdict: &HotlVerdict, start: Instant) {
+    let tenant = tenant_id.to_string();
+    if let Some(ctr) = xiaoguai_observability::hotl_usage_total() {
+        ctr.with_label_values(&[&tenant, scope, verdict_label(verdict)])
+            .inc();
+    }
+    if let Some(hist) = xiaoguai_observability::hotl_check_duration() {
+        hist.observe(start.elapsed().as_secs_f64());
     }
 }
 
