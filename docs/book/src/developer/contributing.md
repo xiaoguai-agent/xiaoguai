@@ -24,7 +24,7 @@ cargo fmt --check
 
 - Unit tests live next to the module they test (`#[cfg(test)]` blocks)
 - Integration tests that need a real DB are `#[ignore]`-marked and run with `XIAOGUAI_TEST_DATABASE_URL`
-- Eval tests live in `crates/xiaoguai-eval/tests/`
+- Eval tests live **per-crate** under `crates/<crate>/tests/<feature>_eval.rs`. The `xiaoguai-eval` crate provides shared eval scaffolding + the canonical regression eval pattern from the v0.x era; new capability evals belong with the feature they exercise. Examples: `crates/xiaoguai-watch/tests/dsl_eval.rs`, `crates/xiaoguai-anomaly/tests/accuracy_eval.rs`, `crates/xiaoguai-api/tests/hotl_eval.rs`, `crates/xiaoguai-audit/tests/outcomes_eval.rs`.
 
 ## Commit style
 
