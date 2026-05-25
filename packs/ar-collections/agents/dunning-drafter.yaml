@@ -1,0 +1,160 @@
+# Agent definition — dunning-drafter
+# ---------------------------------------------------------------------------
+# Subscribes to WatchEvents from dso-over-60 and AnomalyEvents from
+# dso-drift. For each event it:
+#   1. Looks up the customer's overdue invoice details.
+#   2. Selects the appropriate dunning tier (1st / 2nd / final).
+#   3. Renders the matching Jinja template.
+#   4. Writes the draft to ar_dunning_log with status = 'pending_approval'.
+#   5. Notifies the configured human reviewer channel (IM or email stub).
+#
+# HOTL guardrails: budget $0 / 0 emails sent autonomously.
+# All sends require explicit human approval via the admin UI or IM reply.
+# ---------------------------------------------------------------------------
+
+name: dunning-drafter
+version: "1.0.0"
+description: >
+  Drafts graded dunning communications for overdue AR. Selects tier
+  automatically (1st / 2nd / final) based on days overdue and prior
+  contact history. Zero autonomous send — all drafts require human approval.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: ar.dso_over_60
+    source: dso-over-60
+  - event: ar.dso_drift
+    source: dso-drift
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a professional accounts-receivable assistant. Your job is to
+  draft clear, polite, and appropriately firm payment-reminder emails.
+
+  Rules:
+  - Never threaten legal action unless the tier is "final" and explicitly
+    instructed by the operator's policy.
+  - Always address the contact by name when available; use "Dear Accounts
+    Payable Team" as a fallback.
+  - Do not invent invoice numbers, amounts, or due dates — use only the
+    data provided in the tool call results.
+  - Keep emails under 200 words unless the operator policy specifies
+    otherwise.
+  - Output ONLY the rendered email body (no subject line, no metadata).
+
+# --------------------------------------------------------------------------
+# Tools available to this agent
+# --------------------------------------------------------------------------
+tools:
+  - name: lookup_customer
+    description: >
+      Fetch the customer's contact details and outstanding invoice summary
+      from ar_aging. Returns: contact_name, contact_email, company_name,
+      invoice list (invoice_id, amount, due_date, days_overdue).
+    kind: sql
+    query: |
+      SELECT
+          a.customer_id,
+          a.invoice_id,
+          a.amount,
+          a.currency,
+          a.due_date,
+          EXTRACT(DAY FROM NOW() - a.due_date)::INT AS days_overdue
+      FROM ar_aging a
+      WHERE a.tenant_id = '{tenant_id}'
+        AND a.customer_id = '{customer_id}'
+        AND a.paid_at IS NULL
+      ORDER BY a.due_date ASC
+
+  - name: get_prior_dunning_history
+    description: >
+      Check how many dunning emails have previously been sent (approved
+      + sent status) for this customer. Used to determine the dunning tier.
+    kind: sql
+    query: |
+      SELECT
+          tier,
+          COUNT(*) AS sent_count,
+          MAX(sent_at) AS last_sent_at
+      FROM ar_dunning_log
+      WHERE tenant_id = '{tenant_id}'
+        AND customer_id = '{customer_id}'
+        AND status = 'sent'
+      GROUP BY tier
+      ORDER BY tier
+
+  - name: draft_email
+    description: >
+      Render a Jinja2 dunning email template for the given tier.
+      Returns the rendered body as a string.
+    kind: template
+    templates:
+      "1st":   "templates/email-dunning-1st.md.j2"
+      "2nd":   "templates/email-dunning-2nd.md.j2"
+      "final": "templates/email-final.md.j2"
+
+  - name: save_draft
+    description: >
+      Write the draft to ar_dunning_log with status = 'pending_approval'.
+      Returns the draft id for the human reviewer to approve or reject.
+    kind: sql
+    query: |
+      INSERT INTO ar_dunning_log
+          (tenant_id, customer_id, invoice_ids, tier, draft_body, status)
+      VALUES
+          ('{tenant_id}', '{customer_id}', '{invoice_ids}',
+           '{tier}', '{draft_body}', 'pending_approval')
+      RETURNING id
+
+# --------------------------------------------------------------------------
+# HOTL (Human on the Loop) guardrails
+# --------------------------------------------------------------------------
+hotl:
+  # Budget cap: the agent spends $0 autonomously.
+  budget_usd: 0.00
+  # Emails sent autonomously: 0.
+  autonomous_actions:
+    send_email: 0
+  # The agent must call save_draft and halt; a human must approve before send.
+  require_human_approval:
+    - save_draft
+  # Notification channel for pending drafts (operators configure in pack
+  # settings; falls back to admin-ui notification bell).
+  notify_channel: "${AR_COLLECTIONS_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# Tier selection logic (applied before template rendering)
+# --------------------------------------------------------------------------
+tier_logic:
+  # 1st contact: no prior dunning sent, or last sent > 30 days ago
+  "1st":
+    condition: "prior_dunning_count == 0 OR days_since_last_dunning > 30"
+  # 2nd contact: one prior 1st-tier sent
+  "2nd":
+    condition: "prior_dunning_count == 1 AND prior_tiers contains '1st'"
+  # Final notice: two or more prior contacts, or > 90 days overdue
+  "final":
+    condition: "prior_dunning_count >= 2 OR max_days_overdue > 90"
+
+# --------------------------------------------------------------------------
+# Rate limits (prevent hammering the same customer)
+# --------------------------------------------------------------------------
+rate_limits:
+  per_customer_per_day: 1   # at most 1 draft per customer per day
+  per_tenant_per_hour:  20  # at most 20 drafts per tenant per hour
+
+# --------------------------------------------------------------------------
+# Outcome telemetry (F3 — recorded when a draft is approved + sent)
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - draft_created
+    - draft_approved
+    - draft_rejected
+    - email_sent
+  # Feeds the improvement loop so future drafts can be scored
+  feedback_table: ar_dunning_log

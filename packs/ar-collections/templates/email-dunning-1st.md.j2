@@ -1,0 +1,26 @@
+Subject: Friendly Payment Reminder — Invoice{% if invoices | length > 1 %}s{% endif %} {% for inv in invoices %}{{ inv.invoice_id }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+Dear {{ contact_name | default(value="Accounts Payable Team") }},
+
+I hope this message finds you well. I'm writing to draw your attention to
+the following invoice{% if invoices | length > 1 %}s{% endif %} that {% if invoices | length > 1 %}are{% else %}is{% endif %} now past due on your account with
+{{ company_name }}:
+
+{% for inv in invoices %}
+- Invoice {{ inv.invoice_id }} — {{ inv.currency }} {{ inv.amount | round(precision=2) }}
+  (due {{ inv.due_date }}, {{ inv.days_overdue }} days overdue)
+{% endfor %}
+
+Total outstanding: {{ currency }} {{ total_overdue | round(precision=2) }}
+
+If payment has already been arranged, please disregard this notice. Otherwise,
+we would appreciate settlement at your earliest convenience.
+
+Should you have any questions about these invoices or require an updated
+statement, please reply to this email and we will be happy to assist.
+
+Thank you for your continued business.
+
+Warm regards,
+{{ sender_name | default(value="Accounts Receivable Team") }}
+{{ company_name }}
