@@ -166,7 +166,7 @@ async fn run_serve(settings: &Settings) -> Result<()> {
     use xiaoguai_agent::{AgentConfig, Toolbox};
     use xiaoguai_api::{
         audit::{AuditReader, AuditVerifier},
-        AppState, CancelRegistry, RateLimiter,
+        AppState, CancelRegistry, RateClass, RateLimitState,
     };
     use xiaoguai_audit::chain::sink::PgAuditSink;
     use xiaoguai_llm::{build_router, LlmBackend, MockBackend, OsEnvResolver};
@@ -458,10 +458,9 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         auth,
         authz: build_authz(settings).await.context("build authz")?,
         tenants: Some(Arc::new(PgTenantRepository::new(pool.clone()))),
-        // v0.6.3 default: sustain 20 req/s with a 40 token burst per
-        // tenant. Production should tune via config; the knob isn't
-        // exposed yet.
-        rate_limiter: Some(Arc::new(RateLimiter::new(20.0, 40.0))),
+        // v0.6.3 / v1.2.20: per-tenant rate limiting. Legacy single-class
+        // limiter is superseded by rate_limit_state (set at end of struct).
+        rate_limiter: None,
         audit: audit_reader,
         audit_verifier,
         // v0.9.1: opt-in publishing of the Toolbox as an MCP server at
@@ -505,6 +504,7 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         webhook_token_validator,
         webhook_token_admin,
         scheduler_jobs_reader,
+        rate_limit_state: Some(RateLimitState::in_memory(RateClass::Standard)),
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

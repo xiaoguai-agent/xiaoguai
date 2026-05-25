@@ -152,6 +152,9 @@ moka = { version = "0.12", features = ["future"] }
 aws-config = { version = "~1.8.13", default-features = false, features = ["behavior-version-latest"] }
 aws-sdk-s3 = { version = "~1.122", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
 
+# rate limiting
+governor = "0.7"
+
 # misc
 once_cell = "1.20"
 parking_lot = "0.12"
