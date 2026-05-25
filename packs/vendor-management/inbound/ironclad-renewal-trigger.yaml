@@ -1,0 +1,43 @@
+# Inbound source — Ironclad renewal-trigger event
+# ---------------------------------------------------------------------------
+# Ironclad CLM fires a webhook when a contract enters the renewal workflow
+# (typically 90-180 days before expiry, depending on the workflow template).
+# This adapter normalises the Ironclad payload and emits a
+# vendor.ironclad_renewal_trigger event to kick off the
+# renewal-decision-recommender agent.
+# ---------------------------------------------------------------------------
+
+name: ironclad-renewal-trigger
+version: "1.0.0"
+description: >
+  Webhook adapter for Ironclad contract renewal events.  Validates the
+  Ironclad HMAC signature, maps the contract record to an internal
+  vendor_renewals row, and emits vendor.ironclad_renewal_trigger.
+
+kind: webhook
+auth:
+  method: hmac_sha256
+  header: "X-Ironclad-Signature"
+  secret_env: "IRONCLAD_WEBHOOK_SECRET"
+
+endpoint: /inbound/vendor-management/ironclad
+
+content_type: application/json
+
+field_mapping:
+  tenant_id:           "$.metadata.customAttributes.xiaoguai_tenant_id"
+  vendor_id:           "$.metadata.customAttributes.xiaoguai_vendor_id"
+  contract_ref:        "$.record.id"
+  renewal_date:        "$.record.properties.expirationDate"
+  contract_value_usd:  "$.record.properties.contractValue"
+
+event:
+  kind: vendor.ironclad_renewal_trigger
+
+downstream:
+  agents:
+    - renewal-decision-recommender
+
+dedup:
+  key: "$.record.id"
+  ttl_seconds: 86400

@@ -1,0 +1,93 @@
+# Output connector — exec-quarterly-vendor-review
+# ---------------------------------------------------------------------------
+# Generates and delivers the quarterly vendor review package to the exec
+# audience.  Includes:
+#   - Concentration heatmap (all categories)
+#   - Top-10 vendors by risk score
+#   - Renewal pipeline (next 6 months)
+#   - Open incidents (resolved + unresolved)
+#   - Recommended cancel/replace actions (HOTL-gated)
+#
+# HOTL gate: cancel and replace decisions from renewal-decision-recommender
+# are escalated here for named-exec sign-off before being executed.
+# ---------------------------------------------------------------------------
+
+name: exec-quarterly-vendor-review
+version: "1.0.0"
+description: >
+  Produces the quarterly vendor review package (concentration heatmap,
+  risk ranking, renewal pipeline, incidents). Acts as the HOTL approval
+  gate for cancel/replace decisions — requires named exec sign-off.
+
+kind: report
+
+# Triggered quarterly and on-demand by escalation from renewal-decision-recommender
+schedule:
+  cron: "0 9 1 1,4,7,10 *"   # 09:00 on the 1st of Jan, Apr, Jul, Oct
+
+# Also triggered by agent escalation
+triggers:
+  - event: vendor.renewal_decision_requires_approval
+    filter: "payload.decision IN ('replace', 'cancel')"
+
+report_template: "templates/concentration-heatmap.md.j2"
+
+# Data queries for the quarterly report
+data_queries:
+  concentration_snapshot:
+    query: |
+      SELECT category, vendor_id, vendor_name, vendor_spend_usd,
+             category_total_usd, concentration_pct, threshold_pct,
+             concentration_pct >= threshold_pct AS breach
+      FROM concentration_metrics
+      WHERE tenant_id = '{tenant_id}'
+      ORDER BY category, concentration_pct DESC
+
+  top_risk_vendors:
+    query: |
+      SELECT name, category, tier, risk_score, annual_spend_usd
+      FROM vendors
+      WHERE tenant_id = '{tenant_id}'
+        AND status = 'active'
+      ORDER BY risk_score DESC NULLS LAST
+      LIMIT 10
+
+  renewal_pipeline:
+    query: |
+      SELECT v.name AS vendor_name, v.category, r.renewal_date,
+             r.contract_value_usd, r.decision, r.renewal_status
+      FROM vendor_renewals r
+      JOIN vendors v ON v.id = r.vendor_id
+      WHERE r.tenant_id = '{tenant_id}'
+        AND r.renewal_date <= CURRENT_DATE + INTERVAL '6 months'
+        AND r.renewal_status NOT IN ('executed', 'expired')
+      ORDER BY r.renewal_date ASC
+
+  open_incidents:
+    query: |
+      SELECT v.name AS vendor_name, i.severity, i.title,
+             i.blast_radius_score, i.detected_at, i.resolved_at
+      FROM incident_log i
+      JOIN vendors v ON v.id = i.vendor_id
+      WHERE i.tenant_id = '{tenant_id}'
+        AND i.detected_at >= NOW() - INTERVAL '90 days'
+      ORDER BY i.blast_radius_score DESC NULLS LAST, i.detected_at DESC
+
+# Delivery
+delivery:
+  - kind: email
+    recipients_env: "VENDOR_MGMT_EXEC_RECIPIENTS"   # comma-separated emails
+    subject: "Quarterly Vendor Risk Review — {{ quarter }} {{ year }}"
+  - kind: slack
+    channel_env: "VENDOR_MGMT_EXEC_SLACK_CHANNEL"
+    message: "Quarterly vendor review ready. {{ pending_approvals }} decision(s) require exec sign-off."
+
+# HOTL gate for cancel/replace decisions escalated by renewal-decision-recommender
+hotl:
+  require_named_approval:
+    - decision:replace
+    - decision:cancel
+  approver_roles_env: "VENDOR_MGMT_EXEC_APPROVERS"  # comma-separated email/LDAP
+  approval_timeout_hours: 72
+  on_timeout: escalate_to_admin_ui
+  notify_channel: "${VENDOR_MGMT_EXEC_SLACK_CHANNEL:-admin_ui}"

@@ -1,0 +1,109 @@
+# Inbound source — erp-spend-event
+# ---------------------------------------------------------------------------
+# Receives spend allocation events from the ERP system (SAP, NetSuite,
+# Sage, etc.) when vendor invoices are posted or approved.  Updates
+# vendor.annual_spend_usd and triggers a recompute of concentration_metrics
+# for the affected category.
+# ---------------------------------------------------------------------------
+
+name: erp-spend-event
+version: "1.0.0"
+description: >
+  Webhook adapter for ERP vendor-spend events (invoice posted / approved).
+  Upserts annual_spend_usd on the vendor record and recomputes
+  concentration_metrics for the affected Gartner category.
+  Emits vendor.erp_spend_updated for downstream concentration watches.
+
+kind: webhook
+auth:
+  method: bearer_token
+  header: "Authorization"
+  token_env: "ERP_WEBHOOK_TOKEN"
+
+endpoint: /inbound/vendor-management/erp-spend
+
+content_type: application/json
+
+field_mapping:
+  tenant_id:       "$.tenantId"
+  vendor_id:       "$.vendorId"          # must match vendors.id
+  vendor_name:     "$.vendorName"
+  category:        "$.spendCategory"     # Gartner-style category slug
+  invoice_amount:  "$.invoiceAmountUsd"
+  invoice_date:    "$.invoiceDate"
+  fiscal_year:     "$.fiscalYear"
+
+# After normalisation, the pack runtime executes these SQL steps to
+# update the aggregated spend and concentration figures.
+on_receive_sql:
+  - description: "Update vendor annual_spend_usd (rolling 12-month sum)"
+    query: |
+      UPDATE vendors
+      SET annual_spend_usd = (
+          SELECT COALESCE(SUM(invoice_amount), 0)
+          FROM erp_spend_events_raw
+          WHERE vendor_id  = '{vendor_id}'
+            AND tenant_id  = '{tenant_id}'
+            AND invoice_date >= NOW() - INTERVAL '12 months'
+      ),
+          updated_at = NOW()
+      WHERE id        = '{vendor_id}'
+        AND tenant_id = '{tenant_id}'
+
+  - description: "Recompute concentration_metrics for affected category"
+    query: |
+      INSERT INTO concentration_metrics
+          (tenant_id, category, vendor_id, vendor_name,
+           vendor_spend_usd, category_total_usd, concentration_pct,
+           threshold_pct, computed_at)
+      SELECT
+          v.tenant_id,
+          v.category,
+          v.id                                     AS vendor_id,
+          v.name                                   AS vendor_name,
+          v.annual_spend_usd                       AS vendor_spend_usd,
+          SUM(v2.annual_spend_usd) OVER (
+              PARTITION BY v2.tenant_id, v2.category
+          )                                        AS category_total_usd,
+          CASE
+              WHEN SUM(v2.annual_spend_usd) OVER (
+                  PARTITION BY v2.tenant_id, v2.category
+              ) = 0 THEN 0
+              ELSE ROUND(
+                  v.annual_spend_usd /
+                  SUM(v2.annual_spend_usd) OVER (
+                      PARTITION BY v2.tenant_id, v2.category
+                  ) * 100, 3)
+          END                                      AS concentration_pct,
+          COALESCE(cm_existing.threshold_pct, 40)  AS threshold_pct,
+          NOW()                                    AS computed_at
+      FROM vendors v
+      JOIN vendors v2
+           ON v2.tenant_id = v.tenant_id
+          AND v2.category  = v.category
+          AND v2.status    = 'active'
+      LEFT JOIN concentration_metrics cm_existing
+           ON cm_existing.tenant_id = v.tenant_id
+          AND cm_existing.category  = v.category
+          AND cm_existing.vendor_id = v.id
+      WHERE v.tenant_id = '{tenant_id}'
+        AND v.category  = '{category}'
+        AND v.status    = 'active'
+      ON CONFLICT (tenant_id, category, vendor_id)
+      DO UPDATE SET
+          vendor_spend_usd   = EXCLUDED.vendor_spend_usd,
+          category_total_usd = EXCLUDED.category_total_usd,
+          concentration_pct  = EXCLUDED.concentration_pct,
+          computed_at        = EXCLUDED.computed_at,
+          updated_at         = NOW()
+
+event:
+  kind: vendor.erp_spend_updated
+  payload_mapping:
+    tenant_id:  "{tenant_id}"
+    vendor_id:  "$.vendor_id"
+    category:   "$.category"
+
+dedup:
+  key: "$.invoiceId"
+  ttl_seconds: 86400

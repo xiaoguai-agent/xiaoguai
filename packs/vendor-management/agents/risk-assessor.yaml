@@ -1,0 +1,125 @@
+# Agent definition — risk-assessor
+# ---------------------------------------------------------------------------
+# Triggered by the assessment-overdue watch or an inbound OneTrust
+# assessment-completed event.  Compiles SOC2 / ISO27001 / security
+# questionnaire responses, breach history, and financial health signals
+# into a normalised 0-100 risk score and writes a completed assessment
+# record to vendor_assessments.
+#
+# HOTL: no autonomous external actions.  Score + narrative are written to
+# the DB for human reviewer sign-off before the risk_score on the vendors
+# row is updated.
+# ---------------------------------------------------------------------------
+
+name: risk-assessor
+version: "1.0.0"
+description: >
+  Compiles SOC2/ISO27001/security-questionnaire responses, breach history,
+  and financial health signals into a 0-100 risk score with a written
+  narrative. Writes a pending assessment record; a human reviewer must
+  approve before the vendor's live risk_score is updated.
+
+triggers:
+  - event: vendor.assessment_overdue
+    source: assessment-overdue
+  - event: vendor.onetrust_assessment_completed
+    source: onetrust-assessment-event
+
+system_prompt: |
+  You are a third-party risk analyst. Your job is to assess vendor risk
+  objectively and produce a structured 0-100 risk score with a written
+  rationale.
+
+  Scoring dimensions (weights sum to 100):
+    - Security posture      (30 pts): SOC2 Type II / ISO27001 coverage, MFA,
+                                      encryption at rest + in transit, pen-test
+                                      recency, vulnerability disclosure policy.
+    - Breach history        (25 pts): known incidents in past 3 years,
+                                      severity, remediation speed.
+    - Financial health      (20 pts): public rating, funding runway, revenue
+                                      trend, bankruptcy signals.
+    - Contractual controls  (15 pts): DPA in place, SLA ≥ 99.5 %, right-to-audit,
+                                      data-deletion provisions.
+    - Operational resilience(10 pts): geo-redundancy, DR tested, status-page
+                                      availability history.
+
+  Rules:
+  - Score 0 = lowest risk (best), 100 = highest risk (worst).
+  - A critical finding in any dimension (e.g., no SOC2, recent material breach,
+    financial distress) adds a minimum 20-point floor to the total.
+  - Do NOT invent data.  If evidence for a dimension is absent, mark it
+    "insufficient evidence" and apply a conservative (high-risk) partial score.
+  - Output structured JSON matching the save_assessment tool schema.
+
+tools:
+  - name: get_vendor_details
+    description: >
+      Fetch vendor master record including current tier, existing risk_score,
+      integration_map, and contact details.
+    kind: sql
+    query: |
+      SELECT id, name, category, tier, risk_score, annual_spend_usd,
+             integration_map, contact_name, contact_email, status
+      FROM vendors
+      WHERE tenant_id = '{tenant_id}'
+        AND id = '{vendor_id}'
+
+  - name: get_assessment_history
+    description: >
+      Retrieve the two most recent completed assessments for trend analysis.
+    kind: sql
+    query: |
+      SELECT computed_risk_score, risk_narrative, assessed_at
+      FROM vendor_assessments
+      WHERE tenant_id = '{tenant_id}'
+        AND vendor_id = '{vendor_id}'
+        AND assessment_status = 'completed'
+      ORDER BY assessed_at DESC
+      LIMIT 2
+
+  - name: get_incident_history
+    description: >
+      Retrieve vendor-side incidents from the past 36 months.
+    kind: sql
+    query: |
+      SELECT severity, title, detected_at, resolved_at, blast_radius_score
+      FROM incident_log
+      WHERE tenant_id = '{tenant_id}'
+        AND vendor_id = '{vendor_id}'
+        AND detected_at >= NOW() - INTERVAL '36 months'
+      ORDER BY detected_at DESC
+
+  - name: save_assessment
+    description: >
+      Write the completed assessment to vendor_assessments with status
+      'completed'.  Returns the assessment id for the reviewer.
+      Do NOT update the vendors.risk_score — human approval does that.
+    kind: sql
+    query: |
+      INSERT INTO vendor_assessments
+          (tenant_id, vendor_id, questionnaire_data, evidence,
+           computed_risk_score, risk_narrative, assessment_status,
+           assessed_at, next_due_at)
+      VALUES
+          ('{tenant_id}', '{vendor_id}', '{questionnaire_data}'::jsonb,
+           '{evidence}'::jsonb, {computed_risk_score}, '{risk_narrative}',
+           'completed', NOW(), NOW() + INTERVAL '12 months')
+      RETURNING id
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions: {}
+  require_human_approval:
+    - save_assessment   # reviewer must approve before risk_score propagates
+  notify_channel: "${VENDOR_MGMT_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - assessment_saved
+    - reviewer_approved
+    - reviewer_overridden
+  feedback_table: vendor_assessments
+
+rate_limits:
+  per_vendor_per_day: 1
+  per_tenant_per_hour: 10

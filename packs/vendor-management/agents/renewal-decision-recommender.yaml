@@ -1,0 +1,140 @@
+# Agent definition — renewal-decision-recommender
+# ---------------------------------------------------------------------------
+# Triggered by renewal-window-approaching watch or an Ironclad renewal
+# trigger event.  Weighs usage data, contract spend, current risk score,
+# and known alternatives to recommend one of:
+#   renew | renegotiate | replace | cancel
+#
+# HOTL: renew and renegotiate recommendations are advisory (no autonomous
+# action).  replace and cancel decisions require explicit human approval
+# before the decision field on vendor_renewals is updated.
+# ---------------------------------------------------------------------------
+
+name: renewal-decision-recommender
+version: "1.0.0"
+description: >
+  Analyses vendor usage, spend, risk score, and market alternatives to
+  recommend renew / renegotiate / replace / cancel for an upcoming contract.
+  Renew and renegotiate are advisory. Replace and cancel are HOTL-gated and
+  require explicit human approval before execution.
+
+triggers:
+  - event: vendor.renewal_window_approaching
+    source: renewal-window-approaching
+  - event: vendor.ironclad_renewal_trigger
+    source: ironclad-renewal-trigger
+
+system_prompt: |
+  You are a strategic procurement advisor. For each vendor renewal, you
+  must recommend exactly one action and provide a concise decision card.
+
+  Decision framework:
+    renew        — risk_score < 40, usage is active, spend is value-justified,
+                   no better alternative at comparable cost.
+    renegotiate  — contract is above market rate, or risk_score 40-59 with
+                   remediable findings, or usage has declined > 20 %.
+    replace      — risk_score >= 60, or vendor is strategic but a materially
+                   better alternative exists, or recurrent SLA breaches.
+    cancel       — usage near zero, or vendor is deprecated/offboarding,
+                   or risk_score >= 80 with no remediation path.
+
+  Rules:
+  - Always cite the specific data points (risk_score, usage trend, spend vs
+    market rate, alternative options) that drove the recommendation.
+  - Do not recommend replace or cancel without listing at least one
+    concrete alternative vendor or in-sourcing option.
+  - Keep the decision card under 300 words.
+  - Output structured JSON matching the save_recommendation tool schema.
+
+tools:
+  - name: get_vendor_details
+    description: >
+      Fetch vendor master record: risk_score, tier, annual_spend_usd,
+      integration_map, status.
+    kind: sql
+    query: |
+      SELECT id, name, category, tier, risk_score, annual_spend_usd,
+             integration_map, status
+      FROM vendors
+      WHERE tenant_id = '{tenant_id}'
+        AND id = '{vendor_id}'
+
+  - name: get_renewal_details
+    description: >
+      Fetch the renewal record including contract_value_usd and contract_ref.
+    kind: sql
+    query: |
+      SELECT id, vendor_id, contract_ref, renewal_date,
+             contract_value_usd, decision, renewal_status
+      FROM vendor_renewals
+      WHERE tenant_id = '{tenant_id}'
+        AND id = '{renewal_id}'
+
+  - name: get_assessment_summary
+    description: >
+      Retrieve the most recent completed assessment risk score and narrative.
+    kind: sql
+    query: |
+      SELECT computed_risk_score, risk_narrative, assessed_at
+      FROM vendor_assessments
+      WHERE tenant_id = '{tenant_id}'
+        AND vendor_id = '{vendor_id}'
+        AND assessment_status = 'completed'
+      ORDER BY assessed_at DESC
+      LIMIT 1
+
+  - name: get_peer_vendors
+    description: >
+      List other active vendors in the same category for alternative comparison.
+    kind: sql
+    query: |
+      SELECT id, name, tier, risk_score, annual_spend_usd
+      FROM vendors
+      WHERE tenant_id = '{tenant_id}'
+        AND category = '{category}'
+        AND id != '{vendor_id}'
+        AND status = 'active'
+      ORDER BY risk_score ASC
+      LIMIT 5
+
+  - name: save_recommendation
+    description: >
+      Write the recommendation to vendor_renewals.  For renew/renegotiate,
+      sets renewal_status = 'decision_pending' (advisory — no HOTL required).
+      For replace/cancel, sets renewal_status = 'decision_pending' and
+      triggers the HOTL approval gate before decision is finalised.
+    kind: sql
+    query: |
+      UPDATE vendor_renewals
+      SET recommendation  = '{recommendation}',
+          decision        = '{decision}',
+          renewal_status  = 'decision_pending',
+          updated_at      = NOW()
+      WHERE tenant_id = '{tenant_id}'
+        AND id = '{renewal_id}'
+      RETURNING id, decision
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    # renew and renegotiate: advisory, no HOTL
+    renew: advisory
+    renegotiate: advisory
+  require_human_approval:
+    # replace and cancel: must be approved by a named human before executing
+    - decision:replace
+    - decision:cancel
+  notify_channel: "${VENDOR_MGMT_NOTIFY_CHANNEL:-admin_ui}"
+  # cancel/replace escalate to exec-quarterly-vendor-review output
+  escalation_output: outputs/exec-quarterly-vendor-review.yaml
+
+outcome_telemetry:
+  record_on:
+    - recommendation_saved
+    - human_approved
+    - human_overridden
+  feedback_table: vendor_renewals
+
+rate_limits:
+  per_renewal_per_day: 1
+  per_tenant_per_hour: 15

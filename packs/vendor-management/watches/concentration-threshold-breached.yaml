@@ -1,0 +1,86 @@
+# Watch spec — concentration-threshold-breached
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent whenever a single vendor exceeds the configured
+# concentration threshold (default 40 %) of total annualised spend within
+# a Gartner-style spend category.
+#
+# Categories follow Gartner's Technology Spend Taxonomy:
+#   cloud-infrastructure, security, saas-productivity, data-analytics,
+#   professional-services, logistics, hardware, telecom, marketing-tech,
+#   finance-tech.  Operators may add custom categories via pack config.
+#
+# The threshold is stored per (tenant, category, vendor) in
+# concentration_metrics and defaults to 40 % but is operator-overrideable.
+# ---------------------------------------------------------------------------
+
+name: concentration-threshold-breached
+version: "1.0.0"
+description: >
+  Emits a WatchEvent when a single vendor's share of category spend
+  exceeds the operator-configured threshold (default 40 %).
+  Runs every hour after ERP spend events land. Triggers the
+  concentration-analyzer agent to recommend diversification actions.
+
+source:
+  kind: sql
+  table: concentration_metrics
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      cm.tenant_id,
+      cm.category,
+      cm.vendor_id,
+      cm.vendor_name,
+      cm.vendor_spend_usd,
+      cm.category_total_usd,
+      cm.concentration_pct,
+      cm.threshold_pct,
+      -- How far above threshold (positive = breach amount)
+      (cm.concentration_pct - cm.threshold_pct)               AS overage_pct,
+      -- Count of other active vendors in the same category (diversification headroom)
+      COUNT(other.vendor_id)                                   AS peer_vendor_count,
+      cm.computed_at
+  FROM concentration_metrics cm
+  LEFT JOIN concentration_metrics other
+         ON other.tenant_id = cm.tenant_id
+        AND other.category   = cm.category
+        AND other.vendor_id != cm.vendor_id
+  WHERE cm.tenant_id = '{tenant_id}'
+    AND cm.concentration_pct >= cm.threshold_pct
+  GROUP BY cm.tenant_id, cm.category, cm.vendor_id, cm.vendor_name,
+           cm.vendor_spend_usd, cm.category_total_usd, cm.concentration_pct,
+           cm.threshold_pct, cm.computed_at
+  ORDER BY overage_pct DESC
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  cron: "15 * * * *"   # 15 minutes past each hour (after ERP events settle)
+
+event:
+  kind: vendor.concentration_threshold_breached
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:           "$.tenant_id"
+    category:            "$.category"
+    vendor_id:           "$.vendor_id"
+    vendor_name:         "$.vendor_name"
+    vendor_spend_usd:    "$.vendor_spend_usd"
+    category_total_usd:  "$.category_total_usd"
+    concentration_pct:   "$.concentration_pct"
+    threshold_pct:       "$.threshold_pct"
+    overage_pct:         "$.overage_pct"
+    peer_vendor_count:   "$.peer_vendor_count"
+
+downstream:
+  agents:
+    - concentration-analyzer
+
+dedup:
+  # Re-fire for the same (tenant, category, vendor) at most once per 24 hours
+  # unless the concentration has grown by more than 5 percentage points.
+  key: "{tenant_id}:{category}:{vendor_id}"
+  ttl_seconds: 86400
+  re_fire_if: "payload.concentration_pct > prior.concentration_pct + 5"
