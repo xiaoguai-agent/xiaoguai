@@ -1,0 +1,48 @@
+# Inbound connector — bloomberg-terminal-event
+# ---------------------------------------------------------------------------
+# Receives analyst question submissions forwarded from Bloomberg terminal
+# BMsg / BLAW event feeds. Operators configure a Bloomberg relay webhook
+# or email-to-event bridge to push events into this connector.
+#
+# Events emitted:
+#   ir.analyst_question.received — with source = 'bloomberg'
+# ---------------------------------------------------------------------------
+
+name: bloomberg-terminal-event
+version: "1.0.0"
+description: >
+  Ingests analyst question events forwarded from Bloomberg terminal
+  (BMsg / BLAW). Normalises sender metadata and emits
+  ir.analyst_question.received events for the classifier agent.
+
+kind: webhook
+endpoint: "/inbound/bloomberg-terminal"
+auth:
+  type: hmac_sha256
+  secret_env: IR_BLOOMBERG_WEBHOOK_SECRET
+
+# Field mapping from Bloomberg event payload → internal schema
+field_map:
+  analyst_name:  "$.sender.display_name"
+  analyst_firm:  "$.sender.firm"
+  question_text: "$.message.body"
+  received_at:   "$.message.timestamp"
+  source_ref:    "$.message.uuid"
+
+# Event emitted on each valid inbound message
+emit_event: ir.analyst_question.received
+
+# Persistence: raw event is written to ir_analyst_questions before emit
+persist:
+  table: ir_analyst_questions
+  fields:
+    tenant_id:    "{tenant_id}"
+    source:       "bloomberg"
+    analyst_name: "{analyst_name}"
+    analyst_firm: "{analyst_firm}"
+    question_text: "{question_text}"
+    received_at:  "{received_at}"
+    status:       "received"
+
+rate_limit:
+  per_minute: 120

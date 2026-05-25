@@ -1,0 +1,118 @@
+# Output connector — cfo-quarterly-briefing
+# ---------------------------------------------------------------------------
+# Generates and delivers a structured quarterly briefing document to the CFO,
+# summarising IR activity: analyst question trends, shareholder inquiry volume,
+# communications sent, Reg FD flag history, and upcoming earnings calendar.
+#
+# This is an INTERNAL document delivered to the CFO and IR-Lead only.
+# It contains aggregated operational data — not market-sensitive disclosures.
+#
+# HotL-GATED: even though this is an internal document, it is gated because:
+#   1. It may summarise flagged MNPI items and their disposition.
+#   2. CFO must confirm the briefing before it is shared (even internally)
+#      to avoid inadvertent leakage via forwarding.
+# ---------------------------------------------------------------------------
+
+name: cfo-quarterly-briefing
+version: "1.0.0"
+description: >
+  Generates a quarterly CFO briefing summarising IR activity (analyst
+  questions, Reg FD flag history, comms sent, upcoming calendar). Delivered
+  to CFO + IR-Lead only. HotL-gated to prevent inadvertent forwarding of
+  MNPI-sensitive summaries.
+
+kind: internal_report
+
+hotl:
+  gated: true
+  approvers:
+    - role: CFO
+      env: IR_CFO_APPROVER_ID
+    - role: IR-Lead
+      env: IR_LEAD_APPROVER_ID
+
+# Trigger: generate automatically at end of each quarter, or on demand
+triggers:
+  - event: ir.earnings_period.call_complete
+  - event: ir.manual.generate_cfo_briefing
+    source: admin_ui
+
+# Report sections (SQL-backed)
+sections:
+  - title: "Analyst Question Activity"
+    query: |
+      SELECT category,
+             COUNT(*)                                    AS total,
+             SUM(CASE WHEN status = 'answered' THEN 1 ELSE 0 END) AS answered,
+             SUM(CASE WHEN sensitivity = 'mnpi_risk' THEN 1 ELSE 0 END) AS mnpi_held,
+             AVG(EXTRACT(EPOCH FROM (updated_at - received_at))/3600)::INT AS avg_hours_to_answer
+      FROM ir_analyst_questions
+      WHERE tenant_id = '{tenant_id}'
+        AND earnings_period_id = '{earnings_period_id}'
+      GROUP BY category
+      ORDER BY total DESC
+
+  - title: "Reg FD Flag Summary"
+    query: |
+      SELECT reg_fd_check_status,
+             COUNT(*) AS count,
+             STRING_AGG(DISTINCT comm_type, ', ') AS comm_types
+      FROM ir_shareholder_communications
+      WHERE tenant_id = '{tenant_id}'
+        AND earnings_period_id = '{earnings_period_id}'
+      GROUP BY reg_fd_check_status
+
+  - title: "Reg FD Override Log"
+    query: |
+      SELECT a.entity_type, a.entity_id, a.actor_id, a.actor_role,
+             a.rationale, a.created_at
+      FROM ir_approval_log a
+      WHERE a.tenant_id = '{tenant_id}'
+        AND a.action = 'override'
+        AND a.created_at >= (
+          SELECT period_end_date - INTERVAL '92 days'
+          FROM ir_earnings_periods
+          WHERE id = '{earnings_period_id}'
+        )
+      ORDER BY a.created_at DESC
+
+  - title: "Communications Sent"
+    query: |
+      SELECT comm_type, audience, COUNT(*) AS sent_count,
+             MIN(sent_at) AS first_sent, MAX(sent_at) AS last_sent
+      FROM ir_shareholder_communications
+      WHERE tenant_id = '{tenant_id}'
+        AND earnings_period_id = '{earnings_period_id}'
+        AND status = 'sent'
+      GROUP BY comm_type, audience
+      ORDER BY comm_type, audience
+
+  - title: "Upcoming IR Calendar"
+    query: |
+      SELECT fiscal_year, fiscal_quarter, period_end_date,
+             earnings_date, status
+      FROM ir_earnings_periods
+      WHERE tenant_id = '{tenant_id}'
+        AND period_end_date >= CURRENT_DATE
+      ORDER BY period_end_date ASC
+      LIMIT 4
+
+# Delivery
+delivery:
+  method: "${IR_CFO_BRIEFING_DELIVERY:-admin_ui}"   # 'admin_ui' | 'email' | 'slack'
+  recipients:
+    - role: CFO
+      env: IR_CFO_EMAIL
+    - role: IR-Lead
+      env: IR_LEAD_EMAIL
+  email_subject: "IR Quarterly Briefing — {fiscal_year} {fiscal_quarter}"
+  # Email delivery is internal only — not a disclosure method
+  internal_only: true
+
+# Post-delivery: log to approval audit trail
+on_success:
+  log_to_approval_table:
+    entity_type: "shareholder_communication"
+    action: "approved"
+    actor_role: "System"
+    rationale: "CFO quarterly briefing auto-generated and delivered"

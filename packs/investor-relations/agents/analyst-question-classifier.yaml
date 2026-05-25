@@ -1,0 +1,179 @@
+# Agent definition — analyst-question-classifier
+# ---------------------------------------------------------------------------
+# Classifies incoming analyst questions into category + sensitivity and
+# routes them to the correct person or team for response drafting.
+#
+# Categories:
+#   financial   → CFO / Finance team
+#   operational → COO / Business unit leads
+#   strategic   → CEO / Corp Dev
+#   competitive → Strategy / Marketing
+#   esg         → CSO / ESG team (also creates ir_esg_inquiries record)
+#   regulatory  → Legal / Compliance
+#   other       → IR-Lead for manual triage
+#
+# Sensitivity levels:
+#   standard    → normal workflow
+#   elevated    → requires IR-Lead sign-off on draft before routing
+#   mnpi_risk   → HELD; IR-Lead + Legal notified immediately; reg-fd-checker
+#                 must clear before any response is drafted
+#
+# HOTL: the agent classifies and routes but never drafts or sends a response.
+# ---------------------------------------------------------------------------
+
+name: analyst-question-classifier
+version: "1.0.0"
+description: >
+  Classifies inbound analyst questions (financial/operational/strategic/
+  competitive/esg/regulatory) and sensitivity level. Routes to the correct
+  internal team. MNPI-risk questions are immediately held and Legal notified.
+  Zero autonomous response — classification and routing only.
+
+# ---------------------------------------------------------------------------
+# Triggers
+# ---------------------------------------------------------------------------
+triggers:
+  - event: ir.analyst_question.received
+    source: analyst-portal-question-submit
+  - event: ir.analyst_question.received
+    source: ir-email-inbox
+  - event: ir.analyst_question.received
+    source: bloomberg-terminal-event
+  - event: ir.analyst_question.received
+    source: factset-poll
+
+# ---------------------------------------------------------------------------
+# System prompt
+# ---------------------------------------------------------------------------
+system_prompt: |
+  You are an expert IR analyst specializing in public-company communications
+  compliance. Your task is to classify analyst questions and assess their
+  Reg FD sensitivity.
+
+  CLASSIFICATION RULES:
+  - financial: asks about revenue, margins, EPS, guidance, cash, debt, capex
+  - operational: asks about headcount, capacity, supply chain, product volumes
+  - strategic: asks about M&A, partnerships, market expansion, long-term plans
+  - competitive: asks about market share, named competitors, pricing dynamics
+  - esg: asks about environmental targets, DEI, governance, board composition
+  - regulatory: asks about litigation, regulatory approval, compliance
+  - other: does not fit the above
+
+  SENSITIVITY RULES:
+  - mnpi_risk: the question probes information that, if answered accurately,
+    would require immediate public disclosure under Reg FD. Examples:
+    * Specific unreleased quarterly numbers
+    * Pending M&A not yet announced
+    * Undisclosed regulatory actions
+    * Future guidance not yet filed
+  - elevated: question touches sensitive but public-domain topics that require
+    careful wording (competitor litigation, workforce changes, etc.)
+  - standard: routine question answerable with public information
+
+  OUTPUT FORMAT (JSON only — no prose):
+  {
+    "category": "<category>",
+    "sensitivity": "<mnpi_risk|elevated|standard>",
+    "sensitivity_reason": "<one-sentence rationale>",
+    "routed_to": "<CFO|COO|CEO|Strategy|Legal|ESG-Team|IR-Lead>",
+    "routing_note": "<brief instruction for the recipient>"
+  }
+
+  If sensitivity is mnpi_risk, routing_note MUST begin with:
+  "HOLD — do not draft response until Legal + IR-Lead clear Reg FD review."
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+tools:
+  - name: lookup_recent_similar_questions
+    description: >
+      Search the analyst-questions library for similar previously answered
+      questions. Helps the agent identify if this is a repeated question with
+      an existing approved answer. Returns up to 5 matches with their
+      category, sensitivity, and approved_answer (if any).
+    kind: sql
+    query: |
+      SELECT id, question_text, category, sensitivity,
+             approved_answer, status
+      FROM ir_analyst_questions
+      WHERE tenant_id = '{tenant_id}'
+        AND status = 'answered'
+        AND category IS NOT NULL
+      ORDER BY received_at DESC
+      LIMIT 100
+      -- Note: semantic similarity search is handled by the LLM against
+      -- the returned candidates; full vector search is a future enhancement.
+
+  - name: update_question_classification
+    description: >
+      Write the classification result back to ir_analyst_questions.
+      Sets category, sensitivity, routed_to, and advances status to
+      'classified'. If sensitivity = 'mnpi_risk', status becomes 'deferred'.
+    kind: sql
+    query: |
+      UPDATE ir_analyst_questions
+      SET category   = '{category}',
+          sensitivity = '{sensitivity}',
+          routed_to   = '{routed_to}',
+          status      = CASE WHEN '{sensitivity}' = 'mnpi_risk'
+                             THEN 'deferred' ELSE 'classified' END,
+          updated_at  = NOW()
+      WHERE tenant_id = '{tenant_id}'
+        AND id        = '{question_id}'
+      RETURNING id, status
+
+  - name: create_esg_inquiry
+    description: >
+      If category = 'esg', also create a linked record in ir_esg_inquiries
+      to feed the ESG team's response workflow. Only call when category = 'esg'.
+    kind: sql
+    query: |
+      INSERT INTO ir_esg_inquiries
+          (tenant_id, analyst_question_id, source, esg_pillar, inquiry_text, status)
+      VALUES
+          ('{tenant_id}', '{question_id}', 'analyst', '{esg_pillar}',
+           '{question_text}', 'received')
+      ON CONFLICT DO NOTHING
+      RETURNING id
+
+  - name: notify_mnpi_hold
+    description: >
+      Send an internal notification to IR-Lead and Legal when a question is
+      classified as mnpi_risk. This is an internal channel notification only —
+      no external disclosure. Returns notification id.
+    kind: notify
+    channel: "${IR_LEGAL_NOTIFY_CHANNEL:-admin_ui}"
+    template: |
+      [MNPI RISK HOLD] Analyst question from {analyst_firm} held for Reg FD review.
+      Question: {question_text}
+      Reason: {sensitivity_reason}
+      Action required: IR-Lead + Legal must review before any response is drafted.
+
+# ---------------------------------------------------------------------------
+# HotL guardrails
+# ---------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    draft_response: 0
+    send_response: 0
+  # Classification and internal routing are permitted autonomously.
+  # Any draft response requires separate agent + HotL approval.
+  notify_channel: "${IR_NOTIFY_CHANNEL:-admin_ui}"
+
+# ---------------------------------------------------------------------------
+# Rate limits
+# ---------------------------------------------------------------------------
+rate_limits:
+  per_tenant_per_minute: 60   # burst capacity for earnings-day inflow
+
+# ---------------------------------------------------------------------------
+# Outcome telemetry
+# ---------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - question_classified
+    - mnpi_hold_triggered
+    - esg_inquiry_created
+  feedback_table: ir_analyst_questions

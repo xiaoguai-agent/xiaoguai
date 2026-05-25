@@ -1,0 +1,51 @@
+# Inbound connector — shareholder-meeting-survey
+# ---------------------------------------------------------------------------
+# Ingests post-meeting survey responses and pre-meeting question submissions
+# from the annual / special shareholder meeting platform (e.g. Broadridge,
+# Say Technologies, or a custom survey tool).
+#
+# Events emitted:
+#   ir.shareholder_inquiry.received — each survey response with a question
+# ---------------------------------------------------------------------------
+
+name: shareholder-meeting-survey
+version: "1.0.0"
+description: >
+  Ingests shareholder meeting survey responses (pre-meeting questions,
+  post-meeting feedback). Emits shareholder inquiry events for routing.
+  Supports Broadridge, Say Technologies, or generic webhook.
+
+kind: webhook
+endpoint: "/inbound/shareholder-meeting/survey"
+auth:
+  type: hmac_sha256
+  secret_env: IR_MEETING_SURVEY_SECRET
+
+field_map:
+  shareholder_name:  "$.respondent.name"
+  shareholder_email: "$.respondent.email"
+  audience_type:     "$.respondent.account_type"   # 'retail' | 'institutional' | 'unknown'
+  shares_held:       "$.respondent.shares_held"
+  question_text:     "$.response.question"
+  feedback_text:     "$.response.feedback"
+  meeting_id:        "$.meeting.id"
+  received_at:       "$.response.submitted_at"
+  source_ref:        "$.response.id"
+
+# Only emit an event if the response includes a question
+emit_condition: "question_text is not null and question_text != ''"
+emit_event: ir.shareholder_inquiry.received
+
+persist:
+  table: ir_analyst_questions
+  fields:
+    tenant_id:     "{tenant_id}"
+    source:        "earnings_call"
+    analyst_name:  "{shareholder_name}"
+    question_text: "{question_text}"
+    received_at:   "{received_at}"
+    status:        "received"
+  dedup_key: source_ref
+
+rate_limit:
+  per_minute: 200   # high burst capacity around annual meeting

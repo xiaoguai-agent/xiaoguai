@@ -1,0 +1,98 @@
+{# Jinja2 template — shareholder-letter-template
+   Used by: earnings-script-drafter (letter variant) and admin UI manual drafts
+   Variables: fiscal_year, fiscal_quarter, ceo_name, company_name,
+              audience (retail|institutional|all), financial_summary,
+              strategic_highlights (list), outlook_statement (pre-cleared)
+   Reg FD note: DRAFT — HotL-gated before any external distribution.
+                All guidance language must be pre-cleared by Legal + CFO.
+#}
+<!-- DRAFT — INTERNAL USE ONLY — NOT APPROVED FOR EXTERNAL DISTRIBUTION -->
+<!-- Reg FD: This letter is HotL-gated. CFO + IR-Lead must approve before release. -->
+
+---
+
+{{ company_name | upper }}
+**Letter to Shareholders — {{ fiscal_year }} {{ fiscal_quarter }}**
+
+---
+
+Dear Fellow Shareholders,
+
+{% if fiscal_quarter == 'FY' %}
+As we close the fiscal year, I want to take a moment to share our progress,
+reflect on the challenges we navigated, and outline our path forward.
+{% else %}
+I am writing to share an update on {{ company_name }}'s performance during
+the {{ fiscal_year }} {{ fiscal_quarter }} quarter.
+{% endif %}
+
+### Financial Highlights
+
+{% if financial_summary %}
+During the period, we delivered:
+- Revenue of **{{ financial_summary.revenue | default("[PLACEHOLDER]") }}**
+  ({{ financial_summary.revenue_yoy_growth | default("[YoY%]") }} year-over-year)
+- Gross margin of **{{ financial_summary.gross_margin_pct | default("[PLACEHOLDER]%") }}**
+- Non-GAAP EPS of **{{ financial_summary.eps_non_gaap | default("[PLACEHOLDER]") }}**
+{% else %}
+**[Financial summary not loaded — contact Finance team]**
+{% endif %}
+
+These results reflect the dedication of our team and the strength of our
+business model.
+
+### Strategic Progress
+
+{% for highlight in strategic_highlights | default([]) %}
+- {{ highlight }}{% if highlight.reg_fd_flag is defined %} **[REG-FD-FLAG: {{ highlight.reg_fd_flag }}]**{% endif %}
+
+{% endfor %}
+
+{% if not strategic_highlights %}
+**[Strategic highlights to be provided by CEO's office — review for MNPI before including]**
+{% endif %}
+
+### Outlook
+
+{% if outlook_statement %}
+{{ outlook_statement }}
+<!-- NOTE: Outlook language above must be pre-cleared by Legal + CFO.
+     Any specific guidance numbers must match what is filed simultaneously
+     with the SEC or already in a public filing. -->
+{% else %}
+**[OUTLOOK PLACEHOLDER — CFO + Legal must approve this section.
+Do not release any forward-looking statements without explicit sign-off.]**
+{% endif %}
+
+### Closing
+
+We remain deeply committed to creating long-term value for all of our shareholders.
+Your trust and support mean everything to us, and we will continue to work hard
+to earn it.
+
+As always, I welcome your questions and feedback. You can reach our Investor
+Relations team at {{ ir_email | default("[ir@company.com]") }} or visit
+{{ ir_website_url | default("[IR website URL]") }}.
+
+Sincerely,
+
+**{{ ceo_name | default("[CEO Name]") }}**
+Chief Executive Officer
+{{ company_name }}
+
+---
+*This letter contains forward-looking statements within the meaning of the
+Private Securities Litigation Reform Act of 1995. Actual results may differ
+materially. Please refer to our most recent SEC filings for a discussion of
+risk factors.*
+
+<!-- Reg FD approval checklist:
+  [ ] No MNPI — all financial data matches filed earnings release
+  [ ] Outlook language pre-cleared by Legal + CFO
+  [ ] Strategic highlights reviewed for unreleased information
+  [ ] IR-Lead approved
+  [ ] CFO approved
+  [ ] If any new guidance included: 8-K stub created simultaneously
+-->
+---
+<!-- END DRAFT -->
