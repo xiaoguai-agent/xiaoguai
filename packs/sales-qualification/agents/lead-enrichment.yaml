@@ -1,0 +1,126 @@
+# Agent definition — lead-enrichment
+# ---------------------------------------------------------------------------
+# Input:  company domain (extracted from contact_email or provided directly)
+# Output: industry, employee count, funding stage, tech stack, recent news
+#         (cached in sq_enrichment_cache; TTL = 7 days)
+#
+# Uses the xiaoguai web-search MCP tool (Brave Search API).
+# Triggered when bant-extractor returns verdict = "needs_enrichment".
+# After enrichment, re-triggers bant-extractor with the enriched notes.
+# ---------------------------------------------------------------------------
+
+name: lead-enrichment
+version: "1.0.0"
+description: >
+  Enriches a lead record with publicly available company intelligence:
+  industry, headcount, funding stage, primary tech stack, and recent
+  funding or growth events. Results are cached per domain for 7 days.
+  Requires BRAVE_SEARCH_API_KEY.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: sq.bant.needs_enrichment
+    source: bant-extractor
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a B2B sales-intelligence researcher. Given a company domain name,
+  use the web_search tool to find:
+    1. Industry / vertical (e.g. "fintech", "healthcare SaaS", "manufacturing")
+    2. Company size — headcount range (e.g. "50–200 employees")
+    3. Funding stage (e.g. "Series B", "bootstrapped", "public")
+    4. Primary tech stack signals (e.g. "AWS", "Kubernetes", "Snowflake")
+    5. Recent growth signals: latest funding round, notable hires, product
+       launches, or press mentions in the last 90 days
+
+  Rules:
+  - Issue at most 5 search queries; stop when you have confident answers
+    for all five dimensions or exhaust the query budget.
+  - Only report facts you found in search results. Mark each field
+    "unknown" if not found — do not guess.
+  - Output ONLY valid JSON matching the schema below.
+
+  Output schema:
+  {
+    "domain": "<company domain>",
+    "industry": "<string or 'unknown'>",
+    "employee_count_range": "<string or 'unknown'>",   // e.g. "200–500"
+    "funding_stage": "<string or 'unknown'>",
+    "tech_stack": ["<tech>", ...],                     // empty array if unknown
+    "recent_signals": ["<signal>", ...],               // empty array if none found
+    "sources": ["<url>", ...]
+  }
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: check_enrichment_cache
+    description: >
+      Check sq_enrichment_cache for a recent result for this domain.
+      Returns cached data if fetched_at > NOW() - INTERVAL '7 days',
+      otherwise returns NULL.
+    kind: sql
+    query: |
+      SELECT
+          domain,
+          industry,
+          employee_count,
+          funding_stage,
+          tech_stack,
+          raw_result,
+          fetched_at
+      FROM sq_enrichment_cache
+      WHERE domain = '{domain}'
+        AND fetched_at > NOW() - INTERVAL '7 days'
+
+  - name: web_search
+    description: >
+      Search the web for company intelligence using the Brave Search MCP tool.
+      Parameters: query (string), max_results (int, default 5).
+      Returns a list of {title, url, snippet} results.
+    kind: mcp
+    tool: brave_web_search
+    config:
+      api_key: "${BRAVE_SEARCH_API_KEY}"
+      max_results: 5
+
+  - name: save_enrichment
+    description: >
+      Upsert the enrichment result into sq_enrichment_cache and append the
+      enriched notes to the lead record in sq_leads. Returns domain.
+    kind: sql
+    query: |
+      INSERT INTO sq_enrichment_cache
+          (domain, industry, employee_count, funding_stage, tech_stack, raw_result)
+      VALUES
+          ('{domain}', '{industry}', {employee_count},
+           '{funding_stage}', ARRAY[{tech_stack}]::TEXT[], '{raw_result}'::JSONB)
+      ON CONFLICT (domain) DO UPDATE
+          SET industry       = EXCLUDED.industry,
+              employee_count = EXCLUDED.employee_count,
+              funding_stage  = EXCLUDED.funding_stage,
+              tech_stack     = EXCLUDED.tech_stack,
+              raw_result     = EXCLUDED.raw_result,
+              fetched_at     = NOW()
+      RETURNING domain
+
+# --------------------------------------------------------------------------
+# Budget cap (web searches cost real money)
+# --------------------------------------------------------------------------
+budget:
+  max_search_queries: 5
+  max_wall_seconds: 60
+
+# --------------------------------------------------------------------------
+# On completion: re-trigger bant-extractor with enriched context
+# --------------------------------------------------------------------------
+on_completion:
+  emit:
+    - event: sq.enrichment.completed
+      targets:
+        - agents/bant-extractor.yaml
