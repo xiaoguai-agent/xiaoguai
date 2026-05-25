@@ -1,0 +1,33 @@
+{# packs/travel-expense/templates/receipt-summary-card.md.j2
+   Rendered by receipt-parser after a successful parse.
+   Shown to the employee in the admin UI / IM thread to confirm extraction.
+#}
+## Receipt Parsed — {{ expense.merchant | default("Unknown Merchant") }}
+
+| Field | Extracted Value | Confidence |
+|-------|----------------|------------|
+| **Vendor** | {{ expense.merchant | default("—") }} | {{ confidence.vendor | default("—") }} |
+| **Amount** | {{ expense.currency }} {{ "%.2f" | format(expense.amount) }} | {{ confidence.amount | default("—") }} |
+| **Date** | {{ expense.expense_date }} | {{ confidence.expense_date | default("—") }} |
+| **Category** | {{ expense.category }} | {{ confidence.category | default("—") }} |
+| **Description** | {{ expense.description | default("—") | truncate(80) }} | — |
+
+{% if expense.amount_usd is not none %}
+**Normalised:** USD {{ "%.2f" | format(expense.amount_usd) }}
+(FX rate: {{ expense.fx_rate_used }} as of {{ expense.fx_rate_date }})
+{% else %}
+**FX rate pending** — USD normalisation will follow when the daily rate is available.
+{% endif %}
+
+{% if low_confidence_fields %}
+**Action required:** The following fields had low confidence and need your review:
+{% for field in low_confidence_fields %}
+- **{{ field }}** — please correct in the admin UI before submitting.
+{% endfor %}
+{% endif %}
+
+**Expense ID:** `{{ expense.id }}`
+**Status:** {{ expense.status }}
+
+---
+*Parsed by xiaoguai T&E Pack — receipt-parser v{{ parser_version }}*

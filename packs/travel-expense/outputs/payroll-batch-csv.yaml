@@ -1,0 +1,106 @@
+# Output definition — payroll-batch-csv
+# ---------------------------------------------------------------------------
+# Generates the payroll CSV file for a reimbursement batch and delivers it
+# to the configured payroll system (or emails it to the finance team).
+# HOTL-gated: the CSV is generated and staged but NOT sent until a human
+# approves the batch in the admin UI.
+#
+# Supported payroll targets:
+#   csv_export — email CSV to finance team (default)
+#   adp        — POST to ADP API (WorkforceNow)
+#   workday    — POST to Workday SOAP/REST endpoint
+#
+# Configuration:
+#   TE_PAYROLL_SYSTEM — csv_export | adp | workday
+#   TE_PAYROLL_EMAIL  — recipient for csv_export mode
+#   TE_ADP_API_KEY, TE_ADP_COMPANY_CODE — for ADP mode
+#   TE_WORKDAY_ENDPOINT, TE_WORKDAY_USERNAME, TE_WORKDAY_PASSWORD — for Workday
+# ---------------------------------------------------------------------------
+
+name: payroll-batch-csv
+kind: file_export
+version: "1.0.0"
+
+# --------------------------------------------------------------------------
+# Trigger
+# --------------------------------------------------------------------------
+triggers:
+  - event: te.batch_approval_requested    # Draft → generate + stage for review
+  - event: te.batch_approved              # Approved → release to payroll system
+
+# --------------------------------------------------------------------------
+# HOTL gate
+# --------------------------------------------------------------------------
+hotl:
+  enabled: true
+  gate_on: te.batch_approved   # Release only after HOTL approval
+  autonomous_release: false    # Zero autonomous payroll disbursements
+  notify_channel: "${TE_APPROVAL_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# CSV generation (on te.batch_approval_requested)
+# --------------------------------------------------------------------------
+generate:
+  template: templates/reimbursement-batch-report.md.j2
+  format: csv
+  filename: "te-reimbursement-{batch_reference}.csv"
+
+  # CSV columns (order preserved)
+  columns:
+    - employee_id
+    - employee_name
+    - employee_email
+    - expense_id
+    - expense_date
+    - merchant
+    - category
+    - amount_original
+    - currency_original
+    - amount_usd
+    - fx_rate_used
+    - fx_rate_date
+    - description
+    - approved_by
+    - approved_at
+    - waived_violations
+
+  # Summary row appended at end
+  footer_row:
+    employee_id: "TOTAL"
+    amount_usd: "{batch.total_amount_usd}"
+
+  storage: "${TE_RECEIPT_STORAGE:-local}"
+  storage_bucket_env: TE_RECEIPT_BUCKET
+  staging_path: "batches/staged/{batch_reference}.csv"
+
+# --------------------------------------------------------------------------
+# Release (on te.batch_approved — after HOTL)
+# --------------------------------------------------------------------------
+release:
+  target: "${TE_PAYROLL_SYSTEM:-csv_export}"
+
+  csv_export:
+    kind: email
+    to_env: TE_PAYROLL_EMAIL
+    subject: "T&E Reimbursement Batch — {batch_reference}"
+    body: "Please find the approved T&E reimbursement batch attached."
+    attach: "{staging_path}"
+
+  adp:
+    kind: http_post
+    url: "https://api.adp.com/payroll/v1/reimbursements"
+    auth:
+      kind: oauth2_client_credentials
+      client_id_env: TE_ADP_CLIENT_ID
+      client_secret_env: TE_ADP_CLIENT_SECRET
+      token_url: "https://accounts.adp.com/auth/oauth/v2/token"
+    payload_format: adp_v1_json
+
+  workday:
+    kind: http_post
+    url_env: TE_WORKDAY_ENDPOINT
+    auth:
+      kind: basic
+      username_env: TE_WORKDAY_USERNAME
+      password_env: TE_WORKDAY_PASSWORD
+    payload_format: workday_raas_json

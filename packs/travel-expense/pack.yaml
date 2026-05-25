@@ -1,0 +1,106 @@
+# Travel & Expense (T&E) Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# Policy-compliant receipt parsing, violation detection, approval routing,
+# and reimbursement batching for employee travel and business expenses.
+#
+# Install:   xiaoguai pack install packs/travel-expense/
+# Requires:  xiaoguai >= v1.3.1-prep (features: llm, outcome-telemetry, hotl)
+# ---------------------------------------------------------------------------
+
+name: travel-expense
+version: "1.0.0"
+description: >
+  Automates T&E compliance: parses receipts (OCR via xiaoguai-rag or LLM
+  image input), checks against tenant-configured policy (per-diem limits,
+  excluded categories, advance-approval rules), routes approval by amount
+  tier (auto / manager / director / CFO), and batches approved expenses into
+  payroll reimbursement runs. Policy violations escalate to manager with
+  employee-readable explanations — auto-rejection is never performed.
+  All mid+ approvals and batch releases are HOTL-gated.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - llm               # Receipt parsing + policy explanation drafting
+    - outcome-telemetry # Records approval/rejection outcomes for policy tuning
+    - hotl              # Human-on-the-Loop gates for mid+ approvals and batch release
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_te_state.sql
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/receipt-parser.yaml
+  - path: agents/policy-checker.yaml
+  - path: agents/approval-router.yaml
+  - path: agents/reimbursement-batcher.yaml
+
+# --------------------------------------------------------------------------
+# Inbound event handlers (webhook / integration adapters)
+# --------------------------------------------------------------------------
+inbound:
+  - path: inbound/expensify-event.yaml
+  - path: inbound/sap-concur-webhook.yaml
+  - path: inbound/brex-card-transaction.yaml
+  - path: inbound/ramp-card-transaction.yaml
+  - path: inbound/email-receipt-forward.yaml
+
+# --------------------------------------------------------------------------
+# Output definitions
+# --------------------------------------------------------------------------
+outputs:
+  - path: outputs/approval-slack-dm.yaml
+  - path: outputs/payroll-batch-csv.yaml
+  - path: outputs/employee-notification-email.yaml
+  - path: outputs/exec-monthly-te-digest.yaml
+
+# --------------------------------------------------------------------------
+# Schema namespace
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "te_"
+  namespace: "travel_expense"
+
+# --------------------------------------------------------------------------
+# Configuration keys (operator sets in pack settings)
+# --------------------------------------------------------------------------
+config:
+  currency:
+    base: "USD"               # All amounts normalised to this currency
+    conversion_api: "${TE_FX_API_URL:-}"  # Empty = use cached daily rates table
+    conversion_stale_hours: 24            # Reject conversions older than N hours
+
+  approval_thresholds:
+    auto_approve_usd: 25      # <= 25 USD auto-approved
+    manager_usd: 500          # 25 < x <= 500 → manager
+    director_usd: 2000        # 500 < x <= 2000 → director
+    # > 2000 USD → CFO
+
+  policy:
+    # Tenant overrides loaded from te_policy at runtime; these are defaults
+    alcohol_excluded: true
+    personal_excluded: true
+    advance_approval_categories:
+      - international_travel
+      - conference_registration
+      - equipment_purchase
+
+  reimbursement:
+    batch_schedule: "0 9 * * 5"   # Weekly Friday 09:00 payroll run
+    payroll_system: "${TE_PAYROLL_SYSTEM:-csv_export}"  # csv_export | adp | workday
+
+  notify_channel:
+    hotl_approvals: "${TE_APPROVAL_CHANNEL:-admin_ui}"
+    employee_updates: "${TE_EMPLOYEE_CHANNEL:-email}"
+    exec_digest: "${TE_EXEC_DIGEST_CHANNEL:-email}"

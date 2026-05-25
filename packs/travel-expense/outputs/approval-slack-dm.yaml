@@ -1,0 +1,89 @@
+# Output definition — approval-slack-dm
+# ---------------------------------------------------------------------------
+# Sends a Slack DM to the approver for mid+ tier expenses.
+# HOTL-gated: the message is queued and only sent after the HOTL event
+# (te.approval_requested) is received from approval-router.
+#
+# Approver responds in-thread or via admin UI. The Slack action payload
+# (approve / reject / info) is routed back to approval-router via the
+# te.approval_decision event.
+#
+# Configuration:
+#   TE_SLACK_BOT_TOKEN — Slack bot OAuth token (xoxb-...)
+#   TE_SLACK_SIGNING_SECRET — for verifying Slack interactive callbacks
+# ---------------------------------------------------------------------------
+
+name: approval-slack-dm
+kind: slack_dm
+version: "1.0.0"
+
+# --------------------------------------------------------------------------
+# Trigger
+# --------------------------------------------------------------------------
+triggers:
+  - event: te.approval_requested
+    filter: "tier IN ('manager', 'director', 'cfo')"
+
+# --------------------------------------------------------------------------
+# HOTL gate
+# --------------------------------------------------------------------------
+hotl:
+  enabled: true
+  # The DM is composed immediately but sent only after the HOTL gate passes.
+  # The gate is implicitly satisfied by the te.approval_requested event
+  # (approval-router is HOTL-gated; if it emits this event, HOTL was cleared
+  # for the routing decision, but NOT for the actual approval action).
+  gate_on: te.approval_requested
+  autonomous_send: false
+
+# --------------------------------------------------------------------------
+# Slack configuration
+# --------------------------------------------------------------------------
+slack:
+  token_env: TE_SLACK_BOT_TOKEN
+  signing_secret_env: TE_SLACK_SIGNING_SECRET
+
+  recipient:
+    kind: user_lookup
+    lookup_field: approver_slack_id   # From te_approvers table
+    fallback: email_dm                # If no Slack ID, send email instead
+
+  # Rendered from templates/approval-routing-card.md.j2 (converted to Slack blocks)
+  template: templates/approval-routing-card.md.j2
+  render_as: slack_blocks
+
+  # Interactive buttons in the Slack message
+  actions:
+    - id: approve
+      label: "Approve"
+      style: primary
+      callback_event: te.approval_decision
+      callback_payload: { decision: "approved", expense_id: "{expense_id}" }
+
+    - id: reject
+      label: "Reject"
+      style: danger
+      requires_text_input: true
+      text_input_placeholder: "Reason for rejection..."
+      callback_event: te.approval_decision
+      callback_payload: { decision: "rejected", expense_id: "{expense_id}" }
+
+    - id: request_info
+      label: "Ask for Info"
+      style: default
+      requires_text_input: true
+      text_input_placeholder: "What do you need from the employee?"
+      callback_event: te.approval_info_requested
+
+  # Interactive callback endpoint (Slack sends POST here on button click)
+  callback_endpoint: "/inbound/travel-expense/slack-actions"
+  callback_auth:
+    kind: slack_signature
+    signing_secret_env: TE_SLACK_SIGNING_SECRET
+
+# --------------------------------------------------------------------------
+# Fallback (Slack unavailable)
+# --------------------------------------------------------------------------
+fallback:
+  kind: admin_ui_notification
+  message: "T&E approval required: expense {{ expense_id }} from {{ employee.name }}"

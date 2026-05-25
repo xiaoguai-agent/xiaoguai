@@ -1,0 +1,65 @@
+# Inbound adapter — Brex card transaction webhook
+# ---------------------------------------------------------------------------
+# Receives real-time Brex card transaction events. Each settled transaction
+# is ingested as a te_expenses row with status='pending_parse' so
+# receipt-parser can attempt to enrich it with a receipt image (if the
+# employee attaches one via Brex's receipt matching feature) or flag
+# receipt_missing if none arrives within the configured window.
+#
+# Configuration:
+#   BREX_WEBHOOK_SECRET — for HMAC-SHA256 signature verification
+#   BREX_API_KEY — for fetching receipt attachments
+#
+# Brex docs: https://developer.brex.com/openapi/webhooks_api/
+# ---------------------------------------------------------------------------
+
+name: brex-card-transaction
+kind: webhook
+version: "1.0.0"
+
+endpoint:
+  path: "/inbound/travel-expense/brex"
+  method: POST
+  content_type: "application/json"
+
+auth:
+  kind: hmac_sha256
+  secret_env: BREX_WEBHOOK_SECRET
+  header: "X-Brex-Signature"
+
+# Only process settled transactions (not pending)
+filter:
+  field: "$.status"
+  value: "SETTLED"
+
+field_mapping:
+  tenant_id: "$.company_id"
+  employee_id: "$.user_id"
+  amount: "$.amount.amount"         # Brex amounts are in minor units (cents)
+  amount_divisor: 100               # Divide by 100 to get dollars
+  currency: "$.amount.currency"
+  merchant: "$.merchant_name"
+  expense_date: "$.initiated_at_date"
+  source_reference_id: "$.id"
+  # Category inferred from Brex MCC code by receipt-parser
+  mcc_code: "$.merchant_category_code"
+
+mcc_category_map:
+  # MCC ranges to te_expenses categories (subset; parser handles remainder)
+  "5812": "meals"   # Eating places, restaurants
+  "5813": "meals"   # Drinking places (alcohol flag may apply)
+  "7011": "accommodation"   # Hotels and motels
+  "4511": "airfare"         # Airlines
+  "7513": "transport"       # Car rental
+  "4121": "transport"       # Taxicabs / rideshare
+  "7372": "equipment_purchase"  # Software
+  "7379": "equipment_purchase"  # Computer services
+
+receipt_window:
+  # If no receipt is attached within this window, policy-checker will flag
+  # receipt_missing. Employees can still attach retroactively.
+  hours: 72
+
+emits:
+  - event: te.receipt_received
+    source: brex

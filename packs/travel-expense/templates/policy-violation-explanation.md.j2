@@ -1,0 +1,61 @@
+{# packs/travel-expense/templates/policy-violation-explanation.md.j2
+   Rendered by policy-checker for each expense with one or more violations.
+   Sent to the employee (notification) and their manager (escalation).
+   Tone: clear, factual, non-accusatory. Always describes next steps.
+#}
+## T&E Policy Review — {{ expense.merchant | default("Expense") }} ({{ expense.expense_date }})
+
+Hi {{ employee.name }},
+
+Your expense submission has been reviewed against {{ tenant.name }}'s T&E policy.
+{% if violations | length == 1 %}
+One item needs attention before it can be approved.
+{% else %}
+{{ violations | length }} items need attention before they can be approved.
+{% endif %}
+
+---
+
+{% for v in violations %}
+### {{ loop.index }}. {{ v.rule_id | replace("_", " ") | title }}
+
+**Severity:** {{ v.severity | upper }}
+
+{{ v.explanation }}
+
+{% if v.excess_amount_usd is not none %}
+**Amount over limit:** USD {{ "%.2f" | format(v.excess_amount_usd) }}
+{% endif %}
+
+{% endfor %}
+
+---
+
+## What Happens Next
+
+Your manager **{{ manager.name }}** ({{ manager.email }}) has been notified and will
+review your expense along with the above notes. They may:
+
+- **Approve** the expense as submitted (within their authority)
+- **Ask for more information** before deciding
+- **Reject** the expense (rare; only after reviewing all context)
+
+**Your right to appeal:** If your expense is rejected, you have **14 days** to
+submit an appeal with additional context. Reply to this notification or use the
+admin UI to attach your appeal.
+
+---
+
+**Expense details:**
+
+| Field | Value |
+|-------|-------|
+| Merchant | {{ expense.merchant | default("—") }} |
+| Amount | {{ expense.currency }} {{ "%.2f" | format(expense.amount) }}{% if expense.amount_usd is not none %} (USD {{ "%.2f" | format(expense.amount_usd) }}){% endif %} |
+| Date | {{ expense.expense_date }} |
+| Category | {{ expense.category }} |
+| Expense ID | `{{ expense.id }}` |
+
+---
+*This is an automated message from the xiaoguai T&E Pack.*
+*Questions? Contact your finance team or reply to this message.*
