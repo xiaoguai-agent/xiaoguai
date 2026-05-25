@@ -1,0 +1,66 @@
+---
+# Inbound: Manual card creation via admin UI
+#
+# The admin UI (or CLI) POSTs a JSON payload to create a card directly.
+# This is the human-facing entry point: no webhook signature, but requires
+# a valid session token (Bearer Auth via xiaoguai-api middleware).
+#
+# Route: POST /v1/kanban/cards  (served by kanban-automation pack handler)
+# Auth:  Bearer session token (standard xiaoguai-api auth middleware)
+#
+# v1.4-ready: until XIAOGUAI_KANBAN_ENABLED, the card is recorded in
+# kanban_triage_classifications but not written to the kanban subsystem.
+
+name: manual-card-create
+kind: http-api
+
+route: POST /v1/kanban/cards
+auth: bearer-session          # xiaoguai-api session middleware
+
+# Request body schema.
+schema:
+  type: object
+  required: [title]
+  properties:
+    title:
+      type: string
+      maxLength: 200
+      description: "Card title (required)."
+    description:
+      type: string
+      maxLength: 4000
+      description: "Card description / acceptance criteria."
+    urgency_hint:
+      type: string
+      enum: [critical, high, medium, low]
+      description: "Requestor's urgency hint. Triager may override."
+    owner_hint:
+      type: string
+      maxLength: 100
+      description: "Suggested owner team or person."
+    labels:
+      type: array
+      items: {type: string}
+      maxItems: 10
+      description: "Pre-assigned labels (triager will add more)."
+
+extract:
+  inbound_source:  "_const:manual"
+  inbound_ref:     "_generated_uuid"     # Unique request ID
+  title:           "$.title"
+  body:            "$.description"
+  urgency_hint:    "$.urgency_hint"
+  owner_hint:      "$.owner_hint"
+  pre_labels:      "$.labels"
+  created_by:      "_session.user_id"
+
+response:
+  # Immediate response: card queued for triage.
+  status: 202
+  body_template: |
+    {
+      "status": "queued",
+      "request_id": "{{ inbound_ref }}",
+      "message": "Card queued for triage. It will appear in TRIAGE column once the kanban subsystem is active.",
+      "kanban_enabled": {{ feature_flag_active | lower }}
+    }

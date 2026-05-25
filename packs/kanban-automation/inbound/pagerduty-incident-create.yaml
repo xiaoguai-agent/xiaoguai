@@ -1,0 +1,59 @@
+---
+# Inbound: PagerDuty incident → board card
+#
+# Integrates with the devops-oncall workflow: when PagerDuty fires a new
+# incident, this adapter creates a corresponding board card in TRIAGE so the
+# oncall team can track resolution alongside other work.
+#
+# Also acts as the integration point for incident-triage pack: if a PD
+# incident has already been processed by incident-triage, the board card
+# links back to the RCA draft PR.
+#
+# PD webhook version: v3 (X-PagerDuty-Signature HMAC-SHA256)
+# Route: POST /v1/scheduler/webhooks/<route_id>
+
+name: pagerduty-incident-create
+kind: webhook
+
+route_id: "kanban-pagerduty-${PACK_INSTANCE_ID}"
+
+# Only handle PagerDuty incident events.
+event_filter:
+  header: "X-Pagerduty-Event-Type"
+  values: ["incident.triggered", "incident.acknowledged"]
+
+payload_filter:
+  json_path: "$.event.event_type"
+  values: ["incident.triggered"]   # Only triggered events create new cards.
+
+signature:
+  algorithm: hmac-sha256
+  header: "X-Pagerduty-Signature"
+  prefix: "v1="
+  secret_env: PAGERDUTY_WEBHOOK_SECRET
+
+extract:
+  inbound_source:   "_const:pagerduty"
+  inbound_ref:      "$.event.data.id"           # PD incident ID
+  title:
+    template: "[PD] {{ $.event.data.title }}"
+  body:
+    template: |
+      **PagerDuty Incident**: {{ $.event.data.html_url }}
+      **Service**: {{ $.event.data.service.summary }}
+      **Urgency**: {{ $.event.data.urgency }}
+      **Status**: {{ $.event.data.status }}
+      **Description**: {{ $.event.data.body.details | default('(none)') }}
+  # Pre-set urgency based on PD urgency field.
+  urgency_hint:
+    source: "$.event.data.urgency"
+    map:
+      high:   critical    # PD high → board critical
+      low:    high        # PD low  → board high (still an incident)
+      _default: high
+  # Link back to incident-triage pack if RCA draft exists (populated async).
+  rca_draft_url:    null   # Populated by incident-triage pack via board-card-update
+
+ack:
+  status: 202
+  body: '{"message": "incident received, card creation queued"}'

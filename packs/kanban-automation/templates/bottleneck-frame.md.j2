@@ -1,0 +1,45 @@
+{# bottleneck-frame.md.j2
+   Rendered by bottleneck-investigator when a card has been BLOCKED
+   longer than the configured threshold.  Posted to the board Slack channel
+   and optionally as a thread reply on the card's original Slack message. #}
+{% if result.escalation %}
+:rotating_light: *[ESCALATION] Card blocked for {{ card.hours_blocked }}h* :rotating_light:
+{% else %}
+:warning: *[Board] Blocked card needs attention* :warning:
+{% endif %}
+
+{% if card.assignee_slack_id %}<@{{ card.assignee_slack_id }}>{% else %}*Unassigned card*{% endif %} — please help unblock:
+
+*Card*: {{ card.title | truncate(120) }}
+*Card ID*: `{{ card.id }}`
+*Blocked since*: {{ card.blocked_since }} ({{ card.hours_blocked }}h ago)
+{% if card.blocked_reason %}*Stated blocker*: {{ card.blocked_reason | truncate(200) }}{% endif %}
+*Urgency*: `{{ card.urgency | upper }}`
+
+---
+
+{{ result.investigation_summary }}
+
+---
+
+*Questions to unblock:*
+{% for q in result.suggested_questions %}
+{{ loop.index }}. {{ q }}
+{% endfor %}
+
+*Suggested next steps:*
+{% for step in result.next_steps %}
+- {{ step }}
+{% endfor %}
+
+{% if result.escalation %}
+---
+:alarm_clock: This card has now been blocked for **{{ card.hours_blocked }}h** ({{ (card.hours_blocked / hotl_threshold_hours) | round(1) }}× the threshold).
+Please provide an ETA or escalate to your manager / team lead.
+{% endif %}
+
+{% if not kanban_enabled %}
+> _Note: kanban subsystem not yet active. Card status update is a stub._
+{% endif %}
+
+_bottleneck-investigator · xiaoguai kanban-automation v{{ pack_version }}_

@@ -1,0 +1,139 @@
+---
+# Kanban Automation Skill Pack — v0.1.0
+#
+# AI agents that operate the Hermes-inspired task board (ADR-0019, planned v1.4).
+# See docs/kanban-design branch for the board architecture.
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  V1.4-READY STUBS                                                       │
+# │  Outputs that call /v1/tasks/* are no-ops today.  They log an           │
+# │  informative message and return HTTP 202 Accepted (dry-run mode).        │
+# │  When kanban subsystem task #150 ships in v1.4, set                     │
+# │    XIAOGUAI_KANBAN_ENABLED=true                                          │
+# │  and all stubs become live.                                              │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# Functional today (no /v1/tasks dependency):
+#   - Inbound parsing: Slack mention, email, PagerDuty, manual-card-create,
+#     pack-auto-card-create
+#   - Agent reasoning: classify, tag, estimate effort, detect oversized cards,
+#     suggest splits, identify bottlenecks
+#   - Read-only outputs: Slack status messages, email digest
+#
+# Gated on v1.4 (XIAOGUAI_KANBAN_ENABLED):
+#   - board-card-update  (POST /v1/tasks/{id})
+#   - card-split-execute (POST /v1/tasks/{id}/split) — also HotL-gated
+
+name: kanban-automation
+version: "0.1.0"
+description: >
+  Triages incoming requests onto the Hermes task board: classifies type,
+  urgency, and owner-hint; auto-tags cards; detects oversized work (>1 day
+  estimated effort) and proposes splits; balances workload across the worker
+  pool; and investigates BLOCKED cards after a configurable timeout.
+  Outputs depend on the kanban subsystem (v1.4 / task #150); until then,
+  card mutations are logged as dry-run stubs.
+
+depends:
+  # Core runtime — workerless until v1.4 feature flag is set.
+  xiaoguai-api: ">=0.12.1"
+  # LLM required for all five agents.
+  llm: required
+  # Telemetry sink — agent decisions written as outcome events.
+  outcome-telemetry: required
+  # Watch subsystem — drives bottleneck-investigator polling.
+  watch: required
+  # HotL (Human-on-the-Loop) — gates card-split-execute and column transitions.
+  hotl: required
+  # Kanban subsystem ships in v1.4 (task #150).
+  # Pack loads without it; card-mutation outputs degrade to stubs.
+  kanban-subsystem:
+    version: ">=1.4.0"
+    optional: true
+    stub_when_absent: true
+
+# ── Feature flag ────────────────────────────────────────────────────────────
+# Set XIAOGUAI_KANBAN_ENABLED=true once the kanban subsystem (task #150)
+# is deployed.  Without this flag, all /v1/tasks/* calls are skipped and
+# a log line is emitted instead.
+feature_flag: XIAOGUAI_KANBAN_ENABLED
+
+# ── Inbound sources ─────────────────────────────────────────────────────────
+inbound:
+  - ref: inbound/slack-board-channel-mention.yaml
+  - ref: inbound/email-board-inbox.yaml
+  - ref: inbound/pagerduty-incident-create.yaml
+  - ref: inbound/manual-card-create.yaml
+  - ref: inbound/pack-auto-card-create.yaml
+
+# ── Agents ──────────────────────────────────────────────────────────────────
+agents:
+  - ref: agents/incoming-triager.yaml
+  - ref: agents/auto-tagger.yaml
+  - ref: agents/oversized-detector.yaml
+  - ref: agents/workload-balancer.yaml
+  - ref: agents/bottleneck-investigator.yaml
+
+# ── Output connectors ───────────────────────────────────────────────────────
+outputs:
+  - ref: outputs/slack-board-channel.yaml          # functional today
+  - ref: outputs/board-card-update.yaml            # v1.4-ready stub
+  - ref: outputs/email-board-digest.yaml           # functional today
+  - ref: outputs/card-split-execute.yaml           # v1.4-ready stub + HotL-gated
+
+# ── Execution plan ──────────────────────────────────────────────────────────
+# New card lands in TRIAGE → pipeline runs sequentially.
+# workload-balancer and bottleneck-investigator run on their own schedules
+# (watch-driven), not per-card.
+plan:
+  # Per-card pipeline (triggered by any inbound source).
+  - id: triage
+    agent: incoming-triager
+    description: "Classify card type, urgency, owner-hint from content + source."
+
+  - id: tag
+    agent: auto-tagger
+    description: "Assign pack-name, vertical, complexity, and est-effort labels."
+    deps: [triage]
+
+  - id: size-check
+    agent: oversized-detector
+    description: "If est-effort > 1 day, produce a split proposal."
+    deps: [tag]
+
+  - id: update-card
+    output: board-card-update
+    description: "Write triage classification + tags to the card (v1.4 stub)."
+    deps: [triage, tag, size-check]
+
+  - id: notify-triage
+    output: slack-board-channel
+    description: "Post triage summary to the board Slack channel."
+    deps: [update-card]
+
+  # Scheduled: workload balancer — runs when a worker becomes idle.
+  - id: balance
+    agent: workload-balancer
+    description: "Suggest READY cards to idle workers based on specialty."
+    trigger: watch
+    watch_event: worker_idle
+
+  # Scheduled: bottleneck investigator — runs when a card is BLOCKED > X hours.
+  - id: investigate-blocked
+    agent: bottleneck-investigator
+    description: "Open an investigation thread for long-blocked cards."
+    trigger: watch
+    watch_event: card_blocked_timeout
+
+# ── Resource requirements ───────────────────────────────────────────────────
+requires:
+  env:
+    - KANBAN_SLACK_BOT_TOKEN          # Bot token for Slack inbound + outbound
+    - KANBAN_SLACK_BOARD_CHANNEL_ID   # Channel where the board is mirrored
+    - KANBAN_EMAIL_INBOX              # IMAP/SMTP address for email inbound
+    - KANBAN_DIGEST_RECIPIENTS        # Comma-separated email list for daily digest
+    - KANBAN_BLOCKED_THRESHOLD_HOURS  # Hours before bottleneck-investigator fires (default: 4)
+  env_optional:
+    - PAGERDUTY_API_KEY               # Required only if pagerduty-incident-create inbound is active
+    - KANBAN_HOTL_APPROVER_CHANNEL    # Slack channel for HotL split-approve notifications
+  llm: true

@@ -1,0 +1,90 @@
+---
+# Inbound: Pack-to-board automatic card creation
+#
+# Other xiaoguai packs can create board cards programmatically by POSTing
+# to this endpoint with a pack API key.
+#
+# Common use cases:
+#   - security-audit pack: CVE found → create 'bug' card with urgency=critical
+#   - incident-triage pack: new incident → create tracking card (see also
+#     pagerduty-incident-create for the PD-native path)
+#   - ar-collections pack: overdue invoice → create 'task' card for follow-up
+#   - pr-review pack: persistent review failure → create 'task' card for author
+#
+# Route: POST /v1/kanban/cards/auto  (pack-to-pack only, not user-facing)
+# Auth:  Pack API key (X-Xiaoguai-Pack-Key header, managed by xiaoguai-api)
+
+name: pack-auto-card-create
+kind: http-api
+
+route: POST /v1/kanban/cards/auto
+auth: pack-api-key              # X-Xiaoguai-Pack-Key validated by middleware
+
+schema:
+  type: object
+  required: [title, source_pack]
+  properties:
+    title:
+      type: string
+      maxLength: 200
+    description:
+      type: string
+      maxLength: 4000
+    source_pack:
+      type: string
+      description: "Name of the pack creating the card (e.g. 'security-audit')."
+    source_ref:
+      type: string
+      description: "Pack-internal reference id (CVE id, incident id, etc.)."
+    source_url:
+      type: string
+      format: uri
+      description: "URL to the originating event in the source system."
+    urgency:
+      type: string
+      enum: [critical, high, medium, low]
+      description: "Urgency declared by the source pack (triager may adjust)."
+    card_type:
+      type: string
+      enum: [bug, feature, task, incident, question]
+      description: "Card type declared by the source pack (triager may adjust)."
+    owner_hint:
+      type: string
+    labels:
+      type: array
+      items: {type: string}
+      maxItems: 10
+
+extract:
+  inbound_source:  "_const:pack"
+  inbound_ref:     "$.source_ref"
+  title:
+    template: "[{{ $.source_pack | upper }}] {{ $.title }}"
+  body:
+    template: |
+      **Source pack**: {{ $.source_pack }}
+      {% if $.source_url %}**Source URL**: {{ $.source_url }}{% endif %}
+
+      {{ $.description | default('(no description provided)') }}
+  urgency_hint:    "$.urgency"
+  card_type_hint:  "$.card_type"
+  owner_hint:      "$.owner_hint"
+  pre_labels:      "$.labels"
+  source_pack:     "$.source_pack"
+
+# Rate limit per source pack: max 10 cards per minute.
+rate_limit:
+  per_key: 10
+  window_seconds: 60
+  error_status: 429
+  error_body: '{"error": "rate_limit_exceeded", "retry_after_seconds": 60}'
+
+response:
+  status: 202
+  body_template: |
+    {
+      "status": "queued",
+      "request_id": "{{ inbound_ref }}",
+      "source_pack": "{{ source_pack }}",
+      "kanban_enabled": {{ feature_flag_active | lower }}
+    }

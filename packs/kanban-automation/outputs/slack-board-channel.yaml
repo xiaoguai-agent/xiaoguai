@@ -1,0 +1,49 @@
+---
+# Output: Slack board channel
+#
+# Posts status updates to the configured Slack board channel.
+# Functional today — does NOT depend on the kanban subsystem.
+#
+# Used by:
+#   - incoming-triager:       triage-decision-card summary
+#   - workload-balancer:      workload-summary (idle worker suggestion)
+#   - bottleneck-investigator: bottleneck-frame investigation thread
+#
+# The output adapter selects the correct template based on the emitting agent.
+
+name: slack-board-channel
+kind: slack
+
+channel_id_env: KANBAN_SLACK_BOARD_CHANNEL_ID
+bot_token_env: KANBAN_SLACK_BOT_TOKEN
+
+# Message templates per emitting agent.
+# Each template is rendered with Jinja2 before posting.
+templates:
+  incoming-triager:
+    ref: templates/triage-decision-card.md.j2
+    # Post as a thread reply if the card came from Slack (thread_ts present).
+    thread_ts: "{{ card.thread_ts | default(null) }}"
+
+  workload-balancer:
+    ref: templates/workload-summary.md.j2
+    # Mention the idle worker directly.
+    mention_user: "{{ event.slack_user_id | default(null) }}"
+
+  bottleneck-investigator:
+    ref: templates/bottleneck-frame.md.j2
+    # Mention the card assignee to prompt action.
+    mention_user: "{{ card.assignee_slack_id | default(null) }}"
+    # Always post in the card's dedicated thread if one exists.
+    thread_ts: "{{ card.slack_thread_ts | default(null) }}"
+
+# Fallback: if emitting agent has no specific template, use a generic message.
+fallback_template: |
+  *[kanban-automation]* Agent `{{ agent_name }}` completed for card `{{ card.id | default('N/A') }}`.
+
+# Slack posting options.
+options:
+  unfurl_links: false
+  unfurl_media: false
+  # Parse usernames and channel refs.
+  mrkdwn: true

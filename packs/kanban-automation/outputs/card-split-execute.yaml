@@ -1,0 +1,106 @@
+---
+# Output: Card split execute (v1.4-READY STUB + HotL-gated)
+#
+# Executes an approved split proposal: calls POST /v1/tasks/{id}/split
+# to replace the parent card with the proposed sub-cards.
+#
+# TWO gates must pass before execution:
+#   Gate 1 — HotL (Human-on-the-Loop):
+#     A human approver must explicitly approve the split proposal.
+#     Approval is solicited via Slack (KANBAN_HOTL_APPROVER_CHANNEL).
+#     The HotL gate times out after KANBAN_HOTL_TIMEOUT_HOURS (default: 24h).
+#     If timed out → proposal expires with status='skipped'.
+#
+#   Gate 2 — v1.4 feature flag:
+#     XIAOGUAI_KANBAN_ENABLED must be 'true'.
+#     If false → execution is a no-op stub even after HotL approval.
+#     Approved proposals are persisted in kanban_split_suggestions with
+#     approval_status='approved' and executed_at=NULL; they will be
+#     replayed when the flag is enabled.
+#
+# This dual-gate design means splits are safely staged during v1.3:
+#   approved proposals accumulate, and v1.4 can replay them on activation.
+
+name: card-split-execute
+kind: hotl-gated-http-client
+
+# ── HotL gate configuration ─────────────────────────────────────────────────
+hotl:
+  approver_channel_env: KANBAN_HOTL_APPROVER_CHANNEL
+  bot_token_env: KANBAN_SLACK_BOT_TOKEN
+  timeout_hours_env: KANBAN_HOTL_TIMEOUT_HOURS
+  timeout_hours_default: 24
+
+  # Message sent to approver channel requesting approval.
+  request_template_ref: templates/split-proposal.md.j2
+
+  # Approval actions available in the Slack message (interactive buttons).
+  actions:
+    approve:
+      label: "Approve Split"
+      style: primary
+      # Updates kanban_split_suggestions: approval_status='approved', approved_by, approved_at
+      on_click: update_split_approval_status
+    reject:
+      label: "Reject"
+      style: danger
+      prompt_reason: true   # Ask approver for rejection reason before confirming.
+      on_click: update_split_rejection_status
+
+  # On timeout: mark all sub-cards in the batch as 'skipped'.
+  on_timeout:
+    action: update_split_approval_status
+    status: skipped
+    reason: "HotL approval timed out."
+
+# ── v1.4 stub gate ───────────────────────────────────────────────────────────
+stub:
+  enabled_when: "XIAOGUAI_KANBAN_ENABLED != 'true'"
+  # Approved proposals are persisted; they will be replayed when v1.4 activates.
+  log_level: info
+  log_template: |
+    [kanban-automation stub] card-split-execute: HotL approved but kanban subsystem
+    not active. Split proposal batch {{ proposal_batch }} persisted with
+    approval_status='approved'. Will be replayed when XIAOGUAI_KANBAN_ENABLED=true.
+  synthetic_response:
+    status: 202
+    body: '{"status": "approved-pending-subsystem", "message": "split approved; will execute when kanban subsystem activates"}'
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Live execution (only reached when both gates pass).
+base_url: "http://localhost:${XIAOGUAI_API_PORT:-8080}"
+auth:
+  kind: internal-service-token
+  token_env: XIAOGUAI_INTERNAL_SERVICE_TOKEN
+
+operation:
+  method: POST
+  path: "/v1/tasks/{{ parent_card_id }}/split"
+  body:
+    sub_cards:
+      # Array built from approved sub-card rows in kanban_split_suggestions.
+      source: kanban_split_suggestions
+      filter:
+        proposal_batch: "{{ proposal_batch }}"
+        approval_status: "approved"
+      order_by: sub_card_order
+      fields:
+        title:       sub_card_title
+        description: sub_card_description
+        est_effort:  sub_card_est_effort
+        labels:      sub_card_labels
+
+# On successful execution: update all sub-card rows.
+on_success:
+  update_db:
+    table: kanban_split_suggestions
+    filter:
+      proposal_batch: "{{ proposal_batch }}"
+    fields:
+      executed_at: "NOW()"
+      approval_status: "executed"
+
+retry:
+  max_attempts: 2
+  backoff_seconds: 3
+  no_retry_statuses: [401, 403, 409, 422]
