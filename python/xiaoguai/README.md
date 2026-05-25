@@ -34,6 +34,77 @@ for v1.1.7. Build from source instead:
 cargo install --path crates/xiaoguai-cli
 ```
 
+## HTTP client (wave-3)
+
+`pip install 'xiaoguai[client]'` — adds `xiaoguai.client.XiaoguaiClient`, a
+synchronous HTTP client for the `xiaoguai-api` REST server (requires `httpx>=0.25`).
+
+### Covered endpoints (v1.2.x)
+
+| Domain | Methods |
+|---|---|
+| **HotL** | `list_hotl_policies`, `create_hotl_policy`, `delete_hotl_policy` |
+| **Outcomes** | `record_outcome`, `outcomes_summary`, `outcomes_timeseries` |
+| **Skills** | `list_skill_catalog`, `list_installed_skills`, `install_skill`, `uninstall_skill` |
+
+### Quick start
+
+```python
+from xiaoguai.client import XiaoguaiClient
+
+with XiaoguaiClient("http://localhost:8080", token="my-bearer-token") as c:
+    # HotL — boundary policy admin
+    policy = c.create_hotl_policy(
+        tenant_id="my-tenant-uuid",
+        scope="llm_call",
+        window_seconds=3600,
+        max_count=100,
+        escalate_to="ops@example.com",
+    )
+    policies = c.list_hotl_policies(tenant_id="my-tenant-uuid", scope="llm_call")
+    c.delete_hotl_policy(policy.id)
+
+    # Outcomes — ROI telemetry
+    c.record_outcome(
+        tenant_id="my-tenant",
+        agent_name="sales-bot",
+        kind="revenue_usd",
+        value=1500.0,
+        description="Closed enterprise deal",
+    )
+    summary = c.outcomes_summary(tenant_id="my-tenant", range="7d")
+    ts = c.outcomes_timeseries(tenant_id="my-tenant", range="30d", kind="hours_saved")
+
+    # Skills — pack marketplace
+    catalog = c.list_skill_catalog()
+    pack = c.install_skill(tenant_id="my-tenant", pack_slug="rag-legal")
+    installed = c.list_installed_skills(tenant_id="my-tenant")
+    c.uninstall_skill(pack.id)
+```
+
+### Error handling
+
+```python
+from xiaoguai.client import (
+    XiaoguaiNotFoundError,
+    XiaoguaiValidationError,
+    XiaoguaiConflictError,
+)
+
+try:
+    c.install_skill(tenant_id="t1", pack_slug="rag-legal")
+except XiaoguaiConflictError:
+    print("already installed")
+except XiaoguaiNotFoundError:
+    print("unknown pack slug")
+```
+
+### Typed models
+
+`HotlPolicy`, `HotlVerdict`, `OutcomeRecord`, `OutcomeSummary`,
+`OutcomeTimeseries`, `InstalledSkillPack`, `SkillPackEntry` — all frozen
+dataclasses with `from_dict` class methods.
+
 ## Troubleshooting
 
 If `xiaoguai` after a fresh install prints "native binary not
