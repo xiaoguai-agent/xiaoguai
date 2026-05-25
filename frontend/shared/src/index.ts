@@ -388,6 +388,77 @@ export interface OutcomesTimeseriesResponse {
 
 export type OutcomesRange = '24h' | '7d' | '30d';
 
+// ---- v1.3.x — HotL (Human-on-the-Loop) policy --------------------------
+
+/**
+ * The runtime verdict emitted by the HotL policy engine when evaluating
+ * an agent action. Mirrors `xiaoguai_hotl::Verdict` in Rust.
+ */
+export type HotlVerdict = 'Allow' | 'Deny' | 'Escalate';
+
+/**
+ * Marker injected into the agent event stream (as `type: 'hotl_pending'`)
+ * when the HotL engine returns `Verdict::Escalate` for an action. The UI
+ * must surface a non-dismissible banner until the verdict changes or the
+ * session ends.
+ */
+export interface HotlPendingEvent {
+  type: 'hotl_pending';
+  /** Action scope / tool name that triggered escalation. */
+  scope: string;
+  /** Human-readable reason from the policy rule that matched. */
+  reason: string;
+  /** Monotonic escalation ID — use to correlate with `/hotl-queue` entry. */
+  escalation_id: string;
+}
+
+/**
+ * Emitted once an operator approves or rejects an escalation.
+ * `approved` → runtime proceeds; `rejected` → action is cancelled.
+ */
+export interface HotlResolvedEvent {
+  type: 'hotl_resolved';
+  escalation_id: string;
+  verdict: 'approved' | 'rejected';
+}
+
+// ---- v1.3.x — Session-scoped outcome events -----------------------------
+
+/**
+ * Lightweight event emitted by the runtime when an outcome is recorded
+ * during the current session. Included in the agent event stream alongside
+ * `text_delta`, `tool_call_*`, etc.
+ */
+export interface OutcomeRecordedEvent {
+  type: 'outcome_recorded';
+  kind: string;
+  value: number;
+  unit: string | null;
+  description: string | null;
+  /** RFC 3339 timestamp. */
+  ts: string;
+}
+
+/**
+ * Extended API response for `GET /v1/outcomes/summary?session_id=<id>`.
+ * The base `OutcomesSummaryResponse` is tenant-scoped; this variant adds
+ * per-session fields and a recent-events list.
+ */
+export interface SessionOutcomesSummary {
+  session_id: string;
+  tenant_id: string;
+  /** Counts + aggregates by outcome kind. */
+  by_kind: Record<string, { count: number; sum: number; unit: string | null }>;
+  /** The 5 most recent outcome events recorded in this session, newest first. */
+  recent: Array<{
+    kind: string;
+    value: number;
+    unit: string | null;
+    description: string | null;
+    ts: string;
+  }>;
+}
+
 // ---- Agent event stream --------------------------------------------------
 
 export type AgentEvent =
@@ -403,7 +474,10 @@ export type AgentEvent =
     }
   | { type: 'iteration_completed'; iteration: number }
   | { type: 'done'; stop_reason: 'completed' | 'max_iterations' | 'cancelled' }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  | HotlPendingEvent
+  | HotlResolvedEvent
+  | OutcomeRecordedEvent;
 
 // ---- Client --------------------------------------------------------------
 
@@ -679,6 +753,18 @@ export class XiaoguaiClient {
     const params = new URLSearchParams({ tenant_id: opts.tenant_id });
     if (opts.range) params.set('range', opts.range);
     return this.request<OutcomesSummaryResponse>(
+      'GET',
+      `/v1/outcomes/summary?${params.toString()}`,
+    );
+  }
+
+  /**
+   * v1.3.x — session-scoped outcome summary polled by `RecentOutcomesPanel`.
+   * Calls `GET /v1/outcomes/summary?session_id=<id>`.
+   */
+  getSessionOutcomesSummary(sessionId: string): Promise<SessionOutcomesSummary> {
+    const params = new URLSearchParams({ session_id: sessionId });
+    return this.request<SessionOutcomesSummary>(
       'GET',
       `/v1/outcomes/summary?${params.toString()}`,
     );
