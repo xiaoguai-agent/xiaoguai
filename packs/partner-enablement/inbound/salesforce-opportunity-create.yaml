@@ -1,0 +1,144 @@
+# inbound/salesforce-opportunity-create.yaml
+# ---------------------------------------------------------------------------
+# Salesforce Opportunity Create inbound source — conflict detection feed.
+#
+# This source mirrors newly created (and recently modified) Salesforce
+# Opportunities into the pe_sf_opportunities shadow table so that the
+# deal-reg-router can perform fast conflict detection without making a
+# live Salesforce API call on every deal-reg submission.
+#
+# It is NOT an inbound user submission — it is a CRM sync feed.
+# Two delivery modes are supported:
+#   1. Salesforce Platform Events (CometD streaming — preferred for real-time)
+#   2. Scheduled pull via Salesforce SOQL REST API (polling fallback)
+#
+# Mounting: POST /api/v1/packs/partner-enablement/inbound/sf-opportunity
+# Auth:     Salesforce Connected App OAuth2 JWT Bearer token
+#           (validated via SF_INSTANCE_URL + SF_CLIENT_ID)
+# ---------------------------------------------------------------------------
+
+name: salesforce-opportunity-create
+kind: crm_sync_inbound
+version: "1.0.0"
+
+description: >
+  Mirrors Salesforce Opportunity records into pe_sf_opportunities for
+  conflict detection. Accepts Salesforce Platform Event webhooks (real-time)
+  or runs as a scheduled SOQL pull (polling fallback). Does NOT trigger
+  deal-reg-router directly — it only maintains the shadow table that
+  deal-reg-router queries during conflict detection.
+
+# --------------------------------------------------------------------------
+# HTTP endpoint (Platform Events delivery)
+# --------------------------------------------------------------------------
+endpoint:
+  path: /api/v1/packs/partner-enablement/inbound/sf-opportunity
+  method: POST
+  content_type: application/json
+
+# --------------------------------------------------------------------------
+# Authentication (Platform Events push from Salesforce)
+# --------------------------------------------------------------------------
+auth:
+  kind: salesforce_jwt
+  instance_url_env: SALESFORCE_INSTANCE_URL
+  client_id_env:    SALESFORCE_CLIENT_ID
+
+# --------------------------------------------------------------------------
+# Polling fallback (runs if Platform Events are not configured)
+# --------------------------------------------------------------------------
+polling_fallback:
+  enabled: true
+  cron: "*/15 * * * *"    # every 15 minutes
+  soql: |
+    SELECT Id, Name, AccountId, Account.Website, Account.Name,
+           StageName, Amount, CloseDate, OwnerId, Owner.Email,
+           NextStep, LastActivityDate, NumberOfContacts,
+           Exec_Sponsor_Engaged__c, CreatedDate, LastModifiedDate
+    FROM Opportunity
+    WHERE LastModifiedDate >= LAST_N_MINUTES:20
+      AND StageName NOT IN ('Closed Won', 'Closed Lost')
+  credentials:
+    instance_url_env:  SALESFORCE_INSTANCE_URL
+    client_id_env:     SALESFORCE_CLIENT_ID
+    client_secret_env: SALESFORCE_CLIENT_SECRET
+
+# --------------------------------------------------------------------------
+# Payload normalisation → pe_sf_opportunities shadow table
+# --------------------------------------------------------------------------
+normalise:
+  # For Platform Events ($.payload) vs SOQL (direct fields)
+  sf_opportunity_id:     "$.Id"
+  account_name:          "$.Account.Name"
+  account_domain:
+    source: "$.Account.Website"
+    transform:
+      regex_replace:
+        pattern: "^https?://([^/]+).*"
+        replacement: "$1"
+  owner_email:           "$.Owner.Email"
+  stage_name:            "$.StageName"
+  amount_usd:            "$.Amount"
+  close_date:            "$.CloseDate"
+  next_step:             "$.NextStep"
+  last_activity_date:    "$.LastActivityDate"
+  num_contacts:          "$.NumberOfContacts"
+  exec_sponsor_engaged:  "$.Exec_Sponsor_Engaged__c"
+  sf_created_at:         "$.CreatedDate"
+  sf_updated_at:         "$.LastModifiedDate"
+
+# --------------------------------------------------------------------------
+# Shadow table schema (created by migration 0001_partner_state.sql)
+# Note: pe_sf_opportunities is referenced in conflict-detection queries
+# but is maintained only by this inbound source.
+# --------------------------------------------------------------------------
+persist:
+  table: pe_sf_opportunities
+  on_conflict: ["tenant_id", "sf_opportunity_id"]
+  update_fields:
+    - account_name
+    - account_domain
+    - owner_email
+    - stage_name
+    - amount_usd
+    - close_date
+    - next_step
+    - last_activity_date
+    - num_contacts
+    - exec_sponsor_engaged
+    - sf_updated_at
+
+# --------------------------------------------------------------------------
+# No downstream event emission — this source only keeps the shadow table fresh.
+# deal-reg-router queries pe_sf_opportunities synchronously during validation.
+# --------------------------------------------------------------------------
+emit: null
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  log_level: warn     # shadow table lag is tolerable; don't alert on transient errors
+  dead_letter_table: pe_inbound_dead_letter
+  notify_channel: "${PARTNER_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+  alert_after_consecutive_failures: 10
+
+# --------------------------------------------------------------------------
+# Sample payload (Salesforce Platform Event format)
+# --------------------------------------------------------------------------
+sample_payload: |
+  {
+    "Id": "006Hs000004XXXX",
+    "Name": "Globex Corp — Enterprise Expansion",
+    "Account": { "Name": "Globex Corp", "Website": "https://globex.com" },
+    "StageName": "Discovery",
+    "Amount": 150000,
+    "CloseDate": "2026-09-30",
+    "Owner": { "Email": "ae@example.com" },
+    "NextStep": "Schedule technical deep-dive",
+    "LastActivityDate": "2026-05-20",
+    "NumberOfContacts": 3,
+    "Exec_Sponsor_Engaged__c": false,
+    "CreatedDate": "2026-04-15T08:00:00Z",
+    "LastModifiedDate": "2026-05-20T14:30:00Z"
+  }

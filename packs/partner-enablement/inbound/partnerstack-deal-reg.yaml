@@ -1,0 +1,130 @@
+# inbound/partnerstack-deal-reg.yaml
+# ---------------------------------------------------------------------------
+# PartnerStack deal-registration inbound source.
+#
+# PartnerStack fires a webhook when a partner submits a deal registration
+# through its platform. This source validates the signature, normalises the
+# payload, upserts a pe_deal_registrations row, and emits
+# partner.partnerstack.deal_reg_submitted to trigger deal-reg-router.
+#
+# PartnerStack setup:
+#   1. PartnerStack Admin → Settings → Webhooks → Add Webhook
+#   2. Event: "Deal Registration Created"
+#   3. Endpoint: https://<your-host>/api/v1/packs/partner-enablement/inbound/partnerstack
+#   4. Copy the signing secret → set PARTNERSTACK_WEBHOOK_SECRET
+#
+# Mounting: POST /api/v1/packs/partner-enablement/inbound/partnerstack
+# Auth:     HMAC-SHA256 (X-PartnerStack-Signature header)
+# ---------------------------------------------------------------------------
+
+name: partnerstack-deal-reg
+kind: webhook_inbound
+version: "1.0.0"
+
+description: >
+  Receives PartnerStack "Deal Registration Created" webhook events. Validates
+  HMAC-SHA256 signature, normalises deal-reg fields to pe_deal_registrations,
+  and emits partner.partnerstack.deal_reg_submitted to trigger deal-reg-router.
+
+# --------------------------------------------------------------------------
+# HTTP endpoint
+# --------------------------------------------------------------------------
+endpoint:
+  path: /api/v1/packs/partner-enablement/inbound/partnerstack
+  method: POST
+  content_type: application/json
+
+# --------------------------------------------------------------------------
+# Signature verification
+# --------------------------------------------------------------------------
+auth:
+  kind: hmac_sha256
+  header: X-PartnerStack-Signature
+  secret_env: PARTNERSTACK_WEBHOOK_SECRET
+  max_age_seconds: 300
+
+# --------------------------------------------------------------------------
+# Event filtering
+# --------------------------------------------------------------------------
+filters:
+  - field: "$.event"
+    operator: eq
+    values:
+      - "deal_registration.created"
+
+# --------------------------------------------------------------------------
+# Payload normalisation → pe_deal_registrations
+# --------------------------------------------------------------------------
+normalise:
+  source: "partnerstack"
+  partner_lookup:
+    field: "$.data.partner.key"
+    table: pe_partners
+    match_column: partnerstack_id
+  account_name:        "$.data.company_name"
+  account_domain:      "$.data.company_website"   # e.g. "acme.com" or "https://acme.com" — strip protocol
+  contact_name:        "$.data.contact_first_name + ' ' + $.data.contact_last_name"
+  contact_email:       "$.data.contact_email"
+  estimated_arr:       "$.data.deal_value"
+  close_date_target:   "$.data.expected_close_date"
+  notes:               "$.data.notes"
+  source_deal_reg_id:  "$.data.key"
+  source_payload:      "_self"
+
+# --------------------------------------------------------------------------
+# Normalisation transforms
+# --------------------------------------------------------------------------
+transforms:
+  account_domain:
+    # Strip https:// or http:// prefix if present
+    regex_replace:
+      pattern: "^https?://"
+      replacement: ""
+
+# --------------------------------------------------------------------------
+# Database write
+# --------------------------------------------------------------------------
+persist:
+  table: pe_deal_registrations
+  on_conflict: ["source", "source_deal_reg_id"]
+  update_fields:
+    - account_name
+    - account_domain
+    - estimated_arr
+    - close_date_target
+    - notes
+
+# --------------------------------------------------------------------------
+# Emit event
+# --------------------------------------------------------------------------
+emit:
+  event: partner.partnerstack.deal_reg_submitted
+  target: agents/deal-reg-router.yaml
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  log_level: error
+  dead_letter_table: pe_inbound_dead_letter
+  notify_channel: "${PARTNER_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# Sample payload
+# --------------------------------------------------------------------------
+sample_payload: |
+  {
+    "event": "deal_registration.created",
+    "data": {
+      "key": "ps-dr-001",
+      "partner": { "key": "ps-partner-42", "name": "BestChannel Ltd" },
+      "company_name": "Globex Corp",
+      "company_website": "https://globex.com",
+      "contact_first_name": "Homer",
+      "contact_last_name": "Simpson",
+      "contact_email": "homer@globex.com",
+      "deal_value": 120000,
+      "expected_close_date": "2026-09-30",
+      "notes": "Customer evaluating for Q3 expansion. Has exec buy-in."
+    }
+  }

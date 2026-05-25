@@ -1,0 +1,240 @@
+# agents/deal-reg-router.yaml
+# ---------------------------------------------------------------------------
+# Deal-Registration Router
+#
+# Input:  an inbound deal-registration event (from PartnerStack, Crossbeam,
+#         partner portal, or manual entry) normalised to pe_deal_registrations.
+# Output: a routing decision (approved | rejected | conflict) written to
+#         pe_deal_registrations.status, plus a decision card rendered via
+#         templates/deal-reg-decision-card.md.j2 for the channel manager.
+#
+# Conflict detection: if a Salesforce Opportunity already exists for the same
+# account domain (via inbound/salesforce-opportunity-create.yaml), the router
+# marks the deal-reg as 'conflict' and hands off to conflict-mediator.
+#
+# HOTL guardrails: the routing decision itself is autonomous (routing is low
+# risk — the channel manager reviews the decision card before acting).
+# If the router upgrades a deal-reg to 'approved' AND the partner tier is
+# Platinum, it also pre-creates a co-sell engagement stub — that stub write
+# is HOTL-gated because it touches Salesforce attribution.
+# ---------------------------------------------------------------------------
+
+name: deal-reg-router
+version: "1.0.0"
+description: >
+  Validates an inbound deal-registration, checks for conflicts with the
+  direct sales pipeline (same account domain in Salesforce), assigns a
+  channel manager, and routes to either approval, rejection, or conflict
+  mediation. Produces a decision card for channel-manager review.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: partner.partnerstack.deal_reg_submitted
+    source: inbound/partnerstack-deal-reg.yaml
+  - event: partner.crossbeam.overlap_detected
+    source: inbound/crossbeam-event.yaml
+  - event: partner.portal.form_submitted
+    source: inbound/partner-portal-form-submit.yaml
+
+# --------------------------------------------------------------------------
+# LLM settings
+# --------------------------------------------------------------------------
+llm:
+  model: ${PARTNER_LLM_MODEL:-default}
+  temperature: 0.1      # low variance: routing should be deterministic
+  max_tokens: 2048
+
+# --------------------------------------------------------------------------
+# Validation rules (checked before LLM routing step)
+# --------------------------------------------------------------------------
+validation_rules:
+  - id: partner_active
+    description: "Submitting partner must be in 'active' status"
+    sql: |
+      SELECT status FROM pe_partners
+      WHERE id = '{partner_id}' AND tenant_id = '{tenant_id}'
+    fail_if: "status != 'active'"
+    rejection_reason: "Partner account is not active."
+
+  - id: no_duplicate_deal_reg
+    description: "No active deal-reg for the same partner + account in the last 90 days"
+    sql: |
+      SELECT COUNT(*) AS cnt FROM pe_deal_registrations
+      WHERE partner_id = '{partner_id}'
+        AND account_domain = '{account_domain}'
+        AND tenant_id = '{tenant_id}'
+        AND status NOT IN ('rejected', 'expired')
+        AND created_at > now() - INTERVAL '90 days'
+    fail_if: "cnt > 0"
+    rejection_reason: "An active deal registration for this account already exists."
+
+  - id: account_not_direct_customer
+    description: "Account must not already be a direct customer (SF opportunity Closed Won)"
+    sql: |
+      SELECT COUNT(*) AS cnt FROM pe_deal_registrations
+      WHERE account_domain = '{account_domain}'
+        AND tenant_id = '{tenant_id}'
+        AND status = 'approved'
+    # Not a hard rejection — just a signal for the LLM routing step.
+    fail_if: null
+
+# --------------------------------------------------------------------------
+# Conflict detection — checked after validation passes
+# --------------------------------------------------------------------------
+conflict_detection:
+  description: >
+    Query pe_deal_registrations and the mirrored Salesforce opportunity table
+    (populated via inbound/salesforce-opportunity-create.yaml) for any
+    open direct-pipeline opportunity on the same account_domain.
+  sql: |
+    SELECT
+        o.sf_opportunity_id,
+        o.created_at            AS sf_opportunity_created_at,
+        o.owner_email           AS direct_ae_email,
+        o.stage_name,
+        EXTRACT(DAY FROM now() - o.created_at) AS age_days
+    FROM pe_sf_opportunities o
+    WHERE o.account_domain = '{account_domain}'
+      AND o.tenant_id = '{tenant_id}'
+      AND o.stage_name NOT IN ('Closed Won', 'Closed Lost')
+  conflict_if: "row_count > 0"
+  auto_resolve_direct_wins_if: "age_days > 30"
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a partner channel operations analyst responsible for routing
+  inbound deal registrations.
+
+  Your job:
+  1. Review the deal-registration details, validation results, partner profile,
+     and conflict-detection output.
+  2. Decide: approve | reject | conflict.
+  3. Assign the most appropriate channel manager from the available pool.
+  4. Provide a clear, concise routing_reason (1–2 sentences, shown to the
+     channel manager and the partner).
+
+  Routing rules:
+  - REJECT if any validation_rule failed (use its rejection_reason).
+  - CONFLICT if conflict_detection found an active direct-pipeline opportunity
+    AND age_days <= 30 (older opportunities → auto_approve in your system,
+    the mediator is not needed).
+  - APPROVE otherwise.
+  - Channel manager assignment: prefer managers whose territory matches the
+    account's hq_country. If none available, assign the round-robin fallback.
+
+  Output ONLY valid JSON matching the schema below. No prose, no markdown.
+
+  {
+    "deal_reg_id": "<uuid>",
+    "routing_decision": "approve" | "reject" | "conflict",
+    "routing_reason": "<1–2 sentences>",
+    "routing_confidence": "high" | "medium" | "low",
+    "assigned_channel_manager_email": "<email or null>",
+    "conflict_details": {
+      "sf_opportunity_id": "<id or null>",
+      "direct_ae_email": "<email or null>",
+      "age_days": <int or null>
+    } | null
+  }
+
+# --------------------------------------------------------------------------
+# User prompt template
+# --------------------------------------------------------------------------
+user_prompt: |
+  ## Deal Registration
+  - ID: {{ deal_reg.id }}
+  - Partner: {{ partner.name }} (tier: {{ partner.tier | upper }})
+  - Account: {{ deal_reg.account_name }} (domain: {{ deal_reg.account_domain }})
+  - Estimated ARR: {{ deal_reg.estimated_arr | default('unknown') }}
+  - Close target: {{ deal_reg.close_date_target | default('unknown') }}
+  - Source: {{ deal_reg.source }}
+  - Notes: {{ deal_reg.notes | default('(none)') | truncate(500) }}
+
+  ## Validation results
+  {% for rule in validation_results %}
+  - {{ rule.id }}: {{ 'PASS' if rule.passed else 'FAIL — ' + rule.rejection_reason }}
+  {% endfor %}
+
+  ## Conflict detection
+  {% if conflict %}
+  Conflict detected: Salesforce opportunity {{ conflict.sf_opportunity_id }}
+  owned by {{ conflict.direct_ae_email }}, stage {{ conflict.stage_name }},
+  age {{ conflict.age_days | int }} days.
+  {% else %}
+  No direct-pipeline conflict detected.
+  {% endif %}
+
+  ## Available channel managers
+  {{ channel_managers | tojson(indent=2) }}
+
+  Route this deal registration now.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: get_deal_reg_context
+    description: >
+      Fetch the deal-registration record plus the submitting partner's profile
+      (tier, activity_score, primary_contact_email, status).
+    kind: sql
+    query: |
+      SELECT
+          dr.*,
+          p.name              AS partner_name,
+          p.tier              AS partner_tier,
+          p.activity_score    AS partner_activity_score,
+          p.status            AS partner_status
+      FROM pe_deal_registrations dr
+      JOIN pe_partners p ON p.id = dr.partner_id
+      WHERE dr.id = '{deal_reg_id}' AND dr.tenant_id = '{tenant_id}'
+
+  - name: save_routing_decision
+    description: >
+      Persist the routing decision to pe_deal_registrations, write an audit log
+      row, and emit the appropriate downstream event.
+    kind: sql
+    query: |
+      UPDATE pe_deal_registrations SET
+          status                         = '{routing_decision}',
+          assigned_channel_manager_email = '{assigned_channel_manager_email}',
+          routing_reason                 = '{routing_reason}',
+          routing_confidence             = '{routing_confidence}',
+          routed_at                      = now(),
+          updated_at                     = now()
+      WHERE id = '{deal_reg_id}' AND tenant_id = '{tenant_id}'
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    routing_decision: true          # routing itself is autonomous
+    sf_co_sell_stub_create: false   # co-sell stub requires human approval
+  notify_channel: "${PARTNER_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# On completion routing
+# --------------------------------------------------------------------------
+on_completion:
+  route:
+    conflict: agents/conflict-mediator.yaml
+    approve:  outputs/partner-portal-decision-post-back.yaml
+    reject:   outputs/partner-portal-decision-post-back.yaml
+
+# --------------------------------------------------------------------------
+# Rate limits
+# --------------------------------------------------------------------------
+rate_limits:
+  per_partner_per_hour: 20
+  per_tenant_per_hour: 500
+
+# --------------------------------------------------------------------------
+# Output template
+# --------------------------------------------------------------------------
+output_template: templates/deal-reg-decision-card.md.j2
