@@ -6822,6 +6822,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "pin-project-lite",
+ "slab",
  "tokio",
 ]
 
@@ -8721,11 +8722,15 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "once_cell",
+ "prometheus",
  "serde",
  "serde_json",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
+ "tracing",
  "tracing-subscriber",
  "uuid",
  "xiaoguai-audit",
