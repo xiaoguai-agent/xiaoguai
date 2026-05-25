@@ -1,0 +1,22 @@
+meta {
+  name: Get HOTL Policy
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/v1/hotl/policies/{{policyId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{policyId}}
+  res.body.scope: isDefined
+  res.body.window_seconds: isDefined
+}

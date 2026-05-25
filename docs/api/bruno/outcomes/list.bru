@@ -1,0 +1,25 @@
+meta {
+  name: List Outcomes (aggregate)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/v1/outcomes
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:query {
+  tenant_id: tenant_acme
+  ~kind: revenue_usd
+  ~range: 30d
+}
+
+assert {
+  res.status: eq 200
+}
