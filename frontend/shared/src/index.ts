@@ -8,6 +8,20 @@
 
 export const PACKAGE_VERSION = '0.4.0';
 
+// ---- v1.4 Memory subsystem (ADR-0019) — shipped when xiaoguai-memory lands -
+export type {
+  MemoryType,
+  MemoryRecord,
+  ListMemoriesQuery,
+  ListMemoriesResponse,
+  CreateMemoryRequest,
+  UpdateMemoryRequest,
+  RecallEntry,
+  RecallTraceResponse,
+  SimilarMemory,
+  FindSimilarMemoriesResponse,
+} from './memory';
+
 // ---- Wire types ----------------------------------------------------------
 
 export type SessionStatus = 'active' | 'archived';
@@ -695,6 +709,18 @@ export type AgentEvent =
   | { type: 'done'; stop_reason: 'completed' | 'max_iterations' | 'cancelled' }
   | { type: 'error'; message: string };
 
+// ---- Client (memory type aliases for method signatures) -------------------
+
+import type {
+  ListMemoriesQuery,
+  ListMemoriesResponse,
+  CreateMemoryRequest,
+  UpdateMemoryRequest,
+  MemoryRecord,
+  RecallTraceResponse,
+  FindSimilarMemoriesResponse,
+} from './memory';
+
 // ---- Client --------------------------------------------------------------
 
 export interface ApiClientOptions {
@@ -1046,6 +1072,82 @@ export class XiaoguaiClient {
     return this.request<OutcomesSummaryResponse>(
       'GET',
       `/v1/outcomes/summary?${params.toString()}`,
+    );
+  }
+
+  // ---- v1.4 Memory (ADR-0019) — 404 until xiaoguai-memory ships -----------
+
+  /**
+   * List memories with optional filters. Returns 404 if the memory
+   * subsystem (`xiaoguai-memory` crate, task #155) is not yet deployed.
+   */
+  listMemories(q?: ListMemoriesQuery): Promise<ListMemoriesResponse> {
+    const params = new URLSearchParams();
+    if (q?.type) params.set('type', q.type);
+    if (q?.tenant_id) params.set('tenant_id', q.tenant_id);
+    if (q?.agent_id) params.set('agent_id', q.agent_id);
+    if (q?.tag) params.set('tag', q.tag);
+    if (q?.since) params.set('since', q.since);
+    if (q?.until) params.set('until', q.until);
+    if (q?.limit !== undefined) params.set('limit', String(q.limit));
+    if (q?.offset !== undefined) params.set('offset', String(q.offset));
+    const qs = params.toString();
+    return this.request<ListMemoriesResponse>('GET', `/v1/memory${qs ? `?${qs}` : ''}`);
+  }
+
+  /** Create a new memory record. */
+  createMemory(req: CreateMemoryRequest): Promise<MemoryRecord> {
+    return this.request<MemoryRecord>('POST', '/v1/memory', req);
+  }
+
+  /** Fetch a single memory by id. */
+  getMemory(id: string): Promise<MemoryRecord> {
+    return this.request<MemoryRecord>('GET', `/v1/memory/${encodeURIComponent(id)}`);
+  }
+
+  /** Update mutable fields (content, tags, ttl) of an existing memory. */
+  updateMemory(id: string, req: UpdateMemoryRequest): Promise<MemoryRecord> {
+    return this.request<MemoryRecord>('PATCH', `/v1/memory/${encodeURIComponent(id)}`, req);
+  }
+
+  /** Delete a memory record by id. Returns 204; no body. */
+  async deleteMemory(id: string): Promise<void> {
+    const resp = await this.fetchImpl(
+      `${this.baseUrl}/v1/memory/${encodeURIComponent(id)}`,
+      { method: 'DELETE', headers: this.headers() },
+    );
+    if (!resp.ok) {
+      throw new ApiError(resp.status, 'http_error', `HTTP ${resp.status}`);
+    }
+  }
+
+  /**
+   * Fetch the recall trace for a session or free-form query.
+   * Useful for debugging "why did the agent forget X?".
+   */
+  recallMemoriesForSession(opts: {
+    session_id?: string;
+    query?: string;
+    limit?: number;
+  }): Promise<RecallTraceResponse> {
+    const params = new URLSearchParams();
+    if (opts.session_id) params.set('session_id', opts.session_id);
+    if (opts.query) params.set('query', opts.query);
+    if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+    return this.request<RecallTraceResponse>('GET', `/v1/memory/recall?${params.toString()}`);
+  }
+
+  /**
+   * Find N nearest neighbors by vector similarity for a given memory.
+   * Useful for surfacing duplicate or conflicting memories.
+   */
+  findSimilarMemories(memoryId: string, opts?: { top_k?: number }): Promise<FindSimilarMemoriesResponse> {
+    const params = new URLSearchParams();
+    if (opts?.top_k !== undefined) params.set('top_k', String(opts.top_k));
+    const qs = params.toString();
+    return this.request<FindSimilarMemoriesResponse>(
+      'GET',
+      `/v1/memory/${encodeURIComponent(memoryId)}/similar${qs ? `?${qs}` : ''}`,
     );
   }
 

@@ -15,6 +15,7 @@ import { SkillPacksPane } from './panes/SkillPacks';
 import { HotlPoliciesPane } from './panes/HotlPolicies';
 import { AnomalyPane } from './panes/Anomaly';
 import { KanbanPane } from './panes/Kanban';
+import { MemoryPane } from './panes/Memory';
 
 /**
  * v0.11.1 — audit-first console. `Today` becomes the default landing
@@ -75,6 +76,10 @@ export function App() {
         <NavLink to="/audit" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.audit')}
         </NavLink>
+        {/* v1.4: Memory browser — v1.4-ready with 404 fallback + mock data (ADR-0019). */}
+        <NavLink to="/memory" className={({ isActive }) => (isActive ? 'active' : '')}>
+          {t('nav.memory')}
+        </NavLink>
         <LanguageSwitcher />
       </nav>
       <main className="main">
@@ -94,6 +99,7 @@ export function App() {
           <Route path="/providers" element={<ProvidersPane />} />
           <Route path="/hotl-policies" element={<HotlPoliciesPane />} />
           <Route path="/audit" element={<AuditPane />} />
+          <Route path="/memory" element={<MemoryPane />} />
         </Routes>
       </main>
     </div>
