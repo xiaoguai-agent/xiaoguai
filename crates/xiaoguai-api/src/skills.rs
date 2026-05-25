@@ -206,6 +206,9 @@ impl SkillPackRepository for InMemorySkillPackRepository {
 ///
 /// Returns the full catalog baked into the binary. No auth — callers
 /// can browse available packs without credentials.
+///
+/// # Errors
+/// Returns an error if the catalog file cannot be parsed.
 #[allow(clippy::unused_async)]
 pub async fn list_catalog() -> ApiResult<Json<CatalogFile>> {
     Ok(Json(catalog().clone()))
@@ -217,6 +220,9 @@ pub struct InstalledQuery {
 }
 
 /// `GET /v1/skills/installed?tenant=<tenant_id>`
+///
+/// # Errors
+/// Returns an error if the tenant parameter is missing or the repository fails.
 pub async fn list_installed(
     State(state): State<AppState>,
     Query(q): Query<InstalledQuery>,
@@ -240,6 +246,9 @@ pub struct InstallRequest {
 }
 
 /// `POST /v1/skills/install`
+///
+/// # Errors
+/// Returns an error if the pack slug is not found in the catalog or the repository fails.
 pub async fn install_pack(
     State(state): State<AppState>,
     Json(req): Json<InstallRequest>,
@@ -271,6 +280,9 @@ pub async fn install_pack(
 }
 
 /// `DELETE /v1/skills/install/:id`
+///
+/// # Errors
+/// Returns an error if the pack is not found or the repository fails.
 pub async fn uninstall_pack(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -294,6 +306,7 @@ fn skill_repo(state: &AppState) -> ApiResult<Arc<dyn SkillPackRepository>> {
         .ok_or_else(|| ApiError::ServiceUnavailable("skill pack repository not wired".into()))
 }
 
+#[allow(clippy::needless_pass_by_value, reason = "error is moved into anyhow for ownership")]
 fn skill_err_to_api(e: SkillPackError) -> ApiError {
     ApiError::Internal(anyhow::anyhow!("skill pack store: {e}"))
 }
@@ -387,8 +400,8 @@ mod tests {
         for (tenant, slug) in &[("t1", "rag-legal"), ("t1", "rag-finance"), ("t2", "rag-hr")] {
             repo.install(InstalledPackRow {
                 id: Uuid::new_v4().to_string(),
-                tenant_id: tenant.to_string(),
-                pack_slug: slug.to_string(),
+                tenant_id: (*tenant).to_owned(),
+                pack_slug: (*slug).to_owned(),
                 version: "1.0.0".into(),
                 config: serde_json::json!({}),
                 installed_at: Utc::now(),

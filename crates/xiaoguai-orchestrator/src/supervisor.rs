@@ -115,6 +115,7 @@ pub struct Supervisor {
 
 impl Supervisor {
     /// Build a supervisor with an empty worker pool and no challenger.
+    #[must_use]
     pub fn new(budget: Budget, planner: Box<dyn Planner>) -> Self {
         Self {
             budget,
@@ -137,12 +138,23 @@ impl Supervisor {
     }
 
     /// Run to completion or budget exhaustion.
+    ///
+    /// # Errors
+    /// Returns `OrchestratorError` if the planner or any worker step fails.
     pub async fn run(&mut self, goal: &str) -> Result<RunOutcome, OrchestratorError> {
         let report = self.run_detailed(goal).await?;
         Ok(report.outcome)
     }
 
     /// Like `run` but also returns the full step history.
+    ///
+    /// # Errors
+    /// Returns `OrchestratorError` if the planner or any worker step fails.
+    ///
+    /// # Panics
+    /// Panics if the challenge-and-dispatch loop returns `Some` but the inner
+    /// `Option` is `None` — an internal invariant that should not occur in
+    /// practice.
     pub async fn run_detailed(&mut self, goal: &str) -> Result<RunReport, OrchestratorError> {
         self.budget.start();
         let mut history: Vec<StepResult> = Vec::new();

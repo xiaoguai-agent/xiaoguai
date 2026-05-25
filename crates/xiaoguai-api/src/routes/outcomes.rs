@@ -13,8 +13,7 @@ use xiaoguai_audit::outcomes::OutcomeRange;
 
 use crate::error::{ApiError, ApiResult};
 use crate::outcomes::{
-    OutcomeWriter, OutcomesReader, OutcomesSummaryResponse, OutcomesTimeseriesResponse,
-    RecordOutcomeRequest, RecordOutcomeResponse,
+    OutcomesSummaryResponse, OutcomesTimeseriesResponse, RecordOutcomeRequest, RecordOutcomeResponse,
 };
 use crate::state::AppState;
 
@@ -24,6 +23,9 @@ use crate::state::AppState;
 
 /// Record a business outcome attribution.  Agents call this after completing
 /// a task that produced measurable business value.
+///
+/// # Errors
+/// Returns an error if the outcome writer is not wired, inputs are invalid, or the write fails.
 pub async fn record_outcome(
     State(state): State<AppState>,
     Json(req): Json<RecordOutcomeRequest>,
@@ -77,6 +79,9 @@ pub struct SummaryQuery {
 
 /// Aggregated ROI summary — one bucket per outcome kind.  Backs the four
 /// summary cards in the admin-ui Outcomes pane.
+///
+/// # Errors
+/// Returns an error if the outcomes reader is not wired, the range is invalid, or the query fails.
 pub async fn outcomes_summary(
     State(state): State<AppState>,
     Query(q): Query<SummaryQuery>,
@@ -120,6 +125,9 @@ pub struct TimeseriesQuery {
 }
 
 /// Daily time-series breakdown — used by the bar chart in the Outcomes pane.
+///
+/// # Errors
+/// Returns an error if the outcomes reader is not wired, the range is invalid, or the query fails.
 pub async fn outcomes_timeseries(
     State(state): State<AppState>,
     Query(q): Query<TimeseriesQuery>,

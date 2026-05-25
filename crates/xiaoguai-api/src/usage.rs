@@ -379,7 +379,7 @@ mod tests {
     /// Helper: build an entry with explicit token counts and a cost that
     /// mirrors what the PG bridge would compute for a given rate.
     ///
-    /// Formula: cost_cents = round((input * rate_in + output * rate_out) / 1000 * 100)
+    /// Formula: `cost_cents` = round((`input` * `rate_in` + `output` * `rate_out`) / 1000 * 100)
     fn entry_with_cost(
         ts: DateTime<Utc>,
         input: u64,
@@ -387,8 +387,10 @@ mod tests {
         cost_usd_per_1k_input: f64,
         cost_usd_per_1k_output: f64,
     ) -> StaticUsageEntry {
+        #[allow(clippy::cast_precision_loss, reason = "token counts fit safely in f64 for cost math")]
         let usd = (input as f64 * cost_usd_per_1k_input + output as f64 * cost_usd_per_1k_output)
             / 1000.0;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "cost in cents is always non-negative and fits u64")]
         let cents = (usd * 100.0).round() as u64;
         StaticUsageEntry {
             ts,

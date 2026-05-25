@@ -71,6 +71,7 @@ async fn body_to_value(body: Body) -> Value {
     serde_json::from_str(&s).unwrap_or_else(|_| panic!("not valid JSON: {s}"))
 }
 
+#[allow(clippy::needless_pass_by_value, reason = "test helper — caller owns the Value")]
 fn json_post(uri: &str, body: Value) -> Request<Body> {
     Request::builder()
         .method(Method::POST)

@@ -122,6 +122,7 @@ pub struct AgentSpec {
 
 impl AgentSpec {
     /// Returns `true` if this spec covers *all* of the requested capabilities.
+    #[must_use]
     pub fn covers_all(&self, required: &[Capability]) -> bool {
         required.iter().all(|req| self.capabilities.contains(req))
     }
@@ -168,6 +169,9 @@ impl std::fmt::Debug for AgentRef {
 
 impl AgentRef {
     /// Execute the agent.
+    ///
+    /// # Errors
+    /// Returns `OrchestratorError` if the underlying agent implementation fails.
     pub async fn run(&self, payload: &str) -> Result<String, OrchestratorError> {
         self.agent.run(payload).await
     }
@@ -185,6 +189,7 @@ pub struct AgentRegistry {
 
 impl AgentRegistry {
     /// Create an empty registry.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -192,6 +197,10 @@ impl AgentRegistry {
     /// Register an agent.  Returns an error if a name collision occurs.
     ///
     /// To replace an existing agent, call [`Self::unregister`] first.
+    ///
+    /// # Errors
+    /// Returns `OrchestratorError::Internal` if an agent with the same name is
+    /// already registered.
     pub fn register(&self, agent: Arc<dyn Agent>) -> Result<(), OrchestratorError> {
         let name = agent.spec().name.clone();
         if self.agents.contains_key(&name) {
@@ -204,11 +213,13 @@ impl AgentRegistry {
     }
 
     /// Remove an agent by name.  Returns `true` if the agent existed.
+    #[must_use]
     pub fn unregister(&self, name: &str) -> bool {
         self.agents.remove(name).is_some()
     }
 
     /// Look up a single agent by name.
+    #[must_use]
     pub fn lookup_by_name(&self, name: &str) -> Option<AgentRef> {
         self.agents.get(name).map(|entry| {
             let agent = Arc::clone(entry.value());
@@ -222,6 +233,7 @@ impl AgentRegistry {
 
     /// Return all agents whose `AgentSpec::capabilities` cover *every* requested
     /// capability, in ascending `cost_hint` order.
+    #[must_use]
     pub fn lookup_by_capability(&self, required: &[Capability]) -> Vec<AgentRef> {
         let mut matches: Vec<AgentRef> = self
             .agents
@@ -248,6 +260,7 @@ impl AgentRegistry {
     }
 
     /// Return all registered agents, sorted by name.
+    #[must_use]
     pub fn list_all(&self) -> Vec<AgentRef> {
         let mut all: Vec<AgentRef> = self
             .agents
@@ -266,11 +279,13 @@ impl AgentRegistry {
     }
 
     /// Number of registered agents.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.agents.len()
     }
 
     /// `true` if no agents are registered.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.agents.is_empty()
     }
@@ -298,7 +313,7 @@ pub(crate) mod test_helpers {
         }
     }
 
-    /// Build a spec with the given capabilities and cost_hint.
+    /// Build a spec with the given capabilities and `cost_hint`.
     pub fn make_spec(
         name: &str,
         caps: Vec<(&str, &str)>,

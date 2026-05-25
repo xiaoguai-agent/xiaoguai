@@ -76,6 +76,8 @@ impl From<Session> for SessionResponse {
     }
 }
 
+/// # Errors
+/// Returns an error if required fields are missing, the session store is not wired, or the create fails.
 pub async fn create_session(
     State(state): State<AppState>,
     claims: Option<Extension<Claims>>,
@@ -120,6 +122,9 @@ pub struct ListSessionsQuery {
 ///
 /// `user_id` is required: in dev mode it comes from the query string;
 /// in authed mode it falls back to `Claims.sub` when missing.
+///
+/// # Errors
+/// Returns an error if `user_id` is missing, the session store is not wired, or the query fails.
 pub async fn list_sessions(
     State(state): State<AppState>,
     claims: Option<Extension<Claims>>,
@@ -139,6 +144,8 @@ pub async fn list_sessions(
     Ok(Json(rows.into_iter().map(Into::into).collect()))
 }
 
+/// # Errors
+/// Returns an error if the session is not found or the session store fails.
 pub async fn get_session(
     State(state): State<AppState>,
     claims: Option<Extension<Claims>>,
@@ -159,6 +166,8 @@ pub struct ListMessagesQuery {
     pub offset: Option<i64>,
 }
 
+/// # Errors
+/// Returns an error if the session is not found or the message store fails.
 pub async fn list_messages(
     State(state): State<AppState>,
     claims: Option<Extension<Claims>>,
@@ -198,6 +207,9 @@ pub struct SendMessageRequest {
 ///   4. Stream each `AgentEvent` as one SSE event to the client.
 ///   5. A separately-spawned finalize task awaits the agent join handle and
 ///      persists any new messages, then drops the cancel registry entry.
+///
+/// # Errors
+/// Returns an error if the session is not found, the message is invalid, or the agent fails to start.
 pub async fn send_message(
     State(state): State<AppState>,
     claims: Option<Extension<Claims>>,
@@ -343,6 +355,8 @@ pub struct CancelResponse {
     pub cancelled: bool,
 }
 
+/// # Errors
+/// Returns an error if the session is not found or cannot be cancelled.
 pub async fn cancel_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -416,6 +430,9 @@ pub struct ForkSessionRequest {
 /// Tenant resolution mirrors `send_message`: claims first (auth-on
 /// mode), parent session row second (auth-off dev mode). Both paths
 /// converge on a single `tenant` string passed to the forker.
+///
+/// # Errors
+/// Returns an error if the parent session is not found, the message ID is invalid, or the fork fails.
 pub async fn fork_session(
     State(state): State<AppState>,
     claims: Option<Extension<Claims>>,

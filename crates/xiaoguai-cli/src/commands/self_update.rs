@@ -69,12 +69,14 @@ fn current_target() -> &'static str {
 
 /// Return true if `remote_tag` (e.g. `v1.2.15`) is strictly newer than the
 /// compiled-in `CARGO_PKG_VERSION`.
+#[must_use]
 pub fn is_newer(remote_tag: &str) -> bool {
     let remote = remote_tag.trim_start_matches('v');
     parse_semver(remote) > parse_semver(env!("CARGO_PKG_VERSION"))
 }
 
 /// Parse a semver string into `(major, minor, patch)`.  Exposed for testing.
+#[must_use]
 pub fn parse_semver_pub(s: &str) -> (u64, u64, u64) {
     parse_semver(s)
 }
@@ -94,7 +96,9 @@ fn parse_semver(s: &str) -> (u64, u64, u64) {
 ///
 /// `tarball`, `sig`, and `pem` are local filesystem paths.
 ///
-/// Returns `Ok(())` if verification passes, `Err` otherwise.
+/// # Errors
+/// Returns an error if `cosign` is not found on `PATH`, if the subprocess
+/// cannot be spawned, or if signature verification fails.
 pub fn cosign_verify(tarball: &Path, sig: &Path, pem: &Path) -> Result<()> {
     let cosign = which_cosign().context(
         "cosign not found on PATH. Install cosign from https://github.com/sigstore/cosign/releases",
@@ -143,6 +147,10 @@ fn which_cosign() -> Option<PathBuf> {
 /// Extract the `xiaoguai` binary from `tarball_bytes` (gzip-compressed tar).
 ///
 /// Looks for an entry named `xiaoguai` or `bin/xiaoguai` in the archive.
+///
+/// # Errors
+/// Returns an error if decompression fails, a tar entry cannot be read, or
+/// no entry named `xiaoguai` is found in the archive.
 pub fn extract_binary(tarball_bytes: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = flate2::read::GzDecoder::new(tarball_bytes);
     let mut tar_bytes = Vec::new();
@@ -171,6 +179,10 @@ pub fn extract_binary(tarball_bytes: &[u8]) -> Result<Vec<u8>> {
 
 /// Fetch a URL and return the response body bytes (blocking via reqwest sync
 /// feature isn't available; callers run this inside tokio).
+///
+/// # Errors
+/// Returns an error if the HTTP client cannot be built, the request fails,
+/// the server returns a non-2xx status, or the response body cannot be read.
 pub async fn fetch_bytes(url: &str) -> Result<Vec<u8>> {
     let client = reqwest::Client::builder()
         .user_agent(concat!("xiaoguai/", env!("CARGO_PKG_VERSION")))
@@ -201,6 +213,11 @@ pub struct SelfUpdateArgs {
 }
 
 /// Run `xiaoguai self-update`.
+///
+/// # Errors
+/// Returns an error if the GitHub release API cannot be reached, if no
+/// suitable asset is found for the current platform, if the cosign
+/// verification fails, or if the binary cannot be replaced on disk.
 pub async fn run_self_update(args: SelfUpdateArgs) -> Result<()> {
     let api_url = args.api_url.as_deref().unwrap_or(RELEASES_URL);
 

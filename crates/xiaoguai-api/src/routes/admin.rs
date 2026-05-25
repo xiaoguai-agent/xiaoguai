@@ -73,6 +73,8 @@ impl From<Tenant> for TenantResponse {
     }
 }
 
+/// # Errors
+/// Returns an error if the tenant repository is not wired or the query fails.
 pub async fn list_tenants(
     State(state): State<AppState>,
     Query(q): Query<ListTenantsQuery>,
@@ -106,6 +108,9 @@ pub struct VerifyAuditResponse {
 /// response is HTTP 200 on purpose so dashboards can scrape it; the
 /// `ok` flag is the alerting signal).
 /// 503 when no verifier is wired; 400 when `tenant_id` is missing.
+///
+/// # Errors
+/// Returns an error if the verifier is not wired, the tenant ID is missing, or the query fails.
 pub async fn verify_audit(
     State(state): State<AppState>,
     Query(q): Query<VerifyAuditQuery>,
@@ -153,6 +158,9 @@ pub struct ListTodayQuery {
 /// v0.11.1 — audit-first console substrate. Merges the three most-recent
 /// streams (chat / IM / scheduled) into one timeline sorted by ts desc.
 /// Behind the same admin auth stack as the rest of `/v1/admin/*`.
+///
+/// # Errors
+/// Returns an error if the today reader is not wired or the query fails.
 pub async fn list_today(
     State(state): State<AppState>,
     Query(q): Query<ListTodayQuery>,
@@ -176,6 +184,8 @@ pub async fn list_today(
     Ok(Json(items))
 }
 
+/// # Errors
+/// Returns an error if the audit reader is not wired, tenant ID is missing, or the query fails.
 pub async fn list_audit(
     State(state): State<AppState>,
     Query(q): Query<ListAuditQuery>,
@@ -206,6 +216,9 @@ pub async fn list_audit(
 
 /// `GET /v1/admin/eval/suites` — enumerate suites available on disk so
 /// the console can render a clickable left-hand list.
+///
+/// # Errors
+/// Returns an error if the eval service is not wired or the directory cannot be read.
 pub async fn list_eval_suites(
     State(state): State<AppState>,
 ) -> ApiResult<Json<Vec<EvalSuiteListItem>>> {
@@ -220,6 +233,9 @@ pub async fn list_eval_suites(
 /// `POST /v1/admin/eval/run` — execute a suite synchronously and
 /// return the full report. The per-request caps live in
 /// `eval::MAX_CASES_PER_RUN` + `eval::MAX_RUN_DURATION`.
+///
+/// # Errors
+/// Returns an error if the eval service is not wired, the suite is too large, or it times out.
 pub async fn run_eval_suite(
     State(state): State<AppState>,
     Json(req): Json<RunEvalRequest>,
@@ -236,6 +252,9 @@ pub async fn run_eval_suite(
 /// `sessions.id` into a ready-to-edit `EvalCase` YAML the operator
 /// pastes into a new `.eval.yaml` file. Does **not** write to disk; the
 /// caller reviews + commits.
+///
+/// # Errors
+/// Returns an error if the eval service is not wired or the session is not found.
 pub async fn eval_case_from_session(
     State(state): State<AppState>,
     Json(req): Json<CaseFromSessionRequest>,
@@ -259,6 +278,9 @@ pub async fn eval_case_from_session(
 /// Per-tenant API tokens (so external integrators can hit the endpoint
 /// without an admin bearer) land in v0.12.1 — today the route uses the
 /// existing admin bearer/Casbin guard.
+///
+/// # Errors
+/// Returns an error if the webhook pusher is not wired, no jobs matched, or the push fails.
 pub async fn scheduler_webhook(
     State(state): State<AppState>,
     Path(route_id): Path<String>,
@@ -307,6 +329,9 @@ pub struct CompileJobResponse {
 /// description ("每天 8 点扫 r/LocalLLaMA + HN 推 Telegram") into a
 /// ready-to-review `ScheduledJob` row. Does NOT persist; the operator
 /// reviews and then POSTs to `/v1/admin/scheduler/jobs`.
+///
+/// # Errors
+/// Returns an error if the description is empty, the compiler is not wired, or the LLM fails.
 pub async fn scheduler_compile_job(
     State(state): State<AppState>,
     Json(req): Json<CompileJobRequest>,
@@ -334,6 +359,9 @@ pub async fn scheduler_compile_job(
 /// Body shape mirrors `xiaoguai_scheduler::ScheduledJob`. Returns 201
 /// on success, 400 on invalid payload, 503 when the scheduler isn't
 /// wired in this process.
+///
+/// # Errors
+/// Returns an error if the upserter is not wired or the job payload is invalid.
 pub async fn scheduler_upsert_job(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
@@ -396,6 +424,9 @@ impl From<WebhookTokenRecord> for TokenResponse {
 /// `POST /v1/admin/scheduler/tokens` — mint a new webhook token bound to
 /// `(tenant_id, route_id)`. The token is returned exactly once in the
 /// response body; the operator must capture it immediately.
+///
+/// # Errors
+/// Returns an error if the token admin is not wired, inputs are empty, or creation fails.
 pub async fn scheduler_create_token(
     State(state): State<AppState>,
     Json(req): Json<CreateTokenRequest>,
@@ -423,6 +454,9 @@ pub async fn scheduler_create_token(
 
 /// `GET /v1/admin/scheduler/tokens?tenant_id=...&limit=...` — list
 /// tokens, optionally scoped to one tenant.
+///
+/// # Errors
+/// Returns an error if the token admin is not wired or the query fails.
 pub async fn scheduler_list_tokens(
     State(state): State<AppState>,
     Query(q): Query<ListTokensQuery>,
@@ -440,6 +474,10 @@ pub async fn scheduler_list_tokens(
 }
 
 /// `DELETE /v1/admin/scheduler/tokens/:token` — revoke a webhook token.
+///
+/// # Errors
+/// Returns an error if the token admin is not wired, the token is not found, or revocation fails.
+#[allow(clippy::needless_pass_by_value, reason = "Axum Path extractor requires owned String")]
 pub async fn scheduler_revoke_token(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -461,6 +499,9 @@ pub struct ListScheduledJobsQuery {
 /// admin-ui Scheduler pane's Jobs tab. Returns the narrow
 /// `ScheduledJobSummary` shape; drill-in (full row) is a separate
 /// future endpoint.
+///
+/// # Errors
+/// Returns an error if the jobs reader is not wired or the query fails.
 pub async fn scheduler_list_jobs(
     State(state): State<AppState>,
     Query(q): Query<ListScheduledJobsQuery>,
@@ -478,6 +519,9 @@ pub async fn scheduler_list_jobs(
 /// job out-of-band (regardless of `next_fire_at`). Returns 202; the
 /// run completes asynchronously and shows up in the next refresh of
 /// the Today pane.
+///
+/// # Errors
+/// Returns an error if the jobs reader is not wired, the job is not found, or the fire fails.
 pub async fn scheduler_fire_now(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
@@ -504,6 +548,7 @@ fn token_admin_err_to_api(e: WebhookTokenAdminError) -> ApiError {
     }
 }
 
+#[allow(clippy::needless_pass_by_value, reason = "match destructures the error by value")]
 fn jobs_read_err_to_api(e: ScheduledJobsReadError) -> ApiError {
     match e {
         ScheduledJobsReadError::NotFound(_) => ApiError::NotFound,

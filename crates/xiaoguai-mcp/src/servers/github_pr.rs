@@ -13,7 +13,7 @@
 //! # Webhook signature verification
 //!
 //! `verify_github_signature` is a pure function exposed for use by the
-//! xiaoguai-scheduler WebhookSourceAdapter:
+//! `xiaoguai-scheduler` `WebhookSourceAdapter`:
 //! ```ignore
 //! let ok = verify_github_signature(body_bytes, sig_header, secret)?;
 //! ```
@@ -65,6 +65,7 @@ pub struct GitHubPrConfig {
 }
 
 impl GitHubPrConfig {
+    #[must_use]
     pub fn new(token: impl Into<String>) -> Self {
         Self {
             token: token.into(),
@@ -72,6 +73,7 @@ impl GitHubPrConfig {
         }
     }
 
+    #[must_use]
     pub fn with_api_base(mut self, base: impl Into<String>) -> Self {
         self.api_base = base.into();
         self
@@ -129,7 +131,7 @@ pub struct PrFile {
 /// agent calls these methods through the pack's MCP tool dispatch, which
 /// serialises arguments and deserialises results using the standard tool
 /// call protocol.  We skip the rmcp stdio/HTTP framing because the
-/// github_pr tools are always co-located with the pack runner.
+/// `github_pr` tools are always co-located with the pack runner.
 pub struct GitHubPrClient {
     cfg: GitHubPrConfig,
     http: reqwest::Client,
@@ -139,11 +141,16 @@ impl fmt::Debug for GitHubPrClient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GitHubPrClient")
             .field("api_base", &self.cfg.api_base)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
 impl GitHubPrClient {
+    /// Create a new client with HTTPS-only enforcement.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying `reqwest` client cannot be built
+    /// (e.g. invalid TLS configuration on the platform).
     pub fn new(cfg: GitHubPrConfig) -> GitHubPrResult<Self> {
         let http = reqwest::Client::builder().https_only(true).build()?;
         Ok(Self { cfg, http })
@@ -155,6 +162,11 @@ impl GitHubPrClient {
     ///
     /// Returns up to 300 files (GitHub API limit per page; pagination not
     /// implemented — PRs >300 files get a truncated diff).
+    ///
+    /// # Errors
+    /// Returns `GitHubPrError::Api` on 4xx/5xx responses, `GitHubPrError::Http`
+    /// on network failures, or `GitHubPrError::Json` if the response is not
+    /// valid JSON.
     pub async fn get_pr_diff(
         &self,
         owner: &str,
@@ -177,6 +189,12 @@ impl GitHubPrClient {
     /// `comments` must reference diff line positions (the `+` line counter
     /// in the unified diff), NOT file line numbers.  GitHub rejects comments
     /// pointing to non-diff lines with HTTP 422.
+    ///
+    /// # Errors
+    /// Returns `GitHubPrError::Api` on 4xx/5xx responses, `GitHubPrError::Http`
+    /// on network failures, or `GitHubPrError::Json` if the response is not
+    /// valid JSON.
+    #[allow(clippy::too_many_arguments, reason = "mirrors GitHub API: each field is a distinct required parameter")]
     pub async fn post_pr_review(
         &self,
         owner: &str,
@@ -225,6 +243,11 @@ impl GitHubPrClient {
     /// Use `post_pr_review` when posting multiple comments at once; this
     /// method is for ad-hoc single comments (e.g. challenger supplements
     /// added after the review).
+    ///
+    /// # Errors
+    /// Returns `GitHubPrError::Api` on 4xx/5xx responses, `GitHubPrError::Http`
+    /// on network failures, or `GitHubPrError::Json` if the response is not
+    /// valid JSON.
     pub async fn post_comment(
         &self,
         owner: &str,
@@ -332,6 +355,12 @@ pub fn verify_github_signature(body: &[u8], sig_header: &str, secret: &[u8]) -> 
 /// ```ignore
 /// let result = dispatch_tool(&client, tool_name, args_json).await?;
 /// ```
+///
+/// # Errors
+/// Returns `GitHubPrError::InvalidArgument` for missing required arguments,
+/// `GitHubPrError::Api` for GitHub 4xx/5xx responses, `GitHubPrError::Http`
+/// for network failures, `GitHubPrError::Json` for deserialisation errors,
+/// and `GitHubPrError::Api { status: 404 }` for unknown tool names.
 pub async fn dispatch_tool(
     client: &GitHubPrClient,
     tool_name: &str,

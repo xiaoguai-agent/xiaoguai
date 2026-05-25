@@ -2,7 +2,7 @@
 //!
 //! ## What runs today (no F1/F2 required)
 //!
-//! - `pack_yaml_parses` — deserialises pack.yaml against PackManifest schema.
+//! - `pack_yaml_parses` — deserialises pack.yaml against `PackManifest` schema.
 //! - `watch_spec_round_trips` — parses watches/dso-over-60.yaml, re-serialises,
 //!   confirms key fields survive the round-trip.
 //! - `anomaly_spec_round_trips` — same for anomalies/dso-drift.yaml.
@@ -13,11 +13,11 @@
 //!
 //! ## Gated on F1/F2 merge (`#[ignore]`)
 //!
-//! - `watch_tick_emits_event` — seeds ar_aging fixture rows, ticks the
-//!   WatchRunner, asserts a WatchEvent with kind `ar.dso_over_60` is emitted.
+//! - `watch_tick_emits_event` — seeds `ar_aging` fixture rows, ticks the
+//!   `WatchRunner`, asserts a `WatchEvent` with kind `ar.dso_over_60` is emitted.
 //! - `agent_drafts_email_on_watch_event` — full end-to-end: seed fixture,
-//!   tick watch, let dunning-drafter run, assert ar_dunning_log row created
-//!   with status = 'pending_approval' and rendered body contains invoice ID.
+//!   tick watch, let dunning-drafter run, assert `ar_dunning_log` row created
+//!   with status = `pending_approval` and rendered body contains invoice ID.
 
 // -------------------------------------------------------------------------
 // Dependencies
@@ -36,23 +36,24 @@ fn pack_root() -> PathBuf {
     // core crate directory. We walk up the ancestor chain to find the workspace
     // root (the dir that has both Cargo.toml and a packs/ sub-dir).
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."));
+        .map_or_else(|_| PathBuf::from("."), PathBuf::from);
 
     manifest_dir
         .ancestors()
         .find(|p| p.join("Cargo.toml").exists() && p.join("packs").exists())
-        .map(|p| p.join("packs/ar-collections"))
-        .unwrap_or_else(|| {
-            // Fallback: the test file lives at packs/ar-collections/tests/integration.rs
-            // so two parents up is the pack root.
-            PathBuf::from(file!())
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .to_owned()
-        })
+        .map_or_else(
+            || {
+                // Fallback: the test file lives at packs/ar-collections/tests/integration.rs
+                // so two parents up is the pack root.
+                PathBuf::from(file!())
+                    .parent()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .to_owned()
+            },
+            |p| p.join("packs/ar-collections"),
+        )
 }
 
 // -------------------------------------------------------------------------
@@ -79,12 +80,14 @@ struct PackRequires {
 
 #[derive(Debug)]
 struct PackPath {
+    #[allow(dead_code, reason = "parsed from YAML for structural validation; field value unused in assertions")]
     path: String,
 }
 
 #[derive(Debug)]
 struct WatchSpec {
     name: String,
+    #[allow(dead_code, reason = "parsed from YAML for structural validation; field value unused in assertions")]
     version: String,
     source: WatchSource,
     query: String,
@@ -112,6 +115,7 @@ struct WatchEvent {
 #[derive(Debug)]
 struct AnomalySpec {
     name: String,
+    #[allow(dead_code, reason = "parsed from YAML for structural validation; field value unused in assertions")]
     version: String,
     metric: AnomalyMetric,
     baseline: AnomalyBaseline,
@@ -150,14 +154,17 @@ fn parse_str_field(v: &serde_yaml::Value, key: &str) -> String {
         .to_owned()
 }
 
+#[allow(dead_code, reason = "helper retained for future test cases; not yet exercised")]
 fn parse_opt_str(v: &serde_yaml::Value, key: &str) -> Option<String> {
     v[key].as_str().map(str::to_owned)
 }
 
 fn parse_u32_field(v: &serde_yaml::Value, key: &str) -> u32 {
-    v[key]
+    #[allow(clippy::cast_possible_truncation, reason = "YAML integers in pack specs are expected to be small (< 2^32); truncation would be a schema error")]
+    let val = v[key]
         .as_u64()
-        .unwrap_or_else(|| panic!("missing or non-integer field: {key}")) as u32
+        .unwrap_or_else(|| panic!("missing or non-integer field: {key}")) as u32;
+    val
 }
 
 fn parse_f64_field(v: &serde_yaml::Value, key: &str) -> f64 {
@@ -465,14 +472,16 @@ fn email_template_renders_final() {
 // Tests gated on F1/F2 merge — marked #[ignore] until those features land.
 // -------------------------------------------------------------------------
 
-/// Seed ar_aging fixture, run a WatchRunner tick, assert WatchEvent emitted.
+/// Seed `ar_aging` fixture, run a `WatchRunner` tick, assert `WatchEvent` emitted.
 ///
 /// Requires:
-///   - F1: xiaoguai-watch crate + WatchRunner + event bus
-///   - A live Postgres instance (DATABASE_URL env var)
+///   - F1: `xiaoguai-watch` crate + `WatchRunner` + event bus
+///   - A live Postgres instance (`DATABASE_URL` env var)
 ///
 /// To run manually once F1 is merged:
-///   cargo test -p xiaoguai-core watch_tick_emits_event -- --ignored
+/// ```text
+/// cargo test -p xiaoguai-core watch_tick_emits_event -- --ignored
+/// ```
 #[test]
 #[ignore = "pending F1 (xiaoguai-watch) merge"]
 fn watch_tick_emits_event() {
@@ -492,13 +501,15 @@ fn watch_tick_emits_event() {
 /// Full end-to-end: seed → watch tick → dunning-drafter runs → draft saved.
 ///
 /// Requires:
-///   - F1: WatchRunner
-///   - F2: AnomalyRunner (optional for this specific test)
+///   - F1: `WatchRunner`
+///   - F2: `AnomalyRunner` (optional for this specific test)
 ///   - F3: outcome telemetry tables
 ///   - A live Postgres instance + a configured LLM backend
 ///
 /// To run manually once F1/F2/F3 are merged:
-///   cargo test -p xiaoguai-core agent_drafts_email_on_watch_event -- --ignored
+/// ```text
+/// cargo test -p xiaoguai-core agent_drafts_email_on_watch_event -- --ignored
+/// ```
 #[test]
 #[ignore = "pending F1/F2/F3 merge"]
 fn agent_drafts_email_on_watch_event() {

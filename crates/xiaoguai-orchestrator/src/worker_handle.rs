@@ -18,6 +18,7 @@ pub struct WorkerPool {
 }
 
 impl WorkerPool {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             workers: Vec::new(),

@@ -174,7 +174,7 @@ mod tests {
         let r2 = lazy("postgres://invalid:5432/r2");
         let rwp = ReadWritePool::new(p, vec![r0, r1, r2]);
 
-        let ptrs: Vec<*const PgPool> = (0..6).map(|_| rwp.reader() as *const _).collect();
+        let ptrs: Vec<*const PgPool> = (0..6).map(|_| std::ptr::from_ref(rwp.reader())).collect();
 
         // Period must be 3.
         assert_eq!(ptrs[0], ptrs[3]);
@@ -182,7 +182,7 @@ mod tests {
         assert_eq!(ptrs[2], ptrs[5]);
 
         // All three replicas covered in first lap.
-        let unique: std::collections::HashSet<_> = ptrs[..3].iter().cloned().collect();
+        let unique: std::collections::HashSet<_> = ptrs[..3].iter().copied().collect();
         assert_eq!(unique.len(), 3);
     }
 

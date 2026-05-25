@@ -80,6 +80,9 @@ fn catalog() -> &'static CatalogFile {
 }
 
 /// `GET /v1/mcp/marketplace`.
+///
+/// # Errors
+/// Returns an error if the marketplace catalog cannot be loaded.
 #[allow(clippy::unused_async)]
 pub async fn list_marketplace() -> ApiResult<Json<MarketplaceResponse>> {
     let c = catalog();
@@ -107,6 +110,9 @@ pub struct InstallResponse {
 }
 
 /// `POST /v1/mcp/marketplace/install`.
+///
+/// # Errors
+/// Returns an error if the slug is not found or the MCP repository is unavailable.
 pub async fn install_from_marketplace(
     State(state): State<AppState>,
     Json(req): Json<InstallRequest>,
