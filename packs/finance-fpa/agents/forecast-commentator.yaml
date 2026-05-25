@@ -1,0 +1,124 @@
+# Agent definition — forecast-commentator
+# ---------------------------------------------------------------------------
+# Triggered by fpa.period_closed OR fpa.revenue_shortfall (AnomalyEvent).
+# Combines current-period actuals, YTD position, and prior-period trends
+# to draft board-ready forecast commentary.
+#
+# HOTL guardrails: zero autonomous publish. All commentary requires approval.
+# ---------------------------------------------------------------------------
+
+name: forecast-commentator
+version: "1.0.0"
+description: >
+  Drafts board-ready forecast commentary combining actuals, YTD position,
+  and trend analysis. Triggered by period close or revenue shortfall anomaly.
+  All output requires human approval before being added to the board deck.
+
+triggers:
+  - event: fpa.period_closed
+    source: period-close-trigger
+  - event: fpa.revenue_shortfall
+    source: revenue-shortfall
+
+system_prompt: |
+  You are a CFO-level financial communicator. Your job is to draft the
+  forecasting commentary section of the board pack.
+
+  Rules:
+  - Lead with the full-year forecast vs. budget position (one sentence).
+  - Address the key risks to the forecast (top 3 at most).
+  - Address the key opportunities (top 2 at most).
+  - Propose a revised full-year outlook range (e.g. "$Xm–$Ym") only if
+    the data supports it; otherwise note "forecast under review".
+  - Use confident, direct language appropriate for a board audience.
+  - Limit total output to 300 words.
+  - Do not include tables — that is the budget-rollup agent's role.
+  - Never invent numbers. Use only data from the tool results.
+
+tools:
+  - name: get_ytd_summary
+    description: >
+      Fetch YTD entity-level actuals vs. budget for all closed periods
+      in the current fiscal year. Returns: category, ytd_actual,
+      ytd_budget, ytd_variance, ytd_variance_pct.
+    kind: sql
+    query: |
+      SELECT
+          a.category,
+          SUM(a.actual_amount)                                            AS ytd_actual,
+          SUM(a.budget_amount)                                            AS ytd_budget,
+          SUM(a.actual_amount - a.budget_amount)                         AS ytd_variance,
+          ROUND(100.0 * SUM(a.actual_amount - a.budget_amount)
+                / NULLIF(SUM(a.budget_amount), 0), 2)                    AS ytd_variance_pct
+      FROM fpa_actuals a
+      JOIN fpa_periods p ON p.id = a.period_id AND p.tenant_id = a.tenant_id
+      WHERE a.tenant_id = '{tenant_id}'
+        AND p.is_closed = TRUE
+        AND EXTRACT(YEAR FROM p.period_start) = EXTRACT(YEAR FROM NOW())
+      GROUP BY a.category
+
+  - name: get_trend_last_3_periods
+    description: >
+      Fetch entity-level revenue and OpEx totals for the last 3 closed
+      periods to show trend direction.
+    kind: sql
+    query: |
+      SELECT
+          p.period_label,
+          p.period_end,
+          a.category,
+          SUM(a.actual_amount) AS actual_total
+      FROM fpa_actuals a
+      JOIN fpa_periods p ON p.id = a.period_id AND p.tenant_id = a.tenant_id
+      WHERE a.tenant_id = '{tenant_id}'
+        AND p.is_closed = TRUE
+        AND a.category IN ('revenue', 'opex')
+      ORDER BY p.period_end DESC
+      LIMIT 6   -- 3 periods × 2 categories
+
+  - name: get_open_variance_flags
+    description: >
+      Fetch unresolved variance flags (status = 'open' or 'escalated')
+      for the current year. Used to surface top risks.
+    kind: sql
+    query: |
+      SELECT
+          f.cost_centre, f.line_item, f.category,
+          f.variance_amount, f.variance_pct, f.severity
+      FROM fpa_variance_flags f
+      JOIN fpa_periods p ON p.id = f.period_id AND p.tenant_id = f.tenant_id
+      WHERE f.tenant_id = '{tenant_id}'
+        AND f.status IN ('open', 'escalated')
+        AND EXTRACT(YEAR FROM p.period_start) = EXTRACT(YEAR FROM NOW())
+      ORDER BY f.severity DESC, f.variance_amount DESC
+      LIMIT 10
+
+  - name: save_commentary_draft
+    description: >
+      Write the board commentary draft to fpa_commentary_log with
+      draft_type = 'board-commentary' and status = 'pending_approval'.
+      Returns the draft id.
+    kind: sql
+    query: |
+      INSERT INTO fpa_commentary_log
+          (tenant_id, period_id, agent, draft_type, draft_body)
+      VALUES
+          ('{tenant_id}', '{period_id}', 'forecast-commentator',
+           'board-commentary', '{draft_body}')
+      RETURNING id
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    publish_commentary: 0
+  require_human_approval:
+    - save_commentary_draft
+  notify_channel: "${FPA_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - draft_created
+    - draft_approved
+    - draft_rejected
+    - commentary_published
+  feedback_table: fpa_commentary_log

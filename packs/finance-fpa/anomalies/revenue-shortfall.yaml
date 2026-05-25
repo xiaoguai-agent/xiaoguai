@@ -1,0 +1,91 @@
+# Anomaly spec — revenue shortfall (xg-anomaly, rolling 6-period z-score)
+# ---------------------------------------------------------------------------
+# Detects when total revenue actuals fall significantly below the 6-period
+# rolling baseline. Direction = low (downward deviation only).
+#
+# Schema reference: F2 AnomalySpec (xg-anomaly engine).
+# ---------------------------------------------------------------------------
+
+name: revenue-shortfall
+version: "1.0.0"
+description: >
+  Rolling 6-period revenue shortfall detector. Alerts when the current
+  period's total revenue actuals fall below the rolling mean by more than
+  n_sigma standard deviations (default: 2.0), or miss an absolute floor.
+
+# --------------------------------------------------------------------------
+# Metric definition
+# --------------------------------------------------------------------------
+metric:
+  name: tenant_revenue_period
+  description: "Total revenue actuals for the most recently closed period"
+  unit: currency_usd
+  query: |
+    SELECT
+        a.tenant_id,
+        SUM(a.actual_amount) AS value
+    FROM fpa_actuals a
+    JOIN fpa_periods p ON p.id = a.period_id AND p.tenant_id = a.tenant_id
+    WHERE a.tenant_id = '{tenant_id}'
+      AND p.is_closed = TRUE
+      AND a.category = 'revenue'
+      AND p.period_end >= NOW() - INTERVAL '1 month'
+    GROUP BY a.tenant_id
+  tenant_column: tenant_id
+
+# --------------------------------------------------------------------------
+# Baseline window
+# --------------------------------------------------------------------------
+baseline:
+  kind: rolling
+  window_periods: 6
+  min_observations: 3
+
+# --------------------------------------------------------------------------
+# Alert condition
+# --------------------------------------------------------------------------
+alert:
+  kind: n_sigma
+  n_sigma: 2.0
+  direction: low    # flag downward misses only
+  absolute_threshold:
+    operator: "<"
+    value: 0        # also flag any period with zero or negative revenue
+
+# --------------------------------------------------------------------------
+# Schedule
+# --------------------------------------------------------------------------
+schedule:
+  cron: "0 9 * * *"
+
+# --------------------------------------------------------------------------
+# Output — AnomalyEvent payload
+# --------------------------------------------------------------------------
+event:
+  kind: fpa.revenue_shortfall
+  payload_mapping:
+    tenant_id:        "$.tenant_id"
+    current_revenue:  "$.current_value"
+    rolling_mean:     "$.baseline.mean"
+    rolling_stddev:   "$.baseline.stddev"
+    sigma_distance:   "$.sigma_distance"
+    window_periods:   6
+
+# --------------------------------------------------------------------------
+# Severity escalation
+# --------------------------------------------------------------------------
+severity:
+  - sigma: 2.0
+    level: warning
+  - sigma: 3.5
+    level: critical
+
+# --------------------------------------------------------------------------
+# Downstream
+# --------------------------------------------------------------------------
+downstream:
+  agents:
+    - anomaly-flagger
+    - forecast-commentator   # shortfall triggers an updated forecast narrative
+  dashboards:
+    - fpa-variance-overview

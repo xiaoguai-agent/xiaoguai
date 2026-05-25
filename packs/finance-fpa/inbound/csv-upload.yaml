@@ -1,0 +1,98 @@
+# Inbound connector — CSV upload
+# ---------------------------------------------------------------------------
+# Accepts a manually uploaded CSV of actuals or budget data.
+# Used for ad-hoc corrections, one-off period loads, or when neither
+# NetSuite nor Anaplan is configured.
+#
+# Upload endpoint: POST /api/packs/finance-fpa/inbound/csv
+# Required columns: period_label, cost_centre, line_item, category,
+#                   actual_amount, budget_amount, currency
+# ---------------------------------------------------------------------------
+
+name: csv-upload
+version: "1.0.0"
+description: >
+  Manual CSV upload path for actuals and budget data. Validates column
+  presence and data types before ingesting into fpa_actuals. Supports
+  one-off period loads and corrections when ERP connectors are unavailable.
+
+kind: inbound_connector
+source: csv_upload
+
+# --------------------------------------------------------------------------
+# Upload endpoint configuration
+# --------------------------------------------------------------------------
+endpoint:
+  path: /api/packs/finance-fpa/inbound/csv
+  method: POST
+  max_file_size_mb: 50
+  allowed_mime_types:
+    - text/csv
+    - application/vnd.ms-excel
+
+# --------------------------------------------------------------------------
+# Schema validation (fail fast on bad input)
+# --------------------------------------------------------------------------
+schema:
+  required_columns:
+    - period_label     # string, e.g. "2026-04"
+    - cost_centre      # string
+    - line_item        # string
+    - category         # enum: revenue | cogs | opex | capex | other
+    - actual_amount    # numeric
+    - budget_amount    # numeric
+    - currency         # ISO 4217, e.g. "USD"
+  optional_columns:
+    - period_start     # date, inferred from period_label if absent
+    - period_end       # date, inferred from period_label if absent
+
+  validations:
+    - column: category
+      rule: enum
+      values: [revenue, cogs, opex, capex, other]
+    - column: actual_amount
+      rule: numeric
+    - column: budget_amount
+      rule: numeric
+    - column: currency
+      rule: regex
+      pattern: "^[A-Z]{3}$"
+
+# --------------------------------------------------------------------------
+# Data mapping
+# --------------------------------------------------------------------------
+mapping:
+  period_label_column:  "period_label"
+  cost_centre_column:   "cost_centre"
+  line_item_column:     "line_item"
+  category_column:      "category"
+  actual_column:        "actual_amount"
+  budget_column:        "budget_amount"
+  currency_column:      "currency"
+
+# --------------------------------------------------------------------------
+# Target
+# --------------------------------------------------------------------------
+target:
+  table: fpa_actuals
+  upsert_key: [tenant_id, period_id, cost_centre, line_item]
+  period_table: fpa_periods
+  # CSV upload does not auto-close periods; operator must trigger manually.
+  mark_closed_when: null
+
+# --------------------------------------------------------------------------
+# Post-upload actions
+# --------------------------------------------------------------------------
+post_upload:
+  # Notify the FP&A team that new data is available for review
+  notify_channel: "${FPA_NOTIFY_CHANNEL:-admin_ui}"
+  # Trigger variance-analyzer immediately after successful upload
+  trigger_agent: variance-analyzer
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  # Return a structured error response with the row numbers that failed
+  response_format: json
+  include_row_errors: true
