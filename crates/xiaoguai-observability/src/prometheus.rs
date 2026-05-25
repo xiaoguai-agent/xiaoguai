@@ -37,7 +37,7 @@ use axum::{
 };
 use once_cell::sync::OnceCell;
 use prometheus::{
-    exponential_buckets, register_counter_vec_with_registry,
+    exponential_buckets, register_int_counter_vec_with_registry,
     register_histogram_vec_with_registry, register_histogram_with_registry, Histogram,
     HistogramVec, IntCounterVec, Registry,
 };
@@ -137,14 +137,14 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     let scheduler_tick_duration = register_histogram_with_registry!(
         "scheduler_tick_duration_seconds",
         "Scheduler tick processing latency in seconds",
-        latency_buckets,
+        latency_buckets.clone(),
         registry
     )
     .context("register scheduler_tick_duration_seconds")?;
 
     // ── Wave-3 counters + histograms ────────────────────────────────────────
 
-    let hotl_usage_total = register_counter_vec_with_registry!(
+    let hotl_usage_total = register_int_counter_vec_with_registry!(
         "hotl_usage_total",
         "HOTL enforcer decisions, labelled by tenant, scope, and verdict",
         &["tenant", "scope", "verdict"],
@@ -160,7 +160,7 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     )
     .context("register hotl_check_duration_seconds")?;
 
-    let outcomes_recorded_total = register_counter_vec_with_registry!(
+    let outcomes_recorded_total = register_int_counter_vec_with_registry!(
         "outcomes_recorded_total",
         "Outcome attributions recorded, labelled by tenant and kind",
         &["tenant", "kind"],
@@ -177,7 +177,7 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     )
     .context("register outcomes_chain_depth")?;
 
-    let rate_limit_hits_total = register_counter_vec_with_registry!(
+    let rate_limit_hits_total = register_int_counter_vec_with_registry!(
         "rate_limit_hits_total",
         "Rate-limit decisions, labelled by tenant, route class, and decision",
         &["tenant", "route", "decision"],
@@ -185,7 +185,7 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     )
     .context("register rate_limit_hits_total")?;
 
-    let anomaly_detections_total = register_counter_vec_with_registry!(
+    let anomaly_detections_total = register_int_counter_vec_with_registry!(
         "anomaly_detections_total",
         "Anomaly detector fires, labelled by detector type and severity",
         &["detector", "severity"],
@@ -193,7 +193,7 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     )
     .context("register anomaly_detections_total")?;
 
-    let watch_wakeups_total = register_counter_vec_with_registry!(
+    let watch_wakeups_total = register_int_counter_vec_with_registry!(
         "watch_wakeups_total",
         "Watch task wakeup results, labelled by watcher_id and outcome",
         &["watcher_id", "outcome"],
@@ -201,7 +201,7 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     )
     .context("register watch_wakeups_total")?;
 
-    let im_messages_total = register_counter_vec_with_registry!(
+    let im_messages_total = register_int_counter_vec_with_registry!(
         "im_messages_total",
         "IM gateway messages processed, labelled by adapter and direction",
         &["adapter", "direction"],
