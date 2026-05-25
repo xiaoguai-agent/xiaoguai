@@ -1,0 +1,101 @@
+# Anomaly spec — pipeline latency spike (xg-anomaly, rolling p95)
+# ---------------------------------------------------------------------------
+# Detects when a pipeline's execution duration exceeds its rolling 14-day
+# p95 baseline by more than n_sigma standard deviations. Catches query
+# plan regressions, resource contention, and upstream source slowdowns
+# before they cascade into SLA breaches.
+#
+# Schema reference: F2 AnomalySpec (xg-anomaly engine).
+# Integration: registers via pack manifest `anomalies:` key.
+# ---------------------------------------------------------------------------
+
+name: latency-spike
+version: "1.0.0"
+description: >
+  Rolling 14-day p95 latency anomaly detector for pipeline duration.
+  Alerts when today's p95 duration exceeds the rolling p95 baseline by
+  more than n_sigma standard deviations (default: 2.0), or exceeds an
+  absolute ceiling (default: 3600 seconds / 1 hour).
+
+# --------------------------------------------------------------------------
+# Metric definition — p95 duration per pipeline per day
+# --------------------------------------------------------------------------
+metric:
+  name: de_pipeline_p95_duration_seconds
+  description: "95th-percentile pipeline run duration in seconds (successful runs only)"
+  unit: seconds
+  query: |
+    SELECT
+        tenant_id,
+        pipeline_id,
+        run_date,
+        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_seconds) AS value
+    FROM de_pipeline_runs
+    WHERE tenant_id = '{tenant_id}'
+      AND status = 'success'
+      AND duration_seconds IS NOT NULL
+      AND run_date >= CURRENT_DATE - INTERVAL '15 days'
+    GROUP BY tenant_id, pipeline_id, run_date
+    HAVING COUNT(*) >= 2   -- need at least 2 runs to compute a percentile
+  tenant_column: tenant_id
+  series_key: pipeline_id
+
+# --------------------------------------------------------------------------
+# Baseline window (14 days, minimum 5 observations)
+# --------------------------------------------------------------------------
+baseline:
+  kind: rolling
+  window_periods: 14
+  min_observations: 5
+  aggregation: p95_per_day
+
+# --------------------------------------------------------------------------
+# Alert condition
+# --------------------------------------------------------------------------
+alert:
+  kind: n_sigma
+  n_sigma: 2.0
+  direction: high     # only flag upward latency spikes
+  absolute_threshold:
+    operator: ">"
+    value: 3600       # also alert if p95 duration > 1 hour regardless of z-score
+
+# --------------------------------------------------------------------------
+# Schedule: evaluate every hour to catch intra-day latency spikes
+# --------------------------------------------------------------------------
+schedule:
+  cron: "30 * * * *"   # 30 minutes past each hour
+
+# --------------------------------------------------------------------------
+# Output — AnomalyEvent payload
+# --------------------------------------------------------------------------
+event:
+  kind: de.latency_spike
+  payload_mapping:
+    tenant_id:         "$.tenant_id"
+    pipeline_id:       "$.series_key"
+    run_date:          "$.current_period"
+    p95_seconds:       "$.current_value"
+    baseline_p95:      "$.baseline.mean"
+    baseline_stddev:   "$.baseline.stddev"
+    sigma_distance:    "$.sigma_distance"
+    window_days:       14
+
+# --------------------------------------------------------------------------
+# Severity escalation
+# --------------------------------------------------------------------------
+severity:
+  - sigma: 2.0
+    level: warning
+  - sigma: 3.5
+    level: critical
+
+# --------------------------------------------------------------------------
+# Downstream
+# --------------------------------------------------------------------------
+downstream:
+  agents:
+    - freshness-investigator
+    - retry-recommender
+  dashboards:
+    - pipeline-freshness-overview

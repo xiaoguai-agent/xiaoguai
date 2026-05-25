@@ -1,0 +1,100 @@
+# Anomaly spec — row-count drop (xg-anomaly, daily z-score)
+# ---------------------------------------------------------------------------
+# Detects when a pipeline's daily row count falls below its rolling 14-day
+# baseline by more than n_sigma standard deviations. Catches silent data
+# loss, partial loads, and source extraction truncation before downstream
+# consumers notice stale aggregates.
+#
+# Schema reference: F2 AnomalySpec (xg-anomaly engine).
+# Integration: registers via pack manifest `anomalies:` key; xg-anomaly
+# evaluates the metric query on the schedule and emits AnomalyEvent.
+# ---------------------------------------------------------------------------
+
+name: row-count-drop
+version: "1.0.0"
+description: >
+  Rolling 14-day z-score detector for daily pipeline row volume. Alerts when
+  today's row count drops below the rolling mean by more than n_sigma standard
+  deviations (default: 2.5), or falls below an absolute floor.
+
+# --------------------------------------------------------------------------
+# Metric definition
+# --------------------------------------------------------------------------
+metric:
+  name: de_daily_row_count
+  description: "Total rows written by a pipeline on a given run_date"
+  unit: rows
+  query: |
+    SELECT
+        tenant_id,
+        pipeline_id,
+        run_date,
+        SUM(row_count) AS value
+    FROM de_pipeline_runs
+    WHERE tenant_id = '{tenant_id}'
+      AND status = 'success'
+      AND row_count IS NOT NULL
+      AND run_date >= CURRENT_DATE - INTERVAL '15 days'
+    GROUP BY tenant_id, pipeline_id, run_date
+  tenant_column: tenant_id
+  series_key: pipeline_id   # evaluate anomaly per pipeline independently
+
+# --------------------------------------------------------------------------
+# Baseline window (14 successful run-days, minimum 5 observations)
+# --------------------------------------------------------------------------
+baseline:
+  kind: rolling
+  window_periods: 14
+  min_observations: 5
+  aggregation: sum_per_day
+
+# --------------------------------------------------------------------------
+# Alert condition
+# --------------------------------------------------------------------------
+alert:
+  kind: n_sigma
+  n_sigma: 2.5
+  direction: low      # only flag downward drops (volume loss)
+  absolute_threshold:
+    operator: "<"
+    value: 1000       # also alert if row count < 1000 regardless of z-score
+
+# --------------------------------------------------------------------------
+# Schedule: evaluate once per day after typical pipeline completion window
+# --------------------------------------------------------------------------
+schedule:
+  cron: "0 8 * * *"   # 08:00 UTC — pipelines expected complete by 06:00 UTC
+
+# --------------------------------------------------------------------------
+# Output — AnomalyEvent payload
+# --------------------------------------------------------------------------
+event:
+  kind: de.row_count_drop
+  payload_mapping:
+    tenant_id:      "$.tenant_id"
+    pipeline_id:    "$.series_key"
+    run_date:       "$.current_period"
+    today_rows:     "$.current_value"
+    rolling_mean:   "$.baseline.mean"
+    rolling_stddev: "$.baseline.stddev"
+    sigma_distance: "$.sigma_distance"
+    window_days:    14
+
+# --------------------------------------------------------------------------
+# Severity escalation
+# --------------------------------------------------------------------------
+severity:
+  - sigma: 2.5
+    level: warning
+  - sigma: 4.0
+    level: critical
+
+# --------------------------------------------------------------------------
+# Downstream
+# --------------------------------------------------------------------------
+downstream:
+  agents:
+    - freshness-investigator
+    - sla-breach-notifier
+  dashboards:
+    - pipeline-freshness-overview

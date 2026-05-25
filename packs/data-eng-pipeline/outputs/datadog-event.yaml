@@ -1,0 +1,91 @@
+# Output channel — Datadog custom event
+# ---------------------------------------------------------------------------
+# Emits custom Datadog events for SLA breaches, anomaly detections, and
+# pipeline run completions. Enables correlation with Datadog monitors,
+# dashboards, and APM traces.
+#
+# Requires: DATADOG_API_KEY env var.
+# Datadog Events API v2: https://docs.datadoghq.com/api/latest/events/
+# ---------------------------------------------------------------------------
+
+name: datadog-event
+version: "1.0.0"
+description: >
+  Emits custom Datadog events for SLA breaches, row-count drops, latency
+  spikes, and pipeline run results. Enables correlation with Datadog
+  monitors and APM. Requires DATADOG_API_KEY.
+
+kind: output_channel
+type: datadog_events_v2
+
+connection:
+  api_url: "https://api.datadoghq.com/api/v2/events"
+  api_key_env: DATADOG_API_KEY
+  site_env: DATADOG_SITE    # e.g. datadoghq.com or datadoghq.eu; defaults to datadoghq.com
+
+default_tags:
+  - "service:xiaoguai-data-eng-pipeline"
+  - "env:{{ xiaoguai_env | default('production') }}"
+  - "tenant:{{ tenant_id }}"
+
+message_formats:
+  sla_breach:
+    title: "Data SLA breach: {{ dataset_id }}"
+    text: |
+      Pipeline `{{ pipeline_id }}` has not refreshed `{{ dataset_id }}`
+      within the SLA window of {{ sla_max_age_minutes }} minutes.
+      Current age: {{ age_minutes | round(0) }} minutes.
+      Root cause: {{ root_cause | default('Investigation in progress') }}
+    priority: normal
+    alert_type: error    # Datadog: info | warning | error | success
+    tags:
+      - "pipeline_id:{{ pipeline_id }}"
+      - "dataset_id:{{ dataset_id }}"
+      - "breach_id:{{ breach_id }}"
+    aggregation_key: "de-sla-{{ tenant_id }}-{{ dataset_id }}"
+
+  row_count_drop:
+    title: "Row count drop detected: {{ pipeline_id }}"
+    text: |
+      Pipeline `{{ pipeline_id }}` produced {{ today_rows }} rows today
+      vs. {{ rolling_mean | round(0) }} expected ({{ sigma_distance | round(1) }}σ below baseline).
+    priority: normal
+    alert_type: warning
+    tags:
+      - "pipeline_id:{{ pipeline_id }}"
+      - "anomaly_type:row_count_drop"
+    aggregation_key: "de-rowdrop-{{ tenant_id }}-{{ pipeline_id }}"
+
+  latency_spike:
+    title: "Latency spike detected: {{ pipeline_id }}"
+    text: |
+      Pipeline `{{ pipeline_id }}` p95 duration is {{ p95_seconds | round(0) }}s
+      vs. {{ baseline_p95 | round(0) }}s expected ({{ sigma_distance | round(1) }}σ above baseline).
+    priority: low
+    alert_type: warning
+    tags:
+      - "pipeline_id:{{ pipeline_id }}"
+      - "anomaly_type:latency_spike"
+    aggregation_key: "de-latency-{{ tenant_id }}-{{ pipeline_id }}"
+
+  run_succeeded:
+    title: "Pipeline succeeded: {{ pipeline_id }}"
+    text: "Run {{ run_id }} completed in {{ duration_seconds | round(0) }}s, {{ row_count | default('unknown') }} rows."
+    priority: low
+    alert_type: success
+    tags:
+      - "pipeline_id:{{ pipeline_id }}"
+      - "run_status:success"
+
+  breach_resolved:
+    title: "Data SLA breach resolved: {{ dataset_id }}"
+    text: "Dataset `{{ dataset_id }}` is fresh again after {{ downtime_minutes | round(0) }} minutes of staleness."
+    priority: normal
+    alert_type: success
+    tags:
+      - "pipeline_id:{{ pipeline_id }}"
+      - "dataset_id:{{ dataset_id }}"
+    aggregation_key: "de-sla-{{ tenant_id }}-{{ dataset_id }}"
+
+rate_limits:
+  per_tenant_per_minute: 30

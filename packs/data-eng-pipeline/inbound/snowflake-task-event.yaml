@@ -1,0 +1,86 @@
+# Inbound connector — Snowflake task history polling
+# ---------------------------------------------------------------------------
+# Polls SNOWFLAKE_TASK_HISTORY() to detect task runs that completed or
+# failed since the last check. Snowflake does not natively push webhooks,
+# so this connector uses a SQL-over-HTTP poll via the Snowflake SQL API.
+#
+# Requires: SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_PRIVATE_KEY_PATH
+#           (key-pair auth recommended; password auth supported via env).
+# Poll endpoint: https://{account}.snowflakecomputing.com/api/v2/statements
+# ---------------------------------------------------------------------------
+
+name: snowflake-task-event
+version: "1.0.0"
+description: >
+  Polls Snowflake TASK_HISTORY() for recently completed or failed task runs.
+  Normalises task results to de_pipeline_runs. Triggers freshness-investigator
+  on failure and lineage-breadcrumb-writer on success.
+
+kind: inbound_connector
+source: sql_api_poll
+
+connection:
+  kind: snowflake_sql_api
+  account_env: SNOWFLAKE_ACCOUNT
+  user_env: SNOWFLAKE_USER
+  auth:
+    kind: key_pair
+    private_key_path_env: SNOWFLAKE_PRIVATE_KEY_PATH
+    private_key_passphrase_env: SNOWFLAKE_PRIVATE_KEY_PASSPHRASE
+  warehouse_env: SNOWFLAKE_WAREHOUSE
+  database_env: SNOWFLAKE_DATABASE
+  schema_env: SNOWFLAKE_SCHEMA
+
+query: |
+  SELECT
+      DATABASE_NAME,
+      SCHEMA_NAME,
+      NAME                AS task_name,
+      SCHEDULED_TIME,
+      QUERY_START_TIME    AS started_at,
+      COMPLETED_TIME      AS finished_at,
+      STATE,
+      ERROR_CODE,
+      ERROR_MESSAGE,
+      RETURN_VALUE,
+      QUERY_ID
+  FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY(
+      SCHEDULED_TIME_RANGE_START => '{last_check_at}'::TIMESTAMP_LTZ,
+      RESULT_LIMIT => 1000
+  ))
+  WHERE STATE IN ('SUCCEEDED', 'FAILED', 'SKIPPED')
+  ORDER BY SCHEDULED_TIME DESC
+
+schedule:
+  cron: "*/5 * * * *"   # poll every 5 minutes
+
+mapping:
+  pipeline_id:    "snowflake:{{ DATABASE_NAME }}.{{ SCHEMA_NAME }}.{{ task_name }}"
+  run_id:         "$.QUERY_ID"
+  status:         "{{ 'success' if STATE == 'SUCCEEDED' else ('skipped' if STATE == 'SKIPPED' else 'failed') }}"
+  run_date:       "$.SCHEDULED_TIME | date"
+  started_at:     "$.started_at"
+  finished_at:    "$.finished_at"
+  error_message:  "{{ ERROR_CODE + ': ' + ERROR_MESSAGE if ERROR_CODE else None }}"
+  source:         "snowflake"
+  raw_payload:    "$"
+
+target:
+  table: de_pipeline_runs
+  upsert_key: [tenant_id, pipeline_id, run_id]
+
+post_ingest:
+  emit_events:
+    - condition: "{{ status == 'success' }}"
+      event: de.pipeline_run_succeeded
+    - condition: "{{ status == 'failed' }}"
+      event: de.pipeline_run_failed
+  trigger_agents:
+    - condition: "{{ status == 'failed' }}"
+      agent: freshness-investigator
+    - condition: "{{ status == 'success' }}"
+      agent: lineage-breadcrumb-writer
+
+on_error:
+  action: log_and_skip
+  notify_channel: "${DE_NOTIFY_CHANNEL:-admin_ui}"
