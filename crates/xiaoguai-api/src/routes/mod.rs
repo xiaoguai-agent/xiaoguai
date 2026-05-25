@@ -10,12 +10,13 @@ pub mod sessions;
 pub mod tenants;
 pub mod usage;
 
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::Router;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::skills;
+use crate::workspaces;
 
 use crate::auth::require_bearer;
 use crate::rate_limit::{rate_limit, rate_limit_middleware};
@@ -133,6 +134,15 @@ pub fn router(state: AppState) -> Router {
             get(memory::get_memory)
                 .put(memory::update_memory)
                 .delete(memory::delete_memory),
+        )
+        // v1.3.x — workspaces (above sessions/boards, below tenant).
+        .route(
+            "/v1/workspaces",
+            get(workspaces::list_workspaces).post(workspaces::create_workspace),
+        )
+        .route(
+            "/v1/workspaces/:id",
+            put(workspaces::update_workspace).delete(workspaces::archive_workspace),
         );
 
     // Layer order (inner → outer, since `route_layer` adds outward):
