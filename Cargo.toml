@@ -152,7 +152,7 @@ moka = { version = "0.12", features = ["future"] }
 # audit S3 export — pin to versions whose rust-version stays at 1.88.
 # When the toolchain bumps to ≥ 1.91, drop the upper-bound pins.
 aws-config = { version = "~1.8.13", default-features = false, features = ["behavior-version-latest"] }
-aws-sdk-s3 = { version = "~1.122", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
+aws-sdk-s3 = { version = "~1.133", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
 
 # rate limiting
 governor = "0.7"
