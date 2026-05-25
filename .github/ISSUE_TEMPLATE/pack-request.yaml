@@ -1,0 +1,72 @@
+name: Skill Pack Request
+description: Request a new xiaoguai skill pack for a vertical or domain.
+title: "pack: <domain/vertical name>"
+labels: ["pack-request", "triage"]
+assignees: []
+body:
+  - type: input
+    id: vertical
+    attributes:
+      label: Vertical / domain
+      description: "e.g. Legal discovery, Financial reporting, DevOps incident response"
+    validations:
+      required: true
+
+  - type: textarea
+    id: inbound_sources
+    attributes:
+      label: Key inbound sources
+      description: What data / event streams would this pack consume? List system names and protocols.
+      placeholder: |
+        - Jira webhooks (JSON, REST)
+        - PagerDuty alerts (webhook v3)
+        - Internal SQL warehouse (Postgres via JDBC)
+    validations:
+      required: true
+
+  - type: textarea
+    id: output_adapters
+    attributes:
+      label: Key output adapters
+      description: Where should the pack send results or trigger actions?
+      placeholder: |
+        - Slack DM to on-call
+        - JIRA ticket creation
+        - Runbook auto-execution via SSH
+    validations:
+      required: true
+
+  - type: textarea
+    id: who_uses
+    attributes:
+      label: Who would use this pack and how often?
+      description: "Team / persona, approximate daily active users, session frequency."
+    validations:
+      required: true
+
+  - type: textarea
+    id: replaces
+    attributes:
+      label: What tool or workflow does this replace today?
+      description: "Name the current solution (spreadsheet, homegrown script, SaaS tool) and its shortcomings."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: sponsorship
+    attributes:
+      label: Sponsorship level
+      description: Does your team commit to validating / co-developing this pack?
+      options:
+        - "A — will co-develop and test in production"
+        - "B — will test in staging and provide feedback"
+        - "C — interested but no engineering bandwidth"
+        - "D — exploration only"
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Links to example data, existing integrations, SLAs, or compliance requirements.
