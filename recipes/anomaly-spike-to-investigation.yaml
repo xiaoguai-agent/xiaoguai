@@ -1,0 +1,205 @@
+---
+# Recipe: anomaly-spike-to-investigation
+#
+# Anomaly detector fires → xg-watch wakes up → diagnostic agent spawned →
+# outcome chain recorded → Slack notification.
+#
+# Composes:
+#   - feature: anomaly (xg-anomaly AnomalySpec + rolling-window detector)
+#   - feature: watch   (xg-watch WatchSpec + WatchEvent bus)
+#   - pack: ar-collections (anomalies/dso-drift as reference implementation)
+#   - feature: outcome-telemetry (OutcomeRecorder — records investigation chain)
+#   - IM output adapter (Slack / Feishu / DingTalk / WeCom)
+#
+# The recipe is intentionally metric-agnostic: `anomaly_spec` and
+# `watch_spec` refs are configuration knobs so operators can plug in any
+# AnomalySpec (e.g. DSO drift, error-rate spike, p99 latency) without
+# modifying the recipe.
+#
+# Required env:
+#   XG_ANOMALY_NOTIFY_SLACK_WEBHOOK  (or IM channel env per adapter)
+
+name: anomaly-spike-to-investigation
+version: "0.1.0"
+description: >
+  xg-anomaly detector fires → xg-watch event bus wakes the recipe →
+  a diagnostic sub-agent is spawned to gather context (metrics, logs,
+  recent deploys) → outcome chain recorded → Slack / IM notification
+  with findings summary.
+owner: platform-sre
+tags: [anomaly, watch, outcome, investigation]
+
+# ── Required features ─────────────────────────────────────────────────────────
+requires:
+  features:
+    - anomaly          # F2 AnomalySpec + rolling-window alerting
+    - watch            # F1 WatchSpec + WatchEvent bus
+    - outcome-telemetry
+  env:
+    - XG_ANOMALY_NOTIFY_SLACK_WEBHOOK
+  env_optional:
+    - XG_ANOMALY_DIAGNOSTIC_LLM_MODEL   # default: workspace default
+    - XG_ANOMALY_OBSERVABILITY_URL      # metrics/logs MCP server (optional)
+    - XG_ANOMALY_OBSERVABILITY_TOKEN
+
+# ── Configuration knobs ───────────────────────────────────────────────────────
+config:
+  # Ref to the AnomalySpec that drives this recipe.
+  # Operators point this at any registered AnomalySpec slug.
+  # Default: ar-collections anomaly for demo purposes.
+  anomaly_spec: ar-collections/anomalies/dso-drift
+
+  # Ref to the WatchSpec whose events should also wake the recipe
+  # (optional; set to null to disable watch-based triggering).
+  watch_spec: ar-collections/watches/dso-over-60
+
+  # Severity threshold below which events are logged but no agent is spawned.
+  spawn_agent_min_severity: warning   # warning | critical
+
+  # Maximum wall-clock seconds the diagnostic agent is allowed to run.
+  diagnostic_timeout_seconds: 120
+
+# ── Trigger ───────────────────────────────────────────────────────────────────
+trigger:
+  event_bus:
+    - kind: anomaly.fired
+      source: "{{ config.anomaly_spec }}"
+    - kind: watch.fired
+      source: "{{ config.watch_spec }}"
+  description: >
+    Wakes when either the configured AnomalySpec fires an AnomalyEvent or
+    the configured WatchSpec emits a WatchEvent on the xg-watch bus.
+
+# ── Steps ─────────────────────────────────────────────────────────────────────
+steps:
+  - id: gate_severity
+    description: >
+      Evaluate whether the anomaly/watch event meets the minimum severity
+      threshold to justify spawning a diagnostic agent. Events below the
+      threshold are acknowledged and recorded but do not proceed further.
+    condition_check:
+      condition: >
+        {{ trigger.event.severity | severity_rank >= config.spawn_agent_min_severity | severity_rank }}
+    outputs:
+      should_investigate: "{{ gate_severity.passed }}"
+      event_kind: "{{ trigger.event.kind }}"
+      metric_name: "{{ trigger.event.payload.metric_name | default(trigger.event.kind) }}"
+      tenant_id: "{{ trigger.event.payload.tenant_id | default('global') }}"
+    error_handling:
+      on_failure: continue
+      fallback:
+        should_investigate: true   # fail open — investigate if gate errors
+
+  - id: spawn_diagnostic
+    description: >
+      Spawn a diagnostic sub-agent that collects: (a) current metric value vs
+      baseline, (b) observability snapshot for the affected entity (if
+      XG_ANOMALY_OBSERVABILITY_URL is set), (c) recent deploys in the anomaly
+      window.  Returns a structured findings object.
+    agent:
+      inline: diagnostic-agent
+      llm:
+        model: "${XG_ANOMALY_DIAGNOSTIC_LLM_MODEL:-default}"
+        temperature: 0.1
+        max_tokens: 2048
+      timeout_seconds: "{{ config.diagnostic_timeout_seconds }}"
+      system_prompt: |
+        You are a diagnostic agent. Given an anomaly event payload and
+        optional observability data, produce a structured investigation
+        summary. Be factual; if data is absent, say so explicitly.
+        Output ONLY valid JSON matching the DiagnosticFindings schema:
+        {
+          "anomaly_description": "string",
+          "likely_causes": ["string"],
+          "affected_entities": ["string"],
+          "metric_snapshot": { "current": float, "baseline_mean": float, "sigma": float },
+          "recent_deploys": ["string"],
+          "recommendation": "string",
+          "confidence": "high|medium|low"
+        }
+      context_steps:
+        - id: metric_context
+          description: "Anomaly event payload and baseline stats."
+          data: "{{ trigger.event.payload }}"
+        - id: observability_snapshot
+          description: "Live metrics/logs for the affected entity (if configured)."
+          tool: bash
+          command: >
+            curl -sf -H "Authorization: Bearer ${XG_ANOMALY_OBSERVABILITY_TOKEN}"
+            "${XG_ANOMALY_OBSERVABILITY_URL}/snapshot?entity={{ trigger.event.payload.tenant_id }}&window=30m"
+            || echo '{"error": "observability unavailable"}'
+          condition: "{{ env.XG_ANOMALY_OBSERVABILITY_URL is defined }}"
+        - id: recent_deploys
+          description: "Deploy events in the anomaly window."
+          tool: xiaoguai_audit_search
+          params:
+            event_type: deploy
+            since: "{{ trigger.event.payload.window_start | default((trigger.timestamp | minus('30m'))) }}"
+            until: "{{ trigger.timestamp }}"
+            limit: 20
+    inputs:
+      event: "{{ trigger.event }}"
+    outputs:
+      findings: "{{ spawn_diagnostic.findings }}"
+    condition: "{{ steps.gate_severity.outputs.should_investigate }}"
+    deps: [gate_severity]
+    error_handling:
+      on_failure: continue
+      fallback:
+        findings:
+          anomaly_description: "Diagnostic agent failed; manual investigation required."
+          likely_causes: []
+          recommendation: "Check XG_ANOMALY_OBSERVABILITY_URL and agent logs."
+          confidence: low
+
+  - id: record_outcome
+    description: >
+      Write an outcome chain record to agent_outcomes: event kind, metric
+      name, tenant, diagnostic confidence, and recipe elapsed time.
+    outcome:
+      event: anomaly.investigated
+      payload:
+        event_kind: "{{ steps.gate_severity.outputs.event_kind }}"
+        metric_name: "{{ steps.gate_severity.outputs.metric_name }}"
+        tenant_id: "{{ steps.gate_severity.outputs.tenant_id }}"
+        sigma: "{{ trigger.event.payload.sigma_distance | default(null) }}"
+        diagnostic_confidence: "{{ steps.spawn_diagnostic.outputs.findings.confidence }}"
+        agent_spawned: "{{ steps.gate_severity.outputs.should_investigate }}"
+        elapsed_ms: "{{ recipe.elapsed_ms }}"
+    deps: [spawn_diagnostic]
+
+  - id: notify_slack
+    description: >
+      Post a concise investigation summary to the Slack webhook: anomaly
+      description, top likely cause, affected entities, and recommendation.
+      If the agent was not spawned (below severity threshold), sends a
+      brief acknowledgement instead.
+    output:
+      kind: slack_webhook
+      webhook_url: "${XG_ANOMALY_NOTIFY_SLACK_WEBHOOK}"
+      message_template: |
+        {% if steps.gate_severity.outputs.should_investigate %}
+        *Anomaly Investigation*
+        Metric: `{{ steps.gate_severity.outputs.metric_name }}`
+        Tenant: `{{ steps.gate_severity.outputs.tenant_id }}`
+        Severity: `{{ trigger.event.severity | upper }}`
+        Description: {{ steps.spawn_diagnostic.outputs.findings.anomaly_description }}
+        Likely cause: {{ steps.spawn_diagnostic.outputs.findings.likely_causes | first | default("unknown") }}
+        Recommendation: {{ steps.spawn_diagnostic.outputs.findings.recommendation }}
+        Confidence: {{ steps.spawn_diagnostic.outputs.findings.confidence }}
+        {% else %}
+        *Anomaly acknowledged* (below investigation threshold)
+        Metric: `{{ steps.gate_severity.outputs.metric_name }}`  Severity: `{{ trigger.event.severity }}`
+        {% endif %}
+    deps: [spawn_diagnostic, record_outcome]
+    error_handling:
+      on_failure: warn
+
+# ── Error handling — global ───────────────────────────────────────────────────
+on_error:
+  notify:
+    kind: slack_webhook
+    webhook_url: "${XG_ANOMALY_NOTIFY_SLACK_WEBHOOK}"
+    message: >
+      Recipe `anomaly-spike-to-investigation` failed at step `{{ failed_step }}`:
+      {{ error.message }}. Anomaly event: {{ trigger.event.kind }}.
