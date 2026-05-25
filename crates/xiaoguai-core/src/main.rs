@@ -17,6 +17,8 @@
 
 mod audit_bridge;
 mod eval_bridge;
+#[cfg(feature = "packs")]
+pub mod packs;
 mod scheduler_bridge;
 mod sd_notify_bridge;
 mod sessions_bridge;
