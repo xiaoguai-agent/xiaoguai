@@ -43,6 +43,11 @@ pub enum KnobSchema {
         default: i64,
         description: String,
     },
+    /// Floating-point knob (e.g. a 0.0–1.0 threshold).
+    Number {
+        default: f64,
+        description: String,
+    },
     Boolean {
         default: bool,
         description: String,
