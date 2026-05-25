@@ -1,0 +1,95 @@
+---
+# Agent: broken-link-checker
+#
+# Input:  All active KB articles from kb_articles_meta.
+# Output: broken-link findings forwarded to weekly-curation-digest output.
+#         Generates a link-rot-checklist template per article with issues.
+#
+# Strategy:
+#   1. Extract all outbound URLs from each article's body (regex + Markdown link
+#      parser — no LLM needed for extraction).
+#   2. Issue an HTTP HEAD request for each URL.
+#   3. Classify the response:
+#        - 2xx       → ok
+#        - 3xx       → redirect (record final destination)
+#        - 4xx / 5xx → broken
+#        - timeout   → unreachable
+#   4. Aggregate findings per article; skip articles with no outbound links.
+#   5. Emit broken-link report to weekly-curation-digest.
+#
+# No LLM is used — this agent is purely tool-driven.
+# The llm: block is omitted intentionally; the agent runs as a tool-only pipeline.
+
+name: broken-link-checker
+kind: tool-agent
+
+tools:
+  # Fetch article bodies (reuses same tool as canonical-answer-clusterer).
+  - fetch_article_body_batch
+  # Extract all outbound URLs from a Markdown / HTML body.
+  # Returns: [{url, link_text, source_article_id}]
+  - extract_urls_from_body
+  # Issue HTTP HEAD request to a URL.
+  # Returns: {url, status_code, final_url, latency_ms, error?}
+  # Follows redirects up to 5 hops; records final URL.
+  # Timeout: KB_CURATOR_LINK_CHECK_TIMEOUT_SEC (default 10s).
+  - http_head_check
+  # Batch HEAD check with concurrency limit to avoid hammering external servers.
+  # Internally calls http_head_check with max_concurrent=KB_CURATOR_LINK_CHECK_CONCURRENCY
+  - http_head_check_batch
+
+context_steps:
+  - id: all_articles
+    description: "Load all active articles."
+    tool: fetch_article_body_batch
+    params:
+      filter:
+        archived: false
+      fields:
+        - article_id
+        - article_slug
+        - title
+        - body_text
+
+  - id: all_urls
+    description: "Extract every outbound URL from article bodies."
+    tool: extract_urls_from_body
+    params:
+      articles: "{{ context.all_articles }}"
+      # Only extract external URLs (http:// / https://); skip internal anchors.
+      external_only: true
+
+  - id: link_results
+    description: "HEAD-check all URLs."
+    tool: http_head_check_batch
+    params:
+      urls: "{{ context.all_urls }}"
+      max_concurrent: ${KB_CURATOR_LINK_CHECK_CONCURRENCY:-10}
+      timeout_sec:    ${KB_CURATOR_LINK_CHECK_TIMEOUT_SEC:-10}
+      # Treat these as ok: docs often link to redirect hubs.
+      acceptable_redirects: true
+
+# Post-processing: group results by article, filter to broken/unreachable only.
+# This step runs without LLM — purely data transformation.
+post_process:
+  group_by: source_article_id
+  filter:
+    status: ["broken", "unreachable", "redirect"]
+  # An article is flagged if it has >= 1 broken or unreachable link.
+  flag_threshold:
+    broken:      1
+    unreachable: 1
+    redirect:    3   # flag only when 3+ redirects (link rot via redirect chains)
+
+outputs:
+  - outputs/weekly-curation-digest.yaml
+
+budget:
+  # No LLM calls — entirely tool-driven.
+  max_llm_calls: 0
+  # Concurrency is controlled by http_head_check_batch; no additional limit needed.
+
+# Deferred:
+#   - DOM-level link extraction for Confluence HTML bodies (not just Markdown)
+#   - Automatic Jira ticket per article with > N broken links
+#   - Allowlist for known-redirect CDN URLs (e.g. go.docs.* shortlinks)

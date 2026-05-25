@@ -1,0 +1,59 @@
+---
+# Inbound: confluence-page-event
+#
+# Receives Confluence Cloud webhook events when a documentation page is
+# created or updated.  Upserts kb_articles_meta and resets refresh_due_at.
+#
+# Mounting: POST /v1/kb-curator/inbound/confluence/{route_id}
+# Auth:     Bearer token. Confluence does not sign webhooks; rely on bearer only.
+
+source: confluence
+route_prefix: /v1/kb-curator/inbound/confluence
+
+normalize:
+  # No HMAC — Confluence Cloud webhooks are unauthenticated at transport level.
+  # The per-tenant bearer token in the Authorization header is the auth gate.
+  hmac_secret: ~
+
+  field_map:
+    article_id:
+      source: page.id
+      prefix: "confluence:"      # namespaced to avoid collision with Zendesk IDs
+    article_slug:  page._links.webui
+    title:         page.title
+    source_platform: _const:confluence
+    last_edited_at:  page.version.when
+    # Confluence does not include view count in webhooks; set to 0 and sync
+    # via scheduled Confluence Analytics API pull (deferred).
+    view_count:    _const:0
+    labels:
+      source: page.metadata.labels.results
+      transform: label_name_array_to_jsonb
+
+  upsert_defaults:
+    last_verified_at: _now
+    refresh_due_at:   _now_plus_days:${KB_CURATOR_STALE_THRESHOLD_DAYS:-30}
+    archived:         false
+
+accepted_events:
+  - page_created
+  - page_updated
+
+sample_payload: |
+  {
+    "eventType": "page_updated",
+    "page": {
+      "id": "98765",
+      "title": "Setting Up SSO with Okta",
+      "_links": {"webui": "/wiki/spaces/DOCS/pages/98765"},
+      "version": {"when": "2026-05-24T15:30:00.000Z"},
+      "metadata": {
+        "labels": {
+          "results": [
+            {"name": "sso"},
+            {"name": "authentication"}
+          ]
+        }
+      }
+    }
+  }

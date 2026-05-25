@@ -1,0 +1,47 @@
+---
+# Output: slack-docs-team
+#
+# Posts a notification to the configured Slack channel when:
+#   - New FAQ candidates are ready for review (faq-generation plan).
+#   - Stale articles are detected (staleness-review plan).
+#
+# Uses the KB_CURATOR_SLACK_WEBHOOK incoming webhook URL.
+# No Slack Bot token required — incoming webhook only.
+
+output: slack-docs-team
+
+slack:
+  webhook_url: ${KB_CURATOR_SLACK_WEBHOOK}
+
+  # Message template varies by trigger context.
+  # The `trigger_plan` variable is injected by the orchestrator.
+  message_template: |
+    {% if trigger_plan == 'faq-generation' %}
+    *KB Curator — New FAQ Candidates* :pencil:
+
+    {{ faq_candidates | length }} FAQ candidate(s) generated from {{ topic.ticket_count }} tickets
+    on topic *{{ topic.topic_label }}*.
+
+    {% for candidate in faq_candidates %}
+    • *{{ candidate.question | truncate(100) }}* (confidence: {{ candidate.confidence }})
+    {% endfor %}
+
+    Review and approve in Confluence: {{ confluence_draft_url | default("(draft link pending)") }}
+    {% elif trigger_plan == 'staleness-review' %}
+    *KB Curator — Stale Articles Detected* :warning:
+
+    {{ stale_count }} article(s) flagged as potentially outdated:
+
+    {% for article in stale_articles[:5] %}
+    • <{{ article.article_url | default("#") }}|{{ article.title }}> ({{ article.source_platform }}, {{ article.view_count }} views)
+    {% endfor %}
+    {% if stale_articles | length > 5 %}
+    _...and {{ stale_articles | length - 5 }} more. See Jira for full list._
+    {% endif %}
+
+    Jira filter: <{{ jira_filter_url | default("#") }}|KB Curation — Stale Articles>
+    {% endif %}
+
+  # Unfurl links so Confluence / Jira previews appear in Slack.
+  unfurl_links: true
+  unfurl_media: false

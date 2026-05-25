@@ -1,0 +1,62 @@
+---
+# Inbound: github-docs-pr
+#
+# Receives GitHub pull_request webhook events for the configured docs
+# repository.  When a PR is merged into the docs branch, upserts
+# kb_articles_meta for each modified Markdown file and resets refresh_due_at.
+#
+# Mounting: POST /v1/kb-curator/inbound/github-docs/{route_id}
+# Auth:     Bearer token + X-Hub-Signature-256 (HMAC-SHA256) header.
+
+source: github
+route_prefix: /v1/kb-curator/inbound/github-docs
+
+normalize:
+  hmac_secret: ${KB_CURATOR_GITHUB_DOCS_WEBHOOK_SECRET}
+
+  # Only process merged PRs targeting the docs branch.
+  filter:
+    pull_request.merged: true
+    pull_request.base.ref: ${KB_CURATOR_GITHUB_DOCS_BRANCH:-main}
+
+  # For each changed .md file in the PR, upsert a kb_articles_meta row.
+  # The inbound adapter resolves changed files via the GitHub Files API.
+  per_changed_file:
+    filter_pattern: "**/*.md"
+    field_map:
+      article_id:
+        source: file.filename
+        prefix: "github-docs:"
+      article_slug:   file.filename
+      title:
+        source: file.filename
+        transform: filename_to_title   # strips path prefix + .md, title-cases
+      source_platform: _const:github-docs
+      last_edited_at:  pull_request.merged_at
+      view_count:      _const:0
+      labels:
+        # Derive labels from the directory path (e.g. docs/api/ → tag: "api").
+        source: file.filename
+        transform: path_segments_to_labels
+
+  upsert_defaults:
+    last_verified_at: _now
+    refresh_due_at:   _now_plus_days:${KB_CURATOR_STALE_THRESHOLD_DAYS:-30}
+    archived:         false
+
+accepted_events:
+  - pull_request.closed   # filter above restricts to merged=true
+
+sample_payload: |
+  {
+    "action": "closed",
+    "pull_request": {
+      "number": 42,
+      "merged": true,
+      "merged_at": "2026-05-25T10:00:00Z",
+      "base": {"ref": "main"}
+    },
+    "repository": {
+      "full_name": "acme/docs"
+    }
+  }

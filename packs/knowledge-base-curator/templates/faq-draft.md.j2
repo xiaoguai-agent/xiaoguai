@@ -1,0 +1,60 @@
+{#
+  Template: faq-draft.md.j2
+  Rendered by: faq-generator agent
+  Output:      Confluence draft page body (Markdown)
+  Variables:
+    topic          — {topic_label, ticket_count}
+    faq            — {question, answer_md, confidence, rationale}
+    source_tickets — [{id, subject, url}]  (top representatives)
+    pack_version   — string
+#}
+# FAQ Candidate: {{ faq.question }}
+
+> **Status**: Draft — awaiting docs team review
+> **Confidence**: {{ faq.confidence | capitalize }}
+> **Topic cluster**: {{ topic.topic_label }}
+> **Source tickets**: {{ topic.ticket_count }}
+> **Generated**: {{ now() | iso8601 }}
+
+---
+
+## Question
+
+{{ faq.question }}
+
+---
+
+## Answer
+
+{{ faq.answer_md }}
+
+---
+
+## Review Notes
+
+{{ faq.rationale }}
+
+**Before publishing, verify:**
+- [ ] Answer is accurate against the latest product documentation.
+- [ ] Answer does not reference internal tools, systems, or team names.
+- [ ] Answer is ≤ 300 words and uses plain language.
+- [ ] Question matches the phrasing customers actually use (check ticket subjects below).
+- [ ] Article is tagged with the correct product area.
+
+---
+
+## Source Tickets
+
+The following tickets were used to generate this FAQ candidate
+({{ topic.ticket_count }} tickets total; showing top {{ source_tickets | length }}):
+
+| Ticket ID | Subject |
+|-----------|---------|
+{% for ticket in source_tickets %}
+| {{ ticket.id }} | {{ ticket.subject | truncate(80) }} |
+{% endfor %}
+
+---
+
+*Generated automatically by xiaoguai knowledge-base-curator pack v{{ pack_version }}.*
+*Approve and publish via the KB curation workflow — do not edit the source tickets.*
