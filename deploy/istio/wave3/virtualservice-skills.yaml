@@ -1,0 +1,30 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: xiaoguai-skills
+  namespace: xiaoguai
+  labels:
+    app.kubernetes.io/name: xiaoguai
+    app.kubernetes.io/component: skills
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  hosts:
+    - xiaoguai
+  http:
+    - name: skills-routes
+      match:
+        - uri:
+            prefix: /v1/skills/
+      timeout: 10s
+      retries:
+        attempts: 1
+        perTryTimeout: 9s
+        # Only 1 retry: install is mostly idempotent but a duplicate-key conflict
+        # (HTTP 409) must NOT be retried — it is a definitive signal, not transient.
+        retryOn: 5xx,reset,connect-failure
+      route:
+        - destination:
+            host: xiaoguai
+            port:
+              number: 8080
+          weight: 100
