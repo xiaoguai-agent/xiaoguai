@@ -1,0 +1,115 @@
+# Agent: template-selector
+# ---------------------------------------------------------------------------
+# After intake-classifier creates the contract record (stage = 'draft'),
+# template-selector chooses the best contract template from the operator's
+# library based on:
+#   - Contract type (NDA / MSA / SOW)
+#   - Counterparty type (startup, enterprise, government, individual)
+#   - Jurisdiction + governing law
+#   - Deal terms (one-way vs mutual NDA, fixed-price vs T&M SOW, etc.)
+#
+# Transition produced:  draft (populates content) — remains in 'draft' stage.
+#                       Autonomous — no HotL.
+# ---------------------------------------------------------------------------
+
+name: template-selector
+version: "1.0.0"
+description: >
+  Selects the best-matching contract template from the operator's library
+  and renders the initial draft content. Autonomous — runs immediately after
+  intake-classifier creates the contract record.
+
+triggers:
+  - event: cl.contract_created
+    source: intake-classifier
+
+system_prompt: |
+  You are a contract drafter. Your job is to select the best template
+  from the operator's library and produce an initial contract draft.
+
+  Rules:
+  - Match templates strictly by contract_type, counterparty_type, and
+    jurisdiction. If no exact match, prefer the most general template
+    (e.g. jurisdiction = 'US' over 'US-CA') and note the mismatch.
+  - Fill template variables with data from the contract record. Never
+    invent terms, dates, or obligations not present in the deal context.
+  - Flag any template variables that have no value as [REQUIRES LEGAL INPUT].
+  - Do not produce a final document — produce a draft for internal review.
+  - Output the rendered draft body as a string (via save_draft tool).
+
+tools:
+  - name: list_templates
+    description: >
+      List available contract templates filtered by type, counterparty_type,
+      and jurisdiction. Returns template_id, name, version, and a match_score.
+    kind: sql
+    query: |
+      SELECT
+          template_id, name, version,
+          contract_type, counterparty_type, jurisdiction,
+          is_mutual, pricing_model
+      FROM cl_operator_templates
+      WHERE tenant_id = '{tenant_id}'
+        AND contract_type = '{contract_type}'
+        AND (jurisdiction = '{jurisdiction}' OR jurisdiction IS NULL)
+      ORDER BY
+          (jurisdiction = '{jurisdiction}') DESC,
+          version DESC
+      LIMIT 10
+
+  - name: get_template_body
+    description: >
+      Fetch the full Jinja2 template body for a given template_id.
+    kind: sql
+    query: |
+      SELECT template_body
+      FROM cl_operator_templates
+      WHERE tenant_id = '{tenant_id}'
+        AND template_id = '{template_id}'
+
+  - name: get_contract_context
+    description: >
+      Fetch the contract record to use as template variable context.
+    kind: sql
+    query: |
+      SELECT
+          id, reference_number, contract_type, counterparty_name,
+          counterparty_domain, deal_size_usd, jurisdiction, governing_law,
+          sf_opportunity_id
+      FROM cl_contracts
+      WHERE tenant_id = '{tenant_id}'
+        AND id = '{contract_id}'
+
+  - name: save_draft
+    description: >
+      Save the rendered draft as version 1 of cl_contract_drafts.
+      Returns the draft id.
+    kind: sql
+    query: |
+      INSERT INTO cl_contract_drafts (
+          tenant_id, contract_id, version, content_text,
+          authored_by, change_summary
+      ) VALUES (
+          '{tenant_id}', '{contract_id}', 1, '{content_text}',
+          'agent:template-selector', 'Initial draft from template {template_id} v{template_version}'
+      )
+      RETURNING id
+
+  - name: update_contract_template
+    description: >
+      Record which template was used on the contract record.
+    kind: sql
+    query: |
+      UPDATE cl_contracts
+      SET template_id = '{template_id}', stage = 'draft'
+      WHERE tenant_id = '{tenant_id}' AND id = '{contract_id}'
+
+hotl:
+  autonomous: true
+  budget_usd: 0.00
+
+outcome_telemetry:
+  record_on:
+    - template_selected
+    - draft_created
+  feedback_table: cl_stage_audit

@@ -1,0 +1,198 @@
+# Contract Lifecycle Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# End-to-end contract pipeline: NDA → MSA → SOW, with HotL approval gates
+# at every stage that exposes documents to counterparties or triggers
+# e-signatures. Internal-only transitions (draft → internal_review) are
+# autonomous.
+#
+# Peer packs:
+#   packs/legal-contract-review/ — per-contract redline scoring + risk matrix.
+#     This pack calls it when a counterparty redline arrives; it does NOT
+#     replicate per-clause risk scoring.
+#
+# Install:   xiaoguai pack install packs/contract-lifecycle/
+# Requires:  xiaoguai >= v1.4.0 (features: llm, outcome-telemetry, hotl)
+# ---------------------------------------------------------------------------
+
+name: contract-lifecycle
+version: "1.0.0"
+description: >
+  End-to-end contract lifecycle management: NDA → MSA → SOW.
+  Classifies inbound deal intent, selects the right template from the
+  operator's contract library, routes counterparty redlines to
+  legal-contract-review for risk scoring, manages HotL-gated stage
+  transitions for all counterparty-facing actions, assembles executed
+  packages, and surfaces renewal decisions 90 days before MSA expiry.
+  All sends, e-signature envelopes, and counterparty-visible actions
+  require explicit human approval. Internal drafting and review staging
+  are autonomous.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.4.0"
+  features:
+    - llm              # LLM backend — classification, drafting, summarisation
+    - outcome-telemetry  # records stage transitions for improvement loop
+    - hotl             # Human on the Loop gating for counterparty-facing actions
+
+# --------------------------------------------------------------------------
+# Database migrations
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_contract_lifecycle.sql
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  # Determines which contract sequence to start (NDA-first vs MSA-direct)
+  - path: agents/intake-classifier.yaml
+  # Selects the best template from the operator's library
+  - path: agents/template-selector.yaml
+  # Routes counterparty redlines to legal-contract-review and back
+  - path: agents/redline-router.yaml
+  # Assembles the final executed package (PDF + attachments + audit trail)
+  - path: agents/executed-package-builder.yaml
+  # Detects MSA renewals approaching and surfaces a decision card
+  - path: agents/renewal-detector.yaml
+
+# --------------------------------------------------------------------------
+# Inbound sources
+# --------------------------------------------------------------------------
+sources:
+  - path: inbound/salesforce-opportunity-create.yaml
+  - path: inbound/docusign-event.yaml
+  - path: inbound/ironclad-workflow-event.yaml
+  - path: inbound/manual-contract-upload.yaml
+  - path: inbound/email-counterparty-redline-receipt.yaml
+
+# --------------------------------------------------------------------------
+# Output connectors
+# --------------------------------------------------------------------------
+outputs:
+  - path: outputs/legal-team-slack.yaml
+  - path: outputs/docusign-envelope-create.yaml
+  - path: outputs/salesforce-opportunity-update.yaml
+  - path: outputs/contract-archive-s3.yaml
+
+# --------------------------------------------------------------------------
+# HotL gating policy
+# ---------------------------------------------------------------------------
+# Stage transitions are classified into two buckets:
+#
+#   AUTONOMOUS — no human approval required:
+#     draft              (agent creates first draft from template)
+#     draft → internal_review  (moves to internal legal/deal-desk queue)
+#     internal_review → legal_review  (escalates within the organisation)
+#
+#   HOTL-GATED — explicit human approval required before execution:
+#     legal_review → counterparty_review  (sends document out to counterparty)
+#     counterparty_review → legal_review  (counterparty redline received;
+#                                          routed to legal-contract-review pack
+#                                          for risk scoring, then surfaces
+#                                          summary for legal team sign-off)
+#     legal_review → signed              (triggers DocuSign envelope — HOTL)
+#     signed → active                    (marks contract live — HOTL confirms
+#                                         countersigned copy received)
+#     active → terminated                (early termination — HOTL required)
+#     any → expired                      (renewal decision — HOTL on
+#                                         renewal-detector card)
+# --------------------------------------------------------------------------
+hotl:
+  # Transitions that MUST NOT proceed without human approval:
+  gated_transitions:
+    - from: legal_review
+      to: counterparty_review
+      reason: >
+        Sending document to counterparty. Requires legal counsel or
+        authorised signatory approval.
+      output: outputs/docusign-envelope-create.yaml
+
+    - from: counterparty_review
+      to: legal_review
+      reason: >
+        Counterparty redline received. Risk summary from legal-contract-review
+        pack must be reviewed and approved by legal team before next steps.
+      output: outputs/legal-team-slack.yaml
+
+    - from: legal_review
+      to: signed
+      reason: >
+        Triggering e-signature envelope (DocuSign). Final check before
+        binding commitment.
+      output: outputs/docusign-envelope-create.yaml
+
+    - from: signed
+      to: active
+      reason: >
+        Marking contract active. Confirms countersigned copy received and
+        archived.
+      output: outputs/contract-archive-s3.yaml
+
+    - from: active
+      to: terminated
+      reason: >
+        Early termination is irreversible. Requires authorised signatory
+        approval and legal confirmation.
+      output: outputs/legal-team-slack.yaml
+
+    - from: active
+      to: expired
+      reason: >
+        Renewal decision card. Operator chooses renew / let-lapse / escalate.
+        Autonomous renewal is never triggered without this approval.
+      output: outputs/legal-team-slack.yaml
+
+  # Autonomous transitions (no approval required):
+  autonomous_transitions:
+    - from: intent_received
+      to: draft
+      agent: intake-classifier + template-selector
+    - from: draft
+      to: internal_review
+      agent: intake-classifier
+    - from: internal_review
+      to: legal_review
+      agent: redline-router
+
+  # Notification channel for pending HotL approvals.
+  # Operators override with CONTRACTS_HOTL_CHANNEL env var.
+  notify_channel: "${CONTRACTS_HOTL_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# Peer pack integration
+# --------------------------------------------------------------------------
+peer_packs:
+  legal-contract-review:
+    role: >
+      Called by redline-router when a counterparty redline arrives.
+      Receives the diff and returns a risk-scored summary.
+      This pack does NOT replicate per-clause scoring — it only consumes
+      the summary and surfaces it in the HotL approval card.
+    trigger: counterparty_redline_received
+
+# --------------------------------------------------------------------------
+# Schema
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "cl_"
+  namespace: "contract_lifecycle"
+
+# --------------------------------------------------------------------------
+# Outcome telemetry
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - stage_transition
+    - hotl_approval
+    - hotl_rejection
+    - envelope_sent
+    - contract_executed
+    - contract_renewed
+    - contract_terminated
+  feedback_table: cl_stage_audit

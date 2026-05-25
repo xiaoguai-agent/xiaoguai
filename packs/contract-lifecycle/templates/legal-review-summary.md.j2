@@ -1,0 +1,64 @@
+{# templates/legal-review-summary.md.j2
+   Rendered by redline-router after legal-contract-review pack returns
+   a risk score. Surfaced in the HotL approval card.
+   Variables: contract, redline (id, source, draft_version, received_at),
+              risk_score, risk_summary, flagged_clauses (list of
+              {clause, risk, note})
+#}
+## Legal Review Summary — {{ contract.reference_number }}
+
+**Counterparty Redline Received**
+Source: {{ redline.source | replace("_", " ") | title }}
+Draft version reviewed: v{{ redline.draft_version }}
+Received: {{ redline.received_at | datetimeformat("%Y-%m-%d %H:%M UTC") }}
+
+---
+
+### Overall Risk Assessment
+
+{% set risk_emoji = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"} %}
+**Risk Score: {{ risk_score | upper }}**
+
+{{ risk_summary }}
+
+---
+
+### Flagged Clauses
+
+{% if flagged_clauses %}
+| Clause | Risk | Note |
+|--------|------|------|
+{% for clause in flagged_clauses %}
+| {{ clause.clause | truncate(60) }} | **{{ clause.risk | upper }}** | {{ clause.note | truncate(100) }} |
+{% endfor %}
+
+{% if flagged_clauses | selectattr("risk", "equalto", "critical") | list %}
+> **CRITICAL clauses present.** Legal counsel sign-off required before
+> any response is sent to the counterparty.
+{% endif %}
+{% else %}
+No individual clauses were flagged. Review the overall risk score above.
+{% endif %}
+
+---
+
+### Recommended Actions
+
+{% if risk_score == "critical" %}
+1. Escalate to senior legal counsel immediately.
+2. Do not send any response to the counterparty without sign-off.
+3. Consider requesting a call to negotiate the flagged terms before
+   accepting any markup.
+{% elif risk_score == "high" %}
+1. Legal review required for all high-risk clauses before counter-offer.
+2. Prepare position paper for negotiation.
+{% elif risk_score == "medium" %}
+1. Review flagged clauses and determine acceptable compromises.
+2. Standard counter-redline process applies.
+{% else %}
+1. Minor edits — standard legal review is sufficient.
+2. Counter-offer or acceptance at legal team's discretion.
+{% endif %}
+
+*Risk scoring provided by the legal-contract-review pack.
+Redline ID: `{{ redline.id }}`*

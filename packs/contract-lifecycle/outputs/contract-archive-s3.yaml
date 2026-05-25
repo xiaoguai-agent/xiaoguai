@@ -1,0 +1,69 @@
+---
+# Output: contract-archive-s3
+# ---------------------------------------------------------------------------
+# Immutable WORM archive for executed contracts and their audit trails.
+#
+# HOTL-GATED for signed → active: a human must confirm the countersigned
+# copy is correct before the contract is marked active and the permanent
+# archive key is recorded.
+#
+# Also used (autonomously) for intermediate draft backups (uploaded to a
+# non-WORM staging prefix when a new draft version is created).
+#
+# Storage layout:
+#   contracts/{tenant_id}/{counterparty_domain}/{contract_id}/
+#     executed/
+#       {reference_number}.pdf            ← signed PDF (WORM)
+#       {reference_number}-audit-trail.json  ← stage history (WORM)
+#       executed-package-readme.md        ← this file (WORM)
+#       attachments/                      ← countersigned attachments (WORM)
+#     drafts/
+#       v{N}-{reference_number}.pdf       ← draft versions (NOT WORM, 90-day TTL)
+# ---------------------------------------------------------------------------
+
+output: contract-archive-s3
+version: "1.0.0"
+
+hotl:
+  # Final archive to WORM bucket (marking active) requires HotL approval.
+  require_approved_approval_for:
+    - gate: [signed, active]
+  # Draft backups are autonomous.
+  autonomous_for:
+    - event: cl.draft_version_created
+
+s3:
+  region: "${CONTRACTS_S3_REGION}"
+
+  # WORM bucket — Object Lock COMPLIANCE mode, 7-year retention.
+  worm_bucket: "${CONTRACTS_S3_WORM_BUCKET}"
+  worm_retention_years: 7
+  worm_mode: COMPLIANCE
+
+  # Staging bucket — no Object Lock, 90-day lifecycle TTL for drafts.
+  staging_bucket: "${CONTRACTS_STAGING_BUCKET}"
+  staging_ttl_days: 90
+
+  # SSE-S3 encryption for all objects (operators may override with SSE-KMS).
+  encryption: "${CONTRACTS_S3_ENCRYPTION:-AES256}"
+  kms_key_id: "${CONTRACTS_S3_KMS_KEY_ID}"    # optional; only used if encryption=aws:kms
+
+key_templates:
+  executed: >
+    contracts/{tenant_id}/{counterparty_domain}/{contract_id}/executed/{filename}
+  draft: >
+    contracts/{tenant_id}/{counterparty_domain}/{contract_id}/drafts/v{version}-{filename}
+
+# After uploading, update cl_contracts with the S3 key for the executed package.
+post_upload:
+  update_contract_field: storage_key    # only for executed uploads (WORM)
+
+# Index executed contracts by counterparty domain in cl_contracts so the
+# relationship view can surface all contracts per counterparty.
+index:
+  table: cl_contracts
+  field: counterparty_domain
+
+audit:
+  event_type: contract_archived
+  table: cl_stage_audit

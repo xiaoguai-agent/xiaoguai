@@ -1,0 +1,74 @@
+---
+# Inbound: email-counterparty-redline-receipt
+# ---------------------------------------------------------------------------
+# Monitors a dedicated inbound email address (e.g. contracts@company.com)
+# for counterparty redline responses. When an email arrives:
+#
+#   1. Verifies the sender domain matches a known counterparty in cl_contracts.
+#   2. Extracts any attached DOCX/PDF (the redlined document).
+#   3. If a DOCX attachment is present, generates a unified diff against the
+#      latest draft version (cl_contract_drafts max version).
+#   4. Emits cl.counterparty_redline_received — redline-router subscribes.
+#
+# Email polling interval: configurable (default: 5 minutes).
+# Supported email providers: Gmail API, Microsoft Graph (Exchange/Outlook).
+#
+# Mounting: Polled (not a webhook) — xiaoguai scheduler triggers the poll.
+# ---------------------------------------------------------------------------
+
+source: email-redline
+poll:
+  interval_seconds: 300   # 5 minutes
+  provider: "${EMAIL_PROVIDER:-gmail}"  # gmail | msgraph
+
+gmail:
+  credentials_file: "${GMAIL_CREDENTIALS_FILE}"
+  token_file: "${GMAIL_TOKEN_FILE}"
+  inbox_label: "contracts/incoming"    # Gmail label to monitor
+  processed_label: "contracts/processed"
+
+msgraph:
+  client_id: "${MSGRAPH_CLIENT_ID}"
+  client_secret: "${MSGRAPH_CLIENT_SECRET}"
+  tenant_id: "${MSGRAPH_TENANT_ID}"
+  mailbox: "${CONTRACTS_MAILBOX}"      # e.g. contracts@company.com
+
+normalize:
+  # Match email sender domain to counterparty_domain in cl_contracts.
+  sender_domain_match:
+    lookup_table: cl_contracts
+    match_column: counterparty_domain
+    stage_filter: ["counterparty_review"]   # only if contract is awaiting counterparty
+
+  field_map:
+    sender_email:   from
+    sender_domain:  from_domain   # extracted from from
+    subject:        subject
+    body_text:      body_text
+    attachments:    attachments   # list of {name, content_type, bytes}
+
+  # Accepted attachment types for redline extraction.
+  accepted_attachment_types:
+    - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+    - application/pdf
+    - text/plain
+
+  # If no attachment is found but the email body contains inline text
+  # (e.g. pasted contract section), treat the body as the redline content.
+  fallback_to_body: true
+
+  # Generate unified diff between attachment and latest draft.
+  generate_diff:
+    enabled: true
+    context_lines: 3
+
+emits:
+  event: cl.counterparty_redline_received
+
+# Emails from unknown sender domains (no matching counterparty_domain in
+# cl_contracts with stage = counterparty_review) are quarantined to
+# contracts/unmatched label and trigger an admin-ui notification — not
+# forwarded to any agent.
+unmatched_handling:
+  quarantine_label: "contracts/unmatched"
+  notify_channel: "${CONTRACTS_HOTL_CHANNEL:-admin_ui}"

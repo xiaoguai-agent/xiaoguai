@@ -1,0 +1,55 @@
+---
+# Output: salesforce-opportunity-update
+# ---------------------------------------------------------------------------
+# Keeps the linked Salesforce Opportunity in sync with contract stage
+# transitions. Autonomous — no HotL required (read/write to CRM, not
+# a counterparty-facing action).
+#
+# Triggered on every cl.stage_transition event where sf_opportunity_id
+# is set on the contract.
+# ---------------------------------------------------------------------------
+
+output: salesforce-opportunity-update
+version: "1.0.0"
+
+hotl:
+  # CRM updates are autonomous — not counterparty-facing.
+  autonomous: true
+
+salesforce:
+  instance_url: "${SALESFORCE_INSTANCE_URL}"
+  client_id: "${SALESFORCE_CLIENT_ID}"
+  client_secret: "${SALESFORCE_CLIENT_SECRET}"
+  token_url: "${SALESFORCE_TOKEN_URL}"
+
+# Map contract stage → Salesforce Opportunity Stage Name
+stage_map:
+  draft:               "Proposal/Price Quote"
+  internal_review:     "Proposal/Price Quote"
+  legal_review:        "Negotiation/Review"
+  counterparty_review: "Negotiation/Review"
+  signed:              "Closed Won"
+  active:              "Closed Won"
+  expired:             "Closed Lost"
+  terminated:          "Closed Lost"
+
+# Fields updated on the Opportunity record
+field_updates:
+  StageName:
+    source: stage_map[contract.stage]
+  Contract_Stage__c:    # custom field — sync the raw stage value
+    source: contract.stage
+  Contract_Reference__c:
+    source: contract.reference_number
+  Contract_Signed_Date__c:
+    source: contract.signed_at
+    condition: "contract.stage == 'signed'"
+
+# Do not update Salesforce if the Opportunity is already Closed Won/Lost
+# (prevents reverting a manually closed deal).
+skip_conditions:
+  - "sf_opportunity.StageName == 'Closed Won' AND contract.stage NOT IN ('signed', 'active')"
+
+audit:
+  event_type: salesforce_opportunity_updated
+  table: cl_stage_audit

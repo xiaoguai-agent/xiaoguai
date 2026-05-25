@@ -1,0 +1,136 @@
+# Agent: renewal-detector
+# ---------------------------------------------------------------------------
+# Runs on a daily schedule. Finds active MSAs with expiry_date within
+# 90 days (configurable). For each one:
+#
+#   1. Checks whether a renewal has already been initiated (child contract
+#      with parent_id = msa.id and contract_type = 'MSA' in draft/active).
+#   2. If not, renders a renewal-decision-card surfacing the deal history
+#      (SOW count, total value, counterparty contact).
+#   3. Creates a HotL approval record (active → expired decision gate).
+#   4. Notifies the legal/deal-desk channel.
+#
+# Transition:  active → expired (or renewed) is HOTL-GATED.
+# Autonomous renewal is never triggered — the human decides.
+# ---------------------------------------------------------------------------
+
+name: renewal-detector
+version: "1.0.0"
+description: >
+  Daily scan for active MSAs approaching expiry. Surfaces a renewal
+  decision card 90 days out. Creates a HotL gate — autonomous renewal
+  is never triggered.
+
+triggers:
+  - event: schedule.daily
+    cron: "0 9 * * *"   # 09:00 UTC daily
+
+system_prompt: |
+  You are a contract renewal analyst. Every day, scan for active MSAs
+  expiring within the renewal window (default 90 days).
+
+  For each qualifying MSA:
+  1. Check if a renewal is already in progress (child MSA in draft or
+     active stage).
+  2. If not, gather the deal history (linked SOWs, total contract value,
+     counterparty contact).
+  3. Render the renewal-decision-card template.
+  4. Create a pending HotL approval record.
+  5. Notify the configured channel.
+
+  Rules:
+  - Never initiate a renewal autonomously.
+  - If a renewal is already in progress, skip the contract (log a note).
+  - Deduplicate: if a HotL approval for active → expired already exists
+    and is pending, skip the contract.
+  - Surface risk signals: if the counterparty has open redlines or any
+    terminated contracts, flag them in the card.
+
+tools:
+  - name: find_expiring_msas
+    description: >
+      Find active MSAs expiring within the renewal window days.
+    kind: sql
+    query: |
+      SELECT
+          id, reference_number, counterparty_name, counterparty_domain,
+          deal_size_usd, effective_date, expiry_date,
+          EXTRACT(DAY FROM expiry_date - NOW())::INT AS days_until_expiry
+      FROM cl_contracts
+      WHERE tenant_id = '{tenant_id}'
+        AND contract_type = 'MSA'
+        AND stage = 'active'
+        AND expiry_date BETWEEN NOW() AND NOW() + INTERVAL '{renewal_window_days} days'
+      ORDER BY expiry_date ASC
+
+  - name: check_renewal_in_progress
+    description: >
+      Check whether a child MSA renewal or a pending HotL approval
+      for this contract already exists.
+    kind: sql
+    query: |
+      SELECT
+          (
+              SELECT COUNT(*) FROM cl_contracts
+              WHERE parent_id = '{contract_id}'
+                AND contract_type = 'MSA'
+                AND stage NOT IN ('terminated', 'expired')
+          ) AS child_renewal_count,
+          (
+              SELECT COUNT(*) FROM cl_approvals
+              WHERE contract_id = '{contract_id}'
+                AND gate_to_stage IN ('expired', 'active')
+                AND status = 'pending'
+          ) AS pending_hotl_count
+
+  - name: get_deal_history
+    description: >
+      Summarise linked SOWs and total contract value for the MSA.
+    kind: sql
+    query: |
+      SELECT
+          COUNT(*) AS sow_count,
+          COALESCE(SUM(deal_size_usd), 0) AS total_sow_value,
+          MAX(effective_date) AS latest_sow_date
+      FROM cl_contracts
+      WHERE tenant_id = '{tenant_id}'
+        AND parent_id = '{contract_id}'
+        AND contract_type = 'SOW'
+
+  - name: render_renewal_card
+    description: >
+      Render the renewal-decision-card template with MSA + deal history data.
+    kind: template
+    template: "templates/renewal-decision-card.md.j2"
+
+  - name: create_hotl_renewal_approval
+    description: >
+      Create a pending HotL approval record for the renewal decision.
+      gate_to_stage = 'expired' represents "let lapse" — approver can
+      instead initiate a renewal by creating a child contract.
+    kind: sql
+    query: |
+      INSERT INTO cl_approvals (
+          tenant_id, contract_id,
+          gate_from_stage, gate_to_stage,
+          status, approval_card
+      ) VALUES (
+          '{tenant_id}', '{contract_id}',
+          'active', 'expired',
+          'pending', '{approval_card}'
+      )
+      RETURNING id
+
+hotl:
+  # Renewal detector never acts autonomously on expiry.
+  autonomous: false
+  require_approval_before:
+    - stage_transition_to_expired
+    - renewal_contract_creation
+
+outcome_telemetry:
+  record_on:
+    - renewal_detected
+    - renewal_skipped_already_in_progress
+    - hotl_approval_created
+  feedback_table: cl_stage_audit
