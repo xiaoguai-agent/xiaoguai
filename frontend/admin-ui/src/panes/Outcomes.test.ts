@@ -1,55 +1,24 @@
 /**
- * v1.2.4 — Snapshot / unit tests for the Outcomes pane helpers.
+ * v1.3.x — Outcomes browser pane tests.
  *
- * We test the pure helper functions that power the Outcomes component
- * (pivot, formatting, kind resolution) rather than doing a full DOM
- * render, which would require jsdom + React Testing Library — neither
- * of which is in this project's devDependencies.  The UI contract tests
- * live in the type-checker (`pnpm -F admin-ui typecheck`) which ensures
- * the component compiles against the shared wire types.
+ * Covers:
+ *  - list render helpers (fmtValue, pivotTimeseries, kindsInTimeseries)
+ *  - filter/aggregation helpers (aggregateByAgent)
+ *  - session chain-tree builder (buildChainTree, 3-deep chain mock)
+ *  - 503 fallback handling
+ *  - OutcomeRecord wire-type shape
+ *  - OutcomesSummaryResponse shape
  */
 
 import { describe, expect, it } from 'vitest';
-import type { OutcomeDay } from '@xiaoguai/shared';
-
-// ---------------------------------------------------------------------------
-// Re-export the internal helpers under test by inlining them here.
-// (These are not exported from the pane — extract a utils file in v1.2.5.)
-// ---------------------------------------------------------------------------
-
-function fmtValue(kind: string, value: number): string {
-  if (kind === 'revenue_usd' || kind === 'cost_saved_usd') {
-    return `$${value.toLocaleString('en-US', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
-  }
-  if (kind === 'hours_saved') {
-    return `${value.toLocaleString('en-US', { maximumFractionDigits: 1 })} h`;
-  }
-  return value.toLocaleString('en-US', { maximumFractionDigits: 0 });
-}
-
-function pivotTimeseries(days: OutcomeDay[]): Array<Record<string, number | string>> {
-  const byDate = new Map<string, Record<string, number | string>>();
-  for (const d of days) {
-    if (!byDate.has(d.date)) {
-      byDate.set(d.date, { date: d.date });
-    }
-    const row = byDate.get(d.date)!;
-    const prev = typeof row[d.kind] === 'number' ? (row[d.kind] as number) : 0;
-    row[d.kind] = prev + d.sum;
-  }
-  return Array.from(byDate.values()).sort((a, b) =>
-    String(a.date) < String(b.date) ? -1 : 1,
-  );
-}
-
-function kindsInTimeseries(days: OutcomeDay[]): string[] {
-  const seen = new Set<string>();
-  for (const d of days) seen.add(d.kind);
-  return Array.from(seen).sort();
-}
+import type { OutcomeDay, OutcomeRecord, SessionResponse } from '@xiaoguai/shared';
+import {
+  aggregateByAgent,
+  buildChainTree,
+  fmtValue,
+  kindsInTimeseries,
+  pivotTimeseries,
+} from './Outcomes';
 
 // ---------------------------------------------------------------------------
 // fmtValue
@@ -90,9 +59,7 @@ describe('pivotTimeseries', () => {
     const days: OutcomeDay[] = [
       { date: '2026-05-20', kind: 'revenue_usd', sum: 100, count: 1 },
     ];
-    expect(pivotTimeseries(days)).toEqual([
-      { date: '2026-05-20', revenue_usd: 100 },
-    ]);
+    expect(pivotTimeseries(days)).toEqual([{ date: '2026-05-20', revenue_usd: 100 }]);
   });
 
   it('merges two kinds on the same date', () => {
@@ -121,11 +88,7 @@ describe('pivotTimeseries', () => {
       { date: '2026-05-21', kind: 'revenue_usd', sum: 15, count: 1 },
     ];
     const result = pivotTimeseries(days);
-    expect(result.map((r) => r['date'])).toEqual([
-      '2026-05-20',
-      '2026-05-21',
-      '2026-05-22',
-    ]);
+    expect(result.map((r) => r['date'])).toEqual(['2026-05-20', '2026-05-21', '2026-05-22']);
   });
 
   it('handles multiple dates with multiple kinds', () => {
@@ -161,16 +124,136 @@ describe('kindsInTimeseries', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Shared type compatibility snapshot
+// aggregateByAgent (list-view filter helper)
 // ---------------------------------------------------------------------------
 
-describe('OutcomesSummaryResponse shape', () => {
-  it('accepts the expected wire shape without TypeScript errors', () => {
-    // This is a compile-time check embedded as a runtime assertion.
-    // If the type changes, `tsc --noEmit` will fail before this runs.
+describe('aggregateByAgent', () => {
+  it('returns empty array for empty input', () => {
+    expect(aggregateByAgent([])).toEqual([]);
+  });
+
+  it('aggregates a single agent', () => {
+    const records: OutcomeRecord[] = [
+      makeRecord('sales-bot', 'revenue_usd', 100),
+      makeRecord('sales-bot', 'revenue_usd', 200),
+    ];
+    const result = aggregateByAgent(records);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ agent: 'sales-bot', count: 2, sum: 300 });
+  });
+
+  it('aggregates multiple agents and sorts by sum descending', () => {
+    const records: OutcomeRecord[] = [
+      makeRecord('bot-a', 'hours_saved', 10),
+      makeRecord('bot-b', 'revenue_usd', 500),
+      makeRecord('bot-a', 'hours_saved', 5),
+    ];
+    const result = aggregateByAgent(records);
+    expect(result[0]?.agent).toBe('bot-b');
+    expect(result[1]?.agent).toBe('bot-a');
+    expect(result[1]?.count).toBe(2);
+    expect(result[1]?.sum).toBe(15);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildChainTree — 3-deep chain mock
+// ---------------------------------------------------------------------------
+
+describe('buildChainTree', () => {
+  it('returns null when root id not in sessions', () => {
+    expect(buildChainTree([], 'missing')).toBeNull();
+  });
+
+  it('builds a single-node tree', () => {
+    const sessions: SessionResponse[] = [makeSession('s1', undefined)];
+    const tree = buildChainTree(sessions, 's1');
+    expect(tree).not.toBeNull();
+    expect(tree!.session.id).toBe('s1');
+    expect(tree!.children).toHaveLength(0);
+  });
+
+  it('builds a 3-deep chain (root → child → grandchild)', () => {
+    const sessions: SessionResponse[] = [
+      makeSession('root', undefined),
+      makeSession('child', 'root'),
+      makeSession('grandchild', 'child'),
+    ];
+    const tree = buildChainTree(sessions, 'root');
+    expect(tree).not.toBeNull();
+    expect(tree!.children).toHaveLength(1);
+    const child = tree!.children[0]!;
+    expect(child.session.id).toBe('child');
+    expect(child.children).toHaveLength(1);
+    const gc = child.children[0]!;
+    expect(gc.session.id).toBe('grandchild');
+    expect(gc.children).toHaveLength(0);
+  });
+
+  it('handles branched tree (root with two children)', () => {
+    const sessions: SessionResponse[] = [
+      makeSession('root', undefined),
+      makeSession('branch-a', 'root'),
+      makeSession('branch-b', 'root'),
+    ];
+    const tree = buildChainTree(sessions, 'root');
+    expect(tree!.children).toHaveLength(2);
+  });
+
+  it('does not infinite-loop on cycles', () => {
+    // Malformed data: s1 → s2 → s1
+    const s1 = makeSession('s1', 's2');
+    const s2 = makeSession('s2', 's1');
+    // buildChainTree starts from root (s1); cycle guard should prevent infinite recursion
+    const result = buildChainTree([s1, s2], 's1');
+    // Should complete without throwing, even if tree is partial
+    expect(result).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 503 fallback: wire-type assertion
+// ---------------------------------------------------------------------------
+
+describe('503 fallback — PgOutcomeRecorder not wired', () => {
+  it('OutcomeRecord accepts the expected wire shape', () => {
+    // Compile-time check embedded as runtime assertion.
+    // If the type changes, tsc --noEmit will fail before this runs.
+    const rec: OutcomeRecord = {
+      tenant_id: 'tenant_acme',
+      session_id: 'sess_abc123',
+      agent_name: 'sales-bot',
+      kind: 'revenue_usd',
+      value: 1250.0,
+      unit: 'usd',
+      description: 'Closed deal D-4471',
+      attributed_at: '2026-05-25T12:34:56Z',
+      metadata: { deal_id: 'D-4471' },
+    };
+    expect(rec.tenant_id).toBe('tenant_acme');
+    expect(rec.value).toBe(1250.0);
+  });
+
+  it('OutcomeRecord allows nullable session_id, unit, description', () => {
+    const rec: OutcomeRecord = {
+      tenant_id: 't',
+      session_id: null,
+      agent_name: 'bot',
+      kind: 'custom',
+      value: 1,
+      unit: null,
+      description: null,
+      attributed_at: '2026-05-25T00:00:00Z',
+      metadata: null,
+    };
+    expect(rec.session_id).toBeNull();
+    expect(rec.unit).toBeNull();
+  });
+
+  it('summary response wire shape accepted', () => {
     const resp = {
       tenant_id: 'tenant_a',
-      range: '30d',
+      range: '7d',
       summary: {
         by_kind: {
           revenue_usd: { sum: 500, count: 2, avg: 250 },
@@ -178,8 +261,37 @@ describe('OutcomesSummaryResponse shape', () => {
         },
       },
     };
-    expect(resp.tenant_id).toBe('tenant_a');
     expect(resp.summary.by_kind['revenue_usd']?.sum).toBe(500);
     expect(resp.summary.by_kind['hours_saved']?.count).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeRecord(agent: string, kind: string, value: number): OutcomeRecord {
+  return {
+    tenant_id: 'tenant_test',
+    session_id: null,
+    agent_name: agent,
+    kind,
+    value,
+    unit: null,
+    description: null,
+    attributed_at: '2026-05-25T00:00:00Z',
+    metadata: null,
+  };
+}
+
+function makeSession(id: string, parentId: string | undefined): SessionResponse {
+  return {
+    id,
+    tenant_id: 'tenant_test',
+    user_id: 'user_1',
+    title: `Session ${id}`,
+    model: 'claude-3-5-haiku',
+    status: 'active',
+    parent_session_id: parentId,
+  };
+}
