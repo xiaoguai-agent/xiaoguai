@@ -26,6 +26,7 @@ flate2 = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 tokio = { workspace = true }
+xiaoguai-observability = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

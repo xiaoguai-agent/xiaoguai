@@ -131,6 +131,14 @@ impl Detector for ZScoreDetector {
         let score = (value - mean) / std;
         if score.abs() > self.sigma_threshold && self.cooldown.ready(ts) {
             self.cooldown.record(ts);
+            let severity = if score.abs() > self.sigma_threshold * 2.0 {
+                "critical"
+            } else {
+                "high"
+            };
+            if let Some(ctr) = xiaoguai_observability::anomaly_detections_total() {
+                ctr.with_label_values(&["zscore", severity]).inc();
+            }
             let anomaly = Anomaly {
                 ts,
                 value,
@@ -240,6 +248,14 @@ impl Detector for EwmaDetector {
                 let score = (value - prev_mean) / prev_std;
                 if score.abs() > self.sigma_threshold && self.cooldown.ready(ts) {
                     self.cooldown.record(ts);
+                    let severity = if score.abs() > self.sigma_threshold * 2.0 {
+                        "critical"
+                    } else {
+                        "high"
+                    };
+                    if let Some(ctr) = xiaoguai_observability::anomaly_detections_total() {
+                        ctr.with_label_values(&["ewma", severity]).inc();
+                    }
                     let anomaly = Anomaly {
                         ts,
                         value,

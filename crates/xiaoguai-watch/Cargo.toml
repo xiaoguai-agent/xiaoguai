@@ -23,6 +23,7 @@ uuid           = { workspace = true }
 reqwest        = { workspace = true }
 sha2           = { workspace = true }
 moka           = { workspace = true }
+xiaoguai-observability = { workspace = true }
 
 [dev-dependencies]
 tokio              = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }

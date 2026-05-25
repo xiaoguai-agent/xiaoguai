@@ -432,10 +432,19 @@ pub async fn rate_limit_middleware(
         .copied()
         .unwrap_or(state.default_class);
 
+    let route_label = match route_class {
+        RouteClass::Default => "default",
+        RouteClass::SchedulerWebhook => "scheduler_webhook",
+    };
+
     if state
         .backend
         .try_acquire(&tenant_id, route_class, rate_class)
     {
+        if let Some(ctr) = xiaoguai_observability::rate_limit_hits_total() {
+            ctr.with_label_values(&[&tenant_id, route_label, "allow"])
+                .inc();
+        }
         next.run(req).await
     } else {
         tracing::warn!(
@@ -444,6 +453,10 @@ pub async fn rate_limit_middleware(
             ?rate_class,
             "rate limit exceeded"
         );
+        if let Some(ctr) = xiaoguai_observability::rate_limit_hits_total() {
+            ctr.with_label_values(&[&tenant_id, route_label, "deny"])
+                .inc();
+        }
         deny_response(rate_class.retry_after_secs())
     }
 }
