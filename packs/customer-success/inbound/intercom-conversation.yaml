@@ -1,0 +1,83 @@
+# Inbound source — Intercom conversation events
+#
+# Intercom delivers webhook notifications for conversation state changes to:
+#   POST https://<host>/v1/customer-success/inbound/intercom/{route_id}
+#
+# Authentication: Intercom signs every payload with a HMAC-SHA1 digest
+# in the X-Hub-Signature header.  The adapter verifies this before
+# forwarding to the triage agent.
+#
+# Supported topics: conversation.created, conversation.user.replied
+# Ignored topics (acknowledged, not processed):
+#   conversation.admin.replied, conversation.admin.closed, conversation.snoozed
+
+name: intercom-conversation
+kind: webhook
+
+route_id: "intercom-conv-${PACK_INSTANCE_ID}"
+
+event_filter:
+  header: "X-Intercom-Topic"
+  values:
+    - "conversation.created"
+    - "conversation.user.replied"
+
+# Skip conversations already assigned to a human agent — let the human handle it.
+payload_filter:
+  json_path: "$.data.item.assignee.type"
+  values: ["nobody", "bot", null]
+
+signature:
+  algorithm: hmac-sha1
+  header: "X-Hub-Signature"
+  prefix: "sha1="
+  secret_env: INTERCOM_CLIENT_SECRET
+
+extract:
+  id:             "$.data.item.id"
+  subject:        "$.data.item.source.subject"
+  body:           "$.data.item.source.body"       # HTML; adapter strips tags
+  body_format:    "_const:html"
+  created_at:     "$.data.item.created_at"
+  customer_email: "$.data.item.source.author.email"
+  customer_name:  "$.data.item.source.author.name"
+  tags:           "$.data.item.tags.tags[*].name"
+  source:         "_const:intercom"
+
+derived:
+  age_minutes:
+    expr: "now_utc_minutes() - epoch_to_minutes($.data.item.created_at)"
+  has_agent_reply:
+    expr: "$.data.item.statistics.count_assignments > 0"
+  customer_tier:
+    tool: salesforce_get_account_tier
+    params:
+      email: "{{ extract.customer_email }}"
+    fallback: "unknown"
+
+# Adapter strips HTML from the body before passing to the agent.
+transform:
+  body: strip_html
+
+sample_payload: |
+  {
+    "type": "notification_event",
+    "topic": "conversation.created",
+    "data": {
+      "item": {
+        "id": "conv_001",
+        "created_at": 1748167200,
+        "source": {
+          "subject": "SSO not working for our team",
+          "body": "<p>We set up SSO last week but half our team can't log in.</p>",
+          "author": {
+            "email": "bob@startup.io",
+            "name": "Bob Kim"
+          }
+        },
+        "assignee": {"type": "nobody"},
+        "tags": {"tags": [{"name": "sso"}, {"name": "auth"}]},
+        "statistics": {"count_assignments": 0}
+      }
+    }
+  }

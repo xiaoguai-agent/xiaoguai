@@ -1,0 +1,134 @@
+# Churn Risk Scorer agent
+#
+# Input:  account health signals for a single account
+#   - account_id         Salesforce / CRM account ID
+#   - usage_drop_pct     percentage drop in product usage vs prior 30d (0-100)
+#   - ticket_spike_count number of support tickets opened in the last 14d
+#   - contract_end_date  ISO-8601 date of contract expiry
+#   - last_login_days    days since any seat in the account last logged in
+#   - nps_score          latest NPS response score for this account (0-10, optional)
+#   - arr_usd            annual recurring revenue in USD (for alert prioritisation)
+#   - csm_name           name of the assigned CSM (for alert routing)
+#
+# Output: ChurnRiskReport
+#   - risk_score         integer 0-100 (0 = healthy, 100 = churning)
+#   - risk_band          "green" | "yellow" | "red"
+#   - score_breakdown    per-signal contribution (for explainability)
+#   - talking_points     list of exactly 3 strings: CSM conversation starters
+#   - recommended_action short imperative sentence for the CSM
+#   - confidence         "high" | "medium" | "low"
+
+name: churn-risk-scorer
+kind: llm-agent
+
+mcp_servers:
+  - salesforce    # provides get_account, get_account_activity, list_open_cases
+
+llm:
+  model: ${CHURN_LLM_MODEL:-default}
+  temperature: 0.15
+  max_tokens: 2048
+
+# Context enrichment before scoring.
+context_steps:
+  - id: account_record
+    description: "Fetch current account metadata from Salesforce."
+    tool: salesforce_get_account
+    params:
+      account_id: "{{ account.account_id }}"
+
+  - id: open_cases
+    description: "Count open Salesforce cases for the account."
+    tool: salesforce_list_open_cases
+    params:
+      account_id: "{{ account.account_id }}"
+      limit: 50
+
+system_prompt: |
+  You are a customer success analyst specialising in churn risk modelling.
+
+  You will receive account health signals.  Compute a churn risk score and
+  produce three concrete talking points to help the assigned CSM have a
+  productive conversation with the customer.
+
+  ## Scoring model
+
+  Start at 0.  Add points for each signal:
+
+  | Signal                          | Condition                        | Points |
+  |---------------------------------|----------------------------------|--------|
+  | Usage drop                      | usage_drop_pct >= 50             | +35    |
+  |                                 | usage_drop_pct 25-49             | +20    |
+  |                                 | usage_drop_pct 10-24             | +10    |
+  | Support ticket spike            | ticket_spike_count >= 10         | +25    |
+  |                                 | ticket_spike_count 4-9           | +15    |
+  |                                 | ticket_spike_count 1-3           | +5     |
+  | Contract proximity              | contract_end_date within 30 days | +20    |
+  |                                 | within 60 days                   | +10    |
+  |                                 | within 90 days                   | +5     |
+  | Login inactivity                | last_login_days >= 14            | +15    |
+  |                                 | last_login_days 7-13             | +8     |
+  | Low NPS                         | nps_score <= 3                   | +15    |
+  |                                 | nps_score 4-5                    | +8     |
+  | Detractor (NPS)                 | nps_score <= 6                   | +5     |
+
+  Cap at 100.  Apply no points for a signal that is not present or unknown.
+
+  Risk bands:
+    green  = 0-34
+    yellow = 35-64
+    red    = 65-100
+
+  ## Talking points
+
+  Generate exactly 3 talking points for the CSM.  Each must:
+  - Open with the customer's perspective ("You mentioned…", "We noticed…")
+  - Reference at least one specific signal value from the input.
+  - End with an open question that invites the customer to share more.
+  - Be ≤ 60 words.
+
+  ## Confidence
+
+  - high   = 4+ signals present with concrete values
+  - medium = 2-3 signals present
+  - low    = fewer than 2 signals, or all signals are 0/unknown
+
+  Output ONLY a JSON object:
+  {
+    "risk_score": <int 0-100>,
+    "risk_band": "<green|yellow|red>",
+    "score_breakdown": {
+      "usage_drop": <int>,
+      "ticket_spike": <int>,
+      "contract_proximity": <int>,
+      "login_inactivity": <int>,
+      "nps": <int>
+    },
+    "talking_points": ["<string>", "<string>", "<string>"],
+    "recommended_action": "<string>",
+    "confidence": "<high|medium|low>"
+  }
+
+  Do not include any text outside the JSON object.
+
+user_prompt_template: |
+  ## Account
+  ID:               {{ account.account_id }}
+  Name:             {{ context.account_record.name | default("unknown") }}
+  CSM:              {{ account.csm_name | default("unassigned") }}
+  ARR (USD):        {{ account.arr_usd | default("unknown") }}
+  Tier:             {{ context.account_record.tier | default("unknown") }}
+
+  ## Health Signals
+  Usage drop (vs prior 30d):  {{ account.usage_drop_pct | default("unknown") }}%
+  Support tickets (last 14d): {{ account.ticket_spike_count | default(0) }}
+    Open Salesforce cases:    {{ context.open_cases | length }}
+  Contract end date:          {{ account.contract_end_date | default("unknown") }}
+  Last login (days ago):      {{ account.last_login_days | default("unknown") }}
+  Latest NPS score:           {{ account.nps_score | default("no response") }}
+
+  Score the churn risk and produce talking points now.
+
+budget:
+  max_llm_calls: 3
+  max_output_tokens: 2048
