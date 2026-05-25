@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xiaoguai-agent.github.io/xiaoguai/schemas/watch.yaml.schema.json",
+  "title": "WatchSpec",
+  "description": "Schema for WatchSpec — declarative watcher definition consumed by xiaoguai-watch. Grounded in crates/xiaoguai-watch/src/spec.rs.",
+  "type": "object",
+  "required": ["id", "source", "on_match"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique watcher ID used as the dedup namespace. Must be stable across restarts (fingerprints are keyed by id + row_hash).",
+      "minLength": 1
+    },
+    "source": {
+      "description": "Data source to poll. Exactly one of 'sql' or 'http' must be present.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["sql"],
+          "additionalProperties": false,
+          "properties": {
+            "sql": {
+              "type": "object",
+              "required": ["query"],
+              "additionalProperties": false,
+              "description": "Poll a SQL SELECT; each result row is a potential match.",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "SQL SELECT query. Must begin with SELECT (case-insensitive). Use $1, $2 for bind params.",
+                  "minLength": 1,
+                  "pattern": "(?i)^\\s*SELECT"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["http"],
+          "additionalProperties": false,
+          "properties": {
+            "http": {
+              "type": "object",
+              "required": ["url"],
+              "additionalProperties": false,
+              "description": "Poll an HTTP endpoint; a JSONPath expression extracts match rows from the response.",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "description": "Target URL to poll.",
+                  "minLength": 1,
+                  "format": "uri"
+                },
+                "jsonpath": {
+                  "type": "string",
+                  "description": "JSONPath expression selecting an array of objects from the JSON response. Defaults to '$[*]' (top-level array).",
+                  "default": "$[*]"
+                },
+                "method": {
+                  "type": "string",
+                  "description": "HTTP method. Defaults to 'GET'.",
+                  "enum": ["GET", "POST", "PUT", "PATCH"],
+                  "default": "GET"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "schedule": {
+      "description": "Poll frequency. Defaults to a 60-second interval if omitted.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["cron"],
+          "additionalProperties": false,
+          "description": "ISO 8601 cron schedule (6-field: sec min h dom mon dow).",
+          "properties": {
+            "cron": {
+              "type": "object",
+              "required": ["expr"],
+              "additionalProperties": false,
+              "properties": {
+                "expr": {
+                  "type": "string",
+                  "description": "6-field cron expression (seconds minute hour day-of-month month day-of-week).",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["interval_secs"],
+          "additionalProperties": false,
+          "description": "Fixed-interval polling schedule.",
+          "properties": {
+            "interval_secs": {
+              "type": "object",
+              "required": ["secs"],
+              "additionalProperties": false,
+              "properties": {
+                "secs": {
+                  "type": "integer",
+                  "description": "Interval in seconds. Must be > 0.",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "on_match": {
+      "type": "object",
+      "description": "Action to take when a new (non-deduplicated) match is found.",
+      "required": ["action"],
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "Logical action type dispatched by the caller (e.g. 'notify', 'create_task', 'webhook').",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "description": "Arbitrary target string interpreted by the action handler (e.g. a channel name)."
+        },
+        "params": {
+          "type": "object",
+          "description": "Extra key-value metadata forwarded verbatim in the WatchEvent.",
+          "additionalProperties": true
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "id": "ar-aging-alert",
+      "source": {
+        "sql": {
+          "query": "SELECT tenant_id, customer, dso FROM ar_aging WHERE dso > 60"
+        }
+      },
+      "schedule": {
+        "interval_secs": { "secs": 86400 }
+      },
+      "on_match": {
+        "action": "notify",
+        "target": "ops-channel"
+      }
+    }
+  ]
+}

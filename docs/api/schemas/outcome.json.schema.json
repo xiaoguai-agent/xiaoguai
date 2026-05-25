@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xiaoguai-agent.github.io/xiaoguai/schemas/outcome.json.schema.json",
+  "title": "OutcomeSchemas",
+  "description": "Schemas for outcome record shapes used by the ROI telemetry system. Grounded in crates/xiaoguai-audit/src/outcomes.rs.",
+  "$defs": {
+    "OutcomeKind": {
+      "title": "OutcomeKind",
+      "description": "The kind of outcome being attributed. Custom is the escape hatch for operator-defined categories.",
+      "type": "string",
+      "enum": [
+        "revenue_usd",
+        "cost_saved_usd",
+        "hours_saved",
+        "deals_closed",
+        "tickets_resolved",
+        "custom"
+      ]
+    },
+    "OutcomeRecord": {
+      "title": "OutcomeRecord",
+      "description": "A single recorded outcome event. Mirrors the 'agent_outcomes' table row shape. Written by OutcomeRecorder::record().",
+      "type": "object",
+      "required": ["tenant_id", "agent_name", "kind", "value", "attributed_at", "metadata"],
+      "additionalProperties": false,
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "description": "Tenant identifier (UUID string or slug).",
+          "minLength": 1
+        },
+        "session_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Session identifier this outcome is attributed to.",
+              "minLength": 1
+            },
+            { "type": "null" }
+          ],
+          "description": "Session identifier. Null when not tied to a specific session."
+        },
+        "agent_name": {
+          "type": "string",
+          "description": "Name of the agent that produced this outcome.",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "description": "Outcome kind string. Should be one of the OutcomeKind enum values, but free-form strings are accepted for custom kinds.",
+          "minLength": 1
+        },
+        "value": {
+          "type": "number",
+          "description": "Numeric magnitude of the outcome. Must be non-negative.",
+          "minimum": 0
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Unit of the value (e.g. 'usd', 'hours', 'tickets').",
+              "minLength": 1
+            },
+            { "type": "null" }
+          ],
+          "description": "Unit label for the value. Null if dimensionless."
+        },
+        "description": {
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Human-readable description of what drove this outcome (e.g. 'deal closed', 'ticket resolved')."
+            },
+            { "type": "null" }
+          ],
+          "description": "Optional free-text description of this outcome attribution."
+        },
+        "attributed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp (RFC 3339) when the outcome was recorded."
+        },
+        "metadata": {
+          "description": "Arbitrary JSON context (e.g. CRM deal ID, ticket URL). Use null when there is no extra context.",
+          "oneOf": [
+            { "type": "object" },
+            { "type": "array" },
+            { "type": "string" },
+            { "type": "number" },
+            { "type": "boolean" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "Aggregate": {
+      "title": "Aggregate",
+      "description": "Aggregated view of outcomes returned by OutcomeRecorder::aggregate() and GET /v1/outcomes.",
+      "type": "object",
+      "required": ["sum", "count", "avg"],
+      "additionalProperties": false,
+      "properties": {
+        "sum": {
+          "type": "number",
+          "description": "Sum of all outcome values in the filtered set."
+        },
+        "count": {
+          "type": "integer",
+          "description": "Number of outcome records in the filtered set.",
+          "minimum": 0
+        },
+        "avg": {
+          "type": "number",
+          "description": "Average outcome value (sum / count). Zero when count is zero."
+        }
+      }
+    },
+    "OutcomeSummary": {
+      "title": "OutcomeSummary",
+      "description": "Per-kind aggregated summary returned by GET /v1/outcomes/summary for the ROI dashboard.",
+      "type": "object",
+      "required": ["by_kind"],
+      "additionalProperties": false,
+      "properties": {
+        "by_kind": {
+          "type": "object",
+          "description": "Map of outcome kind string to its Aggregate. Keys are sorted alphabetically.",
+          "additionalProperties": {
+            "$ref": "#/$defs/Aggregate"
+          }
+        }
+      }
+    },
+    "OutcomeDay": {
+      "title": "OutcomeDay",
+      "description": "One daily bucket for GET /v1/outcomes/timeseries.",
+      "type": "object",
+      "required": ["date", "kind", "sum", "count"],
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "type": "string",
+          "description": "ISO-8601 date in YYYY-MM-DD format.",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "kind": {
+          "type": "string",
+          "description": "Outcome kind string for this bucket.",
+          "minLength": 1
+        },
+        "sum": {
+          "type": "number",
+          "description": "Sum of all outcome values on this date for this kind."
+        },
+        "count": {
+          "type": "integer",
+          "description": "Number of outcome records on this date for this kind.",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/OutcomeRecord" },
+    { "$ref": "#/$defs/Aggregate" },
+    { "$ref": "#/$defs/OutcomeSummary" },
+    { "$ref": "#/$defs/OutcomeDay" }
+  ],
+  "examples": [
+    {
+      "tenant_id": "acme-corp",
+      "session_id": "sess-abc123",
+      "agent_name": "dunning-drafter",
+      "kind": "revenue_usd",
+      "value": 12500.0,
+      "unit": "usd",
+      "description": "AR collection recovered via dunning draft",
+      "attributed_at": "2026-05-25T14:00:00Z",
+      "metadata": { "invoice_id": "INV-9981", "customer": "Acme Ltd" }
+    }
+  ]
+}
