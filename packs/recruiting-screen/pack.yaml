@@ -1,0 +1,184 @@
+# packs/recruiting-screen/pack.yaml
+#
+# Recruiting Screen Skill Pack — manifest
+#
+# Multi-agent pipeline that parses incoming resumes, matches them against a
+# Job Description, runs a bias audit to strip protected-class signals, and
+# emits structured screening notes with a fairness rationale attached to
+# every scored output.
+#
+# Trigger sources
+# ---------------
+#   inbound/greenhouse-applied.yaml   — Greenhouse ATS webhook (candidate applied)
+#   inbound/lever-applied.yaml        — Lever ATS webhook (candidate applied)
+#   inbound/email-cv-ingest.yaml      — Generic email ingest (plain CV attachment)
+#
+# Agent pipeline (sequential with one parallel branch)
+# ---------------
+#   1. resume-parser        → structured resume fields
+#   2. jd-matcher           → relevance score + gap analysis   (depends on 1)
+#   3. bias-checker         → fairness audit + redacted output  (depends on 1, 2)
+#   4. interview-question-generator → role-specific questions   (depends on 3)
+#
+# Output adapters
+# ---------------
+#   outputs/slack-hiring-channel.yaml  — notify hiring-channel with summary
+#   outputs/ats-stage-update.yaml      — advance candidate stage in ATS
+#   outputs/recruiter-digest.yaml      — daily digest batch to recruiter inbox
+#
+# Bias-check guarantee
+# ---------------
+#   The bias-checker agent MUST run before any output is emitted.
+#   It rejects extraction of: gender, age, ethnicity, religion, nationality,
+#   pregnancy status, disability status, marital status, or any proxy signal
+#   (graduation year used as age proxy, names used as ethnicity proxy, etc.).
+#   Every scored output carries a `fairness_rationale` block explaining which
+#   criteria were used and confirming that no protected-class signal influenced
+#   the score.  If the bias-checker raises a BLOCK verdict the pipeline halts
+#   and writes an audit entry; no output is sent.
+#
+# Dependency map
+# ---------------
+#   xiaoguai-orchestrator   Supervisor + Worker + Planner traits
+#   xiaoguai-scheduler      Webhook + email-ingest trigger
+#   xiaoguai-im-slack       Slack hiring-channel notifications
+#   xiaoguai-llm            LLM backend for all four agents
+#   xiaoguai-audit          Audit log writes
+
+name: recruiting-screen
+version: "1.3.4-prep"
+description: >
+  Multi-agent skill pack for resume parsing, JD matching, and bias-checked
+  candidate screening.  Parses structured resume fields, scores candidate
+  fit against a Job Description, audits for protected-class signal leakage,
+  and produces fairness-annotated screening notes with panel-prep questions.
+
+# ── Runtime dependencies ─────────────────────────────────────────────────────
+
+dependencies:
+  orchestrator: { crate: xiaoguai-orchestrator, feature: default }
+  scheduler:    { crate: xiaoguai-scheduler,    feature: default }
+
+  im_slack:
+    crate: xiaoguai-im-slack
+    real: true
+    note: >
+      Requires SLACK_BOT_TOKEN + SLACK_SIGNING_SECRET in env.
+      Used for hiring-channel notifications.
+
+  llm: { crate: xiaoguai-llm, feature: default }
+  audit: { crate: xiaoguai-audit, feature: default }
+
+# ── Inbound events ───────────────────────────────────────────────────────────
+
+inbound:
+  - ref: inbound/greenhouse-applied.yaml
+  - ref: inbound/lever-applied.yaml
+  - ref: inbound/email-cv-ingest.yaml
+
+# ── Agent definitions ────────────────────────────────────────────────────────
+
+agents:
+  - ref: agents/resume-parser.yaml
+  - ref: agents/jd-matcher.yaml
+  - ref: agents/bias-checker.yaml
+  - ref: agents/interview-question-generator.yaml
+
+# ── Output adapters ──────────────────────────────────────────────────────────
+
+outputs:
+  - ref: outputs/slack-hiring-channel.yaml
+  - ref: outputs/ats-stage-update.yaml
+  - ref: outputs/recruiter-digest.yaml
+
+# ── Execution plan ───────────────────────────────────────────────────────────
+#
+# The bias-checker is a mandatory gate: steps that produce candidate-facing
+# or hiring-team-facing output (post, ats-update, digest) declare deps on
+# `bias_check` so they are never reached if the checker blocks.
+
+plan:
+  - id: parse
+    agent: resume-parser
+    description: "Extract structured fields from the incoming resume document."
+
+  - id: match
+    agent: jd-matcher
+    description: "Score candidate against JD requirements; produce gap analysis."
+    deps: [parse]
+
+  - id: bias_check
+    agent: bias-checker
+    description: >
+      Audit parsed resume and match output for protected-class signals.
+      Produce redacted output and fairness_rationale.  BLOCK if any signal
+      detected — downstream steps will not run.
+    deps: [parse, match]
+
+  - id: panel_prep
+    agent: interview-question-generator
+    description: "Generate role-specific, skills-only interview questions."
+    deps: [bias_check]
+
+  - id: post_slack
+    output: slack-hiring-channel
+    description: "Post bias-checked screening summary to the hiring Slack channel."
+    deps: [bias_check, panel_prep]
+
+  - id: ats_update
+    output: ats-stage-update
+    description: "Advance candidate stage in the ATS based on match score."
+    deps: [bias_check]
+
+  - id: digest
+    output: recruiter-digest
+    description: "Append candidate summary to today's recruiter digest batch."
+    deps: [bias_check, panel_prep]
+
+# ── External system hooks (mock vs real) ────────────────────────────────────
+
+external_systems:
+  greenhouse:
+    status: mocked
+    real_integration: >
+      Would call Greenhouse Harvest API (PATCH /v1/applications/<id>/advance)
+      to advance candidate stage.  Requires GREENHOUSE_API_KEY.
+      Hook point: ats-stage-update output adapter.
+
+  lever:
+    status: mocked
+    real_integration: >
+      Would call Lever API (POST /v1/opportunities/<id>/addStage) to advance
+      stage.  Requires LEVER_API_KEY.
+      Hook point: ats-stage-update output adapter; adapter selects endpoint
+      based on `inbound.ats_source` field.
+
+  slack:
+    status: real
+    note: >
+      Slack hiring-channel post is real when SLACK_BOT_TOKEN is configured.
+      Tests swap in MockSlackAdapter.
+
+# ── Configuration keys ───────────────────────────────────────────────────────
+
+config:
+  coordinator:
+    max_steps: 12
+    max_wall_seconds: 600
+  bias_checker:
+    # Verdicts: PASS | WARN | BLOCK
+    # BLOCK halts the pipeline; WARN annotates output but continues.
+    block_on_signal: true
+    warn_on_proxy_signal: true
+    # Proxy signals to flag even when direct protected-class fields are absent.
+    proxy_signals:
+      - graduation_year_as_age_proxy
+      - name_as_ethnicity_proxy
+      - address_as_nationality_proxy
+      - extracurricular_as_religion_proxy
+  jd_matcher:
+    score_threshold_advance: 0.70   # auto-advance if match score >= 0.70
+    score_threshold_reject:  0.30   # auto-reject if match score < 0.30
+  audit:
+    table: recruiting_screen_runs
+    bias_events_table: recruiting_bias_events

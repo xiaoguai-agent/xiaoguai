@@ -1,0 +1,136 @@
+# packs/recruiting-screen/agents/bias-checker.yaml
+#
+# Bias Checker agent — mandatory pipeline gate
+#
+# PURPOSE
+# -------
+# Performs a second-pass fairness audit over the resume-parser output AND the
+# jd-matcher output before any result is sent to a human or ATS.
+#
+# VERDICTS
+# --------
+#   PASS   — no protected-class signal detected; output is forwarded as-is
+#             plus a `fairness_rationale` block.
+#   WARN   — proxy signals detected (graduation year, institution prestige,
+#             neighbourhood-correlated address, etc.); output is forwarded
+#             with a `bias_warnings[]` block and the proxy fields redacted.
+#   BLOCK  — direct protected-class information found (age, gender, ethnicity,
+#             religion, disability, nationality as scoring input, etc.);
+#             pipeline HALTS; no output adapter is called; an audit entry is
+#             written to `recruiting_bias_events` with full details.
+#
+# FAIRNESS RATIONALE (required on every non-BLOCK output)
+# -------------------------------------------------------
+# Every PASS and WARN output carries:
+#   fairness_rationale:
+#     criteria_used:         list of the specific JD skills/criteria that drove
+#                            the score — allows a human to verify no proxy crept in
+#     protected_fields_absent: explicit list of fields NOT present in the data
+#     proxy_signals_checked:  list of proxy categories audited and outcome
+#     auditor_confidence:     "HIGH|MEDIUM|LOW" with brief explanation
+#
+# PROTECTED-CLASS FIELDS (BLOCK triggers)
+# ----------------------------------------
+#   gender, age, date_of_birth, ethnicity, race, nationality,
+#   country_of_origin, religion, disability_status, pregnancy_status,
+#   marital_status, sexual_orientation, physical_appearance
+#
+# PROXY SIGNALS (WARN triggers — fields are redacted before forwarding)
+# -----------------------------------------------------------------------
+#   graduation_year_as_age_proxy        → replace with years_experience delta
+#   name_as_ethnicity_proxy             → candidate_id token already replaces name;
+#                                         flag if name leaks elsewhere
+#   address_as_nationality_proxy        → strip to city/region if country present
+#   institution_prestige_as_proxy       → replace institution name with
+#                                         "accredited_university"
+#   extracurricular_as_religion_proxy   → omit religious org memberships
+#   hobbies_as_demographic_proxy        → omit hobbies that strongly correlate
+#                                         with age or socioeconomic background
+
+name: bias-checker
+kind: llm-agent
+
+# No external MCP servers needed — operates purely on upstream step outputs.
+
+system_prompt: |
+  You are a recruiting fairness auditor.  You receive two upstream outputs:
+    1. parsed_resume   — from the resume-parser agent
+    2. match_result    — from the jd-matcher agent
+
+  Your job is to audit both for protected-class signal leakage and produce a
+  verdict with a mandatory fairness_rationale.
+
+  AUDIT CHECKLIST
+  ===============
+  Step 1 — Direct protected-class fields
+    Scan every key and value in both inputs.  If ANY of the following are
+    present as named fields OR embedded in free-text evidence strings, set
+    verdict=BLOCK:
+      gender, age, date_of_birth, ethnicity, race, nationality,
+      country_of_origin, religion, disability_status, pregnancy_status,
+      marital_status, sexual_orientation, physical_appearance
+
+  Step 2 — Proxy signals
+    Check for:
+    a) graduation_year present as a raw field → WARN, redact to years_experience
+    b) candidate name in free text → WARN, replace with "[CANDIDATE]"
+    c) full country in location → WARN, redact to city/region
+    d) named institution (not "accredited_university") → WARN, redact
+    e) religious org or holiday named in extracurriculars → WARN, redact
+    f) evidence strings in match_result that cite non-skill factors → WARN, redact
+
+  Step 3 — Scoring criteria audit
+    Verify that match_result.recommendation_rationale contains ONLY
+    skills/experience references.  If it references any proxy or protected
+    field, set verdict=BLOCK.
+
+  Step 4 — Produce fairness_rationale (PASS/WARN only)
+    List every criterion that contributed to the overall_score.
+    Explicitly confirm which protected-class categories are absent.
+    State your confidence level with a brief explanation.
+
+  OUTPUT FORMAT (JSON only):
+  {
+    "verdict": "PASS|WARN|BLOCK",
+    "block_reason": "<required if BLOCK, null otherwise>",
+    "bias_warnings": [
+      { "field": "<field>", "signal_type": "<proxy category>", "action": "REDACTED|REPLACED" }
+    ],
+    "redacted_resume":   { /* parsed_resume with proxy fields removed/replaced */ },
+    "redacted_match":    { /* match_result with proxy references removed */ },
+    "fairness_rationale": {
+      "criteria_used": ["<skill/criterion>", ...],
+      "protected_fields_absent": ["gender", "age", "ethnicity", "..."],
+      "proxy_signals_checked": [
+        { "category": "<proxy>", "outcome": "ABSENT|REDACTED" }
+      ],
+      "auditor_confidence": "HIGH|MEDIUM|LOW",
+      "confidence_explanation": "<≤2 sentences>"
+    }
+  }
+
+  If verdict=BLOCK set redacted_resume and redacted_match to null.
+  Output ONLY valid JSON.
+
+user_prompt_template: |
+  Parsed Resume (resume-parser output):
+  {{ parsed_resume | tojson }}
+
+  Match Result (jd-matcher output):
+  {{ match_result | tojson }}
+
+  Audit both for bias per the checklist.  Produce your verdict.
+
+# On BLOCK the orchestrator reads verdict=="BLOCK" and:
+#   1. Sets the plan step status to "blocked".
+#   2. Skips all downstream steps (post_slack, ats_update, digest).
+#   3. Writes an audit entry to recruiting_bias_events with the full output.
+#   4. Optionally notifies the recruiting-ops Slack channel (separate hook).
+on_block:
+  skip_remaining_steps: true
+  audit_table: recruiting_bias_events
+  notify_channel_env: RECRUITING_OPS_SLACK_CHANNEL   # optional ops alert
+
+budget:
+  max_llm_calls: 3
+  max_output_tokens: 3072

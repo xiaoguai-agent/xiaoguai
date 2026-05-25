@@ -1,0 +1,45 @@
+# inbound/lever-applied.yaml
+#
+# Inbound webhook source — Lever "candidate applied" event
+#
+# Lever must be configured to send application webhooks to:
+#   POST https://<host>/v1/scheduler/webhooks/<route_id>
+#
+# Signature: Lever signs with an HMAC-SHA256 token; the signature is in
+# the `X-Lever-Signature` header, base64-encoded.
+#
+# Docs: https://hire.lever.co/developer/webhooks
+
+name: lever-applied
+kind: webhook
+ats_source: lever
+
+route_id: "lever-applied-${PACK_INSTANCE_ID}"
+
+event_filter:
+  header: "X-Lever-Event"
+  values: ["candidateApplication", "candidateStageChange"]
+
+payload_filter:
+  json_path: "$.data.stage.text"
+  # Only trigger when stage is the initial application stage.
+  values: ["New Applicant", "Application Review"]
+
+signature:
+  algorithm: hmac-sha256
+  header: "X-Lever-Signature"
+  prefix: ""
+  encoding: base64
+  secret_env: LEVER_WEBHOOK_SECRET
+
+# Candidate name is NOT extracted.  opportunity_id is the opaque token.
+extract:
+  candidate_id:   "$.data.opportunityId"
+  job_id:         "$.data.requisitionId"
+  job_title:      "$.data.posting.text"
+  resume_url:     "$.data.files[?(@.type=='Resume')].downloadUrl"
+  ats_source:     "'lever'"
+
+requires:
+  env:
+    - LEVER_WEBHOOK_SECRET

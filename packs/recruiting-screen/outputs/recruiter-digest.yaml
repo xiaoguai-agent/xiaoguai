@@ -1,0 +1,68 @@
+# outputs/recruiter-digest.yaml
+#
+# Output adapter — daily recruiter digest
+#
+# Appends each screened candidate's summary to a daily batch report that is
+# emailed to the recruiter at EOD (scheduled by xiaoguai-scheduler cron).
+# The digest includes the full panel-prep guide (rendered from panel-prep.md.j2)
+# so the recruiter has everything needed for tomorrow's phone screens.
+#
+# Digest sections per candidate:
+#   1. Screening summary (from screening-summary.md.j2)
+#   2. Panel prep guide (from panel-prep.md.j2)
+#   3. Bias audit summary (inline — always visible, not collapsed)
+#
+# Candidate names are NEVER in the digest; only candidate_id tokens.
+# The recruiter can cross-reference candidate_id in the ATS to get
+# the actual candidate identity.
+#
+# Delivery schedule:
+#   Cron: "0 17 * * 1-5"  (5 PM local recruiter timezone, weekdays)
+#   If no candidates screened that day: send empty digest with summary "0 candidates today."
+#   Timezone: read from RECRUITER_DIGEST_TIMEZONE env (default: "America/Los_Angeles")
+
+name: recruiter-digest
+kind: digest-batch
+
+# Batch accumulator: append to today's batch until the cron fires.
+batch:
+  key: "recruiting-digest-{{ today }}"
+  storage: xiaoguai-scheduler/batch-store
+
+# Rendered per candidate and appended to the batch.
+candidate_template: templates/screening-summary.md.j2
+panel_prep_template: templates/panel-prep.md.j2
+
+# Delivery: email via configured SMTP or SendGrid adapter.
+delivery:
+  method: email
+  to_env: RECRUITER_DIGEST_EMAIL
+  subject: "Recruiting Digest {{ today }} — {{ candidate_count }} candidate(s) screened"
+  format: markdown-to-html
+
+cron:
+  schedule: "0 17 * * 1-5"
+  timezone_env: RECRUITER_DIGEST_TIMEZONE
+  timezone_default: "America/Los_Angeles"
+
+# Bias compliance footer appended to every digest email.
+compliance_footer: |
+  This digest was produced by the xiaoguai recruiting-screen pack.
+  All candidates were scored on skills and experience only.
+  Protected-class information was audited and excluded from scoring.
+  Candidate identities are represented as opaque IDs; cross-reference in your ATS.
+  Hiring decisions remain with the recruiter and hiring manager.
+
+audit:
+  table: recruiting_digest_runs
+  fields:
+    - digest_date
+    - candidate_count
+    - bias_blocked_count
+    - delivered_at
+    - delivery_status
+
+requires:
+  env:
+    - RECRUITER_DIGEST_EMAIL
+    - RECRUITER_DIGEST_TIMEZONE   # optional; falls back to America/Los_Angeles
