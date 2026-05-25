@@ -1,0 +1,40 @@
+{
+  "_comment": "Placeholder — populate after the first successful nightly run by copying mutation-report/kill-rate.json here.",
+  "_instructions": [
+    "1. Run: bash tests/mutation/wave3/run-mutation.sh (remove --in-diff flag for full coverage)",
+    "2. Copy mutation-report/kill-rate.json content into this file",
+    "3. Commit as the baseline — future runs compare against these numbers"
+  ],
+  "threshold_pct": 80,
+  "overall_kill_rate_pct": null,
+  "passed": null,
+  "total_caught": null,
+  "total_missed": null,
+  "total_unviable": null,
+  "crates": {
+    "xiaoguai-watch": {
+      "caught": null,
+      "missed": null,
+      "unviable": null,
+      "kill_rate_pct": null
+    },
+    "xiaoguai-anomaly": {
+      "caught": null,
+      "missed": null,
+      "unviable": null,
+      "kill_rate_pct": null
+    },
+    "xiaoguai-api": {
+      "caught": null,
+      "missed": null,
+      "unviable": null,
+      "kill_rate_pct": null
+    },
+    "xiaoguai-audit": {
+      "caught": null,
+      "missed": null,
+      "unviable": null,
+      "kill_rate_pct": null
+    }
+  }
+}
