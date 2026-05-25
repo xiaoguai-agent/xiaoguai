@@ -1,0 +1,92 @@
+{# packs/privacy-dsar/templates/erasure-checklist.md.j2 #}
+{# Advisory erasure checklist sent to the DPO / operator for human execution. #}
+# Erasure Advisory Checklist — DSAR {{ request.id }}
+
+**WARNING: This is an ADVISORY document. No deletions have been executed.**
+Actual deletion must be performed by authorized database administrators following
+your organization's change management procedures.
+
+| Field | Value |
+|-------|-------|
+| DSAR Reference | {{ request.id }} |
+| Requester | {{ request.requester_email }} |
+| Request Received | {{ request.created_at | date('YYYY-MM-DD') }} |
+| Deadline | {{ request.deadline_at | date('YYYY-MM-DD') }} |
+| Erasure Plan Generated | {{ request.erasure_advisory_ready_at | datetime('YYYY-MM-DD HH:mm UTC') }} |
+
+---
+
+## Ordered Deletion Steps
+
+Perform in the order listed. Steps are ordered to respect foreign-key dependencies.
+Verify FK relationships with your DBA before execution.
+
+{% for step in erasure_plan.ordered_deletions %}
+### Step {{ step.step }}: {{ step.system_label }}
+
+- **System ID:** `{{ step.system_id }}`
+- **Records to delete:** {{ step.record_refs | length }}
+- **Data categories:** {{ step.data_categories | join(', ') }}
+- **Delete hint:** `{{ step.delete_hint }}`
+{% if step.fk_note %}
+- **FK note:** {{ step.fk_note }}
+{% endif %}
+
+- [ ] DBA reviewed delete hint
+- [ ] Delete executed in non-production (dry run)
+- [ ] Delete executed in production
+- [ ] Confirmation recorded in change log
+
+---
+{% endfor %}
+
+## Records Excluded from Erasure
+
+### Legal Hold Exclusions
+
+{% if erasure_plan.excluded_legal_hold %}
+The following records are under legal hold and **MUST NOT be deleted** until the
+hold expires. Include in the export (subject has right to know) but not in deletions.
+
+{% for exc in erasure_plan.excluded_legal_hold %}
+- **{{ exc.system_id }}**: {{ exc.record_refs | length }} record(s). Hold reason: {{ exc.hold_reason | default('Not specified') }}.
+  {% if exc.hold_expiry_at %}Hold expires: {{ exc.hold_expiry_at | date('YYYY-MM-DD') }}.{% endif %}
+  _Schedule follow-up erasure after hold expiry._
+{% endfor %}
+{% else %}
+No records are under legal hold. All in-scope records are eligible for deletion
+subject to retention obligations below.
+{% endif %}
+
+### Retention Obligation Exclusions
+
+{% if erasure_plan.excluded_retention_obligation %}
+The following records cannot be deleted yet due to mandatory retention requirements.
+
+{% for exc in erasure_plan.excluded_retention_obligation %}
+- **{{ exc.system_id }}**: {{ exc.retention_policy }}. Earliest erasure date: **{{ exc.earliest_erasure_date | date('YYYY-MM-DD') }}**.
+  _Schedule automated follow-up erasure._
+{% endfor %}
+{% else %}
+No records are excluded for retention obligations.
+{% endif %}
+
+---
+
+## Advisory Notes
+
+{{ erasure_plan.advisory_notes | default('No additional notes.') }}
+
+---
+
+## Completion Sign-Off
+
+Once all steps above are executed, the DPO must approve the DSAR response via
+the HotL gate. The erasure acknowledgement will then be sent to the requester.
+
+- [ ] All ordered deletion steps executed and verified
+- [ ] Legal hold exclusions documented and communicated to requester
+- [ ] Retention exclusions scheduled for follow-up
+- [ ] DPO HotL approval submitted: `/dsar approve {{ request.id }}`
+
+*This checklist is part of the immutable audit trail for DSAR {{ request.id }}.*

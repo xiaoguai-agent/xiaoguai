@@ -1,0 +1,67 @@
+{# packs/privacy-dsar/templates/export-package-readme.md.j2 #}
+{# Top-level README included in every export package zip. #}
+# Data Export — {{ request_type | title }} Request
+**Reference:** {{ request.id }}
+**Prepared for:** {{ request.requester_name }} ({{ request.requester_email }})
+**Prepared by:** {{ operator_name }} Privacy Team
+**Approved by DPO:** {{ request.hotl_approved_by }} on {{ request.hotl_approved_at | datetime('YYYY-MM-DD HH:mm UTC') }}
+**Package generated:** {{ generated_at | datetime('YYYY-MM-DD HH:mm UTC') }}
+**Regulatory framework:** {{ regulatory_framework | upper }}
+
+---
+
+## Contents of This Package
+
+This archive contains your personal data held by {{ operator_name }} as of
+**{{ scope_mapped_at | date('YYYY-MM-DD') }}**.
+
+| File | System | Records | Data Categories |
+|------|--------|---------|----------------|
+{% for entry in inventory_entries %}
+{% if entry.records_found %}
+| `{{ entry.system_id }}/data.json` | {{ entry.system_label }} | {{ entry.record_count | default('unknown') }} | {{ entry.data_categories | join(', ') }} |
+{% endif %}
+{% endfor %}
+
+**Systems with no matching records:**
+{% for entry in inventory_entries %}{% if not entry.records_found %}
+- {{ entry.system_label }}: No records found.
+{% endif %}{% endfor %}
+
+---
+
+## Legal Hold Notice
+
+{% if legal_hold_count > 0 %}
+The following systems contain records that are currently subject to a legal hold.
+These records are included in this export (you have the right to know they exist),
+but they are **excluded from any erasure** while the legal hold is in effect.
+
+{% for entry in inventory_entries %}{% if entry.has_legal_hold %}
+- **{{ entry.system_label }}**: Records under legal hold. Contact {{ dpo_email }} for hold expiry details.
+{% endif %}{% endfor %}
+{% else %}
+No records in this export are subject to a legal hold.
+{% endif %}
+
+---
+
+## Format
+
+{% if request_type == 'portability' %}
+Data files are in JSON-LD format (schema.org vocabulary) as required by GDPR Article 20.
+Each file is machine-readable and can be imported into compatible services.
+{% else %}
+Data files are in JSON format. A human-readable summary is provided in `summary.pdf`.
+{% endif %}
+
+---
+
+## Questions
+
+For questions about this export, contact: **{{ dpo_email }}**
+Please reference: **{{ request.id }}**
+
+This export was reviewed and approved by {{ operator_name }}'s Data Protection Officer
+before release. It reflects data held as of the scope-mapping date above and may not
+reflect changes made after that date.

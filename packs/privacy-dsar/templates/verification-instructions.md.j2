@@ -1,0 +1,69 @@
+{# packs/privacy-dsar/templates/verification-instructions.md.j2 #}
+{# Sent to the requester to explain identity verification requirements. #}
+Subject: Identity Verification Required — Privacy Request {{ request_id }}
+
+Dear {{ requester_name | default('Privacy Rights Requester') }},
+
+We have received your **{{ request_type | title }} Request** (reference: **{{ request_id }}**).
+
+Before we can process your request, we are required to verify your identity to ensure
+we release personal data only to the correct individual. This is a standard protection
+required under applicable privacy law.
+
+## Verification Method: {{ verification_method | replace('_', ' ') | title }}
+
+{% if verification_method == 'email_link' %}
+**Step 1:** Click the verification link below within 48 hours.
+
+[Verify my identity]({{ verification_link }})
+
+This link is single-use and expires at **{{ verification_expires_at | datetime('YYYY-MM-DD HH:mm UTC') }}**.
+
+{% elif verification_method == 'knowledge_based' %}
+**Step 1:** Answer the following questions to verify your identity.
+
+Please reply to this email with answers to:
+{% for q in knowledge_questions %}
+- {{ q }}
+{% endfor %}
+
+{% elif verification_method == 'video_call' %}
+**Step 1:** Schedule a brief identity verification call with our Privacy team.
+
+[Book a verification call]({{ booking_link }})
+
+The call takes approximately 10 minutes. Please have a government-issued photo ID available.
+
+{% elif verification_method == 'notarized_id' %}
+**Step 1:** Provide a notarized copy of a government-issued photo ID.
+
+Please send the notarized copy to: {{ dpo_email }}
+Subject line: "ID Verification — {{ request_id }}"
+
+{% elif verification_method == 'signed_authorization' %}
+**Step 1:** Provide a signed letter of authorization from the data subject you represent.
+
+The letter must include the data subject's full name, their signature, and your name
+as the authorized agent. Please send to: {{ dpo_email }}
+Subject line: "Authorization — {{ request_id }}"
+
+{% endif %}
+
+## What Happens Next
+
+Once your identity is verified, we will:
+1. Map all personal data held about you across our systems.
+2. {% if request_type == 'access' %}Prepare a complete data export for your review.
+   {% elif request_type == 'portability' %}Prepare a machine-readable data export (JSON format).
+   {% elif request_type == 'erasure' %}Prepare an erasure plan and confirm deletion.
+   {% elif request_type == 'rectification' %}Document and process the corrections you requested.
+   {% elif request_type == 'objection' %}Record your objection and restrict the relevant processing.
+   {% endif %}
+3. Obtain Data Protection Officer approval before any data is released.
+4. Respond to you by **{{ deadline_at | date('MMMM D, YYYY') }}**.
+
+If you did not submit this privacy request, please disregard this message and
+contact {{ dpo_email }} to report it.
+
+Regards,
+{{ operator_name }} Privacy Team | {{ dpo_email }}
