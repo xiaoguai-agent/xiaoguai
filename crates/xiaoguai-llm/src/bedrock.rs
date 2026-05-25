@@ -315,18 +315,156 @@ fn build_llama_prompt(messages: &[Message]) -> String {
 // ── Bedrock event-stream response decoding ────────────────────────────────
 //
 // The `invoke-with-response-stream` API returns a binary event-stream format.
-// Each event is a length-prefixed envelope. The body of each event contains a
-// JSON object with a `bytes` field holding a base64-encoded chunk payload.
+// Each event is a length-prefixed frame. We implement the full framing parser
+// here so we need no aws-sdk dependency.
 //
-// We skip the full binary framing here (it's complex to parse correctly without
-// the AWS SDK) and instead use a simplified approach: the reqwest body is
-// buffered per newline, and each base64-encoded chunk is decoded individually.
-// For the mockito test, we simulate this with a plain JSON body.
+// Binary frame layout (all integers big-endian):
+//   Prelude (12 bytes):
+//     total_length    u32   — byte count of the entire frame including trailing CRC
+//     headers_length  u32   — byte count of the headers section
+//     prelude_crc     u32   — CRC32 of the first 8 bytes of the prelude
+//   Headers:         headers_length bytes
+//   Payload:         total_length - headers_length - 16 bytes
+//   Message CRC:     u32   — CRC32 of everything preceding this field
 //
-// Production note: for a robust implementation without the AWS SDK, one would
-// implement the full prelude + chunk + trailer parsing per the AWS event-stream
-// spec. For this workspace, since the test framework mocks at HTTP level and the
-// primary goal is compilation + unit test coverage, we use streaming JSON lines.
+// Each header:
+//   name_length  u8    — byte length of header name
+//   name         bytes — UTF-8 header name (e.g. ":event-type")
+//   value_type   u8    — 7 = string (u16 length prefix + UTF-8 bytes)
+//   value        ...
+//
+// For Bedrock streaming, the relevant header is `:event-type` (typically
+// "chunk") and the payload is a JSON object `{"bytes":"<base64>"}` where the
+// base64 decodes to the actual completion-chunk JSON.
+//
+// When the body does not start with a valid binary frame (e.g. in mockito
+// tests that serve raw JSON lines), we fall back to the newline-delimited
+// JSON path so the same code works in both integration tests and production.
+
+// ── Hand-rolled CRC32 (IEEE polynomial) ──────────────────────────────────
+//
+// crc32fast is in Cargo.lock transitively but not declared as a workspace dep.
+// Rather than add a new dep, we compute CRC32 directly — ~40 lines, correct
+// for the AWS event-stream spec (same polynomial as zlib/PNG).
+
+/// Lookup table for CRC32 (IEEE 802.3 / zlib polynomial 0xEDB88320).
+const fn make_crc32_table() -> [u32; 256] {
+    let mut table = [0u32; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let mut c = i as u32;
+        let mut k = 0;
+        while k < 8 {
+            if c & 1 != 0 {
+                c = 0xEDB8_8320 ^ (c >> 1);
+            } else {
+                c >>= 1;
+            }
+            k += 1;
+        }
+        table[i] = c;
+        i += 1;
+    }
+    table
+}
+
+const CRC32_TABLE: [u32; 256] = make_crc32_table();
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &b in data {
+        crc = CRC32_TABLE[((crc ^ b as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    crc ^ 0xFFFF_FFFF
+}
+
+// ── Binary frame parser ───────────────────────────────────────────────────
+
+/// Result of attempting to parse one binary event-stream frame from `buf`.
+enum FrameResult {
+    /// Successfully parsed a frame. Contains the JSON payload bytes and how
+    /// many bytes of `buf` were consumed (so the caller can advance).
+    Complete { payload: Vec<u8>, consumed: usize },
+    /// `buf` does not look like a binary event-stream frame — treat the data
+    /// as raw newline-delimited JSON instead.
+    NotBinary,
+    /// `buf` looks like a frame but is incomplete — caller should wait for more
+    /// data before retrying.
+    Incomplete,
+}
+
+/// Try to parse the leading binary event-stream frame from `buf`.
+///
+/// Returns:
+///   - `FrameResult::NotBinary`  — first byte is not consistent with a frame
+///     (the binary prelude starts with a u32 total_length that must be ≥ 16;
+///     if the leading byte is a printable ASCII character it is almost
+///     certainly raw JSON, so we fall back).
+///   - `FrameResult::Incomplete` — looks binary but not enough bytes yet.
+///   - `FrameResult::Complete`   — one frame parsed; payload and consumed len.
+fn try_parse_frame(buf: &[u8]) -> FrameResult {
+    // A valid frame must be at least 16 bytes (12 prelude + 0 headers + 0
+    // payload + 4 message CRC).  Minimum real-world frames are larger.
+    if buf.len() < 16 {
+        // Could be either; wait for more data only if we cannot rule out binary.
+        // If the buffer starts with '{' it is definitely JSON.
+        if buf.first().copied().map_or(false, |b| b == b'{' || b == b'\n') {
+            return FrameResult::NotBinary;
+        }
+        return FrameResult::Incomplete;
+    }
+
+    // Read total_length from the first 4 bytes (big-endian).
+    let total_len = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+
+    // Sanity: total_len must be at least 16 and at most a generous cap.
+    // A '{' character in the first byte means this is JSON.
+    if buf[0] == b'{' || buf[0] == b'\n' {
+        return FrameResult::NotBinary;
+    }
+    if total_len < 16 || total_len > 1_048_576 {
+        // Implausible frame size — treat as non-binary.
+        return FrameResult::NotBinary;
+    }
+
+    if buf.len() < total_len {
+        return FrameResult::Incomplete;
+    }
+
+    let frame = &buf[..total_len];
+
+    // Validate prelude CRC (covers first 8 bytes).
+    let prelude_crc_stored = u32::from_be_bytes([frame[8], frame[9], frame[10], frame[11]]);
+    let prelude_crc_computed = crc32(&frame[..8]);
+    if prelude_crc_stored != prelude_crc_computed {
+        // CRC mismatch — not a valid frame; fall back to JSON.
+        return FrameResult::NotBinary;
+    }
+
+    // Validate message CRC (covers everything except the last 4 bytes).
+    let msg_crc_stored =
+        u32::from_be_bytes([frame[total_len - 4], frame[total_len - 3], frame[total_len - 2], frame[total_len - 1]]);
+    let msg_crc_computed = crc32(&frame[..total_len - 4]);
+    if msg_crc_stored != msg_crc_computed {
+        return FrameResult::NotBinary;
+    }
+
+    let headers_len = u32::from_be_bytes([frame[4], frame[5], frame[6], frame[7]]) as usize;
+    // payload = total_len - 12(prelude) - headers_len - 4(msg CRC)
+    let payload_start = 12 + headers_len;
+    let payload_end = total_len - 4;
+
+    if payload_start > payload_end {
+        return FrameResult::NotBinary;
+    }
+
+    let payload = frame[payload_start..payload_end].to_vec();
+
+    FrameResult::Complete {
+        payload,
+        consumed: total_len,
+    }
+}
 
 #[derive(Deserialize)]
 struct BedrockStreamEvent {
@@ -495,8 +633,41 @@ impl LlmBackend for BedrockBackend {
         let mut body_stream = resp.bytes_stream();
 
         tokio::spawn(async move {
-            let mut buf = String::new();
+            // Raw byte accumulation buffer — used for binary frame parsing.
+            let mut raw_buf: Vec<u8> = Vec::new();
+            // Once we determine the body is not binary event-stream, we switch
+            // to newline-delimited JSON mode for the rest of the response.
+            let mut is_json_lines: Option<bool> = None; // None = undecided
             let mut done_sent = false;
+
+            // Helper: process a single payload (bytes) and send chunk(s).
+            // Returns true if we should stop (done sent or error).
+            macro_rules! process_payload {
+                ($payload:expr) => {{
+                    let chunk_result = if is_anthropic {
+                        decode_anthropic_chunk(&$payload)
+                    } else {
+                        decode_llama_chunk(&$payload)
+                    };
+                    match chunk_result {
+                        Ok(Some(chunk)) => {
+                            let finished = chunk.done;
+                            let _ = tx.send(Ok(chunk));
+                            if finished {
+                                done_sent = true;
+                                true // stop
+                            } else {
+                                false
+                            }
+                        }
+                        Ok(None) => false,
+                        Err(e) => {
+                            let _ = tx.send(Err(e));
+                            true // stop
+                        }
+                    }
+                }};
+            }
 
             while let Some(chunk_result) = body_stream.next().await {
                 let bytes = match chunk_result {
@@ -507,59 +678,123 @@ impl LlmBackend for BedrockBackend {
                     }
                 };
 
-                buf.push_str(&String::from_utf8_lossy(&bytes));
+                raw_buf.extend_from_slice(&bytes);
 
-                // Process complete lines
-                while let Some(newline_pos) = buf.find('\n') {
-                    let line = buf[..newline_pos].trim().to_string();
-                    buf = buf[newline_pos + 1..].to_string();
+                // Determine mode on first data: binary event-stream or JSON lines.
+                if is_json_lines.is_none() {
+                    is_json_lines = Some(
+                        raw_buf.first().copied().map_or(true, |b| b == b'{' || b == b'\n'),
+                    );
+                }
 
-                    if line.is_empty() {
-                        continue;
+                if is_json_lines == Some(false) {
+                    // ── Binary event-stream path ──────────────────────────
+                    loop {
+                        match try_parse_frame(&raw_buf) {
+                            FrameResult::Complete { payload, consumed } => {
+                                // Advance buffer past the consumed frame.
+                                raw_buf = raw_buf[consumed..].to_vec();
+
+                                // Payload is a JSON object: {"bytes":"<base64>"}
+                                // or possibly the raw chunk JSON for some models.
+                                let inner: Vec<u8> =
+                                    if let Ok(env) =
+                                        serde_json::from_slice::<BedrockStreamEvent>(&payload)
+                                    {
+                                        if let Some(b64) = env.bytes {
+                                            match base64::engine::general_purpose::STANDARD
+                                                .decode(&b64)
+                                            {
+                                                Ok(decoded) => decoded,
+                                                Err(e) => {
+                                                    let _ = tx.send(Err(LlmError::Provider(
+                                                        format!("base64 decode: {e}"),
+                                                    )));
+                                                    return;
+                                                }
+                                            }
+                                        } else {
+                                            // Metadata event without a bytes field — skip.
+                                            continue;
+                                        }
+                                    } else {
+                                        payload
+                                    };
+
+                                if process_payload!(inner) {
+                                    return;
+                                }
+                            }
+                            FrameResult::Incomplete => {
+                                // Wait for more data from the network.
+                                break;
+                            }
+                            FrameResult::NotBinary => {
+                                // CRC mismatch or implausible size — switch to JSON lines.
+                                is_json_lines = Some(true);
+                                break;
+                            }
+                        }
                     }
+                }
 
-                    // Try to parse as a Bedrock event envelope first.
-                    let payload_bytes: Vec<u8> =
-                        if let Ok(event) = serde_json::from_str::<BedrockStreamEvent>(&line) {
-                            if let Some(b64) = event.bytes {
-                                match base64::engine::general_purpose::STANDARD.decode(&b64) {
-                                    Ok(decoded) => decoded,
-                                    Err(e) => {
-                                        let _ = tx.send(Err(LlmError::Provider(format!(
-                                            "base64 decode: {e}"
-                                        ))));
-                                        return;
+                if is_json_lines == Some(true) {
+                    // ── Newline-delimited JSON path (tests + fallback) ────
+                    // raw_buf may contain data accumulated before we switched.
+                    let text = String::from_utf8_lossy(&raw_buf).into_owned();
+                    // Find how many complete lines we can consume.
+                    let mut consumed_bytes = 0usize;
+                    for line_str in text.split('\n') {
+                        let trimmed = line_str.trim();
+                        if trimmed.is_empty() {
+                            consumed_bytes += line_str.len() + 1; // +1 for '\n'
+                            continue;
+                        }
+
+                        // Check if this line is complete (i.e., we've seen its '\n').
+                        // `split('\n')` always yields the last segment even without a
+                        // trailing newline — skip it unless raw_buf ends with '\n'.
+                        let line_end = consumed_bytes + line_str.len();
+                        if line_end >= raw_buf.len() && !raw_buf.ends_with(b"\n") {
+                            // Incomplete last line — leave in buffer.
+                            break;
+                        }
+                        consumed_bytes += line_str.len() + 1;
+
+                        // Try to parse as a Bedrock event envelope with a
+                        // `bytes` field (base64-encoded payload).  Only treat
+                        // it as an envelope if `bytes` is present and non-null;
+                        // otherwise fall through and treat the line as a raw
+                        // model-chunk JSON (test/fallback path).
+                        let payload_bytes: Vec<u8> =
+                            if let Ok(event) =
+                                serde_json::from_str::<BedrockStreamEvent>(trimmed)
+                            {
+                                if let Some(b64) = event.bytes {
+                                    match base64::engine::general_purpose::STANDARD.decode(&b64) {
+                                        Ok(decoded) => decoded,
+                                        Err(e) => {
+                                            let _ = tx.send(Err(LlmError::Provider(format!(
+                                                "base64 decode: {e}"
+                                            ))));
+                                            return;
+                                        }
                                     }
+                                } else {
+                                    // `bytes` absent — treat as raw model chunk.
+                                    trimmed.as_bytes().to_vec()
                                 }
                             } else {
-                                // Event without bytes (e.g. metadata event) — skip.
-                                continue;
-                            }
-                        } else {
-                            // In tests (mockito), we send raw JSON directly.
-                            line.as_bytes().to_vec()
-                        };
+                                trimmed.as_bytes().to_vec()
+                            };
 
-                    let chunk_result = if is_anthropic {
-                        decode_anthropic_chunk(&payload_bytes)
-                    } else {
-                        decode_llama_chunk(&payload_bytes)
-                    };
-
-                    match chunk_result {
-                        Ok(Some(chunk)) => {
-                            let is_done = chunk.done;
-                            let _ = tx.send(Ok(chunk));
-                            if is_done {
-                                done_sent = true;
-                                return;
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            let _ = tx.send(Err(e));
+                        if process_payload!(payload_bytes) {
                             return;
                         }
+                    }
+                    // Remove consumed bytes from the buffer.
+                    if consumed_bytes > 0 {
+                        raw_buf = raw_buf[consumed_bytes.min(raw_buf.len())..].to_vec();
                     }
                 }
             }
@@ -720,5 +955,138 @@ mod tests {
     fn bedrock_backend_name() {
         let backend = BedrockBackend::with_config("us-east-1", "k", "s", None, None);
         assert_eq!(backend.name(), "bedrock");
+    }
+
+    // ── CRC32 unit tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn crc32_empty_matches_known_value() {
+        // CRC32 of empty byte slice is 0x00000000 with the IEEE polynomial.
+        assert_eq!(crc32(b""), 0x0000_0000);
+    }
+
+    #[test]
+    fn crc32_hello_world_matches_known_value() {
+        // CRC32 of b"hello world" = 0x0D4A1185 (IEEE / zlib).
+        // Verified with Python: import zlib; hex(zlib.crc32(b"hello world") & 0xFFFFFFFF)
+        assert_eq!(crc32(b"hello world"), 0x0D4A_1185);
+    }
+
+    // ── Binary event-stream frame parser unit tests ───────────────────────
+
+    /// Build a minimal valid binary event-stream frame containing the given
+    /// payload.  Headers are empty (0 bytes).
+    fn make_frame(payload: &[u8]) -> Vec<u8> {
+        let headers_len: u32 = 0;
+        let total_len: u32 = 12 + headers_len + payload.len() as u32 + 4;
+
+        let mut frame: Vec<u8> = Vec::new();
+        // Prelude
+        frame.extend_from_slice(&total_len.to_be_bytes());
+        frame.extend_from_slice(&headers_len.to_be_bytes());
+        // Prelude CRC (over first 8 bytes)
+        let prelude_crc = crc32(&frame[..8]);
+        frame.extend_from_slice(&prelude_crc.to_be_bytes());
+        // No headers
+        // Payload
+        frame.extend_from_slice(payload);
+        // Message CRC (over everything so far)
+        let msg_crc = crc32(&frame);
+        frame.extend_from_slice(&msg_crc.to_be_bytes());
+
+        frame
+    }
+
+    #[test]
+    fn try_parse_frame_complete_empty_payload() {
+        let frame = make_frame(b"{}");
+        match try_parse_frame(&frame) {
+            FrameResult::Complete { payload, consumed } => {
+                assert_eq!(payload, b"{}");
+                assert_eq!(consumed, frame.len());
+            }
+            other => panic!("expected Complete, got {:?}", matches!(other, FrameResult::Incomplete)),
+        }
+    }
+
+    #[test]
+    fn try_parse_frame_complete_json_payload() {
+        let json = br#"{"bytes":"SGVsbG8="}"#;
+        let frame = make_frame(json);
+        match try_parse_frame(&frame) {
+            FrameResult::Complete { payload, consumed } => {
+                assert_eq!(&payload, json);
+                assert_eq!(consumed, frame.len());
+            }
+            _ => panic!("expected Complete"),
+        }
+    }
+
+    #[test]
+    fn try_parse_frame_incomplete_when_truncated() {
+        let frame = make_frame(b"hello");
+        // Truncate to just the prelude (12 bytes) — frame is not complete yet.
+        let partial = &frame[..12];
+        assert!(matches!(try_parse_frame(partial), FrameResult::Incomplete));
+    }
+
+    #[test]
+    fn try_parse_frame_not_binary_for_json_body() {
+        // Raw JSON lines should be detected as non-binary immediately.
+        let json = br#"{"type":"content_block_delta"}"#;
+        assert!(matches!(try_parse_frame(json), FrameResult::NotBinary));
+    }
+
+    #[test]
+    fn try_parse_frame_not_binary_for_corrupted_crc() {
+        let mut frame = make_frame(b"test payload");
+        // Flip a byte in the prelude CRC area to corrupt it.
+        frame[8] ^= 0xFF;
+        assert!(matches!(try_parse_frame(&frame), FrameResult::NotBinary));
+    }
+
+    #[test]
+    fn try_parse_frame_two_consecutive_frames() {
+        let frame1 = make_frame(br#"{"bytes":"SGk="}"#);
+        let frame2 = make_frame(br#"{"bytes":"IQ=="}"#);
+        let mut combined = frame1.clone();
+        combined.extend_from_slice(&frame2);
+
+        match try_parse_frame(&combined) {
+            FrameResult::Complete { consumed, .. } => {
+                assert_eq!(consumed, frame1.len());
+                // Parse the second frame from the remainder.
+                assert!(matches!(
+                    try_parse_frame(&combined[consumed..]),
+                    FrameResult::Complete { .. }
+                ));
+            }
+            _ => panic!("expected Complete for first frame"),
+        }
+    }
+
+    #[test]
+    fn crc32_validates_prelude_and_message_independently() {
+        let json_payload = br#"{"bytes":"dGVzdA=="}"#;
+        let frame = make_frame(json_payload);
+
+        let total_len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
+
+        // Prelude CRC covers bytes 0..8
+        let stored_prelude_crc = u32::from_be_bytes([frame[8], frame[9], frame[10], frame[11]]);
+        assert_eq!(crc32(&frame[..8]), stored_prelude_crc, "prelude CRC must be valid");
+
+        // Message CRC covers bytes 0..total_len-4
+        let stored_msg_crc = u32::from_be_bytes([
+            frame[total_len - 4],
+            frame[total_len - 3],
+            frame[total_len - 2],
+            frame[total_len - 1],
+        ]);
+        assert_eq!(
+            crc32(&frame[..total_len - 4]),
+            stored_msg_crc,
+            "message CRC must be valid"
+        );
     }
 }
