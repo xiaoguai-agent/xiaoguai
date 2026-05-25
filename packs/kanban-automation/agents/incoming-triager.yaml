@@ -1,0 +1,90 @@
+---
+# Incoming Triager Agent
+#
+# Triggered when a new card lands in the TRIAGE column (from any inbound source).
+# Classifies the card by type, urgency, and owner-hint, then writes a
+# triage_classification row and routes the card to auto-tagger.
+#
+# Input:  NormalizedCardEvent (title, body, inbound_source, inbound_ref, raw)
+# Output: TriageClassification (card_type, urgency, owner_hint, confidence, rationale)
+
+name: incoming-triager
+kind: llm-agent
+
+llm:
+  model: ${KANBAN_TRIAGE_LLM_MODEL:-default}
+  temperature: 0.1      # low: classification needs consistency
+  max_tokens: 1024
+
+system_prompt: |
+  You are a task-board triage assistant.  A new card has just arrived.
+  Your job is to classify it so the right team member picks it up quickly.
+
+  Classify using exactly these fields:
+
+  card_type:  One of: bug | feature | task | incident | question
+    - bug:      Something is broken or behaving incorrectly.
+    - feature:  A new capability is being requested.
+    - task:     Operational work (deploy, migrate, configure, document).
+    - incident: A live production outage or degradation.
+    - question: A request for information or clarification.
+
+  urgency:    One of: critical | high | medium | low
+    - critical: Production down or data loss risk; must be addressed within 1h.
+    - high:     Significant customer impact or blocking another team; same-day.
+    - medium:   Should be resolved this week.
+    - low:      Nice-to-have or no active customer impact.
+
+  owner_hint: Team or person most likely responsible (string or null).
+    Use the inbound_source as a signal:
+      - pagerduty → DevOps / On-call team
+      - email from known domain → match to owning vertical
+      - slack mention in #security → Security team
+      - pack-auto-card-create source=security-audit → Security team
+    Null if genuinely ambiguous.
+
+  triage_confidence: high | medium | low
+    Reflect how certain you are given the information available.
+
+  rationale: ≤ 200 chars explaining your classification.
+
+  Respond ONLY with a JSON object:
+  {
+    "card_type": "<type>",
+    "urgency": "<urgency>",
+    "owner_hint": "<team or null>",
+    "triage_confidence": "<confidence>",
+    "rationale": "<rationale>"
+  }
+
+user_prompt_template: |
+  ## New card arrived
+
+  **Source**: {{ card.inbound_source }}
+  {% if card.inbound_ref %}**Source ref**: {{ card.inbound_ref }}{% endif %}
+  **Title**: {{ card.title | truncate(200) }}
+  **Body**:
+  {{ card.body | truncate(1500) }}
+
+  Classify this card now.
+
+# Persistence: write the classification to kanban_triage_classifications.
+# card_id will be NULL until XIAOGUAI_KANBAN_ENABLED and task #150 are live.
+persist:
+  table: kanban_triage_classifications
+  fields:
+    inbound_source:    "{{ card.inbound_source }}"
+    inbound_ref:       "{{ card.inbound_ref }}"
+    card_type:         "{{ result.card_type }}"
+    urgency:           "{{ result.urgency }}"
+    owner_hint:        "{{ result.owner_hint }}"
+    triage_confidence: "{{ result.triage_confidence }}"
+    triage_rationale:  "{{ result.rationale | truncate(1000) }}"
+    content_snapshot:  "{{ (card.title ~ '\n' ~ card.body) | truncate(4000) }}"
+
+outputs:
+  - agents/auto-tagger.yaml
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 1024

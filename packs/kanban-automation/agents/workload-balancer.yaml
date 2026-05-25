@@ -1,0 +1,118 @@
+---
+# Workload Balancer Agent
+#
+# Triggered by the watch subsystem when a worker (llm-agent or human) becomes
+# idle (no in-progress cards).
+#
+# Queries READY column for unassigned cards and suggests the best match based
+# on worker specialty alignment with card labels (pack-name, vertical, complexity).
+#
+# v1.4-ready: card assignment suggestion is written to slack-board-channel
+# and to kanban_agent_workload_snapshots. Actual card assignment
+# (PATCH /v1/tasks/{id}/assignee) goes through board-card-update which is
+# a v1.4 stub until XIAOGUAI_KANBAN_ENABLED.
+
+name: workload-balancer
+kind: llm-agent
+
+trigger:
+  kind: watch
+  event: worker_idle
+  # Debounce: don't fire more than once per worker per 5 minutes.
+  debounce_seconds: 300
+
+llm:
+  model: ${KANBAN_BALANCER_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 512
+
+# Context-gathering: called before LLM prompt.
+context_steps:
+  - id: ready_cards
+    description: "Cards currently in the READY column (unassigned, ordered by urgency)."
+    tool: kanban_query          # v1.4-ready: no-op stub until subsystem ships
+    params:
+      column: READY
+      unassigned_only: true
+      order_by: urgency
+      limit: 20
+    stub_response_when_disabled: []
+
+  - id: worker_snapshot
+    description: "Latest workload snapshot for the idle worker."
+    tool: db_query
+    params:
+      table: kanban_agent_workload_snapshots
+      filter:
+        worker_id: "{{ event.worker_id }}"
+      order_by: snapshot_at DESC
+      limit: 1
+
+system_prompt: |
+  You are a workload-balancing assistant for a Hermes-style task board.
+
+  A worker has become idle.  You will receive:
+    - The worker's specialties (pack names and verticals they handle well).
+    - A list of READY cards (unassigned, ordered by urgency).
+
+  Your job: recommend the single best card for this worker to pick up next.
+
+  Scoring criteria (in order of priority):
+    1. Urgency — critical > high > medium > low.
+    2. Specialty alignment — prefer cards whose pack-name or vertical
+       matches the worker's declared specialties.
+    3. Complexity match — prefer cards whose complexity matches the worker's
+       current capacity (simple if many in-progress, complex if idle long).
+
+  Respond ONLY with JSON:
+  {
+    "recommended_card_id": "<card_id or null if no suitable card>",
+    "recommended_card_title": "<title or null>",
+    "match_score": 0-100,
+    "rationale": "<≤150 chars>"
+  }
+
+  If no READY cards exist or none match the worker, set recommended_card_id to null.
+
+user_prompt_template: |
+  ## Idle worker
+
+  **Worker ID**: {{ event.worker_id }}
+  **Worker type**: {{ event.worker_type }}
+  **Specialties**: {{ event.specialties | join(', ') | default('(none declared)') }}
+  **Idle since**: {{ event.idle_since }}
+
+  ## READY cards ({{ context.ready_cards | length }} available)
+
+  {% if context.ready_cards %}
+  {% for card in context.ready_cards %}
+  {{ loop.index }}. [{{ card.urgency | upper }}] {{ card.id }} — {{ card.title | truncate(80) }}
+     Labels: {{ card.labels | join(', ') }}
+  {% endfor %}
+  {% else %}
+  (No READY cards currently.)
+  {% endif %}
+
+  Recommend a card for this worker.
+
+persist:
+  table: kanban_agent_workload_snapshots
+  fields:
+    worker_id:           "{{ event.worker_id }}"
+    worker_type:         "{{ event.worker_type }}"
+    worker_specialties:  "{{ event.specialties }}"
+    in_progress_count:   "{{ event.in_progress_count | default(0) }}"
+    ready_queue_depth:   "{{ context.ready_cards | length }}"
+    blocked_count:       "{{ event.blocked_count | default(0) }}"
+    is_idle:             true
+    idle_since:          "{{ event.idle_since }}"
+    suggested_card_id:   "{{ result.recommended_card_id }}"
+    suggestion_rationale: "{{ result.rationale }}"
+
+outputs:
+  - outputs/slack-board-channel.yaml
+  - outputs/board-card-update.yaml    # v1.4 stub: sets suggested assignee
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 512

@@ -1,0 +1,141 @@
+---
+# Oversized Detector Agent
+#
+# Receives triage + tag output.  If the estimated effort exceeds 1 working day
+# (> 8h), generates a split proposal: a set of smaller sub-cards that together
+# cover the original scope.
+#
+# Effort estimation method (three-signal cascade):
+#   1. LABEL HINT — if auto-tagger set est_effort in {'2d', '3d+'} or
+#      complexity='high', baseline is already >1d → flag immediately.
+#   2. KEYWORD SCAN — title + body are scanned for scope-inflation signals:
+#      ["migrate all", "refactor entire", "implement end-to-end",
+#       "redesign", "replace all", "full audit", "comprehensive"].
+#      Each match increments a weight counter; weight >= 2 → flag.
+#   3. LLM ESTIMATE — agent sends card content to LLM with an effort-estimation
+#      prompt.  LLM returns "<N><unit>" (e.g. "2d", "10h").  Parsed and compared
+#      to the 8h threshold.  If parsing fails, falls back to signal 1+2 result.
+#   effort_basis field records which signal(s) drove the decision:
+#     'label-hint' | 'keyword-scan' | 'llm-estimate' | 'combined'
+#
+# Output: split_proposal (array of sub-cards) written to kanban_split_suggestions.
+# Execution of the split (POST /v1/tasks/{id}/split) is HotL-gated; see
+# outputs/card-split-execute.yaml.
+
+name: oversized-detector
+kind: llm-agent
+
+llm:
+  model: ${KANBAN_OVERSIZED_LLM_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 2048
+
+# Pre-LLM keyword scan runs in the harness before the agent prompt.
+# Agent is only invoked if at least one signal fires.
+pre_check:
+  kind: keyword-scan
+  fields: [card.title, card.body]
+  signals:
+    - pattern: "migrate all|migrate the entire"
+      weight: 2
+    - pattern: "refactor entire|refactor the entire|refactor all"
+      weight: 2
+    - pattern: "implement end-to-end|e2e implementation"
+      weight: 2
+    - pattern: "redesign|overhaul|rearchitect"
+      weight: 2
+    - pattern: "replace all|replace every|replace the entire"
+      weight: 2
+    - pattern: "full audit|comprehensive audit"
+      weight: 1
+    - pattern: "comprehensive|exhaustive"
+      weight: 1
+  # Also flag if auto-tagger est_effort is already in the large buckets.
+  label_signals:
+    - field: tags.est_effort
+      values: ["2d", "3d+"]
+      weight: 3
+    - field: tags.complexity
+      values: ["high"]
+      weight: 1
+  # Threshold: total weight >= 2 → invoke LLM for split proposal.
+  threshold: 2
+  # When pre_check does not fire, skip this agent (card is appropriately sized).
+  skip_when_below_threshold: true
+
+system_prompt: |
+  You are a task-board sizing assistant.  A card has been flagged as potentially
+  oversized (estimated > 1 working day).
+
+  Your job: propose a split into 2–5 smaller sub-cards, each ≤ 4h estimated
+  effort, that together cover the full scope of the original card.
+
+  Rules:
+  - Each sub-card must be independently completable (no hidden dependencies
+    within the set unless you explicitly model them as ordering constraints).
+  - Sub-card titles must be action-oriented ("Implement X", "Write tests for Y").
+  - Preserve all context from the original card — do not silently drop scope.
+  - If the card cannot be usefully split (already atomic despite its size),
+    output an empty split_cards array and explain in rationale.
+
+  Respond ONLY with JSON:
+  {
+    "should_split": true | false,
+    "original_est_effort": "<e.g. 2d>",
+    "effort_basis": "label-hint | keyword-scan | llm-estimate | combined",
+    "split_cards": [
+      {
+        "title": "<action-oriented title>",
+        "description": "<1–3 sentences of scope>",
+        "est_effort": "<e.g. 4h>",
+        "labels": ["<inherited or derived labels>"],
+        "depends_on_index": null | <0-based index of prerequisite sub-card>
+      }
+    ],
+    "rationale": "<≤200 chars explaining the split or why it was skipped>"
+  }
+
+user_prompt_template: |
+  ## Original card
+
+  **Title**: {{ card.title | truncate(200) }}
+  **Body**:
+  {{ card.body | truncate(2000) }}
+
+  **Triage**:
+  - type: {{ triage.card_type }}
+  - urgency: {{ triage.urgency }}
+
+  **Auto-tagger labels**:
+  - pack: {{ tags.pack_name }}
+  - vertical: {{ tags.vertical }}
+  - complexity: {{ tags.complexity }}
+  - est_effort: {{ tags.est_effort }}
+
+  **Pre-check signals fired**: {{ pre_check.signals_fired | join(', ') }}
+  **Pre-check weight**: {{ pre_check.total_weight }}
+
+  Propose a split if warranted.
+
+persist:
+  table: kanban_split_suggestions
+  condition: "{{ result.should_split == true }}"
+  # One row per sub-card in the proposal.
+  multi_row: true
+  row_source: result.split_cards
+  fields:
+    original_est_effort:  "{{ result.original_est_effort }}"
+    effort_basis:         "{{ result.effort_basis }}"
+    sub_card_title:       "{{ row.title }}"
+    sub_card_description: "{{ row.description }}"
+    sub_card_est_effort:  "{{ row.est_effort }}"
+    sub_card_labels:      "{{ row.labels }}"
+    sub_card_order:       "{{ loop.index }}"
+
+outputs:
+  # HotL-gated: human must approve before split is executed.
+  - outputs/card-split-execute.yaml
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 2048
