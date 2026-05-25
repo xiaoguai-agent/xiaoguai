@@ -162,7 +162,7 @@ pub struct QdrantPoint {
 
 /// Deterministic UUID v5 from `"{collection}/{document_id}"`.
 ///
-/// Using UUIDv5 (SHA-1 namespace hash) gives us:
+/// Using `UUIDv5` (SHA-1 namespace hash) gives us:
 /// * Idempotent ingest — same input always produces the same point ID.
 /// * O(1) deletion — no scan needed to find the point.
 /// * Collision-resistance good enough for RAG IDs (~10^38 distinct values).

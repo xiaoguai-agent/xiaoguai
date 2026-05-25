@@ -192,8 +192,7 @@ mod tests {
         let fm = doc.metadata.get("frontmatter").cloned().unwrap_or_default();
         assert!(
             fm.contains("Sample Document"),
-            "frontmatter metadata expected title, got: {:?}",
-            fm
+            "frontmatter metadata expected title, got: {fm:?}"
         );
     }
 
@@ -204,8 +203,7 @@ mod tests {
         let headings = doc.metadata.get("headings").cloned().unwrap_or_default();
         assert!(
             headings.contains("Introduction"),
-            "expected 'Introduction' heading, got: {:?}",
-            headings
+            "expected 'Introduction' heading, got: {headings:?}"
         );
     }
 

@@ -157,7 +157,7 @@ impl OutcomeAttribution for DefaultOutcomeAttribution {
         let metadata = serde_json::json!({
             "task_id":  task_id.to_string(),
             "board_id": board_id.to_string(),
-            "from_col": from_col.map(|c| c.as_str()),
+            "from_col": from_col.map(super::types::Column::as_str),
             "to_col":   to_col.as_str(),
             "actor":    actor,
         });

@@ -25,6 +25,9 @@ use xiaoguai_audit::{
 // ---------------------------------------------------------------------------
 
 /// Build a minimal `OutcomeRecord` with a fixed timestamp of *now*.
+// Retained as a fixture for outcome-record tests even when not currently
+// referenced; keeps the eval-suite helper set complete.
+#[allow(dead_code)]
 fn make_record(
     tenant_id: &str,
     session_id: Option<&str>,

@@ -184,8 +184,7 @@ mod tests {
         let title = doc.metadata.get("title").cloned().unwrap_or_default();
         assert!(
             title.contains("Sample HTML"),
-            "expected title, got: {:?}",
-            title
+            "expected title, got: {title:?}"
         );
     }
 

@@ -2,7 +2,7 @@
 //!
 //! All routes return 503 Service Unavailable when `AppState.memory_store` is
 //! `None`, preserving the pattern established by hotl, outcomes, and
-//! skill_packs routes.
+//! `skill_packs` routes.
 //!
 //! ## Routes
 //!

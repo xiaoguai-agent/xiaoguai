@@ -6,13 +6,13 @@
 ///
 /// # Metric definitions
 ///
-/// * **recall**    = true_positives / (true_positives + false_negatives)
+/// * **recall**    = `true_positives` / (`true_positives` + `false_negatives`)
 ///                 = fraction of injected anomalies the detector caught
-/// * **precision** = true_positives / (true_positives + false_positives)
+/// * **precision** = `true_positives` / (`true_positives` + `false_positives`)
 ///                 = fraction of detector alerts that were actual anomalies
 ///
 /// "Detected" means the detector fired *within 1 tick* of the injected index.
-/// One-tick tolerance accounts for the fact that ZScore folds the anomalous
+/// One-tick tolerance accounts for the fact that `ZScore` folds the anomalous
 /// value into its running mean before scoring, which occasionally shifts the
 /// peak one step.
 use chrono::{Duration, TimeZone, Utc};
@@ -154,11 +154,14 @@ fn scenario_step_change_both_detectors_flag_boundary() {
         let v = if i < BOUNDARY { 50.0 } else { 150.0 };
         let ts = t(i as i64);
 
-        if zscore.observe(ts, v).is_some() && i >= BOUNDARY - TOLERANCE && i <= BOUNDARY + TOLERANCE
+        if zscore.observe(ts, v).is_some()
+            && (BOUNDARY - TOLERANCE..=BOUNDARY + TOLERANCE).contains(&i)
         {
             zscore_boundary_alert = true;
         }
-        if ewma.observe(ts, v).is_some() && i >= BOUNDARY - TOLERANCE && i <= BOUNDARY + TOLERANCE {
+        if ewma.observe(ts, v).is_some()
+            && (BOUNDARY - TOLERANCE..=BOUNDARY + TOLERANCE).contains(&i)
+        {
             ewma_boundary_alert = true;
         }
     }

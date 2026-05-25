@@ -1,12 +1,12 @@
 //! `BedrockBackend` integration tests.
 //! All HTTP is intercepted by mockito — no real AWS API calls.
 //!
-//! For Bedrock, mockito mocks the HTTP layer. The SigV4 signing itself is
+//! For Bedrock, mockito mocks the HTTP layer. The `SigV4` signing itself is
 //! tested separately in the unit tests inside `bedrock.rs` using known AWS
 //! test vectors.
 //!
 //! The mockito server accepts any `Authorization` header (i.e., we do not
-//! assert the full SigV4 signature value in integration tests because the
+//! assert the full `SigV4` signature value in integration tests because the
 //! signature changes every second via `x-amz-date`). We instead verify:
 //!   1. The POST is made to the correct path for the given model ID.
 //!   2. Text chunks are assembled correctly.

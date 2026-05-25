@@ -206,8 +206,7 @@ mod tests {
         assert!(
             headings.to_lowercase().contains("heading")
                 || headings.to_lowercase().contains("section"),
-            "expected heading content in: {:?}",
-            headings
+            "expected heading content in: {headings:?}"
         );
     }
 

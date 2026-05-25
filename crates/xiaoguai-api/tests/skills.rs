@@ -2,7 +2,7 @@
 //!
 //! Exercises catalog listing, install round-trip, uninstall, duplicate
 //! install (409 Conflict), unknown slug (404), and the 503 unwired path —
-//! all through the real axum router + AppState.
+//! all through the real axum router + `AppState`.
 
 mod common;
 

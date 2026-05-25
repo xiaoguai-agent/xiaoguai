@@ -38,6 +38,7 @@ impl Column {
     /// Parse the lowercase DB representation.
     ///
     /// Returns `None` for unrecognised strings.
+    #[must_use]
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             "triage" => Self::Triage,

@@ -93,7 +93,7 @@ impl TaskBoardRepository for InMemoryTaskBoardRepository {
             .tasks
             .iter()
             .filter(|t| t.board_id == board_id)
-            .filter(|t| column.map_or(true, |c| t.column == c))
+            .filter(|t| column.is_none_or(|c| t.column == c))
             .cloned()
             .collect();
         // priority DESC, created_at ASC

@@ -1,4 +1,4 @@
-//! Capability eval suite — HotL escalation routing.
+//! Capability eval suite — `HotL` escalation routing.
 //!
 //! Covers the seven scenarios specified in the task brief:
 //!
@@ -9,7 +9,7 @@
 //! 4. Window expiry    — events older than the window must not count.
 //! 5. Multi-tenant isolation — tenant A's usage must not affect tenant B.
 //! 6. Policy hot-update — delete + re-create a policy; next check uses new threshold.
-//! 7. Approver tier routing — escalate_to string carries the right tier destination.
+//! 7. Approver tier routing — `escalate_to` string carries the right tier destination.
 //!
 //! The in-memory store + enforcer are the same fixtures used by the unit tests
 //! in `crates/xiaoguai-api/src/hotl/enforcer.rs`.
@@ -20,7 +20,7 @@ use uuid::Uuid;
 use xiaoguai_api::hotl::{
     enforcer::{HotlVerdict, InMemoryHotlEnforcer},
     policy::HotlPolicy,
-    CreateHotlPolicyRequest, HotlEnforcer, HotlPolicyStore, InMemoryHotlPolicyStore,
+    HotlEnforcer, HotlPolicyStore, InMemoryHotlPolicyStore,
 };
 
 // ── fixture helpers ───────────────────────────────────────────────────────────

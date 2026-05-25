@@ -199,8 +199,8 @@ pub fn format_policy_table(rows: &[JsonValue]) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "{:<38} {:<12} {:<8} {:<10} {:<10} {}",
-        "ID", "SCOPE", "WINDOW", "MAX_COUNT", "MAX_USD", "ESCALATE_TO"
+        "{:<38} {:<12} {:<8} {:<10} {:<10} ESCALATE_TO",
+        "ID", "SCOPE", "WINDOW", "MAX_COUNT", "MAX_USD"
     );
     for p in rows {
         let id = p.get("id").and_then(JsonValue::as_str).unwrap_or("-");

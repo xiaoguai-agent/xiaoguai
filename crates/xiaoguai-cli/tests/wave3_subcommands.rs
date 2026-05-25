@@ -784,7 +784,7 @@ fn anomaly_format_backtest_table_renders_anomaly_rows() {
     });
     let table = anomaly::format_backtest_table(&result);
     assert!(table.contains("ANOMALY"));
-    assert!(table.contains("*"));
+    assert!(table.contains('*'));
     assert!(table.contains("summary"));
 }
 
