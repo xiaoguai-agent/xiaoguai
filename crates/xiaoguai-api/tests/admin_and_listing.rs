@@ -1562,3 +1562,80 @@ mod scheduler_jobs_reader {
         assert_eq!(reader.fire_calls.lock().as_slice(), &["a".to_string()]);
     }
 }
+
+// ── v1.3.x: GET /v1/tenants/:id/config (chat-ui AiDisclosureBanner) ─────────
+
+async fn body_obj(body: Body) -> Value {
+    let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn tenant_config_returns_ai_disclosure_banner() {
+    let tenants = InMemoryTenantRepo::arc();
+    tenants.push(Tenant {
+        id: TenantId::from("ten_a".to_string()),
+        name: "alpha".into(),
+        display_name: "Alpha".into(),
+        created_at: chrono::Utc::now(),
+        status: TenantStatus::Active,
+    });
+    let app = router(build_state(
+        InMemorySessionRepo::arc(),
+        Some(tenants),
+        None,
+        None,
+    ));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/tenants/ten_a/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_obj(resp.into_body()).await;
+    // Contract shape required by chat-ui + the wave3 Pact interaction.
+    assert_eq!(v["tenant_id"], "ten_a");
+    assert_eq!(v["ai_disclosure_banner"]["enabled"], true);
+    assert_eq!(v["ai_disclosure_banner"]["dismissible"], true);
+    assert!(v["ai_disclosure_banner"]["text"].is_string());
+}
+
+#[tokio::test]
+async fn tenant_config_404_when_tenant_unknown() {
+    let tenants = InMemoryTenantRepo::arc();
+    let app = router(build_state(
+        InMemorySessionRepo::arc(),
+        Some(tenants),
+        None,
+        None,
+    ));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/tenants/ten_missing/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn tenant_config_500_when_repo_not_wired() {
+    let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/tenants/ten_a/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
