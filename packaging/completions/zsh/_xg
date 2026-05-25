@@ -1,0 +1,505 @@
+#compdef xg xiaoguai
+# zsh completion for xg (xiaoguai CLI)
+# Installation:
+#   mkdir -p ~/.zfunc
+#   cp _xg ~/.zfunc/_xg
+#   echo 'fpath=(~/.zfunc $fpath)' >> ~/.zshrc
+#   echo 'autoload -Uz compinit && compinit' >> ~/.zshrc
+#
+# Or with Homebrew: completions auto-installed to $(brew --prefix)/share/zsh/site-functions/
+
+_xg() {
+    local state line
+    typeset -A opt_args
+
+    local -a global_opts
+    global_opts=(
+        '--config[Path to YAML config file]:config file:_files -g "*.yaml *.yml"'
+        '--help[Show help]'
+        '--version[Show version]'
+    )
+
+    local -a output_opts
+    output_opts=(
+        '--output[Output format]:format:(table json yaml)'
+    )
+
+    _arguments -C \
+        $global_opts \
+        '1:command:->command' \
+        '*::args:->args'
+
+    case $state in
+        command)
+            local -a commands
+            commands=(
+                'chat:Send a one-shot prompt to the agent'
+                'provider:Manage LLM provider registry'
+                'mcp:Manage MCP server registry'
+                'remote:Talk to a running xiaoguai-api over HTTP/SSE'
+                'eval:Run an eval suite against the mock backend'
+                'backup:Create a backup archive'
+                'restore:Restore a backup archive'
+                'self-update:Check for and apply binary updates'
+                'audit:Audit log management'
+                'hotl:Hotl policy management (wave-3)'
+                'outcomes:Outcome telemetry (wave-3)'
+                'skills:Skill pack management (wave-3)'
+                'watch:Watch rule management (wave-3)'
+                'anomaly:Anomaly detection (wave-3)'
+            )
+            _describe 'command' commands
+            ;;
+
+        args)
+            case $line[1] in
+                chat)
+                    _arguments \
+                        $global_opts \
+                        '--prompt[User prompt]:prompt: ' \
+                        '--mock[Use deterministic mock backend]' \
+                        '--ollama-url[Override Ollama base URL]:url: ' \
+                        '--model[LLM model name]:model: '
+                    ;;
+
+                provider)
+                    _arguments -C \
+                        $global_opts \
+                        '1:subcommand:->sub' \
+                        '*::args:->subargs'
+                    case $state in
+                        sub)
+                            local -a subcmds
+                            subcmds=(
+                                'register:Register a new provider'
+                                'list:List providers'
+                                'remove:Remove a provider by id'
+                            )
+                            _describe 'provider subcommand' subcmds
+                            ;;
+                        subargs)
+                            case $line[1] in
+                                register)
+                                    _arguments \
+                                        $global_opts \
+                                        '--name[Provider name]:name: ' \
+                                        '--kind[Provider kind]:kind:(ollama openai_compat)' \
+                                        '--endpoint[Endpoint URL]:url: ' \
+                                        '--models[Supported model names (comma-separated)]:models: ' \
+                                        '--default-for[Default-for models (comma-separated)]:models: ' \
+                                        '--fallback-order[Fallback priority]:order: ' \
+                                        '--api-key-env[Env var holding API key]:env_var: ' \
+                                        '--tenant[Tenant id for scoped providers]:tenant: '
+                                    ;;
+                                list)
+                                    _arguments $global_opts '--tenant[Tenant id]:tenant: '
+                                    ;;
+                                remove)
+                                    _arguments $global_opts '--id[Provider id]:id: '
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
+
+                mcp)
+                    _arguments -C \
+                        $global_opts \
+                        '1:subcommand:->sub' \
+                        '*::args:->subargs'
+                    case $state in
+                        sub)
+                            local -a subcmds
+                            subcmds=(
+                                'register:Register a new MCP server'
+                                'list:List MCP servers'
+                                'remove:Remove an MCP server by id'
+                            )
+                            _describe 'mcp subcommand' subcmds
+                            ;;
+                        subargs)
+                            case $line[1] in
+                                register)
+                                    _arguments \
+                                        $global_opts \
+                                        '--name[Server name]:name: ' \
+                                        '--version[Version]:version: ' \
+                                        '--transport[Transport type]:transport:(stdio sse http)' \
+                                        '--command[Command to spawn]:command:_command_names' \
+                                        '--args[Comma-separated args]:args: ' \
+                                        '--env-keys[Comma-separated env var names]:keys: ' \
+                                        '--endpoint[Endpoint URL]:url: ' \
+                                        '--tenant[Tenant id]:tenant: '
+                                    ;;
+                                list)
+                                    _arguments $global_opts '--tenant[Tenant id]:tenant: '
+                                    ;;
+                                remove)
+                                    _arguments $global_opts '--id[Server id]:id: '
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
+
+                remote)
+                    _arguments -C \
+                        $global_opts \
+                        '--server[Base URL of the API server]:url: ' \
+                        '1:subcommand:->sub' \
+                        '*::args:->subargs'
+                    case $state in
+                        sub)
+                            local -a subcmds
+                            subcmds=(
+                                'healthz:Smoke test the remote server'
+                                'chat:Send a prompt to a fresh session'
+                                'messages:Fetch message history of a session'
+                                'cancel:Cancel an in-flight agent run'
+                            )
+                            _describe 'remote subcommand' subcmds
+                            ;;
+                        subargs)
+                            case $line[1] in
+                                healthz) _arguments $global_opts '--server[Server URL]:url: ' ;;
+                                chat)
+                                    _arguments \
+                                        $global_opts \
+                                        '--server[Server URL]:url: ' \
+                                        '--user-id[User id]:user: ' \
+                                        '--tenant-id[Tenant id]:tenant: ' \
+                                        '--model[Model name]:model: ' \
+                                        '--prompt[Prompt text]:prompt: ' \
+                                        '--title[Session title]:title: '
+                                    ;;
+                                messages)
+                                    _arguments $global_opts '--server[Server URL]:url: ' '--session[Session id]:session: '
+                                    ;;
+                                cancel)
+                                    _arguments $global_opts '--server[Server URL]:url: ' '--session[Session id]:session: '
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
+
+                eval)
+                    _arguments -C \
+                        $global_opts \
+                        '1:subcommand:->sub' \
+                        '*::args:->subargs'
+                    case $state in
+                        sub)
+                            local -a subcmds
+                            subcmds=('run:Walk eval cases and grade them')
+                            _describe 'eval subcommand' subcmds
+                            ;;
+                        subargs)
+                            case $line[1] in
+                                run)
+                                    _arguments \
+                                        $global_opts \
+                                        '--suite[Suite name]:suite: ' \
+                                        '--cases-dir[Directory of .eval.yaml files]:dir:_files -/' \
+                                        '--out[Output JSON report path]:file:_files' \
+                                        '--max-iterations[Max agent iterations]:n: '
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
+
+                backup)
+                    _arguments \
+                        $global_opts \
+                        '--out[Output .tar.gz path]:file:_files' \
+                        '--database-url[PostgreSQL connection URL]:url: ' \
+                        '--encrypt[Age public-key file for encryption]:file:_files'
+                    ;;
+
+                restore)
+                    _arguments \
+                        $global_opts \
+                        '--in[Path to backup archive]:file:_files -g "*.tar.gz *.age"' \
+                        '--outdir[Extraction directory]:dir:_files -/' \
+                        '--force[Overwrite existing output directory]' \
+                        '--identity[Age identity file for decryption]:file:_files'
+                    ;;
+
+                self-update)
+                    _arguments $global_opts '--check[Only report if update available]'
+                    ;;
+
+                audit)
+                    _arguments -C \
+                        $global_opts \
+                        '1:subcommand:->sub' \
+                        '*::args:->subargs'
+                    case $state in
+                        sub)
+                            local -a subcmds
+                            subcmds=('export:Export audit rows to S3-compatible sink')
+                            _describe 'audit subcommand' subcmds
+                            ;;
+                        subargs)
+                            case $line[1] in
+                                export)
+                                    _arguments \
+                                        $global_opts \
+                                        '--sink[Sink type]:sink:(s3)' \
+                                        '--bucket[S3 bucket name]:bucket: ' \
+                                        '--prefix[S3 key prefix]:prefix: ' \
+                                        '--region[AWS region]:region: ' \
+                                        '--endpoint-url[Endpoint URL for MinIO/localstack]:url: ' \
+                                        '--sink-name[Logical sink name]:name: ' \
+                                        '--interval-secs[Export interval in seconds]:secs: ' \
+                                        '--once[Run one cycle then exit]' \
+                                        '--database-url[Postgres connection URL]:url: '
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
+
+                # Wave-3: hotl policy management
+                hotl)
+                    _arguments -C \
+                        $global_opts \
+                        '1:subcommand:->sub' \
+                        '*::args:->subargs'
+                    case $state in
+                        sub)
+                            local -a subcmds
+                            subcmds=(
+                                'policy:Manage hotl policies (create/list/get/update/delete)'
+                                'check:Check hotl policy status for a session'
+                            )
+                            _describe 'hotl subcommand' subcmds
+                            ;;
+                        subargs)
+                            case $line[1] in
+                                policy)
+                                    _arguments -C \
+                                        $global_opts \
+                                        '1:action:->action' \
+                                        '*::args:->actionargs'
+                                    case $state in
+                                        action)
+                                            local -a actions
+                                            actions=(
+                                                'create:Create a new hotl policy'
+                                                'list:List hotl policies'
+                                                'get:Get a hotl policy by id'
+                                                'update:Update a hotl policy'
+                                                'delete:Delete a hotl policy'
+                                            )
+                                            _describe 'policy action' actions
+                                            ;;
+                                        actionargs)
+                                            case $line[1] in
+                                                create)
+                                                    _arguments $global_opts \
+                                                        '--name[Policy name]:name: ' \
+                                                        '--rule[Policy rule expression]:rule: ' \
+                                                        '--priority[Priority (lower = higher precedence)]:n: ' \
+                                                        '--enabled[Enable policy]'
+                                                    ;;
+                                                list)
+                                                    _arguments $global_opts $output_opts \
+                                                        '--limit[Max results]:n: ' \
+                                                        '--offset[Pagination offset]:n: '
+                                                    ;;
+                                                get)
+                                                    _arguments $global_opts $output_opts '--id[Policy id]:id: '
+                                                    ;;
+                                                update)
+                                                    _arguments $global_opts \
+                                                        '--id[Policy id]:id: ' \
+                                                        '--name[New name]:name: ' \
+                                                        '--rule[New rule expression]:rule: ' \
+                                                        '--priority[New priority]:n: ' \
+                                                        '--enabled[Enable policy]'
+                                                    ;;
+                                                delete)
+                                                    _arguments $global_opts \
+                                                        '--id[Policy id]:id: ' \
+                                                        '--force[Skip confirmation]'
+                                                    ;;
+                                            esac
+                                            ;;
+                                    esac
+                                    ;;
+                                check)
+                                    _arguments $global_opts $output_opts \
+                                        '--tenant[Tenant id]:tenant: ' \
+                                        '--session[Session id]:session: '
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
+
+                # Wave-3: outcome telemetry
+                outcomes)
+                    _arguments -C \
+                        $global_opts \
+                        '1:subcommand:->sub' \
+                        '*::args:->subargs'
+                    case $state in
+                        sub)
+                            local -a subcmds
+                            subcmds=(
+                                'record:Record an outcome for a session'
+                                'list:List recorded outcomes'
+                                'summary:Summarise outcomes over a time range'
+                                'timeseries:Retrieve outcome metrics as a time series'
+                            )
+                            _describe 'outcomes subcommand' subcmds
+                            ;;
+                        subargs)
+                            case $line[1] in
+                                record)
+                                    _arguments $global_opts \
+                                        '--session[Session id]:session: ' \
+                                        '--outcome[Outcome label]:outcome: ' \
+                                        '--score[Numeric score]:score: ' \
+                                        '--metadata[JSON metadata blob]:json: '
+                                    ;;
+                                list)
+                                    _arguments $global_opts $output_opts \
+                                        '--session[Session id]:session: ' \
+                                        '--tenant[Tenant id]:tenant: ' \
+                                        '--limit[Max results]:n: ' \
+                                        '--offset[Pagination offset]:n: '
+                                    ;;
+                                summary)
+                                    _arguments $global_opts $output_opts \
+                                        '--tenant[Tenant id]:tenant: ' \
+                                        '--from[Start time (ISO-8601)]:time: ' \
+                                        '--to[End time (ISO-8601)]:time: '
+                                    ;;
+                                timeseries)
+                                    _arguments $global_opts $output_opts \
+                                        '--tenant[Tenant id]:tenant: ' \
+                                        '--metric[Metric name]:metric: ' \
+                                        '--from[Start time (ISO-8601)]:time: ' \
+                                        '--to[End time (ISO-8601)]:time: ' \
+                                        '--bucket[Bucket size (e.g. 1h)]:bucket: '
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
+
+                # Wave-3: skill pack management
+                skills)
+                    _arguments -C \
+                        $global_opts \
+                        '1:subcommand:->sub' \
+                        '*::args:->subargs'
+                    case $state in
+                        sub)
+                            local -a subcmds
+                            subcmds=(
+                                'list:List skill packs (installed or available)'
+                                'install:Install a skill pack'
+                            )
+                            _describe 'skills subcommand' subcmds
+                            ;;
+                        subargs)
+                            case $line[1] in
+                                list)
+                                    _arguments $global_opts $output_opts \
+                                        '--installed[Show only installed packs]' \
+                                        '--available[Show only available (catalog) packs]'
+                                    ;;
+                                install)
+                                    _arguments $global_opts \
+                                        '--name[Pack name]:name: ' \
+                                        '--version[Pack version]:version: ' \
+                                        '--force[Force reinstall]'
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
+
+                # Wave-3: watch rules
+                watch)
+                    _arguments -C \
+                        $global_opts \
+                        '1:subcommand:->sub' \
+                        '*::args:->subargs'
+                    case $state in
+                        sub)
+                            local -a subcmds
+                            subcmds=(
+                                'list:List active watch rules'
+                                'start:Start a watch rule from a spec file'
+                                'stop:Stop a running watch rule'
+                                'test:Test a watch rule without side effects'
+                            )
+                            _describe 'watch subcommand' subcmds
+                            ;;
+                        subargs)
+                            case $line[1] in
+                                list)
+                                    _arguments $global_opts $output_opts
+                                    ;;
+                                start)
+                                    _arguments $global_opts \
+                                        '--name[Watch rule name]:name: ' \
+                                        '--spec[Path to spec YAML]:file:_files -g "*.yaml *.yml"'
+                                    ;;
+                                stop)
+                                    _arguments $global_opts '--name[Watch rule name]:name: '
+                                    ;;
+                                test)
+                                    _arguments $global_opts $output_opts \
+                                        '--name[Watch rule name]:name: ' \
+                                        '--dry-run[Preview without side effects]'
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
+
+                # Wave-3: anomaly detection
+                anomaly)
+                    _arguments -C \
+                        $global_opts \
+                        '1:subcommand:->sub' \
+                        '*::args:->subargs'
+                    case $state in
+                        sub)
+                            local -a subcmds
+                            subcmds=(
+                                'run:Run anomaly detection against a data source'
+                                'test:Test anomaly detection spec without persisting results'
+                            )
+                            _describe 'anomaly subcommand' subcmds
+                            ;;
+                        subargs)
+                            case $line[1] in
+                                run)
+                                    _arguments $global_opts $output_opts \
+                                        '--spec[Path to anomaly spec YAML]:file:_files -g "*.yaml *.yml"' \
+                                        '--source[Data source identifier]:source: ' \
+                                        '--window[Detection window (e.g. 24h)]:window: ' \
+                                        '--threshold[Alert threshold (0.0-1.0)]:threshold: '
+                                    ;;
+                                test)
+                                    _arguments $global_opts $output_opts \
+                                        '--spec[Path to anomaly spec YAML]:file:_files -g "*.yaml *.yml"' \
+                                        '--dry-run[Preview detections without persisting]'
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_xg "$@"
