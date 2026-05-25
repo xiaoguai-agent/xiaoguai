@@ -1,0 +1,120 @@
+# Dev / local overrides for xiaoguai-observability.
+#
+# Smaller resource footprints, in-memory or small PVC storage, shorter
+# retentions — suitable for kind, k3s, minikube, or CI clusters.
+#
+#   helm upgrade --install xiaoguai-obs deploy/helm/xiaoguai-observability \
+#     -f values.yaml -f values-dev.yaml \
+#     -n monitoring --create-namespace
+
+# ---------------------------------------------------------------------------
+# kube-prometheus-stack dev overrides
+# ---------------------------------------------------------------------------
+kube-prometheus-stack:
+  grafana:
+    persistence:
+      enabled: false  # in-memory for dev
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+  prometheus:
+    prometheusSpec:
+      retention: "2d"
+      retentionSize: "5GB"
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 5Gi
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 1Gi
+
+  alertmanager:
+    alertmanagerSpec:
+      retention: "24h"
+      replicas: 1
+      storage:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 500Mi
+      resources:
+        requests:
+          cpu: 25m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+
+# ---------------------------------------------------------------------------
+# Loki dev overrides — filesystem storage, minimal resources
+# ---------------------------------------------------------------------------
+loki:
+  loki:
+    storage:
+      type: filesystem
+    limits_config:
+      retention_period: 48h  # 2 days
+  singleBinary:
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 5Gi
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Tempo dev overrides — local storage, short retention
+# ---------------------------------------------------------------------------
+tempo:
+  tempo:
+    retention: 48h  # 2 days
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/traces
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 512Mi
+  persistence:
+    enabled: true
+    size: 5Gi
+
+# ---------------------------------------------------------------------------
+# ServiceMonitor — slower scrape for dev
+# ---------------------------------------------------------------------------
+serviceMonitor:
+  interval: "60s"
+
+# ---------------------------------------------------------------------------
+# AlertmanagerConfig — disable Slack/PD/email in dev to avoid noise
+# ---------------------------------------------------------------------------
+alertmanagerConfig:
+  slackWebhookUrl: ""
+  pagerdutyIntegrationKey: ""
+  email:
+    enabled: false

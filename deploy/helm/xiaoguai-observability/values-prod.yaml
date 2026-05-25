@@ -1,0 +1,131 @@
+# Production overrides for xiaoguai-observability.
+#
+# Apply on top of default values:
+#   helm upgrade --install xiaoguai-obs deploy/helm/xiaoguai-observability \
+#     -f values.yaml -f values-prod.yaml \
+#     -n monitoring --create-namespace
+
+# ---------------------------------------------------------------------------
+# kube-prometheus-stack production overrides
+# ---------------------------------------------------------------------------
+kube-prometheus-stack:
+  grafana:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClassName: ""  # use cluster default; set to your storage class
+
+  prometheus:
+    prometheusSpec:
+      retention: "90d"
+      retentionSize: "200GB"
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            storageClassName: ""  # set to your storage class
+            resources:
+              requests:
+                storage: 200Gi
+      resources:
+        requests:
+          cpu: 1
+          memory: 4Gi
+        limits:
+          cpu: 4
+          memory: 16Gi
+
+  alertmanager:
+    alertmanagerSpec:
+      retention: "720h"  # 30 days
+      replicas: 3
+      storage:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 10Gi
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Loki production overrides
+# ---------------------------------------------------------------------------
+loki:
+  loki:
+    storage:
+      type: s3
+      s3:
+        # Set these via --set or a pre-created Secret.
+        endpoint: ""       # e.g. s3.amazonaws.com
+        region: "us-east-1"
+        bucketnames: "xiaoguai-loki-prod"
+        access_key_id: ""     # placeholder
+        secret_access_key: "" # placeholder
+    limits_config:
+      retention_period: 2160h  # 90 days
+  singleBinary:
+    replicas: 3
+    persistence:
+      enabled: true
+      size: 100Gi
+      storageClassName: ""
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2
+        memory: 4Gi
+
+# ---------------------------------------------------------------------------
+# Tempo production overrides
+# ---------------------------------------------------------------------------
+tempo:
+  tempo:
+    retention: 720h  # 30 days
+    storage:
+      trace:
+        backend: s3
+        s3:
+          bucket: "xiaoguai-tempo-prod"
+          endpoint: "s3.amazonaws.com"
+          region: "us-east-1"
+          # access_key and secret_key via environment / IAM role
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2
+        memory: 4Gi
+  persistence:
+    enabled: true
+    size: 100Gi
+    storageClassName: ""
+
+# ---------------------------------------------------------------------------
+# ServiceMonitor — tighter scrape in prod
+# ---------------------------------------------------------------------------
+serviceMonitor:
+  interval: "15s"
+
+# ---------------------------------------------------------------------------
+# Alertmanager notifications — set real values via --set or Secrets
+# ---------------------------------------------------------------------------
+alertmanagerConfig:
+  slackWebhookUrl: ""          # set via --set alertmanagerConfig.slackWebhookUrl=https://...
+  pagerdutyIntegrationKey: ""  # set via --set alertmanagerConfig.pagerdutyIntegrationKey=...
+  email:
+    enabled: true
+    smarthost: "smtp.example.com:587"
+    from: "alerts@xiaoguai.example.com"
+    to: "oncall@example.com"
+    authUsername: ""  # placeholder
+    authPassword: ""  # placeholder — use a Secret

@@ -1,0 +1,231 @@
+# Xiaoguai Observability Sub-chart — default values.
+#
+# All three observability stacks are enabled by default.
+# Disable individual components with:
+#   --set prometheusStack.enabled=false
+#   --set loki.enabled=false
+#   --set tempo.enabled=false
+#
+# Install:
+#   helm dependency update deploy/helm/xiaoguai-observability
+#   helm install xiaoguai-obs deploy/helm/xiaoguai-observability \
+#     -n monitoring --create-namespace
+
+# ---------------------------------------------------------------------------
+# Global overrides
+# ---------------------------------------------------------------------------
+global:
+  # Namespace where xiaoguai-core is deployed. Used by NetworkPolicy and
+  # ServiceMonitor to target the right namespace.
+  xiaoguaiNamespace: "default"
+  # Release name of the main xiaoguai chart (used by ServiceMonitor selectors).
+  xiaoguaiRelease: "xiaoguai"
+
+# ---------------------------------------------------------------------------
+# Component enable flags (matched by Chart.yaml condition: fields)
+# ---------------------------------------------------------------------------
+prometheusStack:
+  enabled: true
+
+loki:
+  enabled: true
+
+tempo:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# Grafana datasources ConfigMap (grafana-datasources.yaml template)
+# ---------------------------------------------------------------------------
+grafanaDatasources:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# Grafana dashboard provisioning (grafana-dashboards.yaml template)
+# ---------------------------------------------------------------------------
+grafanaDashboards:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# Alertmanager config (alertmanager-config.yaml template)
+# ---------------------------------------------------------------------------
+alertmanagerConfig:
+  enabled: true
+  # Slack webhook URL — set via --set or a pre-created Secret (see below).
+  # Leave empty to disable Slack receiver.
+  slackWebhookUrl: ""
+  # PagerDuty integration key.
+  pagerdutyIntegrationKey: ""
+  # SMTP settings for email receiver.
+  email:
+    enabled: false
+    smarthost: "smtp.example.com:587"
+    from: "alerts@example.com"
+    to: "oncall@example.com"
+    authUsername: ""
+    authPassword: ""  # placeholder — use a Secret in production
+
+# ---------------------------------------------------------------------------
+# Prometheus rules (prometheus-rules.yaml template)
+# ---------------------------------------------------------------------------
+prometheusRules:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# NetworkPolicy (networkpolicy.yaml template)
+# ---------------------------------------------------------------------------
+networkPolicy:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# ServiceMonitor targeting xiaoguai-core (servicemonitor.yaml template)
+# ---------------------------------------------------------------------------
+serviceMonitor:
+  enabled: true
+  # Scrape interval for xiaoguai /metrics endpoint.
+  interval: "30s"
+  # Port name on the xiaoguai Service (must match service.yaml in main chart).
+  port: "http"
+  path: "/metrics"
+
+# ---------------------------------------------------------------------------
+# kube-prometheus-stack sub-chart values
+# https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/values.yaml
+# ---------------------------------------------------------------------------
+kube-prometheus-stack:
+  # Grafana — bundled with kube-prometheus-stack.
+  grafana:
+    enabled: true
+    adminPassword: "changeme"  # PLACEHOLDER — override in prod via Secret
+    sidecar:
+      dashboards:
+        enabled: true
+        label: grafana_dashboard
+        labelValue: "1"
+        searchNamespace: "ALL"
+      datasources:
+        enabled: true
+        label: grafana_datasource
+        labelValue: "1"
+        searchNamespace: "ALL"
+    persistence:
+      enabled: false  # dev default; enable in prod values
+
+  # Prometheus
+  prometheus:
+    prometheusSpec:
+      retention: "15d"
+      retentionSize: "20GB"
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 20Gi
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 1
+          memory: 2Gi
+      # Allow ServiceMonitors from all namespaces (needed to scrape xiaoguai).
+      serviceMonitorNamespaceSelector: {}
+      serviceMonitorSelector: {}
+
+  # Alertmanager
+  alertmanager:
+    alertmanagerSpec:
+      retention: "120h"
+      storage:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 2Gi
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+
+  # Disable components not needed for a basic xiaoguai setup.
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# Loki sub-chart values
+# https://github.com/grafana/helm-charts/blob/main/charts/loki/values.yaml
+# ---------------------------------------------------------------------------
+loki:
+  loki:
+    auth_enabled: false
+    commonConfig:
+      replication_factor: 1
+    storage:
+      type: filesystem
+    limits_config:
+      retention_period: 744h  # 31 days
+  singleBinary:
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 20Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+  # Disable gateway and monitoring extras for default install.
+  gateway:
+    enabled: false
+  monitoring:
+    selfMonitoring:
+      enabled: false
+      grafanaAgent:
+        installOperator: false
+    lokiCanary:
+      enabled: false
+  test:
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# Tempo sub-chart values
+# https://github.com/grafana/helm-charts/blob/main/charts/tempo/values.yaml
+# ---------------------------------------------------------------------------
+tempo:
+  tempo:
+    retention: 336h  # 14 days
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:4317"
+          http:
+            endpoint: "0.0.0.0:4318"
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/traces
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+  persistence:
+    enabled: true
+    size: 20Gi

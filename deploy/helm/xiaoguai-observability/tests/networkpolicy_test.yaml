@@ -1,0 +1,73 @@
+# helm-unittest tests for networkpolicy.yaml
+suite: networkpolicy
+templates:
+  - networkpolicy.yaml
+
+tests:
+  - it: "renders no NetworkPolicy when networkPolicy.enabled=false"
+    set:
+      networkPolicy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: "renders two NetworkPolicy documents when networkPolicy.enabled=true"
+    set:
+      networkPolicy.enabled: true
+      global.xiaoguaiNamespace: "default"
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: "first document targets xiaoguai-core pods by name selector"
+    set:
+      networkPolicy.enabled: true
+      global.xiaoguaiNamespace: "default"
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: spec.podSelector.matchLabels["app.kubernetes.io/name"]
+          value: xiaoguai
+
+  - it: "first document is in xiaoguai namespace (not observability namespace)"
+    set:
+      networkPolicy.enabled: true
+      global.xiaoguaiNamespace: "xiaoguai-prod"
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: "xiaoguai-prod"
+
+  - it: "second document is a default-deny for the observability namespace"
+    set:
+      networkPolicy.enabled: true
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: spec.podSelector
+          value: {}
+      - contains:
+          path: spec.policyTypes
+          content: Ingress
+      - contains:
+          path: spec.policyTypes
+          content: Egress
+
+  - it: "second document allows DNS egress on port 53"
+    set:
+      networkPolicy.enabled: true
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            ports:
+              - port: 53
+                protocol: UDP
+              - port: 53
+                protocol: TCP
