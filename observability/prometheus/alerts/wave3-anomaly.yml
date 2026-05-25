@@ -1,0 +1,103 @@
+---
+# Wave-3 Anomaly Detection alerts
+# Metric source:
+#   xiaoguai_anomaly_detections_total{severity}
+#     severity values: "critical", "high", "medium", "low", "info"
+#
+# Alerts:
+#   1. Critical-severity anomaly burst: N detections in 1 hour
+#   2. Sustained anomaly storm: high + critical combined rate stays elevated
+
+groups:
+  - name: wave3.anomaly.burst
+    interval: 1m
+    rules:
+      - alert: AnomalyDetectionCriticalBurst
+        # Fires when the 1-hour rolling count of critical-severity detections exceeds 10.
+        # increase() over 1h gives approximate count; adjust threshold per environment.
+        expr: >
+          increase(xiaoguai_anomaly_detections_total{severity="critical"}[1h]) > 10
+        for: 0m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: anomaly
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/anomaly-false-positive-triage.md
+        annotations:
+          summary: "More than 10 critical anomaly detections in the last hour"
+          description: >
+            xiaoguai_anomaly_detections_total{severity="critical"} has accumulated
+            {{ $value | printf "%.0f" }} events in the last 60 minutes.
+            This may indicate a genuine security incident, a misconfigured anomaly
+            detector, or unusual agent behaviour. Triage immediately.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=anomaly
+
+      - alert: AnomalyDetectionCriticalBurstHigh
+        expr: >
+          increase(xiaoguai_anomaly_detections_total{severity="critical"}[1h]) > 50
+        for: 0m
+        labels:
+          severity: critical
+          team: platform
+          subsystem: anomaly
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/anomaly-false-positive-triage.md
+        annotations:
+          summary: "More than 50 critical anomaly detections in the last hour (critical)"
+          description: >
+            xiaoguai_anomaly_detections_total{severity="critical"} has accumulated
+            {{ $value | printf "%.0f" }} events in the last 60 minutes — exceeding
+            the high-severity burst threshold.
+            Immediate incident response required. Isolate affected agents and review
+            recent policy changes and ingested data.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=anomaly
+
+  - name: wave3.anomaly.storm
+    interval: 1m
+    rules:
+      - alert: AnomalyDetectionStormWarning
+        # Sustained storm: combined high + critical rate stays above 1 detection/min
+        # for 15 consecutive minutes.
+        expr: >
+          (
+            rate(xiaoguai_anomaly_detections_total{severity="critical"}[5m])
+            +
+            rate(xiaoguai_anomaly_detections_total{severity="high"}[5m])
+          ) * 60 > 1
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: anomaly
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/anomaly-false-positive-triage.md
+        annotations:
+          summary: "Sustained anomaly storm: high+critical rate > 1/min for 15 minutes"
+          description: >
+            The combined rate of high and critical anomaly detections has exceeded
+            1 per minute for 15 consecutive minutes.
+            Current combined rate: {{ $value | printf "%.2f" }} detections/min.
+            Verify whether this is a genuine threat pattern or a detector sensitivity
+            issue. Review the anomaly-false-positive-triage runbook.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=anomaly
+
+      - alert: AnomalyDetectionStormCritical
+        expr: >
+          (
+            rate(xiaoguai_anomaly_detections_total{severity="critical"}[5m])
+            +
+            rate(xiaoguai_anomaly_detections_total{severity="high"}[5m])
+          ) * 60 > 1
+        for: 30m
+        labels:
+          severity: critical
+          team: platform
+          subsystem: anomaly
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/anomaly-false-positive-triage.md
+        annotations:
+          summary: "Sustained anomaly storm for 30 minutes (critical)"
+          description: >
+            The combined rate of high and critical anomaly detections has exceeded
+            1 per minute for 30 consecutive minutes.
+            Current combined rate: {{ $value | printf "%.2f" }} detections/min.
+            Storm is prolonged. Escalate to security and consider emergency
+            throttling of agent actions pending investigation.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=anomaly

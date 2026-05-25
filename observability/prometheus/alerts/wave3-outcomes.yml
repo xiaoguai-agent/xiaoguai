@@ -1,0 +1,113 @@
+---
+# Wave-3 Outcomes alerts
+# Metric sources:
+#   xiaoguai_outcomes_recorded_total{kind}
+#     kind values: "success", "failure", "partial", "timeout"
+#   xiaoguai_outcomes_record_duration_seconds — histogram (SLO in wave3-latency.yml)
+#
+# Alerts:
+#   1. Outcome failure rate > 10% of recorded outcomes
+#   2. Outcome chain depth spike (proxy for agent loops via high outcome volume per interval)
+#   3. outcomes_recorded_total going completely flat (collection broken)
+
+groups:
+  - name: wave3.outcomes.failure
+    interval: 1m
+    rules:
+      - alert: OutcomesFailureRateHigh
+        expr: >
+          (
+            rate(xiaoguai_outcomes_recorded_total{kind="failure"}[5m])
+          ) /
+          (
+            sum without(kind) (rate(xiaoguai_outcomes_recorded_total[5m])) > 0
+          ) > 0.10
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: outcomes
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md
+        annotations:
+          summary: "Outcome failure rate above 10% for 10 minutes"
+          description: >
+            More than 10% of recorded outcomes carry kind="failure" over the last
+            10 consecutive minutes.
+            Current failure fraction: {{ $value | humanizePercentage }}.
+            Check for upstream LLM errors, HotL denies propagating as failures,
+            or storage write errors in the outcome recorder.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=outcomes
+
+      - alert: OutcomesFailureRateCritical
+        expr: >
+          (
+            rate(xiaoguai_outcomes_recorded_total{kind="failure"}[5m])
+          ) /
+          (
+            sum without(kind) (rate(xiaoguai_outcomes_recorded_total[5m])) > 0
+          ) > 0.25
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+          subsystem: outcomes
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md
+        annotations:
+          summary: "Outcome failure rate above 25% (critical)"
+          description: >
+            More than 25% of recorded outcomes are failures over the last 5 minutes.
+            Current failure fraction: {{ $value | humanizePercentage }}.
+            Agents are likely experiencing widespread task failures. Investigate
+            the outcome store, LLM provider health, and active HotL policy state.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=outcomes
+
+  - name: wave3.outcomes.loop
+    interval: 1m
+    rules:
+      - alert: OutcomesChainDepthAnomaly
+        # Proxy for deep agent loops: outcome recording rate spikes to an unusually
+        # high absolute value, suggesting agents are churning through outcome chains.
+        # Threshold: 5x the 1-hour average rate.
+        expr: >
+          rate(xiaoguai_outcomes_recorded_total[5m])
+          >
+          5 * avg_over_time(rate(xiaoguai_outcomes_recorded_total[5m])[1h:5m])
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: outcomes
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md
+        annotations:
+          summary: "Outcome recording rate 5x above 1-hour baseline (possible agent loop)"
+          description: >
+            The rate of xiaoguai_outcomes_recorded_total has been 5x higher than the
+            1-hour rolling average for 5 consecutive minutes.
+            Current rate multiplier: {{ $value | printf "%.1f" }}x.
+            This pattern is consistent with an agent stuck in a tight retry or
+            reasoning loop generating excessive outcome chain entries.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=outcomes
+
+  - name: wave3.outcomes.collection
+    interval: 1m
+    rules:
+      - alert: OutcomesCollectionStalled
+        # Fires when the increase in outcomes_recorded_total is zero over a 15-minute
+        # window during hours when outcomes are normally expected (always-on alerting
+        # is used here; operators can silence during known maintenance windows).
+        expr: >
+          increase(xiaoguai_outcomes_recorded_total[15m]) == 0
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: outcomes
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/outcome-chain-debug.md
+        annotations:
+          summary: "Outcomes recorder appears stalled — no outcomes recorded in 15 minutes"
+          description: >
+            xiaoguai_outcomes_recorded_total has not increased in the last 15 minutes.
+            This may indicate the outcome recorder process has crashed, the metric
+            emission is broken, or the system is genuinely idle (silence if expected).
+            Check the xiaoguai-core service status and Prometheus scrape health.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=outcomes
