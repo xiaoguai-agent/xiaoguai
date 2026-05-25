@@ -498,6 +498,119 @@ export interface HotlVerdict {
   verdict: HotlVerdictKind;
   /** Non-null on `escalate` and `deny`, describing which limit was hit. */
   reason: string | null;
+// ---- v1.4 (planned) — Anomaly detector types ----------------------------
+// Mirrors the DetectorKind + AnomalySpec types in crates/xiaoguai-anomaly/src/spec.rs.
+// REST endpoints are PLANNED; the crate is currently a pure Rust library.
+
+/**
+ * Severity of a fired anomaly, inferred from sigma distance.
+ *   - 'low'      : 2σ–3σ
+ *   - 'medium'   : 3σ–5σ
+ *   - 'high'     : >5σ
+ */
+export type AnomalySeverity = 'low' | 'medium' | 'high';
+
+/**
+ * One fired anomaly detection event returned by GET /v1/anomaly/detections.
+ * Mirrors the runtime output of xiaoguai-anomaly detector evaluation.
+ */
+export interface AnomalyDetection {
+  /** Unique event ID. */
+  id: string;
+  /** Detector (spec) ID — matches AnomalyDetectorConfig.id. */
+  detector_id: string;
+  /** RFC 3339 timestamp when the anomaly was detected. */
+  fired_at: string;
+  severity: AnomalySeverity;
+  /** KPI series key / label. */
+  series_key: string;
+  /** Observed value that triggered the alert. */
+  value: number;
+  /** Threshold value that was breached (e.g. μ ± n·σ). */
+  threshold: number;
+  /** Whether the operator has marked this as a false positive. */
+  is_false_positive: boolean;
+}
+
+/** Response envelope for GET /v1/anomaly/detections. */
+export interface AnomalyDetectionListResponse {
+  detections: AnomalyDetection[];
+  total: number;
+}
+
+/** Query parameters for listAnomalyDetections. */
+export interface ListAnomalyDetectionsQuery {
+  detector_id?: string;
+  severity?: AnomalySeverity;
+  /** RFC 3339 inclusive lower bound. */
+  since?: string;
+  /** RFC 3339 inclusive upper bound. */
+  until?: string;
+  /** Defaults to 50. */
+  limit?: number;
+}
+
+/**
+ * Discriminated union for detector algorithm params.
+ * Mirrors DetectorKind in spec.rs.
+ */
+export type AnomalyDetectorKind =
+  | {
+      kind: 'z_score';
+      sigma_threshold: number;
+      min_count: number;
+    }
+  | {
+      kind: 'ewma';
+      alpha: number;
+      sigma_threshold: number;
+      min_count: number;
+    };
+
+/**
+ * Full detector configuration returned by GET /v1/anomaly/detectors/:id.
+ * Corresponds to AnomalySpec in spec.rs plus runtime-mutable tuning fields.
+ */
+export interface AnomalyDetectorConfig {
+  id: string;
+  kpi_query: string;
+  /** Rolling window in seconds. */
+  window_secs: number;
+  detector: AnomalyDetectorKind;
+  /** Cooldown between alerts in seconds. */
+  cool_off_secs: number;
+}
+
+/**
+ * Partial update payload for PATCH /v1/anomaly/detectors/:id.
+ * All fields are optional — only provided fields are updated.
+ */
+export interface AnomalyDetectorPatch {
+  detector?: AnomalyDetectorKind;
+  window_secs?: number;
+  cool_off_secs?: number;
+}
+
+/** Body for POST /v1/anomaly/feedback. */
+export interface AnomalyFeedbackRequest {
+  /** The detection event ID to mark as false positive. */
+  detection_id: string;
+  /** true = false positive, false = revoke a previous FP mark. */
+  is_false_positive: boolean;
+  /** Optional operator note. */
+  note?: string;
+}
+
+export interface AnomalyFeedbackResponse {
+  ok: boolean;
+}
+
+/** Aggregated fire-rate bucket for the 14-day trend sparkline. */
+export interface AnomalyFireRateBucket {
+  /** YYYY-MM-DD date label. */
+  date: string;
+  /** Number of detections on this date. */
+  count: number;
 }
 
 // ---- Agent event stream --------------------------------------------------
@@ -889,6 +1002,71 @@ export class XiaoguaiClient {
     if (q.range) params.set('range', q.range);
     if (q.kind) params.set('kind', q.kind);
     return this.request<OutcomeRecord[]>('GET', `/v1/outcomes?${params.toString()}`);
+  // ---- v1.4 (planned) — Anomaly detector endpoints -----------------------
+  // NOTE: The REST endpoints /v1/anomaly/* are PLANNED but not yet
+  // implemented in xiaoguai-api. The xiaoguai-anomaly crate exists as a
+  // pure Rust library only. These methods handle 404/503 gracefully so the
+  // UI degrades to a placeholder rather than crashing.
+
+  /**
+   * List recent anomaly detections.
+   * Endpoint: GET /v1/anomaly/detections
+   * Status: PLANNED — endpoint may not exist yet. Returns [] on 404/503.
+   */
+  listAnomalyDetections(
+    opts?: ListAnomalyDetectionsQuery,
+  ): Promise<AnomalyDetectionListResponse> {
+    const params = new URLSearchParams();
+    if (opts?.detector_id) params.set('detector_id', opts.detector_id);
+    if (opts?.severity) params.set('severity', opts.severity);
+    if (opts?.since) params.set('since', opts.since);
+    if (opts?.until) params.set('until', opts.until);
+    if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+    const qs = params.toString();
+    return this.request<AnomalyDetectionListResponse>(
+      'GET',
+      `/v1/anomaly/detections${qs ? `?${qs}` : ''}`,
+    );
+  }
+
+  /**
+   * Get current config for a single anomaly detector.
+   * Endpoint: GET /v1/anomaly/detectors/:id
+   * Status: PLANNED — endpoint may not exist yet.
+   */
+  getAnomalyDetector(detectorId: string): Promise<AnomalyDetectorConfig> {
+    return this.request<AnomalyDetectorConfig>(
+      'GET',
+      `/v1/anomaly/detectors/${encodeURIComponent(detectorId)}`,
+    );
+  }
+
+  /**
+   * Update tuning params for an anomaly detector. HotL-gated on the server
+   * (changing detection thresholds affects audit posture).
+   * Endpoint: PATCH /v1/anomaly/detectors/:id
+   * Status: PLANNED — endpoint may not exist yet.
+   */
+  updateAnomalyDetector(
+    detectorId: string,
+    patch: AnomalyDetectorPatch,
+  ): Promise<AnomalyDetectorConfig> {
+    return this.request<AnomalyDetectorConfig>(
+      'PATCH',
+      `/v1/anomaly/detectors/${encodeURIComponent(detectorId)}`,
+      patch,
+    );
+  }
+
+  /**
+   * Submit a false-positive feedback signal for a detection event.
+   * Endpoint: POST /v1/anomaly/feedback
+   * Status: PLANNED — endpoint may not exist yet.
+   */
+  submitAnomalyFeedback(
+    req: AnomalyFeedbackRequest,
+  ): Promise<AnomalyFeedbackResponse> {
+    return this.request<AnomalyFeedbackResponse>('POST', '/v1/anomaly/feedback', req);
   }
 
   /**
