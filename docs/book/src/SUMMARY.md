@@ -26,6 +26,20 @@
 - [Systemd Hardening](operator/systemd.md)
 - [Security](operator/security.md)
 - [Release Signing](operator/release-signing.md)
+- [Active Wakeup: Watchers & Anomaly Detection](operator/active-wakeup.md)
+- [Human-on-the-Loop Policy](operator/human-on-the-loop.md)
+- [Outcome Telemetry](operator/outcome-telemetry.md)
+- [Task Board](operator/task-board.md)
+
+---
+
+# Runbooks — wave-3
+
+- [HotL escalation stuck](../../runbooks/hotl-escalation-stuck.md)
+- [Outcome chain debug](../../runbooks/outcome-chain-debug.md)
+- [Pack install troubleshoot](../../runbooks/pack-install-troubleshoot.md)
+- [IM adapter onboarding](../../runbooks/im-adapter-onboarding.md)
+- [Anomaly false-positive triage](../../runbooks/anomaly-false-positive-triage.md)
 
 ---
 
@@ -48,9 +62,16 @@
 # Skills Catalog
 
 - [Overview](skills/overview.md)
+- [Skill Packs](skills/skill-packs.md)
 
 ---
 
 # Roadmap
 
 - [Roadmap](roadmap.md)
+
+---
+
+# Glossary
+
+- [Glossary](glossary.md)
