@@ -1,0 +1,86 @@
+# Sender Classifier
+#
+# Classifies the sender into one of five categories that downstream
+# agents use to adjust priority and draft tone:
+#
+#   internal   — same email domain as the user, or in VIP list with role=internal
+#   customer   — known customer domain or CRM-matched address
+#   vendor     — supplier / SaaS tool / service provider
+#   cold       — unknown sender, likely outreach
+#   automated  — no-reply addresses, CI/CD notifications, monitoring alerts
+#
+# PII: receives sender_email and sender_display_name only (no body).
+# Classification signals come from the VIP list and domain rules, not
+# from body content.
+
+name: sender-classifier
+kind: llm-agent
+
+llm:
+  model: ${EMAIL_TRIAGE_FAST_LLM_MODEL:-default}
+  temperature: 0.0
+  max_tokens: 256
+
+# Context steps run before the LLM prompt to gather classification signals.
+context_steps:
+  - id: vip_lookup
+    description: "Look up sender in per-user VIP list"
+    tool: file_read_json
+    params:
+      path: ${EMAIL_TRIAGE_VIP_LIST_PATH}
+      jq: ".[] | select(.email == \"{{ email.sender_email }}\")"
+    optional: true
+
+  - id: domain_rules
+    description: "Match sender domain against known domain categories"
+    tool: email_domain_classify
+    params:
+      domain: "{{ email.sender_email | split('@') | last }}"
+      user_domain: "{{ user.email | split('@') | last }}"
+
+system_prompt: |
+  You are an email sender classifier. Based on lookup context and heuristics,
+  classify the sender into exactly one category.
+
+  Categories:
+    internal  — same org as the recipient (same email domain, or VIP role=internal)
+    customer  — known customer; domain matched or CRM-identified
+    vendor    — SaaS provider, supplier, or tooling service
+    cold      — unsolicited outreach from unknown individual or company
+    automated — no-reply, CI/CD, monitoring, alerts, system notifications
+
+  Automated signals (any one sufficient):
+    - address starts with "no-reply", "noreply", "do-not-reply", "notifications"
+    - From header contains "via GitHub", "via Sentry", "via Datadog"
+    - Subject matches common CI/CD patterns (build passed, deploy succeeded, etc.)
+
+  Output ONLY:
+  {
+    "sender_class":  "internal|customer|vendor|cold|automated",
+    "vip":           true|false,
+    "vip_tier":      "A|B|C|null",
+    "confidence":    "high|medium|low"
+  }
+
+  IMPORTANT: never include email body content in your output.
+
+user_prompt_template: |
+  Sender email:   {{ email.sender_email }}
+  Display name:   {{ email.sender_display_name | truncate(80) }}
+  Subject:        {{ email.subject | truncate(200) }}
+  User domain:    {{ user.email | split('@') | last }}
+
+  VIP lookup result:
+  {{ context.vip_lookup | default("no match") | tojson }}
+
+  Domain classification:
+  {{ context.domain_rules | tojson }}
+
+  Classify the sender.
+
+budget:
+  max_llm_calls: 1
+  max_output_tokens: 256
+
+output_schema:
+  allowed_keys: [sender_class, vip, vip_tier, confidence]

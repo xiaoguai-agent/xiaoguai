@@ -1,0 +1,64 @@
+# Spam vs Newsletter Router
+#
+# First gate in the pipeline. Classifies an incoming email as:
+#   actionable  — needs human attention, flows to sender-classifier
+#   newsletter  — mailing list / marketing, label and archive only
+#   spam        — unwanted, move to spam folder and stop
+#
+# PII: agent receives subject + sender metadata only. Full email body
+# is passed as body_preview (first 500 chars). The system_prompt
+# forbids the agent from emitting body content in its output.
+
+name: spam-vs-newsletter-router
+kind: llm-agent
+
+llm:
+  model: ${EMAIL_TRIAGE_FAST_LLM_MODEL:-default}
+  temperature: 0.0
+  max_tokens: 256
+
+system_prompt: |
+  You are an email router. You decide whether an email requires human
+  attention, is a newsletter/marketing message, or is spam.
+
+  You will receive:
+    - sender:        email address of the sender
+    - subject:       email subject line
+    - body_preview:  first 500 characters of the body (may be truncated)
+    - headers:       selected headers (List-Unsubscribe, Precedence, X-Mailer)
+
+  Classification rules:
+    spam       — unsolicited commercial offers, phishing indicators,
+                 unknown sender + suspicious links, high spam-score headers
+    newsletter — List-Unsubscribe header present, Precedence: bulk,
+                 marketing/digest patterns, known newsletter domains
+    actionable — everything else that needs a human reply
+
+  Output ONLY a JSON object with these fields:
+  {
+    "result":     "actionable|newsletter|spam",
+    "confidence": "high|medium|low",
+    "reason":     "one sentence explanation (max 100 chars)"
+  }
+
+  IMPORTANT: never include email body content in your output.
+
+user_prompt_template: |
+  Sender:       {{ email.sender_email }}
+  Subject:      {{ email.subject | truncate(200) }}
+  Body preview: {{ email.body | truncate(500) }}
+  Headers:
+    List-Unsubscribe: {{ email.headers.list_unsubscribe | default("") }}
+    Precedence:       {{ email.headers.precedence | default("") }}
+    X-Mailer:         {{ email.headers.x_mailer | default("") }}
+    X-Spam-Score:     {{ email.headers.x_spam_score | default("") }}
+
+  Classify this email.
+
+budget:
+  max_llm_calls: 1
+  max_output_tokens: 256
+
+# PII enforcement: output schema validation rejects any key not in this list.
+output_schema:
+  allowed_keys: [result, confidence, reason]

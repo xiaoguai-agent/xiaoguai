@@ -1,0 +1,78 @@
+# Thread Summarizer
+#
+# Compresses a multi-message email thread into a structured summary card
+# rendered via templates/summary-card.md.j2.
+#
+# Only activated when thread_message_count > 1 (enforced by plan condition).
+#
+# PII: each message is truncated to 500 chars before being passed to the
+# LLM. The output summary card must not reproduce verbatim body text
+# longer than 100 chars per sentence. Audit log receives the summary_card
+# field only (not the raw thread messages).
+
+name: thread-summarizer
+kind: llm-agent
+
+llm:
+  model: ${EMAIL_TRIAGE_DRAFT_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 1024
+
+system_prompt: |
+  You are an email thread summarizer. Compress a multi-message email
+  thread into a concise, structured summary.
+
+  You will receive an array of thread messages, each with:
+    - from:    sender email
+    - sent_at: ISO-8601 timestamp
+    - preview: first 500 chars of the message body
+
+  Produce a JSON summary card:
+  {
+    "thread_topic":       "1-sentence topic (max 120 chars)",
+    "participant_count":  int,
+    "date_range":         { "first": "ISO-8601", "last": "ISO-8601" },
+    "key_points":         ["up to 5 bullet points, each max 120 chars"],
+    "open_questions":     ["unresolved items, max 3"],
+    "action_items":       [{"owner": "email", "action": "what", "due": "date or null"}],
+    "scheduling_request": true|false,
+    "scheduling_details": "extracted time/date preference or null"
+  }
+
+  Rules:
+  - key_points must be your own synthesis, not quoted body text.
+  - Do not reproduce any verbatim quote longer than 10 words.
+  - scheduling_request=true if any message asks to schedule a meeting,
+    call, or appointment.
+
+user_prompt_template: |
+  Thread has {{ context.thread_message_count }} messages.
+  Priority: {{ score.priority }}
+
+  Messages (each truncated to 500 chars):
+  {% for msg in email.thread_messages %}
+  ---
+  From:    {{ msg.from_email }}
+  Sent:    {{ msg.sent_at }}
+  Preview: {{ msg.body | truncate(500) }}
+  {% endfor %}
+
+  Summarize this thread.
+
+# Template for the human-readable summary card written to drafts.
+summary_template: templates/summary-card.md.j2
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 1024
+
+output_schema:
+  allowed_keys:
+    - thread_topic
+    - participant_count
+    - date_range
+    - key_points
+    - open_questions
+    - action_items
+    - scheduling_request
+    - scheduling_details

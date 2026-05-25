@@ -1,0 +1,51 @@
+# Priority rules template — default configuration
+#
+# Users can copy this file to EMAIL_TRIAGE_SLA_CONFIG_PATH and edit it
+# to customize priority thresholds and SLA windows.
+#
+# The priority-scorer agent loads this via the sla_config context step.
+# Fields not present here fall back to the agent's built-in defaults.
+
+name: priority-rules-default
+version: "1.0"
+
+# SLA windows per sender class (hours to first response).
+# Breach of the window pushes priority up by one level.
+sla_windows_hours:
+  internal:  24
+  customer:  4
+  vendor:    24
+  cold:      72
+  automated: 72   # automated emails rarely need human response
+
+# Urgency keyword overrides (merged with agent built-in list).
+# Add domain-specific terms here.
+extra_urgency_keywords:
+  - "contract renewal"
+  - "invoice overdue"
+  - "production down"
+  - "P0"
+  - "on fire"
+
+# VIP tier assignment (A=highest, C=lowest).
+# Populated from EMAIL_TRIAGE_VIP_LIST_PATH at runtime.
+# Example entries (replace with real addresses):
+vip_examples:
+  - email: "ceo@example.com"
+    tier: A
+    role: internal
+  - email: "enterprise-customer@bigco.com"
+    tier: A
+    role: customer
+  - email: "accountmanager@vendor.com"
+    tier: B
+    role: vendor
+
+# Priority floor per sender class.
+# Ensures that P3 is never assigned to a customer, for example.
+priority_floor:
+  internal:  P3
+  customer:  P2
+  vendor:    P3
+  cold:      P3
+  automated: P3

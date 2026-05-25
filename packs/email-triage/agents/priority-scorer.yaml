@@ -1,0 +1,99 @@
+# Priority Scorer
+#
+# Assigns P0–P3 based on three independent signals:
+#   1. Sender VIP tier (from sender-classifier output)
+#   2. Urgency keywords detected in subject + first 200 chars of body
+#   3. SLA window breach: expected response time exceeded
+#
+# Priority scale:
+#   P0 — respond within 1 hour  (VIP-A + urgent, or SLA already breached)
+#   P1 — respond within 4 hours (VIP-A, VIP-B + urgent, customer escalation)
+#   P2 — respond by end of day  (customer, vendor, most internal)
+#   P3 — respond within 3 days  (cold, newsletters that slipped through,
+#                                 low-urgency automated)
+#
+# PII: receives subject (full) and body_preview (first 200 chars only).
+# The 200-char body cap matches the audit log redaction limit so that
+# priority rationale records do not leak more than the audit policy allows.
+
+name: priority-scorer
+kind: llm-agent
+
+llm:
+  model: ${EMAIL_TRIAGE_FAST_LLM_MODEL:-default}
+  temperature: 0.0
+  max_tokens: 512
+
+context_steps:
+  - id: sla_config
+    description: "Load per-user SLA window config"
+    tool: file_read_json
+    params:
+      path: ${EMAIL_TRIAGE_SLA_CONFIG_PATH}
+    optional: true
+
+  - id: sla_check
+    description: "Check if SLA window is already breached"
+    tool: sla_window_check
+    params:
+      sender_class: "{{ classify.sender_class }}"
+      received_at:  "{{ email.received_at }}"
+      sla_config:   "{{ context.sla_config | default({}) | tojson }}"
+
+system_prompt: |
+  You are an email priority scorer. Assign a priority P0–P3 to an email.
+
+  Inputs:
+    - subject:        email subject line
+    - body_preview:   FIRST 200 CHARACTERS of body only (never more)
+    - sender_class:   internal|customer|vendor|cold|automated
+    - vip:            true|false
+    - vip_tier:       A|B|C|null
+    - sla_breached:   true|false
+    - sla_minutes_overdue: int (0 if not breached)
+
+  Priority rules (apply in order, first match wins):
+    P0: vip_tier=A AND (urgency_detected OR sla_breached)
+    P0: sla_breached AND sla_minutes_overdue > 60
+    P1: vip_tier=A
+    P1: vip_tier=B AND urgency_detected
+    P1: sender_class=customer AND urgency_detected
+    P2: sender_class=customer
+    P2: sender_class=internal
+    P2: sender_class=vendor AND urgency_detected
+    P3: sender_class=vendor
+    P3: sender_class=cold
+    P3: sender_class=automated
+
+  Urgency keywords (any match → urgency_detected=true):
+    URGENT, ASAP, CRITICAL, BLOCKER, DOWN, OUTAGE, ESCALAT, DEADLINE TODAY,
+    EOD, EOM, time-sensitive, action required, overdue, past due, breach
+
+  Output ONLY:
+  {
+    "priority":         "P0|P1|P2|P3",
+    "urgency_detected": true|false,
+    "urgency_keywords": ["list", "of", "matched", "keywords"],
+    "rule_matched":     "short rule description",
+    "sla_breached":     true|false
+  }
+
+  IMPORTANT: do not include body content beyond confirming urgency keywords.
+
+user_prompt_template: |
+  Subject:        {{ email.subject | truncate(200) }}
+  Body preview:   {{ email.body | truncate(200) }}
+  Sender class:   {{ classify.sender_class }}
+  VIP:            {{ classify.vip }}
+  VIP tier:       {{ classify.vip_tier | default("null") }}
+  SLA breached:   {{ context.sla_check.breached }}
+  SLA overdue:    {{ context.sla_check.minutes_overdue | default(0) }} minutes
+
+  Assign priority.
+
+budget:
+  max_llm_calls: 1
+  max_output_tokens: 512
+
+output_schema:
+  allowed_keys: [priority, urgency_detected, urgency_keywords, rule_matched, sla_breached]

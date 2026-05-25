@@ -1,0 +1,44 @@
+# Output: write draft replies to provider drafts folder
+#
+# Saves all three tone variants from draft-generator to the user's
+# drafts folder via the source provider's API.
+#
+# Draft naming convention:
+#   [xiaoguai][formal] Re: <subject>
+#   [xiaoguai][casual] Re: <subject>
+#   [xiaoguai][brief]  Re: <subject>
+#
+# Supported providers:
+#   gmail        — drafts.create via Gmail API
+#   microsoft365 — POST /me/messages (isDraft=true) via Graph API
+#   imap         — APPEND to Drafts mailbox with \Draft flag
+#
+# PII: draft bodies contain the LLM-generated text, NOT the original
+# email body. Drafts are written to the user's own mailbox; they are
+# not logged in the audit table. Only draft IDs are recorded for later
+# send/delete tracking.
+
+name: drafts-folder-write
+kind: email-api
+
+provider: "${email.inbound_provider}"
+
+# Write all three variants.
+drafts_field: "draft.drafts"    # array of {tone, subject, body} from draft-generator
+
+draft_name_prefix: "[xiaoguai]"
+
+# Set In-Reply-To and References headers so replies thread correctly.
+reply_metadata:
+  in_reply_to: "{{ email.message_id }}"
+  references:  "{{ email.thread_id }}"
+  to:          "{{ email.sender_email }}"
+
+# Audit: record only draft IDs and tones; no body text.
+audit:
+  table: pack_email_triage_draft_ops
+  fields:
+    - message_id          # original email message_id
+    - subject_truncated   # first 200 chars of subject
+    - draft_ids           # list of {tone, draft_id} objects
+    - written_at
