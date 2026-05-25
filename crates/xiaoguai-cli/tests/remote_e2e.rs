@@ -48,6 +48,8 @@ async fn spawn_server(steps: Vec<ScriptStep>) -> String {
         webhook_token_validator: None,
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
+        outcome_writer: None,
+        outcomes_reader: None,
     };
     let (local, fut) = serve_with_state("127.0.0.1:0".parse().unwrap(), state)
         .await

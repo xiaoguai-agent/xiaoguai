@@ -14,6 +14,7 @@ pub mod error;
 pub mod eval;
 pub mod marketplace;
 pub mod mcp_serve;
+pub mod outcomes;
 pub mod rate_limit;
 pub mod rbac;
 pub mod routes;
@@ -38,6 +39,11 @@ pub use eval::{
 };
 pub use marketplace::{MarketplaceEntry, MarketplaceResponse};
 pub use mcp_serve::XiaoguaiMcpServer;
+pub use outcomes::{
+    InMemoryOutcomeRecorder, InMemoryOutcomesBackend, OutcomeKind, OutcomeWriter, OutcomesApiError,
+    OutcomesReader, OutcomesSummaryResponse, OutcomesTimeseriesResponse, RecordOutcomeRequest,
+    RecordOutcomeResponse,
+};
 pub use rate_limit::{rate_limit, RateLimiter};
 pub use rbac::{method_to_action, path_to_resource, require_authorized};
 pub use routes::router;

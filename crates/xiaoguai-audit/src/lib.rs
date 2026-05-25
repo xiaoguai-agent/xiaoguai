@@ -9,5 +9,10 @@
 #![allow(clippy::module_name_repetitions, clippy::missing_errors_doc)]
 
 pub mod chain;
+pub mod outcomes;
 
 pub use chain::{AuditEntry, ChainError, ChainedAudit, StoredEntry};
+pub use outcomes::{
+    timeseries, Aggregate, InMemoryOutcomeRecorder, OutcomeDay, OutcomeError, OutcomeKind,
+    OutcomeRange, OutcomeRecord, OutcomeRecorder, OutcomeSummary,
+};
