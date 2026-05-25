@@ -8493,6 +8493,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "xiaoguai-personas"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "xiaoguai-storage",
+]
+
+[[package]]
 name = "xiaoguai-rag"
 version = "0.1.0"
 dependencies = [
