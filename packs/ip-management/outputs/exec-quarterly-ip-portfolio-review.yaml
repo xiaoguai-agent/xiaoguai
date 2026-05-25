@@ -1,0 +1,114 @@
+# Output connector — executive quarterly IP portfolio review
+# ---------------------------------------------------------------------------
+# Compiles and distributes the quarterly IP portfolio review package to the
+# exec distribution list.  Triggered:
+#   a) On schedule (quarterly, one week before the board meeting date)
+#   b) Immediately for CRITICAL infringement alerts (partial package)
+#
+# The package contains:
+#   - portfolio-coverage-heatmap report (latest approved version)
+#   - Renewal activity summary (decisions made in the quarter)
+#   - Open infringement alerts summary
+#   - Prior-art activity summary
+#
+# Distribution is via email (rendered HTML) + optional Slack exec channel.
+# All sends require explicit human approval (HOTL-gated).
+# ---------------------------------------------------------------------------
+
+output: exec-quarterly-ip-portfolio-review
+version: "1.0.0"
+description: >
+  Compiles and distributes the quarterly executive IP portfolio review
+  package via email and optionally Slack.  Requires human approval before
+  distribution.  Also used for urgent CRITICAL-risk infringement alerts.
+
+# Recipients configured per-tenant in pack settings.
+distribution:
+  to:
+    env: "${IP_EXEC_REVIEW_TO}"           # comma-separated email list
+    fallback: "${IP_MANAGEMENT_NOTIFY_CHANNEL:-admin_ui}"
+  cc:
+    env: "${IP_EXEC_REVIEW_CC}"
+  bcc:
+    env: "${IP_EXEC_REVIEW_BCC}"
+
+email:
+  from:    "${IP_EMAIL_FROM:-ip@company.com}"
+  subject_templates:
+    quarterly: "Q{{ quarter }} {{ year }} IP Portfolio Review — {{ tenant_name }}"
+    critical_alert: "[CRITICAL IP Risk] {{ payload.competitor_name }} — {{ payload.filing_ref }}"
+
+  # Body assembled from SQL aggregations + approved report snapshots.
+  body_sections:
+    - id: portfolio_summary
+      title: "Portfolio at a Glance"
+      query: |
+        SELECT
+            COUNT(*) FILTER (WHERE status = 'granted')   AS active_patents,
+            COUNT(*) FILTER (WHERE status = 'pending')   AS pending_patents,
+            COUNT(*) FILTER (WHERE status = 'lapsed'
+                              OR status = 'expired')     AS lapsed_patents,
+            SUM(revenue_attribution_usd)                 AS total_revenue_protected_usd
+        FROM ip_patents
+        WHERE tenant_id = '{tenant_id}'
+
+    - id: renewal_activity
+      title: "Renewal Activity This Quarter"
+      query: |
+        SELECT
+            recommendation,
+            human_decision,
+            COUNT(*) AS count,
+            SUM(annual_maintenance_cost_usd) AS total_cost_usd
+        FROM ip_renewal_decisions
+        WHERE tenant_id   = '{tenant_id}'
+          AND created_at >= DATE_TRUNC('quarter', NOW())
+        GROUP BY recommendation, human_decision
+        ORDER BY count DESC
+
+    - id: open_alerts
+      title: "Open Infringement Alerts"
+      query: |
+        SELECT trigger_kind, risk_level, COUNT(*) AS count
+        FROM ip_infringement_alerts
+        WHERE tenant_id  = '{tenant_id}'
+          AND resolved_at IS NULL
+        GROUP BY trigger_kind, risk_level
+        ORDER BY
+            CASE risk_level WHEN 'critical' THEN 1
+                            WHEN 'high'     THEN 2
+                            WHEN 'medium'   THEN 3
+                            ELSE 4 END
+
+    - id: prior_art_activity
+      title: "Prior Art Search Activity"
+      query: |
+        SELECT
+            COUNT(*) FILTER (WHERE review_status = 'confirmed'
+                              AND novelty_impact IN ('anticipates','obvious')) AS high_risk_findings,
+            COUNT(*) FILTER (WHERE review_status = 'confirmed'
+                              AND novelty_impact = 'distinguishable')         AS cleared_findings,
+            COUNT(*) FILTER (WHERE review_status = 'pending')                AS pending_review
+        FROM ip_prior_art_findings
+        WHERE tenant_id  = '{tenant_id}'
+          AND created_at >= DATE_TRUNC('quarter', NOW())
+
+schedule:
+  # One week before end of each quarter.
+  cron: "0 9 23 3,6,9,12 *"   # Mar 23, Jun 23, Sep 23, Dec 23 at 09:00 UTC
+
+# Triggered immediately for CRITICAL infringement alerts.
+immediate_trigger:
+  event: ip.competitor_patent_filing_detected
+  condition: "payload.risk_level == 'critical'"
+  package_type: "critical_alert"
+
+hotl:
+  require_human_approval: true
+  notify_channel: "${IP_MANAGEMENT_NOTIFY_CHANNEL:-admin_ui}"
+
+slack:
+  # Optional exec Slack channel for the summary (not the full report).
+  channel: "${IP_EXEC_SLACK_CHANNEL}"
+  send_summary_only: true
+  summary_max_chars: 500

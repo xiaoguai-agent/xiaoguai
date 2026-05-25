@@ -1,0 +1,108 @@
+# Inbound connector — EPO European Patent Register (OPS API)
+# ---------------------------------------------------------------------------
+# Polls the EPO Open Patent Services (OPS) API for:
+#   - Status and renewal-fee events for our EP/PCT filings
+#   - Competitor patent applications in our CPC classes
+#
+# EPO OPS API: https://ops.epo.org/3.2/
+# Authentication: OAuth 2.0 client credentials
+#   - Client ID:  ${EPO_OPS_CLIENT_ID}
+#   - Client Secret: ${EPO_OPS_CLIENT_SECRET}
+# Rate limit: 25 req/sec (registered), bursting to 30/sec.
+# ---------------------------------------------------------------------------
+
+source: epo-european-patent-register
+version: "1.0.0"
+description: >
+  Polls EPO OPS for status updates on our EP/PCT patent filings and for new
+  competitor applications in our technology classes.
+
+base_url: "https://ops.epo.org/3.2/rest-services"
+
+auth:
+  kind: oauth2_client_credentials
+  token_url: "https://ops.epo.org/3.2/auth/accesstoken"
+  client_id: "${EPO_OPS_CLIENT_ID}"
+  client_secret: "${EPO_OPS_CLIENT_SECRET}"
+  scope: "REGISTERED"
+
+endpoints:
+  # Status refresh for our EP and PCT filings
+  - id: ep_status_refresh
+    path: "/register/application/epodoc/{ep_number}/status"
+    method: GET
+    schedule:
+      cron: "30 6 * * *"   # Daily 06:30 UTC (staggered from USPTO)
+    iteration:
+      source: sql
+      query: |
+        SELECT f.local_number AS ep_number, f.id AS filing_id
+        FROM ip_filings f
+        WHERE f.tenant_id    = '{tenant_id}'
+          AND f.ip_kind      = 'patent'
+          AND f.jurisdiction IN ('EP', 'WO')
+          AND f.status       NOT IN ('lapsed', 'abandoned', 'expired')
+    response_mapping:
+      target_table: ip_filings
+      upsert_key: [id]
+      field_map:
+        status: "$.ops:register-search.ops:biblio-search.ops:search-result.ops:publication-reference[0].ops:document-id.ops:doc-number"
+      # Full status mapping handled by connector runtime (EPO XML → canonical status)
+
+  # Renewal fee events for EP filings
+  - id: ep_renewal_fees
+    path: "/register/application/epodoc/{ep_number}/events"
+    method: GET
+    schedule:
+      cron: "30 6 * * *"
+    iteration:
+      source: sql
+      query: |
+        SELECT f.local_number AS ep_number, f.id AS filing_id
+        FROM ip_filings f
+        WHERE f.tenant_id   = '{tenant_id}'
+          AND f.ip_kind     = 'patent'
+          AND f.jurisdiction = 'EP'
+          AND f.status      NOT IN ('lapsed', 'abandoned', 'expired')
+    response_mapping:
+      target_table: ip_renewal_fees
+      upsert_key: [filing_id, due_date]
+      field_map:
+        due_date:        "$.ops:world-patent-data.ops:patent-family.ops:family-member[0].ops:application-reference.ops:document-id.ops:date"
+        status:          "_computed:ep_fee_status"   # connector computes from event type
+        milestone_label: "_computed:ep_year_label"   # e.g. "year-3", "year-7"
+
+  # Competitor patent application watch (EPO CPC search)
+  - id: ep_competitor_watch
+    path: "/published-data/search/full-cycle"
+    method: POST
+    schedule:
+      cron: "30 */6 * * *"
+    request_template:
+      q: >
+        pa=({{ config.ip_management.competitor_names | join(' OR ') }})
+        AND ic=({{ config.ip_management.watch_cpc_classes | join(' OR ') }})
+        AND dp within {{ (now() - duration('7d')) | date('%Y%m%d') }}:{{ now() | date('%Y%m%d') }}
+      Range: "1-100"
+    response_mapping:
+      target_table: ip_infringement_alerts
+      upsert_key: [filing_ref, tenant_id]
+      field_map:
+        trigger_kind:       "_const:competitor_patent_filing"
+        competitor_name:    "$.ops:world-patent-data.ops:biblio-search.ops:search-result.exchange-documents[*].exchange-document.bibliographic-data.parties.applicants.applicant[0].applicant-name.name"
+        filing_ref:         "$.ops:world-patent-data.ops:biblio-search.ops:search-result.exchange-documents[*].exchange-document['@doc-number']"
+        filing_date:        "$.ops:world-patent-data.ops:biblio-search.ops:search-result.exchange-documents[*].exchange-document.bibliographic-data.application-reference.document-id.date"
+        filing_jurisdiction: "_const:EP"
+        risk_level:         "_const:unknown"
+      match_our_patent: true
+
+error_handling:
+  on_rate_limit:
+    strategy: exponential_backoff
+    max_retries: 5
+    initial_delay_seconds: 10
+  on_timeout:
+    strategy: retry_once
+    timeout_seconds: 45
+  on_http_error:
+    log_and_skip: true

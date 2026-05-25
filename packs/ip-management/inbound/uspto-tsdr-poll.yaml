@@ -1,0 +1,143 @@
+# Inbound connector — USPTO TSDR (Trademark Status and Document Retrieval)
+# and Patent Center polling
+# ---------------------------------------------------------------------------
+# Periodically queries the USPTO ODP (Open Data Portal) and TSDR APIs:
+#   - Patent: bulk-data IFW (Image File Wrapper) for maintenance fee events
+#   - Trademark: TSDR serial-number status for our registrations
+#   - Competitor watch: Patent Center full-text search for new filings in
+#     our CPC/IPC technology classes by monitored competitors
+#   - TM similarity: TSDR new-application scrape filtered by Nice class +
+#     phonetic / visual similarity heuristic against our marks
+#
+# Results are normalised and upserted into ip_renewal_fees, ip_filings, and
+# ip_infringement_alerts by the connector runtime.
+# ---------------------------------------------------------------------------
+
+source: uspto-tsdr-poll
+version: "1.0.0"
+description: >
+  Polls USPTO TSDR (trademark status) and Patent Center (maintenance fee
+  status + competitor application monitoring) on a schedule.  Upserts
+  renewal-fee records and inserts infringement alerts.
+
+# Base URL — no auth required for USPTO ODP; rate-limit is 10 req/sec.
+base_url: "https://developer.uspto.gov"
+
+endpoints:
+  # Maintenance fee status for each of our granted US patents
+  - id: patent_maintenance_fees
+    path: "/patent/v1/application/{application_number}/fees"
+    method: GET
+    schedule:
+      cron: "0 6 * * *"   # Daily 06:00 UTC
+    iteration:
+      # Iterate over all granted US patents in our portfolio
+      source: sql
+      query: |
+        SELECT application_number
+        FROM ip_patents
+        WHERE tenant_id = '{tenant_id}'
+          AND primary_jurisdiction = 'US'
+          AND status = 'granted'
+    response_mapping:
+      # Upsert into ip_renewal_fees
+      target_table: ip_renewal_fees
+      upsert_key: [filing_id, due_date]
+      field_map:
+        due_date:        "$.maintenanceFees[*].dueDate"
+        amount_usd:      "$.maintenanceFees[*].feeAmount"
+        status:          "$.maintenanceFees[*].feeStatus"   # paid | scheduled
+        milestone_label: "$.maintenanceFees[*].stageCode"
+
+  # Trademark status refresh for our registrations
+  - id: trademark_status_refresh
+    path: "/tsdr/v3/trademark/{serial_number}/status"
+    method: GET
+    schedule:
+      cron: "0 6 * * *"
+    iteration:
+      source: sql
+      query: |
+        SELECT f.local_number AS serial_number, f.id AS filing_id
+        FROM ip_filings f
+        WHERE f.tenant_id   = '{tenant_id}'
+          AND f.ip_kind     = 'trademark'
+          AND f.jurisdiction = 'US'
+          AND f.status      = 'registered'
+    response_mapping:
+      target_table: ip_filings
+      upsert_key: [id]
+      field_map:
+        status:           "$.statusCode"   # normalised by connector
+        next_renewal_date: "$.expirationDate"
+
+  # Competitor patent application monitoring (Patent Center full-text search)
+  - id: competitor_patent_watch
+    path: "/patent/v1/application/query"
+    method: POST
+    schedule:
+      cron: "0 */6 * * *"   # Every 6 hours
+    request_template:
+      # Operators configure competitor names and CPC classes in pack config.
+      query: >
+        (applicant:({{ config.ip_management.competitor_names | join(' OR ') }}))
+        AND (cpcInventiveFlattened:({{ config.ip_management.watch_cpc_classes | join(' OR ') }}))
+        AND (applicationStatusCategory:(Pending))
+      dateRangeData:
+        field: "applicationFilingDate"
+        startDate: "{{ (now() - duration('7d')) | date('%Y-%m-%d') }}"
+        endDate:   "{{ now() | date('%Y-%m-%d') }}"
+      start: 0
+      rows: 100
+    response_mapping:
+      target_table: ip_infringement_alerts
+      upsert_key: [filing_ref, tenant_id]
+      field_map:
+        trigger_kind:       "_const:competitor_patent_filing"
+        competitor_name:    "$.patentBiblio.applicantBag.applicant[0].applicantName.name"
+        filing_ref:         "$.patentBiblio.applicationNumber"
+        filing_date:        "$.patentBiblio.filingDate"
+        filing_jurisdiction: "_const:US"
+        risk_level:         "_const:unknown"
+      # Match to our patents by CPC class overlap (wired in connector runtime)
+      match_our_patent: true
+
+  # Trademark similarity watch (new TSDR applications in our Nice classes)
+  - id: trademark_similarity_watch
+    path: "/tsdr/v3/trademark/search"
+    method: POST
+    schedule:
+      cron: "0 8 * * *"   # Daily 08:00 UTC
+    request_template:
+      niceClasses: "{{ config.ip_management.watch_nice_classes | join(',') }}"
+      filingDateFrom: "{{ (now() - duration('2d')) | date('%Y-%m-%d') }}"
+      filingDateTo:   "{{ now() | date('%Y-%m-%d') }}"
+      status: "LIVE"
+    response_mapping:
+      target_table: ip_infringement_alerts
+      upsert_key: [filing_ref, tenant_id]
+      field_map:
+        trigger_kind:       "_const:trademark_similarity"
+        competitor_name:    "$.applicantName"
+        filing_ref:         "$.serialNumber"
+        filing_date:        "$.filingDate"
+        filing_jurisdiction: "_const:US"
+        risk_level:         "_const:unknown"
+      # Similarity scoring applied by connector runtime before insert;
+      # rows with similarity_score < threshold are dropped.
+      similarity_filter:
+        our_marks_source: "ip_trademarks"
+        algorithm: "phonetic_visual_llm"
+        threshold: 0.70
+
+# Error handling
+error_handling:
+  on_rate_limit:
+    strategy: exponential_backoff
+    max_retries: 3
+    initial_delay_seconds: 5
+  on_timeout:
+    strategy: retry_once
+    timeout_seconds: 30
+  on_http_error:
+    log_and_skip: true   # do not fail the whole poll on individual record errors

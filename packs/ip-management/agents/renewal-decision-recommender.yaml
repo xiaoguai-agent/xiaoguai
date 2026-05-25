@@ -1,0 +1,234 @@
+# Agent definition — renewal-decision-recommender
+# ---------------------------------------------------------------------------
+# Subscribes to patent and trademark renewal deadline events.  For each event
+# it scores the filing on three dimensions and produces a HOTL-gated
+# recommendation: renew | let_lapse | defer.
+#
+# Scoring formula (weighted sum; all inputs normalised to 0–1 scale):
+#
+#   weighted_score =
+#       (revenue_weight   * revenue_score)    +   # default 0.50
+#       (competitive_weight * competitive_score) + # default 0.35
+#       (cost_weight      * cost_score)            # default 0.15 (inverted)
+#
+#   revenue_score      = revenue_attribution_usd / tenant_revenue_threshold_usd
+#                        (clamped to [0,1])
+#   competitive_score  = competitive_value_score / 10
+#   cost_score         = 1 - (annual_maintenance_cost_usd / cost_ceiling_usd)
+#                        (clamped to [0,1]; higher cost → lower score)
+#
+# Thresholds (operator-configurable in pack settings):
+#   weighted_score >= 0.60  → renew
+#   weighted_score >= 0.35  → defer (flag for manual review)
+#   weighted_score <  0.35  → let_lapse
+#
+# Revenue dimension (weight 0.50) is the primary driver: a patent that
+# demonstrably protects revenue-generating products is almost always worth
+# renewing regardless of maintenance cost.  Competitive value (weight 0.35)
+# captures strategic defensive and blocking value even for pre-revenue IP.
+# Cost (weight 0.15) is a tiebreaker: unusually high maintenance fees can tip
+# a marginal filing to let_lapse, but cannot override strong revenue signal.
+#
+# HOTL guardrails: no renewal instruction is sent to outside counsel without
+# human approval.  The agent writes a draft recommendation card and halts.
+# ---------------------------------------------------------------------------
+
+name: renewal-decision-recommender
+version: "1.0.0"
+description: >
+  Scores upcoming patent and trademark renewals on revenue derived,
+  competitive/strategic value, and maintenance cost, then recommends
+  renew / let_lapse / defer.  All recommendations are HOTL-gated — zero
+  external actions without human approval.
+
+triggers:
+  - event: ip.patent_renewal_deadline_approaching
+    source: patent-renewal-deadline-approaching
+  - event: ip.trademark_renewal_deadline
+    source: trademark-renewal-deadline
+
+llm:
+  model: ${IP_RENEWAL_LLM_MODEL:-default}
+  temperature: 0.1     # deterministic scoring; low temperature
+  max_tokens: 2048
+
+# --------------------------------------------------------------------------
+# Context steps (executed before the LLM prompt)
+# --------------------------------------------------------------------------
+context_steps:
+  - id: scoring_inputs
+    description: "Pull scoring dimensions and peer decisions for context"
+    tool: sql
+    query: |
+      SELECT
+          f.id                            AS filing_id,
+          f.jurisdiction,
+          f.next_renewal_date,
+          p_or_t.revenue_attribution_usd,
+          p_or_t.competitive_value_score,
+          p_or_t.annual_maintenance_cost_usd,
+          -- Recent decisions on the same asset for consistency check
+          (SELECT recommendation
+           FROM ip_renewal_decisions d
+           WHERE d.filing_id = f.id
+             AND d.tenant_id = f.tenant_id
+           ORDER BY d.created_at DESC LIMIT 1)  AS prior_recommendation,
+          -- Sibling filings (other jurisdictions for the same patent/TM)
+          (SELECT json_agg(json_build_object(
+                'jurisdiction', sf.jurisdiction,
+                'status', sf.status,
+                'next_renewal_date', sf.next_renewal_date
+           ))
+           FROM ip_filings sf
+           WHERE sf.parent_id  = f.parent_id
+             AND sf.ip_kind    = f.ip_kind
+             AND sf.tenant_id  = f.tenant_id
+             AND sf.id        != f.id)          AS sibling_filings
+      FROM ip_filings f
+      -- Join to either patents or trademarks
+      LEFT JOIN ip_patents    p_or_t ON p_or_t.id = f.parent_id AND f.ip_kind = 'patent'
+      LEFT JOIN ip_trademarks t_or_p ON t_or_p.id = f.parent_id AND f.ip_kind = 'trademark'
+      -- Coalesce so the columns unify regardless of kind
+      -- (handled in application layer — sql tool returns raw rows)
+      WHERE f.id          = '{filing_id}'
+        AND f.tenant_id   = '{tenant_id}'
+
+  - id: tenant_thresholds
+    description: "Load tenant-level scoring thresholds from pack config"
+    tool: config_lookup
+    key: "ip_management.renewal_scoring"
+    defaults:
+      revenue_weight: 0.50
+      competitive_weight: 0.35
+      cost_weight: 0.15
+      revenue_threshold_usd: 1000000.00   # revenue >= $1M → score 1.0
+      cost_ceiling_usd: 50000.00          # cost >= $50K → score 0.0
+      renew_threshold: 0.60
+      defer_threshold: 0.35
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are an IP portfolio analyst assistant.  Your job is to recommend
+  whether to RENEW, LET_LAPSE, or DEFER a patent or trademark renewal.
+
+  You will receive:
+  - Filing details (jurisdiction, dates, kind)
+  - Three scoring dimensions: revenue_attribution_usd, competitive_value_score (1-10), annual_maintenance_cost_usd
+  - Tenant thresholds for normalisation
+  - Sibling filings (other jurisdictions for the same asset)
+  - The most recent prior recommendation (if any)
+
+  Scoring formula (apply exactly as specified; do not deviate):
+    revenue_score     = min(revenue_attribution_usd / revenue_threshold_usd, 1.0)
+    competitive_score = competitive_value_score / 10.0
+    cost_score        = max(1.0 - (annual_maintenance_cost_usd / cost_ceiling_usd), 0.0)
+    weighted_score    = (revenue_weight * revenue_score)
+                      + (competitive_weight * competitive_score)
+                      + (cost_weight * cost_score)
+
+  Decision:
+    weighted_score >= renew_threshold  → RENEW
+    weighted_score >= defer_threshold  → DEFER
+    otherwise                          → LET_LAPSE
+
+  Rules:
+  - Always show your arithmetic (revenue_score, competitive_score, cost_score, weighted_score).
+  - If revenue_attribution_usd is NULL, treat it as 0 and explain the gap.
+  - If competitive_value_score is NULL, treat it as 5 (neutral) and flag it.
+  - If sibling filings in key jurisdictions (US, EP, CN) are active, note that
+    letting a subsidiary filing lapse may still be sensible.
+  - Do not invent data — use only what is provided.
+  - Output valid JSON matching the RenewalDecisionDraft schema.
+
+  RenewalDecisionDraft schema:
+  {
+    "recommendation": "renew|let_lapse|defer",
+    "weighted_score": 0.000,
+    "revenue_score": 0.000,
+    "competitive_score": 0.000,
+    "cost_score": 0.000,
+    "reasoning_summary": "2-4 sentence plain-English rationale",
+    "data_gaps": ["list of missing inputs"],
+    "sibling_context": "brief note on related jurisdiction filings",
+    "confidence": "high|medium|low"
+  }
+
+user_prompt: |
+  ## Filing under review
+  - Filing ID:     {{ event.filing_id }}
+  - Kind:          {{ event.ip_kind | default('patent') }}
+  - Jurisdiction:  {{ event.jurisdiction }}
+  - Next renewal:  {{ event.next_renewal_date }} ({{ event.days_until_due | default(event.days_until_renewal) }} days)
+  {% if event.patent_title is defined %}
+  - Patent:        {{ event.patent_number }} — {{ event.patent_title }}
+  {% else %}
+  - Trademark:     {{ event.registration_number }} — {{ event.mark }}
+  {% endif %}
+
+  ## Scoring inputs
+  - Revenue attribution (USD/yr): {{ context.scoring_inputs.revenue_attribution_usd | default('NULL') }}
+  - Competitive value score (1–10): {{ context.scoring_inputs.competitive_value_score | default('NULL') }}
+  - Annual maintenance cost (USD): {{ context.scoring_inputs.annual_maintenance_cost_usd | default('NULL') }}
+
+  ## Tenant thresholds
+  {{ context.tenant_thresholds | tojson(indent=2) }}
+
+  ## Sibling filings
+  {{ context.scoring_inputs.sibling_filings | tojson(indent=2) | default('[]') }}
+
+  ## Prior recommendation
+  {{ context.scoring_inputs.prior_recommendation | default('none') }}
+
+  Produce the RenewalDecisionDraft JSON now.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: save_recommendation
+    description: >
+      Persist the recommendation to ip_renewal_decisions with status
+      'pending_approval'.  Returns the decision_id for the HOTL notification.
+    kind: sql
+    query: |
+      INSERT INTO ip_renewal_decisions
+          (tenant_id, filing_id, recommendation,
+           revenue_attribution_usd, competitive_value_score,
+           annual_maintenance_cost_usd, weighted_score, reasoning_summary)
+      VALUES
+          ('{tenant_id}', '{filing_id}', '{recommendation}',
+           {revenue_attribution_usd}, {competitive_value_score},
+           {annual_maintenance_cost_usd}, {weighted_score}, '{reasoning_summary}')
+      RETURNING id
+
+  - name: render_decision_card
+    description: >
+      Render the templates/renewal-decision-card.md.j2 template with the
+      draft recommendation for the human reviewer.
+    kind: template
+    template: "templates/renewal-decision-card.md.j2"
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    instruct_renewal: 0
+    instruct_lapse: 0
+  require_human_approval:
+    - save_recommendation
+  notify_channel: "${IP_MANAGEMENT_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# Outcome telemetry
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - recommendation_created
+    - recommendation_approved
+    - recommendation_rejected
+    - human_override
+  feedback_table: ip_renewal_decisions
