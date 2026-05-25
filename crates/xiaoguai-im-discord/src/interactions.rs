@@ -124,13 +124,15 @@ pub fn message_response(content: impl Into<String>) -> JsonValue {
 /// Parse a raw JSON body into an [`ImEvent`] (or return the PONG JSON for
 /// PING interactions).
 ///
-/// Returns:
-/// - `Ok(None)` for a PING — the caller must respond with [`pong_response()`]
-///   immediately; no agent turn is needed.
-/// - `Ok(Some(ImEvent::Message(_)))` for slash commands and button clicks
-///   that map to a text conversation.
-/// - `Err(ProviderError::Malformed(_))` for unknown interaction types or
-///   structural issues.
+/// Returns `Ok(None)` for a PING — the caller must respond with
+/// [`pong_response()`] immediately; no agent turn is needed.
+/// Returns `Ok(Some(ImEvent::Message(_)))` for slash commands and button
+/// clicks that map to a text conversation.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::Malformed`] for unknown interaction types or
+/// structural issues.
 pub fn parse_interaction(body: &[u8]) -> Result<Option<ImEvent>, ProviderError> {
     let interaction: Interaction = serde_json::from_slice(body)
         .map_err(|e| ProviderError::Malformed(format!("decode interaction: {e}")))?;

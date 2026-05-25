@@ -114,6 +114,10 @@ impl TelegramClient for HttpTelegramClient {
 /// Send a text message to `chat_id`.
 ///
 /// `parse_mode` controls Markdown/HTML rendering. Pass `None` for plain text.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] if the Telegram API call fails.
 pub async fn send_message(
     client: &dyn TelegramClient,
     chat_id: &str,
@@ -131,6 +135,10 @@ pub async fn send_message(
 }
 
 /// Broadcast a typing indicator. Telegram displays it for ~5 s.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] if the Telegram API call fails.
 pub async fn send_chat_action(
     client: &dyn TelegramClient,
     chat_id: &str,
@@ -146,6 +154,10 @@ pub async fn send_chat_action(
 /// Replace the text of a previously-sent message.
 ///
 /// `message_id` must be the message's `message_id` integer.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] if the Telegram API call fails.
 pub async fn edit_message_text(
     client: &dyn TelegramClient,
     chat_id: &str,
@@ -168,6 +180,10 @@ pub async fn edit_message_text(
 ///
 /// `text` is the optional toast shown to the user (max 200 chars, Telegram
 /// silently truncates). Pass `None` for a silent ack.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] if the Telegram API call fails.
 pub async fn answer_callback_query(
     client: &dyn TelegramClient,
     callback_query_id: &str,

@@ -195,7 +195,7 @@ mod tests {
         use sha2::Sha256;
 
         let ts = now_unix.to_string();
-        let base = format!("v0:{}:{}", ts, body);
+        let base = format!("v0:{ts}:{body}");
         let mut mac = Hmac::<Sha256>::new_from_slice(signing_secret.as_bytes()).unwrap();
         mac.update(base.as_bytes());
         let sig = format!("v0={}", hex::encode(mac.finalize().into_bytes()));
@@ -220,7 +220,7 @@ mod tests {
         let mut wh = signed_webhook(body, SECRET, NOW);
         // Tamper with the signature.
         wh.headers[1].1 = "v0=deadbeef".into();
-        let provider = SlackProvider::new(SECRET);
+        let _provider = SlackProvider::new(SECRET);
         // Can't use the real wall clock — use the lower-level fn instead.
         assert!(matches!(
             signature::verify(&wh, SECRET, NOW),
