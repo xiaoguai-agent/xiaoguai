@@ -13,7 +13,7 @@ use serde_json::Value;
 use tower::ServiceExt;
 use xiaoguai_agent::{AgentConfig, Toolbox};
 use xiaoguai_api::auth::{Claims, StubValidator, TokenValidator};
-use xiaoguai_api::{router, AppState, CancelRegistry, RateLimiter};
+use xiaoguai_api::{router, AppState, CancelRegistry, RateClass, RateLimitState, RateLimiter};
 use xiaoguai_llm::mock::ScriptStep;
 use xiaoguai_llm::{LlmBackend, MockBackend};
 use xiaoguai_storage::repositories::{RepoResult, TenantRepository};
@@ -98,6 +98,7 @@ fn build_state(
         webhook_token_validator: None,
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
+        rate_limit_state: None,
     }
 }
 
@@ -228,9 +229,9 @@ async fn admin_tenants_500s_when_repo_not_wired() {
 
 #[tokio::test]
 async fn rate_limit_returns_429_when_bucket_drained() {
-    // Tight limiter: 0 refill, burst 2 → after 2 successful reqs, the
-    // 3rd gets 429.
-    let limiter = Arc::new(RateLimiter::new(0.0, 2.0));
+    // v1.2.20: use RateLimitState with Free class (burst 20).
+    // Drain all 20 burst tokens; the 21st request must get 429.
+    let rls = RateLimitState::in_memory(RateClass::Free);
     let validator: Arc<dyn TokenValidator> = Arc::new(StubValidator {
         claims: Claims {
             sub: "alice".into(),
@@ -238,12 +239,9 @@ async fn rate_limit_returns_429_when_bucket_drained() {
             roles: vec![],
         },
     });
-    let app = router(build_state(
-        InMemorySessionRepo::arc(),
-        None,
-        Some(limiter),
-        Some(validator),
-    ));
+    let mut state = build_state(InMemorySessionRepo::arc(), None, None, Some(validator));
+    state.rate_limit_state = Some(rls);
+    let app = router(state);
     let mk = || {
         Request::builder()
             .uri("/v1/sessions/sess_x")
@@ -251,15 +249,60 @@ async fn rate_limit_returns_429_when_bucket_drained() {
             .body(Body::empty())
             .unwrap()
     };
-    // First two: 404 (session not found), confirms middleware allowed
-    // and the handler ran.
-    let r1 = app.clone().oneshot(mk()).await.unwrap();
-    assert_eq!(r1.status(), StatusCode::NOT_FOUND);
-    let r2 = app.clone().oneshot(mk()).await.unwrap();
-    assert_eq!(r2.status(), StatusCode::NOT_FOUND);
-    // Third: bucket empty → 429.
-    let r3 = app.clone().oneshot(mk()).await.unwrap();
-    assert_eq!(r3.status(), StatusCode::TOO_MANY_REQUESTS);
+    // Drain the burst (20 tokens) — all get 404 (session not found,
+    // which means the handler ran: middleware allowed them through).
+    let burst = RateClass::Free.burst() as usize;
+    for _ in 0..burst {
+        let r = app.clone().oneshot(mk()).await.unwrap();
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    }
+    // 21st: bucket empty → 429.
+    let last = app.clone().oneshot(mk()).await.unwrap();
+    assert_eq!(last.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// v1.2.20: 429 response must include `Retry-After` header and a JSON body
+/// with `error.code = "rate_limit_exceeded"`.
+#[tokio::test]
+async fn rate_limit_429_response_shape() {
+    let rls = RateLimitState::in_memory(RateClass::Free);
+    let validator: Arc<dyn TokenValidator> = Arc::new(StubValidator {
+        claims: Claims {
+            sub: "bob".into(),
+            tenant_id: "ten_shape".into(),
+            roles: vec![],
+        },
+    });
+    let mut state = build_state(InMemorySessionRepo::arc(), None, None, Some(validator));
+    state.rate_limit_state = Some(rls);
+    let app = router(state);
+    let mk = || {
+        Request::builder()
+            .uri("/v1/sessions/sess_shape")
+            .header(axum::http::header::AUTHORIZATION, "Bearer t")
+            .body(Body::empty())
+            .unwrap()
+    };
+    // Drain burst.
+    let burst = RateClass::Free.burst() as usize;
+    for _ in 0..burst {
+        app.clone().oneshot(mk()).await.unwrap();
+    }
+    // Next request → 429.
+    let resp = app.oneshot(mk()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    // Must have Retry-After header.
+    assert!(
+        resp.headers().contains_key("retry-after"),
+        "429 must include Retry-After header"
+    );
+    // Body must be JSON with error.code = "rate_limit_exceeded".
+    let body_bytes = to_bytes(resp.into_body(), 4096).await.unwrap();
+    let json: Value = serde_json::from_slice(&body_bytes).expect("429 body must be JSON");
+    assert_eq!(
+        json["error"]["code"], "rate_limit_exceeded",
+        "error.code must be rate_limit_exceeded"
+    );
 }
 
 #[tokio::test]
@@ -429,15 +472,12 @@ async fn admin_audit_400s_when_tenant_id_missing() {
 
 #[tokio::test]
 async fn rate_limit_is_bypassed_without_claims() {
-    // Same limiter, but no auth → no Claims → no tenant key → middleware
-    // lets every request through.
-    let limiter = Arc::new(RateLimiter::new(0.0, 1.0));
-    let app = router(build_state(
-        InMemorySessionRepo::arc(),
-        None,
-        Some(limiter),
-        None,
-    ));
+    // No auth → no Claims → no tenant key → middleware lets every request
+    // through even though the rate_limit_state is wired.
+    let rls = RateLimitState::in_memory(RateClass::Free);
+    let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
+    state.rate_limit_state = Some(rls);
+    let app = router(state);
     for _ in 0..5 {
         let resp = app
             .clone()

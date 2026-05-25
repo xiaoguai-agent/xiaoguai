@@ -58,6 +58,7 @@ fn build_state_with_auth() -> AppState {
         webhook_token_validator: None,
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
+        rate_limit_state: None,
     }
 }
 
