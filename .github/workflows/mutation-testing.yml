@@ -1,0 +1,136 @@
+name: Mutation Testing (wave-3)
+
+on:
+  schedule:
+    # 08:00 UTC daily — runs on main after overnight merges
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      full_run:
+        description: 'Remove --in-diff constraint and mutate entire examine_globs surface'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  mutants:
+    name: cargo-mutants wave-3
+    runs-on: ubuntu-latest-4-cores
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history required for --in-diff origin/main
+
+      - name: Set up Rust 1.88.0
+        uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: mutation-wave3
+
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants@25.0.1 --locked
+
+      - name: Run mutation testing
+        id: mutants
+        run: |
+          if [[ "${{ inputs.full_run }}" == "true" ]]; then
+            # For manual full runs, disable the --in-diff filter in the script.
+            sed -i 's/--in-diff origin\/main//' tests/mutation/wave3/run-mutation.sh
+          fi
+          bash tests/mutation/wave3/run-mutation.sh
+        # Allow the step to "fail" so we can upload artifacts before failing the job.
+        continue-on-error: true
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report-wave3
+          path: mutation-report/
+          retention-days: 30
+
+      - name: Read kill-rate summary
+        if: always()
+        id: summary
+        run: |
+          if [[ -f mutation-report/kill-rate.json ]]; then
+            OVERALL=$(python3 -c "import json; d=json.load(open('mutation-report/kill-rate.json')); print(d.get('overall_kill_rate_pct', 'N/A'))")
+            PASSED=$(python3 -c "import json; d=json.load(open('mutation-report/kill-rate.json')); print(d.get('passed', False))")
+            CAUGHT=$(python3 -c "import json; d=json.load(open('mutation-report/kill-rate.json')); print(d.get('total_caught', 0))")
+            MISSED=$(python3 -c "import json; d=json.load(open('mutation-report/kill-rate.json')); print(d.get('total_missed', 0))")
+          else
+            OVERALL="N/A"
+            PASSED="false"
+            CAUGHT=0
+            MISSED=0
+          fi
+          echo "overall=${OVERALL}" >> "${GITHUB_OUTPUT}"
+          echo "passed=${PASSED}" >> "${GITHUB_OUTPUT}"
+          echo "caught=${CAUGHT}" >> "${GITHUB_OUTPUT}"
+          echo "missed=${MISSED}" >> "${GITHUB_OUTPUT}"
+
+      - name: Post comment to nightly-status issue
+        if: always() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const overall = '${{ steps.summary.outputs.overall }}';
+            const passed  = '${{ steps.summary.outputs.passed }}' === 'True';
+            const caught  = '${{ steps.summary.outputs.caught }}';
+            const missed  = '${{ steps.summary.outputs.missed }}';
+            const runUrl  = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const status  = passed ? '✅ PASS' : '❌ FAIL';
+            const body = [
+              `## Mutation Testing (wave-3) — ${new Date().toISOString().slice(0, 10)}`,
+              '',
+              `**Status**: ${status}`,
+              `**Kill rate**: ${overall}% (threshold: 80%)`,
+              `**Caught**: ${caught} | **Missed**: ${missed}`,
+              '',
+              `[Full report (artifacts)](${runUrl})`,
+              '',
+              passed
+                ? 'Wave-3 eval assertions are healthy.'
+                : '⚠️ Surviving mutants detected. See README for patterns and remediation steps.',
+            ].join('\n');
+
+            // Find or create the nightly-status tracking issue.
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'nightly-status',
+              state: 'open',
+            });
+
+            if (issues.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues.data[0].number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Nightly mutation testing status',
+                labels: ['nightly-status'],
+                body,
+              });
+            }
+
+      - name: Fail job if kill rate below threshold
+        if: steps.mutants.outcome == 'failure'
+        run: |
+          echo "Kill rate below 80% threshold. Strengthen wave-3 eval assertions."
+          echo "See mutation-report artifact and tests/mutation/wave3/README.md for guidance."
+          exit 1
