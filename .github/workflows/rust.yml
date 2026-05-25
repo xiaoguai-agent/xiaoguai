@@ -20,6 +20,16 @@ jobs:
         os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
+      # The full-workspace --all-targets debug build (30 crates, opt-level=3
+      # deps, debuginfo) plus the clippy artifacts overflow the ~14 GB runner
+      # disk on a cold cache. Reclaim ~25 GB of preinstalled toolchains first.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+            "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}" || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          df -h /
       - uses: dtolnay/rust-toolchain@1.88.0
         with:
           components: rustfmt, clippy
