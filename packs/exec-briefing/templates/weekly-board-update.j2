@@ -1,0 +1,146 @@
+{# templates/weekly-board-update.j2
+   Weekly board / leadership update email.
+   Extends the daily format with a full KPI table, all anomaly callouts
+   (including notable), all action recommendations, and a WoW trend column.
+   Also used for monthly runs (period_type == "monthly") — the period_label
+   and MoM columns auto-adjust.
+#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ narrative.subject_line }}</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+             font-size: 14px; color: #1a1a1a; max-width: 720px; margin: 0 auto; padding: 24px;">
+
+  {# ── Header ─────────────────────────────────────────────────────────── #}
+  <p style="margin: 0; font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.08em;">
+    {% if snapshot.period_type == 'monthly' %}Monthly Board Update{% else %}Weekly Leadership Update{% endif %}
+  </p>
+  <h1 style="margin: 4px 0 6px; font-size: 22px; font-weight: 600; color: #111;">
+    {{ narrative.subject_line }}
+  </h1>
+  <p style="margin: 0 0 28px; font-size: 13px; color: #555;">
+    {{ narrative.period_label }} &nbsp;·&nbsp; {{ generated_at | format_datetime }}
+  </p>
+
+  {# ── Executive summary bullets ────────────────────────────────────── #}
+  <h2 style="font-size: 14px; font-weight: 600; color: #666; text-transform: uppercase;
+             letter-spacing: 0.07em; margin: 0 0 10px;">Executive Summary</h2>
+  <ul style="margin: 0 0 28px; padding-left: 20px; background: #f8f9fa;
+             border-radius: 8px; padding: 20px 20px 20px 36px;">
+    {% for bullet in narrative.bullets %}
+    <li style="margin-bottom: 10px; line-height: 1.5; color:
+      {% if bullet.sentiment == 'positive' %}#166534
+      {% elif bullet.sentiment == 'negative' %}#991b1b
+      {% else %}#1a1a1a{% endif %};">
+      {{ bullet.text }}
+    </li>
+    {% endfor %}
+  </ul>
+
+  {# ── Full KPI table ────────────────────────────────────────────────── #}
+  <h2 style="font-size: 14px; font-weight: 600; color: #666; text-transform: uppercase;
+             letter-spacing: 0.07em; margin: 0 0 10px;">KPI Dashboard</h2>
+  <table width="100%" cellpadding="8" cellspacing="0" style="border-collapse: collapse;
+         margin-bottom: 28px; font-size: 13px;">
+    <thead>
+      <tr style="background: #1e293b; color: #fff;">
+        <th style="text-align: left; padding: 10px 12px; border-radius: 6px 0 0 0;">Metric</th>
+        <th style="text-align: right; padding: 10px 12px;">Current</th>
+        <th style="text-align: right; padding: 10px 12px;">
+          {{ 'MoM' if snapshot.period_type == 'monthly' else 'WoW' }}
+        </th>
+        <th style="text-align: left; padding: 10px 12px; border-radius: 0 6px 0 0;">Category</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for obs in snapshot.observations | sort(attribute='category') %}
+      <tr style="background: {{ '#f8f9fa' if loop.index is odd else '#fff' }};">
+        <td style="padding: 9px 12px; border-bottom: 1px solid #e5e7eb;">
+          {{ obs.metric_label }}
+          {% set anomaly = callouts | selectattr('kpi_name', 'equalto', obs.metric_name) | first | default(None) %}
+          {% if anomaly %}
+          <span style="margin-left: 6px; font-size: 10px; font-weight: 600; padding: 2px 5px;
+                border-radius: 3px; color: #fff; background:
+                {{ '#dc2626' if anomaly.severity == 'urgent'
+                   else '#d97706' if anomaly.severity == 'significant'
+                   else '#6b7280' }};">
+            {{ anomaly.exec_severity_label | upper | truncate(8, True, '') }}
+          </span>
+          {% endif %}
+        </td>
+        <td style="padding: 9px 12px; text-align: right; border-bottom: 1px solid #e5e7eb;
+                   font-weight: 600;">
+          {{ obs.current_value | format_kpi }}
+        </td>
+        <td style="padding: 9px 12px; text-align: right; border-bottom: 1px solid #e5e7eb; color:
+          {% if obs.period_over_period_pct > 0 %}#166534{% elif obs.period_over_period_pct < 0 %}#991b1b
+          {% else %}#555{% endif %};">
+          {{ obs.period_over_period_pct | format_pct(sign=true) }}
+        </td>
+        <td style="padding: 9px 12px; border-bottom: 1px solid #e5e7eb; color: #666; font-size: 12px;">
+          {{ obs.category | title }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {# ── All anomaly callouts ──────────────────────────────────────────── #}
+  {% if callouts %}
+  <h2 style="font-size: 14px; font-weight: 600; color: #666; text-transform: uppercase;
+             letter-spacing: 0.07em; margin: 0 0 12px;">Anomaly Callouts</h2>
+  {% for callout in callouts | sort(attribute='severity', reverse=true) %}
+  {% include 'templates/anomaly-callout-block.j2' %}
+  {% endfor %}
+  <div style="margin-bottom: 28px;"></div>
+  {% endif %}
+
+  {# ── Action recommendations ────────────────────────────────────────── #}
+  {% if actions %}
+  <h2 style="font-size: 14px; font-weight: 600; color: #666; text-transform: uppercase;
+             letter-spacing: 0.07em; margin: 0 0 10px;">Recommended Actions</h2>
+  <table width="100%" cellpadding="8" cellspacing="0"
+         style="border-collapse: collapse; margin-bottom: 28px; font-size: 13px;">
+    <thead>
+      <tr style="background: #f1f5f9;">
+        <th style="text-align: left; padding: 8px 12px; color: #555; font-size: 12px;">Priority</th>
+        <th style="text-align: left; padding: 8px 12px; color: #555; font-size: 12px;">Owner</th>
+        <th style="text-align: left; padding: 8px 12px; color: #555; font-size: 12px;">Action</th>
+        <th style="text-align: left; padding: 8px 12px; color: #555; font-size: 12px;">By</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for action in actions | sort(attribute='priority') %}
+      <tr style="border-bottom: 1px solid #e5e7eb;">
+        <td style="padding: 8px 12px;">
+          <span style="font-weight: 600; color:
+            {{ '#dc2626' if action.priority == 'P0' else '#d97706' if action.priority == 'P1' else '#555' }};">
+            {{ action.priority }}
+          </span>
+        </td>
+        <td style="padding: 8px 12px; color: #374151;">{{ action.owner_role }}</td>
+        <td style="padding: 8px 12px; line-height: 1.4;">{{ action.action_text }}</td>
+        <td style="padding: 8px 12px; color: #666; white-space: nowrap;">
+          {{ action.deadline | replace('_', ' ') | title }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {# ── Footer ─────────────────────────────────────────────────────────── #}
+  <p style="font-size: 11px; color: #999; border-top: 1px solid #e5e7eb; padding-top: 16px;">
+    Generated by xiaoguai exec-briefing pack v{{ pack_version }}.
+    <a href="{{ briefing_url }}" style="color: #6b7280;">Full dashboard</a>
+    &nbsp;·&nbsp;
+    <a href="{{ slides_url }}" style="color: #6b7280;">Slide deck outline</a>
+    &nbsp;·&nbsp;
+    <a href="{{ unsubscribe_url }}" style="color: #6b7280;">Unsubscribe</a>
+  </p>
+
+</body>
+</html>

@@ -1,0 +1,52 @@
+{# templates/anomaly-callout-block.j2
+   Reusable anomaly callout block — included by both daily-briefing-email.j2
+   and weekly-board-update.j2. Receives a single `callout` (AnomalyCallout).
+   Renders as an inline HTML block; styled to stand out without being alarming
+   for notable severity, and progressively more prominent for significant/urgent.
+#}
+{% set border_color =
+  '#dc2626' if callout.severity == 'urgent'
+  else '#d97706' if callout.severity == 'significant'
+  else '#6b7280' %}
+{% set bg_color =
+  '#fff5f5' if callout.severity == 'urgent'
+  else '#fffbeb' if callout.severity == 'significant'
+  else '#f8f9fa' %}
+{% set label_bg =
+  '#dc2626' if callout.severity == 'urgent'
+  else '#d97706' if callout.severity == 'significant'
+  else '#6b7280' %}
+{% set direction_icon =
+  '↑' if callout.direction == 'spike' else '↓' %}
+
+<div style="margin-bottom: 12px; padding: 14px 16px; border-left: 4px solid {{ border_color }};
+            background: {{ bg_color }}; border-radius: 0 6px 6px 0;">
+
+  {# Label row #}
+  <p style="margin: 0 0 6px;">
+    <span style="display: inline-block; font-size: 10px; font-weight: 700; color: #fff;
+                 background: {{ label_bg }}; padding: 2px 6px; border-radius: 3px;
+                 letter-spacing: 0.06em; text-transform: uppercase;">
+      {{ callout.exec_severity_label }}
+    </span>
+    <span style="margin-left: 8px; font-size: 12px; color: #555;">
+      {{ callout.kpi_label }} &nbsp;{{ direction_icon }}
+    </span>
+  </p>
+
+  {# Headline #}
+  <p style="margin: 0 0 6px; font-weight: 600; font-size: 14px; color: #1a1a1a; line-height: 1.4;">
+    {{ callout.headline }}
+  </p>
+
+  {# Explanation #}
+  <p style="margin: 0 0 6px; font-size: 13px; color: #374151; line-height: 1.5;">
+    {{ callout.explanation }}
+  </p>
+
+  {# Signal note (what to watch) #}
+  <p style="margin: 0; font-size: 12px; color: #6b7280; font-style: italic; line-height: 1.4;">
+    {{ callout.signal_note }}
+  </p>
+
+</div>
