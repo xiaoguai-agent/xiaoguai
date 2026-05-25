@@ -1,0 +1,49 @@
+---
+# Inbound connector: Snowflake Task completion event
+#
+# Snowflake Tasks can trigger a webhook via Snowflake's External Functions or
+# a Pub/Sub-style notification channel when a TASK completes successfully.
+# This connector accepts that notification and normalises it into a
+# KpiSourceRefreshEvent.
+#
+# Route: POST /v1/exec-briefing/inbound/snowflake/{route_id}
+# Auth:  Bearer token from scheduler_webhook_tokens table.
+
+source: snowflake-task-event
+route_prefix: /v1/exec-briefing/inbound/snowflake
+
+normalize:
+  # Snowflake notification payloads include a timestamp-based HMAC;
+  # secret configured in the Snowflake NOTIFICATION INTEGRATION.
+  hmac_secret: ${SNOWFLAKE_NOTIFICATION_SECRET}
+
+  field_map:
+    close_date:
+      source: taskCompletedTime
+      transform: date_from_iso8601
+    period_type:
+      source: taskName
+      transform: extract_period_type   # "DAILY_KPI_CLOSE" → "daily"
+    source_system: _const:snowflake
+    completed_at:
+      source: taskCompletedTime
+      transform: parse_iso8601
+    is_synthetic: _const:false
+
+# Snowflake task name patterns that qualify as period-close signals.
+accepted_task_patterns:
+  - "DAILY_KPI_CLOSE"
+  - "WEEKLY_KPI_CLOSE"
+  - "MONTHLY_KPI_CLOSE"
+  - "*_METRICS_CLOSE"
+
+sample_payload: |
+  {
+    "taskName": "METRICS.WAREHOUSE.DAILY_KPI_CLOSE",
+    "taskSchemaName": "WAREHOUSE",
+    "taskDatabaseName": "METRICS",
+    "taskRunId": "01b3e4f5-0000-abcd-0000-0000abc10000",
+    "taskCompletedTime": "2026-05-25T06:03:11.000Z",
+    "taskState": "SUCCEEDED",
+    "rootTaskName": "METRICS.WAREHOUSE.DAILY_KPI_ORCHESTRATOR"
+  }

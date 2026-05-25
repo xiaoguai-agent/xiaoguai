@@ -1,0 +1,118 @@
+---
+# Anomaly Explainer Agent
+#
+# Triggered by: KpiAnomalyEvent from anomalies/kpi-spike.yaml or
+#               anomalies/kpi-trough.yaml.
+#
+# Responsibility: translate a raw KpiAnomalyEvent (which contains a
+# statistical z-score and magnitude) into a plain-English callout block
+# suitable for a non-technical exec audience.
+#
+# The core translation problem: xg-anomaly produces z-scores (e.g. -3.7)
+# and severity labels ("significant"). Executives do not interpret z-scores.
+# This agent bridges that gap by producing a self-contained callout block
+# with business-first language, a directional headline, and a concise
+# explanation of why the movement is unusual relative to recent history.
+#
+# Severity → exec language mapping (drives system prompt framing):
+#
+#   notable    (2.0 ≤ |z| < 3.0):
+#     Framing: "worth watching" — one standard-deviation+ move, but within
+#     the range of normal business variation. Language: hedged, informational.
+#     Example: "DAU is running 12% above its recent 90-day average — early
+#     signal worth monitoring."
+#
+#   significant (3.0 ≤ |z| < 4.0):
+#     Framing: "material movement" — a 2σ+ deviation; uncommon but not
+#     unprecedented. Language: clear, confident, recommends investigation.
+#     Example: "Trial-to-paid conversion jumped to 24% this week — the
+#     highest in 90 days. Worth confirming the data and understanding what
+#     drove it."
+#
+#   urgent      (|z| ≥ 4.0):
+#     Framing: "requires exec attention" — extremely rare statistical event
+#     (< 0.01% of normal observations at this magnitude). Language: direct
+#     and action-oriented, flags that this warrants same-day review.
+#     Example: "Monthly churn spiked to 4.1% — more than 3× its 90-day
+#     average. This is a rare and significant deviation that warrants
+#     same-day investigation."
+
+name: anomaly-explainer
+kind: llm-agent
+description: >
+  Converts xg-anomaly KpiAnomalyEvents (z-score + severity) into plain-English
+  callout blocks for exec briefings. The severity-to-language mapping ensures
+  no raw statistical terms appear in the output. Subscribed to both kpi-spike
+  and kpi-trough anomaly detectors.
+
+# ── LLM settings ──────────────────────────────────────────────────────────────
+
+llm:
+  model: ${EXPLAINER_LLM_MODEL:-sonnet}
+  temperature: 0.2             # conservative — factual, not creative
+  max_tokens: 512              # callout block is short by design
+
+# ── System prompt ─────────────────────────────────────────────────────────────
+
+system_prompt: |
+  You are an executive communications analyst specialising in data narrative.
+  You receive a KPI anomaly event from a statistical detection system and must
+  translate it into a short, plain-English callout block for a C-suite audience.
+
+  CRITICAL rules:
+  - NEVER use the words "z-score", "standard deviation", "sigma", "statistical",
+    or any other statistical term.
+  - Express the magnitude of the anomaly in business terms only:
+      * notable (severity=notable): "running above/below its typical range"
+      * significant (severity=significant): "materially above/below baseline"
+      * urgent (severity=urgent): "a rare and significant deviation"
+  - Include the actual current value and the 90-day average for context.
+  - For spikes (direction=up): frame positively if metric is positive (e.g. WAU),
+    frame as a risk signal if metric is negative (e.g. error rate).
+  - For troughs (direction=down): frame as a concern for positive metrics,
+    frame positively for negative metrics (e.g. churn falling is good).
+  - Sentence count: headline (1 sentence) + explanation (1–2 sentences) + signal (1 sentence).
+  - Total length: ≤ 60 words.
+  - Respond ONLY with valid JSON matching the AnomalyCallout schema.
+
+  AnomalyCallout schema:
+  {
+    "kpi_name": "string",
+    "kpi_label": "string",
+    "direction": "spike|trough",
+    "severity": "notable|significant|urgent",
+    "headline": "1-sentence headline for the anomaly block header",
+    "explanation": "1-2 sentences explaining the movement in business terms",
+    "signal_note": "1 sentence on what this might indicate or what to watch",
+    "exec_severity_label": "Worth watching|Material movement|Requires exec attention",
+    "include_in_daily": true,
+    "include_in_weekly": true
+  }
+
+# ── User prompt ───────────────────────────────────────────────────────────────
+
+user_prompt: |
+  ## Anomaly event
+  - KPI: {{ event.kpi_label }} ({{ event.kpi_name }})
+  - Category: {{ event.kpi_category }}
+  - Direction: {{ event.direction }}
+  - Severity: {{ event.severity }}
+  - Current value: {{ event.current_value | format_kpi }}
+  - 90-day baseline average: {{ event.baseline_mean | format_kpi }}
+  - Period: {{ event.period_date }}
+  {% if event.context_note %}
+  - Additional context: {{ event.context_note }}
+  {% endif %}
+
+  Produce the AnomalyCallout JSON now.
+
+# ── Output ────────────────────────────────────────────────────────────────────
+
+output:
+  struct: AnomalyCallout
+  # Callout blocks are collected and injected into briefing templates.
+  # The templates/anomaly-callout-block.j2 renders each AnomalyCallout.
+  renders_with: templates/anomaly-callout-block
+  # Callouts are also consumed by action-recommender for next-best-action.
+  triggers:
+    - agents/action-recommender.yaml

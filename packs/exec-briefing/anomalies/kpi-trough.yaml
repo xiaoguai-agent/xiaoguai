@@ -1,0 +1,67 @@
+---
+# Anomaly Detector: kpi-trough
+#
+# Detects downward anomalies (unexpected drops) in any tracked KPI.
+# Mirror of kpi-spike.yaml with direction == "down".
+#
+# Same xg-anomaly z-score engine, same 90-day baseline, same severity
+# ladder — but severity language is calibrated for declines (e.g.
+# "revenue is running below baseline" rather than "above baseline").
+
+name: kpi-trough
+kind: anomaly
+detector: xg-anomaly
+
+description: >
+  Flags unexpected downward movements in tracked KPIs using z-score analysis
+  over a 90-day rolling baseline. Emits KpiAnomalyEvent with direction=trough
+  so the anomaly-explainer agent can produce appropriately cautionary language
+  for exec audiences without exposing raw statistical values.
+
+# ── Detection parameters ───────────────────────────────────────────────────────
+
+detection:
+  direction: down
+  baseline_window_days: 90
+  min_data_points: 14
+
+  thresholds:
+    - z_score: 2.0            # |z| magnitude; direction is already "down"
+      severity: notable        # "X is running below its typical range"
+    - z_score: 3.0
+      severity: significant    # "X has declined materially from baseline"
+    - z_score: 4.0
+      severity: urgent         # "X decline requires immediate exec attention"
+
+  cooldown_minutes: 60
+
+# ── KPIs subscribed ──────────────────────────────────────────────────────────
+
+kpis: all_tracked
+
+# ── Emitted event ─────────────────────────────────────────────────────────────
+#
+# Same schema as kpi-spike; direction field distinguishes them at runtime.
+
+emits:
+  event: KpiAnomalyEvent
+  schema:
+    kpi_name: string
+    kpi_label: string
+    kpi_category: string      # "north_star" | "growth" | "retention" | "revenue" | "ops"
+    direction: string         # "trough" for this detector
+    current_value: float
+    baseline_mean: float
+    baseline_std: float
+    z_score: float            # negative z-score (e.g. -3.1) from xg-anomaly
+    severity: string          # "notable" | "significant" | "urgent"
+    severity_label: string    # set by anomaly-explainer
+    period_date: date
+    detected_at: datetime
+    context_note: string
+
+# ── Subscribers ───────────────────────────────────────────────────────────────
+
+subscribers:
+  - agents/anomaly-explainer.yaml
+  - agents/action-recommender.yaml

@@ -1,0 +1,106 @@
+---
+# Exec Narrator Agent
+#
+# Triggered by: kpi-collator on KpiSnapshot completion.
+#
+# Responsibility: write a structured 5-bullet plain-English executive summary
+# of the current period's KPI snapshot. Each bullet covers one theme:
+#   1. North-star headline (one number that matters most)
+#   2. Revenue / commercial performance
+#   3. Growth momentum (new users, pipeline)
+#   4. Retention & engagement health
+#   5. Operational / product reliability
+#
+# Output is a NarrativeSummary struct consumed by the briefing templates.
+
+name: exec-narrator
+kind: llm-agent
+description: >
+  Translates a KpiSnapshot into a 5-bullet plain-English executive summary.
+  Each bullet is one theme; language is direct, jargon-free, and suitable for
+  a board audience. Uses the configured LLM model — recommended: sonnet.
+
+# ── LLM settings ──────────────────────────────────────────────────────────────
+
+llm:
+  model: ${NARRATOR_LLM_MODEL:-sonnet}
+  temperature: 0.3             # low variance for consistent factual tone
+  max_tokens: 1024             # 5 bullets + subject line fits comfortably
+
+# ── System prompt ─────────────────────────────────────────────────────────────
+
+system_prompt: |
+  You are an executive communications analyst producing a KPI briefing for a
+  C-suite and board audience. Your output must be direct, factual, and free of
+  jargon. Numbers should appear as formatted values with clear units
+  (e.g. "$2.4M ARR", "94.2% retention", "+8% WoW").
+
+  Rules:
+  - Produce EXACTLY {{ config.briefing.narrative_bullet_count }} bullets.
+  - Bullet 1: North-star headline — the single most important number and its direction.
+  - Bullet 2: Revenue / commercial performance.
+  - Bullet 3: Growth momentum (signups, pipeline, conversions).
+  - Bullet 4: Retention and engagement health.
+  - Bullet 5: Operational reliability and product health.
+  - Each bullet is 1–2 sentences, max 35 words.
+  - If data for a theme is missing, write "Data unavailable for this period."
+    rather than speculating.
+  - Do not mention z-scores or statistical terms — anomalies are flagged
+    separately by the anomaly-explainer agent.
+  - Respond ONLY with valid JSON matching the NarrativeSummary schema.
+
+  NarrativeSummary schema:
+  {
+    "subject_line": "one sentence ≤15 words suitable for an email subject",
+    "period_label": "e.g. 'Week of May 20, 2026' or 'April 2026'",
+    "bullets": [
+      {
+        "theme": "north_star|revenue|growth|retention|ops",
+        "text": "bullet text",
+        "sentiment": "positive|neutral|negative|missing"
+      }
+    ],
+    "data_quality_notes": ["list of any missing or flagged data sources"]
+  }
+
+# ── User prompt ───────────────────────────────────────────────────────────────
+
+user_prompt: |
+  ## Reporting period
+  - Date: {{ snapshot.close_date }}
+  - Period type: {{ snapshot.period_type }}
+  - Data sources: {{ snapshot.sources_available | join(", ") }}
+  {% if snapshot.sources_missing %}
+  - Missing sources (data gaps): {{ snapshot.sources_missing | join(", ") }}
+  {% endif %}
+
+  ## KPI Snapshot
+  {% for obs in snapshot.observations | sort(attribute='category') %}
+  ### {{ obs.category | title }} — {{ obs.metric_label }}
+  - Current value: {{ obs.current_value | format_kpi }}
+  - Prior period: {{ obs.prior_period_value | format_kpi }}
+  - Period-over-period: {{ obs.period_over_period_pct | format_pct }}
+  {% if obs.ytd_value is defined %}
+  - YTD: {{ obs.ytd_value | format_kpi }}
+  {% endif %}
+  {% endfor %}
+
+  {% if anomalies %}
+  ## Active anomalies (already being narrated separately — do NOT repeat)
+  {% for a in anomalies %}
+  - {{ a.kpi_label }}: {{ a.direction }} ({{ a.severity }})
+  {% endfor %}
+  {% endif %}
+
+  Write the NarrativeSummary JSON now.
+
+# ── Output ────────────────────────────────────────────────────────────────────
+
+output:
+  struct: NarrativeSummary
+  # Passed directly to all briefing templates.
+  triggers:
+    - templates/daily-briefing-email
+    - templates/weekly-board-update
+    - outputs/exec-team-email-digest.yaml
+    - outputs/slack-leadership-channel.yaml
