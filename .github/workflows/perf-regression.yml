@@ -1,0 +1,155 @@
+name: Performance Regression
+
+# Runs the wave-3 k6 mixed workload against a native Rust binary and compares
+# results against a checked-in baseline.  Any endpoint whose p95 latency
+# regresses more than 20 % causes the job to fail.
+#
+# Trigger conditions:
+#   - PR touching crates/** or tests/k6/** (catches API + load-test changes)
+#   - Daily cron at 06:00 UTC (catches slow drift on main)
+#
+# The workflow is intentionally separate from loadtest-smoke.yml.
+# loadtest-smoke runs a quick 30 s smoke gate; this workflow runs the full
+# wave-3 mixed workload and enforces the perf budget defined in
+# docs/perf-budget-wave3.
+
+on:
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'tests/k6/**'
+  schedule:
+    - cron: '0 6 * * *'  # daily 06:00 UTC
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  DATABASE_URL: postgres://postgres:dev@localhost/xiaoguai
+  RATE_LIMIT_BACKEND: redis
+
+jobs:
+  perf-test:
+    name: Wave-3 perf regression
+    runs-on: ubuntu-latest-4-cores  # beefier runner for stable perf numbers
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: dev
+          POSTGRES_DB: xiaoguai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout + Rust toolchain
+      # -----------------------------------------------------------------------
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.91'
+
+      - uses: Swatinem/rust-cache@v2
+
+      # -----------------------------------------------------------------------
+      # 2. Build release binary
+      # -----------------------------------------------------------------------
+      - name: Build xiaoguai-core (release)
+        run: cargo build --release -p xiaoguai-core
+
+      # -----------------------------------------------------------------------
+      # 3. Apply database migrations
+      # -----------------------------------------------------------------------
+      - name: Apply migrations
+        env:
+          PGPASSWORD: dev
+        run: |
+          for f in crates/xiaoguai-storage/migrations/*.sql; do
+            echo "Applying $f"
+            psql -h localhost -U postgres -d xiaoguai -f "$f"
+          done
+
+      # -----------------------------------------------------------------------
+      # 4. Start xiaoguai-core in the background
+      # -----------------------------------------------------------------------
+      - name: Start xiaoguai-core
+        run: ./target/release/xiaoguai-core &
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          RATE_LIMIT_BACKEND: ${{ env.RATE_LIMIT_BACKEND }}
+          REDIS_URL: redis://localhost:6379
+
+      - name: Wait for /healthz
+        run: |
+          deadline=$(( $(date +%s) + 60 ))
+          until curl -fsS http://localhost:8080/healthz; do
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "ERROR: xiaoguai-core did not become healthy within 60 s"
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "xiaoguai-core is healthy"
+
+      # -----------------------------------------------------------------------
+      # 5. Install k6 (official GPG-verified package)
+      # -----------------------------------------------------------------------
+      - name: Install k6
+        run: |
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] \
+            https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq && sudo apt-get install -y k6
+          k6 version
+
+      # -----------------------------------------------------------------------
+      # 6. Run the wave-3 mixed workload
+      # -----------------------------------------------------------------------
+      - name: Run wave-3 k6 mixed workload
+        run: |
+          k6 run \
+            --out json=k6-results.json \
+            tests/k6/wave3-mixed-workload.js
+        env:
+          BASE_URL: 'http://localhost:8080'
+          TOKEN: 'dev-token'
+
+      # -----------------------------------------------------------------------
+      # 7. Compare results to baseline; fails if any p95 regressed > 20 %
+      # -----------------------------------------------------------------------
+      - name: Compare to baseline
+        run: bash scripts/perf-compare.sh k6-results.json tests/k6/baseline.json
+
+      # -----------------------------------------------------------------------
+      # 8. Upload results (always, so failures are diagnosable)
+      # -----------------------------------------------------------------------
+      - name: Archive perf results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results-${{ github.run_id }}
+          path: k6-results.json
+          retention-days: 30
