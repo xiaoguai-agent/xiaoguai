@@ -78,6 +78,7 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
+        memory_store: None,
         workspace_repository: None,
     };
     let provider: Arc<dyn ImProvider> = Arc::new(WeComProvider::with_recording_sink(TOKEN, sink));

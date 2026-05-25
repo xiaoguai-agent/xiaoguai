@@ -116,6 +116,7 @@ fn build_state(mcp: Option<Arc<dyn McpServerRepository>>) -> AppState {
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
+        memory_store: None,
         workspace_repository: None,
     }
 }

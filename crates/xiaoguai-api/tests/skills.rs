@@ -55,6 +55,7 @@ fn build_state(skill_packs: Option<Arc<dyn SkillPackRepository>>) -> AppState {
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs,
+        memory_store: None,
         workspace_repository: None,
     }
 }

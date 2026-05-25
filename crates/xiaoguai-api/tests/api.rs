@@ -57,6 +57,7 @@ fn build_state(steps: Vec<ScriptStep>) -> (AppState, Arc<InMemoryMessageRepo>) {
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
+        memory_store: None,
         workspace_repository: None,
     };
     (state, messages)
