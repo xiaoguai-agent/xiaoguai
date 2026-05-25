@@ -1,0 +1,1205 @@
+openapi: 3.1.0
+info:
+  title: Xiaoguai API
+  version: 1.2.28
+  description: |
+    REST API for the Xiaoguai AI-agent platform.
+
+    **Authentication**: Every `/v1/**` endpoint (except `/v1/skills/catalog`)
+    requires a Bearer token in the `Authorization` header.  On failure the
+    server returns `401` with a `WWW-Authenticate: Bearer …` challenge
+    following RFC 6750 §3.
+
+    **Error envelope**: All 4xx / 5xx responses share a common JSON body:
+    ```json
+    { "code": "not_found", "message": "not found" }
+    ```
+    Stable `code` values allow clients to switch without parsing free-form
+    `message` strings.
+
+servers:
+  - url: https://api.example.com
+    description: Production
+  - url: http://localhost:8080
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: HotL
+    description: >
+      Human-on-the-Loop boundary policies.  Operators configure rolling-window
+      count / cost limits per action scope; the enforcer allows, escalates, or
+      denies agent actions when budgets are breached.
+  - name: Outcomes
+    description: >
+      Business outcome telemetry.  Agents record attributions (revenue, hours
+      saved, deals closed, …) after completing tasks; the admin-ui reads
+      aggregated ROI dashboards from the summary and timeseries endpoints.
+  - name: Skills
+    description: >
+      Skill pack marketplace.  Browse the static catalog embedded in the
+      binary, install packs for a tenant, and manage installed packs.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── HotL policies ──────────────────────────────────────────────────────────
+
+  /v1/hotl/policies:
+    get:
+      tags: [HotL]
+      operationId: listHotlPolicies
+      summary: List HOTL policies for a tenant
+      description: >
+        Returns every HOTL policy row for `tenant_id`, optionally filtered to a
+        single `scope`.  Returns `503` when the policy store is not wired into
+        the server (dev mode without Postgres).
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUID of the tenant whose policies to return.
+          example: "11111111-1111-1111-1111-111111111111"
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            Action category filter.  When omitted all scopes are returned.
+            Well-known values: `llm_call`, `email_send`, `webhook_invoke`.
+          example: "llm_call"
+      responses:
+        "200":
+          description: Policies retrieved.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HotlPolicy"
+              example:
+                - id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+                  tenant_id: "11111111-1111-1111-1111-111111111111"
+                  scope: "llm_call"
+                  window_seconds: 3600
+                  max_count: 100
+                  max_usd: 5.00
+                  escalate_to: "ops@example.com"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+    post:
+      tags: [HotL]
+      operationId: createHotlPolicy
+      summary: Create a HOTL policy
+      description: >
+        Persists a new HOTL boundary policy for a tenant/scope pair.
+        At least one of `max_count` or `max_usd` must be provided.
+        Returns `201 Created` with the full persisted policy (including the
+        server-generated `id`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HotlPolicyCreateRequest"
+            example:
+              tenant_id: "11111111-1111-1111-1111-111111111111"
+              scope: "llm_call"
+              window_seconds: 3600
+              max_count: 100
+              max_usd: 5.00
+              escalate_to: "ops@example.com"
+      responses:
+        "201":
+          description: Policy created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HotlPolicy"
+              example:
+                id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+                tenant_id: "11111111-1111-1111-1111-111111111111"
+                scope: "llm_call"
+                window_seconds: 3600
+                max_count: 100
+                max_usd: 5.00
+                escalate_to: "ops@example.com"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/hotl/policies/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: UUID of the policy to operate on.
+        example: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+    get:
+      tags: [HotL]
+      operationId: getHotlPolicy
+      summary: Get a single HOTL policy by ID
+      description: >
+        Returns the policy with the given `id`.  Returns `404 Not Found` when
+        the ID is unknown.
+      responses:
+        "200":
+          description: Policy found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HotlPolicy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+    put:
+      tags: [HotL]
+      operationId: updateHotlPolicy
+      summary: Replace a HOTL policy
+      description: >
+        Full replacement of the policy identified by `id`.  The request body
+        must satisfy the same constraints as `POST /v1/hotl/policies` (at
+        least one limit must be set, `window_seconds` must be > 0).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HotlPolicyCreateRequest"
+      responses:
+        "200":
+          description: Policy updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HotlPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      tags: [HotL]
+      operationId: deleteHotlPolicy
+      summary: Delete a HOTL policy
+      description: >
+        Removes the policy permanently.  Returns `204 No Content` on success
+        and `404 Not Found` when the id is unknown.
+      responses:
+        "204":
+          description: Policy deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/hotl/check:
+    post:
+      tags: [HotL]
+      operationId: hotlCheck
+      summary: Check budget and record an action
+      description: >
+        Evaluates all active policies for `(tenant_id, scope)` and records
+        the action in the usage log **before** returning the verdict
+        (optimistic insert).
+
+        **Verdict semantics**:
+        - `allow` — budget is within limits; proceed.
+        - `escalate` — a limit was breached but `escalate_to` is configured;
+          allow the action and notify the escalation destination asynchronously.
+        - `deny` — a limit was breached with no `escalate_to`, or the policy
+          store is unreachable (fail-closed).
+
+        Callers **must** abort the action on a `deny` verdict.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HotlCheckRequest"
+            example:
+              tenant_id: "11111111-1111-1111-1111-111111111111"
+              scope: "llm_call"
+              amount: 0.0025
+      responses:
+        "200":
+          description: Verdict computed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HotlVerdict"
+              examples:
+                allow:
+                  summary: Under budget
+                  value:
+                    verdict: "allow"
+                    reason: null
+                escalate:
+                  summary: Budget breached — escalate
+                  value:
+                    verdict: "escalate"
+                    reason: "HOTL breach on scope='llm_call' tenant='…': count 101 > max_count 100 → escalate to ops@example.com"
+                deny:
+                  summary: Budget breached — deny
+                  value:
+                    verdict: "deny"
+                    reason: "HOTL breach on scope='llm_call' tenant='…': cost $5.0025 > max_usd $5.0000"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ── Outcomes ───────────────────────────────────────────────────────────────
+
+  /v1/outcomes:
+    post:
+      tags: [Outcomes]
+      operationId: recordOutcome
+      summary: Record a business outcome attribution
+      description: >
+        Agents call this after completing a task that produced measurable
+        business value.  The `kind` identifies the category
+        (`revenue_usd`, `cost_saved_usd`, `hours_saved`, `deals_closed`,
+        `tickets_resolved`, or `custom`).
+
+        **Validation**:
+        - `kind` must be non-empty.
+        - `agent_name` must be non-empty.
+        - `value` must be ≥ 0.
+        - `tenant_id` must be non-empty.
+
+        Returns `201 Created` with `{ "ok": true }` on success.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordOutcomeRequest"
+            example:
+              tenant_id: "tenant_acme"
+              session_id: "sess_abc123"
+              agent_name: "sales-bot"
+              kind: "revenue_usd"
+              value: 1250.00
+              unit: "usd"
+              description: "Closed deal D-4471 via AI-assisted outreach"
+              metadata:
+                deal_id: "D-4471"
+                crm_url: "https://crm.example.com/deals/D-4471"
+      responses:
+        "201":
+          description: Outcome recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordOutcomeResponse"
+              example:
+                ok: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    get:
+      tags: [Outcomes]
+      operationId: listOutcomes
+      summary: List raw outcome records for a tenant
+      description: >
+        Returns raw outcome records for `tenant_id` within the given time
+        range.  Primarily for export / debugging; use `/v1/outcomes/summary`
+        or `/v1/outcomes/timeseries` for aggregated dashboard data.
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "tenant_acme"
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["24h", "7d", "30d"]
+            default: "30d"
+          description: Rolling window. Defaults to `"30d"`.
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional kind filter.
+          example: "revenue_usd"
+      responses:
+        "200":
+          description: Outcome records returned.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OutcomeRecord"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/outcomes/summary:
+    get:
+      tags: [Outcomes]
+      operationId: getOutcomesSummary
+      summary: Aggregated ROI summary by outcome kind
+      description: >
+        Returns one aggregated bucket per outcome kind, suitable for the
+        summary cards in the admin-ui Outcomes pane.
+
+        `range` must be one of `"24h"`, `"7d"`, or `"30d"` (defaults to
+        `"30d"`).  Unrecognised values return `400`.
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "tenant_acme"
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["24h", "7d", "30d"]
+            default: "30d"
+          description: Rolling window shorthand.
+      responses:
+        "200":
+          description: Summary computed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutcomesSummaryResponse"
+              example:
+                tenant_id: "tenant_acme"
+                range: "7d"
+                summary:
+                  by_kind:
+                    revenue_usd:
+                      sum: 42000.0
+                      count: 18
+                      avg: 2333.33
+                    hours_saved:
+                      sum: 120.0
+                      count: 40
+                      avg: 3.0
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/outcomes/timeseries:
+    get:
+      tags: [Outcomes]
+      operationId: getOutcomesTimeseries
+      summary: Daily time-series breakdown of outcomes
+      description: >
+        Returns day-granularity buckets, each containing the sum and count of
+        outcome values for that `(date, kind)` pair.  Backs the bar chart in
+        the admin-ui Outcomes pane.
+
+        Optionally filter by `kind`.  Results are sorted by `(date, kind)`.
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "tenant_acme"
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["24h", "7d", "30d"]
+            default: "30d"
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            Optional kind filter.  When omitted all kinds are returned.
+          example: "revenue_usd"
+      responses:
+        "200":
+          description: Time-series buckets returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutcomesTimeseriesResponse"
+              example:
+                tenant_id: "tenant_acme"
+                range: "7d"
+                days:
+                  - date: "2026-05-20"
+                    kind: "revenue_usd"
+                    sum: 5000.0
+                    count: 2
+                  - date: "2026-05-21"
+                    kind: "hours_saved"
+                    sum: 12.0
+                    count: 4
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ── Skills ─────────────────────────────────────────────────────────────────
+
+  /v1/skills/installed:
+    get:
+      tags: [Skills]
+      operationId: listInstalledSkills
+      summary: List installed skill packs for a tenant
+      description: >
+        Returns every installed pack row for the given tenant.  Requires the
+        `tenant` query parameter.
+      parameters:
+        - name: tenant
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Tenant identifier.
+          example: "tenant_acme"
+      responses:
+        "200":
+          description: Installed packs returned.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InstalledPackRow"
+              example:
+                - id: "cccccccc-cccc-cccc-cccc-cccccccccccc"
+                  tenant_id: "tenant_acme"
+                  pack_slug: "pr-review"
+                  version: "1.0.0"
+                  config:
+                    max_review_files: 50
+                  installed_at: "2026-05-20T09:00:00Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/skills/install:
+    post:
+      tags: [Skills]
+      operationId: installSkillPack
+      summary: Install a skill pack for a tenant
+      description: >
+        Records an installation of `pack_slug` for `tenant_id`.  The slug
+        must exist in the static catalog baked into the binary; unknown slugs
+        return `404`.  Attempting to install the same slug a second time for
+        the same tenant returns `409 Conflict`.
+
+        This endpoint does **not** hot-reload pack runtime tooling — that is
+        handled by the pack-loader (post-v1.2).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkillPackInstallRequest"
+            example:
+              tenant_id: "tenant_acme"
+              pack_slug: "pr-review"
+              config:
+                max_review_files: 50
+      responses:
+        "200":
+          description: Pack installed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstalledPackRow"
+              example:
+                id: "cccccccc-cccc-cccc-cccc-cccccccccccc"
+                tenant_id: "tenant_acme"
+                pack_slug: "pr-review"
+                version: "1.0.0"
+                config:
+                  max_review_files: 50
+                installed_at: "2026-05-25T12:34:56Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/skills/install/{id}:
+    delete:
+      tags: [Skills]
+      operationId: uninstallSkillPack
+      summary: Uninstall a skill pack
+      description: >
+        Removes the installed-pack row identified by `id` (the UUID returned
+        when the pack was installed).  Returns `404 Not Found` when the row
+        does not exist.  Response body is `{ "deleted": "<id>" }`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The `id` of the installed-pack row to remove.
+          example: "cccccccc-cccc-cccc-cccc-cccccccccccc"
+      responses:
+        "200":
+          description: Pack uninstalled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: string
+                    description: The ID of the deleted row.
+                required: [deleted]
+              example:
+                deleted: "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Components
+# ─────────────────────────────────────────────────────────────────────────────
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Pass a tenant or admin bearer token in the `Authorization` header.
+        On failure the server returns `401` with a `WWW-Authenticate: Bearer`
+        challenge (RFC 6750 §3).
+
+  # ── Schemas ────────────────────────────────────────────────────────────────
+
+  schemas:
+
+    # ── HotL ────────────────────────────────────────────────────────────────
+
+    HotlPolicy:
+      type: object
+      description: One row in `hotl_policies`.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Server-generated policy identifier.
+          example: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        tenant_id:
+          type: string
+          format: uuid
+          description: Tenant this policy applies to.
+          example: "11111111-1111-1111-1111-111111111111"
+        scope:
+          type: string
+          description: >
+            Action category this policy governs.  Well-known values:
+            `llm_call`, `email_send`, `webhook_invoke`.
+          example: "llm_call"
+        window_seconds:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Rolling window width in seconds.
+          example: 3600
+        max_count:
+          type: integer
+          format: int32
+          minimum: 1
+          nullable: true
+          description: >
+            Maximum invocation count within the window.  `null` means no count
+            limit (at least one of `max_count` / `max_usd` must be non-null).
+          example: 100
+        max_usd:
+          type: number
+          format: double
+          minimum: 0
+          nullable: true
+          description: >
+            Maximum cumulative USD cost within the window.  `null` means no
+            cost limit.
+          example: 5.00
+        escalate_to:
+          type: string
+          nullable: true
+          description: >
+            IM channel or email address to notify on budget breach.
+            When `null` the enforcer denies (rather than escalates) on breach.
+          example: "ops@example.com"
+      required:
+        - id
+        - tenant_id
+        - scope
+        - window_seconds
+        - max_count
+        - max_usd
+        - escalate_to
+
+    HotlPolicyCreateRequest:
+      type: object
+      description: Body for `POST /v1/hotl/policies` and `PUT /v1/hotl/policies/{id}`.
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+          description: Tenant to create / update the policy for.
+          example: "11111111-1111-1111-1111-111111111111"
+        scope:
+          type: string
+          description: Action category this policy governs.
+          example: "llm_call"
+        window_seconds:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Rolling window width in seconds.  Must be > 0.
+          example: 3600
+        max_count:
+          type: integer
+          format: int32
+          minimum: 1
+          nullable: true
+          description: >
+            Maximum invocation count.  At least one of `max_count` /
+            `max_usd` must be provided.
+          example: 100
+        max_usd:
+          type: number
+          format: double
+          minimum: 0
+          nullable: true
+          description: Maximum cumulative USD cost.
+          example: 5.00
+        escalate_to:
+          type: string
+          nullable: true
+          description: >
+            Escalation destination.  When `null` the enforcer denies on breach.
+          example: "ops@example.com"
+      required:
+        - tenant_id
+        - scope
+        - window_seconds
+
+    HotlCheckRequest:
+      type: object
+      description: Body for `POST /v1/hotl/check`.
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+          description: Acting tenant.
+          example: "11111111-1111-1111-1111-111111111111"
+        scope:
+          type: string
+          description: Action category to check.
+          example: "llm_call"
+        amount:
+          type: number
+          format: double
+          description: >
+            Increment to record.  Use `1.0` for invocation counting; pass the
+            USD cost for cost-budget scopes.
+          example: 0.0025
+      required:
+        - tenant_id
+        - scope
+        - amount
+
+    HotlVerdict:
+      type: object
+      description: Result of a `POST /v1/hotl/check` call.
+      properties:
+        verdict:
+          type: string
+          enum: [allow, escalate, deny]
+          description: |
+            - `allow` — proceed; budget is within limits.
+            - `escalate` — budget breached; action is permitted but notify
+              the `escalate_to` destination asynchronously.
+            - `deny` — budget breached with no escalation route, or the
+              policy store is unreachable (fail-closed).  The caller **must**
+              abort the action.
+          example: "allow"
+        reason:
+          type: string
+          nullable: true
+          description: >
+            Human-readable reason string, populated on `escalate` and `deny`.
+            Includes which limit was hit and the escalation destination when
+            applicable.
+          example: null
+      required:
+        - verdict
+        - reason
+
+    # ── Outcomes ─────────────────────────────────────────────────────────────
+
+    RecordOutcomeRequest:
+      type: object
+      description: Body for `POST /v1/outcomes`.
+      properties:
+        tenant_id:
+          type: string
+          description: Tenant identifier.  Must be non-empty.
+          example: "tenant_acme"
+        session_id:
+          type: string
+          nullable: true
+          description: Optional session ID to attribute the outcome to.
+          example: "sess_abc123"
+        agent_name:
+          type: string
+          description: Name of the agent recording the outcome.  Must be non-empty.
+          example: "sales-bot"
+        kind:
+          type: string
+          description: >
+            Outcome category.  Well-known values: `revenue_usd`,
+            `cost_saved_usd`, `hours_saved`, `deals_closed`,
+            `tickets_resolved`, `custom`.  Must be non-empty.
+          example: "revenue_usd"
+        value:
+          type: number
+          format: double
+          minimum: 0
+          description: Numeric outcome value.  Must be ≥ 0.
+          example: 1250.00
+        unit:
+          type: string
+          nullable: true
+          description: Optional unit of measurement (e.g. `"usd"`, `"hours"`).
+          example: "usd"
+        description:
+          type: string
+          nullable: true
+          description: Human-readable description of the outcome.
+          example: "Closed deal D-4471 via AI-assisted outreach"
+        metadata:
+          description: Arbitrary JSON context (CRM deal ID, ticket URL, etc.).
+          example:
+            deal_id: "D-4471"
+            crm_url: "https://crm.example.com/deals/D-4471"
+      required:
+        - tenant_id
+        - agent_name
+        - kind
+        - value
+
+    RecordOutcomeResponse:
+      type: object
+      description: Returned by `POST /v1/outcomes` on success.
+      properties:
+        ok:
+          type: boolean
+          example: true
+      required:
+        - ok
+
+    OutcomeRecord:
+      type: object
+      description: A single recorded outcome event (mirrors the `agent_outcomes` row).
+      properties:
+        tenant_id:
+          type: string
+          example: "tenant_acme"
+        session_id:
+          type: string
+          nullable: true
+          example: "sess_abc123"
+        agent_name:
+          type: string
+          example: "sales-bot"
+        kind:
+          type: string
+          example: "revenue_usd"
+        value:
+          type: number
+          format: double
+          example: 1250.00
+        unit:
+          type: string
+          nullable: true
+          example: "usd"
+        description:
+          type: string
+          nullable: true
+          example: "Closed deal D-4471"
+        attributed_at:
+          type: string
+          format: date-time
+          description: ISO-8601 timestamp when the outcome was recorded.
+          example: "2026-05-25T12:34:56Z"
+        metadata:
+          description: Arbitrary JSON context attached at record time.
+          example:
+            deal_id: "D-4471"
+      required:
+        - tenant_id
+        - agent_name
+        - kind
+        - value
+        - attributed_at
+        - metadata
+
+    Aggregate:
+      type: object
+      description: Aggregated (sum / count / average) view of outcome values.
+      properties:
+        sum:
+          type: number
+          format: double
+          example: 42000.0
+        count:
+          type: integer
+          format: int64
+          example: 18
+        avg:
+          type: number
+          format: double
+          example: 2333.33
+      required:
+        - sum
+        - count
+        - avg
+
+    OutcomeSummary:
+      type: object
+      description: >
+        Aggregated outcomes broken down by kind.  Used by the ROI summary
+        cards in the admin-ui Outcomes pane.
+      properties:
+        by_kind:
+          type: object
+          description: >
+            Map from outcome kind string to its `Aggregate`.  Keys are sorted
+            alphabetically.
+          additionalProperties:
+            $ref: "#/components/schemas/Aggregate"
+          example:
+            revenue_usd:
+              sum: 42000.0
+              count: 18
+              avg: 2333.33
+            hours_saved:
+              sum: 120.0
+              count: 40
+              avg: 3.0
+      required:
+        - by_kind
+
+    OutcomesSummaryResponse:
+      type: object
+      description: Response envelope for `GET /v1/outcomes/summary`.
+      properties:
+        tenant_id:
+          type: string
+          example: "tenant_acme"
+        range:
+          type: string
+          enum: ["24h", "7d", "30d"]
+          example: "7d"
+        summary:
+          $ref: "#/components/schemas/OutcomeSummary"
+      required:
+        - tenant_id
+        - range
+        - summary
+
+    OutcomeDay:
+      type: object
+      description: One daily bucket for `GET /v1/outcomes/timeseries`.
+      properties:
+        date:
+          type: string
+          format: date
+          description: ISO-8601 date string (`YYYY-MM-DD`).
+          example: "2026-05-20"
+        kind:
+          type: string
+          example: "revenue_usd"
+        sum:
+          type: number
+          format: double
+          example: 5000.0
+        count:
+          type: integer
+          format: int64
+          example: 2
+      required:
+        - date
+        - kind
+        - sum
+        - count
+
+    OutcomesTimeseriesResponse:
+      type: object
+      description: Response envelope for `GET /v1/outcomes/timeseries`.
+      properties:
+        tenant_id:
+          type: string
+          example: "tenant_acme"
+        range:
+          type: string
+          enum: ["24h", "7d", "30d"]
+          example: "7d"
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutcomeDay"
+      required:
+        - tenant_id
+        - range
+        - days
+
+    # ── Skills ───────────────────────────────────────────────────────────────
+
+    InstalledPackRow:
+      type: object
+      description: >
+        An installed skill pack row as returned by
+        `GET /v1/skills/installed` and `POST /v1/skills/install`.
+      properties:
+        id:
+          type: string
+          description: UUID of the installation row (use this to uninstall).
+          example: "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        tenant_id:
+          type: string
+          example: "tenant_acme"
+        pack_slug:
+          type: string
+          description: Catalog slug of the installed pack.
+          example: "pr-review"
+        version:
+          type: string
+          description: Version of the pack at install time (copied from the catalog).
+          example: "1.0.0"
+        config:
+          description: Operator-supplied knob overrides stored as free-form JSON.
+          example:
+            max_review_files: 50
+        installed_at:
+          type: string
+          format: date-time
+          description: ISO-8601 timestamp when the pack was installed.
+          example: "2026-05-25T12:34:56Z"
+      required:
+        - id
+        - tenant_id
+        - pack_slug
+        - version
+        - config
+        - installed_at
+
+    SkillPackInstallRequest:
+      type: object
+      description: Body for `POST /v1/skills/install`.
+      properties:
+        tenant_id:
+          type: string
+          description: Tenant to install the pack for.
+          example: "tenant_acme"
+        pack_slug:
+          type: string
+          description: >
+            Slug from the static catalog (`GET /v1/skills/catalog`).  Unknown
+            slugs return `404`.
+          example: "pr-review"
+        config:
+          description: >
+            Operator-supplied knob overrides.  Unknown keys are accepted for
+            forward compatibility.
+          example:
+            max_review_files: 50
+      required:
+        - tenant_id
+        - pack_slug
+
+    # ── Error envelope ────────────────────────────────────────────────────────
+
+    ErrorBody:
+      type: object
+      description: >
+        Common error envelope for all 4xx / 5xx responses.  `code` is a
+        stable machine-readable slug; `message` is a human-readable detail.
+      properties:
+        code:
+          type: string
+          description: >
+            Stable error code.  Known values: `not_found`, `unauthorized`,
+            `bad_request`, `invalid_request`, `conflict`,
+            `service_unavailable`, `payload_too_large`, `gateway_timeout`,
+            `internal_error`, `storage_error`, `agent_error`.
+          example: "not_found"
+        message:
+          type: string
+          description: Human-readable error detail (not stable; do not parse).
+          example: "not found"
+      required:
+        - code
+        - message
+
+  # ── Reusable responses ─────────────────────────────────────────────────────
+
+  responses:
+
+    BadRequest:
+      description: >
+        400 Bad Request — invalid or missing parameter.  `code` is
+        `bad_request` or `invalid_request`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+          example:
+            code: "invalid_request"
+            message: "invalid request: kind must not be empty"
+
+    Unauthorized:
+      description: >
+        401 Unauthorized — missing or invalid bearer token.  The response
+        includes a `WWW-Authenticate: Bearer …` challenge (RFC 6750 §3).
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          example: 'Bearer realm="api", error="invalid_token", error_description="Token expired"'
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+          example:
+            code: "unauthorized"
+            message: "unauthorized: Token expired"
+
+    NotFound:
+      description: 404 Not Found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+          example:
+            code: "not_found"
+            message: "not found"
+
+    Conflict:
+      description: 409 Conflict — e.g. pack already installed for this tenant.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+          example:
+            code: "conflict"
+            message: "conflict: pack already installed"
+
+    ServiceUnavailable:
+      description: >
+        503 Service Unavailable — a required backend (policy store, outcome
+        writer, skill pack repository) is not wired into the server.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+          example:
+            code: "service_unavailable"
+            message: "service unavailable: HOTL policy store not wired"
+
+    InternalError:
+      description: 500 Internal Server Error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+          example:
+            code: "internal_error"
+            message: "internal error"
