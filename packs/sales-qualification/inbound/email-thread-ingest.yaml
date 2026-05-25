@@ -1,0 +1,87 @@
+# inbound/email-thread-ingest.yaml
+# ---------------------------------------------------------------------------
+# Email thread ingest — parses raw inbound email threads posted via the
+# xiaoguai email-ingest HTTP endpoint (forward-to-webhook pattern).
+#
+# Setup options:
+#   A. Email forwarding rule: forward lead emails to
+#      ingest+sales-qualification@<your-xiaoguai-host>
+#   B. Gmail/Outlook webhook: configure the mail provider to POST new
+#      messages to the endpoint below.
+#   C. Manual paste: POST the raw email body to the endpoint via the
+#      admin UI "Ingest email thread" panel.
+# ---------------------------------------------------------------------------
+
+name: email-thread-ingest
+kind: email_inbound
+version: "1.0.0"
+
+description: >
+  Parses raw inbound email threads (RFC-5322 or plain text), extracts
+  company and contact metadata, and emits crm.email.lead_ingested to
+  trigger the bant-extractor agent. Requires no CRM credentials — works
+  as a standalone channel for teams not yet using HubSpot or Salesforce.
+
+# --------------------------------------------------------------------------
+# HTTP endpoint registered by the pack loader
+# --------------------------------------------------------------------------
+endpoint:
+  path: /api/v1/packs/sales-qualification/inbound/email
+  method: POST
+  content_types:
+    - message/rfc822
+    - text/plain
+    - application/json   # for structured {"from": ..., "subject": ..., "body": ...}
+
+# --------------------------------------------------------------------------
+# Authentication for the ingest endpoint
+# --------------------------------------------------------------------------
+auth:
+  kind: bearer_token
+  token_env: EMAIL_INGEST_TOKEN
+
+# --------------------------------------------------------------------------
+# Email parsing rules
+# --------------------------------------------------------------------------
+parse:
+  extract_from_header:    true   # parse From: header for contact_name + email
+  extract_company_from:
+    - email_domain               # e.g. alice@acme.com → company hint: acme.com
+    - subject_line               # regex: "from <Company>" or "<Company> inquiry"
+  concatenate_thread: true       # join all reply segments into raw_notes
+  strip_signatures: true         # remove common email signature blocks
+  max_body_chars: 8000           # truncate very long threads
+
+# --------------------------------------------------------------------------
+# Normalisation output
+# --------------------------------------------------------------------------
+normalise:
+  crm_source:    "email"
+  crm_lead_id:   "<message-id header>"
+  company_name:  "<extracted or 'Unknown — enrichment needed'>"
+  contact_name:  "<From: display name>"
+  contact_email: "<From: address>"
+  raw_notes:     "<parsed + concatenated thread body>"
+
+# --------------------------------------------------------------------------
+# Database write (insert only — no dedup on email, each thread is unique)
+# --------------------------------------------------------------------------
+persist:
+  table: sq_leads
+  on_conflict: ["crm_source", "crm_lead_id"]
+  update_fields: ["raw_notes"]  # append new replies to existing thread leads
+
+# --------------------------------------------------------------------------
+# Emit event to trigger agent pipeline
+# --------------------------------------------------------------------------
+emit:
+  event: crm.email.lead_ingested
+  target: agents/bant-extractor.yaml
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  log_level: warn
+  dead_letter_table: sq_inbound_dead_letter
+  notify_channel: "${SALES_HOTL_NOTIFY_CHANNEL:-admin_ui}"

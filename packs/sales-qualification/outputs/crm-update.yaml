@@ -1,0 +1,90 @@
+# outputs/crm-update.yaml
+# ---------------------------------------------------------------------------
+# CRM write-back output — pushes qualification scores and deal-stage updates
+# back to HubSpot or Salesforce after human approval.
+#
+# Triggered by: sq.recommendation.ready (from next-action-recommender)
+# Gated by: HOTL approval (status must be 'approved' in sq_qualification_log)
+# ---------------------------------------------------------------------------
+
+name: crm-update
+kind: output
+version: "1.0.0"
+
+description: >
+  Writes BANT score, MEDDIC completeness, next action, and recommended deal
+  stage back to the originating CRM (HubSpot or Salesforce) after human
+  approval. Zero autonomous writes — all updates require explicit approval
+  via admin UI or IM reply.
+
+# --------------------------------------------------------------------------
+# Trigger
+# --------------------------------------------------------------------------
+triggers:
+  - event: sq.recommendation.ready
+    source: next-action-recommender
+
+# --------------------------------------------------------------------------
+# HOTL gate — abort if log row is not in 'approved' state
+# --------------------------------------------------------------------------
+hotl_gate:
+  check_table: sq_qualification_log
+  check_field: status
+  required_value: approved
+  abort_on_mismatch: true
+
+# --------------------------------------------------------------------------
+# CRM write-back strategies (selected by lead.crm_source)
+# --------------------------------------------------------------------------
+strategies:
+  hubspot:
+    kind: hubspot_properties_api
+    config:
+      token_env: HUBSPOT_PRIVATE_APP_TOKEN
+      object_type: contacts           # or 'deals' if crm_lead_id is a deal
+    field_mapping:
+      sq_bant_score:       "{ total_score }"        # custom HubSpot property
+      sq_meddic_pct:       "{ meddic.completeness_pct }"
+      sq_next_action:      "{ next_action.next_action }"
+      lifecyclestage:      "salesqualifiedlead"     # standard HS property
+      dealstage:           "{ next_action.recommended_deal_stage }"
+
+  salesforce:
+    kind: salesforce_rest_api
+    config:
+      instance_url_env:  SF_INSTANCE_URL
+      client_id_env:     SF_CLIENT_ID
+      client_secret_env: SF_CLIENT_SECRET
+      sobject: Lead        # or Opportunity based on crm_lead_id prefix
+    field_mapping:
+      BANT_Score__c:      "{ bant.total_score }"
+      MEDDIC_Pct__c:      "{ meddic.completeness_pct }"
+      Next_Action__c:     "{ next_action.next_action }"
+      StageName:          "{ next_action.recommended_deal_stage }"
+      LeadStatus:         "Qualified"
+
+  email:
+    kind: no_op
+    note: >
+      Email-sourced leads have no CRM record to update. The qualification
+      scorecard is posted to the Slack deal room instead. AE manually
+      creates the CRM record.
+
+# --------------------------------------------------------------------------
+# Audit
+# --------------------------------------------------------------------------
+audit:
+  log_table: sq_qualification_log
+  update_fields:
+    status: "approved"
+    approved_by: "{ approver }"
+    approved_at: "NOW()"
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  retry: 1
+  backoff_seconds: 5
+  log_level: error
+  notify_channel: "${SALES_HOTL_NOTIFY_CHANNEL:-admin_ui}"

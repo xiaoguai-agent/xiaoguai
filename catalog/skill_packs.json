@@ -214,6 +214,69 @@
         }
       },
       "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/rag-hr.png"
+    },
+    {
+      "slug": "sales-qualification",
+      "name": "Sales Qualification (BANT + MEDDIC)",
+      "description": "Multi-agent lead qualification using BANT (Budget/Authority/Need/Timeline) and MEDDIC (Metrics/Economic Buyer/Decision Criteria/Decision Process/Identify Pain/Champion) frameworks. Ingests leads from HubSpot webhooks, Salesforce platform events, or email threads. Outputs structured qualification scores, evidence quotes, MEDDIC completeness checklists, and next-action recommendations. All CRM write-backs are HOTL-gated.",
+      "version": "1.0.0",
+      "category": "sales",
+      "requires": {
+        "feature_flags": ["llm", "outcome-telemetry", "web-search"],
+        "env_keys": [
+          "BRAVE_SEARCH_API_KEY",
+          "SALES_HOTL_NOTIFY_CHANNEL",
+          "SLACK_BOT_TOKEN",
+          "SLACK_PIPELINE_CHANNEL"
+        ]
+      },
+      "optional_env_keys": [
+        "HUBSPOT_WEBHOOK_SECRET",
+        "HUBSPOT_PRIVATE_APP_TOKEN",
+        "SF_INSTANCE_URL",
+        "SF_CLIENT_ID",
+        "SF_CLIENT_SECRET",
+        "EMAIL_INGEST_TOKEN",
+        "SLACK_DEAL_ROOM_PARENT_CHANNEL",
+        "SLACK_DISQUALIFIED_CHANNEL",
+        "AE_SLACK_USER_ID",
+        "SE_SLACK_USER_ID"
+      ],
+      "knobs": {
+        "bant_pass_threshold": {
+          "type": "integer",
+          "default": 60,
+          "description": "Minimum BANT score (0–100) to advance a lead to MEDDIC deep-dive"
+        },
+        "meddic_complete_threshold": {
+          "type": "integer",
+          "default": 70,
+          "description": "Minimum MEDDIC completeness % to mark a lead as Sales-Qualified"
+        },
+        "deal_stage_on_sqo": {
+          "type": "string",
+          "default": "Demo Scheduled",
+          "description": "CRM deal stage name applied when a lead becomes a Sales-Qualified Opportunity"
+        },
+        "enrichment_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run web-search enrichment for leads with insufficient BANT data"
+        },
+        "weekly_digest_cron": {
+          "type": "string",
+          "default": "0 8 * * 1",
+          "description": "Cron expression for the weekly pipeline digest (default: Monday 08:00 UTC)"
+        }
+      },
+      "agents": [
+        "bant-extractor",
+        "meddic-deep-dive",
+        "next-action-recommender",
+        "lead-enrichment"
+      ],
+      "inbound_channels": ["hubspot-webhook", "salesforce-event", "email-thread-ingest"],
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/sales-qualification.png"
     }
   ]
 }

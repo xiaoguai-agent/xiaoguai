@@ -1,0 +1,136 @@
+# outputs/weekly-pipeline-digest.yaml
+# ---------------------------------------------------------------------------
+# Weekly pipeline digest — scheduled report summarising lead qualification
+# activity, pipeline health, and BANT/MEDDIC score distributions.
+#
+# Triggered by: xiaoguai-scheduler (cron; default Monday 08:00 local time)
+# Delivered to: configured Slack channel + admin UI
+# ---------------------------------------------------------------------------
+
+name: weekly-pipeline-digest
+kind: scheduled_output
+version: "1.0.0"
+
+description: >
+  Produces a weekly summary of lead qualification activity: new leads scored,
+  SQL conversion rate, average BANT and MEDDIC scores, top next-action
+  distribution, and leads pending human approval. Posted to Slack and the
+  admin UI every Monday morning.
+
+# --------------------------------------------------------------------------
+# Schedule
+# --------------------------------------------------------------------------
+schedule:
+  cron: "0 8 * * 1"    # Monday 08:00 in the operator's configured timezone
+  timezone_env: XIAOGUAI_TIMEZONE   # defaults to UTC if not set
+
+# --------------------------------------------------------------------------
+# Data queries (run at report time)
+# --------------------------------------------------------------------------
+queries:
+  new_leads_this_week:
+    kind: sql
+    query: |
+      SELECT COUNT(*) AS count
+      FROM sq_leads
+      WHERE tenant_id = '{tenant_id}'
+        AND created_at >= NOW() - INTERVAL '7 days'
+
+  sql_conversion_rate:
+    kind: sql
+    query: |
+      SELECT
+          COUNT(*) FILTER (WHERE event_type = 'sqo_created')   AS sqo_count,
+          COUNT(*) FILTER (WHERE event_type = 'lead_scored')   AS scored_count,
+          ROUND(
+            100.0 * COUNT(*) FILTER (WHERE event_type = 'sqo_created')
+                   / NULLIF(COUNT(*) FILTER (WHERE event_type = 'lead_scored'), 0),
+            1
+          ) AS conversion_pct
+      FROM sq_qualification_log
+      WHERE tenant_id = '{tenant_id}'
+        AND created_at >= NOW() - INTERVAL '7 days'
+
+  avg_scores:
+    kind: sql
+    query: |
+      SELECT
+          ROUND(AVG(b.total_score), 1)        AS avg_bant,
+          ROUND(AVG(m.completeness_pct), 1)   AS avg_meddic_pct
+      FROM sq_leads l
+      LEFT JOIN sq_bant_scores   b ON b.lead_id = l.id
+      LEFT JOIN sq_meddic_scores m ON m.lead_id = l.id
+      WHERE l.tenant_id = '{tenant_id}'
+        AND l.created_at >= NOW() - INTERVAL '7 days'
+
+  next_action_distribution:
+    kind: sql
+    query: |
+      SELECT next_action, COUNT(*) AS count
+      FROM sq_qualification_log
+      WHERE tenant_id = '{tenant_id}'
+        AND created_at >= NOW() - INTERVAL '7 days'
+        AND next_action IS NOT NULL
+      GROUP BY next_action
+      ORDER BY count DESC
+
+  pending_approvals:
+    kind: sql
+    query: |
+      SELECT
+          l.company_name,
+          l.contact_name,
+          b.total_score    AS bant,
+          m.completeness_pct AS meddic_pct,
+          ql.next_action,
+          ql.created_at
+      FROM sq_qualification_log ql
+      JOIN sq_leads l ON l.id = ql.lead_id
+      LEFT JOIN sq_bant_scores   b ON b.lead_id = l.id
+      LEFT JOIN sq_meddic_scores m ON m.lead_id = l.id
+      WHERE ql.tenant_id = '{tenant_id}'
+        AND ql.status = 'pending_approval'
+      ORDER BY ql.created_at ASC
+      LIMIT 20
+
+# --------------------------------------------------------------------------
+# Report template (Jinja2 — Slack mrkdwn format)
+# --------------------------------------------------------------------------
+message_template: |
+  :bar_chart: *Weekly Pipeline Digest — {{ report_week }}*
+
+  *New Leads Scored:* {{ new_leads_this_week.count }}
+  *SQL Conversion Rate:* {{ sql_conversion_rate.conversion_pct | default('—') }}%
+  *Avg BANT Score:* {{ avg_scores.avg_bant | default('—') }}/100
+  *Avg MEDDIC Completeness:* {{ avg_scores.avg_meddic_pct | default('—') }}%
+
+  *Next-Action Distribution:*
+  {% for row in next_action_distribution %}
+  • `{{ row.next_action }}`: {{ row.count }} leads
+  {% endfor %}
+
+  {% if pending_approvals %}
+  *Pending Approvals ({{ pending_approvals | length }}):*
+  {% for p in pending_approvals %}
+  • *{{ p.company_name }}* — BANT {{ p.bant }}/100, MEDDIC {{ p.meddic_pct }}%, action: `{{ p.next_action }}`
+  {% endfor %}
+  Review in the admin UI or approve/reject above.
+  {% else %}
+  *No pending approvals* — inbox zero! :white_check_mark:
+  {% endif %}
+
+# --------------------------------------------------------------------------
+# Delivery channels
+# --------------------------------------------------------------------------
+deliver_to:
+  - kind: slack
+    token_env: SLACK_BOT_TOKEN
+    channel_env: SLACK_PIPELINE_CHANNEL
+  - kind: admin_ui_notification
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  log_level: warn
+  skip_on_empty_data: true   # don't send a digest if no leads were scored

@@ -1,0 +1,42 @@
+{# packs/sales-qualification/templates/deal-stage-transition.md.j2
+   Rendered when a lead is approved for CRM write-back and the deal
+   stage advances. Posted to the Slack deal room and logged to the audit trail.
+#}
+# Deal Stage Transition — {{ lead.company_name }}
+
+**From:** `{{ from_stage }}`  →  **To:** `{{ to_stage }}`
+**Triggered by:** {{ triggered_by }} ({{ triggered_at }})
+**Approved by:** {{ approved_by }} at {{ approved_at }}
+
+---
+
+## Qualification Summary
+
+| Framework | Score | Status |
+|-----------|------:|--------|
+| BANT      | {{ bant.total_score }}/100 | {% if bant.total_score >= bant_pass_threshold %}Pass{% else %}Fail{% endif %} |
+| MEDDIC    | {{ meddic.completeness_pct }}% | {% if meddic.completeness_pct >= meddic_complete_threshold %}Complete{% else %}Incomplete{% endif %} |
+
+**Next Action:** `{{ next_action | upper | replace('_', ' ') }}`
+**Follow-up:** {{ follow_up_in_days }} days (by {{ follow_up_date }})
+
+---
+
+## Action Items for AE
+
+{% for item in action_items %}
+- [ ] **[{{ item.owner | upper }}]** {{ item.task }}
+{% endfor %}
+
+---
+
+## What Changed in CRM
+
+{% for field in crm_fields_updated %}
+- **{{ field.name }}**: `{{ field.old_value | default('—') }}` → `{{ field.new_value }}`
+{% endfor %}
+
+---
+
+*Log ID: {{ log_id }} · xiaoguai Sales Qualification Pack v{{ pack_version }}*
+*CRM source: {{ crm_source | upper }} · Deal ID: {{ crm_lead_id | default('—') }}*
