@@ -9,6 +9,10 @@
 #   - US GAAP ASC summaries: original work under MIT, citing public FASB codification
 #   - Financial ratio reference: original work under MIT
 
+name: rag-finance
+version: "0.1.0"
+description: "Scaffold RAG pack for financial Q&A over SEC filings, IFRS/GAAP summaries, and financial ratio references."
+
 kind: scaffold-only
 
 domain: finance
