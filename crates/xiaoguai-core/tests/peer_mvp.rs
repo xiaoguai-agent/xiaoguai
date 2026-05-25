@@ -270,6 +270,7 @@ fn build_state(
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
+        memory_store: None,
         workspace_repository: None,
     };
     (state, sessions, messages)

@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
     anomaly, audit, backup, chat, completions, eval, hotl, manpages, mcp, outcomes, provider,
-    remote, self_update, skills, watch,
+    remote, self_update, skills, tasks, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -211,6 +211,15 @@ enum Cmd {
         output: String,
         #[command(subcommand)]
         action: AnomalyCmd,
+    },
+
+    /// Kanban task board management (v1.4-ready — requires /v1/tasks backend).
+    Tasks {
+        /// Base URL of the API server, e.g. `http://localhost:8080`.
+        #[arg(long, global = true, default_value = "http://localhost:8080")]
+        api_base: String,
+        #[command(subcommand)]
+        action: TasksCmd,
     },
 }
 
@@ -617,6 +626,80 @@ enum ProviderCmd {
     Remove {
         #[arg(long)]
         id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TasksCmd {
+    /// List tasks on a board, optionally filtered by column.
+    List {
+        /// Board name to query.
+        #[arg(long, default_value = "default")]
+        board: String,
+        /// Filter by column name (e.g. `triage`, `running`, `done`).
+        #[arg(long)]
+        column: Option<String>,
+    },
+    /// Create a new task on a board.
+    Create {
+        /// Task title (required).
+        #[arg(long)]
+        title: String,
+        /// Optional description.
+        #[arg(long)]
+        description: Option<String>,
+        /// Target board.
+        #[arg(long, default_value = "default")]
+        board: String,
+        /// Initial column for the task.
+        #[arg(long, default_value = "triage")]
+        column: String,
+    },
+    /// Move a task to another column.
+    Move {
+        /// Task identifier.
+        task_id: String,
+        /// Destination column name.
+        #[arg(long)]
+        to: String,
+    },
+    /// Claim a task (transition to RUNNING and assign to an agent).
+    Claim {
+        /// Task identifier.
+        task_id: String,
+        /// Agent name or identifier. Defaults to the current process name.
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// Mark a task as complete.
+    Complete {
+        /// Task identifier.
+        task_id: String,
+        /// Optional outcome summary stored alongside the task.
+        #[arg(long)]
+        outcome: Option<String>,
+    },
+    /// Block a task with a human-readable reason.
+    Block {
+        /// Task identifier.
+        task_id: String,
+        /// Reason the task is blocked.
+        #[arg(long)]
+        reason: String,
+    },
+    /// Dispatch the next READY card(s) to RUNNING (pool-worker pattern).
+    Dispatch {
+        /// Board to pull from.
+        #[arg(long, default_value = "default")]
+        board: String,
+        /// Number of tasks to dispatch in one call.
+        #[arg(long, default_value_t = 1)]
+        n: usize,
+    },
+    /// Show task detail and history.
+    Show {
+        /// Task identifier.
+        task_id: String,
     },
 }
 
@@ -1175,6 +1258,87 @@ async fn handle_anomaly(api_base: String, output: String, action: AnomalyCmd) ->
     Ok(())
 }
 
+async fn handle_tasks(api_base: String, action: TasksCmd) -> Result<()> {
+    let client = tasks::TasksClient::new(api_base);
+    match action {
+        TasksCmd::List { board, column } => {
+            let result = client.list(&board, column.as_deref()).await;
+            match result {
+                Ok(v) => println!("{}", tasks::pretty(&v)),
+                Err(e) => println!("{e}"),
+            }
+        }
+        TasksCmd::Create {
+            title,
+            description,
+            board,
+            column,
+        } => {
+            let req = tasks::CreateTaskRequest {
+                title,
+                description,
+                board,
+                column,
+            };
+            let result = client.create(&req).await;
+            match result {
+                Ok(v) => println!("{}", tasks::pretty(&v)),
+                Err(e) => println!("{e}"),
+            }
+        }
+        TasksCmd::Move { task_id, to } => {
+            let result = client.move_task(&task_id, &to).await;
+            match result {
+                Ok(v) => println!("{}", tasks::pretty(&v)),
+                Err(e) => println!("{e}"),
+            }
+        }
+        TasksCmd::Claim { task_id, agent } => {
+            let result = client.claim(&task_id, agent.as_deref()).await;
+            match result {
+                Ok(v) => println!("{}", tasks::pretty(&v)),
+                Err(e) => println!("{e}"),
+            }
+        }
+        TasksCmd::Complete { task_id, outcome } => {
+            let result = client.complete(&task_id, outcome.as_deref()).await;
+            match result {
+                Ok(v) => println!("{}", tasks::pretty(&v)),
+                Err(e) => println!("{e}"),
+            }
+        }
+        TasksCmd::Block { task_id, reason } => {
+            let result = client.block(&task_id, &reason).await;
+            match result {
+                Ok(v) => println!("{}", tasks::pretty(&v)),
+                Err(e) => println!("{e}"),
+            }
+        }
+        TasksCmd::Dispatch { board, n } => {
+            let result = client.dispatch(&board, n).await;
+            match result {
+                Ok(v) => {
+                    // Server may return empty array when no READY cards exist.
+                    if v.as_array().is_some_and(Vec::is_empty) {
+                        println!("no ready cards on board '{board}'");
+                    } else {
+                        println!("{}", tasks::pretty(&v));
+                    }
+                }
+                Err(e) => println!("{e}"),
+            }
+        }
+        TasksCmd::Show { task_id } => {
+            let result = client.show(&task_id).await;
+            match result {
+                Ok(v) => println!("{}", tasks::pretty(&v)),
+                Err(e) => println!("{e}"),
+            }
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Output helper
 // ---------------------------------------------------------------------------
@@ -1282,5 +1446,7 @@ async fn main() -> Result<()> {
             output,
             action,
         } => handle_anomaly(api_base, output, action).await,
+        // v1.4 — Kanban task board
+        Cmd::Tasks { api_base, action } => handle_tasks(api_base, action).await,
     }
 }

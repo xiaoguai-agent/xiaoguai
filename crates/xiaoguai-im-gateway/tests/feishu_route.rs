@@ -68,6 +68,7 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
+        memory_store: None,
         workspace_repository: None,
     };
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
@@ -278,6 +279,7 @@ async fn agent_inherits_tenant_resolved_by_history_store() {
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
+        memory_store: None,
         workspace_repository: None,
     };
     let sink = Arc::new(Mutex::new(Vec::new()));
@@ -357,6 +359,7 @@ async fn conversation_history_accumulates_per_chat() {
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
+        memory_store: None,
         workspace_repository: None,
     };
     let sink = Arc::new(Mutex::new(Vec::new()));
