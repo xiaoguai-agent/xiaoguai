@@ -1,0 +1,52 @@
+---
+# Inbound connector — Shopify order event webhook
+# ---------------------------------------------------------------------------
+# Receives orders/create and orders/updated webhook events from Shopify.
+# HMAC-SHA256 verification via X-Shopify-Hmac-SHA256 header.
+#
+# Mounting: POST /v1/tax-prep/inbound/shopify/{route_id}
+# Auth:     X-Shopify-Hmac-SHA256 HMAC (SHOPIFY_WEBHOOK_SECRET)
+#           + per-tenant bearer token
+# ---------------------------------------------------------------------------
+
+source: shopify
+route_prefix: /v1/tax-prep/inbound/shopify
+
+normalize:
+  source_value: shopify
+  hmac_header: X-Shopify-Hmac-SHA256
+  hmac_secret: "${SHOPIFY_WEBHOOK_SECRET}"
+
+  field_map:
+    external_id:      id                              # Shopify order ID
+    transaction_date: created_at                     # ISO-8601
+    customer_id:      customer.id
+    gross_amount:     total_price
+    taxable_amount:   subtotal_price                 # pre-tax subtotal (approx taxable)
+    tax_collected:    total_tax
+    dest_state:       shipping_address.province_code  # 2-letter code (e.g. "CA")
+    dest_zip:         shipping_address.zip
+    dest_city:        shipping_address.city
+    currency:         currency
+    is_exempt:        tax_exempt                     # boolean on Shopify customer
+    product_category: line_items[0].product_type     # first line item type (approx)
+
+  # Shopify does not natively expose exemption certificate IDs.
+  # The exemption_cert_id will be null; reconcile via exemption-validator.
+  exemption_cert_id: null
+
+# Accepted Shopify webhook topics
+accepted_topics:
+  - orders/create
+  - orders/updated
+  - orders/cancelled     # cancellations reverse taxable amounts
+
+# Deduplication
+dedup:
+  key: "{tenant_id}:shopify:{external_id}"
+
+integration_status: placeholder
+integration_notes: >
+  Register this endpoint as a Shopify webhook in your Shopify Partner App
+  or via the Admin API (POST /admin/api/2024-01/webhooks.json).
+  Set SHOPIFY_WEBHOOK_SECRET to the HMAC secret provided by Shopify.

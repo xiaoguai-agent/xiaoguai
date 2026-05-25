@@ -1,0 +1,55 @@
+---
+# Inbound connector — Stripe charge.succeeded / payment_intent.succeeded
+# ---------------------------------------------------------------------------
+# Receives Stripe webhook events for completed charges. Stripe Tax metadata
+# is used when available (tax_amounts array on PaymentIntent).
+#
+# Mounting: POST /v1/tax-prep/inbound/stripe/{route_id}
+# Auth:     Stripe-Signature header HMAC (STRIPE_WEBHOOK_SECRET)
+#           + per-tenant bearer token
+# ---------------------------------------------------------------------------
+
+source: stripe
+route_prefix: /v1/tax-prep/inbound/stripe
+
+normalize:
+  source_value: stripe
+  hmac_header: Stripe-Signature
+  hmac_secret: "${STRIPE_WEBHOOK_SECRET}"
+
+  field_map:
+    # Primary event: charge.succeeded
+    external_id:      data.object.id                 # ch_xxx or pi_xxx
+    transaction_date: data.object.created            # Unix timestamp → ISO-8601
+    customer_id:      data.object.customer
+    gross_amount:     data.object.amount             # in cents → divide by 100
+    currency:         data.object.currency
+    # Stripe Tax fields (present when Stripe Tax is enabled)
+    taxable_amount:   data.object.amount_subtotal    # before tax
+    tax_collected:    data.object.amount_tax
+    dest_state:       data.object.shipping.address.state   # 2-letter
+    dest_zip:         data.object.shipping.address.postal_code
+    dest_city:        data.object.shipping.address.city
+    is_exempt:        data.object.metadata.tax_exempt       # "true" / "false" string
+    exemption_cert_id: data.object.metadata.exemption_cert_id
+
+  # Amount normalization: Stripe amounts are in smallest currency unit (cents)
+  amount_divisor: 100
+
+  # Fallback: if dest_state is missing, use billing address
+  dest_state_fallback: data.object.billing_details.address.state
+
+accepted_events:
+  - charge.succeeded
+  - payment_intent.succeeded
+  - charge.refunded           # refunds reverse taxable amounts
+
+dedup:
+  key: "{tenant_id}:stripe:{external_id}"
+
+integration_status: placeholder
+integration_notes: >
+  Register this endpoint as a Stripe webhook in the Stripe Dashboard
+  (Developers → Webhooks → Add endpoint). Enable Stripe Tax in your
+  Stripe account for best taxable_amount data. Set STRIPE_WEBHOOK_SECRET
+  to the signing secret from the Stripe Dashboard.

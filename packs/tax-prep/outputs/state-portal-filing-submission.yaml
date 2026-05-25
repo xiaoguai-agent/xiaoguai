@@ -1,0 +1,142 @@
+---
+# Output connector — state-portal-filing-submission
+# ---------------------------------------------------------------------------
+# Submits a reviewed and HotL-approved sales tax return to the state's
+# online filing portal.
+#
+# MANDATORY HotL GATE:
+#   Tax law (IRC § 6061 + state equivalents) requires an authorized
+#   human signer on every return. This connector enforces this contract:
+#
+#     1. Pre-submission guard: verifies tax_filings.hotl_approved_at IS NOT NULL
+#        AND tax_filings.hotl_signature_ref IS NOT NULL.
+#        If either is missing, the submission is BLOCKED and an error is
+#        returned — the connector will not proceed under any circumstance.
+#     2. Signature attachment: attaches the e-signature document reference
+#        to the submission payload.
+#     3. Audit trail: records the submission attempt (approved or blocked)
+#        in the audit-trail-archive.
+#     4. No bypass: there is no config flag, env var, or operator override
+#        that bypasses the HotL check. The check is in code, not config.
+#
+# Integration note: actual state portal APIs vary widely (e-File XML,
+# REST, web-form submission). This connector uses a placeholder driver;
+# operators must configure the state-specific portal adapter.
+# ---------------------------------------------------------------------------
+
+output: state-portal-filing-submission
+description: >
+  Submits HotL-approved, e-signed sales tax returns to state filing portals.
+  MANDATORY HotL gate — will not submit any return without a confirmed
+  human approver signature on record. Tax law requires an authorized signer
+  on every return; this requirement cannot be bypassed.
+
+# --------------------------------------------------------------------------
+# HotL pre-submission guard (enforced in code, not config)
+# --------------------------------------------------------------------------
+hotl:
+  # Both conditions MUST be satisfied before submission proceeds.
+  # Missing either → BLOCKED, error logged, tax team notified.
+  required_fields:
+    - field: hotl_approved_at
+      table: tax_filings
+      must_not_be_null: true
+      error: "Filing blocked: HotL approval timestamp missing. An authorized human must review and approve this return before submission."
+    - field: hotl_signature_ref
+      table: tax_filings
+      must_not_be_null: true
+      error: "Filing blocked: E-signature reference missing. An authorized human must e-sign this return before submission."
+  # Approver must be a human user ID (not 'system' or 'agent')
+  approver_must_be_human: true
+  # Signature provider verification
+  verify_esignature: true
+  esignature_provider: "${ESIGNATURE_PROVIDER:-docusign}"
+
+# --------------------------------------------------------------------------
+# State portal adapter (placeholder)
+# --------------------------------------------------------------------------
+portal:
+  # Adapter type: placeholder | efile_xml | rest_api | web_form_rpa
+  adapter: "${STATE_PORTAL_ADAPTER:-placeholder}"
+
+  # Per-state portal configuration (operators extend this map)
+  state_configs:
+    CA:
+      adapter: efile_xml
+      endpoint: "${CA_CDTFA_EFILE_ENDPOINT:-}"
+      credentials_env: CA_CDTFA_CREDENTIALS
+    TX:
+      adapter: efile_xml
+      endpoint: "${TX_COMPTROLLER_EFILE_ENDPOINT:-}"
+      credentials_env: TX_COMPTROLLER_CREDENTIALS
+    NY:
+      adapter: rest_api
+      endpoint: "${NY_DTF_API_ENDPOINT:-}"
+      credentials_env: NY_DTF_CREDENTIALS
+    _default:
+      adapter: placeholder
+      note: >
+        No portal adapter configured for this state. Manual filing required.
+        Contact your tax advisor to obtain state portal credentials and
+        configure the appropriate adapter.
+
+  placeholder_behavior:
+    # When adapter = placeholder: log the submission attempt, write to
+    # audit-trail-archive, notify tax team, but do NOT transmit to any portal.
+    on_submit: "log_and_notify_manual_filing_required"
+
+# --------------------------------------------------------------------------
+# Submission workflow
+# --------------------------------------------------------------------------
+workflow:
+  steps:
+    - id: verify_hotl
+      description: "Verify HotL approval and e-signature (blocking)"
+      on_fail: block_and_alert
+
+    - id: fetch_filing
+      description: "Fetch final filing record and return draft"
+
+    - id: render_submission_payload
+      description: "Render state-specific XML or JSON payload"
+
+    - id: attach_signature
+      description: "Attach e-signature document to payload"
+
+    - id: submit_to_portal
+      description: "POST to state portal adapter"
+      retry:
+        max_attempts: 3
+        backoff_seconds: [10, 30, 60]
+        on_permanent_failure: alert_and_pause
+
+    - id: record_confirmation
+      description: "Store portal confirmation number in tax_filings"
+      sql: |
+        UPDATE tax_filings
+        SET status = 'filed',
+            filed_at = NOW(),
+            confirmation_number = '{confirmation_number}',
+            updated_at = NOW()
+        WHERE id = '{filing_id}'
+          AND tenant_id = '{tenant_id}'
+          AND hotl_approved_at IS NOT NULL
+          AND hotl_signature_ref IS NOT NULL
+
+    - id: archive
+      description: "Write submission record to audit-trail-archive (WORM)"
+      connector: audit-trail-archive
+
+# --------------------------------------------------------------------------
+# Notifications after successful submission
+# --------------------------------------------------------------------------
+on_success:
+  outputs:
+    - tax-team-slack
+    - audit-trail-archive
+  slack_message: >
+    ✅ *Filing Submitted — {{ state_code }}*
+    Period: {{ period_start }} – {{ period_end }}
+    Confirmation #: {{ confirmation_number }}
+    Approved by: {{ hotl_approved_by }}
+    Filed at: {{ filed_at }}

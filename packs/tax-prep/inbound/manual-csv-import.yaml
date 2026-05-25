@@ -1,0 +1,55 @@
+---
+# Inbound connector — Manual CSV import
+# ---------------------------------------------------------------------------
+# Accepts a CSV file upload via the admin UI or API for batch import of
+# historical transactions or transactions from systems without a webhook.
+#
+# Mounting: POST /v1/tax-prep/inbound/csv/{route_id}
+#           Content-Type: multipart/form-data (file field: "transactions")
+# Auth:     per-tenant bearer token
+# ---------------------------------------------------------------------------
+
+source: manual_csv
+route_prefix: /v1/tax-prep/inbound/csv
+
+# Expected CSV column headers (case-insensitive, snake_case or camelCase)
+csv_schema:
+  required_columns:
+    - external_id         # unique identifier for this transaction in source system
+    - transaction_date    # ISO-8601 or MM/DD/YYYY
+    - customer_id         # customer identifier
+    - dest_state          # 2-letter US state code
+    - gross_amount        # numeric, USD
+    - taxable_amount      # numeric, USD
+  optional_columns:
+    - tax_collected       # numeric, USD; default 0
+    - dest_zip
+    - dest_city
+    - dest_county
+    - currency            # default USD
+    - is_exempt           # true/false; default false
+    - exemption_cert_id
+    - product_category
+
+normalize:
+  source_value: manual_csv
+  date_formats:
+    - "%Y-%m-%d"          # ISO-8601 (preferred)
+    - "%m/%d/%Y"          # US format
+    - "%Y-%m-%dT%H:%M:%SZ" # ISO-8601 with time
+  boolean_true_values:  ["true", "yes", "1", "y"]
+  boolean_false_values: ["false", "no", "0", "n"]
+
+# Validation rules applied before insert
+validation:
+  max_rows_per_upload: 50000
+  dest_state_must_be_valid_us_code: true
+  gross_amount_min: 0.0
+  taxable_amount_must_be_lte_gross: true
+  reject_future_dates: true
+
+dedup:
+  key: "{tenant_id}:manual_csv:{external_id}"
+
+# On validation error: reject the entire upload and return row-level errors
+on_error: reject_with_details
