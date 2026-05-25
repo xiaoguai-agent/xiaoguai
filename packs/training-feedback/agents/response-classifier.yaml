@@ -1,0 +1,89 @@
+---
+# agents/response-classifier.yaml
+#
+# Response Classifier
+#
+# Input:  a batch of raw survey_responses rows (free-text answers).
+# Output: classification results written back to survey_responses
+#         (theme_label, sentiment, confidence, classifier_version).
+#
+# Runs once per inbound submission batch; re-runs if classifier_version
+# changes (re-classification path).
+
+name: response-classifier
+kind: worker
+description: >
+  Classifies each free-text survey answer into a categorical theme label
+  and a sentiment (positive / neutral / negative).  Operates per-question:
+  the same model prompt is applied to every unclassified free-text row in
+  survey_responses for the current batch.  Rating and multiple-choice
+  answers receive a rule-based sentiment mapping without LLM invocation
+  to keep token spend proportional to value.
+
+llm:
+  model: ${TRAINING_CLASSIFIER_MODEL:-default}
+  temperature: 0.1   # low temperature — classification, not generation
+  max_tokens: 512
+
+# ── Theme taxonomy ────────────────────────────────────────────────────────────
+#
+# The LLM must assign exactly one of these labels.  "other" is a valid
+# escape hatch and is surfaced to the theme-aggregator for review.
+
+theme_taxonomy:
+  - content_clarity       # The explanation was clear / unclear
+  - content_depth         # Too shallow / too deep for the level
+  - content_relevance     # Real-world applicability of the material
+  - pacing                # Too fast / too slow / right speed
+  - exercises_quality     # Lab / practice quality and quantity
+  - assessment_fairness   # Quiz / exam perceived as fair or not
+  - instructor_engagement # Instructor energy, responsiveness, examples
+  - logistics             # Scheduling, platform access, room/tech issues
+  - peer_interaction      # Group work, discussion, networking value
+  - support_resources     # Docs, recordings, office hours availability
+  - other                 # Does not fit the taxonomy above
+
+system_prompt: |
+  You are a training-feedback analyst.  Your job is to classify learner
+  survey responses into a single theme and sentiment.
+
+  Theme labels (choose exactly one):
+  {{ theme_taxonomy | join(", ") }}
+
+  Sentiment values: positive | neutral | negative
+
+  Rules:
+  - Choose the theme that best captures the PRIMARY concern in the answer.
+  - If the answer is ambiguous, choose "other".
+  - Confidence is your subjective certainty (0.0–1.0).
+  - Respond ONLY with valid JSON — no extra prose.
+
+  Response schema:
+  {
+    "theme_label": "<label>",
+    "sentiment": "positive|neutral|negative",
+    "confidence": 0.00
+  }
+
+user_prompt: |
+  Course: {{ response.course_id }}
+  Question: {{ response.question_text }}
+  Answer: {{ response.answer_text | truncate(500) }}
+
+  Classify this response.
+
+# ── Rule-based path for structured answers ─────────────────────────────────
+
+rating_sentiment_map:
+  # Maps a 1–5 or 1–10 rating to sentiment without LLM.
+  # Normalised to 0–1 range before mapping.
+  thresholds:
+    positive: 0.70
+    neutral:  0.40
+    # below 0.40 → negative
+
+on_failure:
+  # If classification fails, leave theme_label NULL and record error in
+  # classified_at (NULL) so a re-run can pick it up.
+  propagate: false
+  audit: true

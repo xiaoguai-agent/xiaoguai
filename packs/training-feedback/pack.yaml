@@ -1,0 +1,112 @@
+---
+# Training Feedback Skill Pack — v0.1.0
+#
+# Synthesises learner feedback from LMS sources (Moodle, Canvas, Typeform,
+# SurveyMonkey, manual CSV) into structured insights for instructors and
+# programme owners.
+#
+# Pipeline:
+#   inbound/* → response-classifier → theme-aggregator
+#             → gap-identifier      → instructor-digest-writer
+#             → course-redesign-recommender
+#             → outputs/*
+#
+# Dependency map
+# ──────────────
+#   xiaoguai-llm            LLM backend — theme extraction, gap analysis,
+#                           digest + proposal generation
+#   xiaoguai-outcome-telemetry  Reads completion rates, assessment scores,
+#                               and time-on-task from the LMS data layer;
+#                               used by gap-identifier to separate delivery
+#                               issues from content gaps
+#
+# Feature flag: XIAOGUAI_TRAINING_FEEDBACK_ENABLED
+
+name: training-feedback
+version: "0.1.0"
+description: >
+  Multi-agent skill pack that ingests post-course learner feedback from LMS
+  platforms, classifies free-text responses into categorical themes and
+  sentiment, aggregates themes across cohorts, identifies gaps between
+  learning objectives and actual learner experience, and produces weekly
+  instructor digests and multi-cohort course-redesign proposals.
+
+# ── Runtime dependencies ─────────────────────────────────────────────────────
+
+depends:
+  # LLM backend — required for all five agents.
+  llm: required
+
+  # Outcome telemetry — provides completion rates, pass rates, and
+  # time-on-task metrics used by gap-identifier to distinguish missing
+  # content from delivery problems.
+  outcome-telemetry: required
+
+# ── Inbound sources ──────────────────────────────────────────────────────────
+
+sources:
+  - inbound/moodle-quiz-submission.yaml
+  - inbound/canvas-feedback-form.yaml
+  - inbound/typeform-post-course.yaml
+  - inbound/surveymonkey-event.yaml
+  - inbound/manual-csv-upload.yaml
+
+# ── Agent definitions ────────────────────────────────────────────────────────
+
+agents:
+  - agents/response-classifier.yaml
+  - agents/theme-aggregator.yaml
+  - agents/gap-identifier.yaml
+  - agents/instructor-digest-writer.yaml
+  - agents/course-redesign-recommender.yaml
+
+# ── Output connectors ────────────────────────────────────────────────────────
+
+outputs:
+  - outputs/instructor-email-digest.yaml
+  - outputs/lms-course-improvement-ticket.yaml
+  - outputs/lead-trainer-slack-channel.yaml
+  - outputs/quarterly-program-review-pdf-stub.yaml
+
+# ── Configuration keys ───────────────────────────────────────────────────────
+
+config:
+  digest:
+    # Cron schedule for the weekly instructor digest (Monday 07:00 local).
+    schedule: "0 7 * * 1"
+    top_n_wins: 3
+    top_n_issues: 3
+    top_n_quick_wins: 3
+
+  aggregation:
+    # Minimum number of responses before a theme is considered stable.
+    min_responses_per_theme: 3
+    # Cohort window for multi-cohort redesign analysis (in weeks).
+    cohort_lookback_weeks: 12
+
+  gap_identifier:
+    # Threshold: if objective-coverage ratio drops below this, flag as gap.
+    coverage_threshold: 0.60
+    # Minimum drop in outcome-telemetry pass rate to flag delivery issue.
+    pass_rate_drop_threshold: 0.15
+
+  llm:
+    classifier_model: ${TRAINING_CLASSIFIER_MODEL:-default}
+    aggregator_model: ${TRAINING_AGGREGATOR_MODEL:-default}
+    gap_model: ${TRAINING_GAP_MODEL:-default}
+    digest_model: ${TRAINING_DIGEST_MODEL:-default}
+    redesign_model: ${TRAINING_REDESIGN_MODEL:-default}
+    temperature: 0.2
+
+# ── Feature flag ─────────────────────────────────────────────────────────────
+
+feature_flag: XIAOGUAI_TRAINING_FEEDBACK_ENABLED
+
+# ── Deferred / out-of-scope ──────────────────────────────────────────────────
+#
+# - Google Forms inbound adapter
+# - Qualtrics inbound adapter
+# - Real PDF rendering for quarterly-program-review (currently a stub)
+# - Automatic Jira integration for lms-course-improvement-ticket
+#   (currently mocked; requires JIRA_API_TOKEN)
+# - Multilingual response classification (currently English only)

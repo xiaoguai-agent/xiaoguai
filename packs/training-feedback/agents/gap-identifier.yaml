@@ -1,0 +1,156 @@
+---
+# agents/gap-identifier.yaml
+#
+# Gap Identifier
+#
+# Input:  current course_themes + outcome-telemetry metrics for the course.
+# Output: rows in content_improvement_suggestions with gap_type set to
+#         either "missing_content" or "delivery_issue".
+#
+# This is the pack's analytical centrepiece: it separates two failure modes
+# that look similar in raw feedback but require different remediation paths.
+
+name: gap-identifier
+kind: worker
+description: >
+  Identifies mismatches between stated learning objectives and learner
+  experience, then classifies each gap as either missing_content or
+  delivery_issue.  Uses a two-signal approach: (1) thematic coverage —
+  does feedback mention the objective at all? and (2) outcome-telemetry —
+  does the pass rate / completion rate for the relevant module show a drop?
+  The combination of both signals determines gap_type; see gap_type_rules
+  below for the decision matrix.
+
+llm:
+  model: ${TRAINING_GAP_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 2048
+
+# ── Gap classification decision matrix ────────────────────────────────────────
+#
+# How gap_type is determined — this logic is enforced in the system prompt
+# and also validated programmatically before writing to the DB.
+#
+#   Thematic coverage of objective   Outcome-telemetry pass-rate drop   gap_type
+#   ──────────────────────────────   ──────────────────────────────────   ──────────────────
+#   LOW  (< coverage_threshold)      ANY                                  missing_content
+#   HIGH (>= coverage_threshold)     HIGH (>= pass_rate_drop_threshold)   delivery_issue
+#   HIGH (>= coverage_threshold)     LOW  (< pass_rate_drop_threshold)    (no gap — skip)
+#
+# Rationale:
+#   missing_content: learners do not mention the objective in feedback,
+#     meaning it was never salient in their experience — the topic was
+#     absent or so brief it left no impression.  Remedy: content authors
+#     add or expand material.
+#
+#   delivery_issue: learners DO mention the objective (coverage is high)
+#     but still perform poorly on associated assessments.  The content
+#     exists; the problem is in how it was taught — pacing, modality,
+#     examples, or instructor clarity.  Remedy: instructor coaching or
+#     session restructure, not new content.
+#
+# Edge cases:
+#   - If outcome-telemetry data is unavailable (pass_rate_before = NULL),
+#     the agent falls back to thematic-coverage-only classification and
+#     records evidence_summary = "telemetry unavailable; coverage-only".
+#   - If both signals point weakly in the same direction, the agent sets
+#     priority = "low" and flags for human review.
+
+gap_type_rules:
+  coverage_threshold: 0.60         # from pack.yaml config
+  pass_rate_drop_threshold: 0.15   # from pack.yaml config
+
+# ── Context steps ──────────────────────────────────────────────────────────────
+
+context_steps:
+  - id: current_themes
+    description: "Current course_themes for this course (is_current = true)"
+    tool: db_query
+    query: |
+      SELECT theme_label, category, sentiment_dist, response_count,
+             representative_quotes
+      FROM course_themes
+      WHERE course_id = :course_id
+        AND is_current = true
+      ORDER BY response_count DESC
+
+  - id: learning_objectives
+    description: "Learning objectives from outcome-telemetry for this course"
+    tool: outcome_telemetry_objectives
+    params:
+      course_id: "{{ course_id }}"
+
+  - id: telemetry_metrics
+    description: "Module pass rates and completion rates from outcome-telemetry"
+    tool: outcome_telemetry_metrics
+    params:
+      course_id: "{{ course_id }}"
+      cohort_ids: "{{ cohort_ids }}"
+      metrics:
+        - pass_rate
+        - completion_rate
+        - median_time_on_task_minutes
+
+system_prompt: |
+  You are a curriculum quality analyst.  Your job is to identify gaps
+  between the stated learning objectives of a course and what learners
+  actually experienced, then classify each gap.
+
+  Gap types:
+    missing_content — the objective topic is absent or negligible in learner
+      feedback (low coverage ratio), regardless of pass rate.  Remedy lies
+      with content authors.
+
+    delivery_issue  — the objective IS present in feedback (high coverage)
+      but the associated module shows a meaningful pass-rate drop.  The
+      content exists; delivery needs improvement.  Remedy lies with
+      instructors or session design.
+
+  Decision rules:
+  1. Compute coverage_ratio = (responses mentioning objective) / (total responses).
+  2. If coverage_ratio < {{ gap_type_rules.coverage_threshold }}: gap_type = missing_content.
+  3. Else if pass_rate_drop >= {{ gap_type_rules.pass_rate_drop_threshold }}: gap_type = delivery_issue.
+  4. Else: no actionable gap — omit from output.
+
+  evidence_summary must explain WHICH signals led to the classification:
+  quote the coverage_ratio and pass_rate_drop values explicitly.
+
+  Respond ONLY with valid JSON array.
+
+  Item schema:
+  {
+    "affected_objective": "...",
+    "gap_type": "missing_content|delivery_issue",
+    "suggestion_text": "...",
+    "evidence_summary": "coverage_ratio=0.32; pass_rate_drop=n/a (telemetry unavailable)",
+    "supporting_quotes": ["quote1", "quote2"],
+    "pass_rate_before": 0.82,
+    "pass_rate_after": 0.61,
+    "coverage_ratio": 0.32,
+    "priority": "high|medium|low"
+  }
+
+user_prompt: |
+  Course: {{ course_id }}
+  Cohorts analysed: {{ cohort_ids | join(", ") }}
+
+  ## Learning Objectives
+  {% for obj in context.learning_objectives %}
+  - {{ obj }}
+  {% endfor %}
+
+  ## Current Themes ({{ context.current_themes | length }} themes)
+  {% for t in context.current_themes %}
+  **{{ t.theme_label }}** ({{ t.category }}, n={{ t.response_count }}): {{ t.representative_quotes[:2] | join(" / ") }}
+  {% endfor %}
+
+  ## Outcome Telemetry
+  {% for m in context.telemetry_metrics %}
+  Module: {{ m.module_id }} — pass_rate_before={{ m.pass_rate_before }}, pass_rate_after={{ m.pass_rate_after }}, completion={{ m.completion_rate }}
+  {% endfor %}
+
+  Identify all gaps and classify each as missing_content or delivery_issue.
+
+on_failure:
+  propagate: false
+  audit: true

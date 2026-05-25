@@ -1,0 +1,73 @@
+---
+# inbound/surveymonkey-event.yaml
+#
+# SurveyMonkey inbound adapter.
+#
+# SurveyMonkey delivers response events via its Webhooks (v3 API).
+# The adapter receives the completion event, then fetches full answer
+# details via the SurveyMonkey REST API (responses endpoint).
+#
+# Mounting: POST /v1/training-feedback/inbound/surveymonkey/{route_id}
+# Auth:     Per-tenant bearer token; SurveyMonkey does not sign payloads
+#           in the basic tier — validate by comparing survey_id allowlist.
+
+source: surveymonkey
+route_prefix: /v1/training-feedback/inbound/surveymonkey
+
+normalize:
+  # SurveyMonkey access token for the Responses API.
+  api_token: ${SURVEYMONKEY_ACCESS_TOKEN}
+  api_base:  https://api.surveymonkey.com/v3
+
+  # Only process surveys whose IDs are in this allowlist.
+  # Prevents processing unrelated SurveyMonkey surveys on the same account.
+  survey_id_allowlist: ${SURVEYMONKEY_SURVEY_IDS}   # comma-separated IDs
+
+  field_map:
+    source_event_id:  object_id                     # SurveyMonkey response ID
+    submitted_at:     date_modified                  # webhook event time
+
+  # course_id, cohort_id, instructor_id are stored as custom variables
+  # in the SurveyMonkey survey ("Custom Variables" feature).
+  # Fetched from the full response via the API.
+  metadata_source: custom_variables
+  metadata_fields:
+    course_id:     course_id
+    cohort_id:     cohort_id
+    instructor_id: instructor_id
+    learner_id:    learner_id
+
+  # Full response fetch: GET /v3/surveys/{survey_id}/responses/{response_id}/details
+  answers_fetch:
+    enabled: true
+    endpoint: /surveys/{survey_id}/responses/{response_id}/details
+
+  # Answer extraction from SurveyMonkey response structure
+  question_path:       pages[*].questions[*]
+  question_id_field:   id
+  question_text_field: headings[0].heading
+  answer_type_rules:
+    open_ended:       free_text
+    single_choice:    multiple_choice
+    multiple_choice:  multiple_choice
+    rating:           rating
+    matrix:           ranking
+    numerical:        rating
+    _default:         free_text
+
+  answer_text_extractors:
+    open_ended:      answers[0].text
+    single_choice:   answers[0].choice_id    # resolved to label via choices[]
+    multiple_choice: answers[*].choice_id | labels | join(", ")
+    rating:          answers[0].row_id       # row ID maps to numeric rating
+
+sample_payload: |
+  {
+    "event_type": "response_completed",
+    "object_id": "sm-resp-7777",
+    "date_modified": "2026-05-22T11:00:00+00:00",
+    "resources": {
+      "survey_id": "sm-surv-111",
+      "response_id": "sm-resp-7777"
+    }
+  }

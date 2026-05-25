@@ -1,0 +1,91 @@
+---
+# outputs/quarterly-program-review-pdf-stub.yaml
+#
+# Quarterly Programme Review PDF Stub output connector.
+#
+# Assembles a quarterly review document from the trailing 12-week window
+# of course_themes, content_improvement_suggestions, and instructor_actions.
+# Renders the course-redesign-proposal template as Markdown and (when a
+# PDF renderer is configured) converts it to PDF.
+#
+# Status: PDF rendering is STUBBED — the Markdown source file is always
+# written.  Set PDF_RENDERER=wkhtmltopdf|weasyprint|puppeteer to enable
+# real PDF output.
+#
+# Triggered quarterly on the first Monday of each quarter, or on-demand
+# via the /v1/training-feedback/review/{course_id} endpoint.
+
+output: quarterly-program-review-pdf-stub
+
+# ── Document assembly ──────────────────────────────────────────────────────────
+
+assembly:
+  # Data window for the quarterly review.
+  lookback_weeks: 12
+
+  # Sections included in the quarterly document.
+  sections:
+    - id: executive_summary
+      title: "Executive Summary"
+      source: course-redesign-recommender   # re-runs recommender over the full quarter
+
+    - id: theme_trends
+      title: "Theme Trends (12 weeks)"
+      template: templates/learner-themes-board.md.j2
+      data_source: course_themes
+      filter: { is_current: false }         # include historical runs for trend view
+
+    - id: gap_analysis
+      title: "Gap Analysis"
+      data_source: content_improvement_suggestions
+      filter: { status: ["proposed", "under_review", "accepted"] }
+
+    - id: action_resolution
+      title: "Instructor Action Resolution Rate"
+      data_source: instructor_actions
+      compute: resolution_rate              # resolved / total × 100
+
+    - id: redesign_proposals
+      title: "Redesign Proposals"
+      template: templates/course-redesign-proposal.md.j2
+
+# ── Output paths ───────────────────────────────────────────────────────────────
+
+output_paths:
+  markdown: ${REVIEW_OUTPUT_DIR:-/tmp}/quarterly-review-{{ course_id }}-{{ quarter }}.md
+  pdf:      ${REVIEW_OUTPUT_DIR:-/tmp}/quarterly-review-{{ course_id }}-{{ quarter }}.pdf
+
+# ── PDF rendering (deferred) ───────────────────────────────────────────────────
+
+pdf:
+  renderer: ${PDF_RENDERER:-none}    # none | wkhtmltopdf | weasyprint | puppeteer
+  options:
+    page_size: A4
+    margin_top_mm: 20
+    margin_bottom_mm: 20
+    margin_left_mm: 25
+    margin_right_mm: 25
+
+  # When renderer = none, log a warning and return the Markdown path only.
+  on_renderer_missing: warn_and_skip
+
+# ── Distribution ──────────────────────────────────────────────────────────────
+
+distribution:
+  # Email the PDF (or Markdown stub) to the lead trainer list.
+  email:
+    enabled: ${QUARTERLY_EMAIL_ENABLED:-false}
+    to_addresses: ${QUARTERLY_REVIEW_RECIPIENTS}   # comma-separated
+    subject_template: >
+      Quarterly Training Review — {{ course_id }} {{ quarter }}
+    attach_pdf: true
+
+  # Upload to the LMS file repository (deferred).
+  lms_upload:
+    enabled: false
+
+# ── Deferred ──────────────────────────────────────────────────────────────────
+# - Real PDF rendering (wkhtmltopdf / weasyprint integration)
+# - LMS file repository upload (Moodle Files API / Canvas Files API)
+# - Slide deck export (PowerPoint stub from Markdown sections)
+# - Multi-course portfolio review (aggregate across course_ids)

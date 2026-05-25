@@ -1,0 +1,136 @@
+---
+# agents/course-redesign-recommender.yaml
+#
+# Course Redesign Recommender
+#
+# Input:  content_improvement_suggestions across cohort_lookback_weeks for
+#         a course (both missing_content and delivery_issue types).
+# Output: a structured redesign proposal written via
+#         templates/course-redesign-proposal.md.j2, sent to outputs/
+#         lms-course-improvement-ticket.yaml and
+#         outputs/quarterly-program-review-pdf-stub.yaml.
+#
+# Runs on-demand (triggered by a lead trainer or automatically when the
+# number of high-priority suggestions exceeds a threshold) and as part of
+# the quarterly programme review cycle.
+
+name: course-redesign-recommender
+kind: worker
+description: >
+  Analyses multi-cohort patterns in content_improvement_suggestions and
+  proposes concrete syllabus changes.  Groups suggestions by affected
+  learning objective, identifies recurring issues across cohorts
+  (min 2 cohorts before a pattern is promoted to a proposal item), and
+  ranks proposed changes by estimated learner impact.  Produces a
+  course-redesign-proposal document and an LMS improvement ticket stub.
+
+llm:
+  model: ${TRAINING_REDESIGN_MODEL:-default}
+  temperature: 0.3
+  max_tokens: 4096
+
+context_steps:
+  - id: suggestions
+    description: "All open/under_review suggestions for this course in the lookback window"
+    tool: db_query
+    query: |
+      SELECT
+        cis.affected_objective,
+        cis.gap_type,
+        cis.suggestion_text,
+        cis.evidence_summary,
+        cis.supporting_quotes,
+        cis.pass_rate_before,
+        cis.pass_rate_after,
+        cis.coverage_ratio,
+        cis.priority,
+        cis.cohort_ids,
+        COUNT(*) OVER (PARTITION BY cis.affected_objective) AS objective_hit_count
+      FROM content_improvement_suggestions cis
+      WHERE cis.course_id = :course_id
+        AND cis.status IN ('proposed', 'under_review')
+        AND cis.created_at >= now() - interval ':lookback_weeks weeks'
+      ORDER BY objective_hit_count DESC, cis.priority
+
+  - id: theme_trends
+    description: "Theme trend: response counts across aggregation runs"
+    tool: db_query
+    query: |
+      SELECT theme_label, category,
+             response_count,
+             aggregated_at
+      FROM course_themes
+      WHERE course_id = :course_id
+      ORDER BY aggregated_at DESC
+      LIMIT 100
+
+system_prompt: |
+  You are a senior curriculum designer.  Given multi-cohort improvement
+  suggestions, propose a structured syllabus redesign.
+
+  Rules:
+  - Only include an objective in the proposal if it appears in suggestions
+    from at least 2 distinct cohorts (objective_hit_count >= 2).
+  - Separate missing_content items (need new/expanded material) from
+    delivery_issue items (need instructional improvement) — they require
+    different owners.
+  - Each proposal item must include: the objective, the change, the owner
+    (content_author | instructor | both), estimated effort, and rationale.
+  - Rank items by (priority DESC, objective_hit_count DESC).
+
+  Respond ONLY with valid JSON.
+
+  Response schema:
+  {
+    "proposal_title": "...",
+    "course_id": "...",
+    "cohorts_analysed": ["..."],
+    "generated_at": "ISO-8601",
+    "executive_summary": "2-3 sentences",
+    "proposal_items": [
+      {
+        "rank": 1,
+        "affected_objective": "...",
+        "gap_type": "missing_content|delivery_issue",
+        "proposed_change": "...",
+        "owner": "content_author|instructor|both",
+        "estimated_effort": "low|medium|high",
+        "cohort_count": 3,
+        "rationale": "...",
+        "evidence_refs": ["suggestion_id:42", "theme:pacing"]
+      }
+    ],
+    "deferred_items": [
+      {
+        "affected_objective": "...",
+        "reason_deferred": "only 1 cohort reported; monitor next cycle"
+      }
+    ]
+  }
+
+user_prompt: |
+  Course: {{ course_id }}
+  Lookback: {{ lookback_weeks }} weeks
+  Cohorts in scope: {{ cohort_ids | join(", ") }}
+
+  ## Improvement Suggestions ({{ context.suggestions | length }} total)
+  {% for s in context.suggestions %}
+  [{{ s.gap_type }}] {{ s.affected_objective }} (hit_count={{ s.objective_hit_count }}, priority={{ s.priority }})
+  Suggestion: {{ s.suggestion_text }}
+  Evidence: {{ s.evidence_summary }}
+  Cohorts: {{ s.cohort_ids | join(", ") }}
+  {% if s.pass_rate_before %}Pass rate: {{ s.pass_rate_before }} → {{ s.pass_rate_after }}{% endif %}
+  {% endfor %}
+
+  ## Theme Trends
+  {% for t in context.theme_trends[:15] %}
+  {{ t.aggregated_at | date }}: {{ t.theme_label }} ({{ t.category }}, n={{ t.response_count }})
+  {% endfor %}
+
+  Generate the redesign proposal JSON now.
+
+template: templates/course-redesign-proposal.md.j2
+
+on_failure:
+  propagate: false
+  audit: true

@@ -1,0 +1,19 @@
+{# packs/training-feedback/templates/quote-callout-frame.md.j2
+   Reusable callout frame for embedding a representative learner quote
+   in any output document (digest, proposal, board, quarterly review).
+   Include via Jinja2 include or macro.
+
+   Expected variables:
+     quote        — verbatim learner text
+     theme_label  — theme the quote was classified under
+     sentiment    — positive | neutral | negative
+     course_id    — course identifier
+     cohort_id    — cohort identifier
+     anonymised   — boolean; if true, learner_id is omitted
+#}
+{% set sentiment_icon = {"positive": "✅", "neutral": "➡️", "negative": "⚠️"} %}
+
+> {{ quote | truncate(300) }}
+>
+> — Learner feedback · {{ course_id }} / {{ cohort_id }}
+> {{ sentiment_icon.get(sentiment, "") }} _{{ theme_label | replace("_", " ") | title }}_

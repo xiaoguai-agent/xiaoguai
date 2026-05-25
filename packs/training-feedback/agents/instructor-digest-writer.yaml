@@ -1,0 +1,124 @@
+---
+# agents/instructor-digest-writer.yaml
+#
+# Instructor Digest Writer
+#
+# Input:  current course_themes + instructor_actions (open items) for the
+#         cohort that just completed or for the rolling weekly window.
+# Output: a rendered instructor-weekly-digest (via templates/) written to
+#         outputs/instructor-email-digest.yaml and new instructor_actions rows.
+#
+# Runs on the digest schedule (default: Monday 07:00).
+
+name: instructor-digest-writer
+kind: worker
+description: >
+  Produces a concise weekly digest for the course instructor.  The digest
+  surfaces the top-N wins (positive themes), top-N issues (negative themes),
+  and top-N quick-win actions the instructor can take before the next session.
+  Quick-wins are constrained to actions the instructor can complete without
+  content authoring (e.g. adjust pacing, add an example, clarify an exercise
+  rubric) — items requiring content changes are routed to
+  content_improvement_suggestions instead.
+
+llm:
+  model: ${TRAINING_DIGEST_MODEL:-default}
+  temperature: 0.3
+  max_tokens: 2048
+
+context_steps:
+  - id: top_themes
+    description: "Current positive and negative themes sorted by response count"
+    tool: db_query
+    query: |
+      SELECT theme_label, category, sentiment_dist, response_count,
+             representative_quotes
+      FROM course_themes
+      WHERE course_id = :course_id
+        AND is_current = true
+      ORDER BY response_count DESC
+      LIMIT 20
+
+  - id: open_actions
+    description: "Open instructor_actions from previous digests"
+    tool: db_query
+    query: |
+      SELECT action_type, description, priority, created_at
+      FROM instructor_actions
+      WHERE course_id = :course_id
+        AND cohort_id = :cohort_id
+        AND status = 'open'
+      ORDER BY priority, created_at
+
+  - id: open_gaps
+    description: "High-priority delivery_issue gaps relevant to this instructor"
+    tool: db_query
+    query: |
+      SELECT affected_objective, suggestion_text, evidence_summary, priority
+      FROM content_improvement_suggestions
+      WHERE course_id = :course_id
+        AND gap_type = 'delivery_issue'
+        AND status IN ('proposed', 'under_review')
+      ORDER BY priority, created_at
+      LIMIT 10
+
+system_prompt: |
+  You are a training programme assistant writing a weekly digest for a course
+  instructor.  Be concise, concrete, and actionable.  The instructor is
+  busy — the digest must be scannable in under 2 minutes.
+
+  Output structure (JSON):
+  {
+    "wins": [
+      {"theme": "...", "insight": "1-sentence positive finding", "quote": "verbatim quote"}
+    ],
+    "issues": [
+      {"theme": "...", "insight": "1-sentence problem statement", "quote": "verbatim quote", "severity": "high|medium|low"}
+    ],
+    "quick_wins": [
+      {"action": "concrete next-session action", "rationale": "why this helps", "effort": "low|medium"}
+    ],
+    "carry_over_actions": [
+      {"description": "...", "age_days": 7}
+    ]
+  }
+
+  Constraints:
+  - wins: exactly {{ config.digest.top_n_wins }} items (fewer if data is sparse)
+  - issues: exactly {{ config.digest.top_n_issues }} items
+  - quick_wins: exactly {{ config.digest.top_n_quick_wins }} items
+  - quick_wins must be instructor-executable without content authoring
+  - If an open_gap is a delivery_issue, it MAY become a quick_win if it is
+    low-effort to address; otherwise leave it in issues.
+
+user_prompt: |
+  Course: {{ course_id }}
+  Cohort: {{ cohort_id }}
+  Instructor: {{ instructor_id }}
+  Week ending: {{ week_end_date }}
+
+  ## Current Themes
+  {% for t in context.top_themes %}
+  {{ t.theme_label }} ({{ t.category }}, n={{ t.response_count }}):
+    sentiment={{ t.sentiment_dist }}
+    quotes={{ t.representative_quotes[:2] | join(" | ") }}
+  {% endfor %}
+
+  ## Open Actions (from prior digests)
+  {% for a in context.open_actions %}
+  - [{{ a.priority }}] {{ a.description }} (open since {{ a.created_at | days_ago }})
+  {% endfor %}
+
+  ## Open Delivery Gaps
+  {% for g in context.open_gaps %}
+  - {{ g.affected_objective }}: {{ g.suggestion_text }} ({{ g.priority }})
+  {% endfor %}
+
+  Generate the digest JSON now.
+
+# Template used for the rendered email output.
+template: templates/instructor-weekly-digest.md.j2
+
+on_failure:
+  propagate: false
+  audit: true

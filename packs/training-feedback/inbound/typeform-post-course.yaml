@@ -1,0 +1,77 @@
+---
+# inbound/typeform-post-course.yaml
+#
+# Typeform post-course survey inbound adapter.
+#
+# Typeform delivers responses via its Webhooks feature
+# (https://www.typeform.com/developers/webhooks/).
+# Each webhook fires once per completed form response.
+#
+# Mounting: POST /v1/training-feedback/inbound/typeform/{route_id}
+# Auth:     Per-tenant bearer token + Typeform signature
+#           (Typeform-Signature SHA-256 HMAC verified if hmac_secret set)
+
+source: typeform
+route_prefix: /v1/training-feedback/inbound/typeform
+
+normalize:
+  hmac_secret: ${TYPEFORM_WEBHOOK_SECRET}
+
+  field_map:
+    source_event_id: event_id
+    # course_id and cohort_id are embedded as hidden fields in the Typeform.
+    # Configure the Typeform with hidden fields: course_id, cohort_id, instructor_id.
+    course_id:    form_response.hidden.course_id
+    cohort_id:    form_response.hidden.cohort_id
+    instructor_id: form_response.hidden.instructor_id
+    learner_id:   form_response.hidden.learner_id    # populated via Typeform prefill URL
+    submitted_at: form_response.submitted_at
+
+  # Typeform answers are in form_response.answers[*].
+  # Each answer references a definition (field) for its question text.
+  question_path:       form_response.answers
+  question_id_field:   field.id
+  question_text_source: form_response.definition.fields  # looked up by field.id
+  answer_type_rules:
+    long_text:          free_text
+    short_text:         free_text
+    opinion_scale:      rating
+    rating:             rating
+    multiple_choice:    multiple_choice
+    yes_no:             multiple_choice
+    ranking:            ranking
+    _default:           free_text
+
+  # answer_text extraction per Typeform answer type:
+  answer_text_extractors:
+    text:           answer.text
+    number:         answer.number | to_string
+    choice:         answer.choice.label
+    choices:        answer.choices.labels | join(", ")
+    boolean:        answer.boolean | to_string
+    number_opinion: answer.number | to_string
+
+sample_payload: |
+  {
+    "event_id": "tf-ev-001",
+    "event_type": "form_response",
+    "form_response": {
+      "submitted_at": "2026-05-21T09:15:00Z",
+      "hidden": {
+        "course_id": "course-303",
+        "cohort_id": "2026-Q2-batch-2",
+        "instructor_id": "inst-lee",
+        "learner_id": "lrn-hashed-001"
+      },
+      "definition": {
+        "fields": [
+          {"id": "fld-1", "title": "What was the most useful part of the course?", "type": "long_text"},
+          {"id": "fld-2", "title": "Rate the overall pacing (1–5)", "type": "opinion_scale"}
+        ]
+      },
+      "answers": [
+        {"field": {"id": "fld-1", "type": "long_text"}, "type": "text", "text": "The case studies were brilliant."},
+        {"field": {"id": "fld-2", "type": "opinion_scale"}, "type": "number", "number": 4}
+      ]
+    }
+  }

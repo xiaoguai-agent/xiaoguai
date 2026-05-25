@@ -1,0 +1,77 @@
+---
+# outputs/lms-course-improvement-ticket.yaml
+#
+# LMS Course Improvement Ticket output connector.
+#
+# Creates a structured improvement ticket in the configured issue tracker
+# (Jira by default; GitHub Issues as an alternative) when
+# course-redesign-recommender produces a proposal with accepted items.
+#
+# Each proposal item becomes a child ticket linked to a parent epic
+# (one epic per course per quarter).
+#
+# Status: Jira integration MOCKED — writes to content_improvement_suggestions
+# table (status → 'under_review') and logs ticket stub to audit.
+# Set JIRA_API_TOKEN to enable real Jira writes.
+
+output: lms-course-improvement-ticket
+
+# ── Jira integration (mocked by default) ──────────────────────────────────────
+
+jira:
+  enabled: ${JIRA_ENABLED:-false}
+  api_base:    ${JIRA_API_BASE}           # e.g. https://company.atlassian.net
+  api_token:   ${JIRA_API_TOKEN}
+  project_key: ${JIRA_PROJECT_KEY:-TRAIN}
+
+  # Parent epic: created once per (course_id, quarter) if it does not exist.
+  epic_summary_template: "Course Improvement — {{ course_id }} {{ quarter }}"
+  epic_labels:
+    - training-feedback
+    - course-improvement
+
+  # Child issue per proposal_item.
+  issue_type: Task
+  issue_summary_template: >
+    [{{ item.gap_type | replace('_', ' ') | title }}] {{ item.affected_objective | truncate(80) }}
+  issue_description_template: |
+    **Course:** {{ course_id }}
+    **Gap type:** {{ item.gap_type }}
+    **Owner:** {{ item.owner }}
+    **Estimated effort:** {{ item.estimated_effort }}
+    **Cohorts reporting:** {{ item.cohort_count }}
+
+    **Proposed change:**
+    {{ item.proposed_change }}
+
+    **Rationale:**
+    {{ item.rationale }}
+
+    **Evidence refs:** {{ item.evidence_refs | join(", ") }}
+  issue_priority_map:
+    high:   High
+    medium: Medium
+    low:    Low
+  issue_labels:
+    - "{{ item.gap_type }}"
+    - "training-feedback"
+
+# ── GitHub Issues fallback ─────────────────────────────────────────────────────
+
+github:
+  enabled: ${GITHUB_ISSUES_ENABLED:-false}
+  repo:      ${GITHUB_ISSUES_REPO}
+  token:     ${GITHUB_TOKEN}
+  label_map:
+    missing_content: content-gap
+    delivery_issue:  delivery-improvement
+
+# ── Mock behaviour (when jira.enabled = false) ────────────────────────────────
+#
+# Writes proposal items to content_improvement_suggestions with
+# status = 'under_review' and redesign_proposal_id set.
+# Logs a ticket stub to stdout / audit log for manual creation.
+
+mock:
+  log_stub: true
+  update_db_status: under_review
