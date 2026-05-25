@@ -1,0 +1,103 @@
+# Output connector — audit-trail-archive
+# ---------------------------------------------------------------------------
+# Writes a structured audit record for every significant vendor management
+# action:
+#   - Assessment completed or overridden
+#   - Renewal decision made (renew / renegotiate / replace / cancel)
+#   - Concentration alert generated or actioned
+#   - Incident recorded or resolved
+#   - HOTL approval granted or rejected
+#
+# Audit records are append-only (INSERT only, never UPDATE/DELETE) and
+# are written to the xiaoguai platform's central audit_trail table using
+# the outcome-telemetry feature.
+# ---------------------------------------------------------------------------
+
+name: audit-trail-archive
+version: "1.0.0"
+description: >
+  Append-only audit trail for all vendor management decisions and agent
+  actions. Written via outcome-telemetry to the platform audit_trail
+  table. Supports export to S3/GCS for long-term retention.
+
+kind: audit
+
+# Platform audit_trail table (provided by outcome-telemetry feature)
+target: platform_audit_trail
+
+# One record schema per auditable event
+event_mappings:
+
+  assessment_completed:
+    action: "vendor_assessment_completed"
+    entity_type: "vendor"
+    entity_id: "{{ vendor_id }}"
+    actor: "{{ assessed_by | default('risk-assessor-agent') }}"
+    details:
+      vendor_name:        "{{ vendor_name }}"
+      risk_score_before:  "{{ prior_risk_score }}"
+      risk_score_after:   "{{ computed_risk_score }}"
+      assessment_id:      "{{ assessment_id }}"
+
+  renewal_decision_made:
+    action: "vendor_renewal_decision"
+    entity_type: "vendor_renewal"
+    entity_id: "{{ renewal_id }}"
+    actor: "{{ decided_by | default('renewal-decision-recommender-agent') }}"
+    details:
+      vendor_name:    "{{ vendor_name }}"
+      decision:       "{{ decision }}"
+      contract_ref:   "{{ contract_ref }}"
+      renewal_date:   "{{ renewal_date }}"
+      hotl_required:  "{{ decision in ['replace', 'cancel'] }}"
+
+  concentration_alert_generated:
+    action: "vendor_concentration_alert"
+    entity_type: "concentration_metric"
+    entity_id: "{{ category }}:{{ vendor_id }}"
+    actor: "concentration-analyzer-agent"
+    details:
+      category:           "{{ category }}"
+      vendor_name:        "{{ vendor_name }}"
+      concentration_pct:  "{{ concentration_pct }}"
+      threshold_pct:      "{{ threshold_pct }}"
+      severity:           "{{ severity }}"
+
+  incident_recorded:
+    action: "vendor_incident_recorded"
+    entity_type: "incident"
+    entity_id: "{{ incident_id }}"
+    actor: "incident-impact-evaluator-agent"
+    details:
+      vendor_name:        "{{ vendor_name }}"
+      severity:           "{{ severity }}"
+      blast_radius_score: "{{ blast_radius_score }}"
+      impacted_systems:   "{{ impacted_systems | tojson }}"
+
+  hotl_approved:
+    action: "hotl_approval_granted"
+    entity_type: "{{ entity_type }}"
+    entity_id: "{{ entity_id }}"
+    actor: "{{ approver_email }}"
+    details:
+      decision: "{{ decision }}"
+      pack:     "vendor-management"
+
+  hotl_rejected:
+    action: "hotl_approval_rejected"
+    entity_type: "{{ entity_type }}"
+    entity_id: "{{ entity_id }}"
+    actor: "{{ approver_email }}"
+    details:
+      decision:       "{{ decision }}"
+      rejection_note: "{{ rejection_note | default('') }}"
+      pack:           "vendor-management"
+
+# Long-term export (optional; configure S3/GCS bucket in pack settings)
+export:
+  enabled_env: "VENDOR_MGMT_AUDIT_EXPORT_ENABLED"
+  destination_env: "VENDOR_MGMT_AUDIT_EXPORT_BUCKET"  # s3://... or gs://...
+  format: jsonl
+  retention_days: 2555   # 7 years (SOC2 / ISO27001 typical requirement)
+  schedule:
+    cron: "0 2 * * *"    # nightly export at 02:00

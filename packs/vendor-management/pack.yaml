@@ -1,0 +1,86 @@
+# Vendor Management Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# Tracks third-party vendor risk, monitors contract renewals, flags
+# spend concentration per Gartner-style category, and evaluates the blast
+# radius of vendor-side outages on internal systems.
+#
+# Install:   xiaoguai pack install packs/vendor-management/
+# Requires:  xiaoguai >= v1.3.1 (features: watch, llm, outcome-telemetry, hotl)
+# ---------------------------------------------------------------------------
+
+name: vendor-management
+version: "1.0.0"
+description: >
+  Monitors third-party vendor risk through continuous watch of renewal
+  windows, annual assessment recertification, and per-category spend
+  concentration. LLM agents compile risk scores (0-100), recommend
+  renew/renegotiate/replace/cancel decisions, and evaluate incident blast
+  radius. Cancel and replace decisions are HOTL-gated; renewal and
+  renegotiate recommendations are advisory only.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - llm               # LLM backend for all four agents
+    - outcome-telemetry # records assessment + decision outcomes
+    - watch             # WatchSpec + WatchEvent bus (renewal / assessment / concentration)
+    - hotl              # Human-on-the-Loop gate for cancel/replace decisions
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_vendor_state.sql
+
+# --------------------------------------------------------------------------
+# Watch specs (declarative; registered into the watch registry on load)
+# --------------------------------------------------------------------------
+watches:
+  - path: watches/renewal-window-approaching.yaml
+  - path: watches/assessment-overdue.yaml
+  - path: watches/concentration-threshold-breached.yaml
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/risk-assessor.yaml
+  - path: agents/renewal-decision-recommender.yaml
+  - path: agents/concentration-analyzer.yaml
+  - path: agents/incident-impact-evaluator.yaml
+
+# --------------------------------------------------------------------------
+# Inbound event sources (webhook adapters + poll connectors)
+# --------------------------------------------------------------------------
+sources:
+  - inbound/onetrust-assessment-event.yaml
+  - inbound/ironclad-renewal-trigger.yaml
+  - inbound/status-page-monitor.yaml
+  - inbound/erp-spend-event.yaml
+
+# --------------------------------------------------------------------------
+# Output connectors
+# --------------------------------------------------------------------------
+outputs:
+  - outputs/procurement-slack-channel.yaml
+  - outputs/jira-vendor-review-ticket.yaml
+  - outputs/exec-quarterly-vendor-review.yaml
+  - outputs/audit-trail-archive.yaml
+
+# --------------------------------------------------------------------------
+# Schema namespace
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "vm_"
+  namespace: "vendor_management"
+
+# --------------------------------------------------------------------------
+# Feature flag (gates /v1/vendor-management route family)
+# --------------------------------------------------------------------------
+feature_flag: XIAOGUAI_VENDOR_MGMT_ENABLED

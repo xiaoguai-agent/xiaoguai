@@ -1,0 +1,46 @@
+# Inbound source — OneTrust assessment-completed event
+# ---------------------------------------------------------------------------
+# Receives a webhook from OneTrust when a vendor's privacy / security
+# assessment questionnaire has been completed by the vendor.  Normalises
+# the OneTrust payload to the internal vendor.onetrust_assessment_completed
+# event schema and forwards it to the risk-assessor agent.
+# ---------------------------------------------------------------------------
+
+name: onetrust-assessment-event
+version: "1.0.0"
+description: >
+  Webhook adapter for OneTrust assessment-completed events.  Validates
+  the HMAC-SHA256 signature, extracts questionnaire responses and evidence
+  links, and emits a vendor.onetrust_assessment_completed event.
+
+kind: webhook
+auth:
+  method: hmac_sha256
+  header: "X-OneTrust-Signature"
+  secret_env: "ONETRUST_WEBHOOK_SECRET"
+
+endpoint: /inbound/vendor-management/onetrust
+
+# OneTrust sends application/json
+content_type: application/json
+
+# Normalisation mapping from OneTrust schema to internal event fields
+field_mapping:
+  tenant_id:           "$.metadata.tenantId"
+  vendor_id:           "$.assessment.vendorId"       # must match vendors.id
+  vendor_name:         "$.assessment.vendorName"
+  questionnaire_data:  "$.assessment.responses"      # forwarded as-is (JSONB)
+  evidence:            "$.assessment.evidence"       # SOC2 URLs, ISO certs, etc.
+  completed_at:        "$.assessment.completedAt"
+
+event:
+  kind: vendor.onetrust_assessment_completed
+
+downstream:
+  agents:
+    - risk-assessor
+
+# Drop duplicate webhook deliveries (OneTrust at-least-once delivery)
+dedup:
+  key: "$.assessment.assessmentId"
+  ttl_seconds: 3600

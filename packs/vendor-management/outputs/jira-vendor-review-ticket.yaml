@@ -1,0 +1,82 @@
+# Output connector — jira-vendor-review-ticket
+# ---------------------------------------------------------------------------
+# Creates or updates Jira tickets for vendor review actions:
+#   - Overdue assessment → ticket in the compliance board
+#   - Renewal decision needed → ticket in the procurement board
+#   - Concentration breach → ticket in the risk board
+# One ticket per (vendor_id, event_kind); subsequent events update the
+# existing open ticket rather than creating duplicates.
+# ---------------------------------------------------------------------------
+
+name: jira-vendor-review-ticket
+version: "1.0.0"
+description: >
+  Creates or updates Jira tickets for vendor review workflows (assessment
+  overdue, renewal decision, concentration breach). Deduplicates against
+  open tickets by vendor_id + event label.
+
+kind: jira
+
+base_url_env: "JIRA_BASE_URL"
+api_token_env: "JIRA_API_TOKEN"
+user_email_env: "JIRA_USER_EMAIL"
+
+ticket_templates:
+
+  vendor.assessment_overdue:
+    project_key_env: "JIRA_COMPLIANCE_PROJECT_KEY"
+    issue_type: "Task"
+    summary: "[Vendor Risk] Annual assessment overdue — {{ vendor_name }}"
+    description: |
+      The annual third-party risk assessment for *{{ vendor_name }}* is overdue.
+
+      - Category: {{ category }}
+      - Tier: {{ tier }}
+      - Last assessed: {{ last_assessed_at | default('never') }}
+      - Annual spend: ${{ annual_spend_usd | format_currency }}
+
+      Please complete the assessment in the admin UI:
+      {{ admin_ui_url }}/vendor-management/assessments/{{ vendor_id }}
+    labels:
+      - vendor-risk
+      - assessment-overdue
+    priority: "{{ 'High' if tier in ['strategic', 'preferred'] else 'Medium' }}"
+    dedup_label: "vm-assessment-{{ vendor_id }}"
+
+  vendor.renewal_window_approaching:
+    project_key_env: "JIRA_PROCUREMENT_PROJECT_KEY"
+    issue_type: "Task"
+    summary: "[Vendor Renewal] {{ vendor_name }} — {{ days_until_renewal }} days"
+    description: |
+      Contract renewal decision required for *{{ vendor_name }}*.
+
+      - Renewal date: {{ renewal_date }}
+      - Contract value: ${{ contract_value_usd | format_currency }}
+      - Risk score: {{ risk_score | default('not assessed') }}
+      - Recommendation: {{ recommendation | default('pending agent analysis') }}
+
+      Review and approve in the admin UI:
+      {{ admin_ui_url }}/vendor-management/renewals/{{ renewal_id }}
+    labels:
+      - vendor-renewal
+    priority: "{{ 'Critical' if days_until_renewal <= 14 else ('High' if days_until_renewal <= 30 else 'Medium') }}"
+    dedup_label: "vm-renewal-{{ renewal_id }}"
+
+  vendor.concentration_threshold_breached:
+    project_key_env: "JIRA_RISK_PROJECT_KEY"
+    issue_type: "Task"
+    summary: "[Concentration Risk] {{ category }} — {{ vendor_name }} at {{ concentration_pct }}%"
+    description: |
+      Spend concentration threshold breached in category *{{ category }}*.
+
+      - Vendor: {{ vendor_name }}
+      - Concentration: {{ concentration_pct }}% (threshold {{ threshold_pct }}%)
+      - Overage: +{{ overage_pct | round(1) }}%
+      - Peer vendors in category: {{ peer_vendor_count }}
+
+      View heatmap:
+      {{ admin_ui_url }}/vendor-management/concentration/{{ category }}
+    labels:
+      - concentration-risk
+    priority: "{{ 'Critical' if overage_pct >= 25 else ('High' if overage_pct >= 10 else 'Medium') }}"
+    dedup_label: "vm-concentration-{{ category }}-{{ vendor_id }}"

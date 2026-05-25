@@ -1,0 +1,105 @@
+# Agent definition — incident-impact-evaluator
+# ---------------------------------------------------------------------------
+# Triggered when the status-page-monitor detects a vendor outage (or an
+# operator files a manual incident).  Uses the vendor's integration_map
+# (a JSON array of internal system names) to compute:
+#   - which internal systems are affected
+#   - which teams own those systems
+#   - an estimated blast-radius score 0-100
+#   - a human-readable impact narrative
+#
+# Writes to incident_log and fires alerts to procurement-slack-channel.
+# No autonomous external actions — purely observational and advisory.
+# ---------------------------------------------------------------------------
+
+name: incident-impact-evaluator
+version: "1.0.0"
+description: >
+  When a vendor-side outage is detected, computes blast radius against
+  the vendor's integration_map to identify impacted internal systems and
+  teams. Writes severity + impact narrative to incident_log and sends
+  a Slack alert. Purely observational — no HOTL gate required.
+
+triggers:
+  - event: vendor.status_page_outage
+    source: status-page-monitor
+
+system_prompt: |
+  You are a vendor-incident impact analyst. When a vendor reports an outage,
+  you must evaluate the blast radius on internal systems.
+
+  Blast radius scoring (0-100, higher = worse):
+    - 0-20:  Peripheral tooling; no customer-facing impact expected.
+    - 21-50: Internal workflow disruption; engineering or ops teams affected.
+    - 51-80: Core platform dependency; potential customer-facing degradation.
+    - 81-100: Critical path; active customer impact or revenue risk.
+
+  Rules:
+  - Use only the integration_map from the vendor record to identify affected
+    systems.  Do not hallucinate system names.
+  - If integration_map is empty, score = 10 and note "no integration data".
+  - For each impacted system, state: system name, owning team (if available),
+    and whether it is customer-facing.
+  - Keep the impact narrative under 250 words.
+  - Output structured JSON matching the save_incident tool schema.
+
+tools:
+  - name: get_vendor_with_integration_map
+    description: >
+      Fetch vendor record including the JSON integration_map array of
+      internal system names this vendor's services feed.
+    kind: sql
+    query: |
+      SELECT id, name, category, tier, risk_score, annual_spend_usd,
+             integration_map, status
+      FROM vendors
+      WHERE tenant_id = '{tenant_id}'
+        AND id = '{vendor_id}'
+
+  - name: get_open_incidents
+    description: >
+      Check for any already-open incident for this vendor to avoid
+      creating duplicate incident records.
+    kind: sql
+    query: |
+      SELECT id, title, severity, detected_at
+      FROM incident_log
+      WHERE tenant_id = '{tenant_id}'
+        AND vendor_id = '{vendor_id}'
+        AND resolved_at IS NULL
+      ORDER BY detected_at DESC
+      LIMIT 3
+
+  - name: save_incident
+    description: >
+      Insert a new incident record or update an existing open one.
+      Returns the incident id for Slack alert attachment.
+    kind: sql
+    query: |
+      INSERT INTO incident_log
+          (tenant_id, vendor_id, source, title, severity,
+           impacted_systems, blast_radius_score, impact_narrative,
+           detected_at, status_page_url)
+      VALUES
+          ('{tenant_id}', '{vendor_id}', '{source}', '{title}',
+           '{severity}', '{impacted_systems}'::jsonb,
+           {blast_radius_score}, '{impact_narrative}',
+           '{detected_at}', '{status_page_url}')
+      ON CONFLICT DO NOTHING
+      RETURNING id
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    save_incident: advisory
+  # No approval gate — incident recording is non-destructive.
+
+outcome_telemetry:
+  record_on:
+    - incident_recorded
+    - incident_resolved
+  feedback_table: incident_log
+
+rate_limits:
+  per_vendor_per_hour: 4    # status pages can be noisy during degraded events
+  per_tenant_per_hour: 40
