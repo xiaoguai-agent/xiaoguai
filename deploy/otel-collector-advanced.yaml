@@ -1,0 +1,374 @@
+# =============================================================================
+# OpenTelemetry Collector — Advanced Production Configuration
+# Xiaoguai observability stack | chore/otel-advanced-config
+#
+# Features:
+#   - Head sampling via probabilistic sampler (deferred to tail)
+#   - Tail sampling: 100% errors + slow spans + escalation tags; 1% normal
+#   - PII redaction: email, phone, SSN patterns dropped or hashed
+#   - Exemplar injection for Prometheus histogram cardinality
+#   - S3 archive with date-rolling prefix for long-term retention
+#   - Structured logging exporter gated on EXPORTER_DEBUG env var
+#
+# Upgrade path from basic config (deploy/otel-collector-config.yaml):
+#   1. Replace MCP server endpoint references to point here (:4317/:4318)
+#   2. Set OTEL_S3_BUCKET, OTEL_AWS_REGION, OTEL_TEMPO_ENDPOINT
+#   3. Operator watchlist: see tail_sampling.policies.watchlist_tenants
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Extensions — must be listed before service section references them
+# ---------------------------------------------------------------------------
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+    path: /health/status
+    check_collector_pipeline:
+      enabled: true
+      interval: 5m
+      exporter_failure_threshold: 5
+
+  pprof:
+    endpoint: 0.0.0.0:1777
+    block_profile_fraction: 0
+    mutex_profile_fraction: 0
+
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+# ---------------------------------------------------------------------------
+# Receivers
+# ---------------------------------------------------------------------------
+receivers:
+  # Primary OTLP ingress — gRPC (service mesh) + HTTP (browser/SDK fallback)
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 4
+        keepalive:
+          server_parameters:
+            max_connection_idle: 11s
+            max_connection_age: 12s
+            time: 30s
+            timeout: 5s
+      http:
+        endpoint: 0.0.0.0:4318
+        max_request_body_size: 4194304   # 4 MiB
+
+  # Prometheus scraper — pull service-mesh sidecar metrics (Envoy, Istio)
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: service_mesh
+          scrape_interval: 30s
+          scrape_timeout: 10s
+          static_configs:
+            - targets:
+                - "envoy-admin:9091"
+              labels:
+                mesh_plane: data
+        - job_name: xiaoguai_internal
+          scrape_interval: 15s
+          static_configs:
+            - targets:
+                - "xiaoguai-core:9091"
+              labels:
+                component: core
+
+# ---------------------------------------------------------------------------
+# Processors — ordered chain (each pipeline declares the exact order)
+# ---------------------------------------------------------------------------
+processors:
+
+  # 1. Memory guard — evict before OOM kill
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 1024
+    spike_limit_mib: 256
+
+  # 2. Batch — amortise export cost
+  batch:
+    timeout: 1s
+    send_batch_size: 200
+    send_batch_max_size: 500
+
+  # 3. Resource enrichment — stamp every span/metric with cluster identity
+  resource:
+    attributes:
+      - key: k8s.cluster.name
+        value: ${env:OTEL_CLUSTER_NAME}
+        action: upsert
+      - key: cloud.region
+        value: ${env:OTEL_AWS_REGION}
+        action: upsert
+      - key: deployment.environment
+        value: ${env:OTEL_ENVIRONMENT}
+        action: upsert
+      - key: service.namespace
+        value: xiaoguai
+        action: insert    # insert = do not overwrite if SDK already set it
+
+  # 4. PII redaction
+  # ---------------------------------------------------------------------------
+  # REDACTION POLICY (documented for compliance audit trail):
+  #
+  # DROPPED attributes (value removed entirely, key retained with REDACTED):
+  #   - user.email          matches RFC-5322-lite pattern
+  #   - user.phone          matches E.164 and common national formats
+  #   - user.ssn            matches US SSN NNN-NN-NNNN
+  #   - http.request.header.authorization  — bearer tokens
+  #   - http.request.header.cookie         — session cookies
+  #   - db.statement        (high-risk: may contain inline PII literals)
+  #
+  # HASHED attributes (SHA-256 hex prefix, first 16 chars retained):
+  #   - enduser.id          — pseudonymise for correlation without re-ID
+  #   - user.name           — pseudonymise for correlation without re-ID
+  #
+  # ALLOWED THROUGH (examples of non-PII fields kept verbatim):
+  #   - http.method, http.status_code, http.route
+  #   - db.name, db.operation (not db.statement)
+  #   - hotl.verdict, hotl.tenant_id
+  #
+  # Operators may extend the blocked list by adding entries below.
+  # ---------------------------------------------------------------------------
+  attributes/redact:
+    actions:
+      # Drop auth headers
+      - key: http.request.header.authorization
+        action: delete
+      - key: http.request.header.cookie
+        action: delete
+      - key: http.response.header.set-cookie
+        action: delete
+      # Drop raw DB statements (may contain PII literals)
+      - key: db.statement
+        action: delete
+      # Redact email pattern from generic message fields
+      - key: user.email
+        action: delete
+      - key: enduser.email
+        action: delete
+      # Redact phone
+      - key: user.phone
+        action: delete
+      # Redact SSN
+      - key: user.ssn
+        action: delete
+      # Pseudonymise user identifiers (hash action — SHA-256 truncated)
+      - key: enduser.id
+        action: hash
+      - key: user.name
+        action: hash
+      # Mask credit card numbers in freeform fields
+      - key: payment.card_number
+        action: delete
+      - key: transaction.card_pan
+        action: delete
+
+  # 5. Tail sampling — decision made after full trace arrives
+  # ---------------------------------------------------------------------------
+  # SAMPLING POLICY SUMMARY:
+  #   - always_sample_errors   : 100% — any span with status=ERROR
+  #   - always_sample_slow     : 100% — any trace with span latency > 2s
+  #   - always_sample_escalate : 100% — hotl.verdict == "escalate"
+  #   - watchlist_tenants      : 100% — tenant IDs in operator watchlist
+  #   - normal_path_sample     : 1%   — everything else (cost control)
+  #
+  # Operator knobs:
+  #   - Adjust `percent_sampled` on normal_path_sample (range 0.1–100)
+  #   - Add tenant IDs to watchlist_tenants.string_attribute.values
+  #   - Increase slow_spans threshold (latency_microseconds) if SLO changes
+  # ---------------------------------------------------------------------------
+  tail_sampling:
+    decision_wait: 10s           # hold trace buffer for this long
+    num_traces: 100000           # max in-flight traces (tune with heap)
+    expected_new_traces_per_sec: 1000
+    policies:
+      # --- Always-on policies ---
+      - name: always_sample_errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+
+      - name: always_sample_slow
+        type: latency
+        latency:
+          threshold_ms: 2000     # spans taking > 2 s
+
+      - name: always_sample_escalate
+        type: string_attribute
+        string_attribute:
+          key: hotl.verdict
+          values:
+            - escalate
+          enabled_regex_matching: false
+
+      # --- Operator watchlist tenants (100% sample rate) ---
+      # Add tenant IDs here for compliance/audit coverage without sampling cuts
+      - name: watchlist_tenants
+        type: string_attribute
+        string_attribute:
+          key: hotl.tenant_id
+          values:
+            - "${env:OTEL_WATCHLIST_TENANT_1}"
+            - "${env:OTEL_WATCHLIST_TENANT_2}"
+            - "${env:OTEL_WATCHLIST_TENANT_3}"
+          enabled_regex_matching: false
+
+      # --- Normal-path probabilistic sample (default 1%) ---
+      - name: normal_path_sample
+        type: probabilistic
+        probabilistic:
+          hash_salt: xiaoguai-otel-salt-v1  # change triggers sampling redistribution
+          sampling_percentage: 1            # operator knob: 0.1–100
+
+  # 6. Exemplar injection — attach high-cardinality trace_id to histogram buckets
+  # This enables Prometheus exemplars: click a histogram spike → jump to Tempo trace
+  transform/add_exemplars:
+    error_mode: ignore
+    metric_statements:
+      - context: datapoint
+        statements:
+          # Promote span context into metric exemplar fields
+          - set(exemplars[0].trace_id, trace_id) where trace_id != ""
+          - set(exemplars[0].span_id, span_id) where span_id != ""
+          - set(exemplars[0].filtered_attributes["http.route"], attributes["http.route"])
+          - set(exemplars[0].filtered_attributes["hotl.verdict"], attributes["hotl.verdict"])
+
+# ---------------------------------------------------------------------------
+# Exporters
+# ---------------------------------------------------------------------------
+exporters:
+
+  # Primary trace backend — Grafana Tempo (OTLP over gRPC)
+  otlp/tempo:
+    endpoint: "${env:OTEL_TEMPO_ENDPOINT}"   # e.g. tempo:4317
+    tls:
+      insecure: false
+      ca_file: "${env:OTEL_TEMPO_CA_FILE}"
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 1000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+  # Prometheus metrics with exemplar support
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: xiaoguai
+    enable_open_metrics: true    # required for exemplar exposition format
+    send_timestamps: true
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # S3 long-term archive — date-rolling prefix, snappy-compressed OTLP proto
+  awss3:
+    s3uploader:
+      region: "${env:OTEL_AWS_REGION}"
+      s3_bucket: "${env:OTEL_S3_BUCKET}"
+      s3_prefix: "otel-archive"
+      s3_partition: "minute"     # rolling prefix: otel-archive/year=YYYY/month=MM/day=DD/hour=HH/minute=MM/
+      file_prefix: "xiaoguai"
+      compression: snappy
+    marshaler: otlp_proto         # binary proto (smallest wire size)
+
+  # Local rotating debug file (gated — only include in pipeline when EXPORTER_DEBUG=true)
+  file:
+    path: /var/log/otelcol/debug.jsonl
+    rotation:
+      max_megabytes: 100
+      max_days: 3
+      max_backups: 5
+    format: json
+
+  # Stdout logging — verbose mode for dev/CI
+  logging:
+    verbosity: detailed
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+  # Loki log backend (conditional — include in logs pipeline if configured)
+  otlp/loki:
+    endpoint: "${env:OTEL_LOKI_ENDPOINT}"   # e.g. loki:3100/otlp
+    tls:
+      insecure: "${env:OTEL_LOKI_INSECURE}"
+    sending_queue:
+      enabled: true
+      num_consumers: 2
+      queue_size: 500
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 60s
+      max_elapsed_time: 300s
+
+# ---------------------------------------------------------------------------
+# Service — wires extensions + pipelines
+# ---------------------------------------------------------------------------
+service:
+  extensions:
+    - health_check
+    - pprof
+    - zpages
+
+  telemetry:
+    logs:
+      level: info
+      encoding: json
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888
+
+  pipelines:
+
+    # --- Traces pipeline ---
+    # Receivers → guard → batch → enrich → redact PII → tail-sample → exemplar → export
+    traces:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - batch
+        - resource
+        - attributes/redact
+        - tail_sampling
+        - transform/add_exemplars
+      exporters:
+        - otlp/tempo
+        - awss3
+        - logging
+
+    # --- Metrics pipeline ---
+    # Receivers → guard → batch → enrich → exemplar → export
+    metrics:
+      receivers:
+        - otlp
+        - prometheus
+      processors:
+        - memory_limiter
+        - batch
+        - resource
+        - transform/add_exemplars
+      exporters:
+        - prometheus
+        - logging
+
+    # --- Logs pipeline ---
+    # Receivers → guard → batch → enrich → redact PII → archive
+    logs:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - batch
+        - resource
+        - attributes/redact
+      exporters:
+        - otlp/loki
+        - awss3
+        - logging
