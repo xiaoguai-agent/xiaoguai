@@ -1,0 +1,52 @@
+# packs/facilities-management/inbound/fexa-cmms-webhook.yaml
+#
+# Fexa CMMS webhook inbound source.
+#
+# Fexa posts JSON to: POST /v1/facilities/inbound/fexa
+# Auth: Bearer token in Authorization header (FEXA_API_TOKEN env var).
+#
+# Fexa is common in multi-tenant commercial real estate; this source
+# handles both tenant-submitted requests and PM work orders generated
+# by Fexa's built-in PM scheduler.
+
+name: fexa-cmms-webhook
+kind: webhook
+endpoint: /v1/facilities/inbound/fexa
+
+auth:
+  method: bearer
+  header: Authorization
+  token_env: FEXA_API_TOKEN
+
+filter:
+  event_types:
+    - ServiceRequest.Created
+    - ServiceRequest.Updated
+    - PreventiveMaintenance.Due
+
+field_mapping:
+  source:          '"fexa"'
+  external_id:     "$.serviceRequestId"
+  building:        "$.property.name"
+  floor:           "$.location.floor"
+  room:            "$.location.suite"
+  title:           "$.title"
+  description:     "$.description"
+  requestor_name:  "$.submittedBy.name"
+  requestor_email: "$.submittedBy.email"
+  requestor_phone: "$.submittedBy.phone"
+  priority_raw:    "$.urgency"          # "emergency" | "urgent" | "routine" | "planned"
+  # PM orders carry a target completion date from Fexa's PM engine.
+  pm_due_date:     "$.preventiveMaintenance.targetDate"
+
+priority_map:
+  emergency: p1
+  urgent:    p2
+  routine:   p3
+  planned:   p3
+
+next_agent: agents/work-order-triager.yaml
+
+dedup:
+  key: "fexa:{{ external_id }}"
+  on_duplicate: update_status_only

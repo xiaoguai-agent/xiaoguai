@@ -1,0 +1,78 @@
+# packs/facilities-management/inbound/manual-tenant-form.yaml
+#
+# Manual tenant / employee submission form.
+#
+# Accepts POST requests from a web form or internal portal at:
+#   POST /v1/facilities/inbound/form
+#
+# Auth: session cookie or API key (for service integrations like ServiceNow).
+# Rate-limited to 10 submissions per user per hour to prevent spam.
+#
+# The form is the catch-all for issues not covered by CMMS integration:
+# ad-hoc space requests, tenant complaints, after-hours contacts.
+
+name: manual-tenant-form
+kind: http_form
+endpoint: /v1/facilities/inbound/form
+
+auth:
+  method: session_or_api_key
+  api_key_header: X-Facilities-API-Key
+  api_key_env:    FACILITIES_FORM_API_KEY
+
+rate_limit:
+  per_user_per_hour: 10
+
+# Expected form fields (all strings; no file uploads in v0.1).
+fields:
+  required:
+    - building          # building name (validated against known buildings list)
+    - title             # short description ≤ 120 chars
+    - description       # full details ≤ 2000 chars
+    - requestor_email   # validated as email address
+  optional:
+    - floor
+    - room
+    - requestor_name
+    - requestor_phone
+    - preferred_time    # requestor's preferred visit window (free text)
+
+validation:
+  building:
+    # Validated against buildings stored in a config list (env var or DB table).
+    lookup: known_buildings
+    error_message: "Building '{{ value }}' not recognised. Please contact facilities@company.com."
+  requestor_email:
+    format: email
+  title:
+    max_length: 120
+  description:
+    max_length: 2000
+
+# After validation, create a draft work order with source='manual' and
+# pass to the triager for category/priority assignment.
+next_agent: agents/work-order-triager.yaml
+
+# Acknowledgement email sent to the requestor after successful submission.
+acknowledgement:
+  enabled: true
+  subject: "Your facilities request has been received ({{ wo_id | truncate(8, end='') }})"
+  body_template: |
+    Hi {{ requestor_name | default('there') }},
+
+    We've received your facilities request:
+
+      "{{ title }}"
+
+    Reference: {{ wo_id }}
+    Building: {{ building }}{% if floor %} / Floor {{ floor }}{% endif %}
+
+    Our team will review and respond within:
+    - P1 (urgent): 4 hours
+    - P2 (normal): 24 hours
+    - P3 (routine): 1 week
+
+    If this is an emergency, please call the facilities desk at
+    {{ facilities_emergency_phone }}.
+
+    — Facilities Team

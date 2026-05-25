@@ -1,0 +1,70 @@
+# packs/facilities-management/watches/work-order-sla-at-risk.yaml
+#
+# Fires when an open work order has consumed ≥ 75% of its SLA window
+# without reaching 'resolved' status.  Alerts the facilities team so
+# they can chase the vendor before the clock runs out.
+#
+# SLA thresholds (configurable via pack.yaml config.sla):
+#   P1 — 4 hours    (fire at 3 h elapsed)
+#   P2 — 24 hours   (fire at 18 h elapsed)
+#   P3 — 168 hours  (fire at 126 h elapsed)
+
+name: work-order-sla-at-risk
+kind: sql_watch
+
+schedule:
+  expression: "*/10 * * * *"    # every 10 minutes — frequent enough for P1 headroom
+  timezone: "${TZ:-America/New_York}"
+
+# The query returns one row per at-risk work order.
+# Parameterised by at_risk_threshold (default 0.75 = 75%).
+query: |
+  SELECT
+    wo.id,
+    wo.title,
+    wo.category::TEXT,
+    wo.priority::TEXT,
+    wo.building,
+    wo.floor,
+    wo.room,
+    wo.requestor_email,
+    wo.sla_deadline,
+    wo.created_at,
+    wo.dispatched_at,
+    vf.name        AS vendor_name,
+    vf.contact_phone AS vendor_phone,
+    -- Fraction of SLA window already elapsed.
+    EXTRACT(EPOCH FROM (now() - wo.created_at))
+      / NULLIF(EXTRACT(EPOCH FROM (wo.sla_deadline - wo.created_at)), 0)
+      AS sla_fraction_elapsed,
+    -- Time remaining in human-readable form.
+    wo.sla_deadline - now() AS time_remaining
+  FROM  work_orders      wo
+  LEFT JOIN vendors_facilities vf ON vf.id = wo.vendor_id
+  WHERE wo.status NOT IN ('resolved', 'closed', 'cancelled')
+    AND wo.sla_deadline > now()   -- not yet breached (separate alert for breaches)
+    AND EXTRACT(EPOCH FROM (now() - wo.created_at))
+        / NULLIF(EXTRACT(EPOCH FROM (wo.sla_deadline - wo.created_at)), 0)
+        >= ${FACILITIES_SLA_AT_RISK_THRESHOLD:-0.75}
+  ORDER BY wo.sla_deadline ASC;
+
+# Suppress duplicate alerts: re-fire no more than once per 30 minutes per WO.
+dedup:
+  key_field: id
+  cooldown_minutes: 30
+
+# Route each at-risk work order to the facilities Slack channel.
+outputs:
+  - outputs/facilities-team-slack.yaml
+
+# Template rendered per row (Jinja2).
+message_template: |
+  ⚠️ *SLA at risk* — Work Order {{ id | truncate(8, end='') }}
+  *{{ title }}*
+  Category: {{ category | upper }}  |  Priority: {{ priority | upper }}
+  Location: {{ building }}{% if floor %} / Floor {{ floor }}{% endif %}{% if room %} / {{ room }}{% endif %}
+
+  SLA deadline: *{{ sla_deadline | datetimeformat('%a %b %-d %H:%M') }}*
+  Time remaining: *{{ time_remaining | duration_humanize }}*
+  Elapsed: {{ (sla_fraction_elapsed * 100) | round(0) }}% of window
+  {% if vendor_name %}Assigned vendor: {{ vendor_name }}{% if vendor_phone %} ({{ vendor_phone }}){% endif %}{% else %}⚠️ No vendor assigned yet{% endif %}

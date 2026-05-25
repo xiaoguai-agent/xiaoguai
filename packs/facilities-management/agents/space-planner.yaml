@@ -1,0 +1,111 @@
+# packs/facilities-management/agents/space-planner.yaml
+#
+# Space Planner
+#
+# Invoked by the space-utilization-low watch (weekly) or ad-hoc when
+# facilities management requests a space review for a building / floor.
+#
+# Input:  a list of under-utilised spaces (from the watch query) plus
+#         optional headcount / growth-plan context.
+# Output: a SpacePlanRecommendation — per-space action (reassign, convert
+#         to hot-desk, reclaim for team expansion, decommission), plus an
+#         aggregate desk-pool sizing recommendation.
+#
+# The agent uses two signals:
+#   1. badge_utilization — fraction of working days the assigned person
+#      badged into the floor (14-day rolling window from space_assignments).
+#   2. room_booking_rate — fraction of working days a meeting room had
+#      at least one booking (from room-booking-system feed).
+
+name: space-planner
+description: >
+  Analyses badge-based desk utilisation and meeting-room booking patterns
+  to recommend desk-pool sizing, seat reassignments, and room reconfiguration.
+  Invoked weekly by the space-utilization-low watch or on-demand.
+
+llm:
+  model: ${FACILITIES_SPACE_LLM_MODEL:-default}
+  temperature: 0.3
+  max_tokens: 2048
+
+context_steps:
+  - id: floor_summary
+    description: "Full utilisation picture for the affected building/floor"
+    tool: xiaoguai_sql_query
+    query: |
+      SELECT
+        building, floor,
+        COUNT(*)                                                  AS total_spaces,
+        SUM(CASE WHEN assignee_email IS NOT NULL THEN 1 END)      AS assigned_desks,
+        SUM(CASE WHEN is_hot_desk = true THEN 1 END)              AS hot_desks,
+        SUM(CASE WHEN assignee_email IS NULL
+                  AND is_hot_desk = false THEN 1 END)             AS meeting_rooms,
+        ROUND(AVG(utilization_rate) FILTER (
+              WHERE assignee_email IS NOT NULL
+                AND is_hot_desk = false)::NUMERIC, 3)             AS avg_desk_util,
+        ROUND(AVG(utilization_rate) FILTER (
+              WHERE assignee_email IS NULL
+                AND is_hot_desk = false)::NUMERIC, 3)             AS avg_room_util
+      FROM space_assignments
+      WHERE building = '{{ event.building | default("%") }}'
+        AND effective_until IS NULL
+      GROUP BY building, floor
+      ORDER BY building, floor;
+
+  - id: open_space_wos
+    description: "Open 'space' category work orders — requested reconfigs"
+    tool: xiaoguai_sql_query
+    query: |
+      SELECT id, title, description, created_at, status
+      FROM   work_orders
+      WHERE  category = 'space'
+        AND  status NOT IN ('closed', 'cancelled')
+      ORDER BY created_at DESC
+      LIMIT 10;
+
+system_prompt: |
+  You are a workplace strategy consultant analysing corporate office utilisation.
+  Return a valid JSON SpacePlanRecommendation.
+
+  Recommendation rules:
+  - Desk util < 20% for 2+ consecutive weeks → recommend reassignment or hot-desk conversion
+  - Desk util < 30% → recommend discussion with manager before action
+  - Room booking < 25% → recommend converting to phone booth or focus pod
+  - Hot-desk pool sizing: target 70% peak occupancy → pool_size = (peak_badge_count / 0.7)
+  - Never recommend actions that would reduce total workstation capacity below
+    forecast headcount (leave 15% buffer for growth)
+
+  SpacePlanRecommendation schema:
+  {
+    "building": "...",
+    "floor": "...",
+    "recommended_hot_desk_pool_size": 0,
+    "spaces": [
+      {
+        "space_id": "UUID",
+        "room": "...",
+        "desk_id": "...",
+        "space_type": "desk|meeting_room",
+        "current_util": 0.00,
+        "action": "reassign|convert_to_hot_desk|convert_to_focus_pod|reclaim_for_team|no_action",
+        "action_rationale": "one sentence"
+      }
+    ],
+    "summary": "2-3 sentence executive summary"
+  }
+
+user_prompt: |
+  ## Under-utilised Spaces
+  {{ spaces | tojson(indent=2) | truncate(3000) }}
+
+  ## Floor Summary
+  {{ context.floor_summary | tojson(indent=2) }}
+
+  ## Open Space Work Orders (requested reconfigs)
+  {{ context.open_space_wos | tojson(indent=2) | truncate(1000) }}
+
+  Generate SpacePlanRecommendation JSON now.
+
+outputs:
+  - outputs/facilities-team-slack.yaml
+  - outputs/exec-monthly-fm-digest.yaml    # recommendations roll up into monthly digest
