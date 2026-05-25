@@ -1,0 +1,91 @@
+# Watch spec — vip-registration-needs-handling
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent within 2 minutes of a VIP registration arriving so the
+# event team can provide white-glove handling immediately.
+#
+# "VIP" is defined as: tier = 'vip' AND status = 'pending'.
+# The inbound adapters (eventbrite, manual-vip-add) write tier=vip directly;
+# registration-triage also upgrades tier based on domain matching.
+#
+# Schema reference: F1 WatchSpec (xiaoguai-watch, >=1.3.1).
+# ---------------------------------------------------------------------------
+
+name: vip-registration-needs-handling
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each VIP registration that arrived in the last poll
+  window and has not yet been confirmed or waitlisted. Fires every 2 minutes
+  to ensure near-real-time handling. Triggers registration-triage agent and
+  notifies the event team immediately via Slack.
+
+# --------------------------------------------------------------------------
+# Data source
+# --------------------------------------------------------------------------
+source:
+  kind: sql
+  table: registrations
+  tenant_column: null
+
+query: |
+  SELECT
+      r.id              AS registration_id,
+      r.event_id,
+      r.name            AS registrant_name,
+      r.email,
+      r.tier,
+      r.dietary_needs,
+      r.accessibility_needs,
+      r.registered_at,
+      e.name            AS event_name,
+      e.starts_at
+  FROM registrations r
+  JOIN events e ON e.id = r.event_id
+  WHERE r.tier   = 'vip'
+    AND r.status = 'pending'
+  ORDER BY r.registered_at ASC
+
+# --------------------------------------------------------------------------
+# Trigger condition
+# --------------------------------------------------------------------------
+trigger:
+  condition: row_count > 0
+
+# --------------------------------------------------------------------------
+# Schedule — frequent polling for near-real-time VIP response
+# --------------------------------------------------------------------------
+schedule:
+  cron: "*/2 * * * *"    # every 2 minutes
+
+# --------------------------------------------------------------------------
+# Output — WatchEvent shape
+# --------------------------------------------------------------------------
+event:
+  kind: events.vip_registration_needs_handling
+  cardinality: per_row
+  payload_mapping:
+    registration_id:      "$.registration_id"
+    event_id:             "$.event_id"
+    registrant_name:      "$.registrant_name"
+    email:                "$.email"
+    tier:                 "$.tier"
+    dietary_needs:        "$.dietary_needs"
+    accessibility_needs:  "$.accessibility_needs"
+    registered_at:        "$.registered_at"
+    event_name:           "$.event_name"
+    starts_at:            "$.starts_at"
+
+# --------------------------------------------------------------------------
+# Downstream
+# --------------------------------------------------------------------------
+downstream:
+  agents:
+    - registration-triage
+
+# --------------------------------------------------------------------------
+# Deduplication — suppress re-fire for the same registration until status
+# changes (i.e. until triage has processed it).
+# --------------------------------------------------------------------------
+dedup:
+  key: "{registration_id}"
+  ttl_seconds: 120          # 2-minute TTL matches the cron cadence
+  re_fire_if: "false"       # never re-fire for the same pending registration

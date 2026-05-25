@@ -1,0 +1,83 @@
+---
+# Output connector — post-event-survey-trigger
+#
+# Triggers personalised post-event survey sends to attendees 24 hours after
+# the event ends. Segmented by attendee type so each segment receives a
+# survey tuned to their experience.
+#
+# Survey platform: configurable (Typeform default; SurveyMonkey alternate).
+# Delivery: via marketing-personalized-email output connector.
+#
+# This output is NOT a real-time output — it is scheduled by the pack's
+# internal scheduler to fire once per event, 24 hours post-event-end.
+# The scheduling is written as a capacity_holds-style deferred action
+# (stored in events.metadata['survey_trigger_scheduled_at']).
+
+output: post-event-survey-trigger
+
+survey:
+  platform: typeform    # typeform | surveymonkey | google_forms
+  # Typeform API
+  api_key_env:     TYPEFORM_API_KEY
+  workspace_id_env: TYPEFORM_WORKSPACE_ID
+
+# Per-segment survey configuration
+segments:
+  general:
+    description: >
+      Standard attendees. 5-question NPS-style survey covering:
+      overall satisfaction, session quality, venue/logistics, networking,
+      and likelihood to return.
+    survey_id_env: TYPEFORM_SURVEY_GENERAL
+    delay_hours: 24
+
+  vip:
+    description: >
+      VIP attendees. Shorter 3-question concierge survey: personalised
+      experience rating, suggestions for improvement, and open text.
+    survey_id_env: TYPEFORM_SURVEY_VIP
+    delay_hours: 12     # VIPs get earlier follow-up
+
+  speaker:
+    description: >
+      Speakers. Speaker experience survey: A/V quality, green room,
+      audience engagement rating, likelihood to speak again, open text.
+    survey_id_env: TYPEFORM_SURVEY_SPEAKER
+    delay_hours: 48     # give speakers a day to decompress
+
+# Scheduling: stored as a deferred action in events.metadata after event ends
+schedule:
+  trigger_on: event.status = 'completed'
+  query: |
+    SELECT
+        r.id          AS registration_id,
+        r.email,
+        r.name,
+        r.tier,
+        e.name        AS event_name,
+        e.ends_at
+    FROM registrations r
+    JOIN events e ON e.id = r.event_id
+    WHERE e.id     = '{event_id}'
+      AND e.status = 'completed'
+      AND r.status IN ('attended', 'confirmed')   -- confirmed = attended but check-in not recorded
+    ORDER BY r.tier, r.name
+
+# Delivery via the marketing-personalized-email output
+delivery:
+  output: outputs/marketing-personalized-email.yaml
+  subject_template: >
+    How was your experience at {{ event_name }}? Share your feedback →
+
+# Outcome telemetry: track survey completion rates
+outcome_telemetry:
+  record_on:
+    - survey_sent
+    - survey_opened
+    - survey_completed
+  feedback_table: content_reviews    # reuse telemetry table; survey_type = 'post_event'
+
+# Deferred:
+#   - In-event pulse survey (mid-day check-in for multi-day events)
+#   - Speaker-specific session rating (attendees rate each session they attended)
+#   - Automated NPS dashboard update after survey responses come in

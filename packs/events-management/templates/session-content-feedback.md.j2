@@ -1,0 +1,97 @@
+{# packs/events-management/templates/session-content-feedback.md.j2
+   Jinja2 template for session content QC feedback emails to speakers.
+   Rendered by session-content-qc agent.
+   Sent autonomously (no HOTL gate) — feedback is constructive, non-financial.
+
+   Context variables:
+     speaker.name          — speaker full name
+     session.title         — session title
+     review.pass_status    — 'approved' | 'needs_revision'
+     review.slide_score    — int 0–100
+     review.abstract_score — int 0–100
+     review.brand_score    — int 0–100 (null if brand guidelines not configured)
+     review.feedback       — dict with keys: slides, abstract, brand (lists of strings)
+     review.summary        — 1-2 sentence overall assessment
+     resource_portal_url   — link to re-upload revised slides
+     resubmit_deadline     — date by which revised materials should be submitted
+     reviewer_name         — event team reviewer name for sign-off
+#}
+
+Subject: {% if review.pass_status == 'approved' %}
+Your session content is approved — {{ session.title }}
+{% else %}
+Content review feedback for your session — {{ session.title }}
+{% endif %}
+
+---
+
+Hi {{ speaker.name | first_name }},
+
+{% if review.pass_status == 'approved' %}
+Great news — your session materials for **{{ session.title }}** have passed
+our content review.
+
+{{ review.summary }}
+
+You're all set! No further action is needed before the event. We will be in
+touch with logistics closer to the date.
+{% else %}
+Thank you for submitting your materials for **{{ session.title }}**. Our
+content team has completed an initial review and has a few suggestions to
+help make your session even stronger.
+
+{{ review.summary }}
+
+---
+
+**Review Scores**
+
+| Dimension       | Score | Status |
+|-----------------|:-----:|--------|
+| Slides          | {{ review.slide_score }}/100 | {% if review.slide_score >= 70 %}✅ Pass{% else %}⚠️ Needs attention{% endif %} |
+| Abstract        | {{ review.abstract_score }}/100 | {% if review.abstract_score >= 70 %}✅ Pass{% else %}⚠️ Needs attention{% endif %} |
+{% if review.brand_score is not none %}
+| Brand alignment | {{ review.brand_score }}/100 | {% if review.brand_score >= 70 %}✅ Pass{% else %}⚠️ Needs attention{% endif %} |
+{% endif %}
+
+---
+
+{% if review.feedback.slides %}
+**Slide feedback**
+
+{% for item in review.feedback.slides %}
+- {{ item }}
+{% endfor %}
+
+{% endif %}
+{% if review.feedback.abstract %}
+**Abstract feedback**
+
+{% for item in review.feedback.abstract %}
+- {{ item }}
+{% endfor %}
+
+{% endif %}
+{% if review.brand_score is not none and review.feedback.brand %}
+**Brand alignment feedback**
+
+{% for item in review.feedback.brand %}
+- {{ item }}
+{% endfor %}
+
+{% endif %}
+
+---
+
+**Next step:** Please upload your revised materials via the Speaker Resource
+Portal by **{{ resubmit_deadline | date_format('%B %-d, %Y') }}**:
+
+[Upload revised materials →]({{ resource_portal_url }})
+
+Our team will re-review within 3 business days. If you have questions about
+any of the feedback above, reply to this email.
+{% endif %}
+
+Warm regards,
+{{ reviewer_name }}
+Events Content Team

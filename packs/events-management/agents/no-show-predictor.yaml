@@ -1,0 +1,222 @@
+# packs/events-management/agents/no-show-predictor.yaml
+#
+# No-Show Predictor Agent
+#
+# Scores each confirmed registrant with a per-registrant no-show probability
+# (0.0 – 1.0). Runs nightly or after bulk registration imports.
+#
+# Feature set used per registrant
+# ────────────────────────────────
+#   PRIOR BEHAVIOUR (from registrations history across all events)
+#     prior_events_registered  — total events the email address has registered for
+#     prior_events_attended    — subset where status ended as 'attended'
+#     prior_no_show_rate       — prior_no_shows / prior_events_registered (0.0–1.0)
+#     days_since_last_attend   — days since most recent 'attended' row (NULL = never)
+#
+#   REGISTRATION TIMING
+#     days_to_event            — days between registered_at and event starts_at
+#     registration_recency     — 'early' (>30d) | 'standard' (7–30d) | 'late' (<7d)
+#     registered_on_weekend    — boolean (weekend registrations correlate with no-shows)
+#
+#   REGISTRATION TIER & COMPLETENESS
+#     tier                     — 'general' | 'vip' | 'speaker' | 'sponsor' | 'staff'
+#     has_dietary_needs        — boolean (declared needs → higher engagement signal)
+#     has_accessibility_needs  — boolean (same rationale)
+#
+#   EVENT CHARACTERISTICS
+#     event_format             — 'in_person' | 'virtual' | 'hybrid'
+#     event_duration_days      — single-day vs multi-day (multi-day higher no-show)
+#
+# Scoring method
+# ──────────────
+# The LLM is given the feature vector for each registrant and instructed to
+# output a probability in [0.0, 1.0] with a brief rationale.  The agent does
+# NOT train a statistical model — it uses the LLM as a zero-shot reasoner
+# over the structured feature vector.  This is appropriate for pack v1.0;
+# a future version may wire a logistic regression model trained on
+# outcome_telemetry data (once enough labelled rows accumulate).
+#
+# Registrants with no_show_prob >= config.no_show.flag_threshold are flagged
+# (no_show_flagged = TRUE) and emitted to the event-team-slack output so the
+# event team can take pre-emptive action (extra reminder, day-of check-in).
+
+name: no-show-predictor
+kind: worker
+
+description: >
+  Scores confirmed registrants with a per-person no-show probability using
+  a feature vector combining prior attendance history, registration timing,
+  tier, and event characteristics. Flags high-risk registrants for proactive
+  outreach. Writes no_show_prob + no_show_flagged back to registrations.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  # Nightly batch scoring of all confirmed registrants for upcoming events.
+  - kind: cron
+    schedule: "0 2 * * *"    # 02:00 daily
+    label: "Nightly no-show scoring"
+
+  # On-demand: triggered after bulk registration import from Eventbrite/Hopin.
+  - kind: inbound
+    sources:
+      - eventbrite-registration
+      - hopin-event
+
+# --------------------------------------------------------------------------
+# LLM settings
+# --------------------------------------------------------------------------
+llm:
+  model: ${NOSHOW_LLM_MODEL:-default}
+  temperature: 0.0      # deterministic probability estimates
+  max_tokens: 256       # short: one probability + rationale per registrant
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a data analyst specialising in event attendance prediction.
+  You will receive a structured feature vector for a single event registrant.
+  Your job is to estimate the probability that this registrant will NOT show up.
+
+  Feature descriptions:
+  - prior_no_show_rate:     Historical no-show rate across all prior events.
+                            Strong predictor. 0.0 = always attended, 1.0 = never attended.
+  - days_to_event:          Days between when they registered and the event date.
+                            Late registrations (< 7 days) have higher no-show rates.
+  - registration_recency:   'early' | 'standard' | 'late' (derived from days_to_event).
+  - registered_on_weekend:  Weekend registrations are weakly correlated with no-shows.
+  - tier:                   VIP, speaker, and sponsor registrants have near-zero no-shows.
+  - has_dietary_needs:      Declaring dietary needs is a strong engagement signal (lower
+                            no-show probability).
+  - has_accessibility_needs: Same rationale as dietary needs.
+  - event_format:           Virtual events have higher no-show rates than in-person.
+  - event_duration_days:    Multi-day events have higher per-day no-show rates on day 2+.
+  - days_since_last_attend: NULL (never attended anything) is a moderate risk signal.
+
+  Calibration guidelines:
+  - prior_no_show_rate is the single most predictive feature.
+  - tier = 'vip' | 'speaker' | 'sponsor' → cap probability at 0.15.
+  - has_dietary_needs = true → subtract ~0.10 from naive estimate.
+  - registration_recency = 'late' → add ~0.15.
+  - Virtual event format → add ~0.10 baseline.
+
+  Output ONLY valid JSON:
+  {
+    "no_show_prob": <float 0.0–1.0, two decimal places>,
+    "rationale":    "<25 words max explaining the top 2 driving factors>"
+  }
+
+  Do not output any other text.
+
+# --------------------------------------------------------------------------
+# Batch processing
+# --------------------------------------------------------------------------
+batch:
+  # Score up to 200 registrants per LLM call using the batch tool.
+  # Each registrant gets an independent prompt; results are collected and
+  # written back in a single SQL update.
+  max_per_batch: 200
+  # Scope: only score confirmed registrants for events starting within 60 days.
+  scope_query: |
+    SELECT
+        r.id                                              AS registration_id,
+        r.event_id,
+        r.email,
+        r.tier,
+        r.dietary_needs  IS NOT NULL
+        AND array_length(r.dietary_needs, 1) > 0          AS has_dietary_needs,
+        r.accessibility_needs IS NOT NULL
+        AND array_length(r.accessibility_needs, 1) > 0    AS has_accessibility_needs,
+        r.registered_at,
+        e.starts_at,
+        e.ends_at,
+        -- days_to_event: negative = registered after event start (edge case)
+        EXTRACT(DAY FROM e.starts_at - r.registered_at)::INT
+                                                          AS days_to_event,
+        EXTRACT(DOW FROM r.registered_at) IN (0, 6)       AS registered_on_weekend,
+        CASE
+            WHEN EXTRACT(DAY FROM e.starts_at - r.registered_at) > 30 THEN 'early'
+            WHEN EXTRACT(DAY FROM e.starts_at - r.registered_at) >= 7 THEN 'standard'
+            ELSE 'late'
+        END                                               AS registration_recency,
+        -- prior behaviour from historical registrations for the same email
+        COALESCE(hist.prior_events_registered, 0)         AS prior_events_registered,
+        COALESCE(hist.prior_events_attended, 0)           AS prior_events_attended,
+        COALESCE(hist.prior_no_show_rate, 0.3)            AS prior_no_show_rate,
+        hist.days_since_last_attend
+    FROM registrations r
+    JOIN events e ON e.id = r.event_id
+    LEFT JOIN LATERAL (
+        SELECT
+            COUNT(*)                                      AS prior_events_registered,
+            SUM(CASE WHEN h.status = 'attended' THEN 1 ELSE 0 END)
+                                                          AS prior_events_attended,
+            ROUND(
+                SUM(CASE WHEN h.status = 'no_show' THEN 1.0 ELSE 0 END)
+                / NULLIF(COUNT(*), 0),
+                4
+            )                                             AS prior_no_show_rate,
+            EXTRACT(DAY FROM NOW() - MAX(
+                CASE WHEN h.status = 'attended' THEN h.updated_at END
+            ))::INT                                       AS days_since_last_attend
+        FROM registrations h
+        WHERE h.email    = r.email
+          AND h.event_id != r.event_id   -- exclude the current event
+    ) hist ON TRUE
+    WHERE r.status  = 'confirmed'
+      AND e.starts_at BETWEEN NOW() AND NOW() + INTERVAL '60 days'
+      -- skip registrants scored in the last 24 hours (unless forced)
+      AND (r.no_show_scored_at IS NULL
+           OR r.no_show_scored_at < NOW() - INTERVAL '24 hours')
+    ORDER BY e.starts_at ASC, r.registered_at ASC
+
+# --------------------------------------------------------------------------
+# Write-back
+# --------------------------------------------------------------------------
+tools:
+  - name: write_scores
+    description: >
+      Bulk-update no_show_prob, no_show_flagged, and no_show_scored_at for
+      a batch of registrations. Also emits Slack notifications for newly
+      flagged high-risk registrants.
+    kind: sql
+    query: |
+      UPDATE registrations
+      SET
+          no_show_prob     = scores.prob,
+          no_show_flagged  = scores.prob >= {flag_threshold},
+          no_show_scored_at = NOW(),
+          updated_at       = NOW()
+      FROM (
+          VALUES {score_rows}   -- (registration_id::uuid, prob::numeric)
+      ) AS scores(id, prob)
+      WHERE registrations.id = scores.id
+
+# --------------------------------------------------------------------------
+# Outcome telemetry — closes the prediction loop
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  # After the event ends, the system compares no_show_flagged predictions
+  # against actual status = 'no_show' / 'attended' rows.
+  record_on:
+    - score_written
+    - event_completed     # triggers retrospective accuracy calculation
+  feedback_table: registrations
+  accuracy_metric: >
+    SELECT
+        ROUND(AVG(CASE
+            WHEN no_show_flagged = TRUE  AND status = 'no_show'   THEN 1.0
+            WHEN no_show_flagged = FALSE AND status = 'attended'  THEN 1.0
+            ELSE 0.0
+        END), 4) AS accuracy
+    FROM registrations
+    WHERE no_show_scored_at IS NOT NULL
+      AND status IN ('no_show', 'attended')
+
+# --------------------------------------------------------------------------
+# Output routing
+# --------------------------------------------------------------------------
+outputs:
+  - outputs/event-team-slack.yaml    # flagged high-risk registrants

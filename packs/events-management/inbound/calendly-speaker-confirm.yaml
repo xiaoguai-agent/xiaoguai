@@ -1,0 +1,81 @@
+---
+# Inbound source — Calendly speaker confirmation webhook
+#
+# When a speaker books a slot via their personalised Calendly link,
+# Calendly delivers an invitee.created event. This source normalises it,
+# updates the speaker's outreach_status to 'confirmed', and triggers
+# speaker-outreach-drafter to send the confirmation email.
+#
+# Mounting: POST /v1/events/inbound/calendly/{route_id}
+# Auth:     Per-tenant bearer token + Calendly webhook signature
+#           (Calendly-Webhook-Signature header, HMAC-SHA256).
+
+name: calendly-speaker-confirm
+kind: webhook
+
+route_prefix: /v1/events/inbound/calendly
+
+# Calendly HMAC-SHA256 signature verification
+signature:
+  algorithm: hmac-sha256
+  header: Calendly-Webhook-Signature
+  prefix: ""    # Calendly does not add a prefix
+  secret_env: CALENDLY_WEBHOOK_SECRET
+
+# Only handle invitee.created events (booking confirmed)
+event_filter:
+  json_path: "$.event"
+  values:
+    - invitee.created
+
+normalize:
+  field_map:
+    # Speaker email matched against speakers.email to find the right row.
+    speaker_email:    "$.payload.email"
+    speaker_name:     "$.payload.name"
+    # Event metadata from the booking
+    calendly_event_uri: "$.payload.event"
+    scheduled_at:     "$.payload.scheduled_event.start_time"
+    # Calendly allows custom questions; look for our session_id question
+    session_id:       "$.payload.questions_and_answers[?(@.question=='Session ID')].answer"
+    raw:              _self
+
+# On receipt, the adapter updates the speaker row and triggers outreach drafter.
+actions:
+  - type: sql_update
+    description: >
+      Set speaker outreach_status = 'confirmed' and confirmed_at = NOW().
+    query: |
+      UPDATE speakers
+      SET    outreach_status = 'confirmed',
+             confirmed_at    = NOW(),
+             updated_at      = NOW()
+      WHERE  email = '{speaker_email}'
+
+  - type: trigger_agent
+    agent: speaker-outreach-drafter
+    event_kind: calendly_confirmation
+
+sample_payload: |
+  {
+    "event": "invitee.created",
+    "payload": {
+      "email": "alice@example.com",
+      "name": "Dr. Alice Chen",
+      "event": "https://api.calendly.com/scheduled_events/UUID",
+      "scheduled_event": {
+        "start_time": "2026-06-10T14:00:00.000000Z",
+        "end_time":   "2026-06-10T14:30:00.000000Z"
+      },
+      "questions_and_answers": [
+        {
+          "question": "Session ID",
+          "answer":   "sz-session-001"
+        }
+      ]
+    }
+  }
+
+# Deferred:
+#   - invitee.cancelled webhook to revert speaker outreach_status to 'invited'
+#   - Calendly round-robin routing for speaker prep call scheduling

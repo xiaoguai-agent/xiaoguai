@@ -1,0 +1,192 @@
+# packs/events-management/agents/registration-triage.yaml
+#
+# Registration Triage Agent
+#
+# Subscribes to three event kinds:
+#   events.vip_registration_needs_handling  — fast-path for VIP arrivals
+#   events.registration_cap_approaching     — activates waitlist routing
+#   inbound/eventbrite-registration         — new general registrations
+#   inbound/hopin-event                     — Hopin platform registrations
+#   inbound/manual-vip-add                  — operator-injected VIP records
+#
+# For each registration this agent:
+#   1. Detects VIP status (tier field or domain match against config.vip.domain_list).
+#   2. Routes to confirmed / waitlisted based on current capacity hold.
+#   3. Flags dietary needs (vegan, halal, kosher, gluten-free, nut-free, …).
+#   4. Flags accessibility needs (wheelchair, hearing loop, sign-language, …).
+#   5. Writes updated registration row and notifies event-team-slack output.
+
+name: registration-triage
+kind: worker
+
+description: >
+  Routes incoming registrations to confirmed or waitlisted status, detects
+  VIPs by email domain or explicit tier, and captures dietary and
+  accessibility requirements. All capacity decisions use a short-lived
+  capacity_hold to prevent double-booking under concurrent triage runs.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: events.vip_registration_needs_handling
+    source: vip-registration-needs-handling
+  - event: events.registration_cap_approaching
+    source: registration-cap-approaching
+  - kind: inbound
+    sources:
+      - eventbrite-registration
+      - hopin-event
+      - manual-vip-add
+
+# --------------------------------------------------------------------------
+# LLM settings
+# --------------------------------------------------------------------------
+llm:
+  model: ${TRIAGE_LLM_MODEL:-default}
+  temperature: 0.0     # deterministic routing decisions
+  max_tokens: 512
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are the Events Registration Triage agent. Your job is to process
+  incoming registrations accurately and quickly.
+
+  For each registration you receive, perform the following steps:
+
+  1. VIP DETECTION
+     - If tier is already 'vip', mark as VIP.
+     - If the registrant's email domain matches any entry in the VIP domain
+       list, upgrade tier to 'vip'.
+     - Return a boolean `is_vip` and the reason ("tier_field" | "domain_match").
+
+  2. CAPACITY ROUTING
+     - Call `check_capacity` to get current confirmed_count and capacity.
+     - If capacity == 0 (unlimited) OR confirmed_count < capacity: route to
+       'confirmed'. Acquire a capacity_hold first to prevent races.
+     - If confirmed_count >= capacity AND tier == 'vip': still confirm
+       (VIPs override capacity limit); log the override.
+     - If confirmed_count >= capacity AND tier != 'vip': route to 'waitlisted'.
+
+  3. NEEDS FLAGGING
+     - Parse the `dietary_needs` and `accessibility_needs` free-text fields.
+     - Normalise to known tags:
+         Dietary:      vegan | vegetarian | halal | kosher | gluten_free |
+                       nut_free | dairy_free | other
+         Accessibility: wheelchair | hearing_loop | sign_language |
+                        large_print | other
+     - Store normalised tag arrays on the registration row.
+
+  4. OUTPUT
+     Return a JSON object:
+     {
+       "registration_id": "<uuid>",
+       "new_status": "confirmed" | "waitlisted",
+       "is_vip": true | false,
+       "vip_reason": "<string or null>",
+       "dietary_needs": ["<tag>", ...],
+       "accessibility_needs": ["<tag>", ...],
+       "capacity_override": true | false,
+       "notes": "<optional free text for the event team>"
+     }
+
+  Rules:
+  - Never confirm a registration without first acquiring a capacity_hold.
+  - Never invent dietary or accessibility tags not listed above; use "other"
+    for unrecognised values and preserve the raw text in notes.
+  - If data is missing (no dietary field, no accessibility field), output [].
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: check_capacity
+    description: >
+      Returns current confirmed registration count and declared capacity
+      for the given event. Also returns the VIP domain list from config.
+    kind: sql
+    query: |
+      SELECT
+          e.capacity,
+          COUNT(r.id)   AS confirmed_count,
+          e.status      AS event_status
+      FROM events e
+      LEFT JOIN registrations r
+             ON r.event_id = e.id
+            AND r.status   = 'confirmed'
+      WHERE e.id = '{event_id}'
+      GROUP BY e.capacity, e.status
+
+  - name: acquire_capacity_hold
+    description: >
+      Inserts a capacity_hold row expiring in 30 seconds. Returns the hold
+      id on success, or an error if capacity is already exhausted (race
+      condition guard). Must be called before setting status = 'confirmed'.
+    kind: sql
+    query: |
+      INSERT INTO capacity_holds (event_id, registration_id, hold_until_at)
+      SELECT '{event_id}', '{registration_id}', NOW() + INTERVAL '30 seconds'
+      WHERE (
+          SELECT COUNT(*) FROM registrations
+          WHERE event_id = '{event_id}' AND status = 'confirmed'
+      ) + (
+          SELECT COUNT(*) FROM capacity_holds
+          WHERE event_id = '{event_id}' AND hold_until_at > NOW()
+      ) < (
+          SELECT NULLIF(capacity, 0) FROM events WHERE id = '{event_id}'
+      )
+      RETURNING id
+
+  - name: update_registration
+    description: >
+      Writes the triage decision back to the registrations table: status,
+      tier, dietary_needs, accessibility_needs, and optional notes.
+    kind: sql
+    query: |
+      UPDATE registrations
+      SET
+          status              = '{new_status}',
+          tier                = '{tier}',
+          dietary_needs       = '{dietary_needs}',
+          accessibility_needs = '{accessibility_needs}',
+          confirmed_at        = CASE WHEN '{new_status}' = 'confirmed'
+                                     THEN NOW() ELSE NULL END,
+          waitlisted_at       = CASE WHEN '{new_status}' = 'waitlisted'
+                                     THEN NOW() ELSE NULL END,
+          updated_at          = NOW()
+      WHERE id = '{registration_id}'
+
+  - name: emit_vip_checklist
+    description: >
+      Renders the vip-handling-checklist template and posts it to the
+      event-team-slack output channel. Called only when is_vip = true.
+    kind: template
+    template: templates/vip-handling-checklist.md.j2
+    output: outputs/event-team-slack.yaml
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  # Routing decisions (confirm / waitlist) are fully autonomous.
+  # VIP capacity overrides emit a Slack notification so a human can review.
+  autonomous_actions:
+    confirm_registration: unlimited
+    waitlist_registration: unlimited
+    capacity_override: 0    # always notify channel before overriding
+  notify_channel: "${EVENTS_HOTL_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_failure:
+  # If capacity_hold fails (race condition), retry once after 2 seconds.
+  retry:
+    max_attempts: 2
+    backoff_seconds: 2
+    condition: "error contains 'capacity_hold'"
+  # Any other failure: log and continue; do NOT leave registration in 'pending'.
+  fallback_status: waitlisted
+  notify_channel: "${EVENTS_HOTL_CHANNEL:-admin_ui}"

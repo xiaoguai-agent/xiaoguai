@@ -1,0 +1,82 @@
+{# packs/events-management/templates/speaker-outreach-email.md.j2
+   Jinja2 template for personalised speaker outreach emails.
+   Rendered by speaker-outreach-drafter agent.
+   Requires human approval before send.
+
+   Context variables:
+     speaker.name           — speaker full name
+     speaker.email          — speaker email
+     speaker.bio            — speaker bio (used for personalisation)
+     speaker.company        — speaker's company
+     session.title          — session title
+     session.theme          — session track / theme
+     session.format         — talk | workshop | panel | keynote | lightning
+     session.duration_min   — duration in minutes
+     event.name             — event name
+     event.starts_at        — event start datetime
+     event.ends_at          — event end datetime
+     event.venue            — venue name (may be null for virtual)
+     email_type             — 'invitation' | 'confirmation'
+     speaker.calendly_link  — Calendly scheduling link (invitation only)
+     resource_portal_url    — speaker resource portal URL (confirmation only)
+     slide_deadline         — slide submission deadline date (confirmation only)
+     llm_body               — LLM-drafted personalised body paragraph(s)
+     sender_name            — event team sender name
+     sender_title           — event team sender title
+#}
+
+Subject: {% if email_type == 'invitation' %}
+Speaking Invitation — {{ session.title }} at {{ event.name }}
+{% else %}
+Your Session is Confirmed — {{ event.name }} Speaker Resources
+{% endif %}
+
+---
+
+Hi {{ speaker.name | first_name }},
+
+{{ llm_body }}
+
+---
+
+**Session Details**
+
+| Field    | Value |
+|----------|-------|
+| Session  | {{ session.title }} |
+| Track    | {{ session.theme | default('TBD') }} |
+| Format   | {{ session.format | title }} ({{ session.duration_min }} min) |
+| Event    | {{ event.name }} |
+| Date     | {{ event.starts_at | date_format('%B %-d, %Y') }}{% if event.ends_at and event.ends_at != event.starts_at %} – {{ event.ends_at | date_format('%B %-d, %Y') }}{% endif %} |
+| Venue    | {{ event.venue | default('Virtual') }} |
+
+{% if email_type == 'invitation' %}
+**Next step:** Please confirm your availability using the link below so we can
+lock in your session slot:
+
+[Confirm your session →]({{ speaker.calendly_link }})
+
+If you have any questions before confirming, reply to this email and we will
+get back to you within one business day.
+{% else %}
+**Speaker Resources**
+
+Everything you need is in the Speaker Resource Portal:
+
+[Access your speaker portal →]({{ resource_portal_url }})
+
+**Slide submission deadline:** {{ slide_deadline | date_format('%B %-d, %Y') }}
+
+Please upload your slides as PDF or PowerPoint. Our content team will review
+and provide feedback within 3 business days.
+{% endif %}
+
+---
+
+Looking forward to having you at {{ event.name }}!
+
+Warm regards,
+{{ sender_name }}
+{{ sender_title }}
+
+{# Deferred: add calendar .ics attachment when calendar-export tool is wired #}

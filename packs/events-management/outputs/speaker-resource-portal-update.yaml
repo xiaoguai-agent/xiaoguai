@@ -1,0 +1,83 @@
+---
+# Output connector — speaker-resource-portal-update
+#
+# Updates the speaker resource portal (a headless CMS or static site) when
+# a speaker's session is approved by the content QC agent.
+#
+# Actions triggered:
+#   - Publish speaker profile page (name, bio, session title, abstract)
+#   - Set slide submission status badge (pending / submitted / approved)
+#   - Generate and post the speaker's personal Calendly booking link
+#   - Add approved slides to the public session page (post-event)
+#
+# Backend: configurable.
+#   - Default: REST API call to PORTAL_API_URL (headless CMS or custom API)
+#   - Alternate: GitHub Pages PR (static site pattern)
+#
+# All updates are HOTL-gated — session-content-qc emits an approval event
+# that the event team must confirm before the portal is updated publicly.
+
+output: speaker-resource-portal-update
+
+portal:
+  api_url_env:   PORTAL_API_URL
+  api_token_env: PORTAL_API_TOKEN
+
+# Actions performed on portal update
+actions:
+  publish_profile:
+    description: >
+      Create or update the speaker's profile page with name, bio, company,
+      session title, abstract, and expertise tags.
+    endpoint: "POST ${PORTAL_API_URL}/speakers/{speaker_id}"
+    payload_template: |
+      {
+        "name":           "{{ speaker.name }}",
+        "bio":            "{{ speaker.bio | escape_json }}",
+        "company":        "{{ speaker.company }}",
+        "session_title":  "{{ session.title | escape_json }}",
+        "session_abstract": "{{ session.abstract | escape_json | truncate(500) }}",
+        "expertise_tags": {{ speaker.expertise_tags | tojson }},
+        "format":         "{{ session.format }}",
+        "theme":          "{{ session.theme }}"
+      }
+
+  update_slide_status:
+    description: >
+      Update the slide submission status badge on the session page.
+      Status values: pending | submitted | approved | needs_revision.
+    endpoint: "PATCH ${PORTAL_API_URL}/sessions/{session_id}/slide-status"
+    payload_template: |
+      {
+        "slide_status": "{{ slide_status }}",
+        "updated_at":   "{{ now | iso8601 }}"
+      }
+
+  post_calendly_link:
+    description: >
+      Add the speaker's Calendly booking link to their portal profile so
+      the event team can schedule prep calls from the portal.
+    endpoint: "PATCH ${PORTAL_API_URL}/speakers/{speaker_id}/calendly"
+    payload_template: |
+      {
+        "calendly_link": "{{ speaker.calendly_link }}"
+      }
+
+# HOTL gate: event team must approve portal update for approved sessions.
+hotl:
+  require_human_approval:
+    - publish_profile
+  autonomous_actions:
+    update_slide_status: unlimited   # badge updates are low-risk
+    post_calendly_link: unlimited
+
+# Fallback: if PORTAL_API_URL is not configured, log the intended update
+# to the admin_ui and skip the API call.
+fallback:
+  kind: admin_ui
+  log_action: true
+
+# Deferred:
+#   - GitHub Pages PR generation for static-site portals
+#   - Automatic social card generation (speaker photo + session title image)
+#   - Post-event: publish recording URL to session page
