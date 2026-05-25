@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}
+  name: {{ include "xiaoguai.fullname" . }}
   labels:
     {{- include "xiaoguai.labels" . | nindent 4 }}
 spec:
@@ -13,3 +13,23 @@ spec:
       name: http
   selector:
     {{- include "xiaoguai.selectorLabels" . | nindent 4 }}
+{{- if .Values.service.headless }}
+---
+# Headless service — useful for pod-IP-based discovery (Prometheus, gRPC, etc.)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "xiaoguai.headlessServiceName" . }}
+  labels:
+    {{- include "xiaoguai.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "xiaoguai.selectorLabels" . | nindent 4 }}
+{{- end }}
