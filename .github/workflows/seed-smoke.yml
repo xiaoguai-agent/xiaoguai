@@ -1,0 +1,68 @@
+name: seed-smoke
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/seed-wave3-demo.sh'
+      - 'scripts/wipe-wave3-demo.sh'
+
+jobs:
+  dry-run-smoke:
+    name: Seeder dry-run smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check — seed script
+        run: bash -n scripts/seed-wave3-demo.sh
+
+      - name: Syntax check — wipe script
+        run: bash -n scripts/wipe-wave3-demo.sh
+
+      - name: Run seeder in dry-run mode
+        run: |
+          # Merge stderr into stdout so outcome "would POST" lines (which go
+          # to stderr to avoid being captured by id=$(...) subshells) are
+          # included in the file we analyse below.
+          bash scripts/seed-wave3-demo.sh \
+            --dry-run \
+            --api-base http://localhost:9999 \
+            --token dev-token \
+            > /tmp/dry.out 2>&1
+          echo "--- dry-run output ---"
+          cat /tmp/dry.out
+
+      - name: Verify exit code was 0
+        # The previous step already fails the job on non-zero exit, but
+        # this makes the intent explicit in the step log.
+        run: echo "Seeder exited 0 — ok"
+
+      - name: Count 'would POST' lines (expect 60)
+        run: |
+          count=$(grep -c "would POST:" /tmp/dry.out || true)
+          echo "would POST lines: ${count}"
+          if [[ "${count}" -ne 60 ]]; then
+            echo "ERROR: expected 60 'would POST' lines, got ${count}" >&2
+            exit 1
+          fi
+
+      - name: Verify DRY-RUN header present
+        run: |
+          if ! grep -q "DRY-RUN mode" /tmp/dry.out; then
+            echo "ERROR: DRY-RUN mode banner not found in output" >&2
+            exit 1
+          fi
+
+      - name: Verify total entities summary present
+        run: |
+          if ! grep -q "Total entities.*60" /tmp/dry.out; then
+            echo "ERROR: 'Total entities : 60' not found in summary" >&2
+            exit 1
+          fi
+
+      - name: Run wipe script in dry-run mode
+        run: |
+          bash scripts/wipe-wave3-demo.sh \
+            --dry-run \
+            --api-base http://localhost:9999 \
+            --token dev-token
