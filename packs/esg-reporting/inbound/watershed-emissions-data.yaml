@@ -1,0 +1,107 @@
+---
+# Watershed Emissions Data — inbound connector
+# ---------------------------------------------------------------------------
+# Pulls Scope 1, 2, and 3 GHG emissions from the Watershed platform API.
+# Watershed is the primary emissions data source; NetSuite GL is the fallback.
+#
+# Authentication: Watershed API key (Bearer token).
+# Credentials: WATERSHED_API_KEY
+
+source: watershed-emissions-data
+display_name: "Watershed — GHG Emissions"
+kind: api
+
+auth:
+  type: bearer_token
+  token: "${WATERSHED_API_KEY}"
+
+endpoint:
+  base_url: "https://api.watershed.com/v1"
+  paths:
+    emissions:  "/emissions/summary"
+    energy:     "/energy/summary"
+    water:      "/water/summary"
+    waste:      "/waste/summary"
+  method: GET
+  params:
+    period_start: "{{ period_start_date }}"
+    period_end:   "{{ period_end_date }}"
+    boundary:     "${ESG_GHG_BOUNDARY:-operational_control}"
+
+output_mapping:
+  # Emissions
+  - source_field: emissions.scope1_tco2e
+    metric_key: emissions_scope1
+    pillar: environmental
+    category: emissions_scope1
+    unit: tCO2e
+    confidence: measured
+    methodology: "GHG Protocol Corporate Standard (operational control boundary); primary data from utility bills and fleet fuel logs via Watershed"
+
+  - source_field: emissions.scope2_market_tco2e
+    metric_key: emissions_scope2
+    pillar: environmental
+    category: emissions_scope2
+    unit: tCO2e
+    confidence: measured
+    methodology: "GHG Protocol Scope 2 Guidance, market-based method; supplier-specific emission factors where available, residual mix otherwise"
+
+  - source_field: emissions.scope3_total_tco2e
+    metric_key: emissions_scope3
+    pillar: environmental
+    category: emissions_scope3
+    unit: tCO2e
+    confidence: modeled
+    methodology: "GHG Protocol Scope 3 Standard; spend-based method for categories 1-8, 11-14; activity-based for category 15 (investments)"
+
+  # Energy
+  - source_field: energy.total_mwh
+    metric_key: energy_consumption
+    pillar: environmental
+    category: energy_consumption
+    unit: MWh
+    confidence: measured
+
+  - source_field: energy.renewable_mwh
+    metric_key: energy_renewable
+    pillar: environmental
+    category: energy_renewable
+    unit: MWh
+    confidence: measured
+    methodology: "Renewable energy certificates (RECs) retired during period; additionality criteria applied per RE100 guidance"
+
+  # Water
+  - source_field: water.withdrawal_m3
+    metric_key: water_withdrawal
+    pillar: environmental
+    category: water_withdrawal
+    unit: cubic_meters
+    confidence: measured
+
+  - source_field: water.recycled_m3
+    metric_key: water_recycled
+    pillar: environmental
+    category: water_recycled
+    unit: cubic_meters
+    confidence: measured
+
+  # Waste
+  - source_field: waste.generated_tonnes
+    metric_key: waste_generated
+    pillar: environmental
+    category: waste_generated
+    unit: tonnes
+    confidence: measured
+
+  - source_field: waste.diverted_tonnes
+    metric_key: waste_diverted
+    pillar: environmental
+    category: waste_diverted
+    unit: tonnes
+    confidence: measured
+
+error_handling:
+  on_auth_failure: return_error
+  on_404: return_empty           # Watershed may not have data yet; treat as not_available
+  on_timeout: retry_once
+  timeout_seconds: 60

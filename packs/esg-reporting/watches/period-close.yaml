@@ -1,0 +1,67 @@
+# Watch spec — period-close
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent when a reporting period transitions to 'closed' status,
+# triggering the metric-aggregator and gap-detector agents to begin the
+# end-of-period disclosure workflow.
+#
+# This watch is the entry-point for the annual/quarterly reporting cycle:
+#   period closed → metric-aggregator (verify completeness)
+#                 → gap-detector (framework coverage analysis)
+#                 → narrative-drafter (section drafts)
+#                 → [human review] → csr-platform-submission (HOTL)
+# ---------------------------------------------------------------------------
+
+name: period-close
+version: "1.0.0"
+description: >
+  Fires a WatchEvent for each reporting period that has just been closed
+  (status = 'closed'). Runs every 30 minutes. Deduplicates so the
+  downstream agents are triggered exactly once per period closure.
+
+source:
+  kind: sql
+  table: esg_reporting_periods
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      rp.id             AS period_id,
+      rp.tenant_id,
+      rp.label,
+      rp.period_type,
+      rp.start_date,
+      rp.end_date,
+      rp.closed_at
+  FROM esg_reporting_periods rp
+  WHERE rp.tenant_id = '{tenant_id}'
+    AND rp.status = 'closed'
+    AND rp.closed_at > NOW() - INTERVAL '2 hours'
+  ORDER BY rp.closed_at DESC
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  cron: "*/30 * * * *"
+
+event:
+  kind: esg.period_closed
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:   "$.tenant_id"
+    period_id:   "$.period_id"
+    period_label: "$.label"
+    period_type: "$.period_type"
+    start_date:  "$.start_date"
+    end_date:    "$.end_date"
+    closed_at:   "$.closed_at"
+
+downstream:
+  agents:
+    - metric-aggregator
+    - gap-detector
+
+dedup:
+  key: "{tenant_id}:{period_id}"
+  ttl_seconds: 7200   # 2 hours — prevents re-trigger for the same closure
+  re_fire_if: "false" # period-close fires exactly once

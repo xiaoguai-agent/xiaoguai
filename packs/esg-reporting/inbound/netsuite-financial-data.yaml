@@ -1,0 +1,63 @@
+---
+# NetSuite Financial Data — inbound connector
+# ---------------------------------------------------------------------------
+# Pulls energy-cost and environmental-spend GL line items from NetSuite
+# via the SuiteQL REST API. Used as a secondary source for energy
+# consumption when a dedicated emissions platform is unavailable.
+#
+# Authentication: OAuth 2.0 Machine-to-Machine (M2M) via client credentials.
+# Credentials stored in ~/.xiaoguai/.env (NETSUITE_ACCOUNT_ID,
+# NETSUITE_CLIENT_ID, NETSUITE_CLIENT_SECRET).
+
+source: netsuite-financial-data
+display_name: "NetSuite GL — Environmental Spend"
+kind: api
+
+auth:
+  type: oauth2_client_credentials
+  token_url: "https://{{ env.NETSUITE_ACCOUNT_ID }}.suitetalk.api.netsuite.com/services/rest/auth/oauth2/v1/token"
+  client_id: "${NETSUITE_CLIENT_ID}"
+  client_secret: "${NETSUITE_CLIENT_SECRET}"
+  scopes:
+    - rest_webservices
+
+endpoint:
+  base_url: "https://{{ env.NETSUITE_ACCOUNT_ID }}.suitetalk.api.netsuite.com/services/rest/query/v1/suiteql"
+  method: POST
+
+# SuiteQL query — pulls energy and environmental cost accounts within period
+query_template: |
+  SELECT
+      tl.account AS account_id,
+      acct.acctnumber AS account_code,
+      acct.fullname AS account_name,
+      SUM(tl.creditamount - tl.debitamount) AS net_amount,
+      tl.currency AS currency
+  FROM transactionline tl
+  JOIN account acct ON acct.id = tl.account
+  WHERE tl.posting = 'T'
+    AND tl.trandate >= '{{ period_start_date }}'
+    AND tl.trandate <= '{{ period_end_date }}'
+    AND acct.acctnumber LIKE '{{ env.NETSUITE_ENERGY_ACCOUNT_PREFIX | default("6200") }}%'
+  GROUP BY tl.account, acct.acctnumber, acct.fullname, tl.currency
+
+# Output field mappings → esg_metrics canonical schema
+output_mapping:
+  - source_field: net_amount
+    metric_key: energy_consumption
+    pillar: environmental
+    category: energy_consumption
+    unit: USD                   # financial proxy — ops layer converts to MWh using cost_per_mwh factor
+    confidence: estimated
+    methodology: "NetSuite GL energy account spend; converted to MWh using ${ESG_COST_PER_MWH} factor"
+
+pagination:
+  style: none   # SuiteQL returns full result set; period scoping limits size
+
+rate_limits:
+  requests_per_minute: 10
+
+error_handling:
+  on_auth_failure: return_error   # do not retry auth; surface to operator
+  on_timeout: retry_once
+  timeout_seconds: 30

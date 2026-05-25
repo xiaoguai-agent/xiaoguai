@@ -1,0 +1,153 @@
+# Agent definition — assurance-readiness-checker
+# ---------------------------------------------------------------------------
+# Prepares the evidence bundle that an external assurance provider (typically
+# a Big-4 firm or specialist ESG assurer) needs to issue a limited or
+# reasonable assurance opinion on the sustainability report.
+#
+# The agent does NOT perform assurance — that is an external human function.
+# It gathers, validates, and packages the evidence so the assurance team
+# spends less time chasing documentation and more time on substantive review.
+#
+# Evidence bundle contents:
+#   - data_source_inventory: list of all sources, connectors, sync dates
+#   - metric_audit_trail: per-metric provenance (source, methodology,
+#     calculation notes, raw vs normalized values)
+#   - gap_summary: outstanding gaps and remediation status
+#   - framework_coverage_matrix: rendered by framework-mapper
+#   - methodology_notes: per-metric calculation methodology descriptions
+#   - change_log: metrics that changed between draft versions
+# ---------------------------------------------------------------------------
+
+name: assurance-readiness-checker
+version: "1.0.0"
+description: >
+  Assembles the evidence bundle required for external ESG assurance review.
+  Validates data source completeness, produces a metric audit trail with
+  full provenance, and renders an evidence-bundle-readme for the assurer.
+  Fires at regulatory deadline horizons (90 / 60 / 30 / 7 days).
+  No submission actions — evidence bundle is a human-reviewed artefact.
+
+triggers:
+  - event: esg.regulatory_deadline_approaching
+    source: regulatory-deadline-approaching
+
+llm:
+  model: ${ESG_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 4096
+
+system_prompt: |
+  You are an ESG assurance preparation specialist. Your job is to gather
+  and validate all evidence needed for an external assurer to issue an
+  assurance opinion on the ESG disclosure for the given reporting period.
+
+  Rules:
+  - Completeness first: flag every metric where provenance is incomplete
+    (missing data_source_id, missing methodology, or confidence =
+    'not_available').
+  - Do not evaluate whether the metrics are "good" ESG performance —
+    your job is evidence packaging, not benchmarking.
+  - Identify any metrics that changed value between the initial draft
+    and the current version, as these require explanation for the assurer.
+  - Output a structured JSON readiness report that will be rendered via
+    the evidence-bundle-readme template.
+
+  Readiness report schema:
+  {
+    "period_label": "FY2024",
+    "assurance_scope": ["Scope 1", "Scope 2", "DEI headcount"],
+    "readiness_score_pct": 82.5,
+    "blockers": [
+      {
+        "metric_key": "water_withdrawal",
+        "issue": "No data source linked; methodology not documented",
+        "severity": "HIGH",
+        "recommendation": "Link to facilities meter data source before assurance fieldwork"
+      }
+    ],
+    "warnings": [
+      {
+        "metric_key": "emissions_scope3",
+        "issue": "confidence = 'modeled'; assurer may require spend-based Scope 3 detail",
+        "severity": "MEDIUM"
+      }
+    ],
+    "data_source_inventory": [...],
+    "metric_count": {"total": 32, "measured": 18, "estimated": 8,
+                     "modeled": 4, "not_available": 2}
+  }
+
+tools:
+  - name: get_metric_audit_trail
+    description: >
+      Fetch full provenance for every metric in the period: source name,
+      connector, last_synced_at, methodology, boundary, confidence, and
+      any notes. This is the core evidence document for the assurer.
+    kind: sql
+    query: |
+      SELECT
+          m.metric_key, m.pillar, m.category,
+          m.value, m.unit, m.confidence,
+          m.methodology, m.boundary, m.notes,
+          m.collected_at, m.updated_at,
+          ds.name AS source_name,
+          ds.kind AS source_kind,
+          ds.last_synced_at,
+          ds.contact_email
+      FROM esg_metrics m
+      JOIN esg_data_sources ds ON ds.id = m.data_source_id
+      WHERE m.tenant_id = '{tenant_id}'
+        AND m.period_id = '{period_id}'
+      ORDER BY m.pillar, m.category, m.metric_key
+
+  - name: get_metrics_with_incomplete_provenance
+    description: >
+      Identify metrics missing methodology documentation or linked to
+      sources with no sync timestamp. These are the highest-priority
+      items to resolve before assurance fieldwork begins.
+    kind: sql
+    query: |
+      SELECT
+          m.metric_key, m.confidence,
+          m.methodology IS NULL OR m.methodology = '' AS missing_methodology,
+          ds.last_synced_at IS NULL                   AS source_never_synced
+      FROM esg_metrics m
+      JOIN esg_data_sources ds ON ds.id = m.data_source_id
+      WHERE m.tenant_id = '{tenant_id}'
+        AND m.period_id = '{period_id}'
+        AND (
+            m.confidence = 'not_available'
+            OR m.methodology IS NULL OR m.methodology = ''
+            OR ds.last_synced_at IS NULL
+        )
+
+  - name: get_data_source_inventory
+    description: >
+      List all registered data sources for the tenant with their sync
+      status. The assurer will want to understand the full data supply chain.
+    kind: sql
+    query: |
+      SELECT
+          id, name, kind, connector, last_synced_at,
+          sync_cadence, contact_email, notes
+      FROM esg_data_sources
+      WHERE tenant_id = '{tenant_id}'
+      ORDER BY kind, name
+
+  - name: render_evidence_bundle_readme
+    description: >
+      Render the evidence-bundle-readme template with the readiness report.
+      Returns a Markdown document to be included in the evidence package
+      sent to the external assurer.
+    kind: template
+    template: "templates/evidence-bundle-readme.md.j2"
+
+outputs:
+  - outputs/sustainability-team-slack.yaml
+
+outcome_telemetry:
+  record_on:
+    - readiness_check_started
+    - readiness_check_completed
+    - evidence_bundle_rendered
+  feedback_table: esg_submissions

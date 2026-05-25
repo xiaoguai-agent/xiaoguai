@@ -1,0 +1,63 @@
+---
+# Supplier Questionnaire Aggregate — inbound connector
+# ---------------------------------------------------------------------------
+# Pulls aggregated supplier sustainability questionnaire results from a
+# supplier engagement platform (e.g. EcoVadis, Sedex, or a custom export).
+# Used to populate Scope 3 Category 1 (purchased goods and services) upstream
+# emissions, supplier DEI commitments, and conflict minerals attestations.
+#
+# The connector aggregates per-supplier rows into portfolio-level metrics.
+# Individual supplier data is not stored in esg_metrics (PII / commercial
+# sensitivity); only the aggregate is persisted.
+#
+# Authentication: API key for the supplier platform.
+# Credentials: SUPPLIER_PLATFORM, SUPPLIER_API_KEY
+
+source: supplier-questionnaire-aggregate
+display_name: "Supplier Questionnaire Aggregate"
+kind: api
+
+auth:
+  type: bearer_token
+  token: "${SUPPLIER_API_KEY}"
+
+endpoint:
+  base_url: "${SUPPLIER_PLATFORM_BASE_URL}"
+  path: "/api/v1/questionnaire/aggregate"
+  method: GET
+  params:
+    survey_year: "{{ period_year }}"
+    status: "submitted"          # only include completed responses
+
+output_mapping:
+  # Scope 3 Category 1 — upstream purchased goods emissions
+  - source_field: scope3_cat1_tco2e
+    metric_key: emissions_scope3
+    pillar: environmental
+    category: emissions_scope3
+    unit: tCO2e
+    confidence: modeled
+    methodology: "Supplier questionnaire aggregate; spend-based GHG Protocol Scope 3 Category 1. Weighted by procurement spend. {{ response_rate_pct }}% supplier response rate."
+    notes: "Partial coverage: {{ response_rate_pct }}% of suppliers by spend responded"
+
+  # Response metadata — not an esg_metric; logged to data_source notes
+  - source_field: total_suppliers_surveyed
+    target: data_source.notes
+    template: "{{ total_suppliers_surveyed }} suppliers surveyed; {{ responses_received }} responded ({{ response_rate_pct }}%)"
+
+# Aggregation logic applied before output_mapping
+aggregation:
+  group_by: period_year
+  sum_fields:
+    - scope3_cat1_tco2e
+  count_fields:
+    - total_suppliers_surveyed
+    - responses_received
+  derived_fields:
+    response_rate_pct: "responses_received / total_suppliers_surveyed * 100"
+
+error_handling:
+  on_auth_failure: return_error
+  on_empty_response: return_not_available  # populate esg_metrics with confidence = 'not_available'
+  on_timeout: retry_once
+  timeout_seconds: 30

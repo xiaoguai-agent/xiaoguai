@@ -1,0 +1,114 @@
+{# CSRD ESRS Narrative Template
+   Covers ESRS 2 general disclosures and relevant topical standards.
+   Sections rendered based on `section` parameter passed by narrative-drafter.
+   Supported sections: governance | strategy | risk_management | metrics_targets
+#}
+
+{% if section == 'governance' %}
+## Governance (ESRS 2 GOV-1 to GOV-5)
+
+### Board Oversight of Sustainability Matters
+
+The Company's Board of Directors exercises oversight of sustainability and
+climate-related matters through the {{ board_committee_name | default("Audit and Sustainability Committee") }}.
+As of {{ period_end_date }}, the Board comprised {{ metrics.board_size | int }} members,
+of whom {{ metrics.board_independent | int }} ({{ "%.0f"|format(metrics.board_independent / metrics.board_size * 100) }}%)
+were independent and {{ metrics.board_female | int }}
+({{ "%.0f"|format(metrics.board_female / metrics.board_size * 100) }}%) were women.
+{% if metrics.board_female / metrics.board_size < 0.40 %}[ESTIMATE: board gender diversity below EU 40% target — verify before filing]{% endif %}
+
+The Board receives sustainability performance updates no less than quarterly.
+Climate-related financial risks are integrated into the Company's enterprise
+risk management process, with material risks escalated to the full Board.
+
+*ESRS reference: ESRS 2 GOV-1 para 21; GOV-3 para 30.*
+
+{% elif section == 'strategy' %}
+## Strategy (ESRS 2 SBM-1 to SBM-3 / ESRS E1)
+
+### Climate-Related Risks and Opportunities
+
+The Company conducted a double-materiality assessment covering both impact
+materiality (the Company's effects on climate and society) and financial
+materiality (climate-related effects on the Company's financial position).
+
+**Transition risks** identified as material include carbon pricing increases
+in applicable jurisdictions and shifting customer demand toward lower-carbon
+products.
+
+**Physical risks** identified as material include acute risks (extreme weather
+disruption to operations and supply chain) and chronic risks (increased cooling
+costs in high-temperature regions).
+
+The Company's strategy incorporates a {{ net_zero_target_year | default("2050") }}
+net-zero commitment aligned with the Paris Agreement 1.5°C pathway.
+Science-based interim targets (SBTi-validated) are set for
+{{ sbti_target_year | default("2030") }}.
+
+*ESRS reference: ESRS 2 SBM-1 para 40; ESRS E1-1 para 14.*
+
+{% elif section == 'risk_management' %}
+## Risk Management (ESRS 2 IRO-1 to IRO-2)
+
+### Identification and Assessment of ESG Risks
+
+The Company's sustainability risk identification process is integrated with
+its enterprise risk management (ERM) framework. Sustainability risks are
+assessed on a {{ risk_assessment_cadence | default("bi-annual") }} basis using
+a double-materiality methodology.
+
+Environmental risks are assessed across the Company's value chain (upstream
+Scope 3: category {{ scope3_categories | default("1, 2, 3, 4") }}; own operations;
+downstream Scope 3: category {{ scope3_downstream_categories | default("11, 15") }}).
+
+Social risks are assessed through workforce surveys, supplier audits, and
+engagement with affected stakeholder groups.
+
+Identified material impacts, risks, and opportunities (IROs) are disclosed
+in the Company's ESRS Appendix: IRO Register.
+
+*ESRS reference: ESRS 2 IRO-1 para 53; ESRS 2 IRO-2 para 56.*
+
+{% elif section == 'metrics_targets' %}
+## Metrics and Targets (ESRS E1-4 to E1-9 / S1 / G1)
+
+### Environmental Metrics
+
+| Metric | {{ period_label }} | Prior Year | Unit | Confidence |
+|--------|-------------------:|----------:|------|------------|
+| Scope 1 GHG emissions | {{ metrics.emissions_scope1 }} | {{ prior.emissions_scope1 | default('N/A') }} | tCO₂e | {{ confidences.emissions_scope1 }} |
+| Scope 2 GHG emissions (market-based) | {{ metrics.emissions_scope2 }} | {{ prior.emissions_scope2 | default('N/A') }} | tCO₂e | {{ confidences.emissions_scope2 }} |
+| Scope 3 GHG emissions | {{ metrics.emissions_scope3 }} | {{ prior.emissions_scope3 | default('N/A') }} | tCO₂e | {{ confidences.emissions_scope3 }}{% if confidences.emissions_scope3 == 'modeled' %} [ESTIMATE]{% endif %} |
+| Total energy consumption | {{ metrics.energy_consumption }} | {{ prior.energy_consumption | default('N/A') }} | MWh | {{ confidences.energy_consumption }} |
+| Renewable energy share | {{ "%.1f"|format(metrics.energy_renewable / metrics.energy_consumption * 100) }}% | — | % | calculated |
+| Water withdrawal | {{ metrics.water_withdrawal }} | {{ prior.water_withdrawal | default('N/A') }} | m³ | {{ confidences.water_withdrawal }} |
+| Total waste generated | {{ metrics.waste_generated }} | {{ prior.waste_generated | default('N/A') }} | tonnes | {{ confidences.waste_generated }} |
+
+### Social Metrics
+
+| Metric | {{ period_label }} | Unit |
+|--------|-------------------:|------|
+| Total workforce | {{ metrics.headcount_total | int }} | headcount |
+| Women in workforce | {{ "%.1f"|format(metrics.headcount_female / metrics.headcount_total * 100) }}% | % |
+| Underrepresented groups | {{ "%.1f"|format(metrics.headcount_underrepresented / metrics.headcount_total * 100) }}% | % |
+| Gender pay gap | {{ metrics.pay_gap_gender }}% | % |
+| Lost-time injury rate | {{ metrics.lost_time_injury_rate }} | per 200k hours |
+
+### Governance Metrics
+
+| Metric | {{ period_label }} |
+|--------|-------------------:|
+| Board size | {{ metrics.board_size | int }} |
+| Independent directors | {{ "%.0f"|format(metrics.board_independent / metrics.board_size * 100) }}% |
+| Women on board | {{ "%.0f"|format(metrics.board_female / metrics.board_size * 100) }}% |
+| CEO pay ratio | {{ metrics.ceo_pay_ratio }}:1 |
+| Regulatory fines (material) | {{ metrics.fines_regulatory | default(0) }} USD |
+
+*ESRS reference: ESRS E1-6 para 56; ESRS S1-6 para 51; ESRS G1-1 para 22.*
+
+{% endif %}
+
+---
+*Draft generated by xiaoguai esg-reporting pack v{{ pack_version }} — narrative-drafter agent.*
+*Status: PENDING HUMAN REVIEW. Do not file without sustainability team sign-off.*
+*Items marked [ESTIMATE] require verification before regulatory submission.*

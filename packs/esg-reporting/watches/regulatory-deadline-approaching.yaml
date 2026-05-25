@@ -1,0 +1,88 @@
+# Watch spec — regulatory-deadline-approaching
+# ---------------------------------------------------------------------------
+# Fires WatchEvents at 90, 60, 30, and 7 days before a regulatory
+# submission deadline. Each horizon has increasing urgency.
+#
+# Regulatory deadlines covered:
+#   CSRD    — ESRS mandatory for large EU PIEs (first deadline FY2024)
+#   GRI     — voluntary but often tied to annual report release
+#   SASB    — voluntary; aligned with 10-K filing deadline for US filers
+#   SEC     — SEC Climate Disclosure Rule (large accelerated filers first)
+# ---------------------------------------------------------------------------
+
+name: regulatory-deadline-approaching
+version: "1.0.0"
+description: >
+  Fires a WatchEvent at 90 / 60 / 30 / 7 days before each unfiled regulatory
+  submission deadline. Urgency escalates with each horizon. Runs daily at
+  07:00 UTC.
+
+source:
+  kind: sql
+  table: esg_submissions
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      s.id             AS submission_id,
+      s.tenant_id,
+      s.period_id,
+      s.regulator,
+      s.framework,
+      s.status,
+      s.deadline_date,
+      rp.label         AS period_label,
+      (s.deadline_date - CURRENT_DATE)::INT AS days_until_deadline,
+      CASE
+          WHEN (s.deadline_date - CURRENT_DATE) <= 7  THEN 'critical'
+          WHEN (s.deadline_date - CURRENT_DATE) <= 30 THEN 'high'
+          WHEN (s.deadline_date - CURRENT_DATE) <= 60 THEN 'medium'
+          ELSE 'low'
+      END AS urgency
+  FROM esg_submissions s
+  JOIN esg_reporting_periods rp ON rp.id = s.period_id
+  WHERE s.tenant_id = '{tenant_id}'
+    AND s.status NOT IN ('filed', 'rejected')
+    AND s.deadline_date IS NOT NULL
+    AND s.deadline_date - CURRENT_DATE IN (90, 60, 30, 7)
+  ORDER BY s.deadline_date ASC
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  # Daily at 07:00 UTC — before most business hours worldwide
+  cron: "0 7 * * *"
+
+event:
+  kind: esg.regulatory_deadline_approaching
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:           "$.tenant_id"
+    submission_id:       "$.submission_id"
+    period_id:           "$.period_id"
+    period_label:        "$.period_label"
+    regulator:           "$.regulator"
+    framework:           "$.framework"
+    submission_status:   "$.status"
+    deadline_date:       "$.deadline_date"
+    days_until_deadline: "$.days_until_deadline"
+    urgency:             "$.urgency"
+
+downstream:
+  agents:
+    - gap-detector              # re-run gap analysis at each horizon
+    - assurance-readiness-checker  # prepare evidence bundle early
+
+notify:
+  output: sustainability-team-slack
+  message_template: >
+    [{{ urgency | upper }}] *{{ regulator }}* deadline in
+    {{ days_until_deadline }} days ({{ deadline_date }}).
+    Period: {{ period_label }} | Status: {{ submission_status }}
+
+dedup:
+  # Each (submission, horizon) fires exactly once per day
+  key: "{tenant_id}:{submission_id}:{days_until_deadline}"
+  ttl_seconds: 86400
+  re_fire_if: "false"

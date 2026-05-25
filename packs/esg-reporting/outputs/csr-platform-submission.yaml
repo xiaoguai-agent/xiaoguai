@@ -1,0 +1,103 @@
+---
+# CSR Platform Submission — output connector (HOTL-GATED)
+# ---------------------------------------------------------------------------
+# Submits the approved ESG disclosure package to the configured regulatory
+# or voluntary reporting platform (e.g. ESAP for CSRD, CDP, GRI Disclosure
+# Service, SEC EDGAR for climate disclosures).
+#
+# THIS CONNECTOR IS HOTL-GATED.
+# No submission occurs without an explicit human approval recorded in
+# esg_submissions.approved_by. The connector verifies the approval record
+# before any outbound API call.
+#
+# Approval flow:
+#   1. narrative-drafter saves draft to esg_submissions (status = 'draft')
+#   2. Sustainability team reviews in admin UI
+#   3. Approver clicks "Approve for submission" → status = 'approved',
+#      approved_by = approver_user_id, approved_at = NOW()
+#   4. This connector fires, verifies approval, submits to platform
+#   5. On success: status = 'filed', submission_ref = platform filing ID
+#   6. On failure: status remains 'approved', error logged, team notified
+
+output: csr-platform-submission
+display_name: "CSR Platform Submission (HOTL-Gated)"
+kind: regulatory_api
+
+hotl:
+  require_human_approval: true
+  approval_table: esg_submissions
+  approval_status_field: status
+  approval_status_value: approved
+  approved_by_field: approved_by
+  approved_at_field: approved_at
+  # If approval record is missing or status != 'approved', abort with error.
+  on_missing_approval: abort_with_error
+
+# Supported platforms (configured via ESG_SUBMISSION_PLATFORM env var)
+platforms:
+  esap:
+    # ESAP — European Single Access Point (CSRD mandatory filing)
+    base_url: "${ESAP_API_BASE_URL:-https://api.esap.eu/v1}"
+    auth:
+      type: oauth2_client_credentials
+      token_url: "${ESAP_TOKEN_URL}"
+      client_id: "${ESAP_CLIENT_ID}"
+      client_secret: "${ESAP_CLIENT_SECRET}"
+    submission_endpoint: "/disclosures"
+    format: xbrl_inline          # ESRS requires iXBRL tagging
+
+  cdp:
+    # CDP Climate, Water, Forests questionnaire submission
+    base_url: "https://api.cdp.net/v1"
+    auth:
+      type: api_key
+      header: X-CDP-API-Key
+      key: "${CDP_API_KEY}"
+    submission_endpoint: "/questionnaire/responses"
+    format: json
+
+  sec_edgar:
+    # SEC EDGAR — climate disclosure (large accelerated filers)
+    base_url: "https://efts.sec.gov/LATEST/search-index/v1"
+    auth:
+      type: bearer_token
+      token: "${SEC_EDGAR_API_KEY}"
+    submission_endpoint: "/submissions"
+    format: inline_xbrl
+
+  gri_disclosure_service:
+    # GRI Disclosure Service — voluntary GRI-aligned report registration
+    base_url: "https://www.globalreporting.org/api/v1"
+    auth:
+      type: api_key
+      header: X-GRI-API-Key
+      key: "${GRI_API_KEY}"
+    submission_endpoint: "/reports"
+    format: json
+
+active_platform: "${ESG_SUBMISSION_PLATFORM:-esap}"
+
+# Post-submission actions
+on_success:
+  - update_esg_submissions:
+      status: filed
+      filed_at: NOW()
+      submission_ref: "{{ response.filing_id }}"
+  - notify:
+      output: sustainability-team-slack
+      message: >
+        :white_check_mark: *Filed successfully.*
+        Period: {{ period_label }} | Framework: {{ framework }}
+        Platform: {{ active_platform }} | Filing ref: {{ response.filing_id }}
+
+on_failure:
+  - notify:
+      output: sustainability-team-slack
+      message: >
+        :x: *Submission FAILED.*
+        Period: {{ period_label }} | Framework: {{ framework }}
+        Error: {{ error_message }}
+        Status remains 'approved' — retry when resolved.
+
+rate_limits:
+  submissions_per_tenant_per_day: 5   # avoid accidental duplicate filings

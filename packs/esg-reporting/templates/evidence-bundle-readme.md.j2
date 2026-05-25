@@ -1,0 +1,92 @@
+# ESG Assurance Evidence Bundle — {{ period_label }}
+
+> Prepared for: External Assurance Provider
+> Tenant: {{ tenant_id }}
+> Period: {{ period_label }} ({{ start_date }} to {{ end_date }})
+> Generated: {{ generated_at }}
+> Readiness score: **{{ readiness_score_pct }}%**
+
+This bundle is prepared to support the external assurance engagement for the
+Company's ESG / Sustainability Report. It does not constitute assurance itself.
+
+---
+
+## 1. Scope of Assurance
+
+The following metrics are presented for assurance review:
+
+{{ assurance_scope | join(', ') }}
+
+Metrics with confidence = 'not_available' are excluded from the assurance
+scope and noted in section 4 (Limitations).
+
+---
+
+## 2. Data Source Inventory
+
+| Source Name | Kind | Connector | Last Synced | Contact |
+|-------------|------|-----------|------------|---------|
+{% for ds in data_source_inventory %}
+| {{ ds.name }} | {{ ds.kind }} | {{ ds.connector | default('—') }} | {{ ds.last_synced_at | default('never') }} | {{ ds.contact_email | default('—') }} |
+{% endfor %}
+
+---
+
+## 3. Metric Audit Trail
+
+| Metric Key | Value | Unit | Confidence | Source | Last Updated | Methodology |
+|------------|------:|------|------------|--------|-------------|-------------|
+{% for m in metric_audit_trail %}
+| `{{ m.metric_key }}` | {{ m.value }} | {{ m.unit }} | {{ m.confidence }} | {{ m.source_name }} | {{ m.updated_at | truncate(10, true, '') }} | {{ m.methodology | default('—') | truncate(60) }} |
+{% endfor %}
+
+---
+
+## 4. Blockers and Limitations
+
+{% if blockers %}
+The following items are **unresolved blockers** that may limit the scope
+of assurance:
+
+| Metric Key | Issue | Severity | Recommendation |
+|------------|-------|----------|----------------|
+{% for b in blockers %}
+| `{{ b.metric_key }}` | {{ b.issue }} | **{{ b.severity }}** | {{ b.recommendation }} |
+{% endfor %}
+{% else %}
+No blockers identified. All in-scope metrics have complete provenance.
+{% endif %}
+
+{% if warnings %}
+### Advisory Warnings (not blocking)
+
+| Metric Key | Issue |
+|------------|-------|
+{% for w in warnings %}
+| `{{ w.metric_key }}` | {{ w.issue }} |
+{% endfor %}
+{% endif %}
+
+---
+
+## 5. Metric Count Summary
+
+| Confidence Level | Count |
+|-----------------|------:|
+| Measured | {{ metric_count.measured }} |
+| Estimated | {{ metric_count.estimated }} |
+| Modeled | {{ metric_count.modeled }} |
+| Not available | {{ metric_count.not_available }} |
+| **Total** | **{{ metric_count.total }}** |
+
+---
+
+## 6. Assurer Notes Section
+
+*[Reserved for assurer's working notes and findings. Do not pre-fill.]*
+
+---
+
+*This evidence bundle was generated automatically by xiaoguai esg-reporting
+pack v{{ pack_version }} (assurance-readiness-checker agent).*
+*Contact: {{ sustainability_contact_email | default("sustainability@company.com") }}*
