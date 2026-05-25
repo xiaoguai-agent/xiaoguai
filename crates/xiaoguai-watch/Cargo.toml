@@ -1,0 +1,32 @@
+[package]
+name = "xiaoguai-watch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Declarative active-wakeup watchers — poll SQL or HTTP sources on a schedule, deduplicate matches, emit WatchEvents."
+
+[dependencies]
+xiaoguai-storage = { path = "../xiaoguai-storage" }
+async-trait    = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+serde_yaml     = { workspace = true }
+sqlx           = { workspace = true }
+tokio          = { workspace = true, features = ["time", "sync", "macros", "rt"] }
+thiserror      = { workspace = true }
+tracing        = { workspace = true }
+chrono         = { workspace = true }
+uuid           = { workspace = true }
+reqwest        = { workspace = true }
+sha2           = { workspace = true }
+moka           = { workspace = true }
+
+[dev-dependencies]
+tokio              = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

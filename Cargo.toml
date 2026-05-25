@@ -26,6 +26,7 @@ members = [
     "crates/xiaoguai-cli",
     "crates/xiaoguai-orchestrator",
     "crates/xiaoguai-observability",
+    "crates/xiaoguai-watch",
 ]
 
 [workspace.package]
@@ -141,6 +142,9 @@ pdf-extract = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 scraper = "0.27"
 pulldown-cmark = { version = "0.13", default-features = false }
+
+# caching / watch dedup
+moka = { version = "0.12", features = ["future"] }
 
 # misc
 once_cell = "1.20"
