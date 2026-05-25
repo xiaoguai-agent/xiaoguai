@@ -1,0 +1,78 @@
+---
+# PagerDuty security channel output adapter.
+#
+# Sends security alerts to PagerDuty via Events API v2.
+# Creates an incident only when severity >= the configured threshold.
+# Deduplicates by dedup_key (tenant_id + agent + result_id) to prevent
+# alert storms on repeated webhook deliveries.
+#
+# API: https://developer.pagerduty.com/docs/events-api-v2/trigger-events/
+
+output: pagerduty-sec-channel
+
+pagerduty:
+  # Events API v2 routing key (per-service integration key).
+  # Use a dedicated "Security" PagerDuty service, not a shared one.
+  routing_key: ${SECURITY_AUDIT_PAGERDUTY_KEY}
+  events_url: "https://events.pagerduty.com/v2/enqueue"
+
+  # Only page when overall_severity is at or above this level.
+  # Adjust per-team SLA: critical-only vs. high+critical.
+  min_severity: high
+
+  # Severity mapping → PagerDuty severity field.
+  severity_map:
+    critical: critical
+    high: error
+    medium: warning
+    low: info
+
+  # Deduplication key template — prevents duplicate incidents for the
+  # same finding across retried webhook deliveries.
+  dedup_key_template: "sec-audit:{{ tenant_id }}:{{ agent_name }}:{{ result_id }}"
+
+  # Incident payload templates per agent.
+  payloads:
+    auth-log-triage:
+      summary_template: >
+        [SEC] Auth anomaly — {{ result.overall_severity | upper }} — {{ result.suspicious_events | length }} events
+        (tenant: {{ result.tenant_id }})
+      details_fields:
+        - key: tenant_id
+          value: "{{ result.tenant_id }}"
+        - key: window
+          value: "{{ result.window_start }} – {{ result.window_end }}"
+        - key: suspicious_events
+          value: "{{ result.suspicious_events | length }}"
+        - key: top_category
+          value: "{{ result.suspicious_events | first | default({}) | get('categories', []) | first | default('none') }}"
+        - key: confidence
+          value: "{{ result.confidence }}"
+        - key: summary
+          value: "{{ result.summary | truncate(300) }}"
+
+    secret-leak-scanner:
+      summary_template: >
+        [SEC] Secret leak — {{ result.overall_severity | upper }} — {{ result.confirmed_secrets }} secret(s)
+        in {{ result.repo }}@{{ result.scan_ref | truncate(8, end='') }}
+      details_fields:
+        - key: repository
+          value: "{{ result.repo }}"
+        - key: scan_ref
+          value: "{{ result.scan_ref }}"
+        - key: confirmed_secrets
+          value: "{{ result.confirmed_secrets }}"
+        - key: top_urgency
+          value: "{{ result.detected_secrets | sort(attribute='rotation_urgency') | first | default({}) | get('rotation_urgency', 'none') }}"
+        - key: summary
+          value: "{{ result.summary | truncate(300) }}"
+
+  # Escalation: auto-resolve PD incident when the Jira ticket moves to Done.
+  # Requires PAGERDUTY_API_TOKEN (REST API v2) in addition to routing key.
+  # Deferred — see docs/plans/security-audit-backlog.md.
+  # auto_resolve_on_jira_done: false
+
+# Deferred:
+#   - Slack/Teams mirror for non-paging alerts (medium severity)
+#   - OpsGenie alternative adapter
+#   - On-call rotation lookup to auto-assign the PD incident

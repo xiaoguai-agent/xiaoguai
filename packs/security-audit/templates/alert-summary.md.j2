@@ -1,0 +1,49 @@
+# Security Alert: Auth Log Anomalies — {{ result.overall_severity | upper }}
+
+> **Tenant**: `{{ result.tenant_id }}`
+> **Window**: {{ result.window_start }} — {{ result.window_end }}
+> **Events analyzed**: {{ result.total_events_analyzed }}
+> **Suspicious events**: {{ result.suspicious_events | length }}
+> **Overall severity**: {{ result.overall_severity | upper }}
+> **Confidence**: {{ result.confidence }}
+
+---
+
+## Summary
+
+{{ result.summary }}
+
+---
+
+## Suspicious Events
+
+{% if result.suspicious_events | length == 0 %}
+No suspicious events detected in this window.
+{% else %}
+| Severity | Timestamp | User | Source IP | Categories | Recommended Response |
+|---|---|---|---|---|---|
+{% for ev in result.suspicious_events | sort(attribute='severity') %}
+| **{{ ev.severity | upper }}** | `{{ ev.timestamp }}` | `{{ ev.user }}` | `{{ ev.src_ip }}` | {{ ev.categories | join(', ') }} | `{{ ev.recommended_response }}` |
+{% endfor %}
+
+### Event Details
+
+{% for ev in result.suspicious_events %}
+#### {{ loop.index }}. {{ ev.categories | join(' + ') | title }} — {{ ev.severity | upper }}
+
+- **Event ID**: `{{ ev.event_id }}`
+- **Time**: {{ ev.timestamp }}
+- **User**: `{{ ev.user }}`
+- **Source IP**: `{{ ev.src_ip }}`{% if ev.threat_intel_hit %} ⚠ **known bad IP**{% endif %}
+
+- **Evidence**: {{ ev.evidence }}
+- **Recommended response**: `{{ ev.recommended_response }}`
+
+{% endfor %}
+{% endif %}
+
+---
+
+*Generated automatically by xiaoguai security-audit pack v{{ pack_version }}.*
+*Reviewed by: <!-- @mention security engineer -->*
+*Resolved: <!-- YYYY-MM-DD HH:MM UTC -->*

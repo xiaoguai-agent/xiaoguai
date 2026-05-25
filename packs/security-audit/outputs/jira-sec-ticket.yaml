@@ -1,0 +1,152 @@
+---
+# Jira security ticket output adapter.
+#
+# Opens a Jira issue in the configured security project for each
+# security finding.  Deduplicates by checking for existing open tickets
+# with the same dedup label before creating a new one.
+#
+# API: https://developer.atlassian.com/cloud/jira/platform/rest/v3/
+
+output: jira-sec-ticket
+
+jira:
+  # Jira base URL (cloud or server).
+  base_url: ${JIRA_BASE_URL}
+  # API token (Atlassian cloud) or username:password (Jira server).
+  token: ${SECURITY_AUDIT_JIRA_TOKEN}
+  # Project key for security issues (e.g. SEC, SECOPS).
+  project: ${SECURITY_AUDIT_JIRA_PROJECT}
+
+  # Issue type to create. Must exist in the target project.
+  issue_type: "Security Finding"
+
+  # Dedup: search for existing open issues with matching label before creating.
+  dedup:
+    enabled: true
+    # JQL to check for duplicates.
+    jql_template: >
+      project = {{ jira_project }}
+      AND labels = "sec-audit:{{ dedup_key }}"
+      AND statusCategory != Done
+    # If a duplicate is found: add a comment instead of creating a new ticket.
+    on_duplicate: comment
+
+  # Priority mapping → Jira priority name (must match your Jira config).
+  priority_map:
+    critical: Critical
+    high: High
+    medium: Medium
+    low: Low
+    info: Lowest
+
+  # Label applied to all issues for easy filtering.
+  base_labels:
+    - "security-audit"
+    - "xiaoguai"
+
+  # Per-agent ticket templates.
+  templates:
+    auth-log-triage:
+      summary_template: >
+        [Auth Anomaly] {{ result.overall_severity | upper }} — {{ result.suspicious_events | length }} suspicious events
+        ({{ result.tenant_id }}, {{ result.window_start | truncate(10, end='') }})
+      dedup_key_template: "auth:{{ tenant_id }}:{{ result.window_start | truncate(10, end='') }}"
+      extra_labels:
+        - "auth-anomaly"
+      priority_source: result.overall_severity
+      description_template: |
+        h2. Summary
+        {{ result.summary }}
+
+        h2. Suspicious Events ({{ result.suspicious_events | length }})
+        || Severity || User || Source IP || Categories || Recommended Response ||
+        {% for ev in result.suspicious_events %}
+        | {{ ev.severity | upper }} | {{ ev.user }} | {{ ev.src_ip }} | {{ ev.categories | join(', ') }} | {{ ev.recommended_response }} |
+        {% endfor %}
+
+        h2. Analysis Window
+        {{ result.window_start }} — {{ result.window_end }}
+
+        Confidence: {{ result.confidence }}
+
+    cve-prioritizer:
+      summary_template: >
+        [CVE] {{ result.ranked_cves | selectattr('priority_tier', 'in', ['critical', 'high']) | list | length }}
+        Critical/High CVEs — {{ result.tenant_id }}
+      dedup_key_template: "cve:{{ tenant_id }}:{{ result.generated_at | truncate(10, end='') }}"
+      extra_labels:
+        - "cve"
+        - "dependency-security"
+      priority_source: >
+        result.ranked_cves | map(attribute='priority_tier') | first | default('medium')
+      description_template: |
+        h2. Summary
+        {{ result.summary }}
+
+        Remediation deadlines:
+        * Critical: {{ result.remediation_deadline.critical }}
+        * High: {{ result.remediation_deadline.high }}
+
+        h2. Ranked CVEs ({{ result.ranked_cves | length }})
+        || CVE ID || Score || Priority || Package || KEV || Friction ||
+        {% for cve in result.ranked_cves %}
+        | [{{ cve.cve_id }}|{{ cve.references | first | default('#') }}] | {{ cve.cvss_score }} | {{ cve.priority_tier | upper }} | {{ cve.affected_package }}@{{ cve.affected_version }} | {{ 'Yes' if cve.kev_listed else 'No' }} | {{ cve.upgrade_paths | map(attribute='friction') | first | default('unknown') }} |
+        {% endfor %}
+
+    secret-leak-scanner:
+      summary_template: >
+        [Secret Leak] {{ result.overall_severity | upper }} — {{ result.confirmed_secrets }} secret(s)
+        in {{ result.repo }}@{{ result.scan_ref | truncate(8, end='') }}
+      dedup_key_template: "secret:{{ result.repo }}:{{ result.scan_ref }}"
+      extra_labels:
+        - "secret-leak"
+        - "rotation-required"
+      priority_source: result.overall_severity
+      description_template: |
+        h2. Summary
+        {{ result.summary }}
+
+        h2. Rotation Order
+        {% for secret_id in result.rotation_order %}
+        {% set secret = result.detected_secrets | selectattr('secret_id', '==', secret_id) | first %}
+        {% if secret %}
+        h3. {{ loop.index }}. {{ secret.type | replace('_', ' ') | title }} — {{ secret.rotation_urgency | upper }}
+        * File: +{{ secret.file_path }}:{{ secret.line_number }}+
+        * Commit: {{secret.commit_sha}}
+        * Masked value: {{ secret.masked_value }}
+        * Blast radius: {{ secret.blast_radius }}
+        * Exposure: {{ secret.exposure_days | default('unknown') }} day(s)
+        {% endif %}
+        {% endfor %}
+
+    soc2-evidence-collator:
+      summary_template: >
+        [SOC2] Control {{ result.control_id }} — {{ result.overall_assessment | replace('_', ' ') | title }}
+        ({{ result.tenant_id }}, {{ result.audit_window.start | truncate(10, end='') }} — {{ result.audit_window.end | truncate(10, end='') }})
+      dedup_key_template: "soc2:{{ tenant_id }}:{{ result.control_id }}:{{ result.audit_window.start | truncate(10, end='') }}"
+      extra_labels:
+        - "soc2"
+        - "audit-evidence"
+      priority_source: >
+        'medium' if result.overall_assessment == 'satisfactory' else 'high'
+      description_template: |
+        h2. Evidence Bundle
+        * Control: {{ result.control_id }} — {{ result.control_title }}
+        * Coverage: {{ result.coverage_status | upper }}
+        * Assessment: {{ result.overall_assessment | replace('_', ' ') | title }}
+        * Evidence items: {{ result.evidence_items | length }}
+
+        h2. Auditor Notes
+        {{ result.auditor_notes }}
+
+        {% if result.coverage_gaps %}
+        h2. Coverage Gaps
+        {% for gap in result.coverage_gaps %}
+        * {{ gap }}
+        {% endfor %}
+        {% endif %}
+
+# Deferred:
+#   - Linear alternative adapter
+#   - GitHub Issues alternative adapter
+#   - Auto-close ticket when PagerDuty incident resolves

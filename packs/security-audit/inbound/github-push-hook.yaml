@@ -1,0 +1,94 @@
+---
+# GitHub push webhook inbound source.
+#
+# Triggers the secret-leak-scanner agent on every push to watched
+# repositories. The adapter fetches the diff for each commit in the
+# push batch and passes it to the scanner.
+#
+# Mounting: POST /v1/security-audit/inbound/github-push/{route_id}
+# Auth:     X-Hub-Signature-256 HMAC-SHA256 verification (required).
+
+source: github-push
+route_prefix: /v1/security-audit/inbound/github-push
+
+normalize:
+  # GitHub signs all webhook deliveries — enforce verification.
+  hmac_secret: ${GITHUB_WEBHOOK_SECRET}
+  hmac_header: X-Hub-Signature-256
+  hmac_algorithm: sha256
+
+  # Map GitHub push event fields onto the GitPushEvent schema.
+  field_map:
+    repo: repository.full_name
+    ref: ref
+    branch:
+      source: ref
+      transform: "ref | replace('refs/heads/', '')"
+    commits:
+      source: commits
+      transform: |
+        [{"sha": c.id, "message": c.message, "author": c.author.name,
+          "url": c.url, "added": c.added, "modified": c.modified}
+         for c in commits]
+    head_commit_sha: head_commit.id
+    pusher: pusher.name
+    tenant_id: installation.id | repository.owner.login
+    occurred_at: _now
+    raw: _self
+
+# Only scan pushes to these ref patterns.
+# Glob patterns; ** matches any path segment.
+watched_refs:
+  - "refs/heads/main"
+  - "refs/heads/master"
+  - "refs/heads/release/**"
+  - "refs/heads/hotfix/**"
+
+# Skip refs — never scan these (reduces noise from bots/renovate).
+skip_refs:
+  - "refs/heads/renovate/**"
+  - "refs/heads/dependabot/**"
+
+# Maximum commits to scan per push event.
+# Pushes with more commits are scanned on the head commit diff only.
+max_commits_per_push: 20
+
+# Fetch the full diff for each commit via GitHub API before scanning.
+diff_fetch:
+  enabled: true
+  # GitHub API endpoint template.
+  url_template: "https://api.github.com/repos/{{ repo }}/commits/{{ sha }}"
+  auth_header: "Bearer ${GITHUB_TOKEN}"
+  accept_header: "application/vnd.github.diff"
+  # Maximum diff size to scan (bytes). Larger diffs are truncated.
+  max_diff_bytes: 524288   # 512 KB
+
+# Route to secret-leak-scanner agent.
+route_to_agent: secret-leak-scanner
+
+# Sample payload (GitHub push event, truncated).
+sample_payload: |
+  {
+    "ref": "refs/heads/main",
+    "head_commit": {
+      "id": "abc123def456",
+      "message": "fix: update database connection string",
+      "author": {"name": "Jane Dev"},
+      "url": "https://github.com/acme/backend/commit/abc123def456",
+      "added": [],
+      "modified": ["config/database.yml"]
+    },
+    "commits": [
+      {
+        "id": "abc123def456",
+        "message": "fix: update database connection string",
+        "author": {"name": "Jane Dev"},
+        "url": "https://github.com/acme/backend/commit/abc123def456",
+        "added": [],
+        "modified": ["config/database.yml"]
+      }
+    ],
+    "repository": {"full_name": "acme/backend", "owner": {"login": "acme"}},
+    "pusher": {"name": "jane-dev"},
+    "installation": {"id": "inst-001"}
+  }
