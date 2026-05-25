@@ -1,0 +1,75 @@
+# Inbound connector — manual pipeline run log CSV upload
+# ---------------------------------------------------------------------------
+# Accepts manually uploaded CSV files describing pipeline run history.
+# Used for one-off imports, backfills, or when source systems are not
+# integrated (e.g. on-prem Spark jobs without webhook support).
+#
+# Upload endpoint: POST /api/packs/data-eng-pipeline/inbound/csv
+# Required columns: pipeline_id, run_id, status, run_date, started_at
+# ---------------------------------------------------------------------------
+
+name: csv-manual-upload
+version: "1.0.0"
+description: >
+  Manual CSV upload for pipeline run logs. Accepts historical or ad-hoc
+  run records, validates required columns and types, and inserts into
+  de_pipeline_runs. Does not trigger agents automatically — operator
+  must trigger manually via Admin UI if needed.
+
+kind: inbound_connector
+source: csv_upload
+
+endpoint:
+  path: /api/packs/data-eng-pipeline/inbound/csv
+  method: POST
+  max_file_size_mb: 25
+  allowed_mime_types:
+    - text/csv
+    - application/vnd.ms-excel
+
+schema:
+  required_columns:
+    - pipeline_id    # string, logical pipeline name
+    - run_id         # string, unique run identifier
+    - status         # enum: success | failed | running | skipped | cancelled
+    - run_date       # date (YYYY-MM-DD)
+    - started_at     # ISO 8601 timestamp
+  optional_columns:
+    - finished_at    # ISO 8601 timestamp
+    - duration_seconds  # numeric
+    - row_count      # integer
+    - dataset_id     # string, downstream dataset refreshed by this run
+    - error_message  # string
+    - source         # string; defaults to 'manual'
+
+validations:
+  - column: status
+    rule: enum
+    values: [success, failed, running, skipped, cancelled]
+  - column: run_date
+    rule: date
+    format: "YYYY-MM-DD"
+  - column: started_at
+    rule: iso8601
+  - column: row_count
+    rule: non_negative_integer
+    nullable: true
+  - column: duration_seconds
+    rule: non_negative_numeric
+    nullable: true
+
+mapping:
+  source_override: "manual"   # force source = 'manual' regardless of CSV content
+
+target:
+  table: de_pipeline_runs
+  upsert_key: [tenant_id, pipeline_id, run_id]
+
+post_upload:
+  notify_channel: "${DE_NOTIFY_CHANNEL:-admin_ui}"
+  # No automatic agent trigger — manual review required before investigation
+  trigger_agent: null
+
+on_error:
+  response_format: json
+  include_row_errors: true

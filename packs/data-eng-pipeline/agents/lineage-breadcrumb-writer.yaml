@@ -1,0 +1,101 @@
+# Agent definition — lineage-breadcrumb-writer
+# ---------------------------------------------------------------------------
+# Triggered by de.pipeline_run_succeeded or de.pipeline_run_failed events.
+# For each completed run, inserts or updates lineage_edges with breadcrumb
+# context — run timing, row counts, anomaly flags — so the lineage graph
+# remains current and useful for future investigations.
+#
+# This agent is lightweight and runs autonomously (no HOTL approval needed).
+# ---------------------------------------------------------------------------
+
+name: lineage-breadcrumb-writer
+version: "1.0.0"
+description: >
+  Writes lineage breadcrumbs to de_lineage_edges after each pipeline run
+  completes. Records upstream/downstream relationships with run context
+  (timing, row counts, anomaly flags). Autonomous — no HOTL approval required.
+
+triggers:
+  - event: de.pipeline_run_succeeded
+    source: inbound/airflow-dag-event
+  - event: de.pipeline_run_succeeded
+    source: inbound/dbt-cloud-run-end
+  - event: de.pipeline_run_succeeded
+    source: inbound/snowflake-task-event
+  - event: de.pipeline_run_failed
+    source: inbound/airflow-dag-event
+  - event: de.pipeline_run_failed
+    source: inbound/dbt-cloud-run-end
+
+system_prompt: |
+  You are a data lineage recorder. Given a completed pipeline run event,
+  your job is to:
+  1. Determine the upstream dataset(s) this pipeline reads from.
+  2. Determine the downstream dataset(s) this pipeline writes to.
+  3. Write a lineage edge for each upstream→downstream pair, annotated
+     with run breadcrumbs: run timing, row count, status, and any anomaly
+     flags from the current xg-anomaly state.
+
+  Rules:
+  - Use only the data provided in the event payload and tool responses.
+  - If upstream/downstream cannot be determined from event metadata, use
+    get_run_lineage_hints to check for declared dependencies.
+  - Write breadcrumbs as compact JSON. Keep each breadcrumb under 500 bytes.
+  - Do not invent lineage relationships not supported by the data.
+
+tools:
+  - name: get_run_details
+    description: >
+      Fetch a pipeline run record by run_id. Returns pipeline_id, dataset_id,
+      row_count, duration_seconds, status, started_at, finished_at.
+    kind: sql
+    query: |
+      SELECT
+          id, pipeline_id, dataset_id, run_id, status,
+          row_count, duration_seconds, started_at, finished_at, source
+      FROM de_pipeline_runs
+      WHERE tenant_id = '{tenant_id}'
+        AND run_id = '{run_id}'
+      LIMIT 1
+
+  - name: get_run_lineage_hints
+    description: >
+      Look up any declared upstream datasets for a pipeline_id from the
+      lineage hint config (de_pipeline_lineage_hints if it exists).
+      Returns upstream_id, downstream_id pairs.
+    kind: sql
+    query: |
+      SELECT upstream_id, downstream_id, edge_kind
+      FROM de_pipeline_lineage_hints
+      WHERE tenant_id = '{tenant_id}'
+        AND pipeline_id = '{pipeline_id}'
+      ORDER BY upstream_id
+
+  - name: upsert_lineage_edge
+    description: >
+      Insert or update a lineage edge for this run. Accepts upstream_id,
+      downstream_id, edge_kind, and a breadcrumb JSON object. Returns
+      the edge id.
+    kind: sql
+    query: |
+      INSERT INTO de_lineage_edges
+          (tenant_id, run_id, upstream_id, downstream_id, edge_kind, breadcrumb)
+      VALUES
+          ('{tenant_id}', '{run_id}', '{upstream_id}', '{downstream_id}',
+           '{edge_kind}', '{breadcrumb}'::JSONB)
+      ON CONFLICT (tenant_id, run_id, upstream_id, downstream_id) DO UPDATE
+          SET breadcrumb = EXCLUDED.breadcrumb,
+              recorded_at = NOW()
+      RETURNING id
+
+hotl:
+  budget_usd: 0.02
+  autonomous_actions:
+    upsert_lineage_edge: -1   # fully autonomous; lineage writes are low-risk
+  require_human_approval: []
+
+outcome_telemetry:
+  record_on:
+    - lineage_edges_written
+    - lineage_write_failed
+  feedback_table: de_lineage_edges

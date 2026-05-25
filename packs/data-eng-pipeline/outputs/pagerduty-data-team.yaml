@@ -1,0 +1,59 @@
+# Output channel — PagerDuty data team on-call
+# ---------------------------------------------------------------------------
+# Routes critical SLA breach alerts to the data engineering on-call rotation
+# via PagerDuty Events API v2. Used exclusively by sla-breach-notifier for
+# critical-severity breaches (age > 2× SLA or sigma > 4.0).
+#
+# Requires: PAGERDUTY_DATA_TEAM_ROUTING_KEY env var.
+# ---------------------------------------------------------------------------
+
+name: pagerduty-data-team
+version: "1.0.0"
+description: >
+  PagerDuty output for critical data pipeline SLA breaches. Sends trigger
+  events via Events API v2 with dedup_key per dataset to prevent duplicate
+  pages for the same ongoing breach. Resolves automatically when
+  de.pipeline_run_succeeded fires for the affected dataset.
+
+kind: output_channel
+type: pagerduty_events_v2
+
+connection:
+  events_url: "https://events.pagerduty.com/v2/enqueue"
+  routing_key_env: PAGERDUTY_DATA_TEAM_ROUTING_KEY
+
+dedup_key_template: "xiaoguai-de-{tenant_id}-{dataset_id}"
+
+# Map xiaoguai breach severity to PagerDuty severity
+severity_mapping:
+  critical: critical
+  warning: error      # PagerDuty 'error' = amber; 'critical' = red
+
+message_formats:
+  breach_trigger:
+    summary: "Data SLA breach: {{ dataset_id }} — {{ age_minutes | round(0) }}m stale (SLA: {{ sla_max_age_minutes }}m)"
+    source: "xiaoguai-data-eng-pipeline"
+    custom_details:
+      pipeline_id:        "{{ pipeline_id }}"
+      dataset_id:         "{{ dataset_id }}"
+      age_minutes:        "{{ age_minutes }}"
+      sla_max_age_minutes: "{{ sla_max_age_minutes }}"
+      root_cause:         "{{ root_cause | default('Investigation in progress') }}"
+      investigation_url:  "{{ admin_url }}/data-eng/breaches/{{ breach_id }}"
+    links:
+      - href: "{{ admin_url }}/data-eng/breaches/{{ breach_id }}"
+        text: "View breach in Admin UI"
+      - href: "{{ admin_url }}/data-eng/lineage/{{ pipeline_id }}"
+        text: "View lineage graph"
+
+  breach_resolve:
+    # Sent automatically when de.pipeline_run_succeeded fires for the dataset
+    summary: "Data SLA breach resolved: {{ dataset_id }} is now fresh"
+    resolve: true
+
+auto_resolve:
+  on_event: de.pipeline_run_succeeded
+  match_key: "{tenant_id}:{dataset_id}"
+
+rate_limits:
+  per_routing_key_per_minute: 60

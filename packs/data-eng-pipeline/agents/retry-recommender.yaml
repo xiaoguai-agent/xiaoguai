@@ -1,0 +1,127 @@
+# Agent definition — retry-recommender
+# ---------------------------------------------------------------------------
+# Triggered by de.dag_run_failed or de.latency_spike events.
+# Analyses the failure type and history to determine whether a retry is
+# safe and likely to succeed. Emits a structured recommendation:
+#   - auto_retry: safe to retry immediately (transient error, no schema change)
+#   - manual_retry: retry after operator confirms (partial failure, state unclear)
+#   - do_not_retry: requires code fix (schema error, logic bug, auth failure)
+#
+# HOTL-gated: auto_retry recommendations are delivered to Slack; actually
+# triggering a DAG re-run requires human approval via admin UI.
+# ---------------------------------------------------------------------------
+
+name: retry-recommender
+version: "1.0.0"
+description: >
+  Analyses DAG run failures and latency spikes to recommend a retry
+  strategy: auto_retry (transient), manual_retry (ambiguous), or
+  do_not_retry (requires code fix). Delivers recommendation to Slack.
+  Actually triggering a re-run requires human approval (HOTL).
+
+triggers:
+  - event: de.dag_run_failed
+    source: dag-run-failure
+  - event: de.latency_spike
+    source: anomaly/latency-spike
+    filter: "{{ event.sigma_distance > 3.5 }}"   # only recommend on severe spikes
+
+system_prompt: |
+  You are a data pipeline reliability advisor. Your job is to recommend
+  whether a failed or slow pipeline run should be retried, and if so, how.
+
+  Decision framework:
+  1. auto_retry — ALL of the following must be true:
+     - Error is transient (connection timeout, rate limit, OOM on worker).
+     - No schema change detected in upstream source in the last 24 hours.
+     - The last 3 successful runs did not show the same error pattern.
+     - Retry count for this run_id is < 2.
+  2. manual_retry — ANY of the following:
+     - Error is ambiguous (generic exception, no stack trace).
+     - Partial success (some tasks succeeded, some failed).
+     - First occurrence of this error type in 30 days.
+  3. do_not_retry — ANY of the following:
+     - Schema/parse error (column not found, type mismatch).
+     - Auth/permission error.
+     - Data quality error (constraint violation, dupe key).
+     - Retry count >= 2 and still failing.
+
+  Output format (required):
+  recommendation: auto_retry | manual_retry | do_not_retry
+  rationale: <one sentence>
+  suggested_action: <specific next step for the on-call engineer>
+  airflow_dag_id: <dag_id if known>
+  retry_delay_minutes: <integer or null>
+
+tools:
+  - name: get_run_history
+    description: >
+      Fetch the last 5 run records for a pipeline_id to detect patterns.
+      Returns: run_id, status, error_message, started_at, retry_count.
+    kind: sql
+    query: |
+      SELECT
+          run_id, status, error_message, started_at, duration_seconds,
+          COALESCE(
+              (raw_payload->>'retry_number')::INT, 0
+          ) AS retry_count
+      FROM de_pipeline_runs
+      WHERE tenant_id = '{tenant_id}'
+        AND pipeline_id = '{pipeline_id}'
+      ORDER BY started_at DESC
+      LIMIT 5
+
+  - name: get_recent_schema_changes
+    description: >
+      Check whether any upstream datasets of this pipeline had schema changes
+      in the last 24 hours. Returns change records if any, empty if none.
+    kind: sql
+    query: |
+      SELECT e.upstream_id, e.breadcrumb->>'schema_change' AS schema_change_hint
+      FROM de_lineage_edges e
+      WHERE e.tenant_id = '{tenant_id}'
+        AND e.downstream_id = '{pipeline_id}'
+        AND e.breadcrumb->>'schema_change' IS NOT NULL
+        AND e.recorded_at >= NOW() - INTERVAL '24 hours'
+      ORDER BY e.recorded_at DESC
+      LIMIT 10
+
+  - name: save_recommendation
+    description: >
+      Persist the retry recommendation to de_freshness_breaches for
+      audit and HOTL approval tracking.
+    kind: sql
+    query: |
+      UPDATE de_freshness_breaches
+      SET root_cause = CONCAT(COALESCE(root_cause, ''), ' | Retry recommendation: {recommendation} — {rationale}'),
+          updated_at = NOW()
+      WHERE tenant_id = '{tenant_id}'
+        AND pipeline_id = '{pipeline_id}'
+        AND status IN ('open', 'investigating')
+      RETURNING id
+
+  - name: post_recommendation_to_slack
+    description: >
+      Post the structured retry recommendation to the data-eng Slack channel.
+    kind: output
+    channel: slack-data-eng-channel
+
+hotl:
+  budget_usd: 0.05
+  autonomous_actions:
+    get_run_history: -1
+    get_recent_schema_changes: -1
+    save_recommendation: 1
+    post_recommendation_to_slack: -1
+  require_human_approval:
+    - trigger_dag_retry    # actual DAG retry trigger — always requires approval
+  notify_channel: "${DE_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - recommendation_auto_retry
+    - recommendation_manual_retry
+    - recommendation_do_not_retry
+    - retry_approved
+    - retry_rejected
+  feedback_table: de_freshness_breaches
