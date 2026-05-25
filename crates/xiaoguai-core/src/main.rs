@@ -27,6 +27,7 @@ mod sessions_bridge;
 pub mod skills_bridge;
 mod today_bridge;
 mod usage_bridge;
+pub mod workspace_bridge;
 
 use std::path::PathBuf;
 
@@ -545,6 +546,9 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // v1.3.x: long-term memory — wire PgMemoryStore here once the
         // memory bridge crate lands; `None` makes /v1/memories return 503.
         memory_store: None,
+        // v1.3.x: workspace CRUD — production wires PgWorkspaceRepository
+        // in workspace_bridge.rs; `None` makes /v1/workspaces return 503.
+        workspace_repository: None,
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

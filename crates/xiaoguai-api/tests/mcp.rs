@@ -129,6 +129,7 @@ fn build_state(auth: Option<Arc<dyn TokenValidator>>, mcp: Arc<InMemoryMcpRepo>)
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
+        workspace_repository: None,
     }
 }
 
