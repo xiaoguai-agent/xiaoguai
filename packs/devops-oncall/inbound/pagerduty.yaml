@@ -1,0 +1,74 @@
+---
+# Inbound webhook source — PagerDuty v2 alert events
+#
+# PagerDuty delivers webhook payloads to:
+#   POST https://<host>/v1/oncall/inbound/pagerduty/{route_id}
+#
+# Configure a PagerDuty webhook extension on your service(s) pointing to this
+# URL.  The route_id must be registered in the xiaoguai scheduler webhook table
+# and corresponds to a token stored in PAGERDUTY_WEBHOOK_SECRET.
+#
+# References: https://developer.pagerduty.com/docs/db0fa8c8984fc-overview
+
+name: pagerduty-webhook
+kind: webhook
+
+route_id: "oncall-pagerduty-${PACK_INSTANCE_ID}"
+route_prefix: /v1/oncall/inbound/pagerduty
+
+# Only process these PagerDuty event types.
+event_filter:
+  header: "X-Pagerduty-Signature"   # presence checked; value verified via HMAC
+  payload_path: "$.messages[*].event"
+  values:
+    - "incident.triggered"
+    - "incident.escalated"
+    - "incident.acknowledged"        # acknowledged but not resolved — re-triage if re-fired
+
+# Signature verification (PagerDuty v3 webhook signature).
+signature:
+  algorithm: hmac-sha256
+  header: "X-Pagerduty-Signature"
+  prefix: "v1="
+  secret_env: PAGERDUTY_WEBHOOK_SECRET
+
+# Normalise PagerDuty payload → common Alert struct.
+normalize:
+  # PagerDuty v2 payloads wrap messages in an array; take the first element.
+  root: "$.messages[0]"
+  field_map:
+    id:             "incident.id"
+    name:           "incident.title"
+    description:    "incident.summary"
+    raw_severity:
+      source: "incident.urgency"
+      map:
+        high:   critical
+        low:    warning
+        _default: warning
+    component:      "incident.service.name"
+    environment:    "incident.service.teams[0].name"   # best proxy available
+    fired_at:       "incident.created_at"
+    source:         _const:pagerduty
+    url:            "incident.html_url"
+    labels:         "incident.impacted_services"
+    raw:            _self
+
+# Sample payload for integration tests.
+sample_payload: |
+  {
+    "messages": [{
+      "event": "incident.triggered",
+      "incident": {
+        "id": "P123ABC",
+        "title": "High error rate on payments-service",
+        "summary": "Error rate exceeded 5% threshold",
+        "urgency": "high",
+        "created_at": "2025-05-24T14:30:00Z",
+        "html_url": "https://acme.pagerduty.com/incidents/P123ABC",
+        "service": {"name": "payments-service"},
+        "impacted_services": [{"name": "payments-service"}],
+        "teams": [{"name": "production"}]
+      }
+    }]
+  }
