@@ -1,0 +1,106 @@
+# Watch spec — patent renewal deadline approaching
+# ---------------------------------------------------------------------------
+# USPTO utility patents require maintenance fees at 3.5, 7.5, and 11.5 years
+# post-grant (due dates: 3yr 6m, 7yr 6m, 11yr 6m from grant; 6-month grace
+# period with surcharge).  EP / PCT / national patents have varying schedules
+# per jurisdiction tracked in ip_renewal_fees.
+#
+# This watch fires per-jurisdiction renewal fee rows that are approaching the
+# due date, giving IP counsel and the renewal-decision-recommender enough lead
+# time to act.
+# ---------------------------------------------------------------------------
+
+name: patent-renewal-deadline-approaching
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each patent renewal fee due within the lookahead
+  window (default 90 days).  Fires per filing so multi-jurisdiction patents
+  produce separate events, enabling jurisdiction-level triage.
+
+source:
+  kind: sql
+  table: ip_renewal_fees
+  tenant_column: tenant_id
+
+# SQL executed per tick (per-tenant; {tenant_id} substituted by runtime).
+# Joins renewal_fees → filings → patents for full context in the event payload.
+query: |
+  SELECT
+      rf.id                           AS renewal_fee_id,
+      rf.tenant_id,
+      rf.filing_id,
+      rf.due_date,
+      rf.amount_usd,
+      rf.currency,
+      rf.milestone_label,
+      f.jurisdiction,
+      f.local_number                  AS local_filing_number,
+      f.local_agent,
+      p.id                            AS patent_id,
+      p.patent_number,
+      p.application_number,
+      p.title                         AS patent_title,
+      p.technology_class,
+      p.inventors,
+      p.revenue_attribution_usd,
+      p.competitive_value_score,
+      p.annual_maintenance_cost_usd,
+      (rf.due_date - CURRENT_DATE)    AS days_until_due
+  FROM ip_renewal_fees   rf
+  JOIN ip_filings        f  ON f.id          = rf.filing_id
+                           AND f.ip_kind     = 'patent'
+                           AND f.tenant_id   = rf.tenant_id
+  JOIN ip_patents        p  ON p.id          = f.parent_id
+                           AND p.tenant_id   = rf.tenant_id
+  WHERE rf.tenant_id   = '{tenant_id}'
+    AND rf.status      = 'scheduled'
+    AND rf.due_date    <= CURRENT_DATE + INTERVAL '{lookahead_days} days'
+    AND rf.due_date    >= CURRENT_DATE
+    AND f.status       NOT IN ('lapsed', 'abandoned', 'expired')
+    AND p.status       = 'granted'
+  ORDER BY rf.due_date ASC
+
+# Default substitution values (operators may override in pack config).
+defaults:
+  lookahead_days: 90
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  # Daily at 07:00 UTC — early enough for same-day action.
+  cron: "0 7 * * *"
+
+event:
+  kind: ip.patent_renewal_deadline_approaching
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:              "$.tenant_id"
+    renewal_fee_id:         "$.renewal_fee_id"
+    filing_id:              "$.filing_id"
+    patent_id:              "$.patent_id"
+    patent_number:          "$.patent_number"
+    patent_title:           "$.patent_title"
+    jurisdiction:           "$.jurisdiction"
+    local_filing_number:    "$.local_filing_number"
+    local_agent:            "$.local_agent"
+    milestone_label:        "$.milestone_label"
+    due_date:               "$.due_date"
+    days_until_due:         "$.days_until_due"
+    amount_usd:             "$.amount_usd"
+    currency:               "$.currency"
+    technology_class:       "$.technology_class"
+    revenue_attribution_usd: "$.revenue_attribution_usd"
+    competitive_value_score: "$.competitive_value_score"
+    annual_maintenance_cost_usd: "$.annual_maintenance_cost_usd"
+
+downstream:
+  agents:
+    - renewal-decision-recommender
+
+# Deduplicate: suppress re-fire for the same fee within 24 hours unless
+# due_date has changed (e.g. operator corrected the date in the registry).
+dedup:
+  key: "{tenant_id}:{renewal_fee_id}"
+  ttl_seconds: 86400
+  re_fire_if: "payload.due_date != prior.due_date"

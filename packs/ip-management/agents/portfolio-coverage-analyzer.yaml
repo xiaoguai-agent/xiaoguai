@@ -1,0 +1,161 @@
+# Agent definition — portfolio-coverage-analyzer
+# ---------------------------------------------------------------------------
+# Run on demand (or weekly) to compare the current patent + trademark
+# footprint against the company's active and planned market jurisdictions.
+# Identifies coverage gaps: markets where the company sells but has no active
+# IP protection, and technology areas filed in only one jurisdiction.
+#
+# Output: a portfolio-coverage-heatmap template rendered as a draft report,
+# HOTL-gated for IP counsel review before sharing with exec.
+# ---------------------------------------------------------------------------
+
+name: portfolio-coverage-analyzer
+version: "1.0.0"
+description: >
+  Analyses geographic and technical coverage of the patent + trademark
+  portfolio against business expansion plans, identifies gaps, and drafts
+  a prioritised remediation plan.  Runs on demand or weekly.  All outputs
+  require human approval before distribution.
+
+triggers:
+  # On-demand trigger from admin UI or scheduled weekly.
+  - event: ip.coverage_analysis_requested
+    source: manual
+  - schedule:
+      cron: "0 9 * * 1"   # Monday 09:00 UTC
+
+llm:
+  model: ${IP_COVERAGE_LLM_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 8192
+
+context_steps:
+  - id: portfolio_summary
+    description: "Aggregate active patents and trademarks by jurisdiction and tech class"
+    tool: sql
+    query: |
+      -- Patent coverage matrix
+      SELECT
+          f.jurisdiction,
+          p.technology_class,
+          COUNT(*)                          AS active_filings,
+          SUM(p.revenue_attribution_usd)    AS total_revenue_usd,
+          AVG(p.competitive_value_score)    AS avg_competitive_score
+      FROM ip_filings  f
+      JOIN ip_patents  p ON p.id        = f.parent_id
+                        AND p.tenant_id = f.tenant_id
+      WHERE f.tenant_id = '{tenant_id}'
+        AND f.ip_kind   = 'patent'
+        AND f.status    NOT IN ('lapsed','abandoned','expired')
+      GROUP BY f.jurisdiction, p.technology_class
+      ORDER BY f.jurisdiction, total_revenue_usd DESC NULLS LAST
+
+  - id: trademark_coverage
+    description: "Aggregate active trademark registrations by jurisdiction and Nice class"
+    tool: sql
+    query: |
+      SELECT
+          f.jurisdiction,
+          UNNEST(t.nice_classes)            AS nice_class,
+          COUNT(*)                          AS active_registrations
+      FROM ip_filings    f
+      JOIN ip_trademarks t ON t.id        = f.parent_id
+                          AND t.tenant_id = f.tenant_id
+      WHERE f.tenant_id = '{tenant_id}'
+        AND f.ip_kind   = 'trademark'
+        AND f.status    = 'registered'
+      GROUP BY f.jurisdiction, nice_class
+      ORDER BY f.jurisdiction, nice_class
+
+  - id: business_markets
+    description: "Load active and planned markets from pack config"
+    tool: config_lookup
+    key: "ip_management.business_markets"
+    # Operators populate this list via pack settings or the admin UI.
+    # Example: { "active": ["US","GB","DE","JP","CN"], "planned": ["IN","BR","SG"] }
+
+system_prompt: |
+  You are an IP portfolio strategist.  Given a summary of the company's
+  active patent and trademark filings and the list of current and planned
+  business markets, identify:
+
+  1. Geographic gaps: markets where the company is active or expanding but
+     has no (or very thin) IP protection.
+  2. Technology gaps: core technology classes represented in only one or two
+     jurisdictions compared to the portfolio breadth.
+  3. Trademark gaps: Nice classes or jurisdictions where brand protection is
+     missing relative to product lines in those markets.
+
+  For each gap, rate priority: HIGH (active revenue market, no protection),
+  MEDIUM (planned expansion, no protection), LOW (minor product line).
+
+  Output valid JSON matching the CoverageAnalysis schema.
+
+  CoverageAnalysis schema:
+  {
+    "analysis_date": "ISO-8601",
+    "geographic_gaps": [
+      {"jurisdiction": "...", "gap_type": "patent|trademark|both",
+       "priority": "HIGH|MEDIUM|LOW", "rationale": "..."}
+    ],
+    "technology_gaps": [
+      {"technology_class": "...", "covered_jurisdictions": [...],
+       "missing_jurisdictions": [...], "priority": "HIGH|MEDIUM|LOW",
+       "rationale": "..."}
+    ],
+    "trademark_gaps": [
+      {"jurisdiction": "...", "nice_classes": [...],
+       "priority": "HIGH|MEDIUM|LOW", "rationale": "..."}
+    ],
+    "remediation_priorities": [
+      {"action": "...", "priority": "HIGH|MEDIUM|LOW",
+       "estimated_cost_usd": null, "owner_suggestion": "..."}
+    ],
+    "confidence": "high|medium|low",
+    "data_gaps": ["..."]
+  }
+
+user_prompt: |
+  ## Patent coverage matrix
+  {{ context.portfolio_summary | tojson(indent=2) | truncate(4000) }}
+
+  ## Trademark coverage matrix
+  {{ context.trademark_coverage | tojson(indent=2) | truncate(2000) }}
+
+  ## Business markets
+  Active: {{ context.business_markets.active | join(', ') }}
+  Planned: {{ context.business_markets.planned | join(', ') }}
+
+  Produce the CoverageAnalysis JSON now.
+
+tools:
+  - name: render_heatmap_report
+    description: >
+      Render templates/portfolio-coverage-heatmap.md.j2 with the coverage
+      analysis results as a human-readable draft report.
+    kind: template
+    template: "templates/portfolio-coverage-heatmap.md.j2"
+
+  - name: create_jira_tasks
+    description: >
+      For each HIGH-priority gap, create a draft Jira IP task (status:
+      pending_approval).  Returns a list of task_ids.
+    kind: output
+    connector: "outputs/jira-ip-task.yaml"
+    filter: "item.priority == 'HIGH'"
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    file_application: 0
+  require_human_approval:
+    - render_heatmap_report
+    - create_jira_tasks
+  notify_channel: "${IP_MANAGEMENT_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - analysis_completed
+    - report_approved
+    - jira_tasks_created
+  feedback_table: ip_renewal_decisions

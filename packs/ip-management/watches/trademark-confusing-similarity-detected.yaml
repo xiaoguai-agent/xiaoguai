@@ -1,0 +1,82 @@
+# Watch spec — trademark confusing similarity detected
+# ---------------------------------------------------------------------------
+# Polls new trademark applications at USPTO (TSDR) and EUIPO for marks
+# similar to our registered trademarks in overlapping Nice classes.
+# Similarity is scored by the inbound/uspto-tsdr-poll pipeline using an
+# LLM phonetic + visual similarity heuristic before inserting into
+# ip_infringement_alerts with trigger_kind = 'trademark_similarity'.
+#
+# This watch picks up those newly inserted alert rows and routes them to
+# infringement-risk-assessor for a full legal risk memo.
+# ---------------------------------------------------------------------------
+
+name: trademark-confusing-similarity-detected
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each new trademark application that the inbound
+  pipeline has flagged as potentially confusingly similar to one of our
+  registered marks (Nice class overlap + similarity score >= threshold).
+
+source:
+  kind: sql
+  table: ip_infringement_alerts
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      a.id                            AS alert_id,
+      a.tenant_id,
+      a.competitor_name,
+      a.filing_ref,
+      a.filing_date,
+      a.filing_jurisdiction,
+      a.our_trademark_id,
+      a.detected_at,
+      a.risk_level,
+      -- Pull the related trademark details for downstream context
+      t.registration_number,
+      t.mark                          AS our_mark,
+      t.nice_classes                  AS our_nice_classes,
+      t.revenue_attribution_usd,
+      t.competitive_value_score
+  FROM ip_infringement_alerts a
+  LEFT JOIN ip_trademarks     t ON t.id        = a.our_trademark_id
+                                AND t.tenant_id = a.tenant_id
+  WHERE a.tenant_id     = '{tenant_id}'
+    AND a.trigger_kind  = 'trademark_similarity'
+    AND a.resolved_at   IS NULL
+    AND a.detected_at   >= NOW() - INTERVAL '24 hours'
+  ORDER BY a.detected_at DESC
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  # Daily at 08:00 UTC — USPTO TSDR daily publication; EUIPO eSearch updates.
+  cron: "0 8 * * *"
+
+event:
+  kind: ip.trademark_confusing_similarity_detected
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:              "$.tenant_id"
+    alert_id:               "$.alert_id"
+    competitor_name:        "$.competitor_name"
+    filing_ref:             "$.filing_ref"
+    filing_date:            "$.filing_date"
+    filing_jurisdiction:    "$.filing_jurisdiction"
+    our_trademark_id:       "$.our_trademark_id"
+    our_mark:               "$.our_mark"
+    our_nice_classes:       "$.our_nice_classes"
+    revenue_attribution_usd: "$.revenue_attribution_usd"
+    competitive_value_score: "$.competitive_value_score"
+    risk_level:             "$.risk_level"
+    detected_at:            "$.detected_at"
+
+downstream:
+  agents:
+    - infringement-risk-assessor
+
+dedup:
+  key: "{tenant_id}:{alert_id}"
+  ttl_seconds: 86400

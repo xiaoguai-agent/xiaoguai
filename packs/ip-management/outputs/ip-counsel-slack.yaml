@@ -1,0 +1,63 @@
+# Output connector — IP Counsel Slack channel notification
+# ---------------------------------------------------------------------------
+# Sends renewal-decision cards, infringement risk memos, and prior-art
+# report summaries to the configured IP-counsel Slack channel.
+# All messages include a link to the admin UI for one-click approval.
+#
+# Messages are sent only after human approval of the underlying draft
+# (enforced by the HOTL guardrails in each agent).
+# ---------------------------------------------------------------------------
+
+output: ip-counsel-slack
+version: "1.0.0"
+description: >
+  Routes IP management alerts and draft documents to the IP counsel Slack
+  channel.  Sent only after human approval via the admin UI.
+
+slack:
+  webhook_url: "${IP_COUNSEL_SLACK_WEBHOOK_URL}"
+  # Override with a named channel if using Slack API (bot token).
+  channel: "${IP_COUNSEL_SLACK_CHANNEL:-#ip-counsel}"
+  username: "Xiaoguai IP"
+  icon_emoji: ":scales:"
+
+# Message templates per event kind.
+message_templates:
+  ip.patent_renewal_deadline_approaching: |
+    *[IP Renewal]* Patent {{ payload.patent_number }} — {{ payload.patent_title | truncate(60) }}
+    Jurisdiction: {{ payload.jurisdiction }} | Due: {{ payload.due_date }} ({{ payload.days_until_due }}d)
+    Milestone: {{ payload.milestone_label }} | Fee: ${{ payload.amount_usd | int | commify }}
+    *Recommendation:* {{ payload.recommendation | upper }} (score: {{ payload.weighted_score }})
+    <{{ admin_ui_url }}/ip/decisions/{{ payload.decision_id }}|Review & approve →>
+
+  ip.trademark_renewal_deadline: |
+    *[TM Renewal]* {{ payload.mark }} — {{ payload.jurisdiction }}
+    Due: {{ payload.next_renewal_date }} ({{ payload.days_until_renewal }}d) | Type: {{ payload.renewal_cycle_type | replace('_', ' ') }}
+    *Recommendation:* {{ payload.recommendation | upper }} (score: {{ payload.weighted_score }})
+    <{{ admin_ui_url }}/ip/decisions/{{ payload.decision_id }}|Review & approve →>
+
+  ip.competitor_patent_filing_detected: |
+    *[IP Alert — Competitor Filing]* {{ payload.competitor_name }} filed {{ payload.filing_ref }} ({{ payload.filing_jurisdiction }})
+    Risk level: *{{ payload.risk_level | upper }}*
+    Our patent: {{ payload.our_patent_title | default('N/A') | truncate(60) }}
+    {{ payload.risk_summary | truncate(200) }}
+    <{{ admin_ui_url }}/ip/alerts/{{ payload.alert_id }}|View risk assessment →>
+
+  ip.trademark_confusing_similarity_detected: |
+    *[TM Alert — Similarity]* {{ payload.competitor_name }} filed {{ payload.filing_ref }} ({{ payload.filing_jurisdiction }})
+    Risk level: *{{ payload.risk_level | upper }}* | Our mark: {{ payload.our_mark }}
+    Nice classes in conflict: {{ payload.our_nice_classes | join(', ') }}
+    <{{ admin_ui_url }}/ip/alerts/{{ payload.alert_id }}|View risk assessment →>
+
+  ip.coverage_analysis_completed: |
+    *[IP Coverage Report]* Weekly portfolio coverage analysis complete.
+    {{ payload.high_priority_gap_count }} HIGH-priority gap(s) identified.
+    <{{ admin_ui_url }}/ip/reports/coverage/{{ payload.report_id }}|Review report →>
+
+rate_limits:
+  per_channel_per_minute: 5
+  burst: 10
+
+fallback:
+  # If Slack is unavailable, fall back to admin UI notification bell.
+  on_error: admin_ui_notification

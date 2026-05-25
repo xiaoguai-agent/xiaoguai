@@ -1,0 +1,195 @@
+# Agent definition — infringement-risk-assessor
+# ---------------------------------------------------------------------------
+# Triggered by competitor-patent-filing-detected and
+# trademark-confusing-similarity-detected watch events.
+# Assesses the infringement risk, drafts defensive options, and routes a risk
+# memo to IP counsel and (if critical) the exec channel.
+#
+# For patent events: compares the competitor's published claims against our
+# product feature set (described in pack config) and our own patent portfolio.
+# For trademark events: assesses likelihood of confusion under the DuPont /
+# Polaroid factors and suggests opposition filing or co-existence options.
+# ---------------------------------------------------------------------------
+
+name: infringement-risk-assessor
+version: "1.0.0"
+description: >
+  Assesses infringement risk when a competitor files a patent or trademark
+  near our IP space, drafts defensive options (cite prior art, opposition,
+  design-around, co-existence), and produces an infringement-risk letter
+  for IP counsel review.  All outputs are HOTL-gated.
+
+triggers:
+  - event: ip.competitor_patent_filing_detected
+    source: competitor-patent-filing-detected
+  - event: ip.trademark_confusing_similarity_detected
+    source: trademark-confusing-similarity-detected
+
+llm:
+  model: ${IP_RISK_LLM_MODEL:-default}
+  temperature: 0.15
+  max_tokens: 6144
+
+context_steps:
+  - id: alert_details
+    description: "Pull the full alert row and related asset details"
+    tool: sql
+    query: |
+      SELECT
+          a.*,
+          -- Our patent context (if patent alert)
+          p.patent_number, p.title AS our_patent_title,
+          p.abstract AS our_patent_abstract,
+          p.technology_class, p.inventors,
+          -- Our trademark context (if trademark alert)
+          t.mark AS our_mark, t.nice_classes, t.description AS tm_description
+      FROM ip_infringement_alerts a
+      LEFT JOIN ip_patents     p ON p.id = a.our_patent_id    AND p.tenant_id = a.tenant_id
+      LEFT JOIN ip_trademarks  t ON t.id = a.our_trademark_id AND t.tenant_id = a.tenant_id
+      WHERE a.id        = '{alert_id}'
+        AND a.tenant_id = '{tenant_id}'
+
+  - id: our_portfolio_overlap
+    description: "Find our patents/TMs in the same tech class or Nice class"
+    tool: sql
+    query: |
+      -- For patent alerts: patents in the same CPC class
+      SELECT
+          patent_number, title, status, expiry_date,
+          competitive_value_score, revenue_attribution_usd
+      FROM ip_patents
+      WHERE tenant_id       = '{tenant_id}'
+        AND status          = 'granted'
+        AND technology_class LIKE '%{technology_class}%'
+      ORDER BY revenue_attribution_usd DESC NULLS LAST
+      LIMIT 10
+
+  - id: product_features
+    description: "Load our product feature descriptions from pack config"
+    tool: config_lookup
+    key: "ip_management.product_features"
+    # Operators populate with brief descriptions of product features/services
+    # to allow the LLM to assess freedom-to-operate risk.
+
+system_prompt: |
+  You are an IP litigation risk analyst.  You will be given details of a
+  competitor's new patent application or trademark filing that may threaten
+  our IP position or freedom to operate.
+
+  For PATENT alerts, assess:
+  1. Claim breadth: how broad are the competitor's likely claims relative to
+     our technology?
+  2. Freedom to operate: do our products potentially fall within those claims?
+  3. Defensive options: can we cite prior art against the application during
+     prosecution (file third-party submissions / observations)?  Can we
+     design around?  Do we have blocking patents?
+  4. Risk level: CRITICAL (product-blocking risk), HIGH (significant overlap,
+     monitor closely), MEDIUM (peripheral overlap), LOW (tangential).
+
+  For TRADEMARK alerts, assess DuPont / Polaroid factors:
+  1. Similarity of marks (sight, sound, meaning)
+  2. Relatedness of goods/services (Nice class overlap)
+  3. Sophistication of purchasers / channels of trade
+  4. Strength of our mark
+  5. Options: file opposition, negotiate co-existence agreement, monitor.
+  6. Risk level as above.
+
+  Rules:
+  - Be factual; base conclusions on the data provided.
+  - If the competitor filing is not yet published (application pending), note
+    that claims may change and recommend monitoring.
+  - Do not draft legal opinions — use "may", "could", "appears to".
+  - Output valid JSON matching the InfringementRiskAssessment schema.
+
+  InfringementRiskAssessment schema:
+  {
+    "alert_id": "...",
+    "alert_kind": "patent|trademark",
+    "risk_level": "critical|high|medium|low",
+    "risk_summary": "2-3 sentence executive summary",
+    "detailed_analysis": "...",
+    "affected_products_or_marks": ["..."],
+    "defensive_options": [
+      {"option": "...", "effort": "high|medium|low",
+       "likelihood_of_success": "high|medium|low", "timeline_weeks": 0}
+    ],
+    "recommended_immediate_action": "...",
+    "monitoring_cadence": "weekly|monthly|quarterly",
+    "confidence": "high|medium|low",
+    "caveats": ["..."]
+  }
+
+user_prompt: |
+  ## Alert
+  - Alert ID:         {{ event.alert_id }}
+  - Type:             {{ event.trigger_kind }}
+  - Competitor:       {{ event.competitor_name }}
+  - Filing ref:       {{ event.filing_ref }} ({{ event.filing_jurisdiction }})
+  - Filing date:      {{ event.filing_date | default('not yet published') }}
+
+  {% if event.trigger_kind == 'competitor_patent_filing' %}
+  ## Our affected patent
+  - Patent number:    {{ context.alert_details.patent_number | default('N/A') }}
+  - Title:            {{ context.alert_details.our_patent_title | default('N/A') }}
+  - Technology class: {{ event.technology_class | default('N/A') }}
+  - Abstract (excerpt): {{ context.alert_details.our_patent_abstract | truncate(800) | default('N/A') }}
+
+  ## Our portfolio overlap (same tech class)
+  {{ context.our_portfolio_overlap | tojson(indent=2) | truncate(2000) }}
+
+  ## Our product features
+  {{ context.product_features | tojson(indent=2) | truncate(2000) }}
+  {% else %}
+  ## Our affected trademark
+  - Mark:             {{ context.alert_details.our_mark | default('N/A') }}
+  - Nice classes:     {{ context.alert_details.nice_classes | join(', ') | default('N/A') }}
+  - Description:      {{ context.alert_details.tm_description | truncate(500) | default('N/A') }}
+  {% endif %}
+
+  Produce the InfringementRiskAssessment JSON now.
+
+tools:
+  - name: update_alert_risk
+    description: >
+      Write the risk_level and risk_summary back to ip_infringement_alerts.
+    kind: sql
+    query: |
+      UPDATE ip_infringement_alerts
+      SET risk_level    = '{risk_level}',
+          risk_summary  = '{risk_summary}',
+          defensive_options = '{defensive_options}'
+      WHERE id        = '{alert_id}'
+        AND tenant_id = '{tenant_id}'
+
+  - name: render_risk_letter
+    description: >
+      Render templates/infringement-risk-letter.md.j2 as a draft memo for
+      IP counsel.
+    kind: template
+    template: "templates/infringement-risk-letter.md.j2"
+
+  - name: notify_counsel
+    description: >
+      Route the risk memo to outputs/ip-counsel-slack.yaml and, for
+      CRITICAL risk, outputs/exec-quarterly-ip-portfolio-review.yaml.
+      Requires human approval.
+    kind: output
+    connector: "outputs/ip-counsel-slack.yaml"
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    file_opposition: 0
+    send_cease_and_desist: 0
+  require_human_approval:
+    - render_risk_letter
+    - notify_counsel
+  notify_channel: "${IP_MANAGEMENT_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - assessment_completed
+    - memo_approved
+    - opposition_filed
+    - resolved
+  feedback_table: ip_infringement_alerts
