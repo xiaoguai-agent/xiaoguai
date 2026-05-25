@@ -1,0 +1,118 @@
+# Pack manifest: knowledge-base-curator
+#
+# Keeps a knowledge base healthy by:
+#   1. Extracting FAQ candidates from support ticket clusters.
+#   2. Detecting articles whose instructions have gone stale relative to
+#      product release notes.
+#   3. Clustering near-duplicate articles and proposing a canonical merge.
+#   4. Checking for broken outbound links inside articles.
+#
+# Watches poll the DB (via outcome-telemetry) on a configurable cadence;
+# no persistent daemon required.
+
+name: knowledge-base-curator
+version: "0.1.0"
+description: >
+  Knowledge-base health pack — ingests support tickets and article metadata,
+  extracts FAQ candidates from ticket clusters, flags stale articles against
+  product release notes, deduplicates near-duplicate articles, and checks
+  broken outbound links.  Outputs to Slack docs channel, Jira docs tickets,
+  Confluence draft pages, and a weekly digest.
+
+depends:
+  xiaoguai-api: ">=0.12.1"
+  # LLM required for FAQ drafting, staleness assessment, and dedup clustering.
+  llm: required
+  # outcome-telemetry provides the SQL watch poller (article view counts,
+  # last_verified_at tracking).
+  outcome-telemetry: required
+  # watch capability drives the SQL polls defined in watches/.
+  watch: required
+
+# ── Inbound event sources ──────────────────────────────────────────────────
+inbound:
+  - ref: inbound/zendesk-article-update.yaml
+  - ref: inbound/intercom-conversation-batch.yaml
+  - ref: inbound/confluence-page-event.yaml
+  - ref: inbound/github-docs-pr.yaml
+
+# ── Scheduled watches (SQL polls) ─────────────────────────────────────────
+watches:
+  - ref: watches/article-stale-check.yaml
+  - ref: watches/ticket-volume-by-topic.yaml
+
+# ── Agent definitions ──────────────────────────────────────────────────────
+agents:
+  - ref: agents/faq-generator.yaml
+  - ref: agents/outdated-detector.yaml
+  - ref: agents/canonical-answer-clusterer.yaml
+  - ref: agents/broken-link-checker.yaml
+
+# ── Output adapters ────────────────────────────────────────────────────────
+outputs:
+  - ref: outputs/slack-docs-team.yaml
+  - ref: outputs/jira-docs-ticket.yaml
+  - ref: outputs/draft-publish-to-confluence.yaml
+  - ref: outputs/weekly-curation-digest.yaml
+
+# ── Execution plans ────────────────────────────────────────────────────────
+plans:
+  # Triggered when ticket-volume-by-topic watch fires.
+  faq-generation:
+    - id: draft-faq
+      agent: faq-generator
+      description: "Cluster tickets by topic and draft FAQ Q+A pairs."
+    - id: publish-faq
+      output: draft-publish-to-confluence
+      description: "Push FAQ draft to Confluence for human review."
+      deps: [draft-faq]
+    - id: notify-team
+      output: slack-docs-team
+      description: "Notify docs team of new FAQ candidates."
+      deps: [draft-faq]
+
+  # Triggered when article-stale-check watch fires.
+  staleness-review:
+    - id: detect-stale
+      agent: outdated-detector
+      description: "Compare article instructions against recent release notes."
+    - id: file-ticket
+      output: jira-docs-ticket
+      description: "Open a Jira ticket for each stale article."
+      deps: [detect-stale]
+    - id: notify-stale
+      output: slack-docs-team
+      description: "Post staleness summary to docs channel."
+      deps: [detect-stale]
+
+  # Triggered on-demand or weekly.
+  dedup-sweep:
+    - id: cluster-dupes
+      agent: canonical-answer-clusterer
+      description: "Find near-duplicate articles and propose merge targets."
+    - id: link-check
+      agent: broken-link-checker
+      description: "HEAD-check outbound URLs from all active articles."
+    - id: weekly-digest
+      output: weekly-curation-digest
+      description: "Compile staleness + dedup + link-rot findings into digest."
+      deps: [cluster-dupes, link-check]
+
+# ── Resource requirements ──────────────────────────────────────────────────
+requires:
+  env:
+    - KB_CURATOR_ZENDESK_TOKEN       # Zendesk API token (articles + tickets)
+    - KB_CURATOR_CONFLUENCE_TOKEN    # Confluence API token (publish drafts)
+    - KB_CURATOR_JIRA_TOKEN          # Jira API token (create tickets)
+    - KB_CURATOR_SLACK_WEBHOOK       # Slack incoming webhook URL (docs channel)
+    - KB_CURATOR_INTERCOM_TOKEN      # Intercom API token (conversation export)
+  llm: true
+
+# Feature flag gates all /v1/kb-curator routes.
+feature_flag: XIAOGUAI_KB_CURATOR_ENABLED
+
+# Deferred / not-yet-implemented:
+#   - Freshdesk inbound connector
+#   - HelpScout conversation batch connector
+#   - Auto-publish approved FAQ drafts (requires human-in-the-loop gate)
+#   - Multi-language dedup (embedding-space clustering across locales)

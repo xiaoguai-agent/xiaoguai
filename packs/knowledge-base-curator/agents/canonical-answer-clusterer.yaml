@@ -1,0 +1,141 @@
+---
+# Agent: canonical-answer-clusterer
+#
+# Input:  All active (non-archived) KB articles from kb_articles_meta.
+# Output: dedup_clusters rows (upserted) + merge proposals forwarded to
+#         weekly-curation-digest output.
+#
+# Similarity scoring algorithm:
+#   1. Fetch body text for each active article.
+#   2. Embed each article body using the embed_text tool (LLM embedding endpoint).
+#   3. Compute pairwise cosine similarity across all embeddings.
+#   4. Group articles into clusters where every pairwise similarity >= 0.88
+#      (configurable via KB_CURATOR_DEDUP_SIMILARITY_THRESHOLD).
+#   5. Within each cluster, select the canonical article:
+#        - Primary:   highest view_count (most authoritative to readers).
+#        - Tie-break: most recently edited (last_edited_at DESC).
+#   6. Draft a merge rationale and structured merge proposal via LLM.
+#   7. Upsert dedup_clusters; skip clusters already resolved (merged/dismissed).
+#
+# Token budget note: embeddings are cheap (no generation tokens); the LLM is
+# invoked only once per new cluster to draft the merge rationale.
+
+name: canonical-answer-clusterer
+kind: llm-agent
+
+llm:
+  model: ${KB_CURATOR_LLM_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 2048
+
+tools:
+  # Fetch body text for a batch of articles.
+  - fetch_article_body_batch
+  # Compute dense embeddings for a list of text strings.
+  # Returns a list of float vectors (same order as input).
+  - embed_text_batch
+  # Compute pairwise cosine similarity matrix from a list of embeddings.
+  # Returns a list of {article_a, article_b, similarity} triples above threshold.
+  - cosine_similarity_matrix
+  # Upsert a dedup_clusters row.
+  - upsert_dedup_cluster
+
+context_steps:
+  - id: all_articles
+    description: "Load all active article IDs, slugs, titles, view counts."
+    tool: fetch_article_body_batch
+    params:
+      filter:
+        archived: false
+      fields:
+        - article_id
+        - article_slug
+        - title
+        - view_count
+        - last_edited_at
+        - body_text
+
+  - id: embeddings
+    description: "Embed all article bodies."
+    tool: embed_text_batch
+    params:
+      texts: "{{ context.all_articles | map(attribute='body_text') | list }}"
+      # Truncate each body to 8000 chars before embedding to stay within
+      # embedding model token limits.
+      max_chars_per_text: 8000
+
+  - id: similar_pairs
+    description: "Find all pairs above the similarity threshold."
+    tool: cosine_similarity_matrix
+    params:
+      embeddings:  "{{ context.embeddings }}"
+      article_ids: "{{ context.all_articles | map(attribute='article_id') | list }}"
+      threshold:   ${KB_CURATOR_DEDUP_SIMILARITY_THRESHOLD:-0.88}
+
+system_prompt: |
+  You are a knowledge-base editor reviewing near-duplicate articles.
+
+  You will receive a cluster of articles that are highly similar in content.
+  Your job: draft a merge rationale and a structured merge proposal.
+
+  Output ONLY valid JSON (no prose, no code fences):
+  {
+    "merge_rationale": "1–2 sentences explaining why these articles are duplicates",
+    "merge_proposal": {
+      "keep": {
+        "article_id": "...",
+        "reason": "why this is the canonical article"
+      },
+      "redirect": [
+        {
+          "article_id": "...",
+          "redirect_to": "...",
+          "reason": "brief note for the editor"
+        }
+      ],
+      "archive": [
+        {
+          "article_id": "...",
+          "reason": "brief note for the editor"
+        }
+      ]
+    }
+  }
+
+  Rules:
+  - The "keep" article must be the one with the highest view_count
+    (or most recently edited if tied).
+  - "redirect" is for articles that should permanently redirect to the canonical.
+  - "archive" is for articles with very low view_count (< 10) that add no
+    unique content — suggest archiving rather than redirecting.
+  - merge_rationale must be useful to a human editor who hasn't seen the articles.
+  - Never suggest archiving the canonical article.
+
+user_prompt_template: |
+  ## Cluster of near-duplicate articles
+  Mean pairwise similarity: {{ cluster.mean_similarity | round(3) }}
+
+  {% for article in cluster.members %}
+  ### Article {{ loop.index }}: {{ article.title }}
+  - ID:           {{ article.article_id }}
+  - Slug:         {{ article.article_slug }}
+  - View count:   {{ article.view_count }}
+  - Last edited:  {{ article.last_edited_at | default("unknown") }}
+  - Body excerpt: {{ article.body_text | truncate(400) }}
+
+  {% endfor %}
+
+  Draft the merge proposal JSON now.
+
+outputs:
+  - outputs/weekly-curation-digest.yaml
+
+budget:
+  # Embeddings don't count as LLM calls; one generation call per new cluster.
+  max_llm_calls: 1
+  max_output_tokens: 2048
+
+# Deferred:
+#   - Cross-locale dedup (embed in shared multilingual space)
+#   - Incremental clustering (only re-embed articles edited since last run)
+#   - Automated redirect creation via Confluence/Zendesk API after approval

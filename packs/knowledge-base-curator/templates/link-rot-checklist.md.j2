@@ -1,0 +1,49 @@
+{#
+  Template: link-rot-checklist.md.j2
+  Rendered by: broken-link-checker agent → weekly-curation-digest output
+  Output:      Section within the weekly digest (Markdown)
+  Variables:
+    article      — kb_articles_meta row
+    link_results — [{url, link_text, status, status_code, final_url, latency_ms, error?}]
+    pack_version — string
+#}
+## Link Rot Report — {{ article.title }}
+
+> **Article ID**: `{{ article.article_id }}`
+> **Platform**: {{ article.source_platform | title }}
+> **Total links checked**: {{ link_results | length }}
+> **Broken / unreachable**: {{ link_results | selectattr('status', 'in', ['broken', 'unreachable']) | list | length }}
+> **Redirected (chain ≥ 3 hops)**: {{ link_results | selectattr('status', 'equalto', 'redirect') | list | length }}
+
+---
+
+{% set broken = link_results | selectattr('status', 'in', ['broken', 'unreachable']) | list %}
+{% if broken %}
+### Broken / Unreachable Links ({{ broken | length }})
+
+| Link Text | URL | Status | Error |
+|-----------|-----|--------|-------|
+{% for lr in broken %}
+| {{ lr.link_text | truncate(40) }} | `{{ lr.url | truncate(60) }}` | {{ lr.status_code | default(lr.status) }} | {{ lr.error | default("—") }} |
+{% endfor %}
+
+{% endif %}
+
+{% set redirects = link_results | selectattr('status', 'equalto', 'redirect') | list %}
+{% if redirects %}
+### Redirect Chains (≥ 3 hops)
+
+| Link Text | Original URL | Final URL | Hops |
+|-----------|-------------|-----------|------|
+{% for lr in redirects %}
+| {{ lr.link_text | truncate(40) }} | `{{ lr.url | truncate(50) }}` | `{{ lr.final_url | truncate(50) }}` | {{ lr.redirect_hops | default("?") }} |
+{% endfor %}
+
+{% endif %}
+
+### Editor Checklist
+
+- [ ] Replace each broken link with an updated or archived URL.
+- [ ] Update redirect chains to point directly to the final destination.
+- [ ] Remove links to content that no longer exists and has no replacement.
+- [ ] Re-run broken-link-checker after fixes to confirm all links resolve.
