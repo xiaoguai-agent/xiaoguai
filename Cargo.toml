@@ -19,6 +19,7 @@ members = [
     "crates/xiaoguai-im-feishu",
     "crates/xiaoguai-im-dingtalk",
     "crates/xiaoguai-im-wecom",
+    "crates/xiaoguai-im-discord",
     "crates/xiaoguai-cli",
     "crates/xiaoguai-orchestrator",
 ]
@@ -89,6 +90,8 @@ cbc = { version = "0.1", features = ["alloc"] }
 cipher = "0.4"
 rand = "0.8"
 urlencoding = "2.1"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+hex = "0.4"
 quick-xml = { version = "0.36", features = ["serialize"] }
 
 # config
