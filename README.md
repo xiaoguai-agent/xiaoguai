@@ -201,4 +201,184 @@ bash docs/book/test-build.sh
 
 ---
 
+## Wave-3 features (v1.2.x / v1.3.x)
+
+Wave 3 merged 33 feature branches into `main` in late May 2026. The
+workspace now passes **1,191 tests / 0 failed / 92 ignored**. Three
+Postgres bridges are still wired to return `503` in production until
+v1.3 lands — see the honest status section below.
+
+### What shipped
+
+| Feature | One-liner |
+|---|---|
+| **Human-on-the-Loop policy (HotL)** | Risk-tiered approval gates; every agent action with `risk ≥ threshold` pauses for a human `APPROVE` / `REJECT` before proceeding. |
+| **Outcome telemetry & attribution** | Every agent action is recorded with `session_id + tool + latency + cost + outcome`; the chain reader exposes `/v1/outcomes/chain/{session_id}` for audit consumers. |
+| **Skill packs** | Declarative install: `POST /v1/skills/install {"slug":"incident-triage"}` records the pack row; 7 packs ship in-repo (`ar-collections`, `incident-triage`, `pr-review`, `hr-onboarding`, `rag-legal`, `rag-finance`, `rag-hr`) with `catalog/skill_packs.json` as the authoritative manifest. |
+| **Active watchers (`xiaoguai-watch`)** | New crate; SQL-poll and HTTP-poll wakeups that feed the scheduler, enabling reactive "check every N seconds, fire when condition changes" loops without a dedicated worker process. |
+| **Anomaly detection (`xiaoguai-anomaly`)** | Z-score and EWMA detectors over any numeric time series; ships as a standalone crate consumable by scheduler jobs and HotL policy rules. |
+| **Rate-limit** | Per-tenant, per-route token-bucket enforced at the Axum middleware layer; config lives in `0014_tenant_rate_limit.sql`. |
+| **New IM adapters** | Discord (Ed25519 sig verification), Telegram (Bot API long-poll), Mattermost (WebSocket), Slack (HMAC sig verification) — four new `xiaoguai-im-*` crates alongside the existing Feishu / DingTalk / WeCom adapters. |
+| **Cloud LLM v2** | `ProviderKind` gains `Bedrock` (SigV4), `AzureOpenAi`, `Mistral`, and `Groq` — all behind the existing `LlmBackend` trait; circuit breakers and cost-quota defence carry over automatically. |
+| **Observability** | New `xiaoguai-observability` crate; opt-in Prometheus scrape endpoint (`/metrics`) and OTLP trace export; zero telemetry by default (ADR-0013 preserved). |
+
+### Quickstart — wave-3 full stack
+
+The base `docker-compose.yml` brings up `xiaoguai-core + postgres + valkey`.
+Add the observability sidecar profile for the full wave-3 stack:
+
+```yaml
+# deploy/docker-compose.wave3.yml  (create or adapt from the snippet below)
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.101.0
+    command: ["--config=/etc/otel.yaml"]
+    volumes: ["./observability/otel.yaml:/etc/otel.yaml:ro"]
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    volumes: ["./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    environment: {GF_SECURITY_ADMIN_PASSWORD: xiaoguai}
+    volumes:
+      - "./observability/grafana/provisioning:/etc/grafana/provisioning:ro"
+      - "./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro"
+    ports: ["3000:3000"]
+```
+
+```bash
+# Bring up everything
+docker compose -f deploy/docker-compose.yml \
+               -f deploy/docker-compose.wave3.yml up --build
+
+# Apply wave-3 migrations (run once, idempotent after)
+docker compose exec xiaoguai-core xiaoguai migrate run
+# Migrations that land new in wave 3:
+#   0011_hotl_policies.sql
+#   0012_outcomes.sql
+#   0015_skill_packs.sql
+
+# Seed the skill-pack catalog
+curl -s -X POST http://localhost:7600/v1/admin/skills/seed \
+     -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Grafana → http://localhost:3000  (admin / xiaoguai)
+# Prometheus → http://localhost:9090
+```
+
+The binary is `xiaoguai` — not `xg`. CLI subcommands for wave-3 features
+(`skills`, `outcomes`, `hotl`) are planned but not yet wired; use the REST
+API or the admin-ui in the meantime.
+
+### Documentation index
+
+#### Operator guides (mdbook)
+
+| Chapter | Path |
+|---|---|
+| Active wakeup / watchers | `docs/book/src/operator/` — day2.md §"Reactive watcher" |
+| HotL policy | pending — see `docs/plans/2026-05-24-v1.1.3.md` |
+| Outcome telemetry | pending — see `docs/plans/2026-05-24-v1.1.4.md` |
+| Skill packs | pending — see `docs/book/src/skills/overview.md` |
+
+Build the handbook locally:
+
+```bash
+cargo install mdbook mdbook-mermaid
+bash docs/book/test-build.sh
+```
+
+#### Runbooks
+
+| Runbook | File |
+|---|---|
+| Observability (Prometheus + OTLP) | [`docs/runbooks/observability.md`](docs/runbooks/observability.md) |
+| Operator day-2 | [`docs/runbooks/operator.md`](docs/runbooks/operator.md) |
+| High availability | [`docs/runbooks/ha.md`](docs/runbooks/ha.md) |
+| Kubernetes / Helm | [`docs/runbooks/k8s-helm.md`](docs/runbooks/k8s-helm.md) |
+| AWS Terraform | [`docs/runbooks/aws-terraform.md`](docs/runbooks/aws-terraform.md) |
+| Release signing | [`docs/runbooks/release-signing.md`](docs/runbooks/release-signing.md) |
+
+#### Architecture
+
+| Document | Path |
+|---|---|
+| ADR-0013 Zero-default telemetry | [`docs/architecture/adr/0013-zero-default-telemetry.md`](docs/architecture/adr/0013-zero-default-telemetry.md) |
+| ADR-0014 Multimodal MCP architecture | [`docs/architecture/adr/0014-multimodal-mcp-architecture.md`](docs/architecture/adr/0014-multimodal-mcp-architecture.md) |
+| ADR-0009 Cost quota + token-bomb defence | [`docs/architecture/adr/0009-cost-quota-and-token-bomb-defense.md`](docs/architecture/adr/0009-cost-quota-and-token-bomb-defense.md) |
+| ADR-0008 Tool-result provenance | [`docs/architecture/adr/0008-tool-result-provenance.md`](docs/architecture/adr/0008-tool-result-provenance.md) |
+| Multi-agent peer topology | [`docs/architecture/multi-agent-peer.md`](docs/architecture/multi-agent-peer.md) |
+| System design (v0.1 origin) | [`docs/architecture/2026-05-21-design.md`](docs/architecture/2026-05-21-design.md) |
+
+#### Compliance
+
+Existing mappings cover 等保 2.0 L3 and GDPR (see the Compliance
+section above). SOC 2, HIPAA, PCI-DSS, ISO 27001, and EU AI Act
+control mappings are on the roadmap — not yet written.
+
+#### API
+
+The REST API surface (15+ endpoints) is described in
+[`docs/book/src/api/rest.md`](docs/book/src/api/rest.md) and the MCP
+toolbox in [`docs/book/src/api/mcp.md`](docs/book/src/api/mcp.md).
+An OpenAPI spec and Bruno collection are planned for v1.3; the routes
+are all typed in `crates/xiaoguai-api/src/routes/`.
+
+#### Skill packs
+
+| Resource | Path |
+|---|---|
+| Pack catalog (machine-readable) | [`catalog/skill_packs.json`](catalog/skill_packs.json) |
+| AR Collections | [`packs/ar-collections/README.md`](packs/ar-collections/README.md) |
+| Incident Triage | `packs/incident-triage/` |
+| PR Review | `packs/pr-review/` |
+| HR Onboarding | `packs/hr-onboarding/` |
+| RAG — Legal | `packs/rag-legal/` |
+| RAG — Finance | `packs/rag-finance/` |
+| RAG — HR | `packs/rag-hr/` |
+
+#### Recipes & examples
+
+| Recipe | Path |
+|---|---|
+| Multi-agent peer pair | [`examples/multi-agent/peer-pair/README.md`](examples/multi-agent/peer-pair/README.md) |
+| Grafana dashboard pack | [`observability/grafana/README.md`](observability/grafana/README.md) |
+
+#### SDKs
+
+| SDK | Status |
+|---|---|
+| Python (`xiaoguai` PyPI package) | Shipped — wraps the binary via subprocess; see `python/xiaoguai/` |
+| TypeScript | Planned (v1.3) |
+| Go | Planned (v1.4) |
+| Java | Under consideration |
+
+### Honest status — what is NOT production-ready yet
+
+Three Postgres bridge implementations are stubbed and return `503` until
+v1.3 wires the real implementations:
+
+- **`/v1/hotl/*`** — HotL policy CRUD and approval-gate evaluation.
+  `HotlPolicyStore` trait is defined; `AppState.hotl_policy_store` field
+  exists; the Postgres bridge is pending.
+- **`/v1/outcomes/*`** — Outcome recording and chain-reader queries.
+  `OutcomeWriter` / `OutcomesReader` traits are defined; the Postgres bridge
+  is pending.
+- **`/v1/skills/*`** — Skill pack install, list, and uninstall.
+  `0015_skill_packs.sql` migration is ready; the HTTP routes exist but the
+  store bridge returns `503`.
+
+The **pack runtime loader** is also not yet wired: installing a pack via
+the API records the row in the `skill_packs` table but does not yet
+activate the pack's prompt overlays or tool registrations at runtime.
+
+Everything else in wave 3 — rate-limit middleware, observability, IM
+adapters, cloud LLM providers, anomaly / watcher crates — is fully wired
+and tested.
+
+---
+
 *Built in Shanghai. 2026.*
