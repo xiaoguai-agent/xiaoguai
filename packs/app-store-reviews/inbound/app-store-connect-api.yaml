@@ -1,0 +1,76 @@
+---
+# Inbound: app-store-connect-api
+#
+# Supplements the RSS feed with structured review data from Apple's
+# App Store Connect REST API (v1). Requires a valid App Store Connect
+# API key (ES256 private key, key ID, issuer ID).
+#
+# Advantages over RSS:
+#   - Returns reviews from all store regions in one request.
+#   - Supports filtering by rating, territory, and app version.
+#   - Provides developer response status and respondedDate.
+#   - No practical page limit (cursor-based pagination).
+#
+# JWT is generated per-request (10-minute expiry); the adapter handles
+# token generation from the private key file.
+
+source: app-store-connect-api
+description: >
+  Apple App Store Connect REST API v1 — structured review endpoint with
+  JWT authentication. Provides multi-territory coverage, developer response
+  status, and cursor-based pagination. Supplements the RSS feed for complete
+  review history.
+
+endpoint: https://api.appstoreconnect.apple.com/v1/apps/${APP_STORE_APP_ID}/customerReviews
+
+auth:
+  type: jwt_es256
+  key_id: ${APP_STORE_CONNECT_KEY_ID}
+  issuer_id: ${APP_STORE_CONNECT_ISSUER_ID}
+  private_key_path: ${APP_STORE_CONNECT_PRIVATE_KEY_PATH}
+  # JWT expiry: 10 minutes (Apple maximum is 20 minutes).
+  token_expiry_seconds: 600
+  audience: appstoreconnect-v1
+
+# API query parameters.
+params:
+  # Sort newest first for cursor-based incremental fetch.
+  "sort": "-createdDate"
+  # Fields to return (minimise payload size).
+  "fields[customerReviews]": "rating,title,body,reviewerNickname,territory,createdDate"
+  # Page size maximum: 200.
+  "limit": 200
+
+# Cursor-based pagination: follow `links.next` until exhausted or cursor passed.
+pagination:
+  strategy: cursor
+  next_link_field: "links.next"
+  stop_when: all_before_cursor
+
+field_map:
+  external_id: "id"
+  rating: "attributes.rating"
+  body: "attributes.body"
+  title: "attributes.title"
+  author_name: "attributes.reviewerNickname"
+  store_region: "attributes.territory"
+  reviewed_at: "attributes.createdDate"
+
+# Upsert: same conflict target as RSS feed; Connect API rows win on title field.
+upsert:
+  conflict_target: [platform, external_id, app_id]
+  update_fields: [title, store_region]   # RSS may lack these; Connect API has them
+
+# Rate limits: Apple App Store Connect API.
+# Burst: 3600 requests/hour per key.
+rate_limit:
+  requests_per_second: 1
+  max_requests_per_hour: 500   # conservative; stay well under burst limit
+
+# Run schedule: supplemental daily run after RSS poll (offset by 30 minutes).
+schedule: "30 6 * * *"
+
+# Deferred:
+#   - Developer response write-back (POST /v1/customerReviewResponses) — requires
+#     human approval workflow; out of scope for v0.1.0
+#   - Territory-segmented analysis (iterate territories for regional breakdown)

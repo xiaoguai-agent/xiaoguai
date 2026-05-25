@@ -1,0 +1,63 @@
+---
+# Output: engineering-jira-bug-ticket
+#
+# Creates or updates Jira issues for top-ranked bug fix candidates
+# produced by fix-priority-ranker.
+#
+# Idempotent: if a ticket already exists for a theme_label (tracked in
+# fix_priorities.jira_ticket_id), the adapter updates the issue description
+# and priority rather than creating a duplicate.
+#
+# Ticket content is rendered from templates/bug-report-jira-frame.md.j2.
+
+output: engineering-jira-bug-ticket
+description: >
+  Creates or updates Jira issues for the top-N ranked bug fix candidates
+  (default N=10). Renders bug-report-jira-frame.md.j2 as the ticket
+  description. Writes the Jira ticket ID back to fix_priorities for tracking.
+
+jira:
+  base_url: ${JIRA_BASE_URL}
+  api_token: ${JIRA_API_TOKEN}
+  project_key: ${JIRA_PROJECT_KEY}
+  # Issue type for app store bug reports.
+  issue_type: Bug
+  # Priority mapping from severity_estimate.
+  priority_map:
+    crash: Highest
+    data-loss: Highest
+    functional-broken: High
+    ui-glitch: Medium
+    performance: Medium
+    unknown: Low
+  # Labels applied to all auto-generated tickets.
+  labels:
+    - app-store-review
+    - auto-generated
+  # Component (optional; map to mobile team component if configured).
+  component: ${JIRA_MOBILE_COMPONENT:-}
+  # Assignee: unassigned by default; triage team assigns during sprint planning.
+  assignee: null
+
+# Ticket title template.
+title_template: "[ASR] {{ bug.title | truncate(80) }} (rank #{{ fix_priority.rank }}, score {{ fix_priority.impact_score | round(0) | int }})"
+
+# Description rendered from Jinja2 template.
+description_template: templates/bug-report-jira-frame.md.j2
+
+# Update behaviour for existing tickets.
+update_if_exists:
+  match_field: fix_priorities.jira_ticket_id
+  update_fields:
+    - description    # refresh with latest evidence reviews
+    - priority       # update if rank changed significantly
+
+# Write-back: store Jira ticket ID in fix_priorities.
+write_back:
+  table: fix_priorities
+  set: {jira_ticket_id: result.issue_key, jira_created: true}
+  where: "theme_label = input.theme_label AND scored_at = input.scored_at"
+
+# Deferred:
+#   - Automatic sprint assignment (requires Jira Agile API)
+#   - Link to related Sentry issues (correlation with incident-triage pack)

@@ -1,0 +1,68 @@
+---
+# Inbound: apple-app-store-rss
+#
+# Polls Apple's public RSS feed for app reviews.
+# The RSS feed is unauthenticated, paginated (page 1–10, 50 reviews/page),
+# and returns the most recent reviews in reverse-chronological order.
+#
+# For more than 500 reviews or structured metadata (developer responses,
+# territory breakdown), use inbound/app-store-connect-api.yaml which calls
+# the App Store Connect REST API with JWT authentication.
+
+source: apple-app-store-rss
+description: >
+  Apple App Store public RSS feed for app reviews. Delivers up to 500 most
+  recent reviews per poll. Unauthenticated; requires only the numeric app ID.
+  Handled by watches/daily-review-poll.yaml (daily at 06:00 UTC).
+
+# Base endpoint template — {page} and {app_id} substituted at poll time.
+endpoint_template: >
+  https://itunes.apple.com/${ASR_STORE_REGION:-us}/rss/customerreviews/page={page}/id={app_id}/sortby=mostrecent/json
+
+auth:
+  type: none
+
+# Payload schema: iTunes RSS JSON format.
+payload_format: json
+response_field: feed.entry   # array of review objects
+
+field_map:
+  external_id: id.label
+  rating: "im:rating.label"
+  body: content.label
+  title: "im:name.label"
+  author_name: author.name.label
+  app_version: "im:version.label"
+  reviewed_at: updated.label      # ISO-8601 string
+
+# Rate limits: Apple does not publish official limits.
+# Empirically safe: ≤1 request/second, ≤600 requests/hour per IP.
+rate_limit:
+  requests_per_second: 1
+  max_requests_per_hour: 60   # conservative; 10 pages × 6 apps
+
+# Supported store regions (override with ASR_STORE_REGION env var).
+# Default: "us". For multi-region polling, run one watch per region.
+regions:
+  - us
+  # - gb
+  # - au
+  # - de
+
+# Sample payload excerpt (from Apple RSS docs).
+sample_payload: |
+  {
+    "feed": {
+      "entry": [
+        {
+          "id": {"label": "12345678901"},
+          "im:rating": {"label": "1"},
+          "content": {"label": "App crashes every time I open it after the latest update."},
+          "im:name": {"label": "Terrible update"},
+          "author": {"name": {"label": "frustrated_user_99"}},
+          "im:version": {"label": "4.2.1"},
+          "updated": {"label": "2026-05-24T14:23:11-07:00"}
+        }
+      ]
+    }
+  }

@@ -1,0 +1,64 @@
+---
+# Anomaly: volume-spike
+#
+# Detects a statistically significant surge in daily review count using a
+# z-score test against a 28-day rolling baseline (same day-of-week window).
+#
+# A review-count surge often signals one of three events:
+#   A) A viral incident or outage driving negative reviews en masse.
+#   B) A competitor campaign or Reddit/HN post sending users to the store.
+#   C) A positive moment (press coverage, influencer mention) driving praise.
+#
+# The anomaly fires direction-neutrally; downstream sentiment-themer
+# classifies whether the surge is predominantly negative (incident signal)
+# or positive (PR opportunity).
+
+name: volume-spike
+description: >
+  Computes the z-score of today's review count against a 28-day rolling
+  baseline (same day-of-week). Fires when z-score exceeds the configured
+  threshold on either Apple or Google platform, or in aggregate. Feeds
+  sentiment-themer for rapid triage and product-slack-channel for immediate
+  awareness.
+
+algorithm: z_score
+params:
+  # Rolling baseline: past 4 weeks, same day-of-week.
+  baseline_weeks: 4
+  baseline_window_obs: 4
+  # Z-score threshold (positive direction — surge).
+  # z=2.5 ≈ top 0.6% — alert on genuine surges only.
+  z_threshold: ${ASR_VOLUME_SPIKE_Z_THRESHOLD:-2.5}
+  # Minimum absolute review count today to fire (prevents noise at low volume).
+  min_absolute_count: ${ASR_VOLUME_SPIKE_MIN_COUNT:-10}
+  # Evaluate per-platform AND aggregate.
+  scope:
+    - aggregate
+    - per_platform
+
+# Data source: same daily_ratings view used by rating-drop (review_count column).
+data_source: daily_ratings
+
+# Output event fields when anomaly fires.
+event_schema:
+  anomaly_type: volume_spike
+  platform: "Affected platform ('apple', 'google', or 'aggregate')"
+  app_id: "App identifier"
+  current_count: "Review count today"
+  baseline_mean: "Mean daily review count over baseline window"
+  baseline_stddev: "Standard deviation of baseline observations"
+  z_score: "Computed z-score"
+  pct_above_baseline: "Percentage above baseline mean"
+  date: "ISO-8601 date of the anomaly"
+
+# Routing: alert product Slack immediately; accelerate sentiment classification.
+forward_to:
+  - outputs/product-slack-channel.yaml
+  - agents/sentiment-themer.yaml
+
+# Cooldown: do not re-fire for the same platform within 24 hours.
+cooldown_minutes: 1440
+
+# Deferred:
+#   - Correlation with media-monitoring mention-volume-spike (detect external driver)
+#   - App version segmentation (detect if surge is concentrated on one version)

@@ -1,0 +1,144 @@
+---
+# App Store Reviews Skill Pack — v0.1.0
+#
+# Ingests iOS App Store and Google Play reviews via RSS/API polling,
+# classifies sentiment and themes with an LLM agent, extracts reproducible
+# bug reports, ranks fixes by impact, benchmarks against competitor apps,
+# and delivers prioritised engineering tickets, CS escalations, and an
+# executive weekly digest.
+#
+# Drafts response templates only — never posts to app stores directly.
+
+name: app-store-reviews
+version: "0.1.0"
+description: >
+  Monitors iOS App Store and Google Play reviews for your app and configured
+  competitors. Classifies sentiment and clusters reviews by theme
+  (bug / feature-request / praise / complaint). Extracts reproducible bug
+  reports for engineering, ranks fixes by impact (mentions × star-impact ×
+  user-tier-mix), surfaces competitor feature gaps, and drafts per-tier
+  response templates. Delivers a daily digest, Jira-ready bug frames,
+  fix-priority cards, and a weekly exec health digest.
+
+depends:
+  # Core API for inbound token auth and outcome telemetry.
+  xiaoguai-api: ">=0.12.1"
+  # LLM backend: sentiment, theme clustering, bug extraction, drafting.
+  llm: required
+  # Outcome telemetry: records theme-classification accuracy feedback.
+  outcome-telemetry: required
+  # Watch engine: RSS-style polling with cursor tracking.
+  watch: required
+  # Anomaly detection: z-score (rating drop) + count-surge algorithms.
+  anomaly: required
+
+# Database migrations.
+migrations:
+  - migrations/0001_app_reviews.sql
+
+# Watch jobs (polling-based inbound sources).
+watches:
+  - watches/daily-review-poll.yaml
+  - watches/competitor-poll.yaml
+
+# Anomaly detectors.
+anomalies:
+  - anomalies/rating-drop.yaml
+  - anomalies/volume-spike.yaml
+
+# Agent definitions.
+agents:
+  - agents/sentiment-themer.yaml
+  - agents/bug-extractor.yaml
+  - agents/fix-priority-ranker.yaml
+  - agents/competitor-feature-gap.yaml
+  - agents/response-drafter.yaml
+
+# Inbound sources.
+sources:
+  - inbound/apple-app-store-rss.yaml
+  - inbound/google-play-rss.yaml
+  - inbound/app-store-connect-api.yaml
+  - inbound/competitor-app-store-poll.yaml
+
+# Output connectors.
+outputs:
+  - outputs/engineering-jira-bug-ticket.yaml
+  - outputs/product-slack-channel.yaml
+  - outputs/customer-success-flagged-reviews.yaml
+  - outputs/weekly-exec-app-health-digest.yaml
+
+# Feature flag gating the /v1/app-store-reviews route family.
+# Set XIAOGUAI_APP_STORE_REVIEWS_ENABLED=true in your .env to activate.
+feature_flag: XIAOGUAI_APP_STORE_REVIEWS_ENABLED
+
+# Execution plan — daily poll trigger.
+plan_daily:
+  - id: poll
+    description: "watch/daily-review-poll fetches new reviews and upserts into reviews table."
+  - id: theme_classify
+    agent: sentiment-themer
+    description: "Classify pending reviews by sentiment + theme category."
+    deps: [poll]
+  - id: bug_extract
+    agent: bug-extractor
+    description: "Extract reproducible bug reports from bug-category reviews."
+    deps: [theme_classify]
+  - id: prioritise
+    agent: fix-priority-ranker
+    description: "Rank open bugs by impact score (mentions × star-impact × tier-mix)."
+    deps: [bug_extract]
+  - id: draft_responses
+    agent: response-drafter
+    description: "Generate draft response templates for 1-star and new reviews."
+    deps: [theme_classify]
+  - id: jira_tickets
+    output: engineering-jira-bug-ticket
+    description: "Create or update Jira tickets for top-N ranked bugs."
+    deps: [prioritise]
+  - id: product_alert
+    output: product-slack-channel
+    description: "Post daily digest to product Slack channel."
+    deps: [prioritise, draft_responses]
+  - id: cs_flag
+    output: customer-success-flagged-reviews
+    description: "Route enterprise-tier 1-star reviews to CS team."
+    deps: [theme_classify]
+
+# Execution plan — weekly competitor + exec digest.
+plan_weekly:
+  - id: competitor_poll
+    description: "watch/competitor-poll fetches new competitor reviews."
+  - id: gap_analysis
+    agent: competitor-feature-gap
+    description: "Extract features in competitor reviews absent from ours."
+    deps: [competitor_poll]
+  - id: exec_digest
+    output: weekly-exec-app-health-digest
+    description: "Compile and deliver weekly exec health digest including competitor gap."
+    deps: [gap_analysis]
+
+# Resource requirements.
+requires:
+  env:
+    - APP_STORE_APP_ID           # Apple numeric app ID (e.g. 123456789)
+    - GOOGLE_PLAY_PACKAGE_NAME   # Android package name (e.g. com.acme.app)
+    - APP_STORE_CONNECT_KEY_ID   # App Store Connect API key ID
+    - APP_STORE_CONNECT_ISSUER_ID
+    - APP_STORE_CONNECT_PRIVATE_KEY_PATH  # Path to .p8 private key file
+    - JIRA_BASE_URL              # e.g. https://acme.atlassian.net
+    - JIRA_API_TOKEN
+    - JIRA_PROJECT_KEY           # e.g. MOB
+    - PRODUCT_SLACK_WEBHOOK_URL
+    - CS_SLACK_WEBHOOK_URL       # Customer success escalation channel
+    - EXEC_EMAIL_RECIPIENTS      # Comma-separated email addresses
+    - COMPETITOR_APP_IDS         # Comma-separated Apple IDs
+    - COMPETITOR_PACKAGE_NAMES   # Comma-separated Android package names
+  llm: true                      # any registered provider
+
+# Deferred / not-yet-implemented:
+#   - Automated public response posting (out of scope — drafts only)
+#   - App Store Connect direct reply API (Apple requires formal entitlement)
+#   - Google Play Reply API integration (follow-on: v0.2.0)
+#   - Real-time webhook from Apple Search Ads for correlation with ad spend
+# See docs/plans/app-store-reviews-backlog.md for prioritisation.

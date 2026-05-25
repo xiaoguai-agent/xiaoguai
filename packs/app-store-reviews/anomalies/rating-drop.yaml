@@ -1,0 +1,67 @@
+---
+# Anomaly: rating-drop
+#
+# Detects a statistically significant drop in the daily mean star rating
+# using a z-score test against a rolling 28-day baseline (same day-of-week
+# to control for weekly patterns, e.g. weekend vs. weekday review behaviour).
+#
+# A sudden rating drop often signals a regression, a breaking release, or
+# a viral negative post. Early detection lets engineering triage before
+# the rating permanently affects store ranking.
+
+name: rating-drop
+description: >
+  Computes the z-score of today's mean star rating against a 28-day rolling
+  baseline (same day-of-week windows). Fires when the z-score falls below
+  the configured negative threshold on either Apple or Google platform, or
+  in aggregate. Feeds sentiment-themer and fix-priority-ranker for rapid
+  triage.
+
+# Algorithm: z-score on same-day-of-week observations from the past N weeks.
+algorithm: z_score
+params:
+  # Rolling baseline: past 4 weeks, same day-of-week.
+  baseline_weeks: 4
+  # Number of same-DOW observations: 4 data points (robust to weekly patterns).
+  baseline_window_obs: 4
+  # Z-score threshold for firing (negative direction — drop).
+  # z=-2.0 ≈ bottom 2.3% — alert on genuine drops, not routine variance.
+  z_threshold: ${ASR_RATING_DROP_Z_THRESHOLD:--2.0}
+  # Minimum review volume today to fire (prevents low-count noise).
+  min_daily_review_count: ${ASR_RATING_DROP_MIN_COUNT:-5}
+  # Minimum absolute rating drop vs baseline mean to fire.
+  min_absolute_drop: ${ASR_RATING_DROP_MIN_ABS:-0.3}
+  # Evaluate per-platform AND aggregate.
+  scope:
+    - aggregate
+    - per_platform
+
+# Data source: pre-aggregated daily mean ratings.
+# The watch engine materialises: daily_ratings(date, platform, app_id, mean_rating, review_count).
+data_source: daily_ratings
+
+# Output event fields when anomaly fires.
+event_schema:
+  anomaly_type: rating_drop
+  platform: "Affected platform ('apple', 'google', or 'aggregate')"
+  app_id: "App identifier"
+  current_mean: "Today's mean star rating"
+  baseline_mean: "Mean of same-DOW observations in baseline window"
+  baseline_stddev: "Standard deviation of baseline observations"
+  z_score: "Computed z-score (negative = drop)"
+  absolute_drop: "current_mean - baseline_mean (negative value)"
+  review_count_today: "Number of reviews received today"
+  date: "ISO-8601 date of the anomaly"
+
+# Routing: fired events are forwarded to product Slack and trigger
+# accelerated classification of today's reviews.
+forward_to:
+  - outputs/product-slack-channel.yaml
+  - agents/sentiment-themer.yaml
+
+# Cooldown: do not re-fire for the same platform within 24 hours.
+cooldown_minutes: 1440
+
+# Deferred:
+#   - Version-segmented rating drop (detect drops scoped to a specific app version)
+#   - Adaptive baseline (auto-widens window after confirmed releases)
