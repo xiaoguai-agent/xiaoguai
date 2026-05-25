@@ -5,9 +5,13 @@
 #   docker compose -f deploy/docker-compose.yml up --build
 #
 # Brings up:
-#   - postgres 16     (state for sessions / messages / mcp / providers / audit)
-#   - valkey 8        (cache + idempotency keys)
-#   - xiaoguai-core   (HTTP API on :7600)
+#   - postgres 16        (state for sessions / messages / mcp / providers / audit)
+#   - valkey 8           (cache + idempotency keys)
+#   - redis 7            (wave-3: rate-limit backend + optional outcome cache)
+#   - otel-collector     (wave-3: OTLP receiver; gRPC :4317, HTTP :4318)
+#   - prometheus         (wave-3: scrapes otel-collector; UI on 127.0.0.1:9090)
+#   - grafana            (wave-3: dashboards on 127.0.0.1:3000)
+#   - xiaoguai-core      (HTTP API on :7600)
 #
 # Optional add-ons (not enabled by default):
 #   - ollama          uncomment the ollama service to run a local LLM
@@ -42,6 +46,78 @@ services:
       timeout: 3s
       retries: 10
 
+  # ---------- wave-3: Redis (rate-limit + outcome cache) ----------
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------- wave-3: OpenTelemetry Collector ----------
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:13133/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  # ---------- wave-3: Prometheus ----------
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+    ports:
+      # Bind to localhost only in dev for safety.
+      - "127.0.0.1:9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # ---------- wave-3: Grafana ----------
+
+  grafana:
+    image: grafana/grafana:latest
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: xiaoguai
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      # Bind to localhost only in dev for safety.
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
   xiaoguai-core:
     build:
       context: ..
@@ -51,6 +127,10 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
     environment:
       XIAOGUAI_SERVER__HOST: 0.0.0.0
       XIAOGUAI_SERVER__PORT: "7600"
@@ -58,6 +138,17 @@ services:
       XIAOGUAI_CACHE__URL: redis://valkey:6379
       # v0.6 ships MockBackend by default; v0.6.1 will wire LlmRouter.
       RUST_LOG: info,sqlx=warn
+      # wave-3: rate-limit backend
+      RATE_LIMIT_BACKEND: redis
+      RATE_LIMIT_REDIS_URL: redis://redis:6379/0
+      # wave-3: observability
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_TRACES_SAMPLE_RATE: "0.1"
+      # wave-3: feature flags (safe defaults — opt-in at runtime)
+      HOTL_ENABLED: "false"
+      OUTCOME_RECORDER_ENABLED: "false"
+      SKILL_PACK_REPO_ENABLED: "false"
+      POLICY_ENFORCEMENT_ENABLED: "false"
     ports:
       - "7600:7600"
 
@@ -74,3 +165,7 @@ volumes:
   pg_data:
   valkey_data:
   # ollama_data:
+  # wave-3
+  redis_data:
+  prometheus_data:
+  grafana_data:
