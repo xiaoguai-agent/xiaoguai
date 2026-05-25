@@ -1,0 +1,107 @@
+---
+# Wave-3 Human-on-the-Loop (HotL) alerts
+# Metric sources:
+#   xiaoguai_hotl_usage_total{verdict}  — counters by verdict label
+#     verdict values: "approved", "denied", "escalated", "timeout"
+#   xiaoguai_hotl_check_duration_seconds — histogram (SLO alert in wave3-latency.yml)
+#
+# Thresholds (operator-tunable; defaults set conservatively):
+#   Escalations/min threshold  : 5   (EscalationsPerMinuteThreshold)
+#   Deny spike rate threshold  : 0.30 (30% of decisions are denies over 5m)
+#   Approver-tier backlog proxy: escalated_rate / approved_rate > 3.0
+
+groups:
+  - name: wave3.hotl.escalation
+    interval: 1m
+    rules:
+      - alert: HotLEscalationRateHigh
+        expr: >
+          rate(xiaoguai_hotl_usage_total{verdict="escalated"}[5m]) * 60 > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: hotl
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md
+        annotations:
+          summary: "HotL escalation rate above 5/min for 5 minutes"
+          description: >
+            xiaoguai_hotl_usage_total{verdict="escalated"} is firing at
+            {{ $value | printf "%.1f" }} escalations/min over the last 5 minutes.
+            This may indicate a policy misconfiguration, a rogue agent, or an
+            external event triggering mass human-review requests.
+            Check the wave-3 overview dashboard and the HotL queue.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=hotl
+
+      - alert: HotLEscalationRateCritical
+        expr: >
+          rate(xiaoguai_hotl_usage_total{verdict="escalated"}[5m]) * 60 > 5
+        for: 15m
+        labels:
+          severity: critical
+          team: platform
+          subsystem: hotl
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md
+        annotations:
+          summary: "HotL escalation rate sustained above 5/min for 15 minutes (critical)"
+          description: >
+            xiaoguai_hotl_usage_total{verdict="escalated"} has been above 5/min
+            for 15 consecutive minutes.
+            Current rate: {{ $value | printf "%.1f" }} escalations/min.
+            Approver-tier backlog is likely growing. Consider emergency policy
+            relaxation or additional approver capacity.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=hotl
+
+  - name: wave3.hotl.deny
+    interval: 1m
+    rules:
+      - alert: HotLDenyRateSpike
+        expr: >
+          (
+            rate(xiaoguai_hotl_usage_total{verdict="denied"}[5m])
+          ) /
+          (
+            sum without(verdict) (rate(xiaoguai_hotl_usage_total[5m]))
+          ) > 0.30
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: hotl
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md
+        annotations:
+          summary: "HotL deny rate above 30% of decisions"
+          description: >
+            More than 30% of HotL decisions in the last 5 minutes are denies.
+            Current deny fraction: {{ $value | humanizePercentage }}.
+            Possible causes: tightened policy rules, unusual agent action patterns,
+            or a compromised/misbehaving agent generating policy violations.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=hotl
+
+  - name: wave3.hotl.backlog
+    interval: 1m
+    rules:
+      - alert: HotLApproverTierBacklogProxy
+        # Proxy: escalation rate is more than 3x the approval rate, suggesting
+        # approvers cannot keep up with the inbound queue.
+        expr: >
+          (
+            rate(xiaoguai_hotl_usage_total{verdict="escalated"}[5m])
+          ) /
+          (
+            rate(xiaoguai_hotl_usage_total{verdict="approved"}[5m]) > 0
+          ) > 3.0
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: hotl
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/hotl-escalation-stuck.md
+        annotations:
+          summary: "HotL approver-tier backlog growing (escalations >> approvals)"
+          description: >
+            The ratio of escalation rate to approval rate has exceeded 3.0 for 10
+            consecutive minutes, suggesting the approver tier cannot clear the queue.
+            Escalation/approval ratio: {{ $value | printf "%.1f" }}.
+            Verify approver availability and check for stuck escalation tasks.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=hotl
