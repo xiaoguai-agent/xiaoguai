@@ -25,6 +25,12 @@ tracing = { workspace = true }
 # handing it to `ingest` — keeps the in-memory backend usable by the
 # file-watch ↔ RAG bridge without dragging in extra deps.
 tokio = { workspace = true, features = ["fs"] }
+# v1.2.17: document loaders
+pdf-extract = { workspace = true }
+zip = { workspace = true }
+quick-xml = { workspace = true }
+scraper = { workspace = true }
+pulldown-cmark = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs"] }
