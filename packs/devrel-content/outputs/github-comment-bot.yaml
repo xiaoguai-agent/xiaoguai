@@ -1,0 +1,51 @@
+# Output adapter — post triage comment + labels to GitHub issue
+#
+# Receives the structured output from issue-triage (and optionally
+# tutorial-outline) and performs two GitHub API calls:
+#   1. add_labels_to_issue  — applies the triage label
+#   2. create_issue_comment — posts the welcome comment (+ tutorial outline block)
+#
+# The github_issues MCP server handles both calls via:
+#   add_label_to_issue(repo, issue_number, label)
+#   post_issue_comment(repo, issue_number, body)
+
+name: github-comment-bot
+kind: mcp-tool
+
+mcp_server: github_issues
+
+# Step 1: apply the triage label.
+# The label must already exist in the repo; the adapter skips if it does not.
+label_tool: add_label_to_issue
+label_params:
+  repo:         "{{ repo_owner }}/{{ repo_name }}"
+  issue_number: "{{ issue.number }}"
+  label:        "{{ triage.label }}"
+
+# Step 2: post the welcome comment.
+# Template rendered from templates/response-template.md.j2.
+comment_tool: post_issue_comment
+comment_template: templates/response-template.md.j2
+
+# If tutorial-outline ran, embed the outline inside a <details> block.
+# The template receives `tutorial_outline` (null if the step was skipped).
+tutorial_outline_field: tutorial_outline   # from plan context; null if skipped
+
+# Retry settings — GitHub API occasionally returns 502 under load.
+retry:
+  max_attempts: 3
+  backoff_seconds: 5
+  on_errors: [502, 503, 429]
+
+# Audit entry.
+audit:
+  table: pack_devrel_issue_triage_runs
+  fields:
+    - issue_number
+    - repo_full
+    - triage_label
+    - triage_confidence
+    - welcome_comment_posted
+    - tutorial_outline_attached
+    - label_applied
+    - processed_at

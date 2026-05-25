@@ -1,0 +1,160 @@
+# Community Digest Agent
+#
+# Aggregates the past 7 days of developer-community activity across:
+#   - Discord       (configured guild + channels via DISCORD_BOT_TOKEN)
+#   - Discourse     (configured forum via DISCOURSE_API_KEY)
+#   - GitHub        (issues opened/closed, PRs merged, Discussions)
+#
+# Produces a structured digest used by:
+#   - slack-devrel-channel output  (TL;DR card)
+#   - weekly-newsletter-draft output  (full Markdown section)
+#   - dx-feedback-synth agent (raw signal for theme extraction)
+
+name: community-digest
+kind: llm-agent
+
+mcp_servers:
+  - discord_reader      # list_messages(channel_id, since, limit)
+  - discourse_reader    # list_topics(since, limit), get_topic(id)
+  - github_discussions  # list_discussions(repo, since, limit), list_issues(repo, since)
+
+system_prompt: |
+  You are a developer-relations community manager producing a weekly digest.
+
+  You will receive raw activity data from Discord, Discourse, and GitHub for
+  the past 7 days. Your job:
+
+  1. TOP THREADS: Identify the 3-5 most engaged or important threads/issues/topics.
+     For each: title, source (discord|discourse|github), URL, 1-sentence summary,
+     engagement score (reply count + reaction count).
+
+  2. HIGHLIGHTS: 2-4 bullet points — notable community achievements, shipped features
+     praised by users, or interesting discussions worth amplifying.
+
+  3. RECURRING QUESTIONS: List up to 5 questions or topics that appeared 3+ times
+     across channels this week. Group near-duplicates together.
+
+  4. SENTIMENT: Overall community sentiment for the week.
+     One of: positive | neutral | mixed | negative.
+     Add a 1-sentence justification.
+
+  5. STATS:
+     - discord_messages: integer
+     - discourse_new_topics: integer
+     - github_issues_opened: integer
+     - github_issues_closed: integer
+     - github_prs_merged: integer
+     - github_discussions_new: integer
+
+  Output ONLY valid JSON:
+  {
+    "week_ending": "<ISO-8601 date>",
+    "top_threads": [
+      {
+        "title": "<string>",
+        "source": "discord|discourse|github",
+        "url": "<string or null>",
+        "summary": "<string>",
+        "engagement": <integer>
+      }
+    ],
+    "highlights": ["<string>"],
+    "recurring_questions": [
+      {"question": "<string>", "count": <integer>, "sources": ["discord|discourse|github"]}
+    ],
+    "sentiment": "positive|neutral|mixed|negative",
+    "sentiment_reason": "<string>",
+    "stats": {
+      "discord_messages": <integer>,
+      "discourse_new_topics": <integer>,
+      "github_issues_opened": <integer>,
+      "github_issues_closed": <integer>,
+      "github_prs_merged": <integer>,
+      "github_discussions_new": <integer>
+    }
+  }
+
+  Rules:
+  - Only include threads with genuine community value; skip bot noise and spam.
+  - Do not expose user handles unless the message is public (Discourse/GitHub).
+  - Discord messages from private channels must be excluded.
+  - Truncate any individual message to 500 characters before quoting.
+
+user_prompt_template: |
+  ## Community activity: {{ period_start }} → {{ period_end }}
+
+  ### Discord ({{ discord_messages | length }} messages across {{ discord_channels | length }} channels)
+  {% for msg in discord_messages[:200] %}
+  [{{ msg.channel }}] {{ msg.author_display }}: {{ msg.content | truncate(200) }}
+  {% endfor %}
+
+  ### Discourse ({{ discourse_topics | length }} topics)
+  {% for t in discourse_topics[:50] %}
+  - [{{ t.title }}]({{ t.url }}) — {{ t.reply_count }} replies, {{ t.views }} views
+  {% endfor %}
+
+  ### GitHub Issues & PRs
+  Opened: {{ github_issues_opened | length }}  Closed: {{ github_issues_closed | length }}  PRs merged: {{ github_prs_merged | length }}
+  {% for issue in (github_issues_opened + github_issues_closed)[:40] %}
+  - #{{ issue.number }} [{{ issue.state }}]: {{ issue.title }}
+  {% endfor %}
+
+  ### GitHub Discussions
+  {% for d in github_discussions[:20] %}
+  - {{ d.title }} ({{ d.comment_count }} comments)
+  {% endfor %}
+
+  Produce the weekly digest JSON now.
+
+tools:
+  - discord_list_messages
+  - discourse_list_topics
+  - github_list_issues
+  - github_list_discussions
+  - github_list_merged_prs
+
+budget:
+  max_llm_calls: 3
+  max_output_tokens: 3000
+
+# Context gathering before the LLM prompt.
+context_steps:
+  - id: discord_messages
+    tool: discord_list_messages
+    params:
+      since: "{{ period_start }}"
+      until: "{{ period_end }}"
+      channels: "${DISCORD_DEVREL_CHANNEL_IDS}"
+      limit: 200
+
+  - id: discourse_topics
+    tool: discourse_list_topics
+    params:
+      since: "{{ period_start }}"
+      limit: 50
+
+  - id: github_issues_opened
+    tool: github_list_issues
+    params:
+      state: open
+      since: "{{ period_start }}"
+      limit: 100
+
+  - id: github_issues_closed
+    tool: github_list_issues
+    params:
+      state: closed
+      since: "{{ period_start }}"
+      limit: 100
+
+  - id: github_prs_merged
+    tool: github_list_merged_prs
+    params:
+      since: "{{ period_start }}"
+      limit: 50
+
+  - id: github_discussions
+    tool: github_list_discussions
+    params:
+      since: "{{ period_start }}"
+      limit: 20

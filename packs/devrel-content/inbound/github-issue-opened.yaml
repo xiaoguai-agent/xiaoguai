@@ -1,0 +1,43 @@
+# Inbound webhook source — GitHub issues events
+#
+# GitHub must be configured to send `issues` webhook events to:
+#   POST https://<host>/v1/devrel/inbound/github-issues/<route_id>
+#
+# Signature verification: HMAC-SHA256 over the raw request body,
+# compared against the `X-Hub-Signature-256` header (same pattern as pr-review).
+
+name: github-issue-opened
+kind: webhook
+
+# Route registered in the scheduler webhook table at deploy time.
+route_id: "github-issues-${PACK_INSTANCE_ID}"
+
+# Only handle the `issues` GitHub event type.
+event_filter:
+  header: "X-GitHub-Event"
+  values: ["issues"]
+
+# Only process newly opened issues, not edits, closes, or re-opens.
+payload_filter:
+  json_path: "$.action"
+  values: ["opened"]
+
+# Signature verification settings.
+signature:
+  algorithm: hmac-sha256
+  header: "X-Hub-Signature-256"
+  prefix: "sha256="
+  secret_env: GITHUB_WEBHOOK_SECRET
+
+# Fields extracted from the payload and passed to the plan context.
+extract:
+  issue_number:  "$.issue.number"
+  issue_title:   "$.issue.title"
+  issue_body:    "$.issue.body"
+  issue_author:  "$.issue.user.login"
+  issue_labels:  "$.issue.labels[*].name"
+  issue_url:     "$.issue.html_url"
+  created_at:    "$.issue.created_at"
+  repo_owner:    "$.repository.owner.login"
+  repo_name:     "$.repository.name"
+  repo_full:     "$.repository.full_name"

@@ -1,0 +1,40 @@
+{# GitHub issue response template — rendered by github-comment-bot output.
+   Posted as the welcome comment on newly opened issues.
+   Receives:
+     triage         — issue-triage agent output
+     issue          — extracted issue fields
+     tutorial_outline — tutorial-outline agent output (null if not generated) #}
+
+{{ triage.welcome_comment }}
+
+{% if triage.label == 'good-first' %}
+---
+
+<details>
+<summary>📚 Tutorial outline (click to expand)</summary>
+
+{% if tutorial_outline %}
+{% include 'tutorial-outline.md.j2' with context %}
+{% else %}
+*A tutorial outline will be generated shortly.*
+{% endif %}
+
+</details>
+{% endif %}
+
+{% if triage.label == 'RFE' and tutorial_outline %}
+---
+
+<details>
+<summary>📚 Suggested tutorial outline for this feature (click to expand)</summary>
+
+{% include 'tutorial-outline.md.j2' with context %}
+
+</details>
+{% endif %}
+
+---
+
+<sub>
+Triaged by xiaoguai devrel-content bot · Label: <code>{{ triage.label }}</code> · Confidence: {{ triage.confidence }}%
+</sub>

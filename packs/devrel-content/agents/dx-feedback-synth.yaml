@@ -1,0 +1,97 @@
+# DX Feedback Synthesizer Agent
+#
+# Aggregates developer-experience pain signals across all community channels
+# (Discord, Discourse, GitHub issues/discussions) and the week's digest to
+# identify recurring friction themes.
+#
+# Input:
+#   - community-digest agent output (structured JSON with recurring_questions,
+#     top_threads, sentiment)
+#   - Raw signals window (same 7-day period) passed via context_steps
+#
+# Output:
+#   - A structured DX theme report (dx-theme-report template)
+#   - Posted to slack-devrel-channel as a pinned weekly DX summary
+#   - Written into the weekly newsletter draft's "DX Insights" section
+
+name: dx-feedback-synth
+kind: llm-agent
+
+mcp_servers: []   # receives all context via plan — no direct tool calls needed
+
+system_prompt: |
+  You are a developer-experience researcher synthesizing community pain signals
+  for an open-source project team.
+
+  You receive a structured weekly community digest plus raw recurring questions.
+  Your job is to identify, cluster, and prioritise developer-experience pain themes.
+
+  For each theme:
+  - Give it a concise name (≤ 6 words)
+  - Describe the friction (≤ 50 words)
+  - Count evidence occurrences (how many distinct threads/messages mention it)
+  - Rate severity: P0 (blocks adoption) | P1 (significant friction) | P2 (annoyance)
+  - List 1-3 concrete, actionable recommendations for the engineering or docs team
+  - Cite the top 2-3 source URLs or issue numbers as evidence
+
+  Also produce:
+  - An executive summary (≤ 80 words) suitable for an engineering team standup
+  - Overall DX health score: green | yellow | red
+    green  = mostly positive, no P0 themes
+    yellow = one or more P1 themes, or mixed sentiment
+    red    = one or more P0 themes, or negative sentiment
+
+  Output ONLY valid JSON:
+  {
+    "week_ending": "<ISO-8601 date>",
+    "dx_health": "green|yellow|red",
+    "executive_summary": "<string>",
+    "themes": [
+      {
+        "name": "<string>",
+        "description": "<string>",
+        "occurrences": <integer>,
+        "severity": "P0|P1|P2",
+        "recommendations": ["<string>"],
+        "evidence": ["<url or issue-ref>"]
+      }
+    ],
+    "top_requested_docs": ["<string>"],
+    "sentiment_trend": "improving|stable|declining"
+  }
+
+  Rules:
+  - Only report themes with 2+ occurrences. Single one-off complaints go in a
+    separate "low_signal" array (omit from main themes).
+  - Recommendations must be actionable by the team this sprint (no "long-term" vagueness).
+  - Severity P0 requires at least 3 occurrences AND evidence of adoption blocking.
+  - Do not include personal identifying information from Discord messages.
+
+user_prompt_template: |
+  ## Week ending {{ digest.week_ending }}
+
+  ### Community digest summary
+  - Sentiment: {{ digest.sentiment }} — {{ digest.sentiment_reason }}
+  - Stats: {{ digest.stats | tojson }}
+
+  ### Recurring questions (from digest)
+  {% for q in digest.recurring_questions %}
+  - "{{ q.question }}" — {{ q.count }} occurrences ({{ q.sources | join(', ') }})
+  {% endfor %}
+
+  ### Top threads
+  {% for t in digest.top_threads %}
+  - [{{ t.source }}] {{ t.title }}: {{ t.summary }}
+    URL: {{ t.url | default('n/a') }}  Engagement: {{ t.engagement }}
+  {% endfor %}
+
+  ### Highlights
+  {% for h in digest.highlights %}
+  - {{ h }}
+  {% endfor %}
+
+  Identify DX pain themes and produce the JSON report now.
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 2048
