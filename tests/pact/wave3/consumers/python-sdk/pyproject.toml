@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "xiaoguai-pact-consumer-python-sdk"
+version = "0.1.0"
+description = "Pact consumer contract tests for Python SDK vs. xiaoguai wave-3 API"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+    "pact-python>=2.2.2",
+    "pytest>=8.2.0",
+    "requests>=2.32.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
