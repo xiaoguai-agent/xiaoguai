@@ -1,0 +1,78 @@
+---
+# Output: Board card update (v1.4-READY STUB)
+#
+# Mutates card metadata in the kanban subsystem via the /v1/tasks API.
+# This output is a NO-OP until XIAOGUAI_KANBAN_ENABLED=true AND the
+# kanban subsystem (task #150) ships in v1.4.
+#
+# When disabled, each attempted write:
+#   1. Logs the intended mutation at INFO level (structured JSON).
+#   2. Returns a synthetic 202 response to the calling agent.
+#   3. Does NOT mutate any state.
+#
+# Supported operations (all gated):
+#   - patch_card:    PATCH /v1/tasks/{card_id}  (update labels, owner, urgency)
+#   - move_column:   PATCH /v1/tasks/{card_id}/column  (column transitions)
+#   - set_assignee:  PATCH /v1/tasks/{card_id}/assignee
+#   - add_comment:   POST  /v1/tasks/{card_id}/comments  (investigation notes)
+
+name: board-card-update
+kind: http-client
+
+# ── v1.4-ready stub ──────────────────────────────────────────────────────────
+stub:
+  enabled_when: "XIAOGUAI_KANBAN_ENABLED != 'true'"
+  log_level: info
+  log_template: |
+    [kanban-automation stub] board-card-update skipped (kanban subsystem not active).
+    Intended operation: {{ operation }}
+    Card id: {{ card_id | default('(pending)') }}
+    Payload: {{ payload | tojson }}
+  synthetic_response:
+    status: 202
+    body: '{"status": "stub", "message": "kanban subsystem not active; mutation logged but not applied"}'
+# ─────────────────────────────────────────────────────────────────────────────
+
+base_url: "http://localhost:${XIAOGUAI_API_PORT:-8080}"
+auth:
+  kind: internal-service-token
+  token_env: XIAOGUAI_INTERNAL_SERVICE_TOKEN
+
+# Operation routing — each operation maps to an API endpoint.
+operations:
+  patch_card:
+    method: PATCH
+    path: "/v1/tasks/{{ card_id }}"
+    body:
+      labels:        "{{ labels | default([]) }}"
+      urgency:       "{{ urgency | default(null) }}"
+      owner_hint:    "{{ owner_hint | default(null) }}"
+      triage_result: "{{ triage_result | default(null) }}"
+
+  move_column:
+    method: PATCH
+    path: "/v1/tasks/{{ card_id }}/column"
+    body:
+      column: "{{ target_column }}"
+      reason: "{{ reason | default('automated') }}"
+
+  set_assignee:
+    method: PATCH
+    path: "/v1/tasks/{{ card_id }}/assignee"
+    body:
+      assignee:   "{{ assignee }}"
+      suggested:  true      # Flag: suggestion only, not a hard assignment
+
+  add_comment:
+    method: POST
+    path: "/v1/tasks/{{ card_id }}/comments"
+    body:
+      body:   "{{ comment_body }}"
+      author: "xiaoguai-kanban-automation"
+      kind:   "{{ comment_kind | default('note') }}"  # note | investigation | split-proposal
+
+retry:
+  max_attempts: 2
+  backoff_seconds: 2
+  # Do not retry auth failures — those need human intervention.
+  no_retry_statuses: [401, 403, 422]

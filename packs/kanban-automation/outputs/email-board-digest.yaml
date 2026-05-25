@@ -1,0 +1,77 @@
+---
+# Output: Daily email board digest
+#
+# Sends a daily summary of board activity to configured recipients.
+# Functional today — does NOT depend on the kanban subsystem.
+#
+# When XIAOGUAI_KANBAN_ENABLED=false, the digest reports on:
+#   - Cards received (from kanban_triage_classifications)
+#   - Split proposals (from kanban_split_suggestions)
+#   - Workload snapshots (from kanban_agent_workload_snapshots)
+#
+# When XIAOGUAI_KANBAN_ENABLED=true (v1.4+), it additionally queries
+# the kanban subsystem for live board state (column counts, cycle times).
+#
+# Schedule: configurable cron (default: 08:00 local time, Mon–Fri).
+
+name: email-board-digest
+kind: email
+
+schedule:
+  cron: "${KANBAN_DIGEST_CRON:-0 8 * * 1-5}"     # Mon–Fri 08:00
+  timezone_env: KANBAN_DIGEST_TIMEZONE
+  timezone_default: "UTC"
+
+smtp:
+  host_env: KANBAN_SMTP_HOST
+  port: 587
+  starttls: true
+  username_env: KANBAN_SMTP_USERNAME
+  password_env: KANBAN_SMTP_PASSWORD
+
+from_address: "xiaoguai-board@${KANBAN_EMAIL_DOMAIN}"
+to_addresses_env: KANBAN_DIGEST_RECIPIENTS      # comma-separated
+subject_template: "[Board Digest] {{ digest_date }} — {{ total_cards }} cards triaged"
+
+body_template_ref: templates/workload-summary.md.j2
+
+# Data gathered before rendering the template.
+data_steps:
+  - id: triage_stats
+    tool: db_query
+    params:
+      query: |
+        SELECT card_type, urgency, COUNT(*) AS count
+        FROM kanban_triage_classifications
+        WHERE classified_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY card_type, urgency
+        ORDER BY urgency, card_type
+
+  - id: split_proposals
+    tool: db_query
+    params:
+      query: |
+        SELECT approval_status, COUNT(DISTINCT proposal_batch) AS proposals
+        FROM kanban_split_suggestions
+        WHERE created_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY approval_status
+
+  - id: bottleneck_count
+    tool: db_query
+    params:
+      query: |
+        SELECT COUNT(*) AS blocked_cards
+        FROM kanban_agent_workload_snapshots
+        WHERE is_idle = false AND blocked_count > 0
+        AND snapshot_at = (
+          SELECT MAX(snapshot_at) FROM kanban_agent_workload_snapshots
+        )
+
+  # v1.4-ready: live board state (no-op stub if kanban not active).
+  - id: live_board_state
+    tool: kanban_query
+    params:
+      summary: true
+    stub_response_when_disabled:
+      note: "kanban subsystem not active — live board data unavailable"
+      columns: {}
