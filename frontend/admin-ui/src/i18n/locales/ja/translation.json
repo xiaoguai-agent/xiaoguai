@@ -24,6 +24,7 @@
     "providers": "LLM プロバイダー",
     "mcp_servers": "MCP サーバー",
     "marketplace": "MCP マーケット",
+    "skill_packs": "スキルパック",
     "audit": "監査ログ"
   },
   "language": {
