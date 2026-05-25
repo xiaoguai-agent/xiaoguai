@@ -19,6 +19,13 @@ ignore = [
     { id = "RUSTSEC-2023-0071", reason = "rsa Marvin sidechannel; pulled by unused sqlx-mysql backend, no fix available" },
     # transitive via notify → notify-types. Low-risk web-time shim.
     { id = "RUSTSEC-2024-0384", reason = "instant unmaintained; transitive via notify, no fix available" },
+    # transitive via opentelemetry_sdk 0.27 (async-std discontinued). Not used
+    # directly; the pending OTel 0.32 upgrade is expected to drop it.
+    { id = "RUSTSEC-2025-0052", reason = "async-std discontinued; transitive via opentelemetry_sdk 0.27, no direct use" },
+    # transitive retry helper (feature-gated via aws/otlp). Unmaintained, not vulnerable.
+    { id = "RUSTSEC-2025-0012", reason = "backoff unmaintained; transitive retry dep, no direct use" },
+    # compile-time proc-macro via age → i18n-embed-fl. Not in the runtime binary.
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; build-time only via age, not shipped" },
 ]
 
 # v1.1.8: gating allow-list. Anything not in this list is denied,
