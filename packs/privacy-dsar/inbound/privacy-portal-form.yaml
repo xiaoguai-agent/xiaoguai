@@ -1,0 +1,46 @@
+---
+# Privacy Portal Form — inbound source spec
+#
+# Receives DSAR submissions from the operator's self-service privacy portal.
+# Mounting: POST /v1/privacy-dsar/inbound/portal/{tenant_id}
+# Auth:     Per-tenant Bearer token (validated by xiaoguai-api middleware)
+
+source: privacy_portal
+route_prefix: /v1/privacy-dsar/inbound/portal
+
+normalize:
+  # Map portal form fields onto the common DSAR intake schema.
+  field_map:
+    requester_name:          form.full_name
+    requester_email:         form.email
+    requester_relationship:  form.relationship          # defaults to 'data_subject'
+    request_type:            form.request_type          # access|erasure|portability|rectification|objection
+    request_description:     form.description
+    # Jurisdiction hint (informs deadline calculation)
+    jurisdiction:            form.jurisdiction          # optional: 'gdpr' | 'ccpa' | 'other'
+
+  # Accepted request_type values (others → 400)
+  accepted_request_types:
+    - access
+    - erasure
+    - portability
+    - rectification
+    - objection
+
+  # Rate limit: no more than 5 DSAR submissions per email per 30 days
+  rate_limit:
+    per_email_per_days: 5
+    window_days: 30
+    response_on_exceeded: >
+      Your request could not be submitted at this time. If you have a pending
+      request, please contact privacy@[operator-domain] for assistance.
+
+sample_payload: |
+  {
+    "full_name": "Jane Smith",
+    "email": "jane.smith@example.com",
+    "relationship": "data_subject",
+    "request_type": "access",
+    "description": "I would like to know all personal data you hold about me.",
+    "jurisdiction": "gdpr"
+  }

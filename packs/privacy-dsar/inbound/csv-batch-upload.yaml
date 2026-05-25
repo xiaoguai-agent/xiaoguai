@@ -1,0 +1,59 @@
+---
+# CSV Batch Upload — inbound source spec
+#
+# Handles bulk DSAR intake during breach-derived DSAR surges or bulk
+# regulatory submissions. Operators upload a CSV file via the admin UI
+# or POST to the batch endpoint.
+#
+# Use cases:
+#   - Post-breach notification: regulator requires operator to process DSARs
+#     for all affected individuals simultaneously
+#   - Bulk erasure for a product shutdown
+#   - Migrating DSARs from a legacy system
+#
+# Each CSV row becomes one dsar_request row. The batch is processed
+# asynchronously; the uploader receives a batch_id for status tracking.
+#
+# Mounting: POST /v1/privacy-dsar/inbound/batch/{tenant_id}
+# Auth:     Admin Bearer token (elevated permissions required)
+
+source: csv_batch
+route_prefix: /v1/privacy-dsar/inbound/batch
+
+# Required CSV columns
+required_columns:
+  - requester_name
+  - requester_email
+  - request_type
+
+# Optional CSV columns (defaults applied if absent)
+optional_columns:
+  requester_relationship: data_subject
+  request_description:    ""
+  jurisdiction:           gdpr
+
+# Validation
+validation:
+  request_type_values:
+    - access
+    - erasure
+    - portability
+    - rectification
+    - objection
+  max_rows_per_upload: 10000
+  # Duplicate detection: same email + request_type within 30 days
+  deduplicate: true
+
+# Batch processing
+batch:
+  # Number of rows processed concurrently
+  concurrency: 10
+  # Notify uploader when batch is complete
+  notify_on_completion: dpo_notify_channel
+  # Store batch metadata for status tracking
+  batch_tracking_table: dsar_batch_uploads
+
+sample_csv: |
+  requester_name,requester_email,request_type,request_description,jurisdiction
+  "Alice Roe","alice.roe@example.com","erasure","Please delete all my data.","gdpr"
+  "Bob Doe","bob.doe@example.com","access","What data do you hold?","ccpa"

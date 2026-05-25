@@ -1,0 +1,51 @@
+---
+# Audit Trail Archive — output connector (immutable WORM-style)
+#
+# On DSAR completion (status = 'completed' or 'rejected'), exports the full
+# audit trail for the request from dsar_disclosures as an immutable archive.
+#
+# Archive contents:
+#   - dsar_requests row (full snapshot, PII included — encrypted at rest)
+#   - All dsar_disclosures rows for this request_id (ordered by recorded_at)
+#   - All dsar_data_inventory rows for this request_id
+#   - The rendered regulator-attestation document
+#
+# Storage: same S3 bucket as exports, under a separate WORM-protected prefix.
+# Key format: dsar/{tenant_id}/archive/{dsar_request_id}/audit-{timestamp}.tar.gz
+#
+# WORM protection: operators should configure S3 Object Lock (Compliance mode,
+# minimum 7 years) on the archive/ prefix. The pack sets the S3 object tag
+# dsar_archive=true to facilitate lifecycle policies.
+#
+# This archive is the definitive record for any future regulator inquiry.
+# It is NOT sent to the requester — it is the operator's internal compliance record.
+
+output: audit-trail-archive
+
+trigger_on_status:
+  - completed
+  - rejected
+
+s3:
+  bucket: "${DSAR_EXPORT_S3_BUCKET}"
+  kms_key_arn: "${DSAR_KMS_KEY_ARN}"
+  server_side_encryption: aws:kms
+  key_template: "dsar/{tenant_id}/archive/{dsar_request_id}/audit-{timestamp}.tar.gz"
+  object_lock: true
+  object_lock_mode: COMPLIANCE
+  object_lock_retain_years: 7
+  object_tags:
+    dsar_archive: "true"
+    tenant_id: "{{ tenant_id }}"
+    dsar_id: "{{ request.id }}"
+    request_type: "{{ request.request_type }}"
+
+# After archive upload, write final dsar_disclosures row
+post_archive_disclosure:
+  disclosure_type: attestation_issued
+  detail_template: |
+    {
+      "archive_s3_key": "{{ archive_s3_key }}",
+      "disclosure_count": {{ disclosure_count }},
+      "archived_at": "{{ archived_at }}"
+    }

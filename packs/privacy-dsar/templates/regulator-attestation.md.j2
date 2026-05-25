@@ -1,0 +1,158 @@
+{# packs/privacy-dsar/templates/regulator-attestation.md.j2 #}
+{# Legal attestation of DSAR completion — for the regulator file. #}
+# Data Subject Rights Request — Attestation of Completion
+
+**Document type:** Formal Attestation of DSAR Response
+**Regulatory framework:** {{ regulatory_framework | upper }}
+**Document generated:** {{ completed_at | datetime('YYYY-MM-DD HH:mm UTC') }}
+**Attestation reference:** {{ request.id }}-ATTEST
+
+---
+
+## 1. Controller Information
+
+| Field | Value |
+|-------|-------|
+| Controller name | {{ operator_name }} |
+| DPO name | {{ request.hotl_approved_by }} |
+| DPO contact | {{ dpo_email }} |
+
+---
+
+## 2. Request Details
+
+| Field | Value |
+|-------|-------|
+| DSAR reference | {{ request.id }} |
+| Right exercised | {{ request_type_legal_basis }} |
+| Inbound channel | {{ request.inbound_source | replace('_', ' ') | title }} |
+| Request received | {{ request.created_at | datetime('YYYY-MM-DD HH:mm UTC') }} |
+| Regulatory deadline | {{ request.deadline_at | date('YYYY-MM-DD') }} |
+| Response completed | {{ request.completed_at | datetime('YYYY-MM-DD HH:mm UTC') }} |
+| Response within deadline | {{ 'YES' if request.completed_at <= request.deadline_at else 'NO — SEE NOTES' }} |
+
+{% if request.regulator_reference_id is defined %}
+| Regulator case reference | {{ request.regulator_reference_id }} |
+{% endif %}
+
+---
+
+## 3. Identity Verification
+
+| Field | Value |
+|-------|-------|
+| Requester relationship | {{ request.requester_relationship | replace('_', ' ') | title }} |
+| Verification method | {{ request.identity_verification_method | replace('_', ' ') | title | default('Skipped — regulator-forwarded') }} |
+| Identity verified at | {{ request.identity_verified_at | datetime('YYYY-MM-DD HH:mm UTC') | default('N/A — automatically verified') }} |
+
+---
+
+## 4. Data Scope
+
+| System | Records Found | Data Categories | Legal Hold | Retention Note |
+|--------|:---:|----------------|:---:|----------------|
+{% for inv in inventory_entries %}
+| {{ inv.system_label }} | {{ inv.record_count | default('0') }} | {{ inv.data_categories | join(', ') | default('N/A') }} | {{ 'YES' if inv.has_legal_hold else 'No' }} | {{ inv.retention_policy | default('Standard') }} |
+{% endfor %}
+
+**Total systems queried:** {{ inventory_entries | length }}
+**Systems with matching records:** {{ inventory_entries | selectattr('records_found') | list | length }}
+**Total records in scope:** {{ total_records | default(0) }}
+
+---
+
+## 5. Action Taken
+
+**Request type: {{ request.request_type | title }}**
+
+{% if request.request_type in ['access', 'portability'] %}
+An encrypted data export package was prepared and delivered to the requester via
+a time-limited secure download link.
+
+- Export package S3 key: `{{ request.export_package_s3_key }}`
+- Format: {{ 'JSON-LD (machine-readable, GDPR Art.20 compliant)' if request.request_type == 'portability' else 'PDF summary + JSON appendix' }}
+- Delivered at: {{ export_delivered_at | datetime('YYYY-MM-DD HH:mm UTC') }}
+- Delivery method: encrypted S3 presigned URL ({{ presigned_url_ttl_hours }}-hour TTL)
+
+{% elif request.request_type == 'erasure' %}
+An erasure advisory plan was produced and delivered to the operator's Data Protection
+Officer for execution. No automated deletions were performed by the DSAR system.
+
+- Erasure plan generated at: {{ request.erasure_advisory_ready_at | datetime('YYYY-MM-DD HH:mm UTC') }}
+- Systems in deletion plan: {{ erasure_plan.ordered_deletions | length }}
+- Records excluded (legal hold): {{ erasure_plan.excluded_legal_hold | length }}
+- Records excluded (retention obligation): {{ erasure_plan.excluded_retention_obligation | length }}
+{% if erasure_plan.excluded_legal_hold %}
+
+**Legal hold exclusions (records not deleted):**
+{% for exc in erasure_plan.excluded_legal_hold %}
+- System: {{ exc.system_id }} | Hold reason: {{ exc.hold_reason | default('Undisclosed') }} | Expiry: {{ exc.hold_expiry_at | date('YYYY-MM-DD') | default('Not specified') }}
+{% endfor %}
+{% endif %}
+{% if erasure_plan.excluded_retention_obligation %}
+
+**Retention obligation exclusions (records not yet eligible for deletion):**
+{% for exc in erasure_plan.excluded_retention_obligation %}
+- System: {{ exc.system_id }} | Policy: {{ exc.retention_policy }} | Eligible from: {{ exc.earliest_erasure_date | date('YYYY-MM-DD') }}
+{% endfor %}
+{% endif %}
+
+{% elif request.request_type == 'rectification' %}
+The requester's correction request was documented and forwarded to the operator's
+data stewards for review and implementation. A change request document was retained
+in the audit archive.
+
+{% elif request.request_type == 'objection' %}
+The requester's objection to processing was recorded. Processing restriction has been
+flagged in the relevant systems per the erasure advisory output. Objection documented
+at: {{ request.scope_mapped_at | datetime('YYYY-MM-DD HH:mm UTC') }}.
+{% endif %}
+
+---
+
+## 6. DPO Approval (Human-on-the-Loop Gate)
+
+All DSAR responses are subject to mandatory Data Protection Officer review and approval
+before any data is released or actions are confirmed to the requester.
+
+| Field | Value |
+|-------|-------|
+| Approval required | YES (mandatory for all DSARs) |
+| DPO approver | {{ request.hotl_approved_by }} |
+| Approval recorded at | {{ request.hotl_approved_at | datetime('YYYY-MM-DD HH:mm UTC') }} |
+| Approval method | HotL gate (Slack interactive approval) |
+
+---
+
+## 7. Audit Trail Reference
+
+All events in this DSAR lifecycle are recorded in the immutable `dsar_disclosures` table
+and archived in the WORM-protected audit archive:
+
+- Archive S3 key: `{{ audit_archive_s3_key }}`
+- Total disclosure events recorded: {{ disclosure_count }}
+
+---
+
+## 8. Attestation Statement
+
+I, **{{ request.hotl_approved_by }}**, acting as Data Protection Officer for
+**{{ operator_name }}**, attest that:
+
+1. The above Data Subject Rights Request was received, processed, and responded to
+   in accordance with the requirements of {{ regulatory_framework | upper }}.
+2. The data subject's identity was verified (or verification was waived as documented above).
+3. All personal data in scope was identified to the best of the organization's ability,
+   given the data inventory maintained at the time of the request.
+4. The appropriate action was taken and confirmed to the data subject within the
+   required regulatory timeframe.
+5. This attestation and the supporting audit trail are retained for a minimum of 7 years
+   in accordance with regulatory record-keeping requirements.
+
+**DPO signature (electronic):** {{ request.hotl_approved_by }}
+**Date:** {{ request.hotl_approved_at | date('YYYY-MM-DD') }}
+
+---
+*This document was generated by the Xiaoguai Privacy DSAR Pack and signed electronically
+by the DPO via the Human-on-the-Loop approval mechanism.*
+*Document reference: {{ request.id }}-ATTEST*

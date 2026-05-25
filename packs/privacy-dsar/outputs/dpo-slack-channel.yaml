@@ -1,0 +1,52 @@
+---
+# DPO Slack Channel — output connector (HotL-gated)
+#
+# Sends DPO notifications for:
+#   1. New DSAR intake (informational — DPO awareness, no action required)
+#   2. HotL approval request (REQUIRES DPO action — approve or reject)
+#   3. Deadline warnings (warn_days_before configured in pack.yaml)
+#   4. Completion confirmations
+#
+# All messages sent to DSAR_DPO_APPROVAL_CHANNEL (Slack webhook).
+# HotL approval/rejection is submitted by the DPO replying with structured
+# slash commands or clicking interactive message buttons (operator-configured
+# Slack app required for interactive approval).
+
+output: dpo-slack-channel
+
+slack:
+  webhook_url: "${DSAR_DPO_SLACK_WEBHOOK_URL}"
+  channel: "${DSAR_DPO_APPROVAL_CHANNEL}"
+
+message_templates:
+  new_intake: |
+    *New DSAR Received* (#{{ request.id | truncate(8, end='') }})
+    Type: {{ request.request_type | title }} | Source: {{ request.inbound_source }}
+    Requester: {{ request.requester_email }}
+    Deadline: {{ request.deadline_at | date('YYYY-MM-DD') }}
+    _No action required at this time._
+
+  hotl_approval_required: |
+    :lock: *DPO Approval Required — DSAR #{{ request.id | truncate(8, end='') }}*
+    Type: {{ request.request_type | title }}
+    Requester: {{ request.requester_email }}
+    Systems with data: {{ systems_with_data | join(', ') }}
+    Total records in scope: {{ total_records }}
+    {% if request.request_type == 'erasure' %}
+    Erasure plan attached. Legal-hold exclusions: {{ legal_hold_count }} system(s).
+    Retention exclusions: {{ retention_count }} system(s).
+    {% endif %}
+    Deadline: {{ request.deadline_at | date('YYYY-MM-DD') }}
+    *Reply `/dsar approve {{ request.id }}`* or *`/dsar reject {{ request.id }} <reason>`*
+
+  deadline_warning: |
+    :warning: *DSAR Deadline Warning — {{ days_remaining }} days remaining*
+    DSAR #{{ request.id | truncate(8, end='') }} | {{ request.request_type | title }}
+    Requester: {{ request.requester_email }}
+    Status: {{ request.status }}
+    Deadline: {{ request.deadline_at | date('YYYY-MM-DD') }}
+
+  completed: |
+    :white_check_mark: *DSAR Completed — #{{ request.id | truncate(8, end='') }}*
+    Type: {{ request.request_type | title }} | Approved by: {{ request.hotl_approved_by }}
+    Attestation: {{ attestation_s3_key }}
