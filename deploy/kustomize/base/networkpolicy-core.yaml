@@ -1,0 +1,126 @@
+##############################################################################
+# xiaoguai-core NetworkPolicy
+#
+# Controls ingress to and egress from the main application pods
+# (app.kubernetes.io/component: core).
+#
+# Ingress allowed from:
+#   - ingress-nginx namespace (HTTP on 8080)
+#   - other xiaoguai-core pods in the same namespace (multi-replica health
+#     checks, gRPC fan-out, intra-cluster calls)
+#   - prometheus pods (metrics scrape on 8080 /metrics path)
+#
+# Egress allowed to:
+#   - postgres  (5432/TCP)  — selected by label
+#   - redis     (6379/TCP)  — selected by label (rate-limit + cache backend)
+#   - otel-collector (4317/TCP gRPC) — selected by label
+#   - DNS       (53/UDP + 53/TCP) — cluster DNS
+#   - External HTTPS (443/TCP) — cloud LLM providers, JWKS, IM webhooks,
+#     supplier APIs (Snyk, etc.).  Restrict further per-env via overlay CIDRs
+#     when Cilium FQDN policies or Calico GlobalNetworkSet are available.
+#
+# All other traffic is denied by the default-deny-all policy above.
+##############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: xiaoguai-core
+  labels:
+    app.kubernetes.io/name: xiaoguai
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: xiaoguai
+      app.kubernetes.io/component: core
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # ── 1. Ingress-gateway (nginx-ingress controller) ──────────────────────
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+
+    # ── 2. Intra-namespace xiaoguai-core peers (multi-replica) ────────────
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: xiaoguai
+              app.kubernetes.io/component: core
+      ports:
+        - protocol: TCP
+          port: 8080
+
+    # ── 3. Prometheus scrape (/metrics on app port) ────────────────────────
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8080
+
+  egress:
+    # ── 1. DNS (cluster resolver) ──────────────────────────────────────────
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # ── 2. PostgreSQL ──────────────────────────────────────────────────────
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # ── 3. Redis / Valkey (rate-limit + cache backend) ─────────────────────
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+
+    # ── 4. OpenTelemetry Collector (gRPC OTLP) ─────────────────────────────
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+
+    # ── 5. External HTTPS — LLM APIs, JWKS, IM webhooks, supplier APIs ─────
+    #
+    # Base policy allows all external HTTPS (port 443).
+    # In overlay/prod, replace this rule with CIDR-scoped rules or use
+    # Cilium CiliumNetworkPolicy (FQDN-based) / Calico GlobalNetworkSet
+    # to restrict to known provider prefixes only.
+    #
+    # Known external destinations (document; enforcement via overlay):
+    #   • OpenAI / Azure OpenAI API
+    #   • AWS Bedrock (us-east-1 / us-west-2 regional endpoints)
+    #   • Google Vertex AI
+    #   • IM webhooks: Discord (162.159.0.0/16), Telegram (149.154.160.0/20
+    #     + 91.108.4.0/22), Mattermost (customer-hosted), Slack (54.172.0.0/24
+    #     + 54.210.6.0/24 — see https://slack.com/intl/en-gb/help/articles/360001167946)
+    #   • Snyk API (99.83.191.0/24 + 162.247.243.0/24)
+    #   • JWKS issuer endpoint (customer-configured)
+    - ports:
+        - protocol: TCP
+          port: 443
