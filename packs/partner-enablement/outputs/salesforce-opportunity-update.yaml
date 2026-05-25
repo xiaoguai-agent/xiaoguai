@@ -1,0 +1,119 @@
+# outputs/salesforce-opportunity-update.yaml
+# ---------------------------------------------------------------------------
+# Salesforce Opportunity update output connector — HOTL-gated.
+#
+# Writes conflict-resolution decisions back to Salesforce Opportunity
+# attribution fields after human approval. This is the only output connector
+# in the partner-enablement pack that mutates Salesforce data.
+#
+# Triggered by: conflict-mediator (via partner.conflict.resolution_proposed)
+# HOTL gate: HARD — this connector aborts if pe_conflict_resolutions.status
+#            is not 'approved'. No autonomous Salesforce writes.
+#
+# Resolution actions by type:
+#   direct_wins   → no SF field change (direct AE retains); reject deal-reg
+#   partner_wins  → set Opportunity.Partner_Source__c = partner.name,
+#                   set Opportunity.Attribution_Source__c = 'partner'
+#   co_sell       → set Partner_Source__c, Attribution_Source__c = 'co_sell',
+#                   set Partner_Attribution_Pct__c, Direct_Attribution_Pct__c
+# ---------------------------------------------------------------------------
+
+name: salesforce-opportunity-update
+kind: output
+version: "1.0.0"
+
+description: >
+  Writes partner attribution fields to a Salesforce Opportunity after a
+  conflict resolution has been approved by a human. Zero autonomous Salesforce
+  mutations — all updates require explicit HOTL approval.
+
+# --------------------------------------------------------------------------
+# Trigger
+# --------------------------------------------------------------------------
+triggers:
+  - event: partner.conflict.resolution_proposed
+    source: agents/conflict-mediator.yaml
+
+# --------------------------------------------------------------------------
+# HOTL gate — abort if resolution is not approved
+# --------------------------------------------------------------------------
+hotl_gate:
+  check_table: pe_conflict_resolutions
+  check_field: status
+  required_value: approved
+  abort_on_mismatch: true
+  abort_message: >
+    Conflict resolution {{ conflict.id }} has not been approved yet.
+    Salesforce update will execute after channel manager approves in admin UI.
+
+# --------------------------------------------------------------------------
+# Salesforce configuration
+# --------------------------------------------------------------------------
+salesforce:
+  instance_url_env:  SALESFORCE_INSTANCE_URL
+  client_id_env:     SALESFORCE_CLIENT_ID
+  client_secret_env: SALESFORCE_CLIENT_SECRET
+  sobject: Opportunity
+  record_id_field: conflict.sf_opportunity_id
+
+# --------------------------------------------------------------------------
+# Field mapping by resolution type
+# --------------------------------------------------------------------------
+resolution_actions:
+  direct_wins:
+    # No Salesforce field changes — direct AE retains the opportunity.
+    # Reject the partner deal-reg (update pe_deal_registrations only).
+    sf_fields: {}
+    side_effects:
+      - update_deal_reg_status: rejected
+        rejection_reason: "Conflict resolved in favour of direct sales pipeline."
+
+  partner_wins:
+    sf_fields:
+      Partner_Source__c:       "{{ partner.name }}"
+      Attribution_Source__c:   "partner"
+      Partner_Contact_Email__c: "{{ partner.primary_contact_email }}"
+    side_effects:
+      - update_deal_reg_status: approved
+        routing_reason: "Conflict resolved in favour of partner pipeline."
+
+  co_sell:
+    sf_fields:
+      Partner_Source__c:             "{{ partner.name }}"
+      Attribution_Source__c:         "co_sell"
+      Partner_Attribution_Pct__c:    "{{ conflict.proposed_partner_attribution_pct }}"
+      Direct_Attribution_Pct__c:     "{{ conflict.proposed_direct_attribution_pct }}"
+      Partner_Contact_Email__c:      "{{ partner.primary_contact_email }}"
+    side_effects:
+      - update_deal_reg_status: approved
+        routing_reason: "Co-sell engagement created with agreed attribution split."
+      - create_co_sell_engagement: true
+
+# --------------------------------------------------------------------------
+# Audit
+# --------------------------------------------------------------------------
+audit:
+  log_table: pe_audit_log
+  entity_type: conflict
+  entity_id_field: conflict.id
+  update_conflict_resolution:
+    status: approved
+    approved_by: "{{ approver }}"
+    approved_at: "NOW()"
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  retry: 1
+  backoff_seconds: 10
+  log_level: error
+  notify_channel: "${PARTNER_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+  # On Salesforce API failure, revert pe_conflict_resolutions to 'proposed'
+  # so the channel manager can retry approval after the SF issue is resolved.
+  on_exhausted:
+    revert_conflict_resolution_status: proposed
+    notify_message: >
+      Salesforce update failed for conflict {{ conflict.id }}. Resolution status
+      reverted to 'proposed'. Please retry approval after checking Salesforce
+      connectivity.

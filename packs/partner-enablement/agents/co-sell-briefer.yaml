@@ -1,0 +1,178 @@
+# agents/co-sell-briefer.yaml
+# ---------------------------------------------------------------------------
+# Co-Sell Briefer
+#
+# Input:  a pe_co_sell_engagements row (triggered when a new co-sell
+#         engagement is created — either from a conflict resolution outcome
+#         or directly by a channel manager).
+# Output: a Markdown meeting brief rendered via templates/co-sell-meeting-brief.md.j2
+#         covering: partner profile + tier + key metrics, opportunity summary,
+#         relationship history (meetings, exec contacts), recommended ask for
+#         the joint call (suggested outcome, talking points, objections to
+#         anticipate), and attribution split reminder.
+#
+# HOTL guardrails: brief generation is autonomous (read-only, no writes).
+# The brief is posted to the Slack channel team output; no Salesforce writes.
+# ---------------------------------------------------------------------------
+
+name: co-sell-briefer
+version: "1.0.0"
+description: >
+  Assembles a co-sell meeting brief for a joint partner + direct-AE call.
+  Pulls partner profile, opportunity details, and relationship history;
+  generates a recommended ask and talking points via LLM; renders to
+  templates/co-sell-meeting-brief.md.j2.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: partner.co_sell.engagement_created
+    source: internal   # emitted by deal-reg-router (approved Platinum) or conflict-mediator
+  - event: partner.co_sell.brief_requested
+    source: internal   # manual trigger by channel manager via admin UI
+
+# --------------------------------------------------------------------------
+# LLM settings
+# --------------------------------------------------------------------------
+llm:
+  model: ${PARTNER_LLM_MODEL:-default}
+  temperature: 0.3
+  max_tokens: 3072
+
+# --------------------------------------------------------------------------
+# Context-gathering steps
+# --------------------------------------------------------------------------
+context_steps:
+  - id: partner_profile
+    description: "Partner tier, metrics, certifications, and recent activity"
+    tool: sql
+    query: |
+      SELECT
+          p.name, p.tier, p.tier_score, p.activity_score,
+          p.revenue_share_pct, p.active_cert_count,
+          p.customer_outcome_score, p.primary_contact_email,
+          p.joined_at,
+          -- Recent deal-reg win rate (last 12 months)
+          COUNT(dr.id) FILTER (WHERE dr.status = 'approved')  AS approved_regs,
+          COUNT(dr.id) FILTER (WHERE dr.status = 'rejected')  AS rejected_regs
+      FROM pe_partners p
+      LEFT JOIN pe_deal_registrations dr
+          ON dr.partner_id = p.id
+          AND dr.created_at > now() - INTERVAL '12 months'
+      WHERE p.id = '{partner_id}' AND p.tenant_id = '{tenant_id}'
+      GROUP BY p.id
+
+  - id: opportunity_details
+    description: "Opportunity summary from pe_co_sell_engagements + Salesforce mirror"
+    tool: sql
+    query: |
+      SELECT
+          cse.account_name, cse.account_domain, cse.estimated_arr,
+          cse.close_date_target, cse.direct_ae_email,
+          cse.channel_manager_email, cse.partner_contact_email,
+          cse.partner_attribution_pct, cse.direct_attribution_pct,
+          sf.stage_name, sf.next_step, sf.last_activity_date
+      FROM pe_co_sell_engagements cse
+      LEFT JOIN pe_sf_opportunities sf
+          ON sf.sf_opportunity_id = cse.sf_opportunity_id
+          AND sf.tenant_id = cse.tenant_id
+      WHERE cse.id = '{engagement_id}' AND cse.tenant_id = '{tenant_id}'
+
+  - id: relationship_history
+    description: "Past co-sell engagements with this partner on this account domain"
+    tool: sql
+    query: |
+      SELECT
+          cse.account_name, cse.status,
+          cse.created_at, cse.close_date_target,
+          cse.partner_attribution_pct
+      FROM pe_co_sell_engagements cse
+      WHERE cse.partner_id = '{partner_id}'
+        AND cse.account_domain = '{account_domain}'
+        AND cse.tenant_id = '{tenant_id}'
+        AND cse.id != '{engagement_id}'
+      ORDER BY cse.created_at DESC
+      LIMIT 5
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a partner channel strategist preparing a co-sell meeting brief
+  for a joint sales call between a direct AE and a partner.
+
+  Your brief must include all of the following sections:
+  1. Partner Snapshot — tier, key metrics (ARR contribution, cert count,
+     customer outcome score), relationship tenure, recent win rate.
+  2. Opportunity Summary — account name, estimated ARR, close date,
+     current stage, next step from CRM.
+  3. Relationship History — past co-sell engagements on this account;
+     note if this is the first engagement.
+  4. Recommended Ask — the single most important outcome for this call
+     (e.g. "Confirm attribution split", "Get exec sponsor intro",
+     "Agree on joint demo date"). State it as one concrete sentence.
+  5. Talking Points — 3–5 bullet points the AE should lead with.
+  6. Anticipated Objections — 2–3 objections the partner may raise and
+     suggested responses.
+  7. Attribution Reminder — restate the agreed split and who owns next steps.
+
+  Rules:
+  - Be specific: use the actual partner name, account name, and ARR figures.
+  - Do not fabricate CRM data not present in the context.
+  - Keep the brief under 600 words (it will be read on a mobile device before
+    a call).
+  - Output valid JSON with a single key "brief_markdown" containing the full
+    brief as a Markdown string. No other keys.
+
+# --------------------------------------------------------------------------
+# User prompt template
+# --------------------------------------------------------------------------
+user_prompt: |
+  ## Partner Profile
+  {{ context.partner_profile | tojson(indent=2) }}
+
+  ## Opportunity
+  {{ context.opportunity_details | tojson(indent=2) }}
+
+  ## Relationship History (last 5 engagements on this account)
+  {{ context.relationship_history | tojson(indent=2) }}
+
+  Generate the co-sell meeting brief now.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: save_brief
+    description: >
+      Persist the generated brief_markdown to pe_co_sell_engagements and
+      write an audit log row. Returns the engagement id and brief_generated_at.
+    kind: sql
+    query: |
+      UPDATE pe_co_sell_engagements SET
+          brief_markdown      = '{brief_markdown}',
+          brief_generated_at  = now(),
+          updated_at          = now()
+      WHERE id = '{engagement_id}' AND tenant_id = '{tenant_id}'
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    brief_generation: true     # read + write brief markdown; no external writes
+  notify_channel: "${PARTNER_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# On completion: post brief to Slack channel team
+# --------------------------------------------------------------------------
+on_completion:
+  emit: partner.co_sell.brief_ready
+  route: outputs/slack-channel-team.yaml
+
+# --------------------------------------------------------------------------
+# Output template
+# --------------------------------------------------------------------------
+output_template: templates/co-sell-meeting-brief.md.j2
