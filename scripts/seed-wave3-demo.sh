@@ -16,10 +16,17 @@
 #
 # Usage:
 #   bash scripts/seed-wave3-demo.sh [--api-base URL] [--token TOKEN]
+#   bash scripts/seed-wave3-demo.sh [--api-base URL] [--token TOKEN] [--dry-run|-n]
 #
 # Defaults:
 #   --api-base  http://localhost:7600
 #   --token     (none — server must have auth disabled)
+#
+# Flags:
+#   --dry-run, -n   Print each curl command and payload to stdout WITHOUT
+#                   sending any HTTP request. Shows expected status codes.
+#                   Useful for reviewing what would be seeded before running
+#                   against a live server.
 
 set -euo pipefail
 
@@ -32,6 +39,19 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --api-base) API_BASE="$2"; shift 2 ;;
     --token)    TOKEN="$2";    shift 2 ;;
+DRY_RUN=false
+
+usage() {
+  grep '^#' "$0" | grep -v '^#!/' | sed 's/^# \{0,1\}//'
+  exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --api-base)   API_BASE="$2"; shift 2 ;;
+    --token)      TOKEN="$2";    shift 2 ;;
+    --dry-run|-n) DRY_RUN=true;  shift   ;;
+    --help|-h)    usage ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
 done
@@ -52,6 +72,26 @@ auth_header() {
 # curl wrapper: injects auth header when --token is set.
 xg_curl() {
   local method="$1"; shift
+# In dry-run mode: prints the command instead of executing it.
+xg_curl() {
+  local method="$1"; shift
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    # Build a printable curl command for inspection.
+    local auth_args=()
+    [[ -n "${TOKEN}" ]] && auth_args+=(-H "Authorization: Bearer ${TOKEN}")
+    # Reconstruct what curl would have been called with.
+    local display_cmd="curl -fsS -X ${method}"
+    [[ -n "${TOKEN}" ]] && display_cmd="${display_cmd} -H 'Authorization: Bearer ${TOKEN}'"
+    for arg in "$@"; do
+      display_cmd="${display_cmd} $(printf '%q' "${arg}")"
+    done
+    echo "  would POST: ${display_cmd}"
+    # Return a stub JSON so callers that inspect the response don't crash.
+    echo '{"id":"dry-run-id","dry_run":true}'
+    return 0
+  fi
+
   if [[ -n "${TOKEN}" ]]; then
     curl -fsS -X "${method}" -H "Authorization: Bearer ${TOKEN}" "$@"
   else
@@ -84,6 +124,20 @@ if [[ "${health}" != "ok" ]]; then
   exit 1
 fi
 green "Server ok"
+if [[ "${DRY_RUN}" == "true" ]]; then
+  bold "DRY-RUN mode — no HTTP requests will be sent"
+  bold "API base: ${API_BASE}"
+  [[ -n "${TOKEN}" ]] && bold "Token:    ${TOKEN:0:8}…(redacted)"
+  echo ""
+else
+  bold "Preflight: checking ${API_BASE}/healthz"
+  health=$(xg_curl GET "${API_BASE}/healthz" 2>/dev/null || true)
+  if [[ "${health}" != "ok" ]]; then
+    red "Server is not healthy (got: '${health}'). Start xiaoguai first."
+    exit 1
+  fi
+  green "Server ok"
+fi
 
 # ── tenants used in demo ──────────────────────────────────────────────────────
 
@@ -99,6 +153,19 @@ bold "Section 1/5 — HotL policies (3)"
 seed_hotl_policy() {
   local tenant_id="$1" scope="$2" window_secs="$3" max_count="$4" max_usd="$5" escalate="$6"
   local label="${tenant_id:(-4)}:${scope}"
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    # Build body for display.
+    local body
+    body="{\"tenant_id\":\"${tenant_id}\",\"scope\":\"${scope}\",\"window_seconds\":${window_secs}"
+    [[ "${max_count}" != "null" ]] && body="${body},\"max_count\":${max_count}"
+    [[ "${max_usd}" != "null" ]]   && body="${body},\"max_usd\":${max_usd}"
+    [[ -n "${escalate}" ]]         && body="${body},\"escalate_to\":\"${escalate}\""
+    body="${body}}"
+    echo "  would POST: POST ${API_BASE}/v1/hotl/policies  [expected: 201 Created]"
+    echo "    payload: ${body}"
+    return 0
+  fi
 
   # Check if a policy with this scope already exists for the tenant.
   existing=$(xg_curl GET \
@@ -175,6 +242,16 @@ seed_outcome() {
   body="${body}\"value\":${value},\"unit\":\"count\","
   body="${body}\"description\":\"Wave-3 demo record depth=${depth}\","
   body="${body}\"metadata\":${meta}}"
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    # Print to stderr so the "would POST" lines are visible even when the
+    # caller captures stdout via id=$(seed_outcome ...).
+    echo "  would POST: POST ${API_BASE}/v1/outcomes  [expected: 201 Created]" >&2
+    echo "    payload: ${body}" >&2
+    # Emit a stub ID on stdout for the caller to store.
+    echo "dry-run-outcome-id"
+    return 0
+  fi
 
   resp=$(xg_curl POST "${API_BASE}/v1/outcomes" \
     -H 'content-type: application/json' \
@@ -259,6 +336,13 @@ bold "Section 3/5 — Skill packs (2)"
 seed_skill_pack() {
   local tenant="$1" slug="$2"
 
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    local body="{\"tenant_id\":\"${tenant}\",\"pack_slug\":\"${slug}\"}"
+    echo "  would POST: POST ${API_BASE}/v1/skills/install  [expected: 201 Created]"
+    echo "    payload: ${body}"
+    return 0
+  fi
+
   existing=$(xg_curl GET \
     "${API_BASE}/v1/skills/installed?tenant=${tenant}" \
     -H 'accept: application/json' 2>/dev/null || echo "[]")
@@ -290,6 +374,12 @@ bold "Section 4/5 — Watchers (4 scheduler jobs)"
 seed_watcher_job() {
   local job_id="$1"
   local job_json="$2"
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    echo "  would POST: POST ${API_BASE}/v1/admin/scheduler/jobs  [expected: 200/201 Upserted]"
+    echo "    payload (id=${job_id}): ${job_json}"
+    return 0
+  fi
 
   resp=$(xg_curl POST "${API_BASE}/v1/admin/scheduler/jobs" \
     -H 'content-type: application/json' \
@@ -460,11 +550,39 @@ spike_resp=$(xg_curl POST "${API_BASE}/v1/outcomes" \
   -H 'content-type: application/json' \
   -d "${spike_body}")
 green "  anomaly spike seeded (value=9999.0 for tenant-gamma/success)"
+if [[ "${DRY_RUN}" == "true" ]]; then
+  echo "  would POST: POST ${API_BASE}/v1/outcomes  [expected: 201 Created]"
+  echo "    payload: ${spike_body}"
+else
+  spike_resp=$(xg_curl POST "${API_BASE}/v1/outcomes" \
+    -H 'content-type: application/json' \
+    -d "${spike_body}")
+  green "  anomaly spike seeded (value=9999.0 for tenant-gamma/success)"
+fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 bold "Seeding complete"
 cat <<EOF
+if [[ "${DRY_RUN}" == "true" ]]; then
+  cat <<EOF
+
+  DRY-RUN summary — no data was sent.
+
+  Would seed:
+    HotL policies   :  3  (count-budget, amount-budget, mixed)
+    Outcome records :  50 (chain depths: 20+14+9+5+2)
+    Skill packs     :  2  (pr-review, incident-triage)
+    Watcher jobs    :  4  (2 SQL + 2 HTTP)
+    Anomaly spikes  :  1  (tenant-gamma/success, value=9999)
+    ─────────────────────
+    Total entities  :  60
+
+  To seed for real:
+    bash scripts/seed-wave3-demo.sh [--api-base URL] [--token TOKEN]
+EOF
+else
+  cat <<EOF
 
   Entity counts:
     HotL policies   :  3  (count-budget, amount-budget, mixed)
@@ -489,3 +607,4 @@ cat <<EOF
   Cleanup:
     bash scripts/wipe-wave3-demo.sh [--api-base URL] [--token TOKEN]
 EOF
+fi
