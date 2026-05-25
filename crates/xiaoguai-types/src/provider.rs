@@ -24,6 +24,24 @@ pub enum ProviderKind {
     /// Models: `gemini-2.0-flash`, `gemini-2.5-pro`.
     #[serde(rename = "gemini")]
     Gemini,
+    /// AWS Bedrock `InvokeModelWithResponseStream`. Auth via SigV4.
+    /// Models: `anthropic.claude-sonnet-4-6-v1:0`, `meta.llama3-70b-instruct-v1:0`.
+    /// `endpoint` field stores the AWS region (e.g. `us-east-1`).
+    #[serde(rename = "bedrock")]
+    Bedrock,
+    /// Azure OpenAI `chat/completions` API. Auth via `api-key` header.
+    /// `endpoint` stores the full deployment URL:
+    /// `https://{resource}.openai.azure.com/openai/deployments/{deployment}`.
+    #[serde(rename = "azure_openai")]
+    AzureOpenAi,
+    /// Mistral La Plateforme `v1/chat/completions`. Auth via Bearer token.
+    /// Models: `mistral-large-latest`, `codestral-latest`.
+    #[serde(rename = "mistral")]
+    Mistral,
+    /// Groq fast-inference `openai/v1/chat/completions`. Auth via Bearer token.
+    /// Models: `llama-3.3-70b-versatile`, `mixtral-8x7b-32768`.
+    #[serde(rename = "groq")]
+    Groq,
 }
 
 impl ProviderKind {
@@ -34,6 +52,10 @@ impl ProviderKind {
             Self::OpenAiCompat => "openai_compat",
             Self::Anthropic => "anthropic",
             Self::Gemini => "gemini",
+            Self::Bedrock => "bedrock",
+            Self::AzureOpenAi => "azure_openai",
+            Self::Mistral => "mistral",
+            Self::Groq => "groq",
         }
     }
 
@@ -48,6 +70,10 @@ impl ProviderKind {
             "openai_compat" => Some(Self::OpenAiCompat),
             "anthropic" => Some(Self::Anthropic),
             "gemini" => Some(Self::Gemini),
+            "bedrock" => Some(Self::Bedrock),
+            "azure_openai" => Some(Self::AzureOpenAi),
+            "mistral" => Some(Self::Mistral),
+            "groq" => Some(Self::Groq),
             _ => None,
         }
     }
@@ -88,6 +114,10 @@ mod tests {
             ProviderKind::OpenAiCompat,
             ProviderKind::Anthropic,
             ProviderKind::Gemini,
+            ProviderKind::Bedrock,
+            ProviderKind::AzureOpenAi,
+            ProviderKind::Mistral,
+            ProviderKind::Groq,
         ] {
             assert_eq!(ProviderKind::parse(k.as_str()), Some(k));
         }
@@ -102,5 +132,25 @@ mod tests {
     fn kind_serializes_snake_case() {
         let s = serde_json::to_string(&ProviderKind::OpenAiCompat).unwrap();
         assert_eq!(s, "\"openai_compat\"");
+    }
+
+    #[test]
+    fn new_kinds_serialize_correctly() {
+        assert_eq!(
+            serde_json::to_string(&ProviderKind::Bedrock).unwrap(),
+            "\"bedrock\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ProviderKind::AzureOpenAi).unwrap(),
+            "\"azure_openai\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ProviderKind::Mistral).unwrap(),
+            "\"mistral\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ProviderKind::Groq).unwrap(),
+            "\"groq\""
+        );
     }
 }
