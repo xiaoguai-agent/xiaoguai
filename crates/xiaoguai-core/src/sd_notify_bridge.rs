@@ -69,37 +69,33 @@ pub fn notify_stopping() {
 pub fn spawn_watchdog_ticker() -> Option<tokio::task::JoinHandle<()>> {
     #[cfg(target_os = "linux")]
     {
-        match sd_notify::watchdog_enabled(false) {
-            Ok(Some(interval)) => {
-                let ping_interval = interval / 2;
-                tracing::info!(
-                    watchdog_usec = interval.as_micros(),
-                    ping_interval_ms = ping_interval.as_millis(),
-                    "sd_notify: watchdog enabled — spawning ping task"
-                );
-                let handle = tokio::spawn(async move {
-                    let mut ticker = tokio::time::interval(ping_interval);
-                    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                    loop {
-                        ticker.tick().await;
-                        use sd_notify::NotifyState;
-                        if let Err(e) = sd_notify::notify(false, &[NotifyState::Watchdog]) {
-                            tracing::warn!(
-                                error = %e,
-                                "sd_notify: WATCHDOG=1 ping failed — watchdog will expire"
-                            );
-                        }
+        // sd_notify::watchdog_enabled(unset_env, &mut usec) -> bool, writing the
+        // watchdog interval in microseconds into `usec` when enabled.
+        let mut usec: u64 = 0;
+        if sd_notify::watchdog_enabled(false, &mut usec) {
+            let ping_interval = std::time::Duration::from_micros(usec) / 2;
+            tracing::info!(
+                watchdog_usec = usec,
+                ping_interval_ms = ping_interval.as_millis(),
+                "sd_notify: watchdog enabled — spawning ping task"
+            );
+            let handle = tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(ping_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                loop {
+                    ticker.tick().await;
+                    use sd_notify::NotifyState;
+                    if let Err(e) = sd_notify::notify(false, &[NotifyState::Watchdog]) {
+                        tracing::warn!(
+                            error = %e,
+                            "sd_notify: WATCHDOG=1 ping failed — watchdog will expire"
+                        );
                     }
-                });
-                return Some(handle);
-            }
-            Ok(None) => {
-                tracing::debug!("sd_notify: WATCHDOG_USEC not set — watchdog ticker not started");
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "sd_notify: watchdog_enabled() error (non-fatal)");
-            }
+                }
+            });
+            return Some(handle);
         }
+        tracing::debug!("sd_notify: WATCHDOG_USEC not set — watchdog ticker not started");
         None
     }
     #[cfg(not(target_os = "linux"))]
@@ -156,9 +152,8 @@ mod tests {
         let receiver = UnixDatagram::bind(&sock_path).expect("bind unix datagram socket");
         receiver.set_nonblocking(true).expect("set_nonblocking");
 
-        // Point sd-notify at our socket.
-        // SAFETY: test-only; single-threaded block.
-        unsafe { std::env::set_var("NOTIFY_SOCKET", sock_path.as_os_str()) };
+        // Point sd-notify at our socket. (set_var is safe in edition 2021.)
+        std::env::set_var("NOTIFY_SOCKET", sock_path.as_os_str());
 
         notify_ready();
 
@@ -169,8 +164,8 @@ mod tests {
         let n = receiver.recv(&mut buf).expect("recv from notify socket");
         let payload = std::str::from_utf8(&buf[..n]).expect("utf8");
 
-        // SAFETY: restore env for other tests.
-        unsafe { std::env::remove_var("NOTIFY_SOCKET") };
+        // Restore env for other tests.
+        std::env::remove_var("NOTIFY_SOCKET");
 
         assert!(
             payload.contains("READY=1"),
