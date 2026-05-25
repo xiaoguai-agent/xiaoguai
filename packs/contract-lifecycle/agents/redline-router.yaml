@@ -1,0 +1,141 @@
+# Agent: redline-router
+# ---------------------------------------------------------------------------
+# When a counterparty returns a redlined document (via email, DocuSign
+# event, or Ironclad), this agent:
+#
+#   1. Extracts the diff (unified diff or full redlined document).
+#   2. Saves the redline to cl_redlines (marking it unprocessed).
+#   3. Calls the legal-contract-review pack (peer pack) to risk-score the
+#      redline. Waits for a risk_summary + risk_score.
+#   4. Saves the risk score back to cl_redlines.
+#   5. Creates a HotL approval request (counterparty_review → legal_review)
+#      rendered from the legal-review-summary template.
+#   6. Notifies the legal team via outputs/legal-team-slack.yaml.
+#
+# The transition counterparty_review → legal_review is HOTL-GATED.
+# This agent creates the approval record and halts — it does NOT advance
+# the stage until the human approves.
+# ---------------------------------------------------------------------------
+
+name: redline-router
+version: "1.0.0"
+description: >
+  Receives counterparty redlines, routes them to legal-contract-review for
+  risk scoring, and creates a HotL approval card for the legal team.
+  Does NOT advance the stage autonomously — waits for human approval.
+
+triggers:
+  - event: cl.counterparty_redline_received
+    source: email-counterparty-redline-receipt
+  - event: cl.docusign_decline
+    source: docusign-event
+  - event: cl.ironclad_counterparty_redline
+    source: ironclad-workflow-event
+
+system_prompt: |
+  You are a legal operations coordinator. When a counterparty returns a
+  redlined contract:
+
+  1. Identify the contract by counterparty domain + reference number.
+  2. Save the redline diff to the database.
+  3. Submit the redline to the legal-contract-review pack for risk scoring.
+     Wait for the result — do not proceed without a risk_score.
+  4. Render a legal-review-summary card using the risk data.
+  5. Create a HotL approval record (status = pending) — never approve it
+     yourself.
+  6. Notify the legal team channel.
+
+  Rules:
+  - Do not evaluate risk yourself — rely exclusively on the
+    legal-contract-review pack's output.
+  - Do not advance the contract stage — only create the approval record.
+  - Flag clauses with risk_score = 'critical' prominently in the card.
+
+tools:
+  - name: find_contract_by_ref
+    description: >
+      Look up a contract by counterparty domain and reference number.
+      Returns contract id and current stage.
+    kind: sql
+    query: |
+      SELECT id, stage, reference_number, counterparty_name, contract_type
+      FROM cl_contracts
+      WHERE tenant_id = '{tenant_id}'
+        AND counterparty_domain = '{counterparty_domain}'
+        AND reference_number = '{reference_number}'
+        AND stage = 'counterparty_review'
+      LIMIT 1
+
+  - name: save_redline
+    description: >
+      Save the incoming redline to cl_redlines as unprocessed.
+      Returns the redline id.
+    kind: sql
+    query: |
+      INSERT INTO cl_redlines (
+          tenant_id, contract_id, draft_version, source,
+          diff_content, storage_key
+      ) VALUES (
+          '{tenant_id}', '{contract_id}', '{draft_version}',
+          '{source}', '{diff_content}', '{storage_key}'
+      )
+      RETURNING id
+
+  - name: submit_to_legal_review_pack
+    description: >
+      Send the redline diff to the legal-contract-review peer pack for
+      per-clause risk scoring. Blocks until the pack returns a result.
+      Returns: risk_score (low/medium/high/critical), risk_summary (text),
+      flagged_clauses (list of clause descriptions with individual scores).
+    kind: peer_pack
+    pack: legal-contract-review
+    action: score_redline
+    timeout_seconds: 120
+
+  - name: update_redline_risk
+    description: >
+      Save the risk score and summary back to the cl_redlines row.
+    kind: sql
+    query: |
+      UPDATE cl_redlines
+      SET risk_score = '{risk_score}',
+          risk_summary = '{risk_summary}',
+          processed_at = NOW()
+      WHERE id = '{redline_id}'
+
+  - name: create_hotl_approval
+    description: >
+      Create a pending HotL approval record for counterparty_review →
+      legal_review. Returns the approval id.
+    kind: sql
+    query: |
+      INSERT INTO cl_approvals (
+          tenant_id, contract_id,
+          gate_from_stage, gate_to_stage,
+          status, approval_card, risk_summary_id
+      ) VALUES (
+          '{tenant_id}', '{contract_id}',
+          'counterparty_review', 'legal_review',
+          'pending', '{approval_card}', '{redline_id}'
+      )
+      RETURNING id
+
+  - name: render_legal_review_summary
+    description: >
+      Render the legal-review-summary Jinja2 template with risk data.
+    kind: template
+    template: "templates/legal-review-summary.md.j2"
+
+hotl:
+  # The agent creates the HotL record but cannot approve it.
+  autonomous: false
+  # All stage-advancing actions require an approval record status = 'approved'.
+  require_approval_before:
+    - stage_transition_to_legal_review
+
+outcome_telemetry:
+  record_on:
+    - redline_received
+    - risk_scored
+    - hotl_approval_created
+  feedback_table: cl_stage_audit

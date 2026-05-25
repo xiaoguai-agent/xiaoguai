@@ -1,0 +1,44 @@
+{# templates/intake-checklist.md.j2
+   Rendered by intake-classifier when a new deal arrives.
+   Variables: counterparty_name, counterparty_domain, contract_type,
+              deal_size_usd, jurisdiction, sf_opportunity_id,
+              sequence (nda_first | msa_direct), existing_nda_ref
+#}
+## Contract Intake — {{ reference_number }}
+
+**Counterparty:** {{ counterparty_name }} ({{ counterparty_domain }})
+**Type:** {{ contract_type }}
+**Jurisdiction:** {{ jurisdiction | default("Not specified") }}
+{% if deal_size_usd %}
+**Deal Size:** ${{ "{:,.0f}".format(deal_size_usd) }}
+{% else %}
+**Deal Size:** Unknown
+{% endif %}
+{% if sf_opportunity_id %}
+**Salesforce Opportunity:** {{ sf_opportunity_id }}
+{% endif %}
+
+### Classification Result
+
+**Sequence:** {{ "NDA → MSA" if sequence == "nda_first" else "MSA Direct" }}
+
+{% if sequence == "msa_direct" and existing_nda_ref %}
+Existing signed NDA on file: **{{ existing_nda_ref }}** — MSA-direct path eligible.
+{% elif sequence == "nda_first" %}
+No qualifying NDA found for this counterparty. Starting NDA-first path.
+{% endif %}
+
+### Intake Checklist
+
+- [{{ "x" if counterparty_name }}] Counterparty name captured
+- [{{ "x" if counterparty_domain }}] Counterparty domain captured (for deduplication)
+- [{{ "x" if jurisdiction }}] Jurisdiction identified
+- [{{ "x" if sf_opportunity_id }}] Salesforce opportunity linked
+- [{{ "x" if deal_size_usd }}] Deal size provided
+- [{{ "x" if sequence }}] Contract sequence determined
+
+### Next Step
+
+Template selector will choose the best **{{ contract_type }}** template
+for `{{ jurisdiction | default("default") }}` jurisdiction.
+Draft will be ready for internal review.

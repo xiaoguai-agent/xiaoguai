@@ -1,0 +1,71 @@
+---
+# Inbound: salesforce-opportunity-create
+# ---------------------------------------------------------------------------
+# Triggered when a Salesforce Opportunity reaches a qualifying stage
+# (default: "Proposal/Price Quote" or later). Extracts counterparty and
+# deal metadata, normalises to the ContractIntent schema, and fires
+# cl.salesforce_opportunity_created — which intake-classifier subscribes to.
+#
+# Authentication: Salesforce sends a signed webhook (HMAC-SHA256 over the
+# raw payload, key = SALESFORCE_WEBHOOK_SECRET). Per-tenant bearer token
+# is verified first.
+#
+# Mounting: POST /v1/contracts/inbound/salesforce/{route_id}
+# ---------------------------------------------------------------------------
+
+source: salesforce-opportunity
+route_prefix: /v1/contracts/inbound/salesforce
+
+auth:
+  bearer_token: true            # per-tenant token from scheduler_webhook_tokens
+  hmac_secret: ${SALESFORCE_WEBHOOK_SECRET}
+  hmac_header: X-Salesforce-Signature
+
+normalize:
+  field_map:
+    counterparty_name:  sobject.Account.Name
+    counterparty_domain:
+      source: sobject.Account.Website
+      transform: extract_domain   # strips https:// and www.
+    deal_size_usd:      sobject.Amount
+    sf_opportunity_id:  sobject.Id
+    jurisdiction:
+      source: sobject.BillingCountryCode
+      map:
+        US: "US"
+        GB: "UK"
+        SG: "SG"
+        DE: "DE"
+        _default: "US"
+    deal_stage:         sobject.StageName
+
+  # Only trigger contract intake for qualifying Salesforce stages.
+  accepted_stages:
+    - "Proposal/Price Quote"
+    - "Negotiation/Review"
+    - "Closed Won"
+
+  # Do not re-trigger if an active contract already exists for this Opportunity.
+  deduplication:
+    field: sf_opportunity_id
+    check_table: cl_contracts
+    dedup_column: sf_opportunity_id
+
+emits:
+  event: cl.salesforce_opportunity_created
+
+sample_payload: |
+  {
+    "event": "opportunityUpdate",
+    "sobject": {
+      "Id": "0065g00000XyzAbcDE",
+      "Name": "Acme Corp — Platform License",
+      "StageName": "Proposal/Price Quote",
+      "Amount": 120000,
+      "Account": {
+        "Name": "Acme Corp",
+        "Website": "https://www.acme.com",
+        "BillingCountryCode": "US"
+      }
+    }
+  }

@@ -1,0 +1,59 @@
+---
+# Inbound: ironclad-workflow-event
+# ---------------------------------------------------------------------------
+# Receives Ironclad workflow events (counterparty redlines, approvals, and
+# signature events) via the Ironclad webhook integration.
+#
+# Ironclad sends events for workflow state transitions. The pack maps
+# the Ironclad "Workflow Reviewed" event (counterparty returned a markup)
+# to cl.ironclad_counterparty_redline, which redline-router subscribes to.
+#
+# Mounting: POST /v1/contracts/inbound/ironclad/{route_id}
+# ---------------------------------------------------------------------------
+
+source: ironclad
+route_prefix: /v1/contracts/inbound/ironclad
+
+auth:
+  bearer_token: true
+  hmac_secret: ${IRONCLAD_WEBHOOK_SECRET}
+  hmac_header: X-Ironclad-Signature
+
+normalize:
+  field_map:
+    workflow_id:      workflowId
+    event_type:       event
+    contract_ref:
+      source: metadata.contractReferenceNumber
+    counterparty_name: metadata.counterpartyName
+    redline_url:      metadata.reviewUrl
+    reviewer_email:   metadata.reviewerEmail
+    comments:         metadata.comments
+
+event_routing:
+  workflow.reviewed:     cl.ironclad_counterparty_redline
+  workflow.approved:     cl.ironclad_approved
+  workflow.completed:    cl.ironclad_completed
+
+active_events:
+  - cl.ironclad_counterparty_redline
+
+# Ironclad does not embed diff content in the webhook — the redline-router
+# must fetch the redlined document via the Ironclad API using redline_url.
+fetch_redline_content:
+  enabled: true
+  api_base: "${IRONCLAD_API_BASE:-https://ironcladapp.com/public/api/v1}"
+  access_token: "${IRONCLAD_API_TOKEN}"
+
+sample_payload: |
+  {
+    "event": "workflow.reviewed",
+    "workflowId": "wf-001",
+    "metadata": {
+      "contractReferenceNumber": "MSA-2026-ACME-002",
+      "counterpartyName": "Acme Corp",
+      "reviewUrl": "https://ironcladapp.com/workflows/wf-001/review",
+      "reviewerEmail": "legal@acme.com",
+      "comments": "Requested changes to indemnification clause"
+    }
+  }

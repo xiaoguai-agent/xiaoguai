@@ -1,0 +1,77 @@
+---
+# Output: docusign-envelope-create
+# ---------------------------------------------------------------------------
+# Creates and sends a DocuSign envelope for e-signature.
+#
+# HOTL-GATED: triggered only after a human approves one of:
+#   - legal_review → counterparty_review gate (send for counterparty review)
+#   - legal_review → signed gate (send for final e-signature)
+#
+# The platform verifies that the HotL approval record status = 'approved'
+# before this connector executes. Zero autonomous envelope sends.
+# ---------------------------------------------------------------------------
+
+output: docusign-envelope-create
+version: "1.0.0"
+
+hotl:
+  require_approved_approval: true
+  accepted_gate_transitions:
+    - from: legal_review
+      to: counterparty_review
+    - from: legal_review
+      to: signed
+
+docusign:
+  account_id: "${DOCUSIGN_ACCOUNT_ID}"
+  access_token: "${DOCUSIGN_ACCESS_TOKEN}"
+  base_uri: "${DOCUSIGN_BASE_URI:-https://na1.docusign.net/restapi}"
+
+envelope:
+  # Email subject shown to signers.
+  subject_template: >
+    {{ contract.contract_type }} — {{ contract.reference_number }} —
+    Signature Request from {{ operator.company_name }}
+
+  # Email body shown to signers.
+  body_template: |
+    Please review and sign the attached {{ contract.contract_type }}
+    with {{ operator.company_name }}.
+
+    Contract Reference: {{ contract.reference_number }}
+    Counterparty: {{ contract.counterparty_name }}
+
+    This envelope was sent on behalf of {{ approved_by }}.
+
+  # Document: fetch latest executed draft from cl_contract_drafts.
+  document_source: cl_contract_drafts
+  document_name_template: "{{ contract.reference_number }}.pdf"
+
+  # Signer routing (sequential by default; parallel if configured)
+  signers:
+    - role: counterparty_signer
+      email_field: counterparty_contact_email   # from contract record
+      name_field: counterparty_contact_name
+      routing_order: 1
+    - role: operator_signatory
+      email: "${OPERATOR_SIGNATORY_EMAIL}"
+      name: "${OPERATOR_SIGNATORY_NAME}"
+      routing_order: 2
+
+  # Store envelope ID back on the contract record after creation.
+  post_create:
+    update_contract:
+      field: docusign_envelope_id
+      from: envelope_id
+
+  # Custom field so DocuSign webhook can route back to the contract.
+  custom_fields:
+    - name: contract_reference_number
+      value: "{{ contract.reference_number }}"
+    - name: tenant_id
+      value: "{{ tenant_id }}"
+
+# Log every envelope creation to cl_stage_audit.
+audit:
+  event_type: docusign_envelope_created
+  table: cl_stage_audit
