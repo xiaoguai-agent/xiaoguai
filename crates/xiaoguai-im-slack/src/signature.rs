@@ -77,7 +77,7 @@ mod tests {
     use xiaoguai_im_gateway::Webhook;
 
     /// Self-consistent vector — signature is generated from the body +
-    /// timestamp + secret using the same algorithm verify() expects.
+    /// timestamp + secret using the same algorithm `verify()` expects.
     /// (The previously-published Slack docs vector did not round-trip
     /// against an independent HMAC-SHA256 implementation; rather than
     /// chase a stale transcription, we cover the algorithm here and

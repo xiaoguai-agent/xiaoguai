@@ -10,7 +10,7 @@
 //! {"channel_id": "...", "message": "..."}
 //! ```
 //!
-//! Reference: https://api.mattermost.com/#tag/posts/operation/CreatePost
+//! Reference: <https://api.mattermost.com/#tag/posts/operation/CreatePost>
 //!
 //! The [`MattermostPoster`] trait abstracts the HTTP layer so tests can
 //! substitute a fake without network access.

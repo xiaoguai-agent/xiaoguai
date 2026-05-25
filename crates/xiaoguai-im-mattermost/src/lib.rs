@@ -107,19 +107,16 @@ impl ImProvider for MattermostProvider {
     }
 
     async fn reply(&self, out: &OutgoingReply) -> Result<JsonValue, ProviderError> {
-        match &self.poster {
-            Some(p) => {
-                let resp = p.create_post(&out.conversation_id, &out.text).await?;
-                tracing::info!(
-                    channel_id = %out.conversation_id,
-                    "mattermost reply sent"
-                );
-                Ok(resp)
-            }
-            None => {
-                tracing::debug!(?out, "mattermost reply stub — no poster configured");
-                Ok(json!({"status": "stubbed"}))
-            }
+        if let Some(p) = &self.poster {
+            let resp = p.create_post(&out.conversation_id, &out.text).await?;
+            tracing::info!(
+                channel_id = %out.conversation_id,
+                "mattermost reply sent"
+            );
+            Ok(resp)
+        } else {
+            tracing::debug!(?out, "mattermost reply stub — no poster configured");
+            Ok(json!({"status": "stubbed"}))
         }
     }
 

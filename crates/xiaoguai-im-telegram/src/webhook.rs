@@ -36,6 +36,11 @@ pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 ///
 /// If `secret_token` is `None`, the check is skipped entirely — useful for
 /// development without a registered webhook.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::BadSignature`] if the token header is absent or
+/// does not match `secret_token`.
 pub fn verify_secret(webhook: &Webhook, secret_token: Option<&str>) -> Result<(), ProviderError> {
     let Some(expected) = secret_token else {
         return Ok(());
@@ -57,6 +62,11 @@ pub fn verify_secret(webhook: &Webhook, secret_token: Option<&str>) -> Result<()
 /// - `edited_message` with text → `ImEvent::Message` (`event_id` prefixed with `edited_`)
 /// - `callback_query` → `ImEvent::Message` (`event_id` = query id, text = callback data)
 /// - Anything else → `ProviderError::Malformed`
+///
+/// # Errors
+///
+/// Returns [`ProviderError::Malformed`] if the body cannot be decoded or
+/// contains no recognised payload variant.
 pub fn parse_update(body: &[u8]) -> Result<ImEvent, ProviderError> {
     let update: Update = serde_json::from_slice(body)
         .map_err(|e| ProviderError::Malformed(format!("decode update: {e}")))?;
@@ -142,6 +152,7 @@ impl ParseMode {
 }
 
 /// Build the JSON body for a `sendMessage` request.
+#[must_use]
 pub fn send_message_body(chat_id: &str, text: &str, parse_mode: Option<ParseMode>) -> JsonValue {
     let mut body = serde_json::json!({
         "chat_id": chat_id,
