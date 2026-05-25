@@ -1,0 +1,259 @@
+name: Pact consumer tests (wave-3)
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "test/pact-*"
+    paths:
+      - "tests/pact/wave3/**"
+      - "crates/xiaoguai-api/src/**"
+
+concurrency:
+  group: pact-consumer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # TypeScript SDK consumer
+  # ──────────────────────────────────────────────────────────────────────────
+  pact-typescript-sdk:
+    name: Pact — TypeScript SDK consumer
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tests/pact/wave3/consumers/typescript-sdk/package.json
+
+      - name: Install dependencies
+        working-directory: tests/pact/wave3/consumers/typescript-sdk
+        run: npm ci
+
+      - name: Run Pact consumer tests
+        working-directory: tests/pact/wave3/consumers/typescript-sdk
+        run: npm run pact:test
+
+      - name: Upload pact file
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact-typescript-sdk
+          path: tests/pact/wave3/pacts/typescript-sdk-xiaoguai.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Python SDK consumer
+  # ──────────────────────────────────────────────────────────────────────────
+  pact-python-sdk:
+    name: Pact — Python SDK consumer
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.4.x"
+
+      - name: Install dependencies
+        working-directory: tests/pact/wave3/consumers/python-sdk
+        run: uv pip install --system -e ".[test]"
+
+      - name: Run Pact consumer tests
+        working-directory: tests/pact/wave3/consumers/python-sdk
+        run: pytest -v
+
+      - name: Upload pact file
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact-python-sdk
+          path: tests/pact/wave3/pacts/python-sdk-xiaoguai.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Go SDK consumer
+  # ──────────────────────────────────────────────────────────────────────────
+  pact-go-sdk:
+    name: Pact — Go SDK consumer
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: tests/pact/wave3/consumers/go-sdk/go.sum
+
+      - name: Install pact-go native library
+        run: |
+          go install github.com/pact-foundation/pact-go/v2@latest
+          pact-go install --libDir /tmp/pact_lib 2>/dev/null || true
+        working-directory: tests/pact/wave3/consumers/go-sdk
+        env:
+          PACT_GO_LIB_DOWNLOAD_PATH: /tmp/pact_lib
+
+      - name: Run Pact consumer tests
+        working-directory: tests/pact/wave3/consumers/go-sdk
+        run: go test ./... -v -timeout 120s
+        env:
+          LD_LIBRARY_PATH: /tmp/pact_lib
+          PACT_GO_LIB_DOWNLOAD_PATH: /tmp/pact_lib
+
+      - name: Upload pact file
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact-go-sdk
+          path: tests/pact/wave3/pacts/go-sdk-xiaoguai.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # chat-ui consumer
+  # ──────────────────────────────────────────────────────────────────────────
+  pact-chat-ui:
+    name: Pact — chat-ui consumer
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tests/pact/wave3/consumers/chat-ui/package.json
+
+      - name: Install dependencies
+        working-directory: tests/pact/wave3/consumers/chat-ui
+        run: npm ci
+
+      - name: Run Pact consumer tests
+        working-directory: tests/pact/wave3/consumers/chat-ui
+        run: npm run pact:test
+
+      - name: Upload pact file
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact-chat-ui
+          path: tests/pact/wave3/pacts/chat-ui-xiaoguai.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Collect all pact files as a combined artifact for provider CI to consume
+  # ──────────────────────────────────────────────────────────────────────────
+  collect-pacts:
+    name: Collect pact artifacts
+    runs-on: ubuntu-22.04
+    needs:
+      - pact-typescript-sdk
+      - pact-python-sdk
+      - pact-go-sdk
+      - pact-chat-ui
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pact-typescript-sdk
+          path: pacts/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pact-python-sdk
+          path: pacts/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pact-go-sdk
+          path: pacts/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pact-chat-ui
+          path: pacts/
+
+      - name: Validate pact file JSON
+        run: |
+          echo "Validating pact files..."
+          for f in pacts/*.json; do
+            echo "  Checking $f"
+            python3 -c "
+          import json, sys
+          with open('$f') as fh:
+              d = json.load(fh)
+          interactions = d.get('interactions', [])
+          print(f'    interactions: {len(interactions)}')
+          assert len(interactions) > 0, 'No interactions found'
+          meta = d.get('metadata', {})
+          pact_spec = meta.get('pactSpecification', {}).get('version', 'unknown')
+          print(f'    pact spec: {pact_spec}')
+          " || { echo "INVALID JSON in $f"; exit 1; }
+          done
+          echo "All pact files valid."
+
+      - name: List all pact files
+        run: |
+          echo "=== Collected pact files ==="
+          ls -lh pacts/
+          echo ""
+          echo "=== Interaction counts ==="
+          for f in pacts/*.json; do
+            count=$(python3 -c "import json; d=json.load(open('$f')); print(len(d.get('interactions',[])))")
+            echo "  $(basename $f): $count interactions"
+          done
+
+      - name: Upload combined pact files
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact-files-wave3-all
+          path: pacts/
+          retention-days: 30
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # (Optional) Publish pacts to Pactflow if credentials are configured.
+  # Set PACTFLOW_BASE_URL and PACTFLOW_TOKEN as repository secrets to enable.
+  # ──────────────────────────────────────────────────────────────────────────
+  publish-to-pactflow:
+    name: Publish to Pactflow (optional)
+    runs-on: ubuntu-22.04
+    needs: collect-pacts
+    if: >
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      vars.PACTFLOW_ENABLED == 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pact-files-wave3-all
+          path: pacts/
+
+      - name: Install Pact CLI
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/pact-foundation/pact-ruby-standalone/master/install.sh \
+            | bash
+          echo "$HOME/.pact/bin" >> "$GITHUB_PATH"
+
+      - name: Publish pacts to Pactflow
+        run: |
+          pact-broker publish pacts/ \
+            --consumer-app-version "${{ github.sha }}" \
+            --branch "${{ github.ref_name }}" \
+            --broker-base-url "${{ secrets.PACTFLOW_BASE_URL }}" \
+            --broker-token "${{ secrets.PACTFLOW_TOKEN }}"
