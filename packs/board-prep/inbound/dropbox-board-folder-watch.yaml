@@ -1,0 +1,49 @@
+---
+# Dropbox Board Folder Watch
+# Watches the configured Dropbox folder for new documents (exec memos,
+# financial reports, legal opinions) uploaded by functional leads.
+# New files are registered as board_inbound_documents and surfaced to
+# the deck-assembler agent.
+#
+# Access control: Dropbox folder must be restricted to authorized leads
+# and the corporate secretary. This watch does not validate Dropbox-level
+# ACLs — operator is responsible for folder permission configuration.
+
+source: dropbox-board-folder-watch
+kind: watch
+
+dropbox:
+  # Dropbox app key/secret for the configured app
+  app_key:    ${BOARD_PREP_DROPBOX_APP_KEY}
+  app_secret: ${BOARD_PREP_DROPBOX_APP_SECRET}
+  # OAuth2 refresh token (long-lived; rotated on pack reconfigure)
+  refresh_token: ${BOARD_PREP_DROPBOX_REFRESH_TOKEN}
+  # Folder path to watch (relative to app root)
+  folder_path: ${BOARD_PREP_DROPBOX_FOLDER:-/board-materials}
+  # Poll interval (Dropbox longpoll — up to 480s)
+  longpoll_timeout_seconds: 480
+
+# Document classification by filename pattern
+classify:
+  - pattern: "*kpi*"
+    doc_type: kpi_report
+  - pattern: "*financial*|*pl*|*balance*|*cashflow*"
+    doc_type: financial_report
+  - pattern: "*memo*|*brief*"
+    doc_type: exec_memo
+  - pattern: "*legal*|*counsel*|*opinion*"
+    doc_type: legal_opinion
+  - pattern: "*agenda*"
+    doc_type: agenda_submission
+  - pattern: "*"
+    doc_type: other
+
+# Legal opinions are flagged as potentially privileged
+privileged_doc_types:
+  - legal_opinion
+
+# Metadata stored; binary content is not loaded into LLM context verbatim
+store_binary: false
+store_metadata: true
+
+emits_event: board.document_received

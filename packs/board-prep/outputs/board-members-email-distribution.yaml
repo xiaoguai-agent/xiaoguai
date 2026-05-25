@@ -1,0 +1,73 @@
+---
+# Board Members Email Distribution — HOTL-gated
+# Sends the board pack and meeting notice to all active board members
+# (and any configured observers) via email.
+#
+# HOTL gate: corporate secretary must approve each distribution run.
+# Distribution list is derived from board_members (is_active = TRUE) plus
+# any observer addresses configured in pack settings.
+#
+# Privileged content: emails may contain board-confidential material.
+# BCC corporate secretary on all distributions for record-keeping.
+
+output: board-members-email-distribution
+
+hotl:
+  require_human_approval: true
+  approver_role: corporate_secretary
+  notify_channel: "${BOARD_PREP_SECRETARY_CHANNEL:-admin_ui}"
+  # Show secretary a preview of recipient list and draft before approval
+  preview_fields:
+    - recipient_count
+    - recipient_names
+    - subject
+    - body_preview_chars: 500
+
+email:
+  # SMTP or transactional email provider
+  provider: ${BOARD_PREP_EMAIL_PROVIDER:-smtp}
+
+  # SMTP settings (used when provider = smtp)
+  smtp:
+    host:     ${BOARD_PREP_SMTP_HOST}
+    port:     ${BOARD_PREP_SMTP_PORT:-587}
+    username: ${BOARD_PREP_SMTP_USERNAME}
+    password: ${BOARD_PREP_SMTP_PASSWORD}
+    tls:      true
+
+  from_name:    "Office of the Corporate Secretary"
+  from_address: ${BOARD_PREP_FROM_EMAIL}
+  bcc:          ${BOARD_PREP_SECRETARY_EMAIL}   # always BCC secretary
+
+  # Subject template
+  subject_template: >
+    [BOARD CONFIDENTIAL] Board Meeting Pre-Read —
+    {{ meeting.scheduled_at | format_datetime(tz=tenant_config.timezone, fmt="%B %-d, %Y") }}
+
+  # Body template (plain text fallback; HTML version uses deck-section-frame)
+  body_template: |
+    Dear {{ member.full_name }},
+
+    Please find attached the pre-read materials for the
+    {{ meeting.meeting_type | title }} Meeting of the Board of Directors
+    scheduled for {{ meeting.scheduled_at | format_datetime(tz=tenant_config.timezone, fmt="%A, %B %-d, %Y at %-I:%M %p %Z") }}.
+
+    Materials are also available in the board portal: {{ portal_url | default("[See board portal]") }}
+
+    This communication is CONFIDENTIAL and intended solely for authorized recipients.
+
+    Regards,
+    Office of the Corporate Secretary
+
+  # Attachments: generated PDF from board-portal-publish run
+  attach_documents:
+    - type: agenda
+    - type: board_pack
+
+# Distribution list
+recipients:
+  source: board_members   # pulled from board_members WHERE is_active = TRUE
+  # Additional observers (non-board-member recipients, e.g., General Counsel)
+  additional_recipients_env: BOARD_PREP_OBSERVER_EMAILS  # comma-separated
+
+emits_event: board.email_distributed

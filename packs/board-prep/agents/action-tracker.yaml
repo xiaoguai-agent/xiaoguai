@@ -1,0 +1,182 @@
+# Agent definition — action-tracker
+# ---------------------------------------------------------------------------
+# Tracks open board action items across meetings. Runs on a scheduled basis
+# (daily) and on-demand. Lifecycle:
+#
+#   1. Scan open + in_progress action items.
+#   2. Mark items past due_date as 'overdue'.
+#   3. Send first reminder to owner at T-3 days before due date (if not yet sent).
+#   4. Send second reminder to owner on due date.
+#   5. Escalate to board chair if item is > ESCALATE_DAYS_OVERDUE days past
+#      due and not yet escalated.
+#   6. For each board meeting, produce an action-item status report that
+#      the agenda-builder consumes as the "prior-action-items" section.
+#
+# Reminders go to exec-team-slack-action-items (no board-portal publish).
+# Escalations go to the board chair's configured channel.
+# All reminder sends are autonomous (low-risk nudges); escalation to chair
+# requires HOTL confirmation to prevent false alarms.
+# ---------------------------------------------------------------------------
+
+name: action-tracker
+version: "1.0.0"
+description: >
+  Tracks open board action items, sends T-3 and due-date reminders to owners,
+  escalates overdue items to the board chair (HOTL-gated). Produces the
+  prior-action-items status report for each meeting agenda.
+
+triggers:
+  # Daily scheduled run (cron)
+  - event: schedule.daily
+    cron: "0 8 * * *"    # 08:00 tenant local time
+    timezone: "${BOARD_PREP_TZ:-UTC}"
+  # On-demand from admin UI
+  - event: board.action_tracker_run_requested
+    source: manual
+  # After minutes are approved (new action items just created)
+  - event: board.minutes_approved
+    source: minutes-drafter
+
+llm:
+  model: ${BOARD_PREP_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 4096
+
+system_prompt: |
+  You are the corporate secretary's assistant tracking board action items.
+  Your job is to identify which items need reminders or escalation and
+  draft concise, professional messages.
+
+  Rules:
+  - Reminder messages must be brief (≤ 100 words), professional, and
+    reference the specific action item description and original due date.
+  - Escalation messages to the chair must include: item description, owner,
+    original due date, days overdue, and a suggested next step.
+  - Do not invent action items, owners, or due dates — use only tool results.
+  - Flag any items with '[TBD]' owner or due date for secretary follow-up
+    rather than sending automated reminders.
+  - Output a JSON object matching the TrackerRun schema.
+
+  TrackerRun schema:
+  {
+    "run_at": "ISO-8601",
+    "items_updated_to_overdue": [{"id": "uuid", "description": "string"}],
+    "reminders_sent": [
+      {"item_id": "uuid", "owner": "string", "type": "t-minus-3|due-date"}
+    ],
+    "escalations_pending_approval": [
+      {
+        "item_id": "uuid",
+        "description": "string",
+        "owner": "string",
+        "due_date": "YYYY-MM-DD",
+        "days_overdue": integer,
+        "draft_escalation_message": "string"
+      }
+    ],
+    "secretary_flags": ["string"]
+  }
+
+tools:
+  - name: get_items_needing_attention
+    description: >
+      Fetch all open/in_progress action items and classify which need
+      a T-3 reminder, due-date reminder, or overdue escalation check.
+      Returns item details including last reminder timestamp.
+    kind: sql
+    query: |
+      SELECT
+          ai.id,
+          ai.description,
+          COALESCE(bm.full_name, ai.owner_text, '[TBD]') AS owner,
+          COALESCE(bm.email, '[TBD]')                     AS owner_email,
+          ai.due_date,
+          ai.status,
+          ai.priority,
+          ai.reminder_sent_at,
+          ai.escalated_to_chair,
+          ai.escalated_at,
+          NOW()::DATE - ai.due_date                        AS days_overdue,
+          ai.due_date - NOW()::DATE                        AS days_until_due
+      FROM board_action_items ai
+      LEFT JOIN board_members bm ON bm.id = ai.owner_member_id
+      WHERE ai.tenant_id = '{tenant_id}'
+        AND ai.status IN ('open', 'in_progress', 'overdue')
+      ORDER BY ai.due_date ASC
+
+  - name: get_board_chair
+    description: >
+      Return the current board chair's name and notification handle for
+      escalation message routing.
+    kind: sql
+    query: |
+      SELECT bm.id, bm.full_name, bm.email
+      FROM board_members bm
+      WHERE bm.tenant_id = '{tenant_id}'
+        AND bm.is_active = TRUE
+        AND bm.title ILIKE '%chair%'
+      ORDER BY bm.joined_on ASC
+      LIMIT 1
+
+  - name: mark_items_overdue
+    description: >
+      Batch-update items past their due_date from 'open'/'in_progress' to
+      'overdue'. Returns count of items updated.
+    kind: sql
+    query: |
+      UPDATE board_action_items
+      SET status = 'overdue'
+      WHERE tenant_id = '{tenant_id}'
+        AND status IN ('open', 'in_progress')
+        AND due_date < NOW()::DATE
+      RETURNING id, description
+
+  - name: record_reminder_sent
+    description: >
+      Update reminder_sent_at on a specific action item after a reminder
+      is dispatched.
+    kind: sql
+    query: |
+      UPDATE board_action_items
+      SET reminder_sent_at = NOW()
+      WHERE id = '{item_id}'
+        AND tenant_id = '{tenant_id}'
+
+  - name: record_escalation
+    description: >
+      Mark an action item as escalated to the chair after HOTL approval.
+    kind: sql
+    query: |
+      UPDATE board_action_items
+      SET escalated_to_chair = TRUE,
+          escalated_at       = NOW()
+      WHERE id = '{item_id}'
+        AND tenant_id = '{tenant_id}'
+
+# Escalation configuration
+escalation:
+  # Days past due before escalation message is drafted for HOTL review
+  escalate_after_days_overdue: ${BOARD_PREP_ESCALATE_DAYS:-7}
+  # Reminders below this threshold are sent autonomously (Slack nudge only)
+  autonomous_reminder_channels:
+    - exec-team-slack-action-items
+  # Escalation to chair requires HOTL confirmation
+  escalation_requires_hotl: true
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    # Slack reminders to exec team are low-risk; sent without gate
+    send_slack_reminder: unlimited
+  require_human_approval:
+    # Escalating to the board chair is consequential; secretary must confirm
+    - escalate_to_chair
+  notify_channel: "${BOARD_PREP_SECRETARY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - reminder_sent
+    - escalation_approved
+    - escalation_rejected
+    - item_completed
+  feedback_table: board_action_items

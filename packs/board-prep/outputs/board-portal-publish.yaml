@@ -1,0 +1,45 @@
+---
+# Board Portal Publish — HOTL-gated
+# Publishes the assembled board pack (deck + agenda) to the configured board
+# portal (Diligent Boards or BoardEffect).
+#
+# HOTL gate: the corporate secretary must explicitly approve publication before
+# any document is uploaded to the portal. No autonomous publish.
+#
+# Privileged content: documents published here may contain attorney-client
+# privileged material and material non-public information. The portal must be
+# configured with corporate-secretary-approved access controls.
+
+output: board-portal-publish
+
+hotl:
+  require_human_approval: true
+  approver_role: corporate_secretary
+  notify_channel: "${BOARD_PREP_SECRETARY_CHANNEL:-admin_ui}"
+  approval_timeout_hours: 48    # if not approved within 48h, escalate to chair
+
+# Portal provider — configure one
+portal:
+  # -- Diligent Boards --
+  provider: diligent
+  site_id:     ${BOARD_PREP_DILIGENT_SITE_ID}
+  api_key:     ${BOARD_PREP_DILIGENT_API_KEY}
+  # Meeting room to publish to (matched by meeting date)
+  room_naming_template: "{{ meeting.scheduled_at | format_datetime(fmt='%Y-%m-%d') }} Board Meeting"
+
+  # -- BoardEffect (uncomment to use instead) --
+  # provider: boardeffect
+  # org_id:    ${BOARD_PREP_BOARDEFFECT_ORG_ID}
+  # api_token: ${BOARD_PREP_BOARDEFFECT_API_TOKEN}
+
+# Documents published per meeting
+documents:
+  - type: agenda
+    template: templates/agenda-template.md.j2
+    filename_template: "{{ meeting.scheduled_at | format_datetime(fmt='%Y-%m-%d') }}-agenda.pdf"
+  - type: board_pack
+    template: templates/board-pack-readme.md.j2
+    filename_template: "{{ meeting.scheduled_at | format_datetime(fmt='%Y-%m-%d') }}-board-pack.pdf"
+
+# Publish event emitted on successful upload
+emits_event: board.portal_published

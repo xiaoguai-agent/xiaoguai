@@ -1,0 +1,169 @@
+# Agent definition — minutes-drafter
+# ---------------------------------------------------------------------------
+# Drafts formal board meeting minutes from:
+#   - Zoom/Teams transcript (via transcript-from-zoom-recording inbound)
+#   - Approved agenda (structure / resolution items)
+#   - Real-time notes submitted during the meeting
+#
+# Minutes follow formal corporate-secretary format:
+#   - Attendance (quorum confirmation)
+#   - Call to order / Chair statement
+#   - Approval of prior minutes (resolution)
+#   - Each agenda item with discussion summary and any resolution
+#   - New action items extracted and linked to board_action_items
+#   - Adjournment
+#
+# Draft is stored in board_minutes with status = 'draft'.
+# Approval + archival are HOTL-gated.
+# ---------------------------------------------------------------------------
+
+name: minutes-drafter
+version: "1.0.0"
+description: >
+  Transcribes and structures board meeting minutes from Zoom transcript and
+  agenda. Extracts formal resolutions and new action items. Minutes approval
+  and WORM archival require HOTL sign-off from the corporate secretary.
+
+triggers:
+  # Triggered when a Zoom transcript arrives for a completed meeting
+  - event: board.transcript_received
+    source: transcript-from-zoom-recording
+  # Manual trigger from admin UI (e.g., when minutes drafted from handwritten notes)
+  - event: board.minutes_draft_requested
+    source: manual
+
+llm:
+  model: ${BOARD_PREP_LLM_MODEL:-default}
+  temperature: 0.05     # formal legal document — very low temperature
+  max_tokens: 16384
+
+system_prompt: |
+  You are a corporate secretary drafting formal board meeting minutes.
+  Minutes are a legal record of the meeting. Be precise and objective.
+
+  Rules:
+  - Use formal third-person language ("The Chair called the meeting to order
+    at 10:02 a.m."; never "I" or "we").
+  - Record resolutions in the standard form: "RESOLVED, that [text],
+    [passed/failed] by [vote count or unanimous]."
+  - Do not paraphrase resolutions — capture exact operative language as
+    closely as the transcript permits; flag uncertainty with [VERIFY].
+  - Summarise discussions concisely (1–3 sentences per topic); do not
+    reproduce verbatim argument.
+  - Extract every new action item as a structured record with owner, due
+    date, and description. If owner or due date was not stated, use
+    "[TBD]" and flag for secretary review.
+  - Do not include attorney-client privileged discussion content verbatim;
+    note "Discussion in closed session — privileged and confidential" and
+    record only the resolution, if any.
+  - Output a JSON object matching the MinutesDraft schema.
+
+  MinutesDraft schema:
+  {
+    "meeting_id": "uuid",
+    "called_to_order_at": "ISO-8601 or null",
+    "adjourned_at": "ISO-8601 or null",
+    "quorum_achieved": true|false,
+    "attendees": [{"name": "string", "role": "string", "present": true|false}],
+    "body_markdown": "full minutes body in markdown",
+    "resolutions": [
+      {
+        "number": "string (e.g. '2026-Q2-01')",
+        "text": "full resolution operative language",
+        "outcome": "passed|failed|tabled",
+        "vote_for": integer or null,
+        "vote_against": integer or null,
+        "vote_abstain": integer or null
+      }
+    ],
+    "action_items": [
+      {
+        "description": "string",
+        "owner": "name string or '[TBD]'",
+        "due_date": "YYYY-MM-DD or '[TBD]'",
+        "priority": "urgent|normal|low"
+      }
+    ],
+    "secretary_flags": ["string — items needing human review"]
+  }
+
+context_steps:
+  - id: approved_agenda
+    description: "Fetch the approved agenda for this meeting"
+    tool: sql
+    query: |
+      SELECT
+          ai.section,
+          ai.sequence,
+          ai.title,
+          ai.description,
+          ai.estimated_minutes
+      FROM board_agenda_items ai
+      JOIN board_agendas a ON a.id = ai.agenda_id
+      WHERE a.meeting_id = '{meeting_id}'
+        AND a.status = 'approved'
+      ORDER BY ai.sequence
+
+  - id: attendee_roster
+    description: "Active board members for attendance reconciliation"
+    tool: sql
+    query: |
+      SELECT full_name, title
+      FROM board_members
+      WHERE tenant_id = '{tenant_id}'
+        AND is_active = TRUE
+      ORDER BY title, full_name
+
+tools:
+  - name: save_minutes_draft
+    description: >
+      Persist the minutes draft. Creates board_minutes record with status =
+      'draft' and stores resolution JSON. Returns minutes_id.
+    kind: sql
+    query: |
+      INSERT INTO board_minutes
+          (tenant_id, meeting_id, version, status, draft_body, resolutions)
+      VALUES
+          ('{tenant_id}', '{meeting_id}', 1, 'draft',
+           '{draft_body}', '{resolutions_json}'::JSONB)
+      RETURNING id
+
+  - name: create_action_items
+    description: >
+      Bulk-insert new action items extracted from minutes into
+      board_action_items. Returns count of items created.
+    kind: sql
+    query: |
+      INSERT INTO board_action_items
+          (tenant_id, meeting_id, description, owner_text, due_date, status, priority)
+      SELECT
+          '{tenant_id}',
+          '{meeting_id}',
+          item->>'description',
+          item->>'owner',
+          (item->>'due_date')::DATE,
+          'open',
+          COALESCE(item->>'priority', 'normal')
+      FROM jsonb_array_elements('{action_items_json}'::JSONB) AS item
+      WHERE item->>'due_date' != '[TBD]'
+      RETURNING id
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    approve_minutes: 0
+    archive_minutes: 0
+    distribute_minutes: 0
+  require_human_approval:
+    - approve_minutes      # corporate secretary must explicitly approve
+    - archive_minutes      # WORM archival is irreversible; explicit gate
+    - distribute_minutes   # email to board members
+  notify_channel: "${BOARD_PREP_SECRETARY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - draft_created
+    - draft_approved
+    - draft_rejected
+    - archived
+  feedback_table: board_minutes

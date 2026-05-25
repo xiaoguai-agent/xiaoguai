@@ -1,0 +1,46 @@
+{# Board Pack README — cover page injected at the front of the distributed deck.
+   Variables: meeting, deck, tenant_config, secretary
+#}
+---
+# Board of Directors — {{ tenant_config.company_name }}
+## Board Meeting Pre-Read Pack
+
+**Meeting:** {{ meeting.meeting_type | title }}{% if meeting.committee_name %} — {{ meeting.committee_name }} Committee{% endif %}
+**Date:** {{ meeting.scheduled_at | format_datetime(tz=tenant_config.timezone, fmt="%B %-d, %Y") }}
+**Distributed:** {{ now | format_datetime(fmt="%Y-%m-%d %H:%M UTC") }}
+
+---
+
+### Contents
+
+{% for i, section in deck.sections | enumerate(start=1) %}
+{{ i }}. {{ section.title }}
+{% endfor %}
+
+---
+
+### Confidentiality Notice
+
+This board pack is **CONFIDENTIAL** and intended solely for members of the
+Board of Directors of {{ tenant_config.company_name }} and their authorized
+advisors. It may contain material non-public information and communications
+that are attorney-client privileged. Unauthorized disclosure, reproduction,
+or distribution is prohibited.
+
+This document was prepared by the Office of the Corporate Secretary.
+Questions or corrections: {{ secretary.email | default("[corporate.secretary@company.com]") }}
+
+---
+
+### Data Gaps
+
+{% if deck.overall_data_gaps %}
+The following items were not available at time of distribution and will be
+provided separately or tabled at the meeting:
+
+{% for gap in deck.overall_data_gaps %}
+- {{ gap }}
+{% endfor %}
+{% else %}
+No data gaps identified at time of distribution.
+{% endif %}

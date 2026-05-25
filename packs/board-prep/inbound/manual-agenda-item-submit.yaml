@@ -1,0 +1,42 @@
+---
+# Manual Agenda Item Submission
+# Accepts agenda item submissions from functional leads via the admin UI or
+# the xiaoguai API. Typically used when a lead wants to add a topic to an
+# upcoming board meeting.
+
+source: manual-agenda-item-submit
+route_prefix: /v1/board/inbound/agenda-item
+
+# Request schema expected from submitters
+schema:
+  required:
+    - meeting_id
+    - title
+    - section
+    - submitter_member_id
+  optional:
+    - description
+    - estimated_minutes
+    - priority
+    - attachments    # list of file refs (Dropbox, SharePoint, etc.)
+
+# Validation
+validate:
+  section:
+    enum: ["standing", "prior-action-items", "new-business", "reports", "closed-session"]
+  priority:
+    enum: ["urgent", "normal", "low"]
+    default: "normal"
+  estimated_minutes:
+    type: integer
+    min: 5
+    max: 120
+    default: 15
+
+# Auth: bearer token scoped to board_prep.agenda.submit permission
+auth:
+  kind: bearer
+  scope: board_prep.agenda.submit
+
+# Fires board.agenda_item_submitted event consumed by agenda-builder
+emits_event: board.agenda_item_submitted

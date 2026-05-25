@@ -1,0 +1,39 @@
+{# Board Meeting Agenda Template
+   Rendered by agenda-builder agent.
+   Variables: meeting, sections, tenant_config
+#}
+---
+**BOARD OF DIRECTORS — {{ tenant_config.company_name | upper }}**
+**MEETING AGENDA**
+
+**Meeting Type:** {{ meeting.meeting_type | title }}{% if meeting.committee_name %} — {{ meeting.committee_name }} Committee{% endif %}
+**Date & Time:** {{ meeting.scheduled_at | format_datetime(tz=tenant_config.timezone, fmt="%A, %B %-d, %Y at %-I:%M %p %Z") }}
+**Location:** {{ meeting.location | default("To be confirmed") }}
+**Chair:** {{ meeting.chair_name | default("To be confirmed") }}
+
+*This agenda is CONFIDENTIAL and intended solely for board members and authorized attendees.*
+
+---
+
+{% set ns = namespace(item_num=1) %}
+{% for section in sections %}
+### {{ section.section | replace("-", " ") | title }}
+
+{% for item in section.items %}
+**{{ ns.item_num }}.** {{ item.title }}{% if item.estimated_minutes %} *({{ item.estimated_minutes }} min)*{% endif %}
+{% if item.presenter %}   *Presenter: {{ item.presenter }}*{% endif %}
+{% if item.description %}
+   {{ item.description }}
+{% endif %}
+{% if item.source_action_item_id %}
+   *Carry-forward action item — see Prior Action Items tracker*
+{% endif %}
+{% set ns.item_num = ns.item_num + 1 %}
+{% endfor %}
+
+{% endfor %}
+
+---
+*Agenda prepared by the Office of the Corporate Secretary.*
+*Version {{ agenda.version }} — Status: {{ agenda.status | upper }}*
+*Generated: {{ now | format_datetime(fmt="%Y-%m-%d %H:%M UTC") }}*
