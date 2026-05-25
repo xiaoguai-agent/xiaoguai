@@ -1,0 +1,75 @@
+{# return-summary-state-X.md.j2 — Sales tax return summary for state X #}
+{# Replace X with the actual state code at render time (state_code variable) #}
+# Sales Tax Return Summary — {{ state_code }} — {{ period_label }}
+
+**Tenant:** {{ tenant_name | default("—") }}
+**State:** {{ state_code }}
+**Period:** {{ period_start | format_date }} – {{ period_end | format_date }}
+**Filing Frequency:** {{ filing_frequency | title }}
+**Due Date:** {{ due_date | format_date }}
+**Prepared By:** return-drafter (automated draft)
+**Draft Status:** PENDING HUMAN REVIEW AND E-SIGNATURE
+
+{% if requires_rate_verification %}
+> **WARNING — TAX RATES UNVERIFIED**
+> This return was prepared using placeholder tax rates because no live
+> rate service (Avalara / TaxJar) is configured. **DO NOT FILE** without
+> verifying all rates via a qualified rate provider and reviewing with
+> a qualified tax advisor.
+{% endif %}
+
+---
+
+## Return Summary
+
+| Line | Description | Amount |
+|------|-------------|--------|
+| 1 | Gross Sales | ${{ gross_sales | format_currency }} |
+| 2 | Exempt Sales | ${{ exempt_sales | format_currency }} |
+| 3 | Taxable Sales (Line 1 − Line 2) | ${{ taxable_sales | format_currency }} |
+| 4 | Tax Rate Applied | {{ tax_rate | format_pct }}{% if requires_rate_verification %} ⚠️ PLACEHOLDER{% endif %} |
+| 5 | **Tax Due** | **${{ tax_due | format_currency }}** |
+
+---
+
+## Exemption Schedule
+
+{% if exemptions %}
+| Exemption Type | Cert # | Customer | Exempt Amount | Cert Expiry |
+|----------------|--------|----------|--------------|-------------|
+{% for e in exemptions %}
+| {{ e.exemption_type | title }} | {{ e.cert_number | default("—") }} | {{ e.customer_id }} | ${{ e.exempt_amount | format_currency }} | {{ e.expiry_date | format_date | default("No expiry") }}{% if e.is_expired %} ⚠️ EXPIRED{% endif %} |
+{% endfor %}
+{% else %}
+_No exempt transactions for this period._
+{% endif %}
+
+{% if expired_certs_used %}
+> **AUDIT RISK:** {{ expired_certs_used | length }} exemption certificate(s) used in this period
+> were expired at the time of the transaction. Review with tax counsel.
+{% endif %}
+
+---
+
+## Transaction Volume
+
+- Total transactions: {{ txn_count | format_int }}
+- Sources: {{ sources | join(", ") }}
+- Date range: {{ earliest_txn | format_date }} – {{ latest_txn | format_date }}
+
+---
+
+## HotL Approval Required
+
+This return requires review and e-signature from an authorized signer
+before submission to the {{ state_code }} Department of Revenue.
+
+- **HotL Requested:** {{ hotl_requested_at | format_datetime | default("Pending") }}
+- **Approved By:** {{ hotl_approved_by | default("— awaiting approval —") }}
+- **E-Signature Ref:** {{ hotl_signature_ref | default("— not yet signed —") }}
+
+---
+
+_This draft was generated automatically by the xiaoguai tax-prep pack.
+It does not constitute legal or tax advice. Review with a qualified tax
+professional before filing._

@@ -1,0 +1,65 @@
+---
+# Inbound connector — NetSuite transaction stream
+# ---------------------------------------------------------------------------
+# Receives sales order / invoice records from NetSuite via a scheduled
+# SuiteScript export or REST Records API webhook.
+#
+# Integration point: connect via Avalara NetSuite Connector or a custom
+# SuiteScript 2.x scheduled script that POSTs to the xiaoguai inbound
+# webhook endpoint.
+#
+# Mounting: POST /v1/tax-prep/inbound/netsuite/{route_id}
+# Auth:     Per-tenant bearer token (X-Xiaoguai-Token header)
+# ---------------------------------------------------------------------------
+
+source: netsuite
+route_prefix: /v1/tax-prep/inbound/netsuite
+
+normalize:
+  # Map NetSuite invoice/sales order fields → tax_taxable_transactions schema
+  source_value: netsuite
+
+  field_map:
+    external_id:      tranId                         # NS transaction internal ID
+    transaction_date: tranDate                       # ISO-8601
+    customer_id:      entity.id
+    gross_amount:     total
+    taxable_amount:   taxableTotal                   # NetSuite-computed taxable amount
+    tax_collected:    taxTotal
+    dest_state:       billingAddress.state            # 2-letter US state code
+    dest_zip:         billingAddress.zip
+    dest_city:        billingAddress.city
+    dest_county:      billingAddress.county
+    product_category: itemList[0].item.itemType       # top-level product type
+    is_exempt:        taxCode                         # mapped via exempt_map below
+    exemption_cert_id: custbody_exemption_cert_ref    # custom NS field
+
+  # Map NetSuite taxCode values to is_exempt boolean
+  exempt_map:
+    EXEMPT: true
+    NON_TAXABLE: true
+    _default: false
+
+  currency_field: currency
+
+# Accepted record types
+accepted_types:
+  - CashSale
+  - Invoice
+  - CreditMemo     # credit memos reduce taxable amounts (negative amounts)
+  - ReturnAuthorization
+
+# Deduplication: skip if external_id already exists for this tenant
+dedup:
+  key: "{tenant_id}:{source}:{external_id}"
+
+# Integration notes (placeholder until real connector is wired):
+#   1. Install SuiteScript 2.x scheduled export to POST to this endpoint.
+#   2. Or use Celigo / Boomi NetSuite connector with the field mapping above.
+#   3. Verify NETSUITE_WEBHOOK_SECRET is set in tenant env.
+integration_status: placeholder
+integration_notes: >
+  Wiring required: configure a NetSuite SuiteScript 2.x Map/Reduce script
+  or a REST-based integration (Celigo, Boomi) to POST sales records to
+  this endpoint. Set NETSUITE_WEBHOOK_SECRET in the tenant environment.
+  See docs/plans/tax-prep-netsuite-integration.md for field mapping details.

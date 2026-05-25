@@ -1,0 +1,118 @@
+---
+# Watch spec — filing-deadline-approaching
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent for every state filing that is due within the
+# configured look-ahead window and has not yet been filed.
+#
+# The filing calendar is determined by:
+#   1. Per-jurisdiction rules in pack config (filing_calendar overrides).
+#   2. The filing's filing_frequency (monthly / quarterly / annual).
+#   3. Statutory due dates sourced from tax_filings.due_date (populated
+#      by the return-drafter agent when it creates a draft filing).
+#
+# Three alert tiers:
+#   - WARNING  (due in <= 14 days, status = draft)
+#   - URGENT   (due in <=  7 days, status in [draft, reviewed])
+#   - CRITICAL (due in <=  2 days, status in [draft, reviewed, hotl_pending])
+#
+# Schema reference: F1 WatchSpec.
+# ---------------------------------------------------------------------------
+
+name: filing-deadline-approaching
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each unfiled state tax return approaching its
+  due date. Three alert tiers: WARNING (14 days), URGENT (7 days),
+  CRITICAL (2 days). Runs daily at 08:00 UTC.
+
+# --------------------------------------------------------------------------
+# Data source
+# --------------------------------------------------------------------------
+source:
+  kind: sql
+  table: tax_filings
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      f.tenant_id,
+      f.id                                            AS filing_id,
+      f.state_code,
+      f.period_start,
+      f.period_end,
+      f.filing_frequency,
+      f.due_date,
+      f.status,
+      f.tax_due,
+      f.hotl_approved_at,
+      f.requires_rate_verification,
+      (f.due_date - CURRENT_DATE)                     AS days_until_due,
+      CASE
+          WHEN (f.due_date - CURRENT_DATE) <= 2  THEN 'CRITICAL'
+          WHEN (f.due_date - CURRENT_DATE) <= 7  THEN 'URGENT'
+          WHEN (f.due_date - CURRENT_DATE) <= 14 THEN 'WARNING'
+          ELSE 'NOTICE'
+      END                                             AS alert_tier,
+      -- Highlight if HotL approval hasn't started yet
+      (f.hotl_requested_at IS NULL
+       AND f.status NOT IN ('filed', 'rejected'))     AS hotl_not_started,
+      -- Highlight if rate verification still outstanding
+      f.requires_rate_verification                    AS needs_rate_check
+  FROM tax_filings f
+  WHERE f.tenant_id = '{tenant_id}'
+    AND f.status NOT IN ('filed', 'rejected', 'amended')
+    AND f.due_date <= CURRENT_DATE + INTERVAL '14 days'
+    AND f.due_date >= CURRENT_DATE
+  ORDER BY f.due_date ASC, f.state_code ASC
+
+# --------------------------------------------------------------------------
+# Trigger condition
+# --------------------------------------------------------------------------
+trigger:
+  condition: row_count > 0
+
+# --------------------------------------------------------------------------
+# Schedule — daily at 08:00 UTC
+# --------------------------------------------------------------------------
+schedule:
+  cron: "0 8 * * *"
+
+# --------------------------------------------------------------------------
+# Output — WatchEvent shape
+# --------------------------------------------------------------------------
+event:
+  kind: tax.filing_deadline_approaching
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:                "$.tenant_id"
+    filing_id:                "$.filing_id"
+    state_code:               "$.state_code"
+    period_start:             "$.period_start"
+    period_end:               "$.period_end"
+    filing_frequency:         "$.filing_frequency"
+    due_date:                 "$.due_date"
+    status:                   "$.status"
+    tax_due:                  "$.tax_due"
+    days_until_due:           "$.days_until_due"
+    alert_tier:               "$.alert_tier"
+    hotl_not_started:         "$.hotl_not_started"
+    needs_rate_check:         "$.needs_rate_check"
+
+# --------------------------------------------------------------------------
+# Downstream subscribers
+# --------------------------------------------------------------------------
+downstream:
+  agents:
+    - return-drafter    # escalate draft / trigger HotL if approaching URGENT
+  outputs:
+    - tax-team-slack    # all tiers → Slack
+    - exec-quarterly-tax-position  # CRITICAL tier only → exec view
+
+# --------------------------------------------------------------------------
+# Deduplication: suppress same filing re-alert within 24h unless tier
+# has escalated (e.g. from WARNING to URGENT)
+# --------------------------------------------------------------------------
+dedup:
+  key: "{tenant_id}:{filing_id}"
+  ttl_seconds: 86400
+  re_fire_if: "payload.alert_tier != prior.alert_tier"

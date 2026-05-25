@@ -1,0 +1,206 @@
+---
+# Agent — audit-defense-package-builder
+# ---------------------------------------------------------------------------
+# When an audit notice arrives (parsed by irs-state-notice-email-parser),
+# this agent assembles an audit-defense package containing:
+#   - All filed returns for the audit period
+#   - Supporting transaction-level detail (by state, by period)
+#   - Exemption certificates referenced in the period
+#   - Nexus analysis narrative (economic + physical presence timeline)
+#   - A cover memo drafted by the LLM
+#
+# Output is written to the audit-trail-archive (WORM-style) and a
+# summary is sent to the tax team via tax-team-slack.
+#
+# No HotL is required for assembly — only for any subsequent response
+# submissions, which are handled via the state-portal-filing-submission
+# output connector (which IS HotL-gated).
+# ---------------------------------------------------------------------------
+
+name: audit-defense-package-builder
+version: "1.0.0"
+description: >
+  Assembles a complete audit-defense package when a state tax audit notice
+  is received. Gathers filed returns, transaction detail, exemption certs,
+  and nexus timeline for the audit scope period. Drafts a cover memo.
+  Writes the package to the WORM audit archive and notifies the tax team.
+
+# --------------------------------------------------------------------------
+# Triggers
+# --------------------------------------------------------------------------
+triggers:
+  - event: tax.audit_notice_received
+    source: irs-state-notice-email-parser
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a sales-tax audit-defense assistant. When an audit notice is
+  received, your job is to:
+  1. Identify the scope: state, audit period (start + end dates), and
+     any specific items flagged in the notice.
+  2. Gather all filed returns for the audit scope.
+  3. Gather transaction-level detail supporting those returns.
+  4. Gather all exemption certificates referenced in the period.
+  5. Produce a nexus timeline narrative showing when economic and
+     physical-presence nexus was established in the state.
+  6. Draft a professional cover memo addressed to the state auditor
+     acknowledging the notice and listing the enclosed documents.
+  7. Assemble all documents into a bundle using the
+     audit-defense-bundle-frame template and write to the archive.
+
+  Rules:
+  - Be factual and conservative — do not advocate legal positions or
+    interpret tax law; recommend the operator consult qualified counsel.
+  - Do not invent documents, transactions, or certificate numbers.
+  - If data is missing for part of the audit period, flag the gap
+    explicitly in the cover memo rather than leaving it unaddressed.
+  - The cover memo must state: "This document was prepared for
+    informational purposes by an automated assistant and has not been
+    reviewed by tax counsel. Please review with a qualified tax advisor
+    before submitting to the tax authority."
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: get_audit_scope
+    description: >
+      Parse the audit notice payload to extract state_code, period_start,
+      period_end, notice_date, notice_number, and any flagged line items.
+    kind: passthrough   # data comes from the inbound event payload
+
+  - name: get_filed_returns
+    description: >
+      Fetch all filed returns for the audit state and period.
+    kind: sql
+    query: |
+      SELECT
+          f.id,
+          f.state_code,
+          f.period_start,
+          f.period_end,
+          f.filing_frequency,
+          f.filed_at,
+          f.confirmation_number,
+          f.gross_sales,
+          f.taxable_sales,
+          f.exempt_sales,
+          f.tax_due,
+          f.return_draft_path,
+          f.hotl_approved_by,
+          f.hotl_signature_ref
+      FROM tax_filings f
+      WHERE f.tenant_id = '{tenant_id}'
+        AND f.state_code = '{state_code}'
+        AND f.period_start >= '{audit_period_start}'
+        AND f.period_end   <= '{audit_period_end}'
+        AND f.status = 'filed'
+      ORDER BY f.period_start ASC
+
+  - name: get_transaction_detail
+    description: >
+      Fetch transaction-level detail for the audit period and state.
+      Paginated to avoid overwhelming the LLM context window.
+    kind: sql
+    query: |
+      SELECT
+          tt.external_id,
+          tt.source,
+          tt.transaction_date,
+          tt.customer_id,
+          tt.dest_state,
+          tt.dest_zip,
+          tt.gross_amount,
+          tt.taxable_amount,
+          tt.tax_collected,
+          tt.is_exempt,
+          tt.exemption_cert_id,
+          tt.product_category
+      FROM tax_taxable_transactions tt
+      WHERE tt.tenant_id = '{tenant_id}'
+        AND tt.dest_state = '{state_code}'
+        AND tt.transaction_date >= '{audit_period_start}'
+        AND tt.transaction_date <  '{audit_period_end}'::DATE + INTERVAL '1 day'
+      ORDER BY tt.transaction_date ASC
+      LIMIT 500 OFFSET {offset}
+
+  - name: get_exemption_certs_in_scope
+    description: >
+      Fetch all exemption certs used in the audit period for this state.
+    kind: sql
+    query: |
+      SELECT DISTINCT
+          ec.id,
+          ec.customer_id,
+          ec.state_code,
+          ec.cert_number,
+          ec.exemption_type,
+          ec.issued_date,
+          ec.expiry_date,
+          ec.document_ref,
+          ec.verified_at
+      FROM tax_exemption_certs ec
+      JOIN tax_taxable_transactions tt
+        ON tt.exemption_cert_id = ec.id
+       AND tt.tenant_id = ec.tenant_id
+      WHERE ec.tenant_id = '{tenant_id}'
+        AND ec.state_code = '{state_code}'
+        AND tt.transaction_date >= '{audit_period_start}'
+        AND tt.transaction_date <  '{audit_period_end}'::DATE + INTERVAL '1 day'
+
+  - name: get_nexus_timeline
+    description: >
+      Fetch the nexus history for this state showing when economic and
+      physical-presence nexus was established.
+    kind: sql
+    query: |
+      SELECT
+          ns.state_code,
+          ns.nexus_established,
+          ns.nexus_established_at,
+          ns.nexus_type,
+          ns.has_physical_presence,
+          ns.physical_presence_note,
+          ns.revenue_threshold,
+          ns.txn_count_threshold,
+          ns.threshold_logic
+      FROM tax_nexus_state ns
+      WHERE ns.tenant_id = '{tenant_id}'
+        AND ns.state_code = '{state_code}'
+
+  - name: render_audit_bundle
+    description: >
+      Render the audit-defense-bundle-frame template with all gathered
+      documents. Returns the rendered bundle as a Markdown document.
+    kind: template
+    template: "templates/audit-defense-bundle-frame"
+
+  - name: write_to_archive
+    description: >
+      Write the assembled audit-defense package to the WORM audit
+      archive. Returns the archive reference ID.
+    kind: output_connector
+    connector: audit-trail-archive
+
+# --------------------------------------------------------------------------
+# HotL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  # Package assembly is read-only + archive write — no HotL required.
+  # Any subsequent submission to a state authority goes through
+  # state-portal-filing-submission which IS HotL-gated.
+  autonomous_actions:
+    write_to_archive: unlimited
+    render_audit_bundle: unlimited
+
+# --------------------------------------------------------------------------
+# Outcome telemetry
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - audit_package_assembled
+    - audit_package_archived
+  feedback_table: tax_filings

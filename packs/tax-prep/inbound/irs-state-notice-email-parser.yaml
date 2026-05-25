@@ -1,0 +1,80 @@
+---
+# Inbound connector — IRS / state tax authority notice email parser
+# ---------------------------------------------------------------------------
+# Parses inbound emails forwarded from the tax team's inbox that contain
+# state or IRS tax audit notices, deficiency notices, or correspondence.
+#
+# The parsed notice triggers the tax.audit_notice_received event, which
+# activates the audit-defense-package-builder agent.
+#
+# Integration: configure email forwarding from the tax team mailbox to
+# the xiaoguai inbound email address (tenant-specific):
+#   tax-notices+{tenant_id}@inbound.xiaoguai.io
+#
+# Auth: inbound email validated by SPF/DKIM; sender domain allowlist
+# ---------------------------------------------------------------------------
+
+source: email_notice_parser
+route_prefix: /v1/tax-prep/inbound/email-notice
+
+email:
+  inbound_address_pattern: "tax-notices+{tenant_id}@inbound.xiaoguai.io"
+  # Only process emails from known state/IRS domains (allowlist)
+  sender_domain_allowlist:
+    - "irs.gov"
+    - "ftb.ca.gov"           # California Franchise Tax Board
+    - "tax.ny.gov"           # New York
+    - "comptroller.texas.gov" # Texas
+    - "dor.wa.gov"           # Washington
+    - "revenue.state.mn.us"  # Minnesota
+    - "tax.colorado.gov"     # Colorado
+    - "dor.georgia.gov"      # Georgia
+    # Operators may extend this list via pack config
+    - "${TAX_NOTICE_DOMAIN_ALLOWLIST:-}"
+
+# LLM-assisted parsing: extract structured fields from unstructured email
+llm_parsing:
+  model: "${NOTICE_PARSER_LLM_MODEL:-default}"
+  extract_fields:
+    notice_number:     "Unique notice or case identifier from the authority"
+    state_code:        "2-letter US state code of the issuing authority"
+    notice_date:       "Date on the notice (ISO-8601)"
+    notice_type:       "One of: audit, deficiency, information_request, penalty, other"
+    audit_period_start: "Start of the audit or assessment period (ISO-8601 date)"
+    audit_period_end:   "End of the audit or assessment period (ISO-8601 date)"
+    amount_asserted:   "Dollar amount asserted or claimed, if any (numeric)"
+    response_deadline: "Deadline for taxpayer response (ISO-8601 date)"
+    issuing_authority: "Name of the tax authority"
+    raw_body:          "Full text of the notice for the audit-defense record"
+
+# Emit this event after successful parsing
+event:
+  kind: tax.audit_notice_received
+  payload_mapping:
+    tenant_id:          "{tenant_id}"
+    notice_number:      "$.notice_number"
+    state_code:         "$.state_code"
+    notice_date:        "$.notice_date"
+    notice_type:        "$.notice_type"
+    audit_period_start: "$.audit_period_start"
+    audit_period_end:   "$.audit_period_end"
+    amount_asserted:    "$.amount_asserted"
+    response_deadline:  "$.response_deadline"
+    issuing_authority:  "$.issuing_authority"
+    raw_body:           "$.raw_body"
+    email_subject:      "$.email_subject"
+    email_received_at:  "$.email_received_at"
+
+downstream:
+  agents:
+    - audit-defense-package-builder
+  outputs:
+    - tax-team-slack    # immediate alert: "Audit notice received from [state]"
+
+integration_status: placeholder
+integration_notes: >
+  Configure email forwarding from your tax team's inbox to the
+  xiaoguai inbound email address. Add state authority sender domains to
+  TAX_NOTICE_DOMAIN_ALLOWLIST. The LLM parser handles varied notice
+  formats; review parsed fields in the admin UI before the
+  audit-defense-package-builder runs.

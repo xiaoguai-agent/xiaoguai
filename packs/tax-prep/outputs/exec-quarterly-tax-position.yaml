@@ -1,0 +1,108 @@
+---
+# Output connector — exec-quarterly-tax-position
+# ---------------------------------------------------------------------------
+# Generates a quarterly executive summary of the company's US sales tax
+# position: nexus exposure map, upcoming filings, YTD tax paid, and
+# open audit/notice items.
+#
+# Delivered to the configured exec channel (email / Slack / admin UI)
+# at the end of each fiscal quarter (configurable schedule).
+#
+# No HotL required for this output — it is a read-only summary report,
+# not a filing submission.
+# ---------------------------------------------------------------------------
+
+output: exec-quarterly-tax-position
+description: >
+  Quarterly executive summary: nexus exposure map (states at risk vs
+  established), upcoming filing obligations, YTD tax paid/owed, and
+  open audit items. Delivered to exec channel. Read-only — no filings.
+
+schedule:
+  # Last business day of each fiscal quarter at 07:00 UTC
+  cron: "0 7 28-31 3,6,9,12 *"
+  # Operators may override via TAX_EXEC_REPORT_CRON
+  cron_override: "${TAX_EXEC_REPORT_CRON:-}"
+
+delivery:
+  channels:
+    - kind: slack
+      webhook_url: "${TAX_EXEC_SLACK_WEBHOOK:-}"
+      channel: "${TAX_EXEC_SLACK_CHANNEL:-#executive-summary}"
+      enabled: "${TAX_EXEC_SLACK_ENABLED:-false}"
+    - kind: email
+      recipients: "${TAX_EXEC_EMAIL_RECIPIENTS:-}"
+      subject: "Quarterly Tax Position — {{ quarter_label }}"
+      enabled: "${TAX_EXEC_EMAIL_ENABLED:-false}"
+    - kind: admin_ui
+      # Always delivered to admin UI regardless of other channel config
+      enabled: true
+
+# Queries that feed the report
+data_queries:
+  nexus_summary: |
+    SELECT
+        state_code,
+        nexus_established,
+        nexus_type,
+        revenue_pct_of_threshold,
+        txn_pct_of_threshold,
+        has_physical_presence,
+        no_sales_tax_state
+    FROM tax_nexus_state
+    WHERE tenant_id = '{tenant_id}'
+    ORDER BY revenue_pct_of_threshold DESC NULLS LAST
+
+  upcoming_filings: |
+    SELECT
+        state_code,
+        period_start,
+        period_end,
+        due_date,
+        status,
+        tax_due,
+        (due_date - CURRENT_DATE) AS days_until_due
+    FROM tax_filings
+    WHERE tenant_id = '{tenant_id}'
+      AND status NOT IN ('filed', 'rejected')
+      AND due_date >= CURRENT_DATE
+      AND due_date <= CURRENT_DATE + INTERVAL '90 days'
+    ORDER BY due_date ASC
+
+  ytd_tax_summary: |
+    SELECT
+        EXTRACT(YEAR FROM period_end)   AS fiscal_year,
+        COUNT(*)                        AS returns_filed,
+        SUM(gross_sales)                AS total_gross_sales,
+        SUM(taxable_sales)              AS total_taxable_sales,
+        SUM(exempt_sales)               AS total_exempt_sales,
+        SUM(tax_due)                    AS total_tax_due
+    FROM tax_filings
+    WHERE tenant_id = '{tenant_id}'
+      AND status = 'filed'
+      AND EXTRACT(YEAR FROM period_end) = EXTRACT(YEAR FROM CURRENT_DATE)
+    GROUP BY fiscal_year
+
+  open_audits: |
+    SELECT
+        state_code,
+        notice_date,
+        notice_type,
+        audit_period_start,
+        audit_period_end,
+        amount_asserted,
+        response_deadline
+    FROM tax_archive_records
+    WHERE tenant_id = '{tenant_id}'
+      AND record_type = 'audit_notice'
+      AND content_json->>'status' != 'closed'
+    ORDER BY response_deadline ASC NULLS LAST
+
+template: "templates/nexus-alert"   # reuses nexus-alert template extended with quarterly framing
+
+# CRITICAL events that escalate to this output immediately (not quarterly)
+immediate_escalations:
+  - event: tax.audit_notice_received
+    filter: "payload.amount_asserted > 50000"   # large assessments go to exec immediately
+  - event: tax.nexus_threshold_approaching
+    filter: "payload.max_pct >= 100"            # nexus crossed → exec alert

@@ -1,0 +1,110 @@
+{# audit-defense-bundle-frame.md.j2 — Audit defense package cover frame #}
+# SALES TAX AUDIT DEFENSE PACKAGE
+
+**CONFIDENTIAL — ATTORNEY-CLIENT PRIVILEGE REQUESTED**
+
+---
+
+**To:** {{ state_code }} Department of Revenue — Audit Division
+**Re:** Audit Notice No. {{ notice_number | default("—") }}
+**Notice Date:** {{ notice_date | format_date | default("—") }}
+**Audit Period:** {{ audit_period_start | format_date }} – {{ audit_period_end | format_date }}
+**Taxpayer:** {{ tenant_name | default("—") }}
+**Prepared:** {{ generated_at | format_datetime }}
+
+---
+
+## Cover Memorandum
+
+Dear Audit Division,
+
+This package is submitted in response to Audit Notice No. {{ notice_number | default("[notice number]") }}
+dated {{ notice_date | format_date | default("[notice date]") }} regarding sales tax compliance for
+the period {{ audit_period_start | format_date }} through {{ audit_period_end | format_date }} in
+{{ state_code }}.
+
+We have enclosed the following documentation in support of our filed returns:
+
+1. **Filed Returns** — All sales tax returns filed for the audit period (see Section A).
+2. **Transaction Detail** — Line-item transaction records supporting each return (Section B).
+3. **Exemption Certificates** — Certificates on file for exempt transactions (Section C).
+4. **Nexus Analysis** — Timeline of economic and physical-presence nexus establishment (Section D).
+
+{% if data_gaps %}
+**Note on Data Gaps:** The following periods or categories have incomplete records:
+{% for gap in data_gaps %}
+- {{ gap }}
+{% endfor %}
+We will supplement this package upon request.
+{% endif %}
+
+Please direct any questions or requests for additional information to the contact
+listed in our filing records.
+
+> **DISCLAIMER:** This document was prepared for informational purposes by an
+> automated assistant and has not been reviewed by tax counsel. Please review
+> with a qualified tax advisor and legal counsel before submitting to the tax
+> authority. This package does not constitute legal advice or an admission of
+> any tax liability.
+
+---
+
+## Section A — Filed Returns
+
+{% if filed_returns %}
+| Period | Filed Date | Gross Sales | Taxable Sales | Tax Paid | Confirmation # |
+|--------|-----------|------------|--------------|---------|--------------|
+{% for r in filed_returns %}
+| {{ r.period_start | format_date }} – {{ r.period_end | format_date }} | {{ r.filed_at | format_date }} | ${{ r.gross_sales | format_currency }} | ${{ r.taxable_sales | format_currency }} | ${{ r.tax_due | format_currency }} | {{ r.confirmation_number | default("—") }} |
+{% endfor %}
+{% else %}
+_No filed returns found for this audit period. Consult tax counsel._
+{% endif %}
+
+---
+
+## Section B — Transaction Summary
+
+Total transactions in scope: {{ total_txn_count | format_int | default("—") }}
+Total taxable amount: ${{ total_taxable | format_currency | default("—") }}
+Total exempt amount: ${{ total_exempt | format_currency | default("—") }}
+
+_Full transaction detail ({{ total_txn_count }} records) is available as a
+separate attachment or electronic export upon request._
+
+---
+
+## Section C — Exemption Certificates
+
+{% if exemption_certs %}
+| State | Customer | Cert # | Type | Issued | Expires | Document Ref |
+|-------|----------|--------|------|--------|---------|-------------|
+{% for c in exemption_certs %}
+| {{ c.state_code }} | {{ c.customer_id }} | {{ c.cert_number | default("—") }} | {{ c.exemption_type | title }} | {{ c.issued_date | format_date | default("—") }} | {{ c.expiry_date | format_date | default("No expiry") }} | {{ c.document_ref | default("On file") }} |
+{% endfor %}
+{% else %}
+_No exemption certificates on file for this period._
+{% endif %}
+
+---
+
+## Section D — Nexus Analysis
+
+**State:** {{ state_code }}
+
+{% if nexus %}
+- **Nexus Type:** {{ nexus.nexus_type | title | default("—") }}
+- **Established:** {{ nexus.nexus_established_at | format_date | default("Not yet established") }}
+- **Economic Nexus Basis:** Revenue threshold ${{ nexus.revenue_threshold | format_currency }},
+  Transaction threshold {{ nexus.txn_count_threshold }}, Logic: {{ nexus.threshold_logic }}
+{% if nexus.has_physical_presence %}
+- **Physical Presence:** {{ nexus.physical_presence_note | default("Physical presence established") }}
+{% endif %}
+{% else %}
+_Nexus history not available for this state._
+{% endif %}
+
+---
+
+_Archive Reference: {{ archive_ref | default("PENDING") }}_
+_Package assembled by: xiaoguai tax-prep audit-defense-package-builder v1.0.0_
