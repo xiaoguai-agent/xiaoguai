@@ -135,14 +135,17 @@ enum Cmd {
     // ------------------------------------------------------------------
     // Wave-3 subcommands
     // ------------------------------------------------------------------
-
     /// Administer Human-on-the-Loop (HOTL) budget policies.
     ///
     /// Manages spend/count caps per tenant and action scope. Enforcer
     /// integration ships in v1.3; on 503 a friendly message is printed.
     Hotl {
         /// Base URL of the `xiaoguai-api` server.
-        #[arg(long, env = "XIAOGUAI_API_BASE", default_value = "http://localhost:8080")]
+        #[arg(
+            long,
+            env = "XIAOGUAI_API_BASE",
+            default_value = "http://localhost:8080"
+        )]
         api_base: String,
         /// Output format.
         #[arg(long, default_value = "table")]
@@ -158,7 +161,11 @@ enum Cmd {
     /// message is printed.
     Outcomes {
         /// Base URL of the `xiaoguai-api` server.
-        #[arg(long, env = "XIAOGUAI_API_BASE", default_value = "http://localhost:8080")]
+        #[arg(
+            long,
+            env = "XIAOGUAI_API_BASE",
+            default_value = "http://localhost:8080"
+        )]
         api_base: String,
         /// Output format.
         #[arg(long, default_value = "table")]
@@ -173,7 +180,11 @@ enum Cmd {
     /// Pg bridge ships in v1.3; on 503 a friendly message is printed.
     Skills {
         /// Base URL of the `xiaoguai-api` server.
-        #[arg(long, env = "XIAOGUAI_API_BASE", default_value = "http://localhost:8080")]
+        #[arg(
+            long,
+            env = "XIAOGUAI_API_BASE",
+            default_value = "http://localhost:8080"
+        )]
         api_base: String,
         /// Output format.
         #[arg(long, default_value = "table")]
@@ -189,7 +200,11 @@ enum Cmd {
     /// friendly message is printed.
     Watch {
         /// Base URL of the `xiaoguai-api` server.
-        #[arg(long, env = "XIAOGUAI_API_BASE", default_value = "http://localhost:8080")]
+        #[arg(
+            long,
+            env = "XIAOGUAI_API_BASE",
+            default_value = "http://localhost:8080"
+        )]
         api_base: String,
         /// Output format.
         #[arg(long, default_value = "table")]
@@ -204,7 +219,11 @@ enum Cmd {
     /// Pg bridge ships in v1.3; on 503 a friendly message is printed.
     Anomaly {
         /// Base URL of the `xiaoguai-api` server.
-        #[arg(long, env = "XIAOGUAI_API_BASE", default_value = "http://localhost:8080")]
+        #[arg(
+            long,
+            env = "XIAOGUAI_API_BASE",
+            default_value = "http://localhost:8080"
+        )]
         api_base: String,
         /// Output format.
         #[arg(long, default_value = "table")]
@@ -1185,7 +1204,11 @@ async fn handle_skills(api_base: String, output: String, action: SkillsCmd) -> R
             skills::install_from_file_not_implemented()?;
         }
         SkillsCmd::Uninstall { id } => {
-            skills::uninstall(skills::UninstallArgs { api_base, id: id.clone() }).await?;
+            skills::uninstall(skills::UninstallArgs {
+                api_base,
+                id: id.clone(),
+            })
+            .await?;
             println!("{}", serde_json::json!({"ok": true}));
         }
     }
@@ -1195,7 +1218,11 @@ async fn handle_skills(api_base: String, output: String, action: SkillsCmd) -> R
 async fn handle_watch(api_base: String, output: String, action: WatchCmd) -> Result<()> {
     match action {
         WatchCmd::List { tenant_id } => {
-            let rows = watch::list(watch::ListArgs { api_base, tenant_id }).await?;
+            let rows = watch::list(watch::ListArgs {
+                api_base,
+                tenant_id,
+            })
+            .await?;
             if output == "table" {
                 print!("{}", watch::format_list_table(&rows));
             } else {

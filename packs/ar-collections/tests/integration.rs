@@ -35,8 +35,8 @@ fn pack_root() -> PathBuf {
     // CARGO_MANIFEST_DIR for integration tests in xiaoguai-core points to the
     // core crate directory. We walk up the ancestor chain to find the workspace
     // root (the dir that has both Cargo.toml and a packs/ sub-dir).
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .map_or_else(|_| PathBuf::from("."), PathBuf::from);
+    let manifest_dir =
+        std::env::var("CARGO_MANIFEST_DIR").map_or_else(|_| PathBuf::from("."), PathBuf::from);
 
     manifest_dir
         .ancestors()
@@ -80,14 +80,20 @@ struct PackRequires {
 
 #[derive(Debug)]
 struct PackPath {
-    #[allow(dead_code, reason = "parsed from YAML for structural validation; field value unused in assertions")]
+    #[allow(
+        dead_code,
+        reason = "parsed from YAML for structural validation; field value unused in assertions"
+    )]
     path: String,
 }
 
 #[derive(Debug)]
 struct WatchSpec {
     name: String,
-    #[allow(dead_code, reason = "parsed from YAML for structural validation; field value unused in assertions")]
+    #[allow(
+        dead_code,
+        reason = "parsed from YAML for structural validation; field value unused in assertions"
+    )]
     version: String,
     source: WatchSource,
     query: String,
@@ -115,7 +121,10 @@ struct WatchEvent {
 #[derive(Debug)]
 struct AnomalySpec {
     name: String,
-    #[allow(dead_code, reason = "parsed from YAML for structural validation; field value unused in assertions")]
+    #[allow(
+        dead_code,
+        reason = "parsed from YAML for structural validation; field value unused in assertions"
+    )]
     version: String,
     metric: AnomalyMetric,
     baseline: AnomalyBaseline,
@@ -154,13 +163,19 @@ fn parse_str_field(v: &serde_yaml::Value, key: &str) -> String {
         .to_owned()
 }
 
-#[allow(dead_code, reason = "helper retained for future test cases; not yet exercised")]
+#[allow(
+    dead_code,
+    reason = "helper retained for future test cases; not yet exercised"
+)]
 fn parse_opt_str(v: &serde_yaml::Value, key: &str) -> Option<String> {
     v[key].as_str().map(str::to_owned)
 }
 
 fn parse_u32_field(v: &serde_yaml::Value, key: &str) -> u32 {
-    #[allow(clippy::cast_possible_truncation, reason = "YAML integers in pack specs are expected to be small (< 2^32); truncation would be a schema error")]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "YAML integers in pack specs are expected to be small (< 2^32); truncation would be a schema error"
+    )]
     let val = v[key]
         .as_u64()
         .unwrap_or_else(|| panic!("missing or non-integer field: {key}")) as u32;

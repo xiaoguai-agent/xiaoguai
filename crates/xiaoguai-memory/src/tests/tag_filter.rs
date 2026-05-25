@@ -122,6 +122,10 @@ async fn recall_with_tag_filter() {
         .await
         .unwrap();
 
-    assert_eq!(recalled.len(), 1, "only the memory with 'features' tag should appear");
+    assert_eq!(
+        recalled.len(),
+        1,
+        "only the memory with 'features' tag should appear"
+    );
     assert!(recalled[0].memory.tags.contains(&"features".to_owned()));
 }

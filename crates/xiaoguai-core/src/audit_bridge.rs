@@ -26,7 +26,10 @@ impl PgAuditAdapter {
     }
 }
 
-#[allow(clippy::needless_pass_by_value, reason = "used as `.map_err(chain_err)` — changing to `&e` would require closure wrappers at every call site")]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "used as `.map_err(chain_err)` — changing to `&e` would require closure wrappers at every call site"
+)]
 fn chain_err(e: ChainError) -> AuditError {
     AuditError::Backend(e.to_string())
 }

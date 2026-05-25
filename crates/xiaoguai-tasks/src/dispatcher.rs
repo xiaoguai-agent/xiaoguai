@@ -202,18 +202,17 @@ impl WorkerPool {
             }
         }
 
-        info!("kanban dispatcher draining {} in-flight tasks", join_set.len());
+        info!(
+            "kanban dispatcher draining {} in-flight tasks",
+            join_set.len()
+        );
         // Drain: let all running workers finish.
         while join_set.join_next().await.is_some() {}
         info!("kanban dispatcher stopped");
     }
 
     /// Claim a batch of READY cards and spawn a worker per card.
-    async fn poll_and_dispatch(
-        &self,
-        semaphore: &Arc<Semaphore>,
-        join_set: &mut JoinSet<()>,
-    ) {
+    async fn poll_and_dispatch(&self, semaphore: &Arc<Semaphore>, join_set: &mut JoinSet<()>) {
         // Reap finished workers to keep JoinSet from growing unbounded.
         while join_set.try_join_next().is_some() {}
 
@@ -297,11 +296,7 @@ impl Worker {
     }
 
     /// Retry loop. Returns the final [`WorkerOutcome`].
-    async fn execute_with_retry(
-        &self,
-        card: &mut KanbanCard,
-        tenant: &str,
-    ) -> WorkerOutcome {
+    async fn execute_with_retry(&self, card: &mut KanbanCard, tenant: &str) -> WorkerOutcome {
         // card.attempt was incremented by claim_ready; subsequent retries
         // increment it here.
         let first_attempt = card.attempt;
@@ -312,11 +307,8 @@ impl Worker {
                 card.attempt = attempt;
             }
 
-            let exec_result = tokio::time::timeout(
-                self.task_timeout,
-                self.executor.execute(card),
-            )
-            .await;
+            let exec_result =
+                tokio::time::timeout(self.task_timeout, self.executor.execute(card)).await;
 
             match exec_result {
                 // Timeout.
@@ -336,11 +328,8 @@ impl Worker {
                     Ok(mut outcome) => {
                         // Append dispatcher attribution to the chain.
                         outcome.attribution_chain.push(
-                            Attribution::new(
-                                format!("dispatcher:attempt-{attempt}"),
-                                "executor",
-                            )
-                            .with_note(format!("card: {}", card.id)),
+                            Attribution::new(format!("dispatcher:attempt-{attempt}"), "executor")
+                                .with_note(format!("card: {}", card.id)),
                         );
                         return WorkerOutcome::Done(outcome);
                     }
@@ -439,7 +428,10 @@ mod tests {
         let store = Arc::new(InMemoryCardStore::new());
         for i in 0..10 {
             store
-                .insert(KanbanCard::new(format!("task-{i}"), serde_json::json!({"i": i})))
+                .insert(KanbanCard::new(
+                    format!("task-{i}"),
+                    serde_json::json!({"i": i}),
+                ))
                 .await;
         }
 
@@ -557,8 +549,8 @@ mod tests {
 
     #[tokio::test]
     async fn timeout_moves_card_to_blocked() {
-        use async_trait::async_trait;
         use crate::card::Outcome;
+        use async_trait::async_trait;
 
         struct SlowExecutor;
         #[async_trait]
@@ -566,7 +558,10 @@ mod tests {
             async fn execute(&self, _card: &KanbanCard) -> Result<Outcome, ExecutorError> {
                 // Sleep longer than the configured timeout.
                 tokio::time::sleep(Duration::from_secs(60)).await;
-                Ok(Outcome::new("should never reach here", serde_json::Value::Null))
+                Ok(Outcome::new(
+                    "should never reach here",
+                    serde_json::Value::Null,
+                ))
             }
         }
 
@@ -609,10 +604,7 @@ mod tests {
 
         let snap = store.snapshot().await;
         assert_eq!(snap[0].column, CardColumn::Blocked);
-        assert_eq!(
-            snap[0].blocked_reason.as_deref(),
-            Some("agent timeout")
-        );
+        assert_eq!(snap[0].blocked_reason.as_deref(), Some("agent timeout"));
     }
 
     // ── Cancel: executor returns Cancelled → terminal BLOCKED ────────────────
@@ -658,9 +650,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn shutdown_drains_in_flight_before_exit() {
+        use crate::card::Outcome;
         use async_trait::async_trait;
         use std::sync::atomic::{AtomicU32, Ordering};
-        use crate::card::Outcome;
 
         static COMPLETED: AtomicU32 = AtomicU32::new(0);
 
@@ -679,7 +671,10 @@ mod tests {
         // Enqueue 3 cards — they'll all be claimed and running when we shut down.
         for i in 0..3 {
             store
-                .insert(KanbanCard::new(format!("drain-{i}"), serde_json::Value::Null))
+                .insert(KanbanCard::new(
+                    format!("drain-{i}"),
+                    serde_json::Value::Null,
+                ))
                 .await;
         }
 
@@ -732,10 +727,7 @@ mod tests {
             if snap.iter().any(|c| c.column == CardColumn::Done) {
                 break;
             }
-            assert!(
-                tokio::time::Instant::now() <= deadline,
-                "card never done"
-            );
+            assert!(tokio::time::Instant::now() <= deadline, "card never done");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
 
@@ -749,7 +741,9 @@ mod tests {
             "attribution_chain must be populated"
         );
         assert!(
-            outcome.attribution_chain[0].actor.starts_with("dispatcher:"),
+            outcome.attribution_chain[0]
+                .actor
+                .starts_with("dispatcher:"),
             "actor must start with 'dispatcher:'"
         );
     }
@@ -766,7 +760,10 @@ mod tests {
         let cfg = PoolConfig::default();
         assert_eq!(cfg.pool_size, DEFAULT_POOL_SIZE);
         assert_eq!(cfg.max_retries, DEFAULT_MAX_RETRIES);
-        assert_eq!(cfg.poll_interval.as_millis(), u128::from(DEFAULT_POLL_INTERVAL_MS));
+        assert_eq!(
+            cfg.poll_interval.as_millis(),
+            u128::from(DEFAULT_POLL_INTERVAL_MS)
+        );
         assert_eq!(cfg.task_timeout.as_secs(), DEFAULT_TASK_TIMEOUT_SECS);
     }
 

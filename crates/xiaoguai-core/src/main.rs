@@ -516,9 +516,8 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // PgHotlPolicyStore and share it between the CRUD handle and the
         // enforcer so both see the same pool.
         hotl_policy_store: Some({
-            let store: Arc<dyn xiaoguai_api::hotl::policy::HotlPolicyStore> = Arc::new(
-                crate::hotl_bridge::PgHotlPolicyStore::new(pool.clone()),
-            );
+            let store: Arc<dyn xiaoguai_api::hotl::policy::HotlPolicyStore> =
+                Arc::new(crate::hotl_bridge::PgHotlPolicyStore::new(pool.clone()));
             store
         }),
         hotl_enforcer: Some({
@@ -530,19 +529,19 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // v1.2.4: outcome telemetry — PgOutcomesBackend implements both
         // writer and reader; construct once and coerce to each trait object.
         outcome_writer: Some({
-            let backend: Arc<dyn xiaoguai_api::outcomes::OutcomeWriter> = Arc::new(
-                crate::outcomes_bridge::PgOutcomesBackend::new(pool.clone()),
-            );
+            let backend: Arc<dyn xiaoguai_api::outcomes::OutcomeWriter> =
+                Arc::new(crate::outcomes_bridge::PgOutcomesBackend::new(pool.clone()));
             backend
         }),
         outcomes_reader: Some({
-            let backend: Arc<dyn xiaoguai_api::outcomes::OutcomesReader> = Arc::new(
-                crate::outcomes_bridge::PgOutcomesBackend::new(pool.clone()),
-            );
+            let backend: Arc<dyn xiaoguai_api::outcomes::OutcomesReader> =
+                Arc::new(crate::outcomes_bridge::PgOutcomesBackend::new(pool.clone()));
             backend
         }),
         // v1.2.28: skill pack install/uninstall — PgSkillPackRepository.
-        skill_packs: Some(crate::skills_bridge::PgSkillPackRepository::arc(pool.clone())),
+        skill_packs: Some(crate::skills_bridge::PgSkillPackRepository::arc(
+            pool.clone(),
+        )),
         // v1.3.x: long-term memory — wire PgMemoryStore here once the
         // memory bridge crate lands; `None` makes /v1/memories return 503.
         memory_store: None,

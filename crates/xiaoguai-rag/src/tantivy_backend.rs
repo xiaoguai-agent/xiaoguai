@@ -423,7 +423,16 @@ impl RagClient for TantivyStore {
 
         // Build one Tantivy document per chunk (line) so BM25 scoring
         // operates at chunk granularity — mirrors `InMemoryRagClient`.
-        let (writer_arc, reader, f_id, f_source_uri, f_text, f_collection_id, f_line_start, f_line_end) = {
+        let (
+            writer_arc,
+            reader,
+            f_id,
+            f_source_uri,
+            f_text,
+            f_collection_id,
+            f_line_start,
+            f_line_end,
+        ) = {
             let guard = self.indexes.lock();
             let s = guard.get(&req.collection_id).unwrap();
             (

@@ -65,7 +65,10 @@ async fn body_json(body: Body) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
-#[allow(clippy::needless_pass_by_value, reason = "test helper — caller owns the Value")]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "test helper — caller owns the Value"
+)]
 fn post_json(uri: &str, body: Value) -> Request<Body> {
     Request::builder()
         .method(Method::POST)

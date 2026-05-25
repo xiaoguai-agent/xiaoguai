@@ -76,12 +76,12 @@ pub use skills::{
     SkillPackEntry, SkillPackError, SkillPackRepository,
 };
 pub use state::{AppState, CancelRegistry};
-pub use workspaces::{
-    CreateWorkspaceRequest, InMemoryWorkspaceRepository, UpdateWorkspaceRequest, Workspace,
-    WorkspaceError, WorkspaceRepository,
-};
 pub use today::{StaticTodayReader, TodayError, TodayItem, TodayKind, TodayQuery, TodayReader};
 pub use usage::{
     StaticUsageEntry, StaticUsageReader, UsageError, UsageGroupBy, UsageQuery, UsageReader,
     UsageReport, UsageRow,
+};
+pub use workspaces::{
+    CreateWorkspaceRequest, InMemoryWorkspaceRepository, UpdateWorkspaceRequest, Workspace,
+    WorkspaceError, WorkspaceRepository,
 };

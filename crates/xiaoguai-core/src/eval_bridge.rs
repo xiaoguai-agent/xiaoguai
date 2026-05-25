@@ -33,7 +33,10 @@ impl PgCaseFromSessionSource {
     }
 }
 
-#[allow(clippy::needless_pass_by_value, reason = "used as `.map_err(map_err)` — changing to `&e` would require closure wrappers at every call site")]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "used as `.map_err(map_err)` — changing to `&e` would require closure wrappers at every call site"
+)]
 fn map_err(e: sqlx::Error) -> EvalServiceError {
     EvalServiceError::Backend(e.to_string())
 }

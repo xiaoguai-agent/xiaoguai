@@ -91,19 +91,12 @@ pub trait TaskBoardRepository: Send + Sync {
     ) -> Result<Option<Task>, TaskError>;
 
     /// Move a RUNNING task to BLOCKED, recording the reason.
-    async fn block_task(
-        &self,
-        task_id: Uuid,
-        actor: &str,
-        reason: &str,
-    ) -> Result<Task, TaskError>;
+    async fn block_task(&self, task_id: Uuid, actor: &str, reason: &str)
+        -> Result<Task, TaskError>;
 
     /// Return the full state-transition history for a task, ordered by
     /// `occurred_at ASC`.
-    async fn get_task_history(
-        &self,
-        task_id: Uuid,
-    ) -> Result<Vec<TaskStateLogEntry>, TaskError>;
+    async fn get_task_history(&self, task_id: Uuid) -> Result<Vec<TaskStateLogEntry>, TaskError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -176,9 +169,7 @@ impl OutcomeAttribution for DefaultOutcomeAttribution {
                 "task_transition",
                 1.0,
                 Some("count"),
-                Some(&format!(
-                    "task {task_id} → {to_col}"
-                )),
+                Some(&format!("task {task_id} → {to_col}")),
                 metadata,
             )
             .await
@@ -194,7 +185,7 @@ mod tests {
     async fn default_attribution_records_transition() {
         let recorder = InMemoryOutcomeRecorder::new();
         let attr = DefaultOutcomeAttribution;
-        let task_id  = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
         let board_id = Uuid::new_v4();
 
         attr.attribute_transition(

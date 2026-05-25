@@ -28,7 +28,6 @@ use crate::eval::EvalService;
 use crate::hotl::enforcer::HotlEnforcer;
 use crate::hotl::policy::HotlPolicyStore;
 use crate::outcomes::{OutcomeWriter, OutcomesReader};
-use xiaoguai_memory::MemoryStore;
 use crate::scheduler::{
     NlJobCompiler, ScheduledJobUpserter, ScheduledJobsReader, WebhookPusher, WebhookTokenAdmin,
     WebhookTokenValidator,
@@ -38,6 +37,7 @@ use crate::skills::SkillPackRepository;
 use crate::today::TodayReader;
 use crate::usage::UsageReader;
 use crate::workspaces::WorkspaceRepository;
+use xiaoguai_memory::MemoryStore;
 
 /// Registry of cancellation tokens keyed by `session_id`. A single token per
 /// session is enough — the API contract serialises message turns within a

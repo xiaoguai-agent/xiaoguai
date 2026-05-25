@@ -279,7 +279,11 @@ async fn eval_policy_hot_update_tighter_threshold() {
     // 10 calls pass comfortably under the 50-call budget.
     for _ in 0..10 {
         let v = enforcer.check(tid, "llm_call", 1.0).await.unwrap();
-        assert_eq!(v, HotlVerdict::Allow, "calls 1-10 must be Allow under budget=50");
+        assert_eq!(
+            v,
+            HotlVerdict::Allow,
+            "calls 1-10 must be Allow under budget=50"
+        );
     }
 
     // Hot-update: remove generous policy, insert tighter one (threshold=10,
@@ -339,7 +343,10 @@ async fn eval_policy_hot_update_relaxed_threshold() {
     }
     // 3rd call → Deny (tight policy).
     let v = enforcer.check(tid, "llm_call", 1.0).await.unwrap();
-    assert!(matches!(v, HotlVerdict::Deny(_)), "3rd call must Deny; got {v:?}");
+    assert!(
+        matches!(v, HotlVerdict::Deny(_)),
+        "3rd call must Deny; got {v:?}"
+    );
 
     // Relax: delete old policy, insert generous one (threshold=1000).
     store.delete(policy.id).await.unwrap();
@@ -384,7 +391,10 @@ async fn eval_tier_routing_low_risk() {
     enforcer.check(tid, "email_send", 1.0).await.unwrap(); // 1 call at-threshold
     let v = enforcer.check(tid, "email_send", 1.0).await.unwrap(); // breach
 
-    assert!(matches!(v, HotlVerdict::Escalate(_)), "must Escalate for low-risk tier; got {v:?}");
+    assert!(
+        matches!(v, HotlVerdict::Escalate(_)),
+        "must Escalate for low-risk tier; got {v:?}"
+    );
     if let HotlVerdict::Escalate(reason) = v {
         assert!(
             reason.contains("tier-1@example.com"),
@@ -403,7 +413,10 @@ async fn eval_tier_routing_medium_risk() {
     enforcer.check(tid, "llm_call", 1.0).await.unwrap();
     let v = enforcer.check(tid, "llm_call", 1.0).await.unwrap();
 
-    assert!(matches!(v, HotlVerdict::Escalate(_)), "must Escalate for medium-risk tier; got {v:?}");
+    assert!(
+        matches!(v, HotlVerdict::Escalate(_)),
+        "must Escalate for medium-risk tier; got {v:?}"
+    );
     if let HotlVerdict::Escalate(reason) = v {
         assert!(
             reason.contains("tier-2@example.com"),
@@ -422,7 +435,10 @@ async fn eval_tier_routing_high_risk() {
     enforcer.check(tid, "external_api", 1.0).await.unwrap();
     let v = enforcer.check(tid, "external_api", 1.0).await.unwrap();
 
-    assert!(matches!(v, HotlVerdict::Escalate(_)), "must Escalate for high-risk tier; got {v:?}");
+    assert!(
+        matches!(v, HotlVerdict::Escalate(_)),
+        "must Escalate for high-risk tier; got {v:?}"
+    );
     if let HotlVerdict::Escalate(reason) = v {
         assert!(
             reason.contains("tier-3@example.com"),
@@ -508,6 +524,10 @@ async fn eval_no_policy_unconditional_allow() {
             .check(Uuid::new_v4(), "llm_call", 999.0)
             .await
             .unwrap();
-        assert_eq!(v, HotlVerdict::Allow, "call {i} must Allow when no policy exists");
+        assert_eq!(
+            v,
+            HotlVerdict::Allow,
+            "call {i} must Allow when no policy exists"
+        );
     }
 }

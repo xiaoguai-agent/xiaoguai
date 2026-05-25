@@ -14,9 +14,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use xiaoguai_api::hotl::{
     enforcer::{HotlEnforcer, HotlVerdict, HotlVerdictResult},
-    policy::{
-        CreateHotlPolicyRequest, HotlPolicy, HotlPolicyStore, HotlPolicyStoreError,
-    },
+    policy::{CreateHotlPolicyRequest, HotlPolicy, HotlPolicyStore, HotlPolicyStoreError},
 };
 
 // ── policy store ──────────────────────────────────────────────────────────────
@@ -230,14 +228,13 @@ impl HotlEnforcer for PgHotlEnforcer {
         }
 
         // Optimistic insert before comparison (same semantics as in-memory).
-        if let Err(e) = sqlx::query(
-            "INSERT INTO hotl_usage_log (tenant_id, scope, amount) VALUES ($1, $2, $3)",
-        )
-        .bind(tenant_id)
-        .bind(scope)
-        .bind(amount)
-        .execute(&self.pool)
-        .await
+        if let Err(e) =
+            sqlx::query("INSERT INTO hotl_usage_log (tenant_id, scope, amount) VALUES ($1, $2, $3)")
+                .bind(tenant_id)
+                .bind(scope)
+                .bind(amount)
+                .execute(&self.pool)
+                .await
         {
             tracing::error!(?e, "HOTL usage log insert failed — fail-closed");
             return Ok(HotlVerdict::Deny(format!(
@@ -277,10 +274,9 @@ impl HotlEnforcer for PgHotlEnforcer {
             let count = row.0.unwrap_or(0.0) as usize;
             let sum = row.1.unwrap_or(0.0);
 
-            let count_breached =
-                policy
-                    .max_count
-                    .is_some_and(|max| count > usize::try_from(max).unwrap_or(0));
+            let count_breached = policy
+                .max_count
+                .is_some_and(|max| count > usize::try_from(max).unwrap_or(0));
             let usd_breached = policy.max_usd.is_some_and(|max| sum > max);
 
             if count_breached || usd_breached {
@@ -364,8 +360,8 @@ mod tests {
     //           --ignore-rust-version -- --ignored hotl_pg_
 
     async fn pg_pool() -> sqlx::PgPool {
-        let url = std::env::var("DATABASE_URL")
-            .expect("DATABASE_URL must be set for PG bridge tests");
+        let url =
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for PG bridge tests");
         sqlx::PgPool::connect(&url).await.expect("pg connect")
     }
 
@@ -408,7 +404,10 @@ mod tests {
         let pool = pg_pool().await;
         let store = PgHotlPolicyStore::new(pool);
         let err = store.delete(Uuid::new_v4()).await.unwrap_err();
-        assert!(matches!(err, xiaoguai_api::hotl::policy::HotlPolicyStoreError::NotFound(_)));
+        assert!(matches!(
+            err,
+            xiaoguai_api::hotl::policy::HotlPolicyStoreError::NotFound(_)
+        ));
     }
 
     #[tokio::test]
@@ -441,7 +440,10 @@ mod tests {
         let pool = pg_pool().await;
         let store = Arc::new(PgHotlPolicyStore::new(pool.clone()));
         let enforcer = PgHotlEnforcer::new(pool, store);
-        let v = enforcer.check(Uuid::new_v4(), "llm_call", 1.0).await.unwrap();
+        let v = enforcer
+            .check(Uuid::new_v4(), "llm_call", 1.0)
+            .await
+            .unwrap();
         assert_eq!(v, HotlVerdict::Allow);
     }
 
@@ -470,6 +472,9 @@ mod tests {
         assert_eq!(v1, HotlVerdict::Allow);
         assert_eq!(v2, HotlVerdict::Allow);
         let v3 = enforcer.check(tid, "llm_call", 1.0).await.unwrap();
-        assert!(matches!(v3, HotlVerdict::Deny(_)), "3rd call must Deny: {v3:?}");
+        assert!(
+            matches!(v3, HotlVerdict::Deny(_)),
+            "3rd call must Deny: {v3:?}"
+        );
     }
 }

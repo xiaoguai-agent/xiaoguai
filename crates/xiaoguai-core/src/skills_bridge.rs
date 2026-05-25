@@ -170,8 +170,8 @@ mod tests {
     //           --ignore-rust-version -- --ignored skills_pg_
 
     async fn pg_pool() -> sqlx::PgPool {
-        let url = std::env::var("DATABASE_URL")
-            .expect("DATABASE_URL must be set for PG bridge tests");
+        let url =
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for PG bridge tests");
         sqlx::PgPool::connect(&url).await.expect("pg connect")
     }
 
@@ -226,7 +226,10 @@ mod tests {
     async fn skills_pg_uninstall_missing_is_not_found() {
         let pool = pg_pool().await;
         let repo = PgSkillPackRepository::new(pool);
-        let err = repo.uninstall(&Uuid::new_v4().to_string()).await.unwrap_err();
+        let err = repo
+            .uninstall(&Uuid::new_v4().to_string())
+            .await
+            .unwrap_err();
         assert!(matches!(err, SkillPackError::NotFound));
     }
 

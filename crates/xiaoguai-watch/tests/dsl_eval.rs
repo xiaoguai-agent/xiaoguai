@@ -59,7 +59,9 @@ fn sql_spec(id: &str, query: &str, interval_secs: u64) -> WatchSpec {
         source: WatchSourceSpec::Sql {
             query: query.into(),
         },
-        schedule: WatchSchedule::IntervalSecs { secs: interval_secs },
+        schedule: WatchSchedule::IntervalSecs {
+            secs: interval_secs,
+        },
         on_match: make_action("notify", Some("test-ch")),
     }
 }
@@ -174,7 +176,8 @@ on_match:
   action: create_task
 "#;
     let spec: WatchSpec = serde_yaml::from_str(yaml).unwrap();
-    spec.validate().expect("spec with HTTP defaults must validate");
+    spec.validate()
+        .expect("spec with HTTP defaults must validate");
 
     match &spec.source {
         WatchSourceSpec::Http {
@@ -391,10 +394,7 @@ fn dsl_10_non_select_error_is_useful() {
         "error for non-SELECT must mention SELECT, got: {err}"
     );
     // The error must not be a generic "parse failed" blob.
-    assert!(
-        err.len() > 10,
-        "error must be descriptive, got: {err}"
-    );
+    assert!(err.len() > 10, "error must be descriptive, got: {err}");
 
     // Update: INSERT also rejected.
     spec.source = WatchSourceSpec::Sql {
@@ -592,7 +592,10 @@ async fn dsl_20_two_specs_same_row_fire_independently() {
     }
 
     assert!(seen.contains("watcher-alpha"), "watcher-alpha must fire");
-    assert!(seen.contains("watcher-beta"), "watcher-beta must fire independently");
+    assert!(
+        seen.contains("watcher-beta"),
+        "watcher-beta must fire independently"
+    );
 
     // Neither fires a second time within the TTL.
     let extra = tokio::time::timeout(Duration::from_millis(1_300), rx.recv()).await;
@@ -647,11 +650,11 @@ async fn dsl_22_chained_watchers_both_fire_before_cooldown() {
 
     runner.register(
         sql_spec("chain-upstream", "SELECT 1", 1),
-        InMemorySource::new(vec![row(json!({"stage": "upstream", "alert": "lag"}))])
+        InMemorySource::new(vec![row(json!({"stage": "upstream", "alert": "lag"}))]),
     );
     runner.register(
         sql_spec("chain-downstream", "SELECT 1", 1),
-        InMemorySource::new(vec![row(json!({"stage": "downstream", "alert": "lag"}))])
+        InMemorySource::new(vec![row(json!({"stage": "downstream", "alert": "lag"}))]),
     );
 
     let mut rx = runner.run();
@@ -710,7 +713,7 @@ on_match:
   action: notify
 "#;
     // Expect deserialization to succeed and produce a 5-second interval.
-    let spec: WatchSpec = serde_yaml::from_str(yaml)
-        .expect("shorthand interval should deserialise");
+    let spec: WatchSpec =
+        serde_yaml::from_str(yaml).expect("shorthand interval should deserialise");
     assert_eq!(spec.schedule, WatchSchedule::IntervalSecs { secs: 5 });
 }

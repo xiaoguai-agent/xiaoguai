@@ -9,8 +9,7 @@ use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use serde_json::Value as JsonValue;
 
-const ERR_503: &str =
-    "Endpoint returns 503 — Pg bridge ships in v1.3. Check /healthz.";
+const ERR_503: &str = "Endpoint returns 503 — Pg bridge ships in v1.3. Check /healthz.";
 
 async fn require_ok(resp: reqwest::Response) -> Result<reqwest::Response> {
     let status = resp.status();
@@ -37,8 +36,7 @@ pub struct RunArgs {
 pub async fn run(args: RunArgs) -> Result<JsonValue> {
     let raw = std::fs::read_to_string(&args.file)
         .with_context(|| format!("read anomaly spec file: {}", args.file.display()))?;
-    let spec: JsonValue =
-        serde_yaml::from_str(&raw).context("parse anomaly spec YAML")?;
+    let spec: JsonValue = serde_yaml::from_str(&raw).context("parse anomaly spec YAML")?;
     let client = Client::new();
     let resp = client
         .post(format!("{}/v1/anomaly/run", args.api_base))
@@ -67,8 +65,7 @@ pub struct BacktestArgs {
 pub async fn backtest(args: BacktestArgs) -> Result<JsonValue> {
     let raw_spec = std::fs::read_to_string(&args.file)
         .with_context(|| format!("read anomaly spec file: {}", args.file.display()))?;
-    let spec: JsonValue =
-        serde_yaml::from_str(&raw_spec).context("parse anomaly spec YAML")?;
+    let spec: JsonValue = serde_yaml::from_str(&raw_spec).context("parse anomaly spec YAML")?;
     let csv_content = std::fs::read_to_string(&args.data)
         .with_context(|| format!("read data CSV: {}", args.data.display()))?;
     let client = Client::new();

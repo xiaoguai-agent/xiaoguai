@@ -13,7 +13,8 @@ use xiaoguai_audit::outcomes::OutcomeRange;
 
 use crate::error::{ApiError, ApiResult};
 use crate::outcomes::{
-    OutcomesSummaryResponse, OutcomesTimeseriesResponse, RecordOutcomeRequest, RecordOutcomeResponse,
+    OutcomesSummaryResponse, OutcomesTimeseriesResponse, RecordOutcomeRequest,
+    RecordOutcomeResponse,
 };
 use crate::state::AppState;
 

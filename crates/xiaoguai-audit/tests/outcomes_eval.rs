@@ -158,7 +158,13 @@ async fn multi_hop_chain_depth_5() {
 
     assert_eq!(chain.len(), 5, "all 5 hops present");
     // Insertion order is preserved in the in-memory impl (Vec append).
-    let expected_agents = ["agent-A", "agent-B", "tool-call", "agent-C", "final-outcome"];
+    let expected_agents = [
+        "agent-A",
+        "agent-B",
+        "tool-call",
+        "agent-C",
+        "final-outcome",
+    ];
     for (i, record) in chain.iter().enumerate() {
         assert_eq!(
             record.agent_name, expected_agents[i],
@@ -280,7 +286,14 @@ async fn time_window_excludes_old_outcomes() {
     // slices passed to aggregate() after the fact — using the public
     // OutcomeSummary::from_records helper which accepts arbitrary timestamps.
     let records = vec![
-        make_record_at("tenant-tw", Some("s1"), "agent-old", "hours_saved", 8.0, old_ts),
+        make_record_at(
+            "tenant-tw",
+            Some("s1"),
+            "agent-old",
+            "hours_saved",
+            8.0,
+            old_ts,
+        ),
         make_record_at(
             "tenant-tw",
             Some("s1"),
@@ -349,10 +362,7 @@ async fn time_window_excludes_old_outcomes() {
         .await
         .unwrap_err();
     assert!(
-        matches!(
-            err,
-            xiaoguai_audit::OutcomeError::InvalidArgument(_)
-        ),
+        matches!(err, xiaoguai_audit::OutcomeError::InvalidArgument(_)),
         "inverted range must be rejected"
     );
 }
@@ -641,11 +651,7 @@ fn timeseries_same_day_different_hours_same_bucket() {
         .collect();
 
     let buckets = timeseries(&records);
-    assert_eq!(
-        buckets.len(),
-        1,
-        "all 3 hours on the same day → 1 bucket"
-    );
+    assert_eq!(buckets.len(), 1, "all 3 hours on the same day → 1 bucket");
     assert_eq!(buckets[0].count, 3);
     assert!((buckets[0].sum - 3.0).abs() < f64::EPSILON);
 }

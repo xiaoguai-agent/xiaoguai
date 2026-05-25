@@ -56,7 +56,10 @@ impl PgUsageReader {
     }
 }
 
-#[allow(clippy::needless_pass_by_value, reason = "used as `.map_err(map_err)` — changing to `&e` would require closure wrappers at every call site")]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "used as `.map_err(map_err)` — changing to `&e` would require closure wrappers at every call site"
+)]
 fn map_err(e: sqlx::Error) -> UsageError {
     UsageError::Backend(e.to_string())
 }

@@ -311,7 +311,10 @@ fn skill_repo(state: &AppState) -> ApiResult<Arc<dyn SkillPackRepository>> {
         .ok_or_else(|| ApiError::ServiceUnavailable("skill pack repository not wired".into()))
 }
 
-#[allow(clippy::needless_pass_by_value, reason = "error is moved into anyhow for ownership")]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "error is moved into anyhow for ownership"
+)]
 fn skill_err_to_api(e: SkillPackError) -> ApiError {
     ApiError::Internal(anyhow::anyhow!("skill pack store: {e}"))
 }

@@ -62,7 +62,10 @@ async fn hotl_policy_create_requires_at_least_one_limit() {
 async fn hotl_policy_list_queries_tenant() {
     let mut server = Server::new_async().await;
     let _m = server
-        .mock("GET", Matcher::Regex(r"/v1/hotl/policies\?tenant_id=".into()))
+        .mock(
+            "GET",
+            Matcher::Regex(r"/v1/hotl/policies\?tenant_id=".into()),
+        )
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"[{"id":"pol-1","scope":"llm_call","window_seconds":3600}]"#)
@@ -752,8 +755,11 @@ async fn anomaly_503_gives_pg_bridge_message() {
 
     let dir = tempfile::tempdir().expect("tmpdir");
     let spec_path = dir.path().join("spec.yaml");
-    std::fs::write(&spec_path, "id: x\nkpi_query: SELECT 1\nwindow:\n  hours: 1\n")
-        .expect("write");
+    std::fs::write(
+        &spec_path,
+        "id: x\nkpi_query: SELECT 1\nwindow:\n  hours: 1\n",
+    )
+    .expect("write");
 
     let err = anomaly::run(anomaly::RunArgs {
         api_base: server.url(),

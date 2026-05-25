@@ -15,8 +15,8 @@ use crate::embedder::{cosine_similarity, EmbeddingProvider};
 use crate::error::{MemoryError, MemoryResult};
 use crate::traits::MemoryStore;
 use crate::types::{
-    CreateMemoryRequest, Memory, MemoryKind, RecallRequest, RecalledMemory, RecalledMemoryRef,
-    RecallTrace, UpdateMemoryRequest,
+    CreateMemoryRequest, Memory, MemoryKind, RecallRequest, RecallTrace, RecalledMemory,
+    RecalledMemoryRef, UpdateMemoryRequest,
 };
 
 /// In-memory implementation of [`MemoryStore`].
@@ -55,11 +55,7 @@ impl MemoryStore for InMemoryMemoryStore {
             .iter()
             .filter(|m| m.tenant_id == tenant_id)
             .filter(|m| kind_filter.is_none_or(|k| m.kind == k))
-            .filter(|m| {
-                tag_filter
-                    .iter()
-                    .all(|tag| m.tags.iter().any(|t| t == tag))
-            })
+            .filter(|m| tag_filter.iter().all(|tag| m.tags.iter().any(|t| t == tag)))
             .skip(offset)
             .take(limit)
             .cloned()
@@ -168,7 +164,10 @@ impl MemoryStore for InMemoryMemoryStore {
         let now = Utc::now();
         let refs: Vec<RecalledMemoryRef> = scored
             .iter()
-            .map(|(score, m)| RecalledMemoryRef { id: m.id, score: *score })
+            .map(|(score, m)| RecalledMemoryRef {
+                id: m.id,
+                score: *score,
+            })
             .collect();
 
         {

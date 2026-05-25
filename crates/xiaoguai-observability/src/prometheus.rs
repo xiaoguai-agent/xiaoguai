@@ -37,9 +37,8 @@ use axum::{
 };
 use once_cell::sync::OnceCell;
 use prometheus::{
-    exponential_buckets, register_int_counter_vec_with_registry,
-    register_histogram_vec_with_registry, register_histogram_with_registry, Histogram,
-    HistogramVec, IntCounterVec, Registry,
+    exponential_buckets, register_histogram_vec_with_registry, register_histogram_with_registry,
+    register_int_counter_vec_with_registry, Histogram, HistogramVec, IntCounterVec, Registry,
 };
 
 /// Bucket boundaries shared by HTTP and LLM histograms (seconds).
@@ -62,7 +61,6 @@ pub struct MetricHandles {
     pub scheduler_tick_duration: Histogram,
 
     // ── Wave-3 metrics ──────────────────────────────────────────────────────
-
     /// HOTL enforcer decisions: `(tenant, scope, verdict)`.
     pub hotl_usage_total: IntCounterVec,
     /// HOTL enforcer check latency (unlabelled).

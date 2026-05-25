@@ -63,7 +63,10 @@ async fn create_duplicate_name_returns_error() {
     let repo = InMemoryPersonaRepository::new();
     let tenant = Uuid::new_v4();
     repo.create(&make_create(tenant, "Unique")).await.unwrap();
-    let err = repo.create(&make_create(tenant, "Unique")).await.unwrap_err();
+    let err = repo
+        .create(&make_create(tenant, "Unique"))
+        .await
+        .unwrap_err();
     assert!(matches!(err, PersonaError::DuplicateName(_)));
 }
 
@@ -74,7 +77,10 @@ async fn duplicate_name_allowed_across_tenants() {
     let t2 = Uuid::new_v4();
     repo.create(&make_create(t1, "Shared Name")).await.unwrap();
     let second = repo.create(&make_create(t2, "Shared Name")).await;
-    assert!(second.is_ok(), "same name under different tenant must succeed");
+    assert!(
+        second.is_ok(),
+        "same name under different tenant must succeed"
+    );
 }
 
 #[tokio::test]
@@ -99,10 +105,7 @@ async fn update_persona_fields() {
     let updated = repo.update(created.id, &req).await.unwrap();
     assert_eq!(updated.name, "Published");
     assert_eq!(updated.system_prompt, "Updated prompt.");
-    assert_eq!(
-        updated.tool_allowlist,
-        Some(vec!["tool_a".to_string()])
-    );
+    assert_eq!(updated.tool_allowlist, Some(vec!["tool_a".to_string()]));
     assert_eq!(updated.default_model.as_deref(), Some("gpt-4o"));
     assert_eq!(updated.escalation_tier.as_deref(), Some("L2"));
 }
@@ -148,10 +151,7 @@ async fn attach_and_get_session_persona() {
     let tenant = Uuid::new_v4();
     let p = repo.create(&make_create(tenant, "Finance")).await.unwrap();
     let session = "sess_abc123";
-    let sp = repo
-        .attach_persona_to_session(session, p.id)
-        .await
-        .unwrap();
+    let sp = repo.attach_persona_to_session(session, p.id).await.unwrap();
     assert_eq!(sp.session_id, session);
     assert_eq!(sp.persona_id, p.id);
 
@@ -166,8 +166,12 @@ async fn attach_replaces_existing_session_persona() {
     let p1 = repo.create(&make_create(tenant, "P1")).await.unwrap();
     let p2 = repo.create(&make_create(tenant, "P2")).await.unwrap();
     let session = "sess_replace";
-    repo.attach_persona_to_session(session, p1.id).await.unwrap();
-    repo.attach_persona_to_session(session, p2.id).await.unwrap();
+    repo.attach_persona_to_session(session, p1.id)
+        .await
+        .unwrap();
+    repo.attach_persona_to_session(session, p2.id)
+        .await
+        .unwrap();
     let active = repo.get_session_persona(session).await.unwrap().unwrap();
     assert_eq!(active.id, p2.id, "second attach must replace the first");
 }
@@ -193,7 +197,9 @@ async fn detach_removes_session_persona() {
     repo.attach_persona_to_session("sess_detach", p.id)
         .await
         .unwrap();
-    repo.detach_persona_from_session("sess_detach").await.unwrap();
+    repo.detach_persona_from_session("sess_detach")
+        .await
+        .unwrap();
     let result = repo.get_session_persona("sess_detach").await.unwrap();
     assert!(result.is_none());
 }
@@ -244,7 +250,10 @@ async fn multi_persona_per_tenant() {
 async fn tool_allowlist_enforcement_unrestricted() {
     let repo = InMemoryPersonaRepository::new();
     let tenant = Uuid::new_v4();
-    let p = repo.create(&make_create(tenant, "Unrestricted")).await.unwrap();
+    let p = repo
+        .create(&make_create(tenant, "Unrestricted"))
+        .await
+        .unwrap();
     assert!(tool_allowed(&p, "bash"));
     assert!(tool_allowed(&p, "web_search"));
     let tools = vec!["a".to_string(), "b".to_string()];
@@ -312,5 +321,8 @@ async fn detach_on_session_cascade_simulated() {
     // Simulate session deletion → detach persona.
     repo.detach_persona_from_session(session).await.unwrap();
     let after = repo.get_session_persona(session).await.unwrap();
-    assert!(after.is_none(), "persona attachment must be gone after session delete");
+    assert!(
+        after.is_none(),
+        "persona attachment must be gone after session delete"
+    );
 }

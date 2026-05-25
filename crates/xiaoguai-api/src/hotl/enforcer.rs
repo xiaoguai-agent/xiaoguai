@@ -477,7 +477,13 @@ mod tests {
         let tid = Uuid::new_v4();
         // Limit is higher than N so all calls are allowed — we just want to
         // verify the counter is exact.
-        let store = store_with_count_policy(tid, "llm_call", 60, i32::try_from(N * 2).expect("N*2 fits i32"), None);
+        let store = store_with_count_policy(
+            tid,
+            "llm_call",
+            60,
+            i32::try_from(N * 2).expect("N*2 fits i32"),
+            None,
+        );
         let enforcer = Arc::new(InMemoryHotlEnforcer::new(store));
         let allow_count = Arc::new(AtomicUsize::new(0));
 
