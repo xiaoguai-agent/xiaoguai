@@ -1,0 +1,61 @@
+# Inbound source — Twitter/X mentions (polling adapter)
+#
+# Twitter/X does not offer reliable real-time webhooks on the v2 Basic tier.
+# This adapter polls the Twitter v2 search/recent API every 15 minutes to
+# collect mentions of the configured search query.
+#
+# Authentication: TWITTER_BEARER_TOKEN (app-only, read-only).
+# Rate limits: 1 request per 15 minutes per app token on the free tier.
+#   Configure TWITTER_POLL_INTERVAL_MINUTES accordingly.
+#
+# Note: Twitter API v2 recent search has a 7-day lookback window.
+
+name: twitter-mention
+kind: poll
+
+mcp_server: twitter_reader
+
+# Poll interval respects the API rate limit.
+# Minimum 15 minutes on free tier; 1 minute on Pro tier.
+poll_interval_seconds: "${TWITTER_POLL_INTERVAL_SECONDS:-900}"
+
+# Search query — mentions of the project handle or hashtag.
+# Override at deploy time via TWITTER_SEARCH_QUERY.
+# Example: "@myproject OR #myproject -is:retweet -is:reply lang:en"
+search_query: "${TWITTER_SEARCH_QUERY}"
+
+# Maximum tweets per poll (Twitter v2 max = 100).
+max_results: 100
+
+# Checkpoint persisted between polls (newest_id parameter for the next request).
+checkpoint:
+  store: xiaoguai-scheduler
+  key: "devrel-content/twitter/newest_id"
+
+# Exclude retweets and replies to reduce noise (configurable).
+exclude_retweets: "${TWITTER_EXCLUDE_RETWEETS:-true}"
+exclude_replies: "${TWITTER_EXCLUDE_REPLIES:-false}"
+
+# Minimum engagement threshold — ignore tweets with fewer than N
+# likes + retweets combined (reduces noise on low-traffic accounts).
+min_engagement: 1
+
+# Fields normalised from the Twitter v2 tweet object.
+normalize:
+  field_map:
+    id:             "$.id"
+    text:           "$.text"
+    author_name:    "$.author.name"
+    author_handle:  "$.author.username"
+    created_at:     "$.created_at"
+    tweet_url:      "{{ 'https://x.com/' + $.author.username + '/status/' + $.id }}"
+    likes:          "$.public_metrics.like_count"
+    retweets:       "$.public_metrics.retweet_count"
+    replies:        "$.public_metrics.reply_count"
+    engagement:     "{{ $.public_metrics.like_count + $.public_metrics.retweet_count }}"
+
+# Privacy: do not store full tweet text beyond the 7-day digest window.
+# Truncate to 280 characters (standard tweet limit) before persisting.
+privacy:
+  max_stored_text_length: 280
+  retention_days: 7
