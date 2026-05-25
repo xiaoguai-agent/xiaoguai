@@ -1,0 +1,55 @@
+# packs/facilities-management/outputs/vendor-dispatch-email.yaml
+#
+# Vendor dispatch email output connector.
+#
+# Sends the vendor-dispatch-card template to the vendor's dispatch_email
+# address when the vendor-dispatcher agent decides to auto-dispatch.
+# For escalated orders, sends a copy to the facilities manager for review
+# before the vendor receives it (approval gate in IM instead).
+
+name: vendor-dispatch-email
+kind: email
+
+smtp:
+  host_env:     SMTP_HOST
+  port_env:     SMTP_PORT
+  username_env: SMTP_USERNAME
+  password_env: SMTP_PASSWORD
+  tls: true
+
+from:
+  address: "${FACILITIES_EMAIL_FROM:-facilities-dispatch@company.com}"
+  name:    "${FACILITIES_EMAIL_FROM_NAME:-Facilities Management}"
+
+reply_to: "${FACILITIES_REPLY_TO:-facilities@company.com}"
+
+# To address comes from vendors_facilities.dispatch_email for the selected vendor.
+to_field: vendor.dispatch_email
+
+# CC the requestor on dispatch confirmation (optional).
+cc_requestor: "${FACILITIES_CC_REQUESTOR:-true}"
+
+# BCC the facilities audit mailbox for record-keeping.
+bcc: "${FACILITIES_BCC_AUDIT:-}"
+
+subject_template: |
+  [{{ wo.priority | upper }}] Facilities Work Order — {{ wo.title | truncate(60) }} ({{ wo.id | truncate(8, end='') }})
+
+body_template: templates/vendor-dispatch-card.md.j2
+body_format: markdown_to_plain    # vendors may not render HTML
+
+# Retry on SMTP errors.
+retry:
+  max_attempts: 3
+  backoff_seconds: 30
+
+# For P1 orders, also send an SMS if vendor_phone is populated.
+# Requires TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_FROM_NUMBER.
+sms_on_p1:
+  enabled: "${FACILITIES_SMS_P1_ENABLED:-false}"
+  to_field: vendor.contact_phone
+  message_template: |
+    URGENT [P1] Facilities WO: {{ wo.title | truncate(100) }}
+    Location: {{ wo.building }}{% if wo.floor %}/F{{ wo.floor }}{% endif %}
+    SLA: {{ wo.sla_deadline | datetimeformat('%H:%M') }}
+    Details emailed to {{ vendor.dispatch_email }}

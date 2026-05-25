@@ -1,0 +1,91 @@
+# packs/facilities-management/inbound/badge-system-poll.yaml
+#
+# Badge / access-control system polling source.
+#
+# Polls the badge system API every 15 minutes to:
+#   1. Update space_assignments.utilization_rate (desk occupancy signal).
+#   2. Detect anomalies → insert into badge_anomalies.
+#   3. Feed the space-planner with accurate peak-occupancy data.
+#
+# Supported badge system adapters (set BADGE_SYSTEM_ADAPTER):
+#   - lenel_s2      (LenelS2 NetBox REST API)
+#   - ccure_9000    (Software House C•CURE 9000 OSDP)
+#   - brivo         (Brivo Access REST API)
+#   - generic_csv   (flat-file export, polled from SFTP/S3)
+#
+# All adapters emit a normalised BadgeEvent:
+#   { building, door_id, badge_holder_email, occurred_at, event_type, granted }
+
+name: badge-system-poll
+kind: poll
+
+schedule:
+  expression: "*/15 * * * *"    # every 15 minutes
+  timezone: "${TZ:-America/New_York}"
+
+adapter:
+  name: "${BADGE_SYSTEM_ADAPTER:-lenel_s2}"
+  api_base_url: "${BADGE_API_BASE_URL}"
+  api_key_env:  BADGE_API_KEY
+  # Only fetch events since the last poll watermark (stored in xi state).
+  incremental: true
+  watermark_key: badge_system_last_polled_at
+
+# Utilisation update: for each granted access event, bump the utilisation
+# counter for the matching space_assignment row.
+utilization_update:
+  enabled: true
+  match_by: assignee_email
+  window_days: "${FACILITIES_BADGE_WINDOW_DAYS:-14}"
+  # Recompute utilization_rate = (days_with_badge_swipe / window_working_days)
+  recompute_sql: |
+    UPDATE space_assignments sa
+    SET
+      utilization_rate = (
+        SELECT COUNT(DISTINCT DATE(b.occurred_at))::NUMERIC
+               / GREATEST(
+                   (SELECT COUNT(*) FROM generate_series(
+                     now()::date - interval '{{ window_days }} days',
+                     now()::date,
+                     '1 day'::interval
+                   ) AS d(day)
+                   WHERE EXTRACT(DOW FROM d.day) BETWEEN 1 AND 5),
+                   1
+                 )
+        FROM badge_events_staging b   -- temp table populated during this poll
+        WHERE b.badge_holder_email = sa.assignee_email
+          AND b.occurred_at >= now() - INTERVAL '{{ window_days }} days'
+          AND b.granted = true
+      ),
+      last_computed_at = now()
+    WHERE sa.assignee_email = ANY($1::text[]);
+
+# Anomaly detection rules (evaluated per event in order; first match wins).
+anomaly_rules:
+  - id: after_hours_access
+    condition: "granted == true AND (hour(occurred_at) < 6 OR hour(occurred_at) >= 22)"
+    event_type: after_hours_access
+    create_badge_anomaly: true
+
+  - id: access_denied_spike
+    condition: "granted == false"
+    # Only flag if ≥5 denials from same badge holder in 10-minute window.
+    aggregate:
+      group_by: [badge_holder_email, building]
+      window_minutes: 10
+      threshold: 5
+    event_type: access_denied_spike
+    create_badge_anomaly: true
+
+  - id: propped_door
+    condition: "event_type == 'door_held_open' AND duration_seconds > 30"
+    event_type: propped_door
+    create_badge_anomaly: true
+    # Propped door in a secure area → create a security work order automatically.
+    auto_create_work_order:
+      category: security
+      priority: p2
+      title: "Propped door detected — {{ building }} / {{ door_id }}"
+      description: "Door held open for {{ duration_seconds }}s at {{ door_id }}."
+
+next_agent: null    # badge events do not trigger triage; they update utilisation + anomalies only

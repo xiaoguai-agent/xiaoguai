@@ -1,0 +1,85 @@
+# packs/facilities-management/outputs/exec-monthly-fm-digest.yaml
+#
+# Executive monthly facilities management digest.
+#
+# Sent on the first business day of each month.  Aggregates:
+#   - Work order volume + SLA compliance by category
+#   - Vendor performance scorecard (OTD rate, avg resolution time)
+#   - Space utilisation trends + space-planner recommendations
+#   - Open PM work orders + cert-expiring vendors
+#
+# Recipients: facilities director + CFO (cost summary) + property managers.
+
+name: exec-monthly-fm-digest
+kind: email
+
+schedule:
+  expression: "0 9 1-7 * 1"    # first Monday of each month at 09:00
+  timezone: "${TZ:-America/New_York}"
+
+smtp:
+  host_env:     SMTP_HOST
+  port_env:     SMTP_PORT
+  username_env: SMTP_USERNAME
+  password_env: SMTP_PASSWORD
+  tls: true
+
+from:
+  address: "${FACILITIES_EMAIL_FROM:-facilities-dispatch@company.com}"
+  name:    "Facilities Management — Monthly Digest"
+
+to: "${EXEC_FM_DIGEST_RECIPIENTS}"    # comma-separated list in env
+
+subject_template: |
+  Facilities Management Digest — {{ report_month | datetimeformat('%B %Y') }}
+
+# The digest aggregation query runs before rendering.
+aggregation_query: |
+  WITH
+  -- Work order stats for the previous calendar month
+  wo_stats AS (
+    SELECT
+      category::TEXT,
+      COUNT(*)                                          AS total,
+      SUM(CASE WHEN met_sla = true  THEN 1 ELSE 0 END) AS met_sla,
+      SUM(CASE WHEN met_sla = false THEN 1 ELSE 0 END) AS missed_sla,
+      ROUND(AVG(EXTRACT(EPOCH FROM (resolved_at - created_at))/3600)::NUMERIC, 1)
+                                                        AS avg_hours
+    FROM work_orders
+    WHERE created_at >= date_trunc('month', now() - INTERVAL '1 month')
+      AND created_at <  date_trunc('month', now())
+      AND status = 'closed'
+    GROUP BY category
+  ),
+  -- Vendor performance
+  vendor_perf AS (
+    SELECT
+      vf.name,
+      COUNT(wo.id)                                         AS orders,
+      ROUND(AVG(wo.met_sla::INT)::NUMERIC * 100, 1)       AS sla_pct,
+      ROUND(AVG(EXTRACT(EPOCH FROM (wo.resolved_at - wo.created_at))/3600)::NUMERIC, 1)
+                                                           AS avg_hours
+    FROM work_orders wo
+    JOIN vendors_facilities vf ON vf.id = wo.vendor_id
+    WHERE wo.created_at >= date_trunc('month', now() - INTERVAL '1 month')
+      AND wo.created_at <  date_trunc('month', now())
+      AND wo.status = 'closed'
+    GROUP BY vf.name
+    ORDER BY sla_pct DESC
+  )
+  SELECT
+    (SELECT json_agg(ws) FROM wo_stats ws)  AS work_order_stats,
+    (SELECT json_agg(vp) FROM vendor_perf vp) AS vendor_performance;
+
+body_template: templates/space-utilization-report.md.j2
+body_format: markdown_to_html    # exec digest rendered as HTML email
+
+# Also post a summary card to the exec IM channel.
+also_notify_im:
+  output: outputs/facilities-team-slack.yaml
+  channel: "${FACILITIES_EXEC_CHANNEL:-#exec-fm-digest}"
+  message_template: |
+    📊 *Monthly FM Digest — {{ report_month | datetimeformat('%B %Y') }}*
+    Work orders closed: {{ wo_stats | sum(attribute='total') }}
+    SLA compliance: {{ ((wo_stats | sum(attribute='met_sla')) / (wo_stats | sum(attribute='total') | max(1)) * 100) | round(1) }}%
+    Full report emailed to {{ exec_recipients_display }}.

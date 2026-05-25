@@ -1,0 +1,127 @@
+# packs/facilities-management/pack.yaml
+#
+# Facilities Management Skill Pack — v0.1.0
+#
+# Handles the full facilities loop:
+#   inbound work orders → triage + prioritisation → vendor dispatch →
+#   space-utilisation analysis → SLA watch + exec digest.
+#
+# Dependencies
+# ─────────────────────────────────────────────────────────────────────────────
+#   llm              Required — triager, planner, and incident-classifier all
+#                    call the LLM for category/priority/best-match reasoning.
+#   outcome-telemetry  Required — SLA resolution times and vendor OTD rates
+#                    feed into the outcome store so perf trends are queryable.
+#   watch            Required — four watch rules drive proactive alerts:
+#                    SLA-at-risk, PM-due, space-underutilised, cert-expiring.
+
+name: facilities-management
+version: "0.1.0"
+description: >
+  Multi-agent skill pack for corporate facilities operations.
+  Triages inbound work orders (HVAC, plumbing, electrical, janitorial,
+  security, space), dispatches vendors, monitors SLA compliance, analyses
+  badge-based space utilisation, and surfaces executive digests.
+
+# ── Runtime dependencies ────────────────────────────────────────────────────
+
+depends:
+  xiaoguai-api: ">=0.12.1"
+  llm: required
+  outcome-telemetry: required
+  watch: required
+  im:
+    any:
+      - feishu
+      - dingtalk
+      - wecom
+      - slack       # common in facilities teams
+
+# ── Schema migrations ───────────────────────────────────────────────────────
+
+migrations:
+  - migrations/0001_facilities.sql
+
+# ── Inbound sources ─────────────────────────────────────────────────────────
+
+sources:
+  - inbound/corrigo-event.yaml          # Corrigo CMMS webhook
+  - inbound/fexa-cmms-webhook.yaml      # Fexa CMMS webhook
+  - inbound/badge-system-poll.yaml      # Badge/access-control system polling
+  - inbound/room-booking-system.yaml    # Meeting-room booking feed
+  - inbound/manual-tenant-form.yaml     # Web form for tenants / employees
+
+# ── Watch rules ─────────────────────────────────────────────────────────────
+
+watches:
+  - watches/work-order-sla-at-risk.yaml
+  - watches/preventive-maintenance-due.yaml
+  - watches/space-utilization-low.yaml
+  - watches/vendor-cert-expiring.yaml
+
+# ── Agent definitions ────────────────────────────────────────────────────────
+
+agents:
+  - agents/work-order-triager.yaml
+  - agents/vendor-dispatcher.yaml
+  - agents/space-planner.yaml
+  - agents/incident-classifier.yaml
+
+# ── Output connectors ────────────────────────────────────────────────────────
+
+outputs:
+  - outputs/facilities-team-slack.yaml
+  - outputs/vendor-dispatch-email.yaml
+  - outputs/exec-monthly-fm-digest.yaml
+  - outputs/finance-vendor-invoice-routing.yaml
+
+# ── Configuration keys ────────────────────────────────────────────────────────
+
+config:
+  sla:
+    # Per-priority resolution targets (hours). Override per category in env.
+    p1_hours: 4
+    p2_hours: 24
+    p3_hours: 168        # 1 week
+    # Fraction of SLA elapsed before work-order-sla-at-risk fires.
+    at_risk_threshold: 0.75
+
+  vendor_match:
+    # Scoring weights used by work-order-triager best-vendor-match logic.
+    # Must sum to 1.0.
+    weight_category_coverage: 0.35
+    weight_avg_resolution_time: 0.25
+    weight_sla_compliance_rate: 0.20
+    weight_current_load: 0.10
+    weight_cert_validity: 0.10
+
+  space:
+    # Occupancy rate below which space-utilization-low fires.
+    low_utilization_threshold: 0.30
+    # Rolling window for badge swipe aggregation.
+    badge_window_days: 14
+    # Booking rate below which a room is flagged under-utilised.
+    room_booking_threshold: 0.25
+
+  im:
+    adapter: slack       # slack | feishu | dingtalk | wecom
+    facilities_channel: "#facilities-ops"
+    exec_channel:        "#exec-fm-digest"
+    vendor_channel:      "#vendor-dispatch"
+
+  finance:
+    # Routing codes used for auto-classification of vendor invoices.
+    cost_center_default: "FAC-GEN"
+    cost_center_hvac:    "FAC-HVAC"
+    cost_center_space:   "FAC-SPACE"
+
+# ── Feature flag ─────────────────────────────────────────────────────────────
+
+feature_flag: XIAOGUAI_FACILITIES_ENABLED
+
+# ── Deferred / backlog ───────────────────────────────────────────────────────
+#
+# - IoT sensor feed (temperature / CO₂) as additional HVAC triage signal.
+# - Lease management integration (lease-end date → space-reclaim watch).
+# - Automated vendor performance scorecard (quarterly report generation).
+# See docs/plans/facilities-management-backlog.md for prioritisation.

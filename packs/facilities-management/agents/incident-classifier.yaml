@@ -1,0 +1,140 @@
+# packs/facilities-management/agents/incident-classifier.yaml
+#
+# Incident Classifier (HVAC failure triage specialisation)
+#
+# Invoked when a work order arrives with category=hvac AND the description
+# or CMMS diagnostic data suggests a potential system failure rather than
+# routine maintenance.
+#
+# Distinguishes between:
+#   routine_maintenance  — filter change, scheduled PM, minor adjustment
+#                          → normal work order flow, P3 or P2
+#   partial_failure      — one zone / AHU down, building still habitable
+#                          → P2 dispatch with escalation note
+#   full_failure         — entire floor or building without HVAC, or
+#                          temperature safety threshold exceeded (< 60°F / > 85°F)
+#                          → P1 immediate dispatch + building management alert
+#   safety_concern       — CO/smoke/refrigerant leak, requires evacuation protocol
+#                          → P1 + notify security + property manager immediately
+#
+# The same pattern applies to electrical (partial vs full outage) and
+# plumbing (slow leak vs active flooding).  The classifier is invoked by
+# the work-order-triager when its initial priority assignment is P1 or when
+# the description contains failure keywords (see trigger_keywords below).
+
+name: incident-classifier
+description: >
+  Distinguishes routine maintenance from partial or full system failures.
+  Specialised for HVAC but also handles electrical outage classification
+  and plumbing flood vs slow-leak distinction.  Upgrades priority and
+  triggers building-management notifications for full failures.
+
+llm:
+  model: ${FACILITIES_CLASSIFIER_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 768
+
+# Keywords that cause the work-order-triager to invoke this agent before
+# finalising triage (evaluated against title + description, case-insensitive).
+trigger_keywords:
+  - "not working"
+  - "completely out"
+  - "no heat"
+  - "no cooling"
+  - "no power"
+  - "power out"
+  - "flooding"
+  - "water everywhere"
+  - "leak"
+  - "tripped breaker"
+  - "smell"
+  - "smoke"
+  - "carbon monoxide"
+  - "co alarm"
+  - "refrigerant"
+  - "evacuation"
+  - "85 degrees"
+  - "60 degrees"
+  - "freezing"
+
+context_steps:
+  - id: recent_hvac_orders
+    description: "Recent HVAC orders for same building (last 30 days)"
+    tool: xiaoguai_sql_query
+    query: |
+      SELECT
+        wo.id, wo.title, wo.status, wo.priority, wo.created_at,
+        wo.resolved_at, wo.met_sla, vf.name AS vendor_name
+      FROM   work_orders wo
+      LEFT JOIN vendors_facilities vf ON vf.id = wo.vendor_id
+      WHERE  wo.building  = '{{ event.building }}'
+        AND  wo.category  = 'hvac'
+        AND  wo.created_at >= now() - INTERVAL '30 days'
+      ORDER BY wo.created_at DESC
+      LIMIT 10;
+
+  - id: badge_anomalies_recent
+    description: "Recent badge anomalies in this building (last 4 hours)"
+    tool: xiaoguai_sql_query
+    query: |
+      SELECT event_type, door_id, occurred_at, badge_holder
+      FROM   badge_anomalies
+      WHERE  building     = '{{ event.building }}'
+        AND  occurred_at >= now() - INTERVAL '4 hours'
+      ORDER BY occurred_at DESC
+      LIMIT 20;
+
+system_prompt: |
+  You are a facilities incident classifier.  Analyse the work order and context
+  to determine the failure type and correct priority.  Return valid JSON matching
+  IncidentClassification.
+
+  Classification rules:
+  - safety_concern: any mention of CO, smoke, refrigerant leak, or evacuation
+    → ALWAYS P1, always set notify_property_manager = true, notify_security = true
+  - full_failure: no HVAC for entire floor/building, reported temperature outside
+    60–85°F range, or total electrical / flooding of common areas
+    → P1, notify_property_manager = true
+  - partial_failure: one zone, one AHU, one circuit, or isolated fixture affected
+    → P2 (or keep P1 if reporter explicitly says life-safety)
+  - routine_maintenance: everything else
+    → keep triager's original priority
+
+  IncidentClassification schema:
+  {
+    "failure_type": "routine_maintenance|partial_failure|full_failure|safety_concern",
+    "recommended_priority": "p1|p2|p3",
+    "override_triager_priority": false,
+    "notify_property_manager": false,
+    "notify_security": false,
+    "affected_scope": "description of what is affected",
+    "rationale": "one sentence"
+  }
+
+user_prompt: |
+  ## Work Order
+  Title: {{ event.title }}
+  Category: {{ event.category }}
+  Building: {{ event.building }}{% if event.floor %} / Floor {{ event.floor }}{% endif %}
+  Description:
+  {{ event.description | truncate(600) }}
+  Triager's initial priority: {{ triager_priority }}
+
+  ## Recent HVAC Orders (same building, last 30 days)
+  {{ context.recent_hvac_orders | tojson(indent=2) | truncate(1500) }}
+
+  ## Badge Anomalies (last 4 hours)
+  {{ context.badge_anomalies_recent | tojson(indent=2) | truncate(500) }}
+
+  Classify this incident and return IncidentClassification JSON now.
+
+post_processing:
+  on_full_failure_or_safety:
+    - upgrade_work_order_priority: true
+    - send_output: outputs/facilities-team-slack.yaml
+    - notify_channels:
+        - "#facilities-ops"
+        - "#building-management"
+
+outputs:
+  - outputs/facilities-team-slack.yaml

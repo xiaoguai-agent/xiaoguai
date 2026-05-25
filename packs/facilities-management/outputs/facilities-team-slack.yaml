@@ -1,0 +1,42 @@
+# packs/facilities-management/outputs/facilities-team-slack.yaml
+#
+# Facilities team Slack / IM output connector.
+#
+# Routes notifications to the facilities-ops channel (or DMs for escalations).
+# Falls back to the configured IM adapter (feishu / dingtalk / wecom) if Slack
+# is not configured.
+
+name: facilities-team-slack
+kind: im
+
+# IM adapter selection — mirrors hr-onboarding pattern.
+adapter: "${FACILITIES_IM_ADAPTER:-slack}"
+
+# Channel routing by notification type.
+channels:
+  default:       "${FACILITIES_SLACK_CHANNEL:-#facilities-ops}"
+  sla_at_risk:   "${FACILITIES_SLACK_CHANNEL:-#facilities-ops}"
+  pm_due:        "${FACILITIES_SLACK_CHANNEL:-#facilities-ops}"
+  space_low:     "${FACILITIES_SLACK_CHANNEL:-#facilities-ops}"
+  cert_expiring: "${FACILITIES_SLACK_CHANNEL:-#facilities-ops}"
+  escalation:    "${FACILITIES_SLACK_ESCALATION_CHANNEL:-#facilities-ops}"
+  full_failure:  "${FACILITIES_SLACK_INCIDENT_CHANNEL:-#facilities-incidents}"
+  safety_concern: "${FACILITIES_SLACK_INCIDENT_CHANNEL:-#facilities-incidents}"
+
+# Message formatting.
+format: markdown
+
+# Retry on transient IM API errors.
+retry:
+  max_attempts: 3
+  backoff_seconds: 5
+
+# Feishu / DingTalk / WeCom adapter config (used when adapter != slack).
+feishu:
+  app_id_env:     FEISHU_APP_ID
+  app_secret_env: FEISHU_APP_SECRET
+dingtalk:
+  webhook_env:    DINGTALK_WEBHOOK_URL
+  secret_env:     DINGTALK_WEBHOOK_SECRET
+wecom:
+  webhook_env:    WECOM_WEBHOOK_URL

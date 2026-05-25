@@ -1,0 +1,82 @@
+# packs/facilities-management/watches/vendor-cert-expiring.yaml
+#
+# Fires when an active vendor's compliance documents are expiring soon.
+# Tracked documents:
+#   - Workers' Compensation insurance (workers_comp_expiry)
+#   - Certificate of Insurance / General Liability (coi_expiry)
+#   - Trade licence (license_expiry)
+#
+# Alert thresholds:
+#   30 days — initial warning (gives time to collect renewed cert)
+#   14 days — escalation (dispatch should be suspended after expiry)
+#    7 days — final warning + auto-suspension flag set
+#
+# When a document is expired (past date), the vendor is blocked from
+# receiving new dispatches by the vendor-dispatcher agent until the
+# cert is renewed in the vendors_facilities table.
+
+name: vendor-cert-expiring
+kind: sql_watch
+
+schedule:
+  expression: "0 7 * * 1,3,5"  # Mon/Wed/Fri mornings — cert mgmt cadence
+  timezone: "${TZ:-America/New_York}"
+
+query: |
+  SELECT
+    vf.id              AS vendor_id,
+    vf.name            AS vendor_name,
+    vf.contact_name,
+    vf.contact_email,
+    vf.dispatch_email,
+    -- Workers comp
+    vf.workers_comp_expiry,
+    vf.workers_comp_expiry - CURRENT_DATE AS workers_comp_days_left,
+    -- COI / General Liability
+    vf.coi_expiry,
+    vf.coi_expiry - CURRENT_DATE          AS coi_days_left,
+    -- Trade licence
+    vf.license_expiry,
+    vf.license_expiry - CURRENT_DATE      AS license_days_left,
+    -- Minimum days across all docs (drives alert severity)
+    LEAST(
+      vf.workers_comp_expiry - CURRENT_DATE,
+      vf.coi_expiry          - CURRENT_DATE,
+      vf.license_expiry      - CURRENT_DATE
+    ) AS min_days_left,
+    -- Active open orders — if certs expire, these are at risk
+    vf.open_order_count,
+    array_agg(cat::TEXT) AS categories
+  FROM vendors_facilities vf,
+       UNNEST(vf.categories) AS cat
+  WHERE vf.active = true
+    AND LEAST(
+          vf.workers_comp_expiry - CURRENT_DATE,
+          vf.coi_expiry          - CURRENT_DATE,
+          vf.license_expiry      - CURRENT_DATE
+        ) <= 30
+  GROUP BY
+    vf.id, vf.name, vf.contact_name, vf.contact_email, vf.dispatch_email,
+    vf.workers_comp_expiry, vf.coi_expiry, vf.license_expiry,
+    vf.open_order_count
+  ORDER BY min_days_left ASC;
+
+dedup:
+  key_field: vendor_id
+  cooldown_minutes: 2880    # alert at most every 2 days per vendor
+
+outputs:
+  - outputs/facilities-team-slack.yaml
+
+message_template: |
+  {% if min_days_left <= 0 %}🚨{% elif min_days_left <= 7 %}🔴{% elif min_days_left <= 14 %}🟠{% else %}🟡{% endif %} *Vendor Cert {% if min_days_left <= 0 %}EXPIRED{% else %}Expiring in {{ min_days_left }} day(s){% endif %}* — {{ vendor_name }}
+  Contact: {{ contact_name }} ({{ contact_email }})
+  Categories: {{ categories | join(', ') | upper }}
+  Open work orders: {{ open_order_count }}
+
+  Document status:
+  - Workers Comp: {% if workers_comp_expiry %}{{ workers_comp_expiry }} ({{ workers_comp_days_left }} days){% else %}*Not on file*{% endif %}
+  - COI / Liability: {% if coi_expiry %}{{ coi_expiry }} ({{ coi_days_left }} days){% else %}*Not on file*{% endif %}
+  - Trade Licence: {% if license_expiry %}{{ license_expiry }} ({{ license_days_left }} days){% else %}*Not on file*{% endif %}
+
+  {% if min_days_left <= 0 %}⛔ This vendor is **blocked** from new dispatches until certs are renewed.{% elif min_days_left <= 7 %}Action required: request renewed certificates immediately.{% else %}Please follow up with the vendor to obtain renewed documents.{% endif %}
