@@ -1,0 +1,62 @@
+{#
+  Template: dedup-merge-proposal.md.j2
+  Rendered by: canonical-answer-clusterer agent → weekly-curation-digest output
+  Output:      Section within the weekly digest (Markdown)
+  Variables:
+    cluster      — dedup_clusters row (member_article_ids, canonical_article_id,
+                   mean_similarity, merge_rationale, merge_proposal)
+    members      — [{article_id, title, slug, view_count, last_edited_at}]
+    pack_version — string
+#}
+## Merge Proposal — Cluster #{{ cluster.id }}
+
+> **Mean similarity**: {{ cluster.mean_similarity | round(3) }}
+> **Members**: {{ members | length }} articles
+> **Detected**: {{ cluster.detected_at | iso8601 }}
+
+### Rationale
+
+{{ cluster.merge_rationale }}
+
+---
+
+### Proposed Action
+
+**Keep (canonical):**
+- [{{ cluster.merge_proposal.keep.article_id }}] {{ members | selectattr('article_id', 'equalto', cluster.merge_proposal.keep.article_id) | map(attribute='title') | first }}
+  - *Reason*: {{ cluster.merge_proposal.keep.reason }}
+
+{% if cluster.merge_proposal.redirect %}
+**Redirect to canonical:**
+{% for r in cluster.merge_proposal.redirect %}
+- `{{ r.article_id }}` → `{{ r.redirect_to }}`
+  - *{{ r.reason }}*
+{% endfor %}
+{% endif %}
+
+{% if cluster.merge_proposal.archive %}
+**Archive (low traffic, no unique content):**
+{% for a in cluster.merge_proposal.archive %}
+- `{{ a.article_id }}`
+  - *{{ a.reason }}*
+{% endfor %}
+{% endif %}
+
+---
+
+### Member Articles
+
+| Article ID | Title | Views | Last Edited |
+|------------|-------|------:|-------------|
+{% for m in members %}
+| `{{ m.article_id }}` | {{ m.title | truncate(60) }} | {{ m.view_count }} | {{ m.last_edited_at | default("—") }} |
+{% endfor %}
+
+### Editor Checklist
+
+- [ ] Review all member articles side by side.
+- [ ] Confirm the canonical article is the most complete and up to date.
+- [ ] Merge unique content from non-canonical articles into the canonical.
+- [ ] Set up redirects for non-canonical article URLs.
+- [ ] Archive or unpublish non-canonical articles after redirects are live.
+- [ ] Update `dedup_clusters.status` to `merged` when complete.

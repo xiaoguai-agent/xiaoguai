@@ -1,0 +1,59 @@
+---
+# Output: jira-docs-ticket
+#
+# Creates a Jira ticket for each stale article flagged by outdated-detector.
+# Ticket body is rendered from templates/staleness-report.md.j2.
+#
+# One Jira ticket per article; idempotent — checks for an existing open ticket
+# on the same article_id (via label search) before creating a duplicate.
+
+output: jira-docs-ticket
+
+jira:
+  base_url:  ${KB_CURATOR_JIRA_BASE_URL}
+  token:     ${KB_CURATOR_JIRA_TOKEN}
+  project:   ${KB_CURATOR_JIRA_PROJECT:-DOCS}
+
+  # Issue type for KB curation tasks.
+  issue_type: Task
+
+  # Title template — must be ≤ 255 chars (Jira limit).
+  summary_template: >
+    [KB Stale] {{ assessment.summary | truncate(200) }}
+
+  # Body rendered from the staleness-report template.
+  description_template_ref: templates/staleness-report.md.j2
+
+  # Labels applied to every ticket for easy filtering.
+  labels:
+    - kb-curation
+    - stale-article
+    - automated
+
+  # Additional label encoding the source platform for dashboard filters.
+  extra_labels:
+    - "platform:{{ article.source_platform }}"
+
+  # Priority: map article view_count to Jira priority.
+  priority:
+    rules:
+      - if: "{{ article.view_count >= 1000 }}"
+        priority: High
+      - if: "{{ article.view_count >= 100 }}"
+        priority: Medium
+      - default: Low
+
+  # Idempotency: search for existing open tickets with this article_id label
+  # before creating a new one.
+  idempotency:
+    check_label: "article:{{ article.article_id }}"
+    skip_if_open: true
+
+  # Custom field to store the article_id for traceability.
+  custom_fields:
+    # Jira custom field ID configured via KB_CURATOR_JIRA_ARTICLE_ID_FIELD.
+    ${KB_CURATOR_JIRA_ARTICLE_ID_FIELD:-customfield_10100}: "{{ article.article_id }}"
+
+# Deferred:
+#   - Auto-transition ticket to Done when last_verified_at is updated
+#   - Assign ticket to article owner based on Confluence page author

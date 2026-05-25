@@ -1,0 +1,57 @@
+{#
+  Template: staleness-report.md.j2
+  Rendered by: outdated-detector agent → jira-docs-ticket output
+  Output:      Jira ticket description body (Markdown)
+  Variables:
+    article     — kb_articles_meta row
+    assessment  — {verdict, confidence, stale_sections, summary}
+    pack_version — string
+#}
+# Staleness Report: {{ article.title }}
+
+> **Verdict**: {{ assessment.verdict | upper }}
+> **Confidence**: {{ assessment.confidence | capitalize }}
+> **Article ID**: `{{ article.article_id }}`
+> **Platform**: {{ article.source_platform | title }}
+> **Last edited**: {{ article.last_edited_at | default("unknown") }}
+> **Last verified**: {{ article.last_verified_at | default("never") }}
+> **View count**: {{ article.view_count }}
+
+---
+
+## Summary
+
+{{ assessment.summary }}
+
+---
+
+{% if assessment.stale_sections %}
+## Stale Sections ({{ assessment.stale_sections | length }})
+
+{% for section in assessment.stale_sections %}
+### {{ loop.index }}. {{ section.section_heading }}
+
+**Outdated instruction:**
+> {{ section.stale_instruction }}
+
+**What changed** ({{ section.release_reference }}):
+{{ section.reason }}
+
+---
+{% endfor %}
+{% else %}
+## No Stale Sections Detected
+
+The article content is consistent with recent release notes.
+{% endif %}
+
+## Action Items
+
+- [ ] Open the article in {{ article.source_platform | title }} and review flagged sections.
+- [ ] Update or remove instructions that no longer match the current product.
+- [ ] Update `last_verified_at` in kb_articles_meta after the review is complete.
+- [ ] If no changes were needed, mark this ticket as "Verified — No Changes".
+
+---
+
+*Generated automatically by xiaoguai knowledge-base-curator pack v{{ pack_version }}.*

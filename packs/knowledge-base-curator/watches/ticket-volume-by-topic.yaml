@@ -1,0 +1,60 @@
+---
+# Watch: ticket-volume-by-topic
+#
+# Polls outcome-telemetry for support ticket topic clusters whose volume
+# has crossed the FAQ-creation threshold within the rolling observation window.
+# When triggered, fires the faq-generation execution plan.
+#
+# Cadence: every 24 hours (daily).
+# Threshold: KB_CURATOR_FAQ_TICKET_THRESHOLD tickets in the observation window
+#            (default 10 tickets in 7 days).
+
+name: ticket-volume-by-topic
+kind: sql-poll
+
+interval: ${KB_CURATOR_TOPIC_POLL_INTERVAL:-24h}
+
+# Query aggregates ticket_topic_clusters (populated by the inbound connectors
+# via outcome-telemetry).  Returns clusters exceeding the FAQ threshold that
+# do not already have a pending or approved faq_candidate for that topic.
+query: |
+  WITH topic_counts AS (
+      SELECT
+          ttc.topic_label,
+          COUNT(*)                                        AS ticket_count,
+          ARRAY_AGG(ttc.ticket_id ORDER BY ttc.created_at DESC)
+              FILTER (WHERE ttc.ticket_id IS NOT NULL)    AS ticket_ids,
+          MAX(ttc.created_at)                             AS latest_ticket_at
+      FROM ticket_topic_clusters ttc
+      WHERE
+          ttc.created_at >= NOW() - INTERVAL '${KB_CURATOR_FAQ_WINDOW_DAYS:-7} days'
+      GROUP BY ttc.topic_label
+      HAVING COUNT(*) >= ${KB_CURATOR_FAQ_TICKET_THRESHOLD:-10}
+  )
+  SELECT
+      tc.topic_label,
+      tc.ticket_count,
+      tc.ticket_ids,
+      tc.latest_ticket_at
+  FROM topic_counts tc
+  WHERE NOT EXISTS (
+      -- Skip topics that already have an open or approved FAQ candidate.
+      SELECT 1
+      FROM faq_candidates fc
+      WHERE
+          fc.topic_label = tc.topic_label
+          AND fc.status IN ('pending', 'approved', 'published')
+  )
+  ORDER BY tc.ticket_count DESC
+  LIMIT ${KB_CURATOR_FAQ_BATCH_TOPICS:-10};
+
+result_binding: high_volume_topics
+
+trigger:
+  plan: faq-generation
+  when: "{{ high_volume_topics | length > 0 }}"
+
+# Deferred:
+#   - Language / locale breakdown per topic cluster
+#   - Seasonal spike detection (compare vs same window last month)
+#   - Auto-reject clusters whose top tickets are marked "known issue" already

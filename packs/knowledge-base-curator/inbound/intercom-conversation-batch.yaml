@@ -1,0 +1,59 @@
+---
+# Inbound: intercom-conversation-batch
+#
+# Receives a nightly batch export of closed Intercom conversations.
+# Each conversation is classified by topic (via embed + cluster lookup) and
+# written to ticket_topic_clusters for the ticket-volume-by-topic watch.
+#
+# Mounting: POST /v1/kb-curator/inbound/intercom/{route_id}
+# Auth:     Bearer token + X-Hub-Signature-256 (HMAC-SHA256) header.
+# Delivery: Intercom Webhook App configured to POST on conversation.closed.
+
+source: intercom
+route_prefix: /v1/kb-curator/inbound/intercom
+
+normalize:
+  hmac_secret: ${KB_CURATOR_INTERCOM_WEBHOOK_SECRET}
+
+  # Map Intercom conversation payload → ticket_topic_clusters insert.
+  field_map:
+    ticket_id:    data.item.id
+    subject:      data.item.conversation_message.subject
+    # Full conversation body assembled from first user message + replies.
+    description:
+      source: data.item.conversation_parts.conversation_parts
+      transform: concat_body_parts
+    created_at:   data.item.created_at
+    closed_at:    data.item.updated_at
+
+  # Topic classification: embed the subject+description and find nearest
+  # existing topic cluster centroid.  If no cluster within 0.80 similarity,
+  # create a new topic_label from the LLM-summarised subject.
+  topic_classification:
+    strategy: embed_and_cluster
+    similarity_threshold: 0.80
+    fallback: llm_summarise_subject
+
+accepted_events:
+  - conversation.closed
+
+sample_payload: |
+  {
+    "type": "notification_event",
+    "data": {
+      "item": {
+        "type": "conversation",
+        "id": "ic-9999",
+        "created_at": 1748073600,
+        "updated_at": 1748077200,
+        "conversation_message": {
+          "subject": "Cannot export data to CSV"
+        },
+        "conversation_parts": {
+          "conversation_parts": [
+            {"body": "I keep getting a 403 when I try to export."}
+          ]
+        }
+      }
+    }
+  }

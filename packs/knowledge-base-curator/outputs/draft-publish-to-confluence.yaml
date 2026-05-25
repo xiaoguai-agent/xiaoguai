@@ -1,0 +1,46 @@
+---
+# Output: draft-publish-to-confluence
+#
+# Publishes FAQ candidate drafts to a designated Confluence space as
+# draft pages (not yet published / visible to end users).
+# A human editor must promote the draft to published via the Confluence UI.
+#
+# Page body is rendered from templates/faq-draft.md.j2 → Confluence wiki markup.
+
+output: draft-publish-to-confluence
+
+confluence:
+  base_url: ${KB_CURATOR_CONFLUENCE_BASE_URL}
+  token:    ${KB_CURATOR_CONFLUENCE_TOKEN}
+
+  # Target Confluence space for FAQ drafts.
+  space_key: ${KB_CURATOR_CONFLUENCE_DRAFT_SPACE:-KBDRAFT}
+
+  # Parent page under which FAQ candidates are nested.
+  parent_page_title: ${KB_CURATOR_CONFLUENCE_PARENT_PAGE:-KB Curation — FAQ Candidates}
+
+  # Page title template.
+  page_title_template: "[FAQ Draft] {{ faq.question | truncate(120) }}"
+
+  # Body is Markdown → converted to Confluence storage format (XHTML).
+  body_format: markdown
+  body_template_ref: templates/faq-draft.md.j2
+
+  # Create as draft (status=draft); page is not visible to end users.
+  status: draft
+
+  # Labels applied to the Confluence page for filtering in the space.
+  labels:
+    - kb-curator
+    - faq-draft
+    - "topic:{{ topic.topic_label | lower | replace(' ', '-') | truncate(50) }}"
+
+  # Idempotency: update existing draft page if one already exists for this
+  # faq_candidate.id (checked via page label search).
+  idempotency:
+    check_label: "faq-candidate:{{ faq_candidate_id }}"
+    update_if_exists: true
+
+# Deferred:
+#   - Auto-move approved drafts to the public KB space
+#   - Trigger Confluence notification to page watchers on draft create

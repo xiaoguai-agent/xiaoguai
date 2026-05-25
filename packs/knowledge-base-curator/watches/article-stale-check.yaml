@@ -1,0 +1,58 @@
+---
+# Watch: article-stale-check
+#
+# Polls kb_articles_meta for articles whose refresh_due_at has passed.
+# When the result set is non-empty, triggers the staleness-review execution
+# plan (outdated-detector agent → jira-docs-ticket + slack-docs-team outputs).
+#
+# Cadence: every 6 hours.  Adjustable via KB_CURATOR_STALE_POLL_INTERVAL.
+
+name: article-stale-check
+kind: sql-poll
+
+# How often to run the poll query.
+interval: ${KB_CURATOR_STALE_POLL_INTERVAL:-6h}
+
+# SQL executed against the outcome-telemetry database.
+# Returns rows for articles overdue for a staleness check, ordered so that
+# high-traffic articles are reviewed first.
+query: |
+  SELECT
+      m.article_id,
+      m.article_slug,
+      m.title,
+      m.source_platform,
+      m.last_edited_at,
+      m.last_verified_at,
+      m.refresh_due_at,
+      m.view_count,
+      m.labels
+  FROM kb_articles_meta m
+  WHERE
+      m.archived     = FALSE
+      AND m.refresh_due_at <= NOW()
+  ORDER BY
+      -- High-traffic articles first so the most-seen content stays fresh.
+      m.view_count DESC,
+      m.refresh_due_at ASC
+  LIMIT ${KB_CURATOR_STALE_BATCH_SIZE:-50};
+
+# Bind the query result to the trigger payload field consumed by the plan.
+result_binding: stale_articles
+
+# Trigger the staleness-review plan when at least one article is overdue.
+trigger:
+  plan: staleness-review
+  when: "{{ stale_articles | length > 0 }}"
+
+# After a successful trigger, mark all returned articles as dispatched so the
+# next poll doesn't re-fire them before the agent has had a chance to update
+# last_verified_at.
+post_trigger_sql: |
+  UPDATE kb_articles_meta
+  SET    refresh_due_at = NOW() + INTERVAL '${KB_CURATOR_STALE_THRESHOLD_DAYS:-30} days'
+  WHERE  article_id = ANY({{ stale_articles | map(attribute='article_id') | list | tojson }}::TEXT[]);
+
+# Deferred:
+#   - Per-article staleness threshold configured by product_area label
+#   - Escalation path for articles stale > 90 days with view_count > 1000
