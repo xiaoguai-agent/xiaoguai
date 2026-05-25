@@ -36,7 +36,10 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.91"
+# Matches the pinned toolchain in rust-toolchain.toml. The codebase compiles
+# and passes its tests on 1.88, so 1.88 is the true MSRV; the previous "1.91"
+# was inconsistent with the pin and broke CI (cargo errored before clippy).
+rust-version = "1.88"
 license = "BUSL-1.1"
 authors = ["Xiaoguai Maintainers"]
 repository = "https://github.com/xiaoguai-agent/xiaoguai"
