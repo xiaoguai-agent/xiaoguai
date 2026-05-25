@@ -1,0 +1,45 @@
+---
+# CSV Upload Inbound Source
+#
+# Accepts a CSV file upload for ad-hoc transcript or survey data.
+# Useful for UserTesting exports, Lookback notes, or spreadsheet-compiled
+# interview notes that do not have a dedicated webhook connector.
+#
+# Mounting: POST /v1/product-research/inbound/csv/{route_id}
+#   Content-Type: multipart/form-data
+#   Field:  file (CSV, ≤ 10 MB)
+#           run_id (string)
+#           mode ("transcript" | "survey")   — selects normalisation path
+# Auth:     Bearer token from scheduler_webhook_tokens table
+
+source: csv-upload
+route_prefix: /v1/product-research/inbound/csv
+
+# Required CSV columns for mode=transcript:
+transcript_columns:
+  required:
+    - participant_id   # unique per participant
+    - text             # verbatim quote or segment text
+  optional:
+    - speaker_name
+    - recorded_at      # ISO-8601 or YYYY-MM-DD
+    - source_ref       # arbitrary reference (interview code, line number, etc.)
+
+# Required CSV columns for mode=survey:
+survey_columns:
+  required:
+    - respondent_id
+    - pain_area        # maps to JTBD pain area label
+    - pct_affected     # 0.0–1.0 fraction of respondents OR raw count
+  optional:
+    - importance       # 1-5 rating
+    - satisfaction     # 1-5 rating
+
+# Limits
+limits:
+  max_file_size_mb: 10
+  max_rows: 5000
+
+# Deferred:
+#   - Excel (.xlsx) upload support
+#   - Lookback session export JSON format

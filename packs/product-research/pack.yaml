@@ -1,0 +1,110 @@
+---
+# Product Research Skill Pack — v0.1.0
+#
+# Ingests customer interview transcripts and survey exports, extracts
+# verbatim-grounded themes, clusters them into Christensen-style JTBD
+# statements, sizes each opportunity by evidence volume + survey signal,
+# and synthesises persona cards.  Outputs a Notion research page,
+# Slack digest, and a Miro board stub.
+#
+# JTBD format: Christensen "When I … I want to … so I can …"
+# (Strategyzer ODI maps are deferred — see deferred section below.)
+
+name: product-research
+version: "0.1.0"
+description: >
+  Ingests customer interview transcripts (Gong, Dovetail) and survey
+  exports (Typeform, CSV), extracts verbatim-grounded themes, clusters
+  them into Christensen-style JTBD statements, sizes each opportunity
+  by evidence volume and survey respondent count, and synthesises
+  persona cards.  Publishes findings to Notion, Slack, and Miro.
+
+depends:
+  xiaoguai-api: ">=0.12.1"
+  llm: required
+  # At least one output destination is required.
+  storage:
+    any:
+      - notion
+      - slack
+
+# ── Inbound sources ───────────────────────────────────────────
+inbound:
+  - ref: inbound/gong-transcript.yaml
+  - ref: inbound/dovetail-export.yaml
+  - ref: inbound/typeform-survey.yaml
+  - ref: inbound/csv-upload.yaml
+
+# ── Agent definitions ─────────────────────────────────────────
+agents:
+  - ref: agents/transcript-themer.yaml
+  - ref: agents/jtbd-clusterer.yaml
+  - ref: agents/opportunity-sizer.yaml
+  - ref: agents/persona-synthesizer.yaml
+
+# ── Output adapters ───────────────────────────────────────────
+outputs:
+  - ref: outputs/notion-research-page.yaml
+  - ref: outputs/slack-product-team.yaml
+  - ref: outputs/miro-board-stub.yaml
+
+# ── Execution plan ────────────────────────────────────────────
+# transcript-themer runs first; downstream agents consume its output.
+# opportunity-sizer and persona-synthesizer can parallelise after
+# jtbd-clusterer completes.
+plan:
+  - id: theme
+    agent: transcript-themer
+    description: "Extract verbatim-grounded themes from all inbound sources."
+
+  - id: cluster
+    agent: jtbd-clusterer
+    description: "Cluster themes into Christensen JTBD statements."
+    deps: [theme]
+
+  - id: size
+    agent: opportunity-sizer
+    description: "Score each JTBD by evidence volume, survey count, and strategic fit."
+    deps: [cluster]
+
+  - id: persona
+    agent: persona-synthesizer
+    description: "Synthesise persona cards from theme + JTBD evidence."
+    deps: [cluster]
+
+  - id: publish-notion
+    output: notion-research-page
+    description: "Render and push the full research page to Notion."
+    deps: [size, persona]
+
+  - id: publish-slack
+    output: slack-product-team
+    description: "Post a digest of top opportunities to the product team channel."
+    deps: [size]
+
+  - id: publish-miro
+    output: miro-board-stub
+    description: "Create a Miro board stub with JTBD cards and opportunity scores."
+    deps: [size, persona]
+
+# ── Resource requirements ─────────────────────────────────────
+requires:
+  env:
+    - NOTION_API_TOKEN          # Notion integration token (pages:write)
+    - NOTION_RESEARCH_DB_ID     # Target Notion database page ID
+    - SLACK_PRODUCT_WEBHOOK_URL # Incoming webhook for #product-research channel
+    - MIRO_ACCESS_TOKEN         # Miro OAuth2 access token (boards:write)
+  llm: true
+
+# Feature flag — gates /v1/product-research route family.
+# Set XIAOGUAI_PRODUCT_RESEARCH_ENABLED=true in your .env to activate.
+feature_flag: XIAOGUAI_PRODUCT_RESEARCH_ENABLED
+
+# ── Deferred ─────────────────────────────────────────────────
+# - Strategyzer ODI (Outcome-Driven Innovation) opportunity scoring
+#   matrix (importance × satisfaction gap) — needs survey instrument
+#   with paired importance/satisfaction scales.
+# - User Story Mapping output connector (FigJam / Miro native cards).
+# - Auto-tagging transcripts back in Dovetail via Dovetail Write API.
+# - Looker Studio / Metabase opportunity dashboard connector.
+# See docs/plans/product-research-backlog.md for prioritisation.

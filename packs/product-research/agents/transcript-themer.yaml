@@ -1,0 +1,82 @@
+---
+# Transcript Themer Agent
+#
+# Input:  one or more NormalizedTranscript records (from any inbound source).
+# Output: a ThemeSet — a list of Theme objects, each with verbatim quotes,
+#         source references, participant count, and a short label.
+
+name: transcript-themer
+description: >
+  Reads normalised interview transcripts and survey free-text responses,
+  groups verbatim quotes into named themes, and emits a ThemeSet.
+  Each theme includes 3-5 representative verbatim quotes, participant
+  count, source file references, and a one-sentence label.
+
+llm:
+  model: ${THEMER_LLM_MODEL:-default}
+  temperature: 0.3
+  max_tokens: 8192
+
+# Context injected before the LLM prompt.
+context_steps:
+  - id: transcripts
+    description: "All normalised transcripts for this research run."
+    tool: xiaoguai_research_transcripts
+    params:
+      run_id: "{{ run.id }}"
+      limit: 200          # max segments; longer transcripts are chunked
+
+system_prompt: |
+  You are a qualitative UX researcher specialised in thematic analysis.
+  You will be given a set of customer interview segments and survey
+  free-text responses.  Your task is to extract recurring themes using
+  an inductive, bottom-up approach.
+
+  Rules:
+  - Ground every theme in verbatim quotes — do not paraphrase.
+  - A theme must appear in at least 2 distinct participants/respondents.
+  - Theme labels must be ≤ 8 words, present-tense, and outcome-oriented
+    (e.g. "Slow export blocks end-of-day reporting").
+  - Discard themes supported by only one data point as "singleton" and
+    still list them in a `singletons` array for review.
+  - Do NOT infer intent — only report what participants said.
+  - Respond ONLY with valid JSON matching the ThemeSet schema below.
+
+  ThemeSet schema:
+  {
+    "themes": [
+      {
+        "id": "theme-001",
+        "label": "Short outcome-oriented label",
+        "verbatims": [
+          {"quote": "exact words", "source_ref": "gong:call-id:mm:ss", "participant_id": "p01"}
+        ],
+        "participant_count": 5,
+        "source_files": ["gong-2024-05-10.json"],
+        "frequency": 12
+      }
+    ],
+    "singletons": [
+      {"quote": "exact words", "source_ref": "...", "participant_id": "p07"}
+    ],
+    "total_segments_reviewed": 87,
+    "total_participants": 14
+  }
+
+user_prompt: |
+  ## Research run
+  - Run ID: {{ run.id }}
+  - Sources: {{ run.sources | join(", ") }}
+  - Total segments: {{ context.transcripts | length }}
+
+  ## Transcript segments
+  {{ context.transcripts | to_json | truncate(24000) }}
+
+  Extract all recurring themes now.
+
+outputs:
+  - agents/jtbd-clusterer.yaml
+
+# Deferred:
+#   - Sentiment polarity per theme (positive / neutral / negative framing)
+#   - Automatic deduplication across multiple runs of the same project
