@@ -1,0 +1,59 @@
+{# templates/screening-summary.md.j2
+   Rendered by outputs/slack-hiring-channel.yaml and recruiter-digest.yaml.
+   Jinja2 template — all variables come from bias-checker + jd-matcher outputs.
+   Candidate name is NEVER rendered; only the opaque candidate_id token.
+#}
+## Candidate {{ candidate_id }} — {{ job_title }} ({{ job_id }})
+
+**Overall Match Score**: {{ "%.0f"|format(overall_score * 100) }}%
+**Recommendation**: {{ recommendation }}
+**Screened**: {{ screened_at | datetimeformat("%Y-%m-%d %H:%M UTC") }}
+**Bias Audit**: {{ bias_verdict }} {% if bias_warnings %}({{ bias_warnings | length }} proxy signal(s) redacted){% endif %}
+
+---
+
+### Skill Coverage
+
+| Skill | Status | Evidence |
+|-------|--------|----------|
+{% for s in required_skills -%}
+| {{ s.skill }} *(required)* | {{ s.status }} | {{ s.evidence | truncate(80) }} |
+{% endfor -%}
+{% for s in preferred_skills -%}
+| {{ s.skill }} *(preferred)* | {{ s.status }} | {{ s.evidence | truncate(80) }} |
+{% endfor %}
+
+### Strengths
+{% for st in strengths -%}
+- {{ st }}
+{% endfor %}
+
+### Skill Gaps
+{% for g in gaps -%}
+- {{ g }}
+{% endfor %}
+
+### Recommendation Rationale
+
+{{ recommendation_rationale }}
+
+---
+
+### Fairness Rationale
+
+**Criteria used to score**: {{ fairness_rationale.criteria_used | join(", ") }}
+
+**Protected fields confirmed absent**: {{ fairness_rationale.protected_fields_absent | join(", ") }}
+
+**Proxy signals audited**:
+{% for p in fairness_rationale.proxy_signals_checked -%}
+- {{ p.category }}: {{ p.outcome }}
+{% endfor %}
+
+**Auditor confidence**: {{ fairness_rationale.auditor_confidence }} — {{ fairness_rationale.confidence_explanation }}
+
+---
+
+*This screening summary was produced by the xiaoguai recruiting-screen pack.
+The bias-checker agent confirmed no protected-class information influenced this score.
+All hiring decisions remain with the human recruiter and hiring manager.*

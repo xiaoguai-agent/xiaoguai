@@ -1,0 +1,60 @@
+# outputs/slack-hiring-channel.yaml
+#
+# Output adapter — post screening summary to the Slack hiring channel
+#
+# Consumes bias-checker (PASS/WARN) output and interview-question-generator
+# output.  Renders screening-summary.md.j2 as a Slack Block Kit message.
+#
+# Suppression logic:
+#   If bias_checker.verdict == "BLOCK": this step is never reached
+#   (bias_check step is a dependency; orchestrator skips all dependents on block).
+#
+# Message structure:
+#   Section 1 — Match score + recommendation badge
+#   Section 2 — Skill coverage table (top 5 required skills)
+#   Section 3 — Strengths + gaps (bullet lists)
+#   Section 4 — Fairness rationale (collapsed accordion block)
+#   Actions   — "View panel prep" button (links to recruiter-digest PDF)
+
+name: slack-hiring-channel
+kind: mcp-tool
+
+mcp_server: slack
+tool: post_message
+
+channel_env: SLACK_HIRING_CHANNEL     # e.g. #hiring-engineering
+
+summary_template: templates/screening-summary.md.j2
+
+# Slack Block Kit layout hints for the MCP tool wrapper.
+block_kit:
+  header:
+    text: "New Candidate Screened — {{ job_title }}"
+    emoji: true
+  score_badge:
+    # Color: green >= 70%, yellow 50–69%, red < 50%
+    color_thresholds:
+      green: 0.70
+      yellow: 0.50
+      red: 0.0
+  collapsible_sections:
+    - section: fairness_rationale
+      label: "Bias Audit Details"
+      collapsed_by_default: true
+
+audit:
+  table: recruiting_screen_runs
+  fields:
+    - candidate_id
+    - job_id
+    - overall_score
+    - recommendation
+    - bias_verdict
+    - bias_warnings_count
+    - slack_message_ts
+    - posted_at
+
+requires:
+  env:
+    - SLACK_BOT_TOKEN
+    - SLACK_HIRING_CHANNEL
