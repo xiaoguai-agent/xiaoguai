@@ -1,0 +1,66 @@
+# Output: Slack P0 priority alert
+#
+# Posts a summary card to the configured Slack channel when an email
+# is scored P0. Only fires when plan condition score.priority == 'P0'.
+#
+# The message contains:
+#   - Sender email and display name
+#   - Subject line
+#   - Priority rationale (rule_matched from priority-scorer)
+#   - Thread summary (if available)
+#   - Deep link back to the email (provider-specific)
+#
+# PII: Slack message must NOT include email body text.
+# The summary card uses only: subject, sender_email, sender_class,
+# priority, rule_matched, thread_topic (from thread-summarizer if run).
+# This is enforced by the template (templates/priority-rules-default.j2
+# does not expose a body field).
+
+name: slack-priority-channel
+kind: slack-webhook
+
+# Slack incoming webhook URL from env. Per-user token.
+webhook_url_env: EMAIL_TRIAGE_SLACK_WEBHOOK_URL
+
+# Only fires for P0 (enforced by plan condition; this is a safety guard).
+guard:
+  field: score.priority
+  operator: eq
+  value: "P0"
+
+# Message template.
+message_template: |
+  :rotating_light: *P0 Email Alert*
+
+  *From:*    {{ email.sender_display_name | default(email.sender_email) | truncate(60) }}
+  *Address:* {{ email.sender_email }}
+  *Subject:* {{ email.subject | truncate(120) }}
+  *Class:*   {{ classify.sender_class }}
+  *Rule:*    {{ score.rule_matched }}
+  {% if score.sla_breached %}:warning: *SLA breached*{% endif %}
+
+  {% if summarize is defined and summarize.thread_topic is defined %}
+  *Thread:* {{ summarize.thread_topic }}
+  {% endif %}
+
+  {% if email.provider_link is defined %}
+  <{{ email.provider_link }}|Open in {{ email.inbound_provider | title }}>
+  {% endif %}
+
+# Slack message metadata (for deduplication).
+metadata:
+  event_type: email_p0_alert
+  event_payload:
+    message_id: "{{ email.message_id }}"
+    priority:   "{{ score.priority }}"
+
+# Audit entry.
+audit:
+  table: pack_email_triage_slack_ops
+  fields:
+    - message_id
+    - subject_truncated    # first 200 chars
+    - sender_email
+    - priority
+    - slack_ts             # Slack message timestamp for later update
+    - posted_at

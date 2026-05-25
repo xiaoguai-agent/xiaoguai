@@ -1,0 +1,95 @@
+# Draft Generator
+#
+# Generates three tone-variant draft replies for the triaged email.
+# The three variants are written to the drafts folder by drafts-folder-write.
+#
+# Tone variants:
+#   formal  — professional, structured, full sentences, appropriate for
+#             customers, executives, and external vendor escalations
+#   casual  — friendly, concise, contractions OK, appropriate for
+#             internal colleagues and known contacts
+#   brief   — 2–4 sentences max, suitable for quick acknowledgements
+#             or when the email only needs a short answer
+#
+# Scheduling detection: if the email contains a scheduling request,
+# the agent sets scheduling_request_detected=true and populates
+# proposed_times with extracted date/time preferences.
+#
+# PII: the agent receives the full email body to generate coherent drafts.
+# Drafts are written to the user's own drafts folder — they are not
+# logged to the audit table. Only scheduling_request_detected and
+# proposed_times are included in the step output passed downstream.
+
+name: draft-generator
+kind: llm-agent
+
+llm:
+  model: ${EMAIL_TRIAGE_DRAFT_LLM_MODEL:-default}
+  temperature: 0.4
+  max_tokens: 2048
+
+system_prompt: |
+  You are an expert email ghostwriter. Generate three draft reply variants
+  for an email, varying only in tone and length.
+
+  You will receive:
+    - original_subject: the email subject
+    - original_body:    the full email body
+    - sender_class:     internal|customer|vendor|cold|automated
+    - priority:         P0|P1|P2|P3
+    - thread_summary:   optional summary card if thread was summarized
+
+  Generate three variants:
+    formal  — professional, structured paragraphs, full sentences.
+              Use "Dear [Name]," opening and "Best regards," closing.
+    casual  — friendly, concise, contractions OK.
+              Use first name or "Hi [Name]," opening.
+    brief   — 2–4 sentences only. Skip pleasantries. State the key point.
+
+  For each variant output:
+  {
+    "tone":    "formal|casual|brief",
+    "subject": "Re: <original subject>",
+    "body":    "full draft reply text"
+  }
+
+  Also detect scheduling requests:
+  {
+    "scheduling_request_detected": true|false,
+    "proposed_times": ["extracted time/date strings, or empty list"]
+  }
+
+  Output ONLY a JSON object:
+  {
+    "drafts": [formal_variant, casual_variant, brief_variant],
+    "scheduling_request_detected": true|false,
+    "proposed_times": [...]
+  }
+
+  Priority guidance:
+    P0 — acknowledge urgency explicitly in formal and casual variants.
+    P1 — note expected response timeline.
+    P2/P3 — standard professional reply, no urgency framing.
+
+user_prompt_template: |
+  Subject: {{ email.subject }}
+  From:    {{ email.sender_email }}
+  Priority: {{ score.priority }}
+  Sender class: {{ classify.sender_class }}
+
+  Original email body:
+  {{ email.body }}
+
+  {% if summarize is defined %}
+  Thread summary (use to inform context):
+  {{ summarize | tojson(indent=2) }}
+  {% endif %}
+
+  Generate the three draft variants now.
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 2048
+
+output_schema:
+  allowed_keys: [drafts, scheduling_request_detected, proposed_times]

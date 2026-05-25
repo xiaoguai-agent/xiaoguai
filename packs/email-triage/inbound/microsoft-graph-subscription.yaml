@@ -1,0 +1,66 @@
+# Inbound: Microsoft Graph change notification subscription
+#
+# Microsoft Graph sends a POST to the registered notification URL when
+# a new message arrives in the subscribed mailbox folder (Inbox).
+# The adapter validates the client state token, then calls
+# GET /me/messages/{id} to fetch the full message.
+#
+# Setup:
+#   1. Register a Microsoft Entra ID app with Mail.ReadWrite permission.
+#   2. Create a subscription via POST /v1.0/subscriptions with:
+#        changeType:          created
+#        resource:            me/mailFolders/Inbox/messages
+#        notificationUrl:     https://<host>/v1/email-triage/inbound/graph/push
+#        clientState:         <value of GRAPH_CLIENT_STATE secret>
+#   3. Populate GRAPH_CLIENT_ID, GRAPH_CLIENT_SECRET, GRAPH_TENANT_ID,
+#      and GRAPH_CLIENT_STATE.
+#
+# Auth: clientState header value compared against GRAPH_CLIENT_STATE secret.
+
+name: microsoft-graph-subscription
+kind: webhook
+
+route_id: "email-triage-graph-${PACK_INSTANCE_ID}"
+route_prefix: /v1/email-triage/inbound/graph/push
+
+# Graph sends a validation token on subscription creation; the adapter
+# echoes it back as plain text (HTTP 200) before processing live events.
+validation:
+  query_param: validationToken
+  response_content_type: text/plain
+
+signature:
+  algorithm: shared-secret
+  field: clientState          # in the JSON body, not a header
+  secret_env: GRAPH_CLIENT_STATE
+
+normalize:
+  fetch_full_message: true
+  graph_credentials:
+    client_id_env:     GRAPH_CLIENT_ID
+    client_secret_env: GRAPH_CLIENT_SECRET
+    tenant_id_env:     GRAPH_TENANT_ID
+  message_id_path: "value[0].resourceData.id"
+
+  field_map:
+    message_id:      "id"
+    thread_id:       "conversationId"
+    sender_email:    "from.emailAddress.address"
+    sender_display_name: "from.emailAddress.name"
+    subject:         "subject"
+    received_at:     "receivedDateTime"
+    body:            "body.content | strip_html"
+    thread_messages: "conversationMessages | extract_thread_previews(max_chars=500)"
+    thread_message_count: "conversationMessages | length"
+    headers:
+      list_unsubscribe: "internetMessageHeaders[?(@.name=='List-Unsubscribe')].value"
+      precedence:       "internetMessageHeaders[?(@.name=='Precedence')].value"
+      x_mailer:         "internetMessageHeaders[?(@.name=='X-Mailer')].value"
+      x_spam_score:     "internetMessageHeaders[?(@.name=='X-Spam-Score')].value"
+
+requires:
+  env:
+    - GRAPH_CLIENT_ID
+    - GRAPH_CLIENT_SECRET
+    - GRAPH_TENANT_ID
+    - GRAPH_CLIENT_STATE

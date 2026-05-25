@@ -1,0 +1,89 @@
+# Inbound: Email forward webhook
+#
+# Receives emails forwarded via a "send-to-webhook" relay service
+# (e.g., SendGrid Inbound Parse, Mailgun Routes, Postmark Inbound,
+# or a self-hosted SMTP-to-HTTP bridge).
+#
+# The relay POSTs a multipart/form-data or JSON payload containing
+# the parsed email fields. A shared HMAC-SHA256 token (or relay-specific
+# signature scheme) authenticates the request.
+#
+# This connector is the fallback for users who cannot configure OAuth
+# (Gmail/Graph) or IMAP credentials; they set up a forwarding rule in
+# their mail client to this endpoint.
+#
+# Endpoint: POST /v1/email-triage/inbound/forward
+
+name: email-forward-webhook
+kind: webhook
+
+route_id: "email-triage-forward-${PACK_INSTANCE_ID}"
+route_prefix: /v1/email-triage/inbound/forward
+
+# Signature: HMAC-SHA256 over the raw body using EMAIL_FORWARD_WEBHOOK_SECRET.
+# Each relay service uses a different header name; configure the one that
+# matches your relay provider.
+signature:
+  algorithm: hmac-sha256
+  header: X-Webhook-Signature
+  prefix: "sha256="
+  secret_env: EMAIL_FORWARD_WEBHOOK_SECRET
+
+# Accept both JSON and multipart/form-data payloads.
+content_types:
+  - application/json
+  - multipart/form-data
+
+# Relay-specific field mappings. Set FORWARD_RELAY_PROFILE to one of:
+#   sendgrid | mailgun | postmark | generic
+relay_profile_env: FORWARD_RELAY_PROFILE
+
+# Generic field mapping (used when relay_profile=generic or unknown).
+# Override per relay:
+#   sendgrid: from=from, subject=subject, text=text, headers=headers
+#   mailgun:  from=from, subject=subject, stripped-text=body
+#   postmark: From=from, Subject=subject, TextBody=body
+normalize:
+  relay_profiles:
+    sendgrid:
+      sender_email:    "from | parse_email_address"
+      sender_display_name: "from | parse_display_name"
+      subject:         "subject"
+      body:            "text"
+      received_at:     "date | parse_rfc2822"
+    mailgun:
+      sender_email:    "from | parse_email_address"
+      sender_display_name: "from | parse_display_name"
+      subject:         "subject"
+      body:            "stripped-text"
+      received_at:     "Date | parse_rfc2822"
+    postmark:
+      sender_email:    "From | parse_email_address"
+      sender_display_name: "From | parse_display_name"
+      subject:         "Subject"
+      body:            "TextBody"
+      received_at:     "Date | parse_rfc2822"
+    generic:
+      sender_email:    "from | parse_email_address"
+      sender_display_name: "from | parse_display_name"
+      subject:         "subject"
+      body:            "body | prefer(text_body, html_body | strip_html)"
+      received_at:     "date | parse_rfc2822"
+
+  # Common fields applied after relay-specific mapping.
+  common:
+    message_id:          "message_id | default(generate_uuid)"
+    thread_id:           "message_id | default(generate_uuid)"
+    thread_messages:     []
+    thread_message_count: 1
+    headers:
+      list_unsubscribe:  "headers.list_unsubscribe | default('')"
+      precedence:        "headers.precedence | default('')"
+      x_mailer:          "headers.x_mailer | default('')"
+      x_spam_score:      "headers.x_spam_score | default('')"
+
+requires:
+  env:
+    - EMAIL_FORWARD_WEBHOOK_SECRET
+  optional_env:
+    - FORWARD_RELAY_PROFILE   # defaults to generic

@@ -1,0 +1,56 @@
+# Inbound: IMAP polling (fallback for servers without push support)
+#
+# Polls the INBOX via IMAP IDLE (RFC 2177) or periodic UID FETCH for
+# servers that do not support IDLE. New UIDs since the last seen UID
+# are fetched, parsed, and emitted as Email events.
+#
+# Preferred over periodic poll when the server advertises IMAP IDLE;
+# the adapter falls back to poll_interval_seconds if IDLE is unavailable.
+#
+# Auth: LOGIN or PLAIN SASL with credentials from env. STARTTLS required
+# (plain TCP without TLS is rejected by the adapter).
+
+name: imap-poll
+kind: polling
+
+route_id: "email-triage-imap-${PACK_INSTANCE_ID}"
+
+connection:
+  host_env:     IMAP_HOST
+  port_env:     IMAP_PORT          # default 993
+  tls:          starttls-or-tls    # reject plaintext
+  username_env: IMAP_USERNAME
+  password_env: IMAP_PASSWORD
+  mailbox:      INBOX
+
+polling:
+  # Use IMAP IDLE if supported; fall back to periodic UID FETCH.
+  mode: idle-with-fallback
+  poll_interval_seconds: 60        # used only if IDLE not supported
+  # UID of the last seen message; persisted per-user in the scheduler state.
+  cursor_field: last_seen_uid
+
+normalize:
+  field_map:
+    message_id:      "message-id"
+    thread_id:       "references | last | default(message-id)"
+    sender_email:    "from | parse_email_address"
+    sender_display_name: "from | parse_display_name"
+    subject:         "subject | decode_mime_words"
+    received_at:     "date | parse_rfc2822"
+    body:            "body | prefer_text_plain | strip_quoted"
+    thread_messages: []             # IMAP poll fetches single messages; no thread fetch
+    thread_message_count: 1
+    headers:
+      list_unsubscribe: "list-unsubscribe"
+      precedence:       "precedence"
+      x_mailer:         "x-mailer"
+      x_spam_score:     "x-spam-score"
+
+requires:
+  env:
+    - IMAP_HOST
+    - IMAP_USERNAME
+    - IMAP_PASSWORD
+  optional_env:
+    - IMAP_PORT       # defaults to 993
