@@ -1,0 +1,131 @@
+# packs/research-paper-survey/inbound/zotero-collection-update.yaml
+#
+# Inbound event: zotero-collection-update
+#
+# Polls the Zotero API for new items added to a configured collection.
+# Zotero does not provide webhooks, so this source uses a scheduled poll
+# that compares the collection's `version` field against the last-seen version.
+#
+# When new items are found, each item is emitted as a separate event routed
+# to the paper-classifier agent.
+#
+# Setup:
+#   - Create a Zotero API key at https://www.zotero.org/settings/keys
+#   - Set ZOTERO_API_KEY and ZOTERO_USER_ID (for personal libraries) or
+#     ZOTERO_GROUP_ID (for group libraries) in your .env
+#   - Set ZOTERO_COLLECTION_KEY to the collection key (visible in Zotero web URL)
+
+name: zotero-collection-update
+kind: scheduled-poll
+
+# ── Poll schedule ─────────────────────────────────────────────────────────────
+
+schedule:
+  interval_minutes: ${ZOTERO_POLL_INTERVAL_MINUTES:-120}   # 2 hours default
+
+# ── Zotero API request ────────────────────────────────────────────────────────
+
+request:
+  # Supports both user libraries and group libraries.
+  # User library: /users/{ZOTERO_USER_ID}/collections/{KEY}/items
+  # Group library: /groups/{ZOTERO_GROUP_ID}/collections/{KEY}/items
+  url_template: >
+    https://api.zotero.org/
+    {{ 'users/' + env.ZOTERO_USER_ID if env.ZOTERO_USER_ID else 'groups/' + env.ZOTERO_GROUP_ID }}
+    /collections/{{ env.ZOTERO_COLLECTION_KEY }}/items
+    ?format=json&itemType=journalArticle+conferencePaper+preprint+report&limit=100
+    &since={{ state.last_version | default(0) }}
+  method: GET
+  headers:
+    Zotero-API-Key: "${ZOTERO_API_KEY}"
+    Zotero-API-Version: "3"
+
+# ── Version tracking ──────────────────────────────────────────────────────────
+#
+# Zotero returns the current library version in the `Last-Modified-Version`
+# response header. Store it in the poll state so the next run only fetches
+# items added/modified since this version.
+
+state_update:
+  last_version: "{{ response.headers['Last-Modified-Version'] }}"
+
+# ── Payload parsing ───────────────────────────────────────────────────────────
+
+parse:
+  format: json
+  items_path: "$[*]"     # top-level array of Zotero item objects
+  item_fields:
+    title:
+      source: "data.title"
+    authors:
+      source: "data.creators"
+      transform: >
+        filter(type='author') | map('{lastName}, {firstName}' if firstName else lastName)
+    abstract:
+      source: "data.abstractNote"
+    venue:
+      # For journal articles use publicationTitle; for conference papers use conferenceName
+      source: "data.publicationTitle | data.conferenceName"
+      transform: "coalesce"
+    published_date:
+      source: "data.date"
+      transform: "parse_date_flexible"
+    doi:
+      source: "data.DOI"
+    arxiv_id:
+      # Zotero stores arXiv IDs in the URL or extra field
+      source: "data.url | data.extra"
+      transform: "regex_extract('arxiv\\.org/abs/([\\d.]+)', 1) | regex_extract('arXiv:([\\d.]+)', 1)"
+    url:
+      source: "data.url"
+    zotero_key:
+      source: "key"
+
+# ── Deduplication ─────────────────────────────────────────────────────────────
+#
+# Check arxiv_id or doi against the papers table to avoid re-classifying
+# papers already ingested from another source.
+
+dedup:
+  store: database
+  checks:
+    - column: arxiv_id
+      table: papers
+      field: arxiv_id
+    - column: doi
+      table: papers
+      field: doi
+
+# ── Event emitted per new item ────────────────────────────────────────────────
+
+emits:
+  event: zotero-collection-update
+  # Emit one event per Zotero item (after dedup)
+  per_item: true
+  payload_mapping:
+    title:         "{{ item.title }}"
+    authors:       "{{ item.authors }}"
+    abstract:      "{{ item.abstract | truncate(2000) }}"
+    venue:         "{{ item.venue }}"
+    published_date: "{{ item.published_date }}"
+    doi:           "{{ item.doi }}"
+    arxiv_id:      "{{ item.arxiv_id }}"
+    url:           "{{ item.url }}"
+    inbound_source: "zotero"
+    zotero_key:    "{{ item.zotero_key }}"
+
+# ── Routing ───────────────────────────────────────────────────────────────────
+
+routes:
+  - agent: agents/paper-classifier.yaml
+    description: "Classify and embed each newly-added Zotero item."
+    payload_as: paper
+
+# ── Error handling ────────────────────────────────────────────────────────────
+
+on_error:
+  retry:
+    max_attempts: 3
+    backoff_seconds: 60
+  action: log_warning
+  message: "Zotero collection poll failed: {{ error }}. Check ZOTERO_API_KEY and ZOTERO_COLLECTION_KEY."

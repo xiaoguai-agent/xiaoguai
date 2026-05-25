@@ -1,0 +1,175 @@
+# packs/research-paper-survey/agents/gap-synthesizer.yaml
+#
+# Gap Synthesizer agent
+#
+# Input:  the current papers corpus (classified, with abstract embeddings)
+# Output: topic_clusters rows with sparsity_score and gap_description
+#
+# Algorithm:
+#   1. Fetch all classified papers with abstract_embedding from the DB.
+#   2. Run HDBSCAN (or configured algorithm) over the embedding vectors to
+#      produce topic clusters.
+#   3. Compute per-cluster sparsity_score:
+#        sparsity = 1 - (cluster_paper_count / max_cluster_paper_count)
+#        Sparse clusters (few papers) signal under-explored research areas.
+#   4. For sparse clusters (sparsity >= gap_threshold), call the LLM to produce
+#      a human-readable gap_description and keyword list.
+#   5. Upsert topic_clusters; update papers.topic_cluster_id for all members.
+
+name: gap-synthesizer
+kind: hybrid-agent    # tool steps for clustering + LLM steps for narrative
+
+llm:
+  model: ${GAP_LLM_MODEL:-default}
+  temperature: 0.3
+  max_tokens: 1024
+
+# ── Context steps ─────────────────────────────────────────────────────────────
+
+context_steps:
+  - id: fetch_embeddings
+    description: "Retrieve all classified papers with their abstract embeddings."
+    tool: xiaoguai_db_query
+    params:
+      sql: |
+        SELECT
+            id,
+            title,
+            abstract,
+            paper_type,
+            relevance_score,
+            abstract_embedding,
+            citation_count
+        FROM papers
+        WHERE status IN ('classified', 'clustered', 'surveyed')
+          AND abstract_embedding IS NOT NULL
+          AND relevance_score >= ${GAP_MIN_RELEVANCE:-0.3}
+        ORDER BY relevance_score DESC
+        LIMIT ${GAP_MAX_PAPERS:-5000}
+    store_as: papers_corpus
+
+  - id: active_survey
+    description: "Retrieve the active survey run for config and context."
+    tool: xiaoguai_db_query
+    params:
+      sql: |
+        SELECT id, topic, config_snapshot
+        FROM survey_runs
+        WHERE status = 'running'
+        ORDER BY started_at DESC
+        LIMIT 1
+    store_as: survey_run
+
+# ── Clustering step ───────────────────────────────────────────────────────────
+
+plan:
+  - id: cluster_embeddings
+    description: "Run HDBSCAN over abstract embeddings to identify topic clusters."
+    tool: xiaoguai_cluster_embeddings
+    params:
+      embeddings:      "{{ context.papers_corpus | pluck('abstract_embedding') }}"
+      paper_ids:       "{{ context.papers_corpus | pluck('id') }}"
+      algorithm:       "${CLUSTER_ALGORITHM:-hdbscan}"
+      min_cluster_size: "${CLUSTER_MIN_SIZE:-5}"
+      # noise_label: papers assigned to cluster -1 (HDBSCAN noise) are skipped.
+      noise_label: -1
+
+  - id: score_sparsity
+    description: "Compute sparsity_score for each cluster."
+    tool: xiaoguai_compute_cluster_sparsity
+    params:
+      clusters:       "{{ plan.cluster_embeddings.clusters }}"
+      # sparsity = 1 - (cluster_size / max_cluster_size)
+      # Clusters at or above gap_threshold are flagged for LLM narrative.
+      gap_threshold:  "${GAP_SPARSITY_THRESHOLD:-0.6}"
+
+  - id: label_gaps
+    description: >
+      For each sparse cluster, call the LLM to assign a human-readable label,
+      extract representative keywords, and write a gap_description.
+    # This step fans out: one LLM call per sparse cluster.
+    foreach: "{{ plan.score_sparsity.sparse_clusters }}"
+    loop_var: cluster
+    tool: llm_call
+    system_prompt: |
+      You are a research gap analyst for an automated literature review system.
+
+      You will be given a set of paper titles and abstracts that form a topic cluster
+      in the survey's embedding space. This cluster is SPARSE — meaning few papers
+      currently address this sub-area compared to the rest of the literature.
+
+      Your tasks:
+      1. LABEL: Give the cluster a concise label (3–6 words) that captures its theme.
+      2. KEYWORDS: List 5–8 representative keywords or keyphrases for this cluster.
+      3. GAP DESCRIPTION: Write 2–4 sentences explaining what research gap this cluster
+         represents. Be specific: what is under-explored? What would a paper filling this
+         gap look like? What methods or datasets are missing?
+
+      Respond ONLY with valid JSON:
+      {
+        "label": "<concise cluster label>",
+        "keywords": ["keyword1", "keyword2", ...],
+        "gap_description": "<2–4 sentence gap narrative>"
+      }
+
+    user_prompt_template: |
+      ## Survey Topic
+      {{ context.survey_run.topic }}
+
+      ## Cluster Statistics
+      - Paper count in cluster: {{ cluster.paper_count }}
+      - Sparsity score: {{ cluster.sparsity_score | round(2) }}
+        (1.0 = completely unexplored; 0.0 = densely covered)
+
+      ## Representative Papers (top {{ [cluster.papers | length, 10] | min }} by relevance)
+      {% for paper in cluster.papers | sort(attribute='relevance_score', reverse=True) | first(10) %}
+      - {{ paper.title }} ({{ paper.paper_type }}, cited {{ paper.citation_count }}x)
+        Abstract snippet: {{ paper.abstract | truncate(300) }}
+      {% endfor %}
+
+      Identify the research gap for this cluster.
+
+  - id: upsert_clusters
+    description: "Persist cluster assignments and gap narratives to the database."
+    tool: xiaoguai_db_batch_exec
+    params:
+      cluster_upserts: |
+        INSERT INTO topic_clusters
+            (label, keywords, centroid_embedding, paper_count, sparsity_score,
+             gap_description, survey_run_id, created_at, updated_at)
+        VALUES (
+            {{ cluster.label | sql_str }},
+            {{ cluster.keywords | sql_array }},
+            {{ cluster.centroid_embedding | tojson | sql_nullable }},
+            {{ cluster.paper_count }},
+            {{ cluster.sparsity_score }},
+            {{ cluster.gap_description | sql_nullable }},
+            {{ context.survey_run.id | sql_str }},
+            now(), now()
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING id AS cluster_id
+
+      paper_updates: |
+        UPDATE papers
+        SET topic_cluster_id = {{ cluster_id }},
+            status           = 'clustered',
+            updated_at       = now()
+        WHERE id = ANY({{ cluster.paper_ids | sql_array }})
+
+  - id: record_telemetry
+    tool: xiaoguai_outcome_telemetry_record
+    params:
+      event_type: gaps_synthesized
+      payload:
+        survey_run_id:   "{{ context.survey_run.id }}"
+        clusters_total:  "{{ plan.cluster_embeddings.clusters | length }}"
+        gaps_identified: "{{ plan.score_sparsity.sparse_clusters | length }}"
+
+# ── Budget ────────────────────────────────────────────────────────────────────
+
+budget:
+  # One LLM call per sparse cluster; cap at 20 gaps per run to stay within
+  # token budget. Remaining sparse clusters are labelled in the next run.
+  max_llm_calls: ${GAP_MAX_LLM_CALLS:-20}
+  max_wall_seconds: 300

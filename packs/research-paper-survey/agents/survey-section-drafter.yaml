@@ -1,0 +1,169 @@
+# packs/research-paper-survey/agents/survey-section-drafter.yaml
+#
+# Survey Section Drafter agent
+#
+# Input:  a topic_cluster (with gap_description + paper members)
+# Output: a drafted survey section in Markdown (rendered from survey-section-skeleton.md.j2)
+#
+# The drafter operates on one cluster at a time. For each cluster with
+# >= min_papers_per_section (default 4) classified papers, it:
+#   1. Retrieves the cluster's papers sorted by relevance + citation_count.
+#   2. Builds a structured claim-extraction context from abstracts.
+#   3. Calls the LLM to write one survey section covering:
+#      background, key contributions, methodological themes, limitations, open problems.
+#   4. Renders the output through survey-section-skeleton.md.j2.
+#   5. Pushes the rendered section to all configured output connectors.
+
+name: survey-section-drafter
+kind: llm-agent
+
+llm:
+  # Drafting requires more reasoning than classification; use a capable model.
+  model: ${DRAFTER_LLM_MODEL:-default}
+  temperature: 0.4
+  max_tokens: ${DRAFTER_MAX_TOKENS:-2000}
+
+# ── Context steps ─────────────────────────────────────────────────────────────
+
+context_steps:
+  - id: cluster_papers
+    description: "Fetch papers belonging to this cluster, sorted for relevance."
+    tool: xiaoguai_db_query
+    params:
+      sql: |
+        SELECT
+            p.id,
+            p.title,
+            p.authors,
+            p.abstract,
+            p.paper_type,
+            p.relevance_score,
+            p.citation_count,
+            p.published_date,
+            p.venue,
+            p.url,
+            p.arxiv_id,
+            p.doi
+        FROM papers p
+        WHERE p.topic_cluster_id = {{ cluster.id | sql_str }}
+          AND p.status IN ('classified', 'clustered', 'surveyed')
+        ORDER BY
+            p.relevance_score DESC,
+            p.citation_count DESC
+        LIMIT ${SECTION_MAX_PAPERS:-40}
+    store_as: papers
+
+  - id: survey_context
+    description: "Retrieve the survey topic and active run metadata."
+    tool: xiaoguai_db_query
+    params:
+      sql: |
+        SELECT id, topic FROM survey_runs
+        WHERE status = 'running'
+        ORDER BY started_at DESC LIMIT 1
+    store_as: survey_run
+
+system_prompt: |
+  You are an academic writing assistant helping researchers draft sections of a
+  literature review paper. You write in a clear, scholarly style — precise,
+  neutral, and well-structured.
+
+  You will receive a topic cluster (a coherent sub-area of the survey), its
+  research-gap description, and a set of papers belonging to that cluster.
+
+  Write ONE survey section covering this topic cluster. The section must include:
+
+  **1. Background and Motivation** (1–2 paragraphs)
+     Why is this sub-area important? What problem does it address?
+
+  **2. Key Contributions** (1–2 paragraphs)
+     Summarise the main results, methods, or ideas from the most influential papers.
+     Cite papers using their provided citation keys (e.g. [Smith2023]).
+
+  **3. Methodological Themes** (1 paragraph)
+     What approaches are most common? How do empirical and theoretical papers relate?
+
+  **4. Limitations and Open Problems** (1 paragraph)
+     What are the acknowledged limitations? What does the gap description suggest
+     is missing? Phrase open problems as specific research questions.
+
+  Writing rules:
+  - Use passive or third-person constructions ("Smith et al. demonstrate…").
+  - Do NOT hallucinate citations. Only cite papers in the provided list.
+  - If a paper has no abstract, skip it rather than inventing content.
+  - Target 600–800 words total.
+  - Respond ONLY with the Markdown section content (no JSON wrapper).
+
+user_prompt_template: |
+  ## Survey Topic
+  {{ context.survey_run.topic }}
+
+  ## Cluster Label
+  {{ cluster.label }}
+
+  ## Research Gap (from gap-synthesizer)
+  {{ cluster.gap_description | default('Not yet described.') }}
+
+  ## Papers in This Cluster ({{ context.papers | length }} total)
+  {% for p in context.papers %}
+  ### [{{ p.authors[0].split(' ')[-1] | default('Unknown') }}{{ p.published_date.year | default('') }}]
+  **Title:** {{ p.title }}
+  **Authors:** {{ p.authors | join(', ') | truncate(120) }}
+  **Venue:** {{ p.venue | default('Preprint') }} ({{ p.published_date | default('n.d.') }})
+  **Type:** {{ p.paper_type }} | **Relevance:** {{ p.relevance_score | round(2) }} | **Citations:** {{ p.citation_count }}
+  **Abstract:** {{ p.abstract | default('[No abstract]') | truncate(500) }}
+  {% endfor %}
+
+  Write the survey section for "{{ cluster.label }}" now.
+
+# ── Post-processing ───────────────────────────────────────────────────────────
+
+post_steps:
+  - id: render_section
+    description: "Render the LLM output through the survey-section-skeleton template."
+    tool: xiaoguai_render_template
+    params:
+      template: packs/research-paper-survey/templates/survey-section-skeleton.md.j2
+      context:
+        cluster_label:    "{{ cluster.label }}"
+        cluster_keywords: "{{ cluster.keywords }}"
+        paper_count:      "{{ context.papers | length }}"
+        sparsity_score:   "{{ cluster.sparsity_score }}"
+        survey_topic:     "{{ context.survey_run.topic }}"
+        section_body:     "{{ result }}"
+        papers:           "{{ context.papers }}"
+        generated_at:     "{{ now() | iso8601 }}"
+
+  - id: mark_papers_surveyed
+    tool: xiaoguai_db_exec
+    params:
+      sql: |
+        UPDATE papers
+        SET status = 'surveyed', updated_at = now()
+        WHERE topic_cluster_id = {{ cluster.id | sql_str }}
+
+  - id: push_outputs
+    description: "Push rendered section to all configured output connectors."
+    tool: xiaoguai_output_dispatch
+    params:
+      rendered_content: "{{ plan.render_section.output }}"
+      outputs:
+        - outputs/notion-research-page.yaml
+        - outputs/latex-section-snippet-export.yaml
+
+  - id: record_telemetry
+    tool: xiaoguai_outcome_telemetry_record
+    params:
+      event_type: section_drafted
+      payload:
+        survey_run_id: "{{ context.survey_run.id }}"
+        cluster_id:    "{{ cluster.id }}"
+        cluster_label: "{{ cluster.label }}"
+        paper_count:   "{{ context.papers | length }}"
+        word_count:    "{{ result | word_count }}"
+
+# ── Budget ────────────────────────────────────────────────────────────────────
+
+budget:
+  max_llm_calls: 3      # 1 draft + 2 retry / revision budget
+  max_wall_seconds: 120

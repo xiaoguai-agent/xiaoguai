@@ -1,0 +1,45 @@
+{# packs/research-paper-survey/templates/paper-summary-card.md.j2
+   One-page summary card for a single paper.
+   Used by notion-research-page output to create per-paper Notion database entries.
+   Variables: paper (papers row), cluster (topic_clusters row or null) #}
+
+## {{ paper.title }}
+
+**Authors:** {{ paper.authors | join(', ') | truncate(200) }}
+**Venue:** {{ paper.venue | default('Preprint') }}{% if paper.published_date %} · {{ paper.published_date }}{% endif %}
+**Type:** {{ paper.paper_type | title }}
+**Relevance:** {{ (paper.relevance_score * 100) | round | int }}%
+**Citations:** {{ paper.citation_count }}
+
+{% if paper.arxiv_id -%}
+**arXiv:** [{{ paper.arxiv_id }}](https://arxiv.org/abs/{{ paper.arxiv_id }})
+{%- endif %}
+{% if paper.doi -%}
+**DOI:** [{{ paper.doi }}](https://doi.org/{{ paper.doi }})
+{%- endif %}
+{% if paper.url and not paper.arxiv_id and not paper.doi -%}
+**URL:** {{ paper.url }}
+{%- endif %}
+
+---
+
+### Abstract
+
+{{ paper.abstract | default('_No abstract available._') }}
+
+---
+
+### Topic Cluster
+
+{% if cluster -%}
+**{{ cluster.label }}** · Sparsity: {{ (cluster.sparsity_score * 100) | round | int }}%
+{% if cluster.keywords -%}
+Keywords: {{ cluster.keywords | join(', ') }}
+{%- endif %}
+{%- else -%}
+_Not yet clustered._
+{%- endif %}
+
+---
+
+<sub>Ingested via {{ paper.inbound_source | default('unknown') }} · {{ paper.created_at | datetime_format('%Y-%m-%d %H:%M UTC') }}</sub>

@@ -1,0 +1,45 @@
+{# packs/research-paper-survey/templates/citation-graph-narrative.md.j2
+   Narrative summary of the citation graph walk results for a given seed paper.
+   Used by slack-research-team-digest and notion-research-page outputs.
+   Variables:
+     seed_paper    — the paper that triggered the walk
+     walk_stats    — { hops_explored, edges_discovered, nodes_visited }
+     top_central   — list of top-N papers by pagerank_score (from citation_edges)
+     clusters_hit  — list of topic_cluster labels the walk passed through
+#}
+
+## Citation Graph: {{ seed_paper.title | truncate(80) }}
+
+**Walk stats:** {{ walk_stats.hops_explored }} hop{{ 's' if walk_stats.hops_explored != 1 }},
+{{ walk_stats.nodes_visited }} papers visited,
+{{ walk_stats.edges_discovered }} new edges discovered.
+
+---
+
+### Most Central Papers (by PageRank)
+
+{% if top_central -%}
+| Rank | Title | Type | Citations | PageRank |
+|------|-------|------|-----------|----------|
+{% for p in top_central -%}
+| {{ loop.index }} | {% if p.arxiv_id %}[{{ p.title | truncate(60) }}](https://arxiv.org/abs/{{ p.arxiv_id }}){% else %}{{ p.title | truncate(60) }}{% endif %} | {{ p.paper_type | title }} | {{ p.citation_count }} | {{ p.pagerank_score | round(4) }} |
+{% endfor %}
+{%- else -%}
+_No central papers identified (walk may still be in progress)._
+{%- endif %}
+
+---
+
+### Topic Clusters Traversed
+
+{% if clusters_hit -%}
+{% for label in clusters_hit -%}
+- {{ label }}
+{% endfor %}
+{%- else -%}
+_Cluster assignment not yet complete._
+{%- endif %}
+
+---
+
+<sub>Walk triggered by inbound event · Seed: {% if seed_paper.arxiv_id %}arXiv:{{ seed_paper.arxiv_id }}{% elif seed_paper.semantic_scholar_id %}S2:{{ seed_paper.semantic_scholar_id }}{% else %}{{ seed_paper.id }}{% endif %}</sub>
