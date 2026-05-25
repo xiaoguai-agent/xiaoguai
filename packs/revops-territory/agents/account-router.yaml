@@ -1,0 +1,172 @@
+# Agent definition — account-router
+# ---------------------------------------------------------------------------
+# Triggered by:
+#   - revops.unassigned_account   (watch: unassigned-accounts)
+#   - revops.account_created      (inbound: salesforce-account-created)
+#   - revops.hubspot_contact      (inbound: hubspot-contact-created)
+#   - revops.bulk_assign_row      (inbound: csv-bulk-assign-upload)
+#
+# For each new account the agent:
+#   1. Loads all active reps and their capacity / specialty profiles.
+#   2. Scores every eligible rep on 5 weighted dimensions.
+#   3. Selects the top-scoring rep.
+#   4. Writes the assignment autonomously (net-new) or routes to
+#      capacity-rebalancer for HOTL review (reassignment).
+#   5. Calls the assignment-explanation template and routes to outputs.
+#
+# HOTL: net-new assignments are AUTONOMOUS.
+#       Reassignments always require human approval.
+# ---------------------------------------------------------------------------
+
+name: account-router
+version: "1.0.0"
+description: >
+  Matches a new or unassigned account to the best-fit rep using a
+  5-factor weighted score: industry match, company-size match, geo match,
+  rep specialty fit, and available capacity. Net-new assignments are
+  autonomous; reassignments are HOTL-gated.
+
+triggers:
+  - event: revops.unassigned_account
+    source: unassigned-accounts
+  - event: revops.account_created
+    source: salesforce-account-created
+  - event: revops.hubspot_contact
+    source: hubspot-contact-created
+  - event: revops.bulk_assign_row
+    source: csv-bulk-assign-upload
+
+llm:
+  model: ${REVOPS_ROUTER_LLM_MODEL:-default}
+  temperature: 0.1     # deterministic — routing must be explainable
+  max_tokens: 2048
+
+system_prompt: |
+  You are a RevOps account-assignment engine. Your sole job is to select
+  the best-fit sales rep for a given account and produce a concise,
+  auditable rationale.
+
+  Scoring weights (must sum to 1.0):
+    - industry_match:    0.30   (exact match = 1.0; adjacent = 0.5; none = 0.0)
+    - size_match:        0.25   (exact segment match = 1.0; adjacent = 0.4; none = 0.0)
+    - geo_match:         0.20   (exact region = 1.0; same continent = 0.5; global = 0.3; mismatch = 0.0)
+    - specialty_fit:     0.15   (LLM-assessed semantic match between account profile and rep specialty notes)
+    - capacity_headroom: 0.10   (1.0 if load_pct < 50; scales linearly to 0.0 at load_pct = 100)
+
+  Rules:
+  - Never assign to a rep whose load_pct >= 95 unless no other rep is eligible.
+  - If two reps tie (score diff < 0.02), prefer the one with more capacity headroom.
+  - Output ONLY valid JSON matching the RouterDecision schema. No prose.
+  - Include score_breakdown with per-factor scores for every candidate evaluated.
+
+  RouterDecision schema:
+  {
+    "selected_rep_id": "string",
+    "selected_rep_name": "string",
+    "composite_score": 0.00,
+    "score_breakdown": {
+      "<rep_id>": {
+        "industry_match": 0.00,
+        "size_match":     0.00,
+        "geo_match":      0.00,
+        "specialty_fit":  0.00,
+        "capacity_headroom": 0.00,
+        "composite":      0.00
+      }
+    },
+    "rationale": "2-3 sentence explanation citing the top 3 factors",
+    "assignment_type": "net_new | reassignment",
+    "confidence": "high | medium | low"
+  }
+
+tools:
+  - name: list_eligible_reps
+    description: >
+      Fetch all active reps with their capacity, industries, geo_regions,
+      and size_segments. Excludes reps at >= 95% capacity unless
+      force_include_at_capacity is true. Returns up to 50 reps.
+    kind: sql
+    query: |
+      SELECT
+          rc.rep_id,
+          rc.rep_name,
+          rc.territory_id,
+          rc.industries,
+          rc.geo_regions,
+          rc.size_segments,
+          rc.account_capacity,
+          rc.active_accounts,
+          rc.load_pct,
+          t.name     AS territory_name,
+          t.geo_region AS territory_geo
+      FROM rt_rep_capacity rc
+      LEFT JOIN rt_territories t ON t.id = rc.territory_id
+      WHERE rc.tenant_id  = '{tenant_id}'
+        AND rc.is_active  = TRUE
+        AND (rc.load_pct  < 95 OR '{force_include_at_capacity}' = 'true')
+      ORDER BY rc.load_pct ASC
+      LIMIT 50
+
+  - name: save_assignment
+    description: >
+      Persist the routing decision to rt_account_assignments and update
+      rt_rep_capacity.active_accounts. Returns the new assignment id.
+      For net_new accounts only — reassignments require HOTL approval first.
+    kind: sql
+    query: |
+      WITH ins AS (
+          INSERT INTO rt_account_assignments
+              (tenant_id, account_id, account_name, crm_source, rep_id,
+               territory_id, industry, company_size, geo_region,
+               arr_estimate, assignment_type, score_breakdown,
+               assigned_by, status)
+          VALUES
+              ('{tenant_id}', '{account_id}', '{account_name}', '{crm_source}',
+               '{rep_id}', '{territory_id}', '{industry}', '{company_size}',
+               '{geo_region}', {arr_estimate}, 'net_new', '{score_breakdown}'::JSONB,
+               'account-router', 'active')
+          ON CONFLICT (tenant_id, account_id)
+              DO UPDATE SET
+                  rep_id          = EXCLUDED.rep_id,
+                  score_breakdown = EXCLUDED.score_breakdown,
+                  assigned_by     = EXCLUDED.assigned_by,
+                  status          = 'active',
+                  assigned_at     = NOW(),
+                  updated_at      = NOW()
+          RETURNING id
+      ),
+      upd AS (
+          UPDATE rt_rep_capacity
+          SET    active_accounts = active_accounts + 1,
+                 updated_at      = NOW()
+          WHERE  tenant_id = '{tenant_id}'
+            AND  rep_id    = '{rep_id}'
+      )
+      SELECT id FROM ins
+
+  - name: render_explanation
+    description: >
+      Render the assignment-explanation template to produce a human-readable
+      rationale card for the AE and their manager.
+    kind: template
+    template: "templates/assignment-explanation.md.j2"
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    # Net-new assignments are fully autonomous — no human gate.
+    save_assignment: unlimited
+  require_human_approval:
+    # Any action that touches an existing active assignment requires approval.
+    - reassign_account
+  notify_channel: "${REVOPS_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - assignment_created
+    - assignment_rejected_by_rep
+    - account_transferred
+  feedback_table: rt_account_assignments
+
+rate_limits:
+  per_tenant_per_minute: 60   # safe for bulk-assign CSV uploads

@@ -1,0 +1,41 @@
+---
+# Output connector — Salesforce Account Owner Update
+#
+# After account-router produces a RouterDecision, this connector:
+#   - For net-new assignments: autonomously PATCHes the Salesforce Account
+#     OwnerId field to the assigned rep's Salesforce user ID.
+#   - For reassignments: waits for HOTL approval before writing to Salesforce.
+#
+# Auth: OAuth 2.0 client credentials flow (SFDC Connected App)
+#       Credentials: SALESFORCE_CLIENT_ID / SALESFORCE_CLIENT_SECRET /
+#                    SALESFORCE_INSTANCE_URL
+
+output: salesforce-account-owner-update
+
+salesforce:
+  instance_url:    ${SALESFORCE_INSTANCE_URL}
+  client_id:       ${SALESFORCE_CLIENT_ID}
+  client_secret:   ${SALESFORCE_CLIENT_SECRET}
+  api_version:     "v60.0"
+
+  # PATCH /services/data/v60.0/sobjects/Account/{account_id}
+  operation: patch
+  sobject:   Account
+  id_field:  account_id
+
+  field_map:
+    OwnerId: "{{ rep.salesforce_user_id }}"
+
+# Autonomous for net_new; HOTL-gated for reassignment.
+hotl_gate:
+  require_approval_when: "assignment_type == 'reassignment'"
+  autonomous_when:       "assignment_type == 'net_new'"
+
+retry:
+  max_attempts: 3
+  backoff_seconds: [5, 30, 120]
+  on_error: log_and_notify   # never silently drop
+
+on_success:
+  # After Salesforce confirms the update, emit an outcome telemetry event.
+  emit_event: revops.sfdc_owner_updated

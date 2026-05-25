@@ -1,0 +1,61 @@
+---
+# Inbound source — Salesforce Account Created
+#
+# Receives Salesforce outbound message or Platform Event when an Account
+# record is created. Normalises the payload to the common AccountCreated
+# schema and emits revops.account_created onto the event bus.
+#
+# Mounting: POST /v1/revops/inbound/salesforce/{route_id}
+# Auth:     per-tenant bearer token (X-Salesforce-Signature HMAC optional)
+
+source: salesforce-account-created
+route_prefix: /v1/revops/inbound/salesforce
+
+normalize:
+  hmac_secret: ${SALESFORCE_OUTBOUND_HMAC_SECRET}
+
+  # Map Salesforce Account fields -> AccountCreated schema
+  field_map:
+    account_id:   Id
+    account_name: Name
+    industry:     Industry
+    company_size:
+      source: NumberOfEmployees
+      transform: |
+        if value < 50:    return "SMB"
+        elif value < 500: return "Mid-Market"
+        elif value < 5000: return "Enterprise"
+        else:             return "Strategic"
+    geo_region:   BillingCountry
+    arr_estimate: AnnualRevenue
+    crm_source:   _const:salesforce
+
+accepted_events:
+  - AccountCreate
+  - AccountUpdate   # Re-routes if Owner field is blank after update
+
+event:
+  kind: revops.account_created
+  payload_mapping:
+    tenant_id:    "{route_tenant_id}"
+    account_id:   "$.account_id"
+    account_name: "$.account_name"
+    industry:     "$.industry"
+    company_size: "$.company_size"
+    geo_region:   "$.geo_region"
+    arr_estimate: "$.arr_estimate"
+    crm_source:   "$.crm_source"
+
+downstream:
+  agents:
+    - account-router
+
+sample_payload: |
+  {
+    "Id": "001XX000003GYkiYAG",
+    "Name": "Acme Corp",
+    "Industry": "Technology",
+    "NumberOfEmployees": 320,
+    "BillingCountry": "US",
+    "AnnualRevenue": 12500000
+  }

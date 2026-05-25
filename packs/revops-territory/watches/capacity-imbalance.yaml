@@ -1,0 +1,86 @@
+# Watch spec — capacity imbalance detection
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent when the gap between the most-loaded and least-loaded
+# active rep in a tenant exceeds the configured threshold (default: 20 pct
+# points of account_capacity). This surfaces overloaded reps before pipeline
+# slippage occurs.
+#
+# Downstream: capacity-rebalancer agent (HOTL-gated re-assignment proposals).
+# ---------------------------------------------------------------------------
+
+name: capacity-imbalance
+version: "1.0.0"
+description: >
+  Polls rt_rep_capacity every 30 minutes. Fires when max(load_pct) -
+  min(load_pct) exceeds the imbalance_threshold (default 20 pct points)
+  across active reps in the same territory. Payload carries the full
+  load distribution so the rebalancer can propose targeted re-assignments.
+
+source:
+  kind: sql
+  table: rt_rep_capacity
+  tenant_column: tenant_id
+
+query: |
+  WITH load_stats AS (
+      SELECT
+          rc.tenant_id,
+          rc.territory_id,
+          t.name                              AS territory_name,
+          MAX(rc.load_pct)                    AS max_load_pct,
+          MIN(rc.load_pct)                    AS min_load_pct,
+          MAX(rc.load_pct) - MIN(rc.load_pct) AS imbalance_pct,
+          AVG(rc.load_pct)                    AS avg_load_pct,
+          COUNT(*)                            AS rep_count,
+          JSONB_AGG(
+              JSONB_BUILD_OBJECT(
+                  'rep_id',           rc.rep_id,
+                  'rep_name',         rc.rep_name,
+                  'active_accounts',  rc.active_accounts,
+                  'account_capacity', rc.account_capacity,
+                  'load_pct',         rc.load_pct
+              )
+              ORDER BY rc.load_pct DESC
+          )                                   AS rep_loads
+      FROM rt_rep_capacity rc
+      LEFT JOIN rt_territories t ON t.id = rc.territory_id
+      WHERE rc.tenant_id = '{tenant_id}'
+        AND rc.is_active  = TRUE
+      GROUP BY rc.tenant_id, rc.territory_id, t.name
+  )
+  SELECT *
+  FROM load_stats
+  WHERE imbalance_pct > ${REVOPS_IMBALANCE_THRESHOLD_PCT:-20}
+    AND rep_count      >= 2
+  ORDER BY imbalance_pct DESC
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  cron: "*/30 * * * *"
+
+event:
+  kind: revops.capacity_imbalance
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:       "$.tenant_id"
+    territory_id:    "$.territory_id"
+    territory_name:  "$.territory_name"
+    max_load_pct:    "$.max_load_pct"
+    min_load_pct:    "$.min_load_pct"
+    imbalance_pct:   "$.imbalance_pct"
+    avg_load_pct:    "$.avg_load_pct"
+    rep_count:       "$.rep_count"
+    rep_loads:       "$.rep_loads"
+
+downstream:
+  agents:
+    - capacity-rebalancer
+
+# Suppress re-fire for the same territory within 4 hours unless imbalance
+# has grown by more than 5 pct points since the last event.
+dedup:
+  key: "{tenant_id}:{territory_id}"
+  ttl_seconds: 14400
+  re_fire_if: "payload.imbalance_pct > prior.imbalance_pct + 5"
