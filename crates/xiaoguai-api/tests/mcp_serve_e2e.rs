@@ -83,6 +83,8 @@ fn build_state_with_toolbox(toolbox: Toolbox, publish: bool) -> AppState {
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
         rate_limit_state: None,
+        hotl_policy_store: None,
+        hotl_enforcer: None,
     }
 }
 

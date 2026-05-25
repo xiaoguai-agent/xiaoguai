@@ -505,6 +505,11 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         webhook_token_admin,
         scheduler_jobs_reader,
         rate_limit_state: Some(RateLimitState::in_memory(RateClass::Standard)),
+        // v1.2.3: HOTL boundary policy — production wires PgHotlPolicyStore
+        // in a follow-up; left unwired here so the routes return 503 until
+        // the bridge crate lands.
+        hotl_policy_store: None,
+        hotl_enforcer: None,
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

@@ -63,6 +63,8 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
         rate_limit_state: None,
+        hotl_policy_store: None,
+        hotl_enforcer: None,
     };
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
     mount_feishu(state, provider)
@@ -267,6 +269,8 @@ async fn agent_inherits_tenant_resolved_by_history_store() {
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
         rate_limit_state: None,
+        hotl_policy_store: None,
+        hotl_enforcer: None,
     };
     let sink = Arc::new(Mutex::new(Vec::new()));
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
@@ -340,6 +344,8 @@ async fn conversation_history_accumulates_per_chat() {
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
         rate_limit_state: None,
+        hotl_policy_store: None,
+        hotl_enforcer: None,
     };
     let sink = Arc::new(Mutex::new(Vec::new()));
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));

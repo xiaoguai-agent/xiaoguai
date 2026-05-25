@@ -52,6 +52,8 @@ fn build_state(steps: Vec<ScriptStep>) -> (AppState, Arc<InMemoryMessageRepo>) {
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
         rate_limit_state: None,
+        hotl_policy_store: None,
+        hotl_enforcer: None,
     };
     (state, messages)
 }

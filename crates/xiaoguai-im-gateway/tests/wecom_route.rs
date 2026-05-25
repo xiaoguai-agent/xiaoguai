@@ -73,6 +73,8 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
         rate_limit_state: None,
+        hotl_policy_store: None,
+        hotl_enforcer: None,
     };
     let provider: Arc<dyn ImProvider> = Arc::new(WeComProvider::with_recording_sink(TOKEN, sink));
     mount_wecom(state, provider)
