@@ -1,0 +1,71 @@
+---
+# Inbound: Slack board channel @mention
+#
+# Watches the configured Slack channel for messages that @mention the bot.
+# Supported patterns:
+#   @xiaoguai please create task <title>
+#   @xiaoguai new card: <title>
+#   @xiaoguai add to board: <description>
+#
+# Non-card messages (e.g. questions, reactions) are acknowledged but not
+# forwarded to the triage pipeline.
+#
+# Route: Slack Events API → POST /v1/scheduler/webhooks/<route_id>
+# Auth:  Slack signing secret (X-Slack-Signature HMAC-SHA256)
+
+name: slack-board-channel-mention
+kind: webhook
+
+route_id: "kanban-slack-${PACK_INSTANCE_ID}"
+
+# Only handle Slack event_callback payloads.
+event_filter:
+  header: "X-Slack-Event"
+  values: ["event_callback"]
+
+# Payload filter: app_mention events only.
+payload_filter:
+  json_path: "$.event.type"
+  values: ["app_mention"]
+
+signature:
+  algorithm: hmac-sha256
+  header: "X-Slack-Signature"
+  prefix: "v0="
+  secret_env: KANBAN_SLACK_SIGNING_SECRET
+  # Slack includes the timestamp in the signed payload to prevent replay.
+  timestamp_header: "X-Slack-Request-Timestamp"
+  max_age_seconds: 300
+
+# Trigger keywords — message must contain at least one to be forwarded.
+# Other @mentions (e.g. "hey @xiaoguai is the board working?") are ack'd
+# with a help message but not triaged.
+trigger_keywords:
+  - "create task"
+  - "new card"
+  - "add to board"
+  - "create card"
+  - "add card"
+
+# Fields extracted from the Slack payload.
+extract:
+  inbound_source:   "_const:slack"
+  inbound_ref:      "$.event.ts"               # Slack message timestamp (unique id)
+  slack_user_id:    "$.event.user"
+  slack_channel_id: "$.event.channel"
+  raw_text:         "$.event.text"
+  # Title: text after the bot mention, trimmed.
+  # Harness strips "<@BOT_ID>" prefix and the trigger keyword phrase.
+  title:
+    source: "$.event.text"
+    transform: strip_mention_and_keyword
+  body:
+    source: "$.event.text"
+    transform: strip_mention_and_keyword
+  thread_ts:        "$.event.thread_ts"        # non-null if this is a thread reply
+
+# Acknowledgement: Slack requires HTTP 200 within 3 seconds.
+# The webhook adapter returns 200 immediately; triage runs async.
+ack:
+  status: 200
+  body: '{"ok": true}'

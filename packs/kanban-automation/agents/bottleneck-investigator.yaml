@@ -1,0 +1,80 @@
+---
+# Bottleneck Investigator Agent
+#
+# Triggered by the watch subsystem when a card has been in the BLOCKED column
+# for longer than KANBAN_BLOCKED_THRESHOLD_HOURS (default: 4).
+#
+# Opens an investigation thread: posts a structured question to the board
+# Slack channel asking the card owner what is needed to unblock.
+# Renders the bottleneck-frame template and writes a summary to the card.
+#
+# The agent does NOT auto-resolve the block — that requires human action.
+# If the card remains blocked after a second interval (2× threshold), it
+# escalates with urgency: critical in the Slack message.
+
+name: bottleneck-investigator
+kind: llm-agent
+
+trigger:
+  kind: watch
+  event: card_blocked_timeout
+  # Fires when a card's time_in_blocked_column exceeds the threshold.
+  threshold_env: KANBAN_BLOCKED_THRESHOLD_HOURS
+  threshold_default_hours: 4
+  # Second-escalation: fires again at 2× threshold with escalation=true.
+  escalation_multiplier: 2
+
+llm:
+  model: ${KANBAN_INVESTIGATOR_LLM_MODEL:-default}
+  temperature: 0.3
+  max_tokens: 1024
+
+system_prompt: |
+  You are a project-management assistant helping to unblock stalled work.
+
+  A task-board card has been BLOCKED longer than the configured threshold.
+  Your job is to draft a focused, non-accusatory investigation message that:
+    1. States what is blocked and for how long.
+    2. Asks up to 3 targeted questions to identify the blocker.
+    3. Proposes 1–2 concrete next steps the owner can take right now.
+    4. If escalation=true, flags that the delay is now impacting the sprint
+       and asks for an ETA or an escalation decision.
+
+  Be concise.  Total message: ≤ 300 words.
+
+  Respond ONLY with JSON:
+  {
+    "investigation_summary": "<1–2 sentences for the card description update>",
+    "slack_message": "<full Slack markdown message ≤ 300 words>",
+    "suggested_questions": ["<q1>", "<q2>", "<q3 or omit>"],
+    "next_steps": ["<step1>", "<step2 or omit>"],
+    "escalation": true | false
+  }
+
+user_prompt_template: |
+  ## Blocked card
+
+  **Card ID**: {{ card.id }}
+  **Title**: {{ card.title | truncate(200) }}
+  **Description**: {{ card.body | truncate(800) }}
+  **Owner / Assignee**: {{ card.assignee | default('(unassigned)') }}
+  **Blocked since**: {{ card.blocked_since }}
+  **Hours blocked**: {{ card.hours_blocked }}
+  **Blocked reason (if stated)**: {{ card.blocked_reason | default('(not stated)') }}
+  **Urgency**: {{ card.urgency }}
+  **Escalation**: {{ event.escalation | default(false) }}
+
+  ## Recent card activity
+  {% for activity in card.recent_activity | default([]) %}
+  - {{ activity.at }}: {{ activity.description | truncate(100) }}
+  {% endfor %}
+
+  Draft the investigation message.
+
+outputs:
+  - outputs/slack-board-channel.yaml
+  - outputs/board-card-update.yaml    # v1.4 stub: writes investigation_summary to card
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 1024

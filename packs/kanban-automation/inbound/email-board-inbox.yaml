@@ -1,0 +1,54 @@
+---
+# Inbound: Email board inbox
+#
+# Polls an IMAP mailbox (KANBAN_EMAIL_INBOX) for new messages.
+# Each email becomes a card: subject → title, body text → description.
+# HTML emails are converted to plain text before truncation.
+#
+# Sender domain can be mapped to a vertical hint (see sender_domain_map below).
+# Attachments are not processed; a note is appended to the card body if present.
+#
+# Polling interval: every 2 minutes (configurable via KANBAN_EMAIL_POLL_INTERVAL_SECONDS).
+
+name: email-board-inbox
+kind: email-poll
+
+# IMAP connection settings.
+imap:
+  host_env: KANBAN_EMAIL_IMAP_HOST
+  port: 993
+  tls: true
+  username_env: KANBAN_EMAIL_INBOX
+  password_env: KANBAN_EMAIL_IMAP_PASSWORD
+  mailbox: INBOX
+  # Move processed emails to this folder instead of deleting.
+  processed_folder: "xiaoguai-processed"
+  mark_seen: true
+
+poll_interval_seconds: 120
+poll_interval_env: KANBAN_EMAIL_POLL_INTERVAL_SECONDS
+
+# Extract card fields from the email.
+extract:
+  inbound_source:  "_const:email"
+  inbound_ref:     "message_id"        # RFC 2822 Message-ID header
+  title:           "subject"           # Email subject → card title
+  body:
+    source: "body_text"                # Plain-text body (HTML stripped)
+    max_chars: 4000
+  sender_email:    "from_address"
+  sender_name:     "from_name"
+
+# Optional: map sender domains to vertical hints for the triager.
+sender_domain_map:
+  "legal.company.com":    "legal"
+  "finance.company.com":  "finance"
+  "hr.company.com":       "hr"
+  "security.company.com": "security"
+  # Unknown domains → vertical resolved by incoming-triager.
+
+# Attachment handling.
+attachments:
+  allowed: false
+  # When an email has attachments, append this note to the card body.
+  note_template: "\n\n[Note: email had {{ attachment_count }} attachment(s): {{ attachment_names | join(', ') }}. Attachments not processed — retrieve from email inbox if needed.]"

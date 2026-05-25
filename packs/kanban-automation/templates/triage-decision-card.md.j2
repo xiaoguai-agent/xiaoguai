@@ -1,0 +1,32 @@
+{# triage-decision-card.md.j2
+   Rendered by slack-board-channel output after incoming-triager + auto-tagger complete.
+   Posted to the board Slack channel (and as a thread reply if source was Slack). #}
+*[Board] New card triaged* {{ ':rotating_light:' if triage.urgency == 'critical' else ':memo:' }}
+
+*Title*: {{ card.title | truncate(120) }}
+*Source*: {{ card.inbound_source | title }}{% if card.inbound_ref %} (`{{ card.inbound_ref | truncate(40) }}`){% endif %}
+
+| Field | Value |
+|---|---|
+| Type | `{{ triage.card_type }}` |
+| Urgency | `{{ triage.urgency | upper }}` |
+| Owner hint | {{ triage.owner_hint | default('_TBD_') }} |
+| Pack | `{{ tags.pack_name }}` |
+| Vertical | `{{ tags.vertical }}` |
+| Complexity | `{{ tags.complexity }}` |
+| Est. effort | `{{ tags.est_effort }}` |
+{% if tags.additional_labels %}| Extra labels | {{ tags.additional_labels | map('code') | join(', ') }} |{% endif %}
+
+{% if triage.triage_confidence != 'high' %}
+> _Triage confidence: **{{ triage.triage_confidence }}** — {{ triage.triage_rationale | truncate(150) }}_
+{% endif %}
+{% if split_proposed %}
+
+*Split suggested* — this card is estimated at `{{ split.original_est_effort }}` (> 1 day).
+A {{ split.split_cards | length }}-part split proposal has been sent for HotL approval.
+{% endif %}
+{% if not kanban_enabled %}
+> _Note: kanban subsystem not yet active (v1.4). Card is queued; mutations are stubs._
+{% endif %}
+
+_Triaged by xiaoguai kanban-automation v{{ pack_version }}_

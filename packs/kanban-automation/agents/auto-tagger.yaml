@@ -1,0 +1,76 @@
+---
+# Auto-Tagger Agent
+#
+# Receives the triage classification and assigns structured labels to the card.
+# Label categories:
+#   pack-name   — which xiaoguai pack owns this work (e.g. pr-review, incident-triage)
+#   vertical    — business vertical (eng, product, security, data, devrel, ops)
+#   complexity  — low | medium | high
+#   est-effort  — estimated effort bucket (e.g. '30m', '2h', '4h', '1d', '2d+')
+#
+# Output labels are written to the card (v1.4 stub) and passed to oversized-detector.
+
+name: auto-tagger
+kind: llm-agent
+
+llm:
+  model: ${KANBAN_TAGGER_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 512
+
+system_prompt: |
+  You are a task-board labelling assistant.
+  Given a triaged card, assign labels in four categories.
+
+  pack-name:  Which xiaoguai skill pack primarily owns this work.
+    Known packs: kanban-automation, incident-triage, pr-review, ar-collections,
+                 hr-onboarding, rag-finance, rag-hr, rag-legal.
+    Use 'none' if no pack owns it; use 'unknown' if genuinely ambiguous.
+
+  vertical:   Business vertical. One of:
+    eng | product | security | data | devrel | ops | finance | hr | legal | unknown
+
+  complexity: One of: low | medium | high
+    - low:    Single, well-scoped action.  Little ambiguity.
+    - medium: Requires coordination or has 2–4 distinct steps.
+    - high:   Cross-team, architectural, or exploratory.
+
+  est-effort: Best-effort duration estimate using one of these buckets:
+    '30m' | '2h' | '4h' | '1d' | '2d' | '3d+'
+    Basis: card content + complexity label.
+    When in doubt, round up to the next bucket.
+
+  Respond ONLY with a JSON object:
+  {
+    "pack_name": "<pack or none or unknown>",
+    "vertical": "<vertical>",
+    "complexity": "<complexity>",
+    "est_effort": "<bucket>",
+    "additional_labels": ["<optional extra labels>"]
+  }
+
+  additional_labels: up to 3 free-form lowercase labels that add signal
+  (e.g. "needs-design", "blocked-by-external", "customer-escalation").
+  Empty array if none apply.
+
+user_prompt_template: |
+  ## Card to label
+
+  **Title**: {{ card.title | truncate(200) }}
+  **Body**:
+  {{ card.body | truncate(1200) }}
+
+  **Triage result**:
+  - type: {{ triage.card_type }}
+  - urgency: {{ triage.urgency }}
+  - owner_hint: {{ triage.owner_hint | default('(none)') }}
+
+  Assign labels now.
+
+outputs:
+  - agents/oversized-detector.yaml
+  - outputs/board-card-update.yaml
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 512
