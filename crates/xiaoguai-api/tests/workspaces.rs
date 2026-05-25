@@ -17,7 +17,8 @@ use xiaoguai_api::routes::router;
 use xiaoguai_api::{
     AppState, CancelRegistry, InMemoryWorkspaceRepository, WorkspaceRepository,
 };
-use xiaoguai_llm::{LlmBackend, MockBackend, ScriptStep};
+use xiaoguai_llm::mock::ScriptStep;
+use xiaoguai_llm::{LlmBackend, MockBackend};
 
 use common::{InMemoryMessageRepo, InMemorySessionRepo};
 

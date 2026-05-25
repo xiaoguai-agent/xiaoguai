@@ -20,7 +20,7 @@ use uuid::Uuid;
 use xiaoguai_api::hotl::{
     enforcer::{HotlVerdict, InMemoryHotlEnforcer},
     policy::HotlPolicy,
-    CreateHotlPolicyRequest, HotlEnforcer, InMemoryHotlPolicyStore,
+    CreateHotlPolicyRequest, HotlEnforcer, HotlPolicyStore, InMemoryHotlPolicyStore,
 };
 
 // ── fixture helpers ───────────────────────────────────────────────────────────
