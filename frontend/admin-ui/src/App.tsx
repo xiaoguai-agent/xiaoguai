@@ -36,11 +36,11 @@ export function App() {
           {t('nav.usage')}
         </NavLink>
         <div className="nav-section">{t('nav.manage')}</div>
-        {/* v1.2.4: Outcomes — ROI / "revenue, not time" dashboard. */}
+        {/* v1.3.x: Outcomes — list + session chain + summary browser. */}
         <NavLink to="/outcomes" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Outcomes
+          {t('pane.outcomes.nav_outcomes')}
         </NavLink>
-        <div className="nav-section">Manage</div>
+        <div className="nav-section">{t('nav.manage')}</div>
         <NavLink to="/tenants" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.tenants')}
         </NavLink>
