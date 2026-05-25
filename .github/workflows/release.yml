@@ -54,7 +54,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-cyclonedx
-        run: cargo install cargo-cyclonedx --locked
+        # Pinned to 0.5.8: v0.5.9 removed the --output-pattern flag, breaking this step.
+        # TODO: re-test on cyclonedx 0.5.9+ when --output-pattern semantic is clear.
+        run: cargo install cargo-cyclonedx@0.5.8 --locked
       - name: Generate SBOM
         run: cargo cyclonedx --format json --output-pattern dir --output-path sbom
       - uses: actions/upload-artifact@v4

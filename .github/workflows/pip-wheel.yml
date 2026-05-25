@@ -56,7 +56,13 @@ jobs:
             cibw_archs: x86_64
             cibw_platform: linux
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm    # GitHub-hosted ARM runner
+            # ubuntu-24.04-arm was swapped for ubuntu-latest + QEMU because the
+            # GitHub-hosted ARM runner pool has very low concurrency (1-2/org) and
+            # caused workflow runs to queue for >24 h (observed 2026-05-24).
+            # cibuildwheel's CIBW_ARCHS=aarch64 on x86_64 triggers QEMU emulation
+            # automatically, producing a correct manylinux aarch64 wheel.
+            # TODO: revert to ubuntu-24.04-arm once ARM pool capacity is confirmed stable.
+            runner: ubuntu-latest
             cibw_archs: aarch64
             cibw_platform: linux
 
