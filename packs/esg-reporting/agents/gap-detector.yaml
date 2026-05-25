@@ -1,0 +1,145 @@
+# Agent definition — gap-detector
+# ---------------------------------------------------------------------------
+# Compares the metric values collected in esg_metrics against the disclosure
+# requirements declared in esg_framework_mappings for each framework.
+#
+# For each framework (CSRD / SASB / TCFD / GRI) the agent:
+#   1. Builds a list of all required disclosure items for this period's
+#      applicable frameworks.
+#   2. Checks which metric_keys have a value with confidence != 'not_available'.
+#   3. Identifies gaps: required items with no collected value.
+#   4. Produces a prioritized gap-remediation-plan using the template.
+#   5. Notifies the sustainability team via Slack.
+#
+# The agent does NOT attempt to fill gaps — it only reports them.
+# Gap remediation is a human task, optionally aided by the metric-aggregator.
+# ---------------------------------------------------------------------------
+
+name: gap-detector
+version: "1.0.0"
+description: >
+  Compares collected ESG metrics against CSRD, SASB, TCFD, and GRI
+  framework requirements. Identifies missing or low-confidence data points
+  and renders a prioritized gap-remediation plan for the sustainability team.
+  Fires after period close and at regulatory deadline horizons.
+
+triggers:
+  - event: esg.period_closed
+    source: period-close
+  - event: esg.regulatory_deadline_approaching
+    source: regulatory-deadline-approaching
+
+llm:
+  model: ${ESG_LLM_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 4096
+
+system_prompt: |
+  You are an ESG disclosure specialist performing a coverage gap analysis.
+  You will be given:
+  - The set of metrics collected for a reporting period.
+  - The disclosure requirements for one or more frameworks (CSRD, SASB,
+    TCFD, GRI) as declared in esg_framework_mappings.
+
+  Your job:
+  1. For each required disclosure item, determine if it is covered
+     (metric collected with confidence != 'not_available').
+  2. Classify each gap by severity:
+     - CRITICAL: required for mandatory regulatory filing (CSRD large PIE,
+                 SEC Climate Rule large accelerated filer) and completely missing.
+     - HIGH:     required for mandatory filing but confidence = 'estimated'
+                 or 'modeled' — needs upgrade to 'measured'.
+     - MEDIUM:   voluntary framework (GRI, SASB) gap, or CSRD phased deadline.
+     - LOW:      nice-to-have disclosure; not blocking any filing.
+  3. For each gap, suggest the most likely remediation source
+     (e.g. "re-run Watershed API pull", "request facilities meter data",
+     "add question to supplier questionnaire").
+  4. Output a structured JSON gap report matching the schema below.
+
+  Gap report schema:
+  {
+    "period_label": "FY2024",
+    "frameworks_assessed": ["CSRD", "GRI", "TCFD"],
+    "coverage_pct": {
+      "CSRD": 87.5,
+      "GRI": 72.0,
+      "TCFD": 91.0
+    },
+    "gaps": [
+      {
+        "framework": "CSRD",
+        "disclosure_item": "E3-4 para 28",
+        "metric_key": "water_withdrawal",
+        "severity": "HIGH",
+        "current_confidence": "not_available",
+        "remediation_suggestion": "Request Q4 meter readings from facilities mgmt",
+        "suggested_source": "manual_entry"
+      }
+    ]
+  }
+
+  Rules:
+  - Do not invent framework requirements that are not in the provided
+    esg_framework_mappings data. Only assess what is declared.
+  - If overlap_resolution = 'csrd_primary', do not flag a GRI gap for
+    the same metric_key — the CSRD disclosure satisfies GRI.
+  - If overlap_resolution = 'both_required', flag gaps independently
+    for each framework.
+
+tools:
+  - name: get_collected_metrics
+    description: >
+      Fetch all metrics collected for the given period_id, including
+      metric_key, value, unit, and confidence. Returned as a list that
+      the gap analysis compares against framework requirements.
+    kind: sql
+    query: |
+      SELECT
+          m.metric_key,
+          m.pillar,
+          m.category,
+          m.value,
+          m.unit,
+          m.confidence,
+          ds.name AS source_name
+      FROM esg_metrics m
+      JOIN esg_data_sources ds ON ds.id = m.data_source_id
+      WHERE m.tenant_id = '{tenant_id}'
+        AND m.period_id = '{period_id}'
+      ORDER BY m.pillar, m.category, m.metric_key
+
+  - name: get_framework_requirements
+    description: >
+      Fetch all disclosure items required for the given framework(s).
+      Returns metric_key, disclosure_item, required_for, and
+      overlap_resolution for each requirement.
+    kind: sql
+    query: |
+      SELECT
+          metric_key,
+          framework,
+          disclosure_item,
+          required_for,
+          overlap_resolution,
+          notes
+      FROM esg_framework_mappings
+      WHERE framework = ANY('{frameworks}'::TEXT[])
+      ORDER BY framework, metric_key
+
+  - name: render_gap_plan
+    description: >
+      Render the gap-remediation-plan template from the gap report JSON.
+      Returns the rendered markdown text for inclusion in the Slack
+      notification and the assurance evidence bundle.
+    kind: template
+    template: "templates/gap-remediation-plan.md.j2"
+
+outputs:
+  - outputs/sustainability-team-slack.yaml
+
+outcome_telemetry:
+  record_on:
+    - gap_analysis_started
+    - gap_analysis_completed
+    - gap_report_rendered
+  feedback_table: esg_submissions

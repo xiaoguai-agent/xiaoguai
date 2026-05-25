@@ -1,0 +1,166 @@
+# Agent definition — narrative-drafter
+# ---------------------------------------------------------------------------
+# Writes the narrative sections of ESG disclosures:
+#   - Governance (who oversees climate/ESG risk)
+#   - Strategy (how climate risk affects business model)
+#   - Risk Management (processes for identifying and managing ESG risks)
+#   - Metrics & Targets (quantitative KPIs with targets and progress)
+#
+# These four sections are required by TCFD and referenced in CSRD ESRS 2.
+# Equivalent sections exist in GRI 2 (General Disclosures) and SASB
+# industry standards.
+#
+# The agent drafts sections in Markdown using framework-specific templates.
+# All drafts are saved with status = 'pending_review'. No submission happens
+# without explicit human approval.
+# ---------------------------------------------------------------------------
+
+name: narrative-drafter
+version: "1.0.0"
+description: >
+  Drafts the four canonical ESG narrative sections (Governance, Strategy,
+  Risk Management, Metrics & Targets) for CSRD, SASB, TCFD, and GRI
+  disclosures. Renders framework-specific Jinja2 templates populated with
+  collected metrics and policy descriptions. All drafts require human review
+  before any submission.
+
+triggers:
+  - event: esg.period_closed
+    source: period-close
+
+llm:
+  model: ${ESG_LLM_MODEL:-default}
+  temperature: 0.3   # slightly higher — narrative writing benefits from some variation
+  max_tokens: 8192
+
+system_prompt: |
+  You are a sustainability disclosure specialist drafting narrative sections
+  for corporate ESG reports. You write accurate, concise, and regulator-ready
+  text based on quantitative metrics and policy descriptions provided to you.
+
+  Rules:
+  - Ground every claim in the metrics data provided. Do not invent figures.
+  - Use hedged language for estimated or modeled data
+    (e.g. "approximately", "based on modeled estimates").
+  - Write in the third person ("The Company") unless the template specifies
+    first person ("We").
+  - Each narrative section should be 150–400 words unless the template
+    specifies otherwise.
+  - Flag inline any metric referenced with confidence = 'estimated' or
+    'modeled' using the marker [ESTIMATE] so the human reviewer can
+    decide whether to verify before filing.
+  - Do not include any financial figures not present in the provided data.
+  - Output ONLY the narrative text — no JSON wrapper, no metadata headers.
+
+tools:
+  - name: get_period_metrics
+    description: >
+      Fetch all collected metrics for the reporting period, including
+      pillar, category, metric_key, value, unit, confidence, and
+      methodology. Used as the quantitative foundation for narrative drafts.
+    kind: sql
+    query: |
+      SELECT
+          m.pillar, m.category, m.metric_key,
+          m.value, m.unit, m.confidence, m.methodology, m.boundary
+      FROM esg_metrics m
+      WHERE m.tenant_id = '{tenant_id}'
+        AND m.period_id = '{period_id}'
+      ORDER BY m.pillar, m.category, m.metric_key
+
+  - name: get_prior_period_metrics
+    description: >
+      Fetch metrics from the prior annual period for year-over-year
+      comparison language (e.g. "Scope 1 emissions decreased 12% vs FY2023").
+      Returns the same schema as get_period_metrics.
+    kind: sql
+    query: |
+      SELECT
+          m.pillar, m.category, m.metric_key,
+          m.value, m.unit, m.confidence
+      FROM esg_metrics m
+      JOIN esg_reporting_periods rp ON rp.id = m.period_id
+      WHERE m.tenant_id = '{tenant_id}'
+        AND rp.period_type = 'annual'
+        AND rp.end_date < (
+            SELECT start_date FROM esg_reporting_periods
+            WHERE id = '{period_id}'
+        )
+      ORDER BY rp.end_date DESC, m.pillar, m.metric_key
+      LIMIT 200
+
+  - name: draft_governance_section
+    description: >
+      Render the Governance narrative template (board oversight,
+      committee structure, management roles) for the specified framework.
+    kind: template
+    templates:
+      CSRD: "templates/narrative-section-CSRD.md.j2"
+      SASB: "templates/narrative-section-SASB.md.j2"
+      TCFD: "templates/narrative-section-TCFD.md.j2"
+      GRI:  "templates/narrative-section-GRI.md.j2"
+    section: governance
+
+  - name: draft_strategy_section
+    description: >
+      Render the Strategy narrative template (material climate risks,
+      transition and physical risk scenarios, business model resilience).
+    kind: template
+    templates:
+      CSRD: "templates/narrative-section-CSRD.md.j2"
+      TCFD: "templates/narrative-section-TCFD.md.j2"
+    section: strategy
+
+  - name: draft_risk_management_section
+    description: >
+      Render the Risk Management narrative template (identification,
+      assessment, and management of ESG risks; integration with ERM).
+    kind: template
+    templates:
+      CSRD: "templates/narrative-section-CSRD.md.j2"
+      TCFD: "templates/narrative-section-TCFD.md.j2"
+      GRI:  "templates/narrative-section-GRI.md.j2"
+    section: risk_management
+
+  - name: draft_metrics_targets_section
+    description: >
+      Render the Metrics & Targets narrative template (quantitative KPIs
+      with targets, progress tracking, and science-based target alignment).
+    kind: template
+    templates:
+      CSRD: "templates/narrative-section-CSRD.md.j2"
+      SASB: "templates/narrative-section-SASB.md.j2"
+      TCFD: "templates/narrative-section-TCFD.md.j2"
+      GRI:  "templates/narrative-section-GRI.md.j2"
+    section: metrics_targets
+
+  - name: save_draft_section
+    description: >
+      Save a rendered narrative section draft to esg_submissions with
+      status = 'draft'. Returns the draft record id for the human reviewer
+      to retrieve in the admin UI.
+    kind: sql
+    query: |
+      INSERT INTO esg_submissions
+          (tenant_id, period_id, regulator, framework, status, notes)
+      VALUES
+          ('{tenant_id}', '{period_id}', '{regulator}', '{framework}',
+           'draft', '{draft_section_json}')
+      ON CONFLICT DO NOTHING
+      RETURNING id
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    submit_to_regulator: 0
+  require_human_approval:
+    - save_draft_section
+  notify_channel: "${ESG_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - draft_started
+    - section_rendered
+    - draft_saved
+    - draft_rejected
+  feedback_table: esg_submissions

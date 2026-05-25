@@ -1,0 +1,99 @@
+# ESG Reporting Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# Aggregates Environmental, Social, and Governance metrics from accounting,
+# HRIS, facilities, and supplier systems; detects data gaps against CSRD,
+# SASB, TCFD, and GRI framework requirements; and drafts disclosure
+# narratives for human review.
+#
+# All regulatory submissions are HOTL-gated (zero file without approver).
+#
+# Install:   xiaoguai pack install packs/esg-reporting/
+# Requires:  xiaoguai >= v1.3.1-prep (features: watch, llm,
+#            outcome-telemetry, hotl)
+# ---------------------------------------------------------------------------
+
+name: esg-reporting
+version: "1.0.0"
+description: >
+  Aggregates Environmental (Scope 1/2/3 emissions, water, waste, energy),
+  Social (DEI, workforce, health & safety), and Governance (board composition,
+  executive pay, audit committee) metrics from connected data sources.
+  Maps metrics to CSRD, SASB, TCFD, and GRI frameworks; detects coverage
+  gaps; drafts narrative disclosure sections; and routes regulatory
+  submissions through a HOTL approver gate.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - llm               # LLM backend for narrative drafting and gap analysis
+    - outcome-telemetry # Records draft/submission outcome for audit trail
+    - watch             # F1: WatchSpec — period-close and staleness triggers
+    - hotl              # Human-on-the-Loop gate for regulatory submissions
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_esg_metrics.sql
+
+# --------------------------------------------------------------------------
+# Watch specs (declarative; registered into the watch registry on load)
+# --------------------------------------------------------------------------
+watches:
+  - path: watches/period-close.yaml
+  - path: watches/data-source-stale.yaml
+  - path: watches/regulatory-deadline-approaching.yaml
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/metric-aggregator.yaml
+  - path: agents/gap-detector.yaml
+  - path: agents/narrative-drafter.yaml
+  - path: agents/framework-mapper.yaml
+  - path: agents/assurance-readiness-checker.yaml
+
+# --------------------------------------------------------------------------
+# Inbound connectors (data sources)
+# --------------------------------------------------------------------------
+sources:
+  - inbound/netsuite-financial-data.yaml
+  - inbound/workday-hris-export.yaml
+  - inbound/watershed-emissions-data.yaml
+  - inbound/manual-survey-csv.yaml
+  - inbound/supplier-questionnaire-aggregate.yaml
+
+# --------------------------------------------------------------------------
+# Output connectors
+# --------------------------------------------------------------------------
+outputs:
+  - outputs/sustainability-team-slack.yaml
+  - outputs/csr-platform-submission.yaml     # HOTL-gated
+  - outputs/exec-board-briefing.yaml
+  - outputs/public-disclosure-pdf-stub.yaml
+
+# --------------------------------------------------------------------------
+# Templates
+# --------------------------------------------------------------------------
+templates:
+  - templates/framework-coverage-matrix.md.j2
+  - templates/narrative-section-CSRD.md.j2
+  - templates/narrative-section-SASB.md.j2
+  - templates/narrative-section-TCFD.md.j2
+  - templates/narrative-section-GRI.md.j2
+  - templates/gap-remediation-plan.md.j2
+  - templates/evidence-bundle-readme.md.j2
+
+# --------------------------------------------------------------------------
+# Schema migration helper
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "esg_"
+  namespace: "esg_reporting"

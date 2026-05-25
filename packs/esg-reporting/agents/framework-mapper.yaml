@@ -1,0 +1,152 @@
+# Agent definition — framework-mapper
+# ---------------------------------------------------------------------------
+# Resolves one disclosure → which frameworks it satisfies → reduces
+# duplication in multi-framework reporting.
+#
+# The core overlap problem:
+#   A company reporting under CSRD (mandatory for EU large PIEs) also wants
+#   to publish a GRI-aligned sustainability report and align with TCFD
+#   recommendations. Without a mapper, the sustainability team writes the
+#   same Scope 1 emissions disclosure three times in slightly different
+#   formats, creating inconsistency risk and rework.
+#
+# How overlap between CSRD and GRI is handled (the primary case):
+#   1. Query esg_framework_mappings WHERE metric_key = X for all frameworks.
+#   2. Check overlap_resolution for each (metric_key, framework) pair.
+#   3. If overlap_resolution = 'csrd_primary':
+#        - CSRD disclosure is authoritative and self-contained.
+#        - GRI section gets a cross-reference paragraph:
+#          "This disclosure satisfies GRI 305-1. Refer to section E1-6
+#           of our CSRD ESRS report for the full methodology and data."
+#        - No independent GRI narrative is drafted — only the cross-ref.
+#   4. If overlap_resolution = 'gri_primary': reverse — CSRD references GRI.
+#   5. If overlap_resolution = 'both_required': the agent drafts both
+#      disclosures independently (e.g. SASB sector-specific vs CSRD generic).
+#   6. If overlap_resolution = 'deferred': the agent flags the metric for
+#      human decision and does NOT make a routing decision.
+#
+# The result is a framework-coverage-matrix showing which disclosures are
+# primary, which are cross-references, and which still need human routing.
+# ---------------------------------------------------------------------------
+
+name: framework-mapper
+version: "1.0.0"
+description: >
+  Resolves each collected ESG metric against all four frameworks (CSRD, SASB,
+  TCFD, GRI) and applies overlap_resolution policy to determine whether each
+  framework disclosure is primary, a cross-reference to another framework, or
+  both independently required. Outputs a framework-coverage-matrix and routes
+  narrative drafting requests to narrative-drafter accordingly.
+
+triggers:
+  - event: esg.period_closed
+    source: period-close
+
+llm:
+  model: ${ESG_LLM_MODEL:-default}
+  temperature: 0.1   # deterministic — this is routing logic, not creative
+  max_tokens: 4096
+
+system_prompt: |
+  You are an ESG disclosure framework specialist. Your job is to apply
+  overlap resolution policy across CSRD, SASB, TCFD, and GRI frameworks
+  and produce a routing plan for narrative drafting.
+
+  Overlap resolution rules (strictly applied; do not deviate):
+  - 'csrd_primary': CSRD disclosure is written in full. For the same
+    metric_key in GRI or TCFD, generate a cross-reference paragraph only
+    (do not request a full narrative draft). Mark the GRI/TCFD row as
+    'cross_reference' in the coverage matrix.
+  - 'gri_primary': GRI disclosure is written in full. CSRD section gets
+    a cross-reference. Mark CSRD row as 'cross_reference'.
+  - 'both_required': Request independent full narrative drafts for each
+    framework. Mark both rows as 'primary'. This incurs duplicated writing
+    effort and is flagged with a warning in the coverage matrix.
+  - 'deferred': Do not route to narrative-drafter. Flag the metric_key
+    in the coverage matrix as 'NEEDS_HUMAN_DECISION' and notify the
+    sustainability team.
+
+  For TCFD specifically: TCFD does not have standalone regulatory force
+  (unlike CSRD). When a metric_key maps to both CSRD and TCFD with
+  csrd_primary, the CSFD ESRS disclosure automatically satisfies TCFD
+  Recommendations. The coverage matrix should note "TCFD satisfied via
+  CSRD ESRS alignment".
+
+  Output format: JSON matching the coverage matrix schema below.
+
+  Coverage matrix schema:
+  {
+    "period_label": "FY2024",
+    "generated_at": "2025-01-15T08:00:00Z",
+    "summary": {
+      "total_metric_keys": 32,
+      "fully_covered": 28,
+      "cross_referenced": 14,
+      "both_required": 3,
+      "needs_human_decision": 2,
+      "not_collected": 4
+    },
+    "rows": [
+      {
+        "metric_key": "emissions_scope1",
+        "pillar": "environmental",
+        "frameworks": {
+          "CSRD": {"disclosure_item": "E1-6 para 56(a)", "routing": "primary"},
+          "GRI":  {"disclosure_item": "GRI 305-1", "routing": "cross_reference",
+                   "cross_ref_to": "CSRD:E1-6 para 56(a)"},
+          "TCFD": {"disclosure_item": "Metrics & Targets 4a", "routing": "cross_reference",
+                   "cross_ref_to": "CSRD:E1-6 para 56(a)",
+                   "note": "TCFD satisfied via CSRD ESRS alignment"},
+          "SASB": {"disclosure_item": "EM-EP-110a.1", "routing": "both_required",
+                   "note": "Sector-specific boundary differs from CSRD generic"}
+        }
+      }
+    ]
+  }
+
+tools:
+  - name: get_all_mappings
+    description: >
+      Fetch all rows from esg_framework_mappings. This is the complete
+      routing table used to build the coverage matrix.
+    kind: sql
+    query: |
+      SELECT
+          metric_key, framework, disclosure_item,
+          required_for, overlap_resolution, notes
+      FROM esg_framework_mappings
+      ORDER BY metric_key, framework
+
+  - name: get_collected_metric_keys
+    description: >
+      Fetch the set of metric_keys collected for the given period, along
+      with their confidence levels. Used to distinguish 'not_collected'
+      from 'cross_reference' in the coverage matrix.
+    kind: sql
+    query: |
+      SELECT DISTINCT metric_key, confidence
+      FROM esg_metrics
+      WHERE tenant_id = '{tenant_id}'
+        AND period_id = '{period_id}'
+
+  - name: render_coverage_matrix
+    description: >
+      Render the framework-coverage-matrix template from the coverage
+      matrix JSON. Returns a Markdown table suitable for the exec board
+      briefing and the assurance evidence bundle.
+    kind: template
+    template: "templates/framework-coverage-matrix.md.j2"
+
+  - name: emit_narrative_drafting_requests
+    description: >
+      Emit internal events to trigger narrative-drafter for each framework
+      section where routing = 'primary'. Does not trigger drafts for
+      'cross_reference' rows. Returns a list of (framework, section)
+      pairs that were queued.
+    kind: emit_events
+    event_kind: esg.narrative_draft_requested
+    cardinality: per_primary_row
+
+outputs:
+  - outputs/exec-board-briefing.yaml
+  - outputs/sustainability-team-slack.yaml
