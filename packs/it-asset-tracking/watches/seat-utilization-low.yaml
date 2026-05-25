@@ -1,0 +1,117 @@
+# packs/it-asset-tracking/watches/seat-utilization-low.yaml
+#
+# Watch spec — SaaS seats with no activity for 60+ days (reclaim candidates)
+#
+# False-positive avoidance strategy
+# ──────────────────────────────────
+# A seat is only emitted as a reclaim candidate when ALL of the following
+# are true:
+#   1. last_active_at IS NULL or < (NOW() - idle_days_threshold)
+#      — verified inactivity, not just missing telemetry
+#   2. assigned_at < (NOW() - min_seat_age_days)
+#      — seat has been held long enough to expect real usage
+#   3. reclaim_exclusion_reason IS NULL
+#      — no active leave / override recorded in asset_assignments
+#   4. reclaim_exclusion_until IS NULL OR reclaim_exclusion_until < CURRENT_DATE
+#      — any time-bounded exclusion has expired
+#   5. employee is NOT listed in the hr-onboarding employees table with
+#      status IN ('pending', 'onboarding')
+#      — excludes seats provisioned for incoming hires not yet at their desks
+#
+# Conditions 3-4 are the primary guard against legitimate idle users
+# (parental leave, sabbatical, long-term sick).  Operators set
+# reclaim_exclusion_reason via the admin UI or Okta HR-sync inbound adapter.
+
+name: seat-utilization-low
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each SaaS seat assignment where the assigned
+  employee has had no recorded activity for 60+ days and holds no active
+  leave or admin exclusion. Feeds the reclaim-recommender agent.
+
+source:
+  kind: sql
+  table: asset_assignments
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      aa.tenant_id,
+      aa.id                                               AS assignment_id,
+      aa.asset_id,
+      a.name                                              AS asset_name,
+      a.vendor,
+      aa.employee_id,
+      aa.employee_email,
+      aa.employee_name,
+      aa.assigned_at,
+      aa.last_active_at,
+      aa.login_count_30d,
+      aa.reclaim_exclusion_reason,
+      aa.reclaim_exclusion_until,
+      EXTRACT(DAY FROM NOW() - COALESCE(aa.last_active_at, aa.assigned_at))::INT
+                                                          AS idle_days,
+      lt.annual_cost_usd / NULLIF(lt.contracted_seats, 0) AS cost_per_seat_usd,
+      lt.contract_id
+  FROM asset_assignments aa
+  JOIN it_assets a
+      ON a.id = aa.asset_id
+     AND a.asset_class = 'software'
+     AND a.asset_type  = 'saas_seat'
+  LEFT JOIN license_terms lt
+      ON lt.asset_id = aa.asset_id
+     AND lt.term_end_date >= CURRENT_DATE
+  -- Exclude employees currently in onboarding (if hr-onboarding pack installed)
+  LEFT JOIN employees e
+      ON e.id     = aa.employee_id
+     AND e.status IN ('pending', 'onboarding')
+  WHERE aa.tenant_id = '{tenant_id}'
+    AND aa.returned_at IS NULL            -- active assignment only
+    -- Inactivity gate
+    AND COALESCE(aa.last_active_at, aa.assigned_at)
+            < NOW() - INTERVAL '60 days'
+    -- Seat age gate (avoid flagging newly provisioned seats)
+    AND aa.assigned_at < NOW() - INTERVAL '30 days'
+    -- Exclusion gates
+    AND aa.reclaim_exclusion_reason IS NULL
+    AND (aa.reclaim_exclusion_until IS NULL
+         OR aa.reclaim_exclusion_until < CURRENT_DATE)
+    -- Onboarding exclusion (e.id IS NOT NULL means joined = currently onboarding)
+    AND e.id IS NULL
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  # Weekly on Monday at 09:00 — reclaim review fits into a weekly IT cadence.
+  cron: "0 9 * * 1"
+
+event:
+  kind: it_asset.seat_utilization_low
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:                "$.tenant_id"
+    assignment_id:            "$.assignment_id"
+    asset_id:                 "$.asset_id"
+    asset_name:               "$.asset_name"
+    vendor:                   "$.vendor"
+    employee_id:              "$.employee_id"
+    employee_email:           "$.employee_email"
+    employee_name:            "$.employee_name"
+    assigned_at:              "$.assigned_at"
+    last_active_at:           "$.last_active_at"
+    login_count_30d:          "$.login_count_30d"
+    idle_days:                "$.idle_days"
+    cost_per_seat_usd:        "$.cost_per_seat_usd"
+    contract_id:              "$.contract_id"
+
+downstream:
+  agents:
+    - reclaim-recommender
+
+# Dedup: suppress re-fire for the same assignment within 7 days unless
+# idle_days has grown by at least 14 (i.e. still idle two more weeks later).
+dedup:
+  key: "{tenant_id}:{assignment_id}"
+  ttl_seconds: 604800   # 7 days
+  re_fire_if: "payload.idle_days > prior.idle_days + 14"

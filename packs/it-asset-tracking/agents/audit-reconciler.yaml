@@ -1,0 +1,253 @@
+# packs/it-asset-tracking/agents/audit-reconciler.yaml
+#
+# Audit Reconciler — Supervisor agent
+#
+# Performs a three-way reconciliation across:
+#   A. procurement_system  — canonical purchase records (CSV import / Snipe-IT)
+#   B. mdm                 — Jamf / Intune enrolled device inventory
+#   C. idp                 — Okta app assignments (who actually has access)
+#
+# Per asset class the reconciler finds:
+#   • ghost_license     : IdP active, no procurement / MDM record
+#   • orphan_mdm_device : MDM enrolled, no procurement record, no assignment
+#   • missing_assignment: procurement record + MDM enrolled, no IdP assignment
+#   • seat_overcount    : active_seats > contracted_seats in license_terms
+#   • expired_license   : license_terms.term_end_date < today, IdP still active
+#   • untracked_hardware: MDM device present, not in it_assets at all
+#
+# Outputs:
+#   • reconciliation_findings rows (one per discrepancy)
+#   • audit-finding-table template rendered to Slack + Jira
+#   • Critical findings trigger a HOTL-gated alert to IT leadership
+#
+# Schedule: monthly on the 1st at 07:00 and on-demand via admin UI.
+
+name: audit-reconciler
+version: "1.0.0"
+kind: supervisor
+
+budget:
+  max_steps: 20
+  max_wall_seconds: 600   # reconciliation can be data-heavy; 10-minute guard
+
+triggers:
+  # Monthly scheduled reconciliation
+  - schedule:
+      cron: "0 7 1 * *"
+  # On-demand from IT admin UI
+  - event: it_asset.manual_audit_request
+
+system_prompt: |
+  You are the IT Asset Audit Reconciler. Run a three-way reconciliation
+  across procurement, MDM, and IdP sources for all asset classes.
+
+  Steps:
+    A. compare_hardware  — cross-reference MDM device inventory against
+                           it_assets (procurement source) and asset_assignments.
+    B. compare_software  — cross-reference Okta app assignments against
+                           license_terms (contracted seats) and asset_assignments.
+    C. classify_findings — for each discrepancy, determine finding_type,
+                           severity, and recommended_action.
+    D. persist_findings  — write all findings to reconciliation_findings.
+    E. render_report     — produce the audit-finding-table and submit it
+                           to Slack + Jira.
+    F. escalate_critical — if any critical findings exist, post an escalation
+                           alert to IT leadership Slack channel.
+
+  Severity rules:
+    critical : seat_overcount (legal/compliance risk) OR ghost_license for
+               offboarded employee OR expired_license still active in IdP
+    high     : orphan_mdm_device (untracked hardware = security risk) OR
+               untracked_hardware
+    medium   : missing_assignment (user has hardware but no IdP access)
+    info     : minor count mismatches within 5% of contracted seats
+
+  Rules:
+  - Use run_id = '{run_id}' in all insert calls to group this run's findings.
+  - Do not delete or modify existing open findings — only insert new ones.
+  - If a finding already exists (same finding_type + asset_id with status='open'),
+    skip inserting a duplicate and note the count of pre-existing open findings.
+  - Always include a recommended_action for critical and high findings.
+
+workers:
+  - id: hardware_comparator
+    handles_step_prefix: "compare_hardware"
+    tools:
+      - name: get_mdm_devices
+        description: >
+          Retrieve all MDM-enrolled devices from the inbound MDM sync view
+          (populated by jamf-mdm-event and intune-event adapters).
+          Returns: mdm_device_id, mdm_source, serial_number, model, enrolled_at,
+          last_checkin_at, assigned_user_email.
+        kind: sql
+        query: |
+          SELECT mdm_device_id, mdm_source, serial_number, model,
+                 enrolled_at, last_checkin_at, assigned_user_email
+          FROM it_assets
+          WHERE tenant_id   = '{tenant_id}'
+            AND asset_class = 'hardware'
+            AND mdm_device_id IS NOT NULL
+            AND status NOT IN ('retired')
+
+      - name: find_untracked_mdm_devices
+        description: >
+          Find MDM device IDs that have no corresponding procurement record
+          in it_assets (device exists in MDM sync but was never entered as
+          a procurement record).
+        kind: sql
+        query: |
+          SELECT m.mdm_device_id, m.serial_number
+          FROM it_assets m
+          WHERE m.tenant_id      = '{tenant_id}'
+            AND m.asset_class    = 'hardware'
+            AND m.mdm_device_id  IS NOT NULL
+            AND m.procurement_source = 'mdm'  -- only MDM-sourced, never matched to procurement
+            AND NOT EXISTS (
+                SELECT 1 FROM it_assets p
+                WHERE p.tenant_id      = m.tenant_id
+                  AND p.serial_number  = m.serial_number
+                  AND p.procurement_source IN ('procurement_system', 'csv_import', 'snipe_it')
+            )
+
+  - id: software_comparator
+    handles_step_prefix: "compare_software"
+    tools:
+      - name: get_okta_app_assignments
+        description: >
+          Retrieve all active Okta app assignments from the inbound Okta sync
+          view (populated by okta-app-assignment-event adapter).
+          Returns: app_name, user_email, assigned_at, last_login_at.
+        kind: sql
+        query: |
+          SELECT detail->>'app_name'  AS app_name,
+                 detail->>'user_email' AS user_email,
+                 (detail->>'assigned_at')::timestamptz AS assigned_at,
+                 (detail->>'last_login_at')::timestamptz AS last_login_at
+          FROM it_assets
+          WHERE tenant_id  = '{tenant_id}'
+            AND asset_class = 'software'
+            AND detail ? 'okta_app_id'
+            AND detail->>'idp_status' = 'active'
+
+      - name: find_ghost_licenses
+        description: >
+          Find Okta app assignments where the user appears in IdP but has no
+          active asset_assignment row. These are ghost licenses.
+        kind: sql
+        query: |
+          SELECT
+              a.id AS asset_id, a.name AS asset_name,
+              detail->>'user_email' AS user_email,
+              e.status AS employee_status
+          FROM it_assets a
+          CROSS JOIN LATERAL jsonb_array_elements(
+              a.detail->'okta_active_users'
+          ) AS u(user_data)
+          LEFT JOIN asset_assignments aa
+              ON aa.asset_id     = a.id
+             AND aa.employee_email = user_data->>'email'
+             AND aa.returned_at IS NULL
+          LEFT JOIN employees e
+              ON e.email = user_data->>'email'
+          WHERE a.tenant_id   = '{tenant_id}'
+            AND a.asset_class = 'software'
+            AND aa.id IS NULL   -- no matching assignment
+
+      - name: find_seat_overcounts
+        description: >
+          Find software assets where active_seats > contracted_seats in
+          any license_terms row.
+        kind: sql
+        query: |
+          SELECT a.id AS asset_id, a.name AS asset_name,
+                 a.active_seats, lt.contracted_seats,
+                 (a.active_seats - lt.contracted_seats) AS overcount,
+                 lt.contract_id, lt.annual_cost_usd
+          FROM it_assets a
+          JOIN license_terms lt ON lt.asset_id = a.id
+          WHERE a.tenant_id    = '{tenant_id}'
+            AND a.asset_class  = 'software'
+            AND a.active_seats > lt.contracted_seats
+
+  - id: finding_persister
+    handles_step_prefix: "persist_findings"
+    tools:
+      - name: insert_finding
+        description: >
+          Insert one reconciliation finding. Skip if an open finding with
+          the same finding_type and asset_id already exists.
+        kind: sql
+        query: |
+          INSERT INTO reconciliation_findings
+              (tenant_id, run_id, finding_type, severity, asset_id,
+               asset_name, asset_class, asset_type, present_in, absent_in,
+               description, recommended_action, detail)
+          SELECT
+              '{tenant_id}', '{run_id}', '{finding_type}', '{severity}',
+              '{asset_id}', '{asset_name}', '{asset_class}', '{asset_type}',
+              ARRAY[{present_in_csv}], ARRAY[{absent_in_csv}],
+              '{description}', '{recommended_action}', '{detail_json}'::jsonb
+          WHERE NOT EXISTS (
+              SELECT 1 FROM reconciliation_findings
+              WHERE tenant_id    = '{tenant_id}'
+                AND finding_type = '{finding_type}'
+                AND asset_id     = '{asset_id}'::uuid
+                AND resolution_status = 'open'
+          )
+
+  - id: report_renderer
+    handles_step_prefix: "render_report"
+    tools:
+      - name: render_audit_table
+        description: >
+          Render the audit-finding-table template with this run's findings
+          grouped by severity. Returns the rendered markdown.
+        kind: template
+        template: templates/audit-finding-table.md.j2
+
+      - name: post_to_slack
+        description: Post the audit finding table to the IT Slack channel.
+        kind: output
+        output: it-team-slack
+
+      - name: create_audit_jira_task
+        description: >
+          Create a Jira epic/task for the reconciliation findings requiring
+          IT action. Links each critical/high finding as a sub-task.
+        kind: output
+        output: jira-asset-task
+
+  - id: escalation_handler
+    handles_step_prefix: "escalate_critical"
+    tools:
+      - name: count_critical_findings
+        description: Count open critical findings from this run.
+        kind: sql
+        query: |
+          SELECT COUNT(*) AS critical_count
+          FROM reconciliation_findings
+          WHERE run_id   = '{run_id}'::uuid
+            AND severity = 'critical'
+
+      - name: post_escalation_alert
+        description: >
+          Post a critical-findings escalation alert to the IT leadership
+          Slack channel (only if critical_count > 0).
+        kind: output
+        output: it-team-slack
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    okta_deprovision: 0
+    mdm_wipe: 0
+  require_human_approval:
+    - insert_finding       # findings visible in admin UI before any action
+    - post_escalation_alert
+
+outcome_telemetry:
+  record_on:
+    - reconciliation_complete
+    - finding_created
+    - finding_resolved
+  feedback_table: reconciliation_findings

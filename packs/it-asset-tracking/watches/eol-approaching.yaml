@@ -1,0 +1,96 @@
+# packs/it-asset-tracking/watches/eol-approaching.yaml
+#
+# Watch spec — assets approaching vendor-announced end-of-life
+#
+# Covers both hardware (Apple / Dell model EOL dates — e.g. Apple last
+# supported macOS version for a chip generation) and software (vendor
+# announces EOL for a product version or tier).
+#
+# EOL dates are stored in it_assets.eol_date and kept current via:
+#   • Snipe-IT import (snipe-it-asset-import inbound adapter)
+#   • CSV procurement feed with a vendor-eol-date column
+#   • Manual update via admin UI
+#
+# Two warning windows: 180 days (planning) and 60 days (urgent replacement).
+# Downstream: it-team-slack + jira-asset-task.
+
+name: eol-approaching
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for hardware and software assets whose vendor-announced
+  end-of-life date is within 180 days. Fires at two windows (180 / 60 days)
+  to support both advance planning and urgent replacement tracking.
+
+source:
+  kind: sql
+  table: it_assets
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      a.tenant_id,
+      a.id                                         AS asset_id,
+      a.name                                       AS asset_name,
+      a.vendor,
+      a.model,
+      a.asset_class,
+      a.asset_type,
+      a.serial_number,
+      a.eol_date,
+      (a.eol_date - CURRENT_DATE)                 AS days_until_eol,
+      CASE
+          WHEN (a.eol_date - CURRENT_DATE) <= 60  THEN 60
+          WHEN (a.eol_date - CURRENT_DATE) <= 180 THEN 180
+          ELSE NULL
+      END                                          AS warning_window_days,
+      -- Impacted users: count of active assignments for this asset
+      COUNT(aa.id)                                 AS assigned_count,
+      ARRAY_AGG(aa.employee_email)
+          FILTER (WHERE aa.employee_email IS NOT NULL) AS assigned_emails
+  FROM it_assets a
+  LEFT JOIN asset_assignments aa
+      ON aa.asset_id    = a.id
+     AND aa.returned_at IS NULL
+  WHERE a.tenant_id = '{tenant_id}'
+    AND a.status NOT IN ('retired')
+    AND a.eol_date IS NOT NULL
+    AND (a.eol_date - CURRENT_DATE) BETWEEN 0 AND 180
+  GROUP BY
+      a.tenant_id, a.id, a.name, a.vendor, a.model,
+      a.asset_class, a.asset_type, a.serial_number, a.eol_date
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  # Weekly on Wednesday — EOL planning fits a biweekly/monthly cadence.
+  cron: "0 8 * * 3"
+
+event:
+  kind: it_asset.eol_approaching
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:           "$.tenant_id"
+    asset_id:            "$.asset_id"
+    asset_name:          "$.asset_name"
+    vendor:              "$.vendor"
+    model:               "$.model"
+    asset_class:         "$.asset_class"
+    asset_type:          "$.asset_type"
+    serial_number:       "$.serial_number"
+    eol_date:            "$.eol_date"
+    days_until_eol:      "$.days_until_eol"
+    warning_window_days: "$.warning_window_days"
+    assigned_count:      "$.assigned_count"
+    assigned_emails:     "$.assigned_emails"
+
+downstream:
+  outputs:
+    - it-team-slack
+    - jira-asset-task
+
+# Dedup: once per (asset, window) per 14 days — EOL notices need periodic
+# reminders without being daily noise.
+dedup:
+  key: "{tenant_id}:{asset_id}:{warning_window_days}"
+  ttl_seconds: 1209600   # 14 days

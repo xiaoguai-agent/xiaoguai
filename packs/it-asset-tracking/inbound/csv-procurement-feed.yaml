@@ -1,0 +1,148 @@
+# packs/it-asset-tracking/inbound/csv-procurement-feed.yaml
+#
+# Inbound adapter — CSV procurement feed import
+#
+# Accepts a CSV file dropped into a watched directory or uploaded via the
+# admin UI "Import" button.  Typically used for:
+#   • One-time bulk hardware imports from a procurement system (e.g. SAP Ariba,
+#     Coupa, or a direct vendor export).
+#   • Monthly software license reconciliation exports from finance.
+#   • Vendor EOL date updates (vendor exports a CSV with model + eol_date).
+#
+# File naming convention:
+#   hardware_<YYYY-MM-DD>.csv     — hardware asset import
+#   licenses_<YYYY-MM-DD>.csv     — software license import
+#   eol_dates_<YYYY-MM-DD>.csv    — EOL date update only (no new assets created)
+#
+# Drop location (configurable):
+#   ${IT_ASSET_CSV_DROP_DIR:-/var/xiaoguai/inbound/it-asset-tracking/}
+# Or upload via admin UI → IT Asset Tracking → Import → CSV.
+
+name: csv-procurement-feed
+version: "1.0.0"
+kind: file_import
+
+trigger:
+  # Poll the drop directory every 5 minutes.
+  cron: "*/5 * * * *"
+  # Also triggered by admin UI file upload.
+  on_upload: true
+
+source:
+  kind: csv
+  watch_dir_env: IT_ASSET_CSV_DROP_DIR
+  watch_dir_default: /var/xiaoguai/inbound/it-asset-tracking/
+  filename_patterns:
+    hardware:   "hardware_*.csv"
+    licenses:   "licenses_*.csv"
+    eol_dates:  "eol_dates_*.csv"
+  # After successful import, move files to processed/ subdirectory.
+  post_import: move_to_processed
+
+# ── Hardware CSV expected columns ────────────────────────────────────────────
+#
+# Required: name, vendor, model, serial_number, asset_type, purchased_at
+# Optional: sku, warranty_expires_at, eol_date, po_number, status, employee_email
+#
+# The importer auto-detects and maps common column name variants:
+#   "Serial Number" → serial_number, "Purchase Date" → purchased_at, etc.
+
+schema:
+  hardware:
+    required:
+      - name
+      - vendor
+      - model
+      - serial_number
+      - asset_type
+      - purchased_at
+    optional:
+      - sku
+      - warranty_expires_at
+      - eol_date
+      - po_number
+      - status
+      - employee_email     # if present, create an asset_assignment row
+
+  licenses:
+    required:
+      - name
+      - vendor
+      - contract_id
+      - contracted_seats
+      - term_start_date
+      - term_end_date
+    optional:
+      - sku
+      - annual_cost_usd
+      - auto_renews
+      - renewal_notice_days
+      - tier
+      - notes
+
+  eol_dates:
+    required:
+      - vendor
+      - model
+      - eol_date
+    optional:
+      - asset_type
+      - notes
+
+field_mappings:
+  hardware:
+    asset_class:        "'hardware'"
+    asset_type:         "$.asset_type"
+    name:               "$.name"
+    vendor:             "$.vendor"
+    model:              "$.model"
+    sku:                "$.sku"
+    serial_number:      "$.serial_number"
+    purchased_at:       "$.purchased_at | parse_date"
+    warranty_expires_at: "$.warranty_expires_at | parse_date"
+    eol_date:           "$.eol_date | parse_date"
+    procurement_source: "'csv_import'"
+    procurement_ref:    "$.po_number"
+    status:             "$.status | default('in_stock')"
+
+  licenses:
+    asset_class:        "'software'"
+    asset_type:         "'license'"
+    name:               "$.name"
+    vendor:             "$.vendor"
+    vendor_contract_id: "$.contract_id"
+    total_seats:        "$.contracted_seats | to_int"
+    license_expires_at: "$.term_end_date | parse_date"
+    procurement_source: "'csv_import'"
+    procurement_ref:    "$.contract_id"
+
+  eol_dates:
+    # EOL date import: only updates existing assets, does not insert new ones.
+    update_only: true
+    match_on: [vendor, model, tenant_id]
+    set:
+      eol_date:   "$.eol_date | parse_date"
+      updated_at: "now()"
+
+upsert:
+  hardware:
+    match_on: [serial_number, tenant_id]
+    on_conflict: update_non_null_fields
+  licenses:
+    match_on: [vendor_contract_id, tenant_id]
+    on_conflict: update_non_null_fields
+
+# Validation: reject the entire file if > 5% of rows fail validation.
+# Failed rows are written to the import error log; successful rows are committed.
+validation:
+  max_error_rate: 0.05
+  on_failure: reject_file_notify_slack
+  notify_output: it-team-slack
+
+emit_event:
+  kind: it_asset.csv_import_complete
+  payload:
+    import_type: "{file_type}"
+    rows_imported: "{success_count}"
+    rows_failed: "{error_count}"
+    filename: "{filename}"
