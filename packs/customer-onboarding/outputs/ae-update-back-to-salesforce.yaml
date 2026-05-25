@@ -1,0 +1,47 @@
+# packs/customer-onboarding/outputs/ae-update-back-to-salesforce.yaml
+#
+# Output: AE update written back to Salesforce as an Opportunity note
+#
+# After handoff-package-builder completes, writes a structured summary back to
+# Salesforce as an Activity Note on the Opportunity record. This closes the loop
+# with the AE who owns the expansion deal.
+
+name: ae-update-back-to-salesforce
+kind: salesforce-api
+
+instance_url_env: SALESFORCE_INSTANCE_URL
+token_env: SALESFORCE_ACCESS_TOKEN
+
+# Write an Activity (Task) on the Opportunity
+api_call:
+  method: POST
+  endpoint: "/services/data/v57.0/sobjects/Task/"
+  body: |
+    {
+      "WhatId":     "{{ opportunity_id }}",
+      "Subject":    "Onboarding Handoff Complete — {{ customer_name }}",
+      "Description": "{{ handoff_summary }}",
+      "Status":     "Completed",
+      "ActivityDate": "{{ today }}",
+      "OwnerId":    "{{ ae_sf_user_id }}"
+    }
+
+# Map internal fields to Salesforce body fields
+field_mapping:
+  opportunity_id:  "$.opportunity_id"
+  customer_name:   "$.customer_name"
+  ae_sf_user_id:   "$.ae_owner_id"    # must be a Salesforce User ID
+  handoff_summary: |
+    POC Score: {{ poc_score_pct }}% | Onboarding Duration: {{ total_onboarding_days }} days
+    Open Risks: {{ open_risk_count }} | Recommendation: {{ recommendation }}
+    Full handoff doc: {{ handoff_doc_url | default("See co_audit_log.") }}
+  today: "{{ now | date('YYYY-MM-DD') }}"
+
+on_error:
+  notify_channel: "ops-alerts"
+  message: "ae-update-back-to-salesforce error: $error (opportunity=$opportunity_id)"
+  fallback: co_audit_log    # write to audit log if Salesforce call fails
+
+mock:
+  enabled_when: "XIAOGUAI_ENV != 'production'"
+  mock_target: co_audit_log

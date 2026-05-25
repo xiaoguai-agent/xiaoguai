@@ -1,0 +1,147 @@
+# packs/customer-onboarding/pack.yaml
+#
+# Customer Onboarding Skill Pack — manifest
+#
+# Covers the pre-activation journey: contract-signed → first-value → expansion-ready.
+# Distinct from packs/customer-success (post-launch retention).
+#
+# Dependency map
+# --------------
+#   xiaoguai-orchestrator   Supervisor + Worker + Planner traits (in-workspace crate)
+#   xiaoguai-watch          SQL-poll + event-driven watch primitives
+#   xiaoguai-llm            LLM backend for milestone-coach and stall-detector
+#   xiaoguai-outcome-tel    Outcome telemetry sink (POC scoring, health series)
+#   xiaoguai-im-feishu      CSM team Slack-equivalent (Feishu default)
+#   xiaoguai-audit          Audit log writes (mocked in tests)
+
+name: customer-onboarding
+version: "1.3.4-prep"
+description: >
+  Multi-agent skill pack for managing B2B customer onboarding from contract-signed
+  through POC execution to expansion-ready handoff.
+  Tracks milestone deadlines, detects stall signals (technical-blocker,
+  champion-disengaged, scope-creep, decision-paralysis), scores POC success
+  against pre-defined criteria, and generates CSM handoff packages.
+
+# ── Runtime dependencies ─────────────────────────────────────────────────────
+
+dependencies:
+  orchestrator: { crate: xiaoguai-orchestrator, feature: default }
+
+  watch:
+    crate: xiaoguai-watch
+    feature: sql-poll
+    note: >
+      Drives milestone-overdue and inactivity-detected watches via SQL polling.
+      Real event stream (Segment webhook) is an alternate inbound path.
+
+  llm:
+    crate: xiaoguai-llm
+    feature: default
+    note: >
+      Used by milestone-coach (next-best-action generation) and stall-detector
+      (category classification from signal evidence). poc-success-scorer uses
+      rule-based grading; LLM is optional for narrative commentary.
+
+  outcome_telemetry:
+    crate: xiaoguai-outcome-tel
+    feature: default
+    note: >
+      Records POC scores, milestone completion times, and stall events as
+      structured outcome series for retrospective analysis and CS playbook tuning.
+
+  im_feishu:
+    crate: xiaoguai-im-feishu
+    real: true
+    note: >
+      Sends CSM team alerts and stall notifications to configured Feishu channels.
+      Requires FEISHU_APP_ID + FEISHU_APP_SECRET.
+  im_dingtalk:
+    crate: xiaoguai-im-dingtalk
+    real: true
+    enabled_by: "config.im.adapter == dingtalk"
+  im_wecom:
+    crate: xiaoguai-im-wecom
+    real: true
+    enabled_by: "config.im.adapter == wecom"
+
+  audit: { crate: xiaoguai-audit, feature: default }
+
+# ── External system hooks (mock vs real) ────────────────────────────────────
+
+external_systems:
+  segment:
+    status: mocked
+    real_integration: >
+      Receives product usage events via Segment webhook (source: product-events).
+      Used to detect inactivity (no events for >N days) and to populate
+      onboarding_milestones.last_activity_at.
+      Hook point: inbound/segment-product-events.yaml.
+
+  salesforce:
+    status: mocked
+    real_integration: >
+      Reads opportunity stage changes (e.g. "POC Started", "POC Won/Lost") and
+      writes AE update summaries back via Salesforce REST API.
+      Requires SALESFORCE_INSTANCE_URL + SALESFORCE_ACCESS_TOKEN.
+      Hook points: inbound/salesforce-opportunity-stage-change.yaml,
+      outputs/ae-update-back-to-salesforce.yaml.
+
+  intercom:
+    status: mocked
+    real_integration: >
+      Reads onboarding thread messages to detect champion disengagement signals
+      (no reply for >X days, negative sentiment).
+      Requires INTERCOM_ACCESS_TOKEN.
+      Hook point: inbound/intercom-onboarding-thread.yaml.
+
+  slack_csm:
+    status: mocked
+    real_integration: >
+      Posts CSM team stall alerts and weekly digest to a configured Slack channel.
+      Requires SLACK_BOT_TOKEN + SLACK_CSM_CHANNEL_ID.
+      Hook point: outputs/csm-team-slack.yaml.
+
+# ── Configuration keys ───────────────────────────────────────────────────────
+
+config:
+  im:
+    adapter: feishu            # feishu | dingtalk | wecom
+
+  milestones:
+    # Ordered stages in the pre-activation journey
+    stages:
+      - contract_signed
+      - kickoff_completed
+      - technical_setup_done
+      - poc_started
+      - first_value_achieved
+      - poc_criteria_met
+      - expansion_ready
+    # Default deadline (calendar days) per stage from the previous stage's completion
+    default_sla_days:
+      contract_signed:       0    # anchor — no deadline, this is t=0
+      kickoff_completed:     5
+      technical_setup_done: 10
+      poc_started:          15
+      first_value_achieved: 30
+      poc_criteria_met:     45
+      expansion_ready:      60
+
+  stall:
+    inactivity_threshold_days: 7      # no usage events → inactivity-detected watch fires
+    overdue_grace_days: 2             # milestone deadline + grace before watch fires
+    decision_paralysis_days: 14       # no stage progression for N days after poc_criteria_met
+
+  poc_scoring:
+    pass_threshold: 0.70              # fraction of criteria that must be met to pass
+
+  coordinator:
+    max_steps: 20
+    max_wall_seconds: 600
+
+  audit:
+    table: co_audit_log
+    milestones_table: onboarding_milestones
+    stall_signals_table: stall_signals
+    handoffs_table: csm_handoffs

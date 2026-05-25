@@ -1,0 +1,126 @@
+# packs/customer-onboarding/agents/handoff-package-builder.yaml
+#
+# Handoff Package Builder — assembles the structured CSM handoff document when
+# a customer reaches the expansion_ready milestone.
+#
+# Triggered by:
+#   - poc-success-scorer conditional dispatch (recommendation = progress-to-next-stage)
+#   - salesforce-opportunity-stage-change inbound when stage → 'Expansion'
+#   - Direct invocation via manual-checkin-submit with action = 'build-handoff'
+#
+# Output: rendered Markdown handoff doc written to csm_handoffs table,
+# then delivered via outputs/csm-team-slack.yaml and
+# outputs/ae-update-back-to-salesforce.yaml.
+
+name: handoff-package-builder
+kind: worker
+
+llm_plan: true
+
+system_prompt: |
+  You are the Customer Onboarding Handoff Package Builder for a B2B SaaS team.
+
+  Your job: compile a comprehensive, honest handoff document that the receiving
+  CSM team can act on immediately. The document must surface both strengths and
+  open risks — never omit known problems.
+
+  You will receive:
+    - customer_id, customer_name, opportunity_id
+    - milestone_summary: [{stage, completed_at, days_taken}] for all completed stages
+    - total_onboarding_days: integer
+    - poc_score: float (0–1)
+    - poc_criteria_detail: [{id, description, met, risk}]
+    - stall_history: [{category, opened_at, resolved_at, resolution_note}] (resolved signals)
+    - open_risks: any stall_signals still open at handoff time
+    - csm_owner_id, ae_owner_id
+    - expansion_products: list of products/tiers the customer is expanding into
+
+  Output format (JSON, strictly):
+  {
+    "executive_summary": "<3-5 sentences: customer journey, POC outcome, readiness>",
+    "milestone_highlights": ["<key achievement 1>", "<key achievement 2>", ...],
+    "poc_outcome": {
+      "score": <float>,
+      "narrative": "<2-3 sentences>",
+      "unmet_criteria": [{"id": "...", "description": "...", "mitigation": "..."}]
+    },
+    "open_risks": [
+      {"risk": "...", "severity": "<low|medium|high>", "mitigation": "...", "owner": "..."}
+    ],
+    "recommended_first_30_days": ["<action 1>", "<action 2>", ...],
+    "expansion_context": "<1-2 sentences on what the customer is expanding into and why>"
+  }
+
+  Rules:
+  - If open_risks contains a 'champion-disengaged' signal, it MUST appear in
+    open_risks with severity >= medium and a specific mitigation.
+  - If poc_score < 0.85, unmet_criteria must list every criterion with met=false
+    plus a proposed mitigation (not just "follow up").
+  - recommended_first_30_days must have exactly 3–5 items, each actionable.
+
+context_queries:
+  milestone_summary: |
+    SELECT stage, status, started_at, completed_at,
+           EXTRACT(EPOCH FROM (completed_at - started_at)) / 86400 AS days_taken
+    FROM   onboarding_milestones
+    WHERE  customer_id = $customer_id
+    ORDER  BY created_at ASC
+
+  stall_history: |
+    SELECT category, confidence, evidence, opened_at, resolved_at, resolution_note
+    FROM   stall_signals
+    WHERE  customer_id = $customer_id
+    ORDER  BY opened_at ASC
+
+  open_risks: |
+    SELECT category, confidence, evidence
+    FROM   stall_signals
+    WHERE  customer_id = $customer_id
+      AND  status = 'open'
+
+  poc_detail: |
+    SELECT poc_criteria, poc_score
+    FROM   onboarding_milestones
+    WHERE  customer_id = $customer_id
+      AND  stage IN ('poc_started', 'poc_criteria_met')
+    ORDER  BY created_at DESC
+    LIMIT  1
+
+post_action:
+  - type: write_csm_handoff
+    sql: |
+      INSERT INTO csm_handoffs
+          (customer_id, opportunity_id, csm_owner_id, ae_owner_id,
+           milestone_summary, poc_score, poc_criteria_detail,
+           open_risks, handoff_doc, delivered)
+      VALUES
+          ($customer_id, $opportunity_id, $csm_owner_id, $ae_owner_id,
+           $milestone_summary::JSONB, $poc_score, $poc_criteria_detail::JSONB,
+           $open_risks::JSONB, $handoff_doc, FALSE)
+      RETURNING id
+
+  - type: update_milestone_stage
+    sql: |
+      UPDATE onboarding_milestones
+      SET    status = 'completed', completed_at = now(), updated_at = now()
+      WHERE  customer_id = $customer_id
+        AND  stage = 'poc_criteria_met'
+        AND  status != 'completed'
+
+  - type: record_outcome_telemetry
+    event: handoff_package_built
+    fields: [customer_id, poc_score, total_onboarding_days, open_risk_count]
+
+  - type: audit_log
+    table: co_audit_log
+    agent: handoff-package-builder
+
+  - type: dispatch_output
+    output: packs/customer-onboarding/outputs/csm-team-slack.yaml
+
+  - type: dispatch_output
+    output: packs/customer-onboarding/outputs/ae-update-back-to-salesforce.yaml
+
+output:
+  template: packs/customer-onboarding/templates/csm-handoff-doc.md.j2
+  write_to_db: true    # persisted in csm_handoffs.handoff_doc
