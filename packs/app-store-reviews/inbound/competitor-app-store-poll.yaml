@@ -1,0 +1,54 @@
+---
+# Inbound: competitor-app-store-poll
+#
+# Polls Apple App Store and Google Play RSS feeds for configured competitor
+# apps. Handled by watches/competitor-poll.yaml (weekly, Sunday 03:00 UTC).
+#
+# This inbound spec describes the source configuration; the watch job
+# controls scheduling, pagination, and cursor management.
+#
+# Data lands in competitor_reviews table (30-day rolling retention).
+# Not used for response drafting — gap analysis only.
+
+source: competitor-app-store-poll
+description: >
+  Polls Apple and Google RSS review feeds for competitor apps configured in
+  COMPETITOR_APP_IDS and COMPETITOR_PACKAGE_NAMES. Samples up to 200 reviews
+  per competitor per weekly run. Feeds competitor-feature-gap agent.
+
+# Competitor app identifiers resolved from env at poll time.
+competitors:
+  apple:
+    app_ids_env: COMPETITOR_APP_IDS          # comma-separated numeric IDs
+    endpoint_template: >
+      https://itunes.apple.com/${ASR_STORE_REGION:-us}/rss/customerreviews/page={page}/id={app_id}/sortby=mostrecent/json
+    auth:
+      type: none
+    max_pages_per_competitor: 4              # ≤200 reviews per competitor per run
+
+  google:
+    package_names_env: COMPETITOR_PACKAGE_NAMES   # comma-separated package names
+    endpoint_template: >
+      https://play.google.com/store/getreviews?id={package_name}&reviewType=0&pageNum={page}&hl=en&gl=us
+    auth:
+      type: none
+    max_pages_per_competitor: 5
+
+# Competitor display name resolution.
+# ASR_COMPETITOR_NAMES: JSON mapping app_id/package_name → human name.
+# Example: {"987654321": "Rival App A", "com.rival.app": "Rival App B"}
+competitor_name_map_env: ASR_COMPETITOR_NAMES
+
+# Target table.
+target_table: competitor_reviews
+
+# Sampling: to stay within LLM token budget, cap at max_reviews_per_competitor
+# per weekly run even if more pages are available.
+sampling:
+  max_reviews_per_competitor: 200
+  strategy: newest_first
+
+# Rate limits: shared with first-party RSS poll; same conservative limits.
+rate_limit:
+  requests_per_second: 0.5
+  backoff_on_429_seconds: 120

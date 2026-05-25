@@ -1,0 +1,38 @@
+{# Response template for 1-star reviews.
+   Populated by response-drafter agent; requires human review before posting.
+   Platform-specific length limits enforced by response-drafter agent.
+   NEVER post without human approval.
+#}
+{# ── Apple App Store variant (≤500 chars recommended) ────────────── #}
+{% if platform == "apple" %}
+{% if user_tier == "enterprise" %}
+Thank you for taking the time to share this. We sincerely apologise for the experience you described — this is not the standard we hold ourselves to. Our support team is ready to assist directly and resolve this for you. Please reach out through our in-app support or your account contact.
+{% elif user_tier == "pro" %}
+We're sorry to hear you ran into this issue — that's not the experience we want for you. Our team is looking into it. Please reach out to our support team so we can make this right and keep you updated on the fix.
+{% else %}
+Thank you for the feedback — we're sorry this fell short of your expectations. Please contact our support team with details and we'll do our best to help. We're committed to improving.
+{% endif %}
+{% endif %}
+
+{# ── Google Play variant (≤280 chars recommended) ─────────────────── #}
+{% if platform == "google" %}
+{% if user_tier == "enterprise" %}
+We sincerely apologise. Please contact your account support contact directly and we will prioritise a resolution for you.
+{% elif user_tier == "pro" %}
+Sorry for this experience. Our support team is ready to help — please reach out through in-app support and we'll get this sorted.
+{% else %}
+We're sorry! Please contact support with details and we'll do our best to help.
+{% endif %}
+{% endif %}
+
+{# ── Metadata (not part of the posted response) ───────────────────── #}
+{# draft_metadata:
+     review_external_id: {{ review.external_id }}
+     platform: {{ platform }}
+     user_tier: {{ user_tier }}
+     theme: {{ review.theme_label | default('unclassified') }}
+     char_count: (computed by response-drafter)
+     human_approved: false
+     approved_by: null
+     approved_at: null
+#}

@@ -1,0 +1,105 @@
+---
+# Agent: response-drafter
+#
+# Input:  newly classified reviews that have not yet received a drafted
+#         response (response_drafted=false), prioritised by low rating.
+# Output: draft response text per review, written to a staging table for
+#         human review. Never posts to app stores — drafts only.
+#
+# Platform rules enforced:
+#   Apple App Store: responses ≤ 5,900 chars; no promises of future features;
+#                    no requests to change the rating; no external URLs.
+#   Google Play:     responses ≤ 350 chars recommended; no promises; no URLs.
+#
+# Tier-sensitive tone: enterprise reviews receive a more formal, accountable
+# tone; free-tier reviews receive a friendly, empathetic tone.
+
+name: response-drafter
+kind: llm-agent
+description: >
+  Generates draft response templates for classified reviews (prioritising
+  1-star and 2-star reviews). Follows platform content policies: no promises,
+  no rating-change requests, no external URLs. Produces tier-sensitive tone
+  (enterprise = formal, free = friendly). Stores drafts for human review only
+  — never posts to app stores.
+
+llm:
+  model: ${ASR_RESPONDER_LLM_MODEL:-default}
+  temperature: 0.4    # some variation in phrasing
+  max_tokens: 2048
+
+# Input: unresponded reviews, lowest-rated first.
+input:
+  table: reviews
+  filter: "response_drafted = false AND classified_at IS NOT NULL"
+  batch_size: 20
+  order_by: "rating ASC, reviewed_at DESC"
+
+system_prompt: |
+  You are a customer experience specialist writing app store review responses
+  on behalf of a software company.
+
+  For each review you receive, produce a draft response following these rules:
+
+  CONTENT RULES (non-negotiable — platform policy):
+  1. Never promise a specific fix date or future feature ("we'll add X in the next release").
+  2. Never ask the reviewer to change or update their rating.
+  3. Never include external URLs, email addresses, or social handles.
+  4. Never reproduce the reviewer's personal information.
+  5. Acknowledge the specific issue mentioned; do not use generic copy-paste text.
+
+  TONE RULES:
+  - user_tier = "enterprise": formal, accountable, offer to escalate to support team.
+  - user_tier = "pro": professional, warm, mention support channel.
+  - user_tier = "free" or "unknown": friendly, empathetic, invite them to contact support.
+  - rating = 4 or 5: brief thanks + one sentence of genuine appreciation.
+  - rating = 1 or 2: lead with empathy, acknowledge the pain, describe next step.
+  - rating = 3: balanced acknowledgement + constructive offer.
+
+  LENGTH RULES:
+  - Apple reviews: ≤ 500 chars (well under the 5,900 limit — keep it human-readable).
+  - Google reviews: ≤ 280 chars (platform recommends brevity).
+
+  Output a JSON array:
+  [
+    {
+      "review_external_id": "<external_id>",
+      "platform": "apple | google",
+      "draft_response": "<response text>",
+      "tone_applied": "formal | professional | friendly",
+      "char_count": <integer>
+    }
+  ]
+
+  Output ONLY the JSON array.
+
+user_prompt: |
+  Draft responses for the following {{ reviews | length }} reviews.
+
+  App name: {{ env.ASR_APP_DISPLAY_NAME | default('our app') }}
+
+  {% for review in reviews %}
+  ---
+  external_id: {{ review.external_id }}
+  platform: {{ review.platform }}
+  rating: {{ review.rating }} / 5
+  user_tier: {{ review.user_tier }}
+  category: {{ review.theme_category | default('unknown') }}
+  theme: {{ review.theme_label | default('') }}
+  body: {{ review.body | truncate(600) }}
+  {% endfor %}
+
+  Output the JSON array now.
+
+# Post-processing: store drafts and mark reviews as responded.
+post_process:
+  - insert_table: review_response_drafts    # staging table (created by migration 0001)
+    from_result: true
+  - update_table: reviews
+    set: {response_drafted: true}
+    where: "external_id = result.review_external_id"
+
+# Budget.
+budget:
+  max_llm_calls: 3
+  max_output_tokens: 2048

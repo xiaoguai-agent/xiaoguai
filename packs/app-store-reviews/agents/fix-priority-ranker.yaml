@@ -1,0 +1,137 @@
+---
+# Agent: fix-priority-ranker
+#
+# Input:  all classified reviews from the current scoring window (default: 30 days)
+#         plus the structured bug reports produced by bug-extractor.
+# Output: ranked fix_priorities rows with composite impact scores.
+#
+# Impact formula (see scoring section below):
+#   impact_score = mention_count × star_impact × (1 + tier_mix_weight)
+#
+# The LLM step adds a qualitative sanity-check layer — it groups near-duplicate
+# theme_labels (e.g. "crash-on-launch" and "app-crashes-immediately") before
+# the numeric scoring, preventing score dilution from label fragmentation.
+
+name: fix-priority-ranker
+kind: llm-agent
+description: >
+  Ranks bug fix candidates by composite impact score. Deduplicates theme
+  labels, then computes impact_score = mention_count × star_impact ×
+  (1 + tier_mix_weight). Writes ranked rows to fix_priorities and forwards
+  the top-N to engineering-jira-bug-ticket for ticket creation.
+
+llm:
+  model: ${ASR_RANKER_LLM_MODEL:-default}
+  temperature: 0.0    # deterministic grouping
+  max_tokens: 2048
+
+# Scoring window: reviews from the past N days.
+scoring_window_days: ${ASR_SCORING_WINDOW_DAYS:-30}
+
+# ── Scoring formula ──────────────────────────────────────────────────────────
+#
+# All three components are dimensionless multipliers, so the composite is
+# on an arbitrary scale.  Rank is determined by relative order, not absolute
+# value.
+#
+# 1. mention_count
+#    Raw count of distinct reviews assigned to this theme_label in the
+#    scoring window. More mentions = wider blast radius.
+#
+# 2. star_impact
+#    Formula: max(0.0, overall_mean_rating - theme_mean_rating)
+#    - overall_mean_rating: mean star rating across ALL reviews in the window.
+#    - theme_mean_rating:   mean star rating of reviews in THIS theme only.
+#    - Range: 0.0–4.0 (0 if the theme rates at or above the app average;
+#      4.0 if all reviews in the theme are 1-star and app average is 5-star,
+#      which is the theoretical maximum).
+#    - Rationale: a bug theme where users rate 1.0 while the app averages 4.2
+#      has star_impact = 3.2 — it disproportionately drags the overall rating
+#      compared to a complaint theme with mean_rating = 4.0 (star_impact = 0.2).
+#    - Clamped at 0: themes rated above the app average do not get a negative
+#      weight (they may be praise or minor issues that don't hurt the score).
+#
+# 3. tier_mix_weight
+#    Formula: (enterprise_count + pro_count) / total_count_in_theme
+#    - Range: 0.0–1.0.
+#    - Multiplier in impact formula: (1 + tier_mix_weight), so a theme
+#      affecting only enterprise users weights 2× vs. a free-user-only theme.
+#    - Rationale: a 1-star crash report from an enterprise user carries higher
+#      revenue and support cost risk than the same report from a free user.
+#    - user_tier is resolved from CRM by the inbound connector; defaults to
+#      'unknown' which is treated as 'free' in this calculation.
+#
+# Combined: themes with many mentions, low ratings, AND high-value users
+# bubble to the top; low-mention themes affecting only free users stay low
+# even if their mean rating is poor.
+#
+# Example:
+#   Theme "crash-on-launch": mention_count=40, star_impact=2.8, tier_mix=0.6
+#   → impact_score = 40 × 2.8 × (1 + 0.6) = 179.2   (rank 1)
+#
+#   Theme "missing-dark-mode": mention_count=80, star_impact=0.4, tier_mix=0.1
+#   → impact_score = 80 × 0.4 × (1 + 0.1) = 35.2    (rank 2)
+#
+#   Theme "slow-sync": mention_count=15, star_impact=1.5, tier_mix=0.9
+#   → impact_score = 15 × 1.5 × (1 + 0.9) = 42.75   (rank 3 — elevated by tier)
+
+scoring:
+  formula: "mention_count * star_impact * (1 + tier_mix_weight)"
+  components:
+    mention_count:
+      source: "COUNT(DISTINCT review_id) WHERE theme_label = ? AND scored_at_window"
+    star_impact:
+      source: "MAX(0.0, overall_mean_rating - theme_mean_rating)"
+      overall_mean_query: "SELECT AVG(rating) FROM reviews WHERE reviewed_at >= NOW() - INTERVAL '{{ scoring_window_days }} days'"
+      theme_mean_query: "SELECT AVG(r.rating) FROM reviews r JOIN review_themes t ON t.review_id = r.id WHERE t.theme_label = ? AND r.reviewed_at >= NOW() - INTERVAL '{{ scoring_window_days }} days'"
+    tier_mix_weight:
+      source: "COUNT(*) FILTER (WHERE user_tier IN ('enterprise','pro')) / NULLIF(COUNT(*), 0)"
+      query: "SELECT user_tier FROM reviews r JOIN review_themes t ON t.review_id = r.id WHERE t.theme_label = ?"
+
+# LLM step: deduplicate and canonicalise theme labels before numeric scoring.
+# The LLM groups semantically equivalent labels and returns canonical forms.
+system_prompt: |
+  You are a product engineering lead reviewing app store review theme labels.
+
+  You will receive a list of theme_label strings. Your job is to group
+  semantically equivalent labels into canonical clusters.
+
+  Output a JSON array of cluster objects:
+  [
+    {
+      "canonical_label": "<chosen canonical label for the cluster>",
+      "aliases": ["<all input labels that map to this canonical>"]
+    }
+  ]
+
+  Rules:
+  - A label belongs to exactly one cluster.
+  - If a label stands alone (no near-duplicates), its cluster has one alias.
+  - canonical_label must be one of the input labels (do not invent new labels).
+  - Order by estimated severity: crash/data-loss labels first, then functional,
+    then UI/performance, then feature requests.
+  - Output ONLY the JSON array.
+
+user_prompt: |
+  Deduplicate these {{ theme_labels | length }} theme labels from the past
+  {{ scoring_window_days }} days of reviews:
+
+  {{ theme_labels | join('\n') }}
+
+  Output the cluster JSON now.
+
+# Top-N bugs to forward to Jira ticket creation.
+top_n_for_jira: ${ASR_TOP_N_JIRA:-10}
+
+# Post-processing: write ranked rows to fix_priorities, forward top-N.
+post_process:
+  - truncate_table: fix_priorities   # replace previous scoring run
+  - insert_table: fix_priorities
+    from_scoring: true
+  - enqueue_for: outputs/engineering-jira-bug-ticket.yaml
+    filter: "rank <= {{ top_n_for_jira }}"
+
+# Budget.
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 2048
