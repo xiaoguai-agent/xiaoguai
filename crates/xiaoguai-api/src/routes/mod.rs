@@ -6,6 +6,7 @@ pub mod mcp;
 pub mod outcomes;
 pub mod scheduler_public;
 pub mod sessions;
+pub mod tenants;
 pub mod usage;
 
 use axum::routing::{delete, get, post};
@@ -52,6 +53,8 @@ pub fn router(state: AppState) -> Router {
             post(crate::marketplace::install_from_marketplace),
         )
         .route("/v1/admin/tenants", get(admin::list_tenants))
+        // v1.3.x — per-tenant client config (chat-ui AiDisclosureBanner).
+        .route("/v1/tenants/:id/config", get(tenants::get_tenant_config))
         .route("/v1/admin/audit", get(admin::list_audit))
         .route("/v1/admin/audit/verify", get(admin::verify_audit))
         .route("/v1/admin/today", get(admin::list_today))
