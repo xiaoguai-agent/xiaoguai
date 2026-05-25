@@ -5,6 +5,7 @@ import { client } from './client';
 import { CitationStrip } from './citations';
 import { CopyButton } from './codeblock';
 import { MarkdownBody } from './markdown';
+import { AiDisclosureBanner } from './AiDisclosureBanner';
 
 type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
 
@@ -201,6 +202,8 @@ export function ChatPage({ onSessionCreated }: Props) {
 
   return (
     <>
+      {/* AI disclosure banner (EU AI Act Art. 50(1)) — always above HotlBanner */}
+      <AiDisclosureBanner tenantId={DEV_TENANT_ID} />
       <div className="messages" ref={scrollRef}>
         {bubbles.map((b, i) => (
           <Bubble key={i} bubble={b} onFork={fork} />

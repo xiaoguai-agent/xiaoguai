@@ -1,0 +1,8 @@
+{
+  "ai_disclosure": {
+    "banner_text": "あなたは AI アシスタントと会話しています。回答が不正確な場合があります。重要な情報は必ずご確認ください。",
+    "dismiss_label": "閉じる",
+    "learn_more_label": "詳細を見る",
+    "banner_aria_label": "AI 透明性に関するお知らせ"
+  }
+}
