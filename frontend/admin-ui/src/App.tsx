@@ -1,4 +1,5 @@
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { TodayPane } from './panes/Today';
 import { SchedulerPane } from './panes/Scheduler';
 import { EvalPane } from './panes/Eval';
@@ -8,45 +9,48 @@ import { TenantsPane } from './panes/Tenants';
 import { ProvidersPane } from './panes/Providers';
 import { AuditPane } from './panes/Audit';
 import { UsagePane } from './panes/Usage';
+import { LanguageSwitcher } from './components/LanguageSwitcher';
 
 /**
  * v0.11.1 — audit-first console. `Today` becomes the default landing
  * pane (roadmap §1 + §3). Everything else demotes to the sidebar.
  */
 export function App() {
+  const { t } = useTranslation();
   return (
     <div className="layout">
       <nav className="nav">
-        <h2>Xiaoguai · Admin</h2>
+        <h2>{t('nav.title')}</h2>
         <NavLink to="/today" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Today
+          {t('nav.today')}
         </NavLink>
         <NavLink to="/scheduler" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Scheduler
+          {t('nav.scheduler')}
         </NavLink>
         <NavLink to="/eval" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Eval
+          {t('nav.eval')}
         </NavLink>
         {/* v1.1.1: Usage slots AFTER Eval, BEFORE MCP-related entries. */}
         <NavLink to="/usage" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Usage
+          {t('nav.usage')}
         </NavLink>
-        <div className="nav-section">Manage</div>
+        <div className="nav-section">{t('nav.manage')}</div>
         <NavLink to="/tenants" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Tenants
+          {t('nav.tenants')}
         </NavLink>
         <NavLink to="/providers" className={({ isActive }) => (isActive ? 'active' : '')}>
-          LLM Providers
+          {t('nav.providers')}
         </NavLink>
         <NavLink to="/mcp-servers" className={({ isActive }) => (isActive ? 'active' : '')}>
-          MCP Servers
+          {t('nav.mcp_servers')}
         </NavLink>
         <NavLink to="/marketplace" className={({ isActive }) => (isActive ? 'active' : '')}>
-          MCP Marketplace
+          {t('nav.marketplace')}
         </NavLink>
         <NavLink to="/audit" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Audit Log
+          {t('nav.audit')}
         </NavLink>
+        <LanguageSwitcher />
       </nav>
       <main className="main">
         <Routes>

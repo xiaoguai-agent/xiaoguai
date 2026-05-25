@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { TodayItem, TodayKind, ListTodayQuery, UsageReport } from '@xiaoguai/shared';
 import { client } from '../client';
 
@@ -25,6 +26,7 @@ interface DrilldownState {
 }
 
 export function TodayPane() {
+  const { t } = useTranslation();
   const [items, setItems] = useState<TodayItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -129,11 +131,11 @@ export function TodayPane() {
   return (
     <>
       <header className="today-header">
-        <h1>Today</h1>
+        <h1>{t('pane.today.title')}</h1>
         <div className="today-meta">
           {lastRefreshedAt && (
             <span className="muted">
-              refreshed {formatRelative(lastRefreshedAt)} ago
+              {t('pane.today.refreshed_ago', { relative: formatRelative(lastRefreshedAt) })}
             </span>
           )}
           <label className="pause">
@@ -142,10 +144,10 @@ export function TodayPane() {
               checked={paused}
               onChange={(e) => setPaused(e.target.checked)}
             />
-            pause auto-refresh
+            {t('pane.today.pause_auto_refresh')}
           </label>
           <button onClick={() => void refresh()} disabled={loading}>
-            {loading ? 'Loading…' : 'Refresh'}
+            {loading ? t('common.loading') : t('common.refresh')}
           </button>
         </div>
       </header>
@@ -159,7 +161,7 @@ export function TodayPane() {
               onClick={() => toggleKind(k)}
               type="button"
             >
-              {kindLabel(k)}
+              {kindLabel(k, t)}
             </button>
           ))}
         </div>
@@ -168,27 +170,27 @@ export function TodayPane() {
           value={range}
           onChange={(e) => setRange(e.target.value as DateRange)}
         >
-          <option value="last_24h">Last 24 hours</option>
-          <option value="last_7d">Last 7 days</option>
-          <option value="all">All time</option>
+          <option value="last_24h">{t('pane.today.range_last_24h')}</option>
+          <option value="last_7d">{t('pane.today.range_last_7d')}</option>
+          <option value="all">{t('pane.today.range_all')}</option>
         </select>
         <input
           className="search"
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Filter previews or tenant…"
+          placeholder={t('pane.today.filter_placeholder')}
         />
       </div>
 
       {usage24h && (
         <div
           className="timeline-card timeline-card-chat"
-          aria-label="Token usage in the last 24 hours"
+          aria-label={t('pane.today.usage_card_label')}
         >
           <div className="timeline-card-body">
             <div className="timeline-card-row">
-              <span className="kind-tag kind-tag-chat">Token usage (24h)</span>
+              <span className="kind-tag kind-tag-chat">{t('pane.today.usage_card_tag')}</span>
             </div>
             <div className="timeline-card-headline">
               {usage24h.total_input_tokens.toLocaleString()} in /{' '}
@@ -196,22 +198,19 @@ export function TodayPane() {
             </div>
             <div className="timeline-card-meta">
               {usage24h.cost_cents === null
-                ? 'cost: — (rates not yet configured)'
-                : `cost: $${(usage24h.cost_cents / 100).toFixed(2)}`}
+                ? t('pane.today.cost_not_configured')
+                : t('pane.today.cost', { amount: `$${(usage24h.cost_cents / 100).toFixed(2)}` })}
             </div>
           </div>
         </div>
       )}
 
-      {error && <div className="error">Failed: {error}</div>}
+      {error && <div className="error">{t('common.failed', { message: error })}</div>}
 
       {visible === null ? (
-        <div className="empty">Loading…</div>
+        <div className="empty">{t('pane.today.empty_loading')}</div>
       ) : visible.length === 0 ? (
-        <div className="empty">
-          Nothing matches the current filters. Widen the date range or
-          clear the search.
-        </div>
+        <div className="empty">{t('pane.today.empty_no_match')}</div>
       ) : (
         <ol className="today-timeline">
           {visible.map((it) => (
@@ -236,15 +235,16 @@ function TimelineCard({
   item: TodayItem;
   onOpen: () => void;
 }): JSX.Element {
+  const { t } = useTranslation();
   return (
     <li className={`timeline-card timeline-card-${item.kind}`}>
       <button className="timeline-card-body" onClick={onOpen} type="button">
         <div className="timeline-card-row">
-          <span className={`kind-tag kind-tag-${item.kind}`}>{kindLabel(item.kind)}</span>
+          <span className={`kind-tag kind-tag-${item.kind}`}>{kindLabel(item.kind, t)}</span>
           <span className="tenant">{tenantOf(item) ?? '—'}</span>
           <time className="ts">{formatAbsolute(item.ts)}</time>
         </div>
-        <div className="timeline-card-headline">{headline(item)}</div>
+        <div className="timeline-card-headline">{headline(item, t)}</div>
         <div className="timeline-card-meta">{subline(item)}</div>
       </button>
     </li>
@@ -258,6 +258,7 @@ function DetailDrawer({
   item: TodayItem;
   onClose: () => void;
 }): JSX.Element {
+  const { t } = useTranslation();
   return (
     <div className="drawer-backdrop" onClick={onClose} role="presentation">
       <aside
@@ -267,14 +268,14 @@ function DetailDrawer({
         aria-modal="true"
       >
         <header className="drawer-header">
-          <span className={`kind-tag kind-tag-${item.kind}`}>{kindLabel(item.kind)}</span>
-          <h2>{headline(item)}</h2>
-          <button className="drawer-close" onClick={onClose} aria-label="Close">
+          <span className={`kind-tag kind-tag-${item.kind}`}>{kindLabel(item.kind, t)}</span>
+          <h2>{headline(item, t)}</h2>
+          <button className="drawer-close" onClick={onClose} aria-label={t('common.close')}>
             ×
           </button>
         </header>
         <dl className="drawer-grid">
-          {detailRows(item).map(([k, v]) => (
+          {detailRows(item, t).map(([k, v]) => (
             <DetailRow key={k} label={k} value={v} />
           ))}
         </dl>
@@ -294,19 +295,21 @@ function DetailRow({ label, value }: { label: string; value: string | null }): J
 
 // ---- helpers --------------------------------------------------------------
 
+type TFunction = ReturnType<typeof useTranslation>['t'];
+
 function timelineKey(it: TodayItem): string {
   if (it.kind === 'scheduled') return `s:${it.run_id}`;
   return `${it.kind}:${it.session_id}:${it.ts}`;
 }
 
-function kindLabel(k: TodayKind): string {
+function kindLabel(k: TodayKind, t: TFunction): string {
   switch (k) {
     case 'chat':
-      return 'Chat';
+      return t('pane.today.kind_chat');
     case 'im':
-      return 'IM';
+      return t('pane.today.kind_im');
     case 'scheduled':
-      return 'Scheduled';
+      return t('pane.today.kind_scheduled');
   }
 }
 
@@ -325,10 +328,10 @@ function previewText(it: TodayItem): string {
   }
 }
 
-function headline(it: TodayItem): string {
+function headline(it: TodayItem, t: TFunction): string {
   switch (it.kind) {
     case 'chat':
-      return it.last_message_preview ?? '(no messages yet)';
+      return it.last_message_preview ?? t('pane.today.no_messages_yet');
     case 'im':
       return it.last_message_preview ?? `${it.provider} · ${it.chat_id}`;
     case 'scheduled':
@@ -351,43 +354,43 @@ function subline(it: TodayItem): string {
   }
 }
 
-function detailRows(it: TodayItem): Array<[string, string | null]> {
+function detailRows(it: TodayItem, t: TFunction): Array<[string, string | null]> {
   const base: Array<[string, string | null]> = [
-    ['Timestamp', formatAbsolute(it.ts)],
-    ['Tenant', tenantOf(it)],
+    [t('pane.today.detail_timestamp'), formatAbsolute(it.ts)],
+    [t('pane.today.detail_tenant'), tenantOf(it)],
   ];
   switch (it.kind) {
     case 'chat':
       return [
         ...base,
-        ['Session', it.session_id],
-        ['User', it.user_id],
-        ['Started', formatAbsolute(it.started_at)],
-        ['Messages', String(it.message_count)],
-        ['Tool calls', String(it.tool_count)],
-        ['Last preview', it.last_message_preview],
+        [t('pane.today.detail_session'), it.session_id],
+        [t('pane.today.detail_user'), it.user_id],
+        [t('pane.today.detail_started'), formatAbsolute(it.started_at)],
+        [t('pane.today.detail_messages'), String(it.message_count)],
+        [t('pane.today.detail_tool_calls'), String(it.tool_count)],
+        [t('pane.today.detail_last_preview'), it.last_message_preview],
       ];
     case 'im':
       return [
         ...base,
-        ['Session', it.session_id],
-        ['Provider', it.provider],
-        ['Chat ID', it.chat_id],
-        ['Started', formatAbsolute(it.started_at)],
-        ['Messages', String(it.message_count)],
-        ['Last preview', it.last_message_preview],
+        [t('pane.today.detail_session'), it.session_id],
+        [t('pane.today.detail_provider'), it.provider],
+        [t('pane.today.detail_chat_id'), it.chat_id],
+        [t('pane.today.detail_started'), formatAbsolute(it.started_at)],
+        [t('pane.today.detail_messages'), String(it.message_count)],
+        [t('pane.today.detail_last_preview'), it.last_message_preview],
       ];
     case 'scheduled':
       return [
         ...base,
-        ['Job', it.job_id],
-        ['Run ID', String(it.run_id)],
-        ['Attempt', String(it.attempt)],
-        ['Status', it.status],
-        ['Fired at', formatAbsolute(it.fired_at)],
-        ['Reason (proactive)', it.reason ?? null],
-        ['Output preview', it.output_preview],
-        ['Error', it.error_message],
+        [t('pane.today.detail_job'), it.job_id],
+        [t('pane.today.detail_run_id'), String(it.run_id)],
+        [t('pane.today.detail_attempt'), String(it.attempt)],
+        [t('pane.today.detail_status'), it.status],
+        [t('pane.today.detail_fired_at'), formatAbsolute(it.fired_at)],
+        [t('pane.today.detail_reason_proactive'), it.reason ?? null],
+        [t('pane.today.detail_output_preview'), it.output_preview],
+        [t('pane.today.detail_error'), it.error_message],
       ];
   }
 }
