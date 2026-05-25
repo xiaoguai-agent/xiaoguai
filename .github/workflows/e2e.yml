@@ -25,7 +25,7 @@ jobs:
       # ----------------------------------------------------------------
       # 1. Checkout
       # ----------------------------------------------------------------
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # ----------------------------------------------------------------
       # 2. Start the docker-compose stack (postgres + valkey + xiaoguai-core)
