@@ -1,0 +1,34 @@
+{# Response template for 5-star reviews.
+   Populated by response-drafter agent; requires human review before posting.
+   Kept brief — over-responding to positive reviews can seem performative.
+   NEVER post without human approval.
+#}
+{# ── Apple App Store variant ──────────────────────────────────────── #}
+{% if platform == "apple" %}
+{% if user_tier == "enterprise" %}
+Thank you — we genuinely appreciate you sharing this. Feedback like yours helps us keep raising the bar. We're glad the product is delivering value for your team.
+{% else %}
+Thank you so much for the kind words! We're really happy to hear {{ review.theme_label | default('it') }} is working well for you. Your support means a lot to the whole team.
+{% endif %}
+{% endif %}
+
+{# ── Google Play variant ───────────────────────────────────────────── #}
+{% if platform == "google" %}
+{% if user_tier == "enterprise" %}
+Thank you — we're glad it's delivering value. Your feedback keeps us improving.
+{% else %}
+Thank you for the 5 stars! So glad you're enjoying it. 🙌
+{% endif %}
+{% endif %}
+
+{# ── Metadata ──────────────────────────────────────────────────────── #}
+{# draft_metadata:
+     review_external_id: {{ review.external_id }}
+     platform: {{ platform }}
+     user_tier: {{ user_tier }}
+     theme: {{ review.theme_label | default('praise') }}
+     char_count: (computed by response-drafter)
+     human_approved: false
+     approved_by: null
+     approved_at: null
+#}

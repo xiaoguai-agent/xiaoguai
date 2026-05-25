@@ -1,0 +1,77 @@
+---
+# Output: customer-success-flagged-reviews
+#
+# Routes 1-star (and configurable 2-star) reviews from enterprise and pro
+# tier users to the customer success team for manual follow-up.
+#
+# High-value user complaints require a human response faster than the
+# standard daily digest cycle — this output fires immediately after
+# sentiment-themer classifies each batch.
+#
+# Does not post to the app stores. Notifies CS via Slack and optionally
+# creates a CRM task in Salesforce.
+
+output: customer-success-flagged-reviews
+description: >
+  Flags enterprise and pro-tier low-rating reviews for immediate CS attention.
+  Sends a Slack alert per flagged review with review text, theme, draft
+  response, and CRM lookup link. Optionally creates a Salesforce task.
+
+# Trigger: immediately after sentiment-themer completes each batch.
+trigger: agents/sentiment-themer.complete
+
+# Filter: which reviews to flag.
+filter:
+  user_tier:
+    - enterprise
+    - pro
+  max_rating: ${ASR_CS_FLAG_MAX_RATING:-1}   # 1 = 1-star only; set 2 for 1–2 stars
+
+slack:
+  webhook_url: ${CS_SLACK_WEBHOOK_URL}
+  mention: ${ASR_CS_SLACK_MENTION:-}   # e.g. "@cs-team" or a specific person
+  # One message per flagged review (not batched — each needs individual attention).
+  blocks:
+    - type: header
+      text: "🚨 {{ review.user_tier | title }} User — {{ review.rating }}⭐ Review Flagged"
+    - type: section
+      fields:
+        - "*Platform:* {{ review.platform | title }}"
+        - "*Theme:* `{{ review.theme_label | default('unclassified') }}`"
+        - "*Tier:* {{ review.user_tier | title }}"
+        - "*Reviewed:* {{ review.reviewed_at | date('D MMM YYYY') }}"
+    - type: section
+      text: |
+        *Review:*
+        > {{ review.body | truncate(400) }}
+    - type: section
+      text: |
+        *Draft response (requires human approval before posting):*
+        {{ draft_response | default('_Not yet generated._') | truncate(300) }}
+    - type: actions
+      elements:
+        - type: button
+          text: "CRM Lookup"
+          url: "{{ crm_lookup_url | default('#') }}"
+        - type: button
+          text: "View All Flagged"
+          url: "{{ flagged_reviews_dashboard_url | default('#') }}"
+
+# Optional: create a Salesforce task for each flagged review.
+salesforce:
+  enabled: ${ASR_CS_SALESFORCE_ENABLED:-false}
+  instance_url: ${SALESFORCE_INSTANCE_URL}
+  client_id: ${SALESFORCE_CLIENT_ID}
+  client_secret: ${SALESFORCE_CLIENT_SECRET}
+  task:
+    subject: "[App Store] {{ review.rating }}⭐ review from {{ review.user_tier | title }} user"
+    description: "{{ review.body | truncate(1000) }}"
+    priority: "{{ 'High' if review.rating == 1 else 'Normal' }}"
+    status: "Not Started"
+    # Account lookup: match by reviewer handle if CRM data is available.
+    # Falls back to creating an unlinked task if no match found.
+    account_lookup_field: reviewer_handle
+
+# Deferred:
+#   - Zendesk ticket creation for flagged reviews (v0.2.0)
+#   - Automatic CRM match by app_version + reviewer handle

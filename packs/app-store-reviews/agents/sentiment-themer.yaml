@@ -1,0 +1,89 @@
+---
+# Agent: sentiment-themer
+#
+# Input:  a batch of unclassified reviews (classified_at IS NULL).
+# Output: review_themes rows — one per review — containing category,
+#         theme_label, emotion, confidence, and has_bug_report flag.
+#
+# Processes reviews in batches of 50 to keep prompt size predictable.
+# Reviews containing reproducible bug signals set has_bug_report=true and
+# are forwarded to bug-extractor for structured extraction.
+
+name: sentiment-themer
+kind: llm-agent
+description: >
+  Classifies pending app store reviews by sentiment category
+  (bug / feature-request / praise / complaint), fine-grained theme label,
+  and dominant emotion. Flags reviews with reproducible bug signals for
+  bug-extractor. Writes results to review_themes table.
+
+llm:
+  model: ${ASR_THEMER_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 4096
+
+# Reviews fetched in batches before the LLM call.
+input:
+  table: reviews
+  filter: "classified_at IS NULL"
+  batch_size: 50
+  order_by: "reviewed_at ASC"
+
+system_prompt: |
+  You are an expert product analyst specialising in app store review analysis.
+
+  You will receive a batch of app store reviews (iOS and Android). For each
+  review, output a JSON classification object with these fields:
+
+  {
+    "external_id": "<review external_id from input>",
+    "category": "bug | feature-request | praise | complaint",
+    "theme_label": "<concise kebab-case label, e.g. crash-on-launch, dark-mode-request, fast-and-responsive>",
+    "emotion": "joy | frustration | anger | neutral | disappointment",
+    "confidence": <float 0.0–1.0>,
+    "has_bug_report": <true if review describes a reproducible failure: steps, conditions, or error messages>
+  }
+
+  Category definitions:
+  - bug: review primarily describes a malfunction, crash, data loss, or incorrect behaviour
+  - feature-request: review primarily asks for a new capability or improvement
+  - praise: review is primarily positive; may note minor issues but tone is appreciative
+  - complaint: review expresses dissatisfaction without a clear bug or feature ask (e.g. pricing, policy)
+
+  Rules:
+  - Output ONLY a JSON array of classification objects, one per input review.
+  - theme_label must be 2–5 words, kebab-case, specific enough to group similar reviews.
+  - confidence reflects how clearly the review fits the assigned category.
+  - If a review is ambiguous, use the dominant signal for category.
+  - Never include the review text in your output.
+  - Preserve the external_id exactly as given.
+
+user_prompt: |
+  Classify the following {{ reviews | length }} app store reviews.
+
+  {% for review in reviews %}
+  ---
+  external_id: {{ review.external_id }}
+  platform: {{ review.platform }}
+  rating: {{ review.rating }} / 5
+  title: {{ review.title | default('(no title)') }}
+  body: {{ review.body | truncate(1000) }}
+  {% endfor %}
+
+  Output a JSON array now.
+
+# After classification, update reviews.classified_at and insert review_themes rows.
+post_process:
+  - update_table: reviews
+    set: {classified_at: NOW()}
+    where: "external_id = result.external_id"
+  - insert_table: review_themes
+    from_result: true
+  # Forward bug-flagged reviews to bug-extractor.
+  - enqueue_for: agents/bug-extractor.yaml
+    filter: "result.has_bug_report = true"
+
+# Budget.
+budget:
+  max_llm_calls: 5     # up to 5 batches of 50 = 250 reviews per run
+  max_output_tokens: 4096

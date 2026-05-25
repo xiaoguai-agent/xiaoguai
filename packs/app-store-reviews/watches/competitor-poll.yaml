@@ -1,0 +1,93 @@
+---
+# Watch: competitor-poll
+#
+# Polls App Store RSS feeds for configured competitor apps on a weekly
+# schedule.  Samples up to 200 reviews per competitor per run to stay
+# within token budget for competitor-feature-gap analysis.
+#
+# Sampled rows are written to competitor_reviews table with a rolling
+# 30-day retention window.
+
+name: competitor-poll
+description: >
+  Polls Apple App Store and Google Play RSS feeds for configured competitor
+  apps weekly. Samples up to 200 reviews per competitor per poll and upserts
+  into competitor_reviews with a 30-day rolling retention. Feeds the
+  competitor-feature-gap agent for weekly gap analysis.
+
+# Weekly schedule — Sunday at 03:00 UTC (off-peak; after daily-review-poll).
+schedule: "0 3 * * 0"
+
+# Competitor app identifiers loaded from env vars (comma-separated).
+competitors:
+  apple:
+    enabled: ${ASR_COMPETITOR_APPLE_ENABLED:-true}
+    app_ids: ${COMPETITOR_APP_IDS}        # e.g. "987654321,876543210"
+    endpoint: https://itunes.apple.com/${ASR_STORE_REGION:-us}/rss/customerreviews/page=1/id={app_id}/sortby=mostrecent/json
+    auth:
+      type: none
+    # Sample: only fetch page 1 (up to 50 reviews) per competitor per run.
+    # For more coverage increase max_pages (raises LLM token cost).
+    pagination:
+      strategy: page_number
+      max_pages: 4      # 4 pages × 50 reviews = 200 max per competitor
+      page_param: page
+      stop_when: all_before_cursor
+    normalize:
+      external_id: "entry[*].id.label"
+      rating: "entry[*].im:rating.label | int"
+      body: "entry[*].content.label | truncate(4096)"
+      reviewed_at: "entry[*].updated.label"
+
+  google:
+    enabled: ${ASR_COMPETITOR_GOOGLE_ENABLED:-true}
+    package_names: ${COMPETITOR_PACKAGE_NAMES}   # e.g. "com.rival.app,com.other.app"
+    endpoint: https://play.google.com/store/getreviews?id={package_name}&reviewType=0&pageNum={page}&hl=en&gl=us
+    auth:
+      type: none
+    pagination:
+      strategy: page_number
+      max_pages: 5      # 5 pages × ~40 reviews = 200 max per competitor
+      page_param: pageNum
+      stop_when: all_before_cursor
+    normalize:
+      external_id: "reviews[*].reviewId"
+      rating: "reviews[*].starRating | int"
+      body: "reviews[*].userComment.text | truncate(4096)"
+      reviewed_at: "reviews[*].reviewCreationTime"
+
+# Competitor name resolution: map app_id / package_name → human name.
+# Loaded from env var ASR_COMPETITOR_NAMES (JSON): {"987654321": "Rival A", ...}
+competitor_name_map: ${ASR_COMPETITOR_NAMES:-{}}
+
+# Upsert strategy.
+upsert:
+  table: competitor_reviews
+  conflict_target: [platform, external_id, competitor_app_id]
+  conflict_action: ignore
+
+# Rolling retention: after each poll, purge rows older than 30 days.
+retention:
+  table: competitor_reviews
+  max_age_days: 30
+  timestamp_field: fetched_at
+
+# Cursor management: per-competitor cursor to avoid re-fetching old reviews.
+cursor:
+  field: reviewed_at
+  persist_key: "asr_competitor_poll_{platform}_{competitor_app_id}"
+
+# After upsert, enqueue new competitor reviews for gap analysis.
+post_upsert:
+  enqueue_for: agents/competitor-feature-gap.yaml
+  filter: "feature_theme IS NULL"
+  batch_size: 100
+
+# Error handling.
+on_error:
+  retry:
+    max_attempts: 2
+    backoff_seconds: 120
+  rate_limit:
+    respect_retry_after: true
+    fallback_backoff_seconds: 600
