@@ -26,6 +26,8 @@
 - [Systemd Hardening](operator/systemd.md)
 - [Security](operator/security.md)
 - [Release Signing](operator/release-signing.md)
+- [Human-on-the-Loop Policy](operator/human-on-the-loop.md)
+- [Outcome Telemetry](operator/outcome-telemetry.md)
 
 ---
 
