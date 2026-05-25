@@ -1,0 +1,85 @@
+# Inbound adapter — MLflow webhook event
+# ---------------------------------------------------------------------------
+# MLflow delivers model registry and run events via POST webhook.
+# Supported event types consumed by this pack:
+#   - REGISTERED_MODEL_CREATED  (new model registered)
+#   - MODEL_VERSION_CREATED     (new version of an existing model)
+#   - MODEL_VERSION_TRANSITIONED_STAGE (staging → production, etc.)
+#   - RUN_FINISHED              (training run completed)
+#
+# Mounting: POST /v1/ml-ops/inbound/mlflow/{route_id}
+# Auth:     Bearer token from scheduler_webhook_tokens table.
+#           MLflow webhook secret verified via X-MLflow-Signature if configured.
+# ---------------------------------------------------------------------------
+
+source: mlflow
+route_prefix: /v1/ml-ops/inbound/mlflow
+
+normalize:
+  hmac_secret: ${MLFLOW_WEBHOOK_SECRET}
+
+  # Mapping from MLflow webhook payload → normalised mlops fields
+  field_map:
+    tenant_id:
+      source: headers.X-Tenant-Id
+      fallback: _env:DEFAULT_TENANT_ID
+    model_name:
+      any:
+        - registered_model.name
+        - model_version.name
+        - run_data.tags["mlflow.runName"]
+    model_version:
+      any:
+        - model_version.version
+        - run_info.run_id
+    platform: _const:mlflow
+    event_type: event_type
+    stage:
+      source: model_version.current_stage
+      map:
+        None: staging
+        Staging: staging
+        Production: champion
+        Archived: retired
+
+  # Emit a normalised mlops.inbound_drift_signal event only for RUN_FINISHED
+  # events where the run's validation metrics indicate a pass-rate drop.
+  # Other event types update mlops_model_versions only (no agent dispatch).
+  conditional_dispatch:
+    - condition: "event_type == 'RUN_FINISHED'"
+      action: upsert_model_version
+    - condition: >
+        event_type == 'RUN_FINISHED'
+        AND run_data.metrics['eval_pass_rate'] IS NOT NULL
+        AND run_data.metrics['eval_pass_rate'] <
+            coalesce(config.eval_pass_rate_floor, 0.85)
+      action: emit_event
+      event: mlops.inbound_drift_signal
+      payload_mapping:
+        signal_source: "_const:mlflow-event"
+        metric_name:   "eval_pass_rate"
+        metric_value:  "$.run_data.metrics['eval_pass_rate']"
+        stat_context:
+          run_id:      "$.run_info.run_id"
+          experiment:  "$.run_info.experiment_id"
+
+# Supported event types processed by this adapter.
+accepted_event_types:
+  - REGISTERED_MODEL_CREATED
+  - MODEL_VERSION_CREATED
+  - MODEL_VERSION_TRANSITIONED_STAGE
+  - RUN_FINISHED
+
+# Sample payload (MLflow model registry webhook schema).
+sample_payload: |
+  {
+    "event_type": "MODEL_VERSION_TRANSITIONED_STAGE",
+    "model_version": {
+      "name": "fraud-detector",
+      "version": "42",
+      "current_stage": "Production",
+      "creation_timestamp": 1716540000000,
+      "last_updated_timestamp": 1716543600000,
+      "run_id": "abc123def456"
+    }
+  }

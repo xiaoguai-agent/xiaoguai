@@ -1,0 +1,116 @@
+# Inbound adapter — Google Vertex AI pipeline event
+# ---------------------------------------------------------------------------
+# Vertex AI Pipelines can publish run completion events to Pub/Sub.
+# A Cloud Run or Cloud Function subscriber forwards the Pub/Sub message body
+# to this xiaoguai inbound endpoint.
+#
+# Pipeline events consumed:
+#   - google.cloud.aiplatform.v1.PipelineJob (state: SUCCEEDED / FAILED)
+#   - Vertex AI Model Monitoring alert (via Cloud Monitoring → Pub/Sub)
+#
+# Mounting: POST /v1/ml-ops/inbound/vertex/{route_id}
+# Auth:     Bearer token; Pub/Sub push subscription uses OIDC auth
+#           (Content-Type: application/json, Authorization: Bearer <oidc_token>)
+# ---------------------------------------------------------------------------
+
+source: vertex-ai
+route_prefix: /v1/ml-ops/inbound/vertex
+
+normalize:
+  # Pub/Sub push delivers a base64-encoded message body.
+  # The adapter decodes it before field extraction.
+  unwrap_pubsub: true
+
+  field_map:
+    tenant_id:
+      source: message.attributes.tenant_id
+      fallback: _env:DEFAULT_TENANT_ID
+    model_name:
+      any:
+        - message.attributes.model_name
+        - protoPayload.resourceName
+          # Extract model display name from Vertex resource path:
+          # projects/.../models/<model_id>
+          transform: vertex_resource_to_model_name
+    model_version:
+      any:
+        - message.attributes.model_version
+        - protoPayload.request.model.versionId
+        - _const:unknown
+    platform: _const:vertex_ai
+    pipeline_state:
+      source: message.attributes.pipeline_job_state
+      map:
+        PIPELINE_STATE_SUCCEEDED: succeeded
+        PIPELINE_STATE_FAILED:    failed
+        PIPELINE_STATE_CANCELLED: cancelled
+
+  # Dispatch rules: what to do for each Vertex event type
+  dispatch_rules:
+    # Successful training pipeline → upsert model version, check eval metrics
+    - condition: >
+        pipeline_state == 'succeeded'
+        AND message.attributes.pipeline_type == 'training'
+      actions:
+        - action: upsert_model_version
+        - action: emit_event_if
+          condition: >
+            message.attributes.eval_pass_rate IS NOT NULL
+            AND float(message.attributes.eval_pass_rate) <
+                coalesce(config.eval_pass_rate_floor, 0.85)
+          event: mlops.inbound_drift_signal
+          payload_mapping:
+            signal_source: "_const:vertex-ai-pipeline-event"
+            metric_name:   "_const:eval_pass_rate"
+            metric_value:  "$.message.attributes.eval_pass_rate"
+            stat_context:
+              pipeline_job:   "$.message.attributes.pipeline_job_id"
+              pipeline_type:  "training"
+
+    # Failed training pipeline → alert only (not a drift signal)
+    - condition: "pipeline_state == 'failed'"
+      actions:
+        - action: emit_event
+          event: mlops.pipeline_failure
+          payload_mapping:
+            signal_source: "_const:vertex-ai-pipeline-event"
+            model_name:    "$.model_name"
+            model_version: "$.model_version"
+            failure_reason: "$.message.attributes.error_message"
+
+    # Vertex AI Model Monitoring alert → drift signal
+    - condition: "message.attributes.alert_type == 'model_monitoring'"
+      actions:
+        - action: emit_event
+          event: mlops.inbound_drift_signal
+          payload_mapping:
+            signal_source:
+              source: message.attributes.monitoring_objective
+              map:
+                FEATURE_ATTRIBUTION_SKEW: feature-distribution-drift
+                PREDICTION_DRIFT:         prediction-distribution-shift
+                _default:                 feature-distribution-drift
+            metric_name:   "$.message.attributes.metric_name"
+            metric_value:  "$.message.attributes.metric_value"
+            stat_context:
+              endpoint:       "$.message.attributes.endpoint_id"
+              objective:      "$.message.attributes.monitoring_objective"
+              deployed_model: "$.message.attributes.deployed_model_id"
+
+sample_payload: |
+  {
+    "subscription": "projects/acme/subscriptions/vertex-pipeline-sub",
+    "message": {
+      "data": "eyJwaXBlbGluZV9qb2JfaWQiOiJmcmF1ZC10cmFpbi0yMDI0MDUyNCJ9",
+      "attributes": {
+        "tenant_id": "acme",
+        "model_name": "fraud-detector",
+        "model_version": "v43",
+        "pipeline_type": "training",
+        "pipeline_job_state": "PIPELINE_STATE_SUCCEEDED",
+        "pipeline_job_id": "fraud-train-20240524",
+        "eval_pass_rate": "0.91"
+      },
+      "messageId": "vertex-msg-001"
+    }
+  }

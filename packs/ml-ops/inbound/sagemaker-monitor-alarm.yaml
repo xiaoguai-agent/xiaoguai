@@ -1,0 +1,84 @@
+# Inbound adapter — Amazon SageMaker Model Monitor alarm
+# ---------------------------------------------------------------------------
+# SageMaker Model Monitor delivers CloudWatch alarm state-change events via
+# SNS → webhook. This adapter normalises the SNS message body into a
+# mlops.inbound_drift_signal event.
+#
+# SageMaker Monitor violation types handled:
+#   - DataQualityJobDefinition  → data_quality signal
+#   - ModelQualityJobDefinition → label/concept drift signal
+#   - ModelBiasJobDefinition    → capability drift signal (fairness)
+#   - ModelExplainabilityJobDefinition → concept drift signal (feature importance)
+#
+# Mounting: POST /v1/ml-ops/inbound/sagemaker/{route_id}
+# Auth:     Bearer token; SNS message signature verified separately.
+# ---------------------------------------------------------------------------
+
+source: sagemaker-monitor
+route_prefix: /v1/ml-ops/inbound/sagemaker
+
+normalize:
+  # SNS wraps the actual CloudWatch alarm message; unwrap it first.
+  unwrap_sns: true
+  # Optional: verify SNS message signature.
+  sns_topic_arn: ${SAGEMAKER_MONITOR_SNS_TOPIC_ARN}
+
+  field_map:
+    tenant_id:
+      source: MessageAttributes.TenantId.Value
+      fallback: _env:DEFAULT_TENANT_ID
+    model_name:
+      # SageMaker uses endpoint name as the model identifier.
+      # Operators configure a mapping in pack config:
+      #   sagemaker_endpoint_to_model: { "fraud-endpoint": "fraud-detector" }
+      source: Trigger.Dimensions[?(@.name=="EndpointName")].value
+      transform: sagemaker_endpoint_to_model_name
+    model_version:
+      source: Trigger.Dimensions[?(@.name=="MonitoringSchedule")].value
+      fallback: _const:unknown
+    platform: _const:sagemaker
+    # Map CloudWatch alarm state to drift severity
+    drift_severity:
+      source: NewStateValue
+      map:
+        OK: low            # alarm cleared
+        ALARM: high        # threshold breached
+        INSUFFICIENT_DATA: low
+    # Map monitor job type to drift signal type
+    signal_type:
+      source: AlarmName
+      regex_map:
+        ".*DataQuality.*":          data-quality-score-drop
+        ".*ModelQuality.*":         prediction-distribution-shift
+        ".*ModelBias.*":            prediction-distribution-shift
+        ".*ModelExplainability.*":  feature-distribution-drift
+        ".*":                       prediction-distribution-shift
+
+  # Only dispatch a drift signal when the alarm state transitions to ALARM.
+  conditional_dispatch:
+    - condition: "NewStateValue == 'ALARM'"
+      action: emit_event
+      event: mlops.inbound_drift_signal
+      payload_mapping:
+        signal_source: "$.signal_type"
+        metric_name:   "sagemaker_monitor_violation_count"
+        metric_value:
+          source: Trigger.MetricName
+        stat_context:
+          alarm_name:       "$.AlarmName"
+          alarm_description: "$.AlarmDescription"
+          old_state:        "$.OldStateValue"
+          new_state:        "$.NewStateValue"
+          reason:           "$.NewStateReason"
+
+accepted_alarm_states:
+  - ALARM    # drift detected
+  - OK       # drift cleared (update mlops_drift_signals.resolved_at)
+
+sample_payload: |
+  {
+    "Type": "Notification",
+    "MessageId": "msg-uuid",
+    "TopicArn": "arn:aws:sns:us-east-1:123456789:sagemaker-monitor-alarms",
+    "Message": "{\"AlarmName\":\"fraud-endpoint-DataQualityAlarm\",\"AlarmDescription\":\"Data quality violation\",\"NewStateValue\":\"ALARM\",\"NewStateReason\":\"Threshold Crossed\",\"OldStateValue\":\"OK\",\"Trigger\":{\"MetricName\":\"feature_baseline_drift_violations\",\"Dimensions\":[{\"name\":\"EndpointName\",\"value\":\"fraud-endpoint\"},{\"name\":\"MonitoringSchedule\",\"value\":\"fraud-daily-monitor\"}]}}"
+  }

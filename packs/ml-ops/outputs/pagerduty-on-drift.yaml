@@ -1,0 +1,91 @@
+# Output connector — PagerDuty on critical drift
+# ---------------------------------------------------------------------------
+# Pages the on-call ML engineer via PagerDuty Events API v2 when:
+#   - drift_severity = critical
+#   - drift_type = data_quality (pipeline may be broken — needs immediate attention)
+#   - eval overall_status = FAILING
+#
+# Non-critical signals go to Slack only (see slack-ml-platform.yaml).
+# PagerDuty incidents are auto-resolved when the drift signal is resolved.
+# ---------------------------------------------------------------------------
+
+output: pagerduty-on-drift
+
+pagerduty:
+  # PagerDuty Events API v2 integration key (service integration).
+  routing_key: ${PAGERDUTY_ML_ROUTING_KEY}
+  # Events API v2 endpoint.
+  endpoint: "https://events.pagerduty.com/v2/enqueue"
+
+# --------------------------------------------------------------------------
+# Alert creation rules
+# --------------------------------------------------------------------------
+alert_rules:
+  - condition: "drift_severity == 'critical'"
+    severity: critical
+    summary: "[CRITICAL] {{ drift_type | title }} drift on {{ model_name }}"
+
+  - condition: "drift_type == 'data_quality' AND drift_severity IN ('medium', 'high', 'critical')"
+    severity: error
+    summary: "[DATA QUALITY] Pipeline defect suspected for {{ model_name }}"
+
+  - condition: "overall_status == 'FAILING'"
+    severity: error
+    summary: "[EVAL FAILING] {{ model_name }} eval suite pass rate critically low"
+
+# --------------------------------------------------------------------------
+# PagerDuty event payload template (Events API v2)
+# --------------------------------------------------------------------------
+payload_template:
+  routing_key: "{{ pagerduty.routing_key }}"
+  event_action: trigger
+
+  payload:
+    summary: "{{ summary }}"
+    source:  "xiaoguai-ml-ops/{{ model_name }}"
+    severity: "{{ severity }}"
+    timestamp: "{{ detected_at }}"
+    component: "{{ model_name }}"
+    group: "ml-platform"
+    class: "{{ drift_type }}_drift"
+    custom_details:
+      model_version:      "{{ model_version }}"
+      drift_type:         "{{ drift_type }}"
+      drift_severity:     "{{ drift_severity }}"
+      signal_source:      "{{ signal_source }}"
+      recommendation:     "{{ recommendation }}"
+      retrain_job_id:     "{{ job_id | default('none') }}"
+      admin_ui_url:       "{{ admin_url }}/ml-ops/drift/{{ signal_id }}"
+      primary_evidence:   "{{ primary_evidence | join(' | ') | truncate(500) }}"
+
+  # Dedup key: one active PD incident per model + drift_type
+  dedup_key: "xiaoguai-mlops:{{ model_name }}:{{ drift_type }}"
+
+  # Links shown in the PagerDuty incident UI
+  links:
+    - href: "{{ admin_url }}/ml-ops/drift/{{ signal_id }}"
+      text: "View drift signal in Admin UI"
+    - href: "{{ admin_url }}/ml-ops/retrain/{{ job_id }}"
+      text: "Review retrain job"
+    - href: "{{ runbook_url | default(admin_url + '/docs/ml-ops-runbook') }}"
+      text: "ML-Ops runbook"
+
+# --------------------------------------------------------------------------
+# Resolution — send a resolve event when the drift signal is resolved
+# --------------------------------------------------------------------------
+resolve_on:
+  event: mlops.drift_signal_resolved
+  event_action: resolve
+  payload:
+    summary: "Resolved: {{ drift_type | title }} drift on {{ model_name }}"
+    dedup_key: "xiaoguai-mlops:{{ model_name }}:{{ drift_type }}"
+
+# --------------------------------------------------------------------------
+# Error handling — PagerDuty failures are non-blocking
+# --------------------------------------------------------------------------
+on_error:
+  action: log_and_fallback
+  fallback_output: slack-ml-platform
+  message: >
+    pagerduty-on-drift: failed to page on-call for {{ model_name }}.
+    Error: {{ error }}. Falling back to Slack notification.

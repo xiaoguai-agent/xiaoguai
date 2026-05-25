@@ -1,0 +1,121 @@
+# Anomaly spec — prediction distribution shift
+# ---------------------------------------------------------------------------
+# Detects when the model's output histogram drifts beyond a rolling baseline.
+# Uses a z-score on the rolling mean of the prediction value distribution;
+# also checks the JS divergence between the current output bucket histogram
+# and the training-time reference histogram.
+#
+# This catches output-side anomalies before they surface in business metrics:
+# e.g. a fraud model suddenly scoring everything low, or a recommender
+# collapsing to a single item.
+#
+# Schema reference: F2 AnomalySpec (xiaoguai-anomaly).
+# ---------------------------------------------------------------------------
+
+name: prediction-distribution-shift
+version: "0.1.0"
+description: >
+  Rolling 7-day anomaly detector on model prediction output distribution.
+  Alerts when the JS divergence between today's output histogram and the
+  7-day rolling reference exceeds 0.10 (notable), 0.25 (severe).
+  Complements feature-distribution-drift which watches inputs.
+
+# --------------------------------------------------------------------------
+# Metric definition
+# --------------------------------------------------------------------------
+metric:
+  name: prediction_js_divergence
+  description: >
+    Jensen-Shannon divergence between the current-day prediction histogram
+    and the rolling 7-day reference histogram for the model's primary output.
+  unit: "nats (0–1)"
+  # SQL to pull daily output histogram bucket counts from the platform telemetry.
+  # The stats sidecar pre-aggregates these; xiaoguai reads from the
+  # mlops_model_versions metadata or a platform-specific view.
+  query: |
+    SELECT
+        tenant_id,
+        model_name,
+        model_version,
+        metric_date,
+        SUM(bucket_count)                            AS total_predictions,
+        ARRAY_AGG(bucket_count ORDER BY bucket_rank) AS bucket_counts,
+        AVG(prediction_value)                        AS mean_prediction,
+        STDDEV(prediction_value)                     AS stddev_prediction
+    FROM mlops_prediction_histogram_daily
+    WHERE tenant_id  = '{tenant_id}'
+      AND model_name = '{model_name}'
+      AND metric_date >= CURRENT_DATE - INTERVAL '8 days'
+    GROUP BY tenant_id, model_name, model_version, metric_date
+    ORDER BY metric_date
+  tenant_column: tenant_id
+  # Note: mlops_prediction_histogram_daily is populated by inbound adapters
+  # (MLflow, SageMaker, Vertex AI). If not populated, this anomaly is skipped
+  # with a warning rather than raising a false alert.
+  missing_data_policy: skip_with_warning
+
+# --------------------------------------------------------------------------
+# Baseline window
+# --------------------------------------------------------------------------
+baseline:
+  kind: rolling
+  window_days: 7
+  min_observations: 3   # skip alert if < 3 days of data (new model)
+
+# --------------------------------------------------------------------------
+# Alert condition (dual threshold)
+# --------------------------------------------------------------------------
+alert:
+  # Primary: JS divergence exceeds notable-shift threshold
+  kind: threshold
+  operator: ">"
+  value: 0.10
+  # Secondary guard: also fire if prediction mean drifts beyond 2.5 sigma
+  # (catches mean-shift without histogram shape change)
+  additional_conditions:
+    - kind: n_sigma
+      metric_field: mean_prediction
+      n_sigma: 2.5
+
+# --------------------------------------------------------------------------
+# Schedule
+# --------------------------------------------------------------------------
+schedule:
+  cron: "0 6 * * *"   # daily at 06:00 — after overnight histogram aggregation
+
+# --------------------------------------------------------------------------
+# Output — AnomalyEvent shape
+# --------------------------------------------------------------------------
+event:
+  kind: mlops.prediction_distribution_shift
+  payload_mapping:
+    tenant_id:          "$.tenant_id"
+    model_name:         "$.model_name"
+    model_version:      "$.model_version"
+    js_divergence:      "$.current_value"
+    rolling_mean_jsd:   "$.baseline.mean"
+    rolling_stddev_jsd: "$.baseline.stddev"
+    sigma_distance:     "$.sigma_distance"
+    mean_prediction:    "$.mean_prediction"
+    baseline_mean:      "$.baseline.mean_prediction"
+    total_predictions:  "$.total_predictions"
+    signal_source:      "_const:prediction-distribution-shift"
+    window_days:        7
+
+# --------------------------------------------------------------------------
+# Severity escalation
+# --------------------------------------------------------------------------
+severity:
+  - threshold: 0.10
+    level: warning
+  - threshold: 0.25
+    level: critical
+
+# --------------------------------------------------------------------------
+# Downstream
+# --------------------------------------------------------------------------
+downstream:
+  agents:
+    - drift-classifier
+  dashboards:
+    - mlops-model-health

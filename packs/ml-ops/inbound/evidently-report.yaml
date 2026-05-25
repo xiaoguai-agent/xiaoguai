@@ -1,0 +1,121 @@
+# Inbound adapter — Evidently AI report webhook
+# ---------------------------------------------------------------------------
+# Evidently AI (open-source ML monitoring) can POST a report summary to a
+# webhook URL after each monitoring run. This adapter normalises Evidently
+# report payloads into mlops.inbound_drift_signal events.
+#
+# Evidently report types consumed:
+#   - DataDriftReport     → feature-distribution-drift signals
+#   - DataQualityReport   → data-quality-score-drop signals
+#   - RegressionReport / ClassificationReport → prediction-distribution-shift
+#   - TextOverviewReport  → prediction-distribution-shift (text models)
+#
+# Mounting: POST /v1/ml-ops/inbound/evidently/{route_id}
+# Auth:     Bearer token; optional HMAC on X-Evidently-Signature.
+# ---------------------------------------------------------------------------
+
+source: evidently
+route_prefix: /v1/ml-ops/inbound/evidently
+
+normalize:
+  hmac_secret: ${EVIDENTLY_WEBHOOK_SECRET}
+
+  field_map:
+    tenant_id:
+      source: metadata.tenant_id
+      fallback: _env:DEFAULT_TENANT_ID
+    model_name:
+      source: metadata.model_name
+    model_version:
+      source: metadata.model_version
+      fallback: _const:unknown
+    platform: _const:evidently
+    report_type: suite.metrics[0].metric_id
+
+  # Per-report-type normalisation rules
+  report_dispatch_rules:
+    # DataDriftReport: check share_of_drifted_columns metric
+    - report_type_contains: "DataDriftPreset"
+      signal_source: feature-distribution-drift
+      metric_path: "suite.metrics[?(@.metric_id=='DataDriftTable')].result.share_of_drifted_columns"
+      threshold:
+        operator: ">"
+        value: 0.20   # more than 20% of features drifted
+      payload_extras:
+        metric_name: "share_of_drifted_columns"
+
+    # DataQualityReport: use dataset_quality metric
+    - report_type_contains: "DataQualityPreset"
+      signal_source: data-quality-score-drop
+      metric_path: "suite.metrics[?(@.metric_id=='DatasetSummaryMetric')].result.current.number_of_missing_values"
+      threshold:
+        operator: ">"
+        value: 0.05   # > 5% missing values
+      payload_extras:
+        metric_name: "missing_value_rate"
+
+    # Classification / Regression report: check accuracy / RMSE delta
+    - report_type_contains: "ClassificationPreset"
+      signal_source: prediction-distribution-shift
+      metric_path: "suite.metrics[?(@.metric_id=='ClassificationQualityMetric')].result.current.accuracy"
+      threshold:
+        operator: "<"
+        value_ref: config.eval_pass_rate_floor
+        default_ref: 0.85
+      payload_extras:
+        metric_name: "accuracy"
+
+    - report_type_contains: "RegressionPreset"
+      signal_source: prediction-distribution-shift
+      metric_path: "suite.metrics[?(@.metric_id=='RegressionQualityMetric')].result.current.r2_score"
+      threshold:
+        operator: "<"
+        value: 0.80
+      payload_extras:
+        metric_name: "r2_score"
+
+  # Persist the full Evidently report JSON to mlops_eval_runs
+  persist:
+    table: mlops_eval_runs
+    condition: "always"
+    mapping:
+      tenant_id:      "$.tenant_id"
+      model_name:     "$.model_name"
+      model_version:  "$.model_version"
+      eval_type:      "_const:custom"
+      suite_name:     "$.suite_name"
+      pass_rate:
+        expr: "1 - share_of_drifted_columns"
+        fallback: 0.0
+      total_cases:    "$.metadata.row_count"
+      passed_cases:
+        expr: "row_count * (1 - share_of_drifted_columns)"
+      source_url:     "$.metadata.report_url"
+      run_started_at: "$.metadata.from_datetime"
+      run_finished_at: "$.metadata.to_datetime"
+
+sample_payload: |
+  {
+    "suite_name": "FraudDetectorMonitor_2024-05-24",
+    "metadata": {
+      "tenant_id": "acme",
+      "model_name": "fraud-detector",
+      "model_version": "v42",
+      "row_count": 15000,
+      "from_datetime": "2024-05-23T00:00:00Z",
+      "to_datetime": "2024-05-24T00:00:00Z",
+      "report_url": "https://evidently.acme.io/reports/fraud-2024-05-24"
+    },
+    "suite": {
+      "metrics": [
+        {
+          "metric_id": "DataDriftTable",
+          "result": {
+            "share_of_drifted_columns": 0.27,
+            "number_of_drifted_columns": 8,
+            "number_of_columns": 30
+          }
+        }
+      ]
+    }
+  }
