@@ -1,0 +1,17 @@
+{
+  "_comment": "PLACEHOLDER — overwrite with first golden run. See tests/k6/baseline-README.md.",
+  "metrics": {
+    "http_req_duration{name:POST /v1/sessions}": {
+      "values": { "p(95)": 0 }
+    },
+    "http_req_duration{name:POST /v1/sessions/:id/messages}": {
+      "values": { "p(95)": 0 }
+    },
+    "http_req_duration{name:GET /v1/sessions/:id/messages}": {
+      "values": { "p(95)": 0 }
+    },
+    "http_req_duration{name:GET /healthz}": {
+      "values": { "p(95)": 0 }
+    }
+  }
+}
