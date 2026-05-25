@@ -1,0 +1,68 @@
+name: HotL Policy Issue
+description: Report a wrong verdict, missing coverage, or misconfigured policy in the HotL policy engine.
+title: "hotl: <policy-id> — <short description>"
+labels: ["hotl", "policy", "triage"]
+assignees: []
+body:
+  - type: input
+    id: policy_id
+    attributes:
+      label: Policy ID
+      description: "Identifier as shown in the policy store, e.g. `hotl.rate.burst.v2` or file path."
+      placeholder: "hotl.subsystem.rule.vN"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Policy scope
+      description: At what level does this policy apply?
+      options:
+        - global
+        - workspace
+        - channel / adapter
+        - user / session
+        - skill pack
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_verdict
+    attributes:
+      label: Expected verdict
+      description: "What decision or action should the policy engine have produced? (allow / deny / throttle / label…)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual_verdict
+    attributes:
+      label: Actual verdict
+      description: "What did the engine actually produce? Include any structured output, error code, or log line."
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Dashboard screenshot or audit-log excerpt
+      description: Paste the relevant audit-log JSON or attach a screenshot of the HotL dashboard.
+      render: json
+
+  - type: textarea
+    id: suggested_fix
+    attributes:
+      label: Suggested fix
+      description: "Optional: proposed change to the policy definition, threshold, or evaluation order."
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I verified the policy ID exists in the current policy store (`xiaoguai-cli policy list`).
+          required: true
+        - label: I searched existing HotL issues and this is not a duplicate.
+          required: true

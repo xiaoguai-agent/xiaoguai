@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & Discussions
+    url: https://github.com/zw008/xiaoguai/discussions
+    about: Ask questions, share ideas, or start a conversation — not a bug or feature request.
+  - name: Runbooks & Docs
+    url: https://zw008.github.io/xiaoguai/
+    about: Operations runbooks, ADRs, and architecture docs.
