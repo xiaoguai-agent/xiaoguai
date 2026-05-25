@@ -1,0 +1,48 @@
+# Output connector — procurement-slack-channel
+# ---------------------------------------------------------------------------
+# Posts vendor management alerts to a dedicated Slack channel.
+# Used by all four agents for advisory notifications (no HOTL gate here;
+# the HOTL gate lives in the agent definitions for replace/cancel decisions).
+# ---------------------------------------------------------------------------
+
+name: procurement-slack-channel
+version: "1.0.0"
+description: >
+  Posts vendor alerts (renewal windows, overdue assessments, concentration
+  breaches, vendor incidents) to the configured Slack procurement channel.
+  All messages include a link to the admin UI for human review.
+
+kind: slack
+
+channel_env: "VENDOR_MGMT_SLACK_CHANNEL"   # e.g. #procurement-alerts
+bot_token_env: "SLACK_BOT_TOKEN"
+
+# One message template per event kind
+message_templates:
+
+  vendor.renewal_window_approaching: |
+    :calendar: *Renewal approaching in {{ days_until_renewal }} days*
+    Vendor: *{{ vendor_name }}* ({{ category }}, {{ tier }})
+    Renewal date: {{ renewal_date }}  Contract value: ${{ contract_value_usd | format_currency }}
+    Risk score: {{ risk_score | default('not assessed') }}
+    <{{ admin_ui_url }}/vendor-management/renewals/{{ renewal_id }}|View renewal →>
+
+  vendor.assessment_overdue: |
+    :warning: *Annual risk assessment overdue*
+    Vendor: *{{ vendor_name }}* ({{ category }}, {{ tier }})
+    Last assessed: {{ last_assessed_at | default('never') }}
+    Annual spend: ${{ annual_spend_usd | format_currency }}
+    <{{ admin_ui_url }}/vendor-management/assessments/{{ vendor_id }}|Start assessment →>
+
+  vendor.concentration_threshold_breached: |
+    :rotating_light: *Concentration threshold breached*
+    Category: *{{ category }}*  Vendor: *{{ vendor_name }}*
+    Share: {{ concentration_pct }}%  (threshold {{ threshold_pct }}%)
+    Overage: +{{ overage_pct | round(1) }}%  Peer vendors: {{ peer_vendor_count }}
+    <{{ admin_ui_url }}/vendor-management/concentration/{{ category }}|View heatmap →>
+
+  vendor.status_page_outage: |
+    :fire: *Vendor outage detected — {{ severity | upper }}*
+    Vendor: *{{ vendor_name }}*  {{ status_page_url }}
+    Blast radius score: {{ blast_radius_score | default('computing…') }} / 100
+    <{{ admin_ui_url }}/vendor-management/incidents/{{ incident_id }}|View impact report →>

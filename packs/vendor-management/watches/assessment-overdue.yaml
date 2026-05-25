@@ -1,0 +1,86 @@
+# Watch spec — assessment-overdue
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent for every active vendor whose last completed
+# assessment is older than 12 months, or who has never been assessed.
+# Annual recertification is a compliance requirement for SOC2 and ISO27001
+# supply-chain controls.
+# ---------------------------------------------------------------------------
+
+name: assessment-overdue
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each vendor whose annual risk assessment is
+  overdue (last completed > 12 months ago, or never assessed).
+  Runs daily. Triggers the risk-assessor agent to initiate a new
+  assessment workflow.
+
+source:
+  kind: sql
+  table: vendors
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      v.tenant_id,
+      v.id                                                    AS vendor_id,
+      v.name                                                  AS vendor_name,
+      v.category,
+      v.tier,
+      v.risk_score                                            AS last_known_risk_score,
+      v.annual_spend_usd,
+      -- Most recent completed assessment (NULL if never assessed)
+      MAX(a.assessed_at)                                      AS last_assessed_at,
+      EXTRACT(DAY FROM NOW() - MAX(a.assessed_at))::INT       AS days_since_assessment,
+      -- Count of open (non-completed) assessments to avoid duplicate kick-offs
+      COUNT(a2.id) FILTER (WHERE a2.assessment_status IN ('pending', 'in_progress'))
+                                                              AS open_assessments
+  FROM vendors v
+  LEFT JOIN vendor_assessments a
+         ON a.vendor_id = v.id
+        AND a.tenant_id = v.tenant_id
+        AND a.assessment_status = 'completed'
+  LEFT JOIN vendor_assessments a2
+         ON a2.vendor_id = v.id
+        AND a2.tenant_id = v.tenant_id
+  WHERE v.tenant_id = '{tenant_id}'
+    AND v.status = 'active'
+  GROUP BY v.tenant_id, v.id, v.name, v.category, v.tier,
+           v.risk_score, v.annual_spend_usd
+  HAVING
+      -- Never assessed
+      MAX(a.assessed_at) IS NULL
+      -- OR last assessment > 12 months ago
+      OR MAX(a.assessed_at) < NOW() - INTERVAL '12 months'
+  ORDER BY last_assessed_at ASC NULLS FIRST
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  cron: "0 8 * * *"   # daily at 08:00
+
+event:
+  kind: vendor.assessment_overdue
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:              "$.tenant_id"
+    vendor_id:              "$.vendor_id"
+    vendor_name:            "$.vendor_name"
+    category:               "$.category"
+    tier:                   "$.tier"
+    last_known_risk_score:  "$.last_known_risk_score"
+    annual_spend_usd:       "$.annual_spend_usd"
+    last_assessed_at:       "$.last_assessed_at"
+    days_since_assessment:  "$.days_since_assessment"
+    open_assessments:       "$.open_assessments"
+
+downstream:
+  agents:
+    - risk-assessor
+
+dedup:
+  # Suppress re-fire for the same vendor within 7 days unless a new
+  # completed assessment has been filed (which would remove them from
+  # the query result naturally).
+  key: "{tenant_id}:{vendor_id}"
+  ttl_seconds: 604800   # 7 days

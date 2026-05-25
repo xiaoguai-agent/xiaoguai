@@ -1,0 +1,81 @@
+# Inbound source — status-page-monitor (poll connector)
+# ---------------------------------------------------------------------------
+# Periodically polls each active vendor's status page URL (stored in the
+# vendor record or pack config) and fires a vendor.status_page_outage event
+# when the page reports degraded performance or an outage.
+#
+# Supports Atlassian Statuspage API v2 and plain HTTP polling with
+# keyword detection as a fallback.
+# ---------------------------------------------------------------------------
+
+name: status-page-monitor
+version: "1.0.0"
+description: >
+  Polls vendor status pages every 5 minutes. Emits vendor.status_page_outage
+  when a vendor reports degraded or outage status. Supports Atlassian
+  Statuspage API v2 and keyword-match fallback for custom pages.
+
+kind: poll
+
+schedule:
+  cron: "*/5 * * * *"   # every 5 minutes
+
+# Vendor list is derived at runtime from the vendors table.
+# Only vendors with a non-null status_page_url config entry are polled.
+source:
+  kind: sql
+  query: |
+    SELECT id AS vendor_id, name AS vendor_name,
+           (integration_map->>'status_page_url') AS status_page_url,
+           (integration_map->>'status_page_kind') AS status_page_kind
+    FROM vendors
+    WHERE tenant_id = '{tenant_id}'
+      AND status = 'active'
+      AND integration_map->>'status_page_url' IS NOT NULL
+
+# Polling strategy per vendor
+poll_strategy:
+  # Atlassian Statuspage (most common SaaS vendors)
+  atlassian_statuspage:
+    kind: atlassian_statuspage_v2
+    # Fires if status.indicator is 'minor', 'major', or 'critical'
+    trigger_indicators:
+      - minor
+      - major
+      - critical
+  # Fallback: plain HTTP GET + keyword scan
+  http_keyword:
+    kind: http_get
+    expect_status: 200
+    outage_keywords:
+      - "outage"
+      - "incident"
+      - "degraded"
+      - "investigating"
+      - "disruption"
+    ignore_keywords:
+      - "resolved"
+      - "no incidents"
+      - "all systems operational"
+
+event:
+  kind: vendor.status_page_outage
+  payload_mapping:
+    tenant_id:       "{tenant_id}"
+    vendor_id:       "$.vendor_id"
+    vendor_name:     "$.vendor_name"
+    title:           "$.incident_title"
+    severity:        "$.severity"    # mapped: minor→sev3, major→sev2, critical→sev1
+    source:          "status_page"
+    status_page_url: "$.status_page_url"
+    detected_at:     "$.polled_at"
+
+downstream:
+  agents:
+    - incident-impact-evaluator
+
+dedup:
+  # Do not re-fire for the same vendor while an open incident exists
+  key: "{tenant_id}:{vendor_id}"
+  ttl_seconds: 300   # re-check every 5 min; only re-fire if still degraded
+  re_fire_if: "payload.severity != prior.severity"  # escalation triggers re-fire

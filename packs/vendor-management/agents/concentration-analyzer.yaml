@@ -1,0 +1,128 @@
+# Agent definition — concentration-analyzer
+# ---------------------------------------------------------------------------
+# Triggered by the concentration-threshold-breached watch.  Analyses
+# spend distribution within a Gartner-style category and flags when a
+# single vendor exceeds the configured threshold (default 40 %).
+#
+# Category taxonomy (Gartner Technology Spend Taxonomy, simplified):
+#   cloud-infrastructure   — IaaS/PaaS: AWS, Azure, GCP, etc.
+#   security               — SIEM, EDR, identity, pen-test vendors
+#   saas-productivity      — collaboration, office, ITSM
+#   data-analytics         — BI, data warehouse, ML platforms
+#   professional-services  — consulting, SI, staffing
+#   logistics              — 3PL, freight, last-mile
+#   hardware               — servers, networking, endpoints
+#   telecom                — WAN, SD-WAN, voice
+#   marketing-tech         — CRM, marketing automation, ad tech
+#   finance-tech           — ERP, payroll, treasury, AP/AR
+#   (custom categories allowed via pack config)
+#
+# The analyzer identifies: current concentration %, breach severity,
+# number of peer vendors available, and recommends diversification targets.
+# ---------------------------------------------------------------------------
+
+name: concentration-analyzer
+version: "1.0.0"
+description: >
+  Detects when a single vendor exceeds the spend-concentration threshold
+  within a Gartner-style category (e.g., cloud-infrastructure, security).
+  Identifies peer alternatives, quantifies the diversification gap, and
+  generates a concentration heatmap entry and a Slack alert.
+  Purely advisory — no HOTL gate required.
+
+triggers:
+  - event: vendor.concentration_threshold_breached
+    source: concentration-threshold-breached
+
+system_prompt: |
+  You are a strategic sourcing analyst specialising in third-party
+  concentration risk (Gartner Hype Cycle for Procurement 2024 framework).
+
+  Category taxonomy (use exactly these slugs when referencing categories):
+    cloud-infrastructure, security, saas-productivity, data-analytics,
+    professional-services, logistics, hardware, telecom, marketing-tech,
+    finance-tech.  Custom categories pass through as-is.
+
+  Your tasks for each concentration breach:
+  1. Confirm the breach: state the vendor name, category, concentration %,
+     and the threshold that was exceeded.
+  2. Assess severity:
+       minor    — threshold < concentration < threshold + 10 %
+       moderate — threshold + 10 % <= concentration < threshold + 25 %
+       critical — concentration >= threshold + 25 %
+  3. Identify diversification options: list peer vendors already in the
+     category (from get_category_peers), plus up to 2 market alternatives
+     if peers are insufficient.  For each option state estimated effort
+     (low / medium / high) to onboard.
+  4. Recommend a concrete next step:
+       minor    — monitor; flag at next quarterly vendor review.
+       moderate — initiate RFP or shortlist 1-2 alternatives within 60 days.
+       critical — escalate to procurement lead; dual-source plan required
+                  within 30 days.
+  5. Output structured JSON matching the save_concentration_alert tool schema.
+
+tools:
+  - name: get_concentration_snapshot
+    description: >
+      Retrieve all vendor spend shares for the breached category so the
+      agent can see the full distribution, not just the top vendor.
+    kind: sql
+    query: |
+      SELECT vendor_id, vendor_name, vendor_spend_usd,
+             category_total_usd, concentration_pct, threshold_pct
+      FROM concentration_metrics
+      WHERE tenant_id = '{tenant_id}'
+        AND category  = '{category}'
+      ORDER BY concentration_pct DESC
+
+  - name: get_category_peers
+    description: >
+      List active vendors in the same category that are NOT the breaching
+      vendor.  Returns their risk scores and spend for comparison.
+    kind: sql
+    query: |
+      SELECT v.id, v.name, v.tier, v.risk_score, v.annual_spend_usd,
+             COALESCE(cm.concentration_pct, 0) AS current_concentration_pct
+      FROM vendors v
+      LEFT JOIN concentration_metrics cm
+             ON cm.vendor_id = v.id
+            AND cm.tenant_id = v.tenant_id
+            AND cm.category  = v.category
+      WHERE v.tenant_id = '{tenant_id}'
+        AND v.category  = '{category}'
+        AND v.id       != '{vendor_id}'
+        AND v.status    = 'active'
+      ORDER BY v.risk_score ASC
+      LIMIT 10
+
+  - name: save_concentration_alert
+    description: >
+      Upsert an alert record and update the concentration_metrics row with
+      the latest computed_at timestamp.  Returns the alert summary for
+      downstream outputs.
+    kind: sql
+    query: |
+      UPDATE concentration_metrics
+      SET computed_at = NOW(),
+          updated_at  = NOW()
+      WHERE tenant_id  = '{tenant_id}'
+        AND category   = '{category}'
+        AND vendor_id  = '{vendor_id}'
+      RETURNING tenant_id, category, vendor_name,
+                concentration_pct, threshold_pct
+
+hotl:
+  # Concentration analysis is advisory — no approval gate.
+  budget_usd: 0.00
+  autonomous_actions:
+    save_concentration_alert: advisory
+
+outcome_telemetry:
+  record_on:
+    - alert_generated
+    - recommendation_actioned
+  feedback_table: concentration_metrics
+
+rate_limits:
+  per_category_per_day: 3
+  per_tenant_per_hour: 20
