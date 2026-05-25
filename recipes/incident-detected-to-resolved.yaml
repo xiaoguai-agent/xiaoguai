@@ -1,0 +1,208 @@
+---
+# Recipe: incident-detected-to-resolved
+#
+# End-to-end incident lifecycle: PagerDuty alert fires → classify → optional
+# P1 escalation (HotL) → runbook auto-execute → outcome recorded → postmortem
+# stub generated.
+#
+# Composes:
+#   - pack: devops-oncall    (inbound/pagerduty, agents/classify-alert,
+#                             agents/runbook-lookup, agents/snapshot-collector,
+#                             outputs/slack-oncall-channel)
+#   - feature: hotl          (HotlPolicyStore — escalation gate for P1)
+#   - feature: outcome-telemetry (OutcomeRecorder — records resolution signal)
+#   - pack: incident-triage  (outputs/draft-pr — postmortem stub)
+#
+# Required env:
+#   PAGERDUTY_WEBHOOK_SECRET, ONCALL_SLACK_TOKEN, ONCALL_SLACK_CHANNEL,
+#   ONCALL_OBSERVABILITY_URL, ONCALL_OBSERVABILITY_TOKEN,
+#   TRIAGE_GITHUB_REPO, TRIAGE_IM_CHANNEL
+
+name: incident-detected-to-resolved
+version: "0.1.0"
+description: >
+  Full incident lifecycle recipe: PagerDuty alert inbound → severity
+  classification → P1 HotL escalation to on-call manager → runbook auto-
+  execution → outcome recorded → postmortem stub PR opened.
+owner: platform-sre
+tags: [ops, incident, hotl, outcome]
+
+# ── Required packs and features ──────────────────────────────────────────────
+requires:
+  packs:
+    - devops-oncall: ">=0.1.0"
+    - incident-triage: ">=0.1.0"
+  features:
+    - hotl              # HotlPolicyStore + HotlEnforcer (migration 0011)
+    - outcome-telemetry # OutcomeRecorder (migration 0012)
+  env:
+    - PAGERDUTY_WEBHOOK_SECRET
+    - ONCALL_SLACK_TOKEN
+    - ONCALL_SLACK_CHANNEL
+    - ONCALL_OBSERVABILITY_URL
+    - ONCALL_OBSERVABILITY_TOKEN
+    - TRIAGE_GITHUB_REPO
+    - TRIAGE_IM_CHANNEL
+
+# ── Trigger ───────────────────────────────────────────────────────────────────
+trigger:
+  inbound: devops-oncall/inbound/pagerduty
+  description: "PagerDuty v2 alert webhook fires when a monitor transitions to TRIGGERED."
+
+# ── Steps (ordered; `deps` enables parallelism where noted) ──────────────────
+steps:
+  - id: classify
+    description: >
+      Classify the incoming PagerDuty alert as P1/P2/P3, identify the suspect
+      component, and surface the three most similar past incidents.
+    agent: devops-oncall/agents/classify-alert
+    inputs:
+      alert: "{{ trigger.payload }}"
+    outputs:
+      priority: "{{ classify.priority }}"        # P1 | P2 | P3
+      component: "{{ classify.component }}"
+      similar_incidents: "{{ classify.similar_incidents }}"
+    error_handling:
+      on_failure: skip_to_notify
+      fallback_priority: P2
+
+  - id: escalate_hotl
+    description: >
+      HotL gate — if priority is P1, send an escalation request to the on-call
+      manager and pause execution until approved or auto-approved by policy
+      (timeout: 5 minutes).
+    hotl:
+      policy: oncall-p1-escalation
+      gated_on: "{{ steps.classify.outputs.priority == 'P1' }}"
+      approver_role: oncall-manager
+      timeout_seconds: 300
+      on_timeout: auto_approve   # proceed after 5 min with no response
+      audit: true
+    condition: "{{ steps.classify.outputs.priority == 'P1' }}"
+    deps: [classify]
+
+  - id: lookup_runbook
+    description: >
+      Retrieve the runbook steps that match the classified component and
+      incident pattern.
+    agent: devops-oncall/agents/runbook-lookup
+    inputs:
+      priority: "{{ steps.classify.outputs.priority }}"
+      component: "{{ steps.classify.outputs.component }}"
+      similar_incidents: "{{ steps.classify.outputs.similar_incidents }}"
+    outputs:
+      runbook_steps: "{{ lookup_runbook.steps }}"
+      runbook_ref: "{{ lookup_runbook.ref }}"
+    deps: [classify]
+    error_handling:
+      on_failure: continue       # no runbook is not fatal; engineer proceeds manually
+      fallback: { runbook_steps: [], runbook_ref: null }
+
+  - id: collect_snapshot
+    description: >
+      Pull metrics and log excerpts for the suspected component from the
+      observability backend (Datadog, Grafana, etc.).
+    agent: devops-oncall/agents/snapshot-collector
+    inputs:
+      component: "{{ steps.classify.outputs.component }}"
+      window_minutes: 30
+    outputs:
+      snapshot: "{{ collect_snapshot.snapshot }}"
+    deps: [classify]
+    error_handling:
+      on_failure: continue       # missing snapshot is recoverable
+      fallback: { snapshot: null }
+
+  - id: auto_execute_runbook
+    description: >
+      Execute non-destructive runbook steps automatically (restart probes,
+      cache flush, health-check calls). Steps marked `require_approval: true`
+      in the runbook are skipped and surfaced in the Slack message for manual
+      action.
+    agent: devops-oncall/agents/runbook-executor
+    inputs:
+      runbook_steps: "{{ steps.lookup_runbook.outputs.runbook_steps }}"
+      component: "{{ steps.classify.outputs.component }}"
+      dry_run: false
+    outputs:
+      executed_steps: "{{ auto_execute_runbook.executed }}"
+      pending_manual: "{{ auto_execute_runbook.pending_manual }}"
+    deps: [lookup_runbook, escalate_hotl]
+    error_handling:
+      on_failure: continue       # partial execution is better than no execution
+      max_retries: 1
+
+  - id: notify_oncall
+    description: >
+      Post a structured alert summary to the on-call Slack channel: priority,
+      component, runbook steps taken, pending manual steps, and observability
+      snapshot link.
+    output: devops-oncall/outputs/slack-oncall-channel
+    inputs:
+      priority: "{{ steps.classify.outputs.priority }}"
+      component: "{{ steps.classify.outputs.component }}"
+      runbook_ref: "{{ steps.lookup_runbook.outputs.runbook_ref }}"
+      executed_steps: "{{ steps.auto_execute_runbook.outputs.executed_steps }}"
+      pending_manual: "{{ steps.auto_execute_runbook.outputs.pending_manual }}"
+      snapshot: "{{ steps.collect_snapshot.outputs.snapshot }}"
+    deps: [classify, lookup_runbook, collect_snapshot, auto_execute_runbook]
+
+  - id: record_outcome
+    description: >
+      Write an outcome record to agent_outcomes (migration 0012): alert source,
+      classification, steps executed, time-to-notify. Used for improvement loop
+      and reporting.
+    outcome:
+      event: incident.triaged
+      payload:
+        alert_id: "{{ trigger.payload.id }}"
+        priority: "{{ steps.classify.outputs.priority }}"
+        component: "{{ steps.classify.outputs.component }}"
+        runbook_ref: "{{ steps.lookup_runbook.outputs.runbook_ref }}"
+        auto_executed_count: "{{ steps.auto_execute_runbook.outputs.executed_steps | length }}"
+        hotl_escalated: "{{ steps.classify.outputs.priority == 'P1' }}"
+        elapsed_ms: "{{ recipe.elapsed_ms }}"
+    deps: [notify_oncall]
+
+  - id: open_postmortem_stub
+    description: >
+      Open a draft GitHub PR with a blank postmortem template populated with
+      incident metadata (id, title, timeline anchor, component). Engineers
+      promote the draft and fill in root cause.
+    output: incident-triage/outputs/draft-pr
+    inputs:
+      incident:
+        id: "{{ trigger.payload.id }}"
+        title: "{{ trigger.payload.summary }}"
+        source: pagerduty
+        severity: "{{ steps.classify.outputs.priority | lower }}"
+        occurred_at: "{{ trigger.payload.triggered_at }}"
+        project: "{{ steps.classify.outputs.component }}"
+        environment: "{{ trigger.payload.environment | default('production') }}"
+        url: "{{ trigger.payload.html_url }}"
+      # Minimal RCA draft — engineers fill in the rest.
+      rca:
+        summary: "Postmortem stub — auto-opened by incident-detected-to-resolved recipe."
+        root_cause: "TBD"
+        confidence: low
+        evidence_refs: []
+    condition: "{{ steps.classify.outputs.priority == 'P1' }}"
+    deps: [record_outcome]
+    error_handling:
+      on_failure: warn   # PR failure should not block resolution flow
+
+# ── Error handling — global fallback ─────────────────────────────────────────
+on_error:
+  notify:
+    output: devops-oncall/outputs/slack-oncall-channel
+    message: >
+      Recipe `incident-detected-to-resolved` encountered an error at step
+      `{{ failed_step }}`: {{ error.message }}. Manual triage required.
+
+# ── Notes ─────────────────────────────────────────────────────────────────────
+# Deferred:
+#   - auto_execute_runbook agent (runbook-executor) is referenced above but
+#     defined in the devops-oncall pack backlog; until it ships, that step
+#     returns an empty executed_steps list (error_handling.on_failure: continue).
+#   - Statuspage incident creation (outputs/statuspage-incident) omitted here;
+#     use devops-oncall pack directly if needed.
