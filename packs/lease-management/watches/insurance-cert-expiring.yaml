@@ -1,0 +1,75 @@
+# Watch spec — insurance-cert-expiring
+# ---------------------------------------------------------------------------
+# Fires when a lease's required insurance certificate is expiring within
+# 60 or 30 days. Landlords typically require up-to-date COI on file —
+# lapses can trigger lease default notices.
+#
+# Downstream: real-estate-team-slack (direct notification, no agent needed)
+# ---------------------------------------------------------------------------
+
+name: insurance-cert-expiring
+version: "1.0.0"
+description: >
+  Emits a WatchEvent at 60 and 30 days before an insurance certificate
+  expiration on any active lease. Real-estate team is notified via Slack
+  to arrange a renewed COI upload before the landlord's grace period closes.
+
+source:
+  kind: sql
+  table: leases
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      l.id                    AS lease_id,
+      l.tenant_id,
+      l.property_name,
+      l.property_address,
+      l.lessor_name,
+      l.lessor_contact_email,
+      l.insurance_cert_expiry,
+      l.insurance_min_coverage,
+      l.insurance_provider,
+      l.external_lease_id,
+      (l.insurance_cert_expiry - CURRENT_DATE) AS days_until_expiry,
+      CASE
+          WHEN (l.insurance_cert_expiry - CURRENT_DATE) <= 30 THEN 30
+          ELSE 60
+      END AS breakpoint_days
+  FROM leases l
+  WHERE l.tenant_id = '{tenant_id}'
+    AND l.status = 'active'
+    AND l.insurance_cert_expiry IS NOT NULL
+    AND (l.insurance_cert_expiry - CURRENT_DATE) IN (60, 30)
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  cron: "0 7 * * *"
+
+event:
+  kind: lease.insurance_cert_expiring
+  cardinality: per_row
+  payload_mapping:
+    lease_id:               "$.lease_id"
+    tenant_id:              "$.tenant_id"
+    property_name:          "$.property_name"
+    property_address:       "$.property_address"
+    lessor_name:            "$.lessor_name"
+    lessor_contact_email:   "$.lessor_contact_email"
+    insurance_cert_expiry:  "$.insurance_cert_expiry"
+    insurance_min_coverage: "$.insurance_min_coverage"
+    insurance_provider:     "$.insurance_provider"
+    days_until_expiry:      "$.days_until_expiry"
+    breakpoint_days:        "$.breakpoint_days"
+    external_lease_id:      "$.external_lease_id"
+
+downstream:
+  # Direct Slack notification — no LLM agent required for this alert.
+  outputs:
+    - real-estate-team-slack
+
+dedup:
+  key: "{tenant_id}:{lease_id}:ins-bp{breakpoint_days}"
+  ttl_seconds: 86400

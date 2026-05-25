@@ -1,0 +1,95 @@
+---
+# Output connector — real-estate-team-slack
+#
+# Routes lease lifecycle notifications and HOTL-gated decision cards to the
+# configured Slack channel. Renewal commit decisions, vacate notices, and
+# dispute letter dispatches are HOTL-gated: the Slack message includes
+# Approve / Reject action buttons that feed back into the HOTL queue.
+#
+# Standard notifications (insurance expiry alerts, escalation flags) are
+# sent without an approval gate.
+
+output: real-estate-team-slack
+
+slack:
+  webhook_url: ${LEASE_SLACK_WEBHOOK_URL}
+  # Default channel for non-gated notifications
+  channel: ${LEASE_SLACK_CHANNEL:-"#real-estate"}
+  # Escalation channel for high-value disputes (> $5,000 variance)
+  escalation_channel: ${LEASE_SLACK_LEGAL_CHANNEL:-"#real-estate-legal"}
+
+# ---------------------------------------------------------------------------
+# Message routing rules
+# ---------------------------------------------------------------------------
+routes:
+  # HOTL-gated: renewal commit decision
+  - event: lease.renewal_window_approaching
+    hotl_gated: true
+    message_template: |
+      *[Lease Renewal Decision Required]* :office:
+      *{{ property_name }}* expires in *{{ days_until_expiry }} days* ({{ expiration_date }})
+      Recommendation: *{{ recommended_action | upper }}* ({{ (confidence_score * 100) | round }}% confidence)
+      {{ recommendation_rationale | truncate(200) }}
+      [View full decision card]({{ decision_card_url }})
+    actions:
+      - label: "Approve {{ recommended_action | title }}"
+        style: primary
+        hotl_action: approve
+      - label: "Reject / Override"
+        style: danger
+        hotl_action: reject
+      - label: "Defer 14 days"
+        style: default
+        hotl_action: defer
+        defer_days: 14
+
+  # HOTL-gated: audit dispute letter dispatch
+  - event: lease.audit_finding
+    condition: "total_variance > ${LEASE_AUDIT_DISPUTE_THRESHOLD_USD:-500}"
+    hotl_gated: true
+    channel: "{{ escalation_channel if total_variance > 5000 else channel }}"
+    message_template: |
+      *[Lease Audit — Dispute Letter Pending Approval]* :receipt:
+      *{{ property_name }}* — {{ audit_year }} CAM/TICAM Reconciliation
+      *Total overcharge detected: {{ base_rent_currency }} {{ "{:,.2f}".format(total_variance) }}*
+      {{ findings_summary | truncate(300) }}
+      [View audit record]({{ audit_record_url }})
+    actions:
+      - label: "Approve & Dispatch Letter"
+        style: primary
+        hotl_action: approve
+      - label: "Reject / Revise"
+        style: danger
+        hotl_action: reject
+
+  # Standard notification: insurance cert expiring (no approval gate)
+  - event: lease.insurance_cert_expiring
+    hotl_gated: false
+    message_template: |
+      :warning: *Insurance Certificate Expiring Soon*
+      *{{ property_name }}* — COI expires in *{{ days_until_expiry }} days* ({{ insurance_cert_expiry }})
+      Provider: {{ insurance_provider | default("not recorded") }}
+      Min. coverage: {{ "{:,.0f}".format(insurance_min_coverage) if insurance_min_coverage else "not recorded" }}
+      Upload renewed COI: [Admin UI]({{ upload_url }})
+
+  # Standard notification: escalation flag
+  - event: lease.rent_escalation_triggered
+    hotl_gated: false
+    message_template: |
+      :bar_chart: *Rent Escalation Validation*
+      *{{ property_name }}* — {{ escalation_type | title }} escalation (Year {{ escalation_year_number }})
+      Calculated new rent: *{{ base_rent_currency }} {{ "{:,.2f}".format(calculated_new_rent) }}*
+      {% if validation_result == 'flag' %}:red_circle: *MISMATCH vs. landlord statement — review required*{% elif validation_result == 'pass' %}:white_check_mark: Calculation verified{% else %}:clock3: Landlord statement not yet received{% endif %}
+      [View validation detail]({{ validation_url }})
+
+# ---------------------------------------------------------------------------
+# HOTL configuration
+# ---------------------------------------------------------------------------
+hotl:
+  # Approval timeout: if no human action within 72 hours, escalate.
+  approval_timeout_hours: 72
+  escalation_on_timeout:
+    channel: ${LEASE_SLACK_ESCALATION_CHANNEL:-"#real-estate"}
+    message: "HOTL approval pending for {{ event_type }} on {{ property_name }} — no response in 72h."
+  # Audit trail: every approval/rejection is logged to renewal_decisions or lease_audit.
+  audit_log: true

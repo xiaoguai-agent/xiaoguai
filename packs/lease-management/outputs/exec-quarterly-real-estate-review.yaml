@@ -1,0 +1,151 @@
+---
+# Output connector — exec-quarterly-real-estate-review
+#
+# Generates a quarterly executive summary of the lease portfolio:
+#   - Portfolio overview (count, type, total annual rent commitment)
+#   - Upcoming renewal decisions (next 12 months)
+#   - Open CAM/TICAM disputes and recovery amounts
+#   - Escalation validation summary
+#   - Sublet / space optimization opportunities
+#
+# Delivered as a structured report to the exec summary channel and
+# optionally exported as a PDF stub. No HOTL gate — this is read-only.
+
+output: exec-quarterly-real-estate-review
+
+schedule:
+  # First business day of each quarter at 08:00 UTC.
+  cron: "0 8 1 1,4,7,10 *"
+
+report:
+  title: "Quarterly Real Estate Portfolio Review — Q{quarter} {year}"
+
+  sections:
+    - id: portfolio_overview
+      title: "Portfolio Overview"
+      query: |
+        SELECT
+            COUNT(*)                               AS total_leases,
+            COUNT(*) FILTER (WHERE lease_type = 'real-estate')
+                                                   AS real_estate_leases,
+            COUNT(*) FILTER (WHERE lease_type = 'equipment')
+                                                   AS equipment_leases,
+            SUM(base_rent_amount * CASE rent_frequency
+                WHEN 'monthly' THEN 12
+                WHEN 'quarterly' THEN 4
+                WHEN 'annual' THEN 1 END)          AS total_annual_rent_commitment,
+            MIN(base_rent_currency)                AS currency,
+            SUM(sqft_total)                        AS total_sqft,
+            ROUND(AVG(COALESCE(sqft_utilized, 0) /
+                  NULLIF(sqft_total, 0)) * 100, 1) AS avg_utilization_pct
+        FROM leases
+        WHERE tenant_id = '{tenant_id}'
+          AND status IN ('active', 'pending-renewal')
+
+    - id: upcoming_renewals
+      title: "Renewals Due (Next 12 Months)"
+      query: |
+        SELECT
+            property_name,
+            lessor_name,
+            expiration_date,
+            (expiration_date - CURRENT_DATE) AS days_remaining,
+            base_rent_amount,
+            base_rent_currency,
+            -- Latest renewal recommendation
+            (SELECT rd.recommended_action
+             FROM renewal_decisions rd
+             WHERE rd.lease_id = l.id
+             ORDER BY rd.created_at DESC LIMIT 1) AS recommendation,
+            (SELECT rd.human_decision
+             FROM renewal_decisions rd
+             WHERE rd.lease_id = l.id
+             ORDER BY rd.created_at DESC LIMIT 1) AS human_decision
+        FROM leases l
+        WHERE tenant_id = '{tenant_id}'
+          AND status IN ('active', 'pending-renewal')
+          AND expiration_date <= CURRENT_DATE + INTERVAL '12 months'
+        ORDER BY expiration_date
+
+    - id: open_disputes
+      title: "Open CAM/TICAM Disputes"
+      query: |
+        SELECT
+            l.property_name,
+            la.audit_year,
+            la.total_variance     AS total_overcharge,
+            la.dispute_amount,
+            la.settlement_amount,
+            la.dispute_status,
+            l.base_rent_currency
+        FROM lease_audit la
+        JOIN leases l ON l.id = la.lease_id
+        WHERE la.tenant_id = '{tenant_id}'
+          AND la.dispute_status IN ('open', 'disputed')
+        ORDER BY la.total_variance DESC
+
+    - id: escalation_summary
+      title: "Rent Escalation Validations (YTD)"
+      query: |
+        SELECT
+            l.property_name,
+            v.escalation_date,
+            v.escalation_type,
+            v.base_rent           AS prior_rent,
+            v.calculated_new_rent AS validated_new_rent,
+            v.variance_amount,
+            v.validation_result,
+            l.base_rent_currency
+        FROM lease_escalation_validations v
+        JOIN leases l ON l.id = v.lease_id
+        WHERE v.tenant_id = '{tenant_id}'
+          AND v.escalation_date >= DATE_TRUNC('year', CURRENT_DATE)
+        ORDER BY v.escalation_date DESC
+
+    - id: sublet_opportunities
+      title: "Space Optimization Opportunities"
+      query: |
+        SELECT
+            l.property_name,
+            l.sqft_total,
+            l.sqft_utilized,
+            GREATEST(l.sqft_total - COALESCE(l.sqft_utilized, 0), 0) AS sqft_underutilized,
+            ROUND(COALESCE(l.sqft_utilized, 0) / NULLIF(l.sqft_total, 0) * 100, 1)
+                AS utilization_pct,
+            s.feasibility_verdict,
+            s.sublet_net_recovery,
+            l.base_rent_currency
+        FROM leases l
+        LEFT JOIN lease_subleases s ON s.lease_id = l.id
+            AND s.status = 'proposed'
+        WHERE l.tenant_id = '{tenant_id}'
+          AND l.lease_type = 'real-estate'
+          AND l.status = 'active'
+          AND COALESCE(l.sqft_utilized, 0) < l.sqft_total * 0.70
+        ORDER BY sqft_underutilized DESC
+        LIMIT 10
+
+delivery:
+  # Email summary to exec distribution list
+  email:
+    enabled: ${LEASE_EXEC_REPORT_EMAIL_ENABLED:-false}
+    from_address: ${LEASE_EXEC_REPORT_FROM_EMAIL}
+    to_addresses: ${LEASE_EXEC_REPORT_TO_EMAILS}  # comma-separated
+    subject: "Q{quarter} {year} Real Estate Portfolio Review"
+
+  # Slack summary (condensed — links to full report)
+  slack:
+    channel: ${LEASE_EXEC_SLACK_CHANNEL:-"#real-estate"}
+    message_template: |
+      :office: *Q{{ quarter }} {{ year }} Real Estate Review*
+      Portfolio: {{ total_leases }} leases | {{ "{:,.0f}".format(total_sqft) }} sqft | {{ currency }} {{ "{:,.0f}".format(total_annual_rent_commitment) }} annual commitment
+      Avg utilization: {{ avg_utilization_pct }}%
+      Renewals due (12mo): {{ upcoming_renewals_count }}
+      Open disputes: {{ open_disputes_count }} ({{ currency }} {{ "{:,.0f}".format(total_dispute_amount) }} at stake)
+      [View full report]({{ report_url }})
+
+  # PDF export stub (same pattern as landlord-dispute-letter-pdf-stub)
+  pdf:
+    enabled: ${LEASE_EXEC_REPORT_PDF_ENABLED:-false}
+    kind: ${LEASE_PDF_RENDERER:-stub}
+    storage_path: "exec-reports/{year}/Q{quarter}/real_estate_review.pdf"

@@ -1,0 +1,59 @@
+{#
+  Template: escalation-validation-frame.md.j2
+  Used by:  escalation-validator agent
+  Renders:  A structured validation summary for real-estate team review,
+            showing the calculated vs. landlord-stated rent increase.
+#}
+---
+## Rent Escalation Validation — {{ property_name }}
+
+**Lease ID:** `{{ lease_id }}`
+**Escalation Date:** {{ current_escalation_date }}
+**Escalation Year:** Year {{ escalation_year_number }}
+**Escalation Type:** {{ escalation_type | title }}
+**Lessor:** {{ lessor_name }}
+
+---
+
+### Calculation Summary
+
+| Item | Value |
+|---|---|
+| Base rent (at commencement) | {{ base_rent_currency }} {{ "{:,.2f}".format(base_rent_amount) }} /mo |
+| Escalation type | {{ escalation_type | title }} |
+{% if escalation_type == 'cpi' %}
+| CPI index | {{ escalation_index }} |
+| Base index value ({{ base_period }}) | {{ "{:.3f}".format(base_cpi_value) }} |
+| Current index value ({{ current_period }}) | {{ "{:.3f}".format(current_cpi_value) }} |
+| CPI adjustment factor | {{ "{:.4f}".format(cpi_factor) }} ({{ "%.2f"|format((cpi_factor - 1) * 100) }}% change) |
+{% else %}
+| Fixed escalation rate | {{ "%.2f"|format(escalation_rate * 100) }}% per annum (compound) |
+| Compound factor | (1 + {{ escalation_rate }})^{{ escalation_year_number }} = {{ "{:.6f}".format(compound_factor) }} |
+{% endif %}
+| **Calculated new rent** | **{{ base_rent_currency }} {{ "{:,.2f}".format(calculated_new_rent) }} /mo** |
+| Landlord stated rent | {% if landlord_stated_rent %}{{ base_rent_currency }} {{ "{:,.2f}".format(landlord_stated_rent) }} /mo{% else %}*Not yet received*{% endif %} |
+| Variance | {% if landlord_stated_rent %}{{ base_rent_currency }} {{ "{:,.2f}".format(variance_amount) }} ({{ "%.2f"|format(variance_pct * 100) }}%){% else %}—{% endif %} |
+
+---
+
+### Validation Result: {{ validation_result | upper }}
+
+{% if validation_result == 'pass' %}
+The landlord's stated rent is within the acceptable tolerance (±0.5%).
+No action required.
+{% elif validation_result == 'flag' %}
+**The landlord's rent calculation differs from the lease formula by
+{{ base_rent_currency }} {{ "{:,.2f}".format(variance_amount) }}
+({{ "%.2f"|format(variance_pct * 100) }}%). Real-estate team should
+contact {{ lessor_name }} to reconcile before the effective date.**
+{% elif validation_result == 'pending-landlord-statement' %}
+Landlord has not yet provided a rent statement for this escalation date.
+Follow up with {{ lessor_name }} to obtain their calculation.
+{% endif %}
+
+{{ explanation }}
+
+---
+
+*Validation generated {{ generated_at }} by escalation-validator agent.*
+*Xiaoguai Lease Management Pack v{{ pack_version }}*

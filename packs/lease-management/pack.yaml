@@ -1,0 +1,83 @@
+# Lease Management Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# Manages real-estate and equipment lease lifecycle: renewal decisions,
+# CAM/TICAM audit reconciliation, escalation validation, and sublet
+# feasibility. All commitment actions are HOTL-gated (zero autonomous send).
+#
+# Install:   xiaoguai pack install packs/lease-management/
+# Requires:  xiaoguai >= v1.3.1-prep (features: watch, llm,
+#            outcome-telemetry, hotl)
+# ---------------------------------------------------------------------------
+
+name: lease-management
+version: "1.0.0"
+description: >
+  Monitors real-estate and equipment lease portfolios for renewal windows,
+  rent escalations, CAM/TICAM overcharges, insurance-cert expirations, and
+  annual audit obligations. Produces renewal-decision cards, landlord dispute
+  letters, and finance accrual updates. All execution actions (renewal commit,
+  termination notice, dispute letter dispatch) require HOTL human approval.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - llm              # LLM backend for renewal recommendations and audit analysis
+    - outcome-telemetry  # F3: records decision outcomes for improvement loop
+    - watch            # F1: WatchSpec + WatchEvent bus for time-based triggers
+    - hotl             # Human-on-the-Loop gate for all commitment executions
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_lease_state.sql
+
+# --------------------------------------------------------------------------
+# Watch specs (declarative; registered into the watch registry on load)
+# --------------------------------------------------------------------------
+watches:
+  - path: watches/renewal-window-approaching.yaml
+  - path: watches/rent-escalation-triggered.yaml
+  - path: watches/insurance-cert-expiring.yaml
+  - path: watches/lease-audit-due.yaml
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/renewal-recommender.yaml
+  - path: agents/audit-reconciler.yaml
+  - path: agents/escalation-validator.yaml
+  - path: agents/sublet-feasibility-checker.yaml
+
+# --------------------------------------------------------------------------
+# Inbound sources
+# --------------------------------------------------------------------------
+sources:
+  - inbound/yardi-event.yaml
+  - inbound/costar-market-data-poll.yaml
+  - inbound/csv-lease-portfolio-import.yaml
+  - inbound/manual-cert-renewal-upload.yaml
+  - inbound/calendar-renewal-reminder.yaml
+
+# --------------------------------------------------------------------------
+# Output connectors
+# --------------------------------------------------------------------------
+outputs:
+  - outputs/real-estate-team-slack.yaml
+  - outputs/landlord-dispute-letter-pdf-stub.yaml
+  - outputs/finance-accrual-update-csv.yaml
+  - outputs/exec-quarterly-real-estate-review.yaml
+
+# --------------------------------------------------------------------------
+# Schema namespace
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "lease_"
+  namespace: "lease_management"
