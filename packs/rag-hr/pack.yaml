@@ -9,6 +9,10 @@
 #   - SHRM-style HR policy templates: original MIT work (not SHRM proprietary text)
 #   - EEO/Title VII summary: original MIT summary citing public EEOC guidance
 
+name: rag-hr
+version: "0.1.0"
+description: "Scaffold RAG pack for HR Q&A over DOL labor-law fact sheets, FMLA/FLSA guidance, and HR policy templates."
+
 kind: scaffold-only
 
 domain: hr

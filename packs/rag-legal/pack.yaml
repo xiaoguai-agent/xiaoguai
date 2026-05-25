@@ -8,6 +8,10 @@
 #   - 18 U.S.C. § 1030 (CFAA) statutory excerpt: public domain (US gov work)
 #   - FOSS NDA templates rewritten as original work: MIT
 
+name: rag-legal
+version: "0.1.0"
+description: "Scaffold RAG pack for legal Q&A over contract templates, open-source licenses, and statutory excerpts."
+
 kind: scaffold-only
 
 domain: legal
