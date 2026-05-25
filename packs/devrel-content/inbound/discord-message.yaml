@@ -1,0 +1,53 @@
+# Inbound source — Discord messages (polling adapter)
+#
+# Discord does not natively support outbound webhooks for arbitrary messages.
+# This adapter uses the Discord Bot API to poll configured channels on a
+# schedule rather than receiving push events.
+#
+# The discord_reader MCP server (crates/xiaoguai-mcp/src/servers/discord_reader.rs)
+# polls on a configurable interval and emits a normalized DiscordMessage event
+# for each new message since the last checkpoint.
+#
+# Authentication: DISCORD_BOT_TOKEN env var.
+# Bot requires Read Message History + View Channel permissions in each channel.
+
+name: discord-message
+kind: poll
+
+# MCP server that performs the polling.
+mcp_server: discord_reader
+
+# Poll interval — 5 minutes is a reasonable balance between freshness and
+# Discord API rate limits (50 req/s per bot global; 5 req/s per channel).
+poll_interval_seconds: 300
+
+# Channels to monitor.  Override at deploy time via DISCORD_DEVREL_CHANNEL_IDS.
+# Format: comma-separated Discord channel snowflake IDs.
+channel_ids: "${DISCORD_DEVREL_CHANNEL_IDS}"
+
+# Checkpoint persisted between polls so messages are processed exactly once.
+checkpoint:
+  store: xiaoguai-scheduler
+  key: "devrel-content/discord/last_message_id"
+
+# Only surface messages from public channels (bot visibility is scoped by
+# Discord permissions; private channels are excluded by construction).
+privacy:
+  exclude_private_channels: true
+  anonymize_dm_authors: true
+
+# Fields normalised from the Discord message object.
+normalize:
+  field_map:
+    id:              "$.id"
+    channel_id:      "$.channel_id"
+    channel_name:    "$.channel.name"
+    guild_id:        "$.guild_id"
+    content:         "$.content"
+    author_display:  "$.author.username"   # username only, no discriminator
+    created_at:      "$.timestamp"
+    attachment_urls: "$.attachments[*].url"
+    reaction_count:  "{{ $.reactions | sum(attribute='count') | default(0) }}"
+
+# Messages shorter than this are likely bot noise (reactions, emotes).
+min_content_length: 20
