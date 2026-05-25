@@ -80,6 +80,8 @@ fn build_state_with_webhook_validator(token: &str, route_id: &str) -> AppState {
         webhook_token_validator: Some(validator),
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
+        hotl_policy_store: None,
+        hotl_enforcer: None,
     }
 }
 

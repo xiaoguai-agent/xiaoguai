@@ -123,6 +123,8 @@ fn build_state(auth: Option<Arc<dyn TokenValidator>>, mcp: Arc<InMemoryMcpRepo>)
         webhook_token_validator: None,
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
+        hotl_policy_store: None,
+        hotl_enforcer: None,
     }
 }
 
