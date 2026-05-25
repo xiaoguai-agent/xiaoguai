@@ -1,0 +1,66 @@
+{# nexus-alert.md.j2 — 5-state-at-risk nexus dashboard #}
+# Sales Tax Nexus Alert — {{ tenant_name | default("Your Organization") }}
+
+**Generated:** {{ generated_at | default(now()) | format_datetime }}
+**Period:** Rolling 12 months ending {{ period_end | default(today()) | format_date }}
+
+---
+
+## States at Risk (Top 5 by Threshold Proximity)
+
+| State | Revenue (12mo) | Revenue Threshold | Rev % | Txn Count | Txn Threshold | Txn % | Nexus? | Alert |
+|-------|---------------|------------------|-------|-----------|--------------|-------|--------|-------|
+{% for s in states_at_risk[:5] %}
+| **{{ s.state_code }}** | ${{ s.rolling_12m_revenue | format_currency }} | ${{ s.revenue_threshold | format_currency }} | {{ s.revenue_pct_of_threshold }}% | {{ s.rolling_12m_txn_count | format_int }} | {{ s.txn_count_threshold | format_int }} | {{ s.txn_pct_of_threshold }}% | {{ "YES" if s.nexus_established else "No" }} | {{ s.alert_tier }} |
+{% endfor %}
+
+---
+
+## Newly Established Nexus This Period
+
+{% if newly_established %}
+{% for s in newly_established %}
+- **{{ s.state_code }}** — Nexus established {{ s.nexus_established_at | format_date }}
+  (Type: {{ s.nexus_type | title }}{% if s.has_physical_presence %}, includes physical presence{% endif %})
+{% endfor %}
+{% else %}
+_No new nexus established in this period._
+{% endif %}
+
+---
+
+## States with Physical Presence Nexus
+
+{% if physical_presence_states %}
+{% for s in physical_presence_states %}
+- **{{ s.state_code }}** — {{ s.physical_presence_note | default("Physical presence established") }}
+{% endfor %}
+{% else %}
+_No physical-presence nexus states on record._
+{% endif %}
+
+---
+
+## States with No Sales Tax (Monitoring Excluded)
+
+OR, MT, NH, DE, AK — no sales tax; nexus monitoring not applicable.
+
+---
+
+## Recommended Actions
+
+{% for s in states_at_risk[:5] %}
+{% if s.nexus_established and not s.has_filing %}
+- **{{ s.state_code }}** — Nexus established but no active filing registration found.
+  Action: Register with {{ s.state_code }} Department of Revenue.
+{% elif s.revenue_pct_of_threshold >= 90 or s.txn_pct_of_threshold >= 90 %}
+- **{{ s.state_code }}** — Approaching threshold ({{ s.max_pct }}%). Monitor closely;
+  consult tax advisor on registration timing.
+{% endif %}
+{% endfor %}
+
+---
+
+_This report is generated automatically by the tax-prep pack. It is for
+informational purposes only and does not constitute legal or tax advice.
+Consult a qualified tax professional for registration and filing decisions._

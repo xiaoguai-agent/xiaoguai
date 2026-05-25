@@ -1,0 +1,239 @@
+---
+# Agent — return-drafter
+# ---------------------------------------------------------------------------
+# Assembles sales tax returns from transaction data and jurisdictional rules.
+#
+# MANDATORY HotL REQUIREMENT:
+#   Every return drafted by this agent MUST be reviewed and e-signed by an
+#   authorized human signer before any submission to a state portal.
+#   Tax law (IRC § 6061 + state equivalents) requires an authorized signer
+#   on every return. This agent enforces this by:
+#     1. Setting filing status = 'hotl_pending' after draft is complete.
+#     2. Requesting HotL approval via the configured approver channel.
+#     3. Blocking any call to submit_to_state_portal unless
+#        hotl_approved_at IS NOT NULL AND hotl_signature_ref IS NOT NULL.
+#     4. Never calling submit_to_state_portal autonomously.
+#
+# Tax-rate calculation:
+#   The actual state + local tax rate is intentionally NOT calculated here.
+#   Use the tax_rate_lookup tool which delegates to Avalara / TaxJar when
+#   config.tax_rate_service.provider is configured, or returns a placeholder
+#   rate flagging the filing as requires_rate_verification = TRUE until
+#   a real provider is integrated.
+#
+# Triggers:
+#   - filing-deadline-approaching WatchEvent (URGENT or CRITICAL tier)
+#   - Operator manually calls the agent for a specific state + period
+# ---------------------------------------------------------------------------
+
+name: return-drafter
+version: "1.0.0"
+description: >
+  Assembles a sales tax return draft for a given state and filing period
+  from taxable_transactions. Looks up applicable rates via the configured
+  tax-rate service (Avalara / TaxJar placeholder). Writes a draft filing
+  to tax_filings and immediately requests HotL approval — tax law requires
+  an authorized human signer on every return; this agent will never submit
+  autonomously.
+
+# --------------------------------------------------------------------------
+# Triggers
+# --------------------------------------------------------------------------
+triggers:
+  - event: tax.filing_deadline_approaching
+    source: filing-deadline-approaching
+    filter: "payload.alert_tier IN ('URGENT', 'CRITICAL')"
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a sales-tax return preparation assistant. Your job is to:
+  1. Gather all taxable transactions for the specified state and period.
+  2. Separate taxable sales from exempt sales using exemption certificate
+     records.
+  3. Look up applicable tax rates via the tax_rate_lookup tool.
+     IMPORTANT: If the rate service returns placeholder data, set
+     requires_rate_verification = TRUE in the filing record and note it
+     prominently in the return summary.
+  4. Calculate gross_sales, taxable_sales, exempt_sales, and tax_due.
+  5. Render the return summary using the return-summary-state-X template.
+  6. Write the filing record with status = 'draft', then advance to
+     status = 'hotl_pending' and request human approval.
+
+  CRITICAL RULES:
+  - NEVER call submit_to_state_portal. That tool is reserved for the
+    state-portal-filing-submission output connector after HotL approval.
+  - NEVER mark a filing as 'filed' — only a human approver can do that.
+  - If requires_rate_verification = TRUE, include a prominent warning in
+    the return summary: "TAX RATES UNVERIFIED — DO NOT FILE WITHOUT
+    AVALARA/TAXJAR INTEGRATION REVIEW."
+  - Do not invent transaction amounts, exemption statuses, or tax rates.
+  - If the filing record already exists for this state + period, update
+    it rather than creating a duplicate.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: get_period_transactions
+    description: >
+      Fetch all taxable transactions for the given tenant, state, and
+      filing period. Returns rows grouped by exemption status and
+      product category.
+    kind: sql
+    query: |
+      SELECT
+          dest_state,
+          is_exempt,
+          exemption_cert_id,
+          product_category,
+          SUM(gross_amount)   AS gross_amount,
+          SUM(taxable_amount) AS taxable_amount,
+          SUM(tax_collected)  AS tax_collected,
+          COUNT(*)            AS txn_count
+      FROM tax_taxable_transactions
+      WHERE tenant_id = '{tenant_id}'
+        AND dest_state = '{state_code}'
+        AND transaction_date >= '{period_start}'
+        AND transaction_date <  '{period_end}'::DATE + INTERVAL '1 day'
+      GROUP BY dest_state, is_exempt, exemption_cert_id, product_category
+      ORDER BY is_exempt, product_category
+
+  - name: get_exemption_summary
+    description: >
+      Summarise exemption amounts by certificate type for the period.
+      Used to populate the exemption schedule on the return.
+    kind: sql
+    query: |
+      SELECT
+          ec.exemption_type,
+          ec.cert_number,
+          ec.expiry_date,
+          ec.is_expired,
+          SUM(tt.taxable_amount) AS exempt_amount,
+          COUNT(tt.id)           AS txn_count
+      FROM tax_taxable_transactions tt
+      JOIN tax_exemption_certs ec
+        ON ec.id = tt.exemption_cert_id
+       AND ec.tenant_id = tt.tenant_id
+      WHERE tt.tenant_id = '{tenant_id}'
+        AND tt.dest_state = '{state_code}'
+        AND tt.is_exempt = TRUE
+        AND tt.transaction_date >= '{period_start}'
+        AND tt.transaction_date <  '{period_end}'::DATE + INTERVAL '1 day'
+      GROUP BY ec.exemption_type, ec.cert_number, ec.expiry_date, ec.is_expired
+
+  - name: tax_rate_lookup
+    description: >
+      Look up the applicable sales tax rate(s) for the given state and
+      period. Delegates to Avalara or TaxJar if configured; otherwise
+      returns a placeholder rate and sets needs_verification = true.
+      Returns: { rate: float, breakdown: {...}, needs_verification: bool,
+      provider: string }.
+    kind: external_tool
+    provider: "${TAX_RATE_PROVIDER:-placeholder}"
+    endpoint: "${TAX_RATE_ENDPOINT:-}"
+    # Placeholder response used when provider = 'placeholder':
+    placeholder_response:
+      rate: 0.0
+      breakdown: {}
+      needs_verification: true
+      provider: "placeholder — integrate Avalara or TaxJar via config.tax_rate_service"
+
+  - name: upsert_filing_draft
+    description: >
+      Create or update a filing record for this state + period with
+      status = 'draft'. Returns the filing_id.
+    kind: sql
+    query: |
+      INSERT INTO tax_filings (
+          tenant_id, state_code, period_start, period_end,
+          filing_frequency, due_date, gross_sales, taxable_sales,
+          exempt_sales, tax_due, status, requires_rate_verification,
+          return_draft_path, notes
+      ) VALUES (
+          '{tenant_id}', '{state_code}', '{period_start}', '{period_end}',
+          '{filing_frequency}', '{due_date}',
+          {gross_sales}, {taxable_sales}, {exempt_sales}, {tax_due},
+          'draft', {requires_rate_verification},
+          '{return_draft_path}', '{notes}'
+      )
+      ON CONFLICT (tenant_id, state_code, period_start, period_end)
+      DO UPDATE SET
+          gross_sales               = EXCLUDED.gross_sales,
+          taxable_sales             = EXCLUDED.taxable_sales,
+          exempt_sales              = EXCLUDED.exempt_sales,
+          tax_due                   = EXCLUDED.tax_due,
+          requires_rate_verification = EXCLUDED.requires_rate_verification,
+          return_draft_path         = EXCLUDED.return_draft_path,
+          notes                     = EXCLUDED.notes,
+          updated_at                = NOW()
+      RETURNING id
+
+  - name: request_hotl_approval
+    description: >
+      Advance the filing status to 'hotl_pending' and send a HotL
+      approval request to the configured approvers channel. Returns
+      the hotl_request_id. MUST be called after upsert_filing_draft.
+      The filing cannot be submitted to the state portal until a human
+      approver responds.
+    kind: hotl_request
+    # HotL contract:
+    #   - Notifies config.hotl.filing_approvers_channel
+    #   - Requires e-signature if config.hotl.require_esignature = true
+    #   - Times out after config.hotl.approval_timeout_hours (default 48h)
+    #   - On timeout: escalates to admin_ui notification, does NOT auto-approve
+    notify_channel: "${TAX_HOTL_APPROVERS_CHANNEL:-admin_ui}"
+    update_filing_status_sql: |
+      UPDATE tax_filings
+      SET status = 'hotl_pending',
+          hotl_requested_at = NOW(),
+          updated_at = NOW()
+      WHERE id = '{filing_id}'
+        AND tenant_id = '{tenant_id}'
+
+  - name: render_return_summary
+    description: >
+      Render the return summary using the return-summary-state-X template.
+      Returns the rendered Markdown string.
+    kind: template
+    template_dir: "templates/"
+    template_name: "return-summary-state-X"
+
+# --------------------------------------------------------------------------
+# HOTL guardrails — MANDATORY
+# Tax law requires an authorized human signer on every return.
+# This agent is prohibited from autonomously submitting any filing.
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    upsert_filing_draft: unlimited    # draft writes are pre-approval
+    submit_to_state_portal: 0         # BLOCKED — zero autonomous submissions
+  require_human_approval:
+    - request_hotl_approval           # all HotL requests must be human-resolved
+  notify_channel: "${TAX_HOTL_APPROVERS_CHANNEL:-admin_ui}"
+  # Escalation: if no response in approval_timeout_hours, re-notify
+  escalation:
+    after_hours: 48
+    action: re_notify
+    channel: "${TAX_HOTL_ESCALATION_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# Rate limits
+# --------------------------------------------------------------------------
+rate_limits:
+  per_tenant_per_hour: 20
+  per_state_per_day: 3   # prevent duplicate draft storms
+
+# --------------------------------------------------------------------------
+# Outcome telemetry
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - filing_draft_created
+    - hotl_requested
+    - hotl_approved
+    - hotl_rejected
+  feedback_table: tax_filings

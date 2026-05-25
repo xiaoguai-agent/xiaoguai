@@ -1,0 +1,131 @@
+---
+# Watch spec — nexus-threshold-approaching
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent for each state where the tenant's rolling-12-month
+# sales are approaching (or have crossed) the economic nexus threshold.
+#
+# Economic nexus (post-South Dakota v. Wayfair): a seller has nexus in a
+# state if it exceeds that state's revenue OR transaction-count threshold
+# over a rolling 12-month window — even with zero physical presence.
+# This watch tracks BOTH legs (revenue and transaction count) independently.
+#
+# Physical-presence nexus is stored in tax_nexus_state.has_physical_presence
+# and is set manually or via the nexus-tracker agent; this watch only fires
+# on economic-nexus proximity.
+#
+# Alert fires when either metric reaches config.alert_at_pct (default 80%)
+# of its threshold, OR when nexus has just been newly established.
+#
+# Schema reference: F1 WatchSpec.
+# ---------------------------------------------------------------------------
+
+name: nexus-threshold-approaching
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each US state where the tenant's rolling 12-month
+  revenue or transaction count reaches or exceeds alert_at_pct % of the
+  applicable economic-nexus threshold. Also fires when nexus is newly
+  established (pct >= 100). Runs every 6 hours.
+
+# --------------------------------------------------------------------------
+# Data source
+# --------------------------------------------------------------------------
+source:
+  kind: sql
+  table: tax_nexus_state
+  tenant_column: tenant_id
+
+# Per-tenant query. The nexus-tracker agent updates tax_nexus_state
+# before this watch runs; this watch only reads the snapshot.
+#
+# alert_at_pct is read from pack config (default 80).
+# States with no_sales_tax_state = TRUE are excluded automatically.
+query: |
+  SELECT
+      ns.tenant_id,
+      ns.state_code,
+      ns.rolling_12m_revenue,
+      ns.rolling_12m_txn_count,
+      ns.revenue_threshold,
+      ns.txn_count_threshold,
+      ns.threshold_logic,
+      ns.revenue_pct_of_threshold,
+      ns.txn_pct_of_threshold,
+      ns.nexus_established,
+      ns.nexus_established_at,
+      ns.nexus_type,
+      ns.has_physical_presence,
+      -- Effective alert percent: the higher of the two metrics
+      GREATEST(
+          COALESCE(ns.revenue_pct_of_threshold, 0),
+          COALESCE(ns.txn_pct_of_threshold, 0)
+      )                                               AS max_pct,
+      -- Which leg is driving the alert
+      CASE
+          WHEN ns.revenue_pct_of_threshold >= ns.txn_pct_of_threshold
+               THEN 'revenue'
+          ELSE 'transaction_count'
+      END                                             AS leading_leg
+  FROM tax_nexus_state ns
+  WHERE ns.tenant_id = '{tenant_id}'
+    AND ns.no_sales_tax_state = FALSE
+    AND (
+        ns.nexus_established = TRUE
+        OR ns.revenue_pct_of_threshold  >= {alert_at_pct}
+        OR ns.txn_pct_of_threshold      >= {alert_at_pct}
+    )
+  ORDER BY max_pct DESC
+
+# --------------------------------------------------------------------------
+# Trigger condition
+# --------------------------------------------------------------------------
+trigger:
+  condition: row_count > 0
+
+# --------------------------------------------------------------------------
+# Schedule — every 6 hours; nexus-tracker should run first
+# --------------------------------------------------------------------------
+schedule:
+  cron: "0 */6 * * *"
+
+# --------------------------------------------------------------------------
+# Output — WatchEvent shape
+# --------------------------------------------------------------------------
+event:
+  kind: tax.nexus_threshold_approaching
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:                "$.tenant_id"
+    state_code:               "$.state_code"
+    rolling_12m_revenue:      "$.rolling_12m_revenue"
+    rolling_12m_txn_count:    "$.rolling_12m_txn_count"
+    revenue_threshold:        "$.revenue_threshold"
+    txn_count_threshold:      "$.txn_count_threshold"
+    threshold_logic:          "$.threshold_logic"
+    revenue_pct_of_threshold: "$.revenue_pct_of_threshold"
+    txn_pct_of_threshold:     "$.txn_pct_of_threshold"
+    nexus_established:        "$.nexus_established"
+    nexus_established_at:     "$.nexus_established_at"
+    nexus_type:               "$.nexus_type"
+    has_physical_presence:    "$.has_physical_presence"
+    max_pct:                  "$.max_pct"
+    leading_leg:              "$.leading_leg"
+
+# --------------------------------------------------------------------------
+# Downstream subscribers
+# --------------------------------------------------------------------------
+downstream:
+  agents:
+    - nexus-tracker     # update nexus_state snapshot, classify nexus type
+  outputs:
+    - tax-team-slack    # immediate Slack alert to tax team
+    - exec-quarterly-tax-position  # rolled up into exec view
+
+# --------------------------------------------------------------------------
+# Deduplication: suppress re-fire for the same state within 24h unless
+# max_pct increases by more than 5 percentage points
+# --------------------------------------------------------------------------
+dedup:
+  key: "{tenant_id}:{state_code}"
+  ttl_seconds: 86400
+  re_fire_if: "payload.max_pct > prior.max_pct + 5"

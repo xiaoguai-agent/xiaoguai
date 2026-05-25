@@ -1,0 +1,74 @@
+---
+# Output connector — tax-team-slack
+# ---------------------------------------------------------------------------
+# Sends tax-related alerts and notifications to the configured Slack channel.
+#
+# HotL policy: this connector sends INFORMATIONAL alerts only (nexus
+# approaching, deadlines, audit notices received). It does NOT submit
+# returns or filings. No HotL gate required for informational messages.
+#
+# For filing submission, see state-portal-filing-submission.yaml which IS
+# HotL-gated with mandatory e-signature.
+# ---------------------------------------------------------------------------
+
+output: tax-team-slack
+description: >
+  Sends nexus threshold alerts, filing deadline reminders, audit notices,
+  and exemption cert warnings to the configured Slack channel.
+  Informational only — no filings are transmitted through this connector.
+
+slack:
+  webhook_url: "${TAX_SLACK_WEBHOOK_URL}"
+  channel: "${TAX_SLACK_CHANNEL:-#tax-compliance}"
+  # Bot display name in Slack
+  username: "Xiaoguai Tax Monitor"
+  icon_emoji: ":receipt:"
+
+# Message templates per event kind
+message_templates:
+  tax.nexus_threshold_approaching:
+    # Alert tier determines emoji and urgency label
+    text: |
+      {{ alert_emoji(payload.max_pct) }} *Nexus Alert — {{ payload.state_code }}*
+      Rolling 12-month: ${{ payload.rolling_12m_revenue | format_currency }} revenue
+      ({{ payload.revenue_pct_of_threshold }}% of threshold) |
+      {{ payload.rolling_12m_txn_count }} transactions
+      ({{ payload.txn_pct_of_threshold }}% of threshold)
+      {% if payload.nexus_established %}
+      *Nexus has been established.* Registration may be required.
+      {% else %}
+      Approaching threshold — monitor closely.
+      {% endif %}
+
+  tax.filing_deadline_approaching:
+    text: |
+      {{ deadline_emoji(payload.alert_tier) }} *Filing Deadline — {{ payload.state_code }}
+      ({{ payload.alert_tier }})*
+      Period: {{ payload.period_start }} – {{ payload.period_end }}
+      Due: *{{ payload.due_date }}* ({{ payload.days_until_due }} days)
+      Status: {{ payload.status | title }}
+      Tax due: ${{ payload.tax_due | format_currency }}
+      {% if payload.hotl_not_started %}
+      ⚠️ HotL approval not yet started — action required.
+      {% endif %}
+      {% if payload.needs_rate_check %}
+      ⚠️ Tax rates unverified — Avalara/TaxJar integration needed.
+      {% endif %}
+
+  tax.audit_notice_received:
+    text: |
+      🚨 *Audit Notice Received — {{ payload.state_code }}*
+      Notice #: {{ payload.notice_number | default("—") }}
+      Authority: {{ payload.issuing_authority | default("—") }}
+      Audit period: {{ payload.audit_period_start }} – {{ payload.audit_period_end }}
+      Response deadline: {{ payload.response_deadline | default("—") }}
+      {% if payload.amount_asserted %}
+      Amount asserted: ${{ payload.amount_asserted | format_currency }}
+      {% endif %}
+      Audit defense package assembly in progress…
+
+# Rate limiting: max 20 Slack messages per tenant per hour
+rate_limits:
+  per_tenant_per_hour: 20
+  # Deduplicate: don't resend same alert_tier for same filing within 6h
+  dedup_ttl_seconds: 21600

@@ -1,0 +1,218 @@
+# Tax Prep Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# Monitors sales-tax economic nexus exposure across US jurisdictions,
+# drafts and tracks sales tax returns, alerts on filing deadlines, and
+# supports audit-defense package assembly.
+#
+# Install:   xiaoguai pack install packs/tax-prep/
+# Requires:  xiaoguai >= v1.3.1-prep (features: watch, llm, outcome-telemetry)
+#            xiaoguai HotL gate (required for ALL filing outputs — tax law
+#            mandates an authorized human signer on every return submission)
+#
+# IMPORTANT — HotL is MANDATORY on every filing output.
+# Tax law requires an authorized signer on every return. The platform MUST
+# block any state-portal-filing-submission or return-summary output from
+# being dispatched without a HotL-approved signature. This is not a
+# preference — it is a legal requirement. See outputs/state-portal-filing-
+# submission.yaml for the enforcement contract.
+#
+# Out of scope: actual tax-rate calculation logic. Hook up Avalara or
+# TaxJar via the inbound/outbound integration points defined below; use
+# the placeholder tax_rate_lookup tool in agents until integrated.
+# ---------------------------------------------------------------------------
+
+name: tax-prep
+version: "1.0.0"
+description: >
+  Monitors US sales-tax nexus thresholds across all 50 jurisdictions,
+  drafts and tracks sales tax returns, sends filing-deadline alerts, and
+  assembles audit-defense packages on demand. All filing outputs are
+  HotL-gated — zero autonomous submission without an authorized human
+  signer. Supports both economic-nexus (revenue / transaction-count
+  thresholds) and physical-presence nexus tracking.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - llm                # LLM backend for return drafting + audit narrative
+    - outcome-telemetry  # F3: records draft/filed/rejected outcome loop
+    - watch              # F1: WatchSpec + WatchEvent bus for threshold alerts
+    - hotl               # Human-on-the-Loop gate — MANDATORY for all filings
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_tax_state.sql
+
+# --------------------------------------------------------------------------
+# Watch specs (declarative; registered into the watch registry on load)
+# --------------------------------------------------------------------------
+watches:
+  - path: watches/nexus-threshold-approaching.yaml
+  - path: watches/filing-deadline-approaching.yaml
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/nexus-tracker.yaml
+  - path: agents/return-drafter.yaml
+  - path: agents/exemption-validator.yaml
+  - path: agents/audit-defense-package-builder.yaml
+
+# --------------------------------------------------------------------------
+# Inbound sources (transaction feeds + notice parsers)
+# --------------------------------------------------------------------------
+sources:
+  - inbound/netsuite-transaction-stream.yaml
+  - inbound/shopify-order-event.yaml
+  - inbound/stripe-charge-completed.yaml
+  - inbound/manual-csv-import.yaml
+  - inbound/irs-state-notice-email-parser.yaml
+
+# --------------------------------------------------------------------------
+# Output connectors
+# --------------------------------------------------------------------------
+outputs:
+  - outputs/tax-team-slack.yaml
+  - outputs/state-portal-filing-submission.yaml
+  - outputs/audit-trail-archive.yaml
+  - outputs/exec-quarterly-tax-position.yaml
+
+# --------------------------------------------------------------------------
+# Configuration knobs (state-specific and global)
+# --------------------------------------------------------------------------
+config:
+  # --- Global settings ---
+  base_currency: USD
+  fiscal_year_end: "12-31"          # MM-DD; affects annual filing calendar
+  default_filing_frequency: quarterly  # monthly | quarterly | annual
+
+  # --- Nexus thresholds (per-state overrides; defaults below match
+  #     post-South-Dakota-v.-Wayfair economic nexus majority rules)
+  #
+  #     Operators may override any state's thresholds here without code
+  #     changes. The nexus-tracker agent reads these at runtime.
+  #     State-specific knobs (all 45 sales-tax states + DC):
+  nexus_thresholds:
+    # Format:  STATE_CODE:
+    #            revenue_usd: 500000      (rolling 12-month, 0 = disabled)
+    #            transaction_count: 200   (rolling 12-month, 0 = disabled)
+    #            logic: OR               (OR = either triggers; AND = both needed)
+    #            physical_presence: false (true = physical-presence nexus already established)
+    # Defaults apply to all states not listed here.
+    _default:
+      revenue_usd: 100000
+      transaction_count: 200
+      logic: OR
+      physical_presence: false
+
+    # High-revenue states with elevated thresholds
+    CA:
+      revenue_usd: 500000
+      transaction_count: 0        # CA: revenue-only threshold post-2019
+      logic: OR
+      physical_presence: false
+    TX:
+      revenue_usd: 500000
+      transaction_count: 0
+      logic: OR
+      physical_presence: false
+    NY:
+      revenue_usd: 500000
+      transaction_count: 100
+      logic: OR
+      physical_presence: false
+    # States that require BOTH revenue AND transaction count
+    PA:
+      revenue_usd: 100000
+      transaction_count: 200
+      logic: AND
+      physical_presence: false
+    # States with no sales tax (no nexus monitoring needed)
+    OR:
+      revenue_usd: 0
+      transaction_count: 0
+      logic: OR
+      physical_presence: false
+      no_sales_tax: true
+    MT:
+      revenue_usd: 0
+      transaction_count: 0
+      logic: OR
+      physical_presence: false
+      no_sales_tax: true
+    NH:
+      revenue_usd: 0
+      transaction_count: 0
+      logic: OR
+      physical_presence: false
+      no_sales_tax: true
+    DE:
+      revenue_usd: 0
+      transaction_count: 0
+      logic: OR
+      physical_presence: false
+      no_sales_tax: true
+    AK:
+      revenue_usd: 0
+      transaction_count: 0
+      logic: OR
+      physical_presence: false
+      no_sales_tax: true
+
+  # --- Alert thresholds: warn at this % of nexus threshold ---
+  alert_at_pct: 80    # fire nexus-threshold-approaching watch at 80%
+
+  # --- Filing calendar ---
+  filing_calendar:
+    # Deadlines are per-jurisdiction. Override individual states below.
+    # Format: STATE_CODE: { monthly: "MM-DD", quarterly: [...], annual: "MM-DD" }
+    # Defaults: 20th of the month following the period close.
+    _default:
+      monthly_day_of_month: 20
+      quarterly_months: [1, 4, 7, 10]   # January/April/July/October
+      quarterly_day_of_month: 20
+      annual_month: 1
+      annual_day: 20
+    # State-specific overrides
+    CA:
+      quarterly_months: [1, 4, 7, 10]
+      quarterly_day_of_month: 31         # CA last day of month after period
+    TX:
+      monthly_day_of_month: 20
+      quarterly_months: [1, 4, 7, 10]
+      quarterly_day_of_month: 20
+
+  # --- HotL approver settings ---
+  hotl:
+    filing_approvers_channel: "${TAX_HOTL_APPROVERS_CHANNEL:-admin_ui}"
+    require_esignature: true            # enforced on state-portal output
+    esignature_provider: "${ESIGNATURE_PROVIDER:-docusign}"  # docusign | hellosign
+    approval_timeout_hours: 48          # escalate if no response in 48h
+
+  # --- External tax-rate service integration ---
+  # Placeholder: swap tax_rate_lookup tool for Avalara or TaxJar when ready
+  tax_rate_service:
+    provider: "${TAX_RATE_PROVIDER:-placeholder}"  # avalara | taxjar | placeholder
+    api_key: "${TAX_RATE_API_KEY:-}"
+    endpoint: "${TAX_RATE_ENDPOINT:-}"
+    # Until a real provider is wired, the return-drafter uses placeholder
+    # rates and flags all returns as "requires rate verification".
+
+  # --- Audit retention ---
+  audit_retention_years: 7            # IRS standard; some states require longer
+
+# --------------------------------------------------------------------------
+# Schema helper
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "tax_"
+  namespace: "tax_prep"
