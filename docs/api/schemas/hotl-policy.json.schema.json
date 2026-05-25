@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xiaoguai-agent.github.io/xiaoguai/schemas/hotl-policy.json.schema.json",
+  "title": "HotlPolicySchemas",
+  "description": "Schemas for HOTL (Human-on-the-Loop) policy API bodies. Grounded in crates/xiaoguai-api/src/hotl/policy.rs.",
+  "$defs": {
+    "HotlPolicy": {
+      "title": "HotlPolicy",
+      "description": "A persisted HOTL policy row returned by GET /v1/hotl/policies and POST /v1/hotl/policies.",
+      "type": "object",
+      "required": ["id", "tenant_id", "scope", "window_seconds"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Policy UUID, server-assigned on creation."
+        },
+        "tenant_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Tenant this policy applies to."
+        },
+        "scope": {
+          "type": "string",
+          "description": "Action category this policy gates (e.g. 'llm_call', 'email_send').",
+          "minLength": 1
+        },
+        "window_seconds": {
+          "type": "integer",
+          "description": "Rolling window width in seconds. Must be > 0.",
+          "minimum": 1
+        },
+        "max_count": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "description": "Maximum invocation count within the window. Must be > 0.",
+              "minimum": 1
+            },
+            { "type": "null" }
+          ],
+          "description": "Maximum invocation count within the window. Null means no count limit. At least one of max_count or max_usd must be non-null."
+        },
+        "max_usd": {
+          "oneOf": [
+            {
+              "type": "number",
+              "description": "Maximum cumulative USD cost within the window. Must be >= 0.",
+              "minimum": 0
+            },
+            { "type": "null" }
+          ],
+          "description": "Maximum cumulative USD cost within the window. Null means no cost limit. At least one of max_count or max_usd must be non-null."
+        },
+        "escalate_to": {
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Escalation destination — an IM channel name or email address.",
+              "minLength": 1
+            },
+            { "type": "null" }
+          ],
+          "description": "Escalation destination. Null means deny on breach rather than escalate."
+        }
+      }
+    },
+    "CreateHotlPolicyRequest": {
+      "title": "CreateHotlPolicyRequest",
+      "description": "Request body for POST /v1/hotl/policies. The server generates the 'id' field.",
+      "type": "object",
+      "required": ["tenant_id", "scope", "window_seconds"],
+      "additionalProperties": false,
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Tenant this policy applies to."
+        },
+        "scope": {
+          "type": "string",
+          "description": "Action category to gate (e.g. 'llm_call', 'email_send'). Must not be empty.",
+          "minLength": 1
+        },
+        "window_seconds": {
+          "type": "integer",
+          "description": "Rolling window width in seconds. Must be > 0.",
+          "minimum": 1
+        },
+        "max_count": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "description": "Maximum invocation count. Must be > 0.",
+              "minimum": 1
+            },
+            { "type": "null" }
+          ],
+          "description": "Maximum invocation count within the window. At least one of max_count or max_usd must be provided and non-null."
+        },
+        "max_usd": {
+          "oneOf": [
+            {
+              "type": "number",
+              "description": "Maximum cumulative USD cost. Must be >= 0.",
+              "minimum": 0
+            },
+            { "type": "null" }
+          ],
+          "description": "Maximum cumulative USD cost within the window. At least one of max_count or max_usd must be provided and non-null."
+        },
+        "escalate_to": {
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Escalation destination (IM channel or email). Null = deny on breach.",
+              "minLength": 1
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/HotlPolicy" },
+    { "$ref": "#/$defs/CreateHotlPolicyRequest" }
+  ],
+  "examples": [
+    {
+      "tenant_id": "018e8f2c-1a2b-7000-8000-000000000001",
+      "scope": "llm_call",
+      "window_seconds": 3600,
+      "max_count": 100,
+      "max_usd": 5.0,
+      "escalate_to": "ops@example.com"
+    }
+  ]
+}
