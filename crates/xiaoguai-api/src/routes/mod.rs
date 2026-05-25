@@ -10,7 +10,7 @@ pub mod sessions;
 pub mod tenants;
 pub mod usage;
 
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
