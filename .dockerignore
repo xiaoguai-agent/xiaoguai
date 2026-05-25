@@ -1,0 +1,51 @@
+# ── Rust build artefacts ──────────────────────────────────────────────────────
+target/
+
+# ── Node / frontend ───────────────────────────────────────────────────────────
+**/node_modules/
+frontend/*/dist/
+frontend/**/.cache/
+**/pnpm-debug.log
+
+# ── Test + benchmark artefacts ───────────────────────────────────────────────
+tests/k6/results/
+tests/k6/*.log
+tests/pact/pacts/
+**/.nyc_output/
+
+# ── VCS + IDE ─────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+*.iml
+
+# ── Dev / local config ────────────────────────────────────────────────────────
+.env
+.env.*
+*.local
+deploy/config.example.yaml
+
+# ── OS + editor noise ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ── Docs + scripts (not needed in build context) ─────────────────────────────
+docs/
+observability/
+packaging/
+scripts/
+supply-chain/
+examples/
+recipes/
+packs/
+catalog/
+python/
+proto/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
