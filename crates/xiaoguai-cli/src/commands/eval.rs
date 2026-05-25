@@ -29,6 +29,11 @@ pub struct EvalArgs {
     pub max_iterations: u32,
 }
 
+/// Run the eval suite and return the report.
+///
+/// # Errors
+/// Returns an error if the cases directory cannot be read, if any case file
+/// is malformed, or if writing the optional JSON report file fails.
 pub async fn run(args: EvalArgs) -> Result<EvalReport> {
     let dir = args
         .cases_dir

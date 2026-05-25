@@ -97,6 +97,10 @@ impl WecomCrypto {
     /// WeCom console omits the trailing `=`).  Returns
     /// [`WecomCryptoError::InvalidKey`] if the key has the wrong length or
     /// contains non-base64 characters.
+    ///
+    /// # Errors
+    /// Returns `WecomCryptoError::InvalidKey` if `encoding_aes_key` is not
+    /// exactly 43 characters, not valid base64, or does not decode to 32 bytes.
     pub fn new(
         token: impl Into<String>,
         encoding_aes_key: &str,
@@ -140,6 +144,7 @@ impl WecomCrypto {
     ///
     /// Returns `true` when the computed digest matches `signature` in
     /// constant time.
+    #[must_use]
     pub fn verify_signature(
         &self,
         signature: &str,
@@ -155,6 +160,14 @@ impl WecomCrypto {
     /// callback.
     ///
     /// On success returns the inner XML as a `String`.
+    ///
+    /// # Errors
+    /// Returns `WecomCryptoError` if the base64 is invalid, AES decryption
+    /// fails, PKCS#7 padding is invalid, or the corp-id tail does not match.
+    ///
+    /// # Panics
+    /// Panics if the sliced byte ranges are out of bounds — this is a logic
+    /// guard and should not occur when the ciphertext comes from WeCom.
     pub fn decrypt(&self, encrypt: &str) -> Result<String, WecomCryptoError> {
         let cipher_bytes = wecom_b64()
             .decode(encrypt)
@@ -204,6 +217,14 @@ impl WecomCrypto {
     ///   <Nonce><![CDATA[...]]></Nonce>
     /// </xml>
     /// ```
+    ///
+    /// # Errors
+    /// Returns `WecomCryptoError` if the message is too large for the WeCom
+    /// protocol or if AES encryption fails.
+    ///
+    /// # Panics
+    /// Panics if the random-bytes fill fails — this is an OS-level RNG call
+    /// and should not fail in production.
     pub fn encrypt(
         &self,
         msg: &str,

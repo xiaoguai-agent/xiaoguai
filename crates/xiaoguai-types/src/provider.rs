@@ -24,7 +24,7 @@ pub enum ProviderKind {
     /// Models: `gemini-2.0-flash`, `gemini-2.5-pro`.
     #[serde(rename = "gemini")]
     Gemini,
-    /// AWS Bedrock `InvokeModelWithResponseStream`. Auth via SigV4.
+    /// AWS Bedrock `InvokeModelWithResponseStream`. Auth via `SigV4`.
     /// Models: `anthropic.claude-sonnet-4-6-v1:0`, `meta.llama3-70b-instruct-v1:0`.
     /// `endpoint` field stores the AWS region (e.g. `us-east-1`).
     #[serde(rename = "bedrock")]

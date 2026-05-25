@@ -80,6 +80,9 @@ impl TokenValidator for StubValidator {
 /// Axum middleware that authenticates `/v1/**` routes when an
 /// `Arc<dyn TokenValidator>` is present in app state. Public routes
 /// (healthz, openapi) should be mounted outside this layer.
+///
+/// # Errors
+/// Returns `401 Unauthorized` if the bearer token is missing or invalid.
 pub async fn require_bearer(
     validator: Arc<dyn TokenValidator>,
     mut req: Request,

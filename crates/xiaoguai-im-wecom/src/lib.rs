@@ -365,6 +365,9 @@ fn parse_event(body: &[u8]) -> Result<ImEvent, ProviderError> {
 /// parameter; the server must echo it (decrypted, when encryption is
 /// enabled). v1.1.3 supports plain-text mode only — the gateway hands
 /// us the `echostr` and we return it verbatim after signature checks.
+///
+/// # Errors
+/// Returns `ProviderError` if the WeCom signature verification fails.
 pub fn echo_challenge(
     webhook: &Webhook,
     token: &str,

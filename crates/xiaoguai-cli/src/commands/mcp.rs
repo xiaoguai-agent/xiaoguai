@@ -29,6 +29,12 @@ pub struct RegisterArgs {
     pub tenant: Option<String>,
 }
 
+/// Register a new MCP server and return the persisted record.
+///
+/// # Errors
+/// Returns an error if the `--name` or `--version` flags are empty, if the
+/// transport string is not recognised, if transport-required fields are
+/// missing, or if the repository `create` call fails.
 pub async fn register(repo: &dyn McpServerRepository, args: RegisterArgs) -> Result<McpServer> {
     if args.name.trim().is_empty() {
         return Err(anyhow!("--name must not be empty"));
@@ -83,6 +89,10 @@ pub struct ListArgs {
     pub tenant: Option<String>,
 }
 
+/// List MCP servers from the repository.
+///
+/// # Errors
+/// Returns an error if the repository query fails.
 pub async fn list(repo: &dyn McpServerRepository, args: ListArgs) -> Result<Vec<McpServer>> {
     let rows = match args.tenant {
         Some(t) => repo.list_for_tenant(&t).await?,
@@ -96,6 +106,11 @@ pub struct RemoveArgs {
     pub id: String,
 }
 
+/// Remove an MCP server by ID.
+///
+/// # Errors
+/// Returns an error if `--id` is empty or if the repository `delete` call
+/// fails.
 pub async fn remove(repo: &dyn McpServerRepository, args: RemoveArgs) -> Result<()> {
     if args.id.trim().is_empty() {
         return Err(anyhow!("--id must not be empty"));

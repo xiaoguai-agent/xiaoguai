@@ -90,6 +90,7 @@ pub enum RateClass {
 
 impl RateClass {
     /// Sustained tokens per second.
+    #[must_use]
     pub fn rate_per_sec(self) -> u32 {
         match self {
             Self::Free => 10,
@@ -99,11 +100,13 @@ impl RateClass {
     }
 
     /// Burst ceiling (tokens the bucket can hold).
+    #[must_use]
     pub fn burst(self) -> u32 {
         self.rate_per_sec() * 2
     }
 
     /// `Retry-After` value in seconds: one token at the sustained rate.
+    #[must_use]
     pub fn retry_after_secs(self) -> u64 {
         // All predefined classes have rate ≥ 1 req/s; always return at least 1.
         u64::from(self.rate_per_sec() >= 1)
@@ -113,6 +116,7 @@ impl RateClass {
     ///
     /// Named `from_class_str` (not `from_str`) to avoid confusion with the
     /// standard `std::str::FromStr` trait.
+    #[must_use]
     pub fn from_class_str(s: &str) -> Self {
         match s {
             "free" => Self::Free,
@@ -122,6 +126,7 @@ impl RateClass {
     }
 
     /// Wire name used in the DB column and config files.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Free => "free",
@@ -151,6 +156,7 @@ pub enum RouteClass {
 
 impl RouteClass {
     /// Classify a URI path.
+    #[must_use]
     pub fn from_path(path: &str) -> Self {
         if path.starts_with("/v1/scheduler/webhooks/") {
             Self::SchedulerWebhook
@@ -197,6 +203,7 @@ fn build_keyed(rate: u32, burst: u32) -> Arc<KeyedLimiter> {
 
 impl InMemoryBackend {
     /// Construct three keyed limiters — one per class.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             free: build_keyed(RateClass::Free.rate_per_sec(), RateClass::Free.burst()),
@@ -212,6 +219,7 @@ impl InMemoryBackend {
     }
 
     /// Try to consume one token. Returns `true` on allow, `false` on deny.
+    #[must_use]
     pub fn try_acquire(
         &self,
         tenant_id: &str,
@@ -287,11 +295,13 @@ pub struct RedisBackend {
 }
 
 impl RedisBackend {
+    #[must_use]
     pub fn new() -> Self {
         Self { _placeholder: () }
     }
 
     /// Try to consume one token. Stub always returns `true` (allow).
+    #[must_use]
     pub fn try_acquire(
         &self,
         _tenant_id: &str,
@@ -315,6 +325,7 @@ pub enum RateLimitBackend {
 }
 
 impl RateLimitBackend {
+    #[must_use]
     pub fn try_acquire(
         &self,
         tenant_id: &str,
@@ -341,6 +352,7 @@ pub struct RateLimitState {
 
 impl RateLimitState {
     /// Build with an in-memory backend and the given default class.
+    #[must_use]
     pub fn in_memory(default_class: RateClass) -> Arc<Self> {
         Arc::new(Self {
             backend: RateLimitBackend::InMemory(InMemoryBackend::new()),
@@ -349,6 +361,7 @@ impl RateLimitState {
     }
 
     /// Build with a Redis backend.
+    #[must_use]
     pub fn redis(default_class: RateClass) -> Arc<Self> {
         Arc::new(Self {
             backend: RateLimitBackend::Redis(RedisBackend::new()),
@@ -451,6 +464,7 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     /// Build a single-class in-memory limiter.
+    #[must_use]
     pub fn new(rate_class: RateClass) -> Self {
         Self {
             rate_class,
@@ -458,6 +472,7 @@ impl RateLimiter {
         }
     }
 
+    #[must_use]
     pub fn try_acquire(&self, tenant_id: &str) -> bool {
         self.state
             .backend
@@ -466,6 +481,7 @@ impl RateLimiter {
 
     /// Expose the inner state so the new middleware can be mounted from
     /// either the shim or a directly-built [`RateLimitState`].
+    #[must_use]
     pub fn state(&self) -> Arc<RateLimitState> {
         Arc::clone(&self.state)
     }
@@ -571,7 +587,7 @@ mod tests {
 
         // Drain burst.
         for _ in 0..burst {
-            backend.try_acquire("tenant-refill", RouteClass::Default, RateClass::Free);
+            let _ = backend.try_acquire("tenant-refill", RouteClass::Default, RateClass::Free);
         }
         // Confirm exhausted.
         assert!(
@@ -598,7 +614,7 @@ mod tests {
 
         // Drain tenant A.
         for _ in 0..=burst {
-            backend.try_acquire("tenant-a", RouteClass::Default, RateClass::Free);
+            let _ = backend.try_acquire("tenant-a", RouteClass::Default, RateClass::Free);
         }
         // Tenant B should still have a full bucket.
         assert!(

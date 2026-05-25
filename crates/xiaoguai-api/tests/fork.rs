@@ -142,7 +142,7 @@ fn forked_session(parent_id: &str, tenant: &str, from_message_id: &str) -> Sessi
     }
 }
 
-fn post(uri: &str, body: Value) -> Request<Body> {
+fn post(uri: &str, body: &Value) -> Request<Body> {
     Request::builder()
         .method(Method::POST)
         .uri(uri)
@@ -164,7 +164,7 @@ async fn fork_returns_503_when_forker_not_wired() {
     let resp = app
         .oneshot(post(
             "/v1/sessions/sess_x/fork",
-            json!({"from_message_id": "m1"}),
+            &json!({"from_message_id": "m1"}),
         ))
         .await
         .unwrap();
@@ -179,7 +179,7 @@ async fn fork_returns_404_when_parent_missing() {
     let resp = app
         .oneshot(post(
             "/v1/sessions/sess_missing/fork",
-            json!({"from_message_id": "m1"}),
+            &json!({"from_message_id": "m1"}),
         ))
         .await
         .unwrap();
@@ -195,7 +195,7 @@ async fn fork_returns_400_when_message_id_blank() {
     let resp = app
         .oneshot(post(
             "/v1/sessions/p1/fork",
-            json!({"from_message_id": "   "}),
+            &json!({"from_message_id": "   "}),
         ))
         .await
         .unwrap();
@@ -214,7 +214,7 @@ async fn fork_happy_path_returns_201_with_child_session() {
     let resp = app
         .oneshot(post(
             "/v1/sessions/p1/fork",
-            json!({"from_message_id": "m1", "title": "explore"}),
+            &json!({"from_message_id": "m1", "title": "explore"}),
         ))
         .await
         .unwrap();
@@ -244,7 +244,7 @@ async fn fork_maps_message_not_found_to_404() {
     let resp = app
         .oneshot(post(
             "/v1/sessions/p1/fork",
-            json!({"from_message_id": "nope"}),
+            &json!({"from_message_id": "nope"}),
         ))
         .await
         .unwrap();
@@ -261,7 +261,7 @@ async fn fork_maps_parent_not_forkable_to_409() {
     let resp = app
         .oneshot(post(
             "/v1/sessions/p1/fork",
-            json!({"from_message_id": "m1"}),
+            &json!({"from_message_id": "m1"}),
         ))
         .await
         .unwrap();

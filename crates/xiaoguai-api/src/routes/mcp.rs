@@ -43,6 +43,8 @@ impl From<McpServer> for McpServerResponse {
     }
 }
 
+/// # Errors
+/// Returns an error if the MCP server registry is not wired or the query fails.
 pub async fn list_servers(
     State(state): State<AppState>,
     claims: Option<Extension<Claims>>,

@@ -147,6 +147,7 @@ pub struct ConflictArbitrator {
 
 impl ConflictArbitrator {
     /// Create an arbitrator with a specific policy applied to all resources.
+    #[must_use]
     pub fn new(policy: ConflictPolicy) -> Self {
         Self {
             table: Arc::new(Mutex::new(HashMap::new())),
@@ -162,6 +163,13 @@ impl ConflictArbitrator {
     ///   acquires the slot.
     ///
     /// Returns a `RunGuard`; dropping it releases the slot.
+    ///
+    /// # Errors
+    /// Returns `AgentConflict` when the policy is `Reject` and the resource is
+    /// already held by another agent.
+    ///
+    /// # Panics
+    /// Panics if any internal mutex is poisoned.
     pub async fn acquire(
         &self,
         resource: ResourceKey,
@@ -239,6 +247,10 @@ impl ConflictArbitrator {
     }
 
     /// Return the agent name currently holding `resource`, if any.
+    ///
+    /// # Panics
+    /// Panics if any internal mutex is poisoned.
+    #[must_use]
     pub fn current_holder(&self, resource: &ResourceKey) -> Option<String> {
         let table = self.table.lock().unwrap();
         table.get(resource).map(|slot_arc| {
@@ -248,11 +260,19 @@ impl ConflictArbitrator {
     }
 
     /// Return the number of resources currently locked.
+    ///
+    /// # Panics
+    /// Panics if the internal mutex is poisoned.
+    #[must_use]
     pub fn in_flight_count(&self) -> usize {
         self.table.lock().unwrap().len()
     }
 
     /// Return how long (seconds) `resource` has been held, if it is locked.
+    ///
+    /// # Panics
+    /// Panics if any internal mutex is poisoned.
+    #[must_use]
     pub fn hold_duration_secs(&self, resource: &ResourceKey) -> Option<f64> {
         let table = self.table.lock().unwrap();
         table.get(resource).map(|slot_arc| {

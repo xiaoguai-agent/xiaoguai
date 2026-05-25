@@ -45,7 +45,6 @@ impl Severity {
         match level {
             "fatal" => Self::Critical,
             "error" => Self::High,
-            "warning" => Self::Medium,
             "info" | "debug" => Self::Low,
             _ => Self::Medium,
         }
@@ -56,7 +55,6 @@ impl Severity {
         match priority {
             "P1" => Self::Critical,
             "P2" => Self::High,
-            "P3" => Self::Medium,
             "P4" | "P5" => Self::Low,
             _ => Self::Medium,
         }
@@ -102,7 +100,7 @@ pub enum NormalizeError {
     /// The JSON payload is structurally invalid or missing required fields.
     #[error("malformed payload: {0}")]
     Malformed(String),
-    /// The provider's action/alert_type is known but intentionally ignored
+    /// The provider's `action`/`alert_type` is known but intentionally ignored
     /// (e.g. "resolved" in Sentry). The HTTP handler should return 200
     /// with a no-op body.
     #[error("ignored action: {0}")]
@@ -124,6 +122,9 @@ pub enum NormalizeError {
 /// - Preserves the full `raw` payload in [`Incident::raw`] so the agent
 ///   has the complete context without re-parsing.
 pub trait IncidentSource: Send + Sync {
+    /// # Errors
+    /// Returns [`NormalizeError::Malformed`] for invalid payloads or
+    /// [`NormalizeError::Ignored`] for known-but-unactionable events.
     fn normalize(&self, raw: Value) -> Result<Incident, NormalizeError>;
     fn source_name(&self) -> &'static str;
 }
@@ -573,8 +574,8 @@ mod tests {
     /// and IM-message structures are well-formed.
     ///
     /// This test does not call a real LLM or GitHub API — it verifies
-    /// the data-flow contract: Incident → RcaDraft (parsed from mock LLM
-    /// response) → PrDraft + ImNotification shapes.
+    /// the data-flow contract: `Incident` → `RcaDraft` (parsed from mock LLM
+    /// response) → `PrDraft` + `ImNotification` shapes.
     #[test]
     fn triage_agent_integration_mock_llm_output() {
         // 1. Normalize an incoming Sentry webhook.
@@ -635,8 +636,8 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// Full pipeline test:
-    /// Sentry webhook payload → SentrySource::normalize → RcaDraft (canned)
-    /// → ImNotification → recorded in a mock Feishu-style sink.
+    /// Sentry webhook payload → `SentrySource::normalize` → `RcaDraft` (canned)
+    /// → `ImNotification` → recorded in a mock Feishu-style sink.
     ///
     /// Proves the data flows through without panicking and that the sink
     /// receives exactly one notification whose text contains the incident ID.
@@ -738,6 +739,7 @@ pub struct PrDraft {
 impl PrDraft {
     /// Build a [`PrDraft`] from a normalized incident + RCA draft.
     /// Renders a minimal Markdown body suitable for a GitHub PR description.
+    #[must_use]
     pub fn from_incident_and_rca(incident: &Incident, rca: &RcaDraft, pack_version: &str) -> Self {
         let severity = format!("{:?}", incident.severity).to_lowercase();
         let title = format!("[RCA Draft] {}", truncate_str(&incident.title, 80));
@@ -766,6 +768,7 @@ pub struct ImNotification {
 impl ImNotification {
     /// Build an [`ImNotification`] from a normalized incident + RCA draft.
     /// The text is kept to ≤ 500 characters to fit IM card constraints.
+    #[must_use]
     pub fn from_incident_and_rca(incident: &Incident, rca: &RcaDraft, pr_url: &str) -> Self {
         let severity = format!("{:?}", incident.severity).to_uppercase();
         let root_cause_short = truncate_str(&rca.root_cause, 120);
@@ -841,7 +844,9 @@ fn render_rca_markdown(incident: &Incident, rca: &RcaDraft, pack_version: &str) 
     if !rca.evidence_refs.is_empty() {
         md.push_str("**Evidence references:**\n");
         for r in &rca.evidence_refs {
-            md.push_str(&format!("- `{r}`\n"));
+            md.push_str("- `");
+            md.push_str(r);
+            md.push_str("`\n");
         }
         md.push('\n');
     }
@@ -849,20 +854,27 @@ fn render_rca_markdown(incident: &Incident, rca: &RcaDraft, pack_version: &str) 
     // Timeline
     md.push_str("---\n\n## 4. Timeline\n\n| Time (UTC) | Event |\n|---|---|\n");
     for entry in &rca.timeline {
-        md.push_str(&format!("| `{}` | {} |\n", entry.time, entry.event));
+        md.push_str("| `");
+        md.push_str(&entry.time);
+        md.push_str("` | ");
+        md.push_str(&entry.event);
+        md.push_str(" |\n");
     }
 
     // Action items
     md.push_str("\n---\n\n## 5. Action Items\n\n| Priority | Assignee | Action |\n|---|---|---|\n");
     for item in &rca.action_items {
-        md.push_str(&format!(
-            "| {} | {} | {} |\n",
-            item.priority, item.assignee, item.action
-        ));
+        md.push_str("| ");
+        md.push_str(&item.priority);
+        md.push_str(" | ");
+        md.push_str(&item.assignee);
+        md.push_str(" | ");
+        md.push_str(&item.action);
+        md.push_str(" |\n");
     }
 
-    md.push_str(&format!(
-        "\n---\n\n*Generated automatically by xiaoguai incident-triage pack v{pack_version}.*\n"
-    ));
+    md.push_str("\n---\n\n*Generated automatically by xiaoguai incident-triage pack v");
+    md.push_str(pack_version);
+    md.push_str(".*\n");
     md
 }

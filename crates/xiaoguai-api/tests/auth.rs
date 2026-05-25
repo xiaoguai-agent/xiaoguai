@@ -72,7 +72,7 @@ async fn body_to_value(body: Body) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
-fn post(uri: &str, body: Value, token: Option<&str>) -> Request<Body> {
+fn post(uri: &str, body: &Value, token: Option<&str>) -> Request<Body> {
     let mut b = Request::builder()
         .method(Method::POST)
         .uri(uri)
@@ -89,7 +89,7 @@ async fn missing_token_yields_401_on_v1_routes() {
     let resp = app
         .oneshot(post(
             "/v1/sessions",
-            json!({"user_id":"u","tenant_id":"t","model":"m"}),
+            &json!({"user_id":"u","tenant_id":"t","model":"m"}),
             None,
         ))
         .await
@@ -119,7 +119,7 @@ async fn valid_token_lets_request_through_and_claims_override_body() {
     let resp = app
         .oneshot(post(
             "/v1/sessions",
-            json!({"user_id":"mallory","tenant_id":"ten_evil","model":"m"}),
+            &json!({"user_id":"mallory","tenant_id":"ten_evil","model":"m"}),
             Some("any-token-the-stub-accepts"),
         ))
         .await

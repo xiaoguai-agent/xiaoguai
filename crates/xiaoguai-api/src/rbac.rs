@@ -67,6 +67,9 @@ pub fn path_to_resource(path: &str) -> String {
 /// Axum middleware that enforces the Casbin policy for a single
 /// request. Mount via `from_fn_with_state` so the `Arc<Authz>` is
 /// captured by clone.
+///
+/// # Errors
+/// Returns `401 Unauthorized` if claims are missing or `403 Forbidden` if the policy denies access.
 pub async fn require_authorized(
     authz: Arc<Authz>,
     req: Request,

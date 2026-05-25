@@ -68,6 +68,7 @@ pub struct InMemoryStore {
 }
 
 impl InMemoryStore {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -115,6 +116,7 @@ impl PgStore {
     /// Construct a `PgStore`.
     ///
     /// TODO(v1.3): accept a `sqlx::PgPool` argument.
+    #[must_use]
     pub fn new() -> Self {
         Self { _private: () }
     }

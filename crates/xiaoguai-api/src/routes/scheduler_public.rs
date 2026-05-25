@@ -25,6 +25,9 @@ use crate::state::AppState;
 
 const TOKEN_HEADER: &str = "X-Xiaoguai-Token";
 
+/// # Errors
+/// Returns an error if the webhook token validator or pusher is not wired, the token is invalid,
+/// or no jobs are registered for the route.
 pub async fn scheduler_webhook_public(
     State(state): State<AppState>,
     Path(route_id): Path<String>,

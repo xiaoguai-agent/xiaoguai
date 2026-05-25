@@ -21,6 +21,9 @@ impl Agent {
     ///
     /// Preserved for v0.1 callers and smoke tests. The real ReAct loop lives
     /// in [`crate::react`].
+    ///
+    /// # Errors
+    /// Returns an error if the backend fails to stream a response.
     pub async fn run_once(&self, user_prompt: &str) -> Result<String> {
         let mut req = ChatRequest::new(self.model.clone(), vec![Message::user(user_prompt)]);
         req.temperature = Some(0.2);

@@ -28,6 +28,9 @@ pub struct ListPoliciesQuery {
 ///
 /// Returns all HOTL policies for the given tenant, optionally filtered by
 /// `scope`. Returns 503 when no store is wired into `AppState`.
+///
+/// # Errors
+/// Returns an error if the policy store is not wired or the query fails.
 pub async fn list_policies(
     State(state): State<AppState>,
     Query(q): Query<ListPoliciesQuery>,
@@ -47,6 +50,9 @@ pub async fn list_policies(
 ///
 /// Body: [`CreateHotlPolicyRequest`].
 /// Returns `201 Created` with the persisted [`HotlPolicy`].
+///
+/// # Errors
+/// Returns an error if the policy store is not wired or the request is invalid.
 pub async fn create_policy(
     State(state): State<AppState>,
     Json(req): Json<CreateHotlPolicyRequest>,
@@ -63,6 +69,9 @@ pub async fn create_policy(
 ///
 /// Returns `204 No Content` on success; `404 Not Found` when the id is
 /// unknown.
+///
+/// # Errors
+/// Returns an error if the policy store is not wired or the policy is not found.
 pub async fn delete_policy(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,

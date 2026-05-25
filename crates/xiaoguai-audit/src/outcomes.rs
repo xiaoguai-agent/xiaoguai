@@ -65,7 +65,8 @@ impl OutcomeKind {
     }
 
     /// Parse the string representation used in the DB / wire.
-    pub fn from_str(s: &str) -> Option<Self> {
+    #[must_use]
+    pub fn from_kind_str(s: &str) -> Option<Self> {
         Some(match s {
             "revenue_usd" => Self::RevenueUsd,
             "cost_saved_usd" => Self::CostSavedUsd,
@@ -112,7 +113,8 @@ impl Aggregate {
             };
         }
         let sum: f64 = values.iter().sum();
-        let count = values.len() as u64;
+        let count = u64::try_from(values.len()).unwrap_or(u64::MAX);
+        #[allow(clippy::cast_precision_loss, reason = "count fits safely in f64 for avg calculation")]
         let avg = sum / count as f64;
         Self { sum, count, avg }
     }
@@ -204,6 +206,10 @@ impl InMemoryOutcomeRecorder {
     }
 
     /// Snapshot of all recorded outcomes — useful for assertions.
+    ///
+    /// # Panics
+    /// Panics if the internal lock is poisoned.
+    #[must_use]
     pub fn snapshot(&self) -> Vec<OutcomeRecord> {
         self.records.lock().unwrap().clone()
     }
@@ -264,9 +270,9 @@ impl OutcomeRecorder for InMemoryOutcomeRecorder {
         let values: Vec<f64> = records
             .iter()
             .filter(|r| r.tenant_id == tenant_id)
-            .filter(|r| kind.map_or(true, |k| r.kind == k))
-            .filter(|r| range.since.map_or(true, |s| r.attributed_at >= s))
-            .filter(|r| range.until.map_or(true, |u| r.attributed_at <= u))
+            .filter(|r| kind.is_none_or(|k| r.kind == k))
+            .filter(|r| range.since.is_none_or(|s| r.attributed_at >= s))
+            .filter(|r| range.until.is_none_or(|u| r.attributed_at <= u))
             .map(|r| r.value)
             .collect();
         Ok(Aggregate::from_values(&values))
@@ -348,9 +354,9 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    async fn recorder_with_entries(
-        entries: &[(&str, Option<&str>, &str, &str, f64, Option<&str>)],
-    ) -> InMemoryOutcomeRecorder {
+    type EntrySpec<'a> = (&'a str, Option<&'a str>, &'a str, &'a str, f64, Option<&'a str>);
+
+    async fn recorder_with_entries(entries: &[EntrySpec<'_>]) -> InMemoryOutcomeRecorder {
         let r = InMemoryOutcomeRecorder::new();
         for (tenant, session, agent, kind, value, unit) in entries {
             r.record(
@@ -447,9 +453,9 @@ mod tests {
             .aggregate("nobody", Some("revenue_usd"), OutcomeRange::default())
             .await
             .unwrap();
-        assert_eq!(agg.sum, 0.0);
+        assert!(agg.sum.abs() < f64::EPSILON);
         assert_eq!(agg.count, 0);
-        assert_eq!(agg.avg, 0.0);
+        assert!(agg.avg.abs() < f64::EPSILON);
     }
 
     #[tokio::test]
@@ -520,9 +526,9 @@ mod tests {
             OutcomeKind::Custom,
         ] {
             let s = kind.as_str();
-            assert_eq!(OutcomeKind::from_str(s), Some(kind));
+            assert_eq!(OutcomeKind::from_kind_str(s), Some(kind));
         }
-        assert!(OutcomeKind::from_str("unknown_kind").is_none());
+        assert!(OutcomeKind::from_kind_str("unknown_kind").is_none());
     }
 
     #[test]

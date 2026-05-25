@@ -37,6 +37,7 @@ pub struct Intent {
 }
 
 impl Intent {
+    #[must_use]
     pub fn new(goal: impl Into<String>, required_capabilities: Vec<Capability>) -> Self {
         Self {
             goal: goal.into(),
@@ -45,6 +46,7 @@ impl Intent {
         }
     }
 
+    #[must_use]
     pub fn with_tenant(mut self, tenant_id: impl Into<String>) -> Self {
         self.tenant_id = Some(tenant_id.into());
         self
@@ -72,6 +74,7 @@ pub struct CapabilityRouter {
 }
 
 impl CapabilityRouter {
+    #[must_use]
     pub fn new(registry: Arc<AgentRegistry>) -> Self {
         Self {
             registry,
@@ -81,6 +84,7 @@ impl CapabilityRouter {
 
     /// Route the intent to the best available agent.
     ///
+    /// # Errors
     /// Returns `Err(OrchestratorError::Internal)` if no agent covers the
     /// required capabilities.
     pub fn route(&self, intent: &Intent) -> Result<Dispatch, OrchestratorError> {
@@ -94,7 +98,7 @@ impl CapabilityRouter {
                 intent
                     .required_capabilities
                     .iter()
-                    .map(|c| c.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(", ")
             )));
@@ -113,8 +117,8 @@ impl CapabilityRouter {
     /// Sort `candidates` in-place according to the ranking rules.
     ///
     /// Sort key per candidate (lexicographically ascending = higher priority first):
-    ///   1. tenant_score descending (negated so smaller = better)
-    ///   2. cost_hint ascending (f64 bits, NaN → MAX)
+    ///   1. `tenant_score` descending (negated so smaller = better)
+    ///   2. `cost_hint` ascending (f64 bits, NaN → MAX)
     ///   3. round-robin position (rotated by `rr_counter`)
     fn rank(&self, candidates: &mut Vec<AgentRef>, intent: &Intent) {
         let rr = self.rr_counter.fetch_add(1, Ordering::Relaxed);

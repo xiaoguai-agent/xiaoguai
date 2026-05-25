@@ -46,6 +46,7 @@ pub enum UnauthorizedReason {
 
 impl UnauthorizedReason {
     /// Returns the RFC 6750 wire string for the `error` parameter.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::InvalidRequest => "invalid_request",
