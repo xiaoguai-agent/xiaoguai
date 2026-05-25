@@ -57,6 +57,7 @@ fn build_state(store: Option<Arc<dyn HotlPolicyStore>>) -> AppState {
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
+        workspace_repository: None,
     }
 }
 

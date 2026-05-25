@@ -86,6 +86,7 @@ fn build_state_with_webhook_validator(token: &str, route_id: &str) -> AppState {
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
+        workspace_repository: None,
     }
 }
 

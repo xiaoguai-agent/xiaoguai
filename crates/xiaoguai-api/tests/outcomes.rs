@@ -61,6 +61,7 @@ fn minimal_state() -> AppState {
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
+        workspace_repository: None,
     }
 }
 
