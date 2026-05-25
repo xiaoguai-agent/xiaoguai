@@ -1,0 +1,73 @@
+---
+# Watch: kpi-source-refresh
+#
+# Polls the metrics warehouse layer (BigQuery, Looker, Snowflake) for a
+# new period-close signal — i.e. the presence of a row in the
+# `metrics_warehouse.period_close_log` table (or equivalent) with a
+# close_date matching today's expected period end.
+#
+# When triggered, emits a KpiSourceRefreshEvent that wakes the kpi-collator
+# agent to begin metric collection for the current period.
+#
+# Poll interval is deliberately conservative (every 5 min) to avoid
+# hammering warehouse query slots during business-critical close windows.
+
+name: kpi-source-refresh
+kind: poll             # poll | webhook — this watch uses timed polling
+
+description: >
+  Polls the configured metrics warehouse every 5 minutes for a period-close
+  completion signal. Emits KpiSourceRefreshEvent when a new period is ready,
+  which triggers the kpi-collator → exec-narrator pipeline.
+
+# ── Poll target ───────────────────────────────────────────────────────────────
+
+poll:
+  interval_seconds: 300    # 5 minutes
+
+  # Primary: BigQuery period-close log
+  bigquery:
+    project: ${BQ_PROJECT_ID}
+    query: |
+      SELECT close_date, period_type, source_system, completed_at
+      FROM `{{ config.kpi_sources.bigquery_project }}.metrics_warehouse.period_close_log`
+      WHERE close_date = CURRENT_DATE()
+        AND completed_at IS NOT NULL
+        AND acknowledged = FALSE
+      ORDER BY completed_at DESC
+      LIMIT 1
+    # Mark the row as acknowledged after successful briefing delivery.
+    ack_query: |
+      UPDATE `{{ config.kpi_sources.bigquery_project }}.metrics_warehouse.period_close_log`
+      SET acknowledged = TRUE, ack_at = CURRENT_TIMESTAMP()
+      WHERE close_date = '{{ event.close_date }}'
+        AND period_type = '{{ event.period_type }}'
+
+  # Fallback: schedule-based trigger if warehouse signal is not present within
+  # 30 min of the expected cron window (handles warehouse delays gracefully).
+  fallback:
+    enabled: true
+    deadline_minutes_after_cron: 30
+    emit_synthetic_event: true
+    synthetic_event_note: "Fallback: warehouse signal not received within 30 min; proceeding with last available data."
+
+# ── Emitted event ─────────────────────────────────────────────────────────────
+
+emits:
+  event: KpiSourceRefreshEvent
+  schema:
+    close_date: date           # YYYY-MM-DD
+    period_type: string        # "daily" | "weekly" | "monthly"
+    source_system: string      # "bigquery" | "snowflake" | "synthetic"
+    completed_at: datetime     # ISO-8601 UTC
+    is_synthetic: bool         # true when fallback fired
+
+# ── Routing ───────────────────────────────────────────────────────────────────
+
+triggers:
+  - agents/kpi-collator.yaml   # primary consumer of this event
+
+# ── Deferred ─────────────────────────────────────────────────────────────────
+#
+# - Snowflake TASK_HISTORY polling as alternative warehouse signal
+# - Looker content delivery receipt as alternative close signal

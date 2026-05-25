@@ -1,0 +1,42 @@
+---
+# Output connector: Slide Deck Outline Export (GCS stub)
+#
+# Renders templates/slide-deck-outline.j2 and writes the resulting .txt file
+# to a GCS bucket for weekly and monthly briefings.
+# Daily runs skip this output (too frequent for slide-deck usage).
+#
+# The output is intentionally a structured plain-text outline rather than a
+# fully rendered slide file. An operator pastes the outline into Google Slides
+# or PowerPoint and inserts charts manually. Automating the full slide render
+# is deferred (see backlog note).
+
+output: slides-stub-export
+
+# Only runs for weekly and monthly briefings.
+cadence_filter: [weekly, monthly]
+
+gcs:
+  bucket: ${SLIDES_GCS_BUCKET}
+  # Path template: exec-briefings/2026/W21/weekly-board-update-outline.txt
+  path_template: >
+    exec-briefings/{{ generated_at | format_year }}/
+    {{- 'W' + (generated_at | format_week) if snapshot.period_type == 'weekly'
+        else generated_at | format_month_label -}}/
+    {{ snapshot.period_type }}-board-update-outline.txt
+  # Content type for GCS object metadata.
+  content_type: text/plain; charset=utf-8
+
+  # Service account — must have roles/storage.objectCreator on the bucket.
+  service_account: ${SLIDES_GCS_SERVICE_ACCOUNT}
+
+# ── Skip condition ────────────────────────────────────────────────────────────
+
+skip_if:
+  # If the bucket env var is empty, skip silently rather than failing the run.
+  condition: "config.slides.output_bucket == ''"
+  log_message: "Slides export skipped — SLIDES_GCS_BUCKET not configured."
+
+# ── Deferred ─────────────────────────────────────────────────────────────────
+# - Google Slides API rendering (insert charts + formatted text automatically)
+# - PowerPoint (.pptx) generation via python-pptx in a sidecar
+# - Notion embed of the slide outline alongside the Notion exec page update

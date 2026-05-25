@@ -1,0 +1,147 @@
+---
+# Exec Briefing Skill Pack — v0.1.0
+#
+# Produces daily and weekly KPI digests for executive audiences.
+# Pulls north-star + functional metrics from configured data warehouses,
+# detects anomalies via xg-anomaly, narrates findings in plain English,
+# and delivers structured briefings by email, Slack, and slide stub.
+#
+# Schedule support: daily (0 6 * * Mon-Fri), weekly (0 7 * * Mon),
+#                   monthly (0 7 1 * *).
+
+name: exec-briefing
+version: "0.1.0"
+description: >
+  Multi-agent skill pack that delivers KPI digest briefings to executive
+  audiences. On each scheduled run the pack collects north-star and
+  functional metrics from BigQuery / Looker / Snowflake, flags anomalies
+  via xg-anomaly, writes a 5-bullet plain-English narrative, and distributes
+  the result as email, Slack message, slide outline, and Notion page update.
+
+# ── Runtime dependencies ─────────────────────────────────────────────────────
+
+dependencies:
+  # Watch + poll infrastructure for metrics warehouse refresh detection.
+  watch: { crate: xiaoguai-watch, feature: default }
+
+  # xg-anomaly: z-score and trend-break detection on time-series metrics.
+  # Required — anomaly events drive the anomaly-explainer agent.
+  anomaly: { crate: xiaoguai-anomaly, feature: default }
+
+  # LLM backend — used by exec-narrator, anomaly-explainer, action-recommender.
+  llm: { crate: xiaoguai-llm, feature: default }
+
+  # Outcome telemetry — records briefing delivery outcomes + open/click rates
+  # so future runs can learn which sections drive engagement.
+  outcome_telemetry: { crate: xiaoguai-outcome-telemetry, feature: default }
+
+  # Scheduler — drives daily / weekly / monthly cron cadence.
+  scheduler: { crate: xiaoguai-scheduler, feature: default }
+
+  # IM adapters (at least one required for Slack leadership channel output).
+  im_slack:
+    crate: xiaoguai-im-slack
+    real: true
+    note: Requires SLACK_BOT_TOKEN + SLACK_LEADERSHIP_CHANNEL env vars.
+  im_feishu:
+    crate: xiaoguai-im-feishu
+    real: true
+    enabled_by: "config.im.adapter == feishu"
+  im_dingtalk:
+    crate: xiaoguai-im-dingtalk
+    real: true
+    enabled_by: "config.im.adapter == dingtalk"
+
+# ── Schedules ────────────────────────────────────────────────────────────────
+
+schedules:
+  daily:
+    cron: "0 6 * * 1-5"       # 06:00 UTC Mon–Fri
+    briefing_type: daily
+    recipients: exec_team
+    template: templates/daily-briefing-email
+
+  weekly:
+    cron: "0 7 * * 1"          # 07:00 UTC Monday
+    briefing_type: weekly
+    recipients: exec_team
+    template: templates/weekly-board-update
+
+  monthly:
+    cron: "0 7 1 * *"          # 07:00 UTC 1st of month
+    briefing_type: monthly
+    recipients: board
+    template: templates/weekly-board-update  # extended with MoM comparisons
+
+# ── Sources ──────────────────────────────────────────────────────────────────
+
+sources:
+  - inbound/bigquery-scheduled-query.yaml
+  - inbound/looker-alert.yaml
+  - inbound/snowflake-task-event.yaml
+  - inbound/manual-kpi-csv.yaml
+
+# ── Watches ──────────────────────────────────────────────────────────────────
+
+watches:
+  - watches/kpi-source-refresh.yaml
+
+# ── Anomaly detectors ────────────────────────────────────────────────────────
+
+anomalies:
+  - anomalies/kpi-spike.yaml
+  - anomalies/kpi-trough.yaml
+
+# ── Agents ───────────────────────────────────────────────────────────────────
+
+agents:
+  - agents/kpi-collator.yaml
+  - agents/exec-narrator.yaml
+  - agents/anomaly-explainer.yaml
+  - agents/action-recommender.yaml
+
+# ── Outputs ──────────────────────────────────────────────────────────────────
+
+outputs:
+  - outputs/exec-team-email-digest.yaml
+  - outputs/slack-leadership-channel.yaml
+  - outputs/slides-stub-export.yaml
+  - outputs/notion-exec-page.yaml
+
+# ── Configuration keys ────────────────────────────────────────────────────────
+
+config:
+  im:
+    adapter: slack             # slack | feishu | dingtalk
+  briefing:
+    max_kpis_daily: 8          # KPIs surfaced in daily email
+    max_kpis_weekly: 15        # KPIs surfaced in weekly board update
+    anomaly_lookback_days: 7   # window passed to xg-anomaly for trend context
+    narrative_bullet_count: 5  # exec-narrator always produces exactly N bullets
+  anomaly:
+    z_score_warn: 2.0          # |z| >= 2.0 → "notable movement" callout
+    z_score_alert: 3.0         # |z| >= 3.0 → "significant anomaly" callout
+    z_score_critical: 4.0      # |z| >= 4.0 → "urgent: requires exec attention"
+  kpi_sources:
+    bigquery_project: ${BQ_PROJECT_ID}
+    looker_base_url: ${LOOKER_BASE_URL}
+    snowflake_account: ${SNOWFLAKE_ACCOUNT}
+  recipients:
+    exec_team: ${EXEC_TEAM_EMAIL_LIST}   # comma-separated
+    board: ${BOARD_EMAIL_LIST}
+  notion:
+    exec_page_id: ${NOTION_EXEC_PAGE_ID}
+  slides:
+    output_bucket: ${SLIDES_GCS_BUCKET:-""}  # empty = skip slides export
+
+# ── Feature flag ──────────────────────────────────────────────────────────────
+
+feature_flag: XIAOGUAI_EXEC_BRIEFING_ENABLED
+
+# ── Deferred ─────────────────────────────────────────────────────────────────
+#
+# - Salesforce CRM metric inbound connector (pipeline, bookings)
+# - Stripe revenue event inbound connector (MRR real-time)
+# - Teams / WeChat output connector
+# - Adaptive send-time optimisation via outcome-telemetry open rates
+# See docs/plans/exec-briefing-backlog.md for prioritisation.

@@ -1,0 +1,59 @@
+---
+# Inbound connector: Looker Alert webhook
+#
+# Looker Alerts can deliver a webhook POST when a Look or dashboard tile
+# crosses a threshold. This connector accepts those payloads and normalises
+# them into KpiSourceRefreshEvent (if the alert signals a period close)
+# or directly into a KpiObservation (for real-time metric updates).
+#
+# Route: POST /v1/exec-briefing/inbound/looker/{route_id}
+# Auth:  Bearer token from scheduler_webhook_tokens table.
+#        Looker embeds a shared secret in the X-Looker-Signature header;
+#        the connector validates it as HMAC-SHA256.
+
+source: looker-alert
+route_prefix: /v1/exec-briefing/inbound/looker
+
+normalize:
+  hmac_secret: ${LOOKER_WEBHOOK_SECRET}
+  hmac_header: X-Looker-Signature
+
+  field_map:
+    # Looker alert payload (v22.x format).
+    kpi_name:
+      source: look_title
+      transform: slugify
+    kpi_label:
+      source: look_title
+    current_value:
+      source: triggered_value
+      transform: parse_float
+    period_date:
+      source: scheduled_time
+      transform: date_from_iso8601
+    source_system: _const:looker
+    close_date:
+      source: scheduled_time
+      transform: date_from_iso8601
+    period_type:
+      source: schedule_name
+      transform: extract_period_type
+    is_synthetic: _const:false
+
+# Only Looks whose title matches these patterns contribute period-close signals.
+# Other Looker alerts are ingested as supplemental KpiObservations only.
+period_close_look_patterns:
+  - "*Daily KPI Close*"
+  - "*Weekly Metrics Close*"
+  - "*Monthly Board Metrics*"
+
+sample_payload: |
+  {
+    "look_id": 42,
+    "look_title": "Daily KPI Close — Growth Metrics",
+    "schedule_name": "daily_close",
+    "scheduled_time": "2026-05-25T06:00:45Z",
+    "triggered_value": 148231,
+    "condition_string": "is greater than 100000",
+    "explore_url": "https://company.looker.com/x/abc123"
+  }

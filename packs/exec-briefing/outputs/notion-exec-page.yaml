@@ -1,0 +1,79 @@
+---
+# Output connector: Notion Executive Page Update
+#
+# Updates a designated Notion page with the current briefing content.
+# Each run appends a new dated block (daily) or replaces the top-level
+# content section (weekly/monthly) so the Notion page always reflects the
+# most recent briefing without accumulating unbounded history.
+#
+# Route to Notion API: POST /v1/blocks/{page_id}/children (append)
+#                      PATCH /v1/pages/{page_id} (update properties)
+#
+# Auth: Notion Integration Token (Internal Integration, read/write on the page).
+
+output: notion-exec-page
+
+notion:
+  api_token: ${NOTION_API_TOKEN}
+  page_id: ${NOTION_EXEC_PAGE_ID}
+
+  # Update strategy per cadence.
+  update_strategy:
+    daily:
+      # Append a collapsed toggle block with the daily summary.
+      # Keeps the page readable without burying weekly content.
+      mode: append_toggle
+      toggle_title: "Daily Briefing — {{ narrative.period_label }}"
+      collapsed: true
+
+    weekly:
+      # Replace the "Current Week" section (first child of the page).
+      # Archive the previous week's content to a sub-page automatically.
+      mode: replace_section
+      section_title: "Current Week"
+      archive_to_subpage: true
+      archive_title: "Archive — {{ narrative.period_label }}"
+
+    monthly:
+      mode: replace_section
+      section_title: "Current Month"
+      archive_to_subpage: true
+      archive_title: "Archive — {{ narrative.period_label }}"
+
+  # Block structure to write.
+  # Rich text rendering uses Notion's paragraph / callout / table block types.
+  blocks:
+    - type: heading_2
+      text: "{{ narrative.subject_line }}"
+
+    - type: paragraph
+      text: "{{ narrative.period_label }} · {{ generated_at | format_datetime }}"
+
+    - type: divider
+
+    # Executive summary bullets as a bulleted list.
+    - type: bulleted_list_item
+      items:
+        {% for bullet in narrative.bullets %}
+        - text: "{{ bullet.text }}"
+          color: >
+            {{ 'green' if bullet.sentiment == 'positive'
+               else 'red' if bullet.sentiment == 'negative'
+               else 'default' }}
+        {% endfor %}
+
+    # Anomaly callouts as Notion callout blocks (coloured by severity).
+    {% for callout in callouts %}
+    - type: callout
+      icon: "{{ '🚨' if callout.severity == 'urgent' else '⚠️' if callout.severity == 'significant' else 'ℹ️' }}"
+      color: >
+        {{ 'red_background' if callout.severity == 'urgent'
+           else 'yellow_background' if callout.severity == 'significant'
+           else 'gray_background' }}
+      text: "**{{ callout.exec_severity_label }}** · {{ callout.kpi_label }}\n{{ callout.headline }}\n{{ callout.explanation }}"
+    {% endfor %}
+
+# ── Deferred ─────────────────────────────────────────────────────────────────
+# - KPI sparkline chart embeds (requires Notion chart block — not yet GA)
+# - Database property updates (sync KPI values to a Notion database table)
+# - Automated page share link in Slack message
