@@ -8,8 +8,14 @@
       "version": "1.0.0",
       "category": "finance",
       "requires": {
-        "feature_flags": ["rag", "scheduler"],
-        "env_keys": ["AR_ERP_URL", "AR_ERP_TOKEN"]
+        "feature_flags": [
+          "rag",
+          "scheduler"
+        ],
+        "env_keys": [
+          "AR_ERP_URL",
+          "AR_ERP_TOKEN"
+        ]
       },
       "knobs": {
         "overdue_days_threshold": {
@@ -24,7 +30,11 @@
         },
         "reminder_tone": {
           "type": "string",
-          "enum": ["friendly", "firm", "formal"],
+          "enum": [
+            "friendly",
+            "firm",
+            "formal"
+          ],
           "default": "friendly",
           "description": "Tone for automated reminder emails"
         }
@@ -38,19 +48,31 @@
       "version": "1.0.0",
       "category": "ops",
       "requires": {
-        "feature_flags": ["rag", "scheduler"],
-        "env_keys": ["PAGERDUTY_TOKEN"]
+        "feature_flags": [
+          "rag",
+          "scheduler"
+        ],
+        "env_keys": [
+          "PAGERDUTY_TOKEN"
+        ]
       },
       "knobs": {
         "severity_model": {
           "type": "string",
-          "enum": ["rule_based", "llm_assisted"],
+          "enum": [
+            "rule_based",
+            "llm_assisted"
+          ],
           "default": "llm_assisted",
           "description": "How severity is classified"
         },
         "auto_page_threshold": {
           "type": "string",
-          "enum": ["sev1", "sev2", "never"],
+          "enum": [
+            "sev1",
+            "sev2",
+            "never"
+          ],
           "default": "sev1",
           "description": "Minimum severity level for automatic paging"
         },
@@ -70,12 +92,17 @@
       "category": "dev",
       "requires": {
         "feature_flags": [],
-        "env_keys": ["GITHUB_TOKEN"]
+        "env_keys": [
+          "GITHUB_TOKEN"
+        ]
       },
       "knobs": {
         "review_scope": {
           "type": "string",
-          "enum": ["full", "diff_only"],
+          "enum": [
+            "full",
+            "diff_only"
+          ],
           "default": "diff_only",
           "description": "Whether to review the full file or only changed lines"
         },
@@ -104,8 +131,14 @@
       "version": "1.0.0",
       "category": "hr",
       "requires": {
-        "feature_flags": ["rag", "scheduler"],
-        "env_keys": ["HRIS_API_KEY", "CALENDAR_API_KEY"]
+        "feature_flags": [
+          "rag",
+          "scheduler"
+        ],
+        "env_keys": [
+          "HRIS_API_KEY",
+          "CALENDAR_API_KEY"
+        ]
       },
       "knobs": {
         "onboarding_duration_days": {
@@ -120,7 +153,12 @@
         },
         "checklist_template": {
           "type": "string",
-          "enum": ["engineering", "sales", "ops", "default"],
+          "enum": [
+            "engineering",
+            "sales",
+            "ops",
+            "default"
+          ],
           "default": "default",
           "description": "Which onboarding checklist template to use"
         }
@@ -134,7 +172,9 @@
       "version": "1.0.0",
       "category": "rag",
       "requires": {
-        "feature_flags": ["rag"],
+        "feature_flags": [
+          "rag"
+        ],
         "env_keys": []
       },
       "knobs": {
@@ -150,7 +190,11 @@
         },
         "citation_style": {
           "type": "string",
-          "enum": ["inline", "footnote", "none"],
+          "enum": [
+            "inline",
+            "footnote",
+            "none"
+          ],
           "default": "inline",
           "description": "How citations appear in the response"
         }
@@ -164,7 +208,9 @@
       "version": "1.0.0",
       "category": "rag",
       "requires": {
-        "feature_flags": ["rag"],
+        "feature_flags": [
+          "rag"
+        ],
         "env_keys": []
       },
       "knobs": {
@@ -193,7 +239,9 @@
       "version": "1.0.0",
       "category": "rag",
       "requires": {
-        "feature_flags": ["rag"],
+        "feature_flags": [
+          "rag"
+        ],
         "env_keys": []
       },
       "knobs": {
@@ -214,6 +262,618 @@
         }
       },
       "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/rag-hr.png"
+    },
+    {
+      "slug": "devops-oncall",
+      "name": "DevOps On-Call",
+      "description": "Real-time alert triage and runbook automation for on-call engineers. Classifies incoming alerts (P1/P2/P3), maps them to suspected components, looks up matching runbook steps, and attaches an observability snapshot (metrics + log excerpts) before paging the engineer. Distinct from incident-triage, which handles post-incident RCA. Supports PagerDuty, Opsgenie, and Alertmanager inbound sources.",
+      "version": "0.1.0",
+      "category": "ops",
+      "requires": {
+        "feature_flags": [
+          "scheduler"
+        ],
+        "env_keys": [
+          "ONCALL_SLACK_TOKEN",
+          "ONCALL_SLACK_CHANNEL",
+          "ONCALL_OBSERVABILITY_URL",
+          "ONCALL_OBSERVABILITY_TOKEN"
+        ]
+      },
+      "knobs": {
+        "auto_p1_statuspage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open a Statuspage incident for P1 alerts (requires STATUSPAGE_API_KEY)"
+        },
+        "snapshot_lookback_minutes": {
+          "type": "integer",
+          "default": 30,
+          "description": "Minutes of observability history to include in the snapshot"
+        },
+        "runbook_match_threshold": {
+          "type": "number",
+          "default": 0.4,
+          "description": "Minimum runbook match score before falling back to the generic triage runbook"
+        },
+        "similar_incident_days": {
+          "type": "integer",
+          "default": 30,
+          "description": "Days of history to search for similar past incidents"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/devops-oncall.png"
+    },
+    {
+      "slug": "sales-qualification",
+      "name": "Sales Qualification (BANT + MEDDIC)",
+      "description": "Multi-agent lead qualification using BANT (Budget/Authority/Need/Timeline) and MEDDIC (Metrics/Economic Buyer/Decision Criteria/Decision Process/Identify Pain/Champion) frameworks. Ingests leads from HubSpot webhooks, Salesforce platform events, or email threads. Outputs structured qualification scores, evidence quotes, MEDDIC completeness checklists, and next-action recommendations. All CRM write-backs are HOTL-gated.",
+      "version": "1.0.0",
+      "category": "sales",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "outcome-telemetry",
+          "web-search"
+        ],
+        "env_keys": [
+          "BRAVE_SEARCH_API_KEY",
+          "SALES_HOTL_NOTIFY_CHANNEL",
+          "SLACK_BOT_TOKEN",
+          "SLACK_PIPELINE_CHANNEL"
+        ]
+      },
+      "optional_env_keys": [
+        "HUBSPOT_WEBHOOK_SECRET",
+        "HUBSPOT_PRIVATE_APP_TOKEN",
+        "SF_INSTANCE_URL",
+        "SF_CLIENT_ID",
+        "SF_CLIENT_SECRET",
+        "EMAIL_INGEST_TOKEN",
+        "SLACK_DEAL_ROOM_PARENT_CHANNEL",
+        "SLACK_DISQUALIFIED_CHANNEL",
+        "AE_SLACK_USER_ID",
+        "SE_SLACK_USER_ID"
+      ],
+      "knobs": {
+        "bant_pass_threshold": {
+          "type": "integer",
+          "default": 60,
+          "description": "Minimum BANT score (0–100) to advance a lead to MEDDIC deep-dive"
+        },
+        "meddic_complete_threshold": {
+          "type": "integer",
+          "default": 70,
+          "description": "Minimum MEDDIC completeness % to mark a lead as Sales-Qualified"
+        },
+        "deal_stage_on_sqo": {
+          "type": "string",
+          "default": "Demo Scheduled",
+          "description": "CRM deal stage name applied when a lead becomes a Sales-Qualified Opportunity"
+        },
+        "enrichment_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run web-search enrichment for leads with insufficient BANT data"
+        },
+        "weekly_digest_cron": {
+          "type": "string",
+          "default": "0 8 * * 1",
+          "description": "Cron expression for the weekly pipeline digest (default: Monday 08:00 UTC)"
+        }
+      },
+      "agents": [
+        "bant-extractor",
+        "meddic-deep-dive",
+        "next-action-recommender",
+        "lead-enrichment"
+      ],
+      "inbound_channels": [
+        "hubspot-webhook",
+        "salesforce-event",
+        "email-thread-ingest"
+      ],
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/sales-qualification.png"
+    },
+    {
+      "slug": "marketing-content",
+      "name": "Marketing Content",
+      "description": "Content generation and repurposing pack — turns a creative brief into a full blog article, then derives platform-tuned social posts and email campaign copy. Triggered by Notion, Contentful, or manual webhooks. All outbound publishes are HOTL-gated.",
+      "version": "1.0.0",
+      "category": "marketing",
+      "requires": {
+        "feature_flags": [
+          "llm"
+        ],
+        "env_keys": [
+          "SLACK_BOT_TOKEN"
+        ]
+      }
+    },
+    {
+      "slug": "customer-success",
+      "name": "Customer Success",
+      "description": "Customer success pack — ticket triage, NPS theme extraction, churn-risk scoring, and QBR prep. Ingests Zendesk tickets, Intercom conversations, and Segment usage events.",
+      "version": "1.0.0",
+      "category": "cs",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "security-audit",
+      "name": "Security Audit",
+      "description": "Security operations pack — auth log anomaly triage, dependency CVE prioritization with blast-radius scoring, SOC 2 evidence collation per control ID, and entropy-based secret leak scanning over git diffs.",
+      "version": "0.1.0",
+      "category": "security",
+      "requires": {
+        "feature_flags": [
+          "llm"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "legal-contract-review",
+      "name": "Legal Contract Review",
+      "description": "NDA / MSA / SOW operational review pack — clause extraction, redline suggestions, and risk scoring. Triggered by DocuSign events, Google Drive watches, or manual upload.",
+      "version": "0.1.0",
+      "category": "legal",
+      "requires": {
+        "feature_flags": [
+          "llm"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "recruiting-screen",
+      "name": "Recruiting Screen",
+      "description": "Multi-agent pipeline for resume parsing, JD matching, and bias-checked candidate screening. Parses structured resume fields, scores against job description, runs bias audit, and emits screening notes.",
+      "version": "1.3.4-prep",
+      "category": "hr",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "finance-fpa",
+      "name": "Finance FP&A",
+      "description": "Operational FP&A intelligence: monitors actuals vs. budget, flags material variances, rolls up budget across cost-centres, and drafts board-ready forecast commentary. Distinct from rag-finance.",
+      "version": "1.0.0",
+      "category": "finance",
+      "requires": {
+        "feature_flags": [
+          "watch",
+          "anomaly",
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "devrel-content",
+      "name": "DevRel Content",
+      "description": "Developer Relations content automation pack — GitHub issue triage, weekly community digest from Discord/Discourse/GitHub, tutorial outline drafting, and DX feedback synthesis.",
+      "version": "0.1.0",
+      "category": "dev",
+      "requires": {
+        "feature_flags": [
+          "llm"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "product-research",
+      "name": "Product Research",
+      "description": "Ingests customer interview transcripts (Gong, Dovetail) and survey exports (Typeform, CSV), extracts verbatim-grounded themes, clusters into JTBD statements, sizes opportunities, and synthesises persona cards.",
+      "version": "0.1.0",
+      "category": "product",
+      "requires": {
+        "feature_flags": [
+          "llm"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "data-eng-pipeline",
+      "name": "Data Engineering Pipeline",
+      "description": "Data freshness SLA monitoring and lineage breadcrumb tracking for ETL/ELT pipelines. Detects row-count drops and latency spikes, dispatches investigation agents, and recommends retries within HOTL guardrails.",
+      "version": "1.0.0",
+      "category": "data",
+      "requires": {
+        "feature_flags": [
+          "watch",
+          "anomaly",
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "ml-ops",
+      "name": "ML Ops",
+      "description": "Monitors deployed ML models for drift and quality degradation, aggregates evaluation suite results, and triggers retrain workflows or shadow deployments when thresholds are breached. All retrain dispatches are HOTL-gated.",
+      "version": "0.1.0",
+      "category": "data",
+      "requires": {
+        "feature_flags": [
+          "anomaly",
+          "watch",
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "exec-briefing",
+      "name": "Exec Briefing",
+      "description": "Multi-agent skill pack that delivers KPI digest briefings to executive audiences. Collects north-star and functional metrics, flags anomalies, writes plain-English narrative, and distributes by email, Slack, and slide stub.",
+      "version": "0.1.0",
+      "category": "ops",
+      "requires": {
+        "feature_flags": [
+          "anomaly",
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "email-triage",
+      "name": "Email Triage",
+      "description": "Inbox prioritization and draft-response pack. Classifies incoming email by sender type and urgency (P0–P3), summarises threads, and drafts responses. PII-safe: no full email body in audit logs.",
+      "version": "0.1.0",
+      "category": "ops",
+      "requires": {
+        "feature_flags": [
+          "llm"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "media-monitoring",
+      "name": "Media Monitoring",
+      "description": "Monitors brand mentions and press coverage across social and news channels. Classifies sentiment, detects volume spikes and sentiment crashes, clusters emerging narratives, and delivers crisis early warnings with response-strategy recommendations.",
+      "version": "0.1.0",
+      "category": "marketing",
+      "requires": {
+        "feature_flags": [
+          "anomaly",
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "customer-onboarding",
+      "name": "Customer Onboarding",
+      "description": "Multi-agent skill pack for managing B2B customer onboarding from contract-signed through POC execution to expansion-ready. Coaches milestones, detects stalls, scores POC success, and produces CSM handoff packages.",
+      "version": "1.3.4-prep",
+      "category": "cs",
+      "requires": {
+        "feature_flags": [
+          "watch",
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "knowledge-base-curator",
+      "name": "Knowledge Base Curator",
+      "description": "Knowledge-base health pack — ingests support tickets and article metadata, extracts FAQ candidates from ticket clusters, flags stale articles against product release notes, deduplicates near-duplicate articles, and checks broken outbound links.",
+      "version": "0.1.0",
+      "category": "cs",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "revops-territory",
+      "name": "RevOps Territory",
+      "description": "Automates account assignment to sales reps (industry + size + geo + specialty + capacity scoring), monitors rep load imbalance, audits fairness, and produces data-driven quota proposals.",
+      "version": "1.0.0",
+      "category": "sales",
+      "requires": {
+        "feature_flags": [
+          "watch",
+          "llm",
+          "hotl",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "partner-enablement",
+      "name": "Partner Enablement",
+      "description": "Multi-agent skill pack for partner channel management. Routes and validates inbound deal registrations, detects pipeline conflicts with direct sales, assembles co-sell meeting briefs, and scores partner tiers.",
+      "version": "1.0.0",
+      "category": "sales",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "outcome-telemetry",
+          "hotl"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "research-paper-survey",
+      "name": "Research Paper Survey",
+      "description": "Automates literature review: polls arXiv for new papers, walks citation graphs to find central works, clusters topics to identify research gaps, and drafts survey sections. Publishes to Notion and exports LaTeX snippets.",
+      "version": "0.1.0",
+      "category": "research",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "privacy-dsar",
+      "name": "Privacy DSAR",
+      "description": "Multi-agent skill pack for end-to-end DSAR lifecycle management under GDPR, CCPA, and similar regulations. Handles intake, identity verification, data scope mapping, evidence gathering, and erasure-cascade recommendations. All exports are HOTL-gated.",
+      "version": "1.3.4-prep",
+      "category": "legal",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "outcome-telemetry",
+          "hotl"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "vendor-management",
+      "name": "Vendor Management",
+      "description": "Monitors third-party vendor risk through continuous watch of renewal windows, annual assessment recertification, and per-category spend concentration. LLM agents compile risk scores and recommend renewal or exit actions.",
+      "version": "1.0.0",
+      "category": "ops",
+      "requires": {
+        "feature_flags": [
+          "watch",
+          "llm",
+          "outcome-telemetry",
+          "hotl"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "training-feedback",
+      "name": "Training Feedback",
+      "description": "Multi-agent skill pack that ingests post-course learner feedback from LMS platforms, classifies free-text responses into themes, identifies learning gaps, and produces instructor digests and course-redesign proposals.",
+      "version": "0.1.0",
+      "category": "hr",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "events-management",
+      "name": "Events Management",
+      "description": "Multi-agent skill pack for end-to-end event management: registration triage with VIP detection and waitlist routing, personalized speaker outreach, session content QC, and no-show prediction.",
+      "version": "1.0.0",
+      "category": "marketing",
+      "requires": {
+        "feature_flags": [
+          "watch",
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "app-store-reviews",
+      "name": "App Store Reviews",
+      "description": "Monitors iOS App Store and Google Play reviews for your app and configured competitors. Classifies sentiment and clusters by theme, extracts bug reports for engineering, ranks fixes by impact, and delivers weekly exec digests. Drafts response templates only — never posts directly.",
+      "version": "0.1.0",
+      "category": "product",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "scheduler"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "tax-prep",
+      "name": "Tax Prep",
+      "description": "Monitors US sales-tax nexus thresholds across all 50 jurisdictions, drafts and tracks sales tax returns, sends filing-deadline alerts, and supports audit-defense package assembly. All filing outputs are HOTL-gated (mandatory human signer).",
+      "version": "1.0.0",
+      "category": "finance",
+      "requires": {
+        "feature_flags": [
+          "watch",
+          "llm",
+          "outcome-telemetry",
+          "hotl"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "lease-management",
+      "name": "Lease Management",
+      "description": "Monitors real-estate and equipment lease portfolios for renewal windows, rent escalations, CAM/TICAM overcharges, insurance-cert expirations, and annual audit obligations. All commitment actions are HOTL-gated.",
+      "version": "1.0.0",
+      "category": "finance",
+      "requires": {
+        "feature_flags": [
+          "watch",
+          "llm",
+          "outcome-telemetry",
+          "hotl"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "it-asset-tracking",
+      "name": "IT Asset Tracking",
+      "description": "Manages the full lifecycle of hardware and software assets — inventory, provisioning, reclaim, license true-up, and audit reconciliation against MDM and IdP sources.",
+      "version": "1.0.0",
+      "category": "ops",
+      "requires": {
+        "feature_flags": [
+          "watch",
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "facilities-management",
+      "name": "Facilities Management",
+      "description": "Multi-agent skill pack for corporate facilities operations. Triages inbound work orders, dispatches vendors, monitors SLAs, tracks space utilization, and produces exec digests.",
+      "version": "0.1.0",
+      "category": "ops",
+      "requires": {
+        "feature_flags": [
+          "watch",
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "travel-expense",
+      "name": "Travel & Expense",
+      "description": "Automates T&E compliance: parses receipts via OCR/LLM, checks against tenant-configured policy (per-diem limits, excluded categories, advance-approval rules), routes approval by amount tier, and batches reimbursements.",
+      "version": "1.0.0",
+      "category": "finance",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "outcome-telemetry",
+          "hotl"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "contract-lifecycle",
+      "name": "Contract Lifecycle",
+      "description": "End-to-end contract lifecycle management: NDA to MSA to SOW. Classifies inbound deal intent, selects the right template, routes redlines, and tracks each contract stage. All counterparty-facing actions are HOTL-gated.",
+      "version": "1.0.0",
+      "category": "legal",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "outcome-telemetry",
+          "hotl"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "ip-management",
+      "name": "IP Management",
+      "description": "Tracks patent and trademark portfolios across jurisdictions, fires deadline-aware renewal alerts, monitors competitor filings, and surfaces risk assessments for human review. All filing and counsel actions are HOTL-gated.",
+      "version": "1.0.0",
+      "category": "legal",
+      "requires": {
+        "feature_flags": [
+          "watch",
+          "llm",
+          "outcome-telemetry"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "esg-reporting",
+      "name": "ESG Reporting",
+      "description": "Aggregates Environmental (Scope 1/2/3 emissions), Social (DEI, workforce), and Governance metrics from accounting, HRIS, and supplier systems. Detects data gaps against CSRD, SASB, TCFD, and GRI frameworks, and drafts disclosure narratives. All regulatory submissions are HOTL-gated.",
+      "version": "1.0.0",
+      "category": "legal",
+      "requires": {
+        "feature_flags": [
+          "watch",
+          "llm",
+          "outcome-telemetry",
+          "hotl"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "investor-relations",
+      "name": "Investor Relations",
+      "description": "Earnings call preparation, analyst Q&A classification and routing, and shareholder communication digest. All external-facing outputs are HOTL-gated (Reg FD compliance — zero selective disclosure).",
+      "version": "1.0.0",
+      "category": "finance",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "outcome-telemetry",
+          "hotl"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "board-prep",
+      "name": "Board Prep",
+      "description": "Automates board meeting lifecycle: assembles agendas, assembles pre-read decks from KPI digests and exec memos, drafts minutes, and tracks action items. All distribution to board members is HOTL-gated.",
+      "version": "1.0.0",
+      "category": "ops",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "outcome-telemetry",
+          "hotl"
+        ],
+        "env_keys": []
+      }
+    },
+    {
+      "slug": "kanban-automation",
+      "name": "Kanban Automation",
+      "description": "Triages incoming requests onto the Hermes task board: classifies type, urgency, and owner-hint; auto-tags cards; detects bottlenecks; balances workload across board members. Compatible with xiaoguai v1.4 kanban subsystem.",
+      "version": "0.1.0",
+      "category": "ops",
+      "requires": {
+        "feature_flags": [
+          "llm"
+        ],
+        "env_keys": []
+      }
     }
   ]
 }
