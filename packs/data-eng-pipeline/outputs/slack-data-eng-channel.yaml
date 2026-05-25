@@ -1,0 +1,91 @@
+# Output channel — Slack data engineering channel
+# ---------------------------------------------------------------------------
+# Delivers SLA breach alerts, investigation summaries, retry recommendations,
+# and resolution notifications to the data engineering Slack channel.
+# Used by sla-breach-notifier, freshness-investigator, and retry-recommender.
+# ---------------------------------------------------------------------------
+
+name: slack-data-eng-channel
+version: "1.0.0"
+description: >
+  Posts data pipeline alerts, investigation summaries, and retry
+  recommendations to the data engineering Slack channel. Includes
+  approve/reject action buttons for HOTL-gated PagerDuty pages and
+  retry triggers.
+
+kind: output_channel
+type: slack
+
+connection:
+  webhook_url: "${DE_SLACK_WEBHOOK_URL}"
+  bot_token: "${DE_SLACK_BOT_TOKEN:-}"
+  channel_id: "${DE_SLACK_CHANNEL_ID:-}"
+
+message_formats:
+  breach_warning:
+    blocks:
+      - type: header
+        text: ":warning: Data SLA Warning — {{ dataset_id }}"
+      - type: section
+        text: "*Pipeline*: `{{ pipeline_id }}`\n*Age*: {{ age_minutes | round(0) }} min (SLA: {{ sla_max_age_minutes }} min)\n*Root cause*: {{ root_cause | default('Investigating…') }}"
+      - type: context
+        text: "Breach started: {{ breach_started_at | datetime }} | <{{ admin_url }}/data-eng/breaches/{{ breach_id }}|View in Admin UI>"
+
+  breach_critical:
+    blocks:
+      - type: header
+        text: ":rotating_light: Data SLA CRITICAL — {{ dataset_id }}"
+      - type: section
+        text: "*Pipeline*: `{{ pipeline_id }}`\n*Age*: {{ age_minutes | round(0) }} min (SLA: {{ sla_max_age_minutes }} min)\n*Root cause*: {{ root_cause | default('Investigation in progress') }}"
+      - type: actions
+        elements:
+          - type: button
+            text: "Approve PagerDuty page"
+            action_id: "de_approve_pd_page"
+            value: "{{ breach_id }}"
+            style: danger
+          - type: button
+            text: "Suppress (false positive)"
+            action_id: "de_suppress_breach"
+            value: "{{ breach_id }}"
+      - type: context
+        text: "Breach started: {{ breach_started_at | datetime }} | <{{ admin_url }}/data-eng/breaches/{{ breach_id }}|Admin UI>"
+
+  investigation_complete:
+    blocks:
+      - type: header
+        text: ":mag: Investigation complete — {{ dataset_id }}"
+      - type: section
+        text: "*Root cause*: {{ root_cause }}\n*Affected pipelines*: {{ affected_downstream | join(', ') | default('none detected') }}"
+      - type: context
+        text: "<{{ admin_url }}/data-eng/investigations/{{ investigation_id }}|View full investigation>"
+
+  retry_recommendation:
+    blocks:
+      - type: header
+        text: ":arrows_counterclockwise: Retry recommendation — {{ pipeline_id }}"
+      - type: section
+        text: "*Recommendation*: `{{ recommendation }}`\n*Rationale*: {{ rationale }}\n*Action*: {{ suggested_action }}"
+      - type: actions
+        elements:
+          - type: button
+            text: "Approve retry"
+            action_id: "de_approve_retry"
+            value: "{{ pipeline_id }}:{{ run_id }}"
+            style: primary
+          - type: button
+            text: "Skip"
+            action_id: "de_skip_retry"
+            value: "{{ pipeline_id }}:{{ run_id }}"
+        condition: "{{ recommendation == 'auto_retry' }}"
+
+  breach_resolved:
+    blocks:
+      - type: section
+        text: ":white_check_mark: *Resolved*: `{{ dataset_id }}` is now fresh (was stale for {{ downtime_minutes | round(0) }} min)"
+      - type: context
+        text: "Resolved at: {{ breach_resolved_at | datetime }}"
+
+rate_limits:
+  per_channel_per_minute: 15
+  per_tenant_per_hour: 120

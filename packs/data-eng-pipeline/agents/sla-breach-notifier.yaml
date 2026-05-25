@@ -1,0 +1,124 @@
+# Agent definition — sla-breach-notifier
+# ---------------------------------------------------------------------------
+# Triggered by de.dataset_stale or de.investigation_complete events.
+# Composes and dispatches SLA breach notifications to PagerDuty (data on-call)
+# and Slack (data-eng channel). Uses the breach-summary template.
+# HOTL-gated: PagerDuty pages for critical breaches require human confirmation;
+# Slack warnings are autonomous.
+# ---------------------------------------------------------------------------
+
+name: sla-breach-notifier
+version: "1.0.0"
+description: >
+  Composes SLA breach notifications and routes them to PagerDuty (critical)
+  and Slack (all severities). HOTL-gated for PagerDuty pages; Slack
+  warnings and informational messages are autonomous.
+
+triggers:
+  - event: de.dataset_stale
+    source: table-freshness-check
+    filter: "{{ event.age_minutes > event.sla_max_age_minutes * 1.5 }}"   # only page when 50% over SLA
+  - event: de.investigation_complete
+    source: agent/freshness-investigator
+  - event: de.row_count_drop
+    source: anomaly/row-count-drop
+
+system_prompt: |
+  You are a data reliability notification agent. Your job is to compose
+  clear, actionable SLA breach notifications for two audiences:
+  1. The data on-call engineer (PagerDuty) — for critical breaches only.
+  2. The data engineering team channel (Slack) — for all breach severities.
+
+  Notification rules:
+  - Critical (age > 2× SLA or sigma > 4.0): page PagerDuty + post Slack.
+  - Warning (age 1.5–2× SLA or sigma 2.5–4.0): post Slack only.
+  - Include: dataset name, pipeline, age/freshness gap, SLA threshold,
+    root cause (if investigation is complete), and recommended next step.
+  - For PagerDuty: one short paragraph (< 60 words) in the alert body.
+  - For Slack: use the breach-summary template (Markdown, 3–5 bullet points).
+  - Do not page if the breach is already in 'investigating' or 'resolved' status.
+  - Never reveal internal tenant IDs or raw SQL error messages externally.
+
+tools:
+  - name: get_breach_status
+    description: >
+      Fetch current freshness breach status for a dataset. Returns status,
+      root_cause, notified_at, breach_started_at, sla_max_age_minutes.
+    kind: sql
+    query: |
+      SELECT id, status, root_cause, notified_at, breach_started_at,
+             sla_max_age_minutes, pipeline_id, dataset_id
+      FROM de_freshness_breaches
+      WHERE tenant_id = '{tenant_id}'
+        AND dataset_id = '{dataset_id}'
+        AND status IN ('open', 'investigating')
+      ORDER BY breach_started_at DESC
+      LIMIT 1
+
+  - name: mark_notified
+    description: >
+      Update the breach record to set notified_at = NOW(), preventing
+      duplicate pages. Returns the breach id.
+    kind: sql
+    query: |
+      UPDATE de_freshness_breaches
+      SET notified_at = NOW(), updated_at = NOW()
+      WHERE tenant_id = '{tenant_id}'
+        AND id = '{breach_id}'
+        AND notified_at IS NULL
+      RETURNING id
+
+  - name: send_pagerduty_alert
+    description: >
+      Page the data on-call via PagerDuty. Accepts: routing_key, summary,
+      severity ('critical' | 'error' | 'warning'), pipeline_id, dataset_id,
+      and a details object. Returns the PagerDuty dedup_key.
+    kind: http
+    method: POST
+    url: "https://events.pagerduty.com/v2/enqueue"
+    headers:
+      Content-Type: "application/json"
+    body_template: |
+      {
+        "routing_key": "${PAGERDUTY_DATA_TEAM_ROUTING_KEY}",
+        "event_action": "trigger",
+        "dedup_key": "de-sla-{tenant_id}-{dataset_id}",
+        "payload": {
+          "summary": "{summary}",
+          "severity": "{severity}",
+          "source": "xiaoguai-data-eng-pipeline",
+          "custom_details": {
+            "pipeline_id": "{pipeline_id}",
+            "dataset_id": "{dataset_id}",
+            "age_minutes": {age_minutes},
+            "sla_max_age_minutes": {sla_max_age_minutes},
+            "root_cause": "{root_cause}"
+          }
+        }
+      }
+
+  - name: send_slack_notification
+    description: >
+      Post a breach notification to the data engineering Slack channel.
+      Accepts: severity, dataset_id, pipeline_id, age_minutes,
+      sla_max_age_minutes, root_cause, and an optional admin_url for the
+      investigation link. Uses the breach-summary block kit format.
+    kind: output
+    channel: slack-data-eng-channel
+
+hotl:
+  budget_usd: 0.05
+  autonomous_actions:
+    get_breach_status: -1
+    mark_notified: 1
+    send_slack_notification: -1   # Slack posts are autonomous
+  require_human_approval:
+    - send_pagerduty_alert          # PagerDuty pages require confirmation
+  notify_channel: "${DE_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - pagerduty_page_sent
+    - slack_notification_sent
+    - notification_suppressed
+  feedback_table: de_freshness_breaches

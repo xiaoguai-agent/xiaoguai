@@ -1,0 +1,79 @@
+# Inbound connector — Airflow DAG event
+# ---------------------------------------------------------------------------
+# Accepts DAG run state-change events from Airflow, either via webhook
+# (recommended: Airflow HTTP callback) or as a fallback via the HTTP poll
+# defined in watches/dag-run-failure.yaml.
+#
+# Webhook endpoint: POST /api/packs/data-eng-pipeline/inbound/airflow
+# Auth: HMAC-SHA256 signature in X-Airflow-Signature header.
+# ---------------------------------------------------------------------------
+
+name: airflow-dag-event
+version: "1.0.0"
+description: >
+  Accepts Airflow DAG run state-change webhooks (dag_run.success,
+  dag_run.failed, dag_run.upstream_failed). Validates HMAC signature,
+  normalises the payload, and upserts a de_pipeline_runs record. Falls
+  back to the dag-run-failure watch if webhooks are not configured.
+
+kind: inbound_connector
+source: webhook
+
+endpoint:
+  path: /api/packs/data-eng-pipeline/inbound/airflow
+  method: POST
+  max_payload_bytes: 65536
+
+auth:
+  kind: hmac_sha256
+  header: X-Airflow-Signature
+  secret_env: AIRFLOW_WEBHOOK_SECRET
+
+schema:
+  required_fields:
+    - dag_id
+    - run_id
+    - state
+    - logical_date
+    - start_date
+  optional_fields:
+    - end_date
+    - external_trigger
+    - conf            # DAG run conf dict (may contain dataset_id hint)
+
+validations:
+  - field: state
+    rule: enum
+    values: [success, failed, upstream_failed, running, queued]
+
+mapping:
+  pipeline_id:    "$.dag_id"
+  run_id:         "$.run_id"
+  status:         "$.state"
+  run_date:       "$.logical_date | date"
+  started_at:     "$.start_date"
+  finished_at:    "$.end_date"
+  dataset_id:     "$.conf.dataset_id"       # optional; set by DAG if known
+  source:         "airflow"
+  raw_payload:    "$"
+
+target:
+  table: de_pipeline_runs
+  upsert_key: [tenant_id, pipeline_id, run_id]
+
+post_ingest:
+  emit_events:
+    - condition: "{{ status == 'success' }}"
+      event: de.pipeline_run_succeeded
+    - condition: "{{ status in ('failed', 'upstream_failed') }}"
+      event: de.pipeline_run_failed
+  trigger_agents:
+    - condition: "{{ status in ('failed', 'upstream_failed') }}"
+      agent: freshness-investigator
+    - condition: "{{ status == 'success' }}"
+      agent: lineage-breadcrumb-writer
+
+on_error:
+  response_format: json
+  invalid_signature: 401
+  invalid_payload: 400

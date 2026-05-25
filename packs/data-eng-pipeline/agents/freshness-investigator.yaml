@@ -1,0 +1,141 @@
+# Agent definition — freshness-investigator
+# ---------------------------------------------------------------------------
+# Triggered by de.dataset_stale or de.dag_run_failed events. Investigates
+# the root cause of a freshness breach by:
+#   1. Checking whether the upstream DAG succeeded or failed.
+#   2. Checking for row-count drops or latency anomalies on this pipeline.
+#   3. Walking the lineage graph to find the furthest-upstream failed node.
+#   4. Writing a root-cause summary to de_freshness_breaches.
+#   5. Emitting a de.investigation_complete event for downstream agents.
+#
+# HOTL guardrails: investigation writes are autonomous; only the root-cause
+# summary narrative requires human approval before external publication.
+# ---------------------------------------------------------------------------
+
+name: freshness-investigator
+version: "1.0.0"
+description: >
+  Investigates why a dataset is stale: checks upstream DAG state, row-count
+  anomalies, lineage graph for cascading failures, and source delay signals.
+  Writes root-cause summary to de_freshness_breaches. HOTL-gated for
+  external publication; internal state writes are autonomous.
+
+triggers:
+  - event: de.dataset_stale
+    source: table-freshness-check
+  - event: de.dag_run_failed
+    source: dag-run-failure
+  - event: de.row_count_drop
+    source: anomaly/row-count-drop
+
+system_prompt: |
+  You are a senior data engineering on-call analyst. Your job is to investigate
+  why a dataset has not been refreshed within its SLA window.
+
+  Investigation checklist (in order):
+  1. Check the most recent pipeline run for the affected dataset. Did it
+     succeed, fail, or not start?
+  2. If failed: what error did it report? Is it a transient error (connection
+     timeout, OOM) or a schema/logic error?
+  3. Walk the lineage graph upstream. Did a parent pipeline fail first?
+     Identify the furthest-upstream failure in the chain.
+  4. Check for row-count drops on the upstream source. Is the source itself
+     delivering fewer rows than expected?
+  5. Check for latency spikes. Is the pipeline running but taking much longer
+     than usual?
+  6. Summarise: root cause (one sentence), affected pipelines (list),
+     recommended action (retry / contact source team / escalate to data eng).
+
+  Rules:
+  - Use only data returned by tools. Do not invent dataset names or error messages.
+  - If lineage data is incomplete, say so explicitly.
+  - Keep the root-cause summary under 100 words.
+  - Do not recommend automated retries for schema/logic errors — those require
+    code changes.
+
+tools:
+  - name: get_latest_pipeline_run
+    description: >
+      Fetch the most recent run record for a given pipeline_id.
+      Returns: run_id, status, started_at, finished_at, duration_seconds,
+      row_count, error_message.
+    kind: sql
+    query: |
+      SELECT
+          run_id, status, started_at, finished_at,
+          duration_seconds, row_count, error_message, source
+      FROM de_pipeline_runs
+      WHERE tenant_id = '{tenant_id}'
+        AND pipeline_id = '{pipeline_id}'
+      ORDER BY started_at DESC
+      LIMIT 1
+
+  - name: get_upstream_lineage
+    description: >
+      Walk one level up the lineage graph for a given dataset_id.
+      Returns: upstream_id, edge_kind, recorded_at, breadcrumb.
+    kind: sql
+    query: |
+      SELECT
+          e.upstream_id, e.edge_kind, e.recorded_at, e.breadcrumb,
+          r.status AS upstream_run_status, r.error_message AS upstream_error
+      FROM de_lineage_edges e
+      LEFT JOIN de_pipeline_runs r
+             ON r.tenant_id = e.tenant_id
+            AND r.pipeline_id = e.upstream_id
+      WHERE e.tenant_id = '{tenant_id}'
+        AND e.downstream_id = '{dataset_id}'
+      ORDER BY e.recorded_at DESC
+      LIMIT 10
+
+  - name: get_open_breach
+    description: >
+      Fetch the current open freshness breach record for a dataset.
+      Returns the breach id so the agent can update it.
+    kind: sql
+    query: |
+      SELECT id, breach_started_at, status
+      FROM de_freshness_breaches
+      WHERE tenant_id = '{tenant_id}'
+        AND dataset_id = '{dataset_id}'
+        AND status IN ('open', 'investigating')
+      ORDER BY breach_started_at DESC
+      LIMIT 1
+
+  - name: open_or_update_breach
+    description: >
+      Insert a new freshness breach or update an existing one to status
+      'investigating' with a root_cause summary. Returns the breach id.
+    kind: sql
+    query: |
+      INSERT INTO de_freshness_breaches
+          (tenant_id, pipeline_id, dataset_id, sla_max_age_minutes,
+           breach_started_at, status, root_cause, investigation_id)
+      VALUES
+          ('{tenant_id}', '{pipeline_id}', '{dataset_id}', {sla_max_age_minutes},
+           '{breach_started_at}', 'investigating', '{root_cause}', '{investigation_id}')
+      ON CONFLICT (tenant_id, dataset_id, breach_started_at) DO UPDATE
+          SET status = 'investigating',
+              root_cause = EXCLUDED.root_cause,
+              investigation_id = EXCLUDED.investigation_id,
+              updated_at = NOW()
+      RETURNING id
+
+hotl:
+  budget_usd: 0.10
+  autonomous_actions:
+    open_or_update_breach: 1      # autonomous state write
+    get_latest_pipeline_run: -1   # read; unlimited
+    get_upstream_lineage: -1
+    get_open_breach: -1
+  require_human_approval:
+    - publish_root_cause_externally   # only if root cause is sent to Slack/PD
+  notify_channel: "${DE_NOTIFY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - breach_opened
+    - breach_updated
+    - root_cause_identified
+    - investigation_failed
+  feedback_table: de_freshness_breaches
