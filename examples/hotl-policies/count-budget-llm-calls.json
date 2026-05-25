@@ -1,0 +1,8 @@
+{
+  "tenant_id": "018e8f2c-1a2b-7000-8000-000000000001",
+  "scope": "llm_call",
+  "window_seconds": 86400,
+  "max_count": 1000,
+  "max_usd": null,
+  "escalate_to": "tier-2@example.com"
+}
