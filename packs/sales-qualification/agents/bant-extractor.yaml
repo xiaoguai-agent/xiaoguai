@@ -1,0 +1,171 @@
+# Agent definition — bant-extractor
+# ---------------------------------------------------------------------------
+# Input:  raw lead notes + email thread (from HubSpot, Salesforce, or email)
+# Output: BANT scores (Budget/Authority/Need/Timeline, each 0–25) +
+#         evidence quotes per dimension + overall BANT pass/fail verdict
+#
+# Triggered by inbound CRM events (hubspot-webhook, salesforce-event,
+# email-thread-ingest). Feeds meddic-deep-dive and next-action-recommender.
+#
+# HOTL guardrails: zero autonomous CRM writes. All score write-backs to
+# HubSpot/Salesforce require human approval via admin UI or IM reply.
+# ---------------------------------------------------------------------------
+
+name: bant-extractor
+version: "1.0.0"
+description: >
+  Extracts and scores Budget, Authority, Need, and Timeline signals from raw
+  lead notes and email threads. Produces per-dimension scores (0–25 each,
+  total 0–100) with direct evidence quotes, and a pass/fail verdict against
+  the operator-configured threshold.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: crm.hubspot.lead_created
+    source: hubspot-webhook
+  - event: crm.salesforce.lead_created
+    source: salesforce-event
+  - event: crm.email.lead_ingested
+    source: email-thread-ingest
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a sales-qualification analyst trained in the BANT framework.
+  Your job is to extract evidence from raw lead notes and email threads
+  and produce a structured BANT score.
+
+  BANT dimensions (each scored 0–25):
+    BUDGET (0–25):
+      0  = No mention of budget
+      1–10 = Vague affordability signals ("we're looking for something cost-effective")
+      11–20 = Budget range mentioned or approved budget cycle referenced
+      21–25 = Explicit budget amount confirmed and allocated
+
+    AUTHORITY (0–25):
+      0  = Unknown decision-maker
+      1–10 = Contact is an influencer but not the buyer
+      11–20 = Contact is the economic buyer or has direct budget authority
+      21–25 = Confirmed economic buyer + other stakeholders identified
+
+    NEED (0–25):
+      0  = No clear pain point or business need stated
+      1–10 = Generic interest; no specific problem articulated
+      11–20 = Specific business problem described with some urgency
+      21–25 = Quantified pain, explicit ROI language, or regulatory driver
+
+    TIMELINE (0–25):
+      0  = No timeline mentioned
+      1–10 = "Someday" or "next year maybe"
+      11–20 = Q-level target ("Q3 decision") or project kick-off mentioned
+      21–25 = Hard deadline confirmed, procurement process started
+
+  Rules:
+  - Quote evidence verbatim from the source text. Do not paraphrase.
+  - If a dimension has no signal, score it 0 and set evidence to an empty array.
+  - Do not hallucinate company facts or budget figures not present in the text.
+  - Output ONLY valid JSON matching the schema below. No prose, no markdown.
+
+  Output schema:
+  {
+    "lead_id": "<uuid from input>",
+    "bant": {
+      "budget":    { "score": <int 0–25>, "evidence": ["<quote>", ...] },
+      "authority": { "score": <int 0–25>, "evidence": ["<quote>", ...] },
+      "need":      { "score": <int 0–25>, "evidence": ["<quote>", ...] },
+      "timeline":  { "score": <int 0–25>, "evidence": ["<quote>", ...] }
+    },
+    "total_score": <int 0–100>,
+    "verdict": "pass" | "fail" | "needs_enrichment",
+    "reasoning": "<1–3 sentence summary for the sales rep>"
+  }
+
+  Use "needs_enrichment" when critical dimensions are 0 because the source
+  text lacks data (not because the signal is absent). The lead-enrichment
+  agent will be called next.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: get_lead_context
+    description: >
+      Fetch the raw lead record (notes, email thread, CRM metadata) for the
+      given lead_id. Returns company_name, contact_name, contact_email,
+      raw_notes, crm_source, crm_lead_id.
+    kind: sql
+    query: |
+      SELECT
+          id            AS lead_id,
+          company_name,
+          contact_name,
+          contact_email,
+          raw_notes,
+          crm_source,
+          crm_lead_id,
+          created_at
+      FROM sq_leads
+      WHERE tenant_id = '{tenant_id}'
+        AND id = '{lead_id}'
+
+  - name: save_bant_score
+    description: >
+      Persist the BANT score JSON to sq_bant_scores and append an event row
+      to sq_qualification_log with status = 'pending_approval'.
+      Returns the bant_score id and the qualification_log id.
+    kind: sql
+    query: |
+      WITH inserted_score AS (
+          INSERT INTO sq_bant_scores
+              (lead_id, tenant_id, budget_score, authority_score,
+               need_score, timeline_score, evidence)
+          VALUES
+              ('{lead_id}', '{tenant_id}',
+               {budget_score}, {authority_score},
+               {need_score}, {timeline_score},
+               '{evidence_json}'::JSONB)
+          RETURNING id AS score_id, total_score
+      ),
+      inserted_log AS (
+          INSERT INTO sq_qualification_log
+              (lead_id, tenant_id, event_type, bant_score, status)
+          VALUES
+              ('{lead_id}', '{tenant_id}', 'lead_scored',
+               (SELECT total_score FROM inserted_score), 'pending_approval')
+          RETURNING id AS log_id
+      )
+      SELECT
+          (SELECT score_id FROM inserted_score) AS bant_score_id,
+          (SELECT log_id   FROM inserted_log)   AS log_id
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    crm_write_back: 0
+  require_human_approval:
+    - save_bant_score       # human reviews score before CRM write-back
+  notify_channel: "${SALES_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# Rate limits
+# --------------------------------------------------------------------------
+rate_limits:
+  per_lead_per_hour: 3       # re-scoring cap (prevents runaway re-triggers)
+  per_tenant_per_hour: 200
+
+# --------------------------------------------------------------------------
+# On completion: hand off to lead-enrichment if verdict = needs_enrichment,
+# otherwise hand off to meddic-deep-dive (if bant_pass_threshold met) or
+# next-action-recommender (if below threshold).
+# --------------------------------------------------------------------------
+on_completion:
+  route:
+    needs_enrichment: lead-enrichment
+    pass:             meddic-deep-dive
+    fail:             next-action-recommender

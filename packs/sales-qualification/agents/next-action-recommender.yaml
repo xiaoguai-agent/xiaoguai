@@ -1,0 +1,164 @@
+# Agent definition — next-action-recommender
+# ---------------------------------------------------------------------------
+# Input:  BANT score + MEDDIC completeness percentage for a lead
+# Output: a suggested next-action from the playbook
+#         (demo / poc / contract_review / executive_alignment /
+#          discovery_call / nurture / disqualify)
+#         plus a short rationale and a list of specific action items
+#
+# Called by both bant-extractor (fail path) and meddic-deep-dive (all paths).
+# Outputs feed crm-update.yaml and slack-deal-room.yaml.
+# ---------------------------------------------------------------------------
+
+name: next-action-recommender
+version: "1.0.0"
+description: >
+  Recommends the best next-action playbook step based on combined BANT and
+  MEDDIC scores. Outputs one of seven playbook actions with rationale and
+  concrete action items for the sales rep.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions (called programmatically)
+# --------------------------------------------------------------------------
+triggers:
+  - event: sq.meddic.completed
+    source: meddic-deep-dive
+  - event: sq.bant.failed
+    source: bant-extractor
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are a sales-strategy advisor. Given BANT and MEDDIC scores for a lead,
+  choose the single best next-action from the playbook and explain why.
+
+  Playbook actions and selection criteria:
+
+    DEMO
+      When: BANT >= 60 AND MEDDIC completeness >= 50%
+            AND decision_criteria_known = true
+      Rationale: prospect understands the problem; a live demo will sharpen
+                 their evaluation criteria.
+
+    POC (Proof of Concept)
+      When: BANT >= 70 AND MEDDIC completeness >= 60%
+            AND technical_validation is the next stated hurdle
+      Rationale: technical buyer is engaged; hands-on POC closes the gap.
+
+    CONTRACT_REVIEW
+      When: BANT >= 80 AND MEDDIC completeness >= 80%
+            AND economic_buyer_identified = true
+      Rationale: deal is highly qualified; move to legal/procurement.
+
+    EXECUTIVE_ALIGNMENT
+      When: BANT >= 60 AND MEDDIC completeness >= 50%
+            AND economic_buyer_identified = false
+      Rationale: champion is engaged but economic buyer is unknown;
+                 executive introduction is the priority.
+
+    DISCOVERY_CALL
+      When: BANT >= 40 AND BANT < 60
+            OR (BANT >= 60 AND MEDDIC completeness < 40%)
+      Rationale: promising lead but insufficient qualification data;
+                 a structured discovery call will fill the gaps.
+
+    NURTURE
+      When: BANT > 0 AND BANT < 40
+            AND timeline_score < 10
+      Rationale: real need exists but no near-term buying trigger;
+                 add to a long-cycle nurture sequence.
+
+    DISQUALIFY
+      When: BANT = 0 (total) OR (need_score = 0 AND budget_score = 0)
+      Rationale: no discernible fit; do not invest further cycles.
+
+  Rules:
+  - Apply criteria in order from CONTRACT_REVIEW down to DISQUALIFY;
+    use the first matching action.
+  - Provide exactly 3–5 specific action items (not generic advice).
+  - Reference the MEDDIC missing dimensions in the action items where relevant.
+  - Output ONLY valid JSON matching the schema below.
+
+  Output schema:
+  {
+    "lead_id": "<uuid>",
+    "next_action": "demo" | "poc" | "contract_review" | "executive_alignment" |
+                   "discovery_call" | "nurture" | "disqualify",
+    "rationale": "<2 sentence explanation>",
+    "action_items": [
+      { "priority": 1, "owner": "ae" | "se" | "manager", "task": "<specific task>" },
+      ...
+    ],
+    "recommended_deal_stage": "<CRM stage name or null>",
+    "follow_up_in_days": <int>
+  }
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: get_scores
+    description: >
+      Fetch the latest BANT score and MEDDIC completeness for a lead.
+      Returns all dimension scores, MEDDIC boolean flags, and missing dims.
+    kind: sql
+    query: |
+      SELECT
+          b.total_score            AS bant_total,
+          b.budget_score,
+          b.authority_score,
+          b.need_score,
+          b.timeline_score,
+          b.evidence               AS bant_evidence,
+          m.completeness_pct       AS meddic_pct,
+          m.metrics_complete,
+          m.economic_buyer_identified,
+          m.decision_criteria_known,
+          m.decision_process_mapped,
+          m.pain_identified,
+          m.champion_identified,
+          m.missing_dimensions
+      FROM sq_leads l
+      LEFT JOIN sq_bant_scores  b ON b.lead_id = l.id
+      LEFT JOIN sq_meddic_scores m ON m.lead_id = l.id
+      WHERE l.tenant_id = '{tenant_id}'
+        AND l.id = '{lead_id}'
+      ORDER BY b.scored_at DESC, m.scored_at DESC
+      LIMIT 1
+
+  - name: save_recommendation
+    description: >
+      Write the recommendation to sq_qualification_log with
+      status = 'pending_approval'. Returns log_id.
+    kind: sql
+    query: |
+      INSERT INTO sq_qualification_log
+          (lead_id, tenant_id, event_type, bant_score, meddic_pct,
+           next_action, status)
+      VALUES
+          ('{lead_id}', '{tenant_id}', 'next_action_recommended',
+           {bant_total}, {meddic_pct}, '{next_action}', 'pending_approval')
+      RETURNING id
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    crm_update: 0
+    slack_post: 0
+  require_human_approval:
+    - save_recommendation
+  notify_channel: "${SALES_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# On completion: trigger CRM update + Slack deal room (both HOTL-gated)
+# --------------------------------------------------------------------------
+on_completion:
+  emit:
+    - event: sq.recommendation.ready
+      targets:
+        - outputs/crm-update.yaml
+        - outputs/slack-deal-room.yaml

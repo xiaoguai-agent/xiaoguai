@@ -1,0 +1,89 @@
+# outputs/slack-deal-room.yaml
+# ---------------------------------------------------------------------------
+# Slack deal room output — opens (or updates) a dedicated Slack channel for
+# a qualified lead and posts the qualification scorecard + action items.
+#
+# Triggered by: sq.recommendation.ready (from next-action-recommender)
+# Channel naming convention: #deal-{company-slug}-{lead-id-prefix}
+# ---------------------------------------------------------------------------
+
+name: slack-deal-room
+kind: output
+version: "1.0.0"
+
+description: >
+  Creates a deal-specific Slack channel when a lead's BANT score exceeds the
+  pass threshold, then posts the full qualification scorecard and action items.
+  For below-threshold leads, posts a brief summary to the team's pipeline
+  channel instead. Requires SLACK_BOT_TOKEN.
+
+# --------------------------------------------------------------------------
+# Trigger
+# --------------------------------------------------------------------------
+triggers:
+  - event: sq.recommendation.ready
+    source: next-action-recommender
+
+# --------------------------------------------------------------------------
+# Slack connection
+# --------------------------------------------------------------------------
+connection:
+  kind: slack_bot
+  token_env: SLACK_BOT_TOKEN
+  workspace_env: SLACK_WORKSPACE_ID   # optional; defaults to bot's workspace
+
+# --------------------------------------------------------------------------
+# Channel routing
+# --------------------------------------------------------------------------
+routing:
+  # For qualified leads (BANT >= threshold): open a dedicated deal room
+  on_qualified:
+    action: create_or_join_channel
+    name_template: "deal-{{ lead.company_name | slugify | truncate(20) }}-{{ lead.id[:8] }}"
+    parent_channel_env: SLACK_DEAL_ROOM_PARENT_CHANNEL
+    invite_users:
+      - "${AE_SLACK_USER_ID}"       # account executive
+      - "${SE_SLACK_USER_ID}"       # sales engineer (optional)
+    post_template: templates/qualification-scorecard.md.j2
+
+  # For unqualified / nurture leads: post a brief note to the pipeline channel
+  on_unqualified:
+    action: post_to_channel
+    channel_env: SLACK_PIPELINE_CHANNEL
+    message_template: |
+      :bar_chart: *Lead scored — {{ lead.company_name }}*
+      BANT: *{{ bant.total_score }}/100* | MEDDIC: *{{ meddic.completeness_pct }}%*
+      Next action: `{{ next_action.next_action }}` | Follow-up in {{ next_action.follow_up_in_days }}d
+      Scorecard: {{ scorecard_url }}
+
+  # For disqualified leads: post to archive channel only
+  on_disqualified:
+    action: post_to_channel
+    channel_env: SLACK_DISQUALIFIED_CHANNEL
+    message_template: |
+      :x: *Disqualified — {{ lead.company_name }}*
+      BANT: {{ bant.total_score }}/100 | Reason: {{ next_action.rationale }}
+
+# --------------------------------------------------------------------------
+# Approval buttons (Slack Block Kit interactive components)
+# --------------------------------------------------------------------------
+approval_buttons:
+  enabled: true
+  actions:
+    - label: "Approve CRM Write-back"
+      style: primary
+      action_id: sq_approve_crm_update
+      confirms_log_id: true
+    - label: "Reject"
+      style: danger
+      action_id: sq_reject_crm_update
+      prompts_reason: true
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  retry: 1
+  backoff_seconds: 3
+  log_level: warn
+  fallback: post_to_admin_ui_notification_bell

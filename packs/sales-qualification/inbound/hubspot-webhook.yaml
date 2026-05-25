@@ -1,0 +1,87 @@
+# inbound/hubspot-webhook.yaml
+# ---------------------------------------------------------------------------
+# HubSpot inbound webhook — receives Contact Created / Deal Created events
+# and normalises them into sq_leads rows before firing bant-extractor.
+#
+# HubSpot setup:
+#   1. In HubSpot: Settings → Integrations → Webhooks → Create Subscription
+#   2. Select "Contact created" and/or "Deal created" event types
+#   3. Set the target URL to your xiaoguai instance:
+#      https://<your-host>/api/v1/packs/sales-qualification/inbound/hubspot
+#   4. Copy the Client Secret from HubSpot and set HUBSPOT_WEBHOOK_SECRET
+# ---------------------------------------------------------------------------
+
+name: hubspot-webhook
+kind: webhook_inbound
+version: "1.0.0"
+
+description: >
+  Receives HubSpot Contact Created and Deal Created webhook events.
+  Validates HMAC-SHA256 signature, normalises the payload to a canonical
+  lead record, upserts into sq_leads, and emits crm.hubspot.lead_created
+  to trigger the bant-extractor agent.
+
+# --------------------------------------------------------------------------
+# HTTP endpoint registered by the pack loader
+# --------------------------------------------------------------------------
+endpoint:
+  path: /api/v1/packs/sales-qualification/inbound/hubspot
+  method: POST
+  content_type: application/json
+
+# --------------------------------------------------------------------------
+# Signature verification (HMAC-SHA256)
+# --------------------------------------------------------------------------
+auth:
+  kind: hmac_sha256
+  header: X-HubSpot-Signature-v3
+  secret_env: HUBSPOT_WEBHOOK_SECRET
+  timestamp_header: X-HubSpot-Request-Timestamp
+  max_age_seconds: 300    # reject replayed webhooks older than 5 minutes
+
+# --------------------------------------------------------------------------
+# Event filtering — only process relevant subscription types
+# --------------------------------------------------------------------------
+filters:
+  - field: "$.subscriptionType"
+    operator: in
+    values:
+      - contact.creation
+      - deal.creation
+
+# --------------------------------------------------------------------------
+# Payload normalisation — maps HubSpot fields to canonical lead schema
+# --------------------------------------------------------------------------
+normalise:
+  crm_source: "hubspot"
+  crm_lead_id: "$.objectId"
+  company_name:   "$.properties.company"
+  contact_name:   "$.properties.firstname + ' ' + $.properties.lastname"
+  contact_email:  "$.properties.email"
+  raw_notes: |
+    Concat of: $.properties.description, $.properties.hs_email_last_email_body,
+    $.properties.notes_last_body — joined with '\n\n---\n\n'.
+    Falls back to empty string if all fields are null.
+
+# --------------------------------------------------------------------------
+# Database write (upsert on crm_source + crm_lead_id)
+# --------------------------------------------------------------------------
+persist:
+  table: sq_leads
+  on_conflict: ["crm_source", "crm_lead_id"]
+  update_fields: ["company_name", "contact_name", "contact_email", "raw_notes"]
+
+# --------------------------------------------------------------------------
+# Emit event to trigger agent pipeline
+# --------------------------------------------------------------------------
+emit:
+  event: crm.hubspot.lead_created
+  target: agents/bant-extractor.yaml
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  log_level: error
+  dead_letter_table: sq_inbound_dead_letter
+  notify_channel: "${SALES_HOTL_NOTIFY_CHANNEL:-admin_ui}"

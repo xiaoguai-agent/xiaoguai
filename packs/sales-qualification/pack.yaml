@@ -1,0 +1,124 @@
+# Sales Qualification Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# BANT + MEDDIC lead qualification for inbound CRM leads.
+# Scores each lead on Budget, Authority, Need, Timeline (BANT) and
+# Metrics, Economic Buyer, Decision Criteria, Decision Process, Identify Pain,
+# Champion (MEDDIC); recommends the next-action playbook step.
+#
+# Install:   xiaoguai pack install packs/sales-qualification/
+# Requires:  xiaoguai >= v1.3.1-prep
+# ---------------------------------------------------------------------------
+
+name: sales-qualification
+version: "1.0.0"
+description: >
+  Multi-agent lead qualification using BANT and MEDDIC frameworks.
+  Ingests leads from HubSpot webhooks, Salesforce platform events, or raw
+  email threads; produces structured qualification scores, evidence quotes,
+  MEDDIC completeness checklists, and next-action recommendations. All CRM
+  write-backs are HOTL-gated (zero autonomous updates without human approval).
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - llm                # core LLM backend
+    - outcome-telemetry  # F3: records qualification outcomes for improvement
+    - web-search         # used by lead-enrichment agent (MCP web search tool)
+
+# --------------------------------------------------------------------------
+# Runtime dependencies
+# --------------------------------------------------------------------------
+dependencies:
+  orchestrator: { crate: xiaoguai-orchestrator, feature: default }
+  scheduler:    { crate: xiaoguai-scheduler,    feature: default }
+  audit:        { crate: xiaoguai-audit,        feature: default }
+
+# --------------------------------------------------------------------------
+# External system integrations (CRM + notification)
+# --------------------------------------------------------------------------
+external_systems:
+  hubspot:
+    status: webhook_inbound
+    real_integration: >
+      Receives Contact/Deal Created events via HubSpot webhook
+      (inbound/hubspot-webhook.yaml). Requires HUBSPOT_WEBHOOK_SECRET for
+      HMAC-SHA256 signature verification. Writes qualification scores back
+      via HubSpot Properties API (HOTL-gated). Hook point:
+      agents/bant-extractor.yaml trigger: crm.hubspot.lead_created.
+
+  salesforce:
+    status: event_inbound
+    real_integration: >
+      Receives Salesforce Platform Events (Lead__e, Opportunity__e) via CometD
+      streaming (inbound/salesforce-event.yaml). Requires SF_INSTANCE_URL,
+      SF_CLIENT_ID, SF_CLIENT_SECRET. Writes scores to Opportunity custom
+      fields via SFDC REST API (HOTL-gated). Hook point:
+      agents/bant-extractor.yaml trigger: crm.salesforce.lead_created.
+
+  slack:
+    status: real
+    real_integration: >
+      Opens a deal room channel and posts the qualification scorecard when a
+      lead crosses the "qualified" threshold. Requires SLACK_BOT_TOKEN and
+      SLACK_DEAL_ROOM_PARENT_CHANNEL. Hook point: outputs/slack-deal-room.yaml.
+
+  web_search:
+    status: real
+    real_integration: >
+      Lead enrichment uses the xiaoguai web-search MCP tool (Brave Search API)
+      to look up company size, industry, tech stack, and recent funding rounds.
+      Requires BRAVE_SEARCH_API_KEY. Hook point: agents/lead-enrichment.yaml.
+
+# --------------------------------------------------------------------------
+# Configuration knobs (operator-tunable without code changes)
+# --------------------------------------------------------------------------
+config:
+  qualification:
+    bant_pass_threshold: 60         # min BANT score (0–100) to advance to MEDDIC
+    meddic_complete_threshold: 70   # min MEDDIC completeness % to mark "Sales-Qualified"
+    deal_stage_on_sqo: "Demo Scheduled"  # CRM stage name when lead becomes SQO
+  enrichment:
+    enabled: true
+    max_search_results: 5
+  hotl:
+    notify_channel: "${SALES_HOTL_NOTIFY_CHANNEL:-admin_ui}"
+    crm_write_back: true            # set false to disable CRM updates entirely
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_leads.sql
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/bant-extractor.yaml
+  - path: agents/meddic-deep-dive.yaml
+  - path: agents/next-action-recommender.yaml
+  - path: agents/lead-enrichment.yaml
+
+# --------------------------------------------------------------------------
+# Schema
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "sq_"
+  namespace: "sales_qualification"
+
+# --------------------------------------------------------------------------
+# Outcome telemetry
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - lead_scored
+    - sqo_created
+    - lead_disqualified
+    - next_action_approved
+  feedback_table: sq_qualification_log
