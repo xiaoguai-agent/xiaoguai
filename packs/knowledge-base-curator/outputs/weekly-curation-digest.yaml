@@ -1,0 +1,68 @@
+---
+# Output: weekly-curation-digest
+#
+# Compiles a weekly summary of all KB curation findings and posts it to the
+# docs team Slack channel as a threaded digest.
+#
+# Sources (all optional — digest renders whichever sections have data):
+#   - Dedup clusters:  canonical-answer-clusterer findings (this week)
+#   - Broken links:    broken-link-checker findings (this week)
+#   - FAQ candidates:  faq_candidates created/approved this week
+#   - Stale articles:  kb_articles_meta with last_verified_at updated this week
+#
+# Triggered by: dedup-sweep plan (weekly cron or on-demand).
+
+output: weekly-curation-digest
+
+schedule:
+  # Default: every Monday at 09:00 in the workspace timezone.
+  cron: ${KB_CURATOR_DIGEST_CRON:-"0 9 * * 1"}
+
+slack:
+  webhook_url: ${KB_CURATOR_SLACK_WEBHOOK}
+
+  # Top-level message (thread parent).
+  header_template: |
+    *KB Curation Weekly Digest* — week of {{ week_start | date("MMM D") }}
+
+    Here's what the KB curator found this week:
+    • :mag: {{ dedup_count }} near-duplicate cluster(s) identified
+    • :link: {{ broken_link_article_count }} article(s) with broken links
+    • :pencil: {{ faq_candidate_count }} new FAQ candidate(s)
+    • :warning: {{ stale_article_count }} article(s) flagged as stale
+
+  # Thread replies — one per section (sent as replies to the header message).
+  thread_sections:
+    - condition: "{{ dedup_clusters | length > 0 }}"
+      template_ref: templates/dedup-merge-proposal.md.j2
+      # One reply per cluster.
+      loop_var: cluster
+      loop_over: dedup_clusters
+
+    - condition: "{{ broken_link_articles | length > 0 }}"
+      template_ref: templates/link-rot-checklist.md.j2
+      # One reply per article with broken links.
+      loop_var: article
+      loop_over: broken_link_articles
+
+    - condition: "{{ faq_candidates | length > 0 }}"
+      inline_template: |
+        *New FAQ Candidates this week ({{ faq_candidates | length }})*
+        {% for fc in faq_candidates %}
+        {{ loop.index }}. {{ fc.question | truncate(100) }} — confidence: {{ fc.confidence }}
+        {% endfor %}
+
+    - condition: "{{ stale_articles | length > 0 }}"
+      inline_template: |
+        *Stale Articles this week ({{ stale_articles | length }})*
+        {% for a in stale_articles[:10] %}
+        • {{ a.title | truncate(60) }} ({{ a.source_platform }}, {{ a.view_count }} views)
+        {% endfor %}
+        {% if stale_articles | length > 10 %}
+        _...and {{ stale_articles | length - 10 }} more. See Jira filter._
+        {% endif %}
+
+# Deferred:
+#   - Email digest to docs team mailing list
+#   - Per-product-area breakdown in separate thread replies
+#   - Historical trend charts (link rot rate, stale rate, dedup rate)

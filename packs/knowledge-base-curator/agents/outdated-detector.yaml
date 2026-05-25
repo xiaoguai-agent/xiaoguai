@@ -1,0 +1,107 @@
+---
+# Agent: outdated-detector
+#
+# Input:  stale_articles from article-stale-check watch — a list of KB article
+#         metadata rows whose refresh_due_at has passed.
+# Output: staleness reports (StaleArticle structs) forwarded to
+#         jira-docs-ticket and slack-docs-team outputs.
+#         Updates kb_articles_meta.last_verified_at after assessment.
+#
+# Strategy:
+#   For each stale article the agent:
+#     1. Fetches the article body from the upstream platform.
+#     2. Fetches recent product release notes (last N days / N releases).
+#     3. Asks the LLM to compare and identify outdated instructions or UI flows.
+#     4. Emits a structured staleness finding or a "still accurate" verdict.
+
+name: outdated-detector
+kind: llm-agent
+
+llm:
+  model: ${KB_CURATOR_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 4096
+
+tools:
+  # Fetch the current body of a KB article from the upstream platform.
+  - fetch_article_body
+  # Fetch recent product release notes from the configured release notes source.
+  # Source configured via KB_CURATOR_RELEASE_NOTES_SOURCE env var.
+  - fetch_release_notes
+  # Update kb_articles_meta.last_verified_at and refresh_due_at.
+  - mark_article_verified
+
+context_steps:
+  - id: article_body
+    description: "Current article content from upstream platform."
+    tool: fetch_article_body
+    params:
+      article_id:      "{{ article.article_id }}"
+      source_platform: "{{ article.source_platform }}"
+
+  - id: release_notes
+    description: "Product release notes since the article was last verified."
+    tool: fetch_release_notes
+    params:
+      since: "{{ article.last_verified_at | default(article.last_edited_at) }}"
+      # Limit to the 10 most recent releases to keep token budget bounded.
+      max_releases: 10
+
+system_prompt: |
+  You are a documentation quality reviewer.
+
+  You will receive a knowledge-base article and recent product release notes.
+  Your job: determine whether any instructions, UI flows, or API references
+  in the article have been invalidated by the release notes.
+
+  Output ONLY valid JSON (no prose, no code fences):
+  {
+    "verdict":   "accurate|stale|uncertain",
+    "confidence": "high|medium|low",
+    "stale_sections": [
+      {
+        "section_heading": "...",
+        "stale_instruction": "brief quote or description of the outdated text",
+        "reason": "what changed according to the release notes",
+        "release_reference": "version/date string from release notes"
+      }
+    ],
+    "summary": "1–2 sentence plain-English summary for the Jira ticket title"
+  }
+
+  Rules:
+  - verdict=accurate  → stale_sections must be [].
+  - verdict=stale     → stale_sections must have ≥ 1 entry.
+  - verdict=uncertain → use when release notes are ambiguous about UI changes.
+  - confidence=low    → when release notes don't clearly overlap with the article topic.
+  - Never invent UI flows or version numbers not present in the source material.
+  - Focus only on *instructional* content (steps, commands, screenshots, API calls).
+    Ignore marketing copy and feature descriptions.
+
+user_prompt_template: |
+  ## KB Article
+  ID:       {{ article.article_id }}
+  Title:    {{ article.title }}
+  Platform: {{ article.source_platform }}
+  Last edited: {{ article.last_edited_at | default("unknown") }}
+  Last verified: {{ article.last_verified_at | default("never") }}
+
+  ### Article body
+  {{ context.article_body | truncate(3000) }}
+
+  ## Product release notes (since last verification)
+  {{ context.release_notes | truncate(3000) }}
+
+  Assess staleness now.
+
+outputs:
+  - outputs/jira-docs-ticket.yaml
+  - outputs/slack-docs-team.yaml
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 4096
+
+# Deferred:
+#   - Screenshot diff for UI-heavy articles (requires vision model)
+#   - Automatic PR to fix trivial staleness (e.g. renamed menu items)

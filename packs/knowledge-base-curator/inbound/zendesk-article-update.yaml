@@ -1,0 +1,55 @@
+---
+# Inbound: zendesk-article-update
+#
+# Receives Zendesk Guide article.published / article.updated webhook events.
+# Upserts the corresponding kb_articles_meta row and resets refresh_due_at.
+#
+# Mounting: POST /v1/kb-curator/inbound/zendesk/{route_id}
+# Auth:     Bearer token from scheduler_webhook_tokens table.
+#           X-Zendesk-Webhook-Signature (HMAC-SHA256) verified if secret set.
+
+source: zendesk
+route_prefix: /v1/kb-curator/inbound/zendesk
+
+normalize:
+  hmac_secret: ${KB_CURATOR_ZENDESK_WEBHOOK_SECRET}
+
+  # Map Zendesk article event payload → kb_articles_meta upsert.
+  field_map:
+    article_id:      article.id
+    article_slug:    article.html_url   # used as stable slug
+    title:           article.title
+    source_platform: _const:zendesk
+    last_edited_at:  article.updated_at
+    view_count:      article.vote_count  # closest proxy; actual views via API
+    labels:
+      source: article.label_names
+      transform: json_array_to_jsonb
+
+  # Reset refresh_due_at to now + threshold so the article is not immediately
+  # re-queued for stale check after a fresh publish.
+  upsert_defaults:
+    last_verified_at: _now
+    refresh_due_at:   _now_plus_days:${KB_CURATOR_STALE_THRESHOLD_DAYS:-30}
+    archived:         false
+
+accepted_events:
+  - article.published
+  - article.updated
+
+# Ignored events (acknowledged HTTP 200, not processed):
+#   - article.unpublished  (handled by setting archived=true — deferred)
+#   - article.deleted
+
+sample_payload: |
+  {
+    "event": "article.published",
+    "article": {
+      "id": "360012345678",
+      "title": "How to reset your password",
+      "html_url": "https://help.example.com/hc/en-us/articles/360012345678",
+      "updated_at": "2026-05-25T08:00:00Z",
+      "vote_count": 42,
+      "label_names": ["account", "authentication"]
+    }
+  }

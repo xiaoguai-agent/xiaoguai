@@ -1,0 +1,103 @@
+---
+# Agent: faq-generator
+#
+# Input:  high_volume_topics from ticket-volume-by-topic watch — a list of
+#         topic clusters, each with a topic_label, ticket_count, and ticket_ids.
+# Output: faq_candidates rows (inserted into DB) + FaqDraft structs forwarded
+#         to draft-publish-to-confluence and slack-docs-team outputs.
+#
+# Strategy:
+#   For each topic cluster the agent:
+#     1. Fetches the N most representative tickets (highest upvote / reply count).
+#     2. Asks the LLM to extract a canonical question and a concise answer.
+#     3. Scores its own confidence (high/medium/low) based on cluster coherence.
+#     4. Inserts a faq_candidates row for human review.
+
+name: faq-generator
+kind: llm-agent
+
+llm:
+  model: ${KB_CURATOR_LLM_MODEL:-default}
+  temperature: 0.3
+  max_tokens: 8192
+
+# Tools available to this agent.
+tools:
+  # Fetch ticket bodies for the given ticket IDs.
+  - fetch_tickets
+  # Insert a faq_candidates row.
+  - insert_faq_candidate
+  # Embed a text string (used internally for cluster coherence scoring).
+  - embed_text
+
+# Context-gathering executed before the LLM prompt, per topic cluster.
+context_steps:
+  - id: fetch_top_tickets
+    description: "Retrieve the top-K ticket bodies for this topic cluster."
+    tool: fetch_tickets
+    params:
+      ticket_ids: "{{ topic.ticket_ids[:20] }}"
+      fields:
+        - id
+        - subject
+        - description
+        - reply_count
+        - upvote_count
+
+system_prompt: |
+  You are a technical writer drafting FAQ entries for a customer-facing
+  knowledge base.
+
+  You will receive a cluster of support tickets that share a common topic.
+  Your job:
+  1. Identify the single most common question these tickets are asking.
+  2. Draft a clear, concise answer suitable for a public FAQ (Markdown).
+  3. Rate your confidence (high/medium/low) based on how coherently the
+     tickets cluster around one question:
+       - high:   90%+ of tickets ask essentially the same question.
+       - medium: 60–90% are on-topic; a minority are tangential.
+       - low:    tickets are loosely related; answer covers multiple cases.
+
+  Output ONLY valid JSON matching this schema (no prose, no code fences):
+  {
+    "question":   "...",
+    "answer_md":  "...",
+    "confidence": "high|medium|low",
+    "rationale":  "one sentence explaining the confidence score"
+  }
+
+  Rules:
+  - Question must be a complete sentence ending with "?".
+  - Answer must be ≤ 300 words, use Markdown, and avoid internal jargon.
+  - Never invent information not present in the provided tickets.
+  - If the cluster is too incoherent to produce a useful FAQ (confidence=low
+    and no single clear question), set question to null and explain in rationale.
+
+user_prompt_template: |
+  ## Topic cluster: {{ topic.topic_label }}
+  Ticket count: {{ topic.ticket_count }}
+  Observation window: {{ watch_config.window_days | default(7) }} days
+
+  ## Representative tickets (most upvoted / replied first)
+  {% for ticket in context.fetch_top_tickets %}
+  ---
+  Ticket {{ ticket.id }} (replies: {{ ticket.reply_count }}, upvotes: {{ ticket.upvote_count }})
+  Subject: {{ ticket.subject }}
+  {{ ticket.description | truncate(600) }}
+  {% endfor %}
+
+  Draft the FAQ JSON now.
+
+# Output routing.
+outputs:
+  - outputs/draft-publish-to-confluence.yaml
+  - outputs/slack-docs-team.yaml
+
+budget:
+  # One LLM call per topic cluster + one tool call to insert the candidate.
+  max_llm_calls: 2
+  max_output_tokens: 8192
+
+# Deferred:
+#   - Multi-turn refinement if initial confidence is low
+#   - Automatic tagging by product_area from ticket metadata
