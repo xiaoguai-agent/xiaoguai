@@ -1,0 +1,229 @@
+---
+# Recipe: ticket-to-csm-action
+#
+# Zendesk ticket inbound → customer-success pack triage → churn-risk scoring →
+# if churn risk > 70, HotL escalate to VP Customer Success → CSM Slack alert →
+# outcome recorded.
+#
+# Composes:
+#   - pack: customer-success (inbound/zendesk-ticket, agents/ticket-triage,
+#                             agents/churn-risk-scorer, outputs/csm-slack-alert,
+#                             outputs/salesforce-account-update)
+#   - feature: hotl (HotlPolicyStore — churn-risk escalation gate)
+#   - feature: outcome-telemetry (OutcomeRecorder)
+#
+# Required env:
+#   ZENDESK_API_TOKEN, ZENDESK_SUBDOMAIN,
+#   SALESFORCE_CLIENT_ID, SALESFORCE_CLIENT_SECRET, SALESFORCE_INSTANCE_URL,
+#   CSM_SLACK_WEBHOOK_URL
+
+name: ticket-to-csm-action
+version: "0.1.0"
+description: >
+  Zendesk ticket inbound → customer-success pack triages and classifies →
+  churn-risk scorer re-scores account health → if churn risk exceeds 70 %,
+  a HotL gate escalates to the VP Customer Success for acknowledgement →
+  CSM Slack alert sent → Salesforce account activity updated → outcome
+  recorded.
+owner: customer-success
+tags: [csm, zendesk, hotl, churn-risk, outcome, slack]
+
+# ── Required packs and features ───────────────────────────────────────────────
+requires:
+  packs:
+    customer-success: ">=1.0.0"
+  features:
+    - hotl
+    - outcome-telemetry
+  env:
+    - ZENDESK_API_TOKEN
+    - ZENDESK_SUBDOMAIN
+    - SALESFORCE_CLIENT_ID
+    - SALESFORCE_CLIENT_SECRET
+    - SALESFORCE_INSTANCE_URL
+    - CSM_SLACK_WEBHOOK_URL
+  env_optional:
+    - TICKET_CSM_LLM_MODEL              # default: workspace default
+    - CHURN_RISK_HOTL_THRESHOLD         # default: 70
+    - CHURN_RISK_HOTL_APPROVER_ROLE     # default: vp-customer-success
+    - CHURN_RISK_HOTL_TIMEOUT_SECONDS   # default: 3600
+
+# ── Configuration knobs ───────────────────────────────────────────────────────
+config:
+  # Churn-risk score (0–100) at or above which the HotL escalation fires.
+  churn_risk_hotl_threshold: "${CHURN_RISK_HOTL_THRESHOLD:-70}"
+  # Role that receives and must acknowledge the escalation.
+  hotl_approver_role: "${CHURN_RISK_HOTL_APPROVER_ROLE:-vp-customer-success}"
+  # Seconds to wait for VP acknowledgement before auto-escalating to Slack
+  # without blocking recipe completion.
+  hotl_timeout_seconds: "${CHURN_RISK_HOTL_TIMEOUT_SECONDS:-3600}"
+  # Minimum ticket priority to run churn-risk scoring (skip low-noise tickets).
+  min_priority_for_risk_score: low     # low | normal | high | urgent
+
+# ── Trigger ───────────────────────────────────────────────────────────────────
+trigger:
+  inbound: customer-success/inbound/zendesk-ticket
+  description: >
+    Fires when a new Zendesk ticket is created or a ticket status changes to
+    open.  Payload: Zendesk ticket object (id, subject, requester, priority,
+    account_id, created_at, tags, description).
+
+# ── Steps ─────────────────────────────────────────────────────────────────────
+steps:
+  - id: triage
+    description: >
+      Classify the inbound Zendesk ticket: assign category (billing, bug,
+      feature-request, churn-signal, etc.), set internal priority, suggest
+      owner team, and surface the three most similar past tickets for
+      context.
+    agent: customer-success/agents/ticket-triage
+    inputs:
+      ticket: "{{ trigger.payload }}"
+    outputs:
+      category: "{{ triage.category }}"
+      internal_priority: "{{ triage.priority }}"   # low | normal | high | urgent
+      owner_team: "{{ triage.owner_team }}"
+      similar_tickets: "{{ triage.similar_tickets }}"
+      is_churn_signal: "{{ triage.category == 'churn-signal' or triage.priority == 'urgent' }}"
+    error_handling:
+      on_failure: abort
+      notify:
+        kind: slack_webhook
+        webhook_url: "${CSM_SLACK_WEBHOOK_URL}"
+        message: >
+          Ticket triage failed for Zendesk ticket {{ trigger.payload.id }}.
+          Manual review required.
+
+  - id: score_churn_risk
+    description: >
+      Re-score the account's churn risk incorporating the new ticket as a
+      signal (ticket spike, category, priority).  Returns a risk score
+      (0–100) and a set of talking points for the CSM.
+    agent: customer-success/agents/churn-risk-scorer
+    inputs:
+      account_id: "{{ trigger.payload.account_id }}"
+      ticket_category: "{{ steps.triage.outputs.category }}"
+      ticket_priority: "{{ steps.triage.outputs.internal_priority }}"
+      ticket_id: "{{ trigger.payload.id }}"
+    outputs:
+      risk_score: "{{ score_churn_risk.risk_score }}"       # 0–100
+      risk_delta: "{{ score_churn_risk.risk_delta }}"       # change vs last score
+      talking_points: "{{ score_churn_risk.talking_points }}"
+      health_tier: "{{ score_churn_risk.health_tier }}"     # green | yellow | red
+    condition: >
+      {{ steps.triage.outputs.internal_priority | priority_rank >= config.min_priority_for_risk_score | priority_rank }}
+    deps: [triage]
+    error_handling:
+      on_failure: continue
+      fallback:
+        risk_score: null
+        risk_delta: null
+        talking_points: []
+        health_tier: unknown
+
+  - id: hotl_escalate_vp
+    description: >
+      HotL gate — if churn risk score >= hotl_threshold, send an escalation
+      request to the VP Customer Success with account details, risk score,
+      and talking points.  The gate does NOT block the CSM Slack alert; it
+      runs in parallel and records whether the VP acknowledged within
+      hotl_timeout_seconds.  On timeout the gate auto-closes with status
+      timed_out (the CSM alert is not suppressed).
+    hotl:
+      policy: churn-risk-vp-escalation
+      gated_on: >
+        {{ steps.score_churn_risk.outputs.risk_score is not none
+           and steps.score_churn_risk.outputs.risk_score >= config.churn_risk_hotl_threshold | int }}
+      approver_role: "{{ config.hotl_approver_role }}"
+      timeout_seconds: "{{ config.hotl_timeout_seconds }}"
+      on_timeout: close_timed_out    # non-blocking: recipe continues either way
+      blocking: false                # VP escalation is advisory, not a gate
+      context_for_approver:
+        account_id: "{{ trigger.payload.account_id }}"
+        risk_score: "{{ steps.score_churn_risk.outputs.risk_score }}"
+        risk_delta: "{{ steps.score_churn_risk.outputs.risk_delta }}"
+        health_tier: "{{ steps.score_churn_risk.outputs.health_tier }}"
+        ticket_id: "{{ trigger.payload.id }}"
+        ticket_subject: "{{ trigger.payload.subject }}"
+        talking_points: "{{ steps.score_churn_risk.outputs.talking_points }}"
+      audit: true
+    condition: >
+      {{ steps.score_churn_risk.outputs.risk_score is not none
+         and steps.score_churn_risk.outputs.risk_score >= config.churn_risk_hotl_threshold | int }}
+    deps: [score_churn_risk]
+
+  - id: alert_csm_slack
+    description: >
+      Send a structured CSM Slack alert containing: ticket details, category,
+      triage owner, churn risk score + delta, health tier, talking points,
+      and a flag indicating whether a VP escalation was raised.
+    output: customer-success/outputs/csm-slack-alert
+    inputs:
+      ticket_id: "{{ trigger.payload.id }}"
+      ticket_subject: "{{ trigger.payload.subject }}"
+      ticket_url: "{{ trigger.payload.url }}"
+      account_id: "{{ trigger.payload.account_id }}"
+      category: "{{ steps.triage.outputs.category }}"
+      internal_priority: "{{ steps.triage.outputs.internal_priority }}"
+      owner_team: "{{ steps.triage.outputs.owner_team }}"
+      risk_score: "{{ steps.score_churn_risk.outputs.risk_score }}"
+      risk_delta: "{{ steps.score_churn_risk.outputs.risk_delta }}"
+      health_tier: "{{ steps.score_churn_risk.outputs.health_tier }}"
+      talking_points: "{{ steps.score_churn_risk.outputs.talking_points }}"
+      vp_escalated: >
+        {{ steps.score_churn_risk.outputs.risk_score is not none
+           and steps.score_churn_risk.outputs.risk_score >= config.churn_risk_hotl_threshold | int }}
+    # Fires regardless of HotL gate outcome (non-blocking VP escalation).
+    deps: [score_churn_risk, hotl_escalate_vp]
+    error_handling:
+      on_failure: warn   # Slack failure should not prevent Salesforce update
+
+  - id: update_salesforce
+    description: >
+      Write triage result and updated risk score to the Salesforce account
+      activity timeline.  If churn risk crossed the hotl_threshold, also
+      update the account health field and log a CSM follow-up task.
+    output: customer-success/outputs/salesforce-account-update
+    inputs:
+      account_id: "{{ trigger.payload.account_id }}"
+      ticket_id: "{{ trigger.payload.id }}"
+      category: "{{ steps.triage.outputs.category }}"
+      internal_priority: "{{ steps.triage.outputs.internal_priority }}"
+      risk_score: "{{ steps.score_churn_risk.outputs.risk_score }}"
+      risk_delta: "{{ steps.score_churn_risk.outputs.risk_delta }}"
+      health_tier: "{{ steps.score_churn_risk.outputs.health_tier }}"
+      create_followup_task: >
+        {{ steps.score_churn_risk.outputs.risk_score is not none
+           and steps.score_churn_risk.outputs.risk_score >= config.churn_risk_hotl_threshold | int }}
+    deps: [score_churn_risk, alert_csm_slack]
+    error_handling:
+      on_failure: warn
+
+  - id: record_outcome
+    description: >
+      Record to OutcomeRecorder: ticket id, account id, triage category,
+      risk score, VP escalation flag, and recipe elapsed time.
+    outcome:
+      event: ticket.csm.actioned
+      payload:
+        ticket_id: "{{ trigger.payload.id }}"
+        account_id: "{{ trigger.payload.account_id }}"
+        category: "{{ steps.triage.outputs.category }}"
+        internal_priority: "{{ steps.triage.outputs.internal_priority }}"
+        risk_score: "{{ steps.score_churn_risk.outputs.risk_score }}"
+        health_tier: "{{ steps.score_churn_risk.outputs.health_tier }}"
+        vp_escalated: >
+          {{ steps.score_churn_risk.outputs.risk_score is not none
+             and steps.score_churn_risk.outputs.risk_score >= config.churn_risk_hotl_threshold | int }}
+        elapsed_ms: "{{ recipe.elapsed_ms }}"
+    deps: [update_salesforce]
+
+# ── Error handling — global ───────────────────────────────────────────────────
+on_error:
+  notify:
+    kind: slack_webhook
+    webhook_url: "${CSM_SLACK_WEBHOOK_URL}"
+    message: >
+      Recipe `ticket-to-csm-action` failed at step `{{ failed_step }}`:
+      {{ error.message }}. Zendesk ticket: {{ trigger.payload.id }}
+      (account: {{ trigger.payload.account_id }}). Manual CSM review required.
