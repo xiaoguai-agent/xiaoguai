@@ -1,0 +1,184 @@
+suite: IM adapter secretKeyRef projection
+templates:
+  - templates/deployment.yaml
+
+tests:
+  # Discord
+  - it: should inject DISCORD_BOT_TOKEN as secretKeyRef when secrets.discord is set
+    set:
+      secrets.database: xiaoguai-database
+      secrets.cache: xiaoguai-cache
+      secrets.auth: xiaoguai-auth
+      secrets.audit: xiaoguai-audit
+      secrets.discord: xiaoguai-discord
+      discord.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DISCORD_BOT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: xiaoguai-discord
+                key: DISCORD_BOT_TOKEN
+
+  - it: should NOT inject DISCORD_BOT_TOKEN when secrets.discord is empty
+    set:
+      secrets.database: xiaoguai-database
+      secrets.cache: xiaoguai-cache
+      secrets.auth: xiaoguai-auth
+      secrets.audit: xiaoguai-audit
+      secrets.discord: ""
+      discord.enabled: true
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DISCORD_BOT_TOKEN
+
+  - it: should inject DISCORD_WEBHOOK_SECRET when discord.webhookSigningEnabled=true and secret set
+    set:
+      secrets.database: xiaoguai-database
+      secrets.cache: xiaoguai-cache
+      secrets.auth: xiaoguai-auth
+      secrets.audit: xiaoguai-audit
+      secrets.discord: xiaoguai-discord
+      discord.enabled: true
+      discord.webhookSigningEnabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DISCORD_WEBHOOK_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: xiaoguai-discord
+                key: DISCORD_WEBHOOK_SECRET
+
+  - it: should NOT inject DISCORD_WEBHOOK_SECRET when webhookSigningEnabled=false
+    set:
+      secrets.database: xiaoguai-database
+      secrets.cache: xiaoguai-cache
+      secrets.auth: xiaoguai-auth
+      secrets.audit: xiaoguai-audit
+      secrets.discord: xiaoguai-discord
+      discord.enabled: true
+      discord.webhookSigningEnabled: false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DISCORD_WEBHOOK_SECRET
+
+  # Telegram
+  - it: should inject TELEGRAM_BOT_TOKEN as secretKeyRef when secrets.telegram is set
+    set:
+      secrets.database: xiaoguai-database
+      secrets.cache: xiaoguai-cache
+      secrets.auth: xiaoguai-auth
+      secrets.audit: xiaoguai-audit
+      secrets.telegram: xiaoguai-telegram
+      telegram.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TELEGRAM_BOT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: xiaoguai-telegram
+                key: TELEGRAM_BOT_TOKEN
+
+  - it: should NOT inject TELEGRAM_BOT_TOKEN when secrets.telegram is empty
+    set:
+      secrets.database: xiaoguai-database
+      secrets.cache: xiaoguai-cache
+      secrets.auth: xiaoguai-auth
+      secrets.audit: xiaoguai-audit
+      secrets.telegram: ""
+      telegram.enabled: true
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TELEGRAM_BOT_TOKEN
+
+  # Mattermost
+  - it: should inject MATTERMOST_BOT_TOKEN as secretKeyRef when secrets.mattermost is set
+    set:
+      secrets.database: xiaoguai-database
+      secrets.cache: xiaoguai-cache
+      secrets.auth: xiaoguai-auth
+      secrets.audit: xiaoguai-audit
+      secrets.mattermost: xiaoguai-mattermost
+      mattermost.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MATTERMOST_BOT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: xiaoguai-mattermost
+                key: MATTERMOST_BOT_TOKEN
+
+  - it: should NOT inject MATTERMOST_BOT_TOKEN when secrets.mattermost is empty
+    set:
+      secrets.database: xiaoguai-database
+      secrets.cache: xiaoguai-cache
+      secrets.auth: xiaoguai-auth
+      secrets.audit: xiaoguai-audit
+      secrets.mattermost: ""
+      mattermost.enabled: true
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MATTERMOST_BOT_TOKEN
+
+  # Slack (wave-3 bot-token flow)
+  - it: should inject SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET as secretKeyRef when secrets.slack is set
+    set:
+      secrets.database: xiaoguai-database
+      secrets.cache: xiaoguai-cache
+      secrets.auth: xiaoguai-auth
+      secrets.audit: xiaoguai-audit
+      secrets.slack: xiaoguai-slack
+      slack.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SLACK_BOT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: xiaoguai-slack
+                key: SLACK_BOT_TOKEN
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SLACK_SIGNING_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: xiaoguai-slack
+                key: SLACK_SIGNING_SECRET
+
+  - it: should NOT inject SLACK_BOT_TOKEN or SLACK_SIGNING_SECRET when secrets.slack is empty
+    set:
+      secrets.database: xiaoguai-database
+      secrets.cache: xiaoguai-cache
+      secrets.auth: xiaoguai-auth
+      secrets.audit: xiaoguai-audit
+      secrets.slack: ""
+      slack.enabled: true
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SLACK_BOT_TOKEN
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SLACK_SIGNING_SECRET
