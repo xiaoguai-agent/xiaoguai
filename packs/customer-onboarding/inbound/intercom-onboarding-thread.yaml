@@ -1,0 +1,82 @@
+# packs/customer-onboarding/inbound/intercom-onboarding-thread.yaml
+#
+# Inbound: Intercom onboarding conversation thread snapshot
+#
+# Polls Intercom for onboarding-tagged conversations and records:
+#   - Last reply timestamp (champion-disengaged detection)
+#   - Thread sentiment (positive / neutral / negative)
+#   - Contact name (who is engaging)
+#
+# Runs on a schedule (not webhook-driven) because Intercom's webhook reliability
+# is insufficient for champion-disengaged classification.
+
+name: intercom-onboarding-thread
+kind: scheduled-poll
+
+schedule:
+  interval_seconds: 14400    # every 4 hours
+
+# Intercom API call — search conversations with onboarding tag
+api:
+  base_url: "https://api.intercom.io"
+  auth:
+    type: bearer
+    token_env: INTERCOM_ACCESS_TOKEN
+  endpoint: "/conversations/search"
+  method: POST
+  body: |
+    {
+      "query": {
+        "operator": "AND",
+        "value": [
+          {"field": "tag.name", "operator": "=", "value": "onboarding"},
+          {"field": "open", "operator": "=", "value": true}
+        ]
+      },
+      "pagination": {"per_page": 50}
+    }
+
+field_mapping:
+  conversation_id: "$.id"
+  contact_name:    "$.source.author.name"
+  contact_email:   "$.source.author.email"
+  last_reply_at:   "$.statistics.last_contact_reply_at"   # epoch seconds
+  created_at:      "$.created_at"                         # epoch seconds
+
+# Match Intercom contact email to onboarding_milestones.customer_id
+# (requires a customers table with contact emails; simplified here)
+customer_lookup_sql: |
+  SELECT m.id AS milestone_id, m.customer_id
+  FROM   onboarding_milestones m
+  JOIN   customers c ON c.id = m.customer_id
+  WHERE  c.champion_email = $contact_email
+    AND  m.status = 'in_progress'
+  LIMIT  1
+
+on_receive_sql: |
+  INSERT INTO co_audit_log (customer_id, agent, action, detail)
+  VALUES (
+      $customer_id::UUID,
+      'intercom-inbound',
+      'intercom_thread_snapshot',
+      jsonb_build_object(
+          'conversation_id',   $conversation_id,
+          'contact_name',      $contact_name,
+          'last_reply_at',     to_timestamp($last_reply_at)::TEXT,
+          'thread_sentiment',  $thread_sentiment   -- populated by LLM sentiment pass
+      )
+  )
+  ON CONFLICT DO NOTHING
+
+# Optional LLM sentiment analysis on the last message body
+sentiment_analysis:
+  enabled: true
+  model: haiku                  # lightweight — sentiment only
+  prompt: |
+    Classify the sentiment of this Intercom message as: positive, neutral, or negative.
+    Respond with exactly one word.
+    Message: {{ last_message_body | truncate(500) }}
+
+on_error:
+  notify_channel: "ops-alerts"
+  message: "intercom-onboarding-thread poll error: $error"

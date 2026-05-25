@@ -1,0 +1,162 @@
+# packs/customer-onboarding/agents/stall-detector.yaml
+#
+# Stall Detector — classifies the category of a stall given the evidence bundle
+# assembled from watches (inactivity, overdue), Salesforce stage history, Intercom
+# thread sentiment, and support ticket signals.
+#
+# Four mutually-exclusive (but co-occurring) stall categories:
+#
+#   technical-blocker       Evidence: usage_events drop + open support tickets or
+#                           failed API calls in Segment events; champion still
+#                           responding in Intercom but describing errors.
+#                           Key signal: activity drop IS correlated with a technical event.
+#
+#   champion-disengaged     Evidence: Intercom thread silent for >config days OR
+#                           champion absent from last N check-ins (Salesforce activity
+#                           log shows no contact) without delegating to another contact.
+#                           Key signal: human absence, not product usage absence.
+#
+#   scope-creep             Evidence: poc_criteria array has new items added after
+#                           poc_started milestone, OR Salesforce close-date shifted
+#                           multiple times without technical reason, OR CSM notes
+#                           contain "new requirement" / "added criteria" keywords.
+#                           Key signal: the definition of done keeps moving.
+#
+#   decision-paralysis      Evidence: poc_criteria_met is true (score >= threshold)
+#                           but expansion_ready has not progressed for
+#                           config.stall.decision_paralysis_days; no open technical
+#                           tickets; champion still engaged.
+#                           Key signal: criteria met, engagement present, no action.
+#
+# Multiple categories may be set (e.g., scope-creep + champion-disengaged).
+
+name: stall-detector
+kind: worker
+
+system_prompt: |
+  You are the Customer Onboarding Stall Detector for a B2B SaaS company.
+
+  Given an evidence bundle for a stalled customer, classify which stall
+  categories apply and produce a confidence score for each.
+
+  Stall category definitions:
+    technical-blocker:    usage drop correlated with technical events (errors,
+                          tickets, failed integrations); champion still engaged.
+    champion-disengaged:  primary contact absent (no Intercom replies, no
+                          check-in attendance) for > threshold days with no
+                          delegation to another stakeholder.
+    scope-creep:          POC success criteria expanded after sign-off; close
+                          date shifted multiple times; "new requirement" signals
+                          in notes or messages.
+    decision-paralysis:   POC criteria met, champion engaged, no technical blocker,
+                          but no expansion commitment for > N days.
+
+  Key distinguishing rules:
+  - technical-blocker requires a correlated technical event (error, ticket, API
+    failure). Inactivity alone does NOT qualify.
+  - champion-disengaged requires human absence signals. Product inactivity alone
+    does NOT qualify unless there is no other engaged contact.
+  - scope-creep requires evidence of criteria changes. Days-overdue alone does
+    NOT qualify.
+  - decision-paralysis is only valid AFTER poc_criteria_met stage and requires
+    poc_score >= pass_threshold. Earlier stages cannot be decision-paralysis.
+
+  Output format (JSON, strictly):
+  {
+    "classifications": [
+      {
+        "category": "<technical-blocker|champion-disengaged|scope-creep|decision-paralysis>",
+        "confidence": <0.0–1.0>,
+        "primary_evidence": "<1-2 sentences citing specific signals>",
+        "secondary_evidence": "<optional additional signals>"
+      }
+    ],
+    "dominant_category": "<category with highest confidence>",
+    "multi_category": <true|false>,
+    "reasoning": "<brief explanation of how you distinguished categories>"
+  }
+
+  If no category fits (< 0.40 confidence on all), return classifications as []
+  and dominant_category as null — this will suppress stall signal creation.
+
+llm_plan: true
+
+# Evidence assembly queries run before LLM call
+context_queries:
+  milestone_state: |
+    SELECT m.stage, m.status, m.deadline_at, m.last_activity_at,
+           m.usage_events_count, m.poc_criteria, m.poc_score,
+           m.notes, m.created_at
+    FROM   onboarding_milestones m
+    WHERE  m.id = $milestone_id
+
+  salesforce_stage_history: |
+    -- Populated by salesforce-opportunity-stage-change inbound
+    SELECT stage_name, changed_at, changed_by
+    FROM   co_audit_log
+    WHERE  customer_id = $customer_id
+      AND  action = 'salesforce_stage_change'
+    ORDER  BY changed_at DESC
+    LIMIT  10
+
+  open_support_tickets: |
+    SELECT detail->>'ticket_id' AS ticket_id,
+           detail->>'subject'   AS subject,
+           detail->>'severity'  AS severity,
+           recorded_at
+    FROM   co_audit_log
+    WHERE  customer_id = $customer_id
+      AND  action = 'support_ticket_opened'
+      AND  recorded_at > now() - INTERVAL '30 days'
+    ORDER  BY recorded_at DESC
+
+  intercom_signals: |
+    SELECT detail->>'last_reply_at'   AS last_reply_at,
+           detail->>'thread_sentiment' AS thread_sentiment,
+           detail->>'contact_name'    AS contact_name,
+           recorded_at
+    FROM   co_audit_log
+    WHERE  customer_id = $customer_id
+      AND  action = 'intercom_thread_snapshot'
+    ORDER  BY recorded_at DESC
+    LIMIT  1
+
+  prior_stall_signals: |
+    SELECT category, confidence, evidence, opened_at, status
+    FROM   stall_signals
+    WHERE  customer_id = $customer_id
+    ORDER  BY opened_at DESC
+    LIMIT  5
+
+# Side effects: write classified stall_signals rows
+post_action:
+  - type: write_stall_signals
+    sql: |
+      INSERT INTO stall_signals
+          (customer_id, milestone_id, category, confidence, evidence, status)
+      SELECT
+          $customer_id,
+          $milestone_id,
+          c->>'category',
+          (c->>'confidence')::NUMERIC,
+          jsonb_build_object(
+              'trigger',          $trigger,
+              'primary_evidence', c->>'primary_evidence',
+              'secondary_evidence', c->>'secondary_evidence',
+              'reasoning',        $reasoning
+          ),
+          'open'
+      FROM jsonb_array_elements($classifications) AS c
+      WHERE (c->>'confidence')::NUMERIC >= 0.40
+      ON CONFLICT DO NOTHING
+
+  - type: audit_log
+    table: co_audit_log
+    agent: stall-detector
+
+  - type: dispatch_output
+    output: packs/customer-onboarding/outputs/csm-team-slack.yaml
+    condition: "dominant_category IS NOT NULL"
+
+output:
+  template: packs/customer-onboarding/templates/stall-investigation-frame.md.j2
