@@ -85,6 +85,8 @@ fn build_state_with_toolbox(toolbox: Toolbox, publish: bool) -> AppState {
         rate_limit_state: None,
         hotl_policy_store: None,
         hotl_enforcer: None,
+        outcome_writer: None,
+        outcomes_reader: None,
     }
 }
 

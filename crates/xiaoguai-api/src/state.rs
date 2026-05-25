@@ -27,6 +27,7 @@ use crate::auth::TokenValidator;
 use crate::eval::EvalService;
 use crate::hotl::enforcer::HotlEnforcer;
 use crate::hotl::policy::HotlPolicyStore;
+use crate::outcomes::{OutcomeWriter, OutcomesReader};
 use crate::scheduler::{
     NlJobCompiler, ScheduledJobUpserter, ScheduledJobsReader, WebhookPusher, WebhookTokenAdmin,
     WebhookTokenValidator,
@@ -184,6 +185,14 @@ pub struct AppState {
     /// (LLM call path wired; email/webhook deferred). `None` disables
     /// enforcement (allow-all passthrough).
     pub hotl_enforcer: Option<Arc<dyn HotlEnforcer>>,
+    /// v1.2.4: outcome telemetry write side — backs `POST /v1/outcomes`.
+    /// `None` makes the endpoint return 503; production wires
+    /// `PgOutcomeRecorder` via an adapter in `xiaoguai-core`.
+    pub outcome_writer: Option<Arc<dyn OutcomeWriter>>,
+    /// v1.2.4: outcome telemetry read side — backs
+    /// `GET /v1/outcomes/summary` and `GET /v1/outcomes/timeseries`.
+    /// `None` makes both endpoints return 503.
+    pub outcomes_reader: Option<Arc<dyn OutcomesReader>>,
 }
 
 impl std::fmt::Debug for AppState {

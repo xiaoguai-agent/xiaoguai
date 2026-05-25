@@ -15,6 +15,7 @@ pub mod eval;
 pub mod hotl;
 pub mod marketplace;
 pub mod mcp_serve;
+pub mod outcomes;
 pub mod rate_limit;
 pub mod rbac;
 pub mod routes;
@@ -46,6 +47,11 @@ pub use mcp_serve::XiaoguaiMcpServer;
 pub use rate_limit::{
     rate_limit, rate_limit_middleware, InMemoryBackend, RateClass, RateLimitBackend,
     RateLimitState, RateLimiter, RedisBackend, RouteClass,
+};
+pub use outcomes::{
+    InMemoryOutcomeRecorder, InMemoryOutcomesBackend, OutcomeKind, OutcomeWriter, OutcomesApiError,
+    OutcomesReader, OutcomesSummaryResponse, OutcomesTimeseriesResponse, RecordOutcomeRequest,
+    RecordOutcomeResponse,
 };
 pub use rbac::{method_to_action, path_to_resource, require_authorized};
 pub use routes::router;

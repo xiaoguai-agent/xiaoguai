@@ -15,5 +15,10 @@
 
 pub mod chain;
 pub mod sinks;
+pub mod outcomes;
 
 pub use chain::{AuditEntry, ChainError, ChainedAudit, StoredEntry};
+pub use outcomes::{
+    timeseries, Aggregate, InMemoryOutcomeRecorder, OutcomeDay, OutcomeError, OutcomeKind,
+    OutcomeRange, OutcomeRecord, OutcomeRecorder, OutcomeSummary,
+};

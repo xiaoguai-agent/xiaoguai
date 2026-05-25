@@ -10,6 +10,7 @@ import { ProvidersPane } from './panes/Providers';
 import { AuditPane } from './panes/Audit';
 import { UsagePane } from './panes/Usage';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
+import { OutcomesPane } from './panes/Outcomes';
 
 /**
  * v0.11.1 — audit-first console. `Today` becomes the default landing
@@ -35,6 +36,11 @@ export function App() {
           {t('nav.usage')}
         </NavLink>
         <div className="nav-section">{t('nav.manage')}</div>
+        {/* v1.2.4: Outcomes — ROI / "revenue, not time" dashboard. */}
+        <NavLink to="/outcomes" className={({ isActive }) => (isActive ? 'active' : '')}>
+          Outcomes
+        </NavLink>
+        <div className="nav-section">Manage</div>
         <NavLink to="/tenants" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.tenants')}
         </NavLink>
@@ -59,6 +65,7 @@ export function App() {
           <Route path="/scheduler" element={<SchedulerPane />} />
           <Route path="/eval" element={<EvalPane />} />
           <Route path="/usage" element={<UsagePane />} />
+          <Route path="/outcomes" element={<OutcomesPane />} />
           <Route path="/marketplace" element={<MarketplacePane />} />
           <Route path="/mcp-servers" element={<McpServersPane />} />
           <Route path="/tenants" element={<TenantsPane />} />

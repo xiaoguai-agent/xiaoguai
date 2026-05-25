@@ -61,6 +61,8 @@ fn build_state_with_auth() -> AppState {
         rate_limit_state: None,
         hotl_policy_store: None,
         hotl_enforcer: None,
+        outcome_writer: None,
+        outcomes_reader: None,
     }
 }
 

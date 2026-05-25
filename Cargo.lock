@@ -7826,6 +7826,7 @@ dependencies = [
  "tracing",
  "uuid",
  "xiaoguai-agent",
+ "xiaoguai-audit",
  "xiaoguai-auth",
  "xiaoguai-eval",
  "xiaoguai-llm",
