@@ -165,6 +165,10 @@ async fn handle_webhook(
             spawn_agent_reply(state, msg);
             (StatusCode::OK, Json(json!({"status":"accepted"}))).into_response()
         }
+        Ok(ImEvent::Ignored) => {
+            // Bot message or Slack retry re-delivery — acknowledge and drop.
+            (StatusCode::OK, Json(json!({"status":"ignored"}))).into_response()
+        }
         Err(ProviderError::BadSignature) => StatusCode::UNAUTHORIZED.into_response(),
         Err(ProviderError::Malformed(msg)) => (StatusCode::BAD_REQUEST, msg).into_response(),
         Err(ProviderError::Transport(msg)) => {

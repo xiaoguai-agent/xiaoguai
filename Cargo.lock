@@ -5436,6 +5436,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "xiaoguai-im-slack"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "bytes",
+ "chrono",
+ "futures-util",
+ "hex",
+ "hmac",
+ "mockito",
+ "parking_lot",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "xiaoguai-im-gateway",
+ "xiaoguai-types",
+]
+
+[[package]]
 name = "xiaoguai-im-telegram"
 version = "0.1.0"
 dependencies = [

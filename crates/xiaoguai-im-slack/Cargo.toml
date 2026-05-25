@@ -1,0 +1,38 @@
+[package]
+name = "xiaoguai-im-slack"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Slack IM adapter — Events API signature verification + parser + chat.postMessage reply + Socket Mode."
+
+[dependencies]
+xiaoguai-types = { path = "../xiaoguai-types" }
+xiaoguai-im-gateway = { path = "../xiaoguai-im-gateway" }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+futures-util = { workspace = true }
+hex = "0.4"
+hmac = { workspace = true }
+parking_lot = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+mockito = { workspace = true }
+futures-util = { workspace = true }
+
+[lints]
+workspace = true
