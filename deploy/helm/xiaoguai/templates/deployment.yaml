@@ -145,6 +145,215 @@ spec:
                   key: ZHIPU_API_KEY
                   optional: true
             {{- end }}
+            {{- if .Values.secrets.bedrock }}
+            # Cloud LLM v2 — AWS Bedrock credentials
+            - name: BEDROCK_AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.bedrock | quote }}
+                  key: BEDROCK_AWS_ACCESS_KEY_ID
+                  optional: true
+            - name: BEDROCK_AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.bedrock | quote }}
+                  key: BEDROCK_AWS_SECRET_ACCESS_KEY
+                  optional: true
+            {{- end }}
+            {{- if .Values.secrets.azureOpenai }}
+            # Cloud LLM v2 — Azure OpenAI API key
+            - name: AZURE_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.azureOpenai | quote }}
+                  key: AZURE_OPENAI_API_KEY
+            {{- end }}
+            {{- if .Values.secrets.mistral }}
+            # Cloud LLM v2 — Mistral API key
+            - name: MISTRAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.mistral | quote }}
+                  key: MISTRAL_API_KEY
+            {{- end }}
+            {{- if .Values.secrets.groq }}
+            # Cloud LLM v2 — Groq API key
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.groq | quote }}
+                  key: GROQ_API_KEY
+            {{- end }}
+            {{- if .Values.secrets.discord }}
+            # IM adapter — Discord bot token
+            - name: DISCORD_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.discord | quote }}
+                  key: DISCORD_BOT_TOKEN
+            {{- if .Values.discord.webhookSigningEnabled }}
+            - name: DISCORD_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.discord | quote }}
+                  key: DISCORD_WEBHOOK_SECRET
+            {{- end }}
+            {{- end }}
+            {{- if .Values.secrets.telegram }}
+            # IM adapter — Telegram bot token
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.telegram | quote }}
+                  key: TELEGRAM_BOT_TOKEN
+            {{- end }}
+            {{- if .Values.secrets.mattermost }}
+            # IM adapter — Mattermost bot token
+            - name: MATTERMOST_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.mattermost | quote }}
+                  key: MATTERMOST_BOT_TOKEN
+            {{- end }}
+            {{- if .Values.secrets.slack }}
+            # IM adapter — Slack bot token + signing secret (wave-3)
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.slack | quote }}
+                  key: SLACK_BOT_TOKEN
+            - name: SLACK_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.slack | quote }}
+                  key: SLACK_SIGNING_SECRET
+            {{- end }}
+            {{- if .Values.hotl.enabled }}
+            # HotL — policy store and enforcement
+            - name: HOTL_POLICY_STORE_BACKEND
+              value: {{ .Values.hotl.policyStoreBackend | quote }}
+            - name: HOTL_ENFORCEMENT_ENABLED
+              value: {{ .Values.hotl.enforcementEnabled | quote }}
+            {{- if .Values.hotl.slackEscalationWebhookUrl }}
+            - name: HOTL_ESCALATION_SLACK_WEBHOOK_URL
+              value: {{ .Values.hotl.slackEscalationWebhookUrl | quote }}
+            {{- end }}
+            {{- if .Values.hotl.emailEscalationAddress }}
+            - name: HOTL_ESCALATION_EMAIL_ADDRESS
+              value: {{ .Values.hotl.emailEscalationAddress | quote }}
+            {{- end }}
+            {{- if .Values.hotl.webhookEscalationUrl }}
+            - name: HOTL_ESCALATION_WEBHOOK_URL
+              value: {{ .Values.hotl.webhookEscalationUrl | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if ne .Values.outcomes.backend "in-mem" }}
+            # Outcomes recorder — non-default backend settings
+            - name: OUTCOMES_BACKEND
+              value: {{ .Values.outcomes.backend | quote }}
+            {{- end }}
+            - name: OUTCOMES_RETENTION_DAYS
+              value: {{ .Values.outcomes.retentionDays | quote }}
+            - name: OUTCOMES_TIMESERIES_BUCKET_SECONDS
+              value: {{ .Values.outcomes.timeseriesBucketSeconds | quote }}
+            {{- if .Values.skills.packsConfigPath }}
+            # Skills / packs
+            - name: SKILLS_PACKS_CONFIG_PATH
+              value: {{ .Values.skills.packsConfigPath | quote }}
+            {{- end }}
+            {{- if .Values.skills.installAllowlist }}
+            - name: SKILLS_INSTALL_ALLOWLIST
+              value: {{ .Values.skills.installAllowlist | quote }}
+            {{- end }}
+            - name: SKILLS_AUTO_INSTALL_ON_STARTUP
+              value: {{ .Values.skills.autoInstallOnStartup | quote }}
+            {{- if .Values.rateLimit.enabled }}
+            # Rate limiting
+            - name: RATE_LIMIT_ENABLED
+              value: "true"
+            - name: RATE_LIMIT_BACKEND
+              value: {{ .Values.rateLimit.backend | quote }}
+            - name: RATE_LIMIT_PER_TENANT_REQUESTS
+              value: {{ .Values.rateLimit.perTenantRequests | quote }}
+            - name: RATE_LIMIT_PER_TENANT_WINDOW_SECONDS
+              value: {{ .Values.rateLimit.perTenantWindowSeconds | quote }}
+            - name: RATE_LIMIT_PER_ROUTE_REQUESTS
+              value: {{ .Values.rateLimit.perRouteRequests | quote }}
+            - name: RATE_LIMIT_PER_ROUTE_WINDOW_SECONDS
+              value: {{ .Values.rateLimit.perRouteWindowSeconds | quote }}
+            {{- end }}
+            {{- if .Values.bedrock.region }}
+            # Cloud LLM v2 — Bedrock config (non-secret)
+            - name: BEDROCK_REGION
+              value: {{ .Values.bedrock.region | quote }}
+            - name: BEDROCK_AUTH_MODE
+              value: {{ .Values.bedrock.authMode | quote }}
+            {{- end }}
+            {{- if .Values.azureOpenai.endpoint }}
+            # Cloud LLM v2 — Azure OpenAI config (non-secret)
+            - name: AZURE_OPENAI_ENDPOINT
+              value: {{ .Values.azureOpenai.endpoint | quote }}
+            - name: AZURE_OPENAI_DEPLOYMENT_ID
+              value: {{ .Values.azureOpenai.deploymentId | quote }}
+            - name: AZURE_OPENAI_API_VERSION
+              value: {{ .Values.azureOpenai.apiVersion | quote }}
+            {{- end }}
+            {{- if .Values.mistral.apiBase }}
+            # Cloud LLM v2 — Mistral config (non-secret)
+            - name: MISTRAL_API_BASE
+              value: {{ .Values.mistral.apiBase | quote }}
+            {{- end }}
+            {{- if .Values.groq.apiBase }}
+            # Cloud LLM v2 — Groq config (non-secret)
+            - name: GROQ_API_BASE
+              value: {{ .Values.groq.apiBase | quote }}
+            {{- end }}
+            {{- if .Values.observability.otel.enabled }}
+            # Observability — OpenTelemetry
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.observability.otel.endpoint | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.observability.otel.tracesSamplingRatio | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.observability.otel.serviceName | quote }}
+            {{- end }}
+            {{- if .Values.observability.prometheus.enabled }}
+            # Observability — Prometheus
+            - name: PROMETHEUS_LISTEN_ADDR
+              value: {{ .Values.observability.prometheus.listenAddr | quote }}
+            {{- end }}
+            {{- if .Values.discord.enabled }}
+            # IM adapter — Discord (non-secret config)
+            {{- if .Values.discord.channelAllowlist }}
+            - name: DISCORD_CHANNEL_ALLOWLIST
+              value: {{ .Values.discord.channelAllowlist | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.telegram.enabled }}
+            # IM adapter — Telegram (non-secret config)
+            {{- if .Values.telegram.chatAllowlist }}
+            - name: TELEGRAM_CHAT_ALLOWLIST
+              value: {{ .Values.telegram.chatAllowlist | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.mattermost.enabled }}
+            # IM adapter — Mattermost (non-secret config)
+            {{- if .Values.mattermost.serverUrl }}
+            - name: MATTERMOST_SERVER_URL
+              value: {{ .Values.mattermost.serverUrl | quote }}
+            {{- end }}
+            {{- if .Values.mattermost.channelAllowlist }}
+            - name: MATTERMOST_CHANNEL_ALLOWLIST
+              value: {{ .Values.mattermost.channelAllowlist | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.slack.enabled }}
+            # IM adapter — Slack (non-secret config, wave-3)
+            {{- if .Values.slack.channelAllowlist }}
+            - name: SLACK_CHANNEL_ALLOWLIST
+              value: {{ .Values.slack.channelAllowlist | quote }}
+            {{- end }}
+            {{- end }}
             {{- range $k, $v := .Values.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
