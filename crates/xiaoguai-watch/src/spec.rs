@@ -50,11 +50,11 @@ pub enum WatchSourceSpec {
         /// for v1.3.x dynamic-binding extension).
         query: String,
     },
-    /// Poll an HTTP endpoint; JSONPath expression extracts match rows.
+    /// Poll an HTTP endpoint; `JSONPath` expression extracts match rows.
     Http {
         /// Target URL.
         url: String,
-        /// JSONPath expression selecting an array of objects from the
+        /// `JSONPath` expression selecting an array of objects from the
         /// JSON response body.  Defaults to `"$[*]"` (top-level array).
         #[serde(default = "default_jsonpath")]
         jsonpath: String,
@@ -251,7 +251,7 @@ on_match:
                 assert_eq!(jsonpath, "$[*]");
                 assert_eq!(method, "GET");
             }
-            other => panic!("unexpected source: {other:?}"),
+            other @ WatchSourceSpec::Sql { .. } => panic!("unexpected source: {other:?}"),
         }
         spec.validate().unwrap();
     }

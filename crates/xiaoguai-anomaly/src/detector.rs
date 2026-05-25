@@ -67,6 +67,7 @@ impl Cooldown {
     }
 }
 
+
 // ── ZScoreDetector ─────────────────────────────────────────────────────────
 
 /// Fires when `|value − mean| / σ > sigma_threshold`.
@@ -88,6 +89,7 @@ pub struct ZScoreDetector {
 
 impl ZScoreDetector {
     /// Create with explicit parameters.
+    #[must_use]
     pub fn new(sigma_threshold: f64, min_count: u64, cool_off: Duration) -> Self {
         Self {
             sigma_threshold,
@@ -99,6 +101,7 @@ impl ZScoreDetector {
     }
 
     /// Convenience: 3-σ threshold, arm after 5 observations, 5-min cooldown.
+    #[must_use]
     pub fn default_config() -> Self {
         Self::new(3.0, 5, Duration::minutes(5))
     }
@@ -176,6 +179,7 @@ pub struct EwmaDetector {
 
 impl EwmaDetector {
     /// Create with explicit parameters.
+    #[must_use]
     pub fn new(alpha: f64, sigma_threshold: f64, min_count: u64, cool_off: Duration) -> Self {
         assert!(
             (0.0..=1.0).contains(&alpha),
@@ -194,6 +198,7 @@ impl EwmaDetector {
     }
 
     /// Convenience: α=0.1, 3-σ, arm after 5 obs, 5-min cooldown.
+    #[must_use]
     pub fn default_config() -> Self {
         Self::new(0.1, 3.0, 5, Duration::minutes(5))
     }

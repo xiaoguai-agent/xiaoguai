@@ -55,6 +55,13 @@
 //! `Some((spec, anomaly))` is returned, read `spec.on_anomaly` to choose the
 //! dispatch path (wake session / IM notify / webhook).
 
+#![warn(clippy::pedantic)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc
+)]
+
 pub mod baseline;
 pub mod detector;
 pub mod registry;
