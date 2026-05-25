@@ -1,0 +1,49 @@
+---
+# Draft-PR output connector.
+#
+# After the triage agent produces an RcaDraft, this connector:
+#   1. Renders templates/rca.md.j2 → .github/incidents/<incident_id>.md
+#   2. Opens a draft GitHub PR titled "[RCA Draft] <incident.title>"
+#      targeting the default branch.
+#   3. Sends an IM message to the configured channel summarising the RCA
+#      and linking to the draft PR.
+#
+# PR body == rendered RCA markdown (truncated to GitHub's 65535-char limit).
+# IM message == short summary (≤ 500 chars) + PR URL.
+
+output: draft-pr
+
+github:
+  # Repository where RCA documents live.
+  # Default: same repo as the incident's project, if detectable.
+  # Override with TRIAGE_GITHUB_REPO env var.
+  repo: ${TRIAGE_GITHUB_REPO}
+  # Target branch for the PR (almost always the default branch).
+  base_branch: ${TRIAGE_GITHUB_BASE_BRANCH:-main}
+  # Directory inside the repo where RCA files are committed.
+  incident_dir: .github/incidents
+  # PR title template.
+  pr_title: "[RCA Draft] {{ incident.title | truncate(80) }}"
+  # PR labels applied automatically.
+  labels:
+    - "incident"
+    - "rca-draft"
+    - "severity-{{ incident.severity }}"
+  # PR is always created as a draft — an engineer must promote it.
+  draft: true
+
+im:
+  # IM channel / chat_id to send the notification to.
+  # Override with TRIAGE_IM_CHANNEL env var.
+  channel: ${TRIAGE_IM_CHANNEL}
+  # Message template (Markdown, ≤ 500 chars).
+  message_template: |
+    **[RCA Draft]** {{ incident.title }}
+    Severity: {{ incident.severity | upper }} | Source: {{ incident.source | title }}
+    Root cause ({{ rca.confidence }} confidence): {{ rca.root_cause | truncate(150) }}
+    Draft PR: {{ pr_url }}
+
+# Deferred:
+#   - Auto-assign PR reviewers from on-call rotation
+#   - Slack/Teams output connector (currently only feishu/dingtalk/wecom)
+#   - Jira ticket creation
