@@ -1,0 +1,157 @@
+# Agent definition — agenda-builder
+# ---------------------------------------------------------------------------
+# Triggered before each board meeting (typically T-7 days). Assembles a
+# draft agenda from:
+#   1. Open action items carried forward from prior meetings.
+#   2. Standing items (call to order, quorum, approval of prior minutes).
+#   3. New business items submitted via inbound sources.
+#   4. Functional lead reports (CEO, CFO, General Counsel, etc.).
+#
+# The draft is written to board_agendas and board_agenda_items with
+# status = 'draft'. Distribution requires HOTL approval.
+# ---------------------------------------------------------------------------
+
+name: agenda-builder
+version: "1.0.0"
+description: >
+  Assembles a draft board meeting agenda from open action items, standing
+  items, new business submissions, and functional lead reports. Draft is
+  stored for corporate-secretary review; zero distribution without approval.
+
+triggers:
+  # Calendar event from calendar-board-meeting-event inbound (T-7 days before)
+  - event: board.meeting_scheduled
+    source: calendar-board-meeting-event
+  # Manual trigger from admin UI
+  - event: board.agenda_build_requested
+    source: manual
+
+llm:
+  model: ${BOARD_PREP_LLM_MODEL:-default}
+  temperature: 0.1       # agenda is structured; low temperature for consistency
+  max_tokens: 8192
+
+system_prompt: |
+  You are the corporate secretary's assistant. Your job is to assemble a
+  clear, well-structured board meeting agenda.
+
+  Rules:
+  - Always begin with standing items: Call to Order, Quorum Confirmation,
+    Approval of Prior Meeting Minutes.
+  - List open action items from prior meetings as the next section, grouped
+    by responsible party, with due dates.
+  - Insert new business items in priority order (urgent first).
+  - Insert functional reports: CEO, CFO, General Counsel, then other leads.
+  - End with Other Business and Adjournment.
+  - Include estimated time in minutes for each item.
+  - Do not invent action items or business items — use only data from tools.
+  - Output a JSON object matching the AgendaDraft schema.
+
+  AgendaDraft schema:
+  {
+    "meeting_id": "uuid",
+    "sections": [
+      {
+        "section": "standing|prior-action-items|new-business|reports|closed-session",
+        "items": [
+          {
+            "title": "string",
+            "description": "string or null",
+            "presenter": "member name or null",
+            "estimated_minutes": integer,
+            "source_action_item_id": "uuid or null"
+          }
+        ]
+      }
+    ]
+  }
+
+tools:
+  - name: get_open_action_items
+    description: >
+      Fetch all open and overdue action items for this tenant, ordered by
+      due date ascending. Returns id, description, owner, due_date, status,
+      and the meeting they originated from.
+    kind: sql
+    query: |
+      SELECT
+          ai.id,
+          ai.description,
+          COALESCE(bm.full_name, ai.owner_text, 'Unassigned') AS owner,
+          ai.due_date,
+          ai.status,
+          ai.priority,
+          src.scheduled_at AS originated_meeting_date
+      FROM board_action_items ai
+      LEFT JOIN board_members bm ON bm.id = ai.owner_member_id
+      LEFT JOIN board_meetings src ON src.id = ai.meeting_id
+      WHERE ai.tenant_id = '{tenant_id}'
+        AND ai.status IN ('open', 'in_progress', 'overdue')
+      ORDER BY ai.due_date ASC
+
+  - name: get_new_business_items
+    description: >
+      Fetch new business submissions received since the last board meeting,
+      not yet assigned to an agenda. Returns title, description, submitter,
+      and priority.
+    kind: sql
+    query: |
+      SELECT
+          ai.id,
+          ai.description AS title,
+          ai.completion_note AS description,
+          COALESCE(bm.full_name, ai.owner_text) AS submitter,
+          ai.priority
+      FROM board_action_items ai
+      LEFT JOIN board_members bm ON bm.id = ai.owner_member_id
+      WHERE ai.tenant_id = '{tenant_id}'
+        AND ai.status = 'open'
+        AND ai.meeting_id = '{meeting_id}'
+        AND ai.agenda_item_id IS NULL
+      ORDER BY
+          CASE ai.priority WHEN 'urgent' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,
+          ai.created_at ASC
+
+  - name: get_prior_meeting_id
+    description: >
+      Find the most recently completed board meeting prior to the given
+      meeting, to link prior-minutes approval on the agenda.
+    kind: sql
+    query: |
+      SELECT id, scheduled_at
+      FROM board_meetings
+      WHERE tenant_id = '{tenant_id}'
+        AND status = 'completed'
+        AND scheduled_at < (
+            SELECT scheduled_at FROM board_meetings WHERE id = '{meeting_id}'
+        )
+      ORDER BY scheduled_at DESC
+      LIMIT 1
+
+  - name: save_agenda_draft
+    description: >
+      Persist the assembled agenda draft to board_agendas and
+      board_agenda_items. Returns the agenda_id.
+    kind: sql
+    query: |
+      WITH ins AS (
+          INSERT INTO board_agendas (tenant_id, meeting_id, version, status)
+          VALUES ('{tenant_id}', '{meeting_id}', 1, 'draft')
+          RETURNING id
+      )
+      SELECT id FROM ins
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    distribute_agenda: 0
+  require_human_approval:
+    - distribute_agenda
+  notify_channel: "${BOARD_PREP_SECRETARY_CHANNEL:-admin_ui}"
+
+outcome_telemetry:
+  record_on:
+    - draft_created
+    - draft_approved
+    - draft_rejected
+  feedback_table: board_agendas
