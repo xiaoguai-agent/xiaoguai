@@ -1,0 +1,42 @@
+---
+# Output connector — executive dashboard update
+#
+# Upserts summary KPIs into the admin-ui executive dashboard whenever a
+# planning cycle, fairness audit, or significant assignment event completes.
+# The dashboard surface is a future admin-ui widget (not wired in v1.3.1-prep);
+# this connector writes to a well-known SQL table that the UI will query.
+#
+# No external API calls — all writes go to the local xiaoguai database.
+
+output: exec-dashboard-update
+
+kind: sql_upsert
+table: rt_exec_dashboard_kpis
+
+# KPI rows upserted per event type
+upsert_routing:
+  revops.quarterly_planning:
+    - metric: "quota_model_proposed_total_usd"
+      value:  "{{ summary.team_total_proposed_usd }}"
+      period: "{{ summary.planning_period }}"
+      meta:   "{{ summary | tojson }}"
+
+  revops.fairness_audit_completed:
+    - metric: "quota_gini_coefficient"
+      value:  "{{ report.gini_coefficient }}"
+      period: "{{ report.audit_period }}"
+      meta:   '{"flagged": {{ report.flagged_inequity | tojson }}, "severity": "{{ report.severity }}"}'
+
+  revops.sfdc_owner_updated:
+    - metric: "accounts_assigned_today"
+      value:  "increment:1"
+      period: "{{ today }}"
+      meta:   null
+
+  revops.capacity_imbalance:
+    - metric: "territories_with_imbalance"
+      value:  "increment:1"
+      period: "{{ today }}"
+      meta:   '{"territory": "{{ event.territory_name }}", "imbalance_pct": {{ event.imbalance_pct }}}'
+
+on_error: log_and_continue   # dashboard KPI update never blocks core assignment flow

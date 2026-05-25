@@ -1,0 +1,82 @@
+---
+# Inbound source — CSV bulk-assign upload
+#
+# Accepts a multipart/form-data CSV file upload via the admin UI or API.
+# Each row is validated, staged as a pending assignment, and emitted as
+# an individual revops.bulk_assign_row event so account-router processes
+# them one at a time (rate-limited: 60 per tenant per minute).
+#
+# Mounting: POST /v1/revops/inbound/bulk-assign/{route_id}
+# Auth:     per-tenant bearer token (same as other inbound routes)
+# Content-Type: multipart/form-data; file field = "csv"
+
+source: csv-bulk-assign-upload
+route_prefix: /v1/revops/inbound/bulk-assign
+
+csv:
+  delimiter: ","
+  has_header: true
+  max_rows: 10000           # reject uploads > 10k rows
+  max_file_size_mb: 10
+
+  # Required columns (case-insensitive header matching)
+  required_columns:
+    - account_id
+    - account_name
+
+  # Optional columns with defaults
+  optional_columns:
+    industry:     null
+    company_size: null
+    geo_region:   null
+    arr_estimate: null
+    rep_id:       null      # if provided, skip router and assign directly
+    territory_id: null
+
+  # Row-level validation rules
+  validation:
+    account_id:
+      type: string
+      max_length: 255
+      required: true
+    account_name:
+      type: string
+      max_length: 500
+      required: true
+    arr_estimate:
+      type: number
+      min: 0
+      required: false
+    company_size:
+      enum: [SMB, Mid-Market, Enterprise, Strategic, null]
+      required: false
+
+# Rows that fail validation are written to an error report returned in
+# the HTTP response body. Valid rows are processed.
+on_validation_error: skip_row_and_report
+
+event:
+  kind: revops.bulk_assign_row
+  # One event per valid CSV row
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:    "{route_tenant_id}"
+    account_id:   "$.account_id"
+    account_name: "$.account_name"
+    crm_source:   "_const:csv"
+    industry:     "$.industry"
+    company_size: "$.company_size"
+    geo_region:   "$.geo_region"
+    arr_estimate: "$.arr_estimate"
+    rep_id:       "$.rep_id"        # may be null → routed by account-router
+    territory_id: "$.territory_id"  # may be null
+
+downstream:
+  agents:
+    - account-router
+
+sample_csv: |
+  account_id,account_name,industry,company_size,geo_region,arr_estimate
+  ACC-001,Soylent Corp,Food & Beverage,Mid-Market,NA-East,800000
+  ACC-002,Initech,Technology,SMB,NA-West,120000
+  ACC-003,Umbrella Corp,Healthcare,Enterprise,EMEA,5400000

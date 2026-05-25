@@ -1,0 +1,71 @@
+# Watch spec — unassigned accounts
+# ---------------------------------------------------------------------------
+# Fires a WatchEvent for every account that has existed in rt_account_assignments
+# staging (status = 'pending') for longer than the configured grace period
+# (default: 4 hours). This ensures no net-new account falls through the cracks
+# if the account-router agent is unavailable or a manual CRM import is missed.
+#
+# Downstream: account-router agent (autonomous assignment for net-new accounts).
+# ---------------------------------------------------------------------------
+
+name: unassigned-accounts
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for each account without an active assignment that has
+  been pending longer than REVOPS_UNASSIGNED_GRACE_HOURS (default 4 h).
+  Triggers the account-router to perform or retry assignment.
+
+source:
+  kind: sql
+  table: rt_account_assignments
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      aa.tenant_id,
+      aa.account_id,
+      aa.account_name,
+      aa.crm_source,
+      aa.industry,
+      aa.company_size,
+      aa.geo_region,
+      aa.arr_estimate,
+      aa.created_at                                       AS ingested_at,
+      EXTRACT(EPOCH FROM NOW() - aa.created_at) / 3600   AS hours_pending
+  FROM rt_account_assignments aa
+  WHERE aa.tenant_id = '{tenant_id}'
+    AND aa.status    = 'pending'
+    AND aa.created_at < NOW() - (${REVOPS_UNASSIGNED_GRACE_HOURS:-4} || ' hours')::INTERVAL
+  ORDER BY aa.created_at ASC
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  # Check every 15 minutes so no account waits more than grace + 15 min.
+  cron: "*/15 * * * *"
+
+event:
+  kind: revops.unassigned_account
+  cardinality: per_row
+  payload_mapping:
+    tenant_id:    "$.tenant_id"
+    account_id:   "$.account_id"
+    account_name: "$.account_name"
+    crm_source:   "$.crm_source"
+    industry:     "$.industry"
+    company_size: "$.company_size"
+    geo_region:   "$.geo_region"
+    arr_estimate: "$.arr_estimate"
+    ingested_at:  "$.ingested_at"
+    hours_pending: "$.hours_pending"
+
+downstream:
+  agents:
+    - account-router
+
+# One re-fire per account per hour until assigned.
+dedup:
+  key: "{tenant_id}:{account_id}"
+  ttl_seconds: 3600
+  re_fire_if: "always"

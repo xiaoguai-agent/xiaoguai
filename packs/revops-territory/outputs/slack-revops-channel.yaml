@@ -1,0 +1,50 @@
+---
+# Output connector — Slack RevOps channel
+#
+# Posts assignment confirmations, rebalance proposals, and capacity alerts
+# to the configured Slack channel. All messages include a link to the
+# admin UI for HOTL actions.
+#
+# Auth: Slack Bot Token (xoxb-...) stored in SLACK_REVOPS_BOT_TOKEN
+
+output: slack-revops-channel
+
+slack:
+  bot_token: ${SLACK_REVOPS_BOT_TOKEN}
+  channel:   ${SLACK_REVOPS_CHANNEL:-#revops-assignments}
+
+# Message routing per event kind
+message_routing:
+  revops.account_created:
+    template: |
+      *New account assigned* ✅
+      *Account:* {{ account.account_name }} ({{ account.industry | default("—") }}, {{ account.company_size | default("—") }})
+      *Rep:* {{ rep.rep_name }} | *Territory:* {{ rep.territory_name }}
+      *Score:* {{ "%.2f" | format(decision.composite_score) }} / 1.00
+      {{ assignment_explanation_url }}
+
+  revops.capacity_imbalance:
+    template: |
+      *Capacity imbalance detected* ⚠️
+      *Territory:* {{ event.territory_name }}
+      *Imbalance:* {{ "%.1f" | format(event.imbalance_pct) }} pct points (max {{ "%.1f" | format(event.max_load_pct) }}% vs min {{ "%.1f" | format(event.min_load_pct) }}%)
+      Rebalance proposal queued — *<{{ hotl_url }}|Review proposal>*
+
+  revops.fairness_flagged:
+    template: |
+      *Quota fairness alert* 🚨
+      *Period:* {{ report.audit_period }} | *Gini:* {{ "%.4f" | format(report.gini_coefficient) }} ({{ report.severity | upper }})
+      {{ report.plain_language_summary | truncate(200) }}
+      *<{{ fairness_report_url }}|View full report>*
+
+  revops.quarterly_planning:
+    template: |
+      *Q+1 quota model ready* 📊
+      *Period:* {{ summary.planning_period }}
+      Team quota change: {{ "%+.1f" | format(summary.team_change_pct) }}%
+      *<{{ quota_summary_url }}|Review proposals>* — no quotas are committed until you approve.
+
+retry:
+  max_attempts: 3
+  backoff_seconds: [2, 10, 60]
+  on_error: log_and_drop   # Slack delivery is best-effort; never block assignment

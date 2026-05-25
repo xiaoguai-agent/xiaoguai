@@ -1,0 +1,81 @@
+# RevOps Territory Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# Account assignment, capacity planning, and quota fairness.
+# Automatically routes new accounts to the best-fit rep, surfaces load
+# imbalances before they affect revenue, and produces data-driven quota
+# proposals for the next planning cycle.
+#
+# Install:   xiaoguai pack install packs/revops-territory/
+# Requires:  xiaoguai >= v1.3.1-prep (features: watch, llm, hotl,
+#            outcome-telemetry)
+# ---------------------------------------------------------------------------
+
+name: revops-territory
+version: "1.0.0"
+description: >
+  Automates account assignment to sales reps (industry + size + geo +
+  specialty + capacity scoring), monitors rep load imbalance, audits
+  quota fairness via Gini coefficient, and models Q+1 targets from
+  historical performance and market data. Re-assignment actions are
+  HOTL-gated; net-new assignments are autonomous.
+
+author: "Xiaoguai Maintainers"
+license: "BUSL-1.1"
+
+# --------------------------------------------------------------------------
+# Required xiaoguai platform features
+# --------------------------------------------------------------------------
+requires:
+  xiaoguai_version: ">=1.3.1"
+  features:
+    - llm               # core LLM backend (always available)
+    - outcome-telemetry # F3: records assignment outcomes for improvement loop
+    - hotl              # Human on the Loop gating for re-assignment
+    - watch             # F1: WatchSpec + WatchEvent bus
+
+# --------------------------------------------------------------------------
+# Database migrations (applied in order on `xiaoguai pack install`)
+# --------------------------------------------------------------------------
+migrations:
+  - path: migrations/0001_territory.sql
+
+# --------------------------------------------------------------------------
+# Watch specs (declarative; registered into the watch registry on load)
+# --------------------------------------------------------------------------
+watches:
+  - path: watches/capacity-imbalance.yaml
+  - path: watches/unassigned-accounts.yaml
+
+# --------------------------------------------------------------------------
+# Agent definitions
+# --------------------------------------------------------------------------
+agents:
+  - path: agents/account-router.yaml
+  - path: agents/capacity-rebalancer.yaml
+  - path: agents/fairness-auditor.yaml
+  - path: agents/quota-modeler.yaml
+
+# --------------------------------------------------------------------------
+# Inbound sources
+# --------------------------------------------------------------------------
+sources:
+  - inbound/salesforce-account-created.yaml
+  - inbound/hubspot-contact-created.yaml
+  - inbound/csv-bulk-assign-upload.yaml
+  - inbound/quarterly-planning-trigger.yaml
+
+# --------------------------------------------------------------------------
+# Output connectors
+# --------------------------------------------------------------------------
+outputs:
+  - outputs/salesforce-account-owner-update.yaml
+  - outputs/slack-revops-channel.yaml
+  - outputs/exec-dashboard-update.yaml
+  - outputs/fairness-alert-to-vp-sales.yaml
+
+# --------------------------------------------------------------------------
+# Schema namespace
+# --------------------------------------------------------------------------
+schema:
+  table_prefix: "rt_"
+  namespace: "revops_territory"
