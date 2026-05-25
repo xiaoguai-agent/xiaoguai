@@ -1,0 +1,81 @@
+---
+# inbound/manual-csv-upload.yaml
+#
+# Manual CSV upload inbound adapter.
+#
+# Accepts a CSV file posted to the upload endpoint.  Intended for
+# offline survey exports (e.g. paper-based feedback scanned and
+# keyed in, or older LMS exports) that cannot use webhook delivery.
+#
+# Mounting: POST /v1/training-feedback/inbound/csv/{route_id}
+#           Content-Type: multipart/form-data  (field name: "file")
+# Auth:     Per-tenant bearer token (same token mechanism as webhooks)
+
+source: csv
+route_prefix: /v1/training-feedback/inbound/csv
+
+# ── CSV schema ────────────────────────────────────────────────────────────────
+#
+# Required columns (exact header names, case-insensitive):
+#   course_id        — LMS course identifier
+#   cohort_id        — cohort label (e.g. "2026-Q2-batch-1")
+#   learner_id       — anonymised learner handle
+#   question_id      — survey question identifier
+#   question_text    — full question text
+#   answer_text      — learner's answer (free-text or choice label)
+#   answer_type      — free_text | rating | multiple_choice | ranking
+#   submitted_at     — ISO-8601 timestamp or YYYY-MM-DD
+#
+# Optional columns:
+#   instructor_id    — if omitted, resolved from course metadata
+#   source_event_id  — if omitted, generated as "csv:{filename}:{row_number}"
+
+csv:
+  delimiter: ","           # override with ";" for European exports
+  encoding: "utf-8"        # fallback: "latin-1" if utf-8 decode fails
+  max_rows: 10000          # reject files exceeding this row count
+  max_file_size_mb: 10
+
+  required_columns:
+    - course_id
+    - cohort_id
+    - learner_id
+    - question_id
+    - question_text
+    - answer_text
+    - answer_type
+    - submitted_at
+
+  optional_columns:
+    - instructor_id
+    - source_event_id
+
+  answer_type_validation:
+    allowed_values:
+      - free_text
+      - rating
+      - multiple_choice
+      - ranking
+    on_invalid: coerce_to_free_text   # or "reject_row"
+
+  # Rows with missing required fields are collected in a validation
+  # error report returned in the HTTP response; valid rows are processed.
+  on_validation_error: skip_row_log_error
+
+# ── Deduplication ─────────────────────────────────────────────────────────────
+#
+# Rows whose (source, source_event_id) already exist in survey_responses
+# are silently skipped (idempotent re-upload).
+
+deduplication: true
+
+# ── Response format ───────────────────────────────────────────────────────────
+#
+# HTTP 200 response body on success:
+#   {"accepted": 142, "skipped_duplicates": 3, "skipped_invalid": 1,
+#    "errors": [{"row": 7, "reason": "missing answer_text"}]}
+
+sample_csv: |
+  course_id,cohort_id,learner_id,question_id,question_text,answer_text,answer_type,submitted_at
+  course-404,2026-Q1-batch-1,lrn-anon-042,q1,"What worked well?","Great examples throughout.",free_text,2026-03-15T10:00:00Z
+  course-404,2026-Q1-batch-1,lrn-anon-042,q2,"Rate the pacing (1–5)","4",rating,2026-03-15T10:00:00Z

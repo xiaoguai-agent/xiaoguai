@@ -1,0 +1,54 @@
+---
+# outputs/lead-trainer-slack-channel.yaml
+#
+# Lead Trainer Slack Channel output connector.
+#
+# Posts a summary to a Slack channel monitored by lead trainers whenever:
+#   (a) a high-priority gap is identified (gap_type = missing_content,
+#       priority = high), or
+#   (b) a course-redesign proposal is generated.
+#
+# Uses Slack Incoming Webhooks (no Bot token required).
+# Configure SLACK_LEAD_TRAINER_WEBHOOK_URL in the environment.
+
+output: lead-trainer-slack-channel
+
+slack:
+  webhook_url: ${SLACK_LEAD_TRAINER_WEBHOOK_URL}
+
+  # ── Gap alert message ─────────────────────────────────────────────────────
+  #
+  # Posted by gap-identifier when a high-priority gap is written to
+  # content_improvement_suggestions.
+
+  gap_alert:
+    enabled: true
+    trigger:
+      gap_type: missing_content
+      priority: high
+    message_template: |
+      :warning: *High-priority content gap detected*
+      *Course:* {{ course_id }} | *Cohorts:* {{ cohort_ids | join(", ") }}
+      *Objective:* {{ suggestion.affected_objective }}
+      *Evidence:* {{ suggestion.evidence_summary }}
+      *Suggested fix:* {{ suggestion.suggestion_text }}
+
+  # ── Redesign proposal summary ─────────────────────────────────────────────
+  #
+  # Posted by course-redesign-recommender when a new proposal is generated.
+
+  redesign_summary:
+    enabled: true
+    message_template: |
+      :books: *Course Redesign Proposal generated*
+      *Course:* {{ proposal.course_id }}
+      *Cohorts analysed:* {{ proposal.cohorts_analysed | join(", ") }}
+      *Items proposed:* {{ proposal.proposal_items | length }}
+      *Top item:* {{ proposal.proposal_items[0].affected_objective | default("(none)") }}
+      {{ proposal.proposal_items[0].proposed_change | default("") | truncate(200) }}
+      _Full proposal sent to LMS improvement ticket._
+
+# ── Deferred ─────────────────────────────────────────────────────────────────
+# - Slack Bot token mode (for interactive approvals via Block Kit buttons)
+# - Digest summary posted to Slack in addition to email
+# - Microsoft Teams connector

@@ -1,0 +1,69 @@
+---
+# inbound/moodle-quiz-submission.yaml
+#
+# Moodle quiz submission inbound adapter.
+#
+# Moodle delivers feedback via its standard Event API webhook
+# (quiz_attempt_submitted event).  This adapter normalises the payload
+# to a list of survey_responses rows.
+#
+# Mounting: POST /v1/training-feedback/inbound/moodle/{route_id}
+# Auth:     Per-tenant bearer token (scheduler_webhook_tokens table)
+
+source: moodle
+route_prefix: /v1/training-feedback/inbound/moodle
+
+normalize:
+  # Moodle Event API v2 field mapping → survey_responses columns
+  field_map:
+    source_event_id: eventname + timecreated   # composite: "quiz_attempt_submitted:1716825600"
+    course_id:       courseid
+    learner_id:      userid                    # stored as hashed value for GDPR compliance
+    submitted_at:    timecreated               # Unix timestamp → TIMESTAMPTZ
+
+  # Question / answer extraction
+  # Moodle quiz responses are nested under data.questions[*].
+  # Each question produces one survey_responses row.
+  question_path: data.questions
+  question_id_field:   slot
+  question_text_field: questiontext
+  answer_text_field:   responsesummary
+  answer_type_rules:
+    # Moodle question types mapped to survey_responses.answer_type
+    essay:          free_text
+    shortanswer:    free_text
+    numerical:      rating
+    multichoice:    multiple_choice
+    ordering:       ranking
+    _default:       free_text
+
+  # cohort_id is not present in the Moodle event; derived from course
+  # group membership via the outcome-telemetry integration.
+  cohort_id_source: outcome_telemetry_lookup
+
+  # instructor_id: resolved from the course's assigned teacher list.
+  instructor_id_source: outcome_telemetry_lookup
+
+sample_payload: |
+  {
+    "eventname": "\\core\\event\\quiz_attempt_submitted",
+    "timecreated": 1716825600,
+    "courseid": "course-101",
+    "userid": "u-abc123",
+    "data": {
+      "questions": [
+        {
+          "slot": "q1",
+          "questiontext": "What did you find most valuable in this session?",
+          "responsesummary": "The hands-on lab was excellent — very practical.",
+          "qtype": "essay"
+        },
+        {
+          "slot": "q2",
+          "questiontext": "Rate the pacing of this session (1–5)",
+          "responsesummary": "4",
+          "qtype": "numerical"
+        }
+      ]
+    }
+  }
