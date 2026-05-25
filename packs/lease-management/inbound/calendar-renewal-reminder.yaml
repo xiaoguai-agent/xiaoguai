@@ -1,0 +1,55 @@
+---
+# Inbound source — calendar renewal reminder integration
+#
+# Reads renewal decision deadlines from the leases table and syncs them to
+# the operator's calendar provider (Google Calendar or Microsoft 365).
+# Creates calendar events at each breakpoint (180/90/60/30 days) so the
+# real-estate team has native calendar visibility without relying solely on
+# Slack notifications.
+#
+# This is an OUTBOUND-from-pack / INBOUND-to-calendar source: the pack
+# writes events to the calendar and can receive acknowledgements back.
+
+source: calendar-sync
+kind: push-to-calendar
+
+auth:
+  # Supports Google Calendar (service account) or Microsoft 365 (client_credentials)
+  provider: ${LEASE_CALENDAR_PROVIDER:-google}  # "google" or "microsoft365"
+  google:
+    service_account_json: ${GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON}
+    calendar_id: ${LEASE_CALENDAR_ID}
+  microsoft365:
+    tenant_id:     ${MS365_TENANT_ID}
+    client_id:     ${MS365_CLIENT_ID}
+    client_secret: ${MS365_CLIENT_SECRET}
+    calendar_id:   ${LEASE_CALENDAR_ID}
+
+schedule:
+  # Sync calendar events daily after the renewal-window watch fires.
+  cron: "30 7 * * *"
+
+# For each lease approaching a breakpoint, upsert a calendar event.
+event_template:
+  title: "[Lease Renewal] {{ property_name }} — {{ breakpoint_days }}-day window"
+  description: |
+    Lease expires: {{ expiration_date }}
+    Lessor: {{ lessor_name }}
+    Current rent: {{ base_rent_currency }} {{ base_rent_amount }} / {{ rent_frequency }}
+    Recommended action: {{ recommended_action | upper }} (see Xiaoguai decision card)
+    Decision card: {{ decision_card_url }}
+  start_date: "{{ breakpoint_trigger_date }}"
+  duration_hours: 1
+  attendees: ${LEASE_RENEWAL_ATTENDEES}  # comma-separated email list
+  reminder_minutes: [1440, 60]  # 24 hours and 1 hour before event
+
+# Dedup: update existing event if lease ID + breakpoint already has a calendar event.
+dedup:
+  idempotency_key: "lease-renewal-{lease_id}-bp{breakpoint_days}"
+  update_if_exists: true
+
+# Receive acknowledgements (optional): if a calendar attendee declines,
+# flag the renewal decision record for escalation.
+inbound_acknowledgements:
+  enabled: false  # Set to true if calendar webhook callback is configured
+  callback_route: /v1/leases/inbound/calendar-callback/{route_id}

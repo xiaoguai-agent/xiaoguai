@@ -1,0 +1,69 @@
+---
+# Inbound source — CSV lease portfolio bulk import
+#
+# Accepts a CSV upload (via admin UI or API) to bulk-load or refresh the
+# lease portfolio. Useful for initial onboarding or when Yardi integration
+# is not available.
+#
+# Mounting: POST /v1/leases/inbound/csv-import/{route_id}
+# Auth:     Standard per-tenant bearer token
+# Content-Type: multipart/form-data (file field: "lease_portfolio_csv")
+
+source: csv-import
+route_prefix: /v1/leases/inbound/csv-import
+
+# Expected CSV columns (header row required, order flexible).
+schema:
+  required_columns:
+    - lease_type         # "real-estate" or "equipment"
+    - property_name
+    - lessor_name
+    - base_rent_amount
+    - base_rent_currency
+    - commencement_date  # ISO 8601: YYYY-MM-DD
+    - expiration_date
+    - renewal_notice_days
+
+  optional_columns:
+    - property_address
+    - lessor_contact_email
+    - rent_frequency      # monthly | quarterly | annual (default: monthly)
+    - cam_charges_annual
+    - ticam_cap_pct
+    - escalation_type     # cpi | fixed | none
+    - escalation_rate
+    - escalation_index
+    - escalation_anchor_date
+    - insurance_cert_expiry
+    - insurance_min_coverage
+    - insurance_provider
+    - sqft_total
+    - sqft_utilized
+    - headcount_capacity
+    - headcount_current
+    - external_lease_id
+    - notes
+
+  date_format: "%Y-%m-%d"
+  decimal_separator: "."
+
+validation:
+  on_error: skip_row_and_report   # valid rows are imported; invalid rows reported
+  max_rows_per_upload: 10000
+  required_format_checks:
+    - lease_type: {enum: ["real-estate", "equipment"]}
+    - base_rent_amount: {type: decimal, min: 0}
+    - commencement_date: {type: date}
+    - expiration_date: {type: date, after: commencement_date}
+    - renewal_notice_days: {type: integer, min: 0, max: 730}
+
+persistence:
+  upsert_table: leases
+  # Upsert on external_lease_id if present, else on (tenant_id, property_name, lessor_name)
+  conflict_key_primary: [tenant_id, external_lease_id]
+  conflict_key_fallback: [tenant_id, property_name, lessor_name]
+
+# After import, emit a summary event to admin_ui notification bell.
+post_import_notification:
+  channel: "${LEASE_MGMT_NOTIFY_CHANNEL:-admin_ui}"
+  message: "CSV import complete: {rows_imported} leases imported, {rows_skipped} rows skipped."

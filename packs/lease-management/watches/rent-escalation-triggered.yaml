@@ -1,0 +1,86 @@
+# Watch spec — rent-escalation-triggered
+# ---------------------------------------------------------------------------
+# Fires when a lease's escalation anchor date falls within the current month,
+# signalling that the upcoming rent adjustment needs validation. Supports both
+# CPI-pegged and fixed-rate escalators.
+#
+# Downstream: escalation-validator agent
+# ---------------------------------------------------------------------------
+
+name: rent-escalation-triggered
+version: "1.0.0"
+description: >
+  Emits a WatchEvent for leases whose annual rent escalation anniversary falls
+  in the current month. The escalation-validator agent then fetches the
+  relevant CPI index (for CPI-pegged leases) or applies the fixed rate, checks
+  the landlord's calculated increase against lease terms, and flags variances.
+
+source:
+  kind: sql
+  table: leases
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      l.id                  AS lease_id,
+      l.tenant_id,
+      l.property_name,
+      l.lessor_name,
+      l.base_rent_amount,
+      l.base_rent_currency,
+      l.escalation_type,
+      l.escalation_rate,
+      l.escalation_index,
+      l.escalation_anchor_date,
+      l.external_lease_id,
+      -- Year offset since anchor: how many escalations have already been applied
+      DATE_PART('year', AGE(CURRENT_DATE, l.escalation_anchor_date))::INT
+          AS escalation_year_number,
+      -- Expected effective date of this escalation
+      (l.escalation_anchor_date + (
+          DATE_PART('year', AGE(CURRENT_DATE, l.escalation_anchor_date)) * INTERVAL '1 year'
+      ))::DATE AS current_escalation_date
+  FROM leases l
+  WHERE l.tenant_id = '{tenant_id}'
+    AND l.status = 'active'
+    AND l.escalation_type IN ('cpi', 'fixed')
+    AND l.escalation_anchor_date IS NOT NULL
+    -- Anniversary month falls in the current calendar month
+    AND DATE_PART('month', l.escalation_anchor_date) = DATE_PART('month', CURRENT_DATE)
+    AND DATE_PART('day',   l.escalation_anchor_date) <= DATE_PART('day', CURRENT_DATE)
+    -- Has been active long enough for at least one escalation
+    AND l.commencement_date < CURRENT_DATE - INTERVAL '11 months'
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  # Run daily; the query self-limits to anniversary months, so most days no rows.
+  cron: "0 8 * * *"
+
+event:
+  kind: lease.rent_escalation_triggered
+  cardinality: per_row
+  payload_mapping:
+    lease_id:                 "$.lease_id"
+    tenant_id:                "$.tenant_id"
+    property_name:            "$.property_name"
+    lessor_name:              "$.lessor_name"
+    base_rent_amount:         "$.base_rent_amount"
+    base_rent_currency:       "$.base_rent_currency"
+    escalation_type:          "$.escalation_type"
+    escalation_rate:          "$.escalation_rate"
+    escalation_index:         "$.escalation_index"
+    escalation_anchor_date:   "$.escalation_anchor_date"
+    escalation_year_number:   "$.escalation_year_number"
+    current_escalation_date:  "$.current_escalation_date"
+    external_lease_id:        "$.external_lease_id"
+
+downstream:
+  agents:
+    - escalation-validator
+
+dedup:
+  # One event per lease per calendar month (the escalation anniversary month).
+  key: "{tenant_id}:{lease_id}:{current_escalation_date}"
+  ttl_seconds: 2592000  # 30 days

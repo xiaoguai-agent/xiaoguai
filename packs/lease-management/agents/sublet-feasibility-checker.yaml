@@ -1,0 +1,153 @@
+# Agent definition — sublet-feasibility-checker
+# ---------------------------------------------------------------------------
+# Triggered manually (via inbound API) or by a headcount-decline signal
+# when a team shrinks below headcount_capacity * 0.50. For each candidate
+# lease the agent:
+#   1. Calculates the monthly cost of the underutilized space.
+#   2. Estimates achievable sublet rent from market comparables.
+#   3. Calculates the early-termination penalty from the lease record.
+#   4. Compares net sublet recovery vs. early-termination cost over the
+#      remaining lease term.
+#   5. Produces a verdict: sublet / early-terminate / hold / inconclusive.
+#   6. Writes a lease_subleases record in 'proposed' status.
+#   7. Routes the feasibility report to real-estate-team-slack (HOTL-gated
+#      for any commitment to engage a subtenant or trigger early exit).
+# ---------------------------------------------------------------------------
+
+name: sublet-feasibility-checker
+version: "1.0.0"
+description: >
+  Evaluates sublet vs. early-termination economics for underutilized leases.
+  Triggered when headcount drops below 50% of capacity. Compares net sublet
+  recovery against early-termination penalty over the remaining term and
+  produces a HOTL-gated feasibility verdict.
+
+triggers:
+  # Manual trigger via API (real-estate team initiates ad-hoc review)
+  - event: lease.sublet_review_requested
+    source: api
+
+  # Automatic trigger when headcount utilization drops below threshold
+  - event: lease.low_utilization_detected
+    source: watch  # future watch spec, emitted when headcount_current < capacity * 0.50
+
+system_prompt: |
+  You are a corporate real-estate financial analyst evaluating whether to
+  sublet underutilized space or exit a lease early.
+
+  Analysis steps:
+  1. Calculate monthly_space_cost = base_rent_amount + cam_charges_monthly
+     for the underutilized portion (sqft_underutilized / sqft_total).
+  2. Estimate sublet_monthly_rent from market comparables (market_rent_psf
+     * sqft_underutilized). Apply a 10% market discount for sublet vs.
+     direct lease (subtenants typically pay less).
+  3. Sublet net recovery over remaining term =
+       (sublet_monthly_rent - head_lease_cost_for_sublet_portion) * months_remaining
+     Subtract broker commission (typically 4% of total sublet value).
+  4. Early-termination cost = early_term_penalty (from lease record).
+     If penalty is not recorded, estimate as 3 months' gross rent.
+  5. Verdict logic:
+       SUBLET:            sublet_net_recovery > 0 AND sublet_net_recovery > early_term_cost
+       EARLY-TERMINATE:   early_term_cost < abs(sublet net loss) AND months_remaining < 18
+       HOLD:              utilization is expected to recover within 6 months
+                          (headcount trend positive) OR months_remaining < 6
+       INCONCLUSIVE:      insufficient market data or ambiguous headcount trend
+
+  Rules:
+  - Show the arithmetic explicitly for each verdict component.
+  - State all assumptions (broker commission %, market discount %).
+  - Do not recommend sublet if landlord_consent_required is TRUE and
+    the lease prohibits assignment — note this as a prerequisite.
+  - Keep verdict rationale under 250 words.
+
+tools:
+  - name: get_lease_utilization
+    description: >
+      Fetch lease record with current utilization and cost metrics.
+    kind: sql
+    query: |
+      SELECT
+          l.id,
+          l.property_name,
+          l.property_address,
+          l.lessor_name,
+          l.base_rent_amount,
+          l.base_rent_currency,
+          l.rent_frequency,
+          l.cam_charges_annual,
+          l.sqft_total,
+          l.sqft_utilized,
+          l.headcount_capacity,
+          l.headcount_current,
+          l.expiration_date,
+          l.commencement_date,
+          -- Months remaining in lease
+          EXTRACT(YEAR  FROM AGE(l.expiration_date, CURRENT_DATE)) * 12 +
+          EXTRACT(MONTH FROM AGE(l.expiration_date, CURRENT_DATE)) AS months_remaining,
+          -- Underutilized sqft
+          GREATEST(COALESCE(l.sqft_total, 0) - COALESCE(l.sqft_utilized, 0), 0)
+              AS sqft_underutilized
+      FROM leases l
+      WHERE l.id = '{lease_id}'
+        AND l.tenant_id = '{tenant_id}'
+
+  - name: get_market_sublet_rate
+    description: >
+      Retrieve sublet market rate from cached CoStar data for the property
+      submarket. Returns sublet_median_psf distinct from direct-lease rate.
+    kind: sql
+    query: |
+      SELECT
+          m.submarket,
+          m.sublet_median_psf,
+          m.median_rent_psf   AS direct_median_psf,
+          m.vacancy_rate_pct,
+          m.data_as_of
+      FROM lease_market_data m
+      WHERE m.tenant_id = '{tenant_id}'
+        AND m.property_address_hash = '{property_address_hash}'
+      ORDER BY m.data_as_of DESC
+      LIMIT 1
+
+  - name: save_feasibility_record
+    description: >
+      Write the feasibility analysis to lease_subleases in 'proposed' status.
+    kind: sql
+    query: |
+      INSERT INTO lease_subleases (
+          tenant_id, lease_id, subtenant_name, sqft_sublet,
+          sublet_rent_amount, sublet_currency, head_lease_cost,
+          early_term_penalty, feasibility_verdict, feasibility_rationale,
+          sublet_start_date, sublet_end_date, landlord_consent_required, status
+      ) VALUES (
+          '{tenant_id}', '{lease_id}', 'TBD', {sqft_underutilized},
+          {sublet_monthly_rent}, '{base_rent_currency}', {head_lease_cost},
+          {early_term_penalty}, '{feasibility_verdict}', '{feasibility_rationale}',
+          CURRENT_DATE, '{expiration_date}', TRUE, 'proposed'
+      ) RETURNING id
+
+  - name: render_feasibility_report
+    description: >
+      Render the sublet feasibility section for inclusion in the Slack card.
+    kind: template
+    template: "templates/renewal-decision-card.md.j2"  # reuses decision card with sublet context
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    engage_subtenant_broker: 0
+    trigger_early_termination: 0
+  require_human_approval:
+    - save_feasibility_record
+  notify_channel: "${LEASE_MGMT_NOTIFY_CHANNEL:-admin_ui}"
+
+rate_limits:
+  per_lease_per_day: 3
+  per_tenant_per_hour: 20
+
+outcome_telemetry:
+  record_on:
+    - feasibility_created
+    - sublet_commenced
+    - early_termination_executed
+  feedback_table: lease_subleases

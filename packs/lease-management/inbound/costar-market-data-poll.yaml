@@ -1,0 +1,54 @@
+---
+# Inbound source — CoStar market data poll
+#
+# Polls the CoStar API for submarket rent and availability data for each
+# property in the active lease portfolio. Data is cached in
+# lease_market_data and used by renewal-recommender and
+# sublet-feasibility-checker agents.
+#
+# CoStar API requires an active subscription (COSTAR_API_KEY env var).
+# Polls weekly; data is stale-safe (agents use data_as_of timestamp).
+
+source: costar-poll
+kind: scheduled_poll
+
+schedule:
+  cron: "0 6 * * 1"  # Weekly on Monday 06:00 UTC
+
+auth:
+  kind: api_key
+  header: "X-API-Key"
+  secret: ${COSTAR_API_KEY}
+
+# For each active real-estate lease, look up submarket data.
+per_lease_query:
+  filter:
+    lease_type: real-estate
+    status: [active, pending-renewal]
+  # CoStar endpoint for submarket statistics
+  endpoint: "https://api.costar.com/v2/property/statistics"
+  params:
+    propertyAddress: "{property_address}"
+    radius_miles: 1.0
+    statTypes:
+      - "medianRentPSF"
+      - "subletMedianRentPSF"
+      - "vacancyRatePct"
+      - "availableAlternativesCount"
+
+normalize:
+  field_map:
+    submarket:                    data.submarket
+    median_rent_psf:              data.statistics.medianRentPSF
+    sublet_median_psf:            data.statistics.subletMedianRentPSF
+    vacancy_rate_pct:             data.statistics.vacancyRatePct
+    available_alternatives_count: data.statistics.availableAlternativesCount
+
+persistence:
+  upsert_table: lease_market_data
+  conflict_key: [tenant_id, property_address_hash, data_as_of]
+  # property_address_hash = SHA256(lower(trim(property_address)))[:16]
+  address_hash_field: property_address_hash
+
+# Fallback: if CoStar API is unavailable, retain prior data up to 30 days.
+stale_data_ttl_days: 30

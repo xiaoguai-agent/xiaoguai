@@ -1,0 +1,146 @@
+# Agent definition — renewal-recommender
+# ---------------------------------------------------------------------------
+# Triggered by renewal-window-approaching watch events (180/90/60/30-day
+# breakpoints). For each lease approaching expiry the agent:
+#   1. Fetches current utilization + cost-per-sqft metrics.
+#   2. Retrieves comparable market rent from CoStar (via costar-market-data-poll
+#      or cached lease_market_data table).
+#   3. Evaluates renewal vs. renegotiate vs. vacate based on:
+#        - utilization ratio (sqft_utilized / sqft_total)
+#        - rent delta vs. market (overpaying or underpaying?)
+#        - available alternatives within target geography
+#        - prior audit findings (recurring overcharges lower renew score)
+#   4. Writes a renewal_decisions record with recommended_action + rationale.
+#   5. Renders the renewal-decision-card template.
+#   6. Routes to real-estate-team-slack (HOTL-gated for renew / vacate commits).
+#
+# HOTL guardrails: zero autonomous commitment. All renew/vacate/renegotiate
+# actions require explicit human approval via the HOTL approval queue.
+# ---------------------------------------------------------------------------
+
+name: renewal-recommender
+version: "1.0.0"
+description: >
+  Recommends renew / renegotiate / vacate for leases entering their decision
+  window. Weighs utilization, market rent comparables, and audit history.
+  Produces a HOTL-gated decision card for real-estate team review.
+
+triggers:
+  - event: lease.renewal_window_approaching
+    source: renewal-window-approaching
+
+system_prompt: |
+  You are a corporate real-estate analyst specializing in lease renewal
+  decisions. Your role is to produce a clear, evidence-based recommendation
+  (renew / renegotiate / vacate) and a concise rationale for human review.
+
+  Decision framework:
+  - RENEW: utilization >= 75%, market rent within 10% of current, no
+    pattern of landlord overcharges, alternatives are scarce or more costly.
+  - RENEGOTIATE: utilization >= 50%, current rent > market by > 10%, OR
+    recurring CAM overcharges in prior 2 audit cycles.
+  - VACATE: utilization < 50%, cheaper alternatives available, OR lease
+    in final breakpoint (30 days) with no renewal terms offered by landlord.
+
+  Rules:
+  - Always cite specific data points (utilization %, rent delta %, audit
+    findings) in your rationale.
+  - Never recommend vacating without listing at least one alternative site
+    if market data is available.
+  - Keep the rationale under 300 words.
+  - Output confidence_score (0.0–1.0) reflecting data completeness.
+
+tools:
+  - name: get_lease_detail
+    description: >
+      Fetch full lease record including utilization metrics, escalation
+      terms, and CAM charges from the leases table.
+    kind: sql
+    query: |
+      SELECT
+          l.*,
+          ROUND(COALESCE(l.sqft_utilized, 0) / NULLIF(l.sqft_total, 0), 4)
+              AS utilization_ratio,
+          ROUND(l.base_rent_amount / NULLIF(l.sqft_total, 0), 4)
+              AS rent_per_sqft
+      FROM leases l
+      WHERE l.id = '{lease_id}'
+        AND l.tenant_id = '{tenant_id}'
+
+  - name: get_audit_history
+    description: >
+      Fetch prior CAM/TICAM audit findings for this lease to identify
+      patterns of overcharging that affect renewal appetite.
+    kind: sql
+    query: |
+      SELECT
+          la.audit_year,
+          la.total_variance,
+          la.dispute_status,
+          la.settlement_amount
+      FROM lease_audit la
+      WHERE la.lease_id = '{lease_id}'
+        AND la.tenant_id = '{tenant_id}'
+      ORDER BY la.audit_year DESC
+      LIMIT 3
+
+  - name: get_market_comparables
+    description: >
+      Retrieve cached CoStar market rent comparables for this property's
+      submarket. Returns median_rent_psf, vacancy_rate, and available_alternatives.
+    kind: sql
+    query: |
+      SELECT
+          m.submarket,
+          m.median_rent_psf,
+          m.vacancy_rate_pct,
+          m.available_alternatives_count,
+          m.data_as_of
+      FROM lease_market_data m
+      WHERE m.tenant_id = '{tenant_id}'
+        AND m.property_address_hash = '{property_address_hash}'
+      ORDER BY m.data_as_of DESC
+      LIMIT 1
+
+  - name: save_recommendation
+    description: >
+      Write the renewal recommendation to renewal_decisions with status
+      pending human approval. Returns the decision id.
+    kind: sql
+    query: |
+      INSERT INTO renewal_decisions (
+          tenant_id, lease_id, recommended_action, confidence_score,
+          recommendation_rationale, market_rent_psf, market_data_source,
+          utilization_pct, alternatives_count, outcome
+      ) VALUES (
+          '{tenant_id}', '{lease_id}', '{recommended_action}',
+          {confidence_score}, '{recommendation_rationale}',
+          {market_rent_psf}, '{market_data_source}',
+          {utilization_pct}, {alternatives_count}, 'pending'
+      ) RETURNING id
+
+  - name: render_decision_card
+    description: >
+      Render the renewal-decision-card template with recommendation data.
+    kind: template
+    template: "templates/renewal-decision-card.md.j2"
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    commit_renewal: 0
+    send_termination_notice: 0
+  require_human_approval:
+    - save_recommendation
+  notify_channel: "${LEASE_MGMT_NOTIFY_CHANNEL:-admin_ui}"
+
+rate_limits:
+  per_lease_per_breakpoint: 1   # one recommendation per lease per breakpoint
+  per_tenant_per_hour: 50
+
+outcome_telemetry:
+  record_on:
+    - recommendation_created
+    - human_decision_made
+    - outcome_recorded
+  feedback_table: renewal_decisions

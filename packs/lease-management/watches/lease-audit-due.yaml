@@ -1,0 +1,92 @@
+# Watch spec — lease-audit-due
+# ---------------------------------------------------------------------------
+# Fires annually for real-estate leases that have CAM/TICAM provisions,
+# signalling that the landlord's annual reconciliation statement should be
+# available and needs audit-reconciler review.
+#
+# Landlords typically issue reconciliation statements in Q1 for the prior
+# calendar year. This watch fires on 01-Feb each year for any active RE lease
+# with CAM charges that has no closed audit record for the prior year.
+#
+# Downstream: audit-reconciler agent
+# ---------------------------------------------------------------------------
+
+name: lease-audit-due
+version: "1.0.0"
+description: >
+  Emits a WatchEvent each February for real-estate leases with CAM/TICAM
+  provisions that lack a completed audit record for the prior calendar year.
+  Triggers the audit-reconciler agent to compare the landlord's statement
+  against lease terms and flag overcharges.
+
+source:
+  kind: sql
+  table: leases
+  tenant_column: tenant_id
+
+query: |
+  SELECT
+      l.id                  AS lease_id,
+      l.tenant_id,
+      l.property_name,
+      l.property_address,
+      l.lessor_name,
+      l.lessor_contact_email,
+      l.base_rent_amount,
+      l.base_rent_currency,
+      l.cam_charges_annual,
+      l.ticam_cap_pct,
+      l.commencement_date,
+      l.expiration_date,
+      l.external_lease_id,
+      (EXTRACT(YEAR FROM CURRENT_DATE) - 1)::INT AS audit_year
+  FROM leases l
+  WHERE l.tenant_id = '{tenant_id}'
+    AND l.status IN ('active', 'terminated', 'expired')
+    AND l.lease_type = 'real-estate'
+    AND l.cam_charges_annual IS NOT NULL
+    -- Lease was active during some part of the prior year
+    AND l.commencement_date < DATE_TRUNC('year', CURRENT_DATE)
+    AND l.expiration_date   >= DATE_TRUNC('year', CURRENT_DATE) - INTERVAL '1 year'
+    -- No closed audit record exists for the prior year
+    AND NOT EXISTS (
+        SELECT 1 FROM lease_audit la
+        WHERE la.lease_id = l.id
+          AND la.audit_year = (EXTRACT(YEAR FROM CURRENT_DATE) - 1)::INT
+          AND la.status IN ('approved', 'disputed', 'closed')
+    )
+
+trigger:
+  condition: row_count > 0
+
+schedule:
+  # Fire on Feb 1 each year (landlords typically issue statements by Jan-end).
+  cron: "0 7 1 2 *"
+
+event:
+  kind: lease.audit_due
+  cardinality: per_row
+  payload_mapping:
+    lease_id:               "$.lease_id"
+    tenant_id:              "$.tenant_id"
+    property_name:          "$.property_name"
+    property_address:       "$.property_address"
+    lessor_name:            "$.lessor_name"
+    lessor_contact_email:   "$.lessor_contact_email"
+    base_rent_amount:       "$.base_rent_amount"
+    base_rent_currency:     "$.base_rent_currency"
+    cam_charges_annual:     "$.cam_charges_annual"
+    ticam_cap_pct:          "$.ticam_cap_pct"
+    commencement_date:      "$.commencement_date"
+    expiration_date:        "$.expiration_date"
+    audit_year:             "$.audit_year"
+    external_lease_id:      "$.external_lease_id"
+
+downstream:
+  agents:
+    - audit-reconciler
+
+dedup:
+  # One event per lease per audit year.
+  key: "{tenant_id}:{lease_id}:audit{audit_year}"
+  ttl_seconds: 7776000  # 90 days
