@@ -57,3 +57,9 @@
 # Roadmap
 
 - [Roadmap](roadmap.md)
+
+---
+
+# Glossary
+
+- [Glossary](glossary.md)
