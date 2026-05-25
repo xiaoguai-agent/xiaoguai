@@ -1,0 +1,94 @@
+# packs/customer-onboarding/inbound/manual-checkin-submit.yaml
+#
+# Inbound: Manual CSM check-in submission
+#
+# CSMs submit check-in updates via a simple JSON POST (from an internal tool,
+# Slack slash command, or web form) to record:
+#   - Milestone stage updates
+#   - POC criteria met/not-met toggles
+#   - Free-text notes
+#   - Direct agent invocations (build-handoff, score-poc, request-coach)
+
+name: manual-checkin-submit
+kind: http-post
+
+endpoint: /inbound/customer-onboarding/checkin
+auth:
+  type: api_key
+  header: "X-CSM-Token"
+  token_env: CSM_API_TOKEN
+
+# Expected request body schema
+request_schema:
+  type: object
+  required: [customer_id, csm_owner_id, action]
+  properties:
+    customer_id:
+      type: string
+      format: uuid
+    opportunity_id:
+      type: string
+    csm_owner_id:
+      type: string
+    action:
+      type: string
+      enum:
+        - update-milestone       # advance or update the current milestone
+        - update-poc-criteria    # toggle individual criteria met/not-met
+        - add-note               # append free-text note to current milestone
+        - score-poc              # invoke poc-success-scorer immediately
+        - build-handoff          # invoke handoff-package-builder immediately
+        - request-coach          # invoke milestone-coach immediately
+        - acknowledge-stall      # acknowledge an open stall_signal
+        - resolve-stall          # mark a stall_signal as resolved
+    milestone_stage:
+      type: string
+      description: "Required for update-milestone action"
+    criteria_updates:
+      type: array
+      items:
+        type: object
+        required: [id, met]
+        properties:
+          id: { type: string }
+          met: { type: boolean }
+    note:
+      type: string
+      maxLength: 2000
+    stall_signal_id:
+      type: integer
+      description: "Required for acknowledge-stall and resolve-stall actions"
+    resolution_note:
+      type: string
+      description: "Required for resolve-stall action"
+
+on_receive_sql: |
+  INSERT INTO co_audit_log (customer_id, agent, action, detail)
+  VALUES (
+      $customer_id::UUID,
+      'manual-checkin',
+      $action,
+      jsonb_build_object(
+          'csm_owner_id',     $csm_owner_id,
+          'milestone_stage',  $milestone_stage,
+          'note',             $note
+      )
+  )
+
+# Route to the appropriate agent based on action
+conditional_dispatch:
+  - condition: "action == 'score-poc'"
+    dispatch:
+      agent: packs/customer-onboarding/agents/poc-success-scorer.yaml
+
+  - condition: "action == 'build-handoff'"
+    dispatch:
+      agent: packs/customer-onboarding/agents/handoff-package-builder.yaml
+
+  - condition: "action == 'request-coach' OR action == 'update-milestone' OR action == 'update-poc-criteria'"
+    dispatch:
+      agent: packs/customer-onboarding/agents/milestone-coach.yaml
+
+on_error:
+  http_status: 422
+  body: { "error": "$error" }

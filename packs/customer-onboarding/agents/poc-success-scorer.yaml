@@ -1,0 +1,98 @@
+# packs/customer-onboarding/agents/poc-success-scorer.yaml
+#
+# POC Success Scorer — evaluates a customer's POC against pre-defined success
+# criteria and produces a structured pass/fail score with per-criterion detail.
+#
+# Triggered by:
+#   - manual-checkin-submit inbound (CSM marks criteria as met/not-met)
+#   - salesforce-opportunity-stage-change inbound when stage → 'POC Review'
+#   - Direct invocation by the coordinator supervisor
+#
+# Scoring model:
+#   poc_score = count(criteria where met=true) / count(criteria)
+#   Pass threshold: config.poc_scoring.pass_threshold (default 0.70)
+#
+# If score >= threshold AND all "must-have" criteria are met → recommend progression
+# to poc_criteria_met stage.
+
+name: poc-success-scorer
+kind: worker
+
+# Rule-based grading is the primary path; LLM is used only for narrative commentary
+# on borderline scores (0.60–0.79) and for identifying criteria that are ambiguous.
+llm_plan: true   # set to false to use pure rule-based mode; LLM only adds commentary
+
+system_prompt: |
+  You are the POC Success Scorer for a B2B SaaS customer onboarding team.
+
+  You will receive:
+    - A list of POC success criteria with their met/not-met status (some may be
+      marked "must-have: true" — failing any must-have is an automatic fail).
+    - The raw poc_score (fraction of met criteria).
+    - The pass_threshold from config.
+    - Any CSM notes or evidence attached to each criterion.
+
+  Your task: produce a scoring summary and recommendation.
+
+  Output format (JSON, strictly):
+  {
+    "poc_score": <0.000–1.000>,
+    "pass": <true|false>,
+    "must_have_failed": [<criterion_id>, ...],
+    "unmet_criteria": [{"id": "...", "description": "...", "risk": "<low|medium|high>"}],
+    "narrative": "<2-4 sentences: what the customer achieved, what's missing, and what it means>",
+    "recommendation": "<progress-to-next-stage | extend-poc | escalate-to-leadership | close-lost>",
+    "recommendation_rationale": "<1-2 sentences>"
+  }
+
+  Rules:
+  - If any must-have criterion is unmet: pass = false regardless of score.
+  - If score >= threshold AND must_have_failed is empty: pass = true.
+  - Recommendation "extend-poc" is only valid if the gap is < 2 unmet criteria
+    and none are must-have.
+  - Never recommend "close-lost" unless score < 0.40 and champion-disengaged
+    stall signal is open (will be in context).
+
+context_queries:
+  poc_criteria_detail: |
+    SELECT poc_criteria, poc_score, stage, status
+    FROM   onboarding_milestones
+    WHERE  id = $milestone_id
+
+  active_stall_signals: |
+    SELECT category, confidence, evidence
+    FROM   stall_signals
+    WHERE  customer_id = $customer_id
+      AND  status = 'open'
+    ORDER  BY confidence DESC
+
+  csm_notes: |
+    SELECT notes, updated_at
+    FROM   onboarding_milestones
+    WHERE  id = $milestone_id
+
+post_action:
+  - type: update_poc_score
+    sql: |
+      UPDATE onboarding_milestones
+      SET    poc_score = $poc_score,
+             poc_criteria = $poc_criteria_updated,
+             updated_at = now()
+      WHERE  id = $milestone_id
+
+  - type: record_outcome_telemetry
+    event: poc_scored
+    fields: [customer_id, poc_score, pass, recommendation]
+
+  - type: audit_log
+    table: co_audit_log
+    agent: poc-success-scorer
+
+  - type: conditional_dispatch
+    condition: "recommendation == 'progress-to-next-stage'"
+    dispatch:
+      agent: packs/customer-onboarding/agents/handoff-package-builder.yaml
+      trigger_after_days: 0    # immediate
+
+output:
+  template: packs/customer-onboarding/templates/success-criteria-rubric.md.j2

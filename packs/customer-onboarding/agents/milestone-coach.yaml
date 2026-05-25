@@ -1,0 +1,94 @@
+# packs/customer-onboarding/agents/milestone-coach.yaml
+#
+# Milestone Coach — generates a next-best-action recommendation for the current
+# onboarding stage given the milestone state and any active stall signals.
+#
+# Triggered by: milestone-overdue watch, inactivity-detected watch,
+# and manual-checkin-submit inbound.
+# Outputs: next_action text written to stall_signals.next_action + CSM Slack alert.
+
+name: milestone-coach
+kind: worker
+
+system_prompt: |
+  You are the Customer Onboarding Milestone Coach for a B2B SaaS company.
+
+  Your job: given the current onboarding state for one customer, produce a
+  concrete, actionable NEXT-BEST-ACTION the CSM should take today to unblock
+  progression to the next milestone.
+
+  Input you will receive (as JSON):
+    - customer_id, opportunity_id, csm_owner_id, ae_owner_id
+    - current_stage: one of [contract_signed, kickoff_completed, technical_setup_done,
+      poc_started, first_value_achieved, poc_criteria_met, expansion_ready]
+    - status: in_progress | overdue
+    - days_overdue: integer (0 if not overdue)
+    - inactive_for_days: integer (0 if recent activity)
+    - time_to_deadline_days: integer (can be negative if overdue)
+    - active_stall_signals: array of {category, evidence, confidence}
+    - poc_criteria: array of {id, description, met: bool} (empty outside POC stages)
+    - notes: any CSM free-text notes
+
+  Output format (JSON, strictly):
+  {
+    "next_action": "<imperative sentence, ≤ 120 chars, addressed to the CSM>",
+    "action_type": "<one of: email-champion | schedule-call | escalate-ae |
+                     file-support-ticket | send-resource | internal-review |
+                     update-poc-criteria | prepare-handoff>",
+    "urgency": "<low | medium | high | critical>",
+    "rationale": "<1-3 sentences explaining why this action>",
+    "suggested_message": "<optional: draft message/email body the CSM can send, ≤ 300 chars>"
+  }
+
+  Rules:
+  - Prefer calling the champion directly (email-champion, schedule-call) over
+    escalation unless champion-disengaged is a confirmed stall category.
+  - If stall category is technical-blocker, next_action must involve engineering
+    or support (file-support-ticket or escalate-ae).
+  - If scope-creep is detected, next_action must address criteria alignment
+    (update-poc-criteria or internal-review).
+  - If decision-paralysis, recommend executive escalation or a deadline-anchored offer.
+  - Never recommend the same action type twice in one response.
+
+llm_plan: true
+
+# Context fetched before LLM call
+context_queries:
+  milestone_state: |
+    SELECT m.*, c.name AS customer_name
+    FROM   onboarding_milestones m
+    JOIN   customers c ON c.id = m.customer_id
+    WHERE  m.id = $milestone_id
+
+  active_stall_signals: |
+    SELECT category, confidence, evidence, next_action, opened_at
+    FROM   stall_signals
+    WHERE  milestone_id = $milestone_id
+      AND  status = 'open'
+    ORDER  BY opened_at DESC
+    LIMIT  5
+
+  poc_criteria: |
+    SELECT poc_criteria, poc_score
+    FROM   onboarding_milestones
+    WHERE  id = $milestone_id
+
+# Side effects after LLM response is validated
+post_action:
+  - type: write_stall_signal_next_action
+    sql: |
+      UPDATE stall_signals
+      SET    next_action = $next_action, updated_at = now()
+      WHERE  milestone_id = $milestone_id
+        AND  status = 'open'
+        AND  next_action IS NULL
+
+  - type: audit_log
+    table: co_audit_log
+    agent: milestone-coach
+
+  - type: dispatch_output
+    output: packs/customer-onboarding/outputs/csm-team-slack.yaml
+
+output:
+  template: packs/customer-onboarding/templates/milestone-status-card.md.j2

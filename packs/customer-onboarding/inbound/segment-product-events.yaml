@@ -1,0 +1,52 @@
+# packs/customer-onboarding/inbound/segment-product-events.yaml
+#
+# Inbound: Segment product-events webhook
+#
+# Receives product usage events from the Segment source "product-events" and
+# updates onboarding_milestones.last_activity_at + usage_events_count.
+# This is the primary signal source for the inactivity-detected watch.
+
+name: segment-product-events
+kind: webhook
+
+endpoint: /inbound/customer-onboarding/segment
+auth:
+  type: hmac_sha256
+  header: "X-Segment-Signature"
+  secret_env: SEGMENT_WEBHOOK_SECRET
+
+# Events to process (all others are silently ignored)
+accepted_event_types:
+  - track
+  - page
+  - identify      # used to associate new contacts with the opportunity
+
+# Map Segment payload fields to our internal schema
+field_mapping:
+  customer_id:    "$.properties.account_id"       # UUID; must match onboarding_milestones.customer_id
+  opportunity_id: "$.properties.opportunity_id"   # optional; used for dedup lookups
+  event_type:     "$.event"
+  occurred_at:    "$.timestamp"
+
+# SQL side effect: update last_activity_at and increment usage_events_count
+# for the matching in-progress milestone row.
+on_receive_sql: |
+  UPDATE onboarding_milestones
+  SET    last_activity_at  = GREATEST(last_activity_at, $occurred_at::TIMESTAMPTZ),
+         usage_events_count = usage_events_count + 1,
+         updated_at         = now()
+  WHERE  customer_id = $customer_id::UUID
+    AND  status = 'in_progress'
+
+  -- Also write a lightweight audit entry for the event
+  INSERT INTO co_audit_log (customer_id, agent, action, detail)
+  VALUES (
+      $customer_id::UUID,
+      'segment-inbound',
+      'product_event',
+      jsonb_build_object('event_type', $event_type, 'occurred_at', $occurred_at)
+  )
+
+on_error:
+  notify_channel: "ops-alerts"
+  message: "segment-product-events inbound error: $error (customer_id=$customer_id)"

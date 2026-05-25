@@ -1,0 +1,45 @@
+# packs/customer-onboarding/outputs/csm-team-slack.yaml
+#
+# Output: CSM team Slack channel
+#
+# Posts milestone alerts, stall notifications, and coach recommendations to the
+# configured CSM Slack channel. Uses the same Slack Bot Token as the broader
+# xiaoguai Slack integration.
+#
+# In development/test, messages are captured in co_audit_log instead of sent.
+
+name: csm-team-slack
+kind: slack
+
+channel_env: SLACK_CSM_CHANNEL_ID    # e.g. C01234ABCDE
+token_env: SLACK_BOT_TOKEN
+
+# Message routing by source agent
+message_routing:
+  milestone-coach:
+    template: packs/customer-onboarding/templates/milestone-status-card.md.j2
+    icon_emoji: ":calendar:"
+    username: "Onboarding Coach"
+
+  stall-detector:
+    template: packs/customer-onboarding/templates/stall-investigation-frame.md.j2
+    icon_emoji: ":warning:"
+    username: "Stall Detector"
+
+  handoff-package-builder:
+    template: packs/customer-onboarding/templates/csm-handoff-doc.md.j2
+    icon_emoji: ":handshake:"
+    username: "Handoff Builder"
+
+# Thread replies: group related messages under a single thread per customer+opportunity
+thread_key: "co-{{ customer_id }}-{{ opportunity_id }}"
+
+# Rate limiting: max 1 alert per customer per hour (dedup by customer+urgency)
+rate_limit:
+  window_seconds: 3600
+  max_per_window: 1
+  dedup_key: "{{ customer_id }}-{{ urgency }}"
+
+mock:
+  enabled_when: "XIAOGUAI_ENV != 'production'"
+  mock_target: co_audit_log    # writes to audit log instead of sending

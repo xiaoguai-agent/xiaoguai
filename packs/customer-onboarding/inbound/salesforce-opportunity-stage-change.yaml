@@ -1,0 +1,68 @@
+# packs/customer-onboarding/inbound/salesforce-opportunity-stage-change.yaml
+#
+# Inbound: Salesforce Opportunity stage change
+#
+# Triggered when a Salesforce Opportunity's StageName field changes via
+# Salesforce Outbound Messaging or a Process Builder / Flow webhook.
+# Maps Salesforce stage names to internal onboarding milestone stages and
+# advances or updates the milestone record accordingly.
+
+name: salesforce-opportunity-stage-change
+kind: webhook
+
+endpoint: /inbound/customer-onboarding/salesforce/stage-change
+auth:
+  type: salesforce_outbound_message   # validates Salesforce org signature
+  org_id_env: SALESFORCE_ORG_ID
+
+# Salesforce StageName → internal stage mapping
+# (Adjust to match your org's picklist values)
+stage_map:
+  "POC Started":        poc_started
+  "POC Review":         poc_criteria_met      # triggers poc-success-scorer
+  "POC Won":            poc_criteria_met
+  "Expansion":          expansion_ready       # triggers handoff-package-builder
+  "Closed Won":         expansion_ready
+  "Kickoff Complete":   kickoff_completed
+  "Technical Setup":    technical_setup_done
+
+field_mapping:
+  opportunity_id: "$.Notification.sObject.Id"
+  account_id:     "$.Notification.sObject.AccountId"
+  stage_name:     "$.Notification.sObject.StageName"
+  close_date:     "$.Notification.sObject.CloseDate"
+  changed_by:     "$.Notification.sObject.LastModifiedById"
+  changed_at:     "$.Notification.sObject.LastModifiedDate"
+
+on_receive_sql: |
+  -- Record stage change in audit log
+  INSERT INTO co_audit_log (customer_id, agent, action, detail)
+  SELECT
+      m.customer_id,
+      'salesforce-inbound',
+      'salesforce_stage_change',
+      jsonb_build_object(
+          'sf_stage',      $stage_name,
+          'internal_stage', $internal_stage,
+          'changed_by',    $changed_by,
+          'changed_at',    $changed_at,
+          'close_date',    $close_date
+      )
+  FROM onboarding_milestones m
+  WHERE m.opportunity_id = $opportunity_id
+    AND m.status = 'in_progress'
+  LIMIT 1
+
+# Conditional agent dispatch based on mapped stage
+conditional_dispatch:
+  - condition: "internal_stage == 'poc_criteria_met'"
+    dispatch:
+      agent: packs/customer-onboarding/agents/poc-success-scorer.yaml
+
+  - condition: "internal_stage == 'expansion_ready'"
+    dispatch:
+      agent: packs/customer-onboarding/agents/handoff-package-builder.yaml
+
+on_error:
+  notify_channel: "ops-alerts"
+  message: "salesforce-opportunity-stage-change inbound error: $error (opportunity=$opportunity_id)"
