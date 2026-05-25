@@ -1,0 +1,88 @@
+---
+# Output adapter — Slack on-call channel notification
+#
+# Posts a rich Slack Block Kit message to the configured on-call channel.
+# Message includes:
+#   - Priority badge + alert name header
+#   - Impact summary from classify-alert
+#   - Runbook steps (collapsed if > 5 steps)
+#   - Observability snapshot summary + dashboard links
+#   - Similar past incidents list (if any)
+#
+# The adapter writes an audit entry regardless of Slack API success.
+
+name: slack-oncall-channel
+kind: slack
+
+# Slack API configuration.
+slack:
+  token_env: ONCALL_SLACK_TOKEN
+  channel_env: ONCALL_SLACK_CHANNEL
+
+  # Message template rendered via templates/alert-summary.md.j2
+  # (used for the fallback plain-text field).
+  summary_template: templates/alert-summary.md.j2
+
+  # Slack Block Kit blocks built from the structured plan outputs.
+  blocks:
+    # Header block: priority badge + alert name.
+    - type: header
+      text: "{{ classify.priority }} — {{ alert.name | truncate(60) }}"
+
+    # Context block: environment, component, source, fired-at.
+    - type: context
+      elements:
+        - "Env: *{{ alert.environment | default('unknown') }}*"
+        - "Component: *{{ classify.suspected_component }}*"
+        - "Source: {{ alert.source | title }}"
+        - "Fired: {{ alert.fired_at | humanize_datetime }}"
+
+    # Impact section.
+    - type: section
+      title: "Impact"
+      text: "{{ classify.impact_summary }}"
+
+    # Observability summary section.
+    - type: section
+      title: "Observability Snapshot"
+      text: "{{ snapshot.summary }}"
+      accessory:
+        type: button
+        text: "Open Dashboard"
+        url: "{{ snapshot.dashboards[0].url | default('') }}"
+        # Only rendered if at least one dashboard link exists.
+        condition: "{{ snapshot.dashboards | length > 0 }}"
+
+    # Runbook steps section (shows first 5 steps inline; remainder linked).
+    - type: section
+      title: "Runbook: {{ lookup.runbook_title }}"
+      text: |
+        {% for step in lookup.steps[:5] %}
+        *{{ step.step_number }}.* {{ step.title }} — {{ step.description | truncate(120) }}
+        {% endfor %}
+        {% if lookup.steps | length > 5 %}_({{ lookup.steps | length - 5 }} more steps — see runbook)_{% endif %}
+        {% if lookup.fallback %}⚠️ _No specific runbook found; showing generic triage steps._{% endif %}
+
+    # Similar incidents section (only rendered if list is non-empty).
+    - type: section
+      title: "Similar Past Incidents"
+      condition: "{{ classify.similar_incidents | length > 0 }}"
+      text: |
+        {% for inc in classify.similar_incidents %}
+        • {{ inc.title }} ({{ inc.resolved_at | default('unresolved') | truncate(10, true, '') }})
+        {% endfor %}
+
+# Audit entry written after each notification attempt.
+audit:
+  table: pack_devops_oncall_notifications
+  fields:
+    - alert_id
+    - alert_name
+    - priority
+    - suspected_component
+    - slack_channel
+    - slack_ts        # Slack message timestamp (used to thread replies)
+    - runbook_id
+    - fallback_runbook
+    - notified_at
+    - success

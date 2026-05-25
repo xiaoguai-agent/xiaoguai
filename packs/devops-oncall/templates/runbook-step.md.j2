@@ -1,0 +1,38 @@
+{# runbook-step.md.j2 — renders a single runbook step as a self-contained
+   markdown fragment.  Used when posting individual steps to Slack threads
+   or when streaming step-by-step guidance to the engineer during triage.
+
+   Expected context variables:
+     step       — RunbookStep object
+     step_total — total number of steps in the runbook
+     runbook    — RunbookMatch object (for header context)
+     alert      — normalized Alert struct
+     classify   — ClassifiedAlert output #}
+### Step {{ step.step_number }} / {{ step_total }} — {{ step.title }}
+
+> **Runbook:** {{ runbook.runbook_title }} | **Alert:** {{ alert.name }} | **Priority:** {{ classify.priority }}
+
+{{ step.description }}
+
+{% if step.commands | length > 0 -%}
+**Commands to run:**
+
+```bash
+{% for cmd in step.commands -%}
+{{ cmd }}
+{% endfor %}
+```
+{%- endif %}
+
+{% if step.links | length > 0 -%}
+**Reference links:**
+{% for link in step.links -%}
+- <{{ link }}>
+{% endfor %}
+{%- endif %}
+
+{% if step.step_number == step_total -%}
+---
+_This was the last runbook step.  If the issue is resolved, acknowledge the alert
+in {{ alert.source | title }}.  If not resolved, escalate or open a P1 incident._
+{%- endif %}

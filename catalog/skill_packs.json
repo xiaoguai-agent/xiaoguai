@@ -187,6 +187,40 @@
       "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/rag-finance.png"
     },
     {
+      "slug": "devops-oncall",
+      "name": "DevOps On-Call",
+      "description": "Real-time alert triage and runbook automation for on-call engineers. Classifies incoming alerts (P1/P2/P3), maps them to suspected components, looks up matching runbook steps, and attaches an observability snapshot (metrics + log excerpts) before paging the engineer. Distinct from incident-triage, which handles post-incident RCA. Supports PagerDuty, Opsgenie, and Alertmanager inbound sources.",
+      "version": "0.1.0",
+      "category": "ops",
+      "requires": {
+        "feature_flags": ["scheduler"],
+        "env_keys": ["ONCALL_SLACK_TOKEN", "ONCALL_SLACK_CHANNEL", "ONCALL_OBSERVABILITY_URL", "ONCALL_OBSERVABILITY_TOKEN"]
+      },
+      "knobs": {
+        "auto_p1_statuspage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open a Statuspage incident for P1 alerts (requires STATUSPAGE_API_KEY)"
+        },
+        "snapshot_lookback_minutes": {
+          "type": "integer",
+          "default": 30,
+          "description": "Minutes of observability history to include in the snapshot"
+        },
+        "runbook_match_threshold": {
+          "type": "number",
+          "default": 0.4,
+          "description": "Minimum runbook match score before falling back to the generic triage runbook"
+        },
+        "similar_incident_days": {
+          "type": "integer",
+          "default": 30,
+          "description": "Days of history to search for similar past incidents"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/devops-oncall.png"
+    },
+    {
       "slug": "rag-hr",
       "name": "HR Policy RAG",
       "description": "Retrieval-augmented Q&A over HR documents: employee handbook, benefits guides, PTO policy, code of conduct, and org charts. Employees ask natural-language questions; the assistant cites the exact policy paragraph.",

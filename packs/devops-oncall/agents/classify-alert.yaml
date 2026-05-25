@@ -1,0 +1,87 @@
+---
+# classify-alert agent
+#
+# Input:  raw alert JSON from any inbound source (PagerDuty / Opsgenie / Alertmanager).
+#         The inbound adapters normalise each source to the common Alert struct before
+#         this agent runs, so the prompt always sees the same shape.
+#
+# Output: ClassifiedAlert struct —
+#           priority:            "P1" | "P2" | "P3"
+#           suspected_component: string (service / host / database / …)
+#           impact_summary:      1-2 sentence human-readable impact description
+#           similar_incidents:   array of past incident references (id, title, resolved_at)
+#           confidence:          "high" | "medium" | "low"
+
+name: classify-alert
+kind: llm-agent
+
+llm:
+  model: ${ONCALL_LLM_MODEL:-default}
+  temperature: 0.1   # low: classification must be deterministic
+  max_tokens: 1024
+
+# Context steps run before the LLM prompt; results are injected as
+# structured sections.
+context_steps:
+  - id: similar_incidents
+    description: "Recent incidents with overlapping component or alert name (last 30 days)"
+    tool: xiaoguai_incident_search
+    params:
+      component: "{{ alert.component | default('') }}"
+      alert_name: "{{ alert.name }}"
+      since_days: 30
+      limit: 5
+
+system_prompt: |
+  You are an expert on-call triage assistant for a software engineering team.
+
+  You will receive a normalized alert and a list of similar past incidents.
+  Your job is to:
+  1. Assign a PRIORITY using these definitions:
+       P1 — Production down or severely degraded; customer-facing; needs immediate human action.
+       P2 — Partial degradation or high error rate; customer impact possible; urgent but not all-hands.
+       P3 — Anomaly or warning threshold breached; no confirmed customer impact; monitor closely.
+  2. Identify the SUSPECTED COMPONENT (one service, host, DB, queue, etc.) most likely responsible.
+  3. Write a 1-2 sentence IMPACT SUMMARY suitable for a Slack message.
+  4. Reference up to 5 SIMILAR PAST INCIDENTS that may share the same root cause.
+
+  Rules:
+  - When in doubt about priority, escalate (choose the higher severity).
+  - Base suspected_component on alert labels; do not fabricate component names.
+  - If alert.component is already set, prefer it unless evidence clearly contradicts it.
+  - Output ONLY valid JSON matching the ClassifiedAlert schema below.
+
+  ClassifiedAlert schema:
+  {
+    "priority": "P1|P2|P3",
+    "suspected_component": "string",
+    "impact_summary": "string",
+    "similar_incidents": [
+      {"id": "string", "title": "string", "resolved_at": "ISO-8601 or null"}
+    ],
+    "confidence": "high|medium|low",
+    "classification_rationale": "string (1-3 sentences explaining the priority decision)"
+  }
+
+user_prompt: |
+  ## Incoming Alert
+  - Name:        {{ alert.name }}
+  - Source:      {{ alert.source }}
+  - Severity:    {{ alert.raw_severity }}
+  - Component:   {{ alert.component | default("unknown") }}
+  - Environment: {{ alert.environment | default("unknown") }}
+  - Fired at:    {{ alert.fired_at }}
+  - Description: {{ alert.description | truncate(500) }}
+  - Labels:      {{ alert.labels | tojson }}
+
+  ## Similar Past Incidents (last 30 days)
+  {{ context.similar_incidents | tojson_pretty | truncate(1500) }}
+
+  Classify the alert now.
+
+outputs:
+  - classify_result  # passed as context to downstream agents
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 1024

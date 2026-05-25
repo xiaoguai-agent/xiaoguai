@@ -1,0 +1,73 @@
+---
+# Output adapter — Statuspage.io incident creation
+#
+# Creates a new Statuspage incident when the classified alert priority is P1.
+# The plan condition gate (`condition: "{{ classify.priority == 'P1' }}"`) ensures
+# this adapter only fires for the highest-severity alerts.
+#
+# The adapter sets the initial incident status to "investigating" and links the
+# impacted component if its name matches a configured component slug mapping.
+#
+# References: https://developer.statuspage.io/#operation/postPagesPageIdIncidents
+
+name: statuspage-incident
+kind: http-post
+
+# Statuspage.io REST API.
+endpoint:
+  url: "https://api.statuspage.io/v1/pages/${STATUSPAGE_PAGE_ID}/incidents"
+  method: POST
+  headers:
+    Authorization: "OAuth ${STATUSPAGE_API_KEY}"
+    Content-Type: "application/json"
+
+# Request body template.
+# component_ids resolved from ONCALL_STATUSPAGE_COMPONENT_MAP env var —
+# a JSON object mapping component names to Statuspage component IDs.
+body_template: |
+  {
+    "incident": {
+      "name": "[P1] {{ alert.name | truncate(80) }}",
+      "status": "investigating",
+      "impact_override": "major",
+      "body": {{ templates/postmortem-stub.md.j2 | render | tojson }},
+      "component_ids": {{ classify.suspected_component | statuspage_component_ids(env.ONCALL_STATUSPAGE_COMPONENT_MAP) | tojson }},
+      "components": {
+        {% for cid in classify.suspected_component | statuspage_component_ids(env.ONCALL_STATUSPAGE_COMPONENT_MAP) %}
+        "{{ cid }}": "major_outage"{% if not loop.last %},{% endif %}
+        {% endfor %}
+      },
+      "metadata": {
+        "xiaoguai_alert_id": "{{ alert.id }}",
+        "xiaoguai_classification_confidence": "{{ classify.confidence }}"
+      },
+      "deliver_notifications": true,
+      "auto_transition_deliver_notifications_at_end": true,
+      "auto_transition_to_maintenance_state": false
+    }
+  }
+
+# Fields extracted from the Statuspage API response and stored for later use
+# (e.g. to resolve the incident when the alert clears).
+extract_response:
+  statuspage_incident_id: "$.incident.id"
+  statuspage_incident_url: "$.incident.shortlink"
+
+# Retry on transient errors (network / 5xx); never retry 4xx (config error).
+retry:
+  max_attempts: 3
+  backoff_seconds: 2
+  retry_on: [429, 500, 502, 503, 504]
+
+# Audit entry.
+audit:
+  table: pack_devops_oncall_statuspage
+  fields:
+    - alert_id
+    - alert_name
+    - priority
+    - statuspage_incident_id
+    - statuspage_incident_url
+    - created_at
+    - success
+    - error_message
