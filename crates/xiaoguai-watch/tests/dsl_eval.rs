@@ -37,8 +37,8 @@ use std::time::Duration;
 
 use serde_json::json;
 use xiaoguai_watch::{
-    ActionRef, DedupCache, InMemorySource, Match, SourceError, WatchRunner, WatchSchedule,
-    WatchSource, WatchSourceSpec, WatchSpec,
+    ActionRef, DedupCache, InMemorySource, Match, WatchRunner, WatchSchedule, WatchSourceSpec,
+    WatchSpec,
 };
 
 // ---------------------------------------------------------------------------
@@ -465,7 +465,7 @@ fn dsl_14_zero_interval_error_is_useful() {
     let err = spec.validate().unwrap_err();
 
     assert!(
-        err.to_lowercase().contains("interval") || err.to_lowercase().contains("0"),
+        err.to_lowercase().contains("interval") || err.to_lowercase().contains('0'),
         "error for zero interval must mention interval or 0, got: {err}"
     );
 }

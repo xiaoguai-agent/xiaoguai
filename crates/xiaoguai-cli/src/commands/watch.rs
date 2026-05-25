@@ -131,8 +131,8 @@ pub fn format_list_table(rows: &[JsonValue]) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "{:<20} {:<18} {:<8} {:<10} {}",
-        "ID", "SCHEDULE", "SOURCE", "ACTION", "STATUS"
+        "{:<20} {:<18} {:<8} {:<10} STATUS",
+        "ID", "SCHEDULE", "SOURCE", "ACTION"
     );
     for r in rows {
         let id = r.get("id").and_then(JsonValue::as_str).unwrap_or("-");

@@ -153,8 +153,8 @@ pub fn format_catalog_table(rows: &[JsonValue]) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "{:<20} {:<28} {:<8} {:<10} {}",
-        "SLUG", "NAME", "VERSION", "CATEGORY", "DESCRIPTION"
+        "{:<20} {:<28} {:<8} {:<10} DESCRIPTION",
+        "SLUG", "NAME", "VERSION", "CATEGORY"
     );
     for r in rows {
         let slug = r.get("slug").and_then(JsonValue::as_str).unwrap_or("-");
@@ -179,8 +179,8 @@ pub fn format_installed_table(rows: &[JsonValue]) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "{:<20} {:<18} {:<8} {}",
-        "ID", "PACK_SLUG", "VERSION", "INSTALLED_AT"
+        "{:<20} {:<18} {:<8} INSTALLED_AT",
+        "ID", "PACK_SLUG", "VERSION"
     );
     for r in rows {
         let id = r.get("id").and_then(JsonValue::as_str).unwrap_or("-");

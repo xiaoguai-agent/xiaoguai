@@ -1,7 +1,7 @@
 //! AWS Bedrock runtime backend.
 //!
 //! Uses the `InvokeModelWithResponseStream` API for streaming chat completions.
-//! Auth is performed via hand-rolled AWS SigV4 (using `hmac`, `sha2`, `hex`,
+//! Auth is performed via hand-rolled AWS `SigV4` (using `hmac`, `sha2`, `hex`,
 //! and `base64` crates already present in the workspace — no `aws-sdk` needed).
 //!
 //! **Supported model IDs** (pass verbatim as `ChatRequest::model`):
@@ -151,7 +151,7 @@ fn derive_signing_key(secret: &str, date: &str, region: &str, service: &str) -> 
     hmac_sha256(&k_service, b"aws4_request")
 }
 
-/// Build `Authorization` header value (AWS SigV4, service = `bedrock`).
+/// Build `Authorization` header value (AWS `SigV4`, service = `bedrock`).
 ///
 /// Returns `(authorization_header, x_amz_date_header, x_amz_content_sha256)`.
 fn sign_request(
@@ -373,7 +373,7 @@ const CRC32_TABLE: [u32; 256] = make_crc32_table();
 fn crc32(data: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
     for &b in data {
-        crc = CRC32_TABLE[((crc ^ b as u32) & 0xFF) as usize] ^ (crc >> 8);
+        crc = CRC32_TABLE[((crc ^ u32::from(b)) & 0xFF) as usize] ^ (crc >> 8);
     }
     crc ^ 0xFFFF_FFFF
 }
@@ -397,7 +397,7 @@ enum FrameResult {
 ///
 /// Returns:
 ///   - `FrameResult::NotBinary`  — first byte is not consistent with a frame
-///     (the binary prelude starts with a u32 total_length that must be ≥ 16;
+///     (the binary prelude starts with a u32 `total_length` that must be ≥ 16;
 ///     if the leading byte is a printable ASCII character it is almost
 ///     certainly raw JSON, so we fall back).
 ///   - `FrameResult::Incomplete` — looks binary but not enough bytes yet.
@@ -411,7 +411,7 @@ fn try_parse_frame(buf: &[u8]) -> FrameResult {
         if buf
             .first()
             .copied()
-            .map_or(false, |b| b == b'{' || b == b'\n')
+            .is_some_and(|b| b == b'{' || b == b'\n')
         {
             return FrameResult::NotBinary;
         }
@@ -426,7 +426,7 @@ fn try_parse_frame(buf: &[u8]) -> FrameResult {
     if buf[0] == b'{' || buf[0] == b'\n' {
         return FrameResult::NotBinary;
     }
-    if total_len < 16 || total_len > 1_048_576 {
+    if !(16..=1_048_576).contains(&total_len) {
         // Implausible frame size — treat as non-binary.
         return FrameResult::NotBinary;
     }
@@ -694,7 +694,7 @@ impl LlmBackend for BedrockBackend {
                         raw_buf
                             .first()
                             .copied()
-                            .map_or(true, |b| b == b'{' || b == b'\n'),
+                            .is_none_or(|b| b == b'{' || b == b'\n'),
                     );
                 }
 
@@ -851,8 +851,8 @@ impl LlmBackend for BedrockBackend {
 mod tests {
     use super::*;
 
-    /// Derive a signing key with the well-known AWS SigV4 test vectors.
-    /// Reference: https://docs.aws.amazon.com/general/latest/gr/sigv4-calculate-signature.html
+    /// Derive a signing key with the well-known AWS `SigV4` test vectors.
+    /// Reference: <https://docs.aws.amazon.com/general/latest/gr/sigv4-calculate-signature.html>
     #[test]
     fn sigv4_derive_signing_key_matches_aws_test_vector() {
         // AWS test vector: secret=wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY

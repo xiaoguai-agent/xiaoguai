@@ -174,8 +174,8 @@ pub fn format_list_table(rows: &[JsonValue]) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "{:<22} {:<15} {:<18} {:<10} {}",
-        "RECORDED_AT", "AGENT", "KIND", "VALUE", "SESSION"
+        "{:<22} {:<15} {:<18} {:<10} SESSION",
+        "RECORDED_AT", "AGENT", "KIND", "VALUE"
     );
     for r in rows {
         let ts = r
@@ -204,11 +204,7 @@ pub fn format_list_table(rows: &[JsonValue]) -> String {
 pub fn format_summary_table(rows: &[JsonValue]) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
-    let _ = writeln!(
-        out,
-        "{:<20} {:<14} {:<8} {}",
-        "KIND", "TOTAL", "COUNT", "AVG"
-    );
+    let _ = writeln!(out, "{:<20} {:<14} {:<8} AVG", "KIND", "TOTAL", "COUNT");
     for r in rows {
         let kind = r.get("kind").and_then(JsonValue::as_str).unwrap_or("-");
         let total = r

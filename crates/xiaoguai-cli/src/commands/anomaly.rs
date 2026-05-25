@@ -96,8 +96,8 @@ pub fn format_backtest_table(result: &JsonValue) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "{:<8} {:<22} {:<8} {:<8} {:<8} {:<8} {}",
-        "ANOMALY", "TS", "VALUE", "MEAN", "STD", "SCORE", "DESCRIPTION"
+        "{:<8} {:<22} {:<8} {:<8} {:<8} {:<8} DESCRIPTION",
+        "ANOMALY", "TS", "VALUE", "MEAN", "STD", "SCORE"
     );
     if let Some(rows) = result.get("anomalies").and_then(JsonValue::as_array) {
         for r in rows {

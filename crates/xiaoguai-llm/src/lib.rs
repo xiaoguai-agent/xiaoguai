@@ -10,7 +10,7 @@
 //! v1.1.9 adds: `AnthropicBackend` (Messages API) and `GeminiBackend`
 //! (generateContent API) for native cloud-LLM support.
 //!
-//! v1.2.6 adds: `BedrockBackend` (AWS Bedrock, SigV4 hand-rolled),
+//! v1.2.6 adds: `BedrockBackend` (AWS Bedrock, `SigV4` hand-rolled),
 //! `AzureOpenAiBackend` (Azure OpenAI, `api-key` auth), `MistralBackend`
 //! (Mistral La Plateforme), and `GroqBackend` (Groq fast inference).
 //!

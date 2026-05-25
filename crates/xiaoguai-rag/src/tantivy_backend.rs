@@ -30,7 +30,7 @@
 //!
 //! Tantivy is synchronous. Every method runs on a `tokio::task::spawn_blocking`
 //! thread to avoid blocking the async executor. This matches the pattern
-//! used in `xiaoguai-storage` (SQLx `spawn_blocking` calls for PG
+//! used in `xiaoguai-storage` (`SQLx` `spawn_blocking` calls for PG
 //! operations that pre-date async sqlx support).
 
 use std::collections::HashMap;
@@ -535,8 +535,7 @@ impl RagClient for TantivyStore {
 /// Convert a URI to a filesystem-safe string (replace `:/` and `/` with `-`).
 fn urlify(uri: &str) -> String {
     uri.replace("://", "-")
-        .replace('/', "-")
-        .replace(':', "-")
+        .replace(['/', ':'], "-")
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
         .take(80)

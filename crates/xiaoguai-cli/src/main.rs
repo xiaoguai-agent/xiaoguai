@@ -196,7 +196,7 @@ enum Cmd {
     /// Manage declarative active-wakeup watchers.
     ///
     /// Registers SQL/HTTP watchers that fire when query rows match or a
-    /// JSONPath expression hits. Pg bridge ships in v1.3; on 503 a
+    /// `JSONPath` expression hits. Pg bridge ships in v1.3; on 503 a
     /// friendly message is printed.
     Watch {
         /// Base URL of the `xiaoguai-api` server.
@@ -335,8 +335,8 @@ enum OutcomesCmd {
         tenant_id: String,
         #[arg(long)]
         agent_name: String,
-        /// One of: revenue_usd, cost_saved_usd, hours_saved, deals_closed,
-        /// tickets_resolved, custom.
+        /// One of: `revenue_usd`, `cost_saved_usd`, `hours_saved`, `deals_closed`,
+        /// `tickets_resolved`, custom.
         #[arg(long)]
         kind: String,
         #[arg(long)]

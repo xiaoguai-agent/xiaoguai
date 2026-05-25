@@ -510,7 +510,7 @@ mod tests {
         let fused = rrf_fuse(vector, lexical, 60.0, 1.0, 1.0, max, 20);
         for h in &fused {
             let s = h.citation.score;
-            assert!(s >= 0.0 && s <= 1.0, "score {s} out of [0,1]");
+            assert!((0.0..=1.0).contains(&s), "score {s} out of [0,1]");
         }
     }
 
@@ -519,7 +519,6 @@ mod tests {
         // With K=1 the top rank contribution = 1/(1+1) = 0.5, vs 1/(60+1)
         // at K=60. Verify that the ratio top-rank / second-rank is higher.
         let vector = vec![make_hit("a", 1.0), make_hit("b", 0.5)];
-        let lexical: Vec<RankedHit> = vec![];
         let max_k1 = 2.0_f32 / 2.0;
         let fused_k1 = rrf_fuse(vector.clone(), vec![], 1.0, 1.0, 1.0, max_k1, 5);
         let max_k60 = 2.0_f32 / 61.0;

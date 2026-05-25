@@ -77,7 +77,7 @@ fn main() {
         let value: f64 = match day {
             // Mon-Fri business hours
             0..=4 => {
-                if hour >= 8 && hour < 22 {
+                if (8..22).contains(&hour) {
                     // Business hours: 120 + diurnal hump + small noise
                     let hump = ((minute_of_day - 8 * 60) as f64 / (14.0 * 60.0)
                         * std::f64::consts::PI)

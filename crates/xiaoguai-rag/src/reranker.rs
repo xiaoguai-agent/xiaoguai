@@ -852,11 +852,11 @@ mod tests {
 
     // ── LlmReranker ──────────────────────────────────────────────────────────
 
-    /// Scripted MockBackend that returns fixed integer scores, one per line.
+    /// Scripted `MockBackend` that returns fixed integer scores, one per line.
     fn mock_llm_scores(scores: &[u8]) -> Arc<dyn xiaoguai_llm::LlmBackend> {
         let text = scores
             .iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect::<Vec<_>>()
             .join("\n");
         Arc::new(xiaoguai_llm::MockBackend::with_response(text))
@@ -983,7 +983,7 @@ mod tests {
                 .ingest(crate::types::IngestRequest {
                     collection_id: "notes".into(),
                     source_uri: format!("file:///doc{i}.md"),
-                    content: content.to_string(),
+                    content: (*content).to_string(),
                     metadata: serde_json::json!({}),
                 })
                 .await
@@ -1022,7 +1022,7 @@ mod tests {
                 .ingest(crate::types::IngestRequest {
                     collection_id: "notes".into(),
                     source_uri: format!("file:///doc{i}.md"),
-                    content: content.to_string(),
+                    content: (*content).to_string(),
                     metadata: serde_json::json!({}),
                 })
                 .await
@@ -1117,7 +1117,7 @@ mod tests {
     }
 
     /// Verify that reranked order from mocked Cohere-style results respects
-    /// relevance sorting and top_k truncation.
+    /// relevance sorting and `top_k` truncation.
     #[test]
     fn sort_and_truncate_respects_relevance_and_top_k() {
         let data = [("a", 0.5f32), ("b", 0.5), ("c", 0.5)];
@@ -1143,7 +1143,7 @@ mod tests {
         assert!((result[1].relevance - 0.60).abs() < 1e-5); // "c"
     }
 
-    /// fallback_order preserves original rank and uses citation score.
+    /// `fallback_order` preserves original rank and uses citation score.
     #[test]
     fn fallback_order_preserves_rank_and_score() {
         let data = [("x", 0.8f32), ("y", 0.6), ("z", 0.4)];

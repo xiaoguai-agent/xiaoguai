@@ -42,7 +42,8 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::missing_errors_doc,
-    clippy::missing_panics_doc
+    clippy::missing_panics_doc,
+    clippy::needless_pass_by_value
 )]
 
 // Persistence layer.
