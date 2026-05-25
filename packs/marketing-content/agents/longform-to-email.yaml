@@ -1,0 +1,92 @@
+# Agent: longform-to-email
+#
+# Derives a 3-email nurture sequence from a long-form article draft.
+#
+# Email cadence (configurable in pack.yaml config.email.default_cadence_days):
+#   Email 1 (Day 0)  — Awareness: tease the problem, deliver the hook, link to full article.
+#   Email 2 (Day 3)  — Consideration: expand on one key insight, provide supplementary value.
+#   Email 3 (Day 7)  — Decision: concrete CTA (demo, trial, purchase, download, etc.).
+#
+# Each email follows the EMAIL_CADENCE_FRAME template injected via system prompt.
+#
+# Input context keys:
+#   longform         — LongformDraft JSON object from the longform step
+#   brand_voice_ref  — name of the brand voice template to inject
+#   cadence_days     — list of 3 integers (days from subscribe); default [0, 3, 7]
+#   list_segment     — optional audience segment label for subject line personalisation
+#
+# Output:
+#   A JSON array of 3 EmailDraft objects.
+
+name: longform-to-email
+kind: llm-agent
+
+system_prompt_template: templates/email-cadence-frame.j2
+
+user_prompt_template: |
+  ## Long-form Source Material
+
+  **Title:** {{ longform.title }}
+
+  **Meta description:** {{ longform.meta_description }}
+
+  **Article body (Markdown):**
+
+  {{ longform.markdown }}
+
+  ---
+
+  ## Sequence Parameters
+
+  - **Cadence:** Email 1 on Day {{ cadence_days[0] | default(0) }},
+    Email 2 on Day {{ cadence_days[1] | default(3) }},
+    Email 3 on Day {{ cadence_days[2] | default(7) }}.
+  {% if list_segment is defined %}
+  - **Audience segment:** {{ list_segment }}
+  {% endif %}
+
+  Write a 3-email nurture sequence following the cadence frame in your system prompt.
+  Output a JSON array of exactly 3 EmailDraft objects — no prose outside the JSON.
+
+output_schema:
+  type: array
+  description: "Array of 3 EmailDraft objects"
+  minItems: 3
+  maxItems: 3
+  items:
+    type: object
+    description: EmailDraft
+    required: [sequence_position, send_day, subject, preview_text, body_html, body_text, cta_text, cta_url_placeholder]
+    properties:
+      sequence_position:
+        type: integer
+        enum: [1, 2, 3]
+        description: "Position in the nurture sequence"
+      send_day:
+        type: integer
+        description: "Day offset from subscribe date when this email should send"
+      subject:
+        type: string
+        description: "Email subject line (≤60 chars; A/B variant encouraged)"
+      subject_variant:
+        type: string
+        description: "Optional A/B variant subject line for testing"
+      preview_text:
+        type: string
+        description: "Email preview / pre-header text (≤90 chars)"
+      body_html:
+        type: string
+        description: "Full email body as HTML (inline styles only, no <head>)"
+      body_text:
+        type: string
+        description: "Plain-text fallback version of the body"
+      cta_text:
+        type: string
+        description: "Call-to-action button / link label (≤12 words)"
+      cta_url_placeholder:
+        type: string
+        description: "Placeholder URL that the Mailchimp adapter will substitute"
+
+budget:
+  max_llm_calls: 3
+  max_output_tokens: 6144

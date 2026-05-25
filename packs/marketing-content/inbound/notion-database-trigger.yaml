@@ -1,0 +1,54 @@
+# Inbound trigger — Notion database item update
+#
+# Fires when a content brief record in a configured Notion database moves
+# to "Ready for Drafting" status.
+#
+# Notion must be configured to send database item webhook events to:
+#   POST https://<host>/v1/scheduler/webhooks/<route_id>
+#
+# Signature verification: HMAC-SHA256 over the raw request body,
+# compared against the `X-Notion-Signature` header.
+#
+# Notion webhook integration:
+#   Set up via Notion Integrations → Webhook → select the content-brief database.
+#   The integration must have "Read content" + "Read user information" capabilities.
+
+name: notion-database-trigger
+kind: webhook
+
+# Route registered in the scheduler webhook table.
+route_id: "marketing-content-notion-${PACK_INSTANCE_ID}"
+
+# Signature verification.
+signature:
+  algorithm: hmac-sha256
+  header: X-Notion-Signature
+  prefix: "v0="
+  secret_env: NOTION_WEBHOOK_SECRET
+
+# Only fire on database item property changes.
+event_filter:
+  header: X-Notion-Event-Type
+  values: ["page_property_updated", "page_created"]
+
+# Only trigger when the Status property transitions to "Ready for Drafting".
+payload_filter:
+  json_path: "$.data.page.properties.Status.select.name"
+  values: ["Ready for Drafting"]
+
+# Fields extracted from the Notion payload and passed to the plan context.
+extract:
+  brief_title:      "$.data.page.properties.Title.title[0].plain_text"
+  brief_summary:    "$.data.page.properties.Summary.rich_text[0].plain_text"
+  target_audience:  "$.data.page.properties.Target Audience.rich_text[0].plain_text"
+  desired_action:   "$.data.page.properties.Desired Action.rich_text[0].plain_text"
+  word_count_target: "$.data.page.properties.Word Count.number"
+  brand_voice_ref:  "$.data.page.properties.Brand Voice.select.name"
+  seo_keywords:     "$.data.page.properties.SEO Keywords.multi_select[*].name"
+  notion_page_id:   "$.data.page.id"
+  notion_page_url:  "$.data.page.url"
+
+# key_messages is a multi-value property — map each item to a list element.
+extract_list:
+  key_messages:
+    json_path: "$.data.page.properties.Key Messages.rich_text[*].plain_text"

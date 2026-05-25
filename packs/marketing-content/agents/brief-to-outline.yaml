@@ -1,0 +1,94 @@
+# Agent: brief-to-outline
+#
+# Consumes a creative brief and brand voice guide, produces a structured
+# content outline with H2/H3 headings, sub-points, and CTA placements.
+#
+# Input context keys (extracted from inbound trigger payload):
+#   brief_title         — working title / topic
+#   brief_summary       — 2-5 sentence description of the piece
+#   target_audience     — persona description
+#   key_messages        — list of core claims or arguments
+#   desired_action      — what the reader should do after reading (CTA intent)
+#   brand_voice_ref     — name of the brand voice template to inject (optional)
+#   word_count_target   — integer target word count for the downstream longform step
+#
+# Output:
+#   A JSON object following the ContentOutline schema (see below).
+
+name: brief-to-outline
+kind: llm-agent
+
+system_prompt_template: templates/brand-voice-system-prompt.j2
+
+user_prompt_template: |
+  ## Creative Brief
+
+  **Title:** {{ brief_title }}
+
+  **Summary:** {{ brief_summary }}
+
+  **Target Audience:** {{ target_audience }}
+
+  **Key Messages:**
+  {% for msg in key_messages -%}
+  - {{ msg }}
+  {% endfor %}
+  **Desired Reader Action (CTA intent):** {{ desired_action }}
+
+  **Target word count for final article:** {{ word_count_target | default(1500) }}
+
+  ---
+
+  Produce a structured content outline for this article.
+  Follow the ContentOutline JSON schema exactly — no prose outside the JSON block.
+
+output_schema:
+  type: object
+  description: ContentOutline
+  required: [title, intro_hook, sections, cta]
+  properties:
+    title:
+      type: string
+      description: "SEO-optimised H1 title (≤70 chars)"
+    intro_hook:
+      type: string
+      description: "1-2 sentence hook for the opening paragraph"
+    sections:
+      type: array
+      description: "Ordered H2 sections"
+      items:
+        type: object
+        required: [h2, sub_points]
+        properties:
+          h2:
+            type: string
+            description: "H2 heading text"
+          sub_points:
+            type: array
+            items:
+              type: object
+              required: [h3, notes]
+              properties:
+                h3:
+                  type: string
+                  description: "H3 sub-heading text (or empty string for flat bullets)"
+                notes:
+                  type: string
+                  description: "2-4 bullet-point notes for the writer"
+          inline_cta:
+            type: string
+            description: "Optional mid-article CTA text for this section"
+    cta:
+      type: object
+      required: [primary, secondary]
+      properties:
+        primary:
+          type: string
+          description: "Main end-of-article CTA (imperative, ≤15 words)"
+        secondary:
+          type: string
+          description: "Soft alternative CTA (newsletter, resource, etc.)"
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 2048
