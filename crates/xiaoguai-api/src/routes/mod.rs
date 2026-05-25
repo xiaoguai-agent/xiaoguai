@@ -1,6 +1,7 @@
 //! HTTP route handlers.
 
 pub mod admin;
+pub mod hotl;
 pub mod mcp;
 pub mod scheduler_public;
 pub mod sessions;
@@ -85,7 +86,16 @@ pub fn router(state: AppState) -> Router {
         // v1.1.2: conversation fork.
         .route("/v1/sessions/:id/fork", post(sessions::fork_session))
         // v1.1.1 — token-usage aggregation.
-        .route("/v1/usage", get(usage::list_usage));
+        .route("/v1/usage", get(usage::list_usage))
+        // v1.2.3 — HOTL boundary policy admin.
+        .route(
+            "/v1/hotl/policies",
+            get(hotl::list_policies).post(hotl::create_policy),
+        )
+        .route(
+            "/v1/hotl/policies/:id",
+            delete(hotl::delete_policy),
+        );
 
     // Layer order (inner → outer, since `route_layer` adds outward):
     //   handler → rate_limit → rbac → require_bearer
