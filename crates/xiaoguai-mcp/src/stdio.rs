@@ -39,6 +39,10 @@ impl StdioMcpClient {
     /// `args` are passed positional after the binary path. `envs` are extra
     /// environment variables for the child process (inherits the parent's
     /// `PATH` etc. by default).
+    ///
+    /// # Errors
+    /// Returns `McpError::Transport` if the child process cannot be spawned,
+    /// or `McpError::Protocol` if the MCP `initialize` handshake fails.
     pub async fn spawn<P, S, T>(program: P, args: &[&str], envs: &[(S, T)]) -> McpResult<Self>
     where
         P: AsRef<Path>,

@@ -185,6 +185,9 @@ async fn handle_webhook(
 ///
 /// Side effect: appends `(user, assistant)` turns to
 /// [`GatewayState::history`] for the conversation's identity.
+///
+/// # Errors
+/// Returns `ProviderError` if the agent run fails or the IM send fails.
 pub async fn run_agent_and_reply(
     state: GatewayState,
     msg: IncomingMessage,

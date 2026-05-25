@@ -386,6 +386,9 @@ fn is_fatal(e: &anyhow::Error) -> bool {
 ///
 /// This is the entry point called by `xiaoguai-im-gateway` once wired.
 /// For now the gateway has not been wired — use `StreamClient::run` directly.
+///
+/// # Errors
+/// Returns an error if the DingTalk stream connection or message loop fails.
 pub async fn run_stream<H, F>(
     client_id: impl Into<String>,
     client_secret: impl Into<String>,

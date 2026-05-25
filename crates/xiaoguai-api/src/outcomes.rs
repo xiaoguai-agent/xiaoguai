@@ -179,8 +179,8 @@ impl OutcomesReader for InMemoryOutcomesBackend {
         let filtered: Vec<OutcomeRecord> = all
             .into_iter()
             .filter(|r| r.tenant_id == tenant_id)
-            .filter(|r| range.since.map_or(true, |s| r.attributed_at >= s))
-            .filter(|r| range.until.map_or(true, |u| r.attributed_at <= u))
+            .filter(|r| range.since.is_none_or(|s| r.attributed_at >= s))
+            .filter(|r| range.until.is_none_or(|u| r.attributed_at <= u))
             .collect();
         Ok(OutcomeSummary::from_records(&filtered))
     }
@@ -195,9 +195,9 @@ impl OutcomesReader for InMemoryOutcomesBackend {
         let filtered: Vec<OutcomeRecord> = all
             .into_iter()
             .filter(|r| r.tenant_id == tenant_id)
-            .filter(|r| kind.map_or(true, |k| r.kind == k))
-            .filter(|r| range.since.map_or(true, |s| r.attributed_at >= s))
-            .filter(|r| range.until.map_or(true, |u| r.attributed_at <= u))
+            .filter(|r| kind.is_none_or(|k| r.kind == k))
+            .filter(|r| range.since.is_none_or(|s| r.attributed_at >= s))
+            .filter(|r| range.until.is_none_or(|u| r.attributed_at <= u))
             .collect();
         Ok(xiaoguai_audit::timeseries(&filtered))
     }

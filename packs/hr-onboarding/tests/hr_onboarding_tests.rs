@@ -1,18 +1,18 @@
 //! HR Onboarding Pack — integration tests
 //!
 //! Tests exercise the pack's logic by wiring real xiaoguai-orchestrator
-//! primitives (Supervisor, Budget, PlanStep) with in-process mock workers and
+//! primitives (`Supervisor`, `Budget`, `PlanStep`) with in-process mock workers and
 //! planners.  No external systems (Okta, Google Workspace, Calendar, Feishu)
 //! are called.
 //!
 //! Test groups
 //! -----------
-//! 1. plan_decomposition  — coordinator produces the 4 expected subtasks in order
-//! 2. worker_side_effects — each worker mock records the right audit entries
-//! 3. failure_handling    — one failing subtask does not abort the run; report flags it
+//! 1. `plan_decomposition`  — coordinator produces the 4 expected subtasks in order
+//! 2. `worker_side_effects` — each worker mock records the right audit entries
+//! 3. `failure_handling`    — one failing subtask does not abort the run; report flags it
 //!
 //! Run:
-//!   cargo test -p xiaoguai-orchestrator --test hr_onboarding_tests
+//!   cargo test -p xiaoguai-orchestrator --test `hr_onboarding_tests`
 //!
 //! (The test file lives under packs/hr-onboarding/tests/ but is gated by a
 //! path in the orchestrator's Cargo.toml [[test]] stanza added in this tag.)
@@ -32,7 +32,7 @@ use xiaoguai_orchestrator::{
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Canonical onboarding goal string (mirrors coordinator.yaml static_plan).
+/// Canonical onboarding goal string (mirrors `coordinator.yaml` `static_plan`).
 const ONBOARD_GOAL: &str =
     "Onboard new employee: name=Alice email=alice@company.com employee_id=emp-001";
 
@@ -75,7 +75,7 @@ fn hr_onboarding_plan() -> Vec<PlanStep> {
 /// Emits the 4 HR plan steps in order; returns None once the queue is empty.
 struct HrOnboardingPlanner {
     steps: Mutex<VecDeque<PlanStep>>,
-    /// Tracks the goals passed to next_step (for assertion in tests).
+    /// Tracks the goals passed to `next_step` (for assertion in tests).
     seen_goals: Mutex<Vec<String>>,
 }
 
@@ -87,6 +87,7 @@ impl HrOnboardingPlanner {
         }
     }
 
+    #[allow(dead_code, reason = "test helper — used in some test variants")]
     fn seen_goal_count(&self) -> usize {
         self.seen_goals.lock().unwrap().len()
     }
@@ -117,7 +118,9 @@ struct MockAuditSink {
 
 #[derive(Debug, Clone)]
 struct AuditEntry {
+    #[allow(dead_code, reason = "recorded for future assertions")]
     employee_id: String,
+    #[allow(dead_code, reason = "recorded for future assertions")]
     step_id: String,
     action: String,
     success: bool,
@@ -125,12 +128,14 @@ struct AuditEntry {
 
 #[derive(Debug, Clone)]
 struct MeetingEntry {
+    #[allow(dead_code, reason = "recorded for future assertions")]
     employee_id: String,
     title: String,
 }
 
 #[derive(Debug, Clone)]
 struct ImSend {
+    #[allow(dead_code, reason = "recorded for future assertions")]
     recipient: String,
     message_kind: String, // "welcome_dm" | "group_chat" | "buddy_notify"
 }
@@ -140,6 +145,7 @@ impl MockAuditSink {
         Arc::new(Self::default())
     }
 
+    #[allow(dead_code, reason = "test helper — available for assertions")]
     fn audit_count(&self) -> usize {
         self.audit_entries.lock().unwrap().len()
     }
@@ -189,7 +195,7 @@ impl MockAuditSink {
 // ── Mock workers ──────────────────────────────────────────────────────────────
 
 /// Mock for the account-provisioner agent.
-/// Side effect: 3 audit entries (okta, google_workspace, github).
+/// Side effect: 3 audit entries (`okta`, `google_workspace`, `github`).
 struct MockAccountProvisioner {
     sink: Arc<MockAuditSink>,
     /// If Some(msg), the worker fails with that message.
@@ -314,7 +320,7 @@ impl Worker for MockMeetingScheduler {
 }
 
 /// Mock for the welcome-messenger agent.
-/// Side effect: 2 IM sends (welcome_dm + group_chat).
+/// Side effect: 2 IM sends (`welcome_dm` + `group_chat`).
 struct MockWelcomeMessenger {
     sink: Arc<MockAuditSink>,
     fail_with: Option<String>,
@@ -328,6 +334,7 @@ impl MockWelcomeMessenger {
         })
     }
 
+    #[allow(dead_code, reason = "test helper — used in failure scenario tests")]
     fn failing(sink: Arc<MockAuditSink>, msg: &str) -> Arc<Self> {
         Arc::new(Self {
             sink,
@@ -372,7 +379,7 @@ impl Worker for MockWelcomeMessenger {
 }
 
 /// Mock for the buddy-assigner agent.
-/// Side effect: 1 audit entry (buddy_assigned) + 1 IM send (buddy_notify).
+/// Side effect: 1 audit entry (`buddy_assigned`) + 1 IM send (`buddy_notify`).
 struct MockBuddyAssigner {
     sink: Arc<MockAuditSink>,
     /// Simulated buddy from the round-robin pool.
@@ -414,8 +421,8 @@ impl Worker for MockBuddyAssigner {
 
 // ── Routing worker: dispatch by step_id prefix ────────────────────────────────
 
-/// Wraps four specialist workers and routes by the step_id prefix,
-/// mirroring the coordinator.yaml `handles_step_prefix` configuration.
+/// Wraps four specialist workers and routes by the `step_id` prefix,
+/// mirroring the `coordinator.yaml` `handles_step_prefix` configuration.
 struct RoutingWorker {
     account_provisioner: Arc<dyn Worker>,
     meeting_scheduler: Arc<dyn Worker>,
@@ -465,16 +472,16 @@ fn standard_budget() -> Budget {
 }
 
 /// Build a complete Supervisor wired with the routing worker.
-fn build_supervisor(sink: Arc<MockAuditSink>) -> Supervisor {
+fn build_supervisor(sink: &Arc<MockAuditSink>) -> Supervisor {
     let planner = HrOnboardingPlanner::new();
     let budget = standard_budget();
     let mut supervisor = Supervisor::new(budget, Box::new(planner));
 
     let router = Arc::new(RoutingWorker {
-        account_provisioner: MockAccountProvisioner::ok(sink.clone()),
-        meeting_scheduler: MockMeetingScheduler::ok(sink.clone()),
-        welcome_messenger: MockWelcomeMessenger::ok(sink.clone()),
-        buddy_assigner: MockBuddyAssigner::ok(sink.clone()),
+        account_provisioner: MockAccountProvisioner::ok(Arc::clone(sink)),
+        meeting_scheduler: MockMeetingScheduler::ok(Arc::clone(sink)),
+        welcome_messenger: MockWelcomeMessenger::ok(Arc::clone(sink)),
+        buddy_assigner: MockBuddyAssigner::ok(Arc::clone(sink)),
     });
     supervisor.add_worker(router);
     supervisor
@@ -489,7 +496,7 @@ fn build_supervisor(sink: Arc<MockAuditSink>) -> Supervisor {
 #[tokio::test]
 async fn plan_produces_four_subtasks() {
     let sink = MockAuditSink::new();
-    let mut supervisor = build_supervisor(sink.clone());
+    let mut supervisor = build_supervisor(&sink);
 
     let report = supervisor.run_detailed(ONBOARD_GOAL).await.expect("run ok");
 
@@ -507,7 +514,7 @@ async fn plan_produces_four_subtasks() {
 #[tokio::test]
 async fn subtasks_dispatched_in_correct_order() {
     let sink = MockAuditSink::new();
-    let mut supervisor = build_supervisor(sink.clone());
+    let mut supervisor = build_supervisor(&sink);
 
     let report = supervisor.run_detailed(ONBOARD_GOAL).await.expect("run ok");
 
@@ -552,7 +559,7 @@ async fn subtasks_dispatched_in_correct_order() {
 #[tokio::test]
 async fn all_four_canonical_step_ids_dispatched() {
     let sink = MockAuditSink::new();
-    let mut supervisor = build_supervisor(sink.clone());
+    let mut supervisor = build_supervisor(&sink);
 
     let report = supervisor.run_detailed(ONBOARD_GOAL).await.expect("run ok");
 
@@ -572,7 +579,7 @@ async fn all_four_canonical_step_ids_dispatched() {
 #[tokio::test]
 async fn account_provisioner_writes_three_audit_entries() {
     let sink = MockAuditSink::new();
-    let mut supervisor = build_supervisor(sink.clone());
+    let mut supervisor = build_supervisor(&sink);
     supervisor.run(ONBOARD_GOAL).await.expect("run ok");
 
     // 3 from account provisioner + 1 from buddy assigner = 4 total
@@ -595,7 +602,7 @@ async fn account_provisioner_writes_three_audit_entries() {
 #[tokio::test]
 async fn meeting_scheduler_writes_four_meetings() {
     let sink = MockAuditSink::new();
-    let mut supervisor = build_supervisor(sink.clone());
+    let mut supervisor = build_supervisor(&sink);
     supervisor.run(ONBOARD_GOAL).await.expect("run ok");
 
     assert_eq!(sink.meeting_count(), 4, "expected 4 scheduled meetings");
@@ -609,7 +616,7 @@ async fn meeting_scheduler_writes_four_meetings() {
 #[tokio::test]
 async fn welcome_messenger_sends_two_im_messages() {
     let sink = MockAuditSink::new();
-    let mut supervisor = build_supervisor(sink.clone());
+    let mut supervisor = build_supervisor(&sink);
     supervisor.run(ONBOARD_GOAL).await.expect("run ok");
 
     assert!(sink.has_im_send("welcome_dm"), "welcome DM missing");
@@ -623,7 +630,7 @@ async fn welcome_messenger_sends_two_im_messages() {
 #[tokio::test]
 async fn buddy_assigner_notifies_buddy_via_im() {
     let sink = MockAuditSink::new();
-    let mut supervisor = build_supervisor(sink.clone());
+    let mut supervisor = build_supervisor(&sink);
     supervisor.run(ONBOARD_GOAL).await.expect("run ok");
 
     assert!(
@@ -640,7 +647,7 @@ async fn buddy_assigner_notifies_buddy_via_im() {
 #[tokio::test]
 async fn total_im_sends_across_run_is_three() {
     let sink = MockAuditSink::new();
-    let mut supervisor = build_supervisor(sink.clone());
+    let mut supervisor = build_supervisor(&sink);
     supervisor.run(ONBOARD_GOAL).await.expect("run ok");
 
     assert_eq!(sink.im_send_count(), 3, "expected 3 IM sends total");

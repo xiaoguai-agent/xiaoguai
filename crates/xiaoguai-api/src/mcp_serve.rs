@@ -158,6 +158,7 @@ fn json_value_to_input_schema(v: &JsonValue) -> JsonObject {
 /// Build the `axum::Router` fragment that serves the MCP endpoint at
 /// `/v1/mcp/serve`. Returns `None` when publishing is disabled in
 /// `AppState`, so the caller can `merge` without an extra branch.
+#[allow(clippy::needless_pass_by_value, reason = "Arc passed by value is intentional API")]
 pub fn build_router(toolbox: Arc<Toolbox>) -> axum::Router {
     let factory = {
         let tb = toolbox.clone();

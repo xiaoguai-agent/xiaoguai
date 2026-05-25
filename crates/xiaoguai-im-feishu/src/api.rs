@@ -234,6 +234,9 @@ impl TokenCache {
 
     /// Test-friendly variant: same as [`get_token`] but with a caller-
     /// supplied clock reading so tests can simulate the passage of time.
+    ///
+    /// # Errors
+    /// Returns `ProviderError` if the token fetch from the Feishu API fails.
     pub async fn get_token_at(&self, now: DateTime<Utc>) -> Result<String, ProviderError> {
         let mut guard = self.cached.lock().await;
         if let Some(c) = guard.as_ref() {

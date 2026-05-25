@@ -211,10 +211,14 @@ impl TokenCache {
         self
     }
 
+    /// # Errors
+    /// Returns `ProviderError` if the token fetch from the WeCom API fails.
     pub async fn get_token(&self) -> Result<String, ProviderError> {
         self.get_token_at(Utc::now()).await
     }
 
+    /// # Errors
+    /// Returns `ProviderError` if the token fetch from the WeCom API fails.
     pub async fn get_token_at(&self, now: DateTime<Utc>) -> Result<String, ProviderError> {
         let mut guard = self.cached.lock().await;
         if let Some(c) = guard.as_ref() {

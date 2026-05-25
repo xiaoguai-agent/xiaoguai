@@ -131,6 +131,7 @@ impl EscalationBus {
     }
 
     /// Subscribe to breaker-opened events.
+    #[must_use]
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<BreakerOpened> {
         self.tx.subscribe()
     }
@@ -181,7 +182,7 @@ pub struct BreakerConfig {
     pub failure_window: Duration,
     /// How long the breaker stays Open before allowing a probe.
     pub reset_after: Duration,
-    /// Number of successful probe calls in HalfOpen before closing again.
+    /// Number of successful probe calls in `HalfOpen` before closing again.
     pub half_open_max_calls: u32,
 }
 
@@ -209,7 +210,7 @@ struct BreakerInner {
     failure_timestamps: VecDeque<Instant>,
     /// When the Open state was entered; used to compute transition.
     opened_at: Option<Instant>,
-    /// Successful probe calls while HalfOpen.
+    /// Successful probe calls while `HalfOpen`.
     half_open_successes: u32,
     /// Running failure count at the point of tripping (for escalation).
     trip_failure_count: u32,
@@ -283,15 +284,17 @@ impl CircuitBreaker {
         self
     }
 
-    /// Current state snapshot (promotes Open → HalfOpen if cooldown elapsed).
+    /// Current state snapshot (promotes `Open` → `HalfOpen` if cooldown elapsed).
+    #[must_use]
     pub fn state(&self) -> BreakerState {
         let mut g = self.inner.lock();
         self.maybe_promote(&mut g)
     }
 
-    /// Returns `true` when a call should be attempted. Open → refuses; HalfOpen
+    /// Returns `true` when a call should be attempted. `Open` → refuses; `HalfOpen`
     /// → allows up to `half_open_max_calls` probes (counted by successes, not
     /// attempts, to avoid thundering-herd on concurrent probes).
+    #[must_use]
     pub fn allows_call(&self) -> bool {
         let mut g = self.inner.lock();
         let st = self.maybe_promote(&mut g);
@@ -321,10 +324,11 @@ impl CircuitBreaker {
     }
 
     /// Record a failure. When in Closed state, adds to the rolling window and
-    /// opens the breaker if the threshold is reached. In HalfOpen, re-opens.
+    /// opens the breaker if the threshold is reached. In `HalfOpen`, re-opens.
     ///
     /// Returns the `BreakerOpened` event if the breaker just tripped, so the
     /// caller can feed it to the escalation bus after releasing the lock.
+    #[must_use]
     pub fn record_failure(&self, last_error: &str) -> Option<BreakerOpened> {
         let now = self.clock.now();
         let mut g = self.inner.lock();
@@ -366,9 +370,9 @@ impl CircuitBreaker {
         }
     }
 
-    /// Possibly promote `Open → HalfOpen` if cooldown has elapsed.
+    /// Possibly promote `Open` → `HalfOpen` if cooldown has elapsed.
     /// Must be called with the lock held.
-    fn maybe_promote<'g>(&self, g: &'g mut BreakerInner) -> BreakerState {
+    fn maybe_promote(&self, g: &mut BreakerInner) -> BreakerState {
         if g.state == BreakerState::Open {
             if let Some(opened) = g.opened_at {
                 if self.clock.now().duration_since(opened) >= self.config.reset_after {
@@ -381,9 +385,8 @@ impl CircuitBreaker {
     }
 
     fn evict_old(&self, g: &mut BreakerInner, now: Instant) {
-        let cutoff = match now.checked_sub(self.config.failure_window) {
-            Some(c) => c,
-            None => return,
+        let Some(cutoff) = now.checked_sub(self.config.failure_window) else {
+            return;
         };
         while let Some(&front) = g.failure_timestamps.front() {
             if front < cutoff {
@@ -444,6 +447,7 @@ impl<E> std::fmt::Debug for RetryPolicy<E> {
 impl<E> RetryPolicy<E> {
     /// Convenience constructor: retry everything up to `max_attempts` with
     /// exponential back-off and full jitter.
+    #[must_use]
     pub fn new(max_attempts: u32, base_delay: Duration, max_delay: Duration) -> Self {
         Self {
             max_attempts,
@@ -455,12 +459,14 @@ impl<E> RetryPolicy<E> {
     }
 
     /// Set a predicate that decides whether a given error is retryable.
+    #[must_use]
     pub fn retry_on(mut self, f: impl Fn(&E) -> bool + Send + Sync + 'static) -> Self {
         self.retry_on = Box::new(f);
         self
     }
 
     /// Disable jitter (useful in tests for deterministic delays).
+    #[must_use]
     pub fn no_jitter(mut self) -> Self {
         self.jitter = false;
         self
@@ -652,7 +658,7 @@ mod tests {
         let (cb, clock) = fast_breaker("pg");
 
         for i in 0..5 {
-            cb.record_failure(&format!("err {i}"));
+            let _ = cb.record_failure(&format!("err {i}"));
         }
         assert_eq!(cb.state(), BreakerState::Open);
 
@@ -673,7 +679,7 @@ mod tests {
         let (cb, clock) = fast_breaker("webhook");
 
         for i in 0..5 {
-            cb.record_failure(&format!("err {i}"));
+            let _ = cb.record_failure(&format!("err {i}"));
         }
         clock.advance(Duration::from_secs(31));
         assert_eq!(cb.state(), BreakerState::HalfOpen);
@@ -743,7 +749,7 @@ mod tests {
         // Either variant is acceptable proof of total failure.
         assert!(result.is_err());
         match result {
-            Err(ResilienceError::BreakerOpen { .. }) | Err(ResilienceError::Exhausted { .. }) => {}
+            Err(ResilienceError::BreakerOpen { .. } | ResilienceError::Exhausted { .. }) => {}
             Ok(_) => panic!("expected error"),
         }
         // Breaker must be open.
@@ -768,7 +774,7 @@ mod tests {
             .map(|i| {
                 let cb = Arc::clone(&cb);
                 tokio::spawn(async move {
-                    cb.record_failure(&format!("concurrent err {i}"));
+                    let _ = cb.record_failure(&format!("concurrent err {i}"));
                 })
             })
             .collect();
@@ -800,7 +806,7 @@ mod tests {
         };
         let cb = CircuitBreaker::with_config("webhook", config).with_bus(bus);
 
-        cb.record_failure("first");
+        let _ = cb.record_failure("first");
         assert!(rx.try_recv().is_err(), "not tripped yet");
 
         cb.escalate(cb.record_failure("second").expect("should trip"));

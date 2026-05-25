@@ -214,6 +214,9 @@ impl EvalService {
     /// holding `*.eval.yaml` files counts as one suite; a top-level
     /// `*.eval.yaml` file also counts (single-file suites stay
     /// convenient for tiny smoke checks).
+    ///
+    /// # Errors
+    /// Returns an error if the suites directory cannot be read.
     pub fn list_suites(&self) -> Result<Vec<EvalSuiteListItem>, EvalServiceError> {
         list_suites_in(&self.suites_dir)
     }
@@ -222,6 +225,9 @@ impl EvalService {
     /// otherwise `suites_dir/<suite_name>`). Enforces the case-count
     /// and wall-clock caps so a too-large suite returns a clear error
     /// instead of pinning the server.
+    ///
+    /// # Errors
+    /// Returns an error if the suite is not found, too large, times out, or the runner fails.
     pub async fn run_suite(&self, req: &RunEvalRequest) -> Result<EvalReport, EvalServiceError> {
         if req.suite_name.is_empty() {
             return Err(EvalServiceError::InvalidArgument(
@@ -257,6 +263,9 @@ impl EvalService {
 
     /// Project a real `sessions.id` into a ready-to-edit `EvalCase`
     /// YAML string. Returns 404 when the source has no such session.
+    ///
+    /// # Errors
+    /// Returns an error if the session is not found or YAML serialization fails.
     pub async fn case_from_session(
         &self,
         req: &CaseFromSessionRequest,
@@ -277,6 +286,9 @@ impl EvalService {
 
 /// Pure projection — kept outside `EvalService` so it's directly
 /// testable without an `Arc<dyn CaseFromSessionSource>`.
+///
+/// # Errors
+/// Returns an error if YAML serialization of the case fails.
 pub fn build_case_yaml(
     session: &SessionForCase,
 ) -> Result<CaseFromSessionResponse, EvalServiceError> {
@@ -378,6 +390,9 @@ fn short_id(id: &str) -> String {
 /// at least one `*.eval.yaml` are treated as multi-case suites; loose
 /// `*.eval.yaml` files at the top become single-case suites named after
 /// the file stem.
+///
+/// # Errors
+/// Returns an error if the directory cannot be read.
 pub fn list_suites_in(dir: &Path) -> Result<Vec<EvalSuiteListItem>, EvalServiceError> {
     if !dir.exists() {
         return Ok(Vec::new());

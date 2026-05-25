@@ -28,7 +28,6 @@
 //! | Email send | follow-up (see docs/plans/hotl-followups.md) |
 //! | Webhook invoke | follow-up |
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -174,11 +173,13 @@ impl HotlEnforcer for InMemoryHotlEnforcer {
         let mut verdict = HotlVerdict::Allow;
 
         for policy in &policies {
-            let window = Duration::from_secs(policy.window_seconds as u64);
+            let window = Duration::from_secs(u64::try_from(policy.window_seconds).unwrap_or(0));
             let (sum, count) = self.window_sum(tenant_id, scope, window);
 
-            let count_breached = policy.max_count.map_or(false, |max| count > max as usize);
-            let usd_breached = policy.max_usd.map_or(false, |max| sum > max);
+            let count_breached = policy
+                .max_count
+                .is_some_and(|max| count > usize::try_from(max).unwrap_or(0));
+            let usd_breached = policy.max_usd.is_some_and(|max| sum > max);
 
             if count_breached || usd_breached {
                 let reason = build_reason(policy, count, sum);
@@ -453,7 +454,7 @@ mod tests {
         let tid = Uuid::new_v4();
         // Limit is higher than N so all calls are allowed — we just want to
         // verify the counter is exact.
-        let store = store_with_count_policy(tid, "llm_call", 60, (N * 2) as i32, None);
+        let store = store_with_count_policy(tid, "llm_call", 60, i32::try_from(N * 2).expect("N*2 fits i32"), None);
         let enforcer = Arc::new(InMemoryHotlEnforcer::new(store));
         let allow_count = Arc::new(AtomicUsize::new(0));
 

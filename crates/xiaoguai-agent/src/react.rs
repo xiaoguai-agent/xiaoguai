@@ -111,6 +111,9 @@ impl ReactAgent {
 
     /// Run to completion, draining the event stream into a vector. Useful
     /// for tests and synchronous callers that don't need streaming.
+    ///
+    /// # Errors
+    /// Returns an error if the agent task panics or the LLM backend fails.
     pub async fn run_to_completion(
         &self,
         initial: Vec<Message>,
@@ -130,6 +133,7 @@ impl ReactAgent {
     /// Launch the loop in the background and return `(join_handle, stream)`.
     /// The stream completes when the loop terminates (regardless of stop
     /// reason); the join handle yields the structured outcome.
+    #[must_use]
     pub fn run_stream(
         &self,
         initial: Vec<Message>,

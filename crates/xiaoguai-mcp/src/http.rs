@@ -97,6 +97,9 @@ impl std::fmt::Debug for HttpMcpClient {
 impl HttpMcpClient {
     /// Connect to an MCP server over Streamable HTTP and complete the
     /// `initialize` handshake.
+    ///
+    /// # Errors
+    /// Returns an error if the connection or initialization fails.
     pub async fn connect(cfg: HttpClientConfig) -> McpResult<Self> {
         let mut transport_cfg = StreamableHttpClientTransportConfig::with_uri(cfg.endpoint);
         if let Some(value) = cfg.auth_header {

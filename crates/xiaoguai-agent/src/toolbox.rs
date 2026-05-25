@@ -51,6 +51,10 @@ impl Toolbox {
 
     /// Pre-allocated builder for the common pattern of registering all tools
     /// from one MCP server at once.
+    ///
+    /// # Errors
+    /// Returns [`ToolboxError::Duplicate`] if any tool name appears more than once.
+    #[allow(clippy::needless_pass_by_value, reason = "Arc passed by value is intentional API")]
     pub fn from_server(
         client: Arc<dyn McpClient>,
         tools: Vec<ToolDescriptor>,
@@ -62,6 +66,8 @@ impl Toolbox {
         Ok(tb)
     }
 
+    /// # Errors
+    /// Returns [`ToolboxError::Duplicate`] if `descriptor.name` is already registered.
     pub fn insert(
         &mut self,
         client: Arc<dyn McpClient>,
