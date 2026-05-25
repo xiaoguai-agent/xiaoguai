@@ -1,0 +1,114 @@
+# Pre-commit hooks for xiaoguai contributors.
+# Install: pip install pre-commit && pre-commit install
+# Run all:  pre-commit run --all-files
+# Skip (emergency only): git commit --no-verify
+#
+# Hooks run in declaration order; each section is labelled.
+# Rust and TypeScript hooks only fire when the relevant files are staged.
+
+default_language_version:
+  python: python3
+
+repos:
+  # ── Standard file hygiene ────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-yaml
+        name: check-yaml (skip helm templates + GH actions matrix)
+        args: [--unsafe]
+        exclude: |
+          (?x)^(
+            deploy/helm/.*/templates/.*\.yaml   |
+            \.github/workflows/.*\.ya?ml
+          )$
+
+      - id: check-json
+        name: check-json
+
+      - id: check-added-large-files
+        name: check-added-large-files (max 1 MB)
+        args: [--maxkb=1024]
+
+      - id: end-of-file-fixer
+        name: end-of-file-fixer
+
+      - id: trailing-whitespace
+        name: trailing-whitespace
+
+      - id: mixed-line-ending
+        name: mixed-line-ending
+        args: [--fix=lf]
+
+  # ── Rust: format check ───────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: rust-fmt
+        name: cargo fmt --check
+        language: script
+        entry: scripts/hooks/rust-fmt-check.sh
+        types: [rust]
+        pass_filenames: false
+
+      # ── Rust: clippy (per-crate, only staged crates) ─────────────────────────
+      - id: rust-clippy
+        name: cargo clippy -D warnings (staged crates)
+        language: script
+        entry: scripts/hooks/rust-clippy-staged.sh
+        types: [rust]
+        pass_filenames: true
+
+  # ── Manifest validators (local hooks via CLI) ─────────────────────────────────
+  - repo: local
+    hooks:
+      - id: validate-pack
+        name: validate pack.yaml manifests
+        language: system
+        entry: python3 scripts/hooks/validate_manifest.py pack
+        files: ^packs/[^/]+/pack\.yaml$
+        pass_filenames: true
+
+      - id: validate-watcher
+        name: validate watcher manifests
+        language: system
+        entry: python3 scripts/hooks/validate_manifest.py watcher
+        files: ^packs/[^/]+/watches/.*\.ya?ml$
+        pass_filenames: true
+
+      - id: validate-hotl-policy
+        name: validate hotl-policy manifests
+        language: system
+        entry: python3 scripts/hooks/validate_manifest.py hotl-policy
+        files: ^examples/hotl-policies/.*\.ya?ml$
+        pass_filenames: true
+
+      - id: validate-recipe
+        name: validate recipe manifests
+        language: system
+        entry: python3 scripts/hooks/validate_manifest.py recipe
+        files: ^recipes/.*\.ya?ml$
+        pass_filenames: true
+
+  # ── TypeScript / frontend ────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: ts-typecheck
+        name: pnpm typecheck (staged packages)
+        language: script
+        entry: scripts/hooks/ts-typecheck-staged.sh
+        files: \.(ts|tsx)$
+        pass_filenames: true
+
+      - id: ts-eslint
+        name: eslint --fix (staged .ts/.tsx)
+        language: script
+        entry: scripts/hooks/ts-eslint-staged.sh
+        files: \.(ts|tsx)$
+        pass_filenames: true
+
+  # ── Secret scanning ──────────────────────────────────────────────────────────
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+        name: gitleaks secret scan
