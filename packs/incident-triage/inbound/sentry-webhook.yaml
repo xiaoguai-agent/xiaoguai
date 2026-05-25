@@ -1,0 +1,80 @@
+---
+# Sentry webhook source spec.
+#
+# Sentry delivers alert / issue notifications via POST to the configured
+# endpoint URL. The payload shape follows Sentry's legacy webhook format
+# (https://docs.sentry.io/organization/integrations/integration-platform/webhooks/).
+#
+# Mounting: POST /v1/incidents/inbound/sentry/{route_id}
+# Auth:     Bearer token from scheduler_webhook_tokens table
+#           (X-Sentry-Hook-Signature HMAC is verified separately — see
+#            normalize.hmac_secret below).
+
+source: sentry
+route_prefix: /v1/incidents/inbound/sentry
+
+# Fields extracted from the raw Sentry webhook body.
+# The normalize step maps them onto the common Incident schema.
+normalize:
+  # Optional: if set, the adapter verifies the X-Sentry-Hook-Signature
+  # header (HMAC-SHA256 over the raw body) before processing the payload.
+  # Leave blank to rely solely on the per-tenant bearer token.
+  hmac_secret: ${SENTRY_WEBHOOK_SECRET}
+
+  # Mapping: Sentry field path -> Incident field
+  field_map:
+    # Incident.id: Sentry issue ID (string)
+    id: action_item.issue.id
+    # Incident.title: issue title
+    title: action_item.issue.title
+    # Incident.severity: derived from Sentry level
+    # Sentry levels: fatal > error > warning > info > debug
+    severity:
+      source: action_item.issue.level
+      map:
+        fatal: critical
+        error: high
+        warning: medium
+        info: low
+        debug: low
+        _default: medium
+    # Incident.source: hardcoded
+    source: _const:sentry
+    # Incident.occurred_at: firstSeen ISO-8601 timestamp
+    occurred_at: action_item.issue.firstSeen
+    # Incident.url: link to the Sentry issue
+    url: action_item.issue.permalink
+    # Incident.project: Sentry project slug
+    project: action_item.issue.project.slug
+    # Incident.environment: from tags if present
+    environment: action_item.issue.tags[?(@.key=="environment")].value
+    # Incident.raw: full raw payload preserved for agent context
+    raw: _self
+
+# Supported Sentry actions that trigger processing.
+# Ignored actions (e.g. "resolved") are acknowledged (HTTP 200) but not
+# forwarded to the triage agent.
+accepted_actions:
+  - created
+  - assigned
+  - triggered
+
+# Sample payload (from Sentry docs — used in tests).
+# See crates/xiaoguai-api/src/incidents.rs SentrySource tests.
+sample_payload: |
+  {
+    "action": "created",
+    "installation": {"uuid": "install-uuid"},
+    "data": {
+      "issue": {
+        "id": "123",
+        "title": "ZeroDivisionError: division by zero",
+        "level": "error",
+        "firstSeen": "2024-05-24T10:00:00.000Z",
+        "permalink": "https://sentry.io/organizations/acme/issues/123/",
+        "project": {"slug": "backend"},
+        "tags": [{"key": "environment", "value": "production"}]
+      }
+    },
+    "actor": {}
+  }
