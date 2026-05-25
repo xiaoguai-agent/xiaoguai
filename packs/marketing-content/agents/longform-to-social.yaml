@@ -1,0 +1,106 @@
+# Agent: longform-to-social
+#
+# Derives five platform-tuned social media snippets from a long-form draft.
+#
+# Platforms and their constraints:
+#   twitter      — ≤280 chars, punchy hook, optional thread indicator
+#   linkedin     — 150-300 chars teaser + up to 3 relevant hashtags, professional tone
+#   instagram    — ≤2200 chars caption, emoji welcome, ends with hashtag block (≤30 tags)
+#   tiktok_hook  — ≤150 chars, first-person pattern-interrupt, hooks in first 3 words
+#   threads      — ≤500 chars, conversational, question or opinion framing
+#
+# Input context keys:
+#   longform       — LongformDraft JSON object from the longform step
+#   brand_voice_ref — name of the brand voice template to inject
+#
+# Output:
+#   A JSON object with one field per platform.
+
+name: longform-to-social
+kind: llm-agent
+
+system_prompt_template: templates/social-platform-rules.j2
+
+user_prompt_template: |
+  ## Long-form Draft
+
+  **Title:** {{ longform.title }}
+
+  **Meta description:** {{ longform.meta_description }}
+
+  **Article body (Markdown):**
+
+  {{ longform.markdown }}
+
+  ---
+
+  Produce platform-tuned social snippets for all five platforms.
+  Follow each platform's character limits and tone rules from your system prompt exactly.
+  Output a single JSON object matching the SocialSnippets schema — no prose outside the JSON.
+
+output_schema:
+  type: object
+  description: SocialSnippets
+  required: [twitter, linkedin, instagram, tiktok_hook, threads]
+  properties:
+    twitter:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: "Tweet text (≤280 chars, including any link placeholder)"
+        thread_continues:
+          type: boolean
+          description: "True if this is the first tweet in a suggested thread"
+        thread_followups:
+          type: array
+          items:
+            type: string
+          description: "Additional tweets in the thread (each ≤280 chars)"
+    linkedin:
+      type: object
+      required: [text, hashtags]
+      properties:
+        text:
+          type: string
+          description: "LinkedIn post body (150-300 chars, professional tone)"
+        hashtags:
+          type: array
+          items:
+            type: string
+          description: "3 relevant hashtags without # prefix"
+    instagram:
+      type: object
+      required: [caption, hashtags]
+      properties:
+        caption:
+          type: string
+          description: "Instagram caption (≤2200 chars, emoji encouraged)"
+        hashtags:
+          type: array
+          items:
+            type: string
+          description: "Up to 30 relevant hashtags without # prefix"
+    tiktok_hook:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: "TikTok opening hook for video script (≤150 chars)"
+        hook_type:
+          type: string
+          enum: [question, controversy, statistic, personal_story]
+          description: "Pattern-interrupt type used"
+    threads:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: "Threads post (≤500 chars, conversational)"
+
+budget:
+  max_llm_calls: 2
+  max_output_tokens: 2048

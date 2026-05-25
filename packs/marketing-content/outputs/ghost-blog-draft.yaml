@@ -1,0 +1,74 @@
+# Output adapter — Ghost blog draft
+#
+# Creates a Ghost blog post in draft state from the approved LongformDraft.
+# Uses the Ghost Admin API (v3).
+#
+# HOTL-gated: this adapter only runs after the slack-content-review step
+# sets `review.approved == true`.  If the review is rejected or expires,
+# this step is suppressed.
+#
+# Ghost Admin API docs: https://ghost.org/docs/admin-api/
+# Endpoint: POST /ghost/api/admin/posts/
+#
+# The post is created in "draft" status — a human must publish it in Ghost.
+# This is intentional: the Ghost editor allows final copy-editing and
+# featured image selection before going live.
+
+name: ghost-blog-draft
+kind: http-post
+
+# Ghost Admin API credentials.
+api_url_env: GHOST_API_URL         # e.g. https://myblog.ghost.io
+api_key_env: GHOST_ADMIN_API_KEY   # Admin API key (format: id:secret)
+
+# Ghost Admin API endpoint.
+endpoint: "/ghost/api/admin/posts/"
+
+# Authentication: Ghost uses JWT signed with the Admin API key secret.
+auth:
+  kind: ghost-admin-jwt
+  key_env: GHOST_ADMIN_API_KEY
+
+# Request body constructed from the longform draft and plan context.
+# Tera variables available: longform, brief_title, seo_keywords, pack_version.
+request_body_template: |
+  {
+    "posts": [
+      {
+        "title": "{{ longform.title | escape }}",
+        "slug": "{{ longform.slug_suggestion | default(longform.title | lower | replace(' ', '-')) | escape }}",
+        "status": "draft",
+        "lexical": null,
+        "mobiledoc": null,
+        "html": {{ longform.markdown | markdownify | tojson }},
+        "custom_excerpt": "{{ longform.meta_description | escape }}",
+        "tags": [
+          {% for kw in seo_keywords | default([]) -%}
+          { "name": "{{ kw | escape }}" }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        "meta_title": "{{ longform.title | escape }}",
+        "meta_description": "{{ longform.meta_description | escape }}",
+        "feature_image": null,
+        "authors": []
+      }
+    ]
+  }
+
+# Extract the created post URL from the response for audit logging.
+response_extract:
+  ghost_post_id:  "$.posts[0].id"
+  ghost_post_url: "$.posts[0].url"
+  ghost_edit_url: "$.posts[0].edit_url"
+
+# Audit entry written on success or failure.
+audit:
+  table: marketing_content_runs
+  fields:
+    - run_id
+    - ghost_post_id
+    - ghost_post_url
+    - ghost_edit_url
+    - published_at     # null (draft)
+    - status           # draft | failed
+    - error_message    # populated on failure
