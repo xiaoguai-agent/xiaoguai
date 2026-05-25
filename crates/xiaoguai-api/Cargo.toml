@@ -11,6 +11,7 @@ description = "axum HTTP server: REST + SSE."
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-storage = { path = "../xiaoguai-storage" }
+xiaoguai-audit = { path = "../xiaoguai-audit" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
 xiaoguai-mcp = { path = "../xiaoguai-mcp" }
 xiaoguai-auth = { path = "../xiaoguai-auth" }

@@ -67,6 +67,8 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
         rate_limit_state: None,
         hotl_policy_store: None,
         hotl_enforcer: None,
+        outcome_writer: None,
+        outcomes_reader: None,
     };
     let provider: Arc<dyn ImProvider> =
         Arc::new(DingTalkProvider::with_recording_sink(SECRET, sink));

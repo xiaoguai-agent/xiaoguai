@@ -54,6 +54,8 @@ fn build_state(usage_reader: Option<Arc<dyn UsageReader>>) -> AppState {
         rate_limit_state: None,
         hotl_policy_store: None,
         hotl_enforcer: None,
+        outcome_writer: None,
+        outcomes_reader: None,
     }
 }
 

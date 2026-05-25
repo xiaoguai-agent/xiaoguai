@@ -325,6 +325,69 @@ export interface CompileScheduledJobResponse {
   rationale: string;
 }
 
+// ---- v1.2.4 — outcome telemetry -----------------------------------------
+
+/**
+ * One of the well-known outcome kinds accepted by `POST /v1/outcomes`.
+ * `'custom'` is allowed for operator-defined categories.
+ */
+export type OutcomeKind =
+  | 'revenue_usd'
+  | 'cost_saved_usd'
+  | 'hours_saved'
+  | 'deals_closed'
+  | 'tickets_resolved'
+  | 'custom';
+
+/** Body for `POST /v1/outcomes`. */
+export interface RecordOutcomeRequest {
+  tenant_id: string;
+  session_id?: string | null;
+  agent_name: string;
+  kind: string;
+  value: number;
+  unit?: string | null;
+  description?: string | null;
+  metadata?: unknown;
+}
+
+export interface RecordOutcomeResponse {
+  ok: boolean;
+}
+
+/** Aggregate stats for a single outcome kind. */
+export interface OutcomeAggregate {
+  sum: number;
+  count: number;
+  avg: number;
+}
+
+/** `GET /v1/outcomes/summary` response. */
+export interface OutcomesSummaryResponse {
+  tenant_id: string;
+  range: string;
+  summary: {
+    by_kind: Record<string, OutcomeAggregate>;
+  };
+}
+
+/** One daily bucket in `GET /v1/outcomes/timeseries`. */
+export interface OutcomeDay {
+  date: string;
+  kind: string;
+  sum: number;
+  count: number;
+}
+
+/** `GET /v1/outcomes/timeseries` response. */
+export interface OutcomesTimeseriesResponse {
+  tenant_id: string;
+  range: string;
+  days: OutcomeDay[];
+}
+
+export type OutcomesRange = '24h' | '7d' | '30d';
+
 // ---- Agent event stream --------------------------------------------------
 
 export type AgentEvent =
@@ -598,6 +661,41 @@ export class XiaoguaiClient {
       'POST',
       '/v1/mcp/marketplace/install',
       req,
+    );
+  }
+
+  // ---- v1.2.4 Outcomes --------------------------------------------------
+
+  /** Record a business outcome attribution. */
+  recordOutcome(req: RecordOutcomeRequest): Promise<RecordOutcomeResponse> {
+    return this.request<RecordOutcomeResponse>('POST', '/v1/outcomes', req);
+  }
+
+  /** ROI summary cards — aggregated by kind. */
+  getOutcomesSummary(opts: {
+    tenant_id: string;
+    range?: OutcomesRange;
+  }): Promise<OutcomesSummaryResponse> {
+    const params = new URLSearchParams({ tenant_id: opts.tenant_id });
+    if (opts.range) params.set('range', opts.range);
+    return this.request<OutcomesSummaryResponse>(
+      'GET',
+      `/v1/outcomes/summary?${params.toString()}`,
+    );
+  }
+
+  /** Daily time-series — bar chart data. */
+  getOutcomesTimeseries(opts: {
+    tenant_id: string;
+    range?: OutcomesRange;
+    kind?: string;
+  }): Promise<OutcomesTimeseriesResponse> {
+    const params = new URLSearchParams({ tenant_id: opts.tenant_id });
+    if (opts.range) params.set('range', opts.range);
+    if (opts.kind) params.set('kind', opts.kind);
+    return this.request<OutcomesTimeseriesResponse>(
+      'GET',
+      `/v1/outcomes/timeseries?${params.toString()}`,
     );
   }
 

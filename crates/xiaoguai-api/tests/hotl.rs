@@ -54,6 +54,8 @@ fn build_state(store: Option<Arc<dyn HotlPolicyStore>>) -> AppState {
         rate_limit_state: None,
         hotl_policy_store: store,
         hotl_enforcer: None,
+        outcome_writer: None,
+        outcomes_reader: None,
     }
 }
 

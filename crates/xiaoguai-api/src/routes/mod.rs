@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod hotl;
 pub mod mcp;
+pub mod outcomes;
 pub mod scheduler_public;
 pub mod sessions;
 pub mod usage;
@@ -95,7 +96,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/hotl/policies/:id",
             delete(hotl::delete_policy),
-        );
+        )
+        // v1.2.4 — outcome telemetry (revenue-not-time ROI tracking).
+        .route("/v1/outcomes", post(outcomes::record_outcome))
+        .route("/v1/outcomes/summary", get(outcomes::outcomes_summary))
+        .route("/v1/outcomes/timeseries", get(outcomes::outcomes_timeseries));
 
     // Layer order (inner → outer, since `route_layer` adds outward):
     //   handler → rate_limit → rbac → require_bearer

@@ -510,6 +510,10 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         // the bridge crate lands.
         hotl_policy_store: None,
         hotl_enforcer: None,
+        // v1.2.4: outcome telemetry — production wires PgOutcomeRecorder
+        // in a follow-up; routes return 503 until then.
+        outcome_writer: None,
+        outcomes_reader: None,
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

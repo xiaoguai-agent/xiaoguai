@@ -51,6 +51,8 @@ async fn spawn_server(steps: Vec<ScriptStep>) -> String {
         rate_limit_state: None,
         hotl_policy_store: None,
         hotl_enforcer: None,
+        outcome_writer: None,
+        outcomes_reader: None,
     };
     let (local, fut) = serve_with_state("127.0.0.1:0".parse().unwrap(), state)
         .await
