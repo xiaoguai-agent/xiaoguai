@@ -256,6 +256,21 @@
       "agent_table_label": "Per-agent outcomes",
       "error_503": "Outcomes backend unavailable (PgOutcomeRecorder not wired — run with a Postgres DB to enable).",
       "nav_outcomes": "Outcomes"
+    "hotl_policies": {
+      "title": "HotL Policies",
+      "btn_new": "+ New policy",
+      "btn_test": "Test policy",
+      "btn_edit": "Edit",
+      "btn_delete": "Delete",
+      "col_scope": "Scope",
+      "col_max_count": "Max count",
+      "col_max_usd": "Max USD",
+      "col_window": "Window",
+      "col_escalate_to": "Escalate to",
+      "empty": "No HotL policies yet.",
+      "unavailable_title": "Policy store not available.",
+      "unavailable_body": "PgHotlPolicyStore is not yet wired — the API returned 503. This is expected in dev mode without Postgres. Check bridges status:",
+      "unavailable_link": "Bridges status →"
     }
   }
 }
