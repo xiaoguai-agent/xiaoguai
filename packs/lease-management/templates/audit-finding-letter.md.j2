@@ -1,0 +1,86 @@
+{#
+  Template: audit-finding-letter.md.j2
+  Used by:  audit-reconciler agent
+  Renders:  A formal dispute letter to the landlord contesting CAM/TICAM
+            overcharges identified in the annual reconciliation audit.
+            HOTL-gated — requires human approval before dispatch.
+#}
+{{ tenant_company_name }}
+{{ tenant_address_line1 }}
+{{ tenant_address_line2 }}
+
+{{ letter_date }}
+
+{{ lessor_name }}
+{{ lessor_contact_email }}
+
+**Re: {{ property_name }} — {{ audit_year }} CAM/TICAM Reconciliation Dispute**
+**Lease Reference:** {{ external_lease_id | default(lease_id) }}
+
+Dear {{ lessor_contact_name | default("Property Management Team") }},
+
+We have completed our review of your {{ audit_year }} Common Area Maintenance
+(CAM) and Tax, Insurance & Common Area Maintenance (TICAM) reconciliation
+statement received for the above-referenced premises. Our analysis of the
+reconciliation against the terms of our lease agreement dated
+{{ commencement_date }} has identified discrepancies totalling
+**{{ base_rent_currency }} {{ "{:,.2f}".format(dispute_amount) }}** in charges
+billed in excess of the amounts permitted under our lease.
+
+---
+
+### Summary of Disputed Charges
+
+| Charge Category | Landlord Billed | Lease Allowable | Variance |
+|---|---|---|---|
+{% if cam_variance and cam_variance > 0 %}
+| Common Area Maintenance (CAM) | {{ base_rent_currency }} {{ "{:,.2f}".format(landlord_cam_billed) }} | {{ base_rent_currency }} {{ "{:,.2f}".format(lease_cam_allowable) }} | **{{ base_rent_currency }} {{ "{:,.2f}".format(cam_variance) }}** |
+{% endif %}
+{% if ticam_variance and ticam_variance > 0 %}
+| TICAM (vs. {{ (ticam_cap_pct * 100) | round(1) }}% cap) | {{ base_rent_currency }} {{ "{:,.2f}".format(landlord_ticam_billed) }} | {{ base_rent_currency }} {{ "{:,.2f}".format(lease_ticam_allowable) }} | **{{ base_rent_currency }} {{ "{:,.2f}".format(ticam_variance) }}** |
+{% endif %}
+{% if admin_fee_variance and admin_fee_variance > 0 %}
+| Admin / Management Fee | {{ base_rent_currency }} {{ "{:,.2f}".format(admin_fee_billed) }} | {{ base_rent_currency }} {{ "{:,.2f}".format(admin_fee_allowable) }} | **{{ base_rent_currency }} {{ "{:,.2f}".format(admin_fee_variance) }}** |
+{% endif %}
+| **Total Disputed** | | | **{{ base_rent_currency }} {{ "{:,.2f}".format(dispute_amount) }}** |
+
+---
+
+### Basis for Dispute
+
+{% for item in disputed_items %}
+**{{ loop.index }}. {{ item.item }}**
+Landlord billed {{ base_rent_currency }} {{ "{:,.2f}".format(item.billed) }};
+lease allows {{ base_rent_currency }} {{ "{:,.2f}".format(item.allowable) }}.
+Variance: {{ base_rent_currency }} {{ "{:,.2f}".format(item.variance) }}.
+*Reason: {{ item.reason }}*
+
+{% endfor %}
+
+---
+
+### Requested Resolution
+
+We respectfully request that you:
+
+1. Provide supporting documentation (general ledger detail, invoices, and
+   gross-up calculation worksheets) for each disputed line item within
+   **30 days** of receipt of this letter.
+
+2. Issue a credit memo for {{ base_rent_currency }} {{ "{:,.2f}".format(dispute_amount) }}
+   against our next rent statement, or provide a detailed written rebuttal
+   with supporting documentation.
+
+We are committed to resolving this matter promptly and professionally. Please
+direct your response to {{ tenant_contact_name }} at {{ tenant_contact_email }}.
+
+Sincerely,
+
+{{ tenant_contact_name }}
+{{ tenant_contact_title }}
+{{ tenant_company_name }}
+
+---
+*This letter was drafted by the Xiaoguai Lease Management Pack audit-reconciler
+agent and reviewed and approved by {{ approved_by }} on {{ approved_at }}.
+Audit record ID: {{ audit_id }}.*

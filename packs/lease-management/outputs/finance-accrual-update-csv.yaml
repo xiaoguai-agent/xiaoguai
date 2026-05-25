@@ -1,0 +1,76 @@
+---
+# Output connector — finance-accrual-update-csv
+#
+# Exports a CSV of lease accrual changes for import into the finance system
+# (NetSuite, SAP, or similar). Triggered by:
+#   a) A renewal decision being approved (new rent term)
+#   b) A CAM audit settlement (adjusting CAM accrual)
+#   c) A rent escalation being validated and accepted
+#
+# The CSV is placed in the configured export bucket/path and a notification
+# is sent to the finance channel. No autonomous write to the finance system —
+# the finance team imports the CSV manually or via their scheduled ETL job.
+
+output: finance-accrual-update-csv
+
+schedule:
+  # Generate on the 1st of each month for standard accrual refresh.
+  cron: "0 5 1 * *"
+  # Also triggered on-demand by renewal / audit events.
+
+export:
+  format: csv
+  delimiter: ","
+  encoding: utf-8-bom   # BOM required by Excel
+
+  query: |
+    SELECT
+        l.external_lease_id                       AS "Lease ID",
+        l.property_name                            AS "Property",
+        l.lessor_name                              AS "Lessor",
+        l.lease_type                               AS "Lease Type",
+        l.base_rent_amount                         AS "Base Rent",
+        l.base_rent_currency                       AS "Currency",
+        l.rent_frequency                           AS "Rent Frequency",
+        COALESCE(l.cam_charges_annual / 12, 0)    AS "Monthly CAM Accrual",
+        -- Latest validated escalation
+        (
+            SELECT v.calculated_new_rent
+            FROM lease_escalation_validations v
+            WHERE v.lease_id = l.id
+              AND v.validation_result = 'pass'
+            ORDER BY v.escalation_date DESC
+            LIMIT 1
+        )                                          AS "Validated Rent (Latest Escalation)",
+        -- Latest settled CAM audit adjustment
+        (
+            SELECT la.settlement_amount
+            FROM lease_audit la
+            WHERE la.lease_id = l.id
+              AND la.dispute_status = 'settled'
+            ORDER BY la.audit_year DESC
+            LIMIT 1
+        )                                          AS "CAM Settlement Credit",
+        l.commencement_date                        AS "Lease Start",
+        l.expiration_date                          AS "Lease End",
+        l.status                                   AS "Status"
+    FROM leases l
+    WHERE l.tenant_id = '{tenant_id}'
+      AND l.status IN ('active', 'pending-renewal')
+    ORDER BY l.property_name
+
+storage:
+  bucket: "${LEASE_EXPORT_BUCKET}"
+  path: "finance-exports/lease-accruals/{tenant_id}/{YYYY-MM}/lease_accruals_{YYYYMMDD}.csv"
+  fallback: db_blob
+
+notification:
+  on_success:
+    channel: "${LEASE_FINANCE_NOTIFY_CHANNEL:-admin_ui}"
+    message: >
+      Lease accrual CSV exported: {row_count} leases.
+      File: {file_path}
+      Ready for import into finance system.
+  on_error:
+    channel: "${LEASE_FINANCE_NOTIFY_CHANNEL:-admin_ui}"
+    message: "Lease accrual export failed: {error_message}."

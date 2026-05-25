@@ -1,0 +1,218 @@
+# Agent definition — audit-reconciler
+# ---------------------------------------------------------------------------
+# Triggered by lease-audit-due watch events (annual, fires ~Feb 1).
+# For each real-estate lease with CAM/TICAM provisions the agent:
+#
+#   STEP 1 — Load landlord statement
+#     Reads the landlord's annual reconciliation statement (PDF extracted to
+#     structured JSON via inbound/manual-cert-renewal-upload or Yardi push).
+#
+#   STEP 2 — Load lease terms
+#     Fetches the authoritative CAM/TICAM allowable amounts from leases table:
+#       cam_charges_annual        — base CAM budget per lease schedule
+#       ticam_cap_pct             — maximum annual TICAM increase % (hard cap)
+#       admin_fee_cap             — admin/management fee cap (% of CAM, per lease)
+#
+#   STEP 3 — Line-by-line reconciliation
+#     For each charge category in the landlord statement:
+#       a. Identify whether the charge type is allowable under the lease
+#          (some leases exclude capital expenditures, management fees > X%).
+#       b. Apply the TICAM cap: if ticam_billed > prior_year_ticam * (1 + cap),
+#          the excess is flagged as an overcharge.
+#       c. Verify gross-up calculations for multi-tenant buildings
+#          (tenant_share = tenant_sqft / occupied_sqft, not total building sqft).
+#       d. Check for excluded expense categories (e.g. landlord capital repairs,
+#          depreciation, leasing commissions, executive salaries).
+#
+#   STEP 4 — Write findings to lease_audit
+#     Inserts a lease_audit record with per-category variances,
+#     a plain-language findings_summary, and disputed_items JSONB array.
+#
+#   STEP 5 — Render audit-finding-letter if total_variance > threshold
+#     Produces a draft landlord dispute letter for HOTL approval.
+#
+# HOTL guardrails: the dispute letter is written to lease_audit with
+# status='pending-review'. Dispatch requires human approval.
+# ---------------------------------------------------------------------------
+
+name: audit-reconciler
+version: "1.0.0"
+description: >
+  Compares landlord CAM/TICAM reconciliation statements against lease terms.
+  Flags overcharges across CAM, TICAM, admin fees, and excluded expense
+  categories. Drafts a dispute letter when total variance exceeds threshold.
+  Zero autonomous dispatch — all letters require HOTL human approval.
+
+triggers:
+  - event: lease.audit_due
+    source: lease-audit-due
+
+system_prompt: |
+  You are a commercial real-estate lease auditor. Your job is to reconcile
+  a landlord's annual CAM/TICAM statement against the controlling lease
+  agreement and identify every dollar of overcharge.
+
+  Reconciliation methodology:
+  1. CAM overcharge = landlord_cam_billed - lease_cam_allowable (from lease
+     schedule). Flag if positive. Check for excluded categories:
+       - Capital expenditures / major repairs (unless lease allows)
+       - Landlord management fees above the lease-specified cap
+       - Leasing commissions and marketing costs
+       - Ground-floor retail costs in mixed-use buildings (unless shared)
+       - Executive / above-property management salaries
+  2. TICAM cap check: ticam_billed must not exceed
+     prior_year_ticam_billed * (1 + ticam_cap_pct). If it does, the excess
+     is an overcharge regardless of actual operating cost increases.
+  3. Gross-up validation: tenant proportionate share must be calculated as
+     tenant_sqft / occupied_sqft (NOT total_building_sqft). Validate that
+     the landlord used the correct occupancy base.
+  4. Admin fee check: if lease caps admin fees at X% of CAM, verify
+     admin_fee_billed <= cam_base * X%. Report any excess.
+
+  Output for each disputed item:
+    {item, landlord_billed, lease_allowable, variance, reason}
+
+  Write a concise findings_summary (plain English, ≤ 400 words) covering:
+  - Total overcharge found
+  - Top 3 disputed line items
+  - Recommended next steps (dispute vs. accept)
+
+  Never fabricate numbers. Only use figures from tool results.
+
+tools:
+  - name: get_lease_terms
+    description: >
+      Fetch the controlling lease financial terms: CAM allowable, TICAM cap,
+      admin fee cap, and any excluded expense categories recorded at import.
+    kind: sql
+    query: |
+      SELECT
+          l.id,
+          l.property_name,
+          l.property_address,
+          l.lessor_name,
+          l.lessor_contact_email,
+          l.base_rent_amount,
+          l.base_rent_currency,
+          l.cam_charges_annual,
+          l.ticam_cap_pct,
+          l.commencement_date,
+          l.expiration_date,
+          l.sqft_total          AS tenant_sqft
+      FROM leases l
+      WHERE l.id = '{lease_id}'
+        AND l.tenant_id = '{tenant_id}'
+
+  - name: get_prior_audit
+    description: >
+      Fetch the most recent closed audit for this lease to obtain prior-year
+      TICAM billed amount (needed for TICAM cap check).
+    kind: sql
+    query: |
+      SELECT
+          la.audit_year,
+          la.landlord_ticam_billed AS prior_ticam_billed,
+          la.landlord_cam_billed   AS prior_cam_billed,
+          la.total_variance        AS prior_total_variance
+      FROM lease_audit la
+      WHERE la.lease_id = '{lease_id}'
+        AND la.tenant_id = '{tenant_id}'
+        AND la.status IN ('approved', 'disputed', 'closed')
+      ORDER BY la.audit_year DESC
+      LIMIT 1
+
+  - name: get_landlord_statement
+    description: >
+      Retrieve the structured landlord reconciliation statement for the
+      audit year. Data originates from inbound/manual-cert-renewal-upload
+      or Yardi push normalised into lease_landlord_statements table.
+    kind: sql
+    query: |
+      SELECT
+          s.statement_year,
+          s.cam_billed,
+          s.ticam_billed,
+          s.admin_fee_billed,
+          s.total_billed,
+          s.tenant_share_pct,
+          s.occupied_sqft_used,
+          s.building_sqft_total,
+          s.line_items           -- JSONB array of {category, amount, description}
+      FROM lease_landlord_statements s
+      WHERE s.lease_id = '{lease_id}'
+        AND s.tenant_id = '{tenant_id}'
+        AND s.statement_year = {audit_year}
+      LIMIT 1
+
+  - name: save_audit_findings
+    description: >
+      Write the reconciliation findings to lease_audit. Returns the audit
+      record id for the human reviewer workflow.
+    kind: sql
+    query: |
+      INSERT INTO lease_audit (
+          tenant_id, lease_id, audit_year,
+          landlord_cam_billed, lease_cam_allowable,
+          landlord_ticam_billed, lease_ticam_allowable,
+          admin_fee_billed, admin_fee_allowable,
+          landlord_statement_url,
+          findings_summary, disputed_items,
+          dispute_status, dispute_amount, status
+      ) VALUES (
+          '{tenant_id}', '{lease_id}', {audit_year},
+          {landlord_cam_billed}, {lease_cam_allowable},
+          {landlord_ticam_billed}, {lease_ticam_allowable},
+          {admin_fee_billed}, {admin_fee_allowable},
+          '{landlord_statement_url}',
+          '{findings_summary}', '{disputed_items}'::JSONB,
+          CASE WHEN {total_variance} > 0 THEN 'open' ELSE 'closed' END,
+          GREATEST({total_variance}, 0),
+          'pending-review'
+      )
+      ON CONFLICT (tenant_id, lease_id, audit_year)
+          DO UPDATE SET
+              landlord_cam_billed    = EXCLUDED.landlord_cam_billed,
+              lease_cam_allowable    = EXCLUDED.lease_cam_allowable,
+              landlord_ticam_billed  = EXCLUDED.landlord_ticam_billed,
+              lease_ticam_allowable  = EXCLUDED.lease_ticam_allowable,
+              admin_fee_billed       = EXCLUDED.admin_fee_billed,
+              admin_fee_allowable    = EXCLUDED.admin_fee_allowable,
+              findings_summary       = EXCLUDED.findings_summary,
+              disputed_items         = EXCLUDED.disputed_items,
+              dispute_amount         = EXCLUDED.dispute_amount,
+              status                 = 'pending-review',
+              updated_at             = NOW()
+      RETURNING id
+
+  - name: render_dispute_letter
+    description: >
+      Render the audit-finding-letter template when total_variance exceeds
+      the dispute threshold. Returns the rendered letter body.
+    kind: template
+    template: "templates/audit-finding-letter.md.j2"
+    # Only called when total_variance > dispute_threshold_usd
+    condition: "total_variance > ${LEASE_AUDIT_DISPUTE_THRESHOLD_USD:-500}"
+
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    send_dispute_letter: 0
+  require_human_approval:
+    - render_dispute_letter
+  notify_channel: "${LEASE_MGMT_NOTIFY_CHANNEL:-admin_ui}"
+  # Escalate to legal channel when total_variance > $5,000
+  escalation_rules:
+    - condition: "total_variance > 5000"
+      notify_channel: "${LEASE_MGMT_LEGAL_CHANNEL:-admin_ui}"
+      label: "high-value-dispute"
+
+rate_limits:
+  per_lease_per_audit_year: 1
+  per_tenant_per_day: 20
+
+outcome_telemetry:
+  record_on:
+    - audit_created
+    - dispute_letter_approved
+    - dispute_settled
+  feedback_table: lease_audit

@@ -1,0 +1,49 @@
+{#
+  Template: notice-to-vacate.md.j2
+  Used by:  Triggered manually after a human approves a 'vacate' renewal
+            decision via the HOTL approval queue.
+  Renders:  A formal notice-to-vacate letter to the landlord in accordance
+            with the lease's required notice period.
+#}
+{{ tenant_company_name }}
+{{ tenant_address_line1 }}
+{{ tenant_address_line2 }}
+
+{{ letter_date }}
+
+{{ lessor_name }}
+{{ lessor_contact_email }}
+
+**Re: Notice of Intent Not to Renew / Notice to Vacate**
+**Premises:** {{ property_name }}, {{ property_address }}
+**Lease Reference:** {{ external_lease_id | default(lease_id) }}
+**Lease Expiration Date:** {{ expiration_date }}
+
+Dear {{ lessor_contact_name | default("Property Management Team") }},
+
+Pursuant to Section [__] of our lease agreement dated {{ commencement_date }},
+this letter serves as formal written notice that {{ tenant_company_name }}
+does **not** intend to renew the above-referenced lease, which expires on
+{{ expiration_date }}.
+
+We will vacate and surrender the premises on or before **{{ expiration_date }}**
+in the condition required by the lease, ordinary wear and tear excepted.
+
+Please confirm receipt of this notice and advise us of your move-out
+inspection scheduling procedures and any pre-move-out requirements.
+
+We thank you for the tenancy and look forward to a smooth transition.
+
+Sincerely,
+
+{{ tenant_contact_name }}
+{{ tenant_contact_title }}
+{{ tenant_company_name }}
+{{ tenant_contact_email }}
+
+---
+*This notice was approved via HOTL approval ID {{ hotl_approval_id }}
+by {{ approved_by }} on {{ approved_at }}.*
+*Notice given {{ days_notice_given }} days before lease expiration
+(required: {{ renewal_notice_days }} days).*
+*Xiaoguai Lease Management Pack v{{ pack_version }}*

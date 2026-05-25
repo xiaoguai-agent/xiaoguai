@@ -1,0 +1,56 @@
+---
+# Output connector — landlord-dispute-letter-pdf-stub
+#
+# Converts the rendered audit-finding-letter Markdown into a PDF and
+# optionally delivers it via email to the landlord's contact address.
+#
+# PDF rendering: uses the configured document renderer (WeasyPrint or
+# an external PDF API). This is a stub — full PDF pipeline wired when
+# the document-renderer microservice lands.
+#
+# Delivery: email dispatch is HOTL-gated (zero autonomous send).
+
+output: landlord-dispute-letter-pdf
+
+pdf_renderer:
+  # "weasyprint" requires the WeasyPrint Python dependency.
+  # "api" delegates to LEASE_PDF_API_URL (e.g., Gotenberg, DocRaptor).
+  kind: ${LEASE_PDF_RENDERER:-stub}   # stub | weasyprint | api
+  api_url: ${LEASE_PDF_API_URL}
+  letterhead_css: "templates/letterhead.css"  # optional branding
+
+storage:
+  bucket: "${LEASE_DOCS_BUCKET}"
+  path: "leases/{lease_id}/dispute-letters/{audit_year}/{filename}"
+  # Falls back to DB blob if LEASE_DOCS_BUCKET is not set.
+  fallback: db_blob
+
+email_delivery:
+  # HOTL-gated: the connector writes the PDF and queues the email.
+  # Actual dispatch requires human approval via Slack HOTL action button.
+  hotl_gated: true
+  from_address: ${LEASE_DISPUTE_FROM_EMAIL}
+  to_address:   "{lessor_contact_email}"
+  subject: "CAM/TICAM Reconciliation Dispute — {property_name} — {audit_year}"
+  body_template: |
+    Dear {{ lessor_contact_name | default("Property Management Team") }},
+
+    Please find attached our formal dispute letter regarding the
+    {{ audit_year }} CAM/TICAM reconciliation for {{ property_name }}.
+
+    We look forward to your response within 30 days.
+
+    Regards,
+    {{ tenant_contact_name }}
+  attachments:
+    - "{pdf_filename}"
+
+# Stub behaviour: when kind=stub, writes the Markdown letter to the
+# storage path as a .md file and logs a warning that PDF rendering
+# is not configured. Allows testing the full workflow without a PDF renderer.
+stub:
+  emit_warning: true
+  warning_message: >
+    PDF renderer not configured (LEASE_PDF_RENDERER=stub). Dispute letter
+    saved as Markdown to {storage_path}. Set LEASE_PDF_RENDERER to enable
+    PDF output.
