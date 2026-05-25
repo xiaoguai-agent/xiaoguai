@@ -23,6 +23,7 @@ pub trait AnomalyStore: Send + Sync {
     /// Persist one anomaly event.
     fn record(&mut self, spec_id: &str, anomaly: &Anomaly);
     /// Return all recorded anomalies (for testing / admin).
+    #[must_use]
     fn all(&self) -> Vec<(String, Anomaly)>;
 }
 
@@ -94,6 +95,7 @@ pub struct AnomalyRegistry {
 
 impl AnomalyRegistry {
     /// Create a new registry backed by the given store.
+    #[must_use]
     pub fn new(store: Box<dyn AnomalyStore>) -> Self {
         Self {
             specs: HashMap::new(),
@@ -148,16 +150,19 @@ impl AnomalyRegistry {
     }
 
     /// All recorded anomalies (from the backing store).
+    #[must_use]
     pub fn recorded_anomalies(&self) -> Vec<(String, Anomaly)> {
         self.store.all()
     }
 
     /// Names of all registered specs.
+    #[must_use]
     pub fn registered_ids(&self) -> Vec<&str> {
         self.specs.keys().map(String::as_str).collect()
     }
 
     /// Look up a spec by ID (read-only).
+    #[must_use]
     pub fn spec(&self, id: &str) -> Option<&AnomalySpec> {
         self.specs.get(id)
     }
