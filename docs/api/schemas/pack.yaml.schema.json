@@ -1,0 +1,414 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xiaoguai-agent.github.io/xiaoguai/schemas/pack.yaml.schema.json",
+  "title": "XiaoguaiPackManifest",
+  "description": "Schema for packs/*/pack.yaml — the operator-authored manifest that describes a Xiaoguai skill pack.",
+  "type": "object",
+  "required": ["name", "version", "description"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Unique kebab-case pack identifier.",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "description": "SemVer version string (may include pre-release suffix, e.g. '1.3.4-prep').",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9.]+)?$"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of the pack's purpose.",
+      "minLength": 1
+    },
+    "author": {
+      "type": "string",
+      "description": "Pack author or maintainer name."
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX license identifier (e.g. 'BUSL-1.1', 'MIT')."
+    },
+    "kind": {
+      "type": "string",
+      "description": "Pack kind qualifier. 'scaffold-only' indicates the pack ships sample corpus and must be replaced before production use.",
+      "enum": ["scaffold-only", "production"]
+    },
+    "domain": {
+      "type": "string",
+      "description": "Business domain for RAG packs (e.g. 'finance', 'hr', 'legal')."
+    },
+    "feature_flag": {
+      "type": "string",
+      "description": "Environment variable name that gates the pack's routes. Set to 'true' to activate."
+    },
+    "requires": {
+      "type": "object",
+      "description": "Platform requirements for this pack.",
+      "additionalProperties": false,
+      "properties": {
+        "xiaoguai_version": {
+          "type": "string",
+          "description": "Minimum required xiaoguai platform version as a semver constraint (e.g. '>=1.3.1').",
+          "pattern": "^[><=!^~]+.*"
+        },
+        "features": {
+          "type": "array",
+          "description": "List of required xiaoguai platform feature flags.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "env": {
+          "type": "array",
+          "description": "Required environment variable names.",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "env_optional": {
+          "type": "array",
+          "description": "Optional environment variable names.",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "llm": {
+          "type": "boolean",
+          "description": "Whether an LLM provider must be configured."
+        }
+      }
+    },
+    "depends": {
+      "type": "object",
+      "description": "External package dependencies (used by incident-triage style manifests).",
+      "additionalProperties": false,
+      "properties": {
+        "xiaoguai-api": {
+          "type": "string",
+          "description": "Semver constraint on xiaoguai-api."
+        },
+        "llm": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "boolean" }
+          ],
+          "description": "LLM backend requirement: 'required' or true."
+        },
+        "im": {
+          "type": "object",
+          "description": "IM adapter requirement.",
+          "additionalProperties": false,
+          "properties": {
+            "any": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "Runtime crate/adapter dependencies (used by hr-onboarding style manifests).",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["crate"],
+            "additionalProperties": true,
+            "properties": {
+              "crate": { "type": "string", "description": "Rust crate name." },
+              "feature": { "type": "string", "description": "Cargo feature flag." },
+              "real": { "type": "boolean", "description": "Whether this uses a real (non-mocked) integration." },
+              "enabled_by": { "type": "string", "description": "Config expression that activates this dependency." },
+              "note": { "type": "string" }
+            }
+          }
+        ]
+      }
+    },
+    "external_systems": {
+      "type": "object",
+      "description": "External system integrations with status and real_integration descriptions.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Integration status.",
+            "enum": ["mocked", "real", "webhook_inbound", "event_inbound"]
+          },
+          "real_integration": { "type": "string" },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "description": "Operator-tunable configuration knobs for this pack.",
+      "additionalProperties": true
+    },
+    "migrations": {
+      "type": "array",
+      "description": "Ordered list of SQL migration files applied on 'xiaoguai pack install'.",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to the migration SQL file, relative to the pack root.",
+            "pattern": ".*\\.sql$"
+          }
+        }
+      }
+    },
+    "watches": {
+      "type": "array",
+      "description": "WatchSpec YAML files to register into the watch registry on pack load.",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" }
+        }
+      }
+    },
+    "anomalies": {
+      "type": "array",
+      "description": "AnomalySpec YAML files to register into the anomaly registry on pack load.",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" }
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "description": "Agent definition files included in this pack.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bare file path shorthand (e.g. 'agents/triage-agent.yaml'), relative to pack root."
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string", "description": "File path relative to pack root (used with bare 'path' key)." },
+              "ref":  { "type": "string", "description": "File path relative to pack root (used with 'ref' key)." }
+            },
+            "oneOf": [
+              { "required": ["path"] },
+              { "required": ["ref"] }
+            ]
+          }
+        ]
+      }
+    },
+    "inbound": {
+      "type": "array",
+      "description": "Inbound event source definition files.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bare file path shorthand, relative to pack root."
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" },
+              "ref":  { "type": "string" }
+            },
+            "oneOf": [
+              { "required": ["path"] },
+              { "required": ["ref"] }
+            ]
+          }
+        ]
+      }
+    },
+    "sources": {
+      "type": "array",
+      "description": "Webhook / event source file paths (path-string form used by incident-triage).",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "outputs": {
+      "type": "array",
+      "description": "Output adapter definition files.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" },
+              "ref":  { "type": "string" }
+            },
+            "oneOf": [
+              { "required": ["path"] },
+              { "required": ["ref"] }
+            ]
+          },
+          { "type": "string" }
+        ]
+      }
+    },
+    "templates": {
+      "type": "array",
+      "description": "Template files referenced by agents or outputs.",
+      "items": { "type": "string" }
+    },
+    "plan": {
+      "type": "array",
+      "description": "Sequential execution plan steps. Each step references an agent or output adapter.",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique step identifier within this plan."
+          },
+          "agent": {
+            "type": "string",
+            "description": "Agent name to invoke for this step."
+          },
+          "output": {
+            "type": "string",
+            "description": "Output adapter name to invoke for this step."
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable description of what this step does."
+          },
+          "deps": {
+            "type": "array",
+            "description": "Step IDs that must complete before this step runs.",
+            "items": { "type": "string" },
+            "uniqueItems": true
+          },
+          "condition": {
+            "type": "string",
+            "description": "Jinja2/template expression; step only runs when this evaluates truthy."
+          }
+        }
+      }
+    },
+    "dashboards": {
+      "type": "array",
+      "description": "Dashboard definitions rendered in the admin-ui.",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "widgets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["type", "title", "query"],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": ["metric", "table", "chart"]
+                },
+                "title": { "type": "string" },
+                "query": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "schema": {
+      "type": "object",
+      "description": "Database schema namespace for this pack.",
+      "additionalProperties": false,
+      "properties": {
+        "table_prefix": {
+          "type": "string",
+          "description": "SQL table prefix applied to all pack-managed tables (e.g. 'ar_')."
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Logical namespace string used to scope migrations and queries."
+        }
+      }
+    },
+    "outcome_telemetry": {
+      "type": "object",
+      "description": "Outcome telemetry configuration for the improvement loop.",
+      "additionalProperties": false,
+      "properties": {
+        "record_on": {
+          "type": "array",
+          "description": "Event names that trigger an outcome record write.",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "feedback_table": {
+          "type": "string",
+          "description": "Database table name where qualification/feedback rows are written."
+        }
+      }
+    },
+    "embedding_model": {
+      "type": "string",
+      "description": "Recommended embedding model for RAG packs (e.g. 'nomic-embed-text')."
+    },
+    "reranker": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "null" }
+      ],
+      "description": "Reranker model identifier. Null to disable reranking."
+    },
+    "top_k": {
+      "type": "integer",
+      "description": "Number of candidates retrieved before reranking.",
+      "minimum": 1
+    },
+    "top_k_final": {
+      "type": "integer",
+      "description": "Number of candidates retained after reranking.",
+      "minimum": 1
+    },
+    "chunking_preset": {
+      "type": "string",
+      "description": "Chunking preset name from xiaoguai-rag::presets::ChunkingPreset.",
+      "enum": ["pdf-heavy", "text-default"]
+    },
+    "collection_id": {
+      "type": "string",
+      "description": "RAG collection identifier used when bulk-loading this pack."
+    },
+    "corpus_dir": {
+      "type": "string",
+      "description": "Path to the corpus directory, relative to the pack root."
+    },
+    "prompts_dir": {
+      "type": "string",
+      "description": "Path to the prompts directory, relative to the pack root."
+    }
+  }
+}
