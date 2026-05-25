@@ -282,7 +282,7 @@ mod tests {
             returns: ResultShape {
                 description: "Review comments in Markdown".to_owned(),
             },
-            cost_hint: 3.14,
+            cost_hint: 3.5,
             locality: TenantScope::Tenant("acme".to_owned()),
         };
 
@@ -293,7 +293,7 @@ mod tests {
         assert_eq!(loaded.name, "rt-agent");
         assert_eq!(loaded.version, "1.2.3");
         assert_eq!(loaded.capabilities.len(), 2);
-        assert!((loaded.cost_hint - 3.14).abs() < f64::EPSILON);
+        assert!((loaded.cost_hint - 3.5).abs() < f64::EPSILON);
         assert_eq!(loaded.locality, TenantScope::Tenant("acme".to_owned()));
     }
 }

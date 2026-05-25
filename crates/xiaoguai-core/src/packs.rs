@@ -188,11 +188,7 @@ impl PackLoader {
     fn validate(&self, manifest: &PackManifest, pack_dir: &Path) -> Result<()> {
         for entry in &manifest.migrations {
             let p = pack_dir.join(&entry.path);
-            anyhow::ensure!(
-                p.exists(),
-                "migration path does not exist: {}",
-                p.display()
-            );
+            anyhow::ensure!(p.exists(), "migration path does not exist: {}", p.display());
         }
         for entry in &manifest.watches {
             let p = pack_dir.join(&entry.path);
@@ -398,16 +394,14 @@ migrations:
         // anyhow error chains: check every layer for our sentinel string.
         let full = format!("{err:#}");
         assert!(
-            full.contains("migration path does not exist")
-                || full.contains("missing.sql"),
+            full.contains("migration path does not exist") || full.contains("missing.sql"),
             "error chain should mention the missing migration path, got: {full}"
         );
     }
 
     #[test]
     fn register_pack_stub_does_not_panic() {
-        let manifest: PackManifest =
-            serde_yaml::from_str(minimal_manifest_yaml()).expect("parse");
+        let manifest: PackManifest = serde_yaml::from_str(minimal_manifest_yaml()).expect("parse");
         let watches = WatchRegistry;
         let anomalies = AnomalyRegistry;
         // Paths don't exist — that's fine for stub registration.

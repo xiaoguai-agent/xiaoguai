@@ -132,7 +132,7 @@ struct MeetingEntry {
 #[derive(Debug, Clone)]
 struct ImSend {
     recipient: String,
-    message_kind: String,   // "welcome_dm" | "group_chat" | "buddy_notify"
+    message_kind: String, // "welcome_dm" | "group_chat" | "buddy_notify"
 }
 
 impl MockAuditSink {
@@ -198,7 +198,10 @@ struct MockAccountProvisioner {
 
 impl MockAccountProvisioner {
     fn ok(sink: Arc<MockAuditSink>) -> Arc<Self> {
-        Arc::new(Self { sink, fail_with: None })
+        Arc::new(Self {
+            sink,
+            fail_with: None,
+        })
     }
 
     fn failing(sink: Arc<MockAuditSink>, msg: &str) -> Arc<Self> {
@@ -252,7 +255,10 @@ struct MockMeetingScheduler {
 
 impl MockMeetingScheduler {
     fn ok(sink: Arc<MockAuditSink>) -> Arc<Self> {
-        Arc::new(Self { sink, fail_with: None })
+        Arc::new(Self {
+            sink,
+            fail_with: None,
+        })
     }
 
     fn failing(sink: Arc<MockAuditSink>, msg: &str) -> Arc<Self> {
@@ -288,15 +294,20 @@ impl Worker for MockMeetingScheduler {
             "Team Introduction",
             "IT Setup",
         ] {
-            self.sink.meeting_entries.lock().unwrap().push(MeetingEntry {
-                employee_id: eid.clone(),
-                title: title.to_string(),
-            });
+            self.sink
+                .meeting_entries
+                .lock()
+                .unwrap()
+                .push(MeetingEntry {
+                    employee_id: eid.clone(),
+                    title: title.to_string(),
+                });
         }
 
         Ok(WorkerResult {
-            output: "Meetings scheduled: Day-1 Orientation, Manager 1:1, Team Introduction, IT Setup"
-                .to_string(),
+            output:
+                "Meetings scheduled: Day-1 Orientation, Manager 1:1, Team Introduction, IT Setup"
+                    .to_string(),
             success: true,
         })
     }
@@ -311,7 +322,10 @@ struct MockWelcomeMessenger {
 
 impl MockWelcomeMessenger {
     fn ok(sink: Arc<MockAuditSink>) -> Arc<Self> {
-        Arc::new(Self { sink, fail_with: None })
+        Arc::new(Self {
+            sink,
+            fail_with: None,
+        })
     }
 
     fn failing(sink: Arc<MockAuditSink>, msg: &str) -> Arc<Self> {
@@ -436,9 +450,12 @@ impl Worker for RoutingWorker {
 fn extract_field(description: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}=");
     description.split_whitespace().find_map(|token| {
-        token
-            .strip_prefix(&prefix)
-            .map(|v| v.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '@' && c != '-' && c != '_' && c != '.').to_string())
+        token.strip_prefix(&prefix).map(|v| {
+            v.trim_end_matches(|c: char| {
+                !c.is_alphanumeric() && c != '@' && c != '-' && c != '_' && c != '.'
+            })
+            .to_string()
+        })
     })
 }
 
@@ -448,9 +465,7 @@ fn standard_budget() -> Budget {
 }
 
 /// Build a complete Supervisor wired with the routing worker.
-fn build_supervisor(
-    sink: Arc<MockAuditSink>,
-) -> Supervisor {
+fn build_supervisor(sink: Arc<MockAuditSink>) -> Supervisor {
     let planner = HrOnboardingPlanner::new();
     let budget = standard_budget();
     let mut supervisor = Supervisor::new(budget, Box::new(planner));
@@ -499,7 +514,10 @@ async fn subtasks_dispatched_in_correct_order() {
     let step_ids: Vec<&str> = report.history.iter().map(|s| s.step_id.as_str()).collect();
 
     // account_provisioning is always first
-    assert_eq!(step_ids[0], STEP_IDS[0], "account_provisioning must be first");
+    assert_eq!(
+        step_ids[0], STEP_IDS[0],
+        "account_provisioning must be first"
+    );
 
     // meeting_scheduling and welcome_messaging follow account_provisioning
     let account_pos = 0usize;
@@ -559,12 +577,18 @@ async fn account_provisioner_writes_three_audit_entries() {
 
     // 3 from account provisioner + 1 from buddy assigner = 4 total
     // Check the specific account_created actions
-    assert!(sink.has_audit_action("account_created:okta"), "okta entry missing");
+    assert!(
+        sink.has_audit_action("account_created:okta"),
+        "okta entry missing"
+    );
     assert!(
         sink.has_audit_action("account_created:google_workspace"),
         "google_workspace entry missing"
     );
-    assert!(sink.has_audit_action("account_created:github"), "github entry missing");
+    assert!(
+        sink.has_audit_action("account_created:github"),
+        "github entry missing"
+    );
 }
 
 /// Meeting scheduler writes 4 meeting entries to the mock meetings table.
@@ -589,7 +613,10 @@ async fn welcome_messenger_sends_two_im_messages() {
     supervisor.run(ONBOARD_GOAL).await.expect("run ok");
 
     assert!(sink.has_im_send("welcome_dm"), "welcome DM missing");
-    assert!(sink.has_im_send("group_chat"), "group chat creation missing");
+    assert!(
+        sink.has_im_send("group_chat"),
+        "group chat creation missing"
+    );
 }
 
 /// Buddy assigner writes one audit entry and sends one IM notification.
@@ -599,8 +626,14 @@ async fn buddy_assigner_notifies_buddy_via_im() {
     let mut supervisor = build_supervisor(sink.clone());
     supervisor.run(ONBOARD_GOAL).await.expect("run ok");
 
-    assert!(sink.has_audit_action("buddy_assigned"), "buddy_assigned audit entry missing");
-    assert!(sink.has_im_send("buddy_notify"), "buddy notification IM missing");
+    assert!(
+        sink.has_audit_action("buddy_assigned"),
+        "buddy_assigned audit entry missing"
+    );
+    assert!(
+        sink.has_im_send("buddy_notify"),
+        "buddy notification IM missing"
+    );
 }
 
 /// Total IM sends across the run: 2 (welcome_dm + group_chat) + 1 (buddy_notify) = 3.
@@ -650,7 +683,10 @@ async fn meeting_scheduler_failure_does_not_abort_run() {
         .iter()
         .find(|s| s.step_id == "meeting_scheduling")
         .expect("meeting_scheduling in history");
-    assert!(!meeting_step.success, "meeting step should be flagged failed");
+    assert!(
+        !meeting_step.success,
+        "meeting step should be flagged failed"
+    );
     assert!(
         meeting_step.output.contains("calendar conflict"),
         "failure output should contain error detail"
@@ -662,7 +698,10 @@ async fn meeting_scheduler_failure_does_not_abort_run() {
         .iter()
         .find(|s| s.step_id == "welcome_messaging")
         .expect("welcome_messaging in history");
-    assert!(welcome_step.success, "welcome step should succeed despite meeting failure");
+    assert!(
+        welcome_step.success,
+        "welcome step should succeed despite meeting failure"
+    );
 
     let buddy_step = report
         .history
@@ -706,7 +745,11 @@ async fn account_provisioner_failure_all_steps_still_attempted() {
     assert!(!acct.success);
 
     // remaining steps still ran and succeeded
-    for step_id in ["meeting_scheduling", "welcome_messaging", "buddy_assignment"] {
+    for step_id in [
+        "meeting_scheduling",
+        "welcome_messaging",
+        "buddy_assignment",
+    ] {
         let step = report
             .history
             .iter()
@@ -730,10 +773,7 @@ async fn failure_is_visible_in_run_history() {
 
     let router = Arc::new(RoutingWorker {
         account_provisioner: MockAccountProvisioner::ok(sink.clone()),
-        meeting_scheduler: MockMeetingScheduler::failing(
-            sink.clone(),
-            "meeting scheduler error",
-        ),
+        meeting_scheduler: MockMeetingScheduler::failing(sink.clone(), "meeting scheduler error"),
         welcome_messenger: MockWelcomeMessenger::ok(sink.clone()),
         buddy_assigner: MockBuddyAssigner::ok(sink.clone()),
     });
@@ -756,10 +796,7 @@ async fn failed_step_still_writes_audit_entry() {
 
     let router = Arc::new(RoutingWorker {
         account_provisioner: MockAccountProvisioner::ok(sink.clone()),
-        meeting_scheduler: MockMeetingScheduler::failing(
-            sink.clone(),
-            "calendar failure",
-        ),
+        meeting_scheduler: MockMeetingScheduler::failing(sink.clone(), "calendar failure"),
         welcome_messenger: MockWelcomeMessenger::ok(sink.clone()),
         buddy_assigner: MockBuddyAssigner::ok(sink.clone()),
     });
@@ -768,7 +805,10 @@ async fn failed_step_still_writes_audit_entry() {
     supervisor.run(ONBOARD_GOAL).await.expect("run ok");
 
     // The meeting scheduler's on_failure: audit: true writes a failed audit entry
-    assert!(sink.failed_audit_count() > 0, "failed step should write audit entry");
+    assert!(
+        sink.failed_audit_count() > 0,
+        "failed step should write audit entry"
+    );
 }
 
 /// A budget of 2 steps stops after 2 dispatches (BudgetExhausted), even

@@ -33,11 +33,7 @@ pub trait TelegramClient: Send + Sync {
     ///
     /// Returns the raw `result` value from the API response envelope
     /// `{"ok": true, "result": …}`.
-    async fn call(
-        &self,
-        method: &str,
-        body: JsonValue,
-    ) -> Result<JsonValue, ProviderError>;
+    async fn call(&self, method: &str, body: JsonValue) -> Result<JsonValue, ProviderError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,10 +81,7 @@ impl HttpTelegramClient {
 impl TelegramClient for HttpTelegramClient {
     #[instrument(skip(self, body), fields(method))]
     async fn call(&self, method: &str, body: JsonValue) -> Result<JsonValue, ProviderError> {
-        let url = format!(
-            "{}/bot{}/{}",
-            self.base_url, self.bot_token, method
-        );
+        let url = format!("{}/bot{}/{}", self.base_url, self.bot_token, method);
         let raw = self
             .client
             .post(&url)

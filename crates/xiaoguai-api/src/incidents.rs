@@ -180,9 +180,9 @@ impl IncidentSource for SentrySource {
             .get("firstSeen")
             .and_then(Value::as_str)
             .ok_or_else(|| NormalizeError::Malformed("missing `data.issue.firstSeen`".into()))?;
-        let occurred_at = occurred_at_str.parse::<DateTime<Utc>>().map_err(|e| {
-            NormalizeError::Malformed(format!("invalid firstSeen timestamp: {e}"))
-        })?;
+        let occurred_at = occurred_at_str
+            .parse::<DateTime<Utc>>()
+            .map_err(|e| NormalizeError::Malformed(format!("invalid firstSeen timestamp: {e}")))?;
 
         let url = issue
             .get("permalink")
@@ -289,10 +289,7 @@ impl IncidentSource for DatadogSource {
 
         // Parse comma-separated tags string "env:production,host:web-01" into
         // a lookup map for environment and project extraction.
-        let tags_str = raw
-            .get("tags")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let tags_str = raw.get("tags").and_then(Value::as_str).unwrap_or_default();
         let tags = parse_datadog_tags(tags_str);
 
         let environment = tags.get("env").or_else(|| tags.get("environment")).cloned();
@@ -381,9 +378,7 @@ mod tests {
         assert_eq!(incident.source, "sentry");
         assert_eq!(
             incident.occurred_at,
-            "2024-05-24T10:00:00Z"
-                .parse::<DateTime<Utc>>()
-                .unwrap()
+            "2024-05-24T10:00:00Z".parse::<DateTime<Utc>>().unwrap()
         );
         assert_eq!(
             incident.url,
@@ -485,14 +480,9 @@ mod tests {
         assert_eq!(incident.source, "datadog");
         assert_eq!(
             incident.occurred_at,
-            "2024-05-24T11:30:00Z"
-                .parse::<DateTime<Utc>>()
-                .unwrap()
+            "2024-05-24T11:30:00Z".parse::<DateTime<Utc>>().unwrap()
         );
-        assert_eq!(
-            incident.url,
-            "https://app.datadoghq.com/monitors/456"
-        );
+        assert_eq!(incident.url, "https://app.datadoghq.com/monitors/456");
         assert_eq!(incident.project, "web-01");
         assert_eq!(incident.environment.as_deref(), Some("production"));
         // raw payload preserved
@@ -534,7 +524,8 @@ mod tests {
     #[test]
     fn datadog_missing_alert_type_is_malformed() {
         let src = DatadogSource;
-        let payload = json!({"alert_id": "1", "title": "t", "last_updated_at": "2024-01-01T00:00:00Z"});
+        let payload =
+            json!({"alert_id": "1", "title": "t", "last_updated_at": "2024-01-01T00:00:00Z"});
         assert!(matches!(
             src.normalize(payload),
             Err(NormalizeError::Malformed(_))
@@ -544,7 +535,8 @@ mod tests {
     #[test]
     fn datadog_missing_alert_id_is_malformed() {
         let src = DatadogSource;
-        let payload = json!({"alert_type": "error", "title": "t", "last_updated_at": "2024-01-01T00:00:00Z"});
+        let payload =
+            json!({"alert_type": "error", "title": "t", "last_updated_at": "2024-01-01T00:00:00Z"});
         assert!(matches!(
             src.normalize(payload),
             Err(NormalizeError::Malformed(_))
@@ -631,7 +623,11 @@ mod tests {
         assert!(im.text.contains("[RCA Draft]"));
         assert!(im.text.contains("sentry:123"));
         // IM message fits within 500-char budget.
-        assert!(im.text.len() <= 500, "IM message too long: {}", im.text.len());
+        assert!(
+            im.text.len() <= 500,
+            "IM message too long: {}",
+            im.text.len()
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -744,10 +740,7 @@ impl PrDraft {
     /// Renders a minimal Markdown body suitable for a GitHub PR description.
     pub fn from_incident_and_rca(incident: &Incident, rca: &RcaDraft, pack_version: &str) -> Self {
         let severity = format!("{:?}", incident.severity).to_lowercase();
-        let title = format!(
-            "[RCA Draft] {}",
-            truncate_str(&incident.title, 80)
-        );
+        let title = format!("[RCA Draft] {}", truncate_str(&incident.title, 80));
         let labels = vec![
             "incident".to_owned(),
             "rca-draft".to_owned(),

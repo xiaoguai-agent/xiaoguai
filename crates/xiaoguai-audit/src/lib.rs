@@ -14,8 +14,8 @@
 #![allow(clippy::module_name_repetitions, clippy::missing_errors_doc)]
 
 pub mod chain;
-pub mod sinks;
 pub mod outcomes;
+pub mod sinks;
 
 pub use chain::{AuditEntry, ChainError, ChainedAudit, StoredEntry};
 pub use outcomes::{

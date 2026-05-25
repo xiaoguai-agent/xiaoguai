@@ -163,8 +163,6 @@ async fn run_smoke(settings: &Settings) -> Result<()> {
 async fn run_serve(settings: &Settings) -> Result<()> {
     use std::net::SocketAddr;
     use std::sync::Arc;
-    #[cfg(feature = "observability")]
-    use xiaoguai_observability;
     use xiaoguai_agent::{AgentConfig, Toolbox};
     use xiaoguai_api::{
         audit::{AuditReader, AuditVerifier},
@@ -173,6 +171,8 @@ async fn run_serve(settings: &Settings) -> Result<()> {
     use xiaoguai_audit::chain::sink::PgAuditSink;
     use xiaoguai_llm::{build_router, LlmBackend, MockBackend, OsEnvResolver};
     use xiaoguai_mcp::McpSupervisor;
+    #[cfg(feature = "observability")]
+    use xiaoguai_observability;
     use xiaoguai_storage::repositories::{
         LlmProviderRepository, PgLlmProviderRepository, PgMcpServerRepository, PgMessageRepository,
         PgSessionRepository, PgTenantRepository,

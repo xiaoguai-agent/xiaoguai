@@ -142,11 +142,7 @@ impl ParseMode {
 }
 
 /// Build the JSON body for a `sendMessage` request.
-pub fn send_message_body(
-    chat_id: &str,
-    text: &str,
-    parse_mode: Option<ParseMode>,
-) -> JsonValue {
+pub fn send_message_body(chat_id: &str, text: &str, parse_mode: Option<ParseMode>) -> JsonValue {
     let mut body = serde_json::json!({
         "chat_id": chat_id,
         "text": text,
@@ -167,10 +163,7 @@ mod tests {
 
     fn webhook_with_token(token: &str) -> Webhook {
         Webhook {
-            headers: vec![(
-                "X-Telegram-Bot-Api-Secret-Token".into(),
-                token.into(),
-            )],
+            headers: vec![("X-Telegram-Bot-Api-Secret-Token".into(), token.into())],
             body: b"{}".to_vec(),
         }
     }
