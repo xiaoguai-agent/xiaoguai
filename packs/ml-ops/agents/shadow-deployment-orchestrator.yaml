@@ -1,0 +1,217 @@
+# Agent definition — shadow-deployment-orchestrator
+# ---------------------------------------------------------------------------
+# Orchestrates the shadow deployment lifecycle after a human approves a
+# 'shadow_deploy' or 'retrain' recommendation from retrain-recommender.
+#
+# Lifecycle steps:
+#   1. Trigger retrain job on the configured ML platform (MLflow / SageMaker /
+#      Vertex AI) via MCP tool call.
+#   2. Once the new model version is registered, update its stage to 'shadow'
+#      in mlops_model_versions.
+#   3. Configure the traffic split (default: 10% to shadow, 90% to champion).
+#   4. Monitor shadow performance via eval-suite-pass-rate watch.
+#   5. After min_shadow_hours have elapsed AND shadow eval pass rate >=
+#      champion pass rate - 2pp, recommend promotion (HOTL: human approves).
+#   6. On promotion: update champion stage, retire prior champion, tag
+#      MLflow/SageMaker run.
+#
+# All state-changing steps require human approval (HOTL).
+# The orchestrator only runs read queries autonomously.
+# ---------------------------------------------------------------------------
+
+name: shadow-deployment-orchestrator
+version: "0.1.0"
+description: >
+  Manages the full shadow deployment cycle: triggers retrain, configures
+  traffic split, monitors shadow vs champion, and recommends promotion when
+  quality criteria are met. All promotions require human approval.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  # Fires when a human approves a shadow_deploy or retrain recommendation
+  - event: mlops.retrain_job_approved
+    source: admin_ui
+    filter: "event.recommendation IN ('shadow_deploy', 'retrain')"
+
+# --------------------------------------------------------------------------
+# LLM settings (used only for promotion recommendation reasoning)
+# --------------------------------------------------------------------------
+llm:
+  model: ${SHADOW_ORCHESTRATOR_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 1024
+
+# --------------------------------------------------------------------------
+# Context-gathering steps (read-only, autonomous)
+# --------------------------------------------------------------------------
+context_steps:
+  - id: current_champion
+    description: "Current champion model version details"
+    tool: sql
+    query: |
+      SELECT id, version, metadata, champion_since
+      FROM mlops_model_versions
+      WHERE tenant_id  = '{tenant_id}'
+        AND model_name = '{model_name}'
+        AND stage      = 'champion'
+      LIMIT 1
+
+  - id: shadow_eval_performance
+    description: "Shadow comparison eval runs since shadow deployment started"
+    tool: sql
+    query: |
+      SELECT pass_rate, total_cases, passed_cases, category_breakdown,
+             run_finished_at
+      FROM mlops_eval_runs
+      WHERE tenant_id    = '{tenant_id}'
+        AND model_name   = '{model_name}'
+        AND model_version = '{candidate_version}'
+        AND eval_type    = 'shadow_comparison'
+      ORDER BY run_finished_at DESC
+      LIMIT 10
+
+  - id: champion_baseline_pass_rate
+    description: "Champion model's recent eval pass rate for comparison"
+    tool: sql
+    query: |
+      SELECT AVG(pass_rate) AS avg_pass_rate
+      FROM mlops_eval_runs
+      WHERE tenant_id    = '{tenant_id}'
+        AND model_name   = '{model_name}'
+        AND model_version = '{champion_version}'
+        AND eval_type    IN ('regression', 'capability')
+        AND run_finished_at >= NOW() - INTERVAL '14 days'
+
+  - id: shadow_duration
+    description: "How many hours the shadow has been running"
+    tool: sql
+    query: |
+      SELECT
+          EXTRACT(EPOCH FROM NOW() - shadow_started_at) / 3600 AS shadow_hours
+      FROM mlops_retrain_jobs
+      WHERE id = '{job_id}'
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: trigger_retrain_mlflow
+    description: >
+      Trigger a new training run on the configured MLflow tracking server.
+      Returns the new run_id and the registered model version string.
+    kind: mcp
+    tool: mlflow_run_create
+    params:
+      experiment_name: "{{ model_name }}-retrain"
+      tags:
+        triggering_job_id: "{{ job_id }}"
+        trigger_reason:    "{{ drift_type }}_drift"
+
+  - name: trigger_retrain_sagemaker
+    description: >
+      Trigger a SageMaker Training Job. Returns the job name and model artifact URI.
+    kind: mcp
+    tool: sagemaker_training_job_create
+    params:
+      job_name: "{{ model_name }}-retrain-{{ job_id | truncate(8) }}"
+      tags:
+        - Key: triggering_job_id
+          Value: "{{ job_id }}"
+
+  - name: register_shadow_version
+    description: >
+      Insert or update the candidate model version in mlops_model_versions
+      with stage = 'shadow' and record the shadow_started_at timestamp in
+      the retrain job.
+    kind: sql
+    query: |
+      INSERT INTO mlops_model_versions (
+          tenant_id, model_name, version, platform, stage, metadata
+      ) VALUES (
+          '{tenant_id}', '{model_name}', '{candidate_version}',
+          '{platform}', 'shadow', '{metadata}'
+      )
+      ON CONFLICT (tenant_id, model_name, version)
+      DO UPDATE SET stage = 'shadow', updated_at = NOW();
+
+      UPDATE mlops_retrain_jobs
+      SET candidate_version = '{candidate_version}',
+          shadow_started_at = NOW(),
+          shadow_traffic_pct = {shadow_traffic_pct},
+          status = 'shadow_running',
+          updated_at = NOW()
+      WHERE id = '{job_id}'
+
+  - name: promote_to_champion
+    description: >
+      Promote the shadow model to champion. Retires the prior champion.
+      Requires human approval before calling this tool.
+    kind: sql
+    query: |
+      UPDATE mlops_model_versions
+      SET stage = 'retired', retired_at = NOW(), updated_at = NOW()
+      WHERE tenant_id  = '{tenant_id}'
+        AND model_name = '{model_name}'
+        AND stage      = 'champion';
+
+      UPDATE mlops_model_versions
+      SET stage = 'champion', champion_since = NOW(), updated_at = NOW()
+      WHERE tenant_id  = '{tenant_id}'
+        AND model_name = '{model_name}'
+        AND version    = '{candidate_version}';
+
+      UPDATE mlops_retrain_jobs
+      SET status = 'succeeded', promoted_at = NOW(),
+          shadow_ended_at = NOW(), updated_at = NOW()
+      WHERE id = '{job_id}'
+
+  - name: abort_shadow
+    description: >
+      Abort the shadow deployment — retire the candidate, keep champion.
+    kind: sql
+    query: |
+      UPDATE mlops_model_versions
+      SET stage = 'failed', retired_at = NOW(), updated_at = NOW()
+      WHERE tenant_id  = '{tenant_id}'
+        AND model_name = '{model_name}'
+        AND version    = '{candidate_version}';
+
+      UPDATE mlops_retrain_jobs
+      SET status = 'failed', shadow_ended_at = NOW(),
+          failure_reason = '{reason}', updated_at = NOW()
+      WHERE id = '{job_id}'
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  require_human_approval:
+    - trigger_retrain_mlflow
+    - trigger_retrain_sagemaker
+    - promote_to_champion
+    - abort_shadow
+  notify_channel: "${ML_OPS_NOTIFY_CHANNEL:-admin_ui}"
+
+# --------------------------------------------------------------------------
+# Promotion criteria (evaluated autonomously; promotion itself is HOTL)
+# --------------------------------------------------------------------------
+promotion_criteria:
+  min_shadow_hours: "${ML_OPS_MIN_SHADOW_HOURS:-24}"
+  # Shadow pass rate must be within 2 pp of champion
+  pass_rate_delta_floor_pp: -2.0
+  min_shadow_eval_runs: 3
+
+# --------------------------------------------------------------------------
+# Outcome telemetry
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - shadow_started
+    - promotion_recommended
+    - promoted
+    - aborted
+  feedback_table: mlops_retrain_jobs
+  outcome_field: outcome

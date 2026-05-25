@@ -1,0 +1,208 @@
+# Agent definition — retrain-recommender
+# ---------------------------------------------------------------------------
+# Receives classified drift events (mlops.drift_classified) and eval pass-rate
+# drops (mlops.eval_pass_rate_drop) and outputs one of four recommendations:
+#
+#   retrain         — trigger a full retrain of the model
+#   shadow_deploy   — retrain and run as shadow before promoting
+#   alert_only      — notify engineers; drift is notable but not severe enough
+#                     to warrant immediate retrain
+#   no_action       — signal is within normal operating bounds; close it
+#
+# The agent never autonomously triggers a retrain. It writes a retrain_job
+# row with status = 'pending_approval' and notifies the human reviewer.
+#
+# Decision factors (in priority order):
+#   1. drift_severity = critical                → retrain
+#   2. drift_type = concept + eval accuracy dropped → retrain
+#   3. drift_type = label + severity >= medium  → shadow_deploy
+#   4. drift_type = covariate + severity = high → shadow_deploy
+#   5. drift_type = data_quality               → alert_only (fix pipeline first)
+#   6. eval pass_rate < floor                  → shadow_deploy
+#   7. All signals low severity                → alert_only or no_action
+# ---------------------------------------------------------------------------
+
+name: retrain-recommender
+version: "0.1.0"
+description: >
+  Decides whether a classified drift signal warrants a retrain, shadow
+  deployment, alert-only, or no action. Writes a pending retrain_job and
+  notifies the reviewer. Zero autonomous retrains — all require human approval.
+
+# --------------------------------------------------------------------------
+# Trigger subscriptions
+# --------------------------------------------------------------------------
+triggers:
+  - event: mlops.drift_classified
+    source: drift-classifier
+  - event: mlops.eval_pass_rate_drop
+    source: eval-suite-pass-rate
+
+# --------------------------------------------------------------------------
+# LLM settings
+# --------------------------------------------------------------------------
+llm:
+  model: ${RETRAIN_RECOMMENDER_LLM_MODEL:-default}
+  temperature: 0.1
+  max_tokens: 2048
+
+# --------------------------------------------------------------------------
+# Context-gathering steps
+# --------------------------------------------------------------------------
+context_steps:
+  - id: active_retrain_jobs
+    description: "Any active or pending retrain jobs for this model"
+    tool: sql
+    query: |
+      SELECT id, recommendation, status, created_at
+      FROM mlops_retrain_jobs
+      WHERE tenant_id  = '{tenant_id}'
+        AND model_name = '{model_name}'
+        AND status NOT IN ('succeeded', 'failed', 'cancelled', 'rejected')
+      ORDER BY created_at DESC
+      LIMIT 5
+
+  - id: recent_eval_trend
+    description: "Pass rate for the last 7 eval runs across all suite types"
+    tool: sql
+    query: |
+      SELECT eval_type, suite_name, pass_rate, run_finished_at
+      FROM mlops_eval_runs
+      WHERE tenant_id  = '{tenant_id}'
+        AND model_name = '{model_name}'
+      ORDER BY run_finished_at DESC
+      LIMIT 14
+
+  - id: retrain_history
+    description: "Outcome of the last 3 completed retrain jobs"
+    tool: sql
+    query: |
+      SELECT recommendation, status, outcome, promoted_at, failure_reason
+      FROM mlops_retrain_jobs
+      WHERE tenant_id  = '{tenant_id}'
+        AND model_name = '{model_name}'
+        AND status IN ('succeeded', 'failed')
+      ORDER BY created_at DESC
+      LIMIT 3
+
+# --------------------------------------------------------------------------
+# System prompt
+# --------------------------------------------------------------------------
+system_prompt: |
+  You are an ML platform advisor. You receive classified drift signals and
+  eval pass-rate data, then recommend one of four actions:
+
+  - retrain       : Trigger a new training run immediately. Use when:
+                    (a) drift_severity is critical, OR
+                    (b) concept drift + eval accuracy has materially dropped.
+
+  - shadow_deploy : Retrain and run the new model on a traffic split before
+                    promoting. Use when the signal is significant but not
+                    critical — the current champion can continue serving.
+
+  - alert_only    : Notify engineers but do not retrain. Use when:
+                    (a) drift_type is data_quality (pipeline fix needed first), OR
+                    (b) severity is low/medium and eval pass rate is still above floor.
+
+  - no_action     : Close the signal — drift is within tolerable bounds.
+
+  Rules:
+  - NEVER recommend retrain if an active retrain job already exists.
+  - If data_quality drift, ALWAYS recommend alert_only (retrain won't help).
+  - Retrain history matters: if the last retrain failed or regressed, prefer
+    alert_only and explain why.
+  - Provide a concise, actionable rationale (2-3 sentences).
+  - Output ONLY valid JSON matching the Recommendation schema.
+
+  Recommendation schema:
+  {
+    "recommendation": "retrain | shadow_deploy | alert_only | no_action",
+    "rationale": "<2-3 sentences>",
+    "urgency": "immediate | within_24h | within_week | monitoring",
+    "blocking_reason": "<null or why retrain is blocked>",
+    "shadow_traffic_pct": 10,
+    "escalation_channels": ["slack-ml-platform", "pagerduty-on-drift"]
+  }
+
+# --------------------------------------------------------------------------
+# User prompt
+# --------------------------------------------------------------------------
+user_prompt: |
+  ## Drift classification
+  - Model: {{ signal.model_name }} ({{ signal.model_version }})
+  - Drift type: {{ signal.drift_type }}
+  - Drift severity: {{ signal.drift_severity }}
+  - Confidence: {{ signal.confidence }}
+  - Primary evidence: {{ signal.primary_evidence | join(', ') }}
+  - Classifier recommendation: {{ signal.recommended_next_step }}
+
+  ## Active retrain jobs
+  {{ context.active_retrain_jobs | truncate(500) }}
+
+  ## Recent eval pass-rate trend
+  {{ context.recent_eval_trend | truncate(1000) }}
+
+  ## Retrain history (last 3)
+  {{ context.retrain_history | truncate(500) }}
+
+  Recommend an action now.
+
+# --------------------------------------------------------------------------
+# Tools
+# --------------------------------------------------------------------------
+tools:
+  - name: create_retrain_job
+    description: >
+      Write a new retrain job to mlops_retrain_jobs with status =
+      'pending_approval'. Returns the job ID for notification.
+    kind: sql
+    query: |
+      INSERT INTO mlops_retrain_jobs (
+          tenant_id, model_name, trigger_version,
+          trigger_signal_ids, recommendation, rationale,
+          status, shadow_traffic_pct
+      ) VALUES (
+          '{tenant_id}', '{model_name}', '{model_version}',
+          '{signal_ids}', '{recommendation}', '{rationale}',
+          'pending_approval', {shadow_traffic_pct}
+      )
+      RETURNING id
+
+  - name: close_signal
+    description: "Mark a drift signal as resolved (no_action path)."
+    kind: sql
+    query: |
+      UPDATE mlops_drift_signals
+      SET resolved_at = NOW(), updated_at = NOW()
+      WHERE id = '{signal_id}'
+
+# --------------------------------------------------------------------------
+# HOTL guardrails
+# --------------------------------------------------------------------------
+hotl:
+  budget_usd: 0.00
+  autonomous_actions:
+    trigger_retrain: 0
+    promote_model: 0
+  require_human_approval:
+    - create_retrain_job
+  notify_channel: "${ML_OPS_NOTIFY_CHANNEL:-admin_ui}"
+  notification_template: |
+    **[ML-Ops]** Retrain recommendation for `{{ model_name }}`
+    Type: {{ drift_type }} drift ({{ drift_severity }})
+    Recommendation: **{{ recommendation }}** ({{ urgency }})
+    {{ rationale }}
+    [Review in admin UI]({{ admin_url }}/ml-ops/retrain/{{ job_id }})
+
+# --------------------------------------------------------------------------
+# Outcome telemetry (F3)
+# --------------------------------------------------------------------------
+outcome_telemetry:
+  record_on:
+    - job_created
+    - job_approved
+    - job_rejected
+    - retrain_succeeded
+    - retrain_failed
+    - model_promoted
+  feedback_table: mlops_retrain_jobs

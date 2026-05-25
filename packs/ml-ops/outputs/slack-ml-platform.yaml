@@ -1,0 +1,114 @@
+# Output connector — Slack ml-platform channel
+# ---------------------------------------------------------------------------
+# Posts drift reports and eval summary cards to the configured Slack channel.
+# Uses the Slack Web API (chat.postMessage) via the xiaoguai-im Slack adapter.
+#
+# Message types:
+#   - drift_alert      — compact Slack Block Kit card with drift type, severity,
+#                        recommendation, and link to admin UI
+#   - eval_summary     — rendered eval-summary-card in a thread or new message
+#   - retrain_approved — notification when a human approves a retrain job
+#   - promotion_ready  — notification when shadow meets promotion criteria
+# ---------------------------------------------------------------------------
+
+output: slack-ml-platform
+
+slack:
+  # Slack Bot token with chat:write scope.
+  token: ${SLACK_ML_PLATFORM_TOKEN}
+  # Primary channel for drift alerts and eval summaries.
+  channel: ${SLACK_ML_PLATFORM_CHANNEL:-#ml-platform}
+  # Thread replies go to a dedicated thread per model (keyed by model_name).
+  thread_strategy: per_model_week   # creates a new thread each week per model
+
+# --------------------------------------------------------------------------
+# Message templates per event type
+# --------------------------------------------------------------------------
+templates:
+  drift_alert:
+    # Slack Block Kit JSON template
+    blocks:
+      - type: header
+        text:
+          type: plain_text
+          text: "{{ severity_emoji }} {{ drift_type | title }} Drift — {{ model_name }}"
+      - type: section
+        fields:
+          - type: mrkdwn
+            text: "*Model*\n`{{ model_name }}` ({{ model_version }})"
+          - type: mrkdwn
+            text: "*Drift type*\n{{ drift_type | upper }}"
+          - type: mrkdwn
+            text: "*Severity*\n{{ drift_severity | upper }}"
+          - type: mrkdwn
+            text: "*Confidence*\n{{ confidence }}"
+      - type: section
+        text:
+          type: mrkdwn
+          text: "*Primary evidence*\n{{ primary_evidence | join('\n') | truncate(400) }}"
+      - type: section
+        text:
+          type: mrkdwn
+          text: "*Recommendation*\n{{ recommendation | upper }} — {{ rationale | truncate(200) }}"
+      - type: actions
+        elements:
+          - type: button
+            text: { type: plain_text, text: "Review in Admin UI" }
+            url: "{{ admin_url }}/ml-ops/retrain/{{ job_id }}"
+            style: primary
+          - type: button
+            text: { type: plain_text, text: "View Drift Report" }
+            url: "{{ admin_url }}/ml-ops/drift/{{ signal_id }}"
+
+  eval_summary:
+    blocks:
+      - type: header
+        text:
+          type: plain_text
+          text: "{{ status_emoji }} Eval Summary — {{ model_name }}"
+      - type: section
+        text:
+          type: mrkdwn
+          text: |
+            *Status*: {{ overall_status }}
+            *Regression*: {{ (regression_summary.latest_pass_rate * 100) | round(1) }}% ({{ trend_arrow_regression }} {{ regression_summary.trend_7d_pp | round(1) }} pp)
+            *Capability*: {{ (capability_summary.latest_pass_rate * 100) | round(1) }}% ({{ trend_arrow_capability }} {{ capability_summary.trend_7d_pp | round(1) }} pp)
+      - type: section
+        text:
+          type: mrkdwn
+          text: "{{ summary_prose | truncate(500) }}"
+
+  retrain_approved:
+    text: >
+      :white_check_mark: Retrain job approved for `{{ model_name }}` by {{ approved_by }}.
+      Shadow deployment will start shortly ({{ shadow_traffic_pct }}% traffic split).
+      Job ID: `{{ job_id }}`
+
+  promotion_ready:
+    text: >
+      :rocket: Shadow model `{{ model_name }} {{ candidate_version }}` is ready for
+      promotion. Pass rate delta: {{ pass_rate_delta_pp | round(1) }} pp vs champion.
+      Shadow ran for {{ shadow_hours | round(0) }}h.
+      <{{ admin_url }}/ml-ops/retrain/{{ job_id }}|Approve promotion>
+
+# --------------------------------------------------------------------------
+# Severity emoji mapping
+# --------------------------------------------------------------------------
+severity_emoji_map:
+  low:      ":large_yellow_circle:"
+  medium:   ":large_orange_circle:"
+  high:     ":red_circle:"
+  critical: ":rotating_light:"
+
+status_emoji_map:
+  HEALTHY:    ":large_green_circle:"
+  DEGRADING:  ":large_yellow_circle:"
+  FAILING:    ":red_circle:"
+  RECOVERING: ":large_blue_circle:"
+
+# --------------------------------------------------------------------------
+# Rate limiting — prevent flooding the channel
+# --------------------------------------------------------------------------
+rate_limits:
+  per_model_per_hour: 3
+  per_channel_per_hour: 20

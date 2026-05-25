@@ -1,0 +1,117 @@
+# Anomaly spec — data quality score drop
+# ---------------------------------------------------------------------------
+# Monitors aggregate data quality scores from the upstream data pipeline.
+# A score drop is distinct from feature distribution drift: drift means the
+# data has changed (possibly legitimately), while a quality drop means the
+# data is broken — missing values, schema changes, truncated batches,
+# outlier inflation.
+#
+# Schema reference: F2 AnomalySpec (xiaoguai-anomaly).
+# ---------------------------------------------------------------------------
+
+name: data-quality-score-drop
+version: "0.1.0"
+description: >
+  Rolling 14-day anomaly detector on the composite data quality score
+  produced by the data pipeline (missing-value rate, schema violation rate,
+  outlier rate). Alerts when the composite score drops below the rolling
+  mean by more than 2 sigma, or falls below an absolute floor of 0.80.
+
+# --------------------------------------------------------------------------
+# Metric definition
+# --------------------------------------------------------------------------
+metric:
+  name: data_quality_composite_score
+  description: >
+    Composite quality score in [0, 1] computed per pipeline batch.
+    Score = 1 - weighted_avg(missing_rate, schema_violation_rate, outlier_rate).
+    Written by inbound adapters (Evidently reports, SageMaker Data Wrangler,
+    or a custom data-quality sidecar).
+  unit: "score (0–1, higher is better)"
+  query: |
+    SELECT
+        tenant_id,
+        model_name,
+        batch_date,
+        AVG(quality_score)                AS composite_score,
+        AVG(missing_value_rate)           AS missing_rate,
+        AVG(schema_violation_rate)        AS schema_violation_rate,
+        AVG(outlier_rate)                 AS outlier_rate,
+        SUM(row_count)                    AS total_rows
+    FROM mlops_data_quality_batches
+    WHERE tenant_id  = '{tenant_id}'
+      AND model_name = '{model_name}'
+      AND batch_date >= CURRENT_DATE - INTERVAL '15 days'
+    GROUP BY tenant_id, model_name, batch_date
+    ORDER BY batch_date
+  tenant_column: tenant_id
+  missing_data_policy: skip_with_warning
+
+# --------------------------------------------------------------------------
+# Baseline window
+# --------------------------------------------------------------------------
+baseline:
+  kind: rolling
+  window_days: 14
+  min_observations: 5
+
+# --------------------------------------------------------------------------
+# Alert condition
+# --------------------------------------------------------------------------
+alert:
+  # Statistical: current score is more than 2 sigma below baseline mean
+  kind: n_sigma_below
+  n_sigma: 2.0
+  # Absolute floor: regardless of baseline, always alert below 0.80
+  absolute_threshold:
+    operator: "<"
+    value: 0.80
+
+# --------------------------------------------------------------------------
+# Schedule
+# --------------------------------------------------------------------------
+schedule:
+  cron: "0 4 * * *"   # 04:00 — before business hours, after overnight ETL
+
+# --------------------------------------------------------------------------
+# Output — AnomalyEvent shape
+# --------------------------------------------------------------------------
+event:
+  kind: mlops.data_quality_score_drop
+  payload_mapping:
+    tenant_id:            "$.tenant_id"
+    model_name:           "$.model_name"
+    current_score:        "$.current_value"
+    rolling_mean:         "$.baseline.mean"
+    rolling_stddev:       "$.baseline.stddev"
+    sigma_distance:       "$.sigma_distance"
+    missing_rate:         "$.missing_rate"
+    schema_violation_rate: "$.schema_violation_rate"
+    outlier_rate:         "$.outlier_rate"
+    total_rows:           "$.total_rows"
+    signal_source:        "_const:data-quality-score-drop"
+    window_days:          14
+
+# --------------------------------------------------------------------------
+# Severity escalation
+# --------------------------------------------------------------------------
+severity:
+  # Notable degradation — investigate but may not require retrain
+  - sigma: 2.0
+    level: warning
+  # Score below 0.70 regardless of sigma — likely pipeline breakage
+  - absolute_below: 0.70
+    level: critical
+
+# --------------------------------------------------------------------------
+# Downstream
+# --------------------------------------------------------------------------
+downstream:
+  agents:
+    - drift-classifier
+  # Data quality drops are routed to PagerDuty immediately (data engineers,
+  # not just ML engineers, need to know).
+  outputs:
+    - pagerduty-on-drift
+  dashboards:
+    - mlops-model-health

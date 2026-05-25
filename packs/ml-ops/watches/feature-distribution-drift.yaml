@@ -1,0 +1,127 @@
+# Watch spec — feature distribution drift
+# ---------------------------------------------------------------------------
+# Polls a feature statistics endpoint (e.g. served by a feature store or
+# a separate stats sidecar) and fires a WatchEvent when any monitored
+# feature's distribution deviates beyond a configurable threshold from its
+# training-time baseline.
+#
+# Drift is measured per-feature using the Population Stability Index (PSI).
+# A PSI > 0.1 indicates notable shift; PSI > 0.2 indicates significant shift
+# requiring investigation.
+#
+# Schema reference: F1 WatchSpec (xiaoguai-watch).
+# ---------------------------------------------------------------------------
+
+name: feature-distribution-drift
+version: "0.1.0"
+description: >
+  Polls the feature statistics endpoint for each registered model and emits
+  a WatchEvent when PSI exceeds the configured threshold on one or more
+  features. Runs every 30 minutes; the downstream drift-classifier agent
+  determines whether the shift is covariate drift or a data pipeline issue.
+
+# --------------------------------------------------------------------------
+# Data source — HTTP polling against a feature stats endpoint
+# --------------------------------------------------------------------------
+source:
+  kind: http
+  # Operators configure per-model endpoints in pack config.
+  # FEATURE_STATS_BASE_URL defaults to a local stats sidecar.
+  url: "${FEATURE_STATS_BASE_URL:-http://localhost:8765}/v1/stats/{model_name}"
+  method: GET
+  headers:
+    Authorization: "Bearer ${FEATURE_STATS_TOKEN}"
+  # Response is expected to be a JSON object keyed by feature name,
+  # each value carrying current distribution histogram buckets + baseline.
+  response_schema:
+    type: object
+    properties:
+      model_name:   { type: string }
+      model_version: { type: string }
+      as_of:        { type: string, format: date-time }
+      features:
+        type: object
+        additionalProperties:
+          type: object
+          properties:
+            psi:              { type: number }
+            current_mean:     { type: number }
+            baseline_mean:    { type: number }
+            current_stddev:   { type: number }
+            baseline_stddev:  { type: number }
+            bucket_counts_current:  { type: array }
+            bucket_counts_baseline: { type: array }
+
+# --------------------------------------------------------------------------
+# Per-model configuration (populated from pack config or DB)
+# --------------------------------------------------------------------------
+per_model_config_query: |
+  SELECT
+      tenant_id,
+      model_name,
+      metadata->>'feature_stats_path' AS stats_path
+  FROM mlops_model_versions
+  WHERE stage = 'champion'
+    AND tenant_id = '{tenant_id}'
+
+# --------------------------------------------------------------------------
+# Trigger condition
+# --------------------------------------------------------------------------
+trigger:
+  # Fire when any feature has PSI exceeding the notable-shift threshold.
+  # The threshold is configurable per-model in metadata; defaults to 0.10.
+  condition: >
+    any(features[*].psi) > coalesce(model_config.psi_threshold, 0.10)
+
+# --------------------------------------------------------------------------
+# Schedule
+# --------------------------------------------------------------------------
+schedule:
+  cron: "*/30 * * * *"   # every 30 minutes
+
+# --------------------------------------------------------------------------
+# Output — WatchEvent shape
+# --------------------------------------------------------------------------
+event:
+  kind: mlops.feature_distribution_drift
+  cardinality: per_model
+  payload_mapping:
+    tenant_id:      "$.tenant_id"
+    model_name:     "$.model_name"
+    model_version:  "$.model_version"
+    as_of:          "$.as_of"
+    # Only ship features that breached threshold to keep payload compact
+    drifted_features:
+      filter: "$.features[?(@.psi > 0.10)]"
+      fields: [psi, current_mean, baseline_mean, current_stddev, baseline_stddev]
+    max_psi:
+      expr: "max(features[*].psi)"
+    signal_source: "_const:feature-distribution-drift"
+
+# --------------------------------------------------------------------------
+# Downstream
+# --------------------------------------------------------------------------
+downstream:
+  agents:
+    - drift-classifier
+
+# --------------------------------------------------------------------------
+# Deduplication — suppress re-fire for the same model within 1 hour unless
+# max_psi has increased by more than 15 % relative to the prior event.
+# --------------------------------------------------------------------------
+dedup:
+  key: "{tenant_id}:{model_name}"
+  ttl_seconds: 3600
+  re_fire_if: "payload.max_psi > prior.max_psi * 1.15"
+
+# --------------------------------------------------------------------------
+# Error handling
+# --------------------------------------------------------------------------
+on_error:
+  # If the feature stats endpoint is unreachable, do not fire a drift event.
+  # Log the failure and try again on the next tick.
+  action: skip_and_log
+  notify_channel: "${ML_OPS_OPS_CHANNEL:-admin_ui}"
+  message: >
+    feature-distribution-drift watch: failed to reach stats endpoint
+    for model {model_name} — skipping this tick. Error: {error}
