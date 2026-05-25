@@ -41,9 +41,8 @@ fn anthropic_bedrock_response() -> String {
 
 // Bedrock returns a binary `application/vnd.amazon.eventstream` framing
 // (with HMAC-validated prelude / payload sections); the mockito-served
-// raw JSON-lines path used here exercises only the request/signing leg.
-// Deferred until the event-stream framing parser lands.
-#[ignore]
+// raw JSON-lines path exercises the JSON-lines fallback of the framing
+// parser — the binary path is unit-tested in `bedrock.rs`.
 #[tokio::test]
 async fn bedrock_anthropic_streams_text() {
     let mut server = mockito::Server::new_async().await;
@@ -91,7 +90,6 @@ fn llama_bedrock_response() -> String {
     format!("{chunk1}\n{chunk2}\n{stop}\n")
 }
 
-#[ignore]
 #[tokio::test]
 async fn bedrock_llama_streams_text() {
     let mut server = mockito::Server::new_async().await;
