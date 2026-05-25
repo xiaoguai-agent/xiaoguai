@@ -1,0 +1,31 @@
+# cargo-mutants config for wave-3 capability evals
+# See: https://mutants.rs/configuration.html
+#
+# Run via: tests/mutation/wave3/run-mutation.sh
+# Do NOT run cargo-mutants directly from repo root — it will attempt to mutate
+# all workspace crates which takes O(hours). Use the wrapper script.
+
+timeout_multiplier = 3
+
+# Skip directories that are not production logic — mutations there carry no signal.
+exclude_globs = [
+    "**/tests/**",
+    "**/benches/**",
+    "**/migrations/**",
+]
+
+# Focus mutation surface on the spec/algorithm code that the wave-3 evals exercise.
+# Each path corresponds to a crate exercised by the eval suites in:
+#   crates/xiaoguai-watch/tests/dsl_eval.rs
+#   crates/xiaoguai-anomaly/tests/accuracy_eval.rs
+#   crates/xiaoguai-api/tests/hotl_eval.rs
+#   crates/xiaoguai-audit/tests/outcomes_eval.rs
+examine_globs = [
+    "crates/xiaoguai-watch/src/spec.rs",
+    "crates/xiaoguai-watch/src/dedup.rs",
+    "crates/xiaoguai-anomaly/src/detector.rs",
+    "crates/xiaoguai-anomaly/src/baseline.rs",
+    "crates/xiaoguai-api/src/hotl/enforcer.rs",
+    "crates/xiaoguai-api/src/hotl/policy.rs",
+    "crates/xiaoguai-audit/src/outcomes.rs",
+]
