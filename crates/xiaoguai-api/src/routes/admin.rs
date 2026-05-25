@@ -477,7 +477,10 @@ pub async fn scheduler_list_tokens(
 ///
 /// # Errors
 /// Returns an error if the token admin is not wired, the token is not found, or revocation fails.
-#[allow(clippy::needless_pass_by_value, reason = "Axum Path extractor requires owned String")]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "Axum Path extractor requires owned String"
+)]
 pub async fn scheduler_revoke_token(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -548,7 +551,10 @@ fn token_admin_err_to_api(e: WebhookTokenAdminError) -> ApiError {
     }
 }
 
-#[allow(clippy::needless_pass_by_value, reason = "match destructures the error by value")]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "match destructures the error by value"
+)]
 fn jobs_read_err_to_api(e: ScheduledJobsReadError) -> ApiError {
     match e {
         ScheduledJobsReadError::NotFound(_) => ApiError::NotFound,

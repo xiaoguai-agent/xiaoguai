@@ -87,7 +87,11 @@ fn parse_pgvector_str(s: &str) -> Vec<f32> {
 
 /// Format a `Vec<f32>` as a pgvector literal "[0.1,0.2,...]".
 fn format_pgvector(v: &[f32]) -> String {
-    let inner = v.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(",");
+    let inner = v
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
     format!("[{inner}]")
 }
 
@@ -312,7 +316,10 @@ impl MemoryStore for PgMemoryStore {
             .execute(&self.pool)
             .await?;
 
-            refs.push(RecalledMemoryRef { id: memory.id, score });
+            refs.push(RecalledMemoryRef {
+                id: memory.id,
+                score,
+            });
             recalled.push(RecalledMemory { memory, score });
         }
 

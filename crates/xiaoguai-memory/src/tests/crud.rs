@@ -36,12 +36,12 @@ async fn create_and_get_round_trip() {
     assert_eq!(created.kind, MemoryKind::Facts);
     assert_eq!(created.tenant_id, tid);
     assert_eq!(created.recall_count, 0);
-    assert!(!created.content_embedding.is_empty(), "embedding must be populated");
+    assert!(
+        !created.content_embedding.is_empty(),
+        "embedding must be populated"
+    );
 
-    let fetched = store
-        .get_memory(created.id, tid)
-        .await
-        .expect("get");
+    let fetched = store.get_memory(created.id, tid).await.expect("get");
 
     assert_eq!(fetched.id, created.id);
     assert_eq!(fetched.content, "User's name is Alice");
@@ -118,7 +118,10 @@ async fn update_content_re_embeds() {
 
     assert_eq!(updated.content, "prefers light mode");
     // Embedding must change when content changes.
-    assert_ne!(updated.content_embedding, old_emb, "embedding should be re-computed on update");
+    assert_ne!(
+        updated.content_embedding, old_emb,
+        "embedding should be re-computed on update"
+    );
 }
 
 #[tokio::test]

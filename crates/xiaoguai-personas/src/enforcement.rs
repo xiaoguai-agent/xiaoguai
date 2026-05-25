@@ -82,7 +82,10 @@ mod tests {
 
     #[test]
     fn populated_allowlist_permits_only_listed_tools() {
-        let persona = make_persona(Some(vec!["web_search".to_string(), "read_file".to_string()]));
+        let persona = make_persona(Some(vec![
+            "web_search".to_string(),
+            "read_file".to_string(),
+        ]));
         assert!(tool_allowed(&persona, "web_search"));
         assert!(tool_allowed(&persona, "read_file"));
         assert!(!tool_allowed(&persona, "bash"));

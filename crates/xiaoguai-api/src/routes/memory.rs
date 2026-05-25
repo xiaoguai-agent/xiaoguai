@@ -23,8 +23,8 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use xiaoguai_memory::{
-    MemoryKind,
     types::{CreateMemoryRequest, RecallRequest, UpdateMemoryRequest},
+    MemoryKind,
 };
 
 use crate::state::AppState;
@@ -165,10 +165,7 @@ pub async fn get_memory(
         return memory_unavailable().into_response();
     };
 
-    let tenant_id = match params
-        .get("tenant_id")
-        .and_then(|s| s.parse::<Uuid>().ok())
-    {
+    let tenant_id = match params.get("tenant_id").and_then(|s| s.parse::<Uuid>().ok()) {
         Some(t) => t,
         None => {
             return (
@@ -231,10 +228,7 @@ pub async fn update_memory(
         return memory_unavailable().into_response();
     };
 
-    let tenant_id = match params
-        .get("tenant_id")
-        .and_then(|s| s.parse::<Uuid>().ok())
-    {
+    let tenant_id = match params.get("tenant_id").and_then(|s| s.parse::<Uuid>().ok()) {
         Some(t) => t,
         None => {
             return (
@@ -268,10 +262,7 @@ pub async fn delete_memory(
         return memory_unavailable().into_response();
     };
 
-    let tenant_id = match params
-        .get("tenant_id")
-        .and_then(|s| s.parse::<Uuid>().ok())
-    {
+    let tenant_id = match params.get("tenant_id").and_then(|s| s.parse::<Uuid>().ok()) {
         Some(t) => t,
         None => {
             return (

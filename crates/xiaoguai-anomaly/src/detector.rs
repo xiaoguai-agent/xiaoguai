@@ -67,7 +67,6 @@ impl Cooldown {
     }
 }
 
-
 // ── ZScoreDetector ─────────────────────────────────────────────────────────
 
 /// Fires when `|value − mean| / σ > sigma_threshold`.

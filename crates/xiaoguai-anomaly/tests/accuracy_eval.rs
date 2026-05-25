@@ -60,11 +60,7 @@ fn t(secs: i64) -> chrono::DateTime<chrono::Utc> {
 fn count_true_positives(spike_indices: &[usize], alerts: &[usize]) -> usize {
     spike_indices
         .iter()
-        .filter(|&&sp| {
-            alerts
-                .iter()
-                .any(|&a| a.abs_diff(sp) <= 1)
-        })
+        .filter(|&&sp| alerts.iter().any(|&a| a.abs_diff(sp) <= 1))
         .count()
 }
 
@@ -158,16 +154,11 @@ fn scenario_step_change_both_detectors_flag_boundary() {
         let v = if i < BOUNDARY { 50.0 } else { 150.0 };
         let ts = t(i as i64);
 
-        if zscore.observe(ts, v).is_some()
-            && i >= BOUNDARY - TOLERANCE
-            && i <= BOUNDARY + TOLERANCE
+        if zscore.observe(ts, v).is_some() && i >= BOUNDARY - TOLERANCE && i <= BOUNDARY + TOLERANCE
         {
             zscore_boundary_alert = true;
         }
-        if ewma.observe(ts, v).is_some()
-            && i >= BOUNDARY - TOLERANCE
-            && i <= BOUNDARY + TOLERANCE
-        {
+        if ewma.observe(ts, v).is_some() && i >= BOUNDARY - TOLERANCE && i <= BOUNDARY + TOLERANCE {
             ewma_boundary_alert = true;
         }
     }

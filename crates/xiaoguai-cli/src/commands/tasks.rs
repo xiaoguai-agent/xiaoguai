@@ -20,8 +20,7 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-const NOT_YET_AVAILABLE: &str =
-    "Tasks subsystem not yet wired (ships in v1.4). See ADR-0019.";
+const NOT_YET_AVAILABLE: &str = "Tasks subsystem not yet wired (ships in v1.4). See ADR-0019.";
 
 /// Thin HTTP client scoped to the `/v1/tasks` namespace.
 pub struct TasksClient {
@@ -67,12 +66,7 @@ impl TasksClient {
         if let Some(col) = column {
             url.push_str(&format!("&column={col}"));
         }
-        let resp = self
-            .http
-            .get(&url)
-            .send()
-            .await
-            .context("GET /v1/tasks")?;
+        let resp = self.http.get(&url).send().await.context("GET /v1/tasks")?;
         self.handle_response(resp).await
     }
 
@@ -199,7 +193,10 @@ mod tests {
             column: "triage".into(),
         };
         let json = serde_json::to_string(&req).unwrap();
-        assert!(!json.contains("description"), "None description must be skipped");
+        assert!(
+            !json.contains("description"),
+            "None description must be skipped"
+        );
     }
 
     #[test]

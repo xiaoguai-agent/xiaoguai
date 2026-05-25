@@ -26,42 +26,42 @@ use crate::{
 
 #[derive(sqlx::FromRow)]
 struct BoardRow {
-    id:              Uuid,
-    tenant_id:       Uuid,
-    name:            String,
-    default_board:   bool,
+    id: Uuid,
+    tenant_id: Uuid,
+    name: String,
+    default_board: bool,
     dispatch_policy: String,
-    pool_size:       i32,
-    created_at:      DateTime<Utc>,
+    pool_size: i32,
+    created_at: DateTime<Utc>,
 }
 
 impl From<BoardRow> for Board {
     fn from(r: BoardRow) -> Self {
         Self {
-            id:              r.id,
-            tenant_id:       r.tenant_id,
-            name:            r.name,
-            default_board:   r.default_board,
+            id: r.id,
+            tenant_id: r.tenant_id,
+            name: r.name,
+            default_board: r.default_board,
             dispatch_policy: r.dispatch_policy,
-            pool_size:       r.pool_size,
-            created_at:      r.created_at,
+            pool_size: r.pool_size,
+            created_at: r.created_at,
         }
     }
 }
 
 #[derive(sqlx::FromRow)]
 struct TaskRow {
-    id:             Uuid,
-    board_id:       Uuid,
-    column:         String,
-    title:          String,
-    description:    Option<String>,
-    priority:       i32,
+    id: Uuid,
+    board_id: Uuid,
+    column: String,
+    title: String,
+    description: Option<String>,
+    priority: i32,
     assignee_agent: Option<String>,
     parent_task_id: Option<Uuid>,
     blocked_reason: Option<String>,
-    created_at:     DateTime<Utc>,
-    updated_at:     DateTime<Utc>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 impl TryFrom<TaskRow> for Task {
@@ -71,29 +71,29 @@ impl TryFrom<TaskRow> for Task {
             TaskError::Backend(format!("unknown column value in DB: '{}'", r.column))
         })?;
         Ok(Self {
-            id:             r.id,
-            board_id:       r.board_id,
+            id: r.id,
+            board_id: r.board_id,
             column,
-            title:          r.title,
-            description:    r.description,
-            priority:       r.priority,
+            title: r.title,
+            description: r.description,
+            priority: r.priority,
             assignee_agent: r.assignee_agent,
             parent_task_id: r.parent_task_id,
             blocked_reason: r.blocked_reason,
-            created_at:     r.created_at,
-            updated_at:     r.updated_at,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
         })
     }
 }
 
 #[derive(sqlx::FromRow)]
 struct LogRow {
-    id:          i64,
-    task_id:     Uuid,
+    id: i64,
+    task_id: Uuid,
     from_column: Option<String>,
-    to_column:   String,
-    actor:       String,
-    reason:      Option<String>,
+    to_column: String,
+    actor: String,
+    reason: Option<String>,
     occurred_at: DateTime<Utc>,
 }
 
@@ -104,21 +104,20 @@ impl TryFrom<LogRow> for TaskStateLogEntry {
             .from_column
             .as_deref()
             .map(|s| {
-                Column::from_str(s).ok_or_else(|| {
-                    TaskError::Backend(format!("unknown from_column in DB: '{s}'"))
-                })
+                Column::from_str(s)
+                    .ok_or_else(|| TaskError::Backend(format!("unknown from_column in DB: '{s}'")))
             })
             .transpose()?;
         let to_column = Column::from_str(&r.to_column).ok_or_else(|| {
             TaskError::Backend(format!("unknown to_column in DB: '{}'", r.to_column))
         })?;
         Ok(Self {
-            id:          r.id,
-            task_id:     r.task_id,
+            id: r.id,
+            task_id: r.task_id,
             from_column,
             to_column,
-            actor:       r.actor,
-            reason:      r.reason,
+            actor: r.actor,
+            reason: r.reason,
             occurred_at: r.occurred_at,
         })
     }
@@ -462,10 +461,7 @@ impl TaskBoardRepository for PgTaskBoardRepository {
         Task::try_from(task_row)
     }
 
-    async fn get_task_history(
-        &self,
-        task_id: Uuid,
-    ) -> Result<Vec<TaskStateLogEntry>, TaskError> {
+    async fn get_task_history(&self, task_id: Uuid) -> Result<Vec<TaskStateLogEntry>, TaskError> {
         let rows = sqlx::query_as::<_, LogRow>(
             r#"
             SELECT id, task_id, from_column, to_column, actor, reason, occurred_at

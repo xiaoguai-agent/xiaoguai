@@ -194,7 +194,10 @@ impl GitHubPrClient {
     /// Returns `GitHubPrError::Api` on 4xx/5xx responses, `GitHubPrError::Http`
     /// on network failures, or `GitHubPrError::Json` if the response is not
     /// valid JSON.
-    #[allow(clippy::too_many_arguments, reason = "mirrors GitHub API: each field is a distinct required parameter")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors GitHub API: each field is a distinct required parameter"
+    )]
     pub async fn post_pr_review(
         &self,
         owner: &str,

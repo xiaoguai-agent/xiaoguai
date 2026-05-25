@@ -238,7 +238,8 @@ async fn watch_task(
         for m in matches {
             if dedup.is_duplicate(&spec.id, &m).await {
                 if let Some(ctr) = xiaoguai_observability::watch_wakeups_total() {
-                    ctr.with_label_values(&[spec.id.as_str(), "duplicate"]).inc();
+                    ctr.with_label_values(&[spec.id.as_str(), "duplicate"])
+                        .inc();
                 }
                 continue;
             }

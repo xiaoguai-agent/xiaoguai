@@ -13,9 +13,7 @@
 //! | `kanban_blocked_total` | Counter | Cards that exhausted retries → BLOCKED |
 //! | `kanban_timeout_total` | Counter | Cards cancelled due to timeout |
 
-use prometheus::{
-    register_int_counter_vec_with_registry, IntCounterVec, Registry,
-};
+use prometheus::{register_int_counter_vec_with_registry, IntCounterVec, Registry};
 
 /// All counter handles in one cheap-clone struct.
 #[derive(Clone)]

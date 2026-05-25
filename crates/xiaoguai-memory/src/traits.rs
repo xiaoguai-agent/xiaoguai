@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::error::MemoryResult;
-use crate::types::{CreateMemoryRequest, Memory, RecallRequest, RecalledMemory, UpdateMemoryRequest};
+use crate::types::{
+    CreateMemoryRequest, Memory, RecallRequest, RecalledMemory, UpdateMemoryRequest,
+};
 
 /// Unified interface for long-term memory storage and retrieval.
 ///

@@ -14,9 +14,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 use xiaoguai_agent::{AgentConfig, Toolbox};
 use xiaoguai_api::routes::router;
-use xiaoguai_api::{
-    AppState, CancelRegistry, InMemoryWorkspaceRepository, WorkspaceRepository,
-};
+use xiaoguai_api::{AppState, CancelRegistry, InMemoryWorkspaceRepository, WorkspaceRepository};
 use xiaoguai_llm::mock::ScriptStep;
 use xiaoguai_llm::{LlmBackend, MockBackend};
 
@@ -78,10 +76,7 @@ async fn list_503_when_unwired() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!(
-                    "/v1/workspaces?tenant_id={}",
-                    Uuid::new_v4()
-                ))
+                .uri(format!("/v1/workspaces?tenant_id={}", Uuid::new_v4()))
                 .body(Body::empty())
                 .unwrap(),
         )

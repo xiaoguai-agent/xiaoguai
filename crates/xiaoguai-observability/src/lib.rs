@@ -34,7 +34,11 @@ pub mod otlp;
 pub mod prometheus;
 
 pub use otlp::{init_otlp, shutdown_tracer};
-pub use prometheus::{init_prometheus, mount_metrics, MetricHandles, hotl_usage_total, hotl_check_duration, outcomes_recorded_total, outcomes_chain_depth, rate_limit_hits_total, anomaly_detections_total, watch_wakeups_total, im_messages_total};
+pub use prometheus::{
+    anomaly_detections_total, hotl_check_duration, hotl_usage_total, im_messages_total,
+    init_prometheus, mount_metrics, outcomes_chain_depth, outcomes_recorded_total,
+    rate_limit_hits_total, watch_wakeups_total, MetricHandles,
+};
 
 use anyhow::Result;
 use axum::Router;

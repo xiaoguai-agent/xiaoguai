@@ -35,7 +35,14 @@ async fn list_happy_path_prints_json() {
         .await;
 
     cli()
-        .args(["tasks", "--api-base", &server.url(), "list", "--board", "default"])
+        .args([
+            "tasks",
+            "--api-base",
+            &server.url(),
+            "list",
+            "--board",
+            "default",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("Fix bug"));
@@ -267,12 +274,7 @@ async fn dispatch_503_prints_fallback_message() {
         .await;
 
     cli()
-        .args([
-            "tasks",
-            "--api-base",
-            &server.url(),
-            "dispatch",
-        ])
+        .args(["tasks", "--api-base", &server.url(), "dispatch"])
         .assert()
         .success()
         .stdout(predicate::str::contains(NOT_YET_MSG));

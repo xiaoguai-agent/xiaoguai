@@ -9,8 +9,7 @@ use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use serde_json::Value as JsonValue;
 
-const ERR_503: &str =
-    "Endpoint returns 503 — Pg bridge ships in v1.3. Check /healthz.";
+const ERR_503: &str = "Endpoint returns 503 — Pg bridge ships in v1.3. Check /healthz.";
 
 async fn require_ok(resp: reqwest::Response) -> Result<reqwest::Response> {
     let status = resp.status();
@@ -40,11 +39,7 @@ pub async fn list(args: ListArgs) -> Result<Vec<JsonValue>> {
     if let Some(tid) = &args.tenant_id {
         url.push_str(&format!("?tenant_id={tid}"));
     }
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .context("GET /v1/watch")?;
+    let resp = client.get(&url).send().await.context("GET /v1/watch")?;
     let resp = require_ok(resp).await?;
     let v: Vec<JsonValue> = resp.json().await.context("decode watch list body")?;
     Ok(v)
@@ -64,8 +59,7 @@ pub struct StartArgs {
 pub async fn start(args: StartArgs) -> Result<JsonValue> {
     let raw = std::fs::read_to_string(&args.file)
         .with_context(|| format!("read watch spec file: {}", args.file.display()))?;
-    let mut spec: JsonValue =
-        serde_yaml::from_str(&raw).context("parse watch spec YAML")?;
+    let mut spec: JsonValue = serde_yaml::from_str(&raw).context("parse watch spec YAML")?;
     if let Some(tid) = &args.tenant_id {
         if let Some(obj) = spec.as_object_mut() {
             obj.insert("tenant_id".to_string(), JsonValue::String(tid.clone()));
@@ -142,10 +136,7 @@ pub fn format_list_table(rows: &[JsonValue]) -> String {
     );
     for r in rows {
         let id = r.get("id").and_then(JsonValue::as_str).unwrap_or("-");
-        let schedule = r
-            .get("schedule")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("-");
+        let schedule = r.get("schedule").and_then(JsonValue::as_str).unwrap_or("-");
         let source = r.get("source").and_then(JsonValue::as_str).unwrap_or("-");
         let action = r.get("action").and_then(JsonValue::as_str).unwrap_or("-");
         let status = r.get("status").and_then(JsonValue::as_str).unwrap_or("-");

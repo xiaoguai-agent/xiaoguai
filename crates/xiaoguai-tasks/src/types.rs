@@ -26,12 +26,12 @@ impl Column {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Triage  => "triage",
-            Self::Todo    => "todo",
-            Self::Ready   => "ready",
+            Self::Triage => "triage",
+            Self::Todo => "todo",
+            Self::Ready => "ready",
             Self::Running => "running",
             Self::Blocked => "blocked",
-            Self::Done    => "done",
+            Self::Done => "done",
         }
     }
 
@@ -40,12 +40,12 @@ impl Column {
     /// Returns `None` for unrecognised strings.
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
-            "triage"  => Self::Triage,
-            "todo"    => Self::Todo,
-            "ready"   => Self::Ready,
+            "triage" => Self::Triage,
+            "todo" => Self::Todo,
+            "ready" => Self::Ready,
             "running" => Self::Running,
             "blocked" => Self::Blocked,
-            "done"    => Self::Done,
+            "done" => Self::Done,
             _ => return None,
         })
     }
@@ -73,23 +73,23 @@ impl std::fmt::Display for Column {
 /// have many boards; exactly one can be marked `default_board`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
-    pub id:              Uuid,
-    pub tenant_id:       Uuid,
-    pub name:            String,
-    pub default_board:   bool,
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub name: String,
+    pub default_board: bool,
     pub dispatch_policy: String,
-    pub pool_size:       i32,
-    pub created_at:      DateTime<Utc>,
+    pub pool_size: i32,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Input for [`crate::traits::TaskBoardRepository::create_board`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateBoardRequest {
-    pub tenant_id:       Uuid,
-    pub name:            String,
-    pub default_board:   bool,
+    pub tenant_id: Uuid,
+    pub name: String,
+    pub default_board: bool,
     pub dispatch_policy: Option<String>,
-    pub pool_size:       Option<i32>,
+    pub pool_size: Option<i32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -99,28 +99,28 @@ pub struct CreateBoardRequest {
 /// A single task card on the board.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
-    pub id:             Uuid,
-    pub board_id:       Uuid,
-    pub column:         Column,
-    pub title:          String,
-    pub description:    Option<String>,
-    pub priority:       i32,
+    pub id: Uuid,
+    pub board_id: Uuid,
+    pub column: Column,
+    pub title: String,
+    pub description: Option<String>,
+    pub priority: i32,
     pub assignee_agent: Option<String>,
     pub parent_task_id: Option<Uuid>,
     pub blocked_reason: Option<String>,
-    pub created_at:     DateTime<Utc>,
-    pub updated_at:     DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Input for [`crate::traits::TaskBoardRepository::create_task`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateTaskRequest {
-    pub board_id:       Uuid,
-    pub title:          String,
-    pub description:    Option<String>,
+    pub board_id: Uuid,
+    pub title: String,
+    pub description: Option<String>,
     /// 0–255; higher = more urgent.  Defaults to 128 when `None`.
-    pub priority:       Option<i32>,
-    pub column:         Option<Column>,
+    pub priority: Option<i32>,
+    pub column: Option<Column>,
     pub assignee_agent: Option<String>,
     pub parent_task_id: Option<Uuid>,
 }
@@ -135,13 +135,13 @@ pub struct CreateTaskRequest {
 /// described in ADR-0019.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskStateLogEntry {
-    pub id:          i64,
-    pub task_id:     Uuid,
+    pub id: i64,
+    pub task_id: Uuid,
     pub from_column: Option<Column>,
-    pub to_column:   Column,
+    pub to_column: Column,
     /// Agent ID, user ID, or `"system"` for automated transitions.
-    pub actor:       String,
-    pub reason:      Option<String>,
+    pub actor: String,
+    pub reason: Option<String>,
     pub occurred_at: DateTime<Utc>,
 }
 
@@ -188,13 +188,13 @@ mod tests {
     #[test]
     fn board_serialises_to_json() {
         let board = Board {
-            id:              Uuid::new_v4(),
-            tenant_id:       Uuid::new_v4(),
-            name:            "ops".into(),
-            default_board:   true,
+            id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            name: "ops".into(),
+            default_board: true,
             dispatch_policy: "fifo".into(),
-            pool_size:       5,
-            created_at:      Utc::now(),
+            pool_size: 5,
+            created_at: Utc::now(),
         };
         let json = serde_json::to_string(&board).unwrap();
         let back: Board = serde_json::from_str(&json).unwrap();
@@ -205,12 +205,12 @@ mod tests {
     #[test]
     fn task_state_log_entry_serialises() {
         let entry = TaskStateLogEntry {
-            id:          1,
-            task_id:     Uuid::new_v4(),
+            id: 1,
+            task_id: Uuid::new_v4(),
             from_column: Some(Column::Ready),
-            to_column:   Column::Running,
-            actor:       "dispatcher".into(),
-            reason:      None,
+            to_column: Column::Running,
+            actor: "dispatcher".into(),
+            reason: None,
             occurred_at: Utc::now(),
         };
         let json = serde_json::to_string(&entry).unwrap();

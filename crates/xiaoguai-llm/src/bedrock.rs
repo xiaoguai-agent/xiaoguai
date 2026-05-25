@@ -408,7 +408,11 @@ fn try_parse_frame(buf: &[u8]) -> FrameResult {
     if buf.len() < 16 {
         // Could be either; wait for more data only if we cannot rule out binary.
         // If the buffer starts with '{' it is definitely JSON.
-        if buf.first().copied().map_or(false, |b| b == b'{' || b == b'\n') {
+        if buf
+            .first()
+            .copied()
+            .map_or(false, |b| b == b'{' || b == b'\n')
+        {
             return FrameResult::NotBinary;
         }
         return FrameResult::Incomplete;
@@ -442,8 +446,12 @@ fn try_parse_frame(buf: &[u8]) -> FrameResult {
     }
 
     // Validate message CRC (covers everything except the last 4 bytes).
-    let msg_crc_stored =
-        u32::from_be_bytes([frame[total_len - 4], frame[total_len - 3], frame[total_len - 2], frame[total_len - 1]]);
+    let msg_crc_stored = u32::from_be_bytes([
+        frame[total_len - 4],
+        frame[total_len - 3],
+        frame[total_len - 2],
+        frame[total_len - 1],
+    ]);
     let msg_crc_computed = crc32(&frame[..total_len - 4]);
     if msg_crc_stored != msg_crc_computed {
         return FrameResult::NotBinary;
@@ -683,7 +691,10 @@ impl LlmBackend for BedrockBackend {
                 // Determine mode on first data: binary event-stream or JSON lines.
                 if is_json_lines.is_none() {
                     is_json_lines = Some(
-                        raw_buf.first().copied().map_or(true, |b| b == b'{' || b == b'\n'),
+                        raw_buf
+                            .first()
+                            .copied()
+                            .map_or(true, |b| b == b'{' || b == b'\n'),
                     );
                 }
 
@@ -697,29 +708,27 @@ impl LlmBackend for BedrockBackend {
 
                                 // Payload is a JSON object: {"bytes":"<base64>"}
                                 // or possibly the raw chunk JSON for some models.
-                                let inner: Vec<u8> =
-                                    if let Ok(env) =
-                                        serde_json::from_slice::<BedrockStreamEvent>(&payload)
-                                    {
-                                        if let Some(b64) = env.bytes {
-                                            match base64::engine::general_purpose::STANDARD
-                                                .decode(&b64)
-                                            {
-                                                Ok(decoded) => decoded,
-                                                Err(e) => {
-                                                    let _ = tx.send(Err(LlmError::Provider(
-                                                        format!("base64 decode: {e}"),
-                                                    )));
-                                                    return;
-                                                }
+                                let inner: Vec<u8> = if let Ok(env) =
+                                    serde_json::from_slice::<BedrockStreamEvent>(&payload)
+                                {
+                                    if let Some(b64) = env.bytes {
+                                        match base64::engine::general_purpose::STANDARD.decode(&b64)
+                                        {
+                                            Ok(decoded) => decoded,
+                                            Err(e) => {
+                                                let _ = tx.send(Err(LlmError::Provider(format!(
+                                                    "base64 decode: {e}"
+                                                ))));
+                                                return;
                                             }
-                                        } else {
-                                            // Metadata event without a bytes field — skip.
-                                            continue;
                                         }
                                     } else {
-                                        payload
-                                    };
+                                        // Metadata event without a bytes field — skip.
+                                        continue;
+                                    }
+                                } else {
+                                    payload
+                                };
 
                                 if process_payload!(inner) {
                                     return;
@@ -766,27 +775,26 @@ impl LlmBackend for BedrockBackend {
                         // it as an envelope if `bytes` is present and non-null;
                         // otherwise fall through and treat the line as a raw
                         // model-chunk JSON (test/fallback path).
-                        let payload_bytes: Vec<u8> =
-                            if let Ok(event) =
-                                serde_json::from_str::<BedrockStreamEvent>(trimmed)
-                            {
-                                if let Some(b64) = event.bytes {
-                                    match base64::engine::general_purpose::STANDARD.decode(&b64) {
-                                        Ok(decoded) => decoded,
-                                        Err(e) => {
-                                            let _ = tx.send(Err(LlmError::Provider(format!(
-                                                "base64 decode: {e}"
-                                            ))));
-                                            return;
-                                        }
+                        let payload_bytes: Vec<u8> = if let Ok(event) =
+                            serde_json::from_str::<BedrockStreamEvent>(trimmed)
+                        {
+                            if let Some(b64) = event.bytes {
+                                match base64::engine::general_purpose::STANDARD.decode(&b64) {
+                                    Ok(decoded) => decoded,
+                                    Err(e) => {
+                                        let _ = tx.send(Err(LlmError::Provider(format!(
+                                            "base64 decode: {e}"
+                                        ))));
+                                        return;
                                     }
-                                } else {
-                                    // `bytes` absent — treat as raw model chunk.
-                                    trimmed.as_bytes().to_vec()
                                 }
                             } else {
+                                // `bytes` absent — treat as raw model chunk.
                                 trimmed.as_bytes().to_vec()
-                            };
+                            }
+                        } else {
+                            trimmed.as_bytes().to_vec()
+                        };
 
                         if process_payload!(payload_bytes) {
                             return;
@@ -1005,7 +1013,10 @@ mod tests {
                 assert_eq!(payload, b"{}");
                 assert_eq!(consumed, frame.len());
             }
-            other => panic!("expected Complete, got {:?}", matches!(other, FrameResult::Incomplete)),
+            other => panic!(
+                "expected Complete, got {:?}",
+                matches!(other, FrameResult::Incomplete)
+            ),
         }
     }
 
@@ -1074,7 +1085,11 @@ mod tests {
 
         // Prelude CRC covers bytes 0..8
         let stored_prelude_crc = u32::from_be_bytes([frame[8], frame[9], frame[10], frame[11]]);
-        assert_eq!(crc32(&frame[..8]), stored_prelude_crc, "prelude CRC must be valid");
+        assert_eq!(
+            crc32(&frame[..8]),
+            stored_prelude_crc,
+            "prelude CRC must be valid"
+        );
 
         // Message CRC covers bytes 0..total_len-4
         let stored_msg_crc = u32::from_be_bytes([

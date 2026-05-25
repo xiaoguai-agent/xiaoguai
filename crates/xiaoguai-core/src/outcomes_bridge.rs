@@ -16,7 +16,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use sqlx::PgPool;
 use xiaoguai_api::outcomes::{
-    OutcomesApiError, OutcomesReader, OutcomeWriter, RecordOutcomeRequest,
+    OutcomeWriter, OutcomesApiError, OutcomesReader, RecordOutcomeRequest,
 };
 use xiaoguai_audit::outcomes::{Aggregate, OutcomeDay, OutcomeRange, OutcomeSummary};
 
@@ -64,8 +64,8 @@ impl OutcomeWriter for PgOutcomesBackend {
         }
 
         // `session_id` is stored as TEXT in the schema (UUID stored as text).
-        let metadata = serde_json::to_value(&req.metadata)
-            .unwrap_or_else(|_| serde_json::json!({}));
+        let metadata =
+            serde_json::to_value(&req.metadata).unwrap_or_else(|_| serde_json::json!({}));
 
         sqlx::query(
             "INSERT INTO agent_outcomes \
@@ -285,8 +285,8 @@ mod tests {
     //           --ignore-rust-version -- --ignored outcomes_pg_
 
     async fn pg_pool() -> sqlx::PgPool {
-        let url = std::env::var("DATABASE_URL")
-            .expect("DATABASE_URL must be set for PG bridge tests");
+        let url =
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for PG bridge tests");
         sqlx::PgPool::connect(&url).await.expect("pg connect")
     }
 
@@ -306,13 +306,19 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live PG; run with DATABASE_URL set"]
     async fn outcomes_pg_record_and_aggregate() {
-        use xiaoguai_api::outcomes::{OutcomesReader, OutcomeWriter};
+        use xiaoguai_api::outcomes::{OutcomeWriter, OutcomesReader};
         let pool = pg_pool().await;
         let backend = PgOutcomesBackend::new(pool);
         let tid = uuid::Uuid::new_v4().to_string();
 
-        backend.record(req(&tid, "revenue_usd", 500.0)).await.unwrap();
-        backend.record(req(&tid, "revenue_usd", 300.0)).await.unwrap();
+        backend
+            .record(req(&tid, "revenue_usd", 500.0))
+            .await
+            .unwrap();
+        backend
+            .record(req(&tid, "revenue_usd", 300.0))
+            .await
+            .unwrap();
 
         let agg = backend
             .aggregate(&tid, Some("revenue_usd"), OutcomeRange::default())
@@ -326,13 +332,19 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live PG; run with DATABASE_URL set"]
     async fn outcomes_pg_timeseries_day_buckets() {
-        use xiaoguai_api::outcomes::{OutcomesReader, OutcomeWriter};
+        use xiaoguai_api::outcomes::{OutcomeWriter, OutcomesReader};
         let pool = pg_pool().await;
         let backend = PgOutcomesBackend::new(pool);
         let tid = uuid::Uuid::new_v4().to_string();
 
-        backend.record(req(&tid, "deals_closed", 1.0)).await.unwrap();
-        backend.record(req(&tid, "deals_closed", 2.0)).await.unwrap();
+        backend
+            .record(req(&tid, "deals_closed", 1.0))
+            .await
+            .unwrap();
+        backend
+            .record(req(&tid, "deals_closed", 2.0))
+            .await
+            .unwrap();
 
         let ts = backend
             .timeseries(&tid, Some("deals_closed"), OutcomeRange::default())
@@ -346,14 +358,20 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live PG; run with DATABASE_URL set"]
     async fn outcomes_pg_cross_tenant_isolation() {
-        use xiaoguai_api::outcomes::{OutcomesReader, OutcomeWriter};
+        use xiaoguai_api::outcomes::{OutcomeWriter, OutcomesReader};
         let pool = pg_pool().await;
         let backend = PgOutcomesBackend::new(pool);
         let tid_a = uuid::Uuid::new_v4().to_string();
         let tid_b = uuid::Uuid::new_v4().to_string();
 
-        backend.record(req(&tid_a, "revenue_usd", 1000.0)).await.unwrap();
-        backend.record(req(&tid_b, "revenue_usd", 9999.0)).await.unwrap();
+        backend
+            .record(req(&tid_a, "revenue_usd", 1000.0))
+            .await
+            .unwrap();
+        backend
+            .record(req(&tid_b, "revenue_usd", 9999.0))
+            .await
+            .unwrap();
 
         let agg = backend
             .aggregate(&tid_a, Some("revenue_usd"), OutcomeRange::default())
@@ -365,16 +383,25 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live PG; run with DATABASE_URL set"]
     async fn outcomes_pg_summary_groups_by_kind() {
-        use xiaoguai_api::outcomes::{OutcomesReader, OutcomeWriter};
+        use xiaoguai_api::outcomes::{OutcomeWriter, OutcomesReader};
         let pool = pg_pool().await;
         let backend = PgOutcomesBackend::new(pool);
         let tid = uuid::Uuid::new_v4().to_string();
 
-        backend.record(req(&tid, "revenue_usd", 100.0)).await.unwrap();
-        backend.record(req(&tid, "cost_saved_usd", 50.0)).await.unwrap();
+        backend
+            .record(req(&tid, "revenue_usd", 100.0))
+            .await
+            .unwrap();
+        backend
+            .record(req(&tid, "cost_saved_usd", 50.0))
+            .await
+            .unwrap();
         backend.record(req(&tid, "hours_saved", 8.0)).await.unwrap();
 
-        let summary = backend.summary(&tid, OutcomeRange::default()).await.unwrap();
+        let summary = backend
+            .summary(&tid, OutcomeRange::default())
+            .await
+            .unwrap();
         assert!(summary.by_kind.contains_key("revenue_usd"));
         assert!(summary.by_kind.contains_key("cost_saved_usd"));
         assert!((summary.by_kind["revenue_usd"].sum - 100.0).abs() < 0.001);

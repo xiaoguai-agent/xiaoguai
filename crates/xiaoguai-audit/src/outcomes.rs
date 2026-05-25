@@ -114,7 +114,10 @@ impl Aggregate {
         }
         let sum: f64 = values.iter().sum();
         let count = u64::try_from(values.len()).unwrap_or(u64::MAX);
-        #[allow(clippy::cast_precision_loss, reason = "count fits safely in f64 for avg calculation")]
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "count fits safely in f64 for avg calculation"
+        )]
         let avg = sum / count as f64;
         Self { sum, count, avg }
     }
@@ -367,7 +370,14 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    type EntrySpec<'a> = (&'a str, Option<&'a str>, &'a str, &'a str, f64, Option<&'a str>);
+    type EntrySpec<'a> = (
+        &'a str,
+        Option<&'a str>,
+        &'a str,
+        &'a str,
+        f64,
+        Option<&'a str>,
+    );
 
     async fn recorder_with_entries(entries: &[EntrySpec<'_>]) -> InMemoryOutcomeRecorder {
         let r = InMemoryOutcomeRecorder::new();

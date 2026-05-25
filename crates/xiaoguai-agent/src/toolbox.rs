@@ -54,7 +54,10 @@ impl Toolbox {
     ///
     /// # Errors
     /// Returns [`ToolboxError::Duplicate`] if any tool name appears more than once.
-    #[allow(clippy::needless_pass_by_value, reason = "Arc passed by value is intentional API")]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Arc passed by value is intentional API"
+    )]
     pub fn from_server(
         client: Arc<dyn McpClient>,
         tools: Vec<ToolDescriptor>,

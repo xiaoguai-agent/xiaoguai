@@ -52,7 +52,9 @@ pub fn router(state: PersonaApiState) -> Router {
         .route("/v1/personas", get(list_personas).post(create_persona))
         .route(
             "/v1/personas/:id",
-            get(get_persona).patch(update_persona).delete(archive_persona),
+            get(get_persona)
+                .patch(update_persona)
+                .delete(archive_persona),
         )
         .route(
             "/v1/sessions/:id/persona",
@@ -125,10 +127,7 @@ async fn create_persona(
     }
 }
 
-async fn get_persona(
-    State(s): State<PersonaApiState>,
-    Path(id): Path<Uuid>,
-) -> impl IntoResponse {
+async fn get_persona(State(s): State<PersonaApiState>, Path(id): Path<Uuid>) -> impl IntoResponse {
     match s.repo.get(id).await {
         Ok(p) => (StatusCode::OK, Json(p)).into_response(),
         Err(e) => map_err(e).into_response(),

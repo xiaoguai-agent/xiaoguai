@@ -285,7 +285,10 @@ pub struct BackupArgs {
 ///
 /// # Errors
 /// Returns an error if any step (`pg_dump`, tar, age encrypt, file write) fails.
-#[allow(clippy::needless_pass_by_value, reason = "public API — callers construct and pass by value")]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "public API — callers construct and pass by value"
+)]
 pub fn run_backup(args: BackupArgs) -> Result<PathBuf> {
     let pg_dump_bin = find_pg_dump()?;
 
@@ -416,7 +419,10 @@ pub struct RestoreArgs {
 ///
 /// # Errors
 /// Returns an error if extraction, decryption, or file writes fail.
-#[allow(clippy::needless_pass_by_value, reason = "public API — callers construct and pass by value")]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "public API — callers construct and pass by value"
+)]
 pub fn run_restore(args: RestoreArgs) -> Result<()> {
     if args.outdir.exists() && !args.force {
         bail!(

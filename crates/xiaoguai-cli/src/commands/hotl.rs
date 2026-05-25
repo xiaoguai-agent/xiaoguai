@@ -9,8 +9,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
-const ERR_503: &str =
-    "Endpoint returns 503 — Pg bridge ships in v1.3. Check /healthz.";
+const ERR_503: &str = "Endpoint returns 503 — Pg bridge ships in v1.3. Check /healthz.";
 
 /// Shared HTTP helper — checks for 503 first, then other non-2xx errors.
 async fn require_ok(resp: reqwest::Response) -> Result<reqwest::Response> {

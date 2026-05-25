@@ -8,8 +8,7 @@ use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use serde_json::Value as JsonValue;
 
-const ERR_503: &str =
-    "Endpoint returns 503 — Pg bridge ships in v1.3. Check /healthz.";
+const ERR_503: &str = "Endpoint returns 503 — Pg bridge ships in v1.3. Check /healthz.";
 
 async fn require_ok(resp: reqwest::Response) -> Result<reqwest::Response> {
     let status = resp.status();
@@ -101,11 +100,7 @@ pub async fn list(args: ListArgs) -> Result<Vec<JsonValue>> {
     if let Some(k) = &args.kind {
         url.push_str(&format!("&kind={k}"));
     }
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .context("GET /v1/outcomes")?;
+    let resp = client.get(&url).send().await.context("GET /v1/outcomes")?;
     let resp = require_ok(resp).await?;
     let v: Vec<JsonValue> = resp.json().await.context("decode list body")?;
     Ok(v)

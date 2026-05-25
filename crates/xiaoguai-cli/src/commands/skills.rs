@@ -12,8 +12,7 @@ use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use serde_json::Value as JsonValue;
 
-const ERR_503: &str =
-    "Endpoint returns 503 — Pg bridge ships in v1.3. Check /healthz.";
+const ERR_503: &str = "Endpoint returns 503 — Pg bridge ships in v1.3. Check /healthz.";
 
 async fn require_ok(resp: reqwest::Response) -> Result<reqwest::Response> {
     let status = resp.status();
@@ -46,10 +45,7 @@ pub async fn list(args: ListArgs) -> Result<Vec<JsonValue>> {
             .tenant_id
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("--tenant-id is required when --installed is set"))?;
-        let url = format!(
-            "{}/v1/skills/installed?tenant_id={tenant}",
-            args.api_base
-        );
+        let url = format!("{}/v1/skills/installed?tenant_id={tenant}", args.api_base);
         let resp = client
             .get(&url)
             .send()
@@ -163,14 +159,8 @@ pub fn format_catalog_table(rows: &[JsonValue]) -> String {
     for r in rows {
         let slug = r.get("slug").and_then(JsonValue::as_str).unwrap_or("-");
         let name = r.get("name").and_then(JsonValue::as_str).unwrap_or("-");
-        let version = r
-            .get("version")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("-");
-        let category = r
-            .get("category")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("-");
+        let version = r.get("version").and_then(JsonValue::as_str).unwrap_or("-");
+        let category = r.get("category").and_then(JsonValue::as_str).unwrap_or("-");
         let desc = r
             .get("description")
             .and_then(JsonValue::as_str)
@@ -198,10 +188,7 @@ pub fn format_installed_table(rows: &[JsonValue]) -> String {
             .get("pack_slug")
             .and_then(JsonValue::as_str)
             .unwrap_or("-");
-        let version = r
-            .get("version")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("-");
+        let version = r.get("version").and_then(JsonValue::as_str).unwrap_or("-");
         let ts = r
             .get("installed_at")
             .and_then(JsonValue::as_str)

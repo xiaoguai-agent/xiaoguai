@@ -30,7 +30,10 @@ pub enum Shell {
 ///
 /// # Errors
 /// Returns an error if writing to `out` fails.
-#[allow(clippy::needless_pass_by_value, reason = "Shell is a small enum; value semantics match clap usage")]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "Shell is a small enum; value semantics match clap usage"
+)]
 pub fn run<W: io::Write>(shell: Shell, cmd: &mut clap::Command, out: &mut W) -> Result<()> {
     match shell {
         Shell::Bash => generate(shells::Bash, cmd, "xiaoguai", out),

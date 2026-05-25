@@ -112,10 +112,7 @@ impl PersonaRepository for InMemoryPersonaRepository {
         persona_id: Uuid,
     ) -> PersonaResult<SessionPersona> {
         let mut g = self.state.lock();
-        let persona = g
-            .personas
-            .get(&persona_id)
-            .ok_or(PersonaError::NotFound)?;
+        let persona = g.personas.get(&persona_id).ok_or(PersonaError::NotFound)?;
         if persona.archived {
             return Err(PersonaError::Archived);
         }
