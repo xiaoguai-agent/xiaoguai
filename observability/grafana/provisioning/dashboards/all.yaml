@@ -1,0 +1,13 @@
+apiVersion: 1
+
+providers:
+  - name: Xiaoguai
+    orgId: 1
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      # Path inside the Grafana container; mount observability/grafana/dashboards/ here
+      path: /var/lib/grafana/dashboards/xiaoguai
+      foldersFromFilesStructure: false
