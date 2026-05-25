@@ -1,0 +1,65 @@
+# syntax=docker/dockerfile:1.7
+#
+# Development variant — fast incremental rebuilds for local iteration.
+#
+#   docker build -f deploy/Dockerfile.dev -t xiaoguai:dev .
+#
+# Intentionally single-stage: build tools stay in the image so you can
+# exec into the container for debugging. No distroless, no cargo-chef
+# overhead (cargo caches via BuildKit mount instead). Frontend assets are
+# copied from a pre-built node stage to avoid requiring Node on the host.
+#
+# Optimisation strategy
+# ──────────────────────
+#   • BuildKit cache mounts on ~/.cargo/registry + target/ mean consecutive
+#     builds that only change Rust source skip dependency compilation.
+#   • Cargo.lock is copied before source so a lockfile-only change still
+#     benefits from the cached registry.
+#   • dev profile (opt-level=1) used for faster compile times.
+
+ARG RUST_VERSION=1.88
+ARG NODE_VERSION=20
+
+# ── frontend (same as production) ────────────────────────────────────────────
+FROM node:${NODE_VERSION}-alpine AS frontend-dev
+WORKDIR /app
+RUN npm install -g pnpm@9.12.0
+COPY frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml frontend/package.json ./
+COPY frontend/shared ./shared
+RUN pnpm install --frozen-lockfile
+COPY frontend/admin-ui ./admin-ui
+COPY frontend/chat-ui  ./chat-ui
+RUN pnpm -r build
+
+# ── rust dev build ───────────────────────────────────────────────────────────
+FROM rust:${RUST_VERSION}-slim-bookworm AS dev
+WORKDIR /app
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        pkg-config libssl-dev ca-certificates git curl \
+ && rm -rf /var/lib/apt/lists/*
+
+# Manifests first — stable layer.
+COPY Cargo.toml Cargo.lock rust-toolchain.toml clippy.toml rustfmt.toml deny.toml ./
+COPY crates ./crates
+
+# Build with dev profile for speed; cache mounts avoid re-downloading crates.
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/app/target \
+    cargo build \
+        --bin xiaoguai-core \
+        --bin xiaoguai \
+ && cp target/debug/xiaoguai-core /usr/local/bin/xiaoguai-core \
+ && cp target/debug/xiaoguai      /usr/local/bin/xiaoguai
+
+# Frontend assets
+COPY --from=frontend-dev /app/admin-ui/dist ./static/admin-ui
+COPY --from=frontend-dev /app/chat-ui/dist  ./static/chat-ui
+
+ENV RUST_LOG=debug,sqlx=info
+EXPOSE 8080
+
+ENTRYPOINT ["/usr/local/bin/xiaoguai-core"]
+CMD ["serve"]
