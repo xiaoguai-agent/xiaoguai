@@ -1,0 +1,92 @@
+---
+# Wave-3 Rate-Limit alerts
+# Metric source:
+#   xiaoguai_rate_limit_hits_total{decision}
+#     decision values: "throttle", "allow", "reject"
+#
+# Alerts:
+#   1. Sustained throttle fraction > 5% of total rate-limit decisions for 10 min
+#   2. Single-tenant throttle concentration (noisy-tenant signal)
+#      — if a per-tenant label is emitted, use it; otherwise proxy via total rate.
+
+groups:
+  - name: wave3.ratelimit.sustained
+    interval: 1m
+    rules:
+      - alert: RateLimitSustainedThrottleWarning
+        expr: >
+          (
+            rate(xiaoguai_rate_limit_hits_total{decision="throttle"}[5m])
+          ) /
+          (
+            sum without(decision) (rate(xiaoguai_rate_limit_hits_total[5m])) > 0
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: rate-limit
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/observability.md
+        annotations:
+          summary: "Rate-limit throttle fraction above 5% for 10 minutes"
+          description: >
+            More than 5% of rate-limit decisions have been throttles for the last
+            10 consecutive minutes.
+            Current throttle fraction: {{ $value | humanizePercentage }}.
+            Agents may be experiencing degraded throughput. Verify quota configuration
+            and whether demand has legitimately increased.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=rate-limit
+
+      - alert: RateLimitSustainedThrottleCritical
+        expr: >
+          (
+            rate(xiaoguai_rate_limit_hits_total{decision="throttle"}[5m])
+          ) /
+          (
+            sum without(decision) (rate(xiaoguai_rate_limit_hits_total[5m])) > 0
+          ) > 0.05
+        for: 20m
+        labels:
+          severity: critical
+          team: platform
+          subsystem: rate-limit
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/observability.md
+        annotations:
+          summary: "Rate-limit throttle fraction above 5% for 20 minutes (critical)"
+          description: >
+            More than 5% of rate-limit decisions have been throttles for 20 minutes.
+            Current throttle fraction: {{ $value | humanizePercentage }}.
+            Widespread agent throughput degradation is ongoing. Consider emergency
+            quota increase or load shedding at the API gateway level.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=rate-limit
+
+  - name: wave3.ratelimit.noisytenant
+    interval: 1m
+    rules:
+      - alert: RateLimitNoisyTenantSignal
+        # When per-tenant labels are available, this fires when a single tenant
+        # accounts for >50% of all throttle hits, indicating a noisy-neighbour situation.
+        # If the metric carries no tenant label, this alert fires on the aggregate
+        # absolute throttle rate exceeding 100 req/s as a proxy.
+        expr: >
+          (
+            max by(tenant) (rate(xiaoguai_rate_limit_hits_total{decision="throttle"}[5m]))
+          ) /
+          (
+            sum(rate(xiaoguai_rate_limit_hits_total{decision="throttle"}[5m])) > 0
+          ) > 0.50
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          subsystem: rate-limit
+          runbook_url: https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/observability.md
+        annotations:
+          summary: "Single tenant consuming >50% of throttle budget (noisy neighbour)"
+          description: >
+            One tenant is responsible for more than 50% of all rate-limit throttle hits
+            over the last 5 minutes.
+            Top-tenant throttle share: {{ $value | humanizePercentage }}.
+            This may be impacting other tenants. Consider per-tenant hard caps or
+            temporary tenant isolation.
+          dashboard_url: https://grafana.internal/d/xiaoguai-wave3-overview?orgId=1&var-subsystem=rate-limit
