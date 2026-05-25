@@ -18,6 +18,12 @@ images:
     newTag: stable
 
 patches:
+  # Wave-3 feature flags
+  - path: wave3-features-enabled.yaml
+    target:
+      kind: ConfigMap
+      name: xiaoguai-config
+
   # 3 replicas at rest; HPA scales to 10
   - patch: |-
       apiVersion: apps/v1
