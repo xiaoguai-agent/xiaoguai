@@ -1186,6 +1186,248 @@ html,
   color: var(--accent);
 }
 
+/* ---------------------------------------------------------- chat header (v1.3.x) */
+
+/* Hosts AiDisclosureBanner, HotlBanner, WatchIndicator in a right-aligned row.
+   Renders nothing visible when all children are null (zero-count watchers). */
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-5);
+  min-height: 0;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--surface);
+  /* Collapse when all children render null */
+  empty-cells: hide;
+}
+
+.chat-header:empty {
+  display: none;
+}
+
+/* ---------------------------------------------------------- watch indicator (v1.3.x) */
+
+.watch-indicator {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Pill badge — green (all running) or amber (any error). */
+.watch-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 10px 2px 7px;
+  border-radius: 99px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: opacity 120ms ease, box-shadow 120ms ease;
+  white-space: nowrap;
+}
+
+.watch-badge--green {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #86efac;
+}
+
+.watch-badge--amber {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fcd34d;
+}
+
+[data-theme='dark'] .watch-badge--green {
+  background: #052e16;
+  color: #4ade80;
+  border-color: #166534;
+}
+
+[data-theme='dark'] .watch-badge--amber {
+  background: #1c1004;
+  color: #fbbf24;
+  border-color: #78350f;
+}
+
+.watch-badge:hover {
+  opacity: 0.85;
+}
+
+.watch-badge:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* Animated status dot inside the pill. */
+.watch-badge__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: watch-pulse 2.4s infinite ease-in-out;
+}
+
+.watch-badge__dot--green {
+  background: #16a34a;
+}
+
+.watch-badge__dot--amber {
+  background: #d97706;
+}
+
+@keyframes watch-pulse {
+  0%, 80%, 100% { opacity: 1; transform: scale(1); }
+  40% { opacity: 0.55; transform: scale(0.8); }
+}
+
+/* Popover panel — appears below the pill. */
+.watch-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 300px;
+  max-width: 380px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.watch-popover__header {
+  padding: var(--space-2) var(--space-3);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.watch-popover__list {
+  display: flex;
+  flex-direction: column;
+}
+
+.watch-popover__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.watch-popover__row:last-child {
+  border-bottom: none;
+}
+
+.watch-popover__row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.watch-popover__name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.watch-popover__status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 99px;
+  flex-shrink: 0;
+}
+
+.watch-popover__status--running {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.watch-popover__status--paused {
+  background: var(--status-bg);
+  color: var(--status-fg);
+}
+
+.watch-popover__status--error {
+  background: var(--tool-error-bg);
+  color: var(--tool-error-fg);
+  border: 1px solid var(--tool-error-border);
+}
+
+[data-theme='dark'] .watch-popover__status--running {
+  background: #052e16;
+  color: #4ade80;
+}
+
+.watch-popover__row-meta {
+  display: flex;
+  gap: var(--space-2);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.watch-popover__source {
+  font-weight: 500;
+}
+
+.watch-popover__row-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: 2px;
+}
+
+.watch-popover__btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 1px 10px;
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--fg-soft);
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.watch-popover__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.watch-popover__btn--pause:hover:not(:disabled) {
+  background: var(--tool-error-bg);
+  border-color: var(--tool-error-border);
+  color: var(--tool-error-fg);
+}
+
+.watch-popover__btn--resume:hover:not(:disabled) {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+
+[data-theme='dark'] .watch-popover__btn--resume:hover:not(:disabled) {
+  background: #052e16;
+  border-color: #166534;
+  color: #4ade80;
+}
+
 /* ------------------------------------------------------------------ small screens */
 
 @media (max-width: 720px) {

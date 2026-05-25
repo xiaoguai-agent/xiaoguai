@@ -388,6 +388,34 @@ export interface OutcomesTimeseriesResponse {
 
 export type OutcomesRange = '24h' | '7d' | '30d';
 
+// ---- v1.3.x — watch event indicators ------------------------------------
+
+/** Status values a watcher can be in. */
+export type WatcherStatus = 'running' | 'paused' | 'error';
+
+/** Source type that produced the watcher (schedule, webhook, manual, etc.). */
+export type WatcherSourceType = 'schedule' | 'webhook' | 'manual' | string;
+
+/**
+ * A single watcher row returned by `GET /v1/watchers?session_id=<id>`.
+ *
+ * NOTE: /v1/watchers is not yet implemented server-side (separate task).
+ * The client handles 404/503 gracefully by returning [].
+ */
+export interface WatcherInfo {
+  id: string;
+  /** Human-readable label, e.g. "Nightly report watcher". */
+  name: string;
+  /** Where this watcher originated. */
+  source_type: WatcherSourceType;
+  /** RFC 3339; null when never fired. */
+  last_fired_at: string | null;
+  /** Current lifecycle status. */
+  status: WatcherStatus;
+  /** Cron or interval expression; null for manual/webhook-driven watchers. */
+  schedule?: string | null;
+}
+
 // ---- Agent event stream --------------------------------------------------
 
 export type AgentEvent =
@@ -697,6 +725,64 @@ export class XiaoguaiClient {
       'GET',
       `/v1/outcomes/timeseries?${params.toString()}`,
     );
+  }
+
+  // ---- v1.3.x Watch indicators -----------------------------------------
+
+  /**
+   * List active watchers attached to a session.
+   *
+   * NOTE: /v1/watchers is not yet implemented server-side (separate task).
+   * This method gracefully returns [] on 404 or 503.
+   */
+  async listSessionWatchers(sessionId: string): Promise<WatcherInfo[]> {
+    try {
+      return await this.request<WatcherInfo[]>(
+        'GET',
+        `/v1/watchers?session_id=${encodeURIComponent(sessionId)}`,
+      );
+    } catch (err) {
+      // Endpoint not yet exposed — render nothing, not an error banner.
+      if (err instanceof ApiError && (err.status === 404 || err.status === 503)) {
+        return [];
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Pause a watcher by id. Returns silently when endpoint absent (404/503).
+   */
+  async pauseWatcher(watcherId: string): Promise<void> {
+    try {
+      await this.request<unknown>(
+        'POST',
+        `/v1/watchers/${encodeURIComponent(watcherId)}/pause`,
+      );
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 404 || err.status === 503)) {
+        return;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Resume a paused or error-state watcher.
+   * HotL-gated for error-state resume on the server side.
+   */
+  async resumeWatcher(watcherId: string): Promise<void> {
+    try {
+      await this.request<unknown>(
+        'POST',
+        `/v1/watchers/${encodeURIComponent(watcherId)}/resume`,
+      );
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 404 || err.status === 503)) {
+        return;
+      }
+      throw err;
+    }
   }
 
   /**

@@ -1,0 +1,19 @@
+{
+  "watch": {
+    "badge_label": "{{count}} 个活跃监听器",
+    "badge_label_plural": "{{count}} 个活跃监听器",
+    "popover_title": "活跃监听器",
+    "pause": "暂停",
+    "resume": "恢复",
+    "status_running": "运行中",
+    "status_paused": "已暂停",
+    "status_error": "错误",
+    "last_fired": "上次触发 {{relative}}",
+    "never_fired": "从未触发",
+    "pause_confirm": "确认暂停此监听器？",
+    "resume_confirm": "确认恢复此监听器？",
+    "source_schedule": "定时",
+    "source_webhook": "Webhook",
+    "source_manual": "手动"
+  }
+}
