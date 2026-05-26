@@ -164,7 +164,7 @@ async fn handle_webhook(
         }
         Ok(ImEvent::Message(msg)) => {
             if let Some(ctr) = xiaoguai_observability::im_messages_total() {
-                ctr.with_label_values(&[&adapter, "inbound"]).inc();
+                ctr.with_label_values(&[adapter.as_str(), "inbound"]).inc();
             }
             spawn_agent_reply(state, msg);
             (StatusCode::OK, Json(json!({"status":"accepted"}))).into_response()

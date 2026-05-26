@@ -442,7 +442,7 @@ pub async fn rate_limit_middleware(
         .try_acquire(&tenant_id, route_class, rate_class)
     {
         if let Some(ctr) = xiaoguai_observability::rate_limit_hits_total() {
-            ctr.with_label_values(&[&tenant_id, route_label, "allow"])
+            ctr.with_label_values(&[tenant_id.as_str(), route_label, "allow"])
                 .inc();
         }
         next.run(req).await
@@ -454,7 +454,7 @@ pub async fn rate_limit_middleware(
             "rate limit exceeded"
         );
         if let Some(ctr) = xiaoguai_observability::rate_limit_hits_total() {
-            ctr.with_label_values(&[&tenant_id, route_label, "deny"])
+            ctr.with_label_values(&[tenant_id.as_str(), route_label, "deny"])
                 .inc();
         }
         deny_response(rate_class.retry_after_secs())

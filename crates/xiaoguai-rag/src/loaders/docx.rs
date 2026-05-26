@@ -104,7 +104,14 @@ fn parse_document_xml(xml: &[u8]) -> Result<(String, Vec<String>), LoadError> {
                 }
             }
             Ok(Event::Text(ref e)) if in_wt => {
-                para_buf.push_str(&e.unescape().unwrap_or_default());
+                // quick-xml 0.40 split decode (charset) from entity unescaping:
+                // BytesText::unescape() is gone; decode() then escape::unescape().
+                let raw = e.decode().unwrap_or_default();
+                let text = match quick_xml::escape::unescape(&raw) {
+                    Ok(t) => t.into_owned(),
+                    Err(_) => raw.into_owned(),
+                };
+                para_buf.push_str(&text);
             }
             Ok(Event::Eof) => break,
             Err(e) => {

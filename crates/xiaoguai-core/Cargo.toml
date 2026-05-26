@@ -107,7 +107,7 @@ serde = { workspace = true }
 # v1.1.6.2: sd-notify integration for Type=notify and watchdog pings.
 # Linux-only; only used in xiaoguai-core (not a workspace dep).
 [target.'cfg(target_os = "linux")'.dependencies]
-sd-notify = "0.4"
+sd-notify = "0.5"
 
 [lints]
 workspace = true

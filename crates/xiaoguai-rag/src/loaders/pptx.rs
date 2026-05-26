@@ -49,7 +49,13 @@ fn extract_slide_text(xml: &[u8]) -> Result<String, LoadError> {
                 }
             }
             Ok(Event::Text(ref e)) if in_at => {
-                let chunk = e.unescape().unwrap_or_default();
+                // quick-xml 0.40: decode() (charset) then escape::unescape()
+                // replace the removed BytesText::unescape().
+                let raw = e.decode().unwrap_or_default();
+                let chunk = match quick_xml::escape::unescape(&raw) {
+                    Ok(t) => t.into_owned(),
+                    Err(_) => raw.into_owned(),
+                };
                 if !chunk.trim().is_empty() {
                     if !slide_text.is_empty() {
                         slide_text.push(' ');
