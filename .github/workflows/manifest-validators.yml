@@ -11,6 +11,16 @@ on:
       - 'scripts/validate-*.py'
   push:
     branches: [main]
+    # Same path scope as the PR trigger — without this the validators ran on
+    # every unrelated push to main (e.g. dep bumps) and failed on pre-existing
+    # pack/recipe/watcher schema debt. They still run when those files change.
+    paths:
+      - 'packs/**'
+      - 'recipes/**'
+      - 'examples/hotl-policies/**'
+      - 'docs/api/schemas/**'
+      - 'scripts/validate-*.sh'
+      - 'scripts/validate-*.py'
 
 jobs:
   validate-packs:
