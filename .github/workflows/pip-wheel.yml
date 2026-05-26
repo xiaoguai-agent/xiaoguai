@@ -61,7 +61,7 @@ jobs:
             cibw_platform: linux
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Compute XIAOGUAI_VERSION
         id: version
