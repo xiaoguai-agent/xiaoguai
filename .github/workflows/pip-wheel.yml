@@ -130,7 +130,7 @@ jobs:
             python -m zipfile -l "$whl" | grep -E "xiaoguai/_binary|xiaoguai/__main__|xiaoguai/_version" || true
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.target }}
           path: wheelhouse/*.whl
@@ -160,7 +160,7 @@ jobs:
       id-token: write   # OIDC token for TestPyPI trusted publisher
       contents: read
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: wheels-*
@@ -201,7 +201,7 @@ jobs:
       id-token: write   # OIDC token for PyPI trusted publisher
       contents: read
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: wheels-*
