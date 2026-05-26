@@ -32,7 +32,6 @@ tags: [csm, zendesk, hotl, churn-risk, outcome, slack]
 requires:
   packs:
     - customer-success: ">=1.0.0"
-    customer-success: ">=1.0.0"
   features:
     - hotl
     - outcome-telemetry

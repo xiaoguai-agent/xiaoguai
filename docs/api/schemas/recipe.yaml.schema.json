@@ -77,11 +77,6 @@
               "type": "string",
               "description": "SemVer constraint (e.g. '>=0.1.0')."
             }
-          "type": "object",
-          "description": "Map of pack-name to SemVer constraint string (e.g. { 'security-audit': '>=0.1.0' }). Idiomatic and consistent with pack.yaml depends block.",
-          "additionalProperties": {
-            "type": "string",
-            "description": "SemVer constraint (e.g. '>=0.1.0', '^1.2.0')."
           }
         },
         "features": {
