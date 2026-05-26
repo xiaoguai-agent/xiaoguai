@@ -67,7 +67,7 @@ jobs:
 
       - name: Upload vet report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cargo-vet-report
           path: vet-report.txt
