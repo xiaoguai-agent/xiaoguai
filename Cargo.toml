@@ -102,7 +102,7 @@ cipher = "0.5"
 rand = "0.10"
 urlencoding = "2.1"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
-quick-xml = { version = "0.36", features = ["serialize"] }
+quick-xml = { version = "0.40", features = ["serialize"] }
 
 # config
 config = { version = "0.14", default-features = false, features = ["yaml"] }
