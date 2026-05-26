@@ -136,7 +136,7 @@ tempfile = "3"
 # observability
 # default-features disabled to drop the `protobuf` exposition format (and its
 # vulnerable protobuf 2.28 dep, RUSTSEC-2024-0437). We only use TextEncoder.
-prometheus = { version = "0.13", default-features = false, features = ["process"] }
+prometheus = { version = "0.14", default-features = false, features = ["process"] }
 xiaoguai-observability = { path = "crates/xiaoguai-observability" }
 opentelemetry = { version = "0.32", features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.32", features = ["trace", "metrics"] }
