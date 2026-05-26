@@ -11,19 +11,15 @@
 
 use opentelemetry::trace::{TraceContextExt, Tracer, TracerProvider as _};
 use opentelemetry::KeyValue;
-use opentelemetry_sdk::{
-    testing::trace::InMemorySpanExporterBuilder,
-    trace::{SimpleSpanProcessor, TracerProvider},
+use opentelemetry_sdk::trace::{
+    InMemorySpanExporter, InMemorySpanExporterBuilder, SdkTracerProvider, SimpleSpanProcessor,
 };
 
 /// Build a provider + exporter pair backed by a `SimpleSpanProcessor`.
-fn make_provider() -> (
-    TracerProvider,
-    opentelemetry_sdk::testing::trace::InMemorySpanExporter,
-) {
+fn make_provider() -> (SdkTracerProvider, InMemorySpanExporter) {
     let exporter = InMemorySpanExporterBuilder::new().build();
-    let processor = SimpleSpanProcessor::new(Box::new(exporter.clone()));
-    let provider = TracerProvider::builder()
+    let processor = SimpleSpanProcessor::new(exporter.clone());
+    let provider = SdkTracerProvider::builder()
         .with_span_processor(processor)
         .build();
     (provider, exporter)
