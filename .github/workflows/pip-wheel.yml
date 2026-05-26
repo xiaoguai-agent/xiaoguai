@@ -160,7 +160,7 @@ jobs:
       id-token: write   # OIDC token for TestPyPI trusted publisher
       contents: read
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: wheels-*
@@ -201,7 +201,7 @@ jobs:
       id-token: write   # OIDC token for PyPI trusted publisher
       contents: read
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: wheels-*
