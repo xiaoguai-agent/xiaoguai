@@ -2,28 +2,27 @@ Business Source License 1.1
 
 Parameters
 
-Licensor:                TestAny (placeholder — to be replaced with final legal entity)
+Licensor:                Zhou Wei (zhouwei008@gmail.com)
 Licensed Work:           Xiaoguai
-                         The Licensed Work is (c) 2026 TestAny.
-Additional Use Grant:    You may make production use of the Licensed Work, provided
-                         Your use does not include offering the Licensed Work to
-                         third parties on a hosted or embedded basis in order to
-                         compete with Licensor's paid version(s) of the Licensed
-                         Work. For purposes of this license:
+                         The Licensed Work is (c) 2026 Zhou Wei.
+Additional Use Grant:    You may use the Licensed Work free of charge for
+                         non-production purposes — including development, testing,
+                         evaluation, and demonstration — and for personal,
+                         non-commercial, or academic and research use.
 
-                         A "competing" offering is a Product that is offered to
-                         third parties on a paid basis, including through paid
-                         support arrangements, that significantly overlaps with
-                         the capabilities of Licensor's paid version(s) of the
-                         Licensed Work. If Your Product is not a competing
-                         offering as defined here, You may make production use of
-                         the Licensed Work without restriction. Products that are
-                         not "Competing" with Licensor include, without limitation:
-                         (1) internal-use deployments of the Licensed Work;
-                         (2) embedding the Licensed Work in Your own product where
-                             agent capabilities are not the primary feature offered
-                             to third parties;
-                         (3) academic and personal use.
+                         Any production use of the Licensed Work requires a
+                         commercial license from the Licensor. "Production use"
+                         includes, without limitation:
+                         (1) internal business use of any kind;
+                         (2) private, self-hosted, or on-premises deployment;
+                         (3) offering the Licensed Work, or any service built on
+                             it, to third parties on a hosted, embedded, or
+                             managed basis;
+                         (4) any use by or for a commercial entity beyond the
+                             non-production purposes granted above.
+
+                         To obtain a commercial license, contact the Licensor at
+                         zhouwei008@gmail.com.
 
 Change Date:             Four years from the date the Licensed Work is published.
                          For each version of the Licensed Work, the Change Date
