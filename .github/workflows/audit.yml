@@ -59,7 +59,7 @@ jobs:
 
       - name: Open issue on failure
         if: failure()
-        uses: peter-evans/create-issue-from-file@v5
+        uses: peter-evans/create-issue-from-file@v6
         with:
           title: "Nightly cargo-audit failure — ${{ github.run_id }}"
           content-filepath: ./issue-body.md

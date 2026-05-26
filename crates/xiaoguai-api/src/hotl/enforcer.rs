@@ -216,7 +216,7 @@ fn verdict_label(v: &HotlVerdict) -> &'static str {
 fn emit_hotl_metrics(tenant_id: &Uuid, scope: &str, verdict: &HotlVerdict, start: Instant) {
     let tenant = tenant_id.to_string();
     if let Some(ctr) = xiaoguai_observability::hotl_usage_total() {
-        ctr.with_label_values(&[&tenant, scope, verdict_label(verdict)])
+        ctr.with_label_values(&[tenant.as_str(), scope, verdict_label(verdict)])
             .inc();
     }
     if let Some(hist) = xiaoguai_observability::hotl_check_duration() {
