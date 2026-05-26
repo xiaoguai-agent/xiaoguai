@@ -39,12 +39,12 @@ pub fn router(state: AppState) -> Router {
             "/v1/sessions",
             get(sessions::list_sessions).post(sessions::create_session),
         )
-        .route("/v1/sessions/:id", get(sessions::get_session))
+        .route("/v1/sessions/{id}", get(sessions::get_session))
         .route(
-            "/v1/sessions/:id/messages",
+            "/v1/sessions/{id}/messages",
             get(sessions::list_messages).post(sessions::send_message),
         )
-        .route("/v1/sessions/:id/cancel", post(sessions::cancel_session))
+        .route("/v1/sessions/{id}/cancel", post(sessions::cancel_session))
         .route("/v1/mcp/servers", get(mcp::list_servers))
         .route(
             "/v1/mcp/marketplace",
@@ -56,7 +56,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/admin/tenants", get(admin::list_tenants))
         // v1.3.x — per-tenant client config (chat-ui AiDisclosureBanner).
-        .route("/v1/tenants/:id/config", get(tenants::get_tenant_config))
+        .route("/v1/tenants/{id}/config", get(tenants::get_tenant_config))
         .route("/v1/admin/audit", get(admin::list_audit))
         .route("/v1/admin/audit/verify", get(admin::verify_audit))
         .route("/v1/admin/today", get(admin::list_today))
@@ -67,7 +67,7 @@ pub fn router(state: AppState) -> Router {
             post(admin::eval_case_from_session),
         )
         .route(
-            "/v1/admin/scheduler/webhooks/:route_id",
+            "/v1/admin/scheduler/webhooks/{route_id}",
             post(admin::scheduler_webhook),
         )
         .route(
@@ -80,7 +80,7 @@ pub fn router(state: AppState) -> Router {
         )
         // v0.12.x.1: admin-ui Scheduler pane — "Run now" + token CRUD.
         .route(
-            "/v1/admin/scheduler/jobs/:id/fire-now",
+            "/v1/admin/scheduler/jobs/{id}/fire-now",
             post(admin::scheduler_fire_now),
         )
         .route(
@@ -88,11 +88,11 @@ pub fn router(state: AppState) -> Router {
             get(admin::scheduler_list_tokens).post(admin::scheduler_create_token),
         )
         .route(
-            "/v1/admin/scheduler/tokens/:token",
+            "/v1/admin/scheduler/tokens/{token}",
             delete(admin::scheduler_revoke_token),
         )
         // v1.1.2: conversation fork.
-        .route("/v1/sessions/:id/fork", post(sessions::fork_session))
+        .route("/v1/sessions/{id}/fork", post(sessions::fork_session))
         // v1.1.1 — token-usage aggregation.
         .route("/v1/usage", get(usage::list_usage))
         // v1.2.3 — HOTL boundary policy admin.
@@ -101,7 +101,7 @@ pub fn router(state: AppState) -> Router {
             get(hotl::list_policies).post(hotl::create_policy),
         )
         .route(
-            "/v1/hotl/policies/:id",
+            "/v1/hotl/policies/{id}",
             delete(hotl::delete_policy),
         )
         // v1.2.4 — outcome telemetry (revenue-not-time ROI tracking).
@@ -113,7 +113,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/skills/installed", get(skills::list_installed))
         .route("/v1/skills/install", post(skills::install_pack))
         .route(
-            "/v1/skills/install/:id",
+            "/v1/skills/install/{id}",
             delete(skills::uninstall_pack),
         )
         // v1.3.x — long-term memory CRUD + semantic recall.
@@ -126,11 +126,11 @@ pub fn router(state: AppState) -> Router {
             post(memory::recall_memories),
         )
         .route(
-            "/v1/memories/similar/:id",
+            "/v1/memories/similar/{id}",
             get(memory::find_similar),
         )
         .route(
-            "/v1/memories/:id",
+            "/v1/memories/{id}",
             get(memory::get_memory)
                 .put(memory::update_memory)
                 .delete(memory::delete_memory),
@@ -141,7 +141,7 @@ pub fn router(state: AppState) -> Router {
             get(workspaces::list_workspaces).post(workspaces::create_workspace),
         )
         .route(
-            "/v1/workspaces/:id",
+            "/v1/workspaces/{id}",
             put(workspaces::update_workspace).delete(workspaces::archive_workspace),
         );
 
@@ -189,13 +189,13 @@ pub fn router(state: AppState) -> Router {
     // the bearer/Casbin layer stack — external integrators (GitHub
     // push, Slack events) authenticate via the `X-Xiaoguai-Token`
     // header validated against the per-tenant token table. The
-    // existing admin route at `/v1/admin/scheduler/webhooks/:route_id`
+    // existing admin route at `/v1/admin/scheduler/webhooks/{route_id}`
     // stays inside the v1 layer for internal callers.
     //
     // Rate limiting is still applied so a flood of bad tokens can't
     // saturate the runner; bearer auth is intentionally skipped.
     let public_v1 = Router::new().route(
-        "/v1/scheduler/webhooks/:route_id",
+        "/v1/scheduler/webhooks/{route_id}",
         post(scheduler_public::scheduler_webhook_public),
     );
     // v1.2.20: scheduler webhooks get the richer rate_limit_state middleware
