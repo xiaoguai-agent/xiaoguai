@@ -11,7 +11,7 @@ jobs:
     name: Seeder dry-run smoke test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Syntax check — seed script
         run: bash -n scripts/seed-wave3-demo.sh

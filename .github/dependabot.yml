@@ -59,6 +59,13 @@ updates:
     #   - your-github-handle
     # assignees:
     #   - your-github-handle
+    ignore:
+      # dtolnay/rust-toolchain pins the Rust toolchain via its tag
+      # (e.g. @1.88.0 installs Rust 1.88, our MSRV). Dependabot misreads
+      # the tag as an action version and tries to bump it past the MSRV,
+      # which breaks the build. Toolchain bumps are done deliberately via
+      # rust-toolchain.toml, not here.
+      - dependency-name: "dtolnay/rust-toolchain"
     groups:
       actions-all:
         patterns:
