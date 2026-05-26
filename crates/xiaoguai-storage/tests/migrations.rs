@@ -5,13 +5,23 @@
 
 #[cfg(test)]
 mod containerized {
-    use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
+    use testcontainers_modules::{
+        postgres::Postgres,
+        testcontainers::{runners::AsyncRunner, ImageExt},
+    };
     use xiaoguai_storage::db;
 
     #[tokio::test]
     #[ignore = "requires Docker"]
     async fn migrations_apply_clean() {
-        let pg = Postgres::default().start().await.expect("start pg");
+        // pgvector image (postgres + the `vector` extension) — migration 0019
+        // creates a vector(384) column, which plain `postgres` can't provide.
+        let pg = Postgres::default()
+            .with_name("pgvector/pgvector")
+            .with_tag("pg16")
+            .start()
+            .await
+            .expect("start pg");
         let port = pg.get_host_port_ipv4(5432).await.expect("port");
         let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
         let pool = db::connect(&url, 5).await.expect("connect");
