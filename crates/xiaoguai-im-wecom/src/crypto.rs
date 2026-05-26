@@ -47,7 +47,7 @@ use base64::{
 };
 use cbc::{Decryptor, Encryptor};
 use cipher::{block_padding::NoPadding, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
-use rand::RngCore;
+use rand::Rng;
 use sha1::{Digest, Sha1};
 
 /// A permissive base64 engine that ignores non-zero padding bits (as
@@ -232,7 +232,7 @@ impl WecomCrypto {
         nonce: &str,
     ) -> Result<String, WecomCryptoError> {
         // Build plaintext: random16 + BE32(len) + msg + corpid.
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut random16 = [0u8; 16];
         rng.fill_bytes(&mut random16);
 
