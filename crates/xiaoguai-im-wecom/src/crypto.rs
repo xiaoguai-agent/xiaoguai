@@ -46,7 +46,7 @@ use base64::{
     Engine,
 };
 use cbc::{Decryptor, Encryptor};
-use cipher::{block_padding::NoPadding, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use cipher::{block_padding::NoPadding, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use rand::Rng;
 use sha1::{Digest, Sha1};
 
@@ -353,11 +353,11 @@ fn aes256_cbc_decrypt(key: &[u8; 32], iv: &[u8; 16], data: &[u8]) -> Result<Vec<
     let decryptor =
         Aes256CbcDec::new_from_slices(key, iv).map_err(|e| format!("init decryptor: {e}"))?;
 
-    // cbc crate's decrypt_padded_vec_mut expects NoPadding / Pkcs7 — we use
+    // cbc crate's decrypt_padded_vec expects NoPadding / Pkcs7 — we use
     // NoPadding because WeCom uses a custom block size (32) for padding, which
     // we handle ourselves.
     decryptor
-        .decrypt_padded_vec_mut::<NoPadding>(data)
+        .decrypt_padded_vec::<NoPadding>(data)
         .map_err(|e| format!("cbc decrypt: {e}"))
 }
 
@@ -371,5 +371,5 @@ fn aes256_cbc_encrypt(key: &[u8; 32], iv: &[u8; 16], data: &[u8]) -> Result<Vec<
     let encryptor =
         Aes256CbcEnc::new_from_slices(key, iv).map_err(|e| format!("init encryptor: {e}"))?;
 
-    Ok(encryptor.encrypt_padded_vec_mut::<NoPadding>(data))
+    Ok(encryptor.encrypt_padded_vec::<NoPadding>(data))
 }
