@@ -10,6 +10,11 @@
 -- Embedding dimension: 384 (matches sentence-transformers/all-MiniLM-L6-v2
 -- and the InMemoryEmbedder test fixture). Change to 1536 for text-embedding-ada-002.
 
+-- pgvector must be available in the target Postgres. This was previously only
+-- a comment in the header, so the `vector` type below failed on a clean DB
+-- (and the migrations-smoke test). IF NOT EXISTS keeps it idempotent.
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE memories (
     id                  UUID            PRIMARY KEY,
     tenant_id           UUID            NOT NULL,

@@ -45,8 +45,10 @@ CREATE TABLE tasks (
     board_id        UUID        NOT NULL REFERENCES boards (id) ON DELETE CASCADE,
 
     -- Column (enum-as-text for schema simplicity; CHECK guards the value set).
-    column          VARCHAR(16) NOT NULL DEFAULT 'triage'
-                    CHECK (column IN ('triage','todo','ready','running','blocked','done')),
+    -- Named board_column, not column: "column" is a SQL reserved word, so an
+    -- unquoted identifier of that name is a syntax error on every Postgres.
+    board_column    VARCHAR(16) NOT NULL DEFAULT 'triage'
+                    CHECK (board_column IN ('triage','todo','ready','running','blocked','done')),
 
     title           TEXT        NOT NULL,
     description     TEXT,
@@ -70,7 +72,7 @@ CREATE TABLE tasks (
 
 -- Primary filter path: find all tasks on a board in a given column.
 CREATE INDEX tasks_board_column_idx
-    ON tasks (board_id, column);
+    ON tasks (board_id, board_column);
 
 -- Fetch all cards for a tenant across boards (used by the operator overview).
 CREATE INDEX tasks_board_tenant_idx
@@ -84,7 +86,7 @@ CREATE INDEX tasks_assignee_idx
 -- Priority-ordered READY cards for priority dispatch policy.
 CREATE INDEX tasks_ready_priority_idx
     ON tasks (board_id, priority DESC, created_at ASC)
-    WHERE column = 'ready';
+    WHERE board_column = 'ready';
 
 -- ---------------------------------------------------------------------------
 -- task_state_log  — append-only transition history
