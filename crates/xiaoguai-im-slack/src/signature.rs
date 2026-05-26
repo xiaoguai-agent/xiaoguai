@@ -10,7 +10,7 @@
 //! Replay protection: we reject any request whose timestamp differs from
 //! `now` by more than [`TIMESTAMP_TOLERANCE_SECS`].
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 use xiaoguai_im_gateway::{ProviderError, Webhook};

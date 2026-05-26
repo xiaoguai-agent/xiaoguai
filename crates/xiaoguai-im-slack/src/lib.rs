@@ -191,7 +191,7 @@ mod tests {
     /// `signing_secret`. `now_unix` is the timestamp embedded in the header
     /// (and also the "current time" we pass to `verify`).
     fn signed_webhook(body: &str, signing_secret: &str, now_unix: i64) -> Webhook {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit, Mac};
         use sha2::Sha256;
 
         let ts = now_unix.to_string();

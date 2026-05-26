@@ -117,7 +117,7 @@ pub fn run_pg_dump(pg_dump_path: &Path, database_url: &str) -> Result<Vec<u8>> {
 fn sha256_of(data: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(data);
-    format!("{:x}", h.finalize())
+    hex::encode(h.finalize())
 }
 
 // ── tar.gz builder ─────────────────────────────────────────────────────────
@@ -398,7 +398,7 @@ fn compute_manifest_checksum(entries: &[ArchiveEntry]) -> String {
             h.update(line.as_bytes());
         }
     }
-    format!("{:x}", h.finalize())
+    hex::encode(h.finalize())
 }
 
 // ── restore ────────────────────────────────────────────────────────────────
@@ -487,7 +487,7 @@ pub fn run_restore(args: RestoreArgs) -> Result<()> {
                 h.update(line.as_bytes());
             }
         }
-        format!("{:x}", h.finalize())
+        hex::encode(h.finalize())
     };
 
     if stored_hex != computed_hex {

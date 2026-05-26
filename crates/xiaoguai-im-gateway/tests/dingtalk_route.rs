@@ -8,7 +8,7 @@ use axum::body::{to_bytes, Body};
 use axum::http::{header, Method, Request, StatusCode};
 use base64::engine::general_purpose::STANDARD as B64_STANDARD;
 use base64::Engine as _;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use sha2::Sha256;

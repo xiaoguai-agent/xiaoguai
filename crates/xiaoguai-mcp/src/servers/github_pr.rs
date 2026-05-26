@@ -27,7 +27,7 @@
 
 use std::fmt;
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
@@ -341,7 +341,7 @@ pub fn verify_github_signature(body: &[u8], sig_header: &str, secret: &[u8]) -> 
     let sig_bytes =
         hex::decode(hex_sig).map_err(|e| GitHubPrError::Signature(format!("hex decode: {e}")))?;
 
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret)
+    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret)
         .map_err(|e| GitHubPrError::Signature(format!("HMAC key: {e}")))?;
     mac.update(body);
     mac.verify_slice(&sig_bytes)
@@ -448,7 +448,7 @@ mod tests {
         let body = b"hello world";
         let secret = b"mysecret";
 
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret).unwrap();
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret).unwrap();
         mac.update(body);
         let result = mac.finalize();
         let expected_hex = hex::encode(result.into_bytes());
@@ -463,7 +463,7 @@ mod tests {
         let secret = b"correct_secret";
         let wrong = b"wrong_secret";
 
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret).unwrap();
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret).unwrap();
         mac.update(body);
         let hex = hex::encode(mac.finalize().into_bytes());
         let sig = format!("sha256={hex}");
@@ -492,7 +492,7 @@ mod tests {
         let tampered = b"tampered payload";
         let secret = b"s3cret";
 
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret).unwrap();
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret).unwrap();
         mac.update(body);
         let hex = hex::encode(mac.finalize().into_bytes());
         let sig = format!("sha256={hex}");
@@ -637,7 +637,7 @@ mod tests {
         // Step 1: webhook arrives — verify signature.
         let body = MOCK_WEBHOOK_PAYLOAD.as_bytes();
         let secret = b"webhook_secret_from_env";
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret).unwrap();
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret).unwrap();
         mac.update(body);
         let sig = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
         assert!(
@@ -684,7 +684,7 @@ mod tests {
     fn e2e_reject_verdict_skips_post() {
         let body = MOCK_WEBHOOK_PAYLOAD.as_bytes();
         let secret = b"webhook_secret_from_env";
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret).unwrap();
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret).unwrap();
         mac.update(body);
         let sig = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
         assert!(verify_github_signature(body, &sig, secret).is_ok());
