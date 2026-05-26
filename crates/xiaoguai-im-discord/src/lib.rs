@@ -227,13 +227,15 @@ fn extract_channel_id<'a>(conversation_id: &'a str, default: &'a str) -> &'a str
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer as _, SigningKey};
-    use rand::rngs::OsRng;
+    use rand::Rng;
     use serde_json::json;
 
     // ── Key helpers ──────────────────────────────────────────────────────────
 
     fn make_keypair() -> (SigningKey, VerifyingKey) {
-        let sk = SigningKey::generate(&mut OsRng);
+        let mut seed = [0u8; 32];
+        rand::rng().fill_bytes(&mut seed);
+        let sk = SigningKey::from_bytes(&seed);
         let vk = sk.verifying_key();
         (sk, vk)
     }
