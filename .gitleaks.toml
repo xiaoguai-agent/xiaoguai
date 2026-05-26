@@ -1,0 +1,20 @@
+# gitleaks configuration for xiaoguai.
+#
+# Extends the default ruleset and allowlists known test fixtures that are
+# intentionally committed and are NOT real secrets:
+#   - WeCom crypto test uses the official sample EncodingAESKey published in
+#     WeCom's developer documentation.
+#   - JWT validation test uses a throwaway RSA-2048 keypair generated locally
+#     for the test only.
+
+title = "xiaoguai gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures + published sample credentials — not real secrets"
+paths = [
+  '''crates/xiaoguai-im-wecom/tests/crypto.rs''',
+  '''crates/xiaoguai-auth/tests/jwt_validation.rs''',
+]
