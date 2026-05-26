@@ -36,7 +36,7 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use chrono::Utc;
 use futures::StreamExt;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio_stream::wrappers::UnboundedReceiverStream;
