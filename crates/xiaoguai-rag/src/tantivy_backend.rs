@@ -354,8 +354,12 @@ impl RagClient for TantivyStore {
                 .parse_query(&query_str)
                 .map_err(|e| RagError::InvalidArgument(format!("tantivy parse: {e}")))?;
 
+            // tantivy 0.26: TopDocs no longer implements Collector directly;
+            // .order_by_score() yields the by-score collector (Fruit is the
+            // same Vec<(Score, DocAddress)> as the old default).
+            let collector = TopDocs::with_limit(top_k).order_by_score();
             let top_docs = searcher
-                .search(&query, &TopDocs::with_limit(top_k))
+                .search(&query, &collector)
                 .map_err(|e| RagError::Backend(format!("tantivy search: {e}")))?;
 
             let mut out = Vec::with_capacity(top_docs.len());
