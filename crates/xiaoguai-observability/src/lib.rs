@@ -43,9 +43,9 @@ pub use prometheus::{
 use anyhow::Result;
 use axum::Router;
 use once_cell::sync::OnceCell;
-use opentelemetry_sdk::trace::TracerProvider;
+use opentelemetry_sdk::trace::SdkTracerProvider;
 
-static TRACER_PROVIDER: OnceCell<TracerProvider> = OnceCell::new();
+static TRACER_PROVIDER: OnceCell<SdkTracerProvider> = OnceCell::new();
 
 /// One-call integration point for `xiaoguai-core`.
 ///
@@ -73,7 +73,9 @@ pub fn mount(router: Router) -> Result<Router> {
 ///
 /// Safe to call even when `mount` was never called (no-op in that case).
 pub fn shutdown() {
-    // TracerProvider doesn't implement Clone; we can't take it out of
-    // OnceCell directly. Use the SDK global shutdown instead.
-    opentelemetry::global::shutdown_tracer_provider();
+    // opentelemetry 0.30+ removed global::shutdown_tracer_provider(); flush
+    // via the stored provider instead (shutdown takes &self, no move needed).
+    if let Some(provider) = TRACER_PROVIDER.get() {
+        otlp::shutdown_tracer(provider);
+    }
 }

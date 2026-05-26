@@ -61,7 +61,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use rand::Rng;
+use rand::RngExt;
 use thiserror::Error;
 use tokio::time::sleep;
 use tracing::{error, warn};
@@ -484,7 +484,7 @@ impl<E> RetryPolicy<E> {
             .min(self.max_delay);
 
         if self.jitter {
-            let nanos = rand::thread_rng().gen_range(0..=capped.as_nanos());
+            let nanos = rand::rng().random_range(0..=capped.as_nanos());
             Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
         } else {
             capped

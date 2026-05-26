@@ -64,10 +64,12 @@ pub fn parse_public_key(hex_key: &str) -> Result<VerifyingKey, ProviderError> {
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer as _, SigningKey};
-    use rand::rngs::OsRng;
+    use rand::Rng;
 
     fn make_keypair() -> (SigningKey, VerifyingKey) {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let mut seed = [0u8; 32];
+        rand::rng().fill_bytes(&mut seed);
+        let signing_key = SigningKey::from_bytes(&seed);
         let verifying_key = signing_key.verifying_key();
         (signing_key, verifying_key)
     }
