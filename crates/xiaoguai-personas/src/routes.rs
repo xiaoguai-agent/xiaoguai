@@ -10,12 +10,12 @@
 //! |--------|----------------------------------------|------------------------------------------|
 //! | GET    | `/v1/personas`                         | List active personas for the tenant      |
 //! | POST   | `/v1/personas`                         | Create a persona                         |
-//! | GET    | `/v1/personas/:id`                     | Fetch a persona by UUID                  |
-//! | PATCH  | `/v1/personas/:id`                     | Partial-update a persona                 |
-//! | DELETE | `/v1/personas/:id`                     | Archive (soft-delete) a persona          |
-//! | PUT    | `/v1/sessions/:id/persona`             | Attach / replace persona for a session   |
-//! | DELETE | `/v1/sessions/:id/persona`             | Detach persona from session              |
-//! | GET    | `/v1/sessions/:id/persona`             | Get active persona for a session         |
+//! | GET    | `/v1/personas/{id}`                     | Fetch a persona by UUID                  |
+//! | PATCH  | `/v1/personas/{id}`                     | Partial-update a persona                 |
+//! | DELETE | `/v1/personas/{id}`                     | Archive (soft-delete) a persona          |
+//! | PUT    | `/v1/sessions/{id}/persona`             | Attach / replace persona for a session   |
+//! | DELETE | `/v1/sessions/{id}/persona`             | Detach persona from session              |
+//! | GET    | `/v1/sessions/{id}/persona`             | Get active persona for a session         |
 
 use std::sync::Arc;
 
@@ -51,13 +51,13 @@ pub fn router(state: PersonaApiState) -> Router {
     Router::new()
         .route("/v1/personas", get(list_personas).post(create_persona))
         .route(
-            "/v1/personas/:id",
+            "/v1/personas/{id}",
             get(get_persona)
                 .patch(update_persona)
                 .delete(archive_persona),
         )
         .route(
-            "/v1/sessions/:id/persona",
+            "/v1/sessions/{id}/persona",
             get(get_session_persona)
                 .put(attach_persona)
                 .delete(detach_persona),

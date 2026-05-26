@@ -47,7 +47,7 @@ jobs:
         run: npm run pact:test
 
       - name: Upload pact file
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pact-typescript-sdk
           path: tests/pact/wave3/pacts/typescript-sdk-xiaoguai.json
@@ -82,7 +82,7 @@ jobs:
         run: pytest -v
 
       - name: Upload pact file
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pact-python-sdk
           path: tests/pact/wave3/pacts/python-sdk-xiaoguai.json
@@ -120,7 +120,7 @@ jobs:
           PACT_GO_LIB_DOWNLOAD_PATH: /tmp/pact_lib
 
       - name: Upload pact file
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pact-go-sdk
           path: tests/pact/wave3/pacts/go-sdk-xiaoguai.json
@@ -152,7 +152,7 @@ jobs:
         run: npm run pact:test
 
       - name: Upload pact file
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pact-chat-ui
           path: tests/pact/wave3/pacts/chat-ui-xiaoguai.json
@@ -172,22 +172,22 @@ jobs:
       - pact-chat-ui
 
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: pact-typescript-sdk
           path: pacts/
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: pact-python-sdk
           path: pacts/
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: pact-go-sdk
           path: pacts/
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: pact-chat-ui
           path: pacts/
@@ -223,7 +223,7 @@ jobs:
           done
 
       - name: Upload combined pact files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pact-files-wave3-all
           path: pacts/
@@ -245,7 +245,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: pact-files-wave3-all
           path: pacts/

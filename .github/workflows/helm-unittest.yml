@@ -38,7 +38,7 @@ jobs:
           echo "Rendered $(wc -l < /tmp/rendered.yaml) lines"
 
       - name: Upload rendered manifests
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rendered-manifests
           path: /tmp/rendered.yaml

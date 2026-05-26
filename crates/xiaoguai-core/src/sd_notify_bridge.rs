@@ -35,7 +35,7 @@ pub fn notify_ready() {
     #[cfg(target_os = "linux")]
     {
         use sd_notify::NotifyState;
-        if let Err(e) = sd_notify::notify(false, &[NotifyState::Ready]) {
+        if let Err(e) = sd_notify::notify(&[NotifyState::Ready]) {
             tracing::warn!(error = %e, "sd_notify: failed to send READY=1 (non-fatal)");
         } else {
             tracing::debug!("sd_notify: READY=1 sent");
@@ -50,7 +50,7 @@ pub fn notify_stopping() {
     #[cfg(target_os = "linux")]
     {
         use sd_notify::NotifyState;
-        if let Err(e) = sd_notify::notify(false, &[NotifyState::Stopping]) {
+        if let Err(e) = sd_notify::notify(&[NotifyState::Stopping]) {
             tracing::warn!(error = %e, "sd_notify: failed to send STOPPING=1 (non-fatal)");
         } else {
             tracing::debug!("sd_notify: STOPPING=1 sent");
@@ -69,13 +69,12 @@ pub fn notify_stopping() {
 pub fn spawn_watchdog_ticker() -> Option<tokio::task::JoinHandle<()>> {
     #[cfg(target_os = "linux")]
     {
-        // sd_notify::watchdog_enabled(unset_env, &mut usec) -> bool, writing the
-        // watchdog interval in microseconds into `usec` when enabled.
-        let mut usec: u64 = 0;
-        if sd_notify::watchdog_enabled(false, &mut usec) {
-            let ping_interval = std::time::Duration::from_micros(usec) / 2;
+        // sd-notify 0.5: watchdog_enabled() -> Option<Duration>, returning the
+        // watchdog interval directly (was a (bool, &mut u64) out-param in 0.4).
+        if let Some(watchdog) = sd_notify::watchdog_enabled() {
+            let ping_interval = watchdog / 2;
             tracing::info!(
-                watchdog_usec = usec,
+                watchdog_usec = u64::try_from(watchdog.as_micros()).unwrap_or(u64::MAX),
                 ping_interval_ms = ping_interval.as_millis(),
                 "sd_notify: watchdog enabled — spawning ping task"
             );
@@ -85,7 +84,7 @@ pub fn spawn_watchdog_ticker() -> Option<tokio::task::JoinHandle<()>> {
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 loop {
                     ticker.tick().await;
-                    if let Err(e) = sd_notify::notify(false, &[NotifyState::Watchdog]) {
+                    if let Err(e) = sd_notify::notify(&[NotifyState::Watchdog]) {
                         tracing::warn!(
                             error = %e,
                             "sd_notify: WATCHDOG=1 ping failed — watchdog will expire"
