@@ -2,6 +2,13 @@ name: Pact consumer tests (wave-3)
 
 on:
   pull_request:
+    # Only run when contract-relevant code changes — otherwise this wave-3
+    # suite (which needs a runtime env it doesn't have in CI yet, tracked as
+    # deferred debt) fired and failed on every unrelated PR. Mirrors the
+    # push paths below.
+    paths:
+      - "tests/pact/wave3/**"
+      - "crates/xiaoguai-api/src/**"
   push:
     branches:
       - main
