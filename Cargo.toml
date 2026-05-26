@@ -108,7 +108,7 @@ quick-xml = { version = "0.36", features = ["serialize"] }
 config = { version = "0.14", default-features = false, features = ["yaml"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 clap_complete = "4.5"
-clap_mangen = "0.2"
+clap_mangen = "0.3"
 dotenvy = "0.15"
 
 # archive / compression
