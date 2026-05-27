@@ -206,10 +206,25 @@ async fn run_serve(settings: &Settings) -> Result<()> {
     // empty we keep the `MockBackend` fallback so that fresh deployments
     // still boot and serve a deterministic response.
     let provider_repo = PgLlmProviderRepository::new(pool.clone());
-    let rows = provider_repo
+    let mut rows = provider_repo
         .list_global()
         .await
         .context("pg list llm providers")?;
+    // Local-first: OLLAMA_HOST repoints the seeded `ollama-local` provider at a
+    // different endpoint (e.g. a dedicated GPU box) without a SQL change. Uses
+    // the standard Ollama env var so it matches operator expectations.
+    if let Ok(host) = std::env::var("OLLAMA_HOST") {
+        let host = host.trim();
+        if !host.is_empty() {
+            for r in rows.iter_mut().filter(|r| r.id.as_str() == "ollama-local") {
+                tracing::info!(
+                    endpoint = %host,
+                    "serve: OLLAMA_HOST override applied to ollama-local"
+                );
+                r.endpoint = host.to_string();
+            }
+        }
+    }
     let (backend, default_model): (Arc<dyn LlmBackend>, String) = if rows.is_empty() {
         tracing::warn!(
             "serve: llm_providers table is empty — falling back to MockBackend. \
