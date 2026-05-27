@@ -146,7 +146,7 @@ tracing-opentelemetry = "0.33"
 
 # document loaders (RAG)
 pdf-extract = "0.10"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 scraper = "0.27"
 pulldown-cmark = { version = "0.13", default-features = false }
 
