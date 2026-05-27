@@ -154,7 +154,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 moka = { version = "0.12", features = ["future"] }
 
 # rate limiting
-governor = "0.7"
+governor = "0.10"
 
 # template engine (Jinja2-compatible; used by pack skill templates)
 tera = "1.20"
