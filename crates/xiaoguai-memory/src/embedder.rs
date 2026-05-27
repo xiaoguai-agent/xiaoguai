@@ -253,18 +253,12 @@ impl EmbeddingProvider for OllamaEmbedder {
             "prompt": text,
         });
 
-        let resp = self
-            .http
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                MemoryError::Embedding(format!(
-                    "Ollama HTTP request failed (is Ollama running at {}?): {}",
-                    self.base_url, e
-                ))
-            })?;
+        let resp = self.http.post(&url).json(&body).send().await.map_err(|e| {
+            MemoryError::Embedding(format!(
+                "Ollama HTTP request failed (is Ollama running at {}?): {}",
+                self.base_url, e
+            ))
+        })?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -276,9 +270,10 @@ impl EmbeddingProvider for OllamaEmbedder {
             )));
         }
 
-        let payload: serde_json::Value = resp.json().await.map_err(|e| {
-            MemoryError::Embedding(format!("Ollama response parse error: {e}"))
-        })?;
+        let payload: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| MemoryError::Embedding(format!("Ollama response parse error: {e}")))?;
 
         let embedding = payload
             .get("embedding")
@@ -314,7 +309,9 @@ mod ollama_tests {
 
     /// Build a 384-element JSON array string for the mock response body.
     fn mock_embedding_json() -> String {
-        let vals: Vec<String> = (0..384).map(|i| format!("{:.6}", 0.001_f64 * f64::from(i))).collect();
+        let vals: Vec<String> = (0..384)
+            .map(|i| format!("{:.6}", 0.001_f64 * f64::from(i)))
+            .collect();
         format!("{{\"embedding\":[{}]}}", vals.join(","))
     }
 
@@ -336,12 +333,7 @@ mod ollama_tests {
 
         assert!(result.is_ok(), "embed() returned error: {:?}", result.err());
         let vec = result.unwrap();
-        assert_eq!(
-            vec.len(),
-            384,
-            "expected 384 floats, got {}",
-            vec.len()
-        );
+        assert_eq!(vec.len(), 384, "expected 384 floats, got {}", vec.len());
         assert_eq!(embedder.dimensions(), 384);
         // Spot-check a few values: index i → 0.001 * i (cast f64 → f32).
         assert!((vec[0] - 0.0_f32).abs() < 1e-5);
