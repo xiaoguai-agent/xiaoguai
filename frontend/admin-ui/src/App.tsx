@@ -69,6 +69,7 @@ export function App() {
         </NavLink>
         <NavLink to="/skills" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.skill_packs')}
+        </NavLink>
         {/* v1.3.x: HotL Policies — budget boundary editor. */}
         <NavLink to="/hotl-policies" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('pane.hotl_policies.title')}

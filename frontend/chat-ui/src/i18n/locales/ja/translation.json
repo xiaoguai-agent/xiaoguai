@@ -4,6 +4,7 @@
     "dismiss_label": "閉じる",
     "learn_more_label": "詳細を見る",
     "banner_aria_label": "AI 透明性に関するお知らせ"
+  },
   "watch": {
     "badge_label": "アクティブなウォッチャー {{count}} 件",
     "badge_label_plural": "アクティブなウォッチャー {{count}} 件",

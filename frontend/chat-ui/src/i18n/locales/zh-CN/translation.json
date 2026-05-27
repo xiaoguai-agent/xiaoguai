@@ -4,6 +4,7 @@
     "dismiss_label": "关闭",
     "learn_more_label": "了解更多",
     "banner_aria_label": "AI 透明度说明"
+  },
   "watch": {
     "badge_label": "{{count}} 个活跃监听器",
     "badge_label_plural": "{{count}} 个活跃监听器",
