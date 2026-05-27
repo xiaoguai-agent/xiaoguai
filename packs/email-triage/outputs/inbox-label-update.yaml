@@ -29,7 +29,7 @@ actions:
     - "xiaoguai/P2"
     - "xiaoguai/P3"
     # Remove only the priority labels we might overwrite; do not remove class labels.
-    exclude_current: true    # skip removing the label we're about to add
+  exclude_current: true    # skip removing the label we're about to add
 
 # For newsletter and spam results from the router:
 route_overrides:

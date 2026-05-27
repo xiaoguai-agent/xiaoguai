@@ -28,7 +28,7 @@ normalize:
     model_name:
       any:
         - message.attributes.model_name
-        - protoPayload.resourceName
+        - source: protoPayload.resourceName
           # Extract model display name from Vertex resource path:
           # projects/.../models/<model_id>
           transform: vertex_resource_to_model_name
