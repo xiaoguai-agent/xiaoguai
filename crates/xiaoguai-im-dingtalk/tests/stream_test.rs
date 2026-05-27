@@ -99,7 +99,9 @@ async fn stream_connect_receive_ack_close() {
                 "text": {"content": "hello stream"}
             }).to_string()
         });
-        sink.send(Message::Text(frame.to_string().into())).await.unwrap();
+        sink.send(Message::Text(frame.to_string().into()))
+            .await
+            .unwrap();
 
         // Read the ack from the client.
         if let Some(Ok(Message::Text(ack_text))) = source.next().await {
@@ -286,7 +288,9 @@ async fn stream_system_disconnect_triggers_reconnect() {
             "headers": { "topic": "disconnect", "messageId": "sys-1", "contentType": "" },
             "data": ""
         });
-        sink.send(Message::Text(frame.to_string().into())).await.unwrap();
+        sink.send(Message::Text(frame.to_string().into()))
+            .await
+            .unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
         sink.close().await.ok();
         let _ = call_count_srv1;
