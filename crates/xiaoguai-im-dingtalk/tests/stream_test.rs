@@ -99,11 +99,11 @@ async fn stream_connect_receive_ack_close() {
                 "text": {"content": "hello stream"}
             }).to_string()
         });
-        sink.send(Message::Text(frame.to_string())).await.unwrap();
+        sink.send(Message::Text(frame.to_string().into())).await.unwrap();
 
         // Read the ack from the client.
         if let Some(Ok(Message::Text(ack_text))) = source.next().await {
-            let ack: serde_json::Value = serde_json::from_str(&ack_text).unwrap();
+            let ack: serde_json::Value = serde_json::from_str(ack_text.as_str()).unwrap();
             *captured_ack.lock() = Some(ack);
         }
 
@@ -205,7 +205,7 @@ async fn stream_ping_pong() {
         let (mut sink, mut source) = accept_ws(stream).await;
 
         // Send a PING with a known payload.
-        sink.send(Message::Ping(b"keepalive".to_vec()))
+        sink.send(Message::Ping(b"keepalive".to_vec().into()))
             .await
             .unwrap();
 
@@ -286,7 +286,7 @@ async fn stream_system_disconnect_triggers_reconnect() {
             "headers": { "topic": "disconnect", "messageId": "sys-1", "contentType": "" },
             "data": ""
         });
-        sink.send(Message::Text(frame.to_string())).await.unwrap();
+        sink.send(Message::Text(frame.to_string().into())).await.unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
         sink.close().await.ok();
         let _ = call_count_srv1;

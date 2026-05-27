@@ -178,7 +178,7 @@ where
                 "disconnect" => {
                     info!("socket_mode: disconnect frame, reconnecting");
                     let ack = json!({"envelope_id": frame.envelope_id});
-                    let _ = write.send(Message::Text(ack.to_string())).await;
+                    let _ = write.send(Message::Text(ack.to_string().into())).await;
                     tokio::time::sleep(RECONNECT_BACKOFF).await;
                     break;
                 }
@@ -186,7 +186,7 @@ where
                     // ACK immediately so Slack doesn't retry.
                     if let Some(ref eid) = frame.envelope_id {
                         let ack = json!({"envelope_id": eid});
-                        if let Err(e) = write.send(Message::Text(ack.to_string())).await {
+                        if let Err(e) = write.send(Message::Text(ack.to_string().into())).await {
                             error!("socket_mode: failed to ACK {eid}: {e}");
                         } else {
                             debug!(%eid, "socket_mode: ACK sent");
