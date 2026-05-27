@@ -559,6 +559,17 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         )),
         // v1.3.x: long-term memory — wire PgMemoryStore here once the
         // memory bridge crate lands; `None` makes /v1/memories return 503.
+        //
+        // TODO(ollama-embedder): when wiring PgMemoryStore, select the embedder
+        // based on OLLAMA_HOST: if set, use OllamaEmbedder::from_host(host) for
+        // air-gapped deployments; otherwise fall back to InMemoryEmbedder or
+        // OpenAIEmbedder. Example:
+        //   let embedder: Box<dyn EmbeddingProvider> =
+        //       if let Ok(host) = std::env::var("OLLAMA_HOST") {
+        //           Box::new(OllamaEmbedder::from_host(host))
+        //       } else {
+        //           Box::new(InMemoryEmbedder::default_dim())
+        //       };
         memory_store: None,
         // v1.3.x: workspace CRUD — production wires PgWorkspaceRepository
         // in workspace_bridge.rs; `None` makes /v1/workspaces return 503.

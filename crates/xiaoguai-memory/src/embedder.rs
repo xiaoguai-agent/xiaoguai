@@ -169,7 +169,212 @@ impl EmbeddingProvider for OpenAIEmbedder {
     }
 }
 
+// ─── OllamaEmbedder ──────────────────────────────────────────────────────────
+
+/// Embedder backed by a locally-running [Ollama](https://ollama.com) server.
+///
+/// Requires no API key. Designed for **air-gapped** deployments where an
+/// outbound call to OpenAI is not permitted.
+///
+/// ## Default model: `all-minilm`
+///
+/// `all-minilm` (sentence-transformers/all-MiniLM-L6-v2) produces **384-dimensional**
+/// vectors, which matches the `vector(384)` column in migration `0019_memories.sql`.
+/// Using a different model requires a schema migration to widen the column:
+///
+/// | Model               | Dimensions | Migration change needed |
+/// |---------------------|:----------:|------------------------|
+/// | `all-minilm`        | 384        | none (default)         |
+/// | `nomic-embed-text`  | 768        | alter `vector(768)`    |
+/// | `mxbai-embed-large` | 1024       | alter `vector(1024)`   |
+///
+/// ## Normalisation
+///
+/// The raw vector from Ollama is returned as-is (no L2-normalisation).
+/// pgvector's cosine distance operator (`<=>`) handles unit-normalisation
+/// internally, matching the behaviour of [`OpenAIEmbedder`].
+///
+/// ## Usage
+///
+/// ```no_run
+/// # #[cfg(feature = "ollama")]
+/// # {
+/// use xiaoguai_memory::OllamaEmbedder;
+/// // Defaults: model=all-minilm, dim=384
+/// let embedder = OllamaEmbedder::from_host("http://localhost:11434");
+/// # }
+/// ```
+///
+/// Install the model beforehand: `ollama pull all-minilm`
+#[cfg(feature = "ollama")]
+pub struct OllamaEmbedder {
+    base_url: String,
+    model: String,
+    dim: usize,
+    http: reqwest::Client,
+}
+
+#[cfg(feature = "ollama")]
+impl OllamaEmbedder {
+    /// Create an embedder pointing at `base_url` with an explicit `model` and
+    /// output `dim`.
+    ///
+    /// `base_url` must **not** include a trailing `/api/embeddings` path — only
+    /// the scheme + host + port (e.g. `"http://localhost:11434"`).
+    pub fn new(base_url: impl Into<String>, model: impl Into<String>, dim: usize) -> Self {
+        Self {
+            base_url: base_url.into(),
+            model: model.into(),
+            dim,
+            http: reqwest::Client::new(),
+        }
+    }
+
+    /// Convenience constructor using the `all-minilm` model at 384 dimensions.
+    ///
+    /// This matches the `vector(384)` column in migration `0019_memories.sql`
+    /// and requires no schema changes.
+    ///
+    /// Before first use run: `ollama pull all-minilm`
+    pub fn from_host(base_url: impl Into<String>) -> Self {
+        Self::new(base_url, "all-minilm", 384)
+    }
+}
+
+#[cfg(feature = "ollama")]
+#[async_trait]
+impl EmbeddingProvider for OllamaEmbedder {
+    async fn embed(&self, text: &str) -> MemoryResult<Vec<f32>> {
+        use crate::error::MemoryError;
+
+        let url = format!("{}/api/embeddings", self.base_url);
+        let body = serde_json::json!({
+            "model": self.model,
+            "prompt": text,
+        });
+
+        let resp = self.http.post(&url).json(&body).send().await.map_err(|e| {
+            MemoryError::Embedding(format!(
+                "Ollama HTTP request failed (is Ollama running at {}?): {}",
+                self.base_url, e
+            ))
+        })?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let detail = resp.text().await.unwrap_or_default();
+            return Err(MemoryError::Embedding(format!(
+                "Ollama returned HTTP {status} — check that the model is available \
+                 (`ollama pull {model}`). Detail: {detail}",
+                model = self.model,
+            )));
+        }
+
+        let payload: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| MemoryError::Embedding(format!("Ollama response parse error: {e}")))?;
+
+        let embedding = payload
+            .get("embedding")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                MemoryError::Embedding(
+                    "Ollama response missing `embedding` array — \
+                     verify that the model supports embeddings (`ollama pull all-minilm`)"
+                        .into(),
+                )
+            })?;
+
+        let vec: Vec<f32> = embedding
+            .iter()
+            .map(|v| v.as_f64().unwrap_or(0.0) as f32)
+            .collect();
+
+        Ok(vec)
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dim
+    }
+}
+
 // ─── LocalEmbedder stub ──────────────────────────────────────────────────────
+
+// ─── OllamaEmbedder tests ────────────────────────────────────────────────────
+
+#[cfg(all(test, feature = "ollama"))]
+mod ollama_tests {
+    use super::*;
+
+    /// Build a 384-element JSON array string for the mock response body.
+    fn mock_embedding_json() -> String {
+        let vals: Vec<String> = (0..384)
+            .map(|i| format!("{:.6}", 0.001_f64 * f64::from(i)))
+            .collect();
+        format!("{{\"embedding\":[{}]}}", vals.join(","))
+    }
+
+    #[tokio::test]
+    async fn embed_returns_384_floats() {
+        let mut server = mockito::Server::new_async().await;
+        let body = mock_embedding_json();
+
+        let _mock = server
+            .mock("POST", "/api/embeddings")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&body)
+            .create_async()
+            .await;
+
+        let embedder = OllamaEmbedder::from_host(server.url());
+        let result = embedder.embed("hello world").await;
+
+        assert!(result.is_ok(), "embed() returned error: {:?}", result.err());
+        let vec = result.unwrap();
+        assert_eq!(vec.len(), 384, "expected 384 floats, got {}", vec.len());
+        assert_eq!(embedder.dimensions(), 384);
+        // Spot-check a few values: index i → 0.001 * i (cast f64 → f32).
+        assert!((vec[0] - 0.0_f32).abs() < 1e-5);
+        assert!((vec[1] - 0.001_f32).abs() < 1e-4);
+        assert!((vec[10] - 0.010_f32).abs() < 1e-4);
+    }
+
+    #[tokio::test]
+    async fn embed_propagates_http_error() {
+        let mut server = mockito::Server::new_async().await;
+
+        let _mock = server
+            .mock("POST", "/api/embeddings")
+            .with_status(404)
+            .with_body(r#"{"error":"model not found"}"#)
+            .create_async()
+            .await;
+
+        let embedder = OllamaEmbedder::from_host(server.url());
+        let err = embedder.embed("test").await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("404"),
+            "error message should mention HTTP status, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn from_host_defaults() {
+        let embedder = OllamaEmbedder::from_host("http://localhost:11434");
+        assert_eq!(embedder.dimensions(), 384);
+        assert_eq!(embedder.model, "all-minilm");
+    }
+
+    #[tokio::test]
+    async fn new_custom_dim() {
+        let embedder = OllamaEmbedder::new("http://localhost:11434", "nomic-embed-text", 768);
+        assert_eq!(embedder.dimensions(), 768);
+        assert_eq!(embedder.model, "nomic-embed-text");
+    }
+}
 
 /// ONNX-based local embedder (feature-gated; trait stub only in this release).
 ///
