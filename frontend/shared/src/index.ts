@@ -463,6 +463,8 @@ export interface InstallSkillPackResponse {
   pack_id: string;
   name: string;
   activation_status: 'pending';
+}
+
 // ---- v1.3.x — HotL policy types -----------------------------------------
 
 /**
@@ -512,6 +514,8 @@ export interface HotlVerdict {
   verdict: HotlVerdictKind;
   /** Non-null on `escalate` and `deny`, describing which limit was hit. */
   reason: string | null;
+}
+
 // ---- v1.4 (planned) — Anomaly detector types ----------------------------
 // Mirrors the DetectorKind + AnomalySpec types in crates/xiaoguai-anomaly/src/spec.rs.
 // REST endpoints are PLANNED; the crate is currently a pure Rust library.
@@ -625,6 +629,8 @@ export interface AnomalyFireRateBucket {
   date: string;
   /** Number of detections on this date. */
   count: number;
+}
+
 // ---- v1.4.0 — Kanban board (task queue) ---------------------------------
 
 /**
@@ -690,13 +696,9 @@ export interface BlockTaskRequest {
 export interface CreateBoardRequest {
   name: string;
   description?: string | null;
-// ---- v1.3.x — HotL (Human-on-the-Loop) policy --------------------------
+}
 
-/**
- * The runtime verdict emitted by the HotL policy engine when evaluating
- * an agent action. Mirrors `xiaoguai_hotl::Verdict` in Rust.
- */
-export type HotlVerdict = 'Allow' | 'Deny' | 'Escalate';
+// ---- v1.3.x — HotL (Human-on-the-Loop) policy --------------------------
 
 /**
  * Marker injected into the agent event stream (as `type: 'hotl_pending'`)
@@ -759,6 +761,8 @@ export interface SessionOutcomesSummary {
     description: string | null;
     ts: string;
   }>;
+}
+
 // ---- v1.3.x — AI disclosure banner (EU AI Act Art. 50(1)) ---------------
 
 /**
@@ -824,6 +828,8 @@ export async function getAiDisclosureConfig(
   } catch {
     return AI_DISCLOSURE_CONFIG_DEFAULTS;
   }
+}
+
 // ---- v1.3.x — watch event indicators ------------------------------------
 
 /** Status values a watcher can be in. */
@@ -1157,6 +1163,8 @@ export class XiaoguaiClient {
    */
   installSkillPack(req: InstallSkillPackRequest): Promise<InstallSkillPackResponse> {
     return this.request<InstallSkillPackResponse>('POST', '/v1/skills/install', req);
+  }
+
   // ---- v1.4.0 Kanban board (task queue) ----------------------------------
 
   /** List all boards. `GET /v1/tasks/boards` */
@@ -1311,6 +1319,9 @@ export class XiaoguaiClient {
     return this.request<FindSimilarMemoriesResponse>(
       'GET',
       `/v1/memory/${encodeURIComponent(memoryId)}/similar${qs ? `?${qs}` : ''}`,
+    );
+  }
+
   /**
    * v1.3.x — session-scoped outcome summary polled by `RecentOutcomesPanel`.
    * Calls `GET /v1/outcomes/summary?session_id=<id>`.
@@ -1378,6 +1389,9 @@ export class XiaoguaiClient {
         if (parsed.message) message = parsed.message;
       } catch { /* body was not JSON */ }
       throw new ApiError(resp.status, code, message);
+    }
+  }
+
   // ---- v1.3.x Watch indicators -----------------------------------------
 
   /**
@@ -1420,6 +1434,8 @@ export class XiaoguaiClient {
     if (q.range) params.set('range', q.range);
     if (q.kind) params.set('kind', q.kind);
     return this.request<OutcomeRecord[]>('GET', `/v1/outcomes?${params.toString()}`);
+  }
+
   // ---- v1.4 (planned) — Anomaly detector endpoints -----------------------
   // NOTE: The REST endpoints /v1/anomaly/* are PLANNED but not yet
   // implemented in xiaoguai-api. The xiaoguai-anomaly crate exists as a
@@ -1485,6 +1501,9 @@ export class XiaoguaiClient {
     req: AnomalyFeedbackRequest,
   ): Promise<AnomalyFeedbackResponse> {
     return this.request<AnomalyFeedbackResponse>('POST', '/v1/anomaly/feedback', req);
+  }
+
+  /**
    * Pause a watcher by id. Returns silently when endpoint absent (404/503).
    */
   async pauseWatcher(watcherId: string): Promise<void> {

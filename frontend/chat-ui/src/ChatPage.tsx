@@ -37,6 +37,21 @@ const DEV_USER_ID = 'usr_dev';
 const DEV_TENANT_ID = 'ten_dev';
 const DEFAULT_MODEL = 'qwen2.5-coder';
 
+/** Opening prompts shown on the empty/welcome screen (Gemini-style chips). */
+const SUGGESTIONS = [
+  'Summarize a document for me',
+  'Write a shell script',
+  'Analyze the latest CVE feed',
+  'Explain how a codebase works',
+];
+
+/** Grow a textarea to fit its content, up to a cap, then scroll. */
+function autoGrow(ta: HTMLTextAreaElement | null) {
+  if (!ta) return;
+  ta.style.height = 'auto';
+  ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+}
+
 export function ChatPage({ onSessionCreated }: Props) {
   const { id: routeId } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -49,6 +64,7 @@ export function ChatPage({ onSessionCreated }: Props) {
   const [hotlPending, setHotlPending] = useState<HotlPendingState | null>(null);
   const abortRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // When the route changes (user clicks a different session), reload history.
   useEffect(() => {
@@ -70,8 +86,14 @@ export function ChatPage({ onSessionCreated }: Props) {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [bubbles]);
 
-  async function send() {
-    const text = draft.trim();
+  // Keep the composer textarea sized to its content as the draft changes
+  // (including when a suggestion chip or a send() clears it back to one row).
+  useEffect(() => {
+    autoGrow(textareaRef.current);
+  }, [draft]);
+
+  async function send(textOverride?: string) {
+    const text = (textOverride ?? draft).trim();
     if (!text || streaming) return;
 
     let sid = sessionId;
@@ -234,34 +256,96 @@ export function ChatPage({ onSessionCreated }: Props) {
         {/* HotlBanner placeholder — wired by feat/chat-ui-hotl-banner branch */}
         <WatchIndicator sessionId={sessionId} />
       </div>
-      <div className="messages" ref={scrollRef}>
-        {bubbles.map((b, i) => (
-          <Bubble key={i} bubble={b} onFork={fork} />
-        ))}
+      <div className={`messages${bubbles.length === 0 ? ' messages-empty' : ''}`} ref={scrollRef}>
+        {bubbles.length === 0 ? (
+          <div className="welcome">
+            <h1 className="welcome-title">Hi, I&apos;m Xiaoguai</h1>
+            <p className="welcome-subtitle">What can I help you with?</p>
+            <div className="welcome-chips">
+              {SUGGESTIONS.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  className="suggestion-chip"
+                  onClick={() => void send(prompt)}
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          bubbles.map((b, i) => <Bubble key={i} bubble={b} onFork={fork} />)
+        )}
       </div>
       {status && <div className="status">{status}</div>}
       <div className="composer">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-          placeholder="Message Xiaoguai..."
-          disabled={streaming}
-        />
-        {streaming ? (
-          <button onClick={cancel}>Cancel</button>
-        ) : (
-          <button onClick={() => void send()} disabled={!draft.trim()}>
-            Send
-          </button>
-        )}
+        <div className="composer-box">
+          <textarea
+            ref={textareaRef}
+            className="composer-input"
+            value={draft}
+            rows={1}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+            placeholder="Message Xiaoguai…"
+          />
+          {streaming ? (
+            <button
+              type="button"
+              className="composer-btn stop"
+              onClick={cancel}
+              aria-label="Stop generating"
+              title="Stop"
+            >
+              <StopIcon />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="composer-btn send"
+              onClick={() => void send()}
+              disabled={!draft.trim()}
+              aria-label="Send message"
+              title="Send"
+            >
+              <SendIcon />
+            </button>
+          )}
+        </div>
+        <div className="composer-hint">Shift+Enter for newline</div>
       </div>
     </>
+  );
+}
+
+/** Up-arrow send glyph (inline SVG — no icon dependency). */
+function SendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+      <path
+        d="M12 19V5M12 5l-6 6M12 5l6 6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Filled square stop glyph. */
+function StopIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+      <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+    </svg>
   );
 }
 

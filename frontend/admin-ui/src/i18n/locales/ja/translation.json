@@ -26,7 +26,6 @@
     "mcp_servers": "MCP サーバー",
     "marketplace": "MCP マーケット",
     "skill_packs": "スキルパック",
-    "audit": "監査ログ"
     "audit": "監査ログ",
     "memory": "記憶"
   },
@@ -259,6 +258,7 @@
       "agent_table_label": "エージェント別成果",
       "error_503": "成果バックエンドが利用できません（PgOutcomeRecorder が未接続です — Postgres DB に接続してください）。",
       "nav_outcomes": "成果"
+    },
     "hotl_policies": {
       "title": "HotL ポリシー",
       "btn_new": "+ 新しいポリシー",
@@ -274,6 +274,7 @@
       "unavailable_title": "ポリシーストアが利用できません。",
       "unavailable_body": "PgHotlPolicyStore がまだ接続されていません — API が 503 を返しました。Postgres なしの開発モードでは想定内です。ブリッジの状態を確認してください：",
       "unavailable_link": "ブリッジ状態 →"
+    },
     "anomaly": {
       "title": "異常検知ダッシュボード",
       "filters_aria": "異常検知フィルター",
@@ -316,6 +317,7 @@
       "sparkline_section_title": "14 日間の発火率",
       "sparkline_aria": "{{id}} の発火率スパークライン",
       "sparkline_label": "14 日間の発火率"
+    },
     "kanban": {
       "title": "カンバン",
       "board_label": "ボード",
@@ -357,6 +359,7 @@
       "modal_field_board": "ボード",
       "modal_btn_create": "作成",
       "modal_btn_cancel": "キャンセル"
+    },
     "memory": {
       "title": "記憶",
       "adr_label": "ADR-0019 · v1.4",
