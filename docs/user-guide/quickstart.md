@@ -77,16 +77,25 @@ same compose stack.
 ## What ships in the v1.0 compose stack
 
 - **xiaoguai-core** — REST + SSE API on :8080.
-  - In v1.0 the default LLM backend is `MockBackend` so the stack runs
-    self-contained. To use a real backend register a provider in PG via
-    `xiaoguai provider register ...` and restart core — provider
-    auto-selection on boot lands in v1.1.
+  - **Local-first by default**: the seeded `ollama-local` provider serves
+    `qwen2.5-coder`, so the agent talks to a **local** model on boot — no
+    cloud API key required. Start Ollama and pull the model:
+    `ollama pull qwen2.5-coder` (or, with Docker, uncomment the `ollama`
+    service in `deploy/docker-compose.yml` and
+    `docker compose exec ollama ollama pull qwen2.5-coder`).
+  - Point at a remote / GPU Ollama with the standard `OLLAMA_HOST` env var
+    (e.g. `OLLAMA_HOST=http://10.0.0.5:11434`) — no SQL change needed.
+  - Cloud providers (OpenAI / Anthropic / …) stay registered as fallbacks;
+    add more with `xiaoguai provider register ...`. If the providers table
+    is empty, core falls back to `MockBackend` so a bare stack still boots.
 - **postgres 16** — sessions / messages / mcp / providers / audit log.
 - **valkey 8** — cache + idempotency keys.
 
-Optional: uncomment the Ollama service in `deploy/docker-compose.yml`
-and `docker compose exec ollama ollama pull qwen2.5-coder` for a local
-LLM.
+**Air-gapped**: with local Ollama for chat (and a local embedding model),
+the stack needs no outbound internet. Note: Ollama-backed embeddings for the
+memory subsystem are a tracked follow-up — today the memory crate's only real
+embedder is OpenAI-backed, so memory/recall in a fully air-gapped deployment
+is pending that work.
 
 ## Next steps
 

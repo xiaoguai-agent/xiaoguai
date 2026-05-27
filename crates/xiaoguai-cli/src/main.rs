@@ -567,7 +567,8 @@ enum ProviderCmd {
     Register {
         #[arg(long)]
         name: String,
-        /// One of: `ollama`, `openai_compat`.
+        /// One of: `ollama`, `openai_compat`, `anthropic`, `gemini`, `bedrock`,
+        /// `azure_openai`, `mistral`, `groq`.
         #[arg(long)]
         kind: String,
         #[arg(long)]

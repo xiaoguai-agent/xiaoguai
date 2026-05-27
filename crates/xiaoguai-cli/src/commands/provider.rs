@@ -37,7 +37,8 @@ pub struct RegisterArgs {
 pub async fn register(repo: &dyn LlmProviderRepository, args: RegisterArgs) -> Result<LlmProvider> {
     let kind = ProviderKind::parse(&args.kind).ok_or_else(|| {
         anyhow!(
-            "unknown provider kind '{}': expected 'ollama' or 'openai_compat'",
+            "unknown provider kind '{}': expected one of 'ollama', 'openai_compat', \
+             'anthropic', 'gemini', 'bedrock', 'azure_openai', 'mistral', 'groq'",
             args.kind
         )
     })?;
