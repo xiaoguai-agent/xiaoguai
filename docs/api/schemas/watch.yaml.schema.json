@@ -2,35 +2,49 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://xiaoguai-agent.github.io/xiaoguai/schemas/watch.yaml.schema.json",
   "title": "WatchSpec",
-  "description": "Schema for WatchSpec — declarative watcher definition consumed by xiaoguai-watch. Grounded in crates/xiaoguai-watch/src/spec.rs.",
+  "description": "Schema for WatchSpec YAML files under packs/*/watches/. Accepts both the canonical Rust loader format (crates/xiaoguai-watch/src/spec.rs: id + source + schedule + on_match) and the extended operator format used by pre-F1 packs (name + source/query + schedule + event/downstream/dedup/trigger/etc).",
   "type": "object",
-  "required": ["id", "source", "on_match"],
   "additionalProperties": false,
   "properties": {
     "id": {
       "type": "string",
-      "description": "Unique watcher ID used as the dedup namespace. Must be stable across restarts (fingerprints are keyed by id + row_hash).",
+      "description": "Unique watcher ID (canonical Rust format). Used as the dedup namespace; must be stable across restarts.",
       "minLength": 1
     },
+    "name": {
+      "type": "string",
+      "description": "Human-readable watch name (extended operator format).",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "description": "Watch spec version string."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what this watch monitors."
+    },
+    "kind": {
+      "type": "string",
+      "description": "Watch kind discriminator (extended format, e.g. 'sql-poll', 'sql_watch', 'http-poll')."
+    },
     "source": {
-      "description": "Data source to poll. Exactly one of 'sql' or 'http' must be present.",
+      "description": "Data source to poll. Accepts the canonical Rust tagged-union form ({sql: {query}} or {http: {url}}) or the extended operator form ({kind: 'sql'|'http'|'webhook', ...}).",
       "oneOf": [
         {
           "type": "object",
           "required": ["sql"],
           "additionalProperties": false,
+          "description": "Canonical Rust SQL source.",
           "properties": {
             "sql": {
               "type": "object",
               "required": ["query"],
               "additionalProperties": false,
-              "description": "Poll a SQL SELECT; each result row is a potential match.",
               "properties": {
                 "query": {
                   "type": "string",
-                  "description": "SQL SELECT query. Must begin with SELECT (case-insensitive). Use $1, $2 for bind params.",
-                  "minLength": 1,
-                  "pattern": "(?i)^\\s*SELECT"
+                  "minLength": 1
                 }
               }
             }
@@ -40,56 +54,66 @@
           "type": "object",
           "required": ["http"],
           "additionalProperties": false,
+          "description": "Canonical Rust HTTP source.",
           "properties": {
             "http": {
               "type": "object",
               "required": ["url"],
               "additionalProperties": false,
-              "description": "Poll an HTTP endpoint; a JSONPath expression extracts match rows from the response.",
               "properties": {
-                "url": {
-                  "type": "string",
-                  "description": "Target URL to poll.",
-                  "minLength": 1,
-                  "format": "uri"
-                },
-                "jsonpath": {
-                  "type": "string",
-                  "description": "JSONPath expression selecting an array of objects from the JSON response. Defaults to '$[*]' (top-level array).",
-                  "default": "$[*]"
-                },
-                "method": {
-                  "type": "string",
-                  "description": "HTTP method. Defaults to 'GET'.",
-                  "enum": ["GET", "POST", "PUT", "PATCH"],
-                  "default": "GET"
-                }
+                "url": { "type": "string", "minLength": 1 },
+                "jsonpath": { "type": "string", "default": "$[*]" },
+                "method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH"], "default": "GET" }
               }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": true,
+          "description": "Extended operator source with 'kind' discriminator (sql, http, webhook, etc).",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "description": "Source type: 'sql', 'http', 'webhook', etc."
             }
           }
         }
       ]
     },
+    "query": {
+      "type": "string",
+      "description": "SQL query (extended operator format — top-level alternative to source.sql.query).",
+      "minLength": 1
+    },
     "schedule": {
-      "description": "Poll frequency. Defaults to a 60-second interval if omitted.",
+      "description": "Poll frequency. Accepts cron strings, interval objects, or the canonical Rust enum objects.",
       "oneOf": [
+        {
+          "type": "string",
+          "description": "Cron expression string (5-field standard cron, e.g. '0 6 * * *').",
+          "minLength": 1
+        },
         {
           "type": "object",
           "required": ["cron"],
           "additionalProperties": false,
-          "description": "ISO 8601 cron schedule (6-field: sec min h dom mon dow).",
+          "description": "Canonical Rust Cron schedule (6-field: sec min h dom mon dow) or extended operator cron (5-field).",
           "properties": {
             "cron": {
-              "type": "object",
-              "required": ["expr"],
-              "additionalProperties": false,
-              "properties": {
-                "expr": {
-                  "type": "string",
-                  "description": "6-field cron expression (seconds minute hour day-of-month month day-of-week).",
-                  "minLength": 1
+              "description": "Cron expression — either a string (5-field) or a {expr} object (6-field Rust canonical).",
+              "oneOf": [
+                { "type": "string", "minLength": 1 },
+                {
+                  "type": "object",
+                  "required": ["expr"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "expr": { "type": "string", "minLength": 1 }
+                  }
                 }
-              }
+              ]
             }
           }
         },
@@ -97,45 +121,352 @@
           "type": "object",
           "required": ["interval_secs"],
           "additionalProperties": false,
-          "description": "Fixed-interval polling schedule.",
+          "description": "Canonical Rust interval schedule.",
           "properties": {
             "interval_secs": {
               "type": "object",
               "required": ["secs"],
               "additionalProperties": false,
               "properties": {
-                "secs": {
-                  "type": "integer",
-                  "description": "Interval in seconds. Must be > 0.",
-                  "minimum": 1
-                }
+                "secs": { "type": "integer", "minimum": 1 }
               }
             }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["interval_seconds"],
+          "additionalProperties": false,
+          "description": "Extended operator interval_seconds form.",
+          "properties": {
+            "interval_seconds": { "type": "integer", "minimum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["interval_minutes"],
+          "additionalProperties": false,
+          "description": "Extended operator interval_minutes form (integer or template string).",
+          "properties": {
+            "interval_minutes": {
+              "oneOf": [
+                { "type": "integer", "minimum": 1 },
+                { "type": "string" }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["expression"],
+          "additionalProperties": true,
+          "description": "Extended operator expression form (may include timezone).",
+          "properties": {
+            "expression": { "type": "string", "minLength": 1 },
+            "timezone": { "type": "string" }
           }
         }
       ]
     },
     "on_match": {
       "type": "object",
-      "description": "Action to take when a new (non-deduplicated) match is found.",
+      "description": "Action to take when a new (non-deduplicated) match is found (canonical Rust format).",
       "required": ["action"],
       "additionalProperties": false,
       "properties": {
         "action": {
           "type": "string",
-          "description": "Logical action type dispatched by the caller (e.g. 'notify', 'create_task', 'webhook').",
+          "description": "Logical action type (e.g. 'notify', 'create_task', 'webhook').",
           "minLength": 1
         },
-        "target": {
-          "type": "string",
-          "description": "Arbitrary target string interpreted by the action handler (e.g. a channel name)."
-        },
-        "params": {
+        "target": { "type": "string" },
+        "params": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "trigger": {
+      "description": "Trigger condition or expression (extended operator format).",
+      "oneOf": [
+        { "type": "string" },
+        {
           "type": "object",
-          "description": "Extra key-value metadata forwarded verbatim in the WatchEvent.",
-          "additionalProperties": true
+          "additionalProperties": true,
+          "properties": {
+            "condition": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "triggers": {
+      "type": "array",
+      "description": "List of event names that trigger this watch.",
+      "items": { "type": "string" }
+    },
+    "event": {
+      "type": "object",
+      "description": "Event emitted per match (extended operator format).",
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "type": "string" },
+        "type": { "type": "string" },
+        "cardinality": { "type": "string", "enum": ["per_row", "aggregate", "once", "per_event", "per_model"] },
+        "payload_mapping": { "type": "object", "additionalProperties": true },
+        "fields": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "downstream": {
+      "type": "object",
+      "description": "Downstream routing — agents or handlers to invoke on match.",
+      "additionalProperties": true,
+      "properties": {
+        "agents": {
+          "type": "array",
+          "items": { "type": "string" }
         }
       }
+    },
+    "dispatch": {
+      "type": "array",
+      "description": "List of agents or handlers to dispatch on match (extended operator format).",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          { "type": "object", "additionalProperties": true }
+        ]
+      }
+    },
+    "dedup": {
+      "description": "Deduplication settings — prevents repeat alerts for the same event.",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "key": { "type": "string" },
+            "key_field": { "type": "string" },
+            "ttl_seconds": { "type": "integer", "minimum": 0 },
+            "cooldown_minutes": { "type": "integer", "minimum": 0 },
+            "re_fire_if": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "dedup_query": {
+      "type": "string",
+      "description": "SQL query to check for existing open signals before emitting a new event."
+    },
+    "on_error": {
+      "description": "Error handling configuration.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "object", "additionalProperties": true }
+      ]
+    },
+    "retry": {
+      "type": "object",
+      "description": "Retry configuration for transient failures.",
+      "additionalProperties": true,
+      "properties": {
+        "max_attempts": { "type": "integer", "minimum": 1 },
+        "backoff_seconds": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "rate_limit": {
+      "type": "object",
+      "description": "Rate limiting configuration.",
+      "additionalProperties": true
+    },
+    "upsert": {
+      "type": "object",
+      "description": "Upsert strategy for inserting matched rows into a database table.",
+      "additionalProperties": true
+    },
+    "post_upsert": {
+      "type": "object",
+      "description": "Actions to perform after upsert (e.g. enqueue for an agent).",
+      "additionalProperties": true
+    },
+    "post_query_sql": {
+      "type": "string",
+      "description": "SQL to execute after the main query (e.g. mark rows as processed)."
+    },
+    "post_trigger_sql": {
+      "type": "string",
+      "description": "SQL to execute after trigger fires."
+    },
+    "cursor": {
+      "type": "object",
+      "description": "Cursor state for incremental polling.",
+      "additionalProperties": true
+    },
+    "field_mapping": {
+      "type": "object",
+      "description": "Maps response fields to event payload fields.",
+      "additionalProperties": { "type": "string" }
+    },
+    "response_path": {
+      "type": "string",
+      "description": "JSONPath expression to extract the match array from the HTTP response."
+    },
+    "normalize": {
+      "type": "object",
+      "description": "Field normalisation mapping from raw source fields to the canonical schema.",
+      "additionalProperties": true
+    },
+    "platforms": {
+      "type": "object",
+      "description": "Per-platform polling configuration (e.g. for app-store polls).",
+      "additionalProperties": true
+    },
+    "channels": {
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Per-channel polling configuration (e.g. for media monitoring).",
+          "additionalProperties": true
+        },
+        {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      ]
+    },
+    "competitors": {
+      "description": "List of competitors to monitor.",
+      "oneOf": [
+        { "type": "array", "items": { "type": "string" } },
+        { "type": "object", "additionalProperties": true }
+      ]
+    },
+    "competitor_name_map": {
+      "description": "Mapping from competitor IDs to display names, or a template string (e.g. '${ASR_COMPETITOR_NAMES:-{}}').",
+      "oneOf": [
+        { "type": "object", "additionalProperties": { "type": "string" } },
+        { "type": "string" }
+      ]
+    },
+    "retention": {
+      "type": "object",
+      "description": "Data retention configuration.",
+      "additionalProperties": true
+    },
+    "interval": {
+      "description": "Poll interval (extended format).",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "integer", "minimum": 1 }
+      ]
+    },
+    "result_binding": {
+      "description": "How to bind query results to downstream variables.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "object", "additionalProperties": true }
+      ]
+    },
+    "outputs": {
+      "type": "array",
+      "description": "Output adapters to invoke on match.",
+      "items": { "type": "string" }
+    },
+    "agent_invoke": {
+      "description": "Agent invocation configuration for this watch — an agent path string or a config object.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "object", "additionalProperties": true }
+      ]
+    },
+    "message_template": {
+      "type": "string",
+      "description": "Jinja2 template for the notification message."
+    },
+    "event_schema": {
+      "type": "object",
+      "description": "Schema definition for emitted events.",
+      "additionalProperties": true
+    },
+    "crisis_routing": {
+      "type": "object",
+      "description": "Crisis escalation routing configuration.",
+      "additionalProperties": true
+    },
+    "window": {
+      "type": "object",
+      "description": "Time window configuration for aggregation-style watches.",
+      "additionalProperties": true
+    },
+    "text": {
+      "type": "object",
+      "description": "Text analysis configuration.",
+      "additionalProperties": true
+    },
+    "poll": {
+      "type": "object",
+      "description": "Polling configuration (used by exec-briefing style watches).",
+      "additionalProperties": true
+    },
+    "emits": {
+      "description": "Event types emitted by this watch.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } },
+        { "type": "object", "additionalProperties": true }
+      ]
+    },
+    "request": {
+      "type": "object",
+      "description": "HTTP request configuration (for HTTP-poll style watches).",
+      "additionalProperties": true
+    },
+    "response": {
+      "type": "object",
+      "description": "HTTP response parsing configuration.",
+      "additionalProperties": true
+    },
+    "parse": {
+      "type": "object",
+      "description": "Response parsing configuration.",
+      "additionalProperties": true
+    },
+    "categories": {
+      "description": "Categories to filter/watch.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "citation_delta_threshold": {
+      "description": "Minimum citation count change to trigger an event (integer or template string).",
+      "oneOf": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "string" }
+      ]
+    },
+    "resolution": {
+      "type": "object",
+      "description": "Resolution/recovery configuration.",
+      "additionalProperties": true
+    },
+    "persist": {
+      "type": "object",
+      "description": "State persistence configuration.",
+      "additionalProperties": true
+    },
+    "per_model_config_query": {
+      "type": "string",
+      "description": "SQL query to fetch per-model configuration."
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Default values for template variables.",
+      "additionalProperties": true
+    },
+    "notify": {
+      "description": "Notification configuration.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "object", "additionalProperties": true }
+      ]
     }
   },
   "examples": [
@@ -153,6 +484,15 @@
         "action": "notify",
         "target": "ops-channel"
       }
+    },
+    {
+      "name": "data-source-stale",
+      "version": "1.0.0",
+      "source": { "kind": "sql", "table": "esg_data_sources", "tenant_column": "tenant_id" },
+      "query": "SELECT id FROM esg_data_sources WHERE ...",
+      "schedule": { "cron": "0 8 * * *" },
+      "trigger": { "condition": "row_count > 0" },
+      "event": { "kind": "esg.data_source_stale", "cardinality": "per_row" }
     }
   ]
 }
