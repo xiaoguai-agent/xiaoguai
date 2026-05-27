@@ -24,7 +24,7 @@
 import { test, expect } from '@playwright/test';
 
 const CHAT_INPUT_SELECTOR = 'textarea[placeholder]';
-const SEND_BUTTON_SELECTOR = 'button:has-text("Send")';
+const SEND_BUTTON_SELECTOR = 'button[aria-label="Send message"]';
 const ASSISTANT_BUBBLE_SELECTOR = '.bubble';
 const STREAMING_BUBBLE_SELECTOR = '.bubble.streaming';
 const BRANCH_BUTTON_SELECTOR = 'button[aria-label="Branch from here"]';

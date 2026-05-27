@@ -26,7 +26,6 @@
     "mcp_servers": "MCP 服务器",
     "marketplace": "MCP 市场",
     "skill_packs": "Skill 包",
-    "audit": "审计日志"
     "audit": "审计日志",
     "memory": "记忆"
   },
@@ -259,6 +258,7 @@
       "agent_table_label": "各智能体成果",
       "error_503": "成果后端不可用（PgOutcomeRecorder 未接入——请连接 Postgres 数据库后重试）。",
       "nav_outcomes": "成果"
+    },
     "hotl_policies": {
       "title": "HotL 策略",
       "btn_new": "+ 新建策略",
@@ -274,6 +274,7 @@
       "unavailable_title": "策略存储不可用。",
       "unavailable_body": "PgHotlPolicyStore 尚未接入——API 返回了 503。在没有 Postgres 的开发模式下属正常情况。请查看桥接状态：",
       "unavailable_link": "桥接状态 →"
+    },
     "anomaly": {
       "title": "异常检测器",
       "filters_aria": "异常检测筛选条件",
@@ -316,6 +317,7 @@
       "sparkline_section_title": "14 天触发频率",
       "sparkline_aria": "{{id}} 的触发频率趋势图",
       "sparkline_label": "14 天触发频率"
+    },
     "kanban": {
       "title": "看板",
       "board_label": "看板",
@@ -357,6 +359,7 @@
       "modal_field_board": "看板",
       "modal_btn_create": "创建",
       "modal_btn_cancel": "取消"
+    },
     "memory": {
       "title": "记忆",
       "adr_label": "ADR-0019 · v1.4",
