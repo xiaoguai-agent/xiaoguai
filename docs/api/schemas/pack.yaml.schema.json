@@ -197,15 +197,6 @@
       "type": "array",
       "description": "Agent definition files included in this pack.",
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "path": { "type": "string", "description": "File path relative to pack root (used with bare 'path' key)." },
-          "ref":  { "type": "string", "description": "File path relative to pack root (used with 'ref' key)." }
-        },
-        "oneOf": [
-          { "required": ["path"] },
-          { "required": ["ref"] }
         "oneOf": [
           {
             "type": "string",
@@ -231,15 +222,6 @@
       "type": "array",
       "description": "Inbound event source definition files.",
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "path": { "type": "string" },
-          "ref":  { "type": "string" }
-        },
-        "oneOf": [
-          { "required": ["path"] },
-          { "required": ["ref"] }
         "oneOf": [
           {
             "type": "string",

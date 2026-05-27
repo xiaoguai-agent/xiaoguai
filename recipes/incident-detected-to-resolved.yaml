@@ -32,8 +32,6 @@ requires:
   packs:
     - devops-oncall: ">=0.1.0"
     - incident-triage: ">=0.1.0"
-    devops-oncall: ">=0.1.0"
-    incident-triage: ">=0.1.0"
   features:
     - hotl              # HotlPolicyStore + HotlEnforcer (migration 0011)
     - outcome-telemetry # OutcomeRecorder (migration 0012)
