@@ -13,12 +13,16 @@ use sqlx::PgPool;
 // We are loaded with `#[path = "sink.rs"] pub mod sink;` from `chain.rs`,
 // so the parent module is `chain` and re-exports live at `crate::chain::...`.
 use super::{AuditEntry, ChainError, ChainedAudit, StoredEntry, HMAC_LEN};
+// `Redactor` lives at the crate root (mod `redact`), not in the `chain` parent.
+use crate::Redactor;
 
 /// Postgres-backed append-only audit sink.
 #[derive(Clone)]
 pub struct PgAuditSink {
     pool: PgPool,
     chain: ChainedAudit,
+    /// Optional PII/secret redactor applied before signing. `None` = pass-through.
+    redactor: Option<Redactor>,
 }
 
 impl std::fmt::Debug for PgAuditSink {
@@ -26,17 +30,30 @@ impl std::fmt::Debug for PgAuditSink {
         f.debug_struct("PgAuditSink")
             .field("chain", &self.chain)
             .field("pool", &"PgPool { .. }")
+            .field("redactor", &self.redactor)
             .finish()
     }
 }
 
 impl PgAuditSink {
     /// Build a sink from a connection pool and HMAC signing key.
+    ///
+    /// No redaction is applied — use [`with_redactor`](Self::with_redactor) to
+    /// scrub PII/secrets before entries are signed.
     pub fn new(pool: PgPool, key: impl Into<Vec<u8>>) -> Self {
         Self {
             pool,
             chain: ChainedAudit::new(key),
+            redactor: None,
         }
+    }
+
+    /// Enable PII/secret redaction. The redactor runs on every entry before its
+    /// HMAC is computed, so the persisted row and its signature match.
+    #[must_use]
+    pub fn with_redactor(mut self, redactor: Redactor) -> Self {
+        self.redactor = Some(redactor);
+        self
     }
 
     /// Borrow the underlying chain engine — useful for offline verification
@@ -53,6 +70,13 @@ impl PgAuditSink {
     /// inside a single transaction so concurrent appends for the same tenant
     /// serialize correctly.
     pub async fn append(&self, entry: AuditEntry) -> Result<StoredEntry, ChainError> {
+        // Redact PII/secrets before signing so the stored row and its HMAC are
+        // both over the redacted form (keeps `verify_chain` valid).
+        let entry = match &self.redactor {
+            Some(r) => r.redact(entry),
+            None => entry,
+        };
+
         let mut tx = self.pool.begin().await?;
 
         let prev: Option<Vec<u8>> = sqlx::query_scalar::<_, Vec<u8>>(

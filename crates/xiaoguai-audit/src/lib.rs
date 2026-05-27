@@ -10,9 +10,11 @@
 
 pub mod chain;
 pub mod outcomes;
+pub mod redact;
 
 pub use chain::{AuditEntry, ChainError, ChainedAudit, StoredEntry};
 pub use outcomes::{
     timeseries, Aggregate, InMemoryOutcomeRecorder, OutcomeDay, OutcomeError, OutcomeKind,
     OutcomeRange, OutcomeRecord, OutcomeRecorder, OutcomeSummary,
 };
+pub use redact::{redact_str, Redactor};

@@ -26,4 +26,10 @@ ignore = [
     # notify (used by FileWatchSource). Low risk — instant is a thin
     # web-time shim. Track upstream notify migration.
     "RUSTSEC-2024-0384",
+
+    # proc-macro-error: unmaintained. Build-time only, pulled via
+    # age → i18n-embed-fl → proc-macro-error. It is a compile-time
+    # proc-macro and never ends up in the shipped runtime binary.
+    # Mirrors deny.toml ignore. Drop when `age` updates i18n-embed-fl.
+    "RUSTSEC-2024-0370",
 ]
