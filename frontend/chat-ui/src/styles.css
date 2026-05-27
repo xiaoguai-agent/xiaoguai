@@ -311,72 +311,172 @@ html,
 
 .composer {
   display: flex;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-7);
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-7) var(--space-5);
   border-top: 1px solid var(--border);
   background: var(--surface);
 }
 
-.composer > * {
-  /* Match the conversation column so the input lines up with the bubbles. */
+/* Rounded "pill" wrapping the textarea + the send/stop button. Width
+   matches the conversation column so it lines up with the bubbles. */
+.composer-box {
+  width: 100%;
   max-width: 720px;
-}
-
-.composer input {
-  flex: 1;
-  padding: var(--space-3) var(--space-4);
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  font: inherit;
-  font-size: 15px;
+  border-radius: var(--radius-xl);
   background: var(--surface);
-  color: var(--fg);
+  box-shadow: var(--shadow-sm);
   transition:
     border-color 120ms ease,
     box-shadow 120ms ease;
 }
 
-.composer input::placeholder {
-  color: var(--muted);
-}
-
-.composer input:focus {
-  outline: none;
+.composer-box:focus-within {
   border-color: var(--accent);
   box-shadow: var(--shadow-focus);
 }
 
-.composer input:disabled {
-  background: var(--border-soft);
-  color: var(--muted);
-  cursor: not-allowed;
+/* Auto-growing textarea (JS caps the height; CSS mirrors the cap). */
+.composer-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  resize: none;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--fg);
+  padding: var(--space-2) 0;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
-.composer button {
-  padding: var(--space-3) var(--space-5);
-  background: var(--accent);
-  color: var(--user-fg);
+.composer-input:focus {
+  outline: none;
+}
+
+.composer-input::placeholder {
+  color: var(--muted);
+}
+
+/* Circular icon button — accent for send, neutral for stop. */
+.composer-btn {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 50%;
   cursor: pointer;
-  font: inherit;
-  font-weight: 600;
+  color: var(--user-fg);
+  background: var(--accent);
   transition:
     background 120ms ease,
     transform 80ms ease;
 }
 
-.composer button:hover:not(:disabled) {
+.composer-btn:hover:not(:disabled) {
   background: var(--accent-hover);
 }
 
-.composer button:active:not(:disabled) {
-  transform: translateY(1px);
+.composer-btn:active:not(:disabled) {
+  transform: scale(0.94);
 }
 
-.composer button:disabled {
-  background: var(--muted);
+.composer-btn:disabled {
+  background: var(--border);
+  color: var(--muted);
   cursor: not-allowed;
+}
+
+.composer-btn.stop {
+  background: var(--fg-soft);
+}
+
+.composer-btn.stop:hover {
+  background: var(--fg);
+}
+
+.composer-hint {
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+
+/* ------------------------------------------------ welcome / empty state */
+
+/* With no messages yet, the conversation pane hosts a centered greeting +
+   suggestion chips (Gemini-style) instead of an empty void. */
+.messages-empty {
+  justify-content: center;
+  align-items: center;
+}
+
+.welcome {
+  max-width: 600px;
+  width: 100%;
+  margin: auto;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.welcome-title {
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+  margin: 0;
+}
+
+.welcome-subtitle {
+  font-size: 16px;
+  color: var(--muted);
+  margin: 0 0 var(--space-4);
+}
+
+.welcome-chips {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.suggestion-chip {
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--fg-soft);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    transform 80ms ease;
+}
+
+.suggestion-chip:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.suggestion-chip:active {
+  transform: translateY(1px);
 }
 
 /* ------------------------------------------------------------------ status */

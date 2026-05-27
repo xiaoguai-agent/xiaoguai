@@ -13,11 +13,8 @@ export default defineConfig({
     },
   },
   test: {
-    environment: 'happy-dom',
     environment: 'jsdom',
     globals: true,
-    globals: true,
-    environment: 'jsdom',
     setupFiles: ['./src/test-setup.ts'],
   },
 });
