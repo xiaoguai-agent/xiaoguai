@@ -235,7 +235,7 @@ impl StreamClient {
             match msg {
                 Message::Text(text) => {
                     debug!("dingtalk stream: frame text len={}", text.len());
-                    match serde_json::from_str::<StreamFrame>(&text) {
+                    match serde_json::from_str::<StreamFrame>(text.as_str()) {
                         Ok(frame) => {
                             let shutdown = self.handle_frame(frame, handler, &mut sink).await?;
                             if let Some(s) = shutdown {
@@ -293,7 +293,7 @@ impl StreamClient {
                 let data = reply.data.unwrap_or_else(|| "{}".to_string());
                 let ack = StreamAck::ok(frame.headers.message_id, data);
                 let ack_json = serde_json::to_string(&ack).context("serialise ack")?;
-                sink.send(Message::Text(ack_json))
+                sink.send(Message::Text(ack_json.into()))
                     .await
                     .map_err(|e| anyhow!("ws send ack: {e}"))?;
             }

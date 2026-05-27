@@ -75,16 +75,16 @@ hyper = "1.5"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 
 # gRPC
-tonic = { version = "0.12", features = ["transport", "tls", "tls-roots"] }
+tonic = { version = "0.14", features = ["transport", "tls", "tls-roots"] }
 tonic-build = "0.12"
-prost = "0.13"
+prost = "0.14"
 prost-build = "0.13"
 
 # database
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "macros", "uuid", "chrono", "json", "migrate"] }
 
 # valkey / redis-compatible client (valkey-rs once stable; for now redis crate works against valkey)
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "1.2", features = ["tokio-comp", "connection-manager"] }
 
 # auth / crypto
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
@@ -95,7 +95,7 @@ base64 = "0.22"
 hex = "0.4"
 hmac = "0.13"
 sha2 = "0.11"
-sha1 = "0.10"
+sha1 = "0.11"
 aes = "0.9"
 cbc = { version = "0.2", features = ["alloc", "block-padding"] }
 cipher = "0.5"
@@ -128,7 +128,7 @@ eventsource-stream = "0.2"
 rmcp = { version = "1.7", default-features = false, features = ["client", "transport-child-process", "transport-async-rw", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "reqwest", "macros"] }
 
 # scheduler
-cron = "0.12"
+cron = "0.16"
 notify = "8"
 notify-debouncer-full = "0.7"
 tempfile = "3"
@@ -146,7 +146,7 @@ tracing-opentelemetry = "0.33"
 
 # document loaders (RAG)
 pdf-extract = "0.10"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 scraper = "0.27"
 pulldown-cmark = { version = "0.13", default-features = false }
 
@@ -154,7 +154,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 moka = { version = "0.12", features = ["future"] }
 
 # rate limiting
-governor = "0.7"
+governor = "0.10"
 
 # template engine (Jinja2-compatible; used by pack skill templates)
 tera = "1.20"
@@ -169,7 +169,7 @@ mime = "0.3"
 regex = "1.11"
 
 # websocket (DingTalk Stream API)
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 
 # RAG backends

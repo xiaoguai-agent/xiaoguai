@@ -48,6 +48,10 @@ allow = [
     "OpenSSL",
     "BUSL-1.1",
     "CC0-1.0",
+    # Boost Software License 1.0 — OSI-approved, permissive (MIT-like, no
+    # copyleft). Pulled in by redis 1.x. NOT the BUSL-1.1 source-available
+    # license despite the similar abbreviation.
+    "BSL-1.0",
 ]
 confidence-threshold = 0.8
 
