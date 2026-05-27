@@ -7,12 +7,19 @@ Usage:
 
 Prints:
     PASS <path>
+    PASS (negative-test) <path>  — file is named invalid-* and correctly fails validation
     FAIL <path> | <json-path>: <message>
+    UNEXPECTED_PASS <path>       — file is named invalid-* but unexpectedly passed validation
 
 Exit codes:
-    0  all files valid
-    1  one or more validation errors
+    0  all files valid (positive fixtures pass; negative fixtures correctly fail)
+    1  one or more validation failures
     2  usage / dependency error
+
+Negative-test fixtures:
+    Files whose basename starts with "invalid-" are expected to fail validation.
+    If they fail (as expected), the run is reported as PASS (negative-test).
+    If they unexpectedly pass, the run is counted as a failure (UNEXPECTED_PASS).
 """
 
 from __future__ import annotations
@@ -79,13 +86,22 @@ def _check_business_rules(data: dict, path: str) -> list[str]:
     return errors
 
 
+def is_negative_fixture(file_path: str) -> bool:
+    """Return True if this file is an intentionally-invalid negative test fixture.
+
+    Convention: files whose basename starts with 'invalid-' are expected to
+    fail validation. Their failure is asserted (not counted as a CI error).
+    """
+    return Path(file_path).name.startswith("invalid-")
+
+
 def validate_file(file_path: str, schema: dict) -> list[str]:
     """
     Validate a single JSON file against the HotL policy schema.
 
     Returns a list of error strings. Empty list means the file is valid.
     """
-    from jsonschema import Draft202012Validator, ValidationError
+    from jsonschema import Draft202012Validator
     from jsonschema.exceptions import SchemaError
 
     path = str(file_path)
@@ -140,13 +156,26 @@ def main(argv: list[str]) -> int:
 
     for file_path in files:
         errors = validate_file(file_path, schema)
-        if errors:
-            for line in errors:
-                print(line)
-            total_fail += 1
+        negative = is_negative_fixture(file_path)
+
+        if negative:
+            if errors:
+                # Expected: negative fixture correctly fails validation. Good.
+                print(f"PASS (negative-test) {file_path}")
+                total_pass += 1
+            else:
+                # Unexpected: negative fixture passed validation — the schema
+                # may be too permissive. Treat as a failure.
+                print(f"UNEXPECTED_PASS {file_path} | negative fixture unexpectedly passed schema validation")
+                total_fail += 1
         else:
-            print(f"PASS {file_path}")
-            total_pass += 1
+            if errors:
+                for line in errors:
+                    print(line)
+                total_fail += 1
+            else:
+                print(f"PASS {file_path}")
+                total_pass += 1
 
     print(
         f"\nSummary: {total_pass} passed, {total_fail} failed",

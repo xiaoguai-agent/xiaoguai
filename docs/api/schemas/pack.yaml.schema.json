@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://xiaoguai-agent.github.io/xiaoguai/schemas/pack.yaml.schema.json",
   "title": "XiaoguaiPackManifest",
-  "description": "Schema for packs/*/pack.yaml — the operator-authored manifest that describes a Xiaoguai skill pack.",
+  "description": "Schema for packs/*/pack.yaml — the operator-authored manifest that describes a Xiaoguai skill pack. Ground truth: crates/xiaoguai-core/src/packs.rs (PackManifest). Extended fields for pre-F1/F2 operator usage are allowed via additionalProperties/patternProperties.",
   "type": "object",
   "required": ["name", "version", "description"],
   "additionalProperties": false,
@@ -78,56 +78,50 @@
         "llm": {
           "type": "boolean",
           "description": "Whether an LLM provider must be configured."
+        },
+        "outcome_telemetry": {
+          "description": "Whether outcome telemetry must be configured.",
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "string" }
+          ]
         }
       }
     },
     "depends": {
       "type": "object",
-      "description": "External package dependencies (used by incident-triage style manifests).",
-      "additionalProperties": false,
-      "properties": {
-        "xiaoguai-api": {
-          "type": "string",
-          "description": "Semver constraint on xiaoguai-api."
-        },
-        "llm": {
-          "oneOf": [
-            { "type": "string" },
-            { "type": "boolean" }
-          ],
-          "description": "LLM backend requirement: 'required' or true."
-        },
-        "im": {
-          "type": "object",
-          "description": "IM adapter requirement.",
-          "additionalProperties": false,
-          "properties": {
-            "any": {
-              "type": "array",
-              "items": { "type": "string" }
-            }
-          }
-        }
-      }
-    },
-    "dependencies": {
-      "type": "object",
-      "description": "Runtime crate/adapter dependencies (used by hr-onboarding style manifests).",
+      "description": "External package/subsystem dependencies. Keys are dependency names; values are version strings, booleans, or objects.",
       "additionalProperties": {
+        "description": "Dependency specification: a semver string, 'required', a boolean, or an object with version/optional/any keys.",
         "oneOf": [
+          { "type": "string" },
+          { "type": "boolean" },
           {
             "type": "object",
-            "required": ["crate"],
             "additionalProperties": true,
             "properties": {
-              "crate": { "type": "string", "description": "Rust crate name." },
-              "feature": { "type": "string", "description": "Cargo feature flag." },
-              "real": { "type": "boolean", "description": "Whether this uses a real (non-mocked) integration." },
-              "enabled_by": { "type": "string", "description": "Config expression that activates this dependency." },
+              "any": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "version": { "type": "string" },
+              "optional": { "type": "boolean" },
+              "stub_when_absent": { "type": "boolean" },
+              "real": { "type": "boolean" },
+              "enabled_by": { "type": "string" },
               "note": { "type": "string" }
             }
           }
         ]
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "Runtime crate/adapter dependencies (used by hr-onboarding/research-paper-survey style manifests).",
+      "additionalProperties": {
+        "description": "Dependency entry: any object form (crate-based, required/note, or freeform).",
+        "type": "object",
+        "additionalProperties": true
       }
     },
     "external_systems": {
@@ -155,42 +149,73 @@
     },
     "migrations": {
       "type": "array",
-      "description": "Ordered list of SQL migration files applied on 'xiaoguai pack install'.",
+      "description": "Ordered list of SQL migration files applied on 'xiaoguai pack install'. Items may be bare path strings (shorthand) or {path} objects.",
       "items": {
-        "type": "object",
-        "required": ["path"],
-        "additionalProperties": false,
-        "properties": {
-          "path": {
+        "oneOf": [
+          {
             "type": "string",
-            "description": "Path to the migration SQL file, relative to the pack root.",
-            "pattern": ".*\\.sql$"
+            "minLength": 1,
+            "description": "Bare file path (shorthand), relative to pack root."
+          },
+          {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Path to the migration SQL file, relative to the pack root.",
+                "pattern": ".*\\.sql$"
+              }
+            }
           }
-        }
+        ]
       }
     },
     "watches": {
       "type": "array",
-      "description": "WatchSpec YAML files to register into the watch registry on pack load.",
+      "description": "WatchSpec YAML files to register into the watch registry on pack load. Items may be bare path strings, {path} objects, or {ref} objects.",
       "items": {
-        "type": "object",
-        "required": ["path"],
-        "additionalProperties": false,
-        "properties": {
-          "path": { "type": "string" }
-        }
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bare file path (shorthand), relative to pack root."
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" },
+              "ref":  { "type": "string" }
+            },
+            "oneOf": [
+              { "required": ["path"] },
+              { "required": ["ref"] }
+            ]
+          }
+        ]
       }
     },
     "anomalies": {
       "type": "array",
-      "description": "AnomalySpec YAML files to register into the anomaly registry on pack load.",
+      "description": "AnomalySpec YAML files to register into the anomaly registry on pack load. Items may be bare path strings or {path} objects.",
       "items": {
-        "type": "object",
-        "required": ["path"],
-        "additionalProperties": false,
-        "properties": {
-          "path": { "type": "string" }
-        }
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bare file path (shorthand), relative to pack root."
+          },
+          {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" }
+            }
+          }
+        ]
       }
     },
     "agents": {
@@ -245,8 +270,24 @@
     },
     "sources": {
       "type": "array",
-      "description": "Webhook / event source file paths (path-string form used by incident-triage).",
-      "items": { "type": "string", "minLength": 1 }
+      "description": "Webhook / event source file paths. Items may be bare path strings or {path} objects.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bare file path (shorthand), relative to pack root."
+          },
+          {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" }
+            }
+          }
+        ]
+      }
     },
     "outputs": {
       "type": "array",
@@ -271,8 +312,23 @@
     },
     "templates": {
       "type": "array",
-      "description": "Template files referenced by agents or outputs.",
-      "items": { "type": "string" }
+      "description": "Template files referenced by agents or outputs. Items may be bare path strings or {path} objects.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Bare file path (shorthand), relative to pack root."
+          },
+          {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" }
+            }
+          }
+        ]
+      }
     },
     "plan": {
       "type": "array",
@@ -307,7 +363,68 @@
           "condition": {
             "type": "string",
             "description": "Jinja2/template expression; step only runs when this evaluates truthy."
+          },
+          "trigger": {
+            "type": "string",
+            "description": "Trigger type for this step (e.g. 'watch')."
+          },
+          "watch_event": {
+            "type": "string",
+            "description": "Watch event name that triggers this step."
+          },
+          "triggers": {
+            "type": "array",
+            "description": "List of event names that trigger this step.",
+            "items": { "type": "string" }
+          },
+          "parallel": {
+            "type": "boolean",
+            "description": "If true, this step runs concurrently with its predecessor(s)."
           }
+        }
+      }
+    },
+    "plans": {
+      "type": "object",
+      "description": "Named execution plans (used by knowledge-base-curator, security-audit style packs). Keys are plan names; values are plan step arrays.",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id"],
+              "additionalProperties": true,
+              "properties": {
+                "id": { "type": "string" },
+                "agent": { "type": "string" },
+                "output": { "type": "string" },
+                "description": { "type": "string" },
+                "deps": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": true
+          }
+        ]
+      }
+    },
+    "schedules": {
+      "type": "object",
+      "description": "Named schedule definitions (used by exec-briefing style packs).",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "cron": { "type": "string" },
+          "briefing_type": { "type": "string" },
+          "recipients": { "type": "string" },
+          "template": { "type": "string" }
         }
       }
     },
@@ -409,6 +526,101 @@
     "prompts_dir": {
       "type": "string",
       "description": "Path to the prompts directory, relative to the pack root."
+    },
+    "hotl": {
+      "type": "object",
+      "description": "Human-on-the-Loop (HotL) configuration for gated transitions and approvers.",
+      "additionalProperties": true
+    },
+    "reg_fd_policy": {
+      "type": "object",
+      "description": "Regulation FD (Fair Disclosure) policy configuration for investor-relations packs.",
+      "additionalProperties": true
+    },
+    "pii_redact": {
+      "type": "object",
+      "description": "PII redaction configuration — controls what fields are masked in audit logs.",
+      "additionalProperties": true
+    },
+    "tenant_scope": {
+      "type": "string",
+      "description": "Tenant isolation scope for this pack (e.g. 'per-user', 'multi-tenant')."
+    },
+    "env": {
+      "type": "object",
+      "description": "Environment variable declarations (required/optional map form).",
+      "additionalProperties": true,
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "optional": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "peer_packs": {
+      "type": "object",
+      "description": "Peer pack references — other packs this pack calls into or delegates to.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "role": { "type": "string" }
+        }
+      }
+    },
+    "caveats": {
+      "type": "object",
+      "description": "Known limitations and caveats for this pack, for operator awareness.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "summary": { "type": "string" }
+        }
+      }
+    }
+  },
+  "patternProperties": {
+    "^plan_[a-z][a-z0-9_]*$": {
+      "description": "Named plan variant (e.g. plan_daily, plan_weekly, plan_nps). May be a step array or an object with trigger+steps.",
+      "oneOf": [
+        {
+          "type": "array",
+          "description": "Flat step list.",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "additionalProperties": true,
+            "properties": {
+              "id": { "type": "string" },
+              "agent": { "type": "string" },
+              "output": { "type": "string" },
+              "description": { "type": "string" },
+              "deps": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "condition": { "type": "string" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Named plan with trigger and steps list.",
+          "additionalProperties": true,
+          "properties": {
+            "trigger": {},
+            "steps": {
+              "type": "array",
+              "items": { "type": "object", "additionalProperties": true }
+            }
+          }
+        }
+      ]
     }
   }
 }
