@@ -53,6 +53,9 @@ pub use types::{Memory, MemoryKind, RecallTrace};
 #[cfg(feature = "openai")]
 pub use embedder::OpenAIEmbedder;
 
+#[cfg(feature = "ollama")]
+pub use embedder::OllamaEmbedder;
+
 #[cfg(feature = "pg")]
 pub use pg::PgMemoryStore;
 
