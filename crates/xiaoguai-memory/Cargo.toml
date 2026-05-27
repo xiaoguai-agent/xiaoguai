@@ -19,6 +19,9 @@ pg = ["sqlx"]
 openai = ["async-openai"]
 # local: ONNX-based local embedder (future; trait stub only).
 local = []
+# ollama: OllamaEmbedder — calls a local Ollama server (no API key required).
+# Suitable for air-gapped environments. Default model: all-minilm (384 dims).
+ollama = ["dep:reqwest"]
 
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
@@ -40,8 +43,12 @@ sqlx = { workspace = true, optional = true }
 # openai feature: embedding via OpenAI API.
 async-openai = { workspace = true, optional = true }
 
+# ollama feature: HTTP client for the local Ollama embedding API.
+reqwest = { workspace = true, optional = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+mockito = { workspace = true }
 
 [lints]
 workspace = true
