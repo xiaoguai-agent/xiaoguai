@@ -42,6 +42,9 @@ tokio = { workspace = true }
 # misc
 once_cell = { workspace = true }
 
+# shared PII redaction primitive (leaf crate — no dependency cycle)
+xiaoguai-types = { path = "../xiaoguai-types" }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # In-memory OTLP exporter for span assertions

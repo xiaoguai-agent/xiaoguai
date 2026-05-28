@@ -7802,7 +7802,6 @@ dependencies = [
  "chrono",
  "hmac 0.13.0",
  "proptest",
- "regex",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -8243,6 +8242,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "xiaoguai-types",
 ]
 
 [[package]]
@@ -8406,6 +8406,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "insta",
+ "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

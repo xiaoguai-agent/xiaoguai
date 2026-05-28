@@ -1,9 +1,12 @@
 //! PII / secret redaction for audit entries.
 //!
-//! Scrubs personally-identifiable and sensitive substrings — email addresses,
-//! `IPv4` addresses, `Bearer` tokens, and AWS access-key ids — from an
-//! [`AuditEntry`] **before** it is HMAC-signed. Because the persisted row and
-//! its signature are both computed over the redacted form,
+//! Wraps the shared [`xiaoguai_types::redact_str`] primitive (email, `IPv4`,
+//! `Bearer` token, and AWS access-key scrubbing) with audit-specific logic:
+//! recursing into a JSON `details` payload and producing a redacted
+//! [`AuditEntry`].
+//!
+//! Redaction runs **before** an entry is HMAC-signed, so the persisted row and
+//! its signature are both computed over the redacted form and
 //! [`ChainedAudit::verify_chain`](crate::ChainedAudit::verify_chain) stays valid.
 //!
 //! Redaction is *immutable*: [`Redactor::redact`] returns a new [`AuditEntry`];
@@ -16,40 +19,10 @@
 //! Only `actor`, `resource`, and string values nested inside `details` are
 //! scrubbed (JSON object keys are preserved so structure is intact).
 
-use std::sync::LazyLock;
-
-use regex::Regex;
 use serde_json::Value;
+use xiaoguai_types::redact_str;
 
 use crate::AuditEntry;
-
-const PLACEHOLDER_EMAIL: &str = "[redacted-email]";
-const PLACEHOLDER_IP: &str = "[redacted-ip]";
-const PLACEHOLDER_TOKEN: &str = "[redacted-token]";
-
-// Patterns are conservative — tuned to minimise false positives on audit data.
-static EMAIL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}").unwrap());
-static IPV4: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b(?:\d{1,3}\.){3}\d{1,3}\b").unwrap());
-// `Bearer <token>` (case-insensitive) — keeps the scheme word, drops the token.
-static BEARER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)bearer\s+[A-Za-z0-9._\-]+").unwrap());
-// AWS access-key id.
-static AWS_KEY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"AKIA[0-9A-Z]{16}").unwrap());
-
-/// Replace every PII/secret span in `input` with its placeholder.
-///
-/// Patterns are applied in a fixed order; `Bearer`/key tokens first so a
-/// generic match can't shadow the scheme prefix we want to keep.
-#[must_use]
-pub fn redact_str(input: &str) -> String {
-    let s = BEARER.replace_all(input, format!("Bearer {PLACEHOLDER_TOKEN}").as_str());
-    let s = AWS_KEY.replace_all(&s, PLACEHOLDER_TOKEN);
-    let s = EMAIL.replace_all(&s, PLACEHOLDER_EMAIL);
-    let s = IPV4.replace_all(&s, PLACEHOLDER_IP);
-    s.into_owned()
-}
 
 /// Recursively redact every string *value* in a JSON document. Object keys and
 /// non-string scalars are left untouched.
@@ -96,47 +69,10 @@ impl Redactor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{redact_json, Redactor};
+    use crate::AuditEntry;
     use chrono::Utc;
     use serde_json::json;
-
-    #[test]
-    fn redacts_email() {
-        assert_eq!(
-            redact_str("contact alice@example.com now"),
-            "contact [redacted-email] now"
-        );
-    }
-
-    #[test]
-    fn redacts_ipv4() {
-        assert_eq!(
-            redact_str("from 10.0.1.5 inbound"),
-            "from [redacted-ip] inbound"
-        );
-    }
-
-    #[test]
-    fn redacts_bearer_keeps_scheme() {
-        assert_eq!(
-            redact_str("Authorization: Bearer abc.DEF-123"),
-            "Authorization: Bearer [redacted-token]"
-        );
-    }
-
-    #[test]
-    fn redacts_aws_key() {
-        assert_eq!(
-            redact_str("key AKIAIOSFODNN7EXAMPLE end"),
-            "key [redacted-token] end"
-        );
-    }
-
-    #[test]
-    fn leaves_clean_text_unchanged() {
-        let clean = "session.create for project alpha";
-        assert_eq!(redact_str(clean), clean);
-    }
 
     #[test]
     fn redacts_nested_json_values_not_keys() {

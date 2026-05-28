@@ -32,6 +32,7 @@
 pub mod instrument;
 pub mod otlp;
 pub mod prometheus;
+pub mod redact;
 
 pub use otlp::{init_otlp, shutdown_tracer};
 pub use prometheus::{
@@ -39,6 +40,7 @@ pub use prometheus::{
     init_prometheus, mount_metrics, outcomes_chain_depth, outcomes_recorded_total,
     rate_limit_hits_total, watch_wakeups_total, MetricHandles,
 };
+pub use redact::RedactingSpanExporter;
 
 use anyhow::Result;
 use axum::Router;

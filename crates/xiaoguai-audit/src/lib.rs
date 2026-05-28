@@ -17,4 +17,6 @@ pub use outcomes::{
     timeseries, Aggregate, InMemoryOutcomeRecorder, OutcomeDay, OutcomeError, OutcomeKind,
     OutcomeRange, OutcomeRecord, OutcomeRecorder, OutcomeSummary,
 };
-pub use redact::{redact_str, Redactor};
+pub use redact::Redactor;
+// Re-exported from the leaf crate so `xiaoguai_audit::redact_str` stays stable.
+pub use xiaoguai_types::redact_str;
