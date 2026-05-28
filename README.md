@@ -43,6 +43,26 @@ That's a full stack — `xiaoguai-core` on `:8080`, Postgres 16, Valkey
 For the chat UI, real LLM providers, MCP server registration, and the
 admin console, see [`docs/user-guide/quickstart.md`](docs/user-guide/quickstart.md).
 
+### Install pre-built binaries
+
+| Platform | Command |
+|---|---|
+| Container (any Linux) | `docker pull ghcr.io/xiaoguai-agent/xiaoguai:latest` |
+| Debian / Ubuntu (amd64) | Download `xiaoguai_*.deb` from the [latest release](https://github.com/xiaoguai-agent/xiaoguai/releases/latest) and `sudo dpkg -i xiaoguai_*.deb` |
+| RHEL / Fedora (amd64) | Download `xiaoguai-*.rpm` from the same release and `sudo rpm -i xiaoguai-*.rpm` |
+| Linux tarball (amd64 / arm64, glibc 2.31+) | Download `xiaoguai-*-linux-gnu.tar.xz`, extract, and place `xiaoguai` on `$PATH` |
+| Build from source | `cargo install --path crates/xiaoguai-cli --locked` |
+
+> **macOS (Homebrew tap) and Windows (PowerShell installer) are tracked
+> in [Plan B](docs/plans/2026-05-28-release-packaging.md) — landing via
+> `cargo-dist` in the next release pass.** Until then, build from source
+> on those platforms.
+
+After install, the canonical entrypoint is `xiaoguai serve`. The
+`xiaoguai-core` shim from earlier versions still works (the .deb wires
+it in for systemd backward-compat) but new operators should reach for
+the unified CLI.
+
 ## Kubernetes observability (optional)
 
 An optional Helm sub-chart at `deploy/helm/xiaoguai-observability/` bundles

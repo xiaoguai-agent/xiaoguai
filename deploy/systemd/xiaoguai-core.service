@@ -40,7 +40,15 @@ Environment="RUST_LOG=info,sqlx=warn"
 # Operators set XIAOGUAI_* env vars in a drop-in:
 #   /etc/systemd/system/xiaoguai-core.service.d/override.conf
 # Or edit /etc/xiaoguai/config.yaml directly.
-ExecStart=/usr/local/bin/xiaoguai-core serve --config /etc/xiaoguai/config.yaml
+#
+# v1.4.x: canonical entrypoint is `xiaoguai serve` (the unified binary
+# from PR #59 — Tier-1a). The `xiaoguai-core` shim still ships in the
+# .deb for backward-compat with sites that haven't redeployed the unit,
+# but new installs should reach the binary via this unit which now uses
+# the unified CLI. Unit filename and User= are kept unchanged so any
+# existing systemd drop-ins at /etc/systemd/system/xiaoguai-core.service.d/
+# continue to apply.
+ExecStart=/usr/local/bin/xiaoguai serve --config /etc/xiaoguai/config.yaml
 
 Restart=on-failure
 RestartSec=5s
