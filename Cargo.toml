@@ -8,6 +8,7 @@ members = [
     "crates/xiaoguai-auth",
     "crates/xiaoguai-llm",
     "crates/xiaoguai-mcp",
+    "crates/xiaoguai-mcp-exec",
     "crates/xiaoguai-rag",
     "crates/xiaoguai-scheduler",
     "crates/xiaoguai-runtime",
