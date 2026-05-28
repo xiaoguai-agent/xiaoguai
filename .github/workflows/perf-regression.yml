@@ -14,12 +14,13 @@ name: Performance Regression
 # docs/perf-budget-wave3.
 
 on:
-  pull_request:
-    paths:
-      - 'crates/**'
-      - 'tests/k6/**'
-  schedule:
-    - cron: '0 6 * * *'  # daily 06:00 UTC
+  # 2026-05-29: triggers were `pull_request` (on crates/** or tests/k6/**) +
+  # daily cron, but the workflow has been failing/incomplete for weeks and
+  # generates noise on every PR. Demoted to workflow_dispatch-only until
+  # someone fixes the perf-budget regression detection. Re-add the PR + cron
+  # triggers once the workflow is healthy again. Tracking: T10 of the
+  # 2026-05-29 next-sprint plan.
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
