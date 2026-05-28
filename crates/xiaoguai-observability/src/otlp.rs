@@ -57,6 +57,11 @@ pub fn build_tracer_provider() -> Result<SdkTracerProvider> {
         .build()
         .context("build OTLP span exporter")?;
 
+    // Decorate the exporter so PII in span attributes is scrubbed just before
+    // export (on by default; see `redact`). Wrapping the exporter — rather than
+    // adding a SpanProcessor — is the only hook that reaches the exported data.
+    let exporter = crate::redact::RedactingSpanExporter::new(exporter);
+
     // 0.32: the batch span processor runs on a dedicated background thread,
     // so with_batch_exporter no longer takes a runtime argument.
     let provider = SdkTracerProvider::builder()

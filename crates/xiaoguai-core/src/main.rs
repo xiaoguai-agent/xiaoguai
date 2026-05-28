@@ -18,6 +18,7 @@
 mod audit_bridge;
 mod eval_bridge;
 pub mod hotl_bridge;
+mod memory_bridge;
 pub mod outcomes_bridge;
 #[cfg(feature = "packs")]
 pub mod packs;
@@ -368,7 +369,18 @@ async fn run_serve(settings: &Settings) -> Result<()> {
             &settings.audit.signing_key_env,
         ) {
             Ok(key) if !key.is_empty() => {
-                let sink = Arc::new(PgAuditSink::new(pool.clone(), key.into_bytes()));
+                let mut sink = PgAuditSink::new(pool.clone(), key.into_bytes());
+                if audit_redaction_enabled() {
+                    sink = sink.with_redactor(xiaoguai_audit::Redactor::new());
+                    tracing::info!(
+                        "serve: audit PII redaction ENABLED (XIAOGUAI_AUDIT_REDACT_PII)"
+                    );
+                } else {
+                    tracing::warn!(
+                        "serve: audit PII redaction DISABLED via XIAOGUAI_AUDIT_REDACT_PII"
+                    );
+                }
+                let sink = Arc::new(sink);
                 Arc::new(crate::scheduler_bridge::PgSchedulerAuditAppender::new(sink))
             }
             _ => {
@@ -557,20 +569,9 @@ async fn run_serve(settings: &Settings) -> Result<()> {
         skill_packs: Some(crate::skills_bridge::PgSkillPackRepository::arc(
             pool.clone(),
         )),
-        // v1.3.x: long-term memory — wire PgMemoryStore here once the
-        // memory bridge crate lands; `None` makes /v1/memories return 503.
-        //
-        // TODO(ollama-embedder): when wiring PgMemoryStore, select the embedder
-        // based on OLLAMA_HOST: if set, use OllamaEmbedder::from_host(host) for
-        // air-gapped deployments; otherwise fall back to InMemoryEmbedder or
-        // OpenAIEmbedder. Example:
-        //   let embedder: Box<dyn EmbeddingProvider> =
-        //       if let Ok(host) = std::env::var("OLLAMA_HOST") {
-        //           Box::new(OllamaEmbedder::from_host(host))
-        //       } else {
-        //           Box::new(InMemoryEmbedder::default_dim())
-        //       };
-        memory_store: None,
+        // v1.3.x: long-term memory — PgMemoryStore with the embedder selected by
+        // `OLLAMA_HOST` (air-gapped Ollama vs in-process). Makes /v1/memories live.
+        memory_store: Some(crate::memory_bridge::build_memory_store(pool.clone())),
         // v1.3.x: workspace CRUD — production wires PgWorkspaceRepository
         // in workspace_bridge.rs; `None` makes /v1/workspaces return 503.
         workspace_repository: None,
@@ -940,6 +941,20 @@ async fn build_authz(settings: &Settings) -> Result<Option<std::sync::Arc<xiaogu
         .context("load casbin policy")?;
     tracing::info!("serve: Casbin authz loaded");
     Ok(Some(Arc::new(authz)))
+}
+
+/// Whether to scrub PII/secrets from audit entries before signing.
+///
+/// On by default (the enterprise privacy posture); set
+/// `XIAOGUAI_AUDIT_REDACT_PII` to `false`/`0`/`no`/`off` to disable.
+fn audit_redaction_enabled() -> bool {
+    match std::env::var("XIAOGUAI_AUDIT_REDACT_PII") {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "false" | "0" | "no" | "off"
+        ),
+        Err(_) => true,
+    }
 }
 
 /// v0.11.2 — assemble the `EvalService` so the admin pane can run

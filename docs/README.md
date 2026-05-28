@@ -25,6 +25,7 @@ Start here to deploy, run, and maintain xiaoguai in production.
 | Disaster recovery | [runbooks/disaster-recovery-wave3.md](runbooks/disaster-recovery-wave3.md) `[branch: docs/dr-playbook-wave3]` |
 | Multi-region failover | [runbooks/multi-region-failover.md](runbooks/multi-region-failover.md) `[branch: docs/multi-region-failover]` |
 | Per-environment setup | [runbooks/per-env-setup.md](runbooks/per-env-setup.md) `[branch: docs/per-env-setup]` |
+| Air-gapped memory + audit PII redaction | [runbooks/local-memory-and-redaction.md](runbooks/local-memory-and-redaction.md) `[branch: feat/local-memory-and-pii-redaction]` |
 | Compliance posture | See [Compliance table](#compliance-mappings) below |
 | Observability queries | [runbooks/observability.md](runbooks/observability.md) + Loki/Tempo query refs `[branch: docs/loki-queries-wave3, docs/tempo-queries-wave3]` |
 
@@ -186,6 +187,7 @@ See the [Runbooks table](#runbooks).
 | [disaster-recovery-wave3.md](runbooks/disaster-recovery-wave3.md) | Full DR playbook | `[branch: docs/dr-playbook-wave3]` |
 | [multi-region-failover.md](runbooks/multi-region-failover.md) | Multi-region failover | `[branch: docs/multi-region-failover]` |
 | [per-env-setup.md](runbooks/per-env-setup.md) | Per-environment setup | `[branch: docs/per-env-setup]` |
+| [local-memory-and-redaction.md](runbooks/local-memory-and-redaction.md) | Air-gapped memory (`OLLAMA_HOST`) + audit PII redaction | `[branch: feat/local-memory-and-pii-redaction]` |
 
 ### Compliance Mappings
 
