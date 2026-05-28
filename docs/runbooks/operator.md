@@ -414,7 +414,11 @@ doesn't match the recomputed value.** The two common causes:
    audit chain is **append-only by design**; never `DELETE` or
    `UPDATE` rows in `audit_log`. If you need to redact a row,
    replace its `details` with a tombstone via a follow-up entry and
-   leave the original in place.
+   leave the original in place. To prevent PII from reaching the chain
+   in the first place, audit entries are scrubbed (emails, IPv4,
+   `Bearer` tokens, AWS keys) **before** signing — see
+   [`local-memory-and-redaction.md`](local-memory-and-redaction.md) §3
+   (`XIAOGUAI_AUDIT_REDACT_PII`, on by default).
 2. **HMAC key rotation without the verification window.** See the
    "Rotating the audit HMAC key" section above. During the 30-day
    window the verifier accepts entries signed by either key; cut the

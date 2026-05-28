@@ -10,9 +10,13 @@
 
 pub mod chain;
 pub mod outcomes;
+pub mod redact;
 
 pub use chain::{AuditEntry, ChainError, ChainedAudit, StoredEntry};
 pub use outcomes::{
     timeseries, Aggregate, InMemoryOutcomeRecorder, OutcomeDay, OutcomeError, OutcomeKind,
     OutcomeRange, OutcomeRecord, OutcomeRecorder, OutcomeSummary,
 };
+pub use redact::Redactor;
+// Re-exported from the leaf crate so `xiaoguai_audit::redact_str` stays stable.
+pub use xiaoguai_types::redact_str;
