@@ -24,6 +24,11 @@ xiaoguai-eval = { path = "../xiaoguai-eval" }
 xiaoguai-storage = { path = "../xiaoguai-storage" }
 xiaoguai-config = { path = "../xiaoguai-config" }
 xiaoguai-audit = { path = "../xiaoguai-audit" }
+# v1.5: unified binary — `xiaoguai serve` delegates into xiaoguai-core's
+# library entry point (the legacy `xiaoguai-core` binary remains a thin shim
+# over the same function, for backward compatibility with existing systemd
+# units and packaging).
+xiaoguai-core = { path = "../xiaoguai-core" }
 sqlx = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }

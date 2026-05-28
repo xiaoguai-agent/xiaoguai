@@ -14,8 +14,8 @@
 //!
 //! ## Usage
 //!
-//! ```no_run
-//! // After all subsystems are ready:
+//! ```ignore
+//! // After all subsystems are ready (called from xiaoguai_core::run_serve):
 //! sd_notify_bridge::notify_ready();
 //!
 //! // Spawn the watchdog ticker (holds the JoinHandle until shutdown):
