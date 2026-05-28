@@ -59,6 +59,9 @@ parking_lot = { workspace = true }
 tempfile = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
+age = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 serde_json = { workspace = true }
 mockito = { workspace = true }
 xiaoguai-api = { path = "../xiaoguai-api" }
