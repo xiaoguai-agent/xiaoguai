@@ -31,6 +31,7 @@ pub mod mock;
 pub mod ollama;
 pub mod openai_compat;
 pub mod router;
+pub mod token_count;
 pub mod types;
 pub mod usage;
 
@@ -47,6 +48,7 @@ pub use mock::MockBackend;
 pub use ollama::OllamaBackend;
 pub use openai_compat::OpenAiCompatBackend;
 pub use router::{LlmRouter, ResolveCtx, RouterConfig};
+pub use token_count::{estimate_message_tokens, estimate_tokens};
 pub use types::{
     ChatChunk, ChatRequest, FinishReason, Message, Role, ToolCallSpec, ToolChoice, ToolSpec,
 };
