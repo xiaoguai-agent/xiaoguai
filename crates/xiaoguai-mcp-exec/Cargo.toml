@@ -1,0 +1,38 @@
+[package]
+name = "xiaoguai-mcp-exec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Sandboxed code-execution MCP server for xiaoguai. Spawns short-lived Python subprocesses behind ulimit + tokio timeout; gating belongs upstream in the agent loop (see HotlGate)."
+
+[lib]
+name = "xiaoguai_mcp_exec"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xiaoguai-mcp-exec"
+path = "src/main.rs"
+
+[dependencies]
+xiaoguai-types = { path = "../xiaoguai-types" }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+clap = { workspace = true }
+rmcp = { workspace = true, features = ["server", "transport-io"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true
