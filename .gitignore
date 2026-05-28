@@ -62,3 +62,6 @@ models/
 
 # Agent worktrees (transient; created by Claude Code isolation runs)
 .claude/worktrees/
+
+# Local-only dev tuning (incremental=false to avoid 211G target blowout, see ci-gotchas)
+.cargo/config.toml
