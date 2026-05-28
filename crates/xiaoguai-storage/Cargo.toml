@@ -13,6 +13,7 @@ xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-config = { path = "../xiaoguai-config" }
 sqlx = { workspace = true }
 redis = { workspace = true }
+dashmap = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
