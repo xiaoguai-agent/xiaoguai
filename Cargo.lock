@@ -8367,6 +8367,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "dashmap 6.2.1",
  "redis",
  "serde",
  "serde_json",
