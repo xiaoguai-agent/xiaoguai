@@ -29,6 +29,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Run the long-lived API server (was the `xiaoguai-core` binary).
+    ///
+    /// Reads the same YAML config as `xiaoguai-core` and the same
+    /// `DATABASE_URL` / `XIAOGUAI_AUDIT_SIGNING_KEY` / `OLLAMA_HOST`
+    /// environment. The legacy `xiaoguai-core` binary is now a thin shim
+    /// over the same library entry point.
+    Serve,
+
+    /// Bootstrap-time round-trip check (PG + cache + JWT + RBAC + audit).
+    ///
+    /// Exits 0 on success, non-zero on any subsystem failure. Useful as
+    /// a systemd `ExecStartPre=` or container healthcheck.
+    Smoke,
+
     /// Send a one-shot prompt to the agent and print the response.
     Chat {
         /// User prompt.
@@ -1309,6 +1323,16 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = cli.config.as_deref();
     match cli.command {
+        Cmd::Serve => {
+            let settings = xiaoguai_core::load_settings(cfg.map(std::path::Path::new))
+                .context("load settings for serve")?;
+            xiaoguai_core::run_serve(&settings).await
+        }
+        Cmd::Smoke => {
+            let settings = xiaoguai_core::load_settings(cfg.map(std::path::Path::new))
+                .context("load settings for smoke")?;
+            xiaoguai_core::run_smoke(&settings).await
+        }
         Cmd::Chat {
             prompt,
             mock,

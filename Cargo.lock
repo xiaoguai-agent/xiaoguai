@@ -7871,6 +7871,7 @@ dependencies = [
  "xiaoguai-api",
  "xiaoguai-audit",
  "xiaoguai-config",
+ "xiaoguai-core",
  "xiaoguai-eval",
  "xiaoguai-llm",
  "xiaoguai-mcp",

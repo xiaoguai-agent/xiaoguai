@@ -8,6 +8,10 @@ authors.workspace = true
 repository.workspace = true
 description = "Xiaoguai core binary — wires api + agent + mcp + llm + storage + auth + audit."
 
+[lib]
+name = "xiaoguai_core"
+path = "src/lib.rs"
+
 [[bin]]
 name = "xiaoguai-core"
 path = "src/main.rs"
