@@ -22,9 +22,12 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+parking_lot = { workspace = true }
+async-trait = { workspace = true }
 
 [lints]
 workspace = true

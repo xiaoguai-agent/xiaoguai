@@ -42,6 +42,7 @@ use xiaoguai_mcp::McpError;
 
 use crate::event::{AgentEvent, StopReason};
 use crate::history::slide;
+use crate::hotl_gate::{HotlGateVerdict, SharedHotlGate};
 use crate::toolbox::Toolbox;
 
 #[derive(Debug, Clone)]
@@ -58,6 +59,18 @@ pub struct AgentConfig {
     /// `LlmRouter` underneath the backend can pick per-tenant defaults
     /// + fallback chains. `None` = system default routing (legacy path).
     pub tenant_id: Option<String>,
+    /// Tier-2 prereq: optional HOTL budget gate consulted before every
+    /// tool dispatch. `None` (the default) preserves legacy behaviour —
+    /// all tools execute unconditionally. When `Some`, the loop calls
+    /// [`crate::hotl_gate::HotlGate::check`] with
+    /// `scope = format!("tool_call.{tool_name}")` per call; a `Deny`
+    /// verdict suppresses the dispatch and reports the reason back to
+    /// the model as a synthetic tool failure.
+    ///
+    /// `Option<None>` (no enforcer wired) ≠ enforcer infra error: the
+    /// latter is folded into `Deny` by the adapter living in
+    /// `xiaoguai-core::hotl_bridge::EnforcerGate`.
+    pub hotl_gate: Option<SharedHotlGate>,
 }
 
 impl AgentConfig {
@@ -69,7 +82,16 @@ impl AgentConfig {
             temperature: Some(0.2),
             model: model.into(),
             tenant_id: None,
+            hotl_gate: None,
         }
+    }
+
+    /// Builder-style attach for the HOTL gate. Chains nicely with
+    /// `AgentConfig::new(model)`.
+    #[must_use]
+    pub fn with_hotl_gate(mut self, gate: SharedHotlGate) -> Self {
+        self.hotl_gate = Some(gate);
+        self
     }
 }
 
@@ -286,7 +308,14 @@ async fn run_inner(
             return Ok(finish_with(&tx, StopReason::Cancelled, messages, iteration + 1).await);
         }
 
-        let results = dispatch_tools(&toolbox, &turn.tool_calls, &tx).await;
+        let results = dispatch_tools(
+            &toolbox,
+            &turn.tool_calls,
+            config.hotl_gate.as_ref(),
+            config.tenant_id.as_deref(),
+            &tx,
+        )
+        .await;
         for (call, tr) in turn.tool_calls.iter().zip(results.into_iter()) {
             messages.push(tool_message_for(call, &tr));
         }
@@ -307,6 +336,8 @@ struct ToolDispatchOutcome {
 async fn dispatch_tools(
     toolbox: &Toolbox,
     calls: &[ToolCallSpec],
+    hotl_gate: Option<&SharedHotlGate>,
+    tenant_id: Option<&str>,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> Vec<ToolDispatchOutcome> {
     // Pre-emit started events in the same order we'll dispatch.
@@ -323,14 +354,43 @@ async fn dispatch_tools(
         .await;
     }
 
+    // Pre-resolve tenant Uuid once; if the agent has no tenant scope (or
+    // it does not parse as a Uuid), the gate is skipped — there's no
+    // policy bucket to charge against. This matches the upstream
+    // `send_message` HOTL check semantics.
+    let tenant_uuid = tenant_id.and_then(|s| uuid::Uuid::parse_str(s).ok());
+
     // Build per-call futures. Each future captures its `ToolCallSpec` so the
     // result row stays addressable by id when we zip with the original list.
+    //
+    // Tier-2 prereq: each future consults the HOTL gate **before** invoking
+    // the MCP client. The check happens inside the per-call future so
+    // parallel dispatch still produces one budget event per tool call (NOT
+    // one for the batch). On `Deny`, we short-circuit to a failed
+    // `ToolDispatchOutcome` carrying the reason — the LLM observes the
+    // denial via the `Role::Tool` message and can adapt.
     let futs = calls.iter().map(|call| {
         let entry = toolbox.get(&call.name);
         let id = call.id.clone();
         let name = call.name.clone();
         let args_json = call.arguments_json.clone();
+        let gate = hotl_gate.cloned();
         async move {
+            // 1. HOTL pre-check. None gate (or absent tenant) → bypass.
+            if let (Some(gate), Some(tid)) = (gate.as_ref(), tenant_uuid) {
+                let scope = format!("tool_call.{name}");
+                let verdict = gate.check(tid, &scope, 1.0).await;
+                if let HotlGateVerdict::Deny(reason) = verdict {
+                    let outcome = ToolDispatchOutcome {
+                        ok: false,
+                        output_text: String::new(),
+                        error: Some(format!("HOTL gate denied tool '{name}': {reason}")),
+                    };
+                    return (id, name, outcome);
+                }
+            }
+
+            // 2. Dispatch the tool (existing behaviour).
             let outcome = match entry {
                 None => ToolDispatchOutcome {
                     ok: false,

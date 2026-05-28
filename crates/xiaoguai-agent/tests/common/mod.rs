@@ -9,7 +9,11 @@ use serde_json::{json, Value as JsonValue};
 use xiaoguai_mcp::{McpClient, McpResult, ServerInfo, ToolDescriptor, ToolResult};
 
 /// One scripted tool response.
+///
+/// `dead_code` is allowed because integration tests live in separate
+/// compilation units — a per-target check may only see one variant used.
 #[derive(Clone)]
+#[allow(dead_code)]
 pub enum ToolResponse {
     Ok(String),
     Err(String),

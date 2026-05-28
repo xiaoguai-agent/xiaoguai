@@ -315,7 +315,25 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // audit-first console can drill into transcripts) and the
     // `PgScheduledJobUpserter` into AppState for `POST /v1/admin/scheduler/jobs`.
     let toolbox = Arc::new(Toolbox::new());
-    let agent_defaults = AgentConfig::new(default_model.clone());
+
+    // Tier-2 prereq: build the HOTL enforcer once, share between
+    // `AppState.hotl_enforcer` (gating LLM calls upstream in
+    // `send_message`) and `agent_defaults.hotl_gate` (gating each tool
+    // dispatch inside the ReAct loop). The enforcer is fail-closed on PG
+    // errors; `EnforcerGate` maps that into a per-tool `Deny` verdict.
+    //
+    // Sharing one PG-backed enforcer means the budget counter is unified:
+    // a tenant that's burned its `tool_call.*` budget can still call the
+    // LLM (different scope), and vice versa.
+    let hotl_policy_store_pg = Arc::new(crate::hotl_bridge::PgHotlPolicyStore::new(pool.clone()));
+    let hotl_enforcer_arc: Arc<dyn xiaoguai_api::hotl::enforcer::HotlEnforcer> = Arc::new(
+        crate::hotl_bridge::PgHotlEnforcer::new(pool.clone(), hotl_policy_store_pg.clone()),
+    );
+    let hotl_gate: Arc<dyn xiaoguai_agent::HotlGate> =
+        crate::hotl_bridge::EnforcerGate::arc(hotl_enforcer_arc.clone());
+
+    let agent_defaults = AgentConfig::new(default_model.clone()).with_hotl_gate(hotl_gate.clone());
+    tracing::info!("serve: agent ReAct loop wired with HOTL gate (scope = tool_call.<name>)");
     // Build these once so both the executor session writer and the
     // upserter on AppState see the same PG handles.
     let pg_session_repo: Arc<dyn xiaoguai_storage::repositories::SessionRepository> =
@@ -551,20 +569,14 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         scheduler_jobs_reader,
         rate_limit_state: Some(RateLimitState::in_memory(RateClass::Standard)),
         // v1.2.3: HOTL boundary policy — PgHotlPolicyStore + PgHotlEnforcer
-        // wired here (migration 0011 provides both tables). We build one
-        // PgHotlPolicyStore and share it between the CRUD handle and the
-        // enforcer so both see the same pool.
-        hotl_policy_store: Some({
-            let store: Arc<dyn xiaoguai_api::hotl::policy::HotlPolicyStore> =
-                Arc::new(crate::hotl_bridge::PgHotlPolicyStore::new(pool.clone()));
-            store
-        }),
-        hotl_enforcer: Some({
-            let store = Arc::new(crate::hotl_bridge::PgHotlPolicyStore::new(pool.clone()));
-            let enforcer: Arc<dyn xiaoguai_api::hotl::enforcer::HotlEnforcer> =
-                Arc::new(crate::hotl_bridge::PgHotlEnforcer::new(pool.clone(), store));
-            enforcer
-        }),
+        // wired here (migration 0011 provides both tables). One store +
+        // one enforcer is shared between the CRUD handle, the
+        // `send_message` LLM-call gate (api crate), and the in-loop
+        // per-tool gate (agent crate, threaded via `agent_defaults`).
+        hotl_policy_store: Some(
+            hotl_policy_store_pg.clone() as Arc<dyn xiaoguai_api::hotl::policy::HotlPolicyStore>
+        ),
+        hotl_enforcer: Some(hotl_enforcer_arc.clone()),
         // v1.2.4: outcome telemetry — PgOutcomesBackend implements both
         // writer and reader; construct once and coerce to each trait object.
         outcome_writer: Some({

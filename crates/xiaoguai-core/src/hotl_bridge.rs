@@ -299,6 +299,101 @@ impl HotlEnforcer for PgHotlEnforcer {
     }
 }
 
+// ── HotlGate adapter (Tier-2 prereq) ─────────────────────────────────────────
+//
+// `xiaoguai-agent::HotlGate` is the abstract trait the ReAct loop consults
+// before each tool dispatch. It deliberately lives in `xiaoguai-agent` (not
+// `xiaoguai-api`) to avoid the `api → agent → api` dep cycle. `EnforcerGate`
+// bridges the full `HotlEnforcer` (api crate) into the minimal `HotlGate`
+// surface the loop needs.
+//
+// Mapping rules:
+//   * `Allow`               → `HotlGateVerdict::Allow`
+//   * `Escalate(reason)`    → `HotlGateVerdict::Allow` + `tracing::warn`
+//                             (the policy author explicitly chose async human
+//                             review over blocking; the loop must proceed)
+//   * `Deny(reason)`        → `HotlGateVerdict::Deny(reason)`
+//   * Enforcer infra error  → `HotlGateVerdict::Deny("…")` + `tracing::error`
+//                             (fail-closed — matches the upstream
+//                              `send_message` contract)
+
+/// Adapter that lets the full `HotlEnforcer` plug into the agent's
+/// `HotlGate` slot. Construct in `run_serve` once, share via `Arc`.
+///
+/// `HotlEnforcer` does not require `Debug`, so we implement it manually
+/// (with an opaque payload) to satisfy the `HotlGate: Debug` super-bound.
+#[derive(Clone)]
+pub struct EnforcerGate {
+    inner: Arc<dyn HotlEnforcer>,
+}
+
+impl std::fmt::Debug for EnforcerGate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnforcerGate")
+            .field("inner", &"Arc<dyn HotlEnforcer>")
+            .finish()
+    }
+}
+
+impl EnforcerGate {
+    #[must_use]
+    pub fn new(inner: Arc<dyn HotlEnforcer>) -> Self {
+        Self { inner }
+    }
+
+    /// Box-and-Arc helper so callers don't have to repeat the dyn coercion.
+    #[must_use]
+    pub fn arc(inner: Arc<dyn HotlEnforcer>) -> Arc<dyn xiaoguai_agent::HotlGate> {
+        Arc::new(Self::new(inner))
+    }
+}
+
+#[async_trait]
+impl xiaoguai_agent::HotlGate for EnforcerGate {
+    async fn check(
+        &self,
+        tenant_id: Uuid,
+        scope: &str,
+        amount: f64,
+    ) -> xiaoguai_agent::HotlGateVerdict {
+        match self.inner.check(tenant_id, scope, amount).await {
+            Ok(HotlVerdict::Allow) => xiaoguai_agent::HotlGateVerdict::Allow,
+            Ok(HotlVerdict::Escalate(reason)) => {
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    %scope,
+                    %reason,
+                    "HOTL gate escalation — proceeding with tool dispatch"
+                );
+                xiaoguai_agent::HotlGateVerdict::Allow
+            }
+            Ok(HotlVerdict::Deny(reason)) => {
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    %scope,
+                    %reason,
+                    "HOTL gate denied tool dispatch"
+                );
+                xiaoguai_agent::HotlGateVerdict::Deny(reason)
+            }
+            Err(e) => {
+                // Fail-closed: enforcer-itself errored. Distinct from
+                // "no enforcer wired" (Option<None>), which never reaches
+                // this adapter.
+                tracing::error!(
+                    tenant_id = %tenant_id,
+                    %scope,
+                    error = %e,
+                    "HOTL gate enforcer error — fail-closed deny"
+                );
+                xiaoguai_agent::HotlGateVerdict::Deny(format!(
+                    "HOTL enforcer infrastructure error (fail-closed): {e}"
+                ))
+            }
+        }
+    }
+}
+
 fn build_reason(policy: &HotlPolicy, count: usize, sum: f64) -> String {
     let mut parts = Vec::new();
     if let Some(max) = policy.max_count {
