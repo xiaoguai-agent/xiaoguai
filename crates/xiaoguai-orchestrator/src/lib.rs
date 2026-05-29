@@ -30,6 +30,12 @@ pub mod plan;
 pub mod planner;
 pub mod registry;
 pub mod supervisor;
+/// v1.6+ planner/worker/critic triangle (DEC-021, sprint-9). The
+/// types here intentionally do NOT collide with the v1.4 `budget`,
+/// `plan`, or `challenger::Verdict` — they live under
+/// `xiaoguai_orchestrator::triangle::*`. See `lld-orchestrator.md`
+/// §4.4–4.7.
+pub mod triangle;
 pub mod worker;
 pub mod worker_handle;
 
