@@ -36,7 +36,8 @@ pub mod redact;
 
 pub use otlp::{init_otlp, shutdown_tracer};
 pub use prometheus::{
-    anomaly_detections_total, hotl_check_duration, hotl_usage_total, im_messages_total,
+    anomaly_detections_total, compaction_fallback_total, compaction_token_savings,
+    compaction_triggered_total, hotl_check_duration, hotl_usage_total, im_messages_total,
     init_prometheus, mount_metrics, outcomes_chain_depth, outcomes_recorded_total,
     rate_limit_hits_total, watch_wakeups_total, MetricHandles,
 };

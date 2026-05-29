@@ -77,6 +77,14 @@ pub struct MetricHandles {
     pub watch_wakeups_total: IntCounterVec,
     /// IM gateway messages: `(adapter, direction)`.
     pub im_messages_total: IntCounterVec,
+
+    // ── v0.5.4.1 history-compaction metrics ─────────────────────────────────
+    /// Agent history compaction triggers: `(reason)`.
+    pub compaction_triggered_total: IntCounterVec,
+    /// Agent history compaction fallbacks (slide instead of summary): `(reason)`.
+    pub compaction_fallback_total: IntCounterVec,
+    /// Tokens saved per compaction event (before - after).
+    pub compaction_token_savings: Histogram,
 }
 
 /// Initialise the Prometheus registry.
@@ -207,6 +215,32 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     )
     .context("register im_messages_total")?;
 
+    // v0.5.4.1 compaction metrics.
+    let compaction_triggered_total = register_int_counter_vec_with_registry!(
+        "compaction_triggered_total",
+        "Agent history compaction triggers, labelled by reason (threshold|manual)",
+        &["reason"],
+        registry
+    )
+    .context("register compaction_triggered_total")?;
+
+    let compaction_fallback_total = register_int_counter_vec_with_registry!(
+        "compaction_fallback_total",
+        "Agent compaction fell back to slide (summary unavailable), labelled by reason",
+        &["reason"],
+        registry
+    )
+    .context("register compaction_fallback_total")?;
+
+    let compaction_token_savings = register_histogram_with_registry!(
+        "compaction_token_savings",
+        "Tokens saved per compaction event (before_estimate - after_estimate)",
+        // Coarse buckets — compaction events are infrequent.
+        vec![100.0, 500.0, 1_000.0, 5_000.0, 10_000.0, 30_000.0, 60_000.0],
+        registry
+    )
+    .context("register compaction_token_savings")?;
+
     let handles = MetricHandles {
         http_request_duration,
         llm_call_duration,
@@ -219,6 +253,9 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
         anomaly_detections_total,
         watch_wakeups_total,
         im_messages_total,
+        compaction_triggered_total,
+        compaction_fallback_total,
+        compaction_token_savings,
     };
 
     // Store globally so macros can look them up without threading the
@@ -312,6 +349,21 @@ pub fn watch_wakeups_total() -> Option<&'static IntCounterVec> {
 /// Counter: `xiaoguai_im_messages_total{adapter, direction}`.
 pub fn im_messages_total() -> Option<&'static IntCounterVec> {
     HANDLES.get().map(|h| &h.im_messages_total)
+}
+
+/// Counter: `xiaoguai_compaction_triggered_total{reason}`.
+pub fn compaction_triggered_total() -> Option<&'static IntCounterVec> {
+    HANDLES.get().map(|h| &h.compaction_triggered_total)
+}
+
+/// Counter: `xiaoguai_compaction_fallback_total{reason}`.
+pub fn compaction_fallback_total() -> Option<&'static IntCounterVec> {
+    HANDLES.get().map(|h| &h.compaction_fallback_total)
+}
+
+/// Histogram: `xiaoguai_compaction_token_savings`.
+pub fn compaction_token_savings() -> Option<&'static Histogram> {
+    HANDLES.get().map(|h| &h.compaction_token_savings)
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
