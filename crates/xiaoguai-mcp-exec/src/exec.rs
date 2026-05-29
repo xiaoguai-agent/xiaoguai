@@ -164,12 +164,7 @@ pub async fn run_python(
 
     let wait_fut = child.wait_with_output();
     let (exit_code, stdout_raw, stderr_raw, timed_out) = match timeout(deadline, wait_fut).await {
-        Ok(Ok(output)) => (
-            output.status.code(),
-            output.stdout,
-            output.stderr,
-            false,
-        ),
+        Ok(Ok(output)) => (output.status.code(), output.stdout, output.stderr, false),
         Ok(Err(e)) => return Err(ExecError::ChildIo(e)),
         Err(_elapsed) => {
             // tokio::process::Child::wait_with_output consumed the child;
@@ -379,10 +374,7 @@ print("contact me at alice@example.com", file=sys.stderr)
     async fn stdout_cap_is_enforced_with_truncation_marker() {
         let cfg = test_cfg();
         // ~150 KB of output, well over OUTPUT_BYTE_CAP (64 KB).
-        let snippet = format!(
-            "print('x' * {})",
-            OUTPUT_BYTE_CAP + 64 * 1024
-        );
+        let snippet = format!("print('x' * {})", OUTPUT_BYTE_CAP + 64 * 1024);
         let r = run_python(&cfg, &snippet, Duration::from_secs(5))
             .await
             .expect("python3 must be available");

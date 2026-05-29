@@ -12,7 +12,11 @@ use clap::Parser;
 use xiaoguai_mcp_exec::{run_stdio_server, ExecConfig};
 
 #[derive(Parser, Debug)]
-#[command(name = "xiaoguai-mcp-exec", version, about = "Sandboxed code-execution MCP server")]
+#[command(
+    name = "xiaoguai-mcp-exec",
+    version,
+    about = "Sandboxed code-execution MCP server"
+)]
 struct Cli {
     /// Hard wall-clock cap per call (seconds). Per-call timeouts above this
     /// are clamped.
