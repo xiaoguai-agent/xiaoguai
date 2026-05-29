@@ -858,6 +858,62 @@ export interface WatcherInfo {
   schedule?: string | null;
 }
 
+// ---- v1.8.0 (sprint-10b S10b-2) — Persona CRUD ---------------------------
+
+/**
+ * A named role profile that shapes agent behaviour within a tenant.
+ *
+ * Mirrors `xiaoguai_personas::Persona` (crates/xiaoguai-personas/src/model.rs).
+ * Field names match the Rust DTO 1:1.
+ */
+export interface Persona {
+  id: string;
+  tenant_id: string;
+  name: string;
+  /** Injected as the leading system message in every chat turn. */
+  system_prompt: string;
+  /** Optional model override. `null` = use the session / global default. */
+  default_model: string | null;
+  /** `null` = unrestricted (all tools). `[]` = no tools allowed. */
+  tool_allowlist: string[] | null;
+  /** Opaque escalation tier label for HOTL integration (e.g. "L1"). */
+  escalation_tier: string | null;
+  created_at: string;
+  /** Soft-deleted personas cannot be attached to new sessions. */
+  archived: boolean;
+}
+
+export interface CreatePersonaRequest {
+  tenant_id: string;
+  name: string;
+  system_prompt?: string;
+  default_model?: string | null;
+  tool_allowlist?: string[] | null;
+  escalation_tier?: string | null;
+}
+
+/**
+ * Optional updates. Omitted fields retain their value.
+ * `tool_allowlist: null` here means "clear → unrestricted"; the Rust
+ * model uses `Option<Option<Vec<String>>>` to disambiguate "do not
+ * change" from "clear", which JS can't model directly — pass `undefined`
+ * (don't include the key) for "do not change", `null` for "clear".
+ */
+export interface UpdatePersonaRequest {
+  name?: string;
+  system_prompt?: string;
+  default_model?: string | null;
+  tool_allowlist?: string[] | null;
+  escalation_tier?: string | null;
+}
+
+// ---- v1.8.0 (sprint-10b S10b-6) — admin /me/scopes -----------------------
+
+/** Response body for `GET /v1/admin/me/scopes`. */
+export interface MyScopesResponse {
+  scopes: string[];
+}
+
 // ---- Agent event stream --------------------------------------------------
 
 export type AgentEvent =
@@ -1536,6 +1592,82 @@ export class XiaoguaiClient {
       }
       throw err;
     }
+  }
+
+  // ---- v1.8.0 (sprint-10b S10b-2) — Persona CRUD -----------------------
+
+  /**
+   * List active personas for the tenant. The backend requires
+   * `tenant_id` as a query parameter; this client method takes the
+   * tenant from the caller so the admin-ui can switch tenants.
+   */
+  listPersonas(tenantId: string): Promise<Persona[]> {
+    return this.request<Persona[]>(
+      'GET',
+      `/v1/personas?tenant_id=${encodeURIComponent(tenantId)}`,
+    );
+  }
+
+  /** Fetch a single persona by UUID. */
+  getPersona(id: string): Promise<Persona> {
+    return this.request<Persona>('GET', `/v1/personas/${encodeURIComponent(id)}`);
+  }
+
+  /** Create a new persona. */
+  createPersona(req: CreatePersonaRequest): Promise<Persona> {
+    return this.request<Persona>('POST', '/v1/personas', req);
+  }
+
+  /**
+   * Update a persona. Note the route uses PATCH (partial update);
+   * the older PUT shape from the prompt is not what the Rust router
+   * mounts — see crates/xiaoguai-api/src/routes/mod.rs personas mount.
+   */
+  updatePersona(id: string, req: UpdatePersonaRequest): Promise<Persona> {
+    return this.request<Persona>(
+      'PATCH',
+      `/v1/personas/${encodeURIComponent(id)}`,
+      req,
+    );
+  }
+
+  /**
+   * Archive (soft-delete) a persona. Returns silently on success;
+   * the backend responds 204 No Content.
+   */
+  async deletePersona(id: string): Promise<void> {
+    const resp = await this.fetchImpl(
+      `${this.baseUrl}/v1/personas/${encodeURIComponent(id)}`,
+      { method: 'DELETE', headers: this.headers() },
+    );
+    if (!resp.ok) {
+      let code = 'http_error';
+      let message = `HTTP ${resp.status}`;
+      try {
+        const parsed = (await resp.json()) as { code?: string; message?: string };
+        if (parsed.code) code = parsed.code;
+        if (parsed.message) message = parsed.message;
+      } catch {
+        // body was not JSON
+      }
+      throw new ApiError(resp.status, code, message);
+    }
+  }
+
+  // ---- v1.8.0 (sprint-10b S10b-6) — /me/scopes ------------------------
+
+  /**
+   * Resolve the bearer subject's effective scope list. Powers the
+   * `<RequireScope>` component in admin-ui.
+   *
+   * Fail-open contract: when the endpoint returns 404 (older backend
+   * without this route), the caller should render gated children rather
+   * than hide them. The client just propagates the ApiError; the
+   * provider in admin-ui handles the 404 fallback. See
+   * DEC-LLD-ADMIN-UI-002 + LLD-ADMIN-UI-001 §4.8.
+   */
+  listMyScopes(): Promise<MyScopesResponse> {
+    return this.request<MyScopesResponse>('GET', '/v1/admin/me/scopes');
   }
 
   /**
