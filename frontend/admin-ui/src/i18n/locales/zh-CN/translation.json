@@ -1,4 +1,12 @@
 {
+  "auth": {
+    "sessionExpired": "会话已过期，请刷新页面重新登录。",
+    "sessionExpiredReload": "刷新",
+    "forbiddenTitle": "无访问权限",
+    "forbiddenScopeMessage": "该操作需要 `{{scope}}` 权限。请联系管理员或查阅运维手册。",
+    "forbiddenGenericMessage": "您没有执行该操作的权限，请联系管理员。",
+    "forbiddenRunbookLink": "查看运维手册"
+  },
   "common": {
     "loading": "加载中…",
     "refresh": "刷新",

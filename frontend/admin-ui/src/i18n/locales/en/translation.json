@@ -1,4 +1,12 @@
 {
+  "auth": {
+    "sessionExpired": "Your session has expired. Reload the page to sign in again.",
+    "sessionExpiredReload": "Reload",
+    "forbiddenTitle": "Access denied",
+    "forbiddenScopeMessage": "This action requires the `{{scope}}` permission. Contact your administrator or check the operator runbook.",
+    "forbiddenGenericMessage": "You don't have permission to perform this action. Contact your administrator.",
+    "forbiddenRunbookLink": "Open operator runbook"
+  },
   "common": {
     "loading": "Loading…",
     "refresh": "Refresh",
