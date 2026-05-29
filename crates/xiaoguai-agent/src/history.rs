@@ -388,6 +388,7 @@ mod tests {
                 tool_calls: vec![],
                 finish_reason: None,
                 done: true,
+                reasoning_delta: None,
             };
             let stream = stream::iter(vec![Ok(chunk)]);
             Ok(Box::pin(stream))

@@ -29,6 +29,9 @@ sha2 = { workspace = true }
 base64 = { workspace = true }
 hex = { workspace = true }
 url = { workspace = true }
+# Sprint-8 S8-10: MiniMax backend reports reasoning-token throughput via
+# `xiaoguai_llm_reasoning_tokens_total{provider, model}`.
+xiaoguai-observability = { workspace = true }
 
 [dev-dependencies]
 mockito = { workspace = true }

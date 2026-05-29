@@ -227,6 +227,7 @@ impl LlmBackend for OllamaBackend {
                     tool_calls,
                     finish_reason,
                     done: parsed.done,
+                    reasoning_delta: None,
                 })
             });
 

@@ -209,6 +209,7 @@ async fn agent_inherits_tenant_resolved_by_history_store() {
                     tool_calls: vec![],
                     finish_reason: Some(xiaoguai_llm::FinishReason::Stop),
                     done: true,
+                    reasoning_delta: None,
                 }),
             ];
             Ok(Box::pin(futures::stream::iter(chunks)))

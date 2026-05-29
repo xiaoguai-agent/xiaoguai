@@ -1,17 +1,22 @@
-//! Groq fast-inference backend.
+//! MiniMax provider backend (DEC-024 / Sprint-8 S8-10).
 //!
-//! Endpoint: `https://api.groq.com/openai/v1/chat/completions`
+//! Endpoint: `https://api.minimax.io/v1/chat/completions`
 //! Auth: `Authorization: Bearer <key>` (OpenAI-compatible)
 //!
-//! Groq is fully OpenAI wire-compatible including streaming SSE and tool
-//! calling — no custom parsing required. The only difference vs the generic
-//! `openai_compat` backend is the fixed base URL.
+//! MiniMax is OpenAI wire-compatible for messages + tool calls. The
+//! distinguishing feature is **thinking-mode passthrough**: the M1/M2
+//! family streams a `reasoning_content` field on each choice-delta
+//! carrying the model's chain-of-thought. We surface it via
+//! [`ChatChunk::reasoning_delta`] so the agent loop can record / display
+//! / feed-to-a-Critic without conflating it with the assistant message
+//! `content`.
 //!
 //! **Supported models** (pass verbatim as `ChatRequest::model`):
-//!   - `llama-3.3-70b-versatile`
-//!   - `mixtral-8x7b-32768`
-//!   - `llama3-8b-8192`
-//!   - `gemma2-9b-it`
+//!   - `MiniMax-M1`
+//!   - `MiniMax-M2`
+//!   - `MiniMax-M2.5`
+//!   - `MiniMax-M2.7`
+//!   - `abab6.5-chat` (no reasoning track; the field stays unset)
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -27,23 +32,23 @@ use crate::types::{
     ChatChunk, ChatRequest, FinishReason, Message, Role, ToolCallSpec, ToolChoice, ToolSpec,
 };
 
-pub const GROQ_DEFAULT_BASE: &str = "https://api.groq.com/openai";
-const GROQ_BASE: &str = GROQ_DEFAULT_BASE;
+/// Default MiniMax HTTPS base URL.
+pub const MINIMAX_DEFAULT_BASE: &str = "https://api.minimax.io";
 
 #[derive(Debug, Clone)]
-pub struct GroqBackend {
+pub struct MinimaxBackend {
     base_url: String,
     api_key: String,
     http: reqwest::Client,
 }
 
-impl GroqBackend {
-    /// Production constructor. `api_key` is the `GROQ_API_KEY` secret.
+impl MinimaxBackend {
+    /// Production constructor. `api_key` is the `MINIMAX_API_KEY` secret.
     pub fn new(api_key: impl Into<String>) -> Self {
-        Self::with_base_url(GROQ_BASE, api_key)
+        Self::with_base_url(MINIMAX_DEFAULT_BASE, api_key)
     }
 
-    /// Test constructor — allows overriding the base URL to point at a mock.
+    /// Test constructor — allows pointing at a mockito server.
     pub fn with_base_url(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
@@ -53,57 +58,57 @@ impl GroqBackend {
     }
 }
 
-// ── Request shapes ─────────────────────────────────────────────────────────
+// ── Request shapes (OpenAI-wire compatible) ────────────────────────────────
 
 #[derive(Serialize)]
-struct GroqRequest<'a> {
+struct MmRequest<'a> {
     model: &'a str,
-    messages: Vec<GroqMessage<'a>>,
+    messages: Vec<MmMessage<'a>>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    tools: Vec<GroqTool<'a>>,
+    tools: Vec<MmTool<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<JsonValue>,
 }
 
 #[derive(Serialize)]
-struct GroqMessage<'a> {
+struct MmMessage<'a> {
     role: &'static str,
     #[serde(skip_serializing_if = "str::is_empty")]
     content: &'a str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    tool_calls: Vec<GroqOutgoingToolCall<'a>>,
+    tool_calls: Vec<MmOutgoingToolCall<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<&'a str>,
 }
 
 #[derive(Serialize)]
-struct GroqOutgoingToolCall<'a> {
+struct MmOutgoingToolCall<'a> {
     id: &'a str,
     #[serde(rename = "type")]
     kind: &'static str,
-    function: GroqOutgoingFn<'a>,
+    function: MmOutgoingFn<'a>,
 }
 
 #[derive(Serialize)]
-struct GroqOutgoingFn<'a> {
+struct MmOutgoingFn<'a> {
     name: &'a str,
     arguments: &'a str,
 }
 
 #[derive(Serialize)]
-struct GroqTool<'a> {
+struct MmTool<'a> {
     #[serde(rename = "type")]
     kind: &'static str,
-    function: GroqToolFn<'a>,
+    function: MmToolFn<'a>,
 }
 
 #[derive(Serialize)]
-struct GroqToolFn<'a> {
+struct MmToolFn<'a> {
     name: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<&'a str>,
@@ -113,38 +118,41 @@ struct GroqToolFn<'a> {
 // ── Response shapes ────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct GroqSseChunk {
+struct MmSseChunk {
     #[serde(default)]
-    choices: Vec<GroqChoice>,
+    choices: Vec<MmChoice>,
 }
 
 #[derive(Deserialize)]
-struct GroqChoice {
+struct MmChoice {
     #[serde(default)]
-    delta: GroqDelta,
+    delta: MmDelta,
     #[serde(default)]
     finish_reason: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
-struct GroqDelta {
+struct MmDelta {
     #[serde(default)]
     content: Option<String>,
+    /// MiniMax M1/M2 thinking-mode delta.
     #[serde(default)]
-    tool_calls: Vec<GroqIncomingToolCallDelta>,
+    reasoning_content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<MmIncomingToolCallDelta>,
 }
 
 #[derive(Deserialize)]
-struct GroqIncomingToolCallDelta {
+struct MmIncomingToolCallDelta {
     index: u32,
     #[serde(default)]
     id: Option<String>,
     #[serde(default)]
-    function: Option<GroqIncomingFnDelta>,
+    function: Option<MmIncomingFnDelta>,
 }
 
 #[derive(Deserialize)]
-struct GroqIncomingFnDelta {
+struct MmIncomingFnDelta {
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
@@ -162,19 +170,19 @@ fn role_str(r: Role) -> &'static str {
     }
 }
 
-fn build_messages(messages: &[Message]) -> Vec<GroqMessage<'_>> {
+fn build_messages(messages: &[Message]) -> Vec<MmMessage<'_>> {
     messages
         .iter()
-        .map(|m| GroqMessage {
+        .map(|m| MmMessage {
             role: role_str(m.role),
             content: &m.content,
             tool_calls: m
                 .tool_calls
                 .iter()
-                .map(|tc| GroqOutgoingToolCall {
+                .map(|tc| MmOutgoingToolCall {
                     id: &tc.id,
                     kind: "function",
-                    function: GroqOutgoingFn {
+                    function: MmOutgoingFn {
                         name: &tc.name,
                         arguments: &tc.arguments_json,
                     },
@@ -185,12 +193,12 @@ fn build_messages(messages: &[Message]) -> Vec<GroqMessage<'_>> {
         .collect()
 }
 
-fn build_tools(tools: &[ToolSpec]) -> Vec<GroqTool<'_>> {
+fn build_tools(tools: &[ToolSpec]) -> Vec<MmTool<'_>> {
     tools
         .iter()
-        .map(|t| GroqTool {
+        .map(|t| MmTool {
             kind: "function",
-            function: GroqToolFn {
+            function: MmToolFn {
                 name: &t.name,
                 description: t.description.as_deref(),
                 parameters: &t.parameters,
@@ -228,7 +236,7 @@ struct PartialToolCall {
 }
 
 impl PartialToolCall {
-    fn merge(&mut self, delta: GroqIncomingToolCallDelta) {
+    fn merge(&mut self, delta: MmIncomingToolCallDelta) {
         if let Some(id) = delta.id {
             if !id.is_empty() {
                 self.id = Some(id);
@@ -247,7 +255,7 @@ impl PartialToolCall {
     }
 
     fn into_complete(self, index: u32) -> Option<ToolCallSpec> {
-        let id = self.id.unwrap_or_else(|| format!("call_groq_{index}"));
+        let id = self.id.unwrap_or_else(|| format!("call_minimax_{index}"));
         let name = self.name?;
         Some(ToolCallSpec {
             id,
@@ -292,17 +300,30 @@ fn emit_final(
     })
 }
 
-// ── LlmBackend impl ────────────────────────────────────────────────────────
+/// Record reasoning bytes on the per-(provider,model) Prometheus counter.
+/// Uses [`crate::token_count::estimate_tokens`] for the 4-char/token
+/// heuristic the rest of the LLM crate relies on.
+fn record_reasoning_tokens(model: &str, reasoning: &str) {
+    let tokens = crate::token_count::estimate_tokens(reasoning);
+    if tokens == 0 {
+        return;
+    }
+    if let Some(counter) = xiaoguai_observability::prometheus::llm_reasoning_tokens_total() {
+        counter
+            .with_label_values(&["minimax", model])
+            .inc_by(tokens as u64);
+    }
+}
 
 #[async_trait]
-impl LlmBackend for GroqBackend {
+impl LlmBackend for MinimaxBackend {
     async fn chat_stream(&self, req: ChatRequest) -> Result<ChatStream, LlmError> {
         let url = format!(
             "{}/v1/chat/completions",
             self.base_url.trim_end_matches('/')
         );
 
-        let body = GroqRequest {
+        let body = MmRequest {
             model: &req.model,
             messages: build_messages(&req.messages),
             stream: true,
@@ -333,22 +354,28 @@ impl LlmBackend for GroqBackend {
         let partials: Arc<Mutex<BTreeMap<u32, PartialToolCall>>> =
             Arc::new(Mutex::new(BTreeMap::new()));
         let final_emitted = Arc::new(Mutex::new(false));
+        let model = req.model.clone();
 
         let mapped = {
             let partials = partials.clone();
             let final_emitted = final_emitted.clone();
+            let model = model.clone();
             sse.map(move |ev| {
                 let ev = ev.map_err(|e| LlmError::Network(e.to_string()))?;
                 if ev.data == "[DONE]" {
                     return Ok(emit_final(&partials, &final_emitted, None));
                 }
-                let parsed: GroqSseChunk = serde_json::from_str(&ev.data)
+                let parsed: MmSseChunk = serde_json::from_str(&ev.data)
                     .map_err(|e| LlmError::Provider(format!("decode SSE: {e}")))?;
                 let mut delta = String::new();
+                let mut reasoning = String::new();
                 let mut finish: Option<FinishReason> = None;
                 for choice in parsed.choices {
                     if let Some(c) = choice.delta.content {
                         delta.push_str(&c);
+                    }
+                    if let Some(r) = choice.delta.reasoning_content {
+                        reasoning.push_str(&r);
                     }
                     {
                         let mut map = partials.lock().expect("partials poisoned");
@@ -361,13 +388,22 @@ impl LlmBackend for GroqBackend {
                         finish = Some(parse_finish_reason(&reason));
                     }
                 }
+                if !reasoning.is_empty() {
+                    record_reasoning_tokens(&model, &reasoning);
+                }
                 if let Some(reason) = finish {
                     Ok(emit_final(&partials, &final_emitted, Some(reason)))
                 } else {
-                    Ok(Some(ChatChunk {
-                        delta,
-                        ..Default::default()
-                    }))
+                    let reasoning_delta = (!reasoning.is_empty()).then_some(reasoning);
+                    if delta.is_empty() && reasoning_delta.is_none() {
+                        Ok(None)
+                    } else {
+                        Ok(Some(ChatChunk {
+                            delta,
+                            reasoning_delta,
+                            ..Default::default()
+                        }))
+                    }
                 }
             })
         }
@@ -414,6 +450,6 @@ impl LlmBackend for GroqBackend {
     }
 
     fn name(&self) -> &'static str {
-        "groq"
+        "minimax"
     }
 }
