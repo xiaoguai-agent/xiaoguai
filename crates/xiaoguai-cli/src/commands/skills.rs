@@ -197,3 +197,101 @@ pub fn format_installed_table(rows: &[JsonValue]) -> String {
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// proposals (Tier-2 D.1)
+// ---------------------------------------------------------------------------
+
+/// List agent-authored skill proposals for a tenant.
+pub async fn proposals_list(
+    api_base: &str,
+    tenant_id: &str,
+    status: Option<&str>,
+) -> Result<Vec<JsonValue>> {
+    let mut url = format!("{api_base}/v1/skills/proposals?tenant_id={tenant_id}");
+    if let Some(s) = status {
+        url.push_str("&status=");
+        url.push_str(s);
+    }
+    let client = Client::new();
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .context("GET /v1/skills/proposals")?;
+    let resp = require_ok(resp).await?;
+    let v: Vec<JsonValue> = resp.json().await.context("decode proposals body")?;
+    Ok(v)
+}
+
+/// Approve a proposal — server flips it to `installed` and writes the
+/// YAML manifest into `~/.xiaoguai/skills/`.
+pub async fn proposals_approve(
+    api_base: &str,
+    id: &str,
+    decided_by: &str,
+) -> Result<JsonValue> {
+    let client = Client::new();
+    let body = serde_json::json!({ "decided_by": decided_by });
+    let resp = client
+        .post(format!("{api_base}/v1/skills/proposals/{id}/approve"))
+        .json(&body)
+        .send()
+        .await
+        .context("POST /v1/skills/proposals/:id/approve")?;
+    let resp = require_ok(resp).await?;
+    let v: JsonValue = resp.json().await.context("decode approve body")?;
+    Ok(v)
+}
+
+/// Reject a proposal with a human-readable reason.
+pub async fn proposals_reject(
+    api_base: &str,
+    id: &str,
+    decided_by: &str,
+    reason: &str,
+) -> Result<JsonValue> {
+    let client = Client::new();
+    let body = serde_json::json!({ "decided_by": decided_by, "reason": reason });
+    let resp = client
+        .post(format!("{api_base}/v1/skills/proposals/{id}/reject"))
+        .json(&body)
+        .send()
+        .await
+        .context("POST /v1/skills/proposals/:id/reject")?;
+    let resp = require_ok(resp).await?;
+    let v: JsonValue = resp.json().await.context("decode reject body")?;
+    Ok(v)
+}
+
+#[must_use]
+pub fn format_proposals_table(rows: &[JsonValue]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "{:<24} {:<20} {:<8} {:<10} CREATED_AT",
+        "ID", "NAME", "VERSION", "STATUS"
+    );
+    for r in rows {
+        let id = r.get("id").and_then(JsonValue::as_str).unwrap_or("-");
+        let name = r
+            .pointer("/manifest/name")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("-");
+        let version = r
+            .pointer("/manifest/version")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("-");
+        let status = r.get("status").and_then(JsonValue::as_str).unwrap_or("-");
+        let ts = r
+            .get("created_at")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("-");
+        let _ = writeln!(
+            out,
+            "{id:<24} {name:<20} {version:<8} {status:<10} {ts}"
+        );
+    }
+    out
+}

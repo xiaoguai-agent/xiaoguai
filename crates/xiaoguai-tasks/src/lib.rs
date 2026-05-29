@@ -59,6 +59,9 @@ pub mod executor;
 pub mod metrics;
 pub mod store;
 
+// Tier-2 D.1 — agent-authored skill proposals (HotL-gated, admin-approved).
+pub mod skill_author;
+
 // Public re-exports — persistence layer.
 pub use mem::InMemoryTaskBoardRepository;
 pub use pg::PgTaskBoardRepository;

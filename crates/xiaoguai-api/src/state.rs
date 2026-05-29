@@ -211,6 +211,24 @@ pub struct AppState {
     /// `None` makes those endpoints return 503; production wires
     /// `PgWorkspaceRepository` from `xiaoguai-core/src/workspace_bridge.rs`.
     pub workspace_repository: Option<Arc<dyn WorkspaceRepository>>,
+    /// v1.5.x (Tier-2 D.1): persistence for agent-authored skill
+    /// proposals. `None` makes `/v1/skills/proposals/*` endpoints return
+    /// 503; production wires `PgSkillProposalRepository`.
+    pub skill_proposals: Option<Arc<dyn xiaoguai_tasks::skill_author::SkillProposalRepository>>,
+    /// v1.5.x: per-tenant opt-in flag store backing
+    /// `allow_skill_authoring`. `None` → `propose_skill` is unavailable.
+    pub tenant_settings:
+        Option<Arc<dyn xiaoguai_tasks::skill_author::TenantSettingsReader>>,
+    /// v1.5.x: HotL gate adapter the `propose_skill` tool consults.
+    /// `None` → the routes return 503.
+    pub skill_author_gate: Option<Arc<dyn xiaoguai_tasks::skill_author::SkillAuthorGate>>,
+    /// v1.5.x: audit sink that records `skill.propose`,
+    /// `skill.hotl_gate`, `skill.approve`, `skill.reject`. Production
+    /// wires the `PgAuditSink` from `xiaoguai-audit`.
+    pub skill_audit: Option<Arc<dyn xiaoguai_tasks::skill_author::SkillAuditSink>>,
+    /// v1.5.x: directory the approved skill manifests are written to.
+    /// Defaults to `~/.xiaoguai/skills` in production wiring.
+    pub skills_dir: std::path::PathBuf,
 }
 
 impl std::fmt::Debug for AppState {

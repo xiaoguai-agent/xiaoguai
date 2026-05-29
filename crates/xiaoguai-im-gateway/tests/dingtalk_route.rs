@@ -72,6 +72,11 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
         skill_packs: None,
         memory_store: None,
         workspace_repository: None,
+        skill_proposals: None,
+        tenant_settings: None,
+        skill_author_gate: None,
+        skill_audit: None,
+        skills_dir: std::path::PathBuf::new(),
     };
     let provider: Arc<dyn ImProvider> =
         Arc::new(DingTalkProvider::with_recording_sink(SECRET, sink));

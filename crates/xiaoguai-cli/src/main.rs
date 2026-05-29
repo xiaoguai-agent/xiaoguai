@@ -423,6 +423,40 @@ enum SkillsCmd {
         #[arg(long)]
         id: String,
     },
+    /// Manage agent-authored skill proposals (Tier-2 D.1).
+    Proposals {
+        #[command(subcommand)]
+        action: ProposalsCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProposalsCmd {
+    /// List proposals for a tenant, optionally filtered by status.
+    List {
+        #[arg(long)]
+        tenant_id: String,
+        /// One of: pending, approved, rejected, installed.
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Approve a proposal — server writes the YAML manifest to ~/.xiaoguai/skills/.
+    Approve {
+        #[arg(long)]
+        id: String,
+        /// Identity of the approver (recorded in the audit log).
+        #[arg(long)]
+        decided_by: String,
+    },
+    /// Reject a proposal with a human-readable reason.
+    Reject {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        decided_by: String,
+        #[arg(long)]
+        reason: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1144,6 +1178,36 @@ async fn handle_skills(api_base: String, output: String, action: SkillsCmd) -> R
             })
             .await?;
             println!("{}", serde_json::json!({"ok": true}));
+        }
+        SkillsCmd::Proposals { action } => {
+            handle_proposals(api_base, output, action).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_proposals(api_base: String, output: String, action: ProposalsCmd) -> Result<()> {
+    match action {
+        ProposalsCmd::List { tenant_id, status } => {
+            let rows =
+                skills::proposals_list(&api_base, &tenant_id, status.as_deref()).await?;
+            if output == "table" {
+                print!("{}", skills::format_proposals_table(&rows));
+            } else {
+                print_value(&serde_json::to_value(&rows)?, &output)?;
+            }
+        }
+        ProposalsCmd::Approve { id, decided_by } => {
+            let v = skills::proposals_approve(&api_base, &id, &decided_by).await?;
+            print_value(&v, &output)?;
+        }
+        ProposalsCmd::Reject {
+            id,
+            decided_by,
+            reason,
+        } => {
+            let v = skills::proposals_reject(&api_base, &id, &decided_by, &reason).await?;
+            print_value(&v, &output)?;
         }
     }
     Ok(())

@@ -16,6 +16,8 @@ xiaoguai-llm = { path = "../xiaoguai-llm" }
 xiaoguai-mcp = { path = "../xiaoguai-mcp" }
 xiaoguai-auth = { path = "../xiaoguai-auth" }
 xiaoguai-agent = { path = "../xiaoguai-agent" }
+# v1.5.x — Tier-2 D.1 agent-authored skill proposals.
+xiaoguai-tasks = { path = "../xiaoguai-tasks" }
 xiaoguai-memory = { path = "../xiaoguai-memory", default-features = false }
 # v0.12.0: shared agent-loop runtime used by REST + IM + scheduler.
 xiaoguai-runtime = { path = "../xiaoguai-runtime" }
