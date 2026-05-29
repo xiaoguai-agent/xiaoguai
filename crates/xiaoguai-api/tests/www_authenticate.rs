@@ -88,6 +88,11 @@ fn build_state_with_webhook_validator(token: &str, route_id: &str) -> AppState {
         skill_packs: None,
         memory_store: None,
         workspace_repository: None,
+        skill_proposals: None,
+        tenant_settings: None,
+        skill_author_gate: None,
+        skill_audit: None,
+        skills_dir: std::path::PathBuf::new(),
     }
 }
 

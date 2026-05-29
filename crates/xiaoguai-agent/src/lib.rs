@@ -12,6 +12,7 @@ pub mod history;
 pub mod hotl_gate;
 pub mod loop_;
 pub mod react;
+pub mod skill_author_tool;
 pub mod toolbox;
 
 pub use event::{AgentEvent, StopReason};
@@ -20,4 +21,7 @@ pub use hotl_gate::{
 };
 pub use loop_::Agent;
 pub use react::{AgentConfig, AgentError, AgentOutcome, ReactAgent};
+pub use skill_author_tool::{
+    ProposeSkillArgs, ProposeSkillBackend, ProposeSkillClient, PROPOSE_SKILL_TOOL_NAME,
+};
 pub use toolbox::{Toolbox, ToolboxError};
