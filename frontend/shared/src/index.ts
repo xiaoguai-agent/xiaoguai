@@ -914,6 +914,86 @@ export interface MyScopesResponse {
   scopes: string[];
 }
 
+// ---- v1.8.0 (sprint-10b S10b-3) — Skill Proposals ------------------------
+
+/**
+ * The shape an agent-authored skill manifest takes when the admin pane
+ * (or any other reviewer) gets it back from the API. Mirrors
+ * `xiaoguai_tasks::skill_author::SkillManifest`
+ * (crates/xiaoguai-tasks/src/skill_author.rs).
+ *
+ * Field names match the Rust DTO 1:1. The schema is intentionally tight —
+ * `additionalProperties: false` on the propose side, so the manifest only
+ * ever carries these five fields. Reviewers can trust the shape.
+ */
+export interface SkillManifest {
+  /** Skill identifier (kebab-case, unique per tenant). */
+  name: string;
+  /** One-sentence description for the catalog. */
+  description: string;
+  /** SemVer string the agent supplied at propose time. */
+  version: string;
+  /** The instructions the skill will receive when the runtime loads it. */
+  system_prompt: string;
+  /** Tools the skill is allowed to call. Empty `[]` means "no tools". */
+  tool_allowlist: string[];
+}
+
+/** Lifecycle states a proposal moves through. */
+export type SkillProposalStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'installed';
+
+/**
+ * One row from `GET /v1/skills/proposals`. Mirrors
+ * `xiaoguai_api::skill_proposals::ProposalRowResponse`.
+ *
+ * `proposed_by` is the agent identity (typically `agent:<persona-id>`);
+ * `decided_by` is the human admin who clicked Approve/Reject.
+ */
+export interface SkillProposal {
+  id: string;
+  tenant_id: string;
+  proposed_by: string;
+  manifest: SkillManifest;
+  status: SkillProposalStatus;
+  /** Set when `status === 'rejected'`. */
+  reason: string | null;
+  created_at: string;
+  decided_at: string | null;
+  decided_by: string | null;
+}
+
+/** Query options for `GET /v1/skills/proposals`. */
+export interface ListSkillProposalsQuery {
+  /** Required — backend rejects the call without it. */
+  tenant_id: string;
+  /** Defaults to "all" when omitted. */
+  status?: SkillProposalStatus;
+}
+
+/**
+ * Body for `POST /v1/skills/proposals/:id/approve`.
+ *
+ * Backend gap (S10b-3, DEC-014): the Rust handler does NOT accept an
+ * optional reviewer `comment`; only `decided_by` is recognised. If you
+ * want to capture rationale, log it to the audit sink separately or extend
+ * the backend handler.
+ */
+export interface ApproveSkillProposalRequest {
+  /** Identity of the approver. Logged to `skill_proposals.decided_by`. */
+  decided_by: string;
+}
+
+/** Body for `POST /v1/skills/proposals/:id/reject`. */
+export interface RejectSkillProposalRequest {
+  decided_by: string;
+  /** Non-empty rationale shown back to the agent. */
+  reason: string;
+}
+
 // ---- Agent event stream --------------------------------------------------
 
 export type AgentEvent =
@@ -1668,6 +1748,53 @@ export class XiaoguaiClient {
    */
   listMyScopes(): Promise<MyScopesResponse> {
     return this.request<MyScopesResponse>('GET', '/v1/admin/me/scopes');
+  }
+
+  // ---- v1.8.0 (sprint-10b S10b-3) — Skill Proposals -------------------
+
+  /**
+   * List agent-authored skill proposals. `tenant_id` is required by the
+   * backend; the optional `status` filter defaults to "all" when omitted.
+   *
+   * The backend returns 503 when the proposal repository is not wired —
+   * the caller should render a "feature unavailable" banner in that case.
+   */
+  listSkillProposals(q: ListSkillProposalsQuery): Promise<SkillProposal[]> {
+    const params = new URLSearchParams();
+    params.set('tenant_id', q.tenant_id);
+    if (q.status) params.set('status', q.status);
+    return this.request<SkillProposal[]>(
+      'GET',
+      `/v1/skills/proposals?${params.toString()}`,
+    );
+  }
+
+  /**
+   * Approve a pending proposal. Returns the updated row (status will be
+   * "installed" — the backend writes the YAML manifest to `skills_dir` as
+   * part of the transition).
+   */
+  approveSkillProposal(
+    id: string,
+    req: ApproveSkillProposalRequest,
+  ): Promise<SkillProposal> {
+    return this.request<SkillProposal>(
+      'POST',
+      `/v1/skills/proposals/${encodeURIComponent(id)}/approve`,
+      req,
+    );
+  }
+
+  /** Reject a pending proposal with a mandatory rationale. */
+  rejectSkillProposal(
+    id: string,
+    req: RejectSkillProposalRequest,
+  ): Promise<SkillProposal> {
+    return this.request<SkillProposal>(
+      'POST',
+      `/v1/skills/proposals/${encodeURIComponent(id)}/reject`,
+      req,
+    );
   }
 
   /**
