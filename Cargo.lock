@@ -9257,13 +9257,18 @@ dependencies = [
  "chrono",
  "dashmap 6.2.1",
  "futures",
+ "once_cell",
  "parking_lot",
+ "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-stream",
+ "tokio-util",
  "tracing",
  "uuid",
+ "xiaoguai-agent",
  "xiaoguai-llm",
 ]
 
