@@ -36,7 +36,8 @@
     "skill_packs": "スキルパック",
     "audit": "監査ログ",
     "memory": "記憶",
-    "personas": "ペルソナ"
+    "personas": "ペルソナ",
+    "skill_proposals": "スキル提案"
   },
   "language": {
     "label": "言語",
@@ -471,6 +472,38 @@
       "unavailable": "Personas リポジトリが未構成です（HTTP 503）。`xiaoguai-personas::pg::PgPersonaRepository` を API ホストに接続してください。",
       "tenant_id_label": "テナント",
       "tenant_id_placeholder": "ten_demo"
+    },
+    "skill_proposals": {
+      "title": "スキル提案",
+      "subtitle": "Agent が作成したスキルマニフェストを審査します（DEC-014）。承認するとマニフェストがディスクに書き込まれ、状態は `installed` に遷移します。却下すると理由が Agent に返されます。",
+      "tenant_id_label": "テナント",
+      "tenant_id_placeholder": "ten_demo",
+      "filter_status_label": "ステータス",
+      "filter_status_pending": "保留中",
+      "filter_status_all": "すべて",
+      "loading": "提案を読み込み中…",
+      "unavailable": "Skill proposals リポジトリが未構成です（HTTP 503）。`xiaoguai_api::AppState::skill_proposals` を API ホストに接続してください。",
+      "empty": "現在のフィルターに一致する提案はありません。",
+      "field_proposer": "提案者",
+      "field_submitted": "提出日時",
+      "field_system_prompt": "システムプロンプト",
+      "field_tools": "ツール許可リスト",
+      "field_reject_reason": "却下理由",
+      "tools_empty": "ツールはリクエストされていません。",
+      "btn_approve": "承認",
+      "btn_reject": "却下",
+      "btn_cancel": "キャンセル",
+      "btn_confirm_approve": "提案を承認",
+      "btn_confirm_reject": "提案を却下",
+      "approve_title": "提案を承認しますか？",
+      "approve_body": "承認すると `{{name}}@{{version}}` がスキルディレクトリに書き込まれ、次回のセッションから Agent が利用可能になります。",
+      "reject_title": "提案を却下しますか？",
+      "reject_body": "却下により `{{name}}` は拒否マークされ、理由は提案者の Agent に返されます。",
+      "reject_reason_label": "理由",
+      "reject_reason_placeholder": "例: ツール許可リストが制限スコープと重複している",
+      "reject_reason_required": "Agent が却下から学習できるよう、理由を入力してください。",
+      "toast_approved": "「{{name}}」を承認しました。",
+      "toast_rejected": "「{{name}}」を却下しました。"
     }
   }
 }

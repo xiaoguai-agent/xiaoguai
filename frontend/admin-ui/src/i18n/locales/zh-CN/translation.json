@@ -36,7 +36,8 @@
     "skill_packs": "Skill 包",
     "audit": "审计日志",
     "memory": "记忆",
-    "personas": "角色档案"
+    "personas": "角色档案",
+    "skill_proposals": "技能提案"
   },
   "language": {
     "label": "语言",
@@ -471,6 +472,38 @@
       "unavailable": "Personas 仓储未配置（HTTP 503）。请在 API 主机中接入 `xiaoguai-personas::pg::PgPersonaRepository`。",
       "tenant_id_label": "租户",
       "tenant_id_placeholder": "ten_demo"
+    },
+    "skill_proposals": {
+      "title": "技能提案",
+      "subtitle": "审查 Agent 提交的技能清单（DEC-014）。批准会将清单写入磁盘并将状态翻转为 `installed`；拒绝则记录原因反馈给 Agent。",
+      "tenant_id_label": "租户",
+      "tenant_id_placeholder": "ten_demo",
+      "filter_status_label": "状态",
+      "filter_status_pending": "待审查",
+      "filter_status_all": "全部",
+      "loading": "加载提案中…",
+      "unavailable": "Skill proposals 仓储未配置（HTTP 503）。请在 API 主机中接入 `xiaoguai_api::AppState::skill_proposals`。",
+      "empty": "没有匹配当前筛选条件的提案。",
+      "field_proposer": "提案方",
+      "field_submitted": "提交时间",
+      "field_system_prompt": "系统提示词",
+      "field_tools": "工具白名单",
+      "field_reject_reason": "拒绝原因",
+      "tools_empty": "未申请任何工具。",
+      "btn_approve": "批准",
+      "btn_reject": "拒绝",
+      "btn_cancel": "取消",
+      "btn_confirm_approve": "确认批准",
+      "btn_confirm_reject": "确认拒绝",
+      "approve_title": "批准此提案？",
+      "approve_body": "批准后将把清单 `{{name}}@{{version}}` 写入技能目录，Agent 在下次会话开始时即可使用。",
+      "reject_title": "拒绝此提案？",
+      "reject_body": "拒绝会将 `{{name}}` 标记为否决，并把原因反馈给提案方 Agent。",
+      "reject_reason_label": "原因",
+      "reject_reason_placeholder": "例如：工具白名单触及受限范围",
+      "reject_reason_required": "请填写原因，以便 Agent 从拒绝中学习。",
+      "toast_approved": "已批准“{{name}}”。",
+      "toast_rejected": "已拒绝“{{name}}”。"
     }
   }
 }

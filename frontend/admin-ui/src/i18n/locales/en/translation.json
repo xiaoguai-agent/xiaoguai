@@ -36,7 +36,8 @@
     "skill_packs": "Skill Packs",
     "audit": "Audit Log",
     "memory": "Memory",
-    "personas": "Personas"
+    "personas": "Personas",
+    "skill_proposals": "Skill Proposals"
   },
   "language": {
     "label": "Language",
@@ -471,6 +472,38 @@
       "unavailable": "Personas repository not configured (HTTP 503). Wire `xiaoguai-personas::pg::PgPersonaRepository` in the API host.",
       "tenant_id_label": "Tenant",
       "tenant_id_placeholder": "ten_demo"
+    },
+    "skill_proposals": {
+      "title": "Skill Proposals",
+      "subtitle": "Review agent-authored skill manifests (DEC-014). Approving writes the manifest to disk and flips the row to `installed`; rejecting records a reason that goes back to the agent.",
+      "tenant_id_label": "Tenant",
+      "tenant_id_placeholder": "ten_demo",
+      "filter_status_label": "Status",
+      "filter_status_pending": "Pending",
+      "filter_status_all": "All",
+      "loading": "Loading proposals…",
+      "unavailable": "Skill proposals repository not configured (HTTP 503). Wire `xiaoguai_api::AppState::skill_proposals` in the API host.",
+      "empty": "No proposals match the current filter.",
+      "field_proposer": "Proposed by",
+      "field_submitted": "Submitted",
+      "field_system_prompt": "System prompt",
+      "field_tools": "Tool allowlist",
+      "field_reject_reason": "Rejection reason",
+      "tools_empty": "No tools requested.",
+      "btn_approve": "Approve",
+      "btn_reject": "Reject",
+      "btn_cancel": "Cancel",
+      "btn_confirm_approve": "Approve proposal",
+      "btn_confirm_reject": "Reject proposal",
+      "approve_title": "Approve proposal?",
+      "approve_body": "Approving installs the manifest `{{name}}@{{version}}` to the skills directory. The agent will be allowed to use it from the next session start.",
+      "reject_title": "Reject proposal?",
+      "reject_body": "Rejecting marks `{{name}}` as denied and surfaces the reason back to the proposing agent.",
+      "reject_reason_label": "Reason",
+      "reject_reason_placeholder": "e.g. tool allowlist overlaps with a restricted scope",
+      "reject_reason_required": "A reason is required so the agent can learn from the rejection.",
+      "toast_approved": "Approved \"{{name}}\".",
+      "toast_rejected": "Rejected \"{{name}}\"."
     }
   }
 }

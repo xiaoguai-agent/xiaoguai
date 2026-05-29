@@ -17,6 +17,7 @@ import { AnomalyPane } from './panes/Anomaly';
 import { KanbanPane } from './panes/Kanban';
 import { MemoryPane } from './panes/Memory';
 import { PersonasPane } from './panes/Personas';
+import { SkillProposalsPane } from './panes/SkillProposals';
 
 /**
  * v0.11.1 — audit-first console. `Today` becomes the default landing
@@ -86,6 +87,13 @@ export function App() {
         <NavLink to="/personas" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.personas')}
         </NavLink>
+        {/* v1.8.0 (sprint-10b S10b-3): Skill Proposals — review agent-authored skills. */}
+        <NavLink
+          to="/skill-proposals"
+          className={({ isActive }) => (isActive ? 'active' : '')}
+        >
+          {t('nav.skill_proposals')}
+        </NavLink>
         <LanguageSwitcher />
       </nav>
       <main className="main">
@@ -107,6 +115,7 @@ export function App() {
           <Route path="/audit" element={<AuditPane />} />
           <Route path="/memory" element={<MemoryPane />} />
           <Route path="/personas" element={<PersonasPane />} />
+          <Route path="/skill-proposals" element={<SkillProposalsPane />} />
         </Routes>
       </main>
     </div>
