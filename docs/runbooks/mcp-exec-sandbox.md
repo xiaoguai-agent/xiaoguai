@@ -157,5 +157,69 @@ xiaoguai mcp list   # find the spawned id
 xiaoguai chat --prompt "Use execute_python to compute the 10th Fibonacci number"
 ```
 
-The agent should call `execute_python`, see exit 0, return 55, and the
-HotL counter should bump by 1 in the `hotl_usage_log` table.
+> **Note (post session-5):** the bare `xiaoguai chat` CLI constructs an
+> `Agent::new(...)` with no MCP tools and no HotL gate wired. It will
+> reply via the LLM but cannot actually invoke `execute_python`. For an
+> end-to-end demo that exercises the gate + the sandbox, see
+> **End-to-end demo** below — go through the running server's
+> `/v1/sessions/*` API rather than the CLI one-shot.
+
+## End-to-end demo (post session-5)
+
+A reproducible, asciinema-recordable demo lives in
+[`docs/scripts/demo-mcp-exec.sh`](../scripts/demo-mcp-exec.sh). It
+covers steps 4.5 + 4.6 of
+[`docs/plans/2026-05-28-agent-mcp-exec-e2e.md`](../plans/2026-05-28-agent-mcp-exec-e2e.md):
+
+1. Confirms the server is healthy, mcp-exec is registered, and a HotL
+   policy is in place.
+2. Opens a `/v1/sessions` session, sends a prompt that should result in
+   `execute_python(7**7)`, asserts the reply contains `823543`.
+3. Asserts the `audit_log` row exists and the `hotl_usage_log` `Allow`
+   counter incremented by 1.
+4. Flips the HotL policy to Deny, resends a similar prompt, asserts the
+   deny reason propagates back to the user and that the new `audit_log`
+   row has `result='denied'`.
+
+Before running the script you need:
+
+| Prereq | How to set up |
+|---|---|
+| `xiaoguai serve` running on `:7601` | `xiaoguai --config ~/.xiaoguai/local.yaml serve` |
+| Tenant + agent identity | Plan A step 4.2 |
+| mcp-exec registered tenant-scoped | `xiaoguai mcp register --name exec-sandbox --transport stdio --command $(which xiaoguai-mcp-exec) --tenant "$TENANT"` |
+| HotL policy `bucket=exec` allowing `execute_python` | Plan A step 4.4 |
+
+Then:
+
+```bash
+export DATABASE_URL=postgres://...
+export TENANT="$(psql "$DATABASE_URL" -At -c \
+    "SELECT id FROM tenants WHERE slug='demo';")"
+bash docs/scripts/demo-mcp-exec.sh
+```
+
+The script exits non-zero on any verification failure so an asciinema
+recording stops cleanly on regression. To capture a cast:
+
+```bash
+asciinema rec \
+  --title 'xiaoguai agent → mcp-exec → HotL E2E' \
+  -c "bash docs/scripts/demo-mcp-exec.sh" \
+  docs/asciinema/agent-mcp-exec-e2e.cast
+```
+
+The four SQL probes the demo asserts:
+
+```sql
+-- session-level
+SELECT count(*) FROM mcp_servers WHERE name='exec-sandbox';
+SELECT count(*) FROM audit_log WHERE action='tool.execute' AND tool_name='execute_python';
+SELECT count(*) FROM hotl_usage_log WHERE outcome='Allow' AND tool_name='execute_python';
+SELECT result FROM audit_log WHERE action='tool.execute' AND tool_name='execute_python' ORDER BY ts DESC LIMIT 1;
+```
+
+If you see anything other than yes / yes / yes / `'denied'` after a full
+run, see the Triage table in
+[`docs/plans/2026-05-28-agent-mcp-exec-e2e.md`](../plans/2026-05-28-agent-mcp-exec-e2e.md)
+§5.
