@@ -22,9 +22,13 @@ dashmap = { workspace = true }
 # v1.6+ triangle pattern (DEC-021, sprint-9 S9-1):
 uuid = { workspace = true }
 parking_lot = { workspace = true }
-# v1.6+ triangle pattern (DEC-021, sprint-9 S9-2 — PlannerAgent needs
-# LlmBackend + ChatRequest + Message to dispatch one-shot prompts):
+# Sprint-9 S9-2 (PlannerAgent) + S9-3 (WorkerAgent) deps:
+xiaoguai-agent = { path = "../xiaoguai-agent" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
+tokio-util = { workspace = true }
+tokio-stream = { workspace = true }
+regex = { workspace = true }
+once_cell = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
