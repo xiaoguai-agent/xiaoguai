@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Sandboxed code-execution MCP server for xiaoguai. Spawns short-lived Python subprocesses behind ulimit + tokio timeout; gating belongs upstream in the agent loop (see HotlGate)."
 
 [lib]

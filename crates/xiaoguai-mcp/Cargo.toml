@@ -8,6 +8,12 @@ authors.workspace = true
 repository.workspace = true
 description = "MCP client + per-tenant supervisor."
 
+# cargo-dist: do NOT ship this crate's `mock-mcp-server` binary in the
+# cross-platform tarball. It's a test fixture used by integration tests,
+# not a user-facing binary.
+[package.metadata.dist]
+dist = false
+
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-storage = { path = "../xiaoguai-storage" }

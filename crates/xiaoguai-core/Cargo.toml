@@ -16,6 +16,15 @@ path = "src/lib.rs"
 name = "xiaoguai-core"
 path = "src/main.rs"
 
+# cargo-dist: do NOT ship xiaoguai-core in the cross-platform tarball.
+# This binary is a thin shim that calls into xiaoguai_core::run_with_cli()
+# (see PR #59, Tier-1a). It exists only so the existing systemd .deb /
+# .rpm packages stay valid for sites that haven't redeployed their unit
+# files. New installs use `xiaoguai serve`; the unified `xiaoguai` binary
+# (from xiaoguai-cli) is what cargo-dist publishes.
+[package.metadata.dist]
+dist = false
+
 # v1.3.1-prep: AR collections pack integration tests.
 # Exercises pack manifest parsing, watch/anomaly spec round-trips, and Jinja
 # template rendering.  DB + F1/F2 tests inside are marked #[ignore].
