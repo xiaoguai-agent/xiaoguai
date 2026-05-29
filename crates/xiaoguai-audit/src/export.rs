@@ -460,13 +460,17 @@ pub fn render_csv(bundle: &ComplianceBundle) -> Result<String, ExportError> {
     Ok(out)
 }
 
-/// PDF rendering stub — surface area in place, no implementation.
+/// PDF rendering — delegates to [`crate::pdf::render_pdf`].
+///
+/// Sprint-8 S8-6 (DEC-023.2) replaces the previous `PdfUnimplemented`
+/// stub with a byte-deterministic `pdf-writer`-backed renderer. The
+/// `PdfUnimplemented` variant is retained for back-compat — operators
+/// upgrading from pre-S8-6 builds shouldn't see a missing variant.
 ///
 /// # Errors
-/// Always returns [`ExportError::PdfUnimplemented`]. Tracked as a post-T5
-/// follow-up.
-pub fn render_pdf(_bundle: &ComplianceBundle) -> Result<Vec<u8>, ExportError> {
-    Err(ExportError::PdfUnimplemented)
+/// Returns [`ExportError::Chain`] wrapping any internal write failure.
+pub fn render_pdf(bundle: &ComplianceBundle) -> Result<Vec<u8>, ExportError> {
+    crate::pdf::render_pdf(bundle)
 }
 
 /// Render the bundle in the requested format.
@@ -766,7 +770,9 @@ mod tests {
     }
 
     #[test]
-    fn pdf_render_returns_unimplemented() {
+    fn pdf_render_now_produces_bytes() {
+        // Sprint-8 S8-6 lit the PDF backend. The stub-error assertion
+        // was retired; we now expect a real PDF starting with %PDF-.
         let (chain, stored) = fixture();
         let bundle = export_bundle(
             Framework::Soc2Cc72,
@@ -776,8 +782,8 @@ mod tests {
             &chain,
         )
         .unwrap();
-        let err = render_pdf(&bundle).unwrap_err();
-        assert!(matches!(err, ExportError::PdfUnimplemented));
+        let bytes = render_pdf(&bundle).expect("PDF should render");
+        assert!(bytes.starts_with(b"%PDF-"));
     }
 
     #[test]

@@ -291,6 +291,7 @@ fn emit_final(
         tool_calls,
         finish_reason: Some(reason),
         done: true,
+        reasoning_delta: None,
     })
 }
 

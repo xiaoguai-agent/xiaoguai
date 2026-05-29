@@ -185,4 +185,14 @@ pub struct ChatChunk {
     pub finish_reason: Option<FinishReason>,
     #[serde(default)]
     pub done: bool,
+    /// Sprint-8 S8-10 (DEC-024): thinking-mode passthrough.
+    ///
+    /// Models that expose a separate reasoning track (MiniMax M1/M2 series,
+    /// future DeepSeek-R, Anthropic extended thinking) emit reasoning bytes
+    /// on a sibling channel to `delta`. Surfaced as a separate field so the
+    /// caller can render it differently, record it for audit, or feed it
+    /// to a Critic (DEC-021). Backends without a reasoning channel leave
+    /// this `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_delta: Option<String>,
 }

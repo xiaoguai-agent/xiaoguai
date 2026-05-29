@@ -185,8 +185,11 @@ fn all_three_frameworks_yield_a_renderable_bundle() {
         assert!(json.contains("chain_proof"));
         assert!(csv.starts_with("# bundle-header"));
 
-        // Format::Pdf must surface as the stub error via the convenience wrapper.
-        let stub = xiaoguai_audit::render(&bundle, Format::Pdf);
-        assert!(matches!(stub, Err(ExportError::PdfUnimplemented)));
+        // Sprint-8 S8-6: Format::Pdf now returns real PDF bytes via the
+        // pdf-writer backend. Reproducibility is asserted in
+        // src/pdf.rs::tests; here we only confirm the convenience wrapper
+        // surfaces non-empty bytes that look like a PDF.
+        let pdf = xiaoguai_audit::render(&bundle, Format::Pdf).expect("pdf render");
+        assert!(pdf.starts_with(b"%PDF-"));
     }
 }

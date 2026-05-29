@@ -91,6 +91,7 @@ fn step_to_chunks(step: &ScriptStep) -> Vec<Result<ChatChunk, LlmError>> {
         tool_calls: step.tool_calls.clone(),
         finish_reason: Some(step.finish_reason.clone()),
         done: true,
+        reasoning_delta: None,
     }));
     out
 }

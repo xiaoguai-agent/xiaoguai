@@ -31,6 +31,7 @@ impl LlmBackend for FixedSummaryBackend {
             tool_calls: vec![],
             finish_reason: None,
             done: true,
+            reasoning_delta: None,
         };
         Ok(Box::pin(stream::iter(vec![Ok(chunk)])))
     }

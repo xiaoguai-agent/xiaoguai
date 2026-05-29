@@ -17,6 +17,7 @@ use crate::backend::LlmBackend;
 use crate::bedrock::BedrockBackend;
 use crate::gemini::GeminiBackend;
 use crate::groq::GroqBackend;
+use crate::minimax::{MinimaxBackend, MINIMAX_DEFAULT_BASE};
 use crate::mistral::MistralBackend;
 use crate::ollama::OllamaBackend;
 use crate::openai_compat::OpenAiCompatBackend;
@@ -195,6 +196,16 @@ pub fn build_router(rows: &[LlmProvider], env: &dyn EnvResolver) -> (LlmRouter, 
                     row.endpoint.clone()
                 };
                 Arc::new(GroqBackend::with_base_url(base_url, api_key))
+            }
+            ProviderKind::MiniMax => {
+                let api_key = resolve_required_key(row, env, &mut report);
+                // `endpoint` may be empty → use default MiniMax base URL.
+                let base_url = if row.endpoint.is_empty() {
+                    MINIMAX_DEFAULT_BASE.to_string()
+                } else {
+                    row.endpoint.clone()
+                };
+                Arc::new(MinimaxBackend::with_base_url(base_url, api_key))
             }
         };
         if backends.insert(row.id.clone(), backend).is_some() {

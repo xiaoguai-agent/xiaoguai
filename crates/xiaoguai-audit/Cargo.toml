@@ -11,6 +11,11 @@ description = "Append-only audit log with hmac chain + S3 sync (skeleton)."
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 async-trait = { workspace = true }
+# Sprint-8 S8-6 (DEC-023.2): byte-deterministic PDF rendering for
+# compliance export. pdf-writer is the typst team's lower-level writer;
+# we use it directly rather than the full typst library because we need
+# a tiny deterministic surface, not a typesetting engine.
+pdf-writer = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

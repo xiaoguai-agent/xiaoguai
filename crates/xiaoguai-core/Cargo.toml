@@ -57,6 +57,9 @@ xiaoguai-rag = { path = "../xiaoguai-rag" }
 # v0.11.2: assemble the EvalService (runner + suites dir) so the admin
 # console can drive `xiaoguai eval` flows via HTTP.
 xiaoguai-eval = { path = "../xiaoguai-eval" }
+# Sprint-8 S8-7 (DEC-023.3): production wiring for skill-author requires
+# Pg impls of SkillProposalRepository + TenantSettingsReader.
+xiaoguai-tasks = { path = "../xiaoguai-tasks" }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }

@@ -42,6 +42,13 @@ pub enum ProviderKind {
     /// Models: `llama-3.3-70b-versatile`, `mixtral-8x7b-32768`.
     #[serde(rename = "groq")]
     Groq,
+    /// MiniMax OpenAI-compatible `/v1/chat/completions`. Auth via Bearer
+    /// token. Models: `MiniMax-M1`, `MiniMax-M2`, `MiniMax-M2.5`,
+    /// `MiniMax-M2.7`, `abab6.5-chat`. M1/M2 series stream
+    /// `reasoning_content` deltas on chunks; we surface them via
+    /// `ChatChunk.reasoning_delta`. See DEC-024.
+    #[serde(rename = "minimax")]
+    MiniMax,
 }
 
 impl ProviderKind {
@@ -56,6 +63,7 @@ impl ProviderKind {
             Self::AzureOpenAi => "azure_openai",
             Self::Mistral => "mistral",
             Self::Groq => "groq",
+            Self::MiniMax => "minimax",
         }
     }
 
@@ -74,6 +82,7 @@ impl ProviderKind {
             "azure_openai" => Some(Self::AzureOpenAi),
             "mistral" => Some(Self::Mistral),
             "groq" => Some(Self::Groq),
+            "minimax" => Some(Self::MiniMax),
             _ => None,
         }
     }
@@ -118,6 +127,7 @@ mod tests {
             ProviderKind::AzureOpenAi,
             ProviderKind::Mistral,
             ProviderKind::Groq,
+            ProviderKind::MiniMax,
         ] {
             assert_eq!(ProviderKind::parse(k.as_str()), Some(k));
         }
@@ -151,6 +161,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&ProviderKind::Groq).unwrap(),
             "\"groq\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ProviderKind::MiniMax).unwrap(),
+            "\"minimax\""
         );
     }
 }
