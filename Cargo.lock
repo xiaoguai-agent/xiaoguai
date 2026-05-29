@@ -9264,6 +9264,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "xiaoguai-llm",
 ]
 
 [[package]]
