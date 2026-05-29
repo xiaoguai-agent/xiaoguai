@@ -22,6 +22,7 @@
 pub mod budget;
 pub mod memory_view;
 pub mod plan;
+pub mod planner_agent;
 pub mod roles;
 pub mod scratchpad;
 pub mod verdict;
@@ -29,6 +30,7 @@ pub mod verdict;
 pub use budget::{BudgetError, TriangleBudget};
 pub use memory_view::{MemoryFact, MemorySnapshot, MemoryView};
 pub use plan::{AcceptanceCriteria, Plan, Task, TaskId};
+pub use planner_agent::{PlannerAgent, PlannerError};
 pub use roles::Role;
 pub use scratchpad::{ScratchEntry, Scratchpad, ScratchpadError};
 pub use verdict::{Verdict, VerdictKind};
