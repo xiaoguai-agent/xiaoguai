@@ -27,7 +27,8 @@
     "marketplace": "MCP Marketplace",
     "skill_packs": "Skill Packs",
     "audit": "Audit Log",
-    "memory": "Memory"
+    "memory": "Memory",
+    "personas": "Personas"
   },
   "language": {
     "label": "Language",
@@ -426,6 +427,42 @@
       "neighbors_results_aria": "Vector neighbor results",
       "neighbors_empty": "No neighbors found.",
       "neighbors_col_similarity": "Similarity"
+    },
+    "personas": {
+      "title": "Personas",
+      "subtitle": "Named role profiles attached to sessions (sprint-9 triangle: planner / worker / critic).",
+      "btn_new": "+ New persona",
+      "btn_edit": "Edit",
+      "btn_delete": "Delete",
+      "btn_save": "Save",
+      "btn_cancel": "Cancel",
+      "filter_name_placeholder": "Filter by name…",
+      "filter_tag_all": "(any role)",
+      "filter_tag_planner": "Planner",
+      "filter_tag_worker": "Worker",
+      "filter_tag_critic": "Critic",
+      "col_name": "Name",
+      "col_tags": "Role",
+      "col_model": "Model",
+      "col_created": "Created",
+      "col_actions": "Actions",
+      "field_name": "Name",
+      "field_system_prompt": "System prompt",
+      "field_model": "Model preference",
+      "field_escalation_tier": "Escalation tier",
+      "field_tool_allowlist": "Tool allowlist (comma-separated; blank = unrestricted)",
+      "placeholder_name": "e.g. planner-default",
+      "placeholder_system_prompt": "You are…",
+      "placeholder_tool_allowlist": "web_search, github_search",
+      "drawer_create_title": "Create persona",
+      "drawer_edit_title": "Edit persona",
+      "delete_confirm_title": "Archive persona?",
+      "delete_confirm_body": "Archiving prevents this persona from being attached to new sessions. Existing sessions keep their persona attachment.",
+      "empty": "No personas defined yet.",
+      "loading": "Loading personas…",
+      "unavailable": "Personas repository not configured (HTTP 503). Wire `xiaoguai-personas::pg::PgPersonaRepository` in the API host.",
+      "tenant_id_label": "Tenant",
+      "tenant_id_placeholder": "ten_demo"
     }
   }
 }

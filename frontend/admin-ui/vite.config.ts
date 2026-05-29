@@ -11,7 +11,11 @@ export default defineConfig({
     },
   },
   test: {
-    environment: 'node',
+    // Component tests (RequireScope, Personas pane) need a DOM.
+    // Existing helper-only tests run identically under jsdom — they
+    // don't touch globals beyond what node already provides.
+    environment: 'jsdom',
+    setupFiles: ['./src/test-setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
   },
 });

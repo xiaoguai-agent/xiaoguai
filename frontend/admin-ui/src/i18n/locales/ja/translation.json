@@ -27,7 +27,8 @@
     "marketplace": "MCP マーケット",
     "skill_packs": "スキルパック",
     "audit": "監査ログ",
-    "memory": "記憶"
+    "memory": "記憶",
+    "personas": "ペルソナ"
   },
   "language": {
     "label": "言語",
@@ -426,6 +427,42 @@
       "neighbors_results_aria": "ベクトル近傍結果",
       "neighbors_empty": "近傍が見つかりませんでした。",
       "neighbors_col_similarity": "類似度"
+    },
+    "personas": {
+      "title": "ペルソナ",
+      "subtitle": "セッションに付加される役割プロファイル（sprint-9 トリアングル: planner / worker / critic）。",
+      "btn_new": "+ 新規ペルソナ",
+      "btn_edit": "編集",
+      "btn_delete": "アーカイブ",
+      "btn_save": "保存",
+      "btn_cancel": "キャンセル",
+      "filter_name_placeholder": "名前で絞り込み…",
+      "filter_tag_all": "（全ロール）",
+      "filter_tag_planner": "プランナー",
+      "filter_tag_worker": "ワーカー",
+      "filter_tag_critic": "クリティック",
+      "col_name": "名前",
+      "col_tags": "ロール",
+      "col_model": "モデル",
+      "col_created": "作成日",
+      "col_actions": "操作",
+      "field_name": "名前",
+      "field_system_prompt": "システムプロンプト",
+      "field_model": "モデル設定",
+      "field_escalation_tier": "エスカレーション階層",
+      "field_tool_allowlist": "ツール許可リスト（カンマ区切り。空 = 制限なし）",
+      "placeholder_name": "例: planner-default",
+      "placeholder_system_prompt": "You are…",
+      "placeholder_tool_allowlist": "web_search, github_search",
+      "drawer_create_title": "ペルソナを作成",
+      "drawer_edit_title": "ペルソナを編集",
+      "delete_confirm_title": "ペルソナをアーカイブしますか？",
+      "delete_confirm_body": "アーカイブ後は新しいセッションに付加できなくなります。既存セッションはそのまま使用されます。",
+      "empty": "ペルソナがまだ定義されていません。",
+      "loading": "読み込み中…",
+      "unavailable": "Personas リポジトリが未構成です（HTTP 503）。`xiaoguai-personas::pg::PgPersonaRepository` を API ホストに接続してください。",
+      "tenant_id_label": "テナント",
+      "tenant_id_placeholder": "ten_demo"
     }
   }
 }

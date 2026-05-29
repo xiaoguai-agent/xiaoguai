@@ -23,6 +23,11 @@ p, member, *, /personas/*, read
 p, member, *, /memories/*, read
 p, member, *, /memories/*, write
 p, member, *, /watchers/*, read
+# v1.8.0 (sprint-10b S10b-6) — anyone authenticated reads their own
+# scope list. `<RequireScope>` in the admin-ui uses this to decide
+# which mutating buttons to render.
+p, member, *, /admin/me/scopes, read
+p, tenant_admin, *, /admin/me/scopes, read
 
 g, system_admin, tenant_admin, *
 g, tenant_admin, member, *
