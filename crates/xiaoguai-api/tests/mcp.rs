@@ -137,6 +137,8 @@ fn build_state(auth: Option<Arc<dyn TokenValidator>>, mcp: Arc<InMemoryMcpRepo>)
         skill_author_gate: None,
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
+        personas: None,
+        watchers: None,
     }
 }
 

@@ -29,6 +29,7 @@ pub mod sse;
 pub mod state;
 pub mod today;
 pub mod usage;
+pub mod watchers;
 pub mod workspaces;
 
 pub use audit::{
@@ -84,6 +85,10 @@ pub use today::{StaticTodayReader, TodayError, TodayItem, TodayKind, TodayQuery,
 pub use usage::{
     StaticUsageEntry, StaticUsageReader, UsageError, UsageGroupBy, UsageQuery, UsageReader,
     UsageReport, UsageRow,
+};
+pub use watchers::{
+    StaticWatcherIntrospector, WatcherError, WatcherInfo, WatcherIntrospector,
+    WatcherSourceType, WatcherStatus,
 };
 pub use workspaces::{
     CreateWorkspaceRequest, InMemoryWorkspaceRepository, UpdateWorkspaceRequest, Workspace,

@@ -43,6 +43,8 @@ xiaoguai-agent = { path = "../xiaoguai-agent" }
 # (ollama) wired into AppState via memory_bridge.rs. `openai` stays off so we
 # don't pull async-openai into the local-first default build.
 xiaoguai-memory = { path = "../xiaoguai-memory", default-features = false, features = ["pg", "ollama"] }
+# v1.8.0 (sprint-10b S10b-1): persona CRUD wired via PgPersonaRepository.
+xiaoguai-personas = { path = "../xiaoguai-personas" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
 xiaoguai-api = { path = "../xiaoguai-api" }
 xiaoguai-mcp = { path = "../xiaoguai-mcp" }

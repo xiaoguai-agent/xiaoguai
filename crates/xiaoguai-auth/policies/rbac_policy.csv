@@ -8,9 +8,21 @@ p, tenant_admin, *, /mcp/*, read
 p, tenant_admin, *, /mcp/*, write
 p, tenant_admin, *, /audit/*, read
 p, tenant_admin, *, /billing/*, read
+p, tenant_admin, *, /personas/*, read
+p, tenant_admin, *, /personas/*, write
+p, tenant_admin, *, /personas/*, delete
+p, tenant_admin, *, /memories/*, read
+p, tenant_admin, *, /memories/*, write
+p, tenant_admin, *, /memories/*, delete
+p, tenant_admin, *, /watchers/*, read
+p, tenant_admin, *, /watchers/*, write
 p, member, *, /sessions/own/*, read
 p, member, *, /sessions/own/*, write
 p, member, *, /mcp/installed/*, read
+p, member, *, /personas/*, read
+p, member, *, /memories/*, read
+p, member, *, /memories/*, write
+p, member, *, /watchers/*, read
 
 g, system_admin, tenant_admin, *
 g, tenant_admin, member, *
