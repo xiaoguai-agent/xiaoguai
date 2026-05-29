@@ -4,8 +4,8 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
-    anomaly, backup, chat, completions, eval, hotl, manpages, mcp, outcomes, provider, remote,
-    self_update, skills, tasks, watch,
+    anomaly, audit_export, backup, chat, completions, eval, hotl, manpages, mcp, outcomes,
+    provider, remote, self_update, skills, tasks, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -247,6 +247,50 @@ enum Cmd {
         api_base: String,
         #[command(subcommand)]
         action: TasksCmd,
+    },
+
+    /// Audit chain administration — T5 compliance export.
+    Audit {
+        /// Base URL of the `xiaoguai-api` server.
+        #[arg(
+            long,
+            env = "XIAOGUAI_API_BASE",
+            default_value = "http://localhost:8080"
+        )]
+        api_base: String,
+        #[command(subcommand)]
+        action: AuditCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum AuditCmd {
+    /// Export a compliance bundle (SOC2 / GDPR / HIPAA) over a time window.
+    ///
+    /// Chain verification runs inside the window before the bundle is
+    /// rendered. If the chain is broken, the call returns 409 + a
+    /// machine-readable error JSON and this command exits non-zero. There
+    /// is no `--skip-verify` flag by design.
+    Export {
+        /// Tenant id (required — chain is per-tenant).
+        #[arg(long)]
+        tenant_id: String,
+        /// Framework short name — `soc2` | `gdpr` | `hipaa`.
+        #[arg(long)]
+        framework: String,
+        /// RFC3339 inclusive lower bound, e.g. `2026-01-01T00:00:00Z`.
+        #[arg(long)]
+        from: String,
+        /// RFC3339 inclusive upper bound, e.g. `2026-04-01T00:00:00Z`.
+        #[arg(long)]
+        to: String,
+        /// Path to write the rendered bundle to.
+        #[arg(long)]
+        output: String,
+        /// Output format — `json` (canonical) or `csv` (auditor-friendly).
+        /// `pdf` is reserved (returns 501 — tracked as a follow-up).
+        #[arg(long, default_value = "json")]
+        format: String,
     },
 }
 
@@ -1561,5 +1605,31 @@ async fn main() -> Result<()> {
         } => handle_anomaly(api_base, output, action).await,
         // v1.4 — Kanban task board
         Cmd::Tasks { api_base, action } => handle_tasks(api_base, action).await,
+        // T5 (Tier-3) — compliance export.
+        Cmd::Audit { api_base, action } => handle_audit(api_base, action).await,
+    }
+}
+
+async fn handle_audit(api_base: String, action: AuditCmd) -> Result<()> {
+    match action {
+        AuditCmd::Export {
+            tenant_id,
+            framework,
+            from,
+            to,
+            output,
+            format,
+        } => {
+            audit_export::run(audit_export::ExportArgs {
+                api_base,
+                tenant_id,
+                framework,
+                from,
+                to,
+                output: std::path::PathBuf::from(output),
+                format,
+            })
+            .await
+        }
     }
 }

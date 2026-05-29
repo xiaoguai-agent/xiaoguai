@@ -11,9 +11,15 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use xiaoguai_api::audit::{AuditEntryView, AuditError, AuditReader, AuditVerifier, VerifyReport};
+use xiaoguai_api::audit::{
+    AuditChainExporter, AuditEntryView, AuditError, AuditReader, AuditVerifier,
+    ExportError as ApiExportError, ExportRequest, VerifyReport,
+};
 use xiaoguai_audit::chain::sink::PgAuditSink;
-use xiaoguai_audit::ChainError;
+use xiaoguai_audit::{
+    export_bundle as audit_export_bundle, render as audit_render, ChainError, ExportError,
+    ExportWindow, Format, Framework,
+};
 
 pub struct PgAuditAdapter {
     sink: Arc<PgAuditSink>,
@@ -62,6 +68,55 @@ impl AuditReader for PgAuditAdapter {
                 hmac: hex::encode(s.hmac),
             })
             .collect())
+    }
+}
+
+/// Bound on the row count pulled per export. Streaming export is out of
+/// scope for T5 — see the runbook for the rationale. Production tenants
+/// with >100k events in a window should request shorter windows.
+const EXPORT_ROW_CAP: i64 = 100_000;
+
+#[async_trait]
+impl AuditChainExporter for PgAuditAdapter {
+    async fn export(&self, req: ExportRequest) -> Result<Vec<u8>, ApiExportError> {
+        let framework =
+            Framework::parse(&req.framework).map_err(|s| ApiExportError::InvalidArgument {
+                message: format!("unknown framework: {s}"),
+            })?;
+        let format = Format::parse(&req.format).map_err(|s| ApiExportError::InvalidArgument {
+            message: format!("unknown format: {s}"),
+        })?;
+        let window =
+            ExportWindow::new(req.from, req.to).ok_or_else(|| ApiExportError::InvalidArgument {
+                message: "from must be <= to".into(),
+            })?;
+
+        let rows = self
+            .sink
+            .list(&req.tenant_id, Some(req.from), Some(req.to), EXPORT_ROW_CAP)
+            .await
+            .map_err(|e| ApiExportError::Backend {
+                message: e.to_string(),
+            })?;
+
+        let bundle = audit_export_bundle(framework, req.tenant_id, rows, window, self.sink.chain())
+            .map_err(map_export_err)?;
+
+        audit_render(&bundle, format).map_err(map_export_err)
+    }
+}
+
+fn map_export_err(e: ExportError) -> ApiExportError {
+    match e {
+        ExportError::ChainBroken {
+            first_broken_id,
+            first_broken_ts,
+        } => ApiExportError::ChainBroken {
+            first_broken_id,
+            first_broken_ts,
+        },
+        ExportError::PdfUnimplemented => ApiExportError::PdfUnimplemented,
+        ExportError::Chain { message } => ApiExportError::Backend { message },
     }
 }
 
