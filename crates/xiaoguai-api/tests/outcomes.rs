@@ -69,6 +69,8 @@ fn minimal_state() -> AppState {
         skill_author_gate: None,
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
+        personas: None,
+        watchers: None,
     }
 }
 
