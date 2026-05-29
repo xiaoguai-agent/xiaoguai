@@ -65,6 +65,7 @@ fn build_state(steps: Vec<ScriptStep>) -> (AppState, Arc<InMemoryMessageRepo>) {
         skill_author_gate: None,
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
+        personas: None,
     };
     (state, messages)
 }

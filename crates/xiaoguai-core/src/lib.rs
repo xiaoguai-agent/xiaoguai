@@ -664,6 +664,12 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                     .map_or_else(|| std::path::PathBuf::from("."), std::path::PathBuf::from);
                 home.join(".xiaoguai").join("skills")
             }),
+        // v1.8.0 (sprint-10b S10b-1): persona CRUD wired via the PG-backed
+        // repository when a pool is available. `None` here would surface as
+        // 503 from `/v1/personas/*`; production always has a Postgres pool.
+        personas: Some(Arc::new(xiaoguai_personas::PgPersonaRepository::new(
+            pool.clone(),
+        ))),
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

@@ -98,6 +98,7 @@ fn build_fixture() -> Fixture {
         skill_author_gate: Some(gate_arc),
         skill_audit: Some(audit_arc),
         skills_dir: tmp.path().to_path_buf(),
+        personas: None,
     };
     Fixture {
         state,

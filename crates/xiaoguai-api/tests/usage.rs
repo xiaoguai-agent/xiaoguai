@@ -65,6 +65,7 @@ fn build_state(usage_reader: Option<Arc<dyn UsageReader>>) -> AppState {
         skill_author_gate: None,
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
+        personas: None,
     }
 }
 

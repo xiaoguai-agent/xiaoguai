@@ -38,6 +38,7 @@ use crate::today::TodayReader;
 use crate::usage::UsageReader;
 use crate::workspaces::WorkspaceRepository;
 use xiaoguai_memory::MemoryStore;
+use xiaoguai_personas::PersonaRepository;
 
 /// Registry of cancellation tokens keyed by `session_id`. A single token per
 /// session is enough — the API contract serialises message turns within a
@@ -234,6 +235,11 @@ pub struct AppState {
     /// v1.5.x: directory the approved skill manifests are written to.
     /// Defaults to `~/.xiaoguai/skills` in production wiring.
     pub skills_dir: std::path::PathBuf,
+    /// v1.8.0 (sprint-10b S10b-1): persona CRUD + session-attachment store —
+    /// backs `/v1/personas/*` and `/v1/sessions/:id/persona`. `None` makes
+    /// those endpoints return 503; production wires `PgPersonaRepository`
+    /// from `xiaoguai-personas`.
+    pub personas: Option<Arc<dyn PersonaRepository>>,
 }
 
 impl std::fmt::Debug for AppState {

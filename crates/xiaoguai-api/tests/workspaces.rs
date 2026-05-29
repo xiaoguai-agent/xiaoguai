@@ -63,6 +63,7 @@ fn build_state(workspaces: Option<Arc<dyn WorkspaceRepository>>) -> AppState {
         skill_author_gate: None,
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
+        personas: None,
     }
 }
 

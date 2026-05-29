@@ -19,6 +19,8 @@ xiaoguai-agent = { path = "../xiaoguai-agent" }
 # v1.5.x — Tier-2 D.1 agent-authored skill proposals.
 xiaoguai-tasks = { path = "../xiaoguai-tasks" }
 xiaoguai-memory = { path = "../xiaoguai-memory", default-features = false }
+# v1.8.0 (sprint-10b S10b-1): persona CRUD endpoints.
+xiaoguai-personas = { path = "../xiaoguai-personas" }
 # v0.12.0: shared agent-loop runtime used by REST + IM + scheduler.
 xiaoguai-runtime = { path = "../xiaoguai-runtime" }
 # v0.11.2: eval pane endpoints reuse the EvalRunner / EvalSuite types

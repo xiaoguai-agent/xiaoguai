@@ -6,6 +6,7 @@ pub mod hotl;
 pub mod mcp;
 pub mod memory;
 pub mod outcomes;
+pub mod personas;
 pub mod scheduler_public;
 pub mod sessions;
 pub mod tenants;
@@ -160,6 +161,26 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/workspaces/{id}",
             put(workspaces::update_workspace).delete(workspaces::archive_workspace),
+        )
+        // v1.8.0 (sprint-10b S10b-1) — persona CRUD + session attachment.
+        // Personas crate (xiaoguai-personas/src/routes.rs) defined the
+        // handlers but never mounted them on the main router; this is the
+        // wiring point that unblocks the admin-ui Personas pane.
+        .route(
+            "/v1/personas",
+            get(personas::list_personas).post(personas::create_persona),
+        )
+        .route(
+            "/v1/personas/{id}",
+            get(personas::get_persona)
+                .patch(personas::update_persona)
+                .delete(personas::archive_persona),
+        )
+        .route(
+            "/v1/sessions/{id}/persona",
+            get(personas::get_session_persona)
+                .put(personas::attach_persona)
+                .delete(personas::detach_persona),
         );
 
     // Layer order (inner → outer, since `route_layer` adds outward):
