@@ -142,9 +142,11 @@ Each call returns a JSON payload inside an MCP `text` content block:
 - **macOS `ulimit -v` is best-effort.** Darwin doesn't always enforce
   virtual-memory caps the way Linux does. Use Linux container deploys
   for production.
-- **No JavaScript runtime yet.** A future `execute_javascript` tool
-  will land as a separate MCP server (separate trust boundary, separate
-  HotL scope). Don't bolt JS into this binary.
+- **JavaScript is a sibling, not part of this binary.** See
+  [`mcp-exec-js-sandbox.md`](mcp-exec-js-sandbox.md) for the
+  `xiaoguai-mcp-exec-js` runbook — separate trust boundary, separate
+  HotL scope (`tool_call.execute_javascript`), separate binary. A
+  sandbox escape in one runtime must not chain into the other.
 
 ## Smoke test
 
