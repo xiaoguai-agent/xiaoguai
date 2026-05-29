@@ -143,6 +143,9 @@ hmac = "0.13"
 sha2 = "0.11"
 sha1 = "0.11"
 aes = "0.9"
+# Sprint-8 S8-5: AES-256-GCM for MCP refresh-token encryption at rest.
+# 0.10.x is the stable line; 0.11 is rc as of plan write.
+aes-gcm = "0.10"
 cbc = { version = "0.2", features = ["alloc", "block-padding"] }
 cipher = "0.5"
 rand = "0.10"

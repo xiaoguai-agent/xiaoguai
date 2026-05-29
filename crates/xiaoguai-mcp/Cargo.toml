@@ -41,6 +41,8 @@ base64 = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
 dashmap = { workspace = true }
+# Sprint-8 S8-5: AES-256-GCM encryption-at-rest for refresh tokens.
+aes-gcm = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
