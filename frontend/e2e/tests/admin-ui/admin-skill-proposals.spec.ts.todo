@@ -1,0 +1,24 @@
+TODO — author this spec when S10b-3 SkillProposals pane merges. See PR #103
+(`feat/sprint10b-s10b-3-skill-proposals`).
+
+This spec should cover the SkillProposals pane (LLD-ADMIN-UI-001 §4.3):
+  - Navigate to `/skill-proposals`; list renders.
+  - Filter by status (pending / approved / rejected).
+  - Open a proposal → drawer shows YAML diff + reasoning.
+  - "Approve" → POST /v1/skill-proposals/:id/decision → row status updates.
+  - "Reject with feedback" → modal → POST → row updates.
+
+Mock strategy (matching the personas spec pattern in admin-personas.spec.ts):
+  - page.route('**/v1/admin/me/scopes', …) → return ['proposals.write']
+  - page.route('**/v1/skill-proposals**', …) → mutable mock store
+
+The reason this is `.todo` and not `.spec.ts.skip`: the SkillProposals
+component file does not exist on the `feat/sprint10b-s10b-8-e2e-extension`
+base branch (which is `feat/sprint10b-s10b-9-auth-ui`). Authoring the spec
+now would create a spec that the navigation step (`page.goto('/skill-proposals')`)
+would fail on even with mocks installed — the route is unmounted.
+
+When S10b-3 merges:
+  1. Rename this file to `admin-skill-proposals.spec.ts`.
+  2. Replace this README block with the imports + test bodies.
+  3. Reuse the `installScopeMock()` helper pattern from admin-personas.spec.ts.
