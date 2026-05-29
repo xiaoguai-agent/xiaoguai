@@ -32,8 +32,8 @@ pub mod usage;
 pub mod workspaces;
 
 pub use audit::{
-    AuditEntryView, AuditError, AuditReader, AuditVerifier, StaticAuditReader, StaticAuditVerifier,
-    VerifyReport,
+    AuditChainExporter, AuditEntryView, AuditError, AuditReader, AuditVerifier, ExportError,
+    ExportRequest, StaticAuditChainExporter, StaticAuditReader, StaticAuditVerifier, VerifyReport,
 };
 pub use auth::{Claims, JwtTokenValidator, StubValidator, TokenValidator};
 pub use error::{ApiError, ApiResult, UnauthorizedReason};

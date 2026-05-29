@@ -69,6 +69,65 @@ pub enum VerifyReport {
     Broken { broken_at: i64 },
 }
 
+/// v1.5 (T5) — compliance bundle exporter.
+///
+/// Wraps `xiaoguai-audit::export::export_bundle` behind a trait so the api
+/// crate doesn't depend on `xiaoguai-audit` directly. The Pg adapter in
+/// `xiaoguai-core::audit_bridge` reads rows for `[from, to]`, calls
+/// `export_bundle` (which re-verifies chain continuity inside the window),
+/// then renders to the requested format and returns the raw bytes.
+///
+/// Why a separate trait (vs. reusing `AuditReader`): the export requires the
+/// signing key (the `ChainedAudit` engine), and the api crate must never see
+/// the key. Keeping the work inside the bridge preserves that boundary.
+#[async_trait]
+pub trait AuditChainExporter: Send + Sync {
+    /// Build + render a compliance bundle for `[from, to]`.
+    ///
+    /// `framework` and `format` are short strings (e.g. `"soc2"`, `"json"`)
+    /// parsed inside the adapter. Returns the rendered bytes (`Content-Type`
+    /// is the caller's job) on success.
+    async fn export(&self, req: ExportRequest) -> Result<Vec<u8>, ExportError>;
+}
+
+/// Request shape for an audit-chain export call.
+#[derive(Debug, Clone)]
+pub struct ExportRequest {
+    pub tenant_id: String,
+    /// Short framework name — `"soc2"`, `"gdpr"`, `"hipaa"`.
+    pub framework: String,
+    /// Short format name — `"json"`, `"csv"`, `"pdf"`.
+    pub format: String,
+    pub from: DateTime<Utc>,
+    pub to: DateTime<Utc>,
+}
+
+/// Errors surfaced by [`AuditChainExporter::export`].
+///
+/// Modelled to map cleanly onto HTTP status codes in the route handler:
+/// * `ChainBroken` → 409
+/// * `PdfUnimplemented` → 501
+/// * `InvalidArgument` → 400
+/// * `Backend` → 500
+#[derive(Debug, Clone, Error, Serialize)]
+#[serde(tag = "error", rename_all = "snake_case")]
+pub enum ExportError {
+    #[error("audit chain broken at row {first_broken_id} ({first_broken_ts})")]
+    ChainBroken {
+        first_broken_id: i64,
+        first_broken_ts: DateTime<Utc>,
+    },
+
+    #[error("pdf rendering is not yet implemented")]
+    PdfUnimplemented,
+
+    #[error("invalid argument: {message}")]
+    InvalidArgument { message: String },
+
+    #[error("backend: {message}")]
+    Backend { message: String },
+}
+
 /// In-memory `AuditReader` used by route tests. Holds a fixed list and
 /// filters on read.
 #[derive(Debug, Default)]
@@ -139,6 +198,67 @@ impl AuditVerifier for StaticAuditVerifier {
             .get(tenant_id)
             .cloned()
             .unwrap_or(VerifyReport::Ok { verified_count: 0 }))
+    }
+}
+
+/// In-memory `AuditChainExporter` for route tests.
+///
+/// Holds pre-canned responses keyed by `(tenant_id, framework, format)`.
+/// Route tests construct one with the bytes they want returned and verify
+/// the HTTP path without standing up the full Pg adapter.
+#[derive(Default)]
+pub struct StaticAuditChainExporter {
+    /// `Ok(bytes)` is returned verbatim; `Err(...)` is propagated.
+    pub responses:
+        std::collections::HashMap<(String, String, String), Result<Vec<u8>, ExportError>>,
+}
+
+impl std::fmt::Debug for StaticAuditChainExporter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StaticAuditChainExporter")
+            .field("response_count", &self.responses.len())
+            .finish()
+    }
+}
+
+impl StaticAuditChainExporter {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a pre-canned response. Keys are `(tenant_id, framework, format)`.
+    #[must_use]
+    pub fn with(
+        mut self,
+        tenant_id: impl Into<String>,
+        framework: impl Into<String>,
+        format: impl Into<String>,
+        response: Result<Vec<u8>, ExportError>,
+    ) -> Self {
+        self.responses.insert(
+            (tenant_id.into(), framework.into(), format.into()),
+            response,
+        );
+        self
+    }
+}
+
+#[async_trait]
+impl AuditChainExporter for StaticAuditChainExporter {
+    async fn export(&self, req: ExportRequest) -> Result<Vec<u8>, ExportError> {
+        let key = (
+            req.tenant_id.clone(),
+            req.framework.clone(),
+            req.format.clone(),
+        );
+        match self.responses.get(&key) {
+            Some(Ok(b)) => Ok(b.clone()),
+            Some(Err(e)) => Err(e.clone()),
+            None => Err(ExportError::InvalidArgument {
+                message: format!("no canned response for {key:?}"),
+            }),
+        }
     }
 }
 
