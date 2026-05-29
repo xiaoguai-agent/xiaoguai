@@ -28,9 +28,18 @@ reqwest = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 hex = "0.4"
+# Tier-3 T4 (OAuth 2.1 PKCE): code_verifier + challenge + state generation,
+# base64url-no-pad encoding, time-window math, async traits, atomic token store.
+rand = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+url = { workspace = true }
+dashmap = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# Tier-3 T4 e2e: mock OAuth token endpoint (already a workspace dep).
+mockito = { workspace = true }
 # v0.9.0: in-process MCP server for the HTTP transport integration test.
 # Server features only enabled for `cargo test`; production binary stays
 # slim.

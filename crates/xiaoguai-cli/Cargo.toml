@@ -24,6 +24,8 @@ xiaoguai-eval = { path = "../xiaoguai-eval" }
 xiaoguai-storage = { path = "../xiaoguai-storage" }
 xiaoguai-config = { path = "../xiaoguai-config" }
 xiaoguai-audit = { path = "../xiaoguai-audit" }
+# Tier-3 T4: `xiaoguai mcp register --auth oauth2-pkce` consent flow.
+xiaoguai-mcp = { path = "../xiaoguai-mcp" }
 # v1.5: unified binary — `xiaoguai serve` delegates into xiaoguai-core's
 # library entry point (the legacy `xiaoguai-core` binary remains a thin shim
 # over the same function, for backward compatibility with existing systemd
@@ -51,6 +53,8 @@ tar = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 tempfile = { workspace = true }
+# Tier-3 T4: parse OAuth callback `?code=...&state=...` query strings.
+url = { workspace = true }
 
 [build-dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -67,7 +71,6 @@ tar = { workspace = true }
 serde_json = { workspace = true }
 mockito = { workspace = true }
 xiaoguai-api = { path = "../xiaoguai-api" }
-xiaoguai-mcp = { path = "../xiaoguai-mcp" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
 
 [lints]
