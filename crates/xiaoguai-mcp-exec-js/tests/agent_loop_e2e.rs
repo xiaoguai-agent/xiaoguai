@@ -107,7 +107,8 @@ async fn execute_javascript_passes_through_hotl_gate_and_records_audit() {
         code: r#"console.log("hello from execute_javascript");"#.into(),
         timeout_secs: Some(10),
     };
-    let (contents, is_error) = execute_javascript_call(&cfg, args).await;
+    let backend = xiaoguai_mcp_exec_js::runtime::ProcessL1JavaScript::new(cfg.clone());
+    let (contents, is_error) = execute_javascript_call(&backend, &cfg, args).await;
 
     assert!(
         !is_error,

@@ -20,18 +20,59 @@ use crate::exec::ExecConfig;
 use crate::tools::{execute_python_call, execute_python_tool, ExecutePythonArgs, EXECUTE_PYTHON};
 
 /// Stateful MCP server that owns the [`ExecConfig`] all `execute_python`
-/// calls share. Cloning is cheap — the config is `Arc`-shared so call-time
-/// branches don't bloat each per-request copy.
-#[derive(Clone, Debug)]
+/// calls share **and** the [`ExecBackend`] trait object that does the work
+/// (DEC-019 — per-tenant L1↔L3 swap is runtime, not build-time). The
+/// trait object lets operators run different sandbox tiers per tenant by
+/// registering distinct MCP servers (e.g., `xiaoguai-mcp-exec` for L1 vs
+/// `xiaoguai-mcp-exec-wasm-py` for L3) without changing this crate. Cloning
+/// is cheap — both the config and the backend are `Arc`-shared.
+#[derive(Clone)]
 pub struct ExecServer {
     cfg: Arc<ExecConfig>,
+    backend: Arc<dyn crate::runtime::ExecBackend>,
+}
+
+impl std::fmt::Debug for ExecServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExecServer")
+            .field("cfg", &self.cfg)
+            .field("backend", &self.backend.name())
+            .finish()
+    }
 }
 
 impl ExecServer {
-    /// Construct with a custom config.
+    /// Construct with a custom config. Uses the default L1 backend
+    /// (`ProcessL1Python`) — this is the canonical entry point.
     #[must_use]
     pub fn new(cfg: ExecConfig) -> Self {
-        Self { cfg: Arc::new(cfg) }
+        let backend: Arc<dyn crate::runtime::ExecBackend> =
+            Arc::new(crate::runtime::ProcessL1Python::new(cfg.clone()));
+        Self {
+            cfg: Arc::new(cfg),
+            backend,
+        }
+    }
+
+    /// Construct with an explicit backend impl (DEC-019). Used by L3
+    /// binaries (`xiaoguai-mcp-exec-wasm-py`) that pass a
+    /// `WasmtimePythonBackend`, and by tests that inject mocks.
+    #[must_use]
+    pub fn with_backend(
+        cfg: ExecConfig,
+        backend: Arc<dyn crate::runtime::ExecBackend>,
+    ) -> Self {
+        Self {
+            cfg: Arc::new(cfg),
+            backend,
+        }
+    }
+
+    /// Backend tier label, surfaced to operators via the supervisor for
+    /// debugging ("which tier is this server actually running?").
+    #[must_use]
+    pub fn backend_name(&self) -> &'static str {
+        self.backend.name()
     }
 }
 
@@ -89,7 +130,8 @@ impl ServerHandler for ExecServer {
             McpProtocolError::invalid_params(format!("invalid arguments: {e}"), None)
         })?;
 
-        let (contents, is_error) = execute_python_call(&self.cfg, args).await;
+        let (contents, is_error) =
+            execute_python_call(self.backend.as_ref(), &self.cfg, args).await;
         Ok(if is_error {
             CallToolResult::error(contents)
         } else {
@@ -153,7 +195,8 @@ mod tests {
             code: "print(1)".into(),
             timeout_secs: Some(5),
         };
-        let (contents, is_error) = execute_python_call(&server.cfg, args).await;
+        let (contents, is_error) =
+            execute_python_call(server.backend.as_ref(), &server.cfg, args).await;
         assert!(!is_error);
         assert!(!contents.is_empty());
     }
@@ -171,5 +214,79 @@ mod tests {
         let v = json!({"timeout_secs": 5});
         let err = serde_json::from_value::<ExecutePythonArgs>(v).unwrap_err();
         assert!(err.to_string().contains("code"));
+    }
+
+    // ── DEC-019 selector wiring (S8-4) -----------------------------------
+
+    /// Mock backend: records every `run` invocation; returns a canned
+    /// success payload. Lets us prove the `ExecServer` actually routes
+    /// through the trait object we hand it (rather than the default L1).
+    #[derive(Default)]
+    struct MockBackend {
+        invocations: std::sync::Mutex<Vec<(String, std::time::Duration)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::runtime::ExecBackend for MockBackend {
+        fn name(&self) -> &'static str {
+            "mock-test-backend"
+        }
+        async fn run(
+            &self,
+            snippet: &str,
+            timeout: std::time::Duration,
+        ) -> Result<crate::exec::ExecResult, crate::exec::ExecError> {
+            self.invocations
+                .lock()
+                .unwrap()
+                .push((snippet.to_string(), timeout));
+            Ok(crate::exec::ExecResult {
+                exit_code: Some(0),
+                stdout: "ok".into(),
+                stderr: String::new(),
+                duration_ms: 1,
+                truncated: false,
+                timed_out: false,
+            })
+        }
+        fn capability_summary(&self) -> crate::runtime::CapabilitySummary {
+            crate::runtime::CapabilitySummary {
+                tier: "mock",
+                language: "python",
+                network: false,
+                filesystem: false,
+                subprocess: false,
+                max_memory_mb: 256,
+                max_timeout_secs: 30,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn with_backend_routes_through_trait_object_not_default_l1() {
+        let mock = std::sync::Arc::new(MockBackend::default());
+        let server = ExecServer::with_backend(ExecConfig::default(), mock.clone());
+
+        assert_eq!(server.backend_name(), "mock-test-backend");
+
+        let args = ExecutePythonArgs {
+            code: "print('routed')".into(),
+            timeout_secs: Some(5),
+        };
+        let (_contents, is_error) =
+            execute_python_call(server.backend.as_ref(), &server.cfg, args).await;
+        assert!(!is_error);
+
+        // Proof: the mock was invoked with exactly the routed snippet.
+        let inv = mock.invocations.lock().unwrap();
+        assert_eq!(inv.len(), 1);
+        assert_eq!(inv[0].0, "print('routed')");
+    }
+
+    #[test]
+    fn default_backend_is_process_l1_python() {
+        let server = ExecServer::new(ExecConfig::default());
+        // Stable label is load-bearing — DEC-019 metrics/dashboards key on it.
+        assert_eq!(server.backend_name(), "process-l1-python");
     }
 }
