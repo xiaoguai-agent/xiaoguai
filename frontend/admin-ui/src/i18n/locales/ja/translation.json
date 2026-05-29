@@ -1,4 +1,12 @@
 {
+  "auth": {
+    "sessionExpired": "セッションが期限切れになりました。ページを再読み込みして再度サインインしてください。",
+    "sessionExpiredReload": "再読み込み",
+    "forbiddenTitle": "アクセス拒否",
+    "forbiddenScopeMessage": "この操作には `{{scope}}` 権限が必要です。管理者に連絡するか、運用ランブックを確認してください。",
+    "forbiddenGenericMessage": "この操作を実行する権限がありません。管理者に連絡してください。",
+    "forbiddenRunbookLink": "運用ランブックを開く"
+  },
   "common": {
     "loading": "読み込み中…",
     "refresh": "更新",
