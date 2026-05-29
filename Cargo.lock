@@ -8859,6 +8859,7 @@ dependencies = [
  "xiaoguai-runtime",
  "xiaoguai-scheduler",
  "xiaoguai-storage",
+ "xiaoguai-tasks",
  "xiaoguai-types",
 ]
 

@@ -40,6 +40,7 @@ pub mod packs;
 mod scheduler_bridge;
 mod sd_notify_bridge;
 mod sessions_bridge;
+pub mod skill_author_bridge;
 pub mod skills_bridge;
 mod today_bridge;
 mod usage_bridge;
@@ -300,14 +301,25 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // — empty / missing means audit endpoints stay at 503 in production
     // rather than silently using `settings.audit.hmac_key` (which is the
     // dev-only fallback wired into `smoke`).
+    // Sprint-8 S8-7: hoist the PgAuditSink so the skill_author_bridge can
+    // reuse the same signing chain. `None` here keeps skill-author audit
+    // wiring off when the signing key env var is empty.
+    let pg_audit_sink: Option<Arc<PgAuditSink>> =
+        match std::env::var(&settings.audit.signing_key_env) {
+            Ok(key) if !key.is_empty() => Some(Arc::new(PgAuditSink::new(
+                pool.clone(),
+                key.into_bytes(),
+            ))),
+            _ => None,
+        };
+
     let (audit_reader, audit_verifier, audit_chain_exporter): (
         Option<Arc<dyn AuditReader>>,
         Option<Arc<dyn AuditVerifier>>,
         Option<Arc<dyn xiaoguai_api::audit::AuditChainExporter>>,
-    ) = match std::env::var(&settings.audit.signing_key_env) {
-        Ok(key) if !key.is_empty() => {
-            let sink = Arc::new(PgAuditSink::new(pool.clone(), key.into_bytes()));
-            let adapter = Arc::new(PgAuditAdapter::new(sink));
+    ) = match &pg_audit_sink {
+        Some(sink) => {
+            let adapter = Arc::new(PgAuditAdapter::new(sink.clone()));
             tracing::info!(
                 env = %settings.audit.signing_key_env,
                 "serve: audit reader+verifier+exporter wired (PgAuditSink)"
@@ -318,7 +330,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                 Some(adapter as Arc<dyn xiaoguai_api::audit::AuditChainExporter>),
             )
         }
-        _ => {
+        None => {
             tracing::warn!(
                 env = %settings.audit.signing_key_env,
                 "serve: audit signing key not set — /v1/admin/audit, /v1/admin/audit/verify, and /v1/audit/exports will return 503"
@@ -627,15 +639,24 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // v1.3.x: workspace CRUD — production wires PgWorkspaceRepository
         // in workspace_bridge.rs; `None` makes /v1/workspaces return 503.
         workspace_repository: None,
-        // v1.5.x — Tier-2 D.1: agent-authored skill proposals.
-        // Production wires PgSkillProposalRepository + PgTenantSettings
-        // + EnforcerGateAdapter + PgAuditSink once the bridge module
-        // lands (next PR). `None` makes /v1/skills/proposals/* routes
-        // return 503 and `propose_skill` unregistered.
-        skill_proposals: None,
-        tenant_settings: None,
-        skill_author_gate: None,
-        skill_audit: None,
+        // Sprint-8 S8-7 (DEC-023.3): skill-author production wiring.
+        // Requires both the audit signing key (for the SkillAuditSink
+        // adapter over PgAuditSink) and a running HotL enforcer. When
+        // the audit key is unset we keep the four slots `None` — the
+        // /v1/skills/proposals/* routes return 503 and `propose_skill`
+        // stays unregistered.
+        skill_proposals: pg_audit_sink.as_ref().map(|_| {
+            xiaoguai_tasks::skill_author_pg::PgSkillProposalRepository::arc(pool.clone())
+        }),
+        tenant_settings: pg_audit_sink
+            .as_ref()
+            .map(|_| xiaoguai_tasks::skill_author_pg::PgTenantSettings::arc(pool.clone())),
+        skill_author_gate: pg_audit_sink.as_ref().map(|_| {
+            crate::skill_author_bridge::EnforcerGateAdapter::arc(hotl_enforcer_arc.clone())
+        }),
+        skill_audit: pg_audit_sink
+            .as_ref()
+            .map(|sink| crate::skill_author_bridge::AuditSinkAdapter::arc(sink.clone())),
         skills_dir: std::env::var_os("XIAOGUAI_SKILLS_DIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| {
