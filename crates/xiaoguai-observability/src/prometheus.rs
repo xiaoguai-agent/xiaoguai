@@ -38,8 +38,9 @@ use axum::{
 };
 use once_cell::sync::OnceCell;
 use prometheus::{
-    exponential_buckets, register_histogram_vec_with_registry, register_histogram_with_registry,
-    register_int_counter_vec_with_registry, Histogram, HistogramVec, IntCounterVec, Registry,
+    exponential_buckets, register_gauge_vec_with_registry, register_histogram_vec_with_registry,
+    register_histogram_with_registry, register_int_counter_vec_with_registry, GaugeVec, Histogram,
+    HistogramVec, IntCounterVec, Registry,
 };
 
 /// Bucket boundaries shared by HTTP and LLM histograms (seconds).
@@ -89,9 +90,22 @@ pub struct MetricHandles {
 
     // ── Sprint-8 S8-10 — LLM reasoning (thinking-mode) telemetry ────────────
     /// Reasoning-track tokens emitted by thinking-mode providers
-    /// (MiniMax M1/M2, future DeepSeek-R, etc.). Counters by `(provider, model)`.
+    /// (`MiniMax` M1/M2, future DeepSeek-R, etc.). Counters by `(provider, model)`.
     /// Increments by the estimated reasoning-token count per delta.
     pub llm_reasoning_tokens_total: IntCounterVec,
+
+    // ── Sprint-10 S10-3 — SLO contracts (DEC-022) ───────────────────────────
+    /// Per-scrape burn-rate ratio for each (signal, window, surface) tuple.
+    /// `> 1.0` means the error budget is being burnt faster than allowed.
+    /// See `lld-observability.md` §4.4 + `docs/runbooks/slo.md`.
+    /// Labels: `(signal, window, surface, tenant)` — `tenant` is `""` for
+    /// the global series and populated only when a tenant override applies
+    /// (LLD §4.4 cardinality budget).
+    pub slo_burn_rate: GaugeVec,
+    /// Counter of per-tenant SLO override JSONB parse failures (lenient
+    /// parse → fall back to declaration default + bump counter). SREs watch
+    /// this to notice silently-ignored overrides. Labelled by `(tenant, key)`.
+    pub slo_override_parse_failed_total: IntCounterVec,
 }
 
 /// Initialise the Prometheus registry.
@@ -257,6 +271,23 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     )
     .context("register llm_reasoning_tokens_total")?;
 
+    // Sprint-10 S10-3: SLO contracts (DEC-022).
+    let slo_burn_rate = register_gauge_vec_with_registry!(
+        "slo_burn_rate",
+        "Per-scrape SLO burn-rate ratio. >1.0 means error budget is being burnt faster than allowed (see docs/runbooks/slo.md).",
+        &["signal", "window", "surface", "tenant"],
+        registry
+    )
+    .context("register slo_burn_rate")?;
+
+    let slo_override_parse_failed_total = register_int_counter_vec_with_registry!(
+        "slo_override_parse_failed_total",
+        "Per-tenant SLO override JSONB parse failures (lenient fallback to declaration default)",
+        &["tenant", "key"],
+        registry
+    )
+    .context("register slo_override_parse_failed_total")?;
+
     let handles = MetricHandles {
         http_request_duration,
         llm_call_duration,
@@ -273,6 +304,8 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
         compaction_fallback_total,
         compaction_token_savings,
         llm_reasoning_tokens_total,
+        slo_burn_rate,
+        slo_override_parse_failed_total,
     };
 
     // Store globally so macros can look them up without threading the
@@ -386,10 +419,22 @@ pub fn compaction_token_savings() -> Option<&'static Histogram> {
 /// Counter: `xiaoguai_llm_reasoning_tokens_total{provider, model}`.
 ///
 /// Returns `None` when `init_prometheus` has not been called (unit tests
-/// that bypass the registry); MiniMax backend silently skips the
+/// that bypass the registry); `MiniMax` backend silently skips the
 /// increment in that case.
 pub fn llm_reasoning_tokens_total() -> Option<&'static IntCounterVec> {
     HANDLES.get().map(|h| &h.llm_reasoning_tokens_total)
+}
+
+/// Gauge: `xiaoguai_slo_burn_rate{signal, window, surface, tenant}`.
+/// Sprint-10 S10-3 / DEC-022.
+pub fn slo_burn_rate() -> Option<&'static GaugeVec> {
+    HANDLES.get().map(|h| &h.slo_burn_rate)
+}
+
+/// Counter: `xiaoguai_slo_override_parse_failed_total{tenant, key}`.
+/// Sprint-10 S10-3 / DEC-022.
+pub fn slo_override_parse_failed_total() -> Option<&'static IntCounterVec> {
+    HANDLES.get().map(|h| &h.slo_override_parse_failed_total)
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
@@ -503,5 +548,66 @@ mod tests {
             .with_label_values(&["feishu", "inbound"])
             .get();
         assert!(val > 0, "im_messages_total must be > 0 after inc()");
+    }
+
+    // Sprint-10 S10-3 — DEC-022 SLO contracts.
+
+    #[test]
+    fn prometheus_slo_burn_rate_set_get() {
+        let (_reg, h) = fresh();
+        h.slo_burn_rate
+            .with_label_values(&["latency", "fast", "/v1/chat/*", ""])
+            .set(14.5);
+        let val = h
+            .slo_burn_rate
+            .with_label_values(&["latency", "fast", "/v1/chat/*", ""])
+            .get();
+        assert!(
+            (val - 14.5).abs() < f64::EPSILON,
+            "slo_burn_rate must read back the value just set, got {}",
+            val
+        );
+    }
+
+    #[test]
+    fn prometheus_slo_burn_rate_tenant_label() {
+        // Per-tenant override series carry a non-empty tenant label.
+        let (_reg, h) = fresh();
+        h.slo_burn_rate
+            .with_label_values(&["errors", "slow", "/v1/sessions/*/messages", "tenant_x"])
+            .set(2.1);
+        let global = h
+            .slo_burn_rate
+            .with_label_values(&["errors", "slow", "/v1/sessions/*/messages", ""])
+            .get();
+        let per_tenant = h
+            .slo_burn_rate
+            .with_label_values(&["errors", "slow", "/v1/sessions/*/messages", "tenant_x"])
+            .get();
+        // Global series should remain at 0 (untouched); per-tenant carries the new value.
+        assert!(
+            (global - 0.0).abs() < f64::EPSILON,
+            "global series must remain 0"
+        );
+        assert!(
+            (per_tenant - 2.1).abs() < f64::EPSILON,
+            "per-tenant series must equal 2.1"
+        );
+    }
+
+    #[test]
+    fn prometheus_slo_override_parse_failed_total_increments() {
+        let (_reg, h) = fresh();
+        h.slo_override_parse_failed_total
+            .with_label_values(&["tenant_x", "slo_latency_p95_ms"])
+            .inc();
+        let val = h
+            .slo_override_parse_failed_total
+            .with_label_values(&["tenant_x", "slo_latency_p95_ms"])
+            .get();
+        assert_eq!(
+            val, 1,
+            "override-parse-failed counter must record exactly 1"
+        );
     }
 }

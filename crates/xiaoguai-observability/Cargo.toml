@@ -42,6 +42,10 @@ tokio = { workspace = true }
 # misc
 once_cell = { workspace = true }
 
+# SLO declarations (sprint-10 S10-3 / DEC-022)
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+
 # shared PII redaction primitive (leaf crate — no dependency cycle)
 xiaoguai-types = { path = "../xiaoguai-types" }
 

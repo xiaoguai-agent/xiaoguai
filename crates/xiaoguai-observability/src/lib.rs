@@ -33,15 +33,22 @@ pub mod instrument;
 pub mod otlp;
 pub mod prometheus;
 pub mod redact;
+pub mod slo;
 
 pub use otlp::{init_otlp, shutdown_tracer};
 pub use prometheus::{
     anomaly_detections_total, compaction_fallback_total, compaction_token_savings,
     compaction_triggered_total, hotl_check_duration, hotl_usage_total, im_messages_total,
     init_prometheus, mount_metrics, outcomes_chain_depth, outcomes_recorded_total,
-    rate_limit_hits_total, watch_wakeups_total, MetricHandles,
+    rate_limit_hits_total, slo_burn_rate, slo_override_parse_failed_total, watch_wakeups_total,
+    MetricHandles,
 };
 pub use redact::RedactingSpanExporter;
+pub use slo::{
+    load_slos, parse_alert_severity_override, parse_error_budget_pct_override,
+    parse_latency_p95_ms_override, parse_saturation_ratio_override, ContractSurface, PageChain,
+    Signal, Slo, SloError, SloFile, Threshold, Window,
+};
 
 use anyhow::Result;
 use axum::Router;
