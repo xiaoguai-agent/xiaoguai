@@ -73,6 +73,7 @@ fn build_state(repo: Option<Arc<dyn PersonaRepository>>) -> AppState {
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
         personas: repo,
+        watchers: None,
     }
 }
 

@@ -99,6 +99,7 @@ fn build_fixture() -> Fixture {
         skill_audit: Some(audit_arc),
         skills_dir: tmp.path().to_path_buf(),
         personas: None,
+        watchers: None,
     };
     Fixture {
         state,

@@ -95,6 +95,7 @@ fn build_state_with_webhook_validator(token: &str, route_id: &str) -> AppState {
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
         personas: None,
+        watchers: None,
     }
 }
 

@@ -72,6 +72,7 @@ fn build_state(memory_store: Option<Arc<dyn MemoryStore>>) -> AppState {
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
         personas: None,
+        watchers: None,
     }
 }
 

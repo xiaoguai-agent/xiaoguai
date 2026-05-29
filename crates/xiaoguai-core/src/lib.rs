@@ -670,6 +670,11 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         personas: Some(Arc::new(xiaoguai_personas::PgPersonaRepository::new(
             pool.clone(),
         ))),
+        // v1.8.0 (sprint-10b S10b-5): watcher introspection — wire the
+        // static (zero-watcher) adapter so the chat-ui WatchIndicator gets
+        // a 200 + empty array instead of falling to its 404 fallback. A
+        // session-aware WatchRunner adapter lands in a future sprint.
+        watchers: Some(xiaoguai_api::StaticWatcherIntrospector::arc()),
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

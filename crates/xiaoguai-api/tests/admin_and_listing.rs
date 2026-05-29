@@ -113,6 +113,7 @@ fn build_state(
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
         personas: None,
+        watchers: None,
     }
 }
 

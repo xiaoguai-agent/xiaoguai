@@ -125,6 +125,7 @@ fn build_state(mcp: Option<Arc<dyn McpServerRepository>>) -> AppState {
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
         personas: None,
+        watchers: None,
     }
 }
 

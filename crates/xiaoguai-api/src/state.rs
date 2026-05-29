@@ -240,6 +240,12 @@ pub struct AppState {
     /// those endpoints return 503; production wires `PgPersonaRepository`
     /// from `xiaoguai-personas`.
     pub personas: Option<Arc<dyn PersonaRepository>>,
+    /// v1.8.0 (sprint-10b S10b-5): session-scoped watcher introspection —
+    /// backs `/v1/watchers/*`. `None` makes those endpoints return 503;
+    /// production wires `StaticWatcherIntrospector` (zero-watcher steady
+    /// state) until a session-aware `xiaoguai-watch::WatchRunner`
+    /// introspection adapter ships.
+    pub watchers: Option<Arc<dyn crate::watchers::WatcherIntrospector>>,
 }
 
 impl std::fmt::Debug for AppState {

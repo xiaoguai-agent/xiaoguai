@@ -69,6 +69,7 @@ async fn build_state(roles: Vec<&str>) -> AppState {
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
         personas: None,
+        watchers: None,
     }
 }
 

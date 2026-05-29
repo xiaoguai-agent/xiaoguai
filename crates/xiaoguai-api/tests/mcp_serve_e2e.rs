@@ -97,6 +97,7 @@ fn build_state_with_toolbox(toolbox: Toolbox, publish: bool) -> AppState {
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
         personas: None,
+        watchers: None,
     }
 }
 

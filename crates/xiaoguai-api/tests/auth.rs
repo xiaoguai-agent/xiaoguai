@@ -73,6 +73,7 @@ fn build_state_with_auth() -> AppState {
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
         personas: None,
+        watchers: None,
     }
 }
 

@@ -11,6 +11,7 @@ pub mod scheduler_public;
 pub mod sessions;
 pub mod tenants;
 pub mod usage;
+pub mod watchers;
 
 use axum::routing::{delete, get, post, put};
 use axum::Router;
@@ -181,6 +182,20 @@ pub fn router(state: AppState) -> Router {
             get(personas::get_session_persona)
                 .put(personas::attach_persona)
                 .delete(personas::detach_persona),
+        )
+        // v1.8.0 (sprint-10b S10b-5) — session-scoped watcher introspection.
+        // Matches the URL shape XiaoguaiClient.listSessionWatchers /
+        // pauseWatcher / resumeWatcher already calls in frontend/shared.
+        // See watchers.rs module docs for why `WatchRunner` is *not*
+        // touched in this sprint.
+        .route("/v1/watchers", get(watchers::list_watchers))
+        .route(
+            "/v1/watchers/{id}/pause",
+            post(watchers::pause_watcher),
+        )
+        .route(
+            "/v1/watchers/{id}/resume",
+            post(watchers::resume_watcher),
         );
 
     // Layer order (inner → outer, since `route_layer` adds outward):

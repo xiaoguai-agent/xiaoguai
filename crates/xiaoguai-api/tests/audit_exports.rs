@@ -63,6 +63,7 @@ fn build_state(exporter: Option<Arc<dyn AuditChainExporter>>) -> AppState {
         memory_store: None,
         workspace_repository: None,
         personas: None,
+        watchers: None,
     }
 }
 

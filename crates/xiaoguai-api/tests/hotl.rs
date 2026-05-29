@@ -66,6 +66,7 @@ fn build_state(store: Option<Arc<dyn HotlPolicyStore>>) -> AppState {
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
         personas: None,
+        watchers: None,
     }
 }
 

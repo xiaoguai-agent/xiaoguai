@@ -63,6 +63,7 @@ async fn spawn_server(steps: Vec<ScriptStep>) -> String {
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
         personas: None,
+        watchers: None,
     };
     let (local, fut) = serve_with_state("127.0.0.1:0".parse().unwrap(), state)
         .await

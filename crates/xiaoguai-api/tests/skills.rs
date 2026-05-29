@@ -64,6 +64,7 @@ fn build_state(skill_packs: Option<Arc<dyn SkillPackRepository>>) -> AppState {
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
         personas: None,
+        watchers: None,
     }
 }
 
