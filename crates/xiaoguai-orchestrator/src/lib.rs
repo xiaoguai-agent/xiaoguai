@@ -26,6 +26,12 @@
 pub mod budget;
 pub mod challenger;
 pub mod error;
+/// v1.6+ orchestration patterns (DEC-021, sprint-9). The patterns
+/// module hosts the runtime-facing event types (`OrchEvent`,
+/// `TriangleStopReason`) so they don't pollute the v1.4 `supervisor`
+/// flow. See `patterns/triangle.rs` for the planner/worker/critic
+/// runner.
+pub mod patterns;
 pub mod plan;
 pub mod planner;
 pub mod registry;
