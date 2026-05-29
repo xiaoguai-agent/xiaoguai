@@ -107,9 +107,8 @@ pub async fn execute_python_call(
     match run_python(cfg, &args.code, timeout).await {
         Ok(result) => {
             let payload = ExecutePythonResultPayload::from(result);
-            let json_text = serde_json::to_string(&payload).unwrap_or_else(|e| {
-                format!(r#"{{"error":"serialize result: {e}"}}"#)
-            });
+            let json_text = serde_json::to_string(&payload)
+                .unwrap_or_else(|e| format!(r#"{{"error":"serialize result: {e}"}}"#));
             (vec![Content::text(json_text)], false)
         }
         Err(ExecError::SnippetTooLarge(n)) => (
@@ -135,7 +134,11 @@ mod tests {
         assert_eq!(t.name.as_ref(), EXECUTE_PYTHON);
         // Description must include the read/write marker so agents can
         // route by capability.
-        assert!(t.description.as_deref().unwrap_or("").starts_with("[WRITE]"));
+        assert!(t
+            .description
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("[WRITE]"));
     }
 
     #[tokio::test]
@@ -152,8 +155,8 @@ mod tests {
             rmcp::model::RawContent::Text(t) => t.text.clone(),
             other => panic!("expected text content, got {other:?}"),
         };
-        let payload: ExecutePythonResultPayload = serde_json::from_str(&text)
-            .expect("payload must round-trip");
+        let payload: ExecutePythonResultPayload =
+            serde_json::from_str(&text).expect("payload must round-trip");
         assert_eq!(payload.exit_code, Some(0));
         assert_eq!(payload.stdout.trim(), "ok");
         assert!(!payload.timed_out);

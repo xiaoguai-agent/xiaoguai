@@ -1,9 +1,10 @@
 name: Mutation Testing (wave-3)
 
 on:
-  schedule:
-    # 08:00 UTC daily — runs on main after overnight merges
-    - cron: '0 8 * * *'
+  # 2026-05-29: daily cron removed — the schedule kept firing but the workflow
+  # has not produced a successful run. Demoted to workflow_dispatch-only until
+  # someone restores the wave-3 examine_globs targeting + the cargo-mutants
+  # baseline. Tracking: T10 of the 2026-05-29 next-sprint plan.
   workflow_dispatch:
     inputs:
       full_run:

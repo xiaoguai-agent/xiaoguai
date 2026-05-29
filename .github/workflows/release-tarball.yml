@@ -18,9 +18,6 @@ on:
   push:
     tags:
       - 'v*'
-    # TEMP: fire on feat/ci-dryrun for dry-run validation; remove before merge.
-    branches:
-      - 'feat/ci-dryrun'
   workflow_dispatch:
 
 env:
