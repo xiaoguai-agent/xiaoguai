@@ -69,7 +69,9 @@ mod tests {
     #[test]
     fn verdict_round_trips_through_serde() {
         for v in [
-            Verdict::Approve { reason: "ok".into() },
+            Verdict::Approve {
+                reason: "ok".into(),
+            },
             Verdict::RequestRevision {
                 feedback: "add citation".into(),
             },

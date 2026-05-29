@@ -20,6 +20,8 @@
 //! session memory (visible to the next round's `MemorySnapshot`).
 
 pub mod budget;
+// Sprint-9 S9-4: CriticAgent — per-WorkerResult Verdict review.
+pub mod critic_agent;
 pub mod memory_view;
 pub mod plan;
 pub mod planner_agent;
@@ -30,6 +32,7 @@ pub mod verdict;
 pub mod worker_agent;
 
 pub use budget::{BudgetError, TriangleBudget};
+pub use critic_agent::{CriticAgent, CriticError};
 pub use memory_view::{MemoryFact, MemorySnapshot, MemoryView};
 pub use plan::{AcceptanceCriteria, Plan, Task, TaskId};
 pub use planner_agent::{PlannerAgent, PlannerError};
