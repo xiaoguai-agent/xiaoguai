@@ -569,6 +569,12 @@ enum RemoteCmd {
 }
 
 #[derive(Subcommand)]
+// Tier-3 T4 added enough OAuth flags to the `Register` variant that
+// `clippy::large_enum_variant` fires. Boxing the strings would make
+// the clap derive output noisier than the warning warrants — clap
+// allocates these once at parse time and they live for the program
+// lifetime.
+#[allow(clippy::large_enum_variant)]
 enum McpCmd {
     /// Register a new MCP server.
     Register {
@@ -595,6 +601,23 @@ enum McpCmd {
         /// Tenant id for tenant-scoped servers. Omit for system-wide.
         #[arg(long)]
         tenant: Option<String>,
+        // ---- Tier-3 T4: OAuth 2.1 PKCE ----
+        /// Auth method. Currently only `oauth2-pkce` is recognised;
+        /// omit for static or no-auth servers.
+        #[arg(long)]
+        auth: Option<String>,
+        /// OAuth `/authorize` endpoint (required for `--auth=oauth2-pkce`).
+        #[arg(long)]
+        auth_url: Option<String>,
+        /// OAuth `/token` endpoint (required for `--auth=oauth2-pkce`).
+        #[arg(long)]
+        token_url: Option<String>,
+        /// OAuth client id (required for `--auth=oauth2-pkce`).
+        #[arg(long)]
+        client_id: Option<String>,
+        /// Comma-separated OAuth scopes.
+        #[arg(long, value_delimiter = ',', default_value = "")]
+        scopes: Vec<String>,
     },
     /// List MCP servers (omit `--tenant` for globals only).
     List {
@@ -824,25 +847,81 @@ async fn handle_mcp(config: Option<&str>, action: McpCmd) -> Result<()> {
             env_keys,
             endpoint,
             tenant,
+            auth,
+            auth_url,
+            token_url,
+            client_id,
+            scopes,
         } => {
-            let server = mcp::register(
-                repo,
-                mcp::RegisterArgs {
-                    name,
-                    version,
-                    transport,
-                    command,
-                    args: args.into_iter().filter(|s| !s.is_empty()).collect(),
-                    env_keys: env_keys.into_iter().filter(|s| !s.is_empty()).collect(),
-                    endpoint,
-                    tenant,
-                },
-            )
-            .await?;
-            println!(
-                "registered {} ({}@{})",
-                server.id, server.name, server.version
-            );
+            let args: Vec<String> = args.into_iter().filter(|s| !s.is_empty()).collect();
+            let env_keys: Vec<String> = env_keys.into_iter().filter(|s| !s.is_empty()).collect();
+            let scopes: Vec<String> = scopes.into_iter().filter(|s| !s.is_empty()).collect();
+            match auth.as_deref() {
+                None | Some("none") => {
+                    let server = mcp::register(
+                        repo,
+                        mcp::RegisterArgs {
+                            name,
+                            version,
+                            transport,
+                            command,
+                            args,
+                            env_keys,
+                            endpoint,
+                            tenant,
+                        },
+                    )
+                    .await?;
+                    println!(
+                        "registered {} ({}@{})",
+                        server.id, server.name, server.version
+                    );
+                }
+                Some("oauth2-pkce") => {
+                    use std::sync::Arc;
+                    use xiaoguai_mcp::auth::{InMemoryTokenStore, TokenStore};
+                    let (listener, redirect_uri) = mcp::bind_callback_listener().await?;
+                    let base = mcp::RegisterArgs {
+                        name,
+                        version,
+                        transport,
+                        command,
+                        args,
+                        env_keys,
+                        endpoint,
+                        tenant,
+                    };
+                    let oauth_args = mcp::OAuthRegisterArgs {
+                        auth_url: auth_url.unwrap_or_default(),
+                        token_url: token_url.unwrap_or_default(),
+                        client_id: client_id.unwrap_or_default(),
+                        scopes,
+                    };
+                    // In-memory store for the consent flow; production
+                    // wiring of a PgTokenStore is a follow-up (see
+                    // docs/plans/2026-05-29-tier3-oauth-pkce-outbound-mcp.md §7).
+                    let store: Arc<dyn TokenStore> = Arc::new(InMemoryTokenStore::new());
+                    let (server, bundle, _oauth_cfg) = mcp::register_oauth_with_listener(
+                        repo,
+                        store,
+                        listener,
+                        redirect_uri,
+                        base,
+                        oauth_args,
+                    )
+                    .await?;
+                    println!(
+                        "registered {} ({}@{})",
+                        server.id, server.name, server.version
+                    );
+                    println!("oauth: access_token expires {}", bundle.expires_at);
+                }
+                Some(other) => {
+                    return Err(anyhow::anyhow!(
+                        "unknown --auth value {other:?}: expected 'oauth2-pkce' or 'none'"
+                    ));
+                }
+            }
         }
         McpCmd::List { tenant } => {
             let rows = mcp::list(repo, mcp::ListArgs { tenant }).await?;

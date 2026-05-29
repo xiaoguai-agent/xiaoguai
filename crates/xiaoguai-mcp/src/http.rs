@@ -24,6 +24,7 @@
 //! sites.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use rmcp::model::{
@@ -36,6 +37,9 @@ use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::RoleClient;
 use serde_json::Value as JsonValue;
 
+use crate::auth::oauth2_pkce::{
+    build_http_client, refresh_pkce, should_refresh, OAuth2PkceConfig, TokenStore,
+};
 use crate::client::McpClient;
 use crate::error::{McpError, McpResult};
 use crate::types::{ContentBlock, ServerInfo, ToolDescriptor, ToolResult};
@@ -95,6 +99,50 @@ impl std::fmt::Debug for HttpMcpClient {
 }
 
 impl HttpMcpClient {
+    /// Connect to an MCP server over Streamable HTTP, using a
+    /// `TokenStore` to resolve the OAuth bearer token. Refreshes the
+    /// stored bundle if it expires within
+    /// [`crate::auth::REFRESH_LEEWAY_SECS`] seconds.
+    ///
+    /// Tier-3 T4 entry point. If the store has no bundle for
+    /// `(server_id, tenant_id)` and `cfg.auth_header` is also unset,
+    /// returns [`McpError::AuthRequired`] so the caller can prompt
+    /// the operator to register the server.
+    ///
+    /// # Errors
+    /// Returns [`McpError::AuthRequired`] if no token is on file and
+    /// no static `auth_header` was supplied; any error returned by
+    /// the underlying refresh or `connect` paths.
+    pub async fn connect_with_store(
+        mut cfg: HttpClientConfig,
+        store: Arc<dyn TokenStore>,
+        oauth_cfg: &OAuth2PkceConfig,
+        server_id: &str,
+        tenant_id: &str,
+    ) -> McpResult<Self> {
+        let existing = store.get(server_id, tenant_id).await?;
+        let bundle = match existing {
+            Some(b) if should_refresh(&b, chrono::Utc::now()) => {
+                let http = build_http_client()?;
+                let refreshed = refresh_pkce(&http, oauth_cfg, &b).await?;
+                store.put(server_id, tenant_id, &refreshed).await?;
+                refreshed
+            }
+            Some(b) => b,
+            None => {
+                if cfg.auth_header.is_none() {
+                    return Err(McpError::AuthRequired(format!(
+                        "no token bundle for server_id={server_id} tenant_id={tenant_id}; \
+                         run `xiaoguai mcp register --auth oauth2-pkce ...`"
+                    )));
+                }
+                return Self::connect(cfg).await;
+            }
+        };
+        cfg.auth_header = Some(format!("Bearer {}", bundle.access_token));
+        Self::connect(cfg).await
+    }
+
     /// Connect to an MCP server over Streamable HTTP and complete the
     /// `initialize` handshake.
     ///

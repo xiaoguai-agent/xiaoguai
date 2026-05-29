@@ -19,6 +19,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod auth;
 pub mod client;
 pub mod error;
 pub mod http;
@@ -27,6 +28,9 @@ pub mod stdio;
 pub mod supervisor;
 pub mod types;
 
+pub use auth::{
+    AuthConfig, InMemoryTokenStore, OAuth2PkceConfig, PkcePair, TokenBundle, TokenStore,
+};
 pub use client::McpClient;
 pub use error::{McpError, McpResult};
 pub use http::{HttpClientConfig, HttpMcpClient};
