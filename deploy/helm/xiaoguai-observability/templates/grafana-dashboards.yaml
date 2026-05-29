@@ -1165,4 +1165,924 @@ data:
         "uid": "xiaoguai-wave3-overview",
         "version": 1
       }
+---
+# Sprint-10 / DEC-022 SLO overview dashboard.
+# Source of truth: observability/grafana/dashboards/slo-overview.json
+# Inlined here to mirror the wave-3 pattern above (chart packaging does not
+# pull in the repo-root observability/ directory). When editing the dashboard,
+# update BOTH files in lockstep — the source JSON for standalone Grafana use
+# and this inlined copy for in-cluster sidecar provisioning.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "xiaoguai-observability.fullname" . }}-slo-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xiaoguai-observability.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  slo-overview.json: |
+      {
+        "__inputs": [
+          {
+            "name": "DS_PROMETHEUS",
+            "label": "Prometheus",
+            "description": "Prometheus datasource for Xiaoguai metrics",
+            "type": "datasource",
+            "pluginId": "prometheus",
+            "pluginName": "Prometheus"
+          }
+        ],
+        "__requires": [
+          {
+            "type": "grafana",
+            "id": "grafana",
+            "name": "Grafana",
+            "version": "10.0.0"
+          },
+          {
+            "type": "datasource",
+            "id": "prometheus",
+            "name": "Prometheus",
+            "version": "1.0.0"
+          },
+          {
+            "type": "panel",
+            "id": "timeseries",
+            "name": "Time series",
+            "version": ""
+          },
+          {
+            "type": "panel",
+            "id": "stat",
+            "name": "Stat",
+            "version": ""
+          },
+          {
+            "type": "panel",
+            "id": "text",
+            "name": "Text",
+            "version": ""
+          }
+        ],
+        "annotations": {
+          "list": [
+            {
+              "builtIn": 1,
+              "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+              "enable": true,
+              "hide": true,
+              "iconColor": "rgba(0, 211, 255, 1)",
+              "name": "Annotations & Alerts",
+              "type": "dashboard"
+            }
+          ]
+        },
+        "description": "Sprint-10 / DEC-022 SLO overview — 4 SRE golden signals (latency, traffic, errors, saturation) + 28-day error-budget tracker per SLO. Data sources: slo-api-tier-recording-rules + xiaoguai_slo_burn_rate gauge.",
+        "editable": true,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "id": null,
+        "links": [
+          {
+            "asDropdown": true,
+            "icon": "external link",
+            "includeVars": true,
+            "keepTime": true,
+            "tags": ["xiaoguai"],
+            "targetBlank": false,
+            "title": "Xiaoguai Dashboards",
+            "tooltip": "",
+            "type": "dashboards",
+            "url": ""
+          }
+        ],
+        "panels": [
+          {
+            "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+            "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+            "id": 1000,
+            "options": {
+              "code": { "language": "plaintext", "showLineNumbers": false, "showMiniMap": false },
+              "content": "# Xiaoguai — SLO Overview (DEC-022)\n\n4 SRE golden signals + 28-day error-budget tracker per SLO. Source of truth: [`docs/runbooks/slo.md`](https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/slo.md). Architecture: DEC-022 (`xiaoguai-agent-design/docs/hld.md`) + LLD-OBS-001.\n\n`xiaoguai_slo_burn_rate{signal,window,surface,tenant}` is the live burn-rate gauge; recording rules under `slo-api-tier-*` provide the windowed SLI ratios shown in the time-series panels.",
+              "mode": "markdown"
+            },
+            "pluginVersion": "10.0.0",
+            "title": "",
+            "type": "text",
+            "transparent": true
+          },
+          {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 3 },
+            "id": 100,
+            "title": "Latency — p95 SLI ratios + burn rate",
+            "type": "row"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "thresholds" },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 1 },
+                    { "color": "red", "value": 6 }
+                  ]
+                },
+                "unit": "none",
+                "decimals": 2
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 6, "x": 0, "y": 4 },
+            "id": 1,
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai:slo_api_lat_chat:ratio_rate1h",
+                "legendFormat": "chat p95 ratio (1h)",
+                "refId": "A"
+              }
+            ],
+            "title": "Chat p95 SLI Ratio (1h)",
+            "description": "ratio_rate1h on /v1/chat/* against 5 s threshold. 1.0 = at SLO, >1 = breaching.",
+            "type": "stat"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "thresholds" },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 1 },
+                    { "color": "red", "value": 6 }
+                  ]
+                },
+                "unit": "none",
+                "decimals": 2
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 6, "x": 6, "y": 4 },
+            "id": 2,
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai:slo_api_lat_sessions:ratio_rate1h",
+                "legendFormat": "first-token p95 ratio (1h)",
+                "refId": "A"
+              }
+            ],
+            "title": "First-Token p95 SLI Ratio (1h)",
+            "description": "ratio_rate1h on /v1/sessions/*/messages against 2 s threshold. Proxy via full-request duration — see slo.md TODO.",
+            "type": "stat"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "palette-classic" },
+                "custom": {
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": { "type": "linear" },
+                  "showPoints": "never",
+                  "spanNulls": true,
+                  "stacking": { "group": "A", "mode": "none" },
+                  "thresholdsStyle": { "mode": "line" }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 6 },
+                    { "color": "red", "value": 14.4 }
+                  ]
+                },
+                "unit": "none"
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 12, "x": 12, "y": 4 },
+            "id": 3,
+            "options": {
+              "legend": { "calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+              "tooltip": { "mode": "multi", "sort": "none" }
+            },
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai_slo_burn_rate{signal=\"latency\", tenant=~\"$tenant\"}",
+                "legendFormat": "{{surface}} — {{window}}",
+                "refId": "A"
+              }
+            ],
+            "title": "Latency Burn Rate (last 6h)",
+            "description": "xiaoguai_slo_burn_rate gauge filtered to signal=latency. Yellow line at 6× (slow-burn floor), red at 14.4× (fast-burn).",
+            "type": "timeseries"
+          },
+          {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 10 },
+            "id": 101,
+            "title": "Errors — non-2xx rates + burn rate",
+            "type": "row"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "thresholds" },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 1 },
+                    { "color": "red", "value": 6 }
+                  ]
+                },
+                "unit": "none",
+                "decimals": 2
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 6, "x": 0, "y": 11 },
+            "id": 4,
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai:slo_api_err_chat:ratio_rate1h",
+                "legendFormat": "chat error ratio (1h)",
+                "refId": "A"
+              }
+            ],
+            "title": "Chat Error-Rate SLI Ratio (1h)",
+            "description": "non-2xx rate on /v1/chat/* divided by 1% threshold. 1.0 = at SLO, >1 = breaching.",
+            "type": "stat"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "thresholds" },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 1 },
+                    { "color": "red", "value": 6 }
+                  ]
+                },
+                "unit": "none",
+                "decimals": 2
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 6, "x": 6, "y": 11 },
+            "id": 5,
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai:slo_api_err_sessions:ratio_rate1h",
+                "legendFormat": "sessions error ratio (1h)",
+                "refId": "A"
+              }
+            ],
+            "title": "Sessions Error-Rate SLI Ratio (1h)",
+            "description": "non-2xx rate on /v1/sessions/*/messages divided by 1% threshold.",
+            "type": "stat"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "palette-classic" },
+                "custom": {
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": { "type": "linear" },
+                  "showPoints": "never",
+                  "spanNulls": true,
+                  "stacking": { "group": "A", "mode": "none" },
+                  "thresholdsStyle": { "mode": "line" }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 6 },
+                    { "color": "red", "value": 14.4 }
+                  ]
+                },
+                "unit": "none"
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 12, "x": 12, "y": 11 },
+            "id": 6,
+            "options": {
+              "legend": { "calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+              "tooltip": { "mode": "multi", "sort": "none" }
+            },
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai_slo_burn_rate{signal=\"errors\", tenant=~\"$tenant\"}",
+                "legendFormat": "{{surface}} — {{window}}",
+                "refId": "A"
+              }
+            ],
+            "title": "Errors Burn Rate (last 6h)",
+            "description": "xiaoguai_slo_burn_rate gauge filtered to signal=errors.",
+            "type": "timeseries"
+          },
+          {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+            "id": 102,
+            "title": "Saturation — tenant LLM budget utilisation + burn rate",
+            "type": "row"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "thresholds" },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 0.6 },
+                    { "color": "red", "value": 0.8 }
+                  ]
+                },
+                "unit": "percentunit",
+                "decimals": 1,
+                "min": 0,
+                "max": 1.2
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 6, "x": 0, "y": 18 },
+            "id": 7,
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai:slo_api_sat_tenant_llm:ratio_rate1h * 0.8",
+                "legendFormat": "tenant LLM utilisation",
+                "refId": "A"
+              }
+            ],
+            "title": "Tenant LLM Budget Utilisation",
+            "description": "Estimated daily LLM token utilisation (proxy via llm_reasoning_tokens — see slo.md TODO).",
+            "type": "stat"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "palette-classic" },
+                "custom": {
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": { "type": "linear" },
+                  "showPoints": "never",
+                  "spanNulls": true,
+                  "stacking": { "group": "A", "mode": "none" },
+                  "thresholdsStyle": { "mode": "line" }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 6 },
+                    { "color": "red", "value": 14.4 }
+                  ]
+                },
+                "unit": "none"
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 18, "x": 6, "y": 18 },
+            "id": 8,
+            "options": {
+              "legend": { "calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+              "tooltip": { "mode": "multi", "sort": "none" }
+            },
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai_slo_burn_rate{signal=\"saturation\", tenant=~\"$tenant\"}",
+                "legendFormat": "{{surface}} — {{window}}",
+                "refId": "A"
+              }
+            ],
+            "title": "Saturation Burn Rate (last 6h)",
+            "description": "xiaoguai_slo_burn_rate gauge filtered to signal=saturation.",
+            "type": "timeseries"
+          },
+          {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+            "id": 103,
+            "title": "Traffic — rate-limit denial ratio + burn rate",
+            "type": "row"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "thresholds" },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 0.03 },
+                    { "color": "red", "value": 0.05 }
+                  ]
+                },
+                "unit": "percentunit",
+                "decimals": 2,
+                "min": 0,
+                "max": 0.2
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 6, "x": 0, "y": 25 },
+            "id": 9,
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "sum(rate(xiaoguai_rate_limit_hits_total{tenant=~\"$tenant\", decision=\"deny\"}[1h])) / (sum(rate(xiaoguai_rate_limit_hits_total{tenant=~\"$tenant\"}[1h])) + 1e-9)",
+                "legendFormat": "deny ratio (1h)",
+                "refId": "A"
+              }
+            ],
+            "title": "Rate-Limit Denial Ratio (1h)",
+            "description": "Tenant denial ratio. Threshold 5% (red). Source: xiaoguai_rate_limit_hits_total{decision=\"deny\"}.",
+            "type": "stat"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "palette-classic" },
+                "custom": {
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": { "type": "linear" },
+                  "showPoints": "never",
+                  "spanNulls": true,
+                  "stacking": { "group": "A", "mode": "none" },
+                  "thresholdsStyle": { "mode": "line" }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 6 },
+                    { "color": "red", "value": 14.4 }
+                  ]
+                },
+                "unit": "none"
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 18, "x": 6, "y": 25 },
+            "id": 10,
+            "options": {
+              "legend": { "calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+              "tooltip": { "mode": "multi", "sort": "none" }
+            },
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai_slo_burn_rate{signal=\"traffic\", tenant=~\"$tenant\"}",
+                "legendFormat": "{{surface}} — {{window}}",
+                "refId": "A"
+              }
+            ],
+            "title": "Traffic Burn Rate (last 6h)",
+            "description": "xiaoguai_slo_burn_rate gauge filtered to signal=traffic.",
+            "type": "timeseries"
+          },
+          {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 },
+            "id": 104,
+            "title": "28-day Error Budget Remaining — per SLO",
+            "type": "row"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "thresholds" },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "yellow", "value": 5 },
+                    { "color": "green", "value": 25 }
+                  ]
+                },
+                "unit": "percent",
+                "decimals": 1,
+                "min": -50,
+                "max": 100
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 5, "w": 4, "x": 0, "y": 32 },
+            "id": 11,
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai:slo_api_lat_chat:budget_remaining_28d * 100",
+                "legendFormat": "chat latency",
+                "refId": "A"
+              }
+            ],
+            "title": "api-latency-chat",
+            "description": "28d error budget for api-latency-chat-p95-5s. Red <5%, yellow <25%, green ≥25%.",
+            "type": "stat"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "thresholds" },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "yellow", "value": 5 },
+                    { "color": "green", "value": 25 }
+                  ]
+                },
+                "unit": "percent",
+                "decimals": 1,
+                "min": -50,
+                "max": 100
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 5, "w": 4, "x": 4, "y": 32 },
+            "id": 12,
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai:slo_api_lat_sessions:budget_remaining_28d * 100",
+                "legendFormat": "first-token",
+                "refId": "A"
+              }
+            ],
+            "title": "api-first-token-sessions",
+            "description": "28d error budget for api-first-token-sessions-p95-2s.",
+            "type": "stat"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "thresholds" },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "yellow", "value": 5 },
+                    { "color": "green", "value": 25 }
+                  ]
+                },
+                "unit": "percent",
+                "decimals": 1,
+                "min": -50,
+                "max": 100
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 5, "w": 4, "x": 8, "y": 32 },
+            "id": 13,
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai:slo_api_traffic_tenant:budget_remaining_28d * 100",
+                "legendFormat": "traffic",
+                "refId": "A"
+              }
+            ],
+            "title": "api-traffic-tenant",
+            "description": "28d error budget for api-traffic-tenant-budget.",
+            "type": "stat"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "thresholds" },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "yellow", "value": 5 },
+                    { "color": "green", "value": 25 }
+                  ]
+                },
+                "unit": "percent",
+                "decimals": 1,
+                "min": -50,
+                "max": 100
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 5, "w": 4, "x": 12, "y": 32 },
+            "id": 14,
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai:slo_api_err_chat:budget_remaining_28d * 100",
+                "legendFormat": "chat errors",
+                "refId": "A"
+              }
+            ],
+            "title": "api-errors-chat",
+            "description": "28d error budget for api-errors-chat-1pct.",
+            "type": "stat"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "thresholds" },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "yellow", "value": 5 },
+                    { "color": "green", "value": 25 }
+                  ]
+                },
+                "unit": "percent",
+                "decimals": 1,
+                "min": -50,
+                "max": 100
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 5, "w": 4, "x": 16, "y": 32 },
+            "id": 15,
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai:slo_api_err_sessions:budget_remaining_28d * 100",
+                "legendFormat": "sessions errors",
+                "refId": "A"
+              }
+            ],
+            "title": "api-errors-sessions",
+            "description": "28d error budget for api-errors-sessions-1pct.",
+            "type": "stat"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "fieldConfig": {
+              "defaults": {
+                "color": { "mode": "thresholds" },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "yellow", "value": 5 },
+                    { "color": "green", "value": 25 }
+                  ]
+                },
+                "unit": "percent",
+                "decimals": 1,
+                "min": -50,
+                "max": 100
+              },
+              "overrides": []
+            },
+            "gridPos": { "h": 5, "w": 4, "x": 20, "y": 32 },
+            "id": 16,
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+              {
+                "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+                "expr": "xiaoguai:slo_api_sat_tenant_llm:budget_remaining_28d * 100",
+                "legendFormat": "tenant LLM",
+                "refId": "A"
+              }
+            ],
+            "title": "api-saturation-tenant-llm",
+            "description": "28d error budget for api-saturation-tenant-llm-budget.",
+            "type": "stat"
+          }
+        ],
+        "refresh": "30s",
+        "schemaVersion": 38,
+        "tags": ["xiaoguai", "slo", "dec-022"],
+        "templating": {
+          "list": [
+            {
+              "current": { "selected": false, "text": "All", "value": "$__all" },
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "definition": "label_values(xiaoguai_slo_burn_rate, tenant)",
+              "hide": 0,
+              "includeAll": true,
+              "multi": true,
+              "name": "tenant",
+              "options": [],
+              "query": {
+                "query": "label_values(xiaoguai_slo_burn_rate, tenant)",
+                "refId": "StandardVariableQuery"
+              },
+              "refresh": 2,
+              "regex": "",
+              "sort": 1,
+              "type": "query",
+              "label": "Tenant"
+            }
+          ]
+        },
+        "time": { "from": "now-6h", "to": "now" },
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "Xiaoguai — SLO Overview",
+        "uid": "xiaoguai-slo-overview",
+        "version": 1
+      }
 {{- end }}
