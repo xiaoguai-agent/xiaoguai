@@ -8232,6 +8232,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "xiaoguai-mcp-exec-js"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "xiaoguai-types",
+]
+
+[[package]]
 name = "xiaoguai-memory"
 version = "0.1.0"
 dependencies = [
