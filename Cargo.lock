@@ -9257,11 +9257,13 @@ dependencies = [
  "chrono",
  "dashmap 6.2.1",
  "futures",
+ "parking_lot",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
