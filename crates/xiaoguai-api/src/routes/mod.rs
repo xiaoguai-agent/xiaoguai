@@ -66,6 +66,11 @@ pub fn router(state: AppState) -> Router {
         // T5 (Tier-3) — compliance bundle export (SOC2/GDPR/HIPAA).
         .route("/v1/audit/exports", post(audit_exports::export_audit))
         .route("/v1/admin/today", get(admin::list_today))
+        // v1.8.0 (sprint-10b S10b-6) — per-subject scope resolver.
+        // Backs frontend `<RequireScope>` so the UI can decide which
+        // mutating buttons to render. No extra Casbin scope required
+        // (anyone authenticated may read their own scopes).
+        .route("/v1/admin/me/scopes", get(admin::list_my_scopes))
         .route("/v1/admin/eval/suites", get(admin::list_eval_suites))
         .route("/v1/admin/eval/run", post(admin::run_eval_suite))
         .route(

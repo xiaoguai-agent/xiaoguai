@@ -858,6 +858,13 @@ export interface WatcherInfo {
   schedule?: string | null;
 }
 
+// ---- v1.8.0 (sprint-10b S10b-6) — admin /me/scopes -----------------------
+
+/** Response body for `GET /v1/admin/me/scopes`. */
+export interface MyScopesResponse {
+  scopes: string[];
+}
+
 // ---- Agent event stream --------------------------------------------------
 
 export type AgentEvent =
@@ -1536,6 +1543,22 @@ export class XiaoguaiClient {
       }
       throw err;
     }
+  }
+
+  // ---- v1.8.0 (sprint-10b S10b-6) — /me/scopes ------------------------
+
+  /**
+   * Resolve the bearer subject's effective scope list. Powers the
+   * `<RequireScope>` component in admin-ui.
+   *
+   * Fail-open contract: when the endpoint returns 404 (older backend
+   * without this route), the caller should render gated children rather
+   * than hide them. The client just propagates the ApiError; the
+   * provider in admin-ui handles the 404 fallback. See
+   * DEC-LLD-ADMIN-UI-002 + LLD-ADMIN-UI-001 §4.8.
+   */
+  listMyScopes(): Promise<MyScopesResponse> {
+    return this.request<MyScopesResponse>('GET', '/v1/admin/me/scopes');
   }
 
   /**
