@@ -220,6 +220,11 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         .context("pg connect")?;
     db::migrate(&pool).await.context("pg migrate")?;
 
+    // Sprint-8 S8-5: refuse-to-start when MCP OAuth tokens exist but the
+    // encryption keyring is unavailable. Fresh-install path (empty table)
+    // boots without the env var.
+    check_mcp_oauth_keyring(&pool).await?;
+
     // v1.1.4.1: build the read/write pool router.
     // `DATABASE_REPLICA_URLS` (comma-separated) — optional; defaults to
     // primary-only when absent, preserving v1.1.4 behaviour exactly.
@@ -1045,4 +1050,42 @@ fn build_eval_service(
         "serve: EvalService wired"
     );
     Arc::new(EvalService::new(runner, suites_dir, source))
+}
+
+/// Sprint-8 S8-5 (DEC-023.1): refuse-to-start when MCP OAuth tokens exist
+/// in the DB but no encryption keyring is configured.
+///
+/// A fresh deployment with zero rows boots without an encryption key —
+/// operators register their first MCP OAuth server and the encrypted
+/// column populates from then on. Existing rows imply the operator has
+/// been running with cleartext-or-encrypted tokens that we must be able
+/// to read/refresh, so the keyring is now required.
+///
+/// # Errors
+/// Returns an error if the `mcp_oauth_tokens` table has ≥ 1 row AND
+/// `XIAOGUAI_MCP_OAUTH_TOKEN_KEY` cannot be loaded.
+async fn check_mcp_oauth_keyring(pool: &sqlx::PgPool) -> Result<()> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcp_oauth_tokens")
+        .fetch_one(pool)
+        .await
+        .context("pg count mcp_oauth_tokens")?;
+    if count == 0 {
+        tracing::debug!(
+            "mcp_oauth_tokens empty; skipping keyring requirement (fresh install path)"
+        );
+        return Ok(());
+    }
+    match xiaoguai_mcp::auth::Keyring::from_env() {
+        Ok(_) => {
+            tracing::info!(
+                rows = count,
+                "mcp_oauth_tokens keyring loaded; refresh-token encryption-at-rest active"
+            );
+            Ok(())
+        }
+        Err(e) => Err(anyhow::anyhow!(
+            "mcp_oauth_tokens contains {count} row(s) but the encryption keyring is unavailable: {e}.\n\
+             Set XIAOGUAI_MCP_OAUTH_TOKEN_KEY (32-byte base64url AES-256-GCM key) and restart."
+        )),
+    }
 }
