@@ -7802,6 +7802,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "hex",
  "hmac 0.13.0",
  "proptest",
  "serde",

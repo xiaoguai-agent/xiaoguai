@@ -1,6 +1,7 @@
 //! HTTP route handlers.
 
 pub mod admin;
+pub mod audit_exports;
 pub mod hotl;
 pub mod mcp;
 pub mod memory;
@@ -59,6 +60,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/tenants/{id}/config", get(tenants::get_tenant_config))
         .route("/v1/admin/audit", get(admin::list_audit))
         .route("/v1/admin/audit/verify", get(admin::verify_audit))
+        // T5 (Tier-3) — compliance bundle export (SOC2/GDPR/HIPAA).
+        .route("/v1/audit/exports", post(audit_exports::export_audit))
         .route("/v1/admin/today", get(admin::list_today))
         .route("/v1/admin/eval/suites", get(admin::list_eval_suites))
         .route("/v1/admin/eval/run", post(admin::run_eval_suite))

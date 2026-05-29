@@ -52,6 +52,7 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
         rate_limiter: None,
         audit: None,
         audit_verifier: None,
+        audit_chain_exporter: None,
         mcp_publish_enabled: false,
         mcp_supervisor: None,
         today: None,

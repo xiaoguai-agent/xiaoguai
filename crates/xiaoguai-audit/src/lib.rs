@@ -6,13 +6,23 @@
 
 #![forbid(unsafe_code)]
 #![warn(clippy::pedantic)]
-#![allow(clippy::module_name_repetitions, clippy::missing_errors_doc)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::needless_pass_by_value
+)]
 
 pub mod chain;
+pub mod export;
 pub mod outcomes;
 pub mod redact;
 
 pub use chain::{AuditEntry, ChainError, ChainedAudit, StoredEntry};
+pub use export::{
+    export_bundle, render, render_csv, render_json, render_pdf, BundleHeader, BundleRow,
+    ChainProof, ComplianceBundle, ExportError, ExportWindow, Format, Framework,
+};
 pub use outcomes::{
     timeseries, Aggregate, InMemoryOutcomeRecorder, OutcomeDay, OutcomeError, OutcomeKind,
     OutcomeRange, OutcomeRecord, OutcomeRecorder, OutcomeSummary,

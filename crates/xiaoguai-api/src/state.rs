@@ -22,7 +22,7 @@ use xiaoguai_storage::repositories::{
     McpServerRepository, MessageRepository, SessionRepository, TenantRepository,
 };
 
-use crate::audit::{AuditReader, AuditVerifier};
+use crate::audit::{AuditChainExporter, AuditReader, AuditVerifier};
 use crate::auth::TokenValidator;
 use crate::eval::EvalService;
 use crate::hotl::enforcer::HotlEnforcer;
@@ -121,6 +121,11 @@ pub struct AppState {
     /// production wires `PgAuditSink` (which implements both reader and
     /// verifier behind the same sink).
     pub audit_verifier: Option<Arc<dyn AuditVerifier>>,
+    /// v1.5 (T5): `None` = `POST /v1/audit/exports` returns 503.
+    /// `Some(...)` exposes compliance bundle export (SOC2 / GDPR / HIPAA)
+    /// over a time window. The adapter re-verifies chain continuity inside
+    /// the window and refuses if broken — there is no `skip_verify` flag.
+    pub audit_chain_exporter: Option<Arc<dyn AuditChainExporter>>,
     /// v0.9.1: when true, mount `/v1/mcp/serve` so external agents can
     /// consume xiaoguai's `Toolbox` over Streamable HTTP. Default off —
     /// publishing tools is an explicit operator decision.

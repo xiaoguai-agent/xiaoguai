@@ -295,25 +295,30 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // — empty / missing means audit endpoints stay at 503 in production
     // rather than silently using `settings.audit.hmac_key` (which is the
     // dev-only fallback wired into `smoke`).
-    let (audit_reader, audit_verifier): (
+    let (audit_reader, audit_verifier, audit_chain_exporter): (
         Option<Arc<dyn AuditReader>>,
         Option<Arc<dyn AuditVerifier>>,
+        Option<Arc<dyn xiaoguai_api::audit::AuditChainExporter>>,
     ) = match std::env::var(&settings.audit.signing_key_env) {
         Ok(key) if !key.is_empty() => {
             let sink = Arc::new(PgAuditSink::new(pool.clone(), key.into_bytes()));
             let adapter = Arc::new(PgAuditAdapter::new(sink));
             tracing::info!(
                 env = %settings.audit.signing_key_env,
-                "serve: audit reader+verifier wired (PgAuditSink)"
+                "serve: audit reader+verifier+exporter wired (PgAuditSink)"
             );
-            (Some(adapter.clone()), Some(adapter))
+            (
+                Some(adapter.clone() as Arc<dyn AuditReader>),
+                Some(adapter.clone() as Arc<dyn AuditVerifier>),
+                Some(adapter as Arc<dyn xiaoguai_api::audit::AuditChainExporter>),
+            )
         }
         _ => {
             tracing::warn!(
                 env = %settings.audit.signing_key_env,
-                "serve: audit signing key not set — /v1/admin/audit and /v1/admin/audit/verify will return 503"
+                "serve: audit signing key not set — /v1/admin/audit, /v1/admin/audit/verify, and /v1/audit/exports will return 503"
             );
-            (None, None)
+            (None, None, None)
         }
     };
 
@@ -543,6 +548,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         rate_limiter: None,
         audit: audit_reader,
         audit_verifier,
+        audit_chain_exporter,
         // v0.9.1: opt-in publishing of the Toolbox as an MCP server at
         // /v1/mcp/serve. Controlled by env var `XIAOGUAI_MCP__PUBLISH`
         // — only flip in deployments that *want* external agents to
