@@ -31,7 +31,7 @@ sub-tasks.
 
 | Pri | ID | Task | Depends on | Est. | R.E.S.T axis |
 |:-:|---|---|---|---:|---|
-| P0 | **S8-1** | `ExecBackend` trait extraction in `xiaoguai-mcp-exec` + `xiaoguai-mcp-exec-js` (DEC-019) | merge of DEC-019..023 PR | 1 day | reliability scaffolding |
+| P0 | **S8-1** | `ExecBackend` trait extraction in `xiaoguai-mcp-exec` + `xiaoguai-mcp-exec-js` (DEC-019) | merge of DEC-019..024 PR | 1 day | reliability scaffolding |
 | P0 | **S8-2** | New crate `xiaoguai-mcp-exec-wasm` with `WasmtimePythonBackend` (DEC-020 — Python L3 first) | S8-1 | 3 days | S |
 | P1 | **S8-3** | `WasmtimeJavaScriptBackend` (DEC-020 — JS L3 second) | S8-2 | 2 days | S |
 | P1 | **S8-4** | Per-tenant `sandbox_tier` config + selector in `ExecServer::new` (DEC-019 wiring) | S8-1 | 1 day | E + S |
@@ -40,8 +40,9 @@ sub-tasks.
 | P1 | **S8-7** | T3 production wiring: `PgSkillProposalRepository`, `PgTenantSettings`, `xiaoguai-core::skill_author_bridge` (DEC-023.3) | none | 1 day | S |
 | P2 | **S8-8** | T6 agent-loop integration test for `execute_javascript` (DEC-023.4) | none | 0.5 day | T |
 | P2 | **S8-9** | Update `lld/lld-mcp-exec.md` + `lld/lld-mcp-exec-js.md` for trait extraction; new `lld/lld-mcp-exec-wasm.md` | S8-2, S8-3 | 0.5 day | T |
+| P0 | **S8-10** | **`MinimaxBackend` (DEC-024)** — new `crates/xiaoguai-llm/src/minimax.rs`, `0023_minimax_provider_seed.sql` migration, `ChatChunk.reasoning_delta` field, `xiaoguai_llm_reasoning_tokens_total` metric, runbook entry. Mirror `GroqBackend` pattern. | none | 1 day | E (provider routing) + T (reasoning visibility) |
 
-**Sprint-8 total**: ~ 10 dev-days. With 2 parallel sub-agents (Wasmtime path + hardening path) wall-clock is ~ 5 days.
+**Sprint-8 total**: ~ 11 dev-days (was 10; +1 for S8-10). With 2 parallel sub-agents (Wasmtime path + hardening path including S8-10) wall-clock is ~ 5-6 days.
 
 ---
 
@@ -97,9 +98,13 @@ Following sprint-7's successful pattern (4 sub-agents, all green):
 
 | Sprint | Sub-agents | What they do in parallel |
 |---|---|---|
-| **8** | 2 in parallel | A: S8-1 → S8-2 → S8-3 (L3 pipeline). B: S8-5 → S8-6 → S8-7 → S8-8 (hardening track). I drive S8-4 + S8-9 in main worktree. |
+| **8** | 2 in parallel | A: S8-1 → S8-2 → S8-3 (L3 pipeline). B: S8-5 → S8-6 → S8-7 → S8-8 → **S8-10** (hardening + MiniMax track). I drive S8-4 + S8-9 in main worktree. |
 | **9** | 2 in parallel after S9-1 lands | A: S9-2 (Planner). B: S9-3 (Worker). I drive S9-4 + S9-5 + S9-6 + LLDs after both A+B return. |
 | **10** | 1 sub-agent | A: S10-2 + S10-3 + S10-4 (alerts + dashboard). I drive S10-1 + S10-5 + S10-6 + S10-7 in main. |
+
+S8-10 (MiniMax) joins the hardening track because it's small (1 day) and
+touches `xiaoguai-llm` + `xiaoguai-storage` migrations, which the L3
+track doesn't touch.
 
 Disk: 3 worktrees × ~ 30 GB = ~ 90 GB peak. Free space stays ≥ 100 GB
 across the sprint (per ci-gotchas budget).
@@ -145,13 +150,24 @@ After each sprint's step 7, I write a session handoff + update
 
 ---
 
-## 9. Ask for the reviewer (you, Zhou Wei)
+## 9. Reviewer sign-off log
 
-Before I dispatch any sub-agent, I need your sign-off on:
+User signed off on the four reviewer asks on 2026-05-30:
 
-1. **3-sprint split** vs collapsing into 1 mega-sprint vs 4-sprint split (one per theme).
-2. **Sprint-8 dual-track dispatch** vs serial (L3 first, hardening second).
-3. **Critic-as-LLM** in DEC-021 — defensible to ship as-is, or should sprint-9 do a feasibility study (mirroring ADR-0020 pattern) before locking in the design?
-4. **SLO defaults in DEC-022** — values shown are educated guesses. Approve as starting points, or want a calibration round on real session-7 production data first?
+1. ✅ **3-sprint split** approved
+2. ✅ **Sprint-8 dual-track dispatch** approved
+3. ✅ **Critic-as-LLM** in DEC-021 approved (no feasibility study; ship as-is)
+4. ✅ **SLO defaults in DEC-022** approved as starting points (no pre-calibration round)
 
-After your answer I'll either dispatch sub-agents (if 1+2+3 are go) or write the requested sub-investigations.
+And added one new requirement:
+
+5. ✅ **MiniMax provider support** — added as DEC-024 and S8-10. User explicitly applied the workflow: "先更新架构文档，再安排任务，再审核，没问题，再执行" — that's what this revision is. The DEC-024 architecture doc lives in `xiaoguai-agent-design#1`; this task plan PR is the corresponding step 2.
+
+## 10. Outstanding asks (this revision)
+
+Awaiting user sign-off on:
+
+1. **S8-10 (MiniMax) added to hardening track** — OK as scoped at 1 day with reasoning_content passthrough + 5-model seed, or want narrower / wider scope?
+2. **Total sprint-8 grows from 10 to 11 dev-days** — fits the sprint; flag if you prefer to defer something else to sprint-9 instead.
+
+After your answer I dispatch sub-agents.
