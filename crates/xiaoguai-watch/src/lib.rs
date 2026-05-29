@@ -60,12 +60,17 @@
     clippy::missing_panics_doc
 )]
 
+pub mod alert_sink;
 pub mod dedup;
 pub mod runner;
 pub mod source;
 pub mod spec;
 
 // Public re-exports — the full public API surface.
+pub use alert_sink::{
+    parse_payload, AlertStatus, AlertmanagerEvent, AlertmanagerInbox, AlertmanagerWebhookPayload,
+    AlertmanagerWebhookSource, BurnWindow, RawAlert,
+};
 pub use dedup::DedupCache;
 pub use runner::{WatchEvent, WatchRunner};
 pub use source::{HttpSource, InMemorySource, Match, SourceError, SqlSource, WatchSource};
