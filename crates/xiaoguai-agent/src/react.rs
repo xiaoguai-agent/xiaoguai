@@ -41,9 +41,10 @@ use xiaoguai_llm::{
 use xiaoguai_mcp::McpError;
 
 use crate::event::{AgentEvent, StopReason};
-use crate::history::slide;
+use crate::history::{compact, should_compact, slide, CompactionConfig, CompactionOutcome};
 use crate::hotl_gate::{HotlGateVerdict, SharedHotlGate};
 use crate::toolbox::Toolbox;
+use xiaoguai_llm::estimate_message_tokens;
 
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
@@ -71,6 +72,13 @@ pub struct AgentConfig {
     /// latter is folded into `Deny` by the adapter living in
     /// `xiaoguai-core::hotl_bridge::EnforcerGate`.
     pub hotl_gate: Option<SharedHotlGate>,
+    /// v0.5.4.1: LLM-summarisation compaction. When `Some`, the loop
+    /// switches from pure `slide` trimming to `compact` whenever the
+    /// estimated token count crosses
+    /// [`CompactionConfig::trigger_threshold`]. Below the threshold the
+    /// `slide` path still runs to enforce the `history_window` cap. When
+    /// `None`, behaviour is identical to pre-compaction (legacy).
+    pub compaction: Option<CompactionConfig>,
 }
 
 impl AgentConfig {
@@ -83,6 +91,7 @@ impl AgentConfig {
             model: model.into(),
             tenant_id: None,
             hotl_gate: None,
+            compaction: None,
         }
     }
 
@@ -91,6 +100,13 @@ impl AgentConfig {
     #[must_use]
     pub fn with_hotl_gate(mut self, gate: SharedHotlGate) -> Self {
         self.hotl_gate = Some(gate);
+        self
+    }
+
+    /// Builder-style enable for LLM-summarisation compaction.
+    #[must_use]
+    pub fn with_compaction(mut self, cfg: CompactionConfig) -> Self {
+        self.compaction = Some(cfg);
         self
     }
 }
@@ -294,7 +310,56 @@ async fn run_inner(
             return Ok(finish_with(&tx, StopReason::MaxIterations, messages, iteration).await);
         }
 
-        messages = slide(messages, config.history_window);
+        // History management:
+        //   * Legacy path (compaction = None): `slide` with the configured
+        //     fixed window.
+        //   * Compaction path: when token estimate exceeds the trigger
+        //     threshold, call `compact` (LLM summary + slide fallback).
+        //     Below threshold, still run `slide` so the window bound is
+        //     respected when the conversation is short.
+        if let Some(cfg) = config.compaction {
+            if should_compact(&messages, cfg) {
+                let before_tokens = estimate_message_tokens(&messages);
+                let (next, outcome) = compact(messages, backend.as_ref(), cfg).await;
+                messages = next;
+                let after_tokens = estimate_message_tokens(&messages);
+                match outcome {
+                    CompactionOutcome::Compacted => {
+                        if let Some(c) = xiaoguai_observability::compaction_triggered_total() {
+                            c.with_label_values(&["threshold"]).inc();
+                        }
+                        if let Some(h) = xiaoguai_observability::compaction_token_savings() {
+                            h.observe(before_tokens.saturating_sub(after_tokens) as f64);
+                        }
+                        tracing::info!(
+                            target: "xiaoguai_agent::react",
+                            kept = messages.len(),
+                            before_tokens,
+                            after_tokens,
+                            "history compacted (LLM summary)"
+                        );
+                    }
+                    CompactionOutcome::FellBack => {
+                        if let Some(c) = xiaoguai_observability::compaction_triggered_total() {
+                            c.with_label_values(&["threshold"]).inc();
+                        }
+                        if let Some(c) = xiaoguai_observability::compaction_fallback_total() {
+                            c.with_label_values(&["backend_error"]).inc();
+                        }
+                        tracing::warn!(
+                            target: "xiaoguai_agent::react",
+                            kept = messages.len(),
+                            "history compaction fell back to slide"
+                        );
+                    }
+                    CompactionOutcome::NoOp => {}
+                }
+            } else {
+                messages = slide(messages, config.history_window);
+            }
+        } else {
+            messages = slide(messages, config.history_window);
+        }
         let req = build_request(&config, &messages, &tool_specs);
         let turn = collect_model_turn(&backend, req, &tx).await?;
         messages.push(assistant_message_from_turn(&turn));

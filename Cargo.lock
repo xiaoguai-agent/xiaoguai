@@ -7740,6 +7740,7 @@ dependencies = [
  "uuid",
  "xiaoguai-llm",
  "xiaoguai-mcp",
+ "xiaoguai-observability",
  "xiaoguai-types",
 ]
 
