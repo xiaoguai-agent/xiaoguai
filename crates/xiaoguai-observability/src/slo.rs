@@ -13,7 +13,7 @@
 //! See `xiaoguai-agent-design/docs/lld/lld-observability.md` (LLD-OBS-001)
 //! for the architecture and `docs/runbooks/slo.md` for the declared SLOs.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -36,7 +36,7 @@ pub struct Slo {
 }
 
 /// One of the four Google SRE golden signals.
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Signal {
     Latency,
