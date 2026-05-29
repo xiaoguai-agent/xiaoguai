@@ -10,6 +10,7 @@ members = [
     "crates/xiaoguai-mcp",
     "crates/xiaoguai-mcp-exec",
     "crates/xiaoguai-mcp-exec-js",
+    "crates/xiaoguai-mcp-exec-wasm",
     "crates/xiaoguai-rag",
     "crates/xiaoguai-scheduler",
     "crates/xiaoguai-runtime",

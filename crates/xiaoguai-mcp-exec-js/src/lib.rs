@@ -38,8 +38,10 @@
 #![forbid(unsafe_code)]
 
 pub mod exec;
+pub mod runtime;
 pub mod server;
 pub mod tools;
 
 pub use exec::{run_javascript, ExecConfig, ExecError, ExecResult, Runtime};
+pub use runtime::{CapabilitySummary, ExecBackend, ProcessL1JavaScript};
 pub use server::{run_stdio_server, ExecServer};

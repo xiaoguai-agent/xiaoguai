@@ -1,0 +1,56 @@
+[package]
+name = "xiaoguai-mcp-exec-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "L3 sandbox: wasmtime + pyodide (Python) and wasmtime + QuickJS-WASM (JavaScript) MCP servers. Capability-based isolation; per-tenant tier selector lives upstream (see DEC-019, DEC-020)."
+
+[lib]
+name = "xiaoguai_mcp_exec_wasm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xiaoguai-mcp-exec-wasm-py"
+path = "src/bin/python.rs"
+
+[[bin]]
+name = "xiaoguai-mcp-exec-wasm-js"
+path = "src/bin/javascript.rs"
+
+[dependencies]
+xiaoguai-types = { path = "../xiaoguai-types" }
+xiaoguai-mcp-exec = { path = "../xiaoguai-mcp-exec" }
+xiaoguai-mcp-exec-js = { path = "../xiaoguai-mcp-exec-js" }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+clap = { workspace = true }
+rmcp = { workspace = true, features = ["server", "transport-io"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# wasmtime 38 — newest line compatible with the workspace-pinned
+# Rust 1.88 (wasmtime 39+ requires 1.91+, wasmtime 45 requires 1.93).
+# The roadmap originally mentioned 27.x; 38.x is the actively-supported
+# LTS that still matches our toolchain. Bumping the workspace
+# rust-version is its own ADR conversation, deferred.
+#
+# default-features off + explicit list keeps build time reasonable
+# (avoids compiling features we never use: wat, profiling, etc.).
+# `p1` is the preview1 WASI surface; `async` covers both the wasmtime
+# async runtime and the component-model dep we need for wasi p1.
+wasmtime = { version = "38", default-features = false, features = ["async", "cranelift", "runtime", "parallel-compilation"] }
+wasmtime-wasi = { version = "38", default-features = false, features = ["p1"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true
