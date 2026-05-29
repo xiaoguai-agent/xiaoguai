@@ -29,8 +29,10 @@
 #![forbid(unsafe_code)]
 
 pub mod exec;
+pub mod runtime;
 pub mod server;
 pub mod tools;
 
 pub use exec::{run_python, ExecConfig, ExecError, ExecResult};
+pub use runtime::{CapabilitySummary, ExecBackend, ProcessL1Python};
 pub use server::{run_stdio_server, ExecServer};
