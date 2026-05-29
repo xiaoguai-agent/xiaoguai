@@ -494,4 +494,530 @@ spec:
                 - increase(xiaoguai_outcomes_record_duration_seconds_count{le="0.050"}[28d])
               ) / (increase(xiaoguai_outcomes_record_duration_seconds_count{le="+Inf"}[28d]) + 1e-9)
             ) / (1 - 0.999)
+
+    # ====================================================================
+    # SPRINT-10 / DEC-022 — API TIER SLO RULES (parallel to wave-3 above)
+    # ====================================================================
+    # Source of truth: docs/runbooks/slo.md (S10-1) — 6 SLOs across 4 SRE
+    # golden signals (latency, traffic, errors, saturation).
+    # Wave-3 groups above stay UNTOUCHED per DEC-LLD-OBS-004.
+    # ====================================================================
+
+    # -- Recording rules: SLI ratios over 5 windows × 6 SLOs ---------------
+    # Naming convention mirrors wave-3: xiaoguai:slo_<id_short>:ratio_rate<window>
+    # Short IDs used here (kept stable; alerts and meta group reference them):
+    #   api_lat_chat        ← api-latency-chat-p95-5s
+    #   api_lat_sessions    ← api-first-token-sessions-p95-2s
+    #   api_traffic_tenant  ← api-traffic-tenant-budget
+    #   api_err_chat        ← api-errors-chat-1pct
+    #   api_err_sessions    ← api-errors-sessions-1pct
+    #   api_sat_tenant_llm  ← api-saturation-tenant-llm-budget
+    #
+    # Metric provenance (crates/xiaoguai-observability/src/prometheus.rs):
+    #   xiaoguai_http_request_duration_seconds{method,path,status}  histogram
+    #   xiaoguai_rate_limit_hits_total{tenant,route,decision}       counter
+    #   xiaoguai_llm_reasoning_tokens_total{provider,model}         counter
+    #
+    # GAPS (S10-2 placeholders — see TODOs below):
+    #   * No xiaoguai_tokens_consumed_total — saturation uses
+    #     llm_reasoning_tokens_total as the closest proxy. A dedicated
+    #     "tokens against daily budget" counter requires a follow-up sprint
+    #     to wire tenant-budget into the LLM client. Documented in slo.md.
+    #   * No `tenant` label on http_request_duration — latency / error SLI
+    #     cannot be sliced per-tenant at recording time. Aggregate-only.
+    #     Recording rules emit one series per surface; per-tenant slicing
+    #     happens at the burn-rate gauge layer (slo.rs) via tenant override.
+    - name: slo-api-tier-recording-rules
+      interval: 1m
+      rules:
+        # --- api_lat_chat (latency on /v1/chat/*) --------------------------
+        # SLI = p95(latency) / threshold (5s). Ratio >1 = breaching.
+        - record: xiaoguai:slo_api_lat_chat:ratio_rate5m
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_http_request_duration_seconds_bucket{path=~"/v1/chat/.*"}[5m])) by (le)
+            ) / 5.0
+        - record: xiaoguai:slo_api_lat_chat:ratio_rate1h
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_http_request_duration_seconds_bucket{path=~"/v1/chat/.*"}[1h])) by (le)
+            ) / 5.0
+        - record: xiaoguai:slo_api_lat_chat:ratio_rate6h
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_http_request_duration_seconds_bucket{path=~"/v1/chat/.*"}[6h])) by (le)
+            ) / 5.0
+        - record: xiaoguai:slo_api_lat_chat:ratio_rate1d
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_http_request_duration_seconds_bucket{path=~"/v1/chat/.*"}[1d])) by (le)
+            ) / 5.0
+        - record: xiaoguai:slo_api_lat_chat:ratio_rate3d
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_http_request_duration_seconds_bucket{path=~"/v1/chat/.*"}[3d])) by (le)
+            ) / 5.0
+
+        # --- api_lat_sessions (first-token latency on sessions messages) ---
+        # TODO(s10-followup): no dedicated first-token histogram exists.
+        # http_request_duration_seconds measures full request, not TTFT.
+        # Using full-request duration as a proxy with threshold 2s — this
+        # WILL alert sooner than a true TTFT SLI. (missing — see TODO)
+        - record: xiaoguai:slo_api_lat_sessions:ratio_rate5m
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_http_request_duration_seconds_bucket{path=~"/v1/sessions/.*/messages"}[5m])) by (le)
+            ) / 2.0
+        - record: xiaoguai:slo_api_lat_sessions:ratio_rate1h
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_http_request_duration_seconds_bucket{path=~"/v1/sessions/.*/messages"}[1h])) by (le)
+            ) / 2.0
+        - record: xiaoguai:slo_api_lat_sessions:ratio_rate6h
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_http_request_duration_seconds_bucket{path=~"/v1/sessions/.*/messages"}[6h])) by (le)
+            ) / 2.0
+        - record: xiaoguai:slo_api_lat_sessions:ratio_rate1d
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_http_request_duration_seconds_bucket{path=~"/v1/sessions/.*/messages"}[1d])) by (le)
+            ) / 2.0
+        - record: xiaoguai:slo_api_lat_sessions:ratio_rate3d
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(xiaoguai_http_request_duration_seconds_bucket{path=~"/v1/sessions/.*/messages"}[3d])) by (le)
+            ) / 2.0
+
+        # --- api_traffic_tenant (rate-limit denial ratio per tenant) -------
+        # SLI = denials / total. Threshold 0.05 (5%). Ratio >1 = breaching.
+        # Aggregated across tenants here; per-tenant slicing exposed via the
+        # xiaoguai_slo_burn_rate gauge in slo.rs (tenant override path).
+        - record: xiaoguai:slo_api_traffic_tenant:ratio_rate5m
+          expr: >
+            (
+              sum(rate(xiaoguai_rate_limit_hits_total{decision="deny"}[5m]))
+              / (sum(rate(xiaoguai_rate_limit_hits_total[5m])) + 1e-9)
+            ) / 0.05
+        - record: xiaoguai:slo_api_traffic_tenant:ratio_rate1h
+          expr: >
+            (
+              sum(rate(xiaoguai_rate_limit_hits_total{decision="deny"}[1h]))
+              / (sum(rate(xiaoguai_rate_limit_hits_total[1h])) + 1e-9)
+            ) / 0.05
+        - record: xiaoguai:slo_api_traffic_tenant:ratio_rate6h
+          expr: >
+            (
+              sum(rate(xiaoguai_rate_limit_hits_total{decision="deny"}[6h]))
+              / (sum(rate(xiaoguai_rate_limit_hits_total[6h])) + 1e-9)
+            ) / 0.05
+        - record: xiaoguai:slo_api_traffic_tenant:ratio_rate1d
+          expr: >
+            (
+              sum(rate(xiaoguai_rate_limit_hits_total{decision="deny"}[1d]))
+              / (sum(rate(xiaoguai_rate_limit_hits_total[1d])) + 1e-9)
+            ) / 0.05
+        - record: xiaoguai:slo_api_traffic_tenant:ratio_rate3d
+          expr: >
+            (
+              sum(rate(xiaoguai_rate_limit_hits_total{decision="deny"}[3d]))
+              / (sum(rate(xiaoguai_rate_limit_hits_total[3d])) + 1e-9)
+            ) / 0.05
+
+        # --- api_err_chat (non-2xx rate on /v1/chat/*) ---------------------
+        # SLI = error_rate / threshold (0.01). Ratio >1 = breaching.
+        - record: xiaoguai:slo_api_err_chat:ratio_rate5m
+          expr: >
+            (
+              sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*",status!~"2.."}[5m]))
+              / (sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*"}[5m])) + 1e-9)
+            ) / 0.01
+        - record: xiaoguai:slo_api_err_chat:ratio_rate1h
+          expr: >
+            (
+              sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*",status!~"2.."}[1h]))
+              / (sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*"}[1h])) + 1e-9)
+            ) / 0.01
+        - record: xiaoguai:slo_api_err_chat:ratio_rate6h
+          expr: >
+            (
+              sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*",status!~"2.."}[6h]))
+              / (sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*"}[6h])) + 1e-9)
+            ) / 0.01
+        - record: xiaoguai:slo_api_err_chat:ratio_rate1d
+          expr: >
+            (
+              sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*",status!~"2.."}[1d]))
+              / (sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*"}[1d])) + 1e-9)
+            ) / 0.01
+        - record: xiaoguai:slo_api_err_chat:ratio_rate3d
+          expr: >
+            (
+              sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*",status!~"2.."}[3d]))
+              / (sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*"}[3d])) + 1e-9)
+            ) / 0.01
+
+        # --- api_err_sessions (non-2xx on /v1/sessions/*/messages) ---------
+        - record: xiaoguai:slo_api_err_sessions:ratio_rate5m
+          expr: >
+            (
+              sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages",status!~"2.."}[5m]))
+              / (sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages"}[5m])) + 1e-9)
+            ) / 0.01
+        - record: xiaoguai:slo_api_err_sessions:ratio_rate1h
+          expr: >
+            (
+              sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages",status!~"2.."}[1h]))
+              / (sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages"}[1h])) + 1e-9)
+            ) / 0.01
+        - record: xiaoguai:slo_api_err_sessions:ratio_rate6h
+          expr: >
+            (
+              sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages",status!~"2.."}[6h]))
+              / (sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages"}[6h])) + 1e-9)
+            ) / 0.01
+        - record: xiaoguai:slo_api_err_sessions:ratio_rate1d
+          expr: >
+            (
+              sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages",status!~"2.."}[1d]))
+              / (sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages"}[1d])) + 1e-9)
+            ) / 0.01
+        - record: xiaoguai:slo_api_err_sessions:ratio_rate3d
+          expr: >
+            (
+              sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages",status!~"2.."}[3d]))
+              / (sum(rate(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages"}[3d])) + 1e-9)
+            ) / 0.01
+
+        # --- api_sat_tenant_llm (utilisation of daily LLM token budget) ----
+        # TODO(s10-followup): xiaoguai_tokens_consumed_total does NOT exist.
+        # The runbook references it as the "tokens consumed vs budget" source,
+        # but only xiaoguai_llm_reasoning_tokens_total is wired today (and it
+        # only counts thinking-mode reasoning tokens, not all output tokens).
+        # Wiring a tenant-aware total-tokens counter against
+        # tenant_settings.daily_llm_token_budget is its own sprint.
+        # Until then, we approximate using reasoning_tokens as the proxy and
+        # a hard-coded budget of 10_000_000 tokens/day. (missing — see TODO)
+        # When the real counter ships, replace numerator + budget below.
+        - record: xiaoguai:slo_api_sat_tenant_llm:ratio_rate5m
+          expr: >
+            (
+              sum(rate(xiaoguai_llm_reasoning_tokens_total[5m])) * 86400
+              / 10000000
+            ) / 0.8
+        - record: xiaoguai:slo_api_sat_tenant_llm:ratio_rate1h
+          expr: >
+            (
+              sum(rate(xiaoguai_llm_reasoning_tokens_total[1h])) * 86400
+              / 10000000
+            ) / 0.8
+        - record: xiaoguai:slo_api_sat_tenant_llm:ratio_rate6h
+          expr: >
+            (
+              sum(rate(xiaoguai_llm_reasoning_tokens_total[6h])) * 86400
+              / 10000000
+            ) / 0.8
+        - record: xiaoguai:slo_api_sat_tenant_llm:ratio_rate1d
+          expr: >
+            (
+              sum(rate(xiaoguai_llm_reasoning_tokens_total[1d])) * 86400
+              / 10000000
+            ) / 0.8
+        - record: xiaoguai:slo_api_sat_tenant_llm:ratio_rate3d
+          expr: >
+            (
+              sum(rate(xiaoguai_llm_reasoning_tokens_total[3d])) * 86400
+              / 10000000
+            ) / 0.8
+
+    # -- Burn-rate alerts: 2-pair (DEC-022 floor) × 6 SLOs = 12 alerts -----
+    # Pair 1 (fast):  1h AND 5m both > 14.4×  →  budget gone in ~47 h
+    # Pair 2 (slow):  6h > 6×                  →  budget gone in ~5 d
+    # Severity / team mirror the page_chain block in docs/runbooks/slo.md.
+    - name: slo-api-tier-burn-rate-alerts
+      interval: 1m
+      rules:
+        # ─── api-latency-chat-p95-5s ────────────────────────────────────
+        - alert: SloApiLatencyChatBurnRateCriticalFast
+          expr: >
+            xiaoguai:slo_api_lat_chat:ratio_rate1h > 14.4
+            and xiaoguai:slo_api_lat_chat:ratio_rate5m > 14.4
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+            slo: api-latency-chat-p95-5s
+            signal: latency
+            surface: "/v1/chat/*"
+            burn_rate_pair: "fast"
+          annotations:
+            summary: "SLO api-latency-chat-p95-5s — fast burn (14.4×, budget exhausted in ~47h)"
+            description: >
+              Both 1h and 5m windows show p95 latency burn > 14.4× the
+              5 s threshold on /v1/chat/*. Triage steps in runbook.
+            runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/slo.md#api-latency-fast-burn"
+
+        - alert: SloApiLatencyChatBurnRateCriticalSlow
+          expr: xiaoguai:slo_api_lat_chat:ratio_rate6h > 6
+          for: 15m
+          labels:
+            severity: critical
+            team: platform
+            slo: api-latency-chat-p95-5s
+            signal: latency
+            surface: "/v1/chat/*"
+            burn_rate_pair: "slow"
+          annotations:
+            summary: "SLO api-latency-chat-p95-5s — slow burn (6×, budget exhausted in ~5d)"
+            description: >
+              6h window p95 latency burn > 6× the 5 s threshold on /v1/chat/*.
+            runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/slo.md#api-latency-slow-burn"
+
+        # ─── api-first-token-sessions-p95-2s ────────────────────────────
+        - alert: SloApiFirstTokenSessionsBurnRateCriticalFast
+          expr: >
+            xiaoguai:slo_api_lat_sessions:ratio_rate1h > 14.4
+            and xiaoguai:slo_api_lat_sessions:ratio_rate5m > 14.4
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+            slo: api-first-token-sessions-p95-2s
+            signal: latency
+            surface: "/v1/sessions/*/messages"
+            burn_rate_pair: "fast"
+          annotations:
+            summary: "SLO api-first-token-sessions-p95-2s — fast burn (14.4×)"
+            description: >
+              Both 1h and 5m windows show first-token p95 burn > 14.4×
+              the 2 s threshold on /v1/sessions/*/messages.
+            runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/slo.md#first-token-fast-burn"
+
+        - alert: SloApiFirstTokenSessionsBurnRateCriticalSlow
+          expr: xiaoguai:slo_api_lat_sessions:ratio_rate6h > 6
+          for: 15m
+          labels:
+            severity: critical
+            team: platform
+            slo: api-first-token-sessions-p95-2s
+            signal: latency
+            surface: "/v1/sessions/*/messages"
+            burn_rate_pair: "slow"
+          annotations:
+            summary: "SLO api-first-token-sessions-p95-2s — slow burn (6×)"
+            description: >
+              6h window first-token p95 burn > 6× the 2 s threshold.
+            runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/slo.md#first-token-slow-burn"
+
+        # ─── api-traffic-tenant-budget ──────────────────────────────────
+        - alert: SloApiTrafficTenantBurnRateWarningFast
+          expr: >
+            xiaoguai:slo_api_traffic_tenant:ratio_rate1h > 14.4
+            and xiaoguai:slo_api_traffic_tenant:ratio_rate5m > 14.4
+          for: 2m
+          labels:
+            severity: warning
+            team: tenant-ops
+            slo: api-traffic-tenant-budget
+            signal: traffic
+            surface: "rate-limit"
+            burn_rate_pair: "fast"
+          annotations:
+            summary: "SLO api-traffic-tenant-budget — fast burn (14.4×)"
+            description: >
+              Rate-limit denial ratio burn > 14.4× the 5% threshold across
+              both 1h and 5m windows. Tenant traffic exceeding budget.
+            runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/slo.md#traffic-fast-burn"
+
+        - alert: SloApiTrafficTenantBurnRateWarningSlow
+          expr: xiaoguai:slo_api_traffic_tenant:ratio_rate6h > 6
+          for: 15m
+          labels:
+            severity: warning
+            team: tenant-ops
+            slo: api-traffic-tenant-budget
+            signal: traffic
+            surface: "rate-limit"
+            burn_rate_pair: "slow"
+          annotations:
+            summary: "SLO api-traffic-tenant-budget — slow burn (6×)"
+            description: >
+              6h window rate-limit denial ratio burn > 6× the 5% threshold.
+            runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/slo.md#traffic-slow-burn"
+
+        # ─── api-errors-chat-1pct ───────────────────────────────────────
+        - alert: SloApiErrorsChatBurnRateCriticalFast
+          expr: >
+            xiaoguai:slo_api_err_chat:ratio_rate1h > 14.4
+            and xiaoguai:slo_api_err_chat:ratio_rate5m > 14.4
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+            slo: api-errors-chat-1pct
+            signal: errors
+            surface: "/v1/chat/*"
+            burn_rate_pair: "fast"
+          annotations:
+            summary: "SLO api-errors-chat-1pct — fast burn (14.4×)"
+            description: >
+              Both 1h and 5m windows show non-2xx error rate burn > 14.4×
+              the 1% threshold on /v1/chat/*.
+            runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/slo.md#api-errors-fast-burn"
+
+        - alert: SloApiErrorsChatBurnRateCriticalSlow
+          expr: xiaoguai:slo_api_err_chat:ratio_rate6h > 6
+          for: 15m
+          labels:
+            severity: critical
+            team: platform
+            slo: api-errors-chat-1pct
+            signal: errors
+            surface: "/v1/chat/*"
+            burn_rate_pair: "slow"
+          annotations:
+            summary: "SLO api-errors-chat-1pct — slow burn (6×)"
+            description: >
+              6h window non-2xx rate burn > 6× the 1% threshold on /v1/chat/*.
+            runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/slo.md#api-errors-slow-burn"
+
+        # ─── api-errors-sessions-1pct ───────────────────────────────────
+        - alert: SloApiErrorsSessionsBurnRateCriticalFast
+          expr: >
+            xiaoguai:slo_api_err_sessions:ratio_rate1h > 14.4
+            and xiaoguai:slo_api_err_sessions:ratio_rate5m > 14.4
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+            slo: api-errors-sessions-1pct
+            signal: errors
+            surface: "/v1/sessions/*/messages"
+            burn_rate_pair: "fast"
+          annotations:
+            summary: "SLO api-errors-sessions-1pct — fast burn (14.4×)"
+            description: >
+              Both 1h and 5m windows show non-2xx error rate burn > 14.4×
+              the 1% threshold on /v1/sessions/*/messages.
+            runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/slo.md#api-errors-fast-burn"
+
+        - alert: SloApiErrorsSessionsBurnRateCriticalSlow
+          expr: xiaoguai:slo_api_err_sessions:ratio_rate6h > 6
+          for: 15m
+          labels:
+            severity: critical
+            team: platform
+            slo: api-errors-sessions-1pct
+            signal: errors
+            surface: "/v1/sessions/*/messages"
+            burn_rate_pair: "slow"
+          annotations:
+            summary: "SLO api-errors-sessions-1pct — slow burn (6×)"
+            description: >
+              6h window non-2xx rate burn > 6× the 1% threshold.
+            runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/slo.md#api-errors-slow-burn"
+
+        # ─── api-saturation-tenant-llm-budget ───────────────────────────
+        - alert: SloApiSaturationTenantLlmBurnRateWarningFast
+          expr: >
+            xiaoguai:slo_api_sat_tenant_llm:ratio_rate1h > 14.4
+            and xiaoguai:slo_api_sat_tenant_llm:ratio_rate5m > 14.4
+          for: 2m
+          labels:
+            severity: warning
+            team: tenant-ops
+            slo: api-saturation-tenant-llm-budget
+            signal: saturation
+            surface: "tenant-llm-budget"
+            burn_rate_pair: "fast"
+          annotations:
+            summary: "SLO api-saturation-tenant-llm-budget — fast burn (14.4×)"
+            description: >
+              LLM token utilisation burn > 14.4× the 80% budget threshold
+              across both 1h and 5m windows. Tenant nearing daily cap.
+            runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/slo.md#saturation-fast-burn"
+
+        - alert: SloApiSaturationTenantLlmBurnRateWarningSlow
+          expr: xiaoguai:slo_api_sat_tenant_llm:ratio_rate6h > 6
+          for: 15m
+          labels:
+            severity: warning
+            team: tenant-ops
+            slo: api-saturation-tenant-llm-budget
+            signal: saturation
+            surface: "tenant-llm-budget"
+            burn_rate_pair: "slow"
+          annotations:
+            summary: "SLO api-saturation-tenant-llm-budget — slow burn (6×)"
+            description: >
+              6h window LLM token utilisation burn > 6× the 80% threshold.
+            runbook_url: "https://github.com/zw008/xiaoguai/blob/main/docs/runbooks/slo.md#saturation-slow-burn"
+
+    # -- Meta: 28-day error budget remaining per SLO -----------------------
+    # Mirrors wave3-slo-meta. One record per SLO (6 total). Budget remaining
+    # = 1 - (observed_breach_rate / threshold). Range typically [0, 1];
+    # negative means budget overspent. Dashboard renders as percentage.
+    - name: slo-api-tier-meta
+      interval: 5m
+      rules:
+        # api-latency-chat-p95-5s — budget = 1 - (breach_count / total)
+        - record: xiaoguai:slo_api_lat_chat:budget_remaining_28d
+          expr: >
+            1 - (
+              (
+                increase(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*"}[28d])
+                - increase(xiaoguai_http_request_duration_seconds_bucket{path=~"/v1/chat/.*",le="5.0"}[28d])
+              ) / (increase(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*"}[28d]) + 1e-9)
+            ) / 0.05
+
+        # api-first-token-sessions-p95-2s — proxy via full request duration
+        # (missing — see TODO above on dedicated TTFT histogram)
+        - record: xiaoguai:slo_api_lat_sessions:budget_remaining_28d
+          expr: >
+            1 - (
+              (
+                increase(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages"}[28d])
+                - increase(xiaoguai_http_request_duration_seconds_bucket{path=~"/v1/sessions/.*/messages",le="2.0"}[28d])
+              ) / (increase(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages"}[28d]) + 1e-9)
+            ) / 0.05
+
+        # api-traffic-tenant-budget — budget = 1 - (deny_ratio / 0.05)
+        - record: xiaoguai:slo_api_traffic_tenant:budget_remaining_28d
+          expr: >
+            1 - (
+              (
+                increase(xiaoguai_rate_limit_hits_total{decision="deny"}[28d])
+                / (increase(xiaoguai_rate_limit_hits_total[28d]) + 1e-9)
+              ) / 0.05
+            )
+
+        # api-errors-chat-1pct
+        - record: xiaoguai:slo_api_err_chat:budget_remaining_28d
+          expr: >
+            1 - (
+              (
+                increase(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*",status!~"2.."}[28d])
+                / (increase(xiaoguai_http_request_duration_seconds_count{path=~"/v1/chat/.*"}[28d]) + 1e-9)
+              ) / 0.01
+            )
+
+        # api-errors-sessions-1pct
+        - record: xiaoguai:slo_api_err_sessions:budget_remaining_28d
+          expr: >
+            1 - (
+              (
+                increase(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages",status!~"2.."}[28d])
+                / (increase(xiaoguai_http_request_duration_seconds_count{path=~"/v1/sessions/.*/messages"}[28d]) + 1e-9)
+              ) / 0.01
+            )
+
+        # api-saturation-tenant-llm-budget — proxy uses reasoning_tokens
+        # (missing — see TODO above on tokens_consumed_total).
+        - record: xiaoguai:slo_api_sat_tenant_llm:budget_remaining_28d
+          expr: >
+            1 - (
+              (
+                sum(rate(xiaoguai_llm_reasoning_tokens_total[28d])) * 86400 / 10000000
+              ) / 0.8
+            )
 {{- end }}
