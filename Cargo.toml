@@ -43,9 +43,52 @@ license = "BUSL-1.1"
 authors = ["Xiaoguai Maintainers"]
 repository = "https://github.com/xiaoguai-agent/xiaoguai"
 homepage = "https://github.com/xiaoguai-agent/xiaoguai"
+description = "Rust-implemented, audit-first, scheduler-native local agent platform."
 
 # (LICENSE Licensor + README URLs already point to xiaoguai-agent.)
 readme = "README.md"
+
+# ─── cargo-dist (release packaging) ─────────────────────────────────────────
+# Produces the cross-platform binaries + installers attached to GitHub
+# Releases on each `v*` tag push. See docs/plans/2026-05-28-release-packaging.md
+# and the companion Plan B PR for the full design rationale.
+#
+# Pinned to cargo-dist 0.28.0 (latest at landing time). Bump deliberately —
+# new versions can regenerate the workflow file with breaking changes.
+[workspace.metadata.dist]
+# Pin so `dist generate` is deterministic across maintainers' machines.
+cargo-dist-version = "0.28.0"
+# Where releases live. GitHub Releases is consistent with release.yml +
+# release-packages.yml. Axodotdev is *not* used; we self-host signing.
+hosting = ["github"]
+# Installers: shell for Linux/macOS, powershell for Windows, homebrew for
+# the macOS-native experience. The homebrew formula is pushed to the tap
+# specified below; user provisions HOMEBREW_TAP_TOKEN as a repo secret.
+installers = ["shell", "powershell", "homebrew"]
+# Homebrew formula publish job — required when `tap` is set so the
+# workflow actually pushes the formula to the tap repo on each release.
+publish-jobs = ["homebrew"]
+# Homebrew tap repo. See Plan B §4.7 for setup.
+tap = "xiaoguai-agent/homebrew-tap"
+# Cross-platform target matrix. ubuntu-22.04 (glibc 2.35) gives a reasonable
+# lower bound matching release-packages.yml. macOS targets cover Intel +
+# Apple Silicon. Windows uses the MSVC ABI (matches the prebuilt rustup
+# default on Windows).
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+# Workflow generated at .github/workflows/release.yml by default; we keep
+# the existing release.yml (container image + SBOM) and rename the
+# generated file to release-dist.yml during `dist generate` so the two
+# coexist on the same `v*` tag.
+ci = "github"
+# pr-run-mode = "plan" runs `dist plan` (no artefact upload) on PRs touching
+# this config, surfacing breakage early without doubling the release-tag CI.
+pr-run-mode = "plan"
 
 [workspace.dependencies]
 # async runtime
@@ -189,6 +232,15 @@ lto = "fat"
 opt-level = 3
 strip = "symbols"
 panic = "abort"
+
+# cargo-dist builds release artefacts with this profile. We inherit the
+# `release` profile but override `lto` and `codegen-units` to match the
+# settings cargo-dist recommends for binary releases — slightly larger
+# binaries for a much faster CI build.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
 
 [profile.dev]
 opt-level = 1

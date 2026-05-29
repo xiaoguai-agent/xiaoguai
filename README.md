@@ -47,21 +47,23 @@ admin console, see [`docs/user-guide/quickstart.md`](docs/user-guide/quickstart.
 
 | Platform | Command |
 |---|---|
-| Container (any Linux) | `docker pull ghcr.io/xiaoguai-agent/xiaoguai:latest` |
+| macOS (Homebrew tap) | `brew tap xiaoguai-agent/tap && brew install xiaoguai` |
+| Linux + macOS (universal installer) | `curl --proto '=https' --tlsv1.2 -LsSf https://github.com/xiaoguai-agent/xiaoguai/releases/latest/download/xiaoguai-cli-installer.sh \| sh` |
+| Windows (PowerShell) | `irm https://github.com/xiaoguai-agent/xiaoguai/releases/latest/download/xiaoguai-cli-installer.ps1 \| iex` |
 | Debian / Ubuntu (amd64) | Download `xiaoguai_*.deb` from the [latest release](https://github.com/xiaoguai-agent/xiaoguai/releases/latest) and `sudo dpkg -i xiaoguai_*.deb` |
 | RHEL / Fedora (amd64) | Download `xiaoguai-*.rpm` from the same release and `sudo rpm -i xiaoguai-*.rpm` |
 | Linux tarball (amd64 / arm64, glibc 2.31+) | Download `xiaoguai-*-linux-gnu.tar.xz`, extract, and place `xiaoguai` on `$PATH` |
+| Container (any Linux) | `docker pull ghcr.io/xiaoguai-agent/xiaoguai:latest` |
 | Build from source | `cargo install --path crates/xiaoguai-cli --locked` |
 
-> **macOS (Homebrew tap) and Windows (PowerShell installer) are tracked
-> in [Plan B](docs/plans/2026-05-28-release-packaging.md) — landing via
-> `cargo-dist` in the next release pass.** Until then, build from source
-> on those platforms.
+The sandboxed code-execution MCP server (`xiaoguai-mcp-exec`) ships as a
+sibling release: `brew install xiaoguai-mcp-exec` (macOS) or the
+matching `xiaoguai-mcp-exec-installer.sh` / `.ps1`.
 
 After install, the canonical entrypoint is `xiaoguai serve`. The
 `xiaoguai-core` shim from earlier versions still works (the .deb wires
-it in for systemd backward-compat) but new operators should reach for
-the unified CLI.
+it in for systemd backward-compat) but new operators should use the
+unified CLI.
 
 ## Kubernetes observability (optional)
 
