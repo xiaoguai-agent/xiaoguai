@@ -11,7 +11,8 @@ use rmcp::model::{Content, Tool, ToolAnnotations};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::exec::{run_python, ExecConfig, ExecError, ExecResult};
+use crate::exec::{ExecConfig, ExecError, ExecResult};
+use crate::runtime::ExecBackend;
 
 /// Canonical tool name. Callers in the agent loop must dispatch a `HotL`
 /// `tool_call.execute_python` scope before invoking; see the runbook.
@@ -92,19 +93,29 @@ impl From<ExecResult> for ExecutePythonResultPayload {
     }
 }
 
-/// Adapt a parsed `ExecutePythonArgs` through [`run_python`] and shape the
-/// outcome into MCP `Content` blocks. Supervisor failures (python missing,
-/// fork failed) become `is_error=true` text blocks; all other outcomes —
-/// including snippet crashes and deadlines — are normal data results.
+/// Adapt a parsed `ExecutePythonArgs` through the supplied
+/// [`ExecBackend`] and shape the outcome into MCP `Content` blocks.
+/// Supervisor failures (python missing, fork failed) become
+/// `is_error=true` text blocks; all other outcomes — including snippet
+/// crashes and deadlines — are normal data results.
+///
+/// DEC-019: by accepting the backend as a parameter (instead of calling
+/// `run_python` directly), this function works unchanged for L1 (process
+/// isolation) and L3 (wasmtime) tiers. The backend tier is chosen at
+/// `ExecServer::new` / `ExecServer::with_backend` time. The
+/// `ExecConfig` argument is kept for caller convenience (e.g. surface
+/// the configured `timeout_secs` ceiling) but the actual run-time
+/// config lives inside the backend.
 pub async fn execute_python_call(
-    cfg: &ExecConfig,
+    backend: &dyn ExecBackend,
+    _cfg: &ExecConfig,
     args: ExecutePythonArgs,
 ) -> (Vec<Content>, bool) {
     let requested = args.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);
     let clamped = requested.min(MAX_TIMEOUT_SECS);
     let timeout = Duration::from_secs(clamped);
 
-    match run_python(cfg, &args.code, timeout).await {
+    match backend.run(&args.code, timeout).await {
         Ok(result) => {
             let payload = ExecutePythonResultPayload::from(result);
             let json_text = serde_json::to_string(&payload)
@@ -148,7 +159,8 @@ mod tests {
             code: "print('ok')".into(),
             timeout_secs: Some(5),
         };
-        let (contents, is_error) = execute_python_call(&cfg, args).await;
+        let backend = crate::runtime::ProcessL1Python::new(cfg.clone());
+        let (contents, is_error) = execute_python_call(&backend, &cfg, args).await;
         assert!(!is_error);
         assert_eq!(contents.len(), 1);
         let text = match &contents[0].raw {
@@ -173,7 +185,8 @@ mod tests {
             // exec.rs timeout tests.
             timeout_secs: Some(999),
         };
-        let (contents, is_error) = execute_python_call(&cfg, args).await;
+        let backend = crate::runtime::ProcessL1Python::new(cfg.clone());
+        let (contents, is_error) = execute_python_call(&backend, &cfg, args).await;
         assert!(!is_error);
         assert!(!contents.is_empty());
     }

@@ -20,7 +20,7 @@
 //! `skill.approve` — together they form a tamper-evident chain of
 //! everything an agent authored.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -170,6 +170,50 @@ pub trait SkillProposalRepository: Send + Sync {
 #[async_trait]
 pub trait TenantSettingsReader: Send + Sync {
     async fn allow_skill_authoring(&self, tenant_id: &str) -> Result<bool, SkillAuthorError>;
+
+    /// DEC-019: returns the sandbox tier the operator wants for this
+    /// tenant. Used by the MCP supervisor in `xiaoguai-core` to decide
+    /// which exec server binary to spawn (`xiaoguai-mcp-exec` for L1
+    /// vs `xiaoguai-mcp-exec-wasm-py` for L3). Defaults to
+    /// [`SandboxTier::L1`] when the tenant has no explicit setting —
+    /// L1 is safe-by-default per PHILO §14.
+    async fn sandbox_tier(&self, tenant_id: &str) -> Result<SandboxTier, SkillAuthorError>;
+}
+
+/// Sandbox tier for code-execution MCP servers (DEC-019). Operators set
+/// this per tenant via `tenant_settings.settings->>'sandbox_tier'`.
+///
+/// L1 is the process-isolated default (`xiaoguai-mcp-exec` +
+/// `xiaoguai-mcp-exec-js`); L3 is the wasmtime capability sandbox
+/// (`xiaoguai-mcp-exec-wasm-py` + `xiaoguai-mcp-exec-wasm-js`,
+/// DEC-020). L2 (container) and L4 (full VM) are not supported by this
+/// enum — operators wrap L1/L3 binaries in containers themselves if
+/// needed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SandboxTier {
+    L1,
+    L3,
+}
+
+impl SandboxTier {
+    /// Parse a tenant's stored string ("L1" / "L3"; case-insensitive).
+    /// Unknown values fall back to L1 (safe default per PHILO §14).
+    #[must_use]
+    pub fn from_str_lenient(s: &str) -> Self {
+        match s.trim().to_ascii_uppercase().as_str() {
+            "L3" => Self::L3,
+            _ => Self::L1,
+        }
+    }
+
+    /// Stable tier label for logs and metrics.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::L1 => "L1",
+            Self::L3 => "L3",
+        }
+    }
 }
 
 /// HotL gate adapter used by this module. Mirrors
@@ -604,6 +648,7 @@ impl SkillProposalRepository for InMemorySkillProposalRepository {
 #[derive(Debug, Default)]
 pub struct InMemoryTenantSettings {
     allowed: Mutex<HashSet<String>>,
+    tiers: Mutex<HashMap<String, SandboxTier>>,
 }
 
 impl InMemoryTenantSettings {
@@ -615,12 +660,26 @@ impl InMemoryTenantSettings {
     pub fn allow(&self, tenant_id: &str) {
         self.allowed.lock().insert(tenant_id.to_string());
     }
+
+    /// Set the sandbox tier for a tenant (DEC-019). Default is L1.
+    pub fn set_sandbox_tier(&self, tenant_id: &str, tier: SandboxTier) {
+        self.tiers.lock().insert(tenant_id.to_string(), tier);
+    }
 }
 
 #[async_trait]
 impl TenantSettingsReader for InMemoryTenantSettings {
     async fn allow_skill_authoring(&self, tenant_id: &str) -> Result<bool, SkillAuthorError> {
         Ok(self.allowed.lock().contains(tenant_id))
+    }
+
+    async fn sandbox_tier(&self, tenant_id: &str) -> Result<SandboxTier, SkillAuthorError> {
+        Ok(self
+            .tiers
+            .lock()
+            .get(tenant_id)
+            .copied()
+            .unwrap_or(SandboxTier::L1))
     }
 }
 
@@ -1080,5 +1139,49 @@ mod tests {
             assert_eq!(ProposalStatus::parse(s.as_str()), Some(s));
         }
         assert_eq!(ProposalStatus::parse("nope"), None);
+    }
+
+    // ── SandboxTier (DEC-019) -----------------------------------------------
+
+    #[test]
+    fn sandbox_tier_parse_lenient_l3() {
+        assert_eq!(SandboxTier::from_str_lenient("L3"), SandboxTier::L3);
+        assert_eq!(SandboxTier::from_str_lenient("l3"), SandboxTier::L3);
+        assert_eq!(SandboxTier::from_str_lenient("  L3  "), SandboxTier::L3);
+    }
+
+    #[test]
+    fn sandbox_tier_unknown_falls_back_to_l1() {
+        // Safe-default per PHILO §14 — unknown / malformed → L1.
+        assert_eq!(SandboxTier::from_str_lenient("L1"), SandboxTier::L1);
+        assert_eq!(SandboxTier::from_str_lenient("l1"), SandboxTier::L1);
+        assert_eq!(SandboxTier::from_str_lenient(""), SandboxTier::L1);
+        assert_eq!(SandboxTier::from_str_lenient("L2"), SandboxTier::L1);
+        assert_eq!(SandboxTier::from_str_lenient("L4"), SandboxTier::L1);
+        assert_eq!(SandboxTier::from_str_lenient("garbage"), SandboxTier::L1);
+    }
+
+    #[test]
+    fn sandbox_tier_labels_are_stable() {
+        // Stable labels are load-bearing for metrics and dashboards;
+        // changing them silently breaks operator alerting.
+        assert_eq!(SandboxTier::L1.as_str(), "L1");
+        assert_eq!(SandboxTier::L3.as_str(), "L3");
+    }
+
+    #[tokio::test]
+    async fn in_memory_tenant_settings_sandbox_tier_defaults_to_l1() {
+        let s = InMemoryTenantSettings::new();
+        // Untouched tenant → L1 default.
+        assert_eq!(s.sandbox_tier("t-fresh").await.unwrap(), SandboxTier::L1);
+    }
+
+    #[tokio::test]
+    async fn in_memory_tenant_settings_sandbox_tier_round_trip() {
+        let s = InMemoryTenantSettings::new();
+        s.set_sandbox_tier("t-l3", SandboxTier::L3);
+        assert_eq!(s.sandbox_tier("t-l3").await.unwrap(), SandboxTier::L3);
+        // Other tenants still get the default.
+        assert_eq!(s.sandbox_tier("t-other").await.unwrap(), SandboxTier::L1);
     }
 }
