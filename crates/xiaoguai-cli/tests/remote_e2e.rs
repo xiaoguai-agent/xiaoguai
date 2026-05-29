@@ -56,6 +56,11 @@ async fn spawn_server(steps: Vec<ScriptStep>) -> String {
         skill_packs: None,
         memory_store: None,
         workspace_repository: None,
+        skill_proposals: None,
+        tenant_settings: None,
+        skill_author_gate: None,
+        skill_audit: None,
+        skills_dir: std::path::PathBuf::new(),
     };
     let (local, fut) = serve_with_state("127.0.0.1:0".parse().unwrap(), state)
         .await

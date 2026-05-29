@@ -70,6 +70,11 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
         skill_packs: None,
         memory_store: None,
         workspace_repository: None,
+        skill_proposals: None,
+        tenant_settings: None,
+        skill_author_gate: None,
+        skill_audit: None,
+        skills_dir: std::path::PathBuf::new(),
     };
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
     mount_feishu(state, provider)
@@ -281,6 +286,11 @@ async fn agent_inherits_tenant_resolved_by_history_store() {
         skill_packs: None,
         memory_store: None,
         workspace_repository: None,
+        skill_proposals: None,
+        tenant_settings: None,
+        skill_author_gate: None,
+        skill_audit: None,
+        skills_dir: std::path::PathBuf::new(),
     };
     let sink = Arc::new(Mutex::new(Vec::new()));
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
@@ -361,6 +371,11 @@ async fn conversation_history_accumulates_per_chat() {
         skill_packs: None,
         memory_store: None,
         workspace_repository: None,
+        skill_proposals: None,
+        tenant_settings: None,
+        skill_author_gate: None,
+        skill_audit: None,
+        skills_dir: std::path::PathBuf::new(),
     };
     let sink = Arc::new(Mutex::new(Vec::new()));
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));

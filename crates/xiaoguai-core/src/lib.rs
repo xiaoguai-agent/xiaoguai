@@ -616,6 +616,22 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // v1.3.x: workspace CRUD — production wires PgWorkspaceRepository
         // in workspace_bridge.rs; `None` makes /v1/workspaces return 503.
         workspace_repository: None,
+        // v1.5.x — Tier-2 D.1: agent-authored skill proposals.
+        // Production wires PgSkillProposalRepository + PgTenantSettings
+        // + EnforcerGateAdapter + PgAuditSink once the bridge module
+        // lands (next PR). `None` makes /v1/skills/proposals/* routes
+        // return 503 and `propose_skill` unregistered.
+        skill_proposals: None,
+        tenant_settings: None,
+        skill_author_gate: None,
+        skill_audit: None,
+        skills_dir: std::env::var_os("XIAOGUAI_SKILLS_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                let home = std::env::var_os("HOME")
+                    .map_or_else(|| std::path::PathBuf::from("."), std::path::PathBuf::from);
+                home.join(".xiaoguai").join("skills")
+            }),
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

@@ -15,6 +15,7 @@ use axum::Router;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::skill_proposals;
 use crate::skills;
 use crate::workspaces;
 
@@ -115,6 +116,19 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/skills/install/{id}",
             delete(skills::uninstall_pack),
+        )
+        // v1.5.x — Tier-2 D.1: agent-authored skill proposals.
+        .route(
+            "/v1/skills/proposals",
+            get(skill_proposals::list_proposals),
+        )
+        .route(
+            "/v1/skills/proposals/{id}/approve",
+            post(skill_proposals::approve_proposal_handler),
+        )
+        .route(
+            "/v1/skills/proposals/{id}/reject",
+            post(skill_proposals::reject_proposal_handler),
         )
         // v1.3.x — long-term memory CRUD + semantic recall.
         .route(

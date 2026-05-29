@@ -7792,6 +7792,7 @@ dependencies = [
  "xiaoguai-observability",
  "xiaoguai-runtime",
  "xiaoguai-storage",
+ "xiaoguai-tasks",
  "xiaoguai-types",
 ]
 
@@ -8411,10 +8412,13 @@ dependencies = [
  "async-trait",
  "chrono",
  "once_cell",
+ "parking_lot",
  "prometheus",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sqlx",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",

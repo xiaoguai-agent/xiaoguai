@@ -57,6 +57,11 @@ fn build_state(workspaces: Option<Arc<dyn WorkspaceRepository>>) -> AppState {
         skill_packs: None,
         memory_store: None,
         workspace_repository: workspaces,
+        skill_proposals: None,
+        tenant_settings: None,
+        skill_author_gate: None,
+        skill_audit: None,
+        skills_dir: std::path::PathBuf::new(),
     }
 }
 
