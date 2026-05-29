@@ -401,6 +401,7 @@ impl LlmBackend for GeminiBackend {
                 tool_calls,
                 finish_reason: finish,
                 done,
+                reasoning_delta: None,
             };
             Ok(chunk)
         });

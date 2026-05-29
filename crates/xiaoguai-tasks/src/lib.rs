@@ -61,6 +61,8 @@ pub mod store;
 
 // Tier-2 D.1 — agent-authored skill proposals (HotL-gated, admin-approved).
 pub mod skill_author;
+// Sprint-8 S8-7 (DEC-023.3) — Pg impls of the skill_author traits.
+pub mod skill_author_pg;
 
 // Public re-exports — persistence layer.
 pub use mem::InMemoryTaskBoardRepository;

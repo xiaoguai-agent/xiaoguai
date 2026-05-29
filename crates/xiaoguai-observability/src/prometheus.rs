@@ -15,6 +15,7 @@
 //! | `xiaoguai_anomaly_detections_total` | Counter | `detector`, `severity` | Anomaly detector fires |
 //! | `xiaoguai_watch_wakeups_total` | Counter | `watcher_id`, `outcome` | Watch task wakeup results |
 //! | `xiaoguai_im_messages_total` | Counter | `adapter`, `direction` | IM gateway messages |
+//! | `xiaoguai_llm_reasoning_tokens_total` | Counter | `provider`, `model` | Reasoning-track tokens (thinking-mode) |
 //!
 //! On Linux, default process collectors (CPU, memory, file descriptors) are
 //! also registered automatically.
@@ -85,6 +86,12 @@ pub struct MetricHandles {
     pub compaction_fallback_total: IntCounterVec,
     /// Tokens saved per compaction event (before - after).
     pub compaction_token_savings: Histogram,
+
+    // ── Sprint-8 S8-10 — LLM reasoning (thinking-mode) telemetry ────────────
+    /// Reasoning-track tokens emitted by thinking-mode providers
+    /// (MiniMax M1/M2, future DeepSeek-R, etc.). Counters by `(provider, model)`.
+    /// Increments by the estimated reasoning-token count per delta.
+    pub llm_reasoning_tokens_total: IntCounterVec,
 }
 
 /// Initialise the Prometheus registry.
@@ -241,6 +248,15 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     )
     .context("register compaction_token_savings")?;
 
+    // Sprint-8 S8-10: thinking-mode reasoning-token throughput.
+    let llm_reasoning_tokens_total = register_int_counter_vec_with_registry!(
+        "llm_reasoning_tokens_total",
+        "LLM reasoning-track tokens emitted by thinking-mode providers, labelled by provider and model",
+        &["provider", "model"],
+        registry
+    )
+    .context("register llm_reasoning_tokens_total")?;
+
     let handles = MetricHandles {
         http_request_duration,
         llm_call_duration,
@@ -256,6 +272,7 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
         compaction_triggered_total,
         compaction_fallback_total,
         compaction_token_savings,
+        llm_reasoning_tokens_total,
     };
 
     // Store globally so macros can look them up without threading the
@@ -364,6 +381,15 @@ pub fn compaction_fallback_total() -> Option<&'static IntCounterVec> {
 /// Histogram: `xiaoguai_compaction_token_savings`.
 pub fn compaction_token_savings() -> Option<&'static Histogram> {
     HANDLES.get().map(|h| &h.compaction_token_savings)
+}
+
+/// Counter: `xiaoguai_llm_reasoning_tokens_total{provider, model}`.
+///
+/// Returns `None` when `init_prometheus` has not been called (unit tests
+/// that bypass the registry); MiniMax backend silently skips the
+/// increment in that case.
+pub fn llm_reasoning_tokens_total() -> Option<&'static IntCounterVec> {
+    HANDLES.get().map(|h| &h.llm_reasoning_tokens_total)
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

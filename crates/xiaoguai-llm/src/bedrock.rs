@@ -566,6 +566,7 @@ fn decode_llama_chunk(payload: &[u8]) -> Result<Option<ChatChunk>, LlmError> {
         finish_reason: finish,
         done,
         tool_calls: Vec::new(),
+        reasoning_delta: None,
     }))
 }
 

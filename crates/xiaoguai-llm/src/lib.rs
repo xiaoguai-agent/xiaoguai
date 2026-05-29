@@ -26,6 +26,7 @@ pub mod breaker;
 pub mod build;
 pub mod gemini;
 pub mod groq;
+pub mod minimax;
 pub mod mistral;
 pub mod mock;
 pub mod ollama;
@@ -43,6 +44,7 @@ pub use breaker::{Breaker, BreakerConfig, BreakerState, Breakers, Clock, SystemC
 pub use build::{build_router, BuildReport, EnvResolver, OsEnvResolver};
 pub use gemini::GeminiBackend;
 pub use groq::GroqBackend;
+pub use minimax::MinimaxBackend;
 pub use mistral::MistralBackend;
 pub use mock::MockBackend;
 pub use ollama::OllamaBackend;

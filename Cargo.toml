@@ -143,6 +143,9 @@ hmac = "0.13"
 sha2 = "0.11"
 sha1 = "0.11"
 aes = "0.9"
+# Sprint-8 S8-5: AES-256-GCM for MCP refresh-token encryption at rest.
+# 0.10.x is the stable line; 0.11 is rc as of plan write.
+aes-gcm = "0.10"
 cbc = { version = "0.2", features = ["alloc", "block-padding"] }
 cipher = "0.5"
 rand = "0.10"
@@ -192,6 +195,11 @@ tracing-opentelemetry = "0.33"
 
 # document loaders (RAG)
 pdf-extract = "0.10"
+# Sprint-8 S8-6 (DEC-023.2): byte-deterministic PDF writer for
+# compliance bundle export. Plan adjustment: typst 0.14 library API
+# proved heavy for a one-template path; pdf-writer gives us deterministic
+# output with a much smaller surface.
+pdf-writer = "0.15"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 scraper = "0.27"
 pulldown-cmark = { version = "0.13", default-features = false }

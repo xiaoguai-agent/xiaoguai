@@ -16,6 +16,7 @@
 pub mod chain;
 pub mod export;
 pub mod outcomes;
+pub mod pdf;
 pub mod redact;
 
 pub use chain::{AuditEntry, ChainError, ChainedAudit, StoredEntry};
