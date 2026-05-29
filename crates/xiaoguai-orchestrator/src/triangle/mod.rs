@@ -26,6 +26,8 @@ pub mod planner_agent;
 pub mod roles;
 pub mod scratchpad;
 pub mod verdict;
+// Sprint-9 S9-3: WorkerAgent — Task execution + Scratchpad writes.
+pub mod worker_agent;
 
 pub use budget::{BudgetError, TriangleBudget};
 pub use memory_view::{MemoryFact, MemorySnapshot, MemoryView};
@@ -34,3 +36,4 @@ pub use planner_agent::{PlannerAgent, PlannerError};
 pub use roles::Role;
 pub use scratchpad::{ScratchEntry, Scratchpad, ScratchpadError};
 pub use verdict::{Verdict, VerdictKind};
+pub use worker_agent::{WorkerAgent, WorkerError, WorkerResult, WorkerStopReason};
