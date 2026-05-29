@@ -192,7 +192,10 @@ mod tests {
             tasks: vec![t.clone(), dup],
             created_at: Utc::now(),
         };
-        assert_eq!(p.validate(), Err(PlanValidationError::DuplicateTaskId(t.id)));
+        assert_eq!(
+            p.validate(),
+            Err(PlanValidationError::DuplicateTaskId(t.id))
+        );
     }
 
     #[test]

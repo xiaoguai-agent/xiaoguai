@@ -185,8 +185,7 @@ impl WorkerAgent {
                 hotl_gate: None,
                 compaction: None,
             };
-            let react =
-                ReactAgent::new(self.backend.clone(), Toolbox::new(), inner_cfg);
+            let react = ReactAgent::new(self.backend.clone(), Toolbox::new(), inner_cfg);
             let cancel = CancellationToken::new();
             let (handle, mut stream) = react.run_stream(messages.clone(), cancel);
 
@@ -206,9 +205,7 @@ impl WorkerAgent {
             }
 
             let outcome = handle.await.map_err(|e| {
-                WorkerError::LlmError(LlmError::Provider(format!(
-                    "ReactAgent join error: {e}"
-                )))
+                WorkerError::LlmError(LlmError::Provider(format!("ReactAgent join error: {e}")))
             })??;
 
             // 3c. Persist messages for the next pass + count.
@@ -347,9 +344,7 @@ pub enum WorkerStopReason {
 pub enum WorkerError {
     #[error("inner LLM backend error: {0}")]
     LlmError(#[from] LlmError),
-    #[error(
-        "scratchpad quarantine violation: expected task {expected}, got task {actual}"
-    )]
+    #[error("scratchpad quarantine violation: expected task {expected}, got task {actual}")]
     WrongTaskId { expected: TaskId, actual: TaskId },
     #[error("budget_tokens must be > 0")]
     BudgetTooSmall,
@@ -360,9 +355,7 @@ impl From<xiaoguai_agent::AgentError> for WorkerError {
     fn from(e: xiaoguai_agent::AgentError) -> Self {
         match e {
             xiaoguai_agent::AgentError::Llm(le) => Self::LlmError(le),
-            xiaoguai_agent::AgentError::Other(msg) => {
-                Self::LlmError(LlmError::Provider(msg))
-            }
+            xiaoguai_agent::AgentError::Other(msg) => Self::LlmError(LlmError::Provider(msg)),
         }
     }
 }
@@ -415,9 +408,8 @@ fn classify_stop(
 /// text. The Worker persona convention puts the self-report at the
 /// end of the final message; taking the last match avoids false hits
 /// on cited JSON earlier in the text.
-static CONFIDENCE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#""confidence"\s*:\s*(-?[0-9]+(?:\.[0-9]+)?)"#).unwrap()
-});
+static CONFIDENCE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#""confidence"\s*:\s*(-?[0-9]+(?:\.[0-9]+)?)"#).unwrap());
 
 fn parse_confidence(text: &str) -> f32 {
     let Some(last) = CONFIDENCE_RE.captures_iter(text).last() else {
@@ -508,13 +500,19 @@ mod tests {
         let mut sp = Scratchpad::new(task.id);
         let memory = snap().await;
 
-        let res = agent.execute(&task, &mut sp, &memory, 10_000).await.unwrap();
+        let res = agent
+            .execute(&task, &mut sp, &memory, 10_000)
+            .await
+            .unwrap();
 
         assert_eq!(res.task_id, task.id);
         assert_eq!(res.artefact.as_deref(), Some("the answer"));
         assert_eq!(res.stop_reason, WorkerStopReason::Completed);
         assert_eq!(res.iterations, 1);
-        assert!(res.cost_tokens > 0, "cost should accumulate at least 1 token");
+        assert!(
+            res.cost_tokens > 0,
+            "cost should accumulate at least 1 token"
+        );
         assert_eq!(sp.entries().len(), 1);
         assert_eq!(sp.cost_tokens, res.cost_tokens);
     }
@@ -534,7 +532,10 @@ mod tests {
         let mut sp = Scratchpad::new(task.id);
         let memory = snap().await;
 
-        let res = agent.execute(&task, &mut sp, &memory, 1_000_000).await.unwrap();
+        let res = agent
+            .execute(&task, &mut sp, &memory, 1_000_000)
+            .await
+            .unwrap();
 
         assert_eq!(res.stop_reason, WorkerStopReason::Completed);
         assert_eq!(res.iterations, 4);
@@ -582,7 +583,10 @@ mod tests {
         let mut sp = Scratchpad::new(task.id);
         let memory = snap().await;
 
-        let res = agent.execute(&task, &mut sp, &memory, 1_000_000).await.unwrap();
+        let res = agent
+            .execute(&task, &mut sp, &memory, 1_000_000)
+            .await
+            .unwrap();
         assert_eq!(sp.entries().len() as u32, res.iterations);
     }
 
@@ -621,7 +625,10 @@ mod tests {
         let mut sp = Scratchpad::new(task.id);
         let memory = snap().await;
 
-        let res = agent.execute(&task, &mut sp, &memory, 10_000).await.unwrap();
+        let res = agent
+            .execute(&task, &mut sp, &memory, 10_000)
+            .await
+            .unwrap();
         assert!(
             (res.confidence - 0.85).abs() < f32::EPSILON,
             "expected 0.85, got {}",
@@ -637,7 +644,10 @@ mod tests {
         let mut sp = Scratchpad::new(task.id);
         let memory = snap().await;
 
-        let res = agent.execute(&task, &mut sp, &memory, 10_000).await.unwrap();
+        let res = agent
+            .execute(&task, &mut sp, &memory, 10_000)
+            .await
+            .unwrap();
         assert!(
             (res.confidence - DEFAULT_CONFIDENCE).abs() < f32::EPSILON,
             "expected default {DEFAULT_CONFIDENCE}, got {}",
@@ -647,16 +657,20 @@ mod tests {
 
     #[tokio::test]
     async fn citations_extracted_from_urls_and_brackets() {
-        let final_msg =
-            "Per https://example.com/doc and [1], also [42] — see https://ref.org.";
+        let final_msg = "Per https://example.com/doc and [1], also [42] — see https://ref.org.";
         let backend = Arc::new(MockBackend::with_response(final_msg));
         let agent = WorkerAgent::new(backend, "persona".into(), vec![]);
         let task = fresh_task("cites");
         let mut sp = Scratchpad::new(task.id);
         let memory = snap().await;
 
-        let res = agent.execute(&task, &mut sp, &memory, 10_000).await.unwrap();
-        assert!(res.citations.contains(&"https://example.com/doc".to_string()));
+        let res = agent
+            .execute(&task, &mut sp, &memory, 10_000)
+            .await
+            .unwrap();
+        assert!(res
+            .citations
+            .contains(&"https://example.com/doc".to_string()));
         assert!(res.citations.contains(&"https://ref.org".to_string()));
         assert!(res.citations.contains(&"[1]".to_string()));
         assert!(res.citations.contains(&"[42]".to_string()));
@@ -668,13 +682,15 @@ mod tests {
         // the inner ReactAgent caps at 2 cycles.
         let script = vec![ScriptStep::tool_calls(vec![tc("loop", "missing")])];
         let backend = Arc::new(MockBackend::with_script(script));
-        let agent = WorkerAgent::new(backend, "persona".into(), vec![])
-            .with_max_iterations(2);
+        let agent = WorkerAgent::new(backend, "persona".into(), vec![]).with_max_iterations(2);
         let task = fresh_task("infinite");
         let mut sp = Scratchpad::new(task.id);
         let memory = snap().await;
 
-        let res = agent.execute(&task, &mut sp, &memory, 1_000_000).await.unwrap();
+        let res = agent
+            .execute(&task, &mut sp, &memory, 1_000_000)
+            .await
+            .unwrap();
         assert_eq!(res.stop_reason, WorkerStopReason::MaxIterations);
         assert!(res.artefact.is_none());
         assert_eq!(res.iterations, 2);

@@ -79,10 +79,7 @@ impl TriangleBudget {
         if worker == 0 || planner == 0 || critic == 0 {
             // Compute the minimum parent budget that would give every
             // role at least 1 token: solve `min * smallest_pct / 100 >= 1`.
-            let smallest_pct = self
-                .worker_pct
-                .min(self.planner_pct)
-                .min(self.critic_pct);
+            let smallest_pct = self.worker_pct.min(self.planner_pct).min(self.critic_pct);
             let min = if smallest_pct == 0 {
                 u64::MAX
             } else {
