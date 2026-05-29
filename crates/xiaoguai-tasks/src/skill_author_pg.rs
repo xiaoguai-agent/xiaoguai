@@ -254,6 +254,30 @@ impl TenantSettingsReader for PgTenantSettings {
         .flatten();
         Ok(val.as_deref() == Some("true"))
     }
+
+    async fn sandbox_tier(
+        &self,
+        tenant_id: &str,
+    ) -> Result<crate::skill_author::SandboxTier, SkillAuthorError> {
+        // DEC-019: `settings->>'sandbox_tier'` is parsed lenient (case
+        // insensitive, "L3" → L3, anything else → L1). Missing row /
+        // missing key → L1 (safe default per PHILO §14).
+        let val: Option<String> = sqlx::query_scalar(
+            "SELECT settings->>'sandbox_tier' \
+             FROM tenant_settings \
+             WHERE tenant_id = $1",
+        )
+        .bind(tenant_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(pg_err)?
+        .flatten();
+        Ok(val
+            .as_deref()
+            .map_or(crate::skill_author::SandboxTier::L1, |s| {
+                crate::skill_author::SandboxTier::from_str_lenient(s)
+            }))
+    }
 }
 
 // ---------------------------------------------------------------------------

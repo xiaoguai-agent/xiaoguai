@@ -11,7 +11,8 @@ use rmcp::model::{Content, Tool, ToolAnnotations};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::exec::{run_javascript, ExecConfig, ExecError, ExecResult};
+use crate::exec::{ExecConfig, ExecError, ExecResult};
+use crate::runtime::ExecBackend;
 
 /// Canonical tool name. Callers in the agent loop must dispatch a `HotL`
 /// `tool_call.execute_javascript` scope before invoking; see the runbook.
@@ -92,20 +93,27 @@ impl From<ExecResult> for ExecuteJavascriptResultPayload {
     }
 }
 
-/// Adapt a parsed `ExecuteJavascriptArgs` through [`run_javascript`] and
-/// shape the outcome into MCP `Content` blocks. Supervisor failures
-/// (runtime missing, fork failed) become `is_error=true` text blocks;
-/// all other outcomes — including snippet crashes and deadlines — are
-/// normal data results.
+/// Adapt a parsed `ExecuteJavascriptArgs` through the supplied
+/// [`ExecBackend`] and shape the outcome into MCP `Content` blocks.
+/// Supervisor failures (runtime missing, fork failed) become
+/// `is_error=true` text blocks; all other outcomes — including snippet
+/// crashes and deadlines — are normal data results.
+///
+/// DEC-019: by accepting the backend as a parameter (instead of calling
+/// `run_javascript` directly), this function works unchanged for L1
+/// (process isolation + Deno `--allow-none`) and L3 (wasmtime +
+/// QuickJS-WASM) tiers. The backend tier is chosen at
+/// `ExecServer::new` / `ExecServer::with_backend` time.
 pub async fn execute_javascript_call(
-    cfg: &ExecConfig,
+    backend: &dyn ExecBackend,
+    _cfg: &ExecConfig,
     args: ExecuteJavascriptArgs,
 ) -> (Vec<Content>, bool) {
     let requested = args.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);
     let clamped = requested.min(MAX_TIMEOUT_SECS);
     let timeout = Duration::from_secs(clamped);
 
-    match run_javascript(cfg, &args.code, timeout).await {
+    match backend.run(&args.code, timeout).await {
         Ok(result) => {
             let payload = ExecuteJavascriptResultPayload::from(result);
             let json_text = serde_json::to_string(&payload)
