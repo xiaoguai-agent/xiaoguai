@@ -139,6 +139,32 @@ export interface ListAuditQuery {
   until?: string;
 }
 
+/**
+ * v1.8.x (sprint-11 S11-1a) — wire shape for `POST /v1/audit/exports`.
+ *
+ * Backend (`crates/xiaoguai-api/src/routes/audit_exports.rs`) returns the
+ * binary export body directly with `Content-Type` set from `format`. There
+ * is no async + SSE progress path — this is a single round-trip.
+ */
+export interface CreateAuditExportRequest {
+  tenant_id: string;
+  framework: 'soc2' | 'gdpr' | 'hipaa';
+  /** Defaults to `"json"` on the backend. PDF currently returns 501. */
+  format?: 'json' | 'csv' | 'pdf';
+  /** RFC 3339 inclusive lower bound. */
+  from: string;
+  /** RFC 3339 inclusive upper bound. */
+  to: string;
+}
+
+/** Resolved download for an audit export. */
+export interface AuditExportBlob {
+  blob: Blob;
+  /** Parsed from `Content-Disposition`, falls back to a synthesised name. */
+  filename: string;
+  contentType: string;
+}
+
 // ---- v0.11.1 — audit-first console (Today endpoint) --------------------
 
 /**
@@ -1143,6 +1169,43 @@ export class XiaoguaiClient {
   }
 
   /**
+   * v1.8.x (sprint-11 S11-1a) — compliance export. Posts the window +
+   * framework and resolves with the binary blob the backend returns.
+   *
+   * Goes through `fetchImpl` directly (not `this.request`) because the
+   * response body is binary; matches the `ApiError` shape used by
+   * `request<T>` for non-2xx responses. On 2xx the filename is parsed
+   * from `Content-Disposition`, falling back to a synthesised name keyed
+   * off tenant id + ts + format extension.
+   */
+  async createAuditExport(req: CreateAuditExportRequest): Promise<AuditExportBlob> {
+    const format = req.format ?? 'json';
+    const resp = await this.fetchImpl(`${this.baseUrl}/v1/audit/exports`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({ ...req, format }),
+    });
+    if (!resp.ok) {
+      let code = 'http_error';
+      let message = `HTTP ${resp.status}`;
+      try {
+        const parsed = (await resp.json()) as { code?: string; message?: string };
+        if (parsed.code) code = parsed.code;
+        if (parsed.message) message = parsed.message;
+      } catch {
+        // body wasn't JSON; keep defaults.
+      }
+      throw new ApiError(resp.status, code, message);
+    }
+    const blob = await resp.blob();
+    const contentType =
+      resp.headers.get('content-type') ?? blob.type ?? 'application/octet-stream';
+    const disposition = resp.headers.get('content-disposition');
+    const filename = parseContentDispositionFilename(disposition) ?? defaultExportFilename(req.tenant_id, format);
+    return { blob, filename, contentType };
+  }
+
+  /**
    * v0.11.1 — composite Today timeline. The console makes this the
    * default landing pane (audit-first, not chat-first).
    */
@@ -1847,6 +1910,36 @@ export class XiaoguaiClient {
     })();
     return () => controller.abort();
   }
+}
+
+/**
+ * Parse an RFC 6266 `Content-Disposition` header for the `filename` parameter.
+ * Handles plain `filename="…"` and the `filename*=UTF-8''…` extended form.
+ * Returns `null` when the header is missing or the parameter cannot be
+ * extracted — callers should fall back to a synthesised filename.
+ */
+function parseContentDispositionFilename(header: string | null): string | null {
+  if (!header) return null;
+  const ext = header.match(/filename\*\s*=\s*[^']*''([^;]+)/i);
+  if (ext?.[1]) {
+    try {
+      return decodeURIComponent(ext[1].trim());
+    } catch {
+      // fall through to the plain form.
+    }
+  }
+  const quoted = header.match(/filename\s*=\s*"([^"]+)"/i);
+  if (quoted?.[1]) return quoted[1];
+  const bare = header.match(/filename\s*=\s*([^;]+)/i);
+  if (bare?.[1]) return bare[1].trim();
+  return null;
+}
+
+/** Synthesise a download filename when the backend omits Content-Disposition. */
+function defaultExportFilename(tenantId: string, format: string): string {
+  const ext = format.toLowerCase();
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  return `audit-${tenantId}-${ts}.${ext}`;
 }
 
 function parseSseChunk(chunk: string): AgentEvent | null {

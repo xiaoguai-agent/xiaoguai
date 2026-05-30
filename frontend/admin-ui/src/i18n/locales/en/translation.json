@@ -189,6 +189,15 @@
       "col_action": "Action",
       "col_resource": "Resource",
       "col_hmac": "HMAC (last 8)",
+      "col_chain_status": "Chain",
+      "chain_status_ok": "OK",
+      "chain_status_rotation": "Rotated",
+      "chain_status_broken": "Broken",
+      "chain_status_head": "Head",
+      "btn_export": "Export",
+      "btn_exporting": "Exporting…",
+      "export_done": "Export downloaded.",
+      "export_failed": "Export failed: {{message}}",
       "empty_for_tenant": "No audit rows for tenant {{tenant}}."
     },
     "mcp_servers": {
