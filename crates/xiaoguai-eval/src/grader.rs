@@ -95,6 +95,8 @@ fn event_type_tag(ev: &AgentEvent) -> &'static str {
         AgentEvent::IterationCompleted { .. } => "iteration_completed",
         AgentEvent::Done { .. } => "done",
         AgentEvent::Error { .. } => "error",
+        AgentEvent::HotlPending { .. } => "hotl_pending",
+        AgentEvent::HotlResolved { .. } => "hotl_resolved",
     }
 }
 

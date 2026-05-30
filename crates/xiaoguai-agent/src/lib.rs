@@ -15,7 +15,7 @@ pub mod react;
 pub mod skill_author_tool;
 pub mod toolbox;
 
-pub use event::{AgentEvent, StopReason};
+pub use event::{AgentEvent, HotlResolution, StopReason};
 pub use hotl_gate::{
     AllowAllGate, DenyAllGate, HotlGate, HotlGateVerdict, ScopeDenyGate, SharedHotlGate,
 };
