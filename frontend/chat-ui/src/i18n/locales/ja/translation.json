@@ -27,6 +27,22 @@
       "reconnecting": "再接続中（{{attempt}} 回目、{{secs}} 秒後に再試行）…",
       "cancel_reconnect": "キャンセル",
       "gave_up": "接続が失われました — {{attempts}} 回の試行後に中止しました"
+    },
+    "hotl": {
+      "title": "人間の承認が必要です",
+      "scope_label": "操作 {{scope}} はオペレーターのレビュー待ちで一時停止されました。",
+      "btn_approve": "承認",
+      "btn_reject": "却下",
+      "btn_adjust": "ポリシーを調整…",
+      "submitting": "送信中…",
+      "submit_failed": "判定の送信に失敗しました: {{message}}",
+      "policy_tighten": "強化（しきい値を上げる）",
+      "policy_loosen": "緩和（しきい値を下げる）",
+      "window_seconds_label": "ウィンドウ（秒）",
+      "max_count_label": "最大コール数",
+      "max_usd_label": "最大支出（USD）",
+      "rationale_label": "理由（必須）",
+      "review_link": "承認キューでレビュー →"
     }
   }
 }
