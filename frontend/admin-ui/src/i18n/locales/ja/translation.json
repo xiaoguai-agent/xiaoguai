@@ -189,6 +189,15 @@
       "col_action": "アクション",
       "col_resource": "リソース",
       "col_hmac": "HMAC（末尾 8 桁）",
+      "col_chain_status": "チェーン",
+      "chain_status_ok": "正常",
+      "chain_status_rotation": "ローテーション",
+      "chain_status_broken": "破損",
+      "chain_status_head": "先頭",
+      "btn_export": "エクスポート",
+      "btn_exporting": "エクスポート中…",
+      "export_done": "エクスポートをダウンロードしました。",
+      "export_failed": "エクスポートに失敗しました：{{message}}",
       "empty_for_tenant": "テナント {{tenant}} の監査レコードがありません。"
     },
     "mcp_servers": {
