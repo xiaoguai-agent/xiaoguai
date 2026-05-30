@@ -368,8 +368,27 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     let hotl_enforcer_arc: Arc<dyn xiaoguai_api::hotl::enforcer::HotlEnforcer> = Arc::new(
         crate::hotl_bridge::PgHotlEnforcer::new(pool.clone(), hotl_policy_store_pg.clone()),
     );
-    let hotl_gate: Arc<dyn xiaoguai_agent::HotlGate> =
-        crate::hotl_bridge::EnforcerGate::arc(hotl_enforcer_arc.clone());
+    // Sprint-12 S12-4: the `DecisionRegistry` is constructed ONCE here
+    // and shared between the gate adapter (so `SuspendingHotlGate::check`
+    // can mint tickets against it) and `AppState.decision_registry`
+    // (so `POST /v1/hotl/decisions` can resolve waiters on it). A second
+    // registry would silently no-op resolves and hang the loop until the
+    // 24h default expiry. See hotl_bridge::build_hotl_gate doc.
+    let decision_registry =
+        std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new());
+    // Per design (`lld-agent.md` §4.5): default suspend window is 24h.
+    // Per-scope overrides are tracked as a sprint-13 follow-up.
+    let hotl_default_expiry = std::time::Duration::from_secs(24 * 3600);
+    let hotl_gate: Arc<dyn xiaoguai_agent::HotlGate> = crate::hotl_bridge::build_hotl_gate(
+        settings.agent.hotl.suspend_on_escalate,
+        hotl_enforcer_arc.clone(),
+        decision_registry.clone(),
+        hotl_default_expiry,
+    );
+    tracing::info!(
+        suspend_on_escalate = settings.agent.hotl.suspend_on_escalate,
+        "serve: HOTL gate selected per agent.hotl.suspend_on_escalate"
+    );
 
     let agent_defaults = AgentConfig::new(default_model.clone()).with_hotl_gate(hotl_gate.clone());
     tracing::info!("serve: agent ReAct loop wired with HOTL gate (scope = tool_call.<name>)");
@@ -686,9 +705,11 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // a 200 + empty array instead of falling to its 404 fallback. A
         // session-aware WatchRunner adapter lands in a future sprint.
         watchers: Some(xiaoguai_api::StaticWatcherIntrospector::arc()),
-        decision_registry: std::sync::Arc::new(
-            xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
-        ),
+        // Sprint-12 S12-4: shared with the gate adapter constructed
+        // above. The registry is built once around line 378; both halves
+        // see the same DashMap so resolves from the route handler reach
+        // the gate's waiters.
+        decision_registry: decision_registry.clone(),
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by
