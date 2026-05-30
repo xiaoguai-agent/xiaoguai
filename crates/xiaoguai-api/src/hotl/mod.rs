@@ -31,6 +31,7 @@
 
 pub mod audit;
 pub mod decision;
+pub mod decision_registry;
 pub mod enforcer;
 pub mod policy;
 
@@ -38,6 +39,16 @@ pub use audit::{HotlAuditSink, InMemoryHotlAuditSink};
 pub use decision::{
     HotlDecisionRecord, HotlDecisionStore, HotlDecisionStoreError, HotlDecisionVerdict,
     InMemoryHotlDecisionStore,
+};
+// Note: `decision_registry::HotlDecisionVerdict` is a struct (settled
+// decision delivered to the loop) and intentionally NOT re-exported here
+// because `decision::HotlDecisionVerdict` is an enum (wire allow/deny tag).
+// Callers reach the struct via the full path
+// `crate::hotl::decision_registry::HotlDecisionVerdict` until S12-1 lands
+// and the struct moves into `xiaoguai_agent::hotl_gate`.
+pub use decision_registry::{
+    DecisionRegistry, DecisionRegistryMetrics, HotlResolution, HotlSuspensionTicket,
+    HotlTicketError,
 };
 pub use enforcer::{HotlEnforcer, HotlVerdictResult, StaticHotlEnforcer};
 pub use policy::{
