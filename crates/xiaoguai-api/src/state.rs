@@ -27,6 +27,7 @@ use crate::auth::TokenValidator;
 use crate::eval::EvalService;
 use crate::hotl::audit::HotlAuditSink;
 use crate::hotl::decision::HotlDecisionStore;
+use crate::hotl::decision_registry::DecisionRegistry;
 use crate::hotl::enforcer::HotlEnforcer;
 use crate::hotl::policy::HotlPolicyStore;
 use crate::outcomes::{OutcomeWriter, OutcomesReader};
@@ -206,6 +207,13 @@ pub struct AppState {
     /// (`SuspendingHotlGate`, `AgentEvent::HotlPending`, `DecisionRegistry`)
     /// is deferred to a future sprint.
     pub hotl_decision_store: Option<Arc<dyn HotlDecisionStore>>,
+    /// v1.9.x sprint-12 (S12-3): per-`request_id` waiter map for
+    /// suspended HOTL requests. Always present — the registry has zero
+    /// side-effects when no one calls `register`, so unwiring would just
+    /// remove an unused field rather than disable a feature. Shared
+    /// between the gate adapter (S12-4) and `POST /v1/hotl/decisions`
+    /// (S12-6).
+    pub decision_registry: Arc<DecisionRegistry>,
     /// v1.8.x sprint-11 (S11-3a.1): HMAC-chained audit sink for the
     /// HOTL decision route. `None` makes the route skip audit logging
     /// (best-effort — audit failures must NOT block the operation).
