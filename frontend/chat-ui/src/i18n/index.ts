@@ -19,9 +19,20 @@ interface TranslationShape {
     learn_more_label: string;
     banner_aria_label: string;
   };
+  chat: {
+    sse: {
+      reconnecting: string;
+      cancel_reconnect: string;
+      gave_up: string;
+    };
+  };
 }
 
-const bundles: Record<Locale, TranslationShape> = { en, 'zh-CN': zhCN, ja };
+const bundles: Record<Locale, TranslationShape> = {
+  en: en as unknown as TranslationShape,
+  'zh-CN': zhCN as unknown as TranslationShape,
+  ja: ja as unknown as TranslationShape,
+};
 
 function detectLocale(): Locale {
   const nav = typeof navigator !== 'undefined' ? navigator.language : 'en';
@@ -33,4 +44,19 @@ function detectLocale(): Locale {
 export function getTranslations(locale?: Locale): TranslationShape {
   const resolved: Locale = locale ?? detectLocale();
   return bundles[resolved] ?? bundles['en'];
+}
+
+/**
+ * Minimal `{{var}}` interpolation. Substitutes every `{{key}}` in `template`
+ * with the matching string/number from `vars`. Missing keys are left as-is
+ * so a parity-test failure is easy to spot at runtime.
+ */
+export function interpolate(
+  template: string,
+  vars: Record<string, string | number>,
+): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => {
+    const v = vars[key];
+    return v === undefined ? `{{${key}}}` : String(v);
+  });
 }

@@ -8,6 +8,7 @@ import { MarkdownBody } from './markdown';
 import { HotlBanner } from './HotlBanner';
 import type { HotlPendingState } from './HotlBanner';
 import { AiDisclosureBanner } from './AiDisclosureBanner';
+import { SseReconnectBanner } from './SseReconnectBanner';
 import { WatchIndicator } from './WatchIndicator';
 
 type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
@@ -62,6 +63,14 @@ export function ChatPage({ onSessionCreated }: Props) {
   const [status, setStatus] = useState<string | null>(null);
   /** v1.3.x — non-null while an HotL escalation is pending for this session. */
   const [hotlPending, setHotlPending] = useState<HotlPendingState | null>(null);
+  /**
+   * sprint-11 S11-2b — non-null while sendMessage is sleeping between
+   * retries. Set by the onReconnect callback, cleared inside applyEvent on
+   * the first event of the resumed stream.
+   */
+  const [reconnect, setReconnect] = useState<{ attempt: number; delayMs: number } | null>(
+    null,
+  );
   const abortRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -70,6 +79,7 @@ export function ChatPage({ onSessionCreated }: Props) {
   useEffect(() => {
     setBubbles([]);
     setHotlPending(null);
+    setReconnect(null);
     setSessionId(routeId);
     if (!routeId) return;
     void (async () => {
@@ -124,10 +134,14 @@ export function ChatPage({ onSessionCreated }: Props) {
     abortRef.current = client.sendMessage(
       sid,
       { content: text },
-      (ev) => applyEvent(ev, setBubbles, setStatus, setHotlPending),
+      (ev) => applyEvent(ev, setBubbles, setStatus, setHotlPending, setReconnect),
       (err) => {
         setStatus(`stream error: ${err.message}`);
         setStreaming(false);
+        setReconnect(null);
+      },
+      {
+        onReconnect: (attempt, delayMs) => setReconnect({ attempt, delayMs }),
       },
     );
 
@@ -140,7 +154,11 @@ export function ChatPage({ onSessionCreated }: Props) {
     update: typeof setBubbles,
     statusSetter: typeof setStatus,
     hotlSetter: typeof setHotlPending,
+    reconnectSetter: typeof setReconnect,
   ) {
+    // Any incoming event = the stream has resumed; tear down the banner.
+    // Per DEC-LLD-CHAT-UI-003 the partial bubble itself is never touched.
+    reconnectSetter(null);
     switch (ev.type) {
       case 'text_delta':
         update((bs) => {
@@ -230,6 +248,7 @@ export function ChatPage({ onSessionCreated }: Props) {
       setStatus(`cancel failed: ${(err as Error).message}`);
     });
     abortRef.current?.();
+    setReconnect(null);
   }
 
   async function fork(messageId: string) {
@@ -248,6 +267,14 @@ export function ChatPage({ onSessionCreated }: Props) {
     <>
       {/* v1.3.x — HotL escalation banner: non-dismissible, shown above messages. */}
       {hotlPending && <HotlBanner pending={hotlPending} />}
+      {/* sprint-11 S11-2b — SSE reconnect banner (LLD-CHAT-UI-001 §4.7.1). */}
+      {reconnect && (
+        <SseReconnectBanner
+          attempt={reconnect.attempt}
+          nextDelayMs={reconnect.delayMs}
+          onCancel={cancel}
+        />
+      )}
       {/* AI disclosure banner (EU AI Act Art. 50(1)) — always above HotlBanner */}
       <AiDisclosureBanner tenantId={DEV_TENANT_ID} />
       {/* Chat header — order: AiDisclosureBanner > HotlBanner > WatchIndicator */}
