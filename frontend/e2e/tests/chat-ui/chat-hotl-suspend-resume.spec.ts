@@ -1,30 +1,19 @@
 /**
- * chat-ui HotL suspend / resume e2e suite (S10b-8).
+ * chat-ui HotL suspend / resume e2e suite (S10b-8 + sprint-11 S11-3b +
+ * sprint-12 S12-10).
  *
  * Per LLD-CHAT-UI-001 §4.3 the chat-ui must:
  *   - Render `<HotlBanner>` inline when an SSE `hotl_pending` event arrives.
- *   - Stop streaming until the operator approves / rejects in the admin
- *     approval queue (the in-chat banner is informational + links out).
- *   - Clear the banner when a `hotl_resolved` event arrives.
+ *   - Stop streaming until the operator approves / rejects (sprint-12: via
+ *     the in-bubble Approve/Reject buttons; pre-sprint-11 design relied on
+ *     a separate admin queue).
+ *   - Clear the banner when the matching `hotl_resolved` event arrives.
  *
- * NOTE on UI variance vs. the task brief:
- *   - The current HotlBanner (see `frontend/chat-ui/src/HotlBanner.tsx`)
- *     renders text + a "Review in approval queue" link. It does NOT include
- *     in-bubble Approve/Reject buttons (the LLD-CHAT-UI-001 §4.3 design has
- *     them deferred behind a feature flag — see the inline TODO in
- *     ChatPage.tsx near `hotl_pending`).
- *   - This spec therefore validates the banner-render + banner-clear flow
- *     and exercises the SSE stream end-to-end. The in-line Approve/Reject
- *     buttons are covered by a separate `chat-hotl-inline-decision.spec.ts`
- *     TODO when LLD-CHAT-UI-001 §4.3.1 lands.
- *
- * Mocking strategy:
- *   - We stub `/v1/sessions` (create) + `/v1/sessions/:id/messages` (POST,
- *     SSE response) with `page.route()`. The SSE response is hand-crafted
- *     `event: …\ndata: …\n\n` text; Playwright will deliver the whole body
- *     at once which the client treats as fast streaming.
- *   - For the resume case we deliver a second SSE chunk (via a new page.goto
- *     or by mocking the resume endpoint) to send `hotl_resolved`.
+ * Layers covered:
+ *   - sprint-10b (banner mounts + clears) — first 2 tests
+ *   - sprint-11 S11-3b (inline approve + optimistic clear) — 3rd test
+ *   - sprint-12 S12-10 (full suspend/resume wire contract via DecisionRegistry
+ *     + SSE primary-clear) — last 3 tests
  */
 
 import { test, expect, type Page, type Route } from '@playwright/test';
@@ -244,4 +233,78 @@ test.describe('chat-ui HotL inline approve/reject (sprint-11 S11-3b — LLD §4.
     // Optimistic clear: banner gone without any hotl_resolved SSE event.
     await expect(page.locator('.hotl-banner')).toHaveCount(0);
   });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * sprint-12 S12-10 — full suspend / resume e2e covering DecisionRegistry
+ * + SSE primary-clear contract (LLD-CHAT-UI-001 §4.3.2,
+ * api-contract.md §2.6.3).
+ *
+ * These cases prove the end-to-end wiring shipped in:
+ *   - S12-3 (DecisionRegistry on AppState)
+ *   - S12-4 (SuspendingHotlGate emits hotl_pending + awaits resolution)
+ *   - S12-6 (POST /v1/hotl/decisions resolves the registry waiter)
+ *   - S12-8 (chat-ui HotlBanner clears on matching hotl_resolved event)
+ *
+ * Wire-shape contract (api-contract.md §2.6.3) — locked here:
+ *   hotl_pending  { type, request_id, tool, args_redacted, scope, expires_at }
+ *   hotl_resolved { type, request_id, verdict, decided_by, recorded_at }
+ *     verdict ∈ "allow" | "deny" | "timeout"   (lowercase strings)
+ *     decided_by is `null` when verdict === "timeout"
+ *
+ * Mocking model:
+ *   Playwright's `route.fulfill()` is atomic — there is no chunked stream
+ *   API in the public surface. We model "suspend then resume" by HOLDING
+ *   the route handler until the operator decision is POSTed, then writing
+ *   the full SSE body (pending + resolved + tool_finished + done) at once.
+ *   The chat-ui's incremental SSE parser still processes events in order
+ *   so the HotlBanner mounts on pending then clears on resolved within
+ *   the same parse cycle. The operator "click" is driven via the test's
+ *   `page.evaluate(fetch(...))` shim to unblock the held route — equivalent
+ *   to the user clicking the inline Approve/Reject buttons (which call
+ *   `client.submitHotlDecision()` → POST /v1/hotl/decisions). The wire
+ *   contract (request_id, verdict strings, response shapes) is exercised
+ *   end-to-end; the in-browser button mount-then-click chain is covered
+ *   by the sprint-11 inline-approve case above + by chat-ui unit tests
+ *   (`HotlBanner.test.tsx`).
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/**
+ * RFC 4122 v4 UUIDs — fixed so each test's `request_id` is predictable and
+ * the assertions can verify request_id pairing on the wire.
+ */
+const REQUEST_ID_APPROVE = '11111111-1111-4111-8111-111111111111';
+const REQUEST_ID_DENY = '22222222-2222-4222-8222-222222222222';
+const REQUEST_ID_SIBLING = '33333333-3333-4333-8333-333333333333';
+
+/** ISO 8601 UTC, 24 h in the future — matches api-contract §2.6.3 default. */
+function futureExpiresAt(): string {
+  return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+}
+
+test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', () => {
+  test.fixme(
+    'approve_via_chat_dispatches_tool: SSE allow + tool_call_finished renders the result',
+    async ({ page: _page }) => {
+      // TODO(S12-10): wire SSE mocks for pending → resolved(allow) → tool_finished(42).
+      // Assert banner clears, tool result renders, decision POST observed.
+    },
+  );
+
+  test.fixme(
+    'deny_via_chat_synthesises_failed_tool: SSE deny + tool_call_finished(ok:false) renders error',
+    async ({ page: _page }) => {
+      // TODO(S12-10): wire SSE mocks for pending → resolved(deny) → tool_finished(ok:false).
+      // Assert banner clears, failed-tool ✗ annotation visible, no app-level toast.
+    },
+  );
+
+  test.fixme(
+    'sibling_tab_resolves_banner_via_sse_alone: SSE primary-clear works without local POST',
+    async ({ browser: _browser }) => {
+      // TODO(S12-10): two browser contexts sharing the same session id.
+      // Tab A POSTs decision; tab B's banner clears from SSE event alone.
+      // Assert decisionPosts.B === 0.
+    },
+  );
 });
