@@ -149,6 +149,9 @@ impl HotlGate for ScopeDenyGate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+    use tokio::time::Instant;
+    use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
     #[tokio::test]
@@ -174,5 +177,90 @@ mod tests {
             .check(Uuid::new_v4(), "tool_call.execute_python", 1.0)
             .await;
         assert_eq!(denied, HotlGateVerdict::Deny("no python in prod".into()));
+    }
+
+    // ── S12-1 sprint-12: HotlSuspensionTicket tests ─────────────────────────
+
+    #[tokio::test]
+    async fn ticket_resolves_when_sender_sends_allow() {
+        let request_id = Uuid::new_v4();
+        let expires_at = Instant::now() + Duration::from_secs(60);
+        let (ticket, sender) = HotlSuspensionTicket::new(request_id, expires_at);
+
+        assert_eq!(ticket.request_id, request_id);
+
+        let verdict = HotlDecisionVerdict {
+            verdict: HotlResolution::Allow,
+            decided_by: Some("alice@example.com".into()),
+            recorded_at: chrono::Utc::now(),
+        };
+        sender.send(verdict.clone()).expect("send must succeed");
+
+        let cancel = CancellationToken::new();
+        let got = ticket
+            .await_decision(&cancel)
+            .await
+            .expect("ticket must resolve");
+        assert_eq!(got.verdict, HotlResolution::Allow);
+        assert_eq!(got.decided_by.as_deref(), Some("alice@example.com"));
+    }
+
+    #[tokio::test]
+    async fn ticket_times_out_at_expires_at() {
+        let request_id = Uuid::new_v4();
+        let expires_at = Instant::now() + Duration::from_millis(50);
+        let (ticket, _sender) = HotlSuspensionTicket::new(request_id, expires_at);
+
+        let cancel = CancellationToken::new();
+        let start = std::time::Instant::now();
+        let got = ticket
+            .await_decision(&cancel)
+            .await
+            .expect("timeout path is Ok(verdict=Timeout), not Err");
+        let elapsed = start.elapsed();
+
+        assert_eq!(got.verdict, HotlResolution::Timeout);
+        assert_eq!(got.decided_by, None);
+        assert!(
+            elapsed >= Duration::from_millis(45),
+            "must wait until expires_at"
+        );
+    }
+
+    #[tokio::test]
+    async fn ticket_cancels_when_token_fires() {
+        let request_id = Uuid::new_v4();
+        let expires_at = Instant::now() + Duration::from_secs(60);
+        let (ticket, _sender) = HotlSuspensionTicket::new(request_id, expires_at);
+
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            cancel_clone.cancel();
+        });
+
+        let err = ticket
+            .await_decision(&cancel)
+            .await
+            .expect_err("cancel must surface as Err");
+        assert!(matches!(err, HotlTicketError::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn ticket_returns_channel_dropped_when_sender_dropped() {
+        let request_id = Uuid::new_v4();
+        let expires_at = Instant::now() + Duration::from_secs(60);
+        let (ticket, sender) = HotlSuspensionTicket::new(request_id, expires_at);
+
+        drop(sender);
+
+        let cancel = CancellationToken::new();
+        let err = ticket
+            .await_decision(&cancel)
+            .await
+            .expect_err("dropped sender must surface as Err");
+        assert!(matches!(err, HotlTicketError::ChannelDropped));
     }
 }
