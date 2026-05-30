@@ -134,7 +134,7 @@ async fn pg_create_duplicate_request_id_returns_conflict() {
 async fn pg_audit_sink_writes_then_visible_to_downstream_reader() {
     let pool = pg_pool().await;
     let signing_key = b"sprint12-s12-7-integration-test-key".to_vec();
-    let pg_sink = std::sync::Arc::new(xiaoguai_audit::PgAuditSink::new(
+    let pg_sink = std::sync::Arc::new(xiaoguai_audit::chain::sink::PgAuditSink::new(
         pool.clone(),
         signing_key,
     ));
