@@ -25,6 +25,22 @@ interface TranslationShape {
       cancel_reconnect: string;
       gave_up: string;
     };
+    hotl: {
+      title: string;
+      scope_label: string;
+      btn_approve: string;
+      btn_reject: string;
+      btn_adjust: string;
+      submitting: string;
+      submit_failed: string;
+      policy_tighten: string;
+      policy_loosen: string;
+      window_seconds_label: string;
+      max_count_label: string;
+      max_usd_label: string;
+      rationale_label: string;
+      review_link: string;
+    };
   };
 }
 
