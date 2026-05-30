@@ -37,6 +37,10 @@ pub struct Settings {
     /// the directory doesn't exist).
     #[serde(default)]
     pub eval: EvalSettings,
+    /// Sprint-12 (S12-0): agent-loop runtime knobs. Optional so existing
+    /// v1.8.x config.yaml files deserialize unchanged.
+    #[serde(default)]
+    pub agent: AgentSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -271,6 +275,39 @@ fn default_eval_suites_dir() -> String {
     "./eval-suites".into()
 }
 
+/// Sprint-12 (S12-0): agent-loop runtime knobs. Each nested block defaults
+/// to its `Default` impl so that omitted blocks in `config.yaml` preserve
+/// pre-sprint-12 behaviour.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AgentSettings {
+    /// HotL (human-on-the-loop) gating knobs.
+    #[serde(default)]
+    pub hotl: HotlSettings,
+}
+
+/// Sprint-12 (S12-0): HotL gating knobs.
+///
+/// `suspend_on_escalate` is a scaffold field added ahead of the suspend/
+/// resume wiring tracked by sprint-12. It is **not yet wired** in v1.8.x —
+/// `run_serve` continues to use `EnforcerGate` regardless. The flag's job
+/// in this PR is to reserve the config surface so tenants can pre-set
+/// `false` in `config.yaml` and have the v1.9.0 default flip (S12-12) be a
+/// no-op for them. The actual selection between `EnforcerGate` and
+/// `SuspendingHotlGate` lands in S12-4.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HotlSettings {
+    /// When `true`, an `Escalate` verdict from `HotlEnforcer` suspends the
+    /// agent loop until an operator decision arrives via
+    /// `POST /v1/hotl/decisions` (or the configured timeout fires). When
+    /// `false` (v1.8.x default) the loop logs the escalation and allows
+    /// the tool call to dispatch — the legacy `EnforcerGate` behaviour.
+    ///
+    /// Default flips to `true` in v1.9.0 via sprint-12 S12-12.
+    /// Override via `XIAOGUAI_AGENT__HOTL__SUSPEND_ON_ESCALATE=true`.
+    #[serde(default)]
+    pub suspend_on_escalate: bool,
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -299,6 +336,7 @@ impl Default for Settings {
             scheduler: SchedulerSettings::default(),
             im: ImSettings::default(),
             eval: EvalSettings::default(),
+            agent: AgentSettings::default(),
         }
     }
 }
@@ -369,19 +407,22 @@ mod tests {
         assert!(!s.agent.hotl.suspend_on_escalate);
     }
 
-    /// Explicit opt-in via env override flips the flag — proves the wiring
-    /// through `XIAOGUAI_AGENT__HOTL__SUSPEND_ON_ESCALATE=true`.
+    /// Explicit `agent.hotl.suspend_on_escalate: true` in a config.yaml
+    /// flips the flag — proves the field is wired into the file-based
+    /// loader path (the route operators actually use).
     #[test]
-    fn agent_hotl_suspend_on_escalate_env_override_works() {
-        // Snapshot + restore env to avoid leaking into other tests.
-        let key = "XIAOGUAI_AGENT__HOTL__SUSPEND_ON_ESCALATE";
-        let prev = std::env::var(key).ok();
-        std::env::set_var(key, "true");
-        let s = Settings::load_from_env().expect("env override load");
-        match prev {
-            Some(v) => std::env::set_var(key, v),
-            None => std::env::remove_var(key),
-        }
+    fn agent_hotl_suspend_on_escalate_yaml_opt_in_works() {
+        use std::io::Write;
+        let mut f = tempfile::Builder::new()
+            .suffix(".yaml")
+            .tempfile()
+            .expect("tmpfile");
+        writeln!(
+            f,
+            "server:\n  host: 127.0.0.1\n  port: 7600\ndatabase:\n  url: postgres://u:p@h/d\ncache:\n  url: redis://localhost:6379\nauth:\n  issuer: a\n  audience: b\n  jwks_url: c\naudit:\n  hmac_key: dev-only-change-me-32-bytes-min\nagent:\n  hotl:\n    suspend_on_escalate: true\n"
+        )
+        .expect("write tmp yaml");
+        let s = Settings::load_from_file(f.path()).expect("yaml load");
         assert!(s.agent.hotl.suspend_on_escalate);
     }
 }
