@@ -285,27 +285,41 @@ pub struct AgentSettings {
     pub hotl: HotlSettings,
 }
 
-/// Sprint-12 (S12-0): HotL gating knobs.
+/// Sprint-12 (S12-0 + S12-12): HotL gating knobs.
 ///
-/// `suspend_on_escalate` is a scaffold field added ahead of the suspend/
-/// resume wiring tracked by sprint-12. It is **not yet wired** in v1.8.x —
-/// `run_serve` continues to use `EnforcerGate` regardless. The flag's job
-/// in this PR is to reserve the config surface so tenants can pre-set
-/// `false` in `config.yaml` and have the v1.9.0 default flip (S12-12) be a
-/// no-op for them. The actual selection between `EnforcerGate` and
-/// `SuspendingHotlGate` lands in S12-4.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// `suspend_on_escalate` was introduced as a scaffold in S12-0 (v1.8.x,
+/// defaulted `false`) so tenants could opt into the upcoming behaviour
+/// early. The full suspend/resume stack landed across S12-1..S12-10 and
+/// S12-12 flips the default to `true` for v1.9.0. Production gate
+/// selection happens in `xiaoguai-core::hotl_bridge::build_hotl_gate`:
+/// `true` → `SuspendingHotlGate`, `false` → legacy `EnforcerGate`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HotlSettings {
     /// When `true`, an `Escalate` verdict from `HotlEnforcer` suspends the
     /// agent loop until an operator decision arrives via
     /// `POST /v1/hotl/decisions` (or the configured timeout fires). When
-    /// `false` (v1.8.x default) the loop logs the escalation and allows
-    /// the tool call to dispatch — the legacy `EnforcerGate` behaviour.
+    /// `false` the loop logs the escalation and allows the tool call to
+    /// dispatch — the legacy `EnforcerGate` behaviour.
     ///
-    /// Default flips to `true` in v1.9.0 via sprint-12 S12-12.
-    /// Override via `XIAOGUAI_AGENT__HOTL__SUSPEND_ON_ESCALATE=true`.
-    #[serde(default)]
+    /// v1.9.0+ default: `true`. Tenants who tested on v1.8.x and want the
+    /// old "Escalate → Allow + warn" behaviour can opt out explicitly by
+    /// setting `agent.hotl.suspend_on_escalate: false` in `config.yaml`
+    /// or via `XIAOGUAI_AGENT__HOTL__SUSPEND_ON_ESCALATE=false`.
+    #[serde(default = "default_suspend_on_escalate_true")]
     pub suspend_on_escalate: bool,
+}
+
+/// v1.9.0 default for `HotlSettings::suspend_on_escalate` (S12-12).
+fn default_suspend_on_escalate_true() -> bool {
+    true
+}
+
+impl Default for HotlSettings {
+    fn default() -> Self {
+        Self {
+            suspend_on_escalate: default_suspend_on_escalate_true(),
+        }
+    }
 }
 
 impl Default for Settings {
@@ -380,38 +394,41 @@ impl Settings {
 mod tests {
     use super::*;
 
-    /// Sprint-12 S12-0 — scaffold for the v1.9.0 HotL suspend/resume behaviour
-    /// flip. The field defaults to `false` in v1.8.x (preserves existing
-    /// `EnforcerGate` semantics) and is intended to flip to `true` via S12-12
-    /// once the suspension stack lands. Until then the field is unwired — this
-    /// test just pins the default so no follow-up PR accidentally flips the
-    /// default ahead of S12-12.
+    /// Sprint-12 S12-12 — default flip for v1.9.0. `suspend_on_escalate`
+    /// now defaults to `true` so fresh deployments suspend on Escalate.
+    /// The companion integration test
+    /// `crates/xiaoguai-core/tests/hotl_default_on.rs` additionally proves
+    /// the gate selector wires `SuspendingHotlGate` for this default.
     #[test]
-    fn agent_hotl_suspend_on_escalate_default_is_false() {
+    fn agent_hotl_suspend_on_escalate_default_is_true() {
         let s = Settings::default();
         assert!(
-            !s.agent.hotl.suspend_on_escalate,
-            "v1.8.x default must remain false until S12-12 flips it"
+            s.agent.hotl.suspend_on_escalate,
+            "v1.9.0 default must be true (S12-12); was false"
         );
     }
 
     /// A config.yaml that omits the `agent` block entirely should still
-    /// deserialize cleanly with the default-`false` value — proves the
-    /// `#[serde(default)]` on both the agent and the inner hotl block.
+    /// deserialize cleanly and pick up the v1.9.0 default-`true` — proves
+    /// the `#[serde(default = ...)]` on the field works through the
+    /// nested `#[serde(default)]` on the surrounding blocks.
     #[test]
     fn agent_block_is_optional_and_defaults_apply() {
         // Reuse the env loader path because it constructs Settings from
         // defaults-as-yaml + env, mirroring how production loads when no
         // file is provided.
         let s = Settings::load_from_env().expect("default load");
-        assert!(!s.agent.hotl.suspend_on_escalate);
+        assert!(
+            s.agent.hotl.suspend_on_escalate,
+            "v1.9.0 default must propagate through the env loader path"
+        );
     }
 
-    /// Explicit `agent.hotl.suspend_on_escalate: true` in a config.yaml
-    /// flips the flag — proves the field is wired into the file-based
-    /// loader path (the route operators actually use).
+    /// Explicit `agent.hotl.suspend_on_escalate: false` in a config.yaml
+    /// flips the flag back to legacy v1.8.x semantics — proves the
+    /// opt-out path documented in RELEASE-LOG v1.9.0 still works.
     #[test]
-    fn agent_hotl_suspend_on_escalate_yaml_opt_in_works() {
+    fn agent_hotl_suspend_on_escalate_yaml_opt_out_works() {
         use std::io::Write;
         let mut f = tempfile::Builder::new()
             .suffix(".yaml")
@@ -419,10 +436,13 @@ mod tests {
             .expect("tmpfile");
         writeln!(
             f,
-            "server:\n  host: 127.0.0.1\n  port: 7600\ndatabase:\n  url: postgres://u:p@h/d\ncache:\n  url: redis://localhost:6379\nauth:\n  issuer: a\n  audience: b\n  jwks_url: c\naudit:\n  hmac_key: dev-only-change-me-32-bytes-min\nagent:\n  hotl:\n    suspend_on_escalate: true\n"
+            "server:\n  host: 127.0.0.1\n  port: 7600\ndatabase:\n  url: postgres://u:p@h/d\ncache:\n  url: redis://localhost:6379\nauth:\n  issuer: a\n  audience: b\n  jwks_url: c\naudit:\n  hmac_key: dev-only-change-me-32-bytes-min\nagent:\n  hotl:\n    suspend_on_escalate: false\n"
         )
         .expect("write tmp yaml");
         let s = Settings::load_from_file(f.path()).expect("yaml load");
-        assert!(s.agent.hotl.suspend_on_escalate);
+        assert!(
+            !s.agent.hotl.suspend_on_escalate,
+            "explicit `false` must opt out of v1.9.0 suspension behaviour"
+        );
     }
 }

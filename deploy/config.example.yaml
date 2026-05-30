@@ -83,15 +83,21 @@ eval:
   max_iterations: 0
 
 agent:
-  # Sprint-12 (v1.8.x scaffold) — HotL (human-on-the-loop) gating knobs.
-  # `suspend_on_escalate` reserves the config surface ahead of the
-  # suspend/resume wiring shipping in sprint-12. Field is not yet wired
-  # in v1.8.x; v1.9.0 (PR S12-12) flips the default to `true` and the
-  # SuspendingHotlGate (S12-4) takes effect.
+  # Sprint-12 (v1.9.0) — HotL (human-on-the-loop) gating knobs.
+  # The suspend/resume stack landed across S12-1..S12-10; S12-12 flips
+  # the default so fresh deployments suspend on Escalate.
   hotl:
-    # When `true`, an Escalate verdict from HotlEnforcer suspends the
-    # agent loop until an operator decides via POST /v1/hotl/decisions
-    # (or the timeout fires). When `false` the loop logs the escalation
-    # and allows the tool call to dispatch (v1.8.x EnforcerGate behaviour).
-    # Override via XIAOGUAI_AGENT__HOTL__SUSPEND_ON_ESCALATE=true.
-    suspend_on_escalate: false
+    # When `true` (v1.9.0+ default), an Escalate verdict from
+    # HotlEnforcer suspends the agent loop until an operator decides via
+    # the chat-ui Approve/Deny banner or POST /v1/hotl/decisions. After
+    # the default suspend window (24h) elapses with no decision, the
+    # loop resumes with an implicit Deny + `verdict=timeout` audit row.
+    #
+    # Set to `false` to restore v1.8.x behaviour (Escalate → Allow +
+    # tracing::warn; tool call dispatches; no operator gate). Choose
+    # this only if your tenant has tested on v1.8.x and is not yet
+    # ready to wire the operator review workflow. See
+    # docs/user-guide/hotl-escalations.md for the opt-out trade-offs.
+    #
+    # Override via XIAOGUAI_AGENT__HOTL__SUSPEND_ON_ESCALATE=false.
+    suspend_on_escalate: true
