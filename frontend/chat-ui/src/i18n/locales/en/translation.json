@@ -27,6 +27,22 @@
       "reconnecting": "Reconnecting (attempt {{attempt}}, retrying in {{secs}}s)…",
       "cancel_reconnect": "Cancel",
       "gave_up": "Connection lost — gave up after {{attempts}} attempts"
+    },
+    "hotl": {
+      "title": "Human approval required",
+      "scope_label": "The action {{scope}} has been paused pending operator review.",
+      "btn_approve": "Approve",
+      "btn_reject": "Reject",
+      "btn_adjust": "Adjust policy…",
+      "submitting": "Submitting…",
+      "submit_failed": "Decision submission failed: {{message}}",
+      "policy_tighten": "Tighten (raise threshold)",
+      "policy_loosen": "Loosen (relax threshold)",
+      "window_seconds_label": "Window (seconds)",
+      "max_count_label": "Max calls",
+      "max_usd_label": "Max spend (USD)",
+      "rationale_label": "Rationale (required)",
+      "review_link": "Review in approval queue →"
     }
   }
 }

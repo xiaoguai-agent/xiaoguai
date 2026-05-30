@@ -265,8 +265,26 @@ export function ChatPage({ onSessionCreated }: Props) {
 
   return (
     <>
-      {/* v1.3.x — HotL escalation banner: non-dismissible, shown above messages. */}
-      {hotlPending && <HotlBanner pending={hotlPending} />}
+      {/* v1.3.x — HotL escalation banner: non-dismissible, shown above messages.
+          sprint-11 S11-3b — inline Approve/Reject/Adjust wired to
+          POST /v1/hotl/decisions. The backend always returns `resumed:false`
+          (no suspend/resume layer in v1.8.x), so we clear the banner
+          optimistically on success — no `hotl_resolved` SSE event arrives. */}
+      {hotlPending && (
+        <HotlBanner
+          pending={hotlPending}
+          decidedBy="chat-ui"
+          onDecision={async (verdict, raisePolicy) => {
+            await client.submitHotlDecision({
+              request_id: hotlPending.escalation_id,
+              verdict,
+              decided_by: 'chat-ui',
+              raise_policy: raisePolicy,
+            });
+            setHotlPending(null);
+          }}
+        />
+      )}
       {/* sprint-11 S11-2b — SSE reconnect banner (LLD-CHAT-UI-001 §4.7.1). */}
       {reconnect && (
         <SseReconnectBanner

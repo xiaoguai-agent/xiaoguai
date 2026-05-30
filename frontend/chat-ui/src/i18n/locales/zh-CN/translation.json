@@ -27,6 +27,22 @@
       "reconnecting": "正在重连（第 {{attempt}} 次尝试，{{secs}} 秒后重试）…",
       "cancel_reconnect": "取消",
       "gave_up": "连接已断开 — {{attempts}} 次尝试后放弃"
+    },
+    "hotl": {
+      "title": "需要人工审批",
+      "scope_label": "操作 {{scope}} 已暂停，等待操作员审核。",
+      "btn_approve": "批准",
+      "btn_reject": "拒绝",
+      "btn_adjust": "调整策略…",
+      "submitting": "正在提交…",
+      "submit_failed": "决策提交失败：{{message}}",
+      "policy_tighten": "收紧（提高阈值）",
+      "policy_loosen": "放宽（降低阈值）",
+      "window_seconds_label": "时间窗口（秒）",
+      "max_count_label": "最大调用次数",
+      "max_usd_label": "最大花费（美元）",
+      "rationale_label": "理由（必填）",
+      "review_link": "在审批队列中查看 →"
     }
   }
 }

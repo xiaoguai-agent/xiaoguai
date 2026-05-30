@@ -542,6 +542,59 @@ export interface HotlVerdict {
   reason: string | null;
 }
 
+// ---- v1.8.x — HotL decision-record types (sprint-11 S11-3a/b) -----------
+//
+// Mirrors `crates/xiaoguai-api/src/routes/hotl_decisions.rs`. Used by the
+// chat-ui inline Approve/Reject buttons (S11-3b) — the decision is recorded
+// in `hotl_decisions` and optionally creates a follow-up `HotlPolicy`
+// ("Approve & remember" / "Deny & tighten"). The backend's `resumed` field
+// is always `false` in 3a.1 (no suspend/resume layer yet); the chat-ui
+// therefore clears its pending banner optimistically.
+
+/** Wire verdict for `POST /v1/hotl/decisions` — distinct from `HotlVerdictKind` */
+/** which carries the budget-check `escalate` value. */
+export type HotlDecisionVerdict = 'allow' | 'deny';
+
+/**
+ * Sub-DTO carried inside [`SubmitHotlDecisionRequest`]. Mirrors backend
+ * `RaisePolicyRequest`. At least one of `max_count` / `max_usd` must be
+ * non-null (validated server-side and pre-validated in the chat-ui).
+ */
+export interface HotlDecisionRaisePolicy {
+  scope: string;
+  tool?: string;
+  window_seconds: number;
+  max_count?: number;
+  max_usd?: number;
+  escalate_to?: string;
+}
+
+/** Body for `POST /v1/hotl/decisions`. */
+export interface SubmitHotlDecisionRequest {
+  /** Canonical name; backend also accepts `escalation_id` as a serde alias. */
+  request_id: string;
+  verdict: HotlDecisionVerdict;
+  decided_by: string;
+  raise_policy?: HotlDecisionRaisePolicy;
+}
+
+/** `201 Created` body returned by `POST /v1/hotl/decisions`. */
+export interface HotlDecisionResponse {
+  id: string;
+  request_id: string;
+  verdict: HotlDecisionVerdict;
+  /** RFC 3339 timestamp. */
+  recorded_at: string;
+  /**
+   * Always `false` in v1.8.x (S11-3a.1). Reserved for the future
+   * `SuspendingHotlGate` work — chat-ui must clear the pending banner
+   * optimistically, since no `hotl_resolved` SSE event will arrive.
+   */
+  resumed: boolean;
+  /** Present when `raise_policy` was supplied and the policy create succeeded. */
+  policy_created?: HotlPolicy | null;
+}
+
 // ---- v1.4 (planned) — Anomaly detector types ----------------------------
 // Mirrors the DetectorKind + AnomalySpec types in crates/xiaoguai-anomaly/src/spec.rs.
 // REST endpoints are PLANNED; the crate is currently a pure Rust library.
@@ -1655,6 +1708,23 @@ export class XiaoguaiClient {
    */
   checkHotlPolicy(req: HotlCheckRequest): Promise<HotlVerdict> {
     return this.request<HotlVerdict>('POST', '/v1/hotl/check', req);
+  }
+
+  /**
+   * Record an operator decision against an escalated HOTL request
+   * (sprint-11 S11-3a/b). Returns the persisted record and, when
+   * `raise_policy` was supplied, the follow-up `HotlPolicy` row.
+   *
+   * NOTE: `resumed` is always `false` in v1.8.x — the backend records
+   * the decision but does not resume any agent loop yet (no
+   * suspend/resume layer). The caller (chat-ui HotlBanner) clears its
+   * `hotlPending` state optimistically; no `hotl_resolved` SSE event
+   * arrives because nothing was suspended.
+   */
+  submitHotlDecision(
+    req: SubmitHotlDecisionRequest,
+  ): Promise<HotlDecisionResponse> {
+    return this.request<HotlDecisionResponse>('POST', '/v1/hotl/decisions', req);
   }
 
   // ---- Streaming ----------------------------------------------------------

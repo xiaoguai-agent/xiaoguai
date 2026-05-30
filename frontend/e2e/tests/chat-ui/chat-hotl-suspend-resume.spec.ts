@@ -176,18 +176,72 @@ test.describe('chat-ui HotL banner', () => {
   });
 });
 
-test.describe('chat-ui HotL inline approve/reject (fixme — LLD §4.3.1)', () => {
-  test.fixme(
-    true,
-    'Inline Approve/Reject buttons inside HotlBanner are deferred behind a feature flag. Re-author when LLD-CHAT-UI-001 §4.3.1 lands and HotlPendingPanel exposes approve/reject affordances + POST /v1/hotl/decisions wiring.',
-  );
-
-  test('Approve resumes the stream and clears the banner', async ({ page }) => {
+test.describe('chat-ui HotL inline approve/reject (sprint-11 S11-3b — LLD §4.3.1)', () => {
+  test('Approve clears the banner optimistically (backend resumed:false)', async ({
+    page,
+  }) => {
     await mockSessionCreate(page);
     await mockSessionMetadata(page);
-    // Approve button + resume SSE would be wired here once the UI exists.
+
+    // SSE response emits a hotl_pending so the banner mounts.
+    await page.route(
+      new RegExp(`/v1/sessions/${SESSION_ID}/messages$`),
+      async (route: Route) => {
+        if (route.request().method() === 'POST') {
+          await route.fulfill({
+            status: 200,
+            contentType: 'text/event-stream',
+            body: sseBody([
+              {
+                event: 'hotl_pending',
+                data: {
+                  type: 'hotl_pending',
+                  escalation_id: ESCALATION_ID,
+                  scope: 'fs.write',
+                  reason: 'sandbox boundary',
+                },
+              },
+            ]),
+          });
+          return;
+        }
+        await route.continue();
+      },
+    );
+
+    // Mock the decision POST — backend returns 201 with resumed:false.
+    // The chat-ui clears `hotlPending` optimistically (no `hotl_resolved`
+    // SSE event will arrive in v1.8.x because no loop was suspended).
+    await page.route('**/v1/hotl/decisions', async (route: Route) => {
+      if (route.request().method() === 'POST') {
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'dec_test_001',
+            request_id: ESCALATION_ID,
+            verdict: 'allow',
+            recorded_at: new Date().toISOString(),
+            resumed: false,
+            policy_created: null,
+          }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
     await page.goto('/');
-    await page.locator('button', { hasText: /^approve$/i }).click();
+    await page.locator('textarea[placeholder]').fill('do something');
+    await page.locator('button[aria-label="Send message"]').click();
+
+    // Banner must appear first.
+    await expect(page.locator('.hotl-banner')).toBeVisible({ timeout: 10_000 });
+
+    // Click inline Approve (data-testid is the e2e contract).
+    await page.locator('[data-testid="hotl-banner-approve"]').click();
+
+    // Optimistic clear: banner gone without any hotl_resolved SSE event.
     await expect(page.locator('.hotl-banner')).toHaveCount(0);
   });
 });
