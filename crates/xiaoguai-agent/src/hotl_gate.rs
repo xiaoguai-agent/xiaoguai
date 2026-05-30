@@ -42,6 +42,13 @@
 //! * `Allow` → dispatch the tool as today.
 //! * `Deny(reason)` → do NOT dispatch; synthesise a failed `ToolResult`
 //!   so the LLM observes the denial and can adapt.
+//! * `Suspend { request_id, scope, ticket }` (sprint-12) → do NOT dispatch
+//!   yet. The loop must emit `AgentEvent::HotlPending`, then call
+//!   `ticket.await_decision(&cancel)` to receive an operator verdict from
+//!   `DecisionRegistry`. Only the new `SuspendingHotlGate`
+//!   (see `xiaoguai-core::hotl_bridge`) ever emits this variant; today's
+//!   `EnforcerGate` keeps mapping upstream `Escalate` to `Allow` for
+//!   backward compatibility (`agent.hotl.suspend_on_escalate=false`).
 //! * Infrastructure error → fail-closed: same as `Deny` plus a
 //!   `tracing::error` emission. The adapter living in `xiaoguai-core`
 //!   maps the upstream enforcer error into this verdict; the trait here
@@ -50,15 +57,227 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tokio::sync::oneshot;
+use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 /// Decision returned by [`HotlGate::check`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Note: `Clone`/`PartialEq` are NOT derived because the sprint-12
+/// `Suspend` variant holds a non-cloneable `oneshot::Receiver`. The
+/// existing `Allow` and `Deny` variants remain cloneable/comparable via
+/// the manual impls below; cloning a `Suspend` verdict panics — callers
+/// must consume the ticket exactly once, which matches the loop's
+/// single-await semantics.
+#[derive(Debug)]
 pub enum HotlGateVerdict {
     /// Budget within limits — proceed with the tool dispatch.
     Allow,
     /// Budget breached or infrastructure failure (fail-closed). The caller
     /// must NOT dispatch the tool; the `reason` is surfaced to the LLM.
     Deny(String),
+    /// Sprint-12 (S12-1, additive). Tool dispatch is suspended pending an
+    /// operator decision. The caller must emit
+    /// `AgentEvent::HotlPending { request_id, scope, ... }` and then call
+    /// `ticket.await_decision(&cancel)`. The resolved verdict either
+    /// authorises the dispatch (Allow), synthesises a failed `ToolResult`
+    /// (Deny / Timeout), or surrenders to a parent cancel
+    /// (`HotlTicketError::Cancelled`).
+    ///
+    /// This variant is **only** emitted by `SuspendingHotlGate` in
+    /// `xiaoguai-core::hotl_bridge`, which is selected per-tenant via the
+    /// `agent.hotl.suspend_on_escalate` config flag. The legacy
+    /// `EnforcerGate` continues to map upstream `Escalate` → `Allow` so
+    /// existing tenants observe no behaviour change until S12-12 flips
+    /// the default in v1.9.0.
+    Suspend {
+        request_id: uuid::Uuid,
+        scope: String,
+        ticket: HotlSuspensionTicket,
+    },
+}
+
+impl Clone for HotlGateVerdict {
+    /// Cloning `Allow` and `Deny` is byte-identical to the pre-sprint-12
+    /// derived impl. Cloning a `Suspend` verdict panics — the ticket is
+    /// a one-shot resource and must be consumed exactly once. The loop
+    /// never clones a verdict (it matches and moves), so this branch is
+    /// unreachable in practice; the panic exists only to satisfy callers
+    /// (like test fixtures) that hold `Clone` verdicts statically.
+    fn clone(&self) -> Self {
+        match self {
+            Self::Allow => Self::Allow,
+            Self::Deny(reason) => Self::Deny(reason.clone()),
+            Self::Suspend { .. } => panic!(
+                "HotlGateVerdict::Suspend cannot be cloned — the suspension ticket is one-shot. \
+                 Match-and-move the verdict instead of cloning."
+            ),
+        }
+    }
+}
+
+impl PartialEq for HotlGateVerdict {
+    /// `Allow == Allow` and `Deny(r1) == Deny(r2)` iff `r1 == r2`.
+    /// Two `Suspend` verdicts are never equal (the tickets are distinct
+    /// one-shot resources). This matches the v1.8.x behaviour for
+    /// `Allow`/`Deny` comparisons (the only pair tests have ever used).
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Allow, Self::Allow) => true,
+            (Self::Deny(a), Self::Deny(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+/// Sprint-12 (S12-1). Outcome of an operator's HotL decision, returned
+/// by [`HotlSuspensionTicket::await_decision`] when the operator (or the
+/// timeout helper) sends a verdict through the registry's `oneshot`
+/// sender. Mirrors the wire shape of `POST /v1/hotl/decisions` in
+/// `api-contract.md` §2.6.2 for the fields the agent loop consumes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HotlDecisionVerdict {
+    /// The operator's resolution (or `Timeout` synthesised by the
+    /// registry's expiry helper).
+    pub verdict: HotlResolution,
+    /// The operator that recorded the decision, if known. `None` when
+    /// the verdict is `Timeout` (no operator was involved) or when the
+    /// authentication identity is not yet wired (sprint-13 follow-up).
+    pub decided_by: Option<String>,
+    /// Wall-clock timestamp the verdict was committed at. Sourced from
+    /// the resolver (`DecisionRegistry::resolve`) on the API side or from
+    /// the ticket's timeout helper.
+    pub recorded_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Sprint-12 (S12-1). The three terminal states of a suspended tool
+/// call. Mirrors `api-contract.md` §2.6.3 `hotl_resolved.verdict` enum
+/// and is what the ReAct loop matches in its `HotlGateVerdict::Suspend`
+/// arm (added by S12-5) to decide whether to dispatch the tool, deny it,
+/// or annotate it as timed-out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HotlResolution {
+    /// Operator approved the tool call. Loop must dispatch.
+    Allow,
+    /// Operator rejected the tool call. Loop must synthesise a failed
+    /// `ToolResult` carrying the reason so the LLM observes the denial.
+    Deny(String),
+    /// `expires_at` passed without an operator decision. Equivalent in
+    /// effect to `Deny("operator decision timed out")` from the loop's
+    /// perspective, but distinguished on the SSE wire (`verdict=timeout`)
+    /// so the frontend can render the dedicated annotation.
+    Timeout,
+}
+
+/// Sprint-12 (S12-1). Error returned by
+/// [`HotlSuspensionTicket::await_decision`] when the wait could not
+/// complete because the parent operation was cancelled, or because the
+/// registry dropped its sender without sending a verdict (which would be
+/// a registry bug — included for forward compatibility).
+#[derive(Debug, thiserror::Error)]
+pub enum HotlTicketError {
+    /// The caller's `CancellationToken` fired before a verdict arrived
+    /// and before the timeout expired. The loop's iteration-boundary
+    /// cancel logic emits `Final(Cancelled)`; the suspend arm must NOT
+    /// emit `HotlResolved` in this path.
+    #[error("HotL suspension cancelled by parent operation")]
+    Cancelled,
+    /// The registry's sender was dropped without sending a verdict. In
+    /// production this should never happen — the registry owns the
+    /// sender, only releases it on `resolve()` (which sends), or on the
+    /// timeout helper (which sends `Timeout`). Surfaced as an error so
+    /// the loop can degrade gracefully rather than hang forever.
+    #[error("HotL decision channel was dropped before a verdict was sent")]
+    ChannelDropped,
+}
+
+/// Sprint-12 (S12-1). One-shot ticket returned inside
+/// `HotlGateVerdict::Suspend`. Holds the receiver half of a `oneshot`
+/// channel paired with the deadline `expires_at`. The sender half lives
+/// in `DecisionRegistry` (S12-3) keyed by `request_id`; the route handler
+/// (`POST /v1/hotl/decisions`, S12-6) resolves it on operator decision,
+/// and the registry's companion timeout future resolves it with
+/// `HotlResolution::Timeout` if `expires_at` elapses first.
+///
+/// Use [`HotlSuspensionTicket::await_decision`] to consume the ticket.
+/// The function takes `self` (drop-on-await) because the receiver is a
+/// one-shot resource — you can wait on it exactly once.
+#[derive(Debug)]
+pub struct HotlSuspensionTicket {
+    rx: oneshot::Receiver<HotlDecisionVerdict>,
+    expires_at: Instant,
+    /// Same `request_id` the loop emits on the matching
+    /// `AgentEvent::HotlPending`. Exposed so the loop can include it in
+    /// `HotlResolved` events without threading it through a separate
+    /// channel.
+    pub request_id: uuid::Uuid,
+}
+
+impl HotlSuspensionTicket {
+    /// Sprint-12 (S12-3 calls this). Constructs a ticket together with
+    /// its paired sender. The registry stores `sender` keyed by
+    /// `request_id` and hands the ticket back to the gate, which embeds
+    /// it inside `HotlGateVerdict::Suspend`.
+    ///
+    /// The pair is returned so the registry can also spawn a companion
+    /// `tokio::time::sleep_until(expires_at)` task that sends a
+    /// `Timeout` verdict if no operator decision arrives in time.
+    /// `await_decision` independently sleeps to `expires_at`, so even
+    /// without the registry's helper the loop still observes a timeout
+    /// (defence in depth).
+    #[must_use]
+    pub fn new(
+        request_id: uuid::Uuid,
+        expires_at: Instant,
+    ) -> (Self, oneshot::Sender<HotlDecisionVerdict>) {
+        let (tx, rx) = oneshot::channel();
+        let ticket = Self {
+            rx,
+            expires_at,
+            request_id,
+        };
+        (ticket, tx)
+    }
+
+    /// Wait for the operator's decision, the configured timeout, or a
+    /// parent cancellation — whichever happens first.
+    ///
+    /// Returns:
+    /// - `Ok(verdict)` when the registry's sender sends, OR when the
+    ///   internal `sleep_until(expires_at)` fires (synthesised as
+    ///   `HotlResolution::Timeout` with `decided_by: None`).
+    /// - `Err(HotlTicketError::Cancelled)` when `cancel` fires before
+    ///   either of the above. The caller (the ReAct loop) is responsible
+    ///   for NOT emitting `HotlResolved` in this path — the parent cancel
+    ///   logic emits `Final(Cancelled)` instead.
+    /// - `Err(HotlTicketError::ChannelDropped)` when the registry's
+    ///   sender is dropped without sending. Should not happen in
+    ///   production; surfaced so a misconfigured registry cannot make
+    ///   the loop hang forever.
+    pub async fn await_decision(
+        self,
+        cancel: &CancellationToken,
+    ) -> Result<HotlDecisionVerdict, HotlTicketError> {
+        let Self {
+            rx, expires_at, ..
+        } = self;
+        tokio::select! {
+            // Bias the select so cancellation always wins ties — this matches
+            // the loop's documented "cancel wins" semantics from DEC-LLD-AGENT-004
+            // and is what S12-9's hotl_suspend_cancel.rs integration test will pin.
+            biased;
+            () = cancel.cancelled() => Err(HotlTicketError::Cancelled),
+            res = rx => match res {
+                Ok(verdict) => Ok(verdict),
+                Err(_recv_err) => Err(HotlTicketError::ChannelDropped),
+            },
+            () = tokio::time::sleep_until(expires_at) => Ok(HotlDecisionVerdict {
+                verdict: HotlResolution::Timeout,
+                decided_by: None,
+                recorded_at: chrono::Utc::now(),
+            }),
+        }
+    }
 }
 
 /// Abstract HOTL budget gate consulted per tool call by the ReAct loop.
