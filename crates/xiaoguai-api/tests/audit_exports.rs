@@ -62,6 +62,11 @@ fn build_state(exporter: Option<Arc<dyn AuditChainExporter>>) -> AppState {
         skill_packs: None,
         memory_store: None,
         workspace_repository: None,
+        skill_proposals: None,
+        tenant_settings: None,
+        skill_author_gate: None,
+        skill_audit: None,
+        skills_dir: std::env::temp_dir(),
         personas: None,
         watchers: None,
     }
