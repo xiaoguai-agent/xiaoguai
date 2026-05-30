@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod audit_exports;
 pub mod hotl;
+pub mod hotl_decisions;
 pub mod mcp;
 pub mod memory;
 pub mod outcomes;
@@ -114,6 +115,13 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/hotl/policies/{id}",
             delete(hotl::delete_policy),
+        )
+        // v1.8.x sprint-11 (S11-3a.1) — HOTL decision-record + raise_policy.
+        // 3a.1 does NOT resume any agent loop; response.resumed is always
+        // false. Full suspend/resume ships in a later sprint.
+        .route(
+            "/v1/hotl/decisions",
+            post(hotl_decisions::create_decision),
         )
         // v1.2.4 — outcome telemetry (revenue-not-time ROI tracking).
         .route("/v1/outcomes", post(outcomes::record_outcome))

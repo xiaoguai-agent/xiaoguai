@@ -53,6 +53,8 @@ fn build_state(workspaces: Option<Arc<dyn WorkspaceRepository>>) -> AppState {
         rate_limit_state: None,
         hotl_policy_store: None,
         hotl_enforcer: None,
+        hotl_decision_store: None,
+        hotl_audit: None,
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,

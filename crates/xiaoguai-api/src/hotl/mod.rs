@@ -29,9 +29,16 @@
 //! system prefers denying a single call over allowing unbounded spend when
 //! the budget ledger is unavailable.
 
+pub mod audit;
+pub mod decision;
 pub mod enforcer;
 pub mod policy;
 
+pub use audit::{HotlAuditSink, InMemoryHotlAuditSink};
+pub use decision::{
+    HotlDecisionRecord, HotlDecisionStore, HotlDecisionStoreError, HotlDecisionVerdict,
+    InMemoryHotlDecisionStore,
+};
 pub use enforcer::{HotlEnforcer, HotlVerdictResult, StaticHotlEnforcer};
 pub use policy::{
     CreateHotlPolicyRequest, HotlPolicy, HotlPolicyStore, HotlPolicyStoreError,
