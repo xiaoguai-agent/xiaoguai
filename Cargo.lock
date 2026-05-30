@@ -8855,6 +8855,7 @@ dependencies = [
  "tera",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "uuid",
