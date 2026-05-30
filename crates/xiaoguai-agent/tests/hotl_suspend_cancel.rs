@@ -29,8 +29,8 @@ use common::{MockMcpClient, ToolResponse};
 
 #[derive(Debug)]
 struct LongSuspendGate {
-    /// Hold senders alive so the cancel path (not ChannelDropped) is what
-    /// terminates the ticket.
+    /// Hold senders alive so the cancel path (not `ChannelDropped`) is
+    /// what terminates the ticket.
     senders: Arc<Mutex<Vec<oneshot::Sender<HotlDecisionVerdict>>>>,
     /// Signals the test the gate has registered a waiter so it can cancel.
     registered: Arc<tokio::sync::Notify>,

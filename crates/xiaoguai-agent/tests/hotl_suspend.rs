@@ -7,7 +7,6 @@
 
 mod common;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,15 +28,18 @@ use xiaoguai_llm::{LlmBackend, Message, MockBackend, ToolCallSpec};
 
 use common::{MockMcpClient, ToolResponse};
 
+/// Tuple of `(request_id, sender)` stashed by `TestSuspendGate` so tests
+/// can simulate `DecisionRegistry::resolve(...)` from the outside.
+type PendingEntry = (Uuid, oneshot::Sender<HotlDecisionVerdict>);
+
 /// Test fixture gate that always emits `Suspend`. Each `check()` invocation
 /// mints a fresh ticket and stashes the matching `oneshot::Sender` in a
-/// shared map keyed by `(scope, request_id)`. The test then retrieves a
-/// sender and uses it to simulate `DecisionRegistry::resolve(...)`.
+/// shared list so the test can pop one and send through it.
 #[derive(Debug)]
 struct TestSuspendGate {
-    /// Pending senders keyed by `request_id`, in registration order so
-    /// tests can drive the first one without juggling specific UUIDs.
-    pending: Arc<Mutex<Vec<(Uuid, oneshot::Sender<HotlDecisionVerdict>)>>>,
+    /// Pending senders, in registration order so tests can drive the first
+    /// one without juggling specific UUIDs.
+    pending: Arc<Mutex<Vec<PendingEntry>>>,
     /// Expiry passed into each ticket. Tests vary this to exercise the
     /// timeout branch.
     expiry: Duration,
@@ -52,9 +54,9 @@ impl TestSuspendGate {
     }
 
     /// Block until the gate has at least one registered waiter, then return
-    /// (request_id, sender) for the first one. Polls because the loop runs
+    /// `(request_id, sender)` for the first one. Polls because the loop runs
     /// in a spawned task and may not have hit the gate yet.
-    async fn take_first_pending(self: &Arc<Self>) -> (Uuid, oneshot::Sender<HotlDecisionVerdict>) {
+    async fn take_first_pending(self: &Arc<Self>) -> PendingEntry {
         for _ in 0..200 {
             if let Some(entry) = self.pending.lock().pop() {
                 return entry;
@@ -107,8 +109,6 @@ async fn suspend_then_operator_allow_dispatches_tool() {
         agent.run_stream(vec![Message::user("hi")], cancel.clone());
 
     // Collect events on a side task so we can drive the registry concurrently.
-    let collector: HashMap<&str, ()> = HashMap::new();
-    let _ = collector;
     let collected: Arc<Mutex<Vec<AgentEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let collected_clone = collected.clone();
     let drain = tokio::spawn(async move {

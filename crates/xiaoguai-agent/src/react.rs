@@ -40,9 +40,9 @@ use xiaoguai_llm::{
 };
 use xiaoguai_mcp::McpError;
 
-use crate::event::{AgentEvent, StopReason};
+use crate::event::{AgentEvent, HotlResolution as EventResolution, StopReason};
 use crate::history::{compact, should_compact, slide, CompactionConfig, CompactionOutcome};
-use crate::hotl_gate::{HotlGateVerdict, SharedHotlGate};
+use crate::hotl_gate::{HotlGateVerdict, HotlResolution, HotlTicketError, SharedHotlGate};
 use crate::toolbox::Toolbox;
 use xiaoguai_llm::estimate_message_tokens;
 
@@ -379,6 +379,7 @@ async fn run_inner(
             config.hotl_gate.as_ref(),
             config.tenant_id.as_deref(),
             &tx,
+            &cancel,
         )
         .await;
         for (call, tr) in turn.tool_calls.iter().zip(results.into_iter()) {
@@ -404,6 +405,7 @@ async fn dispatch_tools(
     hotl_gate: Option<&SharedHotlGate>,
     tenant_id: Option<&str>,
     tx: &mpsc::Sender<AgentEvent>,
+    cancel: &CancellationToken,
 ) -> Vec<ToolDispatchOutcome> {
     // Pre-emit started events in the same order we'll dispatch.
     for call in calls {
@@ -440,6 +442,8 @@ async fn dispatch_tools(
         let name = call.name.clone();
         let args_json = call.arguments_json.clone();
         let gate = hotl_gate.cloned();
+        let tx_inner = tx.clone();
+        let cancel_inner = cancel.clone();
         async move {
             // 1. HOTL pre-check. None gate (or absent tenant) → bypass.
             if let (Some(gate), Some(tid)) = (gate.as_ref(), tenant_uuid) {
@@ -455,22 +459,135 @@ async fn dispatch_tools(
                         };
                         return (id, name, outcome);
                     }
-                    HotlGateVerdict::Suspend { .. } => {
-                        // Sprint-12 (S12-1): placeholder for the suspend arm.
-                        // This branch is unreachable in v1.8.x — `EnforcerGate`
-                        // (the only gate plugged into `run_serve` today) never
-                        // emits `Suspend`. The variant exists so that S12-4's
-                        // `SuspendingHotlGate` can be wired in next, and S12-5
-                        // will REPLACE this arm with the real suspend handling
-                        // (emit `AgentEvent::HotlPending`, await the ticket,
-                        // emit `AgentEvent::HotlResolved`, then fall through
-                        // or synthesise a denial). See plan §1 row S12-5.
-                        unreachable!(
-                            "HotlGateVerdict::Suspend requires SuspendingHotlGate \
-                             (sprint-12 S12-4); not enabled in this build path. \
-                             S12-5 will replace this unreachable arm with the \
-                             real suspend handling."
-                        );
+                    HotlGateVerdict::Suspend {
+                        request_id,
+                        scope: suspend_scope,
+                        ticket,
+                    } => {
+                        // Sprint-12 (S12-5). Emit HotlPending so SSE clients
+                        // render the operator banner, then block this branch
+                        // of the parallel dispatch on the ticket. Other
+                        // tool calls in the same turn keep running — the
+                        // outer `join_all` collects them as they complete.
+                        //
+                        // expires_at: convert tokio's Instant → wall-clock
+                        // chrono via the remaining duration. This is the
+                        // best we can do without dragging a SystemTime
+                        // through the gate; clients render it as a "due
+                        // by" timestamp, ±tens of ms is irrelevant.
+                        let now_instant = tokio::time::Instant::now();
+                        let remaining = ticket.expires_at().saturating_duration_since(now_instant);
+                        let expires_at_wall = chrono::Utc::now()
+                            + chrono::Duration::from_std(remaining).unwrap_or_else(|_| {
+                                chrono::Duration::seconds(0)
+                            });
+                        let args_redacted = parse_args(&args_json);
+                        emit(
+                            &tx_inner,
+                            AgentEvent::HotlPending {
+                                request_id,
+                                tool: name.clone(),
+                                args_redacted,
+                                scope: suspend_scope,
+                                expires_at: expires_at_wall,
+                            },
+                        )
+                        .await;
+
+                        // Block this branch until the operator decides, the
+                        // deadline passes, or the parent cancels.
+                        match ticket.await_decision(&cancel_inner).await {
+                            Ok(decision) => {
+                                let event_verdict = match &decision.verdict {
+                                    HotlResolution::Allow => EventResolution::Allow,
+                                    HotlResolution::Deny(_) => EventResolution::Deny,
+                                    HotlResolution::Timeout => EventResolution::Timeout,
+                                };
+                                emit(
+                                    &tx_inner,
+                                    AgentEvent::HotlResolved {
+                                        request_id,
+                                        verdict: event_verdict,
+                                        decided_by: decision.decided_by.clone(),
+                                        recorded_at: decision.recorded_at,
+                                    },
+                                )
+                                .await;
+                                match decision.verdict {
+                                    HotlResolution::Allow => {
+                                        // Fall through to the normal dispatch path.
+                                    }
+                                    HotlResolution::Deny(reason) => {
+                                        let outcome = ToolDispatchOutcome {
+                                            ok: false,
+                                            output_text: String::new(),
+                                            error: Some(format!(
+                                                "HotL suspended → {reason}"
+                                            )),
+                                        };
+                                        return (id, name, outcome);
+                                    }
+                                    HotlResolution::Timeout => {
+                                        let outcome = ToolDispatchOutcome {
+                                            ok: false,
+                                            output_text: String::new(),
+                                            error: Some(
+                                                "HotL suspended → timeout: operator did not decide before expires_at".to_string()
+                                            ),
+                                        };
+                                        return (id, name, outcome);
+                                    }
+                                }
+                            }
+                            Err(HotlTicketError::Cancelled) => {
+                                // DEC-LLD-AGENT-004 + lld-agent §4.5: do NOT
+                                // emit HotlResolved when the parent cancels;
+                                // the outer `cancel.is_cancelled()` check at
+                                // the next iteration boundary terminates the
+                                // loop with Final(Cancelled). Synthesise a
+                                // failed dispatch so the join_all completes
+                                // cleanly and the iteration unwinds.
+                                let outcome = ToolDispatchOutcome {
+                                    ok: false,
+                                    output_text: String::new(),
+                                    error: Some(
+                                        "HotL suspension cancelled by parent operation".to_string(),
+                                    ),
+                                };
+                                return (id, name, outcome);
+                            }
+                            Err(HotlTicketError::ChannelDropped) => {
+                                // Registry sender dropped without sending —
+                                // misconfiguration / race. Degrade to a
+                                // synthetic deny + log so the loop doesn't
+                                // hang forever. Still emit HotlResolved
+                                // (verdict=Deny) so SSE clients clear the
+                                // pending banner.
+                                tracing::error!(
+                                    %request_id,
+                                    tool = %name,
+                                    "DecisionRegistry sender dropped without verdict — synthesising deny"
+                                );
+                                emit(
+                                    &tx_inner,
+                                    AgentEvent::HotlResolved {
+                                        request_id,
+                                        verdict: EventResolution::Deny,
+                                        decided_by: None,
+                                        recorded_at: chrono::Utc::now(),
+                                    },
+                                )
+                                .await;
+                                let outcome = ToolDispatchOutcome {
+                                    ok: false,
+                                    output_text: String::new(),
+                                    error: Some(
+                                        "HotL suspended → registry channel dropped".to_string(),
+                                    ),
+                                };
+                                return (id, name, outcome);
+                            }
+                        }
                     }
                 }
             }
