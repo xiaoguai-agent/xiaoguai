@@ -57,15 +57,24 @@ WORKDIR /app
 # Install pnpm. Match the packageManager field in frontend/package.json.
 RUN npm install -g pnpm@9.12.0
 
-# Deps layer — busts only when lockfile or root package.json changes.
+# Deps layer — busts only when lockfile or any workspace package.json changes.
+# Copy ALL workspace package.json files BEFORE `pnpm install` so the install
+# resolves devDependencies for every workspace package (admin-ui, chat-ui,
+# shared). Sprint-11 (S11-2b) added a `build` script to shared/ that calls
+# `tsc`; with the prior layout (only shared copied at install time) admin-ui
+# and chat-ui ended up with no node_modules and the `tsc` binary was not on
+# PATH at `pnpm -r build` time.
 COPY frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml frontend/package.json ./
-# Shared types referenced by both UIs.
-COPY frontend/shared ./shared
+COPY frontend/shared/package.json    ./shared/package.json
+COPY frontend/admin-ui/package.json  ./admin-ui/package.json
+COPY frontend/chat-ui/package.json   ./chat-ui/package.json
+COPY frontend/e2e/package.json       ./e2e/package.json
 RUN pnpm install --frozen-lockfile
 
 # Source layers — after deps so source changes don't re-download packages.
-COPY frontend/admin-ui ./admin-ui
-COPY frontend/chat-ui  ./chat-ui
+COPY frontend/shared    ./shared
+COPY frontend/admin-ui  ./admin-ui
+COPY frontend/chat-ui   ./chat-ui
 RUN pnpm -r build
 
 # ── stage 4: cook deps + compile binaries ────────────────────────────────────
