@@ -38,10 +38,11 @@ pub mod slo;
 pub use otlp::{init_otlp, shutdown_tracer};
 pub use prometheus::{
     anomaly_detections_total, compaction_fallback_total, compaction_token_savings,
-    compaction_triggered_total, hotl_check_duration, hotl_usage_total, im_messages_total,
-    init_prometheus, mount_metrics, outcomes_chain_depth, outcomes_recorded_total,
-    rate_limit_hits_total, slo_burn_rate, slo_override_parse_failed_total, watch_wakeups_total,
-    MetricHandles,
+    compaction_triggered_total, global_handles, hotl_check_duration,
+    hotl_suspended_loops_gauge, hotl_suspension_duration_seconds, hotl_suspensions_total,
+    hotl_usage_total, im_messages_total, init_prometheus, mount_metrics, outcomes_chain_depth,
+    outcomes_recorded_total, rate_limit_hits_total, slo_burn_rate,
+    slo_override_parse_failed_total, watch_wakeups_total, MetricHandles,
 };
 pub use redact::RedactingSpanExporter;
 pub use slo::{

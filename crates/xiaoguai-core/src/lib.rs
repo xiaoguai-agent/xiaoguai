@@ -681,6 +681,9 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // a 200 + empty array instead of falling to its 404 fallback. A
         // session-aware WatchRunner adapter lands in a future sprint.
         watchers: Some(xiaoguai_api::StaticWatcherIntrospector::arc()),
+        decision_registry: std::sync::Arc::new(
+            xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
+        ),
     };
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by

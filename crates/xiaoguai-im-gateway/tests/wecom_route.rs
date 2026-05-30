@@ -90,6 +90,7 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
+        decision_registry: std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
     };
     let provider: Arc<dyn ImProvider> = Arc::new(WeComProvider::with_recording_sink(TOKEN, sink));
     mount_wecom(state, provider)

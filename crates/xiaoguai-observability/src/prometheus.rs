@@ -16,6 +16,9 @@
 //! | `xiaoguai_watch_wakeups_total` | Counter | `watcher_id`, `outcome` | Watch task wakeup results |
 //! | `xiaoguai_im_messages_total` | Counter | `adapter`, `direction` | IM gateway messages |
 //! | `xiaoguai_llm_reasoning_tokens_total` | Counter | `provider`, `model` | Reasoning-track tokens (thinking-mode) |
+//! | `xiaoguai_hotl_suspensions_total` | Counter | `verdict` | HOTL suspended-loop resolutions (sprint-12 S12-3) |
+//! | `xiaoguai_hotl_suspended_loops_gauge` | Gauge | — | Currently-blocked agent loops awaiting HOTL decision |
+//! | `xiaoguai_hotl_suspension_duration_seconds` | Histogram | — | Time spent suspended between register and resolve |
 //!
 //! On Linux, default process collectors (CPU, memory, file descriptors) are
 //! also registered automatically.
@@ -38,9 +41,10 @@ use axum::{
 };
 use once_cell::sync::OnceCell;
 use prometheus::{
-    exponential_buckets, register_gauge_vec_with_registry, register_histogram_vec_with_registry,
-    register_histogram_with_registry, register_int_counter_vec_with_registry, GaugeVec, Histogram,
-    HistogramVec, IntCounterVec, Registry,
+    exponential_buckets, register_gauge_vec_with_registry, register_gauge_with_registry,
+    register_histogram_vec_with_registry, register_histogram_with_registry,
+    register_int_counter_vec_with_registry, Gauge, GaugeVec, Histogram, HistogramVec,
+    IntCounterVec, Registry,
 };
 
 /// Bucket boundaries shared by HTTP and LLM histograms (seconds).
@@ -106,6 +110,21 @@ pub struct MetricHandles {
     /// parse → fall back to declaration default + bump counter). SREs watch
     /// this to notice silently-ignored overrides. Labelled by `(tenant, key)`.
     pub slo_override_parse_failed_total: IntCounterVec,
+
+    // ── Sprint-12 S12-3 — HOTL suspend/resume telemetry ─────────────────────
+    /// Resolved HOTL suspensions, labelled by terminal verdict
+    /// (`allow` | `deny` | `timeout` | `cancelled`). Emitted by
+    /// `DecisionRegistry::on_resolve` from the agent loop side after a
+    /// `HotlSuspensionTicket` settles.
+    pub hotl_suspensions_total: IntCounterVec,
+    /// Number of agent loops currently suspended on a HOTL decision.
+    /// Increments on `register`, decrements on `resolve` (or timeout
+    /// expiry). Watched by ops to surface long-running suspensions.
+    pub hotl_suspended_loops_gauge: Gauge,
+    /// Wall-clock duration each suspension spent between register and
+    /// resolve. Observed on every resolve including timeouts and
+    /// cancellations.
+    pub hotl_suspension_duration_seconds: Histogram,
 }
 
 /// Initialise the Prometheus registry.
@@ -288,6 +307,32 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     )
     .context("register slo_override_parse_failed_total")?;
 
+    // Sprint-12 S12-3: HOTL suspend/resume telemetry.
+    let hotl_suspensions_total = register_int_counter_vec_with_registry!(
+        "hotl_suspensions_total",
+        "HOTL suspended-loop resolutions, labelled by terminal verdict (allow | deny | timeout | cancelled)",
+        &["verdict"],
+        registry
+    )
+    .context("register hotl_suspensions_total")?;
+
+    let hotl_suspended_loops_gauge = register_gauge_with_registry!(
+        "hotl_suspended_loops_gauge",
+        "Number of agent loops currently suspended awaiting a HOTL decision",
+        registry
+    )
+    .context("register hotl_suspended_loops_gauge")?;
+
+    let hotl_suspension_duration_seconds = register_histogram_with_registry!(
+        "hotl_suspension_duration_seconds",
+        "Wall-clock duration each HOTL suspension spent between register and resolve, in seconds",
+        // Suspensions can range from sub-second (operator clicks Approve fast) to 24h timeout.
+        // Buckets: 1s, 5s, 30s, 2m, 10m, 1h, 6h, 24h.
+        vec![1.0, 5.0, 30.0, 120.0, 600.0, 3_600.0, 21_600.0, 86_400.0],
+        registry
+    )
+    .context("register hotl_suspension_duration_seconds")?;
+
     let handles = MetricHandles {
         http_request_duration,
         llm_call_duration,
@@ -306,6 +351,9 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
         llm_reasoning_tokens_total,
         slo_burn_rate,
         slo_override_parse_failed_total,
+        hotl_suspensions_total,
+        hotl_suspended_loops_gauge,
+        hotl_suspension_duration_seconds,
     };
 
     // Store globally so macros can look them up without threading the
@@ -435,6 +483,24 @@ pub fn slo_burn_rate() -> Option<&'static GaugeVec> {
 /// Sprint-10 S10-3 / DEC-022.
 pub fn slo_override_parse_failed_total() -> Option<&'static IntCounterVec> {
     HANDLES.get().map(|h| &h.slo_override_parse_failed_total)
+}
+
+/// Counter: `xiaoguai_hotl_suspensions_total{verdict}`.
+/// Sprint-12 S12-3 — HOTL suspend/resume resolutions.
+pub fn hotl_suspensions_total() -> Option<&'static IntCounterVec> {
+    HANDLES.get().map(|h| &h.hotl_suspensions_total)
+}
+
+/// Gauge: `xiaoguai_hotl_suspended_loops_gauge`.
+/// Sprint-12 S12-3 — currently-blocked loop count.
+pub fn hotl_suspended_loops_gauge() -> Option<&'static Gauge> {
+    HANDLES.get().map(|h| &h.hotl_suspended_loops_gauge)
+}
+
+/// Histogram: `xiaoguai_hotl_suspension_duration_seconds`.
+/// Sprint-12 S12-3 — wall-clock time held between register and resolve.
+pub fn hotl_suspension_duration_seconds() -> Option<&'static Histogram> {
+    HANDLES.get().map(|h| &h.hotl_suspension_duration_seconds)
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
@@ -593,6 +659,48 @@ mod tests {
             (per_tenant - 2.1).abs() < f64::EPSILON,
             "per-tenant series must equal 2.1"
         );
+    }
+
+    // Sprint-12 S12-3 — HOTL suspend/resume telemetry.
+
+    #[test]
+    fn prometheus_hotl_suspensions_total_increments() {
+        let (_reg, h) = fresh();
+        h.hotl_suspensions_total
+            .with_label_values(&["allow"])
+            .inc();
+        h.hotl_suspensions_total
+            .with_label_values(&["timeout"])
+            .inc();
+        assert_eq!(
+            h.hotl_suspensions_total
+                .with_label_values(&["allow"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            h.hotl_suspensions_total
+                .with_label_values(&["timeout"])
+                .get(),
+            1
+        );
+    }
+
+    #[test]
+    fn prometheus_hotl_suspended_loops_gauge_inc_dec() {
+        let (_reg, h) = fresh();
+        h.hotl_suspended_loops_gauge.inc();
+        h.hotl_suspended_loops_gauge.inc();
+        assert!((h.hotl_suspended_loops_gauge.get() - 2.0).abs() < f64::EPSILON);
+        h.hotl_suspended_loops_gauge.dec();
+        assert!((h.hotl_suspended_loops_gauge.get() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn prometheus_hotl_suspension_duration_observes() {
+        let (_reg, h) = fresh();
+        h.hotl_suspension_duration_seconds.observe(2.5);
+        assert_eq!(h.hotl_suspension_duration_seconds.get_sample_count(), 1);
     }
 
     #[test]

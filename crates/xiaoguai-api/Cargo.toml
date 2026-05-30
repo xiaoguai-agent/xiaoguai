@@ -45,6 +45,8 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 parking_lot = { workspace = true }
 governor = { workspace = true }
+# Sprint-12 S12-3: lock-free map for DecisionRegistry waiters.
+dashmap = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
