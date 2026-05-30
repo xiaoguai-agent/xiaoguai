@@ -1,4 +1,4 @@
-# Session handoff — sprint-11 shipped, next = v1.8.1 release + sprint-12
+# Session handoff — sprint-11 shipped, v1.8.1 released, next = sprint-12
 
 > Written 2026-05-30 (later same day as the v1.8.0 release session). Session is being cleared; the next session starts from this doc.
 
@@ -6,13 +6,9 @@
 
 ## TL;DR
 
-**Sprint-11 fully merged.** 7 PRs (6 impl + 1 design): 3 LLD-vs-impl UI drifts closed, 1 new backend route + migration shipped, 4 e2e `test.fixme()` placeholders flipped to passing tests. All sprint-10b "TODO when LLD §X lands" gaps now have shipping code.
+**Sprint-11 fully merged + v1.8.1 released**: https://github.com/xiaoguai-agent/xiaoguai/releases/tag/v1.8.1. 7 sprint-11 PRs (6 impl + 1 design) + 1 release hotfix. 3 LLD-vs-impl UI drifts closed, 1 new backend route + migration shipped, 4 e2e `test.fixme()` placeholders flipped to passing tests. All sprint-10b "TODO when LLD §X lands" gaps now have shipping code.
 
-**Next session has two parallel asks**:
-1. **Release v1.8.1** carrying sprint-11 (no breaking changes — UI polish + one additive backend route)
-2. **Sprint-12** = HotL suspend/resume (S11-3a.2) + the other deferred items from sprint-11 plan §4
-
-Per the 7-step workflow ([[sprint-workflow]]) sprint-12 starts with design-repo changes (no new HLD DECs likely — S11-3a.2 was scoped + deferred in sprint-11's plan).
+**Next session = sprint-12**. Top of the stack: HotL suspend/resume (S11-3a.2) + the other deferred items from sprint-11 plan §4. Per the 7-step workflow ([[sprint-workflow]]) sprint-12 starts with design-repo changes (no new HLD DECs likely — S11-3a.2 was scoped + deferred in sprint-11's plan).
 
 ---
 
@@ -71,36 +67,37 @@ LLD-CHAT-UI §4.3 already specifies all of this — it's been the aspirational s
 
 ---
 
-## Release v1.8.1 prep
+## v1.8.1 release — shipped 2026-05-30
 
-Sprint-11 is the entire delta for v1.8.1. No breaking changes.
+Published: https://github.com/xiaoguai-agent/xiaoguai/releases/tag/v1.8.1 (06:51 UTC). Curated body matches the sprint-11 PR list; 1 SBOM asset (`multiple.intoto.jsonl`) — same shape as v1.8.0 (cargo-dist's binary-artifact workflows have been failing for the same reasons since at least v1.8.0; not a sprint-11 regression).
 
-### Release notes outline
+### Release hotfix (one PR-skipping commit on main: `e58f13b`)
 
-- **UI polish** — Audit pane gains ChainBadge column + Export button (direct download); chat SSE survives drops with reconnect banner; HotL banner exposes inline Approve/Reject/Adjust actions
-- **New backend route** — `POST /v1/hotl/decisions` (decision-record layer; suspend/resume coming in v1.9)
-- **New migration** — `0026_hotl_decisions.sql`
-- **New `AppState` fields** — `hotl_decision_store: Option<Arc<dyn HotlDecisionStore>>`, `hotl_audit: Option<Arc<dyn HotlAuditSink>>` (both default `None`; existing deployments unaffected)
-- **Drive-by** — pre-existing AppState init drift in 2 integration tests fixed (PR #115)
+Two regressions were exposed when the cargo-dist Release workflow ran against the v1.8.1 tag — neither caught by `cargo test -p xiaoguai-api` (which is what the sprint-11 sub-agents used):
 
-### Release checklist (per [[sprint-workflow]] Step 7)
+1. **`xiaoguai-core/src/lib.rs:552` production `serve()` AppState init** missed the two new fields S11-3a added (`hotl_decision_store`, `hotl_audit`). S11-3a's sub-agent updated 24 *test* files but never recompiled `xiaoguai-core` (a downstream crate). Fix: both set to `None` in production — `/v1/hotl/decisions` returns 503 until the PG impl ships in sprint-12. Mirrors the established pattern for other unwired optional `AppState` slots.
 
+2. **`deploy/Dockerfile` frontend stage** failed with `tsc: not found` + `node_modules missing` for admin-ui and chat-ui. Root cause: PR #116 (S11-2b) added `"build": "tsc --noEmit"` to `frontend/shared/package.json`. Before that, `pnpm -r build` only ran the vite-only admin-ui/chat-ui builds, and `tsc` resolved via pnpm hoist. After that, `shared`'s build runs `tsc` first (works — devDep + hoist), but admin-ui/chat-ui can't find `tsc` because **the Dockerfile copied only `shared/` before `pnpm install`** — at install time the workspace pretend-list was missing admin-ui, chat-ui, and e2e, so their `node_modules` never got populated. Fix: copy ALL four workspace `package.json` files BEFORE `pnpm install`, then copy source bodies after. Standard pnpm-monorepo-Dockerfile pattern.
+
+### Workflow / cargo-dist status (lesson for sprint-12 + future patch releases)
+
+The repo's cargo-dist setup has been broken since at least v1.8.0:
+- **container image (`Release (container image + SBOM)`)** fails on `crates/xiaoguai-api/src/skills.rs:35` `include_str!("../../../catalog/skill_packs.json")` because the Dockerfile never copies `catalog/` to the build context. Pre-existing.
+- **native packages (`Release — native Linux packages (deb + rpm)`)** fails because the workflow YAML uses `cargo install --version 2.6` / `--version 0.14` — newer cargo (1.83+) rejects these as ambiguous and requires explicit SemVer (e.g. `^2.6`). Pre-existing toolchain regression.
+- **bare-metal tarball** fails for related reasons; haven't dug in.
+- **Main `Release` job** and **`Pip wheel`** have `needs:` on the above; they stay queued indefinitely. **Cancel them after diagnosing**, otherwise they fill the org's queue slots and block future runs (we hit a 115-min queue backlog because earlier sprint-11-branch Release runs from PR push events were never cancelled — a single `gh run cancel` per stuck run cleared it instantly).
+
+**Effective release pattern for this repo until those are fixed**:
 ```bash
-# 1. Sync mains
-cd /Users/zw/testany/myskills/xiaoguai && git checkout main && git pull origin main --ff-only
-
-# 2. CHANGELOG.md — add v1.8.1 section (use the merged PR list as source)
-# 3. Bump version in workspace Cargo.toml + frontend package.json(s) per existing convention
-# 4. Tag + push
-# git tag v1.8.1 && git push origin v1.8.1
-
-# 5. GitHub Release
-# gh release create v1.8.1 --title "v1.8.1 — sprint-11 UI drift closure" --notes-file <prepared notes>
-
-# 6. Verify cargo-dist artifacts (per [[ci-gotchas]] — tag must match Cargo.toml workspace.package.version exactly or dist fails silently)
+git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z
+sleep 90  # let SBOM job create the GH Release shell
+# Cancel the queued blocker jobs once you've confirmed they'll never complete:
+gh run list --branch vX.Y.Z --status queued -L 5 --json databaseId,name -q '.[] | .databaseId' | xargs -I{} gh run cancel {}
+# Apply curated notes:
+gh release edit vX.Y.Z --notes-file <prepared notes>
 ```
 
-**Don't skip the verification step** — past releases had silent failures (`uvx --from`, wheel-missing-mcp_server etc. — full list in CLAUDE.md踩坑 #7, #16-21). The "release succeeded" signal is when `git tag v1.8.1 && git push` + GitHub Actions cargo-dist completes + artifacts download cleanly + `crates.io/crates/xiaoguai` updates.
+**Sprint-12 candidate**: fix one or more of the cargo-dist failures. Cheapest win is the Dockerfile `catalog/` copy + the cargo `--version` qualifier bump in the workflow YAML.
 
 ---
 
@@ -139,20 +136,16 @@ cd /Users/zw/testany/myskills/xiaoguai
 claude
 ```
 
-Memory auto-loads `project-status.md` + `agent-roadmap.md` + `sprint-workflow.md` + `ci-gotchas.md` + `feedback-stacked-prs.md`. Then say one of:
+Memory auto-loads `project-status.md` + `agent-roadmap.md` + `sprint-workflow.md` + `ci-gotchas.md` + `feedback-stacked-prs.md`. Then say:
 
-> 先发 v1.8.1，再开 sprint-12 Step 1
+> 开始 sprint-12 Step 1 — HotL suspend/resume 设计修订
 
-— or —
+Per workflow rule, **start with design-repo**. Likely a LLD-CHAT-UI §4.3 post-impl status amendment (sprint-11 closed the buttons; suspend/resume is what 3a.2 adds) + new LLD-AGENT or LLD-ORCHESTRATOR §X covering the `SuspendingHotlGate` + `DecisionRegistry` wiring. No new HLD DECs expected (S11-3a.2 was scoped + deferred in sprint-11 plan §4).
 
-> 直接进 sprint-12 Step 1（HotL suspend/resume 设计修订）
-
-The first option is the **recommended** order per the user's 7-step workflow: ship the merged work as a release before opening the next sprint, so v1.8.1's contents are crisp + searchable.
-
-If sprint-12 Step 1: per workflow rule, **start with design-repo**. Likely a LLD-CHAT-UI §4.3 status amendment + new LLD-AGENT or LLD-ORCHESTRATOR §X covering the `SuspendingHotlGate` + `DecisionRegistry` wiring. No new HLD DECs expected (S11-3a.2 was scoped + deferred in sprint-11 plan §4).
+Side quest worth flagging if the user asks about cargo-dist: the 3 ancillary Release workflows have been failing since at least v1.8.0 (container image lacks `catalog/` in build context; native packages workflow uses cargo `--version 2.6` without explicit SemVer qualifier). Fixing them would let v1.9 ship binary artifacts via cargo-dist instead of relying on the "GH Release shell + curated notes" pattern.
 
 ---
 
 ## One-line summary
 
-✅ Sprint-11 fully merged (7 PRs, 4 e2e fixmes flipped, ~9 dev-days in one session via parallel worktree agents). ⏭ Next: v1.8.1 release, then sprint-12 = HotL suspend/resume (S11-3a.2) + deferred polish items.
+✅ Sprint-11 fully merged + v1.8.1 released (7 PRs + 1 hotfix, 4 e2e fixmes flipped, ~9 dev-days in one session via parallel worktree agents). ⏭ Next: sprint-12 = HotL suspend/resume (S11-3a.2) + deferred polish items + optional cargo-dist plumbing fixes.
