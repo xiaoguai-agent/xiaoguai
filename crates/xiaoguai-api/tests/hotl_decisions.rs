@@ -9,16 +9,20 @@
 mod common;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{header, Request, StatusCode};
 use serde_json::Value;
+use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uuid::Uuid;
 use xiaoguai_agent::{AgentConfig, Toolbox};
 use xiaoguai_api::auth::{Claims, StubValidator, TokenValidator};
 use xiaoguai_api::hotl::audit::{HotlAuditSink, InMemoryHotlAuditSink};
 use xiaoguai_api::hotl::decision::{HotlDecisionStore, InMemoryHotlDecisionStore};
+use xiaoguai_api::hotl::decision_registry::{DecisionRegistry, HotlResolution, HotlTicketError};
 use xiaoguai_api::hotl::policy::{HotlPolicyStore, InMemoryHotlPolicyStore};
 use xiaoguai_api::{router, AppState, CancelRegistry};
 use xiaoguai_auth::Authz;
@@ -36,6 +40,7 @@ struct StateOptions {
     audit_sink: Option<Arc<dyn HotlAuditSink>>,
     auth: Option<Arc<dyn TokenValidator>>,
     authz: Option<Arc<Authz>>,
+    decision_registry: Option<Arc<DecisionRegistry>>,
 }
 
 fn build_state(opts: StateOptions) -> AppState {
@@ -85,7 +90,9 @@ fn build_state(opts: StateOptions) -> AppState {
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
-        decision_registry: std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
+        decision_registry: opts
+            .decision_registry
+            .unwrap_or_else(|| std::sync::Arc::new(DecisionRegistry::new())),
     }
 }
 
@@ -478,4 +485,165 @@ async fn audit_sink_receives_decision_entry() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].action, "hotl.decision");
     assert_eq!(entries[0].actor, "alice");
+}
+
+// ── 11. S12-6: live waiter is resolved → resumed:true ────────────────────────
+//
+// Pre-register a ticket on the shared `DecisionRegistry`, then POST
+// `/v1/hotl/decisions` for the same request_id. The response MUST carry
+// `resumed: true` AND the awaiting ticket must resolve with the operator's
+// verdict before a bounded timeout.
+#[tokio::test]
+async fn decision_resolves_live_waiter_returns_resumed_true() {
+    let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());
+    let registry = Arc::new(DecisionRegistry::new());
+    let request_id = Uuid::new_v4();
+    // Park a ticket so the route handler has someone to wake.
+    let ticket = registry.register(request_id, Instant::now() + Duration::from_secs(60));
+
+    let app = router(build_state(StateOptions {
+        decision_store: Some(Arc::clone(&decisions)),
+        decision_registry: Some(Arc::clone(&registry)),
+        ..Default::default()
+    }));
+    let body = serde_json::json!({
+        "request_id": request_id.to_string(),
+        "verdict": "allow",
+        "decided_by": "alice"
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/hotl/decisions")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let json = body_json(resp.into_body()).await;
+    assert_eq!(
+        json["resumed"], true,
+        "live waiter must flip resumed to true"
+    );
+
+    // Ticket must resolve to the operator's verdict (Allow, decided_by alice).
+    let cancel = CancellationToken::new();
+    let settled = tokio::time::timeout(
+        Duration::from_secs(2),
+        ticket.await_decision(&cancel),
+    )
+    .await
+    .expect("ticket must resolve before the bounded timeout")
+    .expect("ticket must not error out");
+    assert_eq!(settled.verdict, HotlResolution::Allow);
+    assert_eq!(settled.decided_by.as_deref(), Some("alice"));
+}
+
+// ── 12. S12-6: no waiter present → resumed:false ─────────────────────────────
+//
+// Locks in the sprint-11 behaviour: when no ticket was registered, the
+// route handler still returns 201 and `resumed: false`. This is the
+// dominant case for the legacy `EnforcerGate` path that never suspends.
+#[tokio::test]
+async fn decision_with_no_waiter_returns_resumed_false() {
+    let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());
+    let registry = Arc::new(DecisionRegistry::new());
+    let app = router(build_state(StateOptions {
+        decision_store: Some(Arc::clone(&decisions)),
+        decision_registry: Some(Arc::clone(&registry)),
+        ..Default::default()
+    }));
+    let body = serde_json::json!({
+        "request_id": Uuid::new_v4().to_string(),
+        "verdict": "allow",
+        "decided_by": "alice"
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/hotl/decisions")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let json = body_json(resp.into_body()).await;
+    assert_eq!(
+        json["resumed"], false,
+        "no live waiter ⇒ resumed must remain false"
+    );
+}
+
+// ── 13. S12-6: late decision after ticket timed out → resumed:false ──────────
+//
+// Register a ticket with a 50ms expiry, let the background sleeper fire
+// `resolve(.., Timeout)` (which removes the entry from the map), then
+// POST `/v1/hotl/decisions` for that same request_id. The decision row
+// is fresh from the store's perspective (no duplicate), so the response is
+// 201 + `resumed: false` (no live waiter when the late decision arrived).
+#[tokio::test]
+async fn late_decision_after_timeout_returns_resumed_false() {
+    let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());
+    let registry = Arc::new(DecisionRegistry::new());
+    let request_id = Uuid::new_v4();
+
+    // Short-lived ticket; immediately await it so we observe the timeout.
+    let ticket = registry.register(request_id, Instant::now() + Duration::from_millis(50));
+    let cancel = CancellationToken::new();
+    let settled = ticket
+        .await_decision(&cancel)
+        .await
+        .expect("ticket must resolve via timeout, not error");
+    assert_eq!(
+        settled.verdict,
+        HotlResolution::Timeout,
+        "ticket must settle as Timeout when expiry fires before any resolve"
+    );
+
+    // Give the spawned background timeout task a beat to clear the slot.
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        registry.is_empty(),
+        "background timeout must have removed the slot"
+    );
+
+    let app = router(build_state(StateOptions {
+        decision_store: Some(Arc::clone(&decisions)),
+        decision_registry: Some(Arc::clone(&registry)),
+        ..Default::default()
+    }));
+    let body = serde_json::json!({
+        "request_id": request_id.to_string(),
+        "verdict": "allow",
+        "decided_by": "alice"
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/hotl/decisions")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    // Decision row is fresh in the store — 201, not 409. Late decision finds
+    // no live waiter — resumed stays false.
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let json = body_json(resp.into_body()).await;
+    assert_eq!(
+        json["resumed"], false,
+        "late decision after timeout ⇒ resumed must be false"
+    );
+
+    // Defensive: HotlTicketError is only reached via ChannelDropped, which
+    // these tests never exercise — silence the unused-import lint cleanly.
+    let _ = std::any::type_name::<HotlTicketError>();
 }
