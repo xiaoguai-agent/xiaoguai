@@ -154,8 +154,11 @@ describe('HotlBanner', () => {
   // ── sprint-12 S12-8 — SSE-primary clear + 30s defensive fallback ────────
 
   describe('sprint-12 S12-8 — hotl_resolved primary clear', () => {
+    // Fake-timer tests cannot use `waitFor` (its 50 ms polling needs real
+    // time). Instead: drive React updates via `act()` + manual microtask
+    // flushes, advance fake timers explicitly with vi.advanceTimersByTime.
     beforeEach(() => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ shouldAdvanceTime: false });
     });
     afterEach(() => {
       vi.useRealTimers();
@@ -175,18 +178,45 @@ describe('HotlBanner', () => {
       };
     }
 
+    /**
+     * Flush React's effect queue. The component's useEffect for the
+     * resolved/cleared path is synchronous after a render; one act() with a
+     * microtask drain is enough.
+     */
+    async function flushEffects(): Promise<void> {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+
+    /** Submit the local decision and wait for `localSubmitted` to flip. */
+    async function clickApproveAndAwaitSubmit(onDecision: ReturnType<typeof vi.fn>) {
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('hotl-banner-approve'));
+      });
+      // The onDecision mock resolves on the next microtask; drain so the
+      // post-await `setLocalSubmitted(true)` runs inside React's batch.
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(onDecision).toHaveBeenCalledTimes(1);
+    }
+
     it('primary_clear_via_hotl_resolved_sse: matching SSE clears the banner immediately', async () => {
       const onCleared = vi.fn();
       const { rerender } = render(
         <HotlBanner pending={base} resolved={null} onCleared={onCleared} />,
       );
+      expect(onCleared).not.toHaveBeenCalled();
 
       // Re-render with a matching resolved event — primary clear path.
       rerender(
         <HotlBanner pending={base} resolved={resolvedEvent()} onCleared={onCleared} />,
       );
+      await flushEffects();
 
-      await waitFor(() => expect(onCleared).toHaveBeenCalledTimes(1));
+      expect(onCleared).toHaveBeenCalledTimes(1);
     });
 
     it('defensive_fallback_fires_at_30s_when_sse_silent: 30s timer clears after local submit when SSE never arrives', async () => {
@@ -202,19 +232,17 @@ describe('HotlBanner', () => {
         />,
       );
 
-      // User clicks Approve — local submit succeeds, no SSE event arrives.
-      fireEvent.click(screen.getByTestId('hotl-banner-approve'));
-      await waitFor(() => expect(onDecision).toHaveBeenCalledTimes(1));
+      await clickApproveAndAwaitSubmit(onDecision);
 
       // Less than 30s: fallback NOT fired.
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(29_000);
+        vi.advanceTimersByTime(29_000);
       });
       expect(onCleared).not.toHaveBeenCalled();
 
       // Cross the 30s threshold: fallback fires.
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(2_000);
+        vi.advanceTimersByTime(2_000);
       });
       expect(onCleared).toHaveBeenCalledTimes(1);
     });
@@ -233,18 +261,20 @@ describe('HotlBanner', () => {
           onCleared={onCleared}
         />,
       );
+      await flushEffects();
 
-      await waitFor(() => {
-        expect(
-          screen.getByText(/Decision timed out — tool call denied/),
-        ).toBeInTheDocument();
-      });
+      expect(
+        screen.getByTestId('hotl-banner-timeout-annotation'),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/Decision timed out — tool call denied/),
+      ).toBeInTheDocument();
       // Annotation visible, not yet cleared.
       expect(onCleared).not.toHaveBeenCalled();
 
       // Advance 3s — annotation drives clear.
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(3_100);
+        vi.advanceTimersByTime(3_100);
       });
       expect(onCleared).toHaveBeenCalledTimes(1);
     });
@@ -263,8 +293,7 @@ describe('HotlBanner', () => {
       );
 
       // Alice clicks Approve — local submit succeeds, banner enters submitting state.
-      fireEvent.click(screen.getByTestId('hotl-banner-approve'));
-      await waitFor(() => expect(onDecision).toHaveBeenCalledTimes(1));
+      await clickApproveAndAwaitSubmit(onDecision);
 
       // SSE then arrives with a DIFFERENT decided_by — sibling tab raced ahead.
       rerender(
@@ -276,17 +305,16 @@ describe('HotlBanner', () => {
           decidedBy="alice@acme.com"
         />,
       );
+      await flushEffects();
 
       // Conflict toast surfaces.
-      await waitFor(() => {
-        expect(
-          screen.getByTestId('hotl-banner-conflict-toast'),
-        ).toBeInTheDocument();
-      });
+      expect(
+        screen.getByTestId('hotl-banner-conflict-toast'),
+      ).toBeInTheDocument();
       // Local submitting state reverted (no longer disabled).
       expect(screen.getByTestId('hotl-banner-approve')).not.toBeDisabled();
-      // Banner clears via SSE.
-      await waitFor(() => expect(onCleared).toHaveBeenCalledTimes(1));
+      // Banner clears via SSE (allow verdict from sibling).
+      expect(onCleared).toHaveBeenCalledTimes(1);
     });
 
     it('sse_resolved_cancels_pending_fallback_timer: only one onCleared call', async () => {
@@ -303,12 +331,11 @@ describe('HotlBanner', () => {
       );
 
       // Click Approve — fallback timer is now ticking.
-      fireEvent.click(screen.getByTestId('hotl-banner-approve'));
-      await waitFor(() => expect(onDecision).toHaveBeenCalledTimes(1));
+      await clickApproveAndAwaitSubmit(onDecision);
 
       // Advance to just before the 30s threshold.
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(20_000);
+        vi.advanceTimersByTime(20_000);
       });
       expect(onCleared).not.toHaveBeenCalled();
 
@@ -322,11 +349,13 @@ describe('HotlBanner', () => {
           decidedBy="alice@acme.com"
         />,
       );
-      await waitFor(() => expect(onCleared).toHaveBeenCalledTimes(1));
+      await flushEffects();
+      expect(onCleared).toHaveBeenCalledTimes(1);
 
-      // Advance past 30s total — fallback must NOT fire a second time.
+      // Advance past 30s total — fallback must NOT fire a second time
+      // (the SSE primary clear cancelled it).
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(20_000);
+        vi.advanceTimersByTime(20_000);
       });
       expect(onCleared).toHaveBeenCalledTimes(1);
     });

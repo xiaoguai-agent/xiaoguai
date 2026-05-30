@@ -781,28 +781,44 @@ export interface CreateBoardRequest {
 
 /**
  * Marker injected into the agent event stream (as `type: 'hotl_pending'`)
- * when the HotL engine returns `Verdict::Escalate` for an action. The UI
- * must surface a non-dismissible banner until the verdict changes or the
- * session ends.
+ * when the agent loop is suspended on a HotL decision. The UI must surface
+ * a non-dismissible banner until the matching `hotl_resolved` event arrives
+ * or the session ends.
+ *
+ * Wire shape per [`api-contract.md`](../../xiaoguai-agent-design/docs/api-contract.md)
+ * §2.6.3 (sprint-12 S12-2). The v1.3.x shape (`escalation_id` + `reason`)
+ * has been retired — the backend never emits the old shape now that
+ * `SuspendingHotlGate` is the only producer of this event.
  */
 export interface HotlPendingEvent {
   type: 'hotl_pending';
-  /** Action scope / tool name that triggered escalation. */
+  /** Suspended decision id; pairs 1:1 with `HotlResolvedEvent.request_id`. */
+  request_id: string;
+  /** Tool name whose dispatch is suspended (e.g. `execute_python`). */
+  tool: string;
+  /** Policy-driven redaction of the tool arguments (opaque JSON shape). */
+  args_redacted: unknown;
+  /** Policy scope that matched, e.g. `tool_call.execute_python`. */
   scope: string;
-  /** Human-readable reason from the policy rule that matched. */
-  reason: string;
-  /** Monotonic escalation ID — use to correlate with `/hotl-queue` entry. */
-  escalation_id: string;
+  /** RFC 3339; server-side decision deadline (default: now + 24h). */
+  expires_at: string;
 }
 
 /**
- * Emitted once an operator approves or rejects an escalation.
- * `approved` → runtime proceeds; `rejected` → action is cancelled.
+ * Emitted by `xiaoguai-agent` after the suspended decision resolves —
+ * either via operator verdict (`POST /v1/hotl/decisions`) or the
+ * server-side timeout. Frontend keys the `<HotlBanner>` on `request_id`
+ * and clears the matching pending state on receipt.
+ *
+ * Wire shape per `api-contract.md` §2.6.3. `decided_by` is `null` when
+ * `verdict === 'timeout'`.
  */
 export interface HotlResolvedEvent {
   type: 'hotl_resolved';
-  escalation_id: string;
-  verdict: 'approved' | 'rejected';
+  request_id: string;
+  verdict: 'allow' | 'deny' | 'timeout';
+  decided_by: string | null;
+  recorded_at: string;
 }
 
 // ---- v1.3.x — Session-scoped outcome events -----------------------------
