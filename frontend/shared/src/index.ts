@@ -1067,6 +1067,41 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Optional callbacks for {@link XiaoguaiClient.sendMessage} retry behaviour.
+ * Per LLD-CHAT-UI-001 §4.7 / §4.7.1.
+ */
+export interface SendMessageOptions {
+  /**
+   * Invoked just before each retry sleeps. `attempt` is 1-based (1 = first
+   * retry after the initial failure). `delayMs` is the backoff about to be
+   * slept. ChatPage uses this to mount the reconnect banner.
+   */
+  onReconnect?: (attempt: number, delayMs: number) => void;
+  /**
+   * Maximum number of retries after the first failure. Defaults to 5 →
+   * backoff sequence 1+2+4+8+16 = 31 s before giving up.
+   */
+  maxRetries?: number;
+}
+
+/**
+ * Generate an Idempotency-Key for sendMessage retries. Format mirrors a
+ * UUID-ish 16-byte hex stream so backends matching RFC 4122 dedup keys can
+ * accept it. crypto.randomUUID() is preferred when available; otherwise
+ * fall back to Math.random hex (non-cryptographic — acceptable for a
+ * client-side dedup hint, not a security boundary).
+ */
+function generateIdempotencyKey(): string {
+  const g = globalThis as { crypto?: { randomUUID?: () => string } };
+  if (g.crypto?.randomUUID) return g.crypto.randomUUID();
+  const hex = (n: number) => Math.floor(Math.random() * n).toString(16);
+  return `${hex(0xffffffff)}-${hex(0xffff)}-${hex(0xffff)}-${hex(0xffff)}-${hex(0xffffffff)}${hex(0xffff)}`;
+}
+
+/** Exponential backoff schedule for sendMessage retries (ms), capped at 30 s. */
+const RECONNECT_BACKOFF_MS: readonly number[] = [1000, 2000, 4000, 8000, 16000];
+
 export class XiaoguaiClient {
   private readonly baseUrl: string;
   private readonly token?: string;
@@ -1870,44 +1905,110 @@ export class XiaoguaiClient {
     body: SendMessageRequest,
     onEvent: (ev: AgentEvent) => void,
     onError?: (err: Error) => void,
+    opts?: SendMessageOptions,
   ): () => void {
     const controller = new AbortController();
-    void (async () => {
-      try {
-        const resp = await this.fetchImpl(
-          `${this.baseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/messages`,
-          {
-            method: 'POST',
-            headers: this.headers(),
-            body: JSON.stringify(body),
-            signal: controller.signal,
-          },
-        );
-        if (!resp.ok || !resp.body) {
-          onError?.(new ApiError(resp.status, 'http_error', `HTTP ${resp.status}`));
-          return;
+    const maxRetries = opts?.maxRetries ?? RECONNECT_BACKOFF_MS.length;
+    // Per plan §3 / DEC-LLD-CHAT-UI-003: generate once, reuse on retries so a
+    // dedup-aware backend treats the resend as the same logical request.
+    // Behaviour degrades safely (duplicate message) if the backend ignores it.
+    const idempotencyKey = generateIdempotencyKey();
+    const url = `${this.baseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/messages`;
+    const serialized = JSON.stringify(body);
+
+    const buildHeaders = (attempt: number): Record<string, string> => {
+      const h = this.headers();
+      // Only send the idempotency header on retries so the happy path stays
+      // byte-identical to the previous behaviour. (See sendMessage.test.ts
+      // "Idempotency-Key header" case.)
+      if (attempt > 0) h['idempotency-key'] = idempotencyKey;
+      return h;
+    };
+
+    const sleep = (ms: number): Promise<void> =>
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          controller.signal.removeEventListener('abort', onAbort);
+          resolve();
+        }, ms);
+        const onAbort = () => {
+          clearTimeout(timer);
+          controller.signal.removeEventListener('abort', onAbort);
+          const err = new Error('aborted');
+          err.name = 'AbortError';
+          reject(err);
+        };
+        if (controller.signal.aborted) {
+          onAbort();
+        } else {
+          controller.signal.addEventListener('abort', onAbort);
         }
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buf = '';
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          let idx: number;
-          while ((idx = buf.indexOf('\n\n')) !== -1) {
-            const chunk = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-            const parsed = parseSseChunk(chunk);
-            if (parsed) onEvent(parsed);
+      });
+
+    void (async () => {
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      let lastErr: Error | null = null;
+
+      for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+        if (attempt > 0) {
+          const idx = Math.min(attempt - 1, RECONNECT_BACKOFF_MS.length - 1);
+          const delayMs = Math.min(RECONNECT_BACKOFF_MS[idx]!, 30000);
+          try {
+            opts?.onReconnect?.(attempt, delayMs);
+          } catch {
+            // Don't let a callback throw kill the retry loop.
+          }
+          try {
+            await sleep(delayMs);
+          } catch {
+            // Aborted during backoff — caller cancelled, exit silently.
+            return;
           }
         }
-      } catch (err) {
-        if ((err as Error).name !== 'AbortError') {
-          onError?.(err as Error);
+        try {
+          const resp = await this.fetchImpl(url, {
+            method: 'POST',
+            headers: buildHeaders(attempt),
+            body: serialized,
+            signal: controller.signal,
+          });
+          if (!resp.ok || !resp.body) {
+            lastErr = new ApiError(resp.status, 'http_error', `HTTP ${resp.status}`);
+            continue;
+          }
+          const reader = resp.body.getReader();
+          // Drain the stream. A buf carried over from a prior partial attempt
+          // is intentionally preserved across iterations so a delta split by
+          // a mid-chunk disconnect can be reassembled when the server resumes.
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) {
+              // Clean EOF — stream ended successfully.
+              return;
+            }
+            buf += decoder.decode(value, { stream: true });
+            let idx: number;
+            while ((idx = buf.indexOf('\n\n')) !== -1) {
+              const chunk = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              const parsed = parseSseChunk(chunk);
+              if (parsed) onEvent(parsed);
+            }
+          }
+        } catch (err) {
+          if ((err as Error).name === 'AbortError') {
+            // Explicit cancel — do not retry.
+            return;
+          }
+          lastErr = err as Error;
+          continue;
         }
       }
+
+      if (lastErr) onError?.(lastErr);
     })();
+
     return () => controller.abort();
   }
 }

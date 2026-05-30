@@ -21,5 +21,12 @@
     "source_schedule": "スケジュール",
     "source_webhook": "Webhook",
     "source_manual": "手動"
+  },
+  "chat": {
+    "sse": {
+      "reconnecting": "再接続中（{{attempt}} 回目、{{secs}} 秒後に再試行）…",
+      "cancel_reconnect": "キャンセル",
+      "gave_up": "接続が失われました — {{attempts}} 回の試行後に中止しました"
+    }
   }
 }

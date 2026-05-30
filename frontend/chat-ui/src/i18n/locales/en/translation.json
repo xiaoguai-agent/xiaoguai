@@ -21,5 +21,12 @@
     "source_schedule": "schedule",
     "source_webhook": "webhook",
     "source_manual": "manual"
+  },
+  "chat": {
+    "sse": {
+      "reconnecting": "Reconnecting (attempt {{attempt}}, retrying in {{secs}}s)…",
+      "cancel_reconnect": "Cancel",
+      "gave_up": "Connection lost — gave up after {{attempts}} attempts"
+    }
   }
 }
