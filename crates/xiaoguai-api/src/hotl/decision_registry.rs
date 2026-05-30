@@ -320,6 +320,20 @@ impl Default for DecisionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::OnceLock;
+
+    /// Global serialisation lock for any test in this module that
+    /// observes the Prometheus gauge (which is a process-wide singleton
+    /// owned by `xiaoguai-observability`). Tests that only assert local
+    /// invariants on the per-test `DecisionRegistry` instance don't
+    /// strictly need it, but they DO bump the gauge as a side effect,
+    /// so they acquire the lock too to keep the gauge-observation test
+    /// race-free. The lock is held for the entire test body — these
+    /// tests run in milliseconds, so contention is irrelevant.
+    fn metrics_lock() -> &'static parking_lot::Mutex<()> {
+        static LOCK: OnceLock<parking_lot::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| parking_lot::Mutex::new(()))
+    }
 
     fn allow_verdict() -> HotlDecisionVerdict {
         HotlDecisionVerdict {
@@ -331,6 +345,7 @@ mod tests {
 
     #[tokio::test]
     async fn register_then_resolve_returns_true() {
+        let _guard = metrics_lock().lock();
         let reg = DecisionRegistry::arc();
         let id = Uuid::new_v4();
         let _ticket = reg.register(id, Instant::now() + Duration::from_secs(60));
@@ -342,6 +357,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_on_empty_returns_false() {
+        let _guard = metrics_lock().lock();
         let reg = DecisionRegistry::arc();
         let resolved = reg.resolve(Uuid::new_v4(), allow_verdict());
         assert!(!resolved, "no waiter ⇒ resolve must return false");
@@ -352,6 +368,7 @@ mod tests {
         // Race case from §3 risk row 2: resolve lands before the loop
         // even reaches `ticket.await_decision`. Oneshot channel must
         // still deliver the verdict.
+        let _guard = metrics_lock().lock();
         let reg = DecisionRegistry::arc();
         let id = Uuid::new_v4();
         let ticket = reg.register(id, Instant::now() + Duration::from_secs(60));
@@ -364,6 +381,7 @@ mod tests {
 
     #[tokio::test]
     async fn expires_removes_entry_and_resolves_as_timeout() {
+        let _guard = metrics_lock().lock();
         let reg = DecisionRegistry::arc();
         let id = Uuid::new_v4();
         let ticket = reg.register(id, Instant::now() + Duration::from_millis(50));
@@ -380,6 +398,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_register_and_resolve_is_safe() {
+        let _guard = metrics_lock().lock();
         let reg = DecisionRegistry::arc();
         let mut handles = Vec::new();
         for _ in 0..100 {
@@ -402,6 +421,9 @@ mod tests {
 
     #[tokio::test]
     async fn metrics_gauge_increments_on_register_decrements_on_resolve() {
+        // Serialise against the other gauge-bumping tests in this
+        // module — the gauge is a process-wide singleton.
+        let _guard = metrics_lock().lock();
         // `init_prometheus` is idempotent w.r.t. the global `OnceCell` —
         // the first call wins, subsequent calls in the same binary
         // silently return a fresh-but-unused registry. We only care
