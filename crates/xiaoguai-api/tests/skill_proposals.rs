@@ -89,6 +89,8 @@ fn build_fixture() -> Fixture {
         rate_limit_state: None,
         hotl_policy_store: None,
         hotl_enforcer: None,
+        hotl_decision_store: None,
+        hotl_audit: None,
         outcome_writer: None,
         outcomes_reader: None,
         skill_packs: None,
@@ -142,10 +144,7 @@ async fn list_proposals_returns_seeded_rows_newest_first() {
     let app = router(fx.state.clone());
     let req = Request::builder()
         .method(Method::GET)
-        .uri(format!(
-            "/v1/skills/proposals?tenant_id={}",
-            tenant_uuid()
-        ))
+        .uri(format!("/v1/skills/proposals?tenant_id={}", tenant_uuid()))
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -264,10 +263,7 @@ async fn list_returns_503_when_proposals_unwired() {
     let app = router(fx.state.clone());
     let req = Request::builder()
         .method(Method::GET)
-        .uri(format!(
-            "/v1/skills/proposals?tenant_id={}",
-            tenant_uuid()
-        ))
+        .uri(format!("/v1/skills/proposals?tenant_id={}", tenant_uuid()))
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
