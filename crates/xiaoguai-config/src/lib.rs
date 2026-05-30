@@ -337,3 +337,51 @@ impl Settings {
         cfg.try_deserialize().map_err(|e| e.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Sprint-12 S12-0 — scaffold for the v1.9.0 HotL suspend/resume behaviour
+    /// flip. The field defaults to `false` in v1.8.x (preserves existing
+    /// `EnforcerGate` semantics) and is intended to flip to `true` via S12-12
+    /// once the suspension stack lands. Until then the field is unwired — this
+    /// test just pins the default so no follow-up PR accidentally flips the
+    /// default ahead of S12-12.
+    #[test]
+    fn agent_hotl_suspend_on_escalate_default_is_false() {
+        let s = Settings::default();
+        assert!(
+            !s.agent.hotl.suspend_on_escalate,
+            "v1.8.x default must remain false until S12-12 flips it"
+        );
+    }
+
+    /// A config.yaml that omits the `agent` block entirely should still
+    /// deserialize cleanly with the default-`false` value — proves the
+    /// `#[serde(default)]` on both the agent and the inner hotl block.
+    #[test]
+    fn agent_block_is_optional_and_defaults_apply() {
+        // Reuse the env loader path because it constructs Settings from
+        // defaults-as-yaml + env, mirroring how production loads when no
+        // file is provided.
+        let s = Settings::load_from_env().expect("default load");
+        assert!(!s.agent.hotl.suspend_on_escalate);
+    }
+
+    /// Explicit opt-in via env override flips the flag — proves the wiring
+    /// through `XIAOGUAI_AGENT__HOTL__SUSPEND_ON_ESCALATE=true`.
+    #[test]
+    fn agent_hotl_suspend_on_escalate_env_override_works() {
+        // Snapshot + restore env to avoid leaking into other tests.
+        let key = "XIAOGUAI_AGENT__HOTL__SUSPEND_ON_ESCALATE";
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, "true");
+        let s = Settings::load_from_env().expect("env override load");
+        match prev {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+        assert!(s.agent.hotl.suspend_on_escalate);
+    }
+}
