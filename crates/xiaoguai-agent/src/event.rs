@@ -4,8 +4,10 @@
 //! handler can forward them over SSE/WebSocket without coupling to the loop's
 //! internals.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -41,6 +43,40 @@ pub enum AgentEvent {
 
     /// Unrecoverable error mid-loop. No further events follow.
     Error { message: String },
+
+    /// New (sprint-12). Tool dispatch paused; waiting on operator decision.
+    /// SSE event name: `hotl_pending`. Wire shape: `api-contract.md` §2.6.3.
+    HotlPending {
+        request_id: Uuid,
+        tool: String,
+        args_redacted: JsonValue,
+        scope: String,
+        expires_at: DateTime<Utc>,
+    },
+
+    /// New (sprint-12). Emitted after the ticket resolves.
+    /// SSE event name: `hotl_resolved`. Wire shape: `api-contract.md` §2.6.3.
+    /// `decided_by` is omitted on `Timeout`.
+    HotlResolved {
+        request_id: Uuid,
+        verdict: HotlResolution,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        decided_by: Option<String>,
+        recorded_at: DateTime<Utc>,
+    },
+}
+
+/// Operator decision verdict for a suspended tool-call.
+///
+/// TODO(sprint-12 S12-1 merge): unify with `crate::hotl_gate::HotlResolution`
+/// once S12-1 lands its parallel-sub-agent enum. Both must serialise to the
+/// same lowercase wire shape (`allow` / `deny` / `timeout`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HotlResolution {
+    Allow,
+    Deny,
+    Timeout,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

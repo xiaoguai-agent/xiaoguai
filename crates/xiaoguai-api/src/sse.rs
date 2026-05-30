@@ -19,6 +19,8 @@ pub fn event_to_sse(ev: &AgentEvent) -> Event {
         AgentEvent::IterationCompleted { .. } => ("iteration_completed", serde_json::to_value(ev)),
         AgentEvent::Done { .. } => ("done", serde_json::to_value(ev)),
         AgentEvent::Error { .. } => ("error", serde_json::to_value(ev)),
+        AgentEvent::HotlPending { .. } => ("hotl_pending", serde_json::to_value(ev)),
+        AgentEvent::HotlResolved { .. } => ("hotl_resolved", serde_json::to_value(ev)),
     };
     let json = body.unwrap_or_else(
         |e| serde_json::json!({"type": "error", "message": format!("encode: {e}")}),
