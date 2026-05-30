@@ -29,8 +29,10 @@
 | 3 | S12-5 + S12-9 — ReAct loop arm + 4 backend integration tests | xiaoguai#131 | Bundled per plan §2 Wave 3; `Suspend` arm calls `ticket.await_decision(&cancel)`; metrics recorded from loop side via `metrics.on_resolve(elapsed, verdict)`; 4 tests: happy-resolve, timeout, cancel, **`hotl_legacy_no_suspend.rs` backward-compat regression** |
 | 3 | S12-10 — chat-ui e2e (3 cases) | xiaoguai#132 | `approve_via_chat_dispatches_tool`, `deny_via_chat_synthesises_failed_tool`, `sibling_tab_resolves_banner_via_sse_alone`; 3 browsers (Chromium/Firefox/Webkit) |
 | 4 | S12-11 — LLD §4.3.2 post-impl amendment | xiaoguai-agent-design#10 | Flips status callout from "drift to close" to "shipped sprint-12" |
-| 4 | S12-12 — default flag flip + tenant docs + RELEASE-LOG | xiaoguai#134 _(placeholder)_ | `agent.hotl.suspend_on_escalate` default `false` → `true`; `docs/user-guide/hotl-escalations.md`; `docs/runbooks/operator-review.md`; `hotl_default_on_suspends.rs` proves new default |
-| 4 | S12-13 — release prep (this PR) | xiaoguai#135 _(placeholder)_ | Curated v1.9.0 release notes + this handoff doc; tag push deferred to user-driven runbook (see PR body) |
+| 4 | S12-12 — default flag flip + tenant docs + impl-repo half | xiaoguai#134 | `agent.hotl.suspend_on_escalate` default `false` → `true`; `docs/user-guide/hotl-escalations.md`; `docs/runbooks/operator-review.md`; `hotl_default_on_suspends.rs` proves new default |
+| 4 | S12-12 — RELEASE-LOG v1.9.0 entry (design repo half) | xiaoguai-agent-design#11 | Behaviour-change disclosure + opt-out instructions in design repo's RELEASE-LOG.md |
+| 4 | S12-13 — release prep | xiaoguai#133 | Curated v1.9.0 release notes + this handoff doc; tag push deferred to user-driven runbook (see PR body) |
+| Hotfix | wasmtime 38→45 revert | xiaoguai#135 | Reverts PR #83 — wasmtime 45.0.0 requires rustc 1.93.0 but repo is pinned at 1.88.0; CVE deferred to v1.9.1 |
 
 **Total**: ~10.6 dev-days planned, completed in one session via parallel sub-agents on isolated worktrees (same pattern as sprint-11).
 
@@ -40,6 +42,7 @@
 2. **S12-8 banner clear semantics earlier draft said "delete the 5 s setTimeout"** — that contradicted lld-chat-ui §4.3.2 last paragraph (defensive fallback essential for SSE-interrupted case). Plan was amended (commit `bd86b37` against PR #122) before S12-8 started; final shape keeps the fallback at 30 s, primary signal is `hotl_resolved`.
 3. **S12-4 cross-crate type duplication** — `xiaoguai-api`'s `decision_registry.rs` initially carried local duplicates of `HotlSuspensionTicket` / `HotlDecisionVerdict` / `HotlResolution` / `HotlTicketError`. S12-4 swapped to `pub use` from `xiaoguai_agent::hotl_gate` so `SuspendingHotlGate` can embed the registry-issued ticket directly into `HotlGateVerdict::Suspend.ticket` without a second adapter layer. Verified no external consumers existed via grep before the swap.
 4. **Cargo-dist Release-workflow baseline reds carried from v1.8.1** — S12-0 fixed the two known issues (Dockerfile `catalog/` copy, native-packages cargo `--version` qualifier) but they remain best-effort per plan §3.1 — can't be locally verified without an actual tag push. The fallback pattern (sleep 90 → cancel queued blocker jobs → `gh release edit --notes-file`) is documented in the release runbook in this PR's body and stays valid even if the S12-0 fixes don't land cleanly.
+5. **wasmtime CVE bump broke MSRV** — late in the sprint, while clearing the open-PR backlog, dependabot PR #83 (wasmtime 38→45, CVE RUSTSEC-2026-0087) was squash-merged. wasmtime 45.0.0 requires `rustc 1.93.0` but `rust-toolchain.toml` is pinned at `1.88.0`; `cargo check` failed immediately. Reverted via hotfix PR #135. Sibling PR #84 (wasmtime-wasi 45) was closed for the same reason. CVE remains active — tracked in [issue #121](https://github.com/xiaoguai-agent/xiaoguai/issues/121). v1.9.1 will pin wasmtime to 42.0.2 (CVE-safe per advisory + likely 1.88-compatible) OR bump the toolchain to 1.93+ (more cascading risk).
 
 ---
 

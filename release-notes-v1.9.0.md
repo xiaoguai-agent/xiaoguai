@@ -45,11 +45,21 @@ Grafana panels are bundled if you sync from `observability/grafana/`.
 | #130 | S12-4 — `SuspendingHotlGate` adapter + `build_hotl_gate(...)` selector in `run_serve` (cross-crate type unification: api crate `pub use`s canonical types from `xiaoguai-agent::hotl_gate`) |
 | #131 | S12-5 + S12-9 — ReAct loop `Suspend` arm + 4 backend integration tests (`hotl_suspend`, `hotl_suspend_timeout`, `hotl_suspend_cancel`, `hotl_legacy_no_suspend`) |
 | #132 | S12-10 — chat-ui hotl suspend/resume — 3 new e2e cases (approve-dispatches-tool, deny-synthesises-failure, sibling-tab-clears-via-sse-alone) |
-| #133 | S12-11 — `lld-chat-ui.md` §4.3.2 post-impl amendment (design repo PR; flips status callout from "drift to close" to "shipped") |
-| #134 | S12-12 — default-flag flip (`false` → `true`) + tenant-facing docs (`docs/user-guide/hotl-escalations.md`, `docs/runbooks/operator-review.md`) + RELEASE-LOG entry in design repo |
-| #135 | S12-13 — this release prep (curated release notes + sprint-12 handoff doc) |
+| xiaoguai-agent-design#10 | S12-11 — `lld-chat-ui.md` §4.3.2 post-impl amendment (design repo PR; flips status callout from "drift to close" to "shipped") |
+| #134 | S12-12 — default-flag flip (`false` → `true`) + tenant-facing docs (`docs/user-guide/hotl-escalations.md`, `docs/runbooks/operator-review.md`) + `hotl_default_on_suspends.rs` test |
+| xiaoguai-agent-design#11 | S12-12 design-repo half — RELEASE-LOG v1.9.0 entry |
+| #133 | S12-13 — release prep (curated release notes + sprint-12 handoff doc) |
+| #136 | Release-notes corrections (this PR; final PR-ref + CVE known-issue disclosure) |
 
-> PR numbers for S12-11 (design repo), S12-12, S12-13 are placeholders — update after open.
+## Known issue — wasmtime CVE deferred to v1.9.1
+
+[RUSTSEC-2026-0087](https://rustsec.org/advisories/RUSTSEC-2026-0087) — medium-severity (CVSS 4.1) segfault / out-of-sandbox load via `f64x2.splat` on Cranelift x86-64 — affects this repo's pinned `wasmtime 38.0.4` dependency (via `xiaoguai-mcp-exec-wasm`). Dependabot PR #83 attempted to bump to `wasmtime 45.0.0` but that release requires `rustc 1.93.0` while this repo is pinned at `1.88.0`; #83 was reverted in #135 to keep `main` compilable. Tracked in [issue #121](https://github.com/xiaoguai-agent/xiaoguai/issues/121).
+
+Operational impact: limited to deployments that expose `xiaoguai-mcp-exec-wasm` (the WASM-sandboxed Python MCP server) to untrusted module input on x86-64 Linux/macOS. Tenants who only run the Deno-based JS MCP server (`xiaoguai-mcp-exec-js`) or who do not run wasm-sandbox tools at all are unaffected.
+
+v1.9.1 will resolve via one of:
+1. Bump `rust-toolchain.toml` to `1.93+` (cascading risk; will also unblock other recent dep bumps).
+2. Pin `wasmtime` to `42.0.2` (CVE-safe per advisory; expected to be compatible with rustc 1.88).
 
 ## Design-doc updates
 
