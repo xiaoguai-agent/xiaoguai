@@ -25,6 +25,8 @@ use xiaoguai_storage::repositories::{
 use crate::audit::{AuditChainExporter, AuditReader, AuditVerifier};
 use crate::auth::TokenValidator;
 use crate::eval::EvalService;
+use crate::hotl::audit::HotlAuditSink;
+use crate::hotl::decision::HotlDecisionStore;
 use crate::hotl::enforcer::HotlEnforcer;
 use crate::hotl::policy::HotlPolicyStore;
 use crate::outcomes::{OutcomeWriter, OutcomesReader};
@@ -194,6 +196,23 @@ pub struct AppState {
     /// (LLM call path wired; email/webhook deferred). `None` disables
     /// enforcement (allow-all passthrough).
     pub hotl_enforcer: Option<Arc<dyn HotlEnforcer>>,
+    /// v1.8.x sprint-11 (S11-3a.1): record-of-decision store backing
+    /// `POST /v1/hotl/decisions`. `None` makes the endpoint return 503;
+    /// production wires `PgHotlDecisionStore` from `xiaoguai-core`.
+    ///
+    /// 3a.1 ships the decision-record + `raise_policy` route only — the
+    /// agent loop does NOT suspend on `Escalate` yet, so the response's
+    /// `resumed` field is always `false`. Full suspend/resume
+    /// (`SuspendingHotlGate`, `AgentEvent::HotlPending`, `DecisionRegistry`)
+    /// is deferred to a future sprint.
+    pub hotl_decision_store: Option<Arc<dyn HotlDecisionStore>>,
+    /// v1.8.x sprint-11 (S11-3a.1): HMAC-chained audit sink for the
+    /// HOTL decision route. `None` makes the route skip audit logging
+    /// (best-effort — audit failures must NOT block the operation).
+    /// Distinct from `audit` (read-only) and `audit_chain_exporter`
+    /// (compliance export); production wires a thin adapter around
+    /// `xiaoguai_audit::PgAuditSink`.
+    pub hotl_audit: Option<Arc<dyn HotlAuditSink>>,
     /// v1.2.4: outcome telemetry write side — backs `POST /v1/outcomes`.
     /// `None` makes the endpoint return 503; production wires
     /// `PgOutcomeRecorder` via an adapter in `xiaoguai-core`.
@@ -223,9 +242,8 @@ pub struct AppState {
     pub skill_proposals: Option<Arc<dyn xiaoguai_tasks::skill_author::SkillProposalRepository>>,
     /// v1.5.x: per-tenant opt-in flag store backing
     /// `allow_skill_authoring`. `None` → `propose_skill` is unavailable.
-    pub tenant_settings:
-        Option<Arc<dyn xiaoguai_tasks::skill_author::TenantSettingsReader>>,
-    /// v1.5.x: HotL gate adapter the `propose_skill` tool consults.
+    pub tenant_settings: Option<Arc<dyn xiaoguai_tasks::skill_author::TenantSettingsReader>>,
+    /// v1.5.x: `HotL` gate adapter the `propose_skill` tool consults.
     /// `None` → the routes return 503.
     pub skill_author_gate: Option<Arc<dyn xiaoguai_tasks::skill_author::SkillAuthorGate>>,
     /// v1.5.x: audit sink that records `skill.propose`,
