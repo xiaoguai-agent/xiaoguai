@@ -112,6 +112,10 @@ packs = ["dep:serde_yaml", "dep:tera", "dep:serde"]
 parking_lot = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs"] }
+# Sprint-12 S12-4: CancellationToken for SuspendingHotlGate tests + the
+# hotl_gate_selection integration test that proves the run_serve flag
+# selects EnforcerGate vs SuspendingHotlGate adapters.
+tokio-util = { workspace = true }
 # v1.1.5a: peer_mvp integration test spins two in-process xiaoguai
 # peers on ephemeral TCP ports and drives the front-door via HTTP.
 reqwest = { workspace = true }

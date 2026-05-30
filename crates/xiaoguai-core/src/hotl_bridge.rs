@@ -728,4 +728,247 @@ mod tests {
             "3rd call must Deny: {v3:?}"
         );
     }
+
+    // ── Sprint-12 S12-4: SuspendingHotlGate adapter tests ────────────────────
+    //
+    // Behaviour mapping vs. the legacy `EnforcerGate`:
+    //
+    //   upstream HotlVerdict        EnforcerGate        SuspendingHotlGate
+    //   --------------------------  ------------------  ------------------------
+    //   Allow                       HGV::Allow          HGV::Allow
+    //   Deny(reason)                HGV::Deny(reason)   HGV::Deny(reason)
+    //   Escalate(reason)            HGV::Allow + warn   HGV::Suspend{ticket}
+    //   Err(_)  (enforcer infra)    HGV::Deny(...)      HGV::Deny(...) (fail-closed)
+    //
+    // These tests pin the table above and prove the registry is the one
+    // construction site (no second registry minted inside the gate).
+
+    /// Tiny inline mock enforcer driven by a stored verdict or error. Avoids
+    /// pulling mockall into the dev-deps just for these five tests.
+    #[derive(Debug)]
+    struct StubEnforcer {
+        next: parking_lot::Mutex<Option<HotlVerdictResult>>,
+    }
+
+    impl StubEnforcer {
+        fn allow() -> Arc<Self> {
+            Arc::new(Self {
+                next: parking_lot::Mutex::new(Some(Ok(HotlVerdict::Allow))),
+            })
+        }
+        fn deny(reason: &str) -> Arc<Self> {
+            Arc::new(Self {
+                next: parking_lot::Mutex::new(Some(Ok(HotlVerdict::Deny(reason.into())))),
+            })
+        }
+        fn escalate(reason: &str) -> Arc<Self> {
+            Arc::new(Self {
+                next: parking_lot::Mutex::new(Some(Ok(HotlVerdict::Escalate(reason.into())))),
+            })
+        }
+        fn infra_error(msg: &str) -> Arc<Self> {
+            Arc::new(Self {
+                next: parking_lot::Mutex::new(Some(Err(
+                    xiaoguai_api::hotl::enforcer::HotlEnforcerError::PolicyStore(
+                        xiaoguai_api::hotl::policy::HotlPolicyStoreError::Backend(msg.into()),
+                    ),
+                ))),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl xiaoguai_api::hotl::enforcer::HotlEnforcer for StubEnforcer {
+        async fn check(
+            &self,
+            _tenant_id: Uuid,
+            _scope: &str,
+            _amount: f64,
+        ) -> xiaoguai_api::hotl::enforcer::HotlVerdictResult {
+            // Clone the stored verdict for each call so the same stub can be
+            // consulted multiple times (the gate-selection integration test
+            // wants two .check() calls against the same enforcer).
+            let guard = self.next.lock();
+            match guard.as_ref().expect("StubEnforcer not primed") {
+                Ok(v) => Ok(v.clone()),
+                Err(xiaoguai_api::hotl::enforcer::HotlEnforcerError::PolicyStore(
+                    xiaoguai_api::hotl::policy::HotlPolicyStoreError::Backend(s),
+                )) => Err(xiaoguai_api::hotl::enforcer::HotlEnforcerError::PolicyStore(
+                    xiaoguai_api::hotl::policy::HotlPolicyStoreError::Backend(s.clone()),
+                )),
+                Err(_) => unreachable!("StubEnforcer only primes Backend errors"),
+            }
+        }
+    }
+
+    fn registry() -> Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry> {
+        xiaoguai_api::hotl::decision_registry::DecisionRegistry::arc()
+    }
+
+    fn default_expiry() -> std::time::Duration {
+        std::time::Duration::from_secs(60)
+    }
+
+    #[tokio::test]
+    async fn suspending_gate_allow_passes_through() {
+        let reg = registry();
+        let enforcer = StubEnforcer::allow();
+        let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
+
+        let v = xiaoguai_agent::HotlGate::check(
+            &gate,
+            Uuid::new_v4(),
+            "tool_call.search",
+            1.0,
+        )
+        .await;
+        assert!(matches!(v, xiaoguai_agent::HotlGateVerdict::Allow));
+        assert!(reg.is_empty(), "Allow path must not register a ticket");
+    }
+
+    #[tokio::test]
+    async fn suspending_gate_deny_passes_through() {
+        let reg = registry();
+        let enforcer = StubEnforcer::deny("budget exceeded");
+        let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
+
+        let v = xiaoguai_agent::HotlGate::check(
+            &gate,
+            Uuid::new_v4(),
+            "tool_call.search",
+            1.0,
+        )
+        .await;
+        match v {
+            xiaoguai_agent::HotlGateVerdict::Deny(reason) => {
+                assert_eq!(reason, "budget exceeded");
+            }
+            other => panic!("expected Deny, got {other:?}"),
+        }
+        assert!(reg.is_empty(), "Deny path must not register a ticket");
+    }
+
+    #[tokio::test]
+    async fn suspending_gate_escalate_returns_suspend_with_registered_ticket() {
+        let reg = registry();
+        let enforcer = StubEnforcer::escalate("monthly budget at 110%");
+        let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
+
+        let v = xiaoguai_agent::HotlGate::check(
+            &gate,
+            Uuid::new_v4(),
+            "tool_call.execute_python",
+            1.0,
+        )
+        .await;
+        let (request_id, scope, ticket) = match v {
+            xiaoguai_agent::HotlGateVerdict::Suspend {
+                request_id,
+                scope,
+                ticket,
+            } => (request_id, scope, ticket),
+            other => panic!("expected Suspend, got {other:?}"),
+        };
+        assert_eq!(scope, "tool_call.execute_python");
+        assert_eq!(
+            reg.len(),
+            1,
+            "Suspend path must register exactly one waiter"
+        );
+
+        // Resolve via the registry and confirm the ticket receives the verdict.
+        // Use the agent-crate hotl_gate types directly (the registry's
+        // `pub use` makes them reachable via the api path too, but the
+        // explicit `xiaoguai_agent::hotl_gate::*` form documents the
+        // canonical source).
+        let resolved = reg.resolve(
+            request_id,
+            xiaoguai_agent::hotl_gate::HotlDecisionVerdict {
+                verdict: xiaoguai_agent::hotl_gate::HotlResolution::Allow,
+                decided_by: Some("alice@example.com".into()),
+                recorded_at: chrono::Utc::now(),
+            },
+        );
+        assert!(resolved, "live waiter must be resolved");
+        assert!(reg.is_empty(), "resolve must remove the entry");
+
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let got = ticket
+            .await_decision(&cancel)
+            .await
+            .expect("ticket must yield the resolved verdict");
+        assert_eq!(got.verdict, xiaoguai_agent::hotl_gate::HotlResolution::Allow);
+        assert_eq!(got.decided_by.as_deref(), Some("alice@example.com"));
+    }
+
+    #[tokio::test]
+    async fn suspending_gate_infrastructure_error_fails_closed() {
+        let reg = registry();
+        let enforcer = StubEnforcer::infra_error("pg connection refused");
+        let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
+
+        let v = xiaoguai_agent::HotlGate::check(
+            &gate,
+            Uuid::new_v4(),
+            "tool_call.search",
+            1.0,
+        )
+        .await;
+        match v {
+            xiaoguai_agent::HotlGateVerdict::Deny(reason) => {
+                assert!(
+                    reason.contains("HOTL enforcer infrastructure error"),
+                    "expected fail-closed deny reason, got: {reason}"
+                );
+            }
+            other => panic!("expected Deny on infra error, got {other:?}"),
+        }
+        assert!(
+            reg.is_empty(),
+            "Err path must not register a ticket (fail-closed before mint)"
+        );
+    }
+
+    #[tokio::test]
+    async fn suspending_gate_uses_passed_registry_not_new_one() {
+        // Pin the wiring contract: the gate must register against the
+        // registry it was constructed with, not a fresh one. We prove this
+        // by minting a waiter externally on the same registry, calling the
+        // gate (which must register a *second* waiter), then asserting both
+        // waiters coexist independently — meaning they share the same
+        // DashMap (a different map would have len==1, not len==2).
+        let reg = registry();
+        let preexisting_id = Uuid::new_v4();
+        let _preexisting_ticket = reg.register(
+            preexisting_id,
+            tokio::time::Instant::now() + std::time::Duration::from_secs(60),
+        );
+        assert_eq!(reg.len(), 1);
+
+        let enforcer = StubEnforcer::escalate("budget breach");
+        let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
+
+        let v = xiaoguai_agent::HotlGate::check(
+            &gate,
+            Uuid::new_v4(),
+            "tool_call.search",
+            1.0,
+        )
+        .await;
+        let (new_request_id, _scope, _ticket) = match v {
+            xiaoguai_agent::HotlGateVerdict::Suspend {
+                request_id,
+                scope,
+                ticket,
+            } => (request_id, scope, ticket),
+            other => panic!("expected Suspend, got {other:?}"),
+        };
+        assert_ne!(new_request_id, preexisting_id);
+        assert_eq!(
+            reg.len(),
+            2,
+            "shared registry must hold both waiters; got {} (gate likely minted its own registry)",
+            reg.len()
+        );
+    }
 }
