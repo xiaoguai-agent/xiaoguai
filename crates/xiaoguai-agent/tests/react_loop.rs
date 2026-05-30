@@ -261,6 +261,8 @@ async fn streaming_events_are_emitted_in_order() {
             AgentEvent::IterationCompleted { .. } => "iter_done",
             AgentEvent::Done { .. } => "done",
             AgentEvent::Error { .. } => "error",
+            AgentEvent::HotlPending { .. } => "hotl_pending",
+            AgentEvent::HotlResolved { .. } => "hotl_resolved",
         });
     }
 
