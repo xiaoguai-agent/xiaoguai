@@ -29,8 +29,14 @@ on:
 env:
   CARGO_TERM_COLOR: always
   # Both package tools need the release binary; build once and reuse.
-  CARGO_DEB_VERSION: "2.6"
-  CARGO_GENERATE_RPM_VERSION: "0.14"
+  # Sprint-12 S12-0: bare two-component versions (`2.6` / `0.14`) are
+  # ambiguous to newer cargo and `cargo install --version 2.6` fails with
+  # "expected a version like '0.x.x'". Pinning to caret semver
+  # (`^2.6` / `^0.14`) keeps us on the same minor stream while satisfying
+  # the strict version qualifier expected by cargo >= 1.83. Regression
+  # first seen on the v1.8.1 release-packages workflow run.
+  CARGO_DEB_VERSION: "^2.6"
+  CARGO_GENERATE_RPM_VERSION: "^0.14"
 
 jobs:
   # ============================================================
