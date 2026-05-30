@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { AgentEvent, ContentBlock, Message } from '@xiaoguai/shared';
+import type {
+  AgentEvent,
+  ContentBlock,
+  HotlResolvedEvent,
+  Message,
+} from '@xiaoguai/shared';
 import { client } from './client';
 import { CitationStrip } from './citations';
 import { CopyButton } from './codeblock';
@@ -64,6 +69,14 @@ export function ChatPage({ onSessionCreated }: Props) {
   /** v1.3.x — non-null while an HotL escalation is pending for this session. */
   const [hotlPending, setHotlPending] = useState<HotlPendingState | null>(null);
   /**
+   * Sprint-12 S12-8 — latest matching `hotl_resolved` SSE event. Reduced
+   * by `applyEvent`; HotlBanner consumes it as the primary clear signal.
+   * Reset on session change or when HotlBanner reports cleared.
+   */
+  const [hotlResolved, setHotlResolved] = useState<HotlResolvedEvent | null>(
+    null,
+  );
+  /**
    * sprint-11 S11-2b — non-null while sendMessage is sleeping between
    * retries. Set by the onReconnect callback, cleared inside applyEvent on
    * the first event of the resumed stream.
@@ -79,6 +92,7 @@ export function ChatPage({ onSessionCreated }: Props) {
   useEffect(() => {
     setBubbles([]);
     setHotlPending(null);
+    setHotlResolved(null);
     setReconnect(null);
     setSessionId(routeId);
     if (!routeId) return;
@@ -134,7 +148,15 @@ export function ChatPage({ onSessionCreated }: Props) {
     abortRef.current = client.sendMessage(
       sid,
       { content: text },
-      (ev) => applyEvent(ev, setBubbles, setStatus, setHotlPending, setReconnect),
+      (ev) =>
+        applyEvent(
+          ev,
+          setBubbles,
+          setStatus,
+          setHotlPending,
+          setHotlResolved,
+          setReconnect,
+        ),
       (err) => {
         setStatus(`stream error: ${err.message}`);
         setStreaming(false);
@@ -154,6 +176,7 @@ export function ChatPage({ onSessionCreated }: Props) {
     update: typeof setBubbles,
     statusSetter: typeof setStatus,
     hotlSetter: typeof setHotlPending,
+    hotlResolvedSetter: typeof setHotlResolved,
     reconnectSetter: typeof setReconnect,
   ) {
     // Any incoming event = the stream has resumed; tear down the banner.
@@ -224,17 +247,22 @@ export function ChatPage({ onSessionCreated }: Props) {
         statusSetter(`agent error: ${ev.message}`);
         setStreaming(false);
         break;
-      // v1.3.x — HotL escalation events
+      // sprint-12 S12-8 — HotL suspend/resume events
       case 'hotl_pending':
         hotlSetter({
-          escalation_id: ev.escalation_id,
+          request_id: ev.request_id,
+          tool: ev.tool,
           scope: ev.scope,
-          reason: ev.reason,
+          args_redacted: ev.args_redacted,
+          expires_at: ev.expires_at,
         });
+        // Fresh pending — discard any stale resolved event from prior round.
+        hotlResolvedSetter(null);
         break;
       case 'hotl_resolved':
-        // Clear the banner once the operator resolves the escalation.
-        hotlSetter(null);
+        // Primary clear signal — HotlBanner reacts to this via its
+        // `resolved` prop and calls `onCleared()`. Per lld-chat-ui §4.3.2.
+        hotlResolvedSetter(ev);
         break;
       // v1.3.x — outcome recorded events are informational; no UI change needed here.
       case 'outcome_recorded':
@@ -265,23 +293,32 @@ export function ChatPage({ onSessionCreated }: Props) {
 
   return (
     <>
-      {/* v1.3.x — HotL escalation banner: non-dismissible, shown above messages.
-          sprint-11 S11-3b — inline Approve/Reject/Adjust wired to
-          POST /v1/hotl/decisions. The backend always returns `resumed:false`
-          (no suspend/resume layer in v1.8.x), so we clear the banner
-          optimistically on success — no `hotl_resolved` SSE event arrives. */}
+      {/* sprint-12 S12-8 — HotL suspend/resume banner: non-dismissible, shown
+          above messages. The PRIMARY clear signal is the matching
+          `hotl_resolved` SSE event reduced into `hotlResolved`; HotlBanner
+          subscribes to it via the `resolved` prop and calls `onCleared` to
+          unmount. A defensive 30 s fallback inside the banner covers the
+          SSE-interrupted case. See lld-chat-ui.md §4.3.2. */}
       {hotlPending && (
         <HotlBanner
           pending={hotlPending}
+          resolved={hotlResolved}
           decidedBy="chat-ui"
+          onCleared={() => {
+            setHotlPending(null);
+            setHotlResolved(null);
+          }}
           onDecision={async (verdict, raisePolicy) => {
             await client.submitHotlDecision({
-              request_id: hotlPending.escalation_id,
+              request_id: hotlPending.request_id,
               verdict,
               decided_by: 'chat-ui',
               raise_policy: raisePolicy,
             });
-            setHotlPending(null);
+            // Sprint-12: do NOT unmount the banner here. HotlBanner waits
+            // for the matching `hotl_resolved` SSE event (primary signal)
+            // or its internal 30 s defensive fallback (SSE-interrupted
+            // case) and then invokes `onCleared` above.
           }}
         />
       )}

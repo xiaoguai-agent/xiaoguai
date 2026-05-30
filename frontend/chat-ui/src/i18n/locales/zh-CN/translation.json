@@ -42,7 +42,9 @@
       "max_count_label": "最大调用次数",
       "max_usd_label": "最大花费（美元）",
       "rationale_label": "理由（必填）",
-      "review_link": "在审批队列中查看 →"
+      "review_link": "在审批队列中查看 →",
+      "timeout_annotation": "决定超时 — 工具调用被拒绝",
+      "conflict_toast": "另一位审核者已先做出决定 — 您的操作未被应用"
     }
   }
 }

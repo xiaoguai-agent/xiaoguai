@@ -42,7 +42,9 @@
       "max_count_label": "最大コール数",
       "max_usd_label": "最大支出（USD）",
       "rationale_label": "理由（必須）",
-      "review_link": "承認キューでレビュー →"
+      "review_link": "承認キューでレビュー →",
+      "timeout_annotation": "判定がタイムアウトしました — ツール呼び出しは拒否されました",
+      "conflict_toast": "他のレビュー担当者が先に判定しました — あなたの操作は反映されませんでした"
     }
   }
 }

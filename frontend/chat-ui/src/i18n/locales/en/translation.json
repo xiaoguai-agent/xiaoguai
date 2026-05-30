@@ -42,7 +42,9 @@
       "max_count_label": "Max calls",
       "max_usd_label": "Max spend (USD)",
       "rationale_label": "Rationale (required)",
-      "review_link": "Review in approval queue →"
+      "review_link": "Review in approval queue →",
+      "timeout_annotation": "Decision timed out — tool call denied",
+      "conflict_toast": "Another reviewer decided first — your action was not applied"
     }
   }
 }

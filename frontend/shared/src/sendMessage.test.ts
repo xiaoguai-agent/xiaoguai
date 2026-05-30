@@ -245,4 +245,114 @@ describe('XiaoguaiClient.sendMessage retry loop', () => {
     expect(events).toEqual([{ type: 'text_delta', delta: 'resumed' }]);
     expect(onError).not.toHaveBeenCalled();
   });
+
+  // ── sprint-12 S12-8 — hotl_pending / hotl_resolved SSE wire shapes ────────
+
+  it('parses hotl_pending SSE chunk with sprint-12 wire shape (request_id, tool, args_redacted, scope, expires_at)', async () => {
+    const events: AgentEvent[] = [];
+    const payload = {
+      type: 'hotl_pending',
+      request_id: '11111111-1111-1111-1111-111111111111',
+      tool: 'execute_python',
+      args_redacted: { code: '[redacted]' },
+      scope: 'tool_call.execute_python',
+      expires_at: '2026-05-31T08:12:34Z',
+    };
+    const chunk = `event: hotl_pending\ndata: ${JSON.stringify(payload)}\n\n`;
+    const fetchImpl = vi
+      .fn<(...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockResolvedValueOnce(sseResponse([chunk]));
+
+    const client = new XiaoguaiClient({
+      baseUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    client.sendMessage(
+      'sess1',
+      { content: 'hi' },
+      (ev) => events.push(ev),
+      () => {},
+    );
+
+    await flush();
+    await flush();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'hotl_pending',
+      request_id: '11111111-1111-1111-1111-111111111111',
+      tool: 'execute_python',
+      scope: 'tool_call.execute_python',
+      expires_at: '2026-05-31T08:12:34Z',
+    });
+  });
+
+  it('parses hotl_resolved SSE chunk with sprint-12 wire shape (request_id, verdict, decided_by, recorded_at)', async () => {
+    const events: AgentEvent[] = [];
+    const payload = {
+      type: 'hotl_resolved',
+      request_id: '22222222-2222-2222-2222-222222222222',
+      verdict: 'allow',
+      decided_by: 'ops@acme.com',
+      recorded_at: '2026-05-30T08:13:01Z',
+    };
+    const chunk = `event: hotl_resolved\ndata: ${JSON.stringify(payload)}\n\n`;
+    const fetchImpl = vi
+      .fn<(...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockResolvedValueOnce(sseResponse([chunk]));
+
+    const client = new XiaoguaiClient({
+      baseUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    client.sendMessage(
+      'sess1',
+      { content: 'hi' },
+      (ev) => events.push(ev),
+      () => {},
+    );
+
+    await flush();
+    await flush();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'hotl_resolved',
+      request_id: '22222222-2222-2222-2222-222222222222',
+      verdict: 'allow',
+      decided_by: 'ops@acme.com',
+      recorded_at: '2026-05-30T08:13:01Z',
+    });
+  });
+
+  it('parses hotl_resolved with verdict=timeout and null decided_by', async () => {
+    const events: AgentEvent[] = [];
+    const payload = {
+      type: 'hotl_resolved',
+      request_id: '33333333-3333-3333-3333-333333333333',
+      verdict: 'timeout',
+      decided_by: null,
+      recorded_at: '2026-05-31T08:13:01Z',
+    };
+    const chunk = `event: hotl_resolved\ndata: ${JSON.stringify(payload)}\n\n`;
+    const fetchImpl = vi
+      .fn<(...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockResolvedValueOnce(sseResponse([chunk]));
+
+    const client = new XiaoguaiClient({
+      baseUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    client.sendMessage(
+      'sess1',
+      { content: 'hi' },
+      (ev) => events.push(ev),
+      () => {},
+    );
+
+    await flush();
+    await flush();
+    expect(events).toHaveLength(1);
+    const ev = events[0] as Extract<AgentEvent, { type: 'hotl_resolved' }>;
+    expect(ev.verdict).toBe('timeout');
+    expect(ev.decided_by).toBeNull();
+  });
 });
