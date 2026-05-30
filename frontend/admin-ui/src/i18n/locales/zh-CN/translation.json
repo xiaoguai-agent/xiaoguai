@@ -189,6 +189,15 @@
       "col_action": "操作",
       "col_resource": "资源",
       "col_hmac": "HMAC（后 8 位）",
+      "col_chain_status": "链状态",
+      "chain_status_ok": "正常",
+      "chain_status_rotation": "已轮换",
+      "chain_status_broken": "断裂",
+      "chain_status_head": "起点",
+      "btn_export": "导出",
+      "btn_exporting": "导出中…",
+      "export_done": "导出已下载。",
+      "export_failed": "导出失败：{{message}}",
       "empty_for_tenant": "租户 {{tenant}} 暂无审计记录。"
     },
     "mcp_servers": {

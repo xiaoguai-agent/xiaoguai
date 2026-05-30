@@ -1,31 +1,18 @@
 /**
- * admin-ui Audit pane — HMAC chain badges + compliance export (S10b-8).
+ * admin-ui Audit pane — HMAC chain badges + compliance export (S10b-8 + S11-1c).
  *
- * Per LLD-ADMIN-UI-001 §4.2 and PR #74 (sprint-7 LLD-OBS-001), the Audit
- * pane is expected to:
- *   - Render a ChainBadge column visualising HMAC chain integrity.
- *   - Provide an "Export" button that POSTs /v1/audit/exports, then renders
- *     an SSE-driven progress indicator and finally a "Download ChainProof"
- *     link when the export completes.
+ * Per LLD-ADMIN-UI-001 §4.2 (sprint-11 amendment), the Audit pane:
+ *   - Renders a ChainBadge column visualising HMAC chain integrity, with
+ *     state derived client-side from adjacent-row HMAC comparison.
+ *   - Provides an "Export" button (gated by `<RequireScope name="audit.export">`)
+ *     that POSTs /v1/audit/exports and receives the binary export body
+ *     directly. There is no SSE progress phase — the backend returns a
+ *     single Content-Type-tagged response and the frontend synthesises an
+ *     anchor click to drive the browser download.
  *
- * Current state (base branch `feat/sprint10b-s10b-9-auth-ui`):
- *   - `frontend/admin-ui/src/panes/Audit.tsx` renders only id/ts/actor/action
- *     /resource/hmac columns (HMAC shown truncated, no badge component).
- *   - No "Export" button exists; no /v1/audit/exports client method exists
- *     in frontend/shared/src/index.ts.
- *
- * So the export-related cases are marked `test.fixme()` with a pointer to
- * the missing UI hooks. The rows-render and tenant-id-input checks DO run
- * against the existing pane (using mocked /v1/admin/audit) so this spec
- * still provides value today.
- *
- * Gap to close before the fixme'd cases can pass:
- *   1. Audit.tsx renders `<ChainBadge prev_hmac hmac />` per row.
- *   2. Audit.tsx renders an "Export" button (gated by RequireScope
- *      `audit.export`).
- *   3. `XiaoguaiClient.createAuditExport()` exists in shared/.
- *   4. Audit.tsx subscribes to the export progress SSE and renders a
- *      "Download ChainProof" anchor when state === "complete".
+ * sprint-11 S11-1c flipped the previous `test.fixme()` markers — both
+ * paths now exercise the wired implementation. The original mocked SSE
+ * progress endpoint was removed because the backend has no such route.
  */
 
 import { test, expect, type Page, type Route } from '@playwright/test';
@@ -122,59 +109,56 @@ test.describe('admin-ui Audit pane — rows render with HMAC column', () => {
   });
 });
 
-test.describe('admin-ui Audit pane — ChainBadge visualisation (fixme)', () => {
-  test.fixme(
-    true,
-    'ChainBadge column not yet rendered in Audit.tsx — needs UI hook to assert against. See spec header for the gap-close checklist.',
-  );
-
-  test('each row shows a ChainBadge', async ({ page }) => {
-    await installAuditMocks(page, [makeEntry(1), makeEntry(2)]);
+test.describe('admin-ui Audit pane — ChainBadge visualisation', () => {
+  test('each row shows a ChainBadge with the expected state', async ({ page }) => {
+    // Two well-chained rows so the second is `ok`, plus a third row whose
+    // prev_hmac is deliberately bogus to exercise the `broken` state.
+    const r1 = makeEntry(1);
+    const r2 = makeEntry(2);
+    const r3 = { ...makeEntry(3), prev_hmac: 'f'.repeat(64) };
+    await installAuditMocks(page, [r1, r2, r3]);
     await page.goto('/audit');
+    await expect(page.locator('[data-testid="chain-badge"]')).toHaveCount(3);
+    // Backend returns id ASC so row 1 (first rendered) is the chain head.
     await expect(
-      page.locator('[data-testid="chain-badge"]'),
-    ).toHaveCount(2);
+      page.locator('[data-testid="chain-badge"]').first(),
+    ).toHaveAttribute('data-state', 'head');
+    // Row 3 has a mismatched prev_hmac within the rotation window → broken.
+    await expect(
+      page.locator('[data-testid="chain-badge"]').last(),
+    ).toHaveAttribute('data-state', 'broken');
   });
 });
 
-test.describe('admin-ui Audit pane — compliance export (fixme)', () => {
-  test.fixme(
-    true,
-    'Export button + SSE progress + ChainProof download not yet wired into Audit.tsx — needs (a) <button>Export</button>, (b) XiaoguaiClient.createAuditExport(), (c) SSE consumer that flips to a "Download ChainProof" anchor on completion.',
-  );
-
-  test('Export → SSE progress → Download ChainProof link', async ({ page }) => {
+test.describe('admin-ui Audit pane — compliance export', () => {
+  test('Export → direct binary download', async ({ page }) => {
     await installAuditMocks(page, [makeEntry(1)]);
 
-    // Mock POST /v1/audit/exports → returns export id.
+    // Mock POST /v1/audit/exports → returns a binary body directly with a
+    // Content-Disposition header. Matches the actual backend contract: a
+    // single round-trip, no SSE progress phase. We send a minimal ZIP
+    // local-file-header signature ("PK\x03\x04…") so the response looks
+    // like a real archive to browser sniffers, but the bytes are arbitrary
+    // — the assertion is on filename, not payload content.
     await page.route('**/v1/audit/exports', async (route: Route) => {
-      if (route.request().method() === 'POST') {
-        await route.fulfill({
-          status: 202,
-          contentType: 'application/json',
-          body: JSON.stringify({ id: 'exp_e2e', status: 'pending' }),
-        });
+      if (route.request().method() !== 'POST') {
+        await route.continue();
         return;
       }
-      await route.continue();
-    });
-
-    // Mock SSE progress endpoint.
-    await page.route('**/v1/audit/exports/exp_e2e/events', async (route: Route) => {
-      const body =
-        'event: progress\ndata: {"pct":50}\n\n' +
-        'event: complete\ndata: {"url":"/v1/audit/exports/exp_e2e/download"}\n\n';
       await route.fulfill({
         status: 200,
-        contentType: 'text/event-stream',
-        body,
+        contentType: 'application/zip',
+        headers: {
+          'content-disposition': 'attachment; filename="audit.zip"',
+        },
+        body: Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00]),
       });
     });
 
     await page.goto('/audit');
-    await page.locator('button', { hasText: /export/i }).click();
-    await expect(
-      page.locator('a', { hasText: /download chainproof/i }),
-    ).toBeVisible({ timeout: 10_000 });
+    const downloadPromise = page.waitForEvent('download');
+    await page.locator('[data-testid="audit-export-btn"]').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe('audit.zip');
   });
 });
