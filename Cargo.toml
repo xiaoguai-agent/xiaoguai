@@ -135,7 +135,7 @@ redis = { version = "1.2", features = ["tokio-comp", "connection-manager"] }
 # auth / crypto
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 casbin = { version = "2.5", default-features = false, features = ["runtime-tokio", "incremental"] }
-age = "0.10"
+age = "0.11"
 ring = "0.17"
 base64 = "0.22"
 hex = "0.4"
