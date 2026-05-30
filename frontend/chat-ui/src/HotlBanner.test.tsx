@@ -2,23 +2,28 @@
  * HotlBanner — unit tests.
  *
  * Covers:
- *  - Renders with scope, reason, and escalation link when `pending` is supplied.
+ *  - Renders with scope and queue link when `pending` is supplied.
  *  - Banner has `role="alert"` (non-dismissible, screen-reader accessible).
- *  - Operator queue link encodes the escalation_id correctly.
- *  - Reason paragraph is omitted when `reason` is an empty string.
+ *  - Operator queue link encodes the `request_id` correctly.
  *  - sprint-11 S11-3b inline decision flow (5 cases): Approve, Reject,
  *    Adjust validation, Submitting state, Error state.
+ *  - sprint-12 S12-8 state machine (5 new cases): primary clear via
+ *    `hotl_resolved` SSE, defensive 30s fallback, timeout-verdict
+ *    annotation, sibling-tab conflict, fallback timer cancellation.
  */
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HotlBanner } from './HotlBanner';
 import type { HotlPendingState } from './HotlBanner';
+import type { HotlResolvedEvent } from '@xiaoguai/shared';
 
 const base: HotlPendingState = {
-  escalation_id: 'esc-abc-123',
-  scope: 'fs_write',
-  reason: 'Policy rule: no filesystem writes outside /tmp.',
+  request_id: 'req-abc-123',
+  tool: 'fs_write',
+  scope: 'tool_call.fs_write',
+  args_redacted: { path: '/tmp/x' },
+  expires_at: '2026-05-31T08:12:34Z',
 };
 
 describe('HotlBanner', () => {
@@ -29,35 +34,18 @@ describe('HotlBanner', () => {
     expect(screen.getByText('Human approval required')).toBeInTheDocument();
     // The scope is interpolated into the localized template.
     expect(
-      screen.getByText(/The action fs_write has been paused/),
+      screen.getByText(/The action tool_call.fs_write has been paused/),
     ).toBeInTheDocument();
   });
 
-  it('renders the reason text', () => {
-    render(<HotlBanner pending={base} />);
-
-    expect(
-      screen.getByText('Policy rule: no filesystem writes outside /tmp.'),
-    ).toBeInTheDocument();
-  });
-
-  it('omits the reason paragraph when reason is empty', () => {
-    const noBanner = { ...base, reason: '' };
-    render(<HotlBanner pending={noBanner} />);
-
-    expect(
-      screen.queryByText('Policy rule: no filesystem writes outside /tmp.'),
-    ).toBeNull();
-  });
-
-  it('renders a link to the operator approval queue with encoded escalation_id', () => {
+  it('renders a link to the operator approval queue with encoded request_id', () => {
     render(<HotlBanner pending={base} />);
 
     const link = screen.getByRole('link', { name: /open operator approval queue/i });
     expect(link).toBeInTheDocument();
     expect(link).toHaveAttribute(
       'href',
-      '/hotl-queue?escalation_id=esc-abc-123',
+      '/hotl-queue?request_id=req-abc-123',
     );
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
@@ -69,16 +57,16 @@ describe('HotlBanner', () => {
     const link = screen.getByRole('link', { name: /open operator approval queue/i });
     expect(link).toHaveAttribute(
       'href',
-      'https://admin.example.com/hotl-queue?escalation_id=esc-abc-123',
+      'https://admin.example.com/hotl-queue?request_id=req-abc-123',
     );
   });
 
-  it('encodes special characters in escalation_id', () => {
-    const specialId: HotlPendingState = { ...base, escalation_id: 'esc a+b=c&d' };
+  it('encodes special characters in request_id', () => {
+    const specialId: HotlPendingState = { ...base, request_id: 'req a+b=c&d' };
     render(<HotlBanner pending={specialId} />);
 
     const link = screen.getByRole('link', { name: /open operator approval queue/i });
-    expect(link.getAttribute('href')).toContain('esc%20a%2Bb%3Dc%26d');
+    expect(link.getAttribute('href')).toContain('req%20a%2Bb%3Dc%26d');
   });
 
   it('does not render inline buttons when onDecision is not provided', () => {
@@ -113,8 +101,6 @@ describe('HotlBanner', () => {
     render(<HotlBanner pending={base} onDecision={onDecision} />);
 
     fireEvent.click(screen.getByTestId('hotl-banner-adjust'));
-    // Sub-panel is now open. Fill max_count to satisfy "at least one budget"
-    // but leave rationale empty to trigger the validation error.
     const maxCountInput = screen.getByLabelText(/Max calls/);
     fireEvent.change(maxCountInput, { target: { value: '5' } });
 
@@ -163,5 +149,186 @@ describe('HotlBanner', () => {
     });
     expect(screen.getByTestId('hotl-banner-approve')).not.toBeDisabled();
     expect(screen.getByTestId('hotl-banner-reject')).not.toBeDisabled();
+  });
+
+  // ── sprint-12 S12-8 — SSE-primary clear + 30s defensive fallback ────────
+
+  describe('sprint-12 S12-8 — hotl_resolved primary clear', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** Build a resolved event matching the base pending request_id. */
+    function resolvedEvent(
+      overrides: Partial<HotlResolvedEvent> = {},
+    ): HotlResolvedEvent {
+      return {
+        type: 'hotl_resolved',
+        request_id: base.request_id,
+        verdict: 'allow',
+        decided_by: 'ops@acme.com',
+        recorded_at: '2026-05-30T08:13:01Z',
+        ...overrides,
+      };
+    }
+
+    it('primary_clear_via_hotl_resolved_sse: matching SSE clears the banner immediately', async () => {
+      const onCleared = vi.fn();
+      const { rerender } = render(
+        <HotlBanner pending={base} resolved={null} onCleared={onCleared} />,
+      );
+
+      // Re-render with a matching resolved event — primary clear path.
+      rerender(
+        <HotlBanner pending={base} resolved={resolvedEvent()} onCleared={onCleared} />,
+      );
+
+      await waitFor(() => expect(onCleared).toHaveBeenCalledTimes(1));
+    });
+
+    it('defensive_fallback_fires_at_30s_when_sse_silent: 30s timer clears after local submit when SSE never arrives', async () => {
+      const onCleared = vi.fn();
+      const onDecision = vi.fn().mockResolvedValue(undefined);
+      render(
+        <HotlBanner
+          pending={base}
+          resolved={null}
+          onCleared={onCleared}
+          onDecision={onDecision}
+          decidedBy="alice@acme.com"
+        />,
+      );
+
+      // User clicks Approve — local submit succeeds, no SSE event arrives.
+      fireEvent.click(screen.getByTestId('hotl-banner-approve'));
+      await waitFor(() => expect(onDecision).toHaveBeenCalledTimes(1));
+
+      // Less than 30s: fallback NOT fired.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(29_000);
+      });
+      expect(onCleared).not.toHaveBeenCalled();
+
+      // Cross the 30s threshold: fallback fires.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(onCleared).toHaveBeenCalledTimes(1);
+    });
+
+    it('timeout_verdict_shows_annotation_for_3s before clearing', async () => {
+      const onCleared = vi.fn();
+      const { rerender } = render(
+        <HotlBanner pending={base} resolved={null} onCleared={onCleared} />,
+      );
+
+      // Re-render with timeout verdict — annotation appears, banner not yet cleared.
+      rerender(
+        <HotlBanner
+          pending={base}
+          resolved={resolvedEvent({ verdict: 'timeout', decided_by: null })}
+          onCleared={onCleared}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/Decision timed out — tool call denied/),
+        ).toBeInTheDocument();
+      });
+      // Annotation visible, not yet cleared.
+      expect(onCleared).not.toHaveBeenCalled();
+
+      // Advance 3s — annotation drives clear.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_100);
+      });
+      expect(onCleared).toHaveBeenCalledTimes(1);
+    });
+
+    it('sibling_tab_conflict_reverts_local_state when decided_by differs from local actor', async () => {
+      const onCleared = vi.fn();
+      const onDecision = vi.fn().mockResolvedValue(undefined);
+      const { rerender } = render(
+        <HotlBanner
+          pending={base}
+          resolved={null}
+          onCleared={onCleared}
+          onDecision={onDecision}
+          decidedBy="alice@acme.com"
+        />,
+      );
+
+      // Alice clicks Approve — local submit succeeds, banner enters submitting state.
+      fireEvent.click(screen.getByTestId('hotl-banner-approve'));
+      await waitFor(() => expect(onDecision).toHaveBeenCalledTimes(1));
+
+      // SSE then arrives with a DIFFERENT decided_by — sibling tab raced ahead.
+      rerender(
+        <HotlBanner
+          pending={base}
+          resolved={resolvedEvent({ decided_by: 'bob@acme.com' })}
+          onCleared={onCleared}
+          onDecision={onDecision}
+          decidedBy="alice@acme.com"
+        />,
+      );
+
+      // Conflict toast surfaces.
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('hotl-banner-conflict-toast'),
+        ).toBeInTheDocument();
+      });
+      // Local submitting state reverted (no longer disabled).
+      expect(screen.getByTestId('hotl-banner-approve')).not.toBeDisabled();
+      // Banner clears via SSE.
+      await waitFor(() => expect(onCleared).toHaveBeenCalledTimes(1));
+    });
+
+    it('sse_resolved_cancels_pending_fallback_timer: only one onCleared call', async () => {
+      const onCleared = vi.fn();
+      const onDecision = vi.fn().mockResolvedValue(undefined);
+      const { rerender } = render(
+        <HotlBanner
+          pending={base}
+          resolved={null}
+          onCleared={onCleared}
+          onDecision={onDecision}
+          decidedBy="alice@acme.com"
+        />,
+      );
+
+      // Click Approve — fallback timer is now ticking.
+      fireEvent.click(screen.getByTestId('hotl-banner-approve'));
+      await waitFor(() => expect(onDecision).toHaveBeenCalledTimes(1));
+
+      // Advance to just before the 30s threshold.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      expect(onCleared).not.toHaveBeenCalled();
+
+      // SSE arrives — primary clear, fallback must be cancelled.
+      rerender(
+        <HotlBanner
+          pending={base}
+          resolved={resolvedEvent({ decided_by: 'alice@acme.com' })}
+          onCleared={onCleared}
+          onDecision={onDecision}
+          decidedBy="alice@acme.com"
+        />,
+      );
+      await waitFor(() => expect(onCleared).toHaveBeenCalledTimes(1));
+
+      // Advance past 30s total — fallback must NOT fire a second time.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      expect(onCleared).toHaveBeenCalledTimes(1);
+    });
   });
 });
