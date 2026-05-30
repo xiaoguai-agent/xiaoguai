@@ -3,11 +3,25 @@
 //!
 //! Records a human verdict (`allow` / `deny`) against an escalated HOTL
 //! request and optionally creates a follow-up `HotlPolicy` in the same
-//! request ("Approve & remember" UX). The handler does NOT resume any
-//! agent loop — the loop does not yet suspend on `Escalate` (see
-//! `crates/xiaoguai-api/src/hotl/enforcer.rs:48-51`). The response's
-//! `resumed` field is therefore always `false`; it stays in the wire
-//! schema as the seam for the full suspend/resume work (sprint-12+).
+//! request ("Approve & remember" UX).
+//!
+//! ## `resumed` flag (sprint-12 S12-6)
+//!
+//! The handler also wakes any parked agent loop registered against the
+//! same `request_id` on the [`crate::hotl::decision_registry::DecisionRegistry`].
+//! The response's `resumed: bool` is the return value of
+//! `DecisionRegistry::resolve`:
+//!
+//! * `true`  — a `SuspendingHotlGate` (S12-4) had parked a loop on this
+//!   request_id; it is now released with the operator's verdict.
+//! * `false` — no live waiter existed (legacy `EnforcerGate` path that
+//!   never suspends, OR the ticket already timed out / was cancelled).
+//!
+//! Ordering: the decision row is persisted **before** the registry
+//! resolve, so a registry-side crash never loses the operator's audit
+//! trail. The registry op is a single in-memory `DashMap::remove +
+//! oneshot::Sender::send`; in practice it cannot panic on a `resolve`
+//! call (per S12-3 unit tests), but the ordering rule is the safety net.
 //!
 //! ## Tenant identity
 //!
@@ -48,6 +62,9 @@ use uuid::Uuid;
 use crate::auth::Claims;
 use crate::error::{ApiError, ApiResult};
 use crate::hotl::decision::{HotlDecisionRecord, HotlDecisionStoreError, HotlDecisionVerdict};
+use crate::hotl::decision_registry::{
+    HotlDecisionVerdict as RegistryDecisionVerdict, HotlResolution,
+};
 use crate::hotl::policy::{CreateHotlPolicyRequest, HotlPolicy};
 use crate::routes::hotl::map_store_err as map_policy_err;
 use crate::state::AppState;
@@ -97,9 +114,10 @@ pub struct HotlDecisionResponse {
     pub request_id: Uuid,
     pub verdict: HotlDecisionVerdict,
     pub recorded_at: DateTime<Utc>,
-    /// 3a.1 invariant: always `false`. Reserved for the future
-    /// `SuspendingHotlGate` work — leave it on the wire so chat-ui can
-    /// rely on a stable contract.
+    /// `true` when a live waiter on `DecisionRegistry` was woken by this
+    /// decision (sprint-12 S12-6); `false` when no waiter existed — either
+    /// the legacy non-suspending `EnforcerGate` path, or a ticket that
+    /// already timed out / was cancelled before the operator decided.
     pub resumed: bool,
     /// `Some(policy)` when `raise_policy` was present and the follow-up
     /// `HotlPolicy::create` succeeded.
@@ -107,14 +125,16 @@ pub struct HotlDecisionResponse {
     pub policy_created: Option<HotlPolicy>,
 }
 
-impl From<HotlDecisionRecord> for HotlDecisionResponse {
-    fn from(r: HotlDecisionRecord) -> Self {
+impl HotlDecisionResponse {
+    /// Build a response from the persisted decision row plus the live
+    /// `resumed` flag returned by [`crate::hotl::decision_registry::DecisionRegistry::resolve`].
+    fn from_record(r: HotlDecisionRecord, resumed: bool) -> Self {
         Self {
             id: r.id,
             request_id: r.request_id,
             verdict: r.verdict,
             recorded_at: r.recorded_at,
-            resumed: false,
+            resumed,
             policy_created: None,
         }
     }
@@ -241,8 +261,33 @@ pub async fn create_decision(
         let _ = sink.append(entry).await;
     }
 
-    // ── 7. Build the response ───────────────────────────────────────────────
-    let mut resp = HotlDecisionResponse::from(initial_record);
+    // ── 7. Wake the parked agent loop (S12-6) ───────────────────────────────
+    //
+    // Runs AFTER the persist + raise_policy + audit-log steps so that a
+    // hypothetical registry-side panic cannot lose the operator's audit
+    // trail. `resolve` is a single `DashMap::remove` + `oneshot::send` and
+    // returns `false` when no waiter exists (legacy `EnforcerGate` path or
+    // already-timed-out ticket).
+    let resolution = match req.verdict {
+        HotlDecisionVerdict::Allow => HotlResolution::Allow,
+        // Deny carries no operator-supplied reason in the current wire
+        // contract (sprint-11 schema). The synthetic ToolResult the loop
+        // builds for the LLM is keyed off the verdict tag, not free text;
+        // a future sprint can add `deny_reason` to the request body and
+        // surface it here.
+        HotlDecisionVerdict::Deny => HotlResolution::Deny(String::new()),
+    };
+    let registry_verdict = RegistryDecisionVerdict {
+        verdict: resolution,
+        decided_by: Some(req.decided_by.clone()),
+        recorded_at: Utc::now(),
+    };
+    let resumed = state
+        .decision_registry
+        .resolve(req.request_id, registry_verdict);
+
+    // ── 8. Build the response ───────────────────────────────────────────────
+    let mut resp = HotlDecisionResponse::from_record(initial_record, resumed);
     resp.policy_created = policy_created;
 
     Ok((StatusCode::CREATED, Json(resp)))
@@ -292,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn response_resumed_field_defaults_false() {
+    fn response_from_record_passes_through_resumed_flag() {
         let rec = HotlDecisionRecord {
             id: Uuid::new_v4(),
             request_id: Uuid::new_v4(),
@@ -302,8 +347,10 @@ mod tests {
             raised_policy_id: None,
             recorded_at: Utc::now(),
         };
-        let resp = HotlDecisionResponse::from(rec);
-        assert!(!resp.resumed);
-        assert!(resp.policy_created.is_none());
+        let off = HotlDecisionResponse::from_record(rec.clone(), false);
+        assert!(!off.resumed);
+        assert!(off.policy_created.is_none());
+        let on = HotlDecisionResponse::from_record(rec, true);
+        assert!(on.resumed);
     }
 }
