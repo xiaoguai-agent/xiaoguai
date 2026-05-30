@@ -214,6 +214,15 @@ pub struct HotlSuspensionTicket {
 }
 
 impl HotlSuspensionTicket {
+    /// Sprint-12 (S12-5). Read-only accessor for the deadline. The loop
+    /// needs this BEFORE consuming the ticket via `await_decision` so it
+    /// can derive the `expires_at: DateTime<Utc>` field of the
+    /// `AgentEvent::HotlPending` it emits to SSE clients.
+    #[must_use]
+    pub fn expires_at(&self) -> Instant {
+        self.expires_at
+    }
+
     /// Sprint-12 (S12-3 calls this). Constructs a ticket together with
     /// its paired sender. The registry stores `sender` keyed by
     /// `request_id` and hands the ticket back to the gate, which embeds
