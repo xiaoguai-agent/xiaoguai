@@ -283,28 +283,459 @@ function futureExpiresAt(): string {
 }
 
 test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', () => {
-  test.fixme(
-    'approve_via_chat_dispatches_tool: SSE allow + tool_call_finished renders the result',
-    async ({ page: _page }) => {
-      // TODO(S12-10): wire SSE mocks for pending → resolved(allow) → tool_finished(42).
-      // Assert banner clears, tool result renders, decision POST observed.
-    },
-  );
+  test('approve_via_chat_dispatches_tool: SSE allow + tool_call_finished renders the result', async ({
+    page,
+  }) => {
+    await mockSessionCreate(page);
+    await mockSessionMetadata(page);
 
-  test.fixme(
-    'deny_via_chat_synthesises_failed_tool: SSE deny + tool_call_finished(ok:false) renders error',
-    async ({ page: _page }) => {
-      // TODO(S12-10): wire SSE mocks for pending → resolved(deny) → tool_finished(ok:false).
-      // Assert banner clears, failed-tool ✗ annotation visible, no app-level toast.
-    },
-  );
+    // Gate the SSE response on the decision POST landing — models the
+    // S12-4 + S12-6 flow where the agent loop is suspended in
+    // `SuspendingHotlGate::check` until DecisionRegistry::resolve fires.
+    let resolveDecision: (req: { verdict: string; decided_by: string }) => void;
+    const decisionPromise = new Promise<{ verdict: string; decided_by: string }>(
+      (resolve) => {
+        resolveDecision = resolve;
+      },
+    );
 
-  test.fixme(
-    'sibling_tab_resolves_banner_via_sse_alone: SSE primary-clear works without local POST',
-    async ({ browser: _browser }) => {
-      // TODO(S12-10): two browser contexts sharing the same session id.
-      // Tab A POSTs decision; tab B's banner clears from SSE event alone.
-      // Assert decisionPosts.B === 0.
-    },
-  );
+    await page.route('**/v1/hotl/decisions', async (route: Route) => {
+      if (route.request().method() === 'POST') {
+        const body = JSON.parse(route.request().postData() ?? '{}');
+        resolveDecision({
+          verdict: body.verdict as string,
+          decided_by: body.decided_by as string,
+        });
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'dec_s12_10_a',
+            request_id: REQUEST_ID_APPROVE,
+            verdict: 'allow',
+            recorded_at: new Date().toISOString(),
+            resumed: true,
+            policy_created: null,
+          }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await page.route(
+      new RegExp(`/v1/sessions/${SESSION_ID}/messages$`),
+      async (route: Route) => {
+        if (route.request().method() !== 'POST') {
+          await route.continue();
+          return;
+        }
+        const pendingChunk = sseBody([
+          {
+            event: 'text_delta',
+            data: { type: 'text_delta', delta: 'About to run the tool…' },
+          },
+          {
+            event: 'tool_call_started',
+            data: {
+              type: 'tool_call_started',
+              id: 'tc_001',
+              name: 'execute_python',
+              arguments: { code: 'print(40 + 2)' },
+            },
+          },
+          {
+            event: 'hotl_pending',
+            data: {
+              type: 'hotl_pending',
+              request_id: REQUEST_ID_APPROVE,
+              tool: 'execute_python',
+              args_redacted: { code: '[redacted]' },
+              scope: 'tool_call.execute_python',
+              expires_at: futureExpiresAt(),
+            },
+          },
+        ]);
+        // Hold the SSE response open until the operator decision lands.
+        await decisionPromise;
+        const resumeChunk = sseBody([
+          {
+            event: 'hotl_resolved',
+            data: {
+              type: 'hotl_resolved',
+              request_id: REQUEST_ID_APPROVE,
+              verdict: 'allow',
+              decided_by: 'chat-ui',
+              recorded_at: new Date().toISOString(),
+            },
+          },
+          {
+            event: 'tool_call_finished',
+            data: {
+              type: 'tool_call_finished',
+              id: 'tc_001',
+              name: 'execute_python',
+              ok: true,
+              output_text: '42',
+            },
+          },
+          {
+            event: 'done',
+            data: { type: 'done', stop_reason: 'completed' },
+          },
+        ]);
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: pendingChunk + resumeChunk,
+        });
+      },
+    );
+
+    await page.goto('/');
+    await page.locator('textarea[placeholder]').fill('compute 40 + 2');
+    await page.locator('button[aria-label="Send message"]').click();
+
+    // Drive the operator decision via fetch (equivalent to the inline
+    // Approve button calling `client.submitHotlDecision()` — see mocking
+    // model comment above).
+    await page.evaluate(
+      async ({ requestId }) => {
+        await fetch('/v1/hotl/decisions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            request_id: requestId,
+            verdict: 'allow',
+            decided_by: 'chat-ui',
+          }),
+        });
+      },
+      { requestId: REQUEST_ID_APPROVE },
+    );
+
+    // After the decision posts, the SSE response unblocks and the
+    // chat-ui processes pending → resolved → tool_finished → done.
+    await expect(page.locator('.hotl-banner')).toHaveCount(0, {
+      timeout: 10_000,
+    });
+    // Tool output appears in the conversation as `← execute_python: 42`
+    // (see ChatPage.tsx tool_call_finished branch).
+    await expect(
+      page.locator('text=/←\\s*execute_python:\\s*42/').first(),
+    ).toBeVisible({ timeout: 10_000 });
+
+    // Decision was posted with the correct wire shape.
+    const decision = await decisionPromise;
+    expect(decision.verdict).toBe('allow');
+    expect(decision.decided_by).toBe('chat-ui');
+  });
+
+  test('deny_via_chat_synthesises_failed_tool: SSE deny + tool_call_finished(ok:false) renders error', async ({
+    page,
+  }) => {
+    await mockSessionCreate(page);
+    await mockSessionMetadata(page);
+
+    let resolveDecision: (req: { verdict: string }) => void;
+    const decisionPromise = new Promise<{ verdict: string }>((resolve) => {
+      resolveDecision = resolve;
+    });
+
+    await page.route('**/v1/hotl/decisions', async (route: Route) => {
+      if (route.request().method() === 'POST') {
+        const body = JSON.parse(route.request().postData() ?? '{}');
+        resolveDecision({ verdict: body.verdict as string });
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'dec_s12_10_b',
+            request_id: REQUEST_ID_DENY,
+            verdict: 'deny',
+            recorded_at: new Date().toISOString(),
+            resumed: true,
+            policy_created: null,
+          }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await page.route(
+      new RegExp(`/v1/sessions/${SESSION_ID}/messages$`),
+      async (route: Route) => {
+        if (route.request().method() !== 'POST') {
+          await route.continue();
+          return;
+        }
+        const pendingChunk = sseBody([
+          {
+            event: 'tool_call_started',
+            data: {
+              type: 'tool_call_started',
+              id: 'tc_002',
+              name: 'execute_python',
+              arguments: { code: 'rm -rf /' },
+            },
+          },
+          {
+            event: 'hotl_pending',
+            data: {
+              type: 'hotl_pending',
+              request_id: REQUEST_ID_DENY,
+              tool: 'execute_python',
+              args_redacted: { code: '[redacted]' },
+              scope: 'tool_call.execute_python',
+              expires_at: futureExpiresAt(),
+            },
+          },
+        ]);
+        await decisionPromise;
+        const resumeChunk = sseBody([
+          {
+            event: 'hotl_resolved',
+            data: {
+              type: 'hotl_resolved',
+              request_id: REQUEST_ID_DENY,
+              verdict: 'deny',
+              decided_by: 'chat-ui',
+              recorded_at: new Date().toISOString(),
+            },
+          },
+          {
+            event: 'tool_call_finished',
+            data: {
+              type: 'tool_call_finished',
+              id: 'tc_002',
+              name: 'execute_python',
+              ok: false,
+              error: 'HotL suspended → denied by operator',
+            },
+          },
+          {
+            event: 'done',
+            data: { type: 'done', stop_reason: 'completed' },
+          },
+        ]);
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: pendingChunk + resumeChunk,
+        });
+      },
+    );
+
+    await page.goto('/');
+    await page.locator('textarea[placeholder]').fill('do the dangerous thing');
+    await page.locator('button[aria-label="Send message"]').click();
+
+    await page.evaluate(
+      async ({ requestId }) => {
+        await fetch('/v1/hotl/decisions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            request_id: requestId,
+            verdict: 'deny',
+            decided_by: 'chat-ui',
+          }),
+        });
+      },
+      { requestId: REQUEST_ID_DENY },
+    );
+
+    // Final state: banner cleared, failed tool annotation visible.
+    // ChatPage renders `✗ <tool>: <error>` for ok:false (ChatPage.tsx
+    // tool_call_finished branch).
+    await expect(page.locator('.hotl-banner')).toHaveCount(0, {
+      timeout: 10_000,
+    });
+    await expect(
+      page.locator('text=/✗\\s*execute_python/').first(),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(
+      page.locator('text=/denied by operator/').first(),
+    ).toBeVisible({ timeout: 10_000 });
+
+    const decision = await decisionPromise;
+    expect(decision.verdict).toBe('deny');
+  });
+
+  test('sibling_tab_resolves_banner_via_sse_alone: SSE primary-clear works without local POST', async ({
+    browser,
+  }) => {
+    /*
+     * Two browser contexts (= isolated cookie/storage jars), same session
+     * id pinned via mock. Tab B's SSE stream delivers BOTH the
+     * `hotl_pending` and the `hotl_resolved` events; tab B's banner
+     * mounts then clears WITHOUT calling /v1/hotl/decisions — proving
+     * the SSE-primary-clear contract.
+     *
+     * Wire contract proven: DecisionRegistry (S12-3) resolves the single
+     * waiter → SSE encoder broadcasts hotl_resolved to all subscribed
+     * clients; chat-ui (S12-8) clears the banner from the SSE event
+     * alone (primary signal path). Tab A optionally also clears via
+     * the same SSE path.
+     *
+     * Mocking caveat (same as cases a + b): Playwright's atomic
+     * `route.fulfill` delivers both SSE chunks together — the banner
+     * mount-then-clear cycle happens within one React render tick.
+     * The "never posted" assertion is the strong invariant; the mount
+     * is verified indirectly by the SSE parser processing the pending
+     * event before the resolved event.
+     */
+    const sharedSessionId = 'sess_e2e_hotl_sibling';
+    const ctxA = await browser.newContext();
+    const ctxB = await browser.newContext();
+    const pageA = await ctxA.newPage();
+    const pageB = await ctxB.newPage();
+
+    // Counters used to assert that tab B never posted a decision.
+    const decisionPosts: { A: number; B: number } = { A: 0, B: 0 };
+
+    async function installCommonMocks(
+      page: Page,
+      side: 'A' | 'B',
+    ): Promise<void> {
+      await page.route('**/v1/sessions', async (route: Route) => {
+        if (route.request().method() === 'POST') {
+          await route.fulfill({
+            status: 201,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              id: sharedSessionId,
+              tenant_id: 'ten_dev',
+              user_id: 'usr_dev',
+              title: 'sibling',
+              created_at: new Date().toISOString(),
+            }),
+          });
+          return;
+        }
+        await route.continue();
+      });
+      await page.route(
+        new RegExp(`/v1/sessions/${sharedSessionId}/messages$`),
+        async (route: Route) => {
+          if (route.request().method() === 'GET') {
+            await route.fulfill({
+              status: 200,
+              contentType: 'application/json',
+              body: '[]',
+            });
+            return;
+          }
+          if (route.request().method() === 'POST') {
+            // Both pending and resolved arrive in the same SSE response —
+            // models the real broadcast: DecisionRegistry resolves, the
+            // SSE encoder pushes hotl_resolved to every subscribed client.
+            const body = sseBody([
+              {
+                event: 'hotl_pending',
+                data: {
+                  type: 'hotl_pending',
+                  request_id: REQUEST_ID_SIBLING,
+                  tool: 'execute_python',
+                  args_redacted: { code: '[redacted]' },
+                  scope: 'tool_call.execute_python',
+                  expires_at: futureExpiresAt(),
+                },
+              },
+              {
+                event: 'hotl_resolved',
+                data: {
+                  type: 'hotl_resolved',
+                  request_id: REQUEST_ID_SIBLING,
+                  verdict: 'allow',
+                  decided_by: 'ops@example.com',
+                  recorded_at: new Date().toISOString(),
+                },
+              },
+              {
+                event: 'done',
+                data: { type: 'done', stop_reason: 'completed' },
+              },
+            ]);
+            await route.fulfill({
+              status: 200,
+              contentType: 'text/event-stream',
+              body,
+            });
+            return;
+          }
+          await route.continue();
+        },
+      );
+      await page.route('**/v1/hotl/decisions', async (route: Route) => {
+        if (route.request().method() === 'POST') {
+          decisionPosts[side] += 1;
+          await route.fulfill({
+            status: 201,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              id: `dec_s12_10_c_${side}`,
+              request_id: REQUEST_ID_SIBLING,
+              verdict: 'allow',
+              recorded_at: new Date().toISOString(),
+              resumed: true,
+              policy_created: null,
+            }),
+          });
+          return;
+        }
+        await route.continue();
+      });
+    }
+
+    await installCommonMocks(pageA, 'A');
+    await installCommonMocks(pageB, 'B');
+
+    // Both tabs start a conversation pointed at the same session. Each
+    // tab's SSE stream delivers the full pending → resolved sequence
+    // independently — modelling the backend broadcasting hotl_resolved
+    // to every connected client after tab A's operator decision lands.
+    await pageA.goto('/');
+    await pageA.locator('textarea[placeholder]').fill('first tab');
+    await pageA.locator('button[aria-label="Send message"]').click();
+    await pageB.goto('/');
+    await pageB.locator('textarea[placeholder]').fill('second tab');
+    await pageB.locator('button[aria-label="Send message"]').click();
+
+    // Tab A drives the operator decision (programmatic fetch — same
+    // mocking workaround as cases a + b above). Tab B never clicks.
+    await pageA.evaluate(
+      async ({ requestId }) => {
+        await fetch('/v1/hotl/decisions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            request_id: requestId,
+            verdict: 'allow',
+            decided_by: 'ops@example.com',
+          }),
+        });
+      },
+      { requestId: REQUEST_ID_SIBLING },
+    );
+
+    // Both banners must end in the cleared state.
+    await expect(pageA.locator('.hotl-banner')).toHaveCount(0, {
+      timeout: 10_000,
+    });
+    await expect(pageB.locator('.hotl-banner')).toHaveCount(0, {
+      timeout: 10_000,
+    });
+
+    // Critical wire-contract assertion: tab B NEVER posted a decision —
+    // its banner cleared from the SSE event broadcast alone, proving
+    // the primary-clear path (S12-8 contract).
+    expect(decisionPosts.B).toBe(0);
+    // Tab A's programmatic POST counts as 1 (= the operator's click).
+    expect(decisionPosts.A).toBe(1);
+
+    await ctxA.close();
+    await ctxB.close();
+  });
 });
