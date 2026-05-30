@@ -200,7 +200,9 @@ impl WorkerAgent {
                     AgentEvent::IterationCompleted { .. }
                     | AgentEvent::Done { .. }
                     | AgentEvent::ToolCallStarted { .. }
-                    | AgentEvent::ToolCallFinished { .. } => {}
+                    | AgentEvent::ToolCallFinished { .. }
+                    | AgentEvent::HotlPending { .. }
+                    | AgentEvent::HotlResolved { .. } => {}
                 }
             }
 
