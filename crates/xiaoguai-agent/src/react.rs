@@ -445,13 +445,33 @@ async fn dispatch_tools(
             if let (Some(gate), Some(tid)) = (gate.as_ref(), tenant_uuid) {
                 let scope = format!("tool_call.{name}");
                 let verdict = gate.check(tid, &scope, 1.0).await;
-                if let HotlGateVerdict::Deny(reason) = verdict {
-                    let outcome = ToolDispatchOutcome {
-                        ok: false,
-                        output_text: String::new(),
-                        error: Some(format!("HOTL gate denied tool '{name}': {reason}")),
-                    };
-                    return (id, name, outcome);
+                match verdict {
+                    HotlGateVerdict::Allow => {}
+                    HotlGateVerdict::Deny(reason) => {
+                        let outcome = ToolDispatchOutcome {
+                            ok: false,
+                            output_text: String::new(),
+                            error: Some(format!("HOTL gate denied tool '{name}': {reason}")),
+                        };
+                        return (id, name, outcome);
+                    }
+                    HotlGateVerdict::Suspend { .. } => {
+                        // Sprint-12 (S12-1): placeholder for the suspend arm.
+                        // This branch is unreachable in v1.8.x — `EnforcerGate`
+                        // (the only gate plugged into `run_serve` today) never
+                        // emits `Suspend`. The variant exists so that S12-4's
+                        // `SuspendingHotlGate` can be wired in next, and S12-5
+                        // will REPLACE this arm with the real suspend handling
+                        // (emit `AgentEvent::HotlPending`, await the ticket,
+                        // emit `AgentEvent::HotlResolved`, then fall through
+                        // or synthesise a denial). See plan §1 row S12-5.
+                        unreachable!(
+                            "HotlGateVerdict::Suspend requires SuspendingHotlGate \
+                             (sprint-12 S12-4); not enabled in this build path. \
+                             S12-5 will replace this unreachable arm with the \
+                             real suspend handling."
+                        );
+                    }
                 }
             }
 
