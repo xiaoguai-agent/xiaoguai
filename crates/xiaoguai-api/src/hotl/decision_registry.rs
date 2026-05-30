@@ -153,10 +153,19 @@ impl HotlSuspensionTicket {
     /// build tickets by hand) still terminates.
     pub async fn await_decision(
         self,
-        _cancel: &CancellationToken,
+        cancel: &CancellationToken,
     ) -> Result<HotlDecisionVerdict, HotlTicketError> {
-        // RED stub — real impl in next commit.
-        Err(HotlTicketError::ChannelDropped)
+        let Self {
+            expires_at, rx, ..
+        } = self;
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => Err(HotlTicketError::Cancelled),
+            result = rx => result.map_err(|_| HotlTicketError::ChannelDropped),
+            () = tokio::time::sleep_until(expires_at) => {
+                Ok(HotlDecisionVerdict::new(HotlResolution::Timeout))
+            }
+        }
     }
 }
 
@@ -237,9 +246,32 @@ impl DecisionRegistry {
         request_id: Uuid,
         expires_at: Instant,
     ) -> HotlSuspensionTicket {
-        // RED stub — does not record the sender, does not arm expiry,
-        // does not bump metrics. Real impl in next commit.
-        let (_tx, rx) = oneshot::channel();
+        let (tx, rx) = oneshot::channel();
+        let slot = WaiterSlot {
+            sender: tx,
+            registered_at: Instant::now(),
+        };
+        // If a prior `register` for the same id is still in flight
+        // (caller bug — operator UI would never emit duplicate
+        // request_ids), drop the old sender so its ticket resolves as
+        // `ChannelDropped`.
+        self.waiters.insert(request_id, slot);
+        self.metrics.on_register();
+
+        // Background sleeper: fire `resolve(.., Timeout)` on expiry. The
+        // self.clone() bumps the Arc refcount so the spawned task can
+        // outlive the caller scope.
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            tokio::time::sleep_until(expires_at).await;
+            // `resolve` is a no-op if the operator already decided; the
+            // sender slot is gone in that case.
+            let _ = this.resolve(
+                request_id,
+                HotlDecisionVerdict::new(HotlResolution::Timeout),
+            );
+        });
+
         HotlSuspensionTicket {
             request_id,
             expires_at,
@@ -250,10 +282,18 @@ impl DecisionRegistry {
     /// Deliver the operator's verdict (or a Timeout from the background
     /// sleeper) to the parked loop. Returns `true` if a live waiter
     /// existed; `false` if it had already been resolved or never registered.
-    pub fn resolve(&self, _request_id: Uuid, _verdict: HotlDecisionVerdict) -> bool {
-        // RED stub — does not deliver the verdict, does not bump
-        // metrics. Real impl in next commit.
-        false
+    pub fn resolve(&self, request_id: Uuid, verdict: HotlDecisionVerdict) -> bool {
+        let Some((_, slot)) = self.waiters.remove(&request_id) else {
+            return false;
+        };
+        let held = slot.registered_at.elapsed();
+        let verdict_clone = verdict.verdict.clone();
+        // `send` only fails if the receiver was dropped. Treat as a
+        // successful resolve — the loop tore down its ticket
+        // independently (e.g. session cancel beat us to it).
+        let _ = slot.sender.send(verdict);
+        self.metrics.on_resolve(held, &verdict_clone);
+        true
     }
 
     /// Test/diagnostic accessor: number of currently-registered waiters.
