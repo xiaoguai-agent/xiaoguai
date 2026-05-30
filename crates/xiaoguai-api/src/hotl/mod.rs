@@ -44,8 +44,9 @@ pub use decision::{
 // decision delivered to the loop) and intentionally NOT re-exported here
 // because `decision::HotlDecisionVerdict` is an enum (wire allow/deny tag).
 // Callers reach the struct via the full path
-// `crate::hotl::decision_registry::HotlDecisionVerdict` until S12-1 lands
-// and the struct moves into `xiaoguai_agent::hotl_gate`.
+// `crate::hotl::decision_registry::HotlDecisionVerdict`. Sprint-12 S12-4:
+// the struct is now an alias of `xiaoguai_agent::hotl_gate::HotlDecisionVerdict`
+// (single source of truth, see `decision_registry.rs` module doc).
 pub use decision_registry::{
     DecisionRegistry, DecisionRegistryMetrics, HotlResolution, HotlSuspensionTicket,
     HotlTicketError,

@@ -24,16 +24,16 @@
 //! 3. Loop calls `metrics.on_resolve(elapsed, verdict)`
 //!    → gauge--, counter++, histogram observe.
 //!
-//! ## Sprint-12 cross-crate contract note
+//! ## Sprint-12 cross-crate contract note (resolved in S12-4)
 //!
 //! The canonical home for [`HotlSuspensionTicket`],
 //! [`HotlDecisionVerdict`], and [`HotlResolution`] is
-//! `xiaoguai_agent::hotl_gate` (sprint-12 S12-1). Because S12-1 and S12-3
-//! are dispatched as parallel Wave-1 PRs, the types live here for the
-//! first wave; sprint-12 Wave-2 (S12-4) re-imports them from
-//! `xiaoguai-agent` once S12-1 merges and removes the local duplicates.
-//! The wire shape is fixed by the design (`lld-agent.md` §4.5), so the
-//! eventual swap is a `use` rewrite, not a contract negotiation.
+//! `xiaoguai_agent::hotl_gate` (sprint-12 S12-1). The S12-3 wave landed
+//! local duplicates because S12-1 was an independent parallel PR. S12-4
+//! flips the registry over to the agent-crate types so the gate
+//! (`SuspendingHotlGate` in `xiaoguai-core::hotl_bridge`) can embed the
+//! ticket inside `HotlGateVerdict::Suspend` without a second adapter
+//! layer. The wire shape is fixed by the design (`lld-agent.md` §4.5).
 //!
 //! ## Concurrency
 //!
@@ -52,124 +52,36 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-// ── wire types (sprint-12 cross-crate contract; see module doc) ──────────────
-
-/// Resolution outcome for a suspended HOTL request.
-///
-/// Wire shape matches `lld-agent.md` §4.5 and `api-contract.md` §2.6.3.
-/// Serialised as lowercase tags so the same string flows through the
-/// `xiaoguai_hotl_suspensions_total{verdict}` counter label and the
-/// `hotl_resolved` SSE event payload without case-folding.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HotlResolution {
-    /// Operator approved — proceed with the tool dispatch.
-    Allow,
-    /// Operator denied with a reason — loop synthesises a failed
-    /// `ToolResult` so the LLM observes the denial.
-    Deny(String),
-    /// No decision arrived before `expires_at` — treated as deny.
-    Timeout,
-    /// Session cancellation token fired during the wait. Not emitted
-    /// by `resolve`; produced by `HotlSuspensionTicket::await_decision`.
-    Cancelled,
-}
-
-impl HotlResolution {
-    /// Stable label string for the `xiaoguai_hotl_suspensions_total{verdict}` counter.
-    #[must_use]
-    pub fn metric_label(&self) -> &'static str {
-        match self {
-            Self::Allow => "allow",
-            Self::Deny(_) => "deny",
-            Self::Timeout => "timeout",
-            Self::Cancelled => "cancelled",
-        }
-    }
-}
-
-/// Settled HOTL decision delivered to a parked agent loop.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HotlDecisionVerdict {
-    pub verdict: HotlResolution,
-    pub decided_by: Option<String>,
-    pub recorded_at: DateTime<Utc>,
-}
-
-impl HotlDecisionVerdict {
-    /// Convenience constructor for tests / call sites that don't care about
-    /// the audit trail fields.
-    #[must_use]
-    pub fn new(verdict: HotlResolution) -> Self {
-        Self {
-            verdict,
-            decided_by: None,
-            recorded_at: Utc::now(),
-        }
-    }
-}
-
-/// Errors returned by [`HotlSuspensionTicket::await_decision`].
-#[derive(Debug, Error)]
-pub enum HotlTicketError {
-    /// Session cancellation token fired during the wait. Loop should
-    /// fall through to its existing `Final(Cancelled)` branch.
-    #[error("session cancelled while awaiting HOTL decision")]
-    Cancelled,
-    /// Channel dropped without a verdict — should not happen in
-    /// production (timeout writes Timeout instead). Kept as a defensive
-    /// branch for test isolation.
-    #[error("decision channel dropped without verdict")]
-    ChannelDropped,
-}
-
-/// Receipt issued by [`DecisionRegistry::register`]. The loop awaits
-/// this to receive the operator's verdict; the background sleeper
-/// races the receive against the `expires_at` deadline.
-#[derive(Debug)]
-pub struct HotlSuspensionTicket {
-    pub request_id: Uuid,
-    pub expires_at: Instant,
-    rx: oneshot::Receiver<HotlDecisionVerdict>,
-}
-
-impl HotlSuspensionTicket {
-    /// Park the loop on the verdict channel, racing the expiry deadline
-    /// and the session cancellation token.
-    ///
-    /// On expiry: the deadline race is a defensive belt — production
-    /// resolves come via the background expiry task firing
-    /// `resolve(.., Timeout)` first, so this `select!` arm usually loses.
-    /// Kept so a registry without a spawned expiry task (e.g. tests that
-    /// build tickets by hand) still terminates.
-    pub async fn await_decision(
-        self,
-        cancel: &CancellationToken,
-    ) -> Result<HotlDecisionVerdict, HotlTicketError> {
-        let Self {
-            expires_at, rx, ..
-        } = self;
-        tokio::select! {
-            biased;
-            () = cancel.cancelled() => Err(HotlTicketError::Cancelled),
-            result = rx => result.map_err(|_| HotlTicketError::ChannelDropped),
-            () = tokio::time::sleep_until(expires_at) => {
-                Ok(HotlDecisionVerdict::new(HotlResolution::Timeout))
-            }
-        }
-    }
-}
+// Sprint-12 S12-4: the canonical ticket / verdict / resolution types live
+// in `xiaoguai_agent::hotl_gate`. The registry re-exports them so callers
+// (the route handler, gate adapter, tests) can keep the
+// `xiaoguai_api::hotl::decision_registry::*` import path they were already
+// using; the underlying types now match what
+// `xiaoguai_agent::HotlGateVerdict::Suspend.ticket` carries.
+pub use xiaoguai_agent::hotl_gate::{
+    HotlDecisionVerdict, HotlResolution, HotlSuspensionTicket, HotlTicketError,
+};
 
 // ── metrics helper ────────────────────────────────────────────────────────────
+
+/// Stable metric label for `xiaoguai_hotl_suspensions_total{verdict}`.
+/// Free function (not a method on the agent-crate `HotlResolution`) so the
+/// label vocabulary stays owned by the registry — sprint-12 S12-5 will
+/// extend it with an explicit `"cancelled"` label when the loop tears down
+/// a waiter due to session cancel (no resolved verdict was produced).
+#[must_use]
+pub fn metric_label_for(verdict: &HotlResolution) -> &'static str {
+    match verdict {
+        HotlResolution::Allow => "allow",
+        HotlResolution::Deny(_) => "deny",
+        HotlResolution::Timeout => "timeout",
+    }
+}
 
 /// Thin wrapper around the three Prometheus handles registered in
 /// `xiaoguai-observability::init_prometheus`. Falls back to a silent
@@ -185,14 +97,15 @@ impl DecisionRegistryMetrics {
         }
     }
 
-    /// Entry resolved (any reason). Decrement the gauge, increment the
+    /// Entry resolved with a verdict from the channel (operator decision
+    /// or background-task Timeout). Decrement the gauge, increment the
     /// per-verdict counter, observe the histogram.
     pub fn on_resolve(self, held: Duration, verdict: &HotlResolution) {
         if let Some(g) = xiaoguai_observability::hotl_suspended_loops_gauge() {
             g.dec();
         }
         if let Some(c) = xiaoguai_observability::hotl_suspensions_total() {
-            c.with_label_values(&[verdict.metric_label()]).inc();
+            c.with_label_values(&[metric_label_for(verdict)]).inc();
         }
         if let Some(h) = xiaoguai_observability::hotl_suspension_duration_seconds() {
             h.observe(held.as_secs_f64());
@@ -238,17 +151,22 @@ impl DecisionRegistry {
         Arc::new(Self::new())
     }
 
-    /// Register a new suspended request. Returns a ticket the loop
-    /// `await`s; spawns a background sleeper that resolves the ticket
-    /// with `HotlResolution::Timeout` on `expires_at`.
+    /// Register a new suspended request. Returns the agent-crate ticket
+    /// the loop `await`s; spawns a background sleeper that resolves the
+    /// ticket with `HotlResolution::Timeout` on `expires_at`.
+    ///
+    /// Sprint-12 S12-4: the ticket is built via
+    /// `xiaoguai_agent::HotlSuspensionTicket::new` so the registry, the
+    /// gate adapter (`SuspendingHotlGate`), and the ReAct loop all share
+    /// one type. The registry owns the matching `oneshot::Sender`.
     pub fn register(
         self: &Arc<Self>,
         request_id: Uuid,
         expires_at: Instant,
     ) -> HotlSuspensionTicket {
-        let (tx, rx) = oneshot::channel();
+        let (ticket, sender) = HotlSuspensionTicket::new(request_id, expires_at);
         let slot = WaiterSlot {
-            sender: tx,
+            sender,
             registered_at: Instant::now(),
         };
         // If a prior `register` for the same id is still in flight
@@ -260,7 +178,10 @@ impl DecisionRegistry {
 
         // Background sleeper: fire `resolve(.., Timeout)` on expiry. The
         // self.clone() bumps the Arc refcount so the spawned task can
-        // outlive the caller scope.
+        // outlive the caller scope. The agent ticket's own select! also
+        // races `expires_at`, so this background task is belt-and-braces:
+        // it ensures the registry map entry is removed and the gauge
+        // decremented even if no one awaits the ticket.
         let this = Arc::clone(self);
         tokio::spawn(async move {
             tokio::time::sleep_until(expires_at).await;
@@ -268,15 +189,15 @@ impl DecisionRegistry {
             // sender slot is gone in that case.
             let _ = this.resolve(
                 request_id,
-                HotlDecisionVerdict::new(HotlResolution::Timeout),
+                HotlDecisionVerdict {
+                    verdict: HotlResolution::Timeout,
+                    decided_by: None,
+                    recorded_at: chrono::Utc::now(),
+                },
             );
         });
 
-        HotlSuspensionTicket {
-            request_id,
-            expires_at,
-            rx,
-        }
+        ticket
     }
 
     /// Deliver the operator's verdict (or a Timeout from the background
@@ -321,6 +242,7 @@ impl Default for DecisionRegistry {
 mod tests {
     use super::*;
     use std::sync::OnceLock;
+    use tokio_util::sync::CancellationToken;
 
     /// Global serialisation lock for any test in this module that
     /// observes the Prometheus gauge (which is a process-wide singleton
@@ -339,7 +261,15 @@ mod tests {
         HotlDecisionVerdict {
             verdict: HotlResolution::Allow,
             decided_by: Some("alice".into()),
-            recorded_at: Utc::now(),
+            recorded_at: chrono::Utc::now(),
+        }
+    }
+
+    fn timeout_verdict() -> HotlDecisionVerdict {
+        HotlDecisionVerdict {
+            verdict: HotlResolution::Timeout,
+            decided_by: None,
+            recorded_at: chrono::Utc::now(),
         }
     }
 
@@ -456,7 +386,7 @@ mod tests {
 
         // Forcibly expire id2 by resolving via the same path the
         // background sleeper would use.
-        registry.resolve(id2, HotlDecisionVerdict::new(HotlResolution::Timeout));
+        registry.resolve(id2, timeout_verdict());
         assert!(
             (gauge.get() - baseline - 1.0).abs() < f64::EPSILON,
             "after 2 resolves gauge delta must be +1 (got {})",

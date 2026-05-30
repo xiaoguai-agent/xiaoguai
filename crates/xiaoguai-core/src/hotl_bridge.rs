@@ -408,6 +408,152 @@ impl xiaoguai_agent::HotlGate for EnforcerGate {
     }
 }
 
+// ── SuspendingHotlGate (sprint-12 S12-4) ─────────────────────────────────────
+//
+// Second `HotlGate` adapter alongside `EnforcerGate`. The only difference is
+// how `HotlVerdict::Escalate(_)` is mapped:
+//
+//   EnforcerGate           → log a warn + return `HotlGateVerdict::Allow`
+//                            (v1.8.x semantics — the LLM call proceeds)
+//   SuspendingHotlGate     → mint a `request_id`, register a waiter on the
+//                            shared `DecisionRegistry`, return
+//                            `HotlGateVerdict::Suspend { ticket, .. }`
+//                            so the ReAct loop blocks on the operator's
+//                            decision (sprint-12 v1.9.0 default).
+//
+// The `Allow`, `Deny(reason)`, and infra-error (`Err(_)` → fail-closed Deny)
+// arms are identical to `EnforcerGate` — those paths are not behaviour gates.
+//
+// Wiring constraint: the `DecisionRegistry` MUST be constructed exactly once
+// in `run_serve` and shared between this gate and `AppState.decision_registry`.
+// The route handler (`POST /v1/hotl/decisions`, sprint-12 S12-6) calls
+// `state.decision_registry.resolve(...)` to wake the parked loop — if the
+// gate held a *different* registry, the resolve would silently no-op and the
+// loop would hang until the 24h default expiry fires.
+
+/// Sprint-12 (S12-4). Adapter that suspends the ReAct loop on `Escalate`
+/// instead of allowing the call through.
+///
+/// Construct alongside `EnforcerGate` in `run_serve` and select between the
+/// two with `agent.hotl.suspend_on_escalate`. The `default_expiry` is the
+/// upper bound the loop will block waiting for an operator decision (the
+/// design default is 24h; tests pass shorter durations).
+pub struct SuspendingHotlGate {
+    inner: Arc<dyn HotlEnforcer>,
+    registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
+    default_expiry: std::time::Duration,
+}
+
+impl std::fmt::Debug for SuspendingHotlGate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SuspendingHotlGate")
+            .field("inner", &"Arc<dyn HotlEnforcer>")
+            .field("registry", &"Arc<DecisionRegistry>")
+            .field("default_expiry", &self.default_expiry)
+            .finish()
+    }
+}
+
+impl SuspendingHotlGate {
+    #[must_use]
+    pub fn new(
+        inner: Arc<dyn HotlEnforcer>,
+        registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
+        default_expiry: std::time::Duration,
+    ) -> Self {
+        Self {
+            inner,
+            registry,
+            default_expiry,
+        }
+    }
+
+    /// Box-and-Arc helper mirroring `EnforcerGate::arc`. Lets `run_serve`
+    /// pick between adapters with a single-line ternary.
+    #[must_use]
+    pub fn arc(
+        inner: Arc<dyn HotlEnforcer>,
+        registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
+        default_expiry: std::time::Duration,
+    ) -> Arc<dyn xiaoguai_agent::HotlGate> {
+        Arc::new(Self::new(inner, registry, default_expiry))
+    }
+}
+
+#[async_trait]
+impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
+    async fn check(
+        &self,
+        tenant_id: Uuid,
+        scope: &str,
+        amount: f64,
+    ) -> xiaoguai_agent::HotlGateVerdict {
+        match self.inner.check(tenant_id, scope, amount).await {
+            Ok(HotlVerdict::Allow) => xiaoguai_agent::HotlGateVerdict::Allow,
+            Ok(HotlVerdict::Deny(reason)) => {
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    %scope,
+                    %reason,
+                    "HOTL gate denied tool dispatch"
+                );
+                xiaoguai_agent::HotlGateVerdict::Deny(reason)
+            }
+            Ok(HotlVerdict::Escalate(reason)) => {
+                let request_id = Uuid::new_v4();
+                let expires_at = tokio::time::Instant::now() + self.default_expiry;
+                let ticket = self.registry.register(request_id, expires_at);
+                tracing::info!(
+                    tenant_id = %tenant_id,
+                    %scope,
+                    %reason,
+                    %request_id,
+                    "HOTL escalate → suspend; awaiting operator decision"
+                );
+                xiaoguai_agent::HotlGateVerdict::Suspend {
+                    request_id,
+                    scope: scope.to_string(),
+                    ticket,
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    tenant_id = %tenant_id,
+                    %scope,
+                    error = %e,
+                    "HOTL gate enforcer error — fail-closed deny"
+                );
+                xiaoguai_agent::HotlGateVerdict::Deny(format!(
+                    "HOTL enforcer infrastructure error (fail-closed): {e}"
+                ))
+            }
+        }
+    }
+}
+
+/// Sprint-12 (S12-4). Build the per-request `HotlGate` plugged into
+/// `AgentConfig`, selecting `EnforcerGate` or `SuspendingHotlGate` based
+/// on the `agent.hotl.suspend_on_escalate` config flag.
+///
+/// Extracted into a free function so `run_serve` stays a single-line
+/// selection and `hotl_gate_selection.rs` can prove the table directly
+/// without spinning up a full server. The registry is passed in (not
+/// constructed here) so both adapters and `AppState` share one instance —
+/// see the wiring constraint at the top of the `SuspendingHotlGate` block.
+#[must_use]
+pub fn build_hotl_gate(
+    suspend_on_escalate: bool,
+    enforcer: Arc<dyn HotlEnforcer>,
+    registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
+    default_expiry: std::time::Duration,
+) -> Arc<dyn xiaoguai_agent::HotlGate> {
+    if suspend_on_escalate {
+        SuspendingHotlGate::arc(enforcer, registry, default_expiry)
+    } else {
+        EnforcerGate::arc(enforcer)
+    }
+}
+
 fn build_reason(policy: &HotlPolicy, count: usize, sum: f64) -> String {
     let mut parts = Vec::new();
     if let Some(max) = policy.max_count {
