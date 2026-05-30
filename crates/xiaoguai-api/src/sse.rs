@@ -29,6 +29,9 @@ pub fn event_to_sse(ev: &AgentEvent) -> Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone, Utc};
+    use uuid::Uuid;
+    use xiaoguai_agent::HotlResolution;
 
     #[test]
     fn text_delta_event_carries_text_delta_tag() {
@@ -38,5 +41,54 @@ mod tests {
         // emits `event: <name>\ndata: <body>\n\n`.
         let rendered = format!("{sse:?}");
         assert!(rendered.contains("text_delta"));
+    }
+
+    #[test]
+    fn hotl_pending_encodes_as_sse_event() {
+        let request_id = Uuid::new_v4();
+        let ev = AgentEvent::HotlPending {
+            request_id,
+            tool: "execute_python".into(),
+            args_redacted: serde_json::json!({"code": "[redacted]"}),
+            scope: "tool_call.execute_python".into(),
+            expires_at: Utc.with_ymd_and_hms(2026, 5, 31, 8, 12, 34).unwrap(),
+        };
+        let sse = event_to_sse(&ev);
+        let rendered = format!("{sse:?}");
+        assert!(
+            rendered.contains("hotl_pending"),
+            "expected event name `hotl_pending` in SSE: {rendered}"
+        );
+        assert!(
+            rendered.contains("execute_python"),
+            "expected serialised data to include tool name: {rendered}"
+        );
+        assert!(
+            rendered.contains(&request_id.to_string()),
+            "expected serialised data to include request_id: {rendered}"
+        );
+    }
+
+    #[test]
+    fn hotl_resolved_encodes_as_sse_event() {
+        let request_id = Uuid::new_v4();
+        let ev = AgentEvent::HotlResolved {
+            request_id,
+            verdict: HotlResolution::Allow,
+            decided_by: Some("ops@acme.com".into()),
+            recorded_at: Utc.with_ymd_and_hms(2026, 5, 30, 8, 13, 1).unwrap(),
+        };
+        let sse = event_to_sse(&ev);
+        let rendered = format!("{sse:?}");
+        assert!(
+            rendered.contains("hotl_resolved"),
+            "expected event name `hotl_resolved` in SSE: {rendered}"
+        );
+        // Verdict must be lowercased on the wire (api-contract §2.6.3).
+        assert!(
+            rendered.contains("\\\"verdict\\\":\\\"allow\\\"")
+                || rendered.contains("\"verdict\":\"allow\""),
+            "expected lowercase `\"verdict\":\"allow\"` in SSE: {rendered}"
+        );
     }
 }
