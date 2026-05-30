@@ -111,12 +111,7 @@ test.describe('chat-ui SSE — partial preserved on abrupt disconnect', () => {
   });
 });
 
-test.describe('chat-ui SSE reconnect banner (fixme — LLD §4.7)', () => {
-  test.fixme(
-    true,
-    'Reconnect banner UI is not yet implemented. Re-author when ChatPage exposes a `[data-testid="sse-reconnect-banner"]` element and sendMessage() retries on network error.',
-  );
-
+test.describe('chat-ui SSE reconnect banner (sprint-11 S11-2)', () => {
   test('disconnect surfaces banner then clears on reconnect', async ({ page }) => {
     await mockSessionCreate(page);
     // First POST → abrupt close. Second POST (retry) → completes with `done`.

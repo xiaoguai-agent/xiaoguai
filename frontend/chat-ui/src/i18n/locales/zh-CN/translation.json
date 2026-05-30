@@ -21,5 +21,12 @@
     "source_schedule": "定时",
     "source_webhook": "Webhook",
     "source_manual": "手动"
+  },
+  "chat": {
+    "sse": {
+      "reconnecting": "正在重连（第 {{attempt}} 次尝试，{{secs}} 秒后重试）…",
+      "cancel_reconnect": "取消",
+      "gave_up": "连接已断开 — {{attempts}} 次尝试后放弃"
+    }
   }
 }

@@ -1,0 +1,248 @@
+/**
+ * Unit tests for XiaoguaiClient.sendMessage retry loop (sprint-11 S11-2a).
+ *
+ * Covers LLD-CHAT-UI-001 §4.7.1:
+ *   - Exponential backoff on reader/network failure mid-stream.
+ *   - onReconnect callback invoked with 1-based attempt and the delay.
+ *   - AbortError (caller cancelled) short-circuits the loop.
+ *   - maxRetries exhausted -> onError with the last error.
+ *   - Idempotency-Key header reused across all retries.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { XiaoguaiClient } from './index';
+import type { AgentEvent } from './index';
+
+/**
+ * Build a Response whose body is a ReadableStream containing the given SSE
+ * chunks. After the last chunk the stream closes cleanly (no `done`
+ * event required at the protocol layer — sendMessage simply drains until
+ * EOF).
+ */
+function sseResponse(chunks: string[], status = 200): Response {
+  const stream = new ReadableStream({
+    start(controller) {
+      const enc = new TextEncoder();
+      for (const c of chunks) controller.enqueue(enc.encode(c));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+}
+
+/**
+ * Build a Response whose body throws on the first read() — emulates a
+ * connection that gets the headers through but tears down mid-stream.
+ */
+function sseAbortingResponse(): Response {
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.error(new TypeError('network error'));
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+}
+
+function delta(text: string): string {
+  return `event: text_delta\ndata: ${JSON.stringify({ type: 'text_delta', delta: text })}\n\n`;
+}
+
+/** Run a microtask drain so queued promise continuations get to execute. */
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+describe('XiaoguaiClient.sendMessage retry loop', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('retries once after a fetch throws and calls onReconnect with attempt=1, delay=1000', async () => {
+    const events: AgentEvent[] = [];
+    const onError = vi.fn();
+    const onReconnect = vi.fn();
+
+    const fetchImpl = vi
+      .fn<(...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(sseResponse([delta('resumed')]));
+
+    const client = new XiaoguaiClient({
+      baseUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    client.sendMessage(
+      'sess1',
+      { content: 'hi' },
+      (ev) => events.push(ev),
+      onError,
+      { onReconnect },
+    );
+
+    // First fetch throws. Drain microtasks so the catch block runs.
+    await flush();
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+    expect(onReconnect).toHaveBeenCalledWith(1, 1000);
+
+    // Advance the backoff sleep.
+    await vi.advanceTimersByTimeAsync(1000);
+    await flush();
+    // Second fetch issued.
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    // Drain reader. The second response streams a single delta.
+    await flush();
+    await flush();
+    expect(events).toEqual([{ type: 'text_delta', delta: 'resumed' }]);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('does not issue a second fetch when caller aborts during backoff', async () => {
+    const onError = vi.fn();
+    const onReconnect = vi.fn();
+
+    const fetchImpl = vi
+      .fn<(...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    const client = new XiaoguaiClient({
+      baseUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const cancel = client.sendMessage(
+      'sess1',
+      { content: 'hi' },
+      () => undefined,
+      onError,
+      { onReconnect },
+    );
+
+    await flush();
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+
+    // Cancel mid-backoff, before the 1 s sleep elapses.
+    cancel();
+    await vi.advanceTimersByTimeAsync(5000);
+    await flush();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('exhausts maxRetries=5 and surfaces the last error via onError', async () => {
+    const onError = vi.fn();
+    const onReconnect = vi.fn();
+
+    const fetchImpl = vi
+      .fn<(...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockRejectedValue(new TypeError('Failed to fetch'));
+
+    const client = new XiaoguaiClient({
+      baseUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    client.sendMessage(
+      'sess1',
+      { content: 'hi' },
+      () => undefined,
+      onError,
+      { maxRetries: 5, onReconnect },
+    );
+
+    // Drain the 6 attempts (1 initial + 5 retries) and their sleeps.
+    for (const ms of [0, 1000, 2000, 4000, 8000, 16000]) {
+      await flush();
+      await vi.advanceTimersByTimeAsync(ms);
+      await flush();
+    }
+    await flush();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
+    expect(onReconnect).toHaveBeenCalledTimes(5);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((onError.mock.calls[0]![0] as Error).message).toBe('Failed to fetch');
+  });
+
+  it('reuses the same Idempotency-Key header across retries', async () => {
+    const onError = vi.fn();
+
+    const fetchImpl = vi
+      .fn<(...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(sseResponse([delta('ok')]));
+
+    const client = new XiaoguaiClient({
+      baseUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    client.sendMessage(
+      'sess1',
+      { content: 'hi' },
+      () => undefined,
+      onError,
+    );
+
+    await flush();
+    await vi.advanceTimersByTimeAsync(1000);
+    await flush();
+    await flush();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const firstHeaders = (fetchImpl.mock.calls[0]![1] as RequestInit).headers as Record<
+      string,
+      string
+    >;
+    const secondHeaders = (fetchImpl.mock.calls[1]![1] as RequestInit).headers as Record<
+      string,
+      string
+    >;
+    // Initial POST has no idempotency header — happy path unchanged.
+    expect(firstHeaders['idempotency-key']).toBeUndefined();
+    // Retry has the header set.
+    expect(secondHeaders['idempotency-key']).toBeTruthy();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('retries when the response body errors mid-stream and resumes the bubble', async () => {
+    const events: AgentEvent[] = [];
+    const onError = vi.fn();
+    const onReconnect = vi.fn();
+
+    const fetchImpl = vi
+      .fn<(...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockResolvedValueOnce(sseAbortingResponse())
+      .mockResolvedValueOnce(sseResponse([delta('resumed')]));
+
+    const client = new XiaoguaiClient({
+      baseUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    client.sendMessage(
+      'sess1',
+      { content: 'hi' },
+      (ev) => events.push(ev),
+      onError,
+      { onReconnect },
+    );
+
+    await flush();
+    await flush();
+    expect(onReconnect).toHaveBeenCalledWith(1, 1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    await flush();
+    await flush();
+    expect(events).toEqual([{ type: 'text_delta', delta: 'resumed' }]);
+    expect(onError).not.toHaveBeenCalled();
+  });
+});
