@@ -40,6 +40,8 @@ interface TranslationShape {
       max_usd_label: string;
       rationale_label: string;
       review_link: string;
+      timeout_annotation: string;
+      conflict_toast: string;
     };
   };
 }
