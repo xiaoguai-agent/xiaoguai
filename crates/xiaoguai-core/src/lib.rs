@@ -617,12 +617,17 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
             hotl_policy_store_pg.clone() as Arc<dyn xiaoguai_api::hotl::policy::HotlPolicyStore>
         ),
         hotl_enforcer: Some(hotl_enforcer_arc.clone()),
-        // Sprint-11 S11-3a.1 (v1.8.1): decision-record layer for
-        // POST /v1/hotl/decisions. PG impl of HotlDecisionStore +
-        // HotlAuditSink adapter are sprint-12 work — until then the
-        // route returns 503 (the trait + in-mem impl ship for tests).
-        hotl_decision_store: None,
-        hotl_audit: None,
+        // Sprint-12 S12-7: PG impls of HotlDecisionStore + HotlAuditSink
+        // now ship; POST /v1/hotl/decisions returns 201 instead of 503
+        // in production. The decision store always wires (table 0026 is
+        // unconditional); the audit sink only wires when the audit
+        // signing key env var is set (otherwise the route degrades to
+        // "decision persisted, no audit trail" and logs a warning at the
+        // route handler — matching the audit-disabled posture elsewhere).
+        hotl_decision_store: Some(crate::hotl_bridge::PgHotlDecisionStore::arc(pool.clone())),
+        hotl_audit: pg_audit_sink
+            .as_ref()
+            .map(|sink| crate::hotl_bridge::PgHotlAuditSink::arc(sink.clone())),
         // v1.2.4: outcome telemetry — PgOutcomesBackend implements both
         // writer and reader; construct once and coerce to each trait object.
         outcome_writer: Some({

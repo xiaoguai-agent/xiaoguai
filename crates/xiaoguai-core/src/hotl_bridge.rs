@@ -6,16 +6,30 @@
 //!
 //! Lives in `xiaoguai-core` (same layering pattern as `audit_bridge.rs`):
 //! the api crate stays sqlx-free; SQL lives here.
+//!
+//! Sprint-12 S12-7: adds `PgHotlDecisionStore` (table `hotl_decisions`,
+//! migration 0026) and `PgHotlAuditSink` (adapter over
+//! `xiaoguai_audit::PgAuditSink`). Together they replace the production
+//! `state.hotl_decision_store = None` / `state.hotl_audit = None` slots
+//! set by the v1.8.1 hotfix, flipping `POST /v1/hotl/decisions` from 503
+//! → 201 in production.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 use xiaoguai_api::hotl::{
+    audit::HotlAuditSink,
+    decision::{
+        HotlDecisionRecord, HotlDecisionStore, HotlDecisionStoreError, HotlDecisionVerdict,
+    },
     enforcer::{HotlEnforcer, HotlVerdict, HotlVerdictResult},
     policy::{CreateHotlPolicyRequest, HotlPolicy, HotlPolicyStore, HotlPolicyStoreError},
 };
+use xiaoguai_audit::chain::sink::PgAuditSink;
+use xiaoguai_audit::AuditEntry;
 
 // ── policy store ──────────────────────────────────────────────────────────────
 
@@ -408,6 +422,148 @@ fn build_reason(policy: &HotlPolicy, count: usize, sum: f64) -> String {
         policy.tenant_id,
         parts.join("; ")
     )
+}
+
+// ── decision store (sprint-12 S12-7) ─────────────────────────────────────────
+//
+// PG-backed `HotlDecisionStore` for `POST /v1/hotl/decisions`. Reads/writes
+// the `hotl_decisions` table from migration 0026. The UNIQUE constraint on
+// `request_id` is the idempotency guard — a duplicate insert surfaces as
+// `HotlDecisionStoreError::Duplicate(request_id)` so the route returns 409.
+//
+// `verdict` is stored as the lowercase text the SQL CHECK constraint enforces
+// (`'allow' | 'deny'`); on read we map both values back into the
+// `HotlDecisionVerdict` enum. Any other value (impossible given the CHECK)
+// surfaces as a `Backend` error rather than silently coercing.
+
+#[derive(Debug, Clone)]
+pub struct PgHotlDecisionStore {
+    pool: PgPool,
+}
+
+impl PgHotlDecisionStore {
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// Box-and-Arc helper so callers in `run_serve` don't repeat the dyn coercion.
+    #[must_use]
+    pub fn arc(pool: PgPool) -> Arc<dyn HotlDecisionStore> {
+        Arc::new(Self::new(pool))
+    }
+}
+
+fn decision_pg_err(e: sqlx::Error) -> HotlDecisionStoreError {
+    HotlDecisionStoreError::Other(e.to_string())
+}
+
+/// PostgreSQL `unique_violation` code, per
+/// <https://www.postgresql.org/docs/current/errcodes-appendix.html>.
+const PG_UNIQUE_VIOLATION: &str = "23505";
+
+#[async_trait]
+impl HotlDecisionStore for PgHotlDecisionStore {
+    async fn record(
+        &self,
+        request_id: Uuid,
+        tenant_id: Uuid,
+        verdict: HotlDecisionVerdict,
+        decided_by: String,
+        raised_policy_id: Option<Uuid>,
+    ) -> Result<HotlDecisionRecord, HotlDecisionStoreError> {
+        let id = Uuid::new_v4();
+
+        let row: (Uuid, Uuid, Uuid, String, String, Option<Uuid>, DateTime<Utc>) =
+            sqlx::query_as(
+                "INSERT INTO hotl_decisions \
+                    (id, request_id, tenant_id, verdict, decided_by, raised_policy_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6) \
+                 RETURNING id, request_id, tenant_id, verdict, decided_by, raised_policy_id, recorded_at",
+            )
+            .bind(id)
+            .bind(request_id)
+            .bind(tenant_id)
+            .bind(verdict.as_str())
+            .bind(&decided_by)
+            .bind(raised_policy_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| {
+                if let sqlx::Error::Database(db_err) = &e {
+                    if db_err.code().as_deref() == Some(PG_UNIQUE_VIOLATION) {
+                        return HotlDecisionStoreError::Duplicate(request_id);
+                    }
+                }
+                decision_pg_err(e)
+            })?;
+
+        let returned_verdict = match row.3.as_str() {
+            "allow" => HotlDecisionVerdict::Allow,
+            "deny" => HotlDecisionVerdict::Deny,
+            other => {
+                return Err(HotlDecisionStoreError::Other(format!(
+                    "unexpected verdict text from DB: {other:?}"
+                )))
+            }
+        };
+
+        Ok(HotlDecisionRecord {
+            id: row.0,
+            request_id: row.1,
+            tenant_id: row.2,
+            verdict: returned_verdict,
+            decided_by: row.4,
+            raised_policy_id: row.5,
+            recorded_at: row.6,
+        })
+    }
+}
+
+// ── audit sink adapter (sprint-12 S12-7) ─────────────────────────────────────
+//
+// Wraps `xiaoguai_audit::PgAuditSink` behind the api crate's `HotlAuditSink`
+// trait so the `/v1/hotl/decisions` route can record `hotl.decision` audit
+// entries through the same HMAC-chained sink the rest of the audit surface
+// uses. We keep the trait surface (`Result<(), String>`) opaque per
+// `xiaoguai_api::hotl::audit` — `ChainError`'s rich variants are squashed to
+// a string so the api crate doesn't pull a `xiaoguai-audit` dep.
+
+#[derive(Clone)]
+pub struct PgHotlAuditSink {
+    inner: Arc<PgAuditSink>,
+}
+
+impl PgHotlAuditSink {
+    #[must_use]
+    pub fn new(inner: Arc<PgAuditSink>) -> Self {
+        Self { inner }
+    }
+
+    /// Box-and-Arc helper so callers in `run_serve` don't repeat the dyn coercion.
+    #[must_use]
+    pub fn arc(inner: Arc<PgAuditSink>) -> Arc<dyn HotlAuditSink> {
+        Arc::new(Self::new(inner))
+    }
+}
+
+impl std::fmt::Debug for PgHotlAuditSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PgHotlAuditSink")
+            .field("inner", &"Arc<PgAuditSink>")
+            .finish()
+    }
+}
+
+#[async_trait]
+impl HotlAuditSink for PgHotlAuditSink {
+    async fn append(&self, entry: AuditEntry) -> Result<(), String> {
+        self.inner
+            .append(entry)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
