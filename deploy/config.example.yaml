@@ -81,3 +81,17 @@ eval:
   # doesn't exist — leave the default to keep eval disabled.
   suites_dir: ./eval-suites
   max_iterations: 0
+
+agent:
+  # Sprint-12 (v1.8.x scaffold) — HotL (human-on-the-loop) gating knobs.
+  # `suspend_on_escalate` reserves the config surface ahead of the
+  # suspend/resume wiring shipping in sprint-12. Field is not yet wired
+  # in v1.8.x; v1.9.0 (PR S12-12) flips the default to `true` and the
+  # SuspendingHotlGate (S12-4) takes effect.
+  hotl:
+    # When `true`, an Escalate verdict from HotlEnforcer suspends the
+    # agent loop until an operator decides via POST /v1/hotl/decisions
+    # (or the timeout fires). When `false` the loop logs the escalation
+    # and allows the tool call to dispatch (v1.8.x EnforcerGate behaviour).
+    # Override via XIAOGUAI_AGENT__HOTL__SUSPEND_ON_ESCALATE=true.
+    suspend_on_escalate: false

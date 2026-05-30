@@ -91,6 +91,12 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
 # Now copy source — cache miss here only rebuilds changed crates, not deps.
 COPY Cargo.toml Cargo.lock rust-toolchain.toml clippy.toml rustfmt.toml deny.toml ./
 COPY crates ./crates
+# Sprint-12 S12-0: `crates/xiaoguai-api/src/skills.rs` embeds the skill
+# catalog via `include_str!("../../../catalog/skill_packs.json")` — must be
+# present at compile time. Without this COPY the release-image workflow
+# fails at `cargo build --release` with a file-not-found include_str error
+# (regression first seen on the v1.8.1 release run).
+COPY catalog ./catalog
 
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
