@@ -93,8 +93,7 @@ pub enum StopReason {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{TimeZone, Utc};
-    use uuid::Uuid;
+    use chrono::TimeZone;
 
     #[test]
     fn hotl_pending_round_trip() {
