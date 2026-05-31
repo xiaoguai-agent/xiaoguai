@@ -4,6 +4,7 @@
 //! defense-in-depth via Postgres policies (ADR — multi-tenant isolation).
 
 pub mod error;
+pub mod hotl_escalations;
 pub mod hotl_redaction;
 pub mod im;
 pub mod llm_provider;
@@ -16,6 +17,10 @@ pub mod token_usage;
 pub mod user;
 
 pub use error::{RepoError, RepoResult};
+pub use hotl_escalations::{
+    HotlDecisionVerdict, HotlEscalationRow, HotlEscalationStore, HotlPendingRow,
+    PgHotlEscalationRepository,
+};
 pub use hotl_redaction::{HotlRedactionRepo, PgHotlRedactionRepo, RedactionPolicyRow};
 pub use im::{
     ExternalConversation, ExternalIdentity, ImConversation, ImIdentity, ImIdentityRepository,
