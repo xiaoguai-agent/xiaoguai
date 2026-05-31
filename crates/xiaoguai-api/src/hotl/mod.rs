@@ -49,7 +49,7 @@ pub use decision::{
 // (single source of truth, see `decision_registry.rs` module doc).
 pub use decision_registry::{
     DecisionRegistry, DecisionRegistryMetrics, HotlResolution, HotlSuspensionTicket,
-    HotlTicketError,
+    HotlTicketError, NoopHotlEscalationStore, RegistryError, ReplayOutcome,
 };
 pub use enforcer::{HotlEnforcer, HotlVerdictResult, StaticHotlEnforcer};
 pub use policy::{
