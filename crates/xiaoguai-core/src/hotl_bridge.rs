@@ -454,6 +454,26 @@ pub struct SuspendingHotlGate {
     /// Sprint-13 S13-7: scope-class → expiry override map. Empty by
     /// default; populated from `agent.hotl.expiry` in `run_serve`.
     expiry: std::collections::HashMap<String, std::time::Duration>,
+    /// Sprint-13 S13-6: per-tenant redaction rule store. The gate calls
+    /// `RedactionRules::from_storage(&*redaction_repo, tenant_id)` on
+    /// every escalation so admin edits land on the next call (no cache).
+    /// Wiring uses a `NoopHotlRedactionRepo` shim for the sprint-12
+    /// constructors that don't supply one — preserves byte-for-byte the
+    /// v1.9.x behaviour.
+    redaction_repo: Arc<dyn xiaoguai_storage::repositories::hotl_redaction::HotlRedactionRepo>,
+    /// Sprint-13 S13-6 (S13-0 config). When `true`, an escalation with
+    /// no matching redaction rule short-circuits to `Deny("redaction
+    /// policy missing")` instead of leaking verbatim args on SSE. The
+    /// v1.10 default is `false` (warn-once-and-pass); v1.11 flips it to
+    /// `true` so unredacted tool args never reach SSE clients.
+    redaction_required: bool,
+    /// Sprint-13 S13-6. Optional audit sink that receives one
+    /// `hotl.escalation` entry per Suspend verdict. The entry's
+    /// `details` JSON embeds `redaction_policy_id` so audit queries can
+    /// trace which policy masked which call. `None` skips the audit
+    /// emission (acceptable for tests + boot scenarios where the audit
+    /// chain is not yet wired).
+    audit_sink: Option<Arc<dyn xiaoguai_api::hotl::audit::HotlAuditSink>>,
 }
 
 impl std::fmt::Debug for SuspendingHotlGate {
@@ -463,7 +483,38 @@ impl std::fmt::Debug for SuspendingHotlGate {
             .field("registry", &"Arc<DecisionRegistry>")
             .field("default_expiry", &self.default_expiry)
             .field("expiry_overrides", &self.expiry.len())
+            .field("redaction_repo", &"Arc<dyn HotlRedactionRepo>")
+            .field("redaction_required", &self.redaction_required)
+            .field(
+                "audit_sink",
+                &self.audit_sink.as_ref().map(|_| "Arc<dyn HotlAuditSink>"),
+            )
             .finish()
+    }
+}
+
+/// Sprint-13 S13-6. Fallback `HotlRedactionRepo` that returns no rules.
+/// Used by the sprint-12 constructors (`new`, `with_expiry`, `arc`,
+/// `arc_with_expiry`) that don't accept a repo, so they keep building a
+/// gate whose behaviour matches the v1.9.x pass-through.
+///
+/// `redaction_required = false` paired with this repo means the gate
+/// warns once per instance (via `RedactionRules`) and emits verbatim
+/// args. `redaction_required = true` paired with this repo would
+/// fail-closed every call — only the `with_redaction` constructor (used
+/// by `run_serve`) should ever combine those.
+#[derive(Debug, Default, Clone)]
+struct NoopHotlRedactionRepo;
+
+#[async_trait]
+impl xiaoguai_storage::repositories::hotl_redaction::HotlRedactionRepo for NoopHotlRedactionRepo {
+    async fn load_for_tenant(
+        &self,
+        _tenant_id: Uuid,
+    ) -> xiaoguai_storage::repositories::error::RepoResult<
+        Vec<xiaoguai_storage::repositories::hotl_redaction::RedactionPolicyRow>,
+    > {
+        Ok(Vec::new())
     }
 }
 
@@ -495,11 +546,50 @@ impl SuspendingHotlGate {
         default_expiry: std::time::Duration,
         expiry: std::collections::HashMap<String, std::time::Duration>,
     ) -> Self {
+        Self::with_redaction(
+            inner,
+            registry,
+            default_expiry,
+            expiry,
+            Arc::new(NoopHotlRedactionRepo) as _,
+            false,
+            None,
+        )
+    }
+
+    /// Sprint-13 S13-6. Construct a gate that consults `redaction_repo`
+    /// on every escalation and (optionally) emits an audit entry to
+    /// `audit_sink` carrying the matched `redaction_policy_id`.
+    ///
+    /// `redaction_required = true` enforces fail-closed semantics: any
+    /// escalation that lacks a matching rule short-circuits to
+    /// `HotlGateVerdict::Deny("redaction policy missing")` instead of
+    /// leaking verbatim args on SSE. The v1.10 default is `false` to
+    /// preserve byte-for-byte the v1.9.x pass-through; v1.11 will flip
+    /// it on by default.
+    ///
+    /// `audit_sink = None` skips the audit emission — acceptable for
+    /// tests + early-boot wiring before the audit chain is up. The
+    /// `Suspend` verdict's `args_redacted` field is still populated
+    /// regardless of the sink state.
+    #[must_use]
+    pub fn with_redaction(
+        inner: Arc<dyn HotlEnforcer>,
+        registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
+        default_expiry: std::time::Duration,
+        expiry: std::collections::HashMap<String, std::time::Duration>,
+        redaction_repo: Arc<dyn xiaoguai_storage::repositories::hotl_redaction::HotlRedactionRepo>,
+        redaction_required: bool,
+        audit_sink: Option<Arc<dyn xiaoguai_api::hotl::audit::HotlAuditSink>>,
+    ) -> Self {
         Self {
             inner,
             registry,
             default_expiry,
             expiry,
+            redaction_repo,
+            redaction_required,
+            audit_sink,
         }
     }
 
@@ -531,6 +621,31 @@ impl SuspendingHotlGate {
     ) -> Arc<dyn xiaoguai_agent::HotlGate> {
         Arc::new(Self::with_expiry(inner, registry, default_expiry, expiry))
     }
+
+    /// Sprint-13 S13-6: Arc helper that threads expiry, the redaction
+    /// repo, and an audit sink. `build_hotl_gate_with_redaction` uses
+    /// this when the suspend gate is selected; `run_serve` calls it
+    /// directly.
+    #[must_use]
+    pub fn arc_with_redaction(
+        inner: Arc<dyn HotlEnforcer>,
+        registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
+        default_expiry: std::time::Duration,
+        expiry: std::collections::HashMap<String, std::time::Duration>,
+        redaction_repo: Arc<dyn xiaoguai_storage::repositories::hotl_redaction::HotlRedactionRepo>,
+        redaction_required: bool,
+        audit_sink: Option<Arc<dyn xiaoguai_api::hotl::audit::HotlAuditSink>>,
+    ) -> Arc<dyn xiaoguai_agent::HotlGate> {
+        Arc::new(Self::with_redaction(
+            inner,
+            registry,
+            default_expiry,
+            expiry,
+            redaction_repo,
+            redaction_required,
+            audit_sink,
+        ))
+    }
 }
 
 /// Sprint-13 S13-7. Resolve the expiry `Duration` for a given scope by
@@ -554,11 +669,33 @@ fn resolve_expiry(
 
 #[async_trait]
 impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
+    /// Legacy entry point — preserves the v1.9.x signature so test
+    /// harnesses that don't supply args continue to compile. Delegates
+    /// to [`Self::check_with_args`] with `Value::Null` so the redaction
+    /// path is exercised consistently (an empty input yields an empty
+    /// output regardless of policy).
     async fn check(
         &self,
         tenant_id: Uuid,
         scope: &str,
         amount: f64,
+    ) -> xiaoguai_agent::HotlGateVerdict {
+        <Self as xiaoguai_agent::HotlGate>::check_with_args(
+            self,
+            tenant_id,
+            scope,
+            amount,
+            &serde_json::Value::Null,
+        )
+        .await
+    }
+
+    async fn check_with_args(
+        &self,
+        tenant_id: Uuid,
+        scope: &str,
+        amount: f64,
+        args: &serde_json::Value,
     ) -> xiaoguai_agent::HotlGateVerdict {
         match self.inner.check(tenant_id, scope, amount).await {
             Ok(HotlVerdict::Allow) => xiaoguai_agent::HotlGateVerdict::Allow,
@@ -572,6 +709,50 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                 xiaoguai_agent::HotlGateVerdict::Deny(reason)
             }
             Ok(HotlVerdict::Escalate(reason)) => {
+                // Sprint-13 S13-6: per-call rule load — admin edits land
+                // on the next escalation (DEC-HLD-014 mutability
+                // rationale). Repo failure is fail-closed: without
+                // knowing the policy state we can't decide whether
+                // redaction was required, so we deny rather than risk
+                // leaking unredacted args on SSE.
+                let rules = match xiaoguai_auth::RedactionRules::from_storage(
+                    &*self.redaction_repo,
+                    tenant_id,
+                )
+                .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::error!(
+                            tenant_id = %tenant_id,
+                            %scope,
+                            error = %e,
+                            "HOTL redaction policy load failed — fail-closed deny"
+                        );
+                        return xiaoguai_agent::HotlGateVerdict::Deny(format!(
+                            "HOTL redaction policy store error (fail-closed): {e}"
+                        ));
+                    }
+                };
+
+                let matching_id = rules.matching_rule_id(scope);
+                // Fail-closed branch (DEC-HLD-014 + S13-0 config): if
+                // redaction is required but no rule matches this scope,
+                // deny. Empty rule sets and per-scope misses both surface
+                // as `matching_id.is_none()` here.
+                if self.redaction_required && matching_id.is_none() {
+                    tracing::error!(
+                        tenant_id = %tenant_id,
+                        %scope,
+                        "HOTL escalate but redaction_required=true and no matching policy — fail-closed deny"
+                    );
+                    return xiaoguai_agent::HotlGateVerdict::Deny(
+                        "redaction policy missing".into(),
+                    );
+                }
+
+                let args_redacted = rules.apply(scope, args);
+
                 let escalation_id = Uuid::new_v4();
                 // Sprint-13 S13-7: per-call lookup; runtime config edits
                 // are honoured on the next escalation.
@@ -605,7 +786,10 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                     // Sprint-13 S13-8 will plumb the tool name through;
                     // the scope already encodes it (`tool_call.<name>`).
                     tool: scope.to_string(),
-                    args_redacted: serde_json::json!({"amount": amount}),
+                    // Sprint-13 S13-6: persist the policy-masked args
+                    // so a UI restart restores the same redacted view
+                    // that the live SSE banner displayed.
+                    args_redacted: args_redacted.clone(),
                     status: "pending".to_string(),
                     expires_at: expires_at_utc,
                     created_at: now_utc,
@@ -624,12 +808,44 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                             %scope,
                             %reason,
                             %escalation_id,
+                            ?matching_id,
                             "HOTL escalate → suspend; awaiting operator decision"
                         );
+
+                        // Sprint-13 S13-6: emit one `hotl.escalation`
+                        // audit entry per Suspend verdict, embedding
+                        // the matched `redaction_policy_id` so audit
+                        // queries can trace policy lineage. Audit
+                        // failure is logged but does NOT block the
+                        // operator decision flow.
+                        if let Some(sink) = &self.audit_sink {
+                            let entry = xiaoguai_audit::AuditEntry {
+                                ts: now_utc,
+                                tenant_id: tenant_id.to_string(),
+                                actor: "system".into(),
+                                action: "hotl.escalation".into(),
+                                resource: Some(format!("escalation:{escalation_id}")),
+                                details: serde_json::json!({
+                                    "scope": scope,
+                                    "redaction_policy_id": matching_id,
+                                }),
+                            };
+                            if let Err(e) = sink.append(entry).await {
+                                tracing::warn!(
+                                    tenant_id = %tenant_id,
+                                    %scope,
+                                    %escalation_id,
+                                    error = %e,
+                                    "HOTL escalation audit append failed — continuing"
+                                );
+                            }
+                        }
+
                         xiaoguai_agent::HotlGateVerdict::Suspend {
                             escalation_id,
                             scope: scope.to_string(),
                             ticket,
+                            args_redacted,
                         }
                     }
                     Err(e) => {
@@ -707,8 +923,49 @@ pub fn build_hotl_gate_with_expiry(
     default_expiry: std::time::Duration,
     expiry: std::collections::HashMap<String, std::time::Duration>,
 ) -> Arc<dyn xiaoguai_agent::HotlGate> {
+    // Sprint-13 S13-6: delegate to the redaction-aware builder with a
+    // Noop repo + redaction_required=false + no audit sink, so existing
+    // test fixtures keep observing byte-for-byte the sprint-12
+    // behaviour (verbatim args, no policy lookup).
+    build_hotl_gate_with_redaction(
+        suspend_on_escalate,
+        enforcer,
+        registry,
+        default_expiry,
+        expiry,
+        Arc::new(NoopHotlRedactionRepo) as _,
+        false,
+        None,
+    )
+}
+
+/// Sprint-13 S13-6. `build_hotl_gate_with_expiry` variant that also
+/// threads the redaction repo + `redaction_required` flag + audit sink
+/// into `SuspendingHotlGate`. Ignored when `suspend_on_escalate ==
+/// false` (legacy `EnforcerGate` does not have a redaction surface).
+/// `run_serve` calls this directly with `PgHotlRedactionRepo` and the
+/// `agent.hotl.redaction_policy_required` config field.
+#[must_use]
+pub fn build_hotl_gate_with_redaction(
+    suspend_on_escalate: bool,
+    enforcer: Arc<dyn HotlEnforcer>,
+    registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
+    default_expiry: std::time::Duration,
+    expiry: std::collections::HashMap<String, std::time::Duration>,
+    redaction_repo: Arc<dyn xiaoguai_storage::repositories::hotl_redaction::HotlRedactionRepo>,
+    redaction_required: bool,
+    audit_sink: Option<Arc<dyn xiaoguai_api::hotl::audit::HotlAuditSink>>,
+) -> Arc<dyn xiaoguai_agent::HotlGate> {
     if suspend_on_escalate {
-        SuspendingHotlGate::arc_with_expiry(enforcer, registry, default_expiry, expiry)
+        SuspendingHotlGate::arc_with_redaction(
+            enforcer,
+            registry,
+            default_expiry,
+            expiry,
+            redaction_repo,
+            redaction_required,
+            audit_sink,
+        )
     } else {
         EnforcerGate::arc(enforcer)
     }
@@ -1211,6 +1468,7 @@ mod tests {
                 escalation_id,
                 scope,
                 ticket,
+                args_redacted: _,
             } => (escalation_id, scope, ticket),
             other => panic!("expected Suspend, got {other:?}"),
         };
@@ -1298,6 +1556,7 @@ mod tests {
                 escalation_id,
                 scope,
                 ticket,
+                args_redacted: _,
             } => (escalation_id, scope, ticket),
             other => panic!("expected Suspend, got {other:?}"),
         };
