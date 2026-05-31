@@ -364,14 +364,31 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     let hotl_enforcer_arc: Arc<dyn xiaoguai_api::hotl::enforcer::HotlEnforcer> = Arc::new(
         crate::hotl_bridge::PgHotlEnforcer::new(pool.clone(), hotl_policy_store_pg.clone()),
     );
-    // Sprint-12 S12-4: the `DecisionRegistry` is constructed ONCE here
-    // and shared between the gate adapter (so `SuspendingHotlGate::check`
-    // can mint tickets against it) and `AppState.decision_registry`
-    // (so `POST /v1/hotl/decisions` can resolve waiters on it). A second
-    // registry would silently no-op resolves and hang the loop until the
-    // 24h default expiry. See hotl_bridge::build_hotl_gate doc.
+    // Sprint-12 S12-4 / Sprint-13 S13-5: the `DecisionRegistry` is
+    // constructed ONCE here and shared between the gate adapter (so
+    // `SuspendingHotlGate::check` can mint tickets against it) and
+    // `AppState.decision_registry` (so `POST /v1/hotl/decisions` can
+    // resolve waiters on it). A second registry would silently no-op
+    // resolves and hang the loop until the 24h default expiry.
+    //
+    // Sprint-13 S13-5: the registry is wired to
+    // `PgHotlEscalationRepository` and uses `replay_from_storage` so any
+    // `hotl_pending` rows that survived a restart are reattached BEFORE
+    // the HTTP server starts accepting requests. The replay log line
+    // `hotl: replayed N pending decision waiters from PG` is the SRE
+    // signal that the boot recovery path actually ran.
+    let hotl_escalation_store: std::sync::Arc<
+        dyn xiaoguai_storage::repositories::HotlEscalationStore,
+    > = std::sync::Arc::new(
+        xiaoguai_storage::repositories::PgHotlEscalationRepository::new(pool.clone()),
+    );
     let decision_registry =
-        std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new());
+        xiaoguai_api::hotl::decision_registry::DecisionRegistry::replay_from_storage(
+            hotl_escalation_store.clone(),
+            chrono::Utc::now(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("HOTL decision registry boot replay failed: {e}"))?;
     // Per design (`lld-agent.md` §4.5): default suspend window is 24h.
     // Sprint-13 S13-7: per-scope-class overrides land via
     // `agent.hotl.expiry` (S13-0 surface) — empty map preserves the

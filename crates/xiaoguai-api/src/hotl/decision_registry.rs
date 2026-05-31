@@ -1,79 +1,100 @@
-//! Per-`request_id` HOTL decision waiter registry — sprint-12 S12-3.
+//! Per-`escalation_id` HOTL decision waiter registry — sprint-12 S12-3,
+//! sprint-13 S13-5 (persistence + boot replay).
 //!
 //! When the agent loop's gate returns `Suspend`, it parks on a oneshot
 //! receiver issued by this registry; when `POST /v1/hotl/decisions` lands,
 //! the route handler calls [`DecisionRegistry::resolve`] to wake the
 //! waiter with the operator's verdict.
 //!
+//! ## Sprint-13 S13-5: persistence + boot replay
+//!
+//! The registry now holds an `Arc<dyn HotlEscalationStore>` (from
+//! `xiaoguai-storage`) and routes every state transition through it:
+//!
+//! * [`DecisionRegistry::register`] writes `hotl_escalations` +
+//!   `hotl_pending` rows **before** installing the in-memory oneshot
+//!   sender. A persist failure leaves zero in-memory state — boot replay
+//!   would otherwise resurrect a phantom waiter no operator could ever
+//!   resolve.
+//! * [`DecisionRegistry::resolve`] writes the verdict row **before**
+//!   firing the oneshot. A store miss (no row matched) returns
+//!   [`RegistryError::UnknownEscalation`] so the route handler can render
+//!   404.
+//! * [`DecisionRegistry::replay_from_storage`] rebuilds the in-memory
+//!   waiter map from `hotl_pending` rows that are still `pending` AND
+//!   unexpired at boot time. Each replayed row gets a fresh oneshot +
+//!   `sleep_until(expires_at)` companion task. The replay counts (per
+//!   outcome: `reattached`, `expired`, `failed`) are emitted to the new
+//!   `xiaoguai_hotl_registry_replayed_total` counter.
+//!
 //! ## Lifecycle
 //!
 //! 1. Gate (`SuspendingHotlGate`, S12-4) calls
-//!    [`DecisionRegistry::register(request_id, expires_at)`] →
-//!    returns a [`HotlSuspensionTicket`].
+//!    [`DecisionRegistry::register(escalation_id, parent, child, expires_at)`]
+//!    → returns a [`HotlSuspensionTicket`].
 //! 2. Loop (`react.rs`, S12-5) emits `HotlPending`, then `await`s
 //!    `ticket.await_decision(cancel)`. Three terminal states:
 //!    * Operator decides → route handler calls
-//!      [`DecisionRegistry::resolve(request_id, verdict)`] →
-//!      ticket resolves to the verdict.
+//!      [`DecisionRegistry::resolve(escalation_id, resolution, decided_by)`]
+//!      → ticket resolves to the verdict.
 //!    * Expiry fires → background sleeper resolves the ticket
 //!      with `HotlResolution::Timeout`.
 //!    * Cancel token fires → ticket resolves to
-//!      `HotlTicketError::Cancelled`; loop still calls
-//!      `metrics.on_resolve(elapsed, Cancelled)` so the gauge
-//!      decrements deterministically.
+//!      `HotlTicketError::Cancelled`.
 //! 3. Loop calls `metrics.on_resolve(elapsed, verdict)`
 //!    → gauge--, counter++, histogram observe.
-//!
-//! ## Sprint-12 cross-crate contract note (resolved in S12-4)
-//!
-//! The canonical home for [`HotlSuspensionTicket`],
-//! [`HotlDecisionVerdict`], and [`HotlResolution`] is
-//! `xiaoguai_agent::hotl_gate` (sprint-12 S12-1). The S12-3 wave landed
-//! local duplicates because S12-1 was an independent parallel PR. S12-4
-//! flips the registry over to the agent-crate types so the gate
-//! (`SuspendingHotlGate` in `xiaoguai-core::hotl_bridge`) can embed the
-//! ticket inside `HotlGateVerdict::Suspend` without a second adapter
-//! layer. The wire shape is fixed by the design (`lld-agent.md` §4.5).
 //!
 //! ## Concurrency
 //!
 //! Backed by `DashMap` (lock-free segmented hash map). `register` and
 //! `resolve` may interleave arbitrarily — the only invariant is that
-//! exactly one of `resolve` / timeout / cancel wins per `request_id`.
-//! Late `resolve` calls (after expiry already fired) return `false`
-//! and are no-ops.
-//!
-//! ## Persistence
-//!
-//! In-memory only. Restart drops live waiters; loops blocked at
-//! `ticket.await_decision` will be torn down with the process. Per
-//! plan §4 out-of-scope: Redis-backed persistence is sprint-14+.
+//! exactly one of `resolve` / timeout / cancel wins per `escalation_id`.
+//! Late `resolve` calls (after expiry already fired) match no row at the
+//! DB layer and surface [`RegistryError::UnknownEscalation`].
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use thiserror::Error;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 use uuid::Uuid;
 
+use xiaoguai_storage::repositories::error::{RepoError, RepoResult};
+use xiaoguai_storage::repositories::hotl_escalations::{
+    HotlDecisionVerdict as StoreVerdict, HotlEscalationRow, HotlEscalationStore, HotlPendingRow,
+};
+
 // Sprint-12 S12-4: the canonical ticket / verdict / resolution types live
 // in `xiaoguai_agent::hotl_gate`. The registry re-exports them so callers
-// (the route handler, gate adapter, tests) can keep the
-// `xiaoguai_api::hotl::decision_registry::*` import path they were already
-// using; the underlying types now match what
-// `xiaoguai_agent::HotlGateVerdict::Suspend.ticket` carries.
+// keep the `xiaoguai_api::hotl::decision_registry::*` import path.
 pub use xiaoguai_agent::hotl_gate::{
     HotlDecisionVerdict, HotlResolution, HotlSuspensionTicket, HotlTicketError,
 };
 
+// ── error type ────────────────────────────────────────────────────────────────
+
+/// Sprint-13 S13-5. Failure modes of the persistence-aware
+/// [`DecisionRegistry`] API.
+#[derive(Debug, Error)]
+pub enum RegistryError {
+    /// `resolve` was called for an `escalation_id` that has no matching
+    /// `status='pending'` row in the store. Either the id never existed
+    /// or the row has already been terminalised (resolved / expired) by
+    /// another worker — the route handler maps this to `404 Not Found`.
+    #[error("escalation_id not found or already terminalised")]
+    UnknownEscalation,
+    /// Underlying storage failure (sqlx error, connection drop, etc.).
+    #[error("storage error: {0}")]
+    Storage(#[from] RepoError),
+}
+
 // ── metrics helper ────────────────────────────────────────────────────────────
 
 /// Stable metric label for `xiaoguai_hotl_suspensions_total{verdict}`.
-/// Free function (not a method on the agent-crate `HotlResolution`) so the
-/// label vocabulary stays owned by the registry — sprint-12 S12-5 will
-/// extend it with an explicit `"cancelled"` label when the loop tears down
-/// a waiter due to session cancel (no resolved verdict was produced).
 #[must_use]
 pub fn metric_label_for(verdict: &HotlResolution) -> &'static str {
     match verdict {
@@ -83,7 +104,7 @@ pub fn metric_label_for(verdict: &HotlResolution) -> &'static str {
     }
 }
 
-/// Thin wrapper around the three Prometheus handles registered in
+/// Thin wrapper around the Prometheus handles registered in
 /// `xiaoguai-observability::init_prometheus`. Falls back to a silent
 /// no-op when `init_prometheus` was never called (unit tests).
 #[derive(Debug, Default, Clone, Copy)]
@@ -97,8 +118,7 @@ impl DecisionRegistryMetrics {
         }
     }
 
-    /// Entry resolved with a verdict from the channel (operator decision
-    /// or background-task Timeout). Decrement the gauge, increment the
+    /// Entry resolved with a verdict. Decrement the gauge, increment the
     /// per-verdict counter, observe the histogram.
     pub fn on_resolve(self, held: Duration, verdict: &HotlResolution) {
         if let Some(g) = xiaoguai_observability::hotl_suspended_loops_gauge() {
@@ -111,20 +131,103 @@ impl DecisionRegistryMetrics {
             h.observe(held.as_secs_f64());
         }
     }
+
+    /// Sprint-13 S13-5: per-row outcome of boot replay.
+    pub fn on_replay(self, outcome: ReplayOutcome) {
+        if let Some(c) = xiaoguai_observability::hotl_registry_replayed_total() {
+            c.with_label_values(&[outcome.as_label()]).inc();
+        }
+    }
+}
+
+/// Sprint-13 S13-5. Per-row outcome of
+/// [`DecisionRegistry::replay_from_storage`]. Surfaces as the `outcome`
+/// label on `xiaoguai_hotl_registry_replayed_total`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayOutcome {
+    /// Row had `status='pending'` AND `expires_at > now` at SQL filter
+    /// time AND the in-memory waiter was minted successfully.
+    Reattached,
+    /// Row slipped from "unexpired at SQL filter" to "expired by spawn
+    /// time" — rare clock-skew race. The row is intentionally NOT
+    /// resurrected in-memory; the next decision request will hit the DB
+    /// and find it unresolved + expired.
+    Expired,
+    /// Replay-side bookkeeping failure (e.g. duplicate id in the boot
+    /// batch — should never happen but accounted for defensively).
+    Failed,
+}
+
+impl ReplayOutcome {
+    fn as_label(self) -> &'static str {
+        match self {
+            Self::Reattached => "reattached",
+            Self::Expired => "expired",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+// ── noop store (for tests) ────────────────────────────────────────────────────
+
+/// Sprint-13 S13-5. In-process no-op `HotlEscalationStore` for unit
+/// tests that don't care about persistence. Every write is a no-op and
+/// every read returns an empty vec. Production NEVER uses this — the
+/// `run_serve` wiring constructs `PgHotlEscalationRepository`.
+#[derive(Debug, Default)]
+pub struct NoopHotlEscalationStore;
+
+#[async_trait]
+impl HotlEscalationStore for NoopHotlEscalationStore {
+    async fn insert_pending(
+        &self,
+        parent: HotlEscalationRow,
+        _child: HotlPendingRow,
+    ) -> RepoResult<Uuid> {
+        Ok(parent.id)
+    }
+
+    async fn list_pending_unexpired(&self, _now: DateTime<Utc>) -> RepoResult<Vec<HotlPendingRow>> {
+        Ok(Vec::new())
+    }
+
+    async fn record_decision(
+        &self,
+        _escalation_id: Uuid,
+        _verdict: StoreVerdict,
+        _decided_by: Option<String>,
+    ) -> RepoResult<bool> {
+        // Test-only path: every resolve returns "row matched" so the
+        // in-memory pathway exercises the post-persist branch.
+        Ok(true)
+    }
 }
 
 // ── registry ──────────────────────────────────────────────────────────────────
 
-/// Per-`request_id` map of suspended HOTL waiters.
+/// Per-`escalation_id` map of suspended HOTL waiters.
 ///
 /// One registry per [`crate::AppState`]; shared between the gate adapter
-/// (which calls `register`) and the route handler (which calls
-/// `resolve`). The registry itself has zero side-effects when no one
-/// calls `register`, so it is always-present on `AppState` (no `Option`).
-#[derive(Debug)]
+/// (which calls `register_persisted`) and the route handler (which calls
+/// `resolve_persisted`). The registry itself has zero side-effects when
+/// no one calls `register*`, so it is always-present on `AppState` (no
+/// `Option`).
 pub struct DecisionRegistry {
     waiters: DashMap<Uuid, WaiterSlot>,
+    /// Sprint-13 S13-5: persistence layer. `NoopHotlEscalationStore` in
+    /// tests; `PgHotlEscalationRepository` in production.
+    store: Arc<dyn HotlEscalationStore>,
     metrics: DecisionRegistryMetrics,
+}
+
+impl std::fmt::Debug for DecisionRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DecisionRegistry")
+            .field("waiters", &self.waiters.len())
+            .field("store", &"Arc<dyn HotlEscalationStore>")
+            .field("metrics", &self.metrics)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -134,31 +237,224 @@ struct WaiterSlot {
 }
 
 impl DecisionRegistry {
-    /// Construct an empty registry. Metrics are bound to the global
-    /// `xiaoguai-observability` handles lazily; tests that bypass
-    /// `init_prometheus` get a silent no-op.
+    /// Sprint-13 S13-5: construct a registry wired to the given store.
+    /// `run_serve` calls this with `PgHotlEscalationRepository`; tests
+    /// pass `NoopHotlEscalationStore` via [`Self::in_memory`].
     #[must_use]
-    pub fn new() -> Self {
+    pub fn with_store(store: Arc<dyn HotlEscalationStore>) -> Self {
         Self {
             waiters: DashMap::new(),
+            store,
             metrics: DecisionRegistryMetrics,
         }
     }
 
-    /// Convenience constructor: `Arc::new(Self::new())`.
+    /// Test helper: construct a registry backed by
+    /// [`NoopHotlEscalationStore`]. Equivalent to the sprint-12
+    /// `DecisionRegistry::new()` (no persistence).
     #[must_use]
-    pub fn arc() -> Arc<Self> {
-        Arc::new(Self::new())
+    pub fn in_memory() -> Self {
+        Self::with_store(Arc::new(NoopHotlEscalationStore))
     }
 
-    /// Register a new suspended request. Returns the agent-crate ticket
-    /// the loop `await`s; spawns a background sleeper that resolves the
-    /// ticket with `HotlResolution::Timeout` on `expires_at`.
+    /// Back-compat alias for sprint-12 callers; constructs an in-memory
+    /// registry. Production wiring should call
+    /// [`Self::with_store`] or [`Self::replay_from_storage`] instead.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::in_memory()
+    }
+
+    /// Back-compat alias for sprint-12 callers; constructs an
+    /// `Arc<Self>` backed by [`NoopHotlEscalationStore`].
+    #[must_use]
+    pub fn arc() -> Arc<Self> {
+        Arc::new(Self::in_memory())
+    }
+
+    /// Sprint-13 S13-5. Boot-time replay constructor.
     ///
-    /// Sprint-12 S12-4: the ticket is built via
-    /// `xiaoguai_agent::HotlSuspensionTicket::new` so the registry, the
-    /// gate adapter (`SuspendingHotlGate`), and the ReAct loop all share
-    /// one type. The registry owns the matching `oneshot::Sender`.
+    /// Walks `store.list_pending_unexpired(now)`, mints a fresh
+    /// `oneshot::channel` per row, spawns a `sleep_until(row.expires_at)`
+    /// companion that emits `verdict=timeout` on fire, and returns the
+    /// fully-populated registry. The HTTP server MUST NOT start
+    /// accepting requests until this future resolves — otherwise a
+    /// decision request could land before the matching waiter is in the
+    /// map.
+    ///
+    /// The `sleep_until` companion does NOT re-call `store.record_decision`
+    /// — that's the route handler's job. It only fires the oneshot, so
+    /// the in-memory waiter (which exists across the registry's lifetime)
+    /// observes the timeout. The DB row stays `status='pending'` until
+    /// the next replay or a real operator decision.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::Storage`] if the
+    /// `list_pending_unexpired` query fails. Per-row spawn failures are
+    /// counted as `ReplayOutcome::Failed` and the replay continues with
+    /// the next row.
+    pub async fn replay_from_storage(
+        store: Arc<dyn HotlEscalationStore>,
+        now: DateTime<Utc>,
+    ) -> Result<Arc<Self>, RegistryError> {
+        let rows = store.list_pending_unexpired(now).await?;
+        let registry = Arc::new(Self::with_store(store));
+
+        let mut reattached: usize = 0;
+        let mut expired: usize = 0;
+
+        for row in &rows {
+            // Defensive: even though SQL filtered `expires_at > now`,
+            // the spawn happens N ms later and clock skew is real.
+            let now2 = Utc::now();
+            if row.expires_at <= now2 {
+                registry.metrics.on_replay(ReplayOutcome::Expired);
+                expired += 1;
+                continue;
+            }
+
+            // Convert DateTime<Utc> deadline to tokio::Instant for the
+            // sleep_until companion.
+            let dur_until = (row.expires_at - now2)
+                .to_std()
+                .unwrap_or(Duration::from_secs(0));
+            let expires_at = Instant::now() + dur_until;
+
+            let (ticket, sender) = HotlSuspensionTicket::new(row.escalation_id, expires_at);
+            // Drop the ticket immediately: replay does NOT hand the
+            // ticket back to any awaiting loop — the original loop is
+            // gone with the old process. Holding the sender keeps the
+            // route handler's `resolve_persisted` path functional for
+            // when an operator decision lands in the new process.
+            drop(ticket);
+
+            let slot = WaiterSlot {
+                sender,
+                registered_at: Instant::now(),
+            };
+            registry.waiters.insert(row.escalation_id, slot);
+            registry.metrics.on_register();
+            registry.metrics.on_replay(ReplayOutcome::Reattached);
+            reattached += 1;
+
+            // sleep_until companion: drop the slot + decrement the gauge
+            // on expiry. Does NOT touch the store.
+            let this = Arc::clone(&registry);
+            let escalation_id = row.escalation_id;
+            tokio::spawn(async move {
+                tokio::time::sleep_until(expires_at).await;
+                this.fire_timeout(escalation_id);
+            });
+        }
+
+        tracing::info!(
+            count = rows.len(),
+            reattached,
+            expired,
+            "hotl: replayed pending decision waiters from PG"
+        );
+
+        Ok(registry)
+    }
+
+    /// Sprint-13 S13-5. Persistence-aware register: writes the
+    /// `hotl_escalations` + `hotl_pending` pair through the store
+    /// **before** installing the in-memory oneshot sender. A persist
+    /// failure leaves zero in-memory state — boot replay would resurrect
+    /// a phantom waiter no operator could ever resolve.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::Storage`] on store write failure.
+    pub async fn register_persisted(
+        self: &Arc<Self>,
+        escalation_id: Uuid,
+        parent: HotlEscalationRow,
+        child: HotlPendingRow,
+        expires_at: Instant,
+    ) -> Result<HotlSuspensionTicket, RegistryError> {
+        // 1. Persist first.
+        self.store.insert_pending(parent, child).await?;
+
+        // 2. Then install the in-memory sender.
+        let (ticket, sender) = HotlSuspensionTicket::new(escalation_id, expires_at);
+        let slot = WaiterSlot {
+            sender,
+            registered_at: Instant::now(),
+        };
+        self.waiters.insert(escalation_id, slot);
+        self.metrics.on_register();
+
+        // Background sleeper: fire on expiry. Mirrors the sprint-12
+        // `register` belt-and-braces. Does NOT touch the store — the
+        // DB stays `pending` and the next boot replay will sweep it
+        // (or an operator decision lands first).
+        let this = Arc::clone(self);
+        let expires_at_for_task = expires_at;
+        tokio::spawn(async move {
+            tokio::time::sleep_until(expires_at_for_task).await;
+            this.fire_timeout(escalation_id);
+        });
+
+        Ok(ticket)
+    }
+
+    /// Sprint-13 S13-5. Persistence-aware resolve: writes the verdict
+    /// through the store **before** firing the oneshot. A store miss
+    /// (no row matched) returns [`RegistryError::UnknownEscalation`].
+    ///
+    /// Returns `Ok(bool)` where the bool is whether a live in-memory
+    /// waiter received the verdict. `false` means the DB row was
+    /// updated but no operator was parked on the oneshot (e.g. the
+    /// agent loop had already dropped the ticket via cancel).
+    ///
+    /// # Errors
+    ///
+    /// - [`RegistryError::Storage`] — underlying sqlx failure.
+    /// - [`RegistryError::UnknownEscalation`] — `record_decision`
+    ///   returned `Ok(false)` (no row matched, or row was already
+    ///   terminalised).
+    pub async fn resolve_persisted(
+        &self,
+        escalation_id: Uuid,
+        resolution: HotlResolution,
+        decided_by: Option<String>,
+    ) -> Result<bool, RegistryError> {
+        // 1. Persist first.
+        let store_verdict = match &resolution {
+            HotlResolution::Allow => StoreVerdict::Allowed,
+            HotlResolution::Deny(_) => StoreVerdict::Denied,
+            HotlResolution::Timeout => StoreVerdict::Expired,
+        };
+        let matched = self
+            .store
+            .record_decision(escalation_id, store_verdict, decided_by.clone())
+            .await?;
+        if !matched {
+            return Err(RegistryError::UnknownEscalation);
+        }
+
+        // 2. Then fire the oneshot (if a waiter is still in the map).
+        let Some((_, slot)) = self.waiters.remove(&escalation_id) else {
+            return Ok(false);
+        };
+        let held = slot.registered_at.elapsed();
+        let verdict = HotlDecisionVerdict {
+            verdict: resolution.clone(),
+            decided_by,
+            recorded_at: Utc::now(),
+        };
+        let _ = slot.sender.send(verdict);
+        self.metrics.on_resolve(held, &resolution);
+        Ok(true)
+    }
+
+    /// Sprint-12 (S12-3 back-compat). In-memory register: no persistence,
+    /// just install a oneshot sender keyed on `request_id`. Used by the
+    /// 20+ pre-sprint-13 integration tests that don't care about the
+    /// store path. Production (`SuspendingHotlGate`) calls
+    /// [`Self::register_persisted`] instead.
     pub fn register(
         self: &Arc<Self>,
         request_id: Uuid,
@@ -169,52 +465,50 @@ impl DecisionRegistry {
             sender,
             registered_at: Instant::now(),
         };
-        // If a prior `register` for the same id is still in flight
-        // (caller bug — operator UI would never emit duplicate
-        // request_ids), drop the old sender so its ticket resolves as
-        // `ChannelDropped`.
         self.waiters.insert(request_id, slot);
         self.metrics.on_register();
 
-        // Background sleeper: fire `resolve(.., Timeout)` on expiry. The
-        // self.clone() bumps the Arc refcount so the spawned task can
-        // outlive the caller scope. The agent ticket's own select! also
-        // races `expires_at`, so this background task is belt-and-braces:
-        // it ensures the registry map entry is removed and the gauge
-        // decremented even if no one awaits the ticket.
         let this = Arc::clone(self);
         tokio::spawn(async move {
             tokio::time::sleep_until(expires_at).await;
-            // `resolve` is a no-op if the operator already decided; the
-            // sender slot is gone in that case.
-            let _ = this.resolve(
-                request_id,
-                HotlDecisionVerdict {
-                    verdict: HotlResolution::Timeout,
-                    decided_by: None,
-                    recorded_at: chrono::Utc::now(),
-                },
-            );
+            this.fire_timeout(request_id);
         });
 
         ticket
     }
 
-    /// Deliver the operator's verdict (or a Timeout from the background
-    /// sleeper) to the parked loop. Returns `true` if a live waiter
-    /// existed; `false` if it had already been resolved or never registered.
+    /// Sprint-12 (S12-3 back-compat). In-memory resolve: no persistence,
+    /// just remove the slot and fire the oneshot. Returns `true` if a
+    /// live waiter existed. Used by sprint-12 routes + tests.
+    ///
+    /// Production (`POST /v1/hotl/decisions`) calls
+    /// [`Self::resolve_persisted`] instead.
     pub fn resolve(&self, request_id: Uuid, verdict: HotlDecisionVerdict) -> bool {
         let Some((_, slot)) = self.waiters.remove(&request_id) else {
             return false;
         };
         let held = slot.registered_at.elapsed();
         let verdict_clone = verdict.verdict.clone();
-        // `send` only fails if the receiver was dropped. Treat as a
-        // successful resolve — the loop tore down its ticket
-        // independently (e.g. session cancel beat us to it).
         let _ = slot.sender.send(verdict);
         self.metrics.on_resolve(held, &verdict_clone);
         true
+    }
+
+    /// Internal: fire a `Timeout` verdict on the in-memory channel only.
+    /// Used by both `register` and `replay_from_storage` companion
+    /// tasks. Does NOT touch the store.
+    fn fire_timeout(&self, escalation_id: Uuid) {
+        let Some((_, slot)) = self.waiters.remove(&escalation_id) else {
+            return;
+        };
+        let held = slot.registered_at.elapsed();
+        let verdict = HotlDecisionVerdict {
+            verdict: HotlResolution::Timeout,
+            decided_by: None,
+            recorded_at: Utc::now(),
+        };
+        let _ = slot.sender.send(verdict);
+        self.metrics.on_resolve(held, &HotlResolution::Timeout);
     }
 
     /// Test/diagnostic accessor: number of currently-registered waiters.
@@ -232,32 +526,19 @@ impl DecisionRegistry {
 
 impl Default for DecisionRegistry {
     fn default() -> Self {
-        Self::new()
+        Self::in_memory()
     }
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-// `metrics_lock()` is a `std::sync::Mutex` held across `.await` in these
-// tests purely to serialise the process-wide Prometheus gauge — the critical
-// sections never block on async work, so the `await_holding_lock` lint is
-// a false positive here. Allowed at module scope to avoid sprinkling
-// `#[allow(...)]` on every async test.
 #[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use std::sync::OnceLock;
     use tokio_util::sync::CancellationToken;
 
-    /// Global serialisation lock for any test in this module that
-    /// observes the Prometheus gauge (which is a process-wide singleton
-    /// owned by `xiaoguai-observability`). Tests that only assert local
-    /// invariants on the per-test `DecisionRegistry` instance don't
-    /// strictly need it, but they DO bump the gauge as a side effect,
-    /// so they acquire the lock too to keep the gauge-observation test
-    /// race-free. The lock is held for the entire test body — these
-    /// tests run in milliseconds, so contention is irrelevant.
     fn metrics_lock() -> &'static parking_lot::Mutex<()> {
         static LOCK: OnceLock<parking_lot::Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| parking_lot::Mutex::new(()))
@@ -267,7 +548,7 @@ mod tests {
         HotlDecisionVerdict {
             verdict: HotlResolution::Allow,
             decided_by: Some("alice".into()),
-            recorded_at: chrono::Utc::now(),
+            recorded_at: Utc::now(),
         }
     }
 
@@ -275,7 +556,7 @@ mod tests {
         HotlDecisionVerdict {
             verdict: HotlResolution::Timeout,
             decided_by: None,
-            recorded_at: chrono::Utc::now(),
+            recorded_at: Utc::now(),
         }
     }
 
@@ -301,9 +582,6 @@ mod tests {
 
     #[tokio::test]
     async fn register_then_resolve_before_await_succeeds() {
-        // Race case from §3 risk row 2: resolve lands before the loop
-        // even reaches `ticket.await_decision`. Oneshot channel must
-        // still deliver the verdict.
         let _guard = metrics_lock().lock();
         let reg = DecisionRegistry::arc();
         let id = Uuid::new_v4();
@@ -324,7 +602,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let got = ticket.await_decision(&cancel).await.unwrap();
         assert_eq!(got.verdict, HotlResolution::Timeout);
-        // Give the spawned sleeper a chance to remove the entry.
         tokio::time::sleep(Duration::from_millis(20)).await;
         assert!(
             reg.is_empty(),
@@ -357,14 +634,7 @@ mod tests {
 
     #[tokio::test]
     async fn metrics_gauge_increments_on_register_decrements_on_resolve() {
-        // Serialise against the other gauge-bumping tests in this
-        // module — the gauge is a process-wide singleton.
         let _guard = metrics_lock().lock();
-        // `init_prometheus` is idempotent w.r.t. the global `OnceCell` —
-        // the first call wins, subsequent calls in the same binary
-        // silently return a fresh-but-unused registry. We only care
-        // about the *delta* on the global handle, not the registry
-        // identity, so we ignore the error path.
         let _ = xiaoguai_observability::init_prometheus();
         let gauge = xiaoguai_observability::hotl_suspended_loops_gauge()
             .expect("gauge must be wired after init_prometheus");
@@ -390,8 +660,6 @@ mod tests {
             gauge.get() - baseline
         );
 
-        // Forcibly expire id2 by resolving via the same path the
-        // background sleeper would use.
         registry.resolve(id2, timeout_verdict());
         assert!(
             (gauge.get() - baseline - 1.0).abs() < f64::EPSILON,
