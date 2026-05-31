@@ -257,6 +257,7 @@ async fn rate_limit_returns_429_when_bucket_drained() {
             sub: "alice".into(),
             tenant_id: "ten_a".into(),
             roles: vec![],
+            scopes: vec![],
         },
     });
     let mut state = build_state(InMemorySessionRepo::arc(), None, None, Some(validator));
@@ -291,6 +292,7 @@ async fn rate_limit_429_response_shape() {
             sub: "bob".into(),
             tenant_id: "ten_shape".into(),
             roles: vec![],
+            scopes: vec![],
         },
     });
     let mut state = build_state(InMemorySessionRepo::arc(), None, None, Some(validator));

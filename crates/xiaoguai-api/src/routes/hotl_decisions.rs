@@ -54,13 +54,14 @@
 
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::Claims;
-use crate::error::{ApiError, ApiResult};
+use crate::error::ApiError;
 use crate::hotl::decision::{HotlDecisionRecord, HotlDecisionStoreError, HotlDecisionVerdict};
 use crate::hotl::decision_registry::{
     HotlDecisionVerdict as RegistryDecisionVerdict, HotlResolution,
@@ -68,6 +69,12 @@ use crate::hotl::decision_registry::{
 use crate::hotl::policy::{CreateHotlPolicyRequest, HotlPolicy};
 use crate::routes::hotl::map_store_err as map_policy_err;
 use crate::state::AppState;
+
+/// Scope slug guarding `POST /v1/hotl/decisions` (sprint-13 S13-10,
+/// DEC-HLD-016, GR-SEC-14). Operators carry this scope in their JWT;
+/// requests without it are rejected with a structured 403 so the
+/// chat-ui can render a precise error.
+pub const HOTL_DECIDE_SCOPE: &str = "hotl:decide";
 
 // ── wire DTOs ─────────────────────────────────────────────────────────────────
 
@@ -162,12 +169,39 @@ pub async fn create_decision(
     State(state): State<AppState>,
     claims: Option<Extension<Claims>>,
     Json(req): Json<CreateHotlDecisionRequest>,
-) -> ApiResult<(StatusCode, Json<HotlDecisionResponse>)> {
+) -> Response {
+    match create_decision_inner(state, claims, req).await {
+        Ok((status, body)) => (status, body).into_response(),
+        Err(DecisionRouteError::MissingScope(scope)) => forbidden_missing_scope(scope),
+        Err(DecisionRouteError::Api(api)) => api.into_response(),
+    }
+}
+
+async fn create_decision_inner(
+    state: AppState,
+    claims: Option<Extension<Claims>>,
+    req: CreateHotlDecisionRequest,
+) -> Result<(StatusCode, Json<HotlDecisionResponse>), DecisionRouteError> {
+    // ── 0. Scope gate (sprint-13 S13-10, DEC-HLD-016, GR-SEC-14) ────────────
+    //
+    // Enforce `hotl:decide` when Claims are present. When `claims` is
+    // `None` we're in unauthed dev/test mode and the gate is a no-op —
+    // production deploys always wire `auth: Some(...)`, so this fallback
+    // is unreachable in real environments. The gate runs BEFORE any
+    // store touch so a forbidden caller cannot probe for a 503 ("is the
+    // store wired?") signal.
+    if let Some(Extension(c)) = claims.as_ref() {
+        if !c.scopes.iter().any(|s| s == HOTL_DECIDE_SCOPE) {
+            return Err(DecisionRouteError::MissingScope(HOTL_DECIDE_SCOPE));
+        }
+    }
+
     // ── 1. Required wiring ───────────────────────────────────────────────────
-    let store = state
-        .hotl_decision_store
-        .as_ref()
-        .ok_or_else(|| ApiError::ServiceUnavailable("HOTL decision store not wired".into()))?;
+    let store = state.hotl_decision_store.as_ref().ok_or_else(|| {
+        DecisionRouteError::Api(ApiError::ServiceUnavailable(
+            "HOTL decision store not wired".into(),
+        ))
+    })?;
 
     // ── 2. Tenant id from Claims, never from body ───────────────────────────
     // Auth-required mode: Claims.tenant_id is a string (mirrors the rest of
@@ -189,12 +223,14 @@ pub async fn create_decision(
         if rp.max_count.is_none() && rp.max_usd.is_none() {
             return Err(ApiError::InvalidRequest(
                 "raise_policy: at least one of max_count or max_usd must be set".into(),
-            ));
+            )
+            .into());
         }
         if rp.window_seconds <= 0 {
             return Err(ApiError::InvalidRequest(
                 "raise_policy: window_seconds must be > 0".into(),
-            ));
+            )
+            .into());
         }
     }
 
@@ -291,6 +327,37 @@ pub async fn create_decision(
     resp.policy_created = policy_created;
 
     Ok((StatusCode::CREATED, Json(resp)))
+}
+
+// ── route-local error type ────────────────────────────────────────────────────
+
+/// Route-local error wrapper so the scope-gate (`MissingScope`) can
+/// return a structured `{error, required_scope}` body that does not fit
+/// the [`ApiError`] envelope. All other errors flow through `Api` and
+/// render via [`ApiError::into_response`].
+pub enum DecisionRouteError {
+    /// The bearer token did not carry the required scope; render as 403
+    /// with `{"error":"forbidden","required_scope":"<slug>"}`.
+    MissingScope(&'static str),
+    /// All other errors — service unavailable, conflict, etc.
+    Api(ApiError),
+}
+
+impl From<ApiError> for DecisionRouteError {
+    fn from(value: ApiError) -> Self {
+        Self::Api(value)
+    }
+}
+
+/// Render the 403 body the chat-ui expects when the operator JWT lacks
+/// `hotl:decide`. Kept narrow on purpose — the body shape is part of
+/// the wire contract documented in api-contract.md §2.6.2.
+fn forbidden_missing_scope(required_scope: &'static str) -> Response {
+    let body = serde_json::json!({
+        "error": "forbidden",
+        "required_scope": required_scope,
+    });
+    (StatusCode::FORBIDDEN, Json(body)).into_response()
 }
 
 // ── error mapping ─────────────────────────────────────────────────────────────
