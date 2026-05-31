@@ -15,6 +15,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v1.10.0] — 2026-05-31
+
+HotL hardening — persistence, redaction, per-scope expiry, `escalation_id` rename. See [`release-notes-v1.10.0.md`](release-notes-v1.10.0.md) for full notes and [`docs/HANDOFF-2026-05-31-sprint-13-shipped.md`](docs/HANDOFF-2026-05-31-sprint-13-shipped.md) for the engineering handoff.
+
+### Breaking
+- **Wire rename `request_id` → `escalation_id`** across SSE events, `POST /v1/hotl/decisions` payloads, `DecisionRegistry` keys, and chat-ui types. No compat alias; chat-ui must upgrade in lockstep (#146, #147; DEC-HLD-016).
+- **Casbin `hotl:decide` scope is now enforced** on `POST /v1/hotl/decisions`. Operators whose JWTs do not carry `hotl:decide` in the `scopes` claim get 403 (#143; DEC-HLD-016).
+
+### Added
+- **`DecisionRegistry` persistence + boot-time waiter replay** via `HotlEscalationStore` (trait in `xiaoguai-core`, PG impl `HotlEscalationRepo` in `xiaoguai-storage`). Restarts no longer synthesise `verdict=timeout` over already-approved escalations (#141, #145; DEC-HLD-013).
+- **Policy-driven args redaction** — `RedactionRules` in `xiaoguai-auth` (JSONPath → `"***"` with warn-once per tenant/tool pair), applied by `SuspendingHotlGate` before SSE emission; paired audit row carries `redaction_policy_id` FK (#140, #144, #148; DEC-HLD-014).
+- **Per-scope HotL expiry** — `agent.hotl.expiry: {tool, mcp, skill}` overrides global `default_expiry`; empty map preserves v1.9.x semantics (#139, #142; DEC-HLD-015).
+- **Fail-closed redaction flag** — `agent.hotl.redaction_policy_required: bool` (default `false` in v1.10.x; will flip `true` in v1.11; #139, #148).
+- **DB-backed Casbin adapter** — hybrid model, CSV stays source of truth, `casbin_rule` rows merged on top at boot (#138, #143).
+- New Prometheus counter `xiaoguai_hotl_registry_replayed_total{outcome}` (`rehydrated | expired | malformed`).
+
+### Changed
+- **Toolchain bump rustc 1.88 → 1.93** + `wasmtime 38 → 45`. ADR-0021 supersedes ADR-0001 (#137). Closes [#121](https://github.com/xiaoguai-agent/xiaoguai/issues/121); clears RUSTSEC-2026-0086 / 0087 / 0089 / 0114 / 0149.
+
+### Migration notes
+- Run migration `0027_hotl_escalations_split.sql`:
+  1. Creates `hotl_escalations` parent table; 1-to-1 backfill from existing `hotl_pending` rows.
+  2. Creates `hotl_redaction_policies` (per-tenant JSONPath rules + `applies_to_scope`).
+  3. Creates `casbin_rule`; seeds `p, operator, hotl:decide, *, allow`.
+- Idempotent; safe to re-run after partial failure.
+- **Before** flipping traffic to v1.10.0, ensure operator JWTs carry `hotl:decide` in their `scopes` claim — otherwise `POST /v1/hotl/decisions` returns 403 in production. Dev `StubValidator` mints it automatically.
+- Upgrade chat-ui in lockstep — no `request_id` compat alias.
+
+### Known follow-ups
+See sprint-13 handoff §"Carried forward to sprint-14":
+- Admin-ui CRUD for `hotl_redaction_policies` (S13-3 ships read-only).
+- `require_scope` middleware/extractor not extracted (S13-10 inlined the check).
+- Casbin DB merge is boot-time single-shot; needs hot-reload signal when tenant-managed Casbin CRUD lands.
+- Grafana dashboard panel for `xiaoguai_hotl_registry_replayed_total` not yet added (metric is exported and scrapeable).
+
+---
+
+## [v1.9.0] — 2026-05-31
+
+HotL suspend/resume default-on. See [`release-notes-v1.9.0.md`](release-notes-v1.9.0.md) for full notes and [`docs/HANDOFF-2026-05-31-sprint-12-shipped.md`](docs/HANDOFF-2026-05-31-sprint-12-shipped.md) for the engineering handoff.
+
+### Added
+- `HotlGateVerdict::Suspend` + `SuspendingHotlGate` adapter; ReAct loop now parks on a per-`request_id` oneshot when a tool requires HotL approval.
+- `POST /v1/hotl/decisions` resolves the live waiter (`PgHotlDecisionStore` + `PgHotlAuditSink` replace v1.8.1's `None` slots).
+- SSE events `hotl_pending` + `hotl_resolved`; chat-ui `<HotlBanner>` clears on SSE primary signal with 30 s defensive fallback.
+- Prometheus: `xiaoguai_hotl_suspensions_total{verdict}`, `xiaoguai_hotl_suspended_loops_gauge`, `xiaoguai_hotl_suspension_duration_seconds`.
+
+### Changed
+- Default behaviour: `agent.hotl.suspend_on_escalate` now `true`. v1.8.x semantics available via opt-out flag.
+
+### Known issue (resolved in v1.10.0)
+- wasmtime CVE RUSTSEC-2026-0087 deferred (issue #121); closed by v1.10.0 PR #137.
+
+---
+
 ## [v1.3.8-prep] — 2026-05-25
 
 _Rolled into wave-3 integration (see docs/HANDOFF-2026-05-26.md §3, merge step 16)._
