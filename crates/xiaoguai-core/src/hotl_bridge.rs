@@ -478,7 +478,12 @@ impl SuspendingHotlGate {
         registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
         default_expiry: std::time::Duration,
     ) -> Self {
-        Self::with_expiry(inner, registry, default_expiry, std::collections::HashMap::new())
+        Self::with_expiry(
+            inner,
+            registry,
+            default_expiry,
+            std::collections::HashMap::new(),
+        )
     }
 
     /// Sprint-13 S13-7: construct a gate with a per-scope-class expiry
@@ -506,7 +511,12 @@ impl SuspendingHotlGate {
         registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
         default_expiry: std::time::Duration,
     ) -> Arc<dyn xiaoguai_agent::HotlGate> {
-        Self::arc_with_expiry(inner, registry, default_expiry, std::collections::HashMap::new())
+        Self::arc_with_expiry(
+            inner,
+            registry,
+            default_expiry,
+            std::collections::HashMap::new(),
+        )
     }
 
     /// Sprint-13 S13-7: Arc helper that also threads the per-scope-class
