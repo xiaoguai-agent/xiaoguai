@@ -94,6 +94,15 @@ pub enum HotlGateVerdict {
         escalation_id: uuid::Uuid,
         scope: String,
         ticket: HotlSuspensionTicket,
+        /// Sprint-13 S13-6. Policy-redacted tool-call arguments suitable
+        /// for the `AgentEvent::HotlPending.args_redacted` SSE field. The
+        /// gate (`SuspendingHotlGate`) computes this from
+        /// `RedactionRules::apply()`; the legacy `EnforcerGate` does not
+        /// emit `Suspend` so this field is only ever populated by the
+        /// suspend path. Callers MUST forward this value verbatim into
+        /// the SSE event — re-using the raw tool args would defeat the
+        /// purpose of the redaction policy.
+        args_redacted: serde_json::Value,
     },
 }
 
@@ -300,6 +309,49 @@ impl HotlSuspensionTicket {
 #[async_trait]
 pub trait HotlGate: Send + Sync + std::fmt::Debug {
     async fn check(&self, tenant_id: uuid::Uuid, scope: &str, amount: f64) -> HotlGateVerdict;
+
+    /// Sprint-13 S13-6. Variant of [`HotlGate::check`] that exposes the
+    /// tool-call arguments to the gate so adapters can apply per-tenant
+    /// redaction policies before the loop emits `AgentEvent::HotlPending`.
+    ///
+    /// Default impl forwards to [`HotlGate::check`] and substitutes the
+    /// raw `args` into the `Suspend` verdict's `args_redacted` field
+    /// (verbatim). The production adapter `SuspendingHotlGate` overrides
+    /// this method to consult `RedactionRules` and emit a masked
+    /// `args_redacted` plus an audit row keyed on
+    /// `redaction_policy_id`.
+    ///
+    /// The ReAct loop calls this method (not `check`) so every adapter —
+    /// including the always-allow/deny test stubs — sees the same
+    /// signature. Adapters that do not care about args (test stubs) are
+    /// covered by the default impl for free.
+    async fn check_with_args(
+        &self,
+        tenant_id: uuid::Uuid,
+        scope: &str,
+        amount: f64,
+        args: &serde_json::Value,
+    ) -> HotlGateVerdict {
+        // Default: ignore `args`, fall back to the legacy `check`. If
+        // the verdict is `Suspend` (which only `SuspendingHotlGate`
+        // emits by default), backfill `args_redacted` with the verbatim
+        // args so downstream code never sees a `null` blob.
+        match self.check(tenant_id, scope, amount).await {
+            HotlGateVerdict::Allow => HotlGateVerdict::Allow,
+            HotlGateVerdict::Deny(reason) => HotlGateVerdict::Deny(reason),
+            HotlGateVerdict::Suspend {
+                escalation_id,
+                scope,
+                ticket,
+                args_redacted: _ignored,
+            } => HotlGateVerdict::Suspend {
+                escalation_id,
+                scope,
+                ticket,
+                args_redacted: args.clone(),
+            },
+        }
+    }
 }
 
 /// Convenience type alias for the optional gate plugged into `AgentConfig`.
