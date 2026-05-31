@@ -394,17 +394,34 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // `agent.hotl.expiry` (S13-0 surface) — empty map preserves the
     // single-knob v1.9.x behaviour byte-for-byte.
     let hotl_default_expiry = std::time::Duration::from_secs(24 * 3600);
+    // Sprint-13 S13-6: wire the `PgHotlRedactionRepo` + per-tenant
+    // policy required flag + audit sink into the suspend gate so
+    // operator banners see masked tool args and the audit chain carries
+    // the matched policy id.
+    let hotl_redaction_repo: Arc<
+        dyn xiaoguai_storage::repositories::hotl_redaction::HotlRedactionRepo,
+    > = Arc::new(
+        xiaoguai_storage::repositories::hotl_redaction::PgHotlRedactionRepo::new(pool.clone()),
+    );
+    let hotl_gate_audit_sink: Option<Arc<dyn xiaoguai_api::hotl::audit::HotlAuditSink>> =
+        pg_audit_sink
+            .as_ref()
+            .map(|sink| crate::hotl_bridge::PgHotlAuditSink::arc(sink.clone()));
     let hotl_gate: Arc<dyn xiaoguai_agent::HotlGate> =
-        crate::hotl_bridge::build_hotl_gate_with_expiry(
+        crate::hotl_bridge::build_hotl_gate_with_redaction(
             settings.agent.hotl.suspend_on_escalate,
             hotl_enforcer_arc.clone(),
             decision_registry.clone(),
             hotl_default_expiry,
             settings.agent.hotl.expiry.clone(),
+            hotl_redaction_repo,
+            settings.agent.hotl.redaction_policy_required,
+            hotl_gate_audit_sink,
         );
     tracing::info!(
         suspend_on_escalate = settings.agent.hotl.suspend_on_escalate,
-        "serve: HOTL gate selected per agent.hotl.suspend_on_escalate"
+        redaction_policy_required = settings.agent.hotl.redaction_policy_required,
+        "serve: HOTL gate selected per agent.hotl.suspend_on_escalate (+ redaction wiring)"
     );
 
     let agent_defaults = AgentConfig::new(default_model.clone()).with_hotl_gate(hotl_gate.clone());

@@ -57,6 +57,7 @@ impl HotlGate for LongSuspendGate {
             escalation_id,
             scope: scope.to_string(),
             ticket,
+            args_redacted: serde_json::Value::Null,
         }
     }
 }

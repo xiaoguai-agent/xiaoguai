@@ -448,7 +448,13 @@ async fn dispatch_tools(
             // 1. HOTL pre-check. None gate (or absent tenant) → bypass.
             if let (Some(gate), Some(tid)) = (gate.as_ref(), tenant_uuid) {
                 let scope = format!("tool_call.{name}");
-                let verdict = gate.check(tid, &scope, 1.0).await;
+                // Sprint-13 S13-6: hand the parsed args to the gate so
+                // `SuspendingHotlGate` can run them through the
+                // per-tenant `RedactionRules`. The default trait impl
+                // backfills `args_redacted` with the verbatim args for
+                // adapters that don't override.
+                let args_for_gate = parse_args(&args_json);
+                let verdict = gate.check_with_args(tid, &scope, 1.0, &args_for_gate).await;
                 match verdict {
                     HotlGateVerdict::Allow => {}
                     HotlGateVerdict::Deny(reason) => {
@@ -463,6 +469,7 @@ async fn dispatch_tools(
                         escalation_id,
                         scope: suspend_scope,
                         ticket,
+                        args_redacted,
                     } => {
                         // Sprint-12 (S12-5). Emit HotlPending so SSE clients
                         // render the operator banner, then block this branch
@@ -481,7 +488,12 @@ async fn dispatch_tools(
                             + chrono::Duration::from_std(remaining).unwrap_or_else(|_| {
                                 chrono::Duration::seconds(0)
                             });
-                        let args_redacted = parse_args(&args_json);
+                        // Sprint-13 S13-6: `args_redacted` is computed by
+                        // `SuspendingHotlGate` (via `RedactionRules`)
+                        // and threaded through the `Suspend` verdict.
+                        // The default `HotlGate` impl backfills it from
+                        // the raw args, so test stubs continue to work
+                        // unchanged.
                         emit(
                             &tx_inner,
                             AgentEvent::HotlPending {
