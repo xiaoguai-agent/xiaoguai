@@ -75,11 +75,7 @@ impl MockEscalationStore {
     }
 
     /// Pre-seed both tables — simulates state surviving a restart.
-    fn seed_pending(
-        &self,
-        parent: HotlEscalationRow,
-        mut child: HotlPendingRow,
-    ) {
+    fn seed_pending(&self, parent: HotlEscalationRow, mut child: HotlPendingRow) {
         child.escalation_id = parent.id;
         self.parents.lock().insert(parent.id, parent.clone());
         self.children.lock().insert(parent.id, child);
@@ -400,7 +396,8 @@ async fn restart_replay_then_resolve_via_route_with_scope_check() {
     );
     let json = body_json(resp.into_body()).await;
     assert_eq!(
-        json["escalation_id"], id_a.to_string(),
+        json["escalation_id"],
+        id_a.to_string(),
         "S13-8: response body must echo escalation_id (no request_id alias)"
     );
     assert!(

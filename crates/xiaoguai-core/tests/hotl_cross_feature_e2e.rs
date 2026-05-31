@@ -233,7 +233,7 @@ async fn full_suspend_resume_with_redaction_persistence_and_per_scope_expiry() {
     // S13-5: registry is store-backed so the suspend path triggers
     // `insert_pending` against our mock.
     let registry = Arc::new(DecisionRegistry::with_store(
-        store.clone() as Arc<dyn HotlEscalationStore>,
+        store.clone() as Arc<dyn HotlEscalationStore>
     ));
 
     // S13-7: per-scope-class table — `tool` → 6h. Other classes fall
@@ -258,11 +258,7 @@ async fn full_suspend_resume_with_redaction_persistence_and_per_scope_expiry() {
     // S13-8: verdict carries `escalation_id`, not `request_id`.
     let before_utc = Utc::now();
     let verdict = <SuspendingHotlGate as xiaoguai_agent::HotlGate>::check_with_args(
-        &gate,
-        tenant_id,
-        scope,
-        1.0,
-        &args_in,
+        &gate, tenant_id, scope, 1.0, &args_in,
     )
     .await;
 
