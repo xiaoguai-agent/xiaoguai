@@ -207,7 +207,7 @@ pub struct AppState {
     /// (`SuspendingHotlGate`, `AgentEvent::HotlPending`, `DecisionRegistry`)
     /// is deferred to a future sprint.
     pub hotl_decision_store: Option<Arc<dyn HotlDecisionStore>>,
-    /// v1.9.x sprint-12 (S12-3): per-`request_id` waiter map for
+    /// v1.9.x sprint-12 (S12-3): per-`escalation_id` waiter map for
     /// suspended HOTL requests. Always present — the registry has zero
     /// side-effects when no one calls `register`, so unwiring would just
     /// remove an unused field rather than disable a feature. Shared

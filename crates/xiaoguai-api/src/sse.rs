@@ -47,9 +47,9 @@ mod tests {
 
     #[test]
     fn hotl_pending_encodes_as_sse_event() {
-        let request_id = Uuid::new_v4();
+        let escalation_id = Uuid::new_v4();
         let ev = AgentEvent::HotlPending {
-            request_id,
+            escalation_id,
             tool: "execute_python".into(),
             args_redacted: serde_json::json!({"code": "[redacted]"}),
             scope: "tool_call.execute_python".into(),
@@ -66,16 +66,16 @@ mod tests {
             "expected serialised data to include tool name: {rendered}"
         );
         assert!(
-            rendered.contains(&request_id.to_string()),
-            "expected serialised data to include request_id: {rendered}"
+            rendered.contains(&escalation_id.to_string()),
+            "expected serialised data to include escalation_id: {rendered}"
         );
     }
 
     #[test]
     fn hotl_resolved_encodes_as_sse_event() {
-        let request_id = Uuid::new_v4();
+        let escalation_id = Uuid::new_v4();
         let ev = AgentEvent::HotlResolved {
-            request_id,
+            escalation_id,
             verdict: HotlResolution::Allow,
             decided_by: Some("ops@acme.com".into()),
             recorded_at: Utc.with_ymd_and_hms(2026, 5, 30, 8, 13, 1).unwrap(),

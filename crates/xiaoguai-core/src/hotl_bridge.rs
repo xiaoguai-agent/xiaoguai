@@ -415,7 +415,7 @@ impl xiaoguai_agent::HotlGate for EnforcerGate {
 //
 //   EnforcerGate           → log a warn + return `HotlGateVerdict::Allow`
 //                            (v1.8.x semantics — the LLM call proceeds)
-//   SuspendingHotlGate     → mint a `request_id`, register a waiter on the
+//   SuspendingHotlGate     → mint a `escalation_id`, register a waiter on the
 //                            shared `DecisionRegistry`, return
 //                            `HotlGateVerdict::Suspend { ticket, .. }`
 //                            so the ReAct loop blocks on the operator's
@@ -572,7 +572,7 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                 xiaoguai_agent::HotlGateVerdict::Deny(reason)
             }
             Ok(HotlVerdict::Escalate(reason)) => {
-                let request_id = Uuid::new_v4();
+                let escalation_id = Uuid::new_v4();
                 // Sprint-13 S13-7: per-call lookup; runtime config edits
                 // are honoured on the next escalation.
                 let window = resolve_expiry(&self.expiry, self.default_expiry, scope);
@@ -586,12 +586,12 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                 // `hotl_escalations` parent + `hotl_pending` child rows
                 // from the available gate context — the agent loop
                 // doesn't surface `session_id` through the trait, so we
-                // use the request_id as a synthetic session anchor
+                // use the escalation_id as a synthetic session anchor
                 // (sprint-13 OOS: full session threading lands in S13-8).
                 let parent = xiaoguai_storage::repositories::hotl_escalations::HotlEscalationRow {
-                    id: request_id,
+                    id: escalation_id,
                     tenant_id,
-                    session_id: request_id,
+                    session_id: escalation_id,
                     top_level_scope: scope.to_string(),
                     status: "pending".to_string(),
                     created_at: now_utc,
@@ -599,7 +599,7 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                 };
                 let child = xiaoguai_storage::repositories::hotl_escalations::HotlPendingRow {
                     id: Uuid::new_v4(),
-                    escalation_id: request_id,
+                    escalation_id,
                     tenant_id,
                     scope: scope.to_string(),
                     // Sprint-13 S13-8 will plumb the tool name through;
@@ -615,7 +615,7 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
 
                 match self
                     .registry
-                    .register_persisted(request_id, parent, child, expires_at_instant)
+                    .register_persisted(escalation_id, parent, child, expires_at_instant)
                     .await
                 {
                     Ok(ticket) => {
@@ -623,11 +623,11 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                             tenant_id = %tenant_id,
                             %scope,
                             %reason,
-                            %request_id,
+                            %escalation_id,
                             "HOTL escalate → suspend; awaiting operator decision"
                         );
                         xiaoguai_agent::HotlGateVerdict::Suspend {
-                            request_id,
+                            escalation_id,
                             scope: scope.to_string(),
                             ticket,
                         }
@@ -644,7 +644,7 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                             tenant_id = %tenant_id,
                             %scope,
                             error = %e,
-                            %request_id,
+                            %escalation_id,
                             "HOTL escalate persistence failed — fail-closed deny"
                         );
                         xiaoguai_agent::HotlGateVerdict::Deny(format!(
@@ -734,8 +734,8 @@ fn build_reason(policy: &HotlPolicy, count: usize, sum: f64) -> String {
 //
 // PG-backed `HotlDecisionStore` for `POST /v1/hotl/decisions`. Reads/writes
 // the `hotl_decisions` table from migration 0026. The UNIQUE constraint on
-// `request_id` is the idempotency guard — a duplicate insert surfaces as
-// `HotlDecisionStoreError::Duplicate(request_id)` so the route returns 409.
+// `escalation_id` is the idempotency guard — a duplicate insert surfaces as
+// `HotlDecisionStoreError::Duplicate(escalation_id)` so the route returns 409.
 //
 // `verdict` is stored as the lowercase text the SQL CHECK constraint enforces
 // (`'allow' | 'deny'`); on read we map both values back into the
@@ -772,7 +772,7 @@ const PG_UNIQUE_VIOLATION: &str = "23505";
 impl HotlDecisionStore for PgHotlDecisionStore {
     async fn record(
         &self,
-        request_id: Uuid,
+        escalation_id: Uuid,
         tenant_id: Uuid,
         verdict: HotlDecisionVerdict,
         decided_by: String,
@@ -783,12 +783,12 @@ impl HotlDecisionStore for PgHotlDecisionStore {
         let row: (Uuid, Uuid, Uuid, String, String, Option<Uuid>, DateTime<Utc>) =
             sqlx::query_as(
                 "INSERT INTO hotl_decisions \
-                    (id, request_id, tenant_id, verdict, decided_by, raised_policy_id) \
+                    (id, escalation_id, tenant_id, verdict, decided_by, raised_policy_id) \
                  VALUES ($1, $2, $3, $4, $5, $6) \
-                 RETURNING id, request_id, tenant_id, verdict, decided_by, raised_policy_id, recorded_at",
+                 RETURNING id, escalation_id, tenant_id, verdict, decided_by, raised_policy_id, recorded_at",
             )
             .bind(id)
-            .bind(request_id)
+            .bind(escalation_id)
             .bind(tenant_id)
             .bind(verdict.as_str())
             .bind(&decided_by)
@@ -798,7 +798,7 @@ impl HotlDecisionStore for PgHotlDecisionStore {
             .map_err(|e| {
                 if let sqlx::Error::Database(db_err) = &e {
                     if db_err.code().as_deref() == Some(PG_UNIQUE_VIOLATION) {
-                        return HotlDecisionStoreError::Duplicate(request_id);
+                        return HotlDecisionStoreError::Duplicate(escalation_id);
                     }
                 }
                 decision_pg_err(e)
@@ -1206,12 +1206,12 @@ mod tests {
         let v =
             xiaoguai_agent::HotlGate::check(&gate, Uuid::new_v4(), "tool_call.execute_python", 1.0)
                 .await;
-        let (request_id, scope, ticket) = match v {
+        let (escalation_id, scope, ticket) = match v {
             xiaoguai_agent::HotlGateVerdict::Suspend {
-                request_id,
+                escalation_id,
                 scope,
                 ticket,
-            } => (request_id, scope, ticket),
+            } => (escalation_id, scope, ticket),
             other => panic!("expected Suspend, got {other:?}"),
         };
         assert_eq!(scope, "tool_call.execute_python");
@@ -1227,7 +1227,7 @@ mod tests {
         // explicit `xiaoguai_agent::hotl_gate::*` form documents the
         // canonical source).
         let resolved = reg.resolve(
-            request_id,
+            escalation_id,
             xiaoguai_agent::hotl_gate::HotlDecisionVerdict {
                 verdict: xiaoguai_agent::hotl_gate::HotlResolution::Allow,
                 decided_by: Some("alice@example.com".into()),
@@ -1293,15 +1293,15 @@ mod tests {
 
         let v =
             xiaoguai_agent::HotlGate::check(&gate, Uuid::new_v4(), "tool_call.search", 1.0).await;
-        let (new_request_id, _scope, _ticket) = match v {
+        let (new_escalation_id, _scope, _ticket) = match v {
             xiaoguai_agent::HotlGateVerdict::Suspend {
-                request_id,
+                escalation_id,
                 scope,
                 ticket,
-            } => (request_id, scope, ticket),
+            } => (escalation_id, scope, ticket),
             other => panic!("expected Suspend, got {other:?}"),
         };
-        assert_ne!(new_request_id, preexisting_id);
+        assert_ne!(new_escalation_id, preexisting_id);
         assert_eq!(
             reg.len(),
             2,

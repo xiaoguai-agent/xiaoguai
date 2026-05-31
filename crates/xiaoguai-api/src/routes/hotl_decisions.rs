@@ -8,12 +8,12 @@
 //! ## `resumed` flag (sprint-12 S12-6)
 //!
 //! The handler also wakes any parked agent loop registered against the
-//! same `request_id` on the [`crate::hotl::decision_registry::DecisionRegistry`].
+//! same `escalation_id` on the [`crate::hotl::decision_registry::DecisionRegistry`].
 //! The response's `resumed: bool` is the return value of
 //! `DecisionRegistry::resolve`:
 //!
 //! * `true`  — a `SuspendingHotlGate` (S12-4) had parked a loop on this
-//!   `request_id`; it is now released with the operator's verdict.
+//!   `escalation_id`; it is now released with the operator's verdict.
 //! * `false` — no live waiter existed (legacy `EnforcerGate` path that
 //!   never suspends, OR the ticket already timed out / was cancelled).
 //!
@@ -48,7 +48,7 @@
 //! ("never approve LLM calls in this scope again"); the design does not
 //! gate the field on verdict.
 //!
-//! Open question Q3 (plan §7): duplicate `request_id` returns `409 Conflict`.
+//! Open question Q3 (plan §7): duplicate `escalation_id` returns `409 Conflict`.
 //! The handler does not implement idempotent-replay semantics — operators
 //! who double-click see a clear error rather than a silent no-op.
 
@@ -78,14 +78,14 @@ pub const HOTL_DECIDE_SCOPE: &str = "hotl:decide";
 
 /// Body accepted by `POST /v1/hotl/decisions`.
 ///
-/// `request_id` is the canonical name; `escalation_id` is accepted as a
+/// `escalation_id` is the canonical name; `escalation_id` is accepted as a
 /// `#[serde(alias)]` so the existing SSE-event field name and chat-ui
 /// e2e mocks keep working without a flag day. Full rename across the SSE
 /// contract is deferred (plan §4 OOS).
 #[derive(Debug, Deserialize)]
 pub struct CreateHotlDecisionRequest {
     #[serde(alias = "escalation_id")]
-    pub request_id: Uuid,
+    pub escalation_id: Uuid,
     pub verdict: HotlDecisionVerdict,
     pub decided_by: String,
     /// Optional follow-up policy ("Approve & remember" / "Deny & tighten").
@@ -116,7 +116,7 @@ pub struct RaisePolicyRequest {
 #[derive(Debug, Serialize)]
 pub struct HotlDecisionResponse {
     pub id: Uuid,
-    pub request_id: Uuid,
+    pub escalation_id: Uuid,
     pub verdict: HotlDecisionVerdict,
     pub recorded_at: DateTime<Utc>,
     /// `true` when a live waiter on `DecisionRegistry` was woken by this
@@ -136,7 +136,7 @@ impl HotlDecisionResponse {
     fn from_record(r: HotlDecisionRecord, resumed: bool) -> Self {
         Self {
             id: r.id,
-            request_id: r.request_id,
+            escalation_id: r.request_id,
             verdict: r.verdict,
             recorded_at: r.recorded_at,
             resumed,
@@ -161,18 +161,52 @@ impl HotlDecisionResponse {
 ///   table lands in 3a.2. 3a.1 has no parent table; this status is
 ///   currently unreachable from a well-formed request (kept on the wire
 ///   so 3a.2 can return it without a client breaking change).
-/// - `409 Conflict` — `request_id` already has a recorded decision.
+/// - `409 Conflict` — `escalation_id` already has a recorded decision.
 /// - `401 Unauthorized` / `403 Forbidden` — handled by middleware.
 pub async fn create_decision(
     State(state): State<AppState>,
     claims: Option<Extension<Claims>>,
-    Json(req): Json<CreateHotlDecisionRequest>,
+    body: axum::body::Bytes,
 ) -> Response {
+    // Sprint-13 S13-8 / DEC-HLD-016: pre-flight check for the legacy
+    // `request_id` field so callers get a structured rename diagnostic
+    // (400 with `{field: "escalation_id"}`) instead of a generic
+    // unknown-field error.
+    let value: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            return ApiError::InvalidRequest(format!("invalid JSON body: {e}")).into_response();
+        }
+    };
+    if let Some(obj) = value.as_object() {
+        if obj.contains_key("request_id") && !obj.contains_key("escalation_id") {
+            return rename_diagnostic_response();
+        }
+    }
+    let req: CreateHotlDecisionRequest = match serde_json::from_value(value) {
+        Ok(r) => r,
+        Err(e) => {
+            return ApiError::InvalidRequest(format!("invalid request body: {e}")).into_response();
+        }
+    };
     match create_decision_inner(state, claims, req).await {
         Ok((status, body)) => (status, body).into_response(),
         Err(DecisionRouteError::MissingScope(scope)) => forbidden_missing_scope(scope),
         Err(DecisionRouteError::Api(api)) => api.into_response(),
     }
+}
+
+/// Sprint-13 S13-8 / DEC-HLD-016. Build the 400 response emitted when a
+/// caller posts a body with the legacy `request_id` key. The body shape
+/// `{error, field, message}` is stable so client error handlers can switch
+/// on `field` and prompt the user to upgrade.
+fn rename_diagnostic_response() -> Response {
+    let body = serde_json::json!({
+        "error": "field",
+        "field": "escalation_id",
+        "message": "request_id was renamed to escalation_id in v1.10.0; update your client to send the `escalation_id` field instead.",
+    });
+    (axum::http::StatusCode::BAD_REQUEST, Json(body)).into_response()
 }
 
 async fn create_decision_inner(
@@ -235,7 +269,7 @@ async fn create_decision_inner(
     // ── 4. Record the decision (no raised_policy_id yet) ────────────────────
     let initial_record = store
         .record(
-            req.request_id,
+            req.escalation_id,
             tenant_id,
             req.verdict,
             req.decided_by.clone(),
@@ -285,7 +319,7 @@ async fn create_decision_inner(
             tenant_id: tenant_id.to_string(),
             actor: req.decided_by.clone(),
             action: "hotl.decision".into(),
-            resource: Some(format!("escalation:{}", req.request_id)),
+            resource: Some(format!("escalation:{}", req.escalation_id)),
             details: serde_json::json!({
                 "verdict": req.verdict,
                 "raise_policy": req.raise_policy,
@@ -325,7 +359,7 @@ async fn create_decision_inner(
     // `Ok(false)` for unknown ids → `Err(UnknownEscalation)` → 404.
     let resumed = match state
         .decision_registry
-        .resolve_persisted(req.request_id, resolution, Some(req.decided_by.clone()))
+        .resolve_persisted(req.escalation_id, resolution, Some(req.decided_by.clone()))
         .await
     {
         Ok(true) => true,
@@ -391,7 +425,7 @@ fn forbidden_missing_scope(required_scope: &'static str) -> Response {
 fn map_decision_err(e: HotlDecisionStoreError) -> ApiError {
     match e {
         HotlDecisionStoreError::Duplicate(id) => {
-            ApiError::Conflict(format!("decision already recorded for request_id {id}"))
+            ApiError::Conflict(format!("decision already recorded for escalation_id {id}"))
         }
         HotlDecisionStoreError::Other(msg) => {
             ApiError::Internal(anyhow::anyhow!("HOTL decision store: {msg}"))
@@ -412,16 +446,16 @@ mod tests {
         });
         let parsed: CreateHotlDecisionRequest = serde_json::from_value(raw).unwrap();
         assert_eq!(
-            parsed.request_id,
+            parsed.escalation_id,
             Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()
         );
         assert_eq!(parsed.verdict, HotlDecisionVerdict::Allow);
     }
 
     #[test]
-    fn canonical_request_id_parses() {
+    fn canonical_escalation_id_parses() {
         let raw = serde_json::json!({
-            "request_id": "00000000-0000-0000-0000-000000000002",
+            "escalation_id": "00000000-0000-0000-0000-000000000002",
             "verdict": "deny",
             "decided_by": "bob"
         });
