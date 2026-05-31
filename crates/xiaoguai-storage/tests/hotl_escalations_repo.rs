@@ -1,7 +1,7 @@
 //! sprint-13 S13-2: integration tests for `HotlEscalationRepo` / `HotlEscalationStore`.
 //!
 //! Backs the boot-replay path used by `xiaoguai-core::run_serve` (S13-5): a
-//! restart of `xiaoguai-api` must reattach every pending HotL waiter that is
+//! restart of `xiaoguai-api` must reattach every pending `HotL` waiter that is
 //! still within its `expires_at` window, and any UPDATE-on-decision must
 //! return whether a pending row actually matched (so the registry can fall
 //! back to `verdict=timeout` for stale ids).
