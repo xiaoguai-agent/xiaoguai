@@ -30,6 +30,7 @@ fn build_state_with_auth() -> AppState {
             sub: "alice".into(),
             tenant_id: "ten_a".into(),
             roles: vec!["user".into()],
+            scopes: vec![],
         },
     });
     AppState {

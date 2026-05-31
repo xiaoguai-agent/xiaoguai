@@ -185,6 +185,7 @@ async fn authed_caller_sees_globals_plus_their_tenant() {
             sub: "alice".into(),
             tenant_id: "ten_a".into(),
             roles: vec![],
+            scopes: vec![],
         },
     });
     let app = router(build_state(Some(validator), mcp));

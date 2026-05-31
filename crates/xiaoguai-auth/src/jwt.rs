@@ -27,6 +27,12 @@ pub struct Claims {
     pub tenant_id: String,
     /// Role names assigned at issue time.
     pub roles: Vec<String>,
+    /// OAuth 2.0-style scope strings carried by the token (sprint-13
+    /// DEC-HLD-016). Empty for legacy tokens issued before sprint-13;
+    /// scope-gated routes (e.g. `POST /v1/hotl/decisions`) treat the
+    /// empty set as "no scopes" and return 403.
+    #[serde(default)]
+    pub scopes: Vec<String>,
     /// Expiry (seconds since epoch).
     pub exp: i64,
     /// Issued-at (seconds since epoch).

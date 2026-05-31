@@ -27,6 +27,12 @@ pub struct Claims {
     pub sub: String,
     pub tenant_id: String,
     pub roles: Vec<String>,
+    /// OAuth 2.0-style scope strings (sprint-13 S13-10). Empty for
+    /// legacy tokens issued before sprint-13. Scope-gated handlers
+    /// (e.g. `POST /v1/hotl/decisions`) check membership and return
+    /// 403 on miss; non-scope-gated routes ignore this field.
+    #[serde(default)]
+    pub scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Error)]
@@ -55,6 +61,7 @@ impl TokenValidator for JwtTokenValidator<xiaoguai_auth::JwtValidator> {
                 sub: c.sub,
                 tenant_id: c.tenant_id,
                 roles: c.roles,
+                scopes: c.scopes,
             }),
             Err(e) => Err(AuthError::Invalid(e.to_string())),
         }
@@ -113,6 +120,7 @@ mod tests {
                 sub: "u".into(),
                 tenant_id: "t".into(),
                 roles: vec![],
+                scopes: vec![],
             },
         };
         assert!(matches!(v.validate("").await, Err(AuthError::Missing)));
@@ -125,6 +133,7 @@ mod tests {
                 sub: "alice".into(),
                 tenant_id: "ten_a".into(),
                 roles: vec!["admin".into()],
+                scopes: vec![],
             },
         };
         let c = v.validate("anything").await.expect("ok");
