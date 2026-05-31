@@ -250,7 +250,7 @@ export function ChatPage({ onSessionCreated }: Props) {
       // sprint-12 S12-8 — HotL suspend/resume events
       case 'hotl_pending':
         hotlSetter({
-          request_id: ev.request_id,
+          escalation_id: ev.escalation_id,
           tool: ev.tool,
           scope: ev.scope,
           args_redacted: ev.args_redacted,
@@ -310,7 +310,7 @@ export function ChatPage({ onSessionCreated }: Props) {
           }}
           onDecision={async (verdict, raisePolicy) => {
             await client.submitHotlDecision({
-              request_id: hotlPending.request_id,
+              escalation_id: hotlPending.escalation_id,
               verdict,
               decided_by: 'chat-ui',
               raise_policy: raisePolicy,

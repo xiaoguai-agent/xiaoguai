@@ -208,7 +208,7 @@ test.describe('chat-ui HotL inline approve/reject (sprint-11 S11-3b — LLD §4.
           contentType: 'application/json',
           body: JSON.stringify({
             id: 'dec_test_001',
-            request_id: ESCALATION_ID,
+            escalation_id: ESCALATION_ID,
             verdict: 'allow',
             recorded_at: new Date().toISOString(),
             resumed: false,
@@ -247,8 +247,8 @@ test.describe('chat-ui HotL inline approve/reject (sprint-11 S11-3b — LLD §4.
  *   - S12-8 (chat-ui HotlBanner clears on matching hotl_resolved event)
  *
  * Wire-shape contract (api-contract.md §2.6.3) — locked here:
- *   hotl_pending  { type, request_id, tool, args_redacted, scope, expires_at }
- *   hotl_resolved { type, request_id, verdict, decided_by, recorded_at }
+ *   hotl_pending  { type, escalation_id, tool, args_redacted, scope, expires_at }
+ *   hotl_resolved { type, escalation_id, verdict, decided_by, recorded_at }
  *     verdict ∈ "allow" | "deny" | "timeout"   (lowercase strings)
  *     decided_by is `null` when verdict === "timeout"
  *
@@ -263,19 +263,19 @@ test.describe('chat-ui HotL inline approve/reject (sprint-11 S11-3b — LLD §4.
  *   `page.evaluate(fetch(...))` shim to unblock the held route — equivalent
  *   to the user clicking the inline Approve/Reject buttons (which call
  *   `client.submitHotlDecision()` → POST /v1/hotl/decisions). The wire
- *   contract (request_id, verdict strings, response shapes) is exercised
+ *   contract (escalation_id, verdict strings, response shapes) is exercised
  *   end-to-end; the in-browser button mount-then-click chain is covered
  *   by the sprint-11 inline-approve case above + by chat-ui unit tests
  *   (`HotlBanner.test.tsx`).
  * ───────────────────────────────────────────────────────────────────────── */
 
 /**
- * RFC 4122 v4 UUIDs — fixed so each test's `request_id` is predictable and
- * the assertions can verify request_id pairing on the wire.
+ * RFC 4122 v4 UUIDs — fixed so each test's `escalation_id` is predictable and
+ * the assertions can verify escalation_id pairing on the wire.
  */
-const REQUEST_ID_APPROVE = '11111111-1111-4111-8111-111111111111';
-const REQUEST_ID_DENY = '22222222-2222-4222-8222-222222222222';
-const REQUEST_ID_SIBLING = '33333333-3333-4333-8333-333333333333';
+const ESCALATION_ID_APPROVE = '11111111-1111-4111-8111-111111111111';
+const ESCALATION_ID_DENY = '22222222-2222-4222-8222-222222222222';
+const ESCALATION_ID_SIBLING = '33333333-3333-4333-8333-333333333333';
 
 /** ISO 8601 UTC, 24 h in the future — matches api-contract §2.6.3 default. */
 function futureExpiresAt(): string {
@@ -311,7 +311,7 @@ test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', 
           contentType: 'application/json',
           body: JSON.stringify({
             id: 'dec_s12_10_a',
-            request_id: REQUEST_ID_APPROVE,
+            escalation_id: ESCALATION_ID_APPROVE,
             verdict: 'allow',
             recorded_at: new Date().toISOString(),
             resumed: true,
@@ -348,7 +348,7 @@ test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', 
             event: 'hotl_pending',
             data: {
               type: 'hotl_pending',
-              request_id: REQUEST_ID_APPROVE,
+              escalation_id: ESCALATION_ID_APPROVE,
               tool: 'execute_python',
               args_redacted: { code: '[redacted]' },
               scope: 'tool_call.execute_python',
@@ -363,7 +363,7 @@ test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', 
             event: 'hotl_resolved',
             data: {
               type: 'hotl_resolved',
-              request_id: REQUEST_ID_APPROVE,
+              escalation_id: ESCALATION_ID_APPROVE,
               verdict: 'allow',
               decided_by: 'chat-ui',
               recorded_at: new Date().toISOString(),
@@ -400,18 +400,18 @@ test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', 
     // Approve button calling `client.submitHotlDecision()` — see mocking
     // model comment above).
     await page.evaluate(
-      async ({ requestId }) => {
+      async ({ escalationId }) => {
         await fetch('/v1/hotl/decisions', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            request_id: requestId,
+            escalation_id: escalationId,
             verdict: 'allow',
             decided_by: 'chat-ui',
           }),
         });
       },
-      { requestId: REQUEST_ID_APPROVE },
+      { escalationId: ESCALATION_ID_APPROVE },
     );
 
     // After the decision posts, the SSE response unblocks and the
@@ -451,7 +451,7 @@ test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', 
           contentType: 'application/json',
           body: JSON.stringify({
             id: 'dec_s12_10_b',
-            request_id: REQUEST_ID_DENY,
+            escalation_id: ESCALATION_ID_DENY,
             verdict: 'deny',
             recorded_at: new Date().toISOString(),
             resumed: true,
@@ -484,7 +484,7 @@ test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', 
             event: 'hotl_pending',
             data: {
               type: 'hotl_pending',
-              request_id: REQUEST_ID_DENY,
+              escalation_id: ESCALATION_ID_DENY,
               tool: 'execute_python',
               args_redacted: { code: '[redacted]' },
               scope: 'tool_call.execute_python',
@@ -498,7 +498,7 @@ test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', 
             event: 'hotl_resolved',
             data: {
               type: 'hotl_resolved',
-              request_id: REQUEST_ID_DENY,
+              escalation_id: ESCALATION_ID_DENY,
               verdict: 'deny',
               decided_by: 'chat-ui',
               recorded_at: new Date().toISOString(),
@@ -532,18 +532,18 @@ test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', 
     await page.locator('button[aria-label="Send message"]').click();
 
     await page.evaluate(
-      async ({ requestId }) => {
+      async ({ escalationId }) => {
         await fetch('/v1/hotl/decisions', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            request_id: requestId,
+            escalation_id: escalationId,
             verdict: 'deny',
             decided_by: 'chat-ui',
           }),
         });
       },
-      { requestId: REQUEST_ID_DENY },
+      { escalationId: ESCALATION_ID_DENY },
     );
 
     // Final state: banner cleared, failed tool annotation visible.
@@ -636,7 +636,7 @@ test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', 
                 event: 'hotl_pending',
                 data: {
                   type: 'hotl_pending',
-                  request_id: REQUEST_ID_SIBLING,
+                  escalation_id: ESCALATION_ID_SIBLING,
                   tool: 'execute_python',
                   args_redacted: { code: '[redacted]' },
                   scope: 'tool_call.execute_python',
@@ -647,7 +647,7 @@ test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', 
                 event: 'hotl_resolved',
                 data: {
                   type: 'hotl_resolved',
-                  request_id: REQUEST_ID_SIBLING,
+                  escalation_id: ESCALATION_ID_SIBLING,
                   verdict: 'allow',
                   decided_by: 'ops@example.com',
                   recorded_at: new Date().toISOString(),
@@ -676,7 +676,7 @@ test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', 
             contentType: 'application/json',
             body: JSON.stringify({
               id: `dec_s12_10_c_${side}`,
-              request_id: REQUEST_ID_SIBLING,
+              escalation_id: ESCALATION_ID_SIBLING,
               verdict: 'allow',
               recorded_at: new Date().toISOString(),
               resumed: true,
@@ -706,18 +706,18 @@ test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', 
     // Tab A drives the operator decision (programmatic fetch — same
     // mocking workaround as cases a + b above). Tab B never clicks.
     await pageA.evaluate(
-      async ({ requestId }) => {
+      async ({ escalationId }) => {
         await fetch('/v1/hotl/decisions', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            request_id: requestId,
+            escalation_id: escalationId,
             verdict: 'allow',
             decided_by: 'ops@example.com',
           }),
         });
       },
-      { requestId: REQUEST_ID_SIBLING },
+      { escalationId: ESCALATION_ID_SIBLING },
     );
 
     // Both banners must end in the cleared state.
