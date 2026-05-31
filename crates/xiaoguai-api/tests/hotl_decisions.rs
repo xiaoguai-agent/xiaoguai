@@ -344,6 +344,7 @@ async fn unauthorized_when_bearer_missing() {
             sub: "u".into(),
             tenant_id: "00000000-0000-0000-0000-000000000abc".into(),
             roles: vec!["system_admin".into()],
+            scopes: vec![],
         },
     });
     let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());
@@ -387,6 +388,7 @@ async fn forbidden_when_rbac_denies_hotl_decide_scope() {
             sub: "u".into(),
             tenant_id: "00000000-0000-0000-0000-000000000abc".into(),
             roles: vec!["nobody".into()],
+            scopes: vec![],
         },
     });
     let authz = Arc::new(Authz::new_default().await.expect("authz"));

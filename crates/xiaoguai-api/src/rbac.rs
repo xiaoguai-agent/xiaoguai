@@ -167,6 +167,7 @@ mod tests {
             sub: "u".into(),
             tenant_id: "t".into(),
             roles: vec!["nobody".into()],
+            scopes: vec![],
         });
         let action = method_to_action(request.method());
         let resource = path_to_resource(request.uri().path());

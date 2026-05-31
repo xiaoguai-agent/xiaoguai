@@ -23,6 +23,7 @@ async fn build_state(roles: Vec<&str>) -> AppState {
             sub: "u".into(),
             tenant_id: "ten_a".into(),
             roles: roles.into_iter().map(str::to_string).collect(),
+            scopes: vec![],
         },
     });
     let backend: Arc<dyn LlmBackend> =

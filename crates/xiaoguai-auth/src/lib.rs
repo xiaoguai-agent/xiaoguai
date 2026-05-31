@@ -8,4 +8,4 @@ pub mod jwt;
 pub mod rbac;
 
 pub use jwt::{Claims, JwtError, JwtValidator};
-pub use rbac::{Authz, RbacError};
+pub use rbac::{Authz, DbPolicyRow, RbacError};
