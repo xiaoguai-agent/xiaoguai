@@ -3,7 +3,7 @@
 //!
 //! These tests pin the config-shape contract that S13-7 (per-scope expiry
 //! lookup) and S13-6 (redaction policy enforcement) will wire into the
-//! HotL gate. S13-0 only adds the surface — defaults preserve v1.9.0
+//! `HotL` gate. S13-0 only adds the surface — defaults preserve v1.9.0
 //! behaviour (empty map → fall back to `default_expiry`; redaction policy
 //! NOT required).
 //!

@@ -12,7 +12,9 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::module_name_repetitions)]
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -285,6 +287,43 @@ pub struct AgentSettings {
     pub hotl: HotlSettings,
 }
 
+/// Sprint-13 S13-0: serde adapter that lets `HashMap<String, Duration>`
+/// round-trip through humantime string literals like `"24h"`. Mirrors
+/// the `humantime_serde::Serde<T>` wrapper pattern but specialised to
+/// the per-scope expiry map shape so call sites stay terse.
+mod humantime_serde_map {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    /// Serialise each value via `humantime_serde::Serde<Duration>`, which
+    /// produces a human-readable string like `"24h"`.
+    pub fn serialize<S>(map: &HashMap<String, Duration>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let wrapped: HashMap<&String, humantime_serde::Serde<&Duration>> = map
+            .iter()
+            .map(|(k, v)| (k, humantime_serde::Serde::from(v)))
+            .collect();
+        wrapped.serialize(s)
+    }
+
+    /// Deserialise each value via `humantime_serde::Serde<Duration>`,
+    /// accepting human strings like `"24h"` or numeric seconds.
+    pub fn deserialize<'de, D>(d: D) -> Result<HashMap<String, Duration>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wrapped: HashMap<String, humantime_serde::Serde<Duration>> = HashMap::deserialize(d)?;
+        Ok(wrapped
+            .into_iter()
+            .map(|(k, v)| (k, v.into_inner()))
+            .collect())
+    }
+}
+
 /// Sprint-12 (S12-0 + S12-12): `HotL` gating knobs.
 ///
 /// `suspend_on_escalate` was introduced as a scaffold in S12-0 (v1.8.x,
@@ -307,6 +346,45 @@ pub struct HotlSettings {
     /// or via `XIAOGUAI_AGENT__HOTL__SUSPEND_ON_ESCALATE=false`.
     #[serde(default = "default_suspend_on_escalate_true")]
     pub suspend_on_escalate: bool,
+
+    /// Sprint-13 S13-0 (pre-flight surface) — per-scope expiry overrides
+    /// for the suspend window. Map of scope-name → `Duration` (parsed
+    /// from `humantime` strings like `"24h"`, `"4h"`, `"72h"`). Lookup
+    /// falls back to the in-code `default_expiry` (`24h`) when a scope
+    /// is missing from this map.
+    ///
+    /// S13-7 will wire `SuspendingHotlGate` to read from here when minting
+    /// a `HotlPending` ticket; S13-0 only adds the surface. Default is
+    /// the empty map → all scopes fall back to `default_expiry`, which
+    /// preserves the v1.9.0 single-knob behaviour byte-for-byte.
+    ///
+    /// Override via YAML:
+    /// ```yaml
+    /// agent:
+    ///   hotl:
+    ///     expiry:
+    ///       tool: 24h
+    ///       mcp: 4h
+    ///       skill: 72h
+    /// ```
+    /// Or env: `XIAOGUAI_AGENT__HOTL__EXPIRY__TOOL=12h`.
+    #[serde(default, with = "humantime_serde_map")]
+    pub expiry: HashMap<String, Duration>,
+
+    /// Sprint-13 S13-0 (pre-flight surface) — when `true`, every
+    /// HotL-escalated tool call MUST have its `args_redacted` field
+    /// populated by a policy-driven redactor before `HotlPending` is
+    /// emitted; a missing/empty redaction is treated as a hard policy
+    /// violation by S13-6.
+    ///
+    /// v1.10 default: `false` (preserve v1.9.0 pass-through behaviour).
+    /// v1.11 will flip this to `true` so production deployments stop
+    /// leaking raw tool arguments through the `HotL` banner / audit chain.
+    ///
+    /// Override via YAML `agent.hotl.redaction_policy_required: true` or
+    /// env `XIAOGUAI_AGENT__HOTL__REDACTION_POLICY_REQUIRED=true`.
+    #[serde(default)]
+    pub redaction_policy_required: bool,
 }
 
 /// v1.9.0 default for `HotlSettings::suspend_on_escalate` (S12-12).
@@ -318,6 +396,8 @@ impl Default for HotlSettings {
     fn default() -> Self {
         Self {
             suspend_on_escalate: default_suspend_on_escalate_true(),
+            expiry: HashMap::new(),
+            redaction_policy_required: false,
         }
     }
 }

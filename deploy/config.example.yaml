@@ -101,3 +101,30 @@ agent:
     #
     # Override via XIAOGUAI_AGENT__HOTL__SUSPEND_ON_ESCALATE=false.
     suspend_on_escalate: true
+
+    # Sprint-13 S13-0 (v1.10 pre-flight surface) — per-scope expiry
+    # overrides. Lookup at suspend time: `expiry.get(scope).unwrap_or
+    # (default_expiry)` where `default_expiry` is the in-code 24h
+    # constant in run_serve. Strings parse via humantime ("24h", "30m",
+    # "72h", "1d12h", ...). Missing scopes fall back to the 24h
+    # default. S13-7 will wire this map into SuspendingHotlGate ticket
+    # minting; S13-0 only adds the config surface so ops can pre-stage
+    # the values. Defaults to an empty map (every scope → 24h) so
+    # existing v1.9.0 configs deserialize byte-for-byte unchanged.
+    expiry:
+      tool: 24h
+      mcp: 4h
+      skill: 72h
+
+    # Sprint-13 S13-0 (v1.10 pre-flight surface) — when `true`, every
+    # HotL-escalated tool call MUST have its `args_redacted` field
+    # populated by a policy-driven redactor before the HotlPending
+    # ticket is minted. Missing/empty redaction → S13-6 treats as a
+    # hard policy violation (escalation rejected).
+    #
+    # v1.10 default: `false` (pass-through, matches v1.9.0 behaviour).
+    # v1.11 will flip this to `true` so production deployments stop
+    # leaking raw tool arguments through the HotL banner / audit chain.
+    #
+    # Override via XIAOGUAI_AGENT__HOTL__REDACTION_POLICY_REQUIRED=true.
+    redaction_policy_required: false
