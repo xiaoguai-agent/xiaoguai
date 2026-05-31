@@ -939,9 +939,11 @@ mod tests {
                 Ok(v) => Ok(v.clone()),
                 Err(xiaoguai_api::hotl::enforcer::HotlEnforcerError::PolicyStore(
                     xiaoguai_api::hotl::policy::HotlPolicyStoreError::Backend(s),
-                )) => Err(xiaoguai_api::hotl::enforcer::HotlEnforcerError::PolicyStore(
-                    xiaoguai_api::hotl::policy::HotlPolicyStoreError::Backend(s.clone()),
-                )),
+                )) => Err(
+                    xiaoguai_api::hotl::enforcer::HotlEnforcerError::PolicyStore(
+                        xiaoguai_api::hotl::policy::HotlPolicyStoreError::Backend(s.clone()),
+                    ),
+                ),
                 Err(_) => unreachable!("StubEnforcer only primes Backend errors"),
             }
         }
@@ -961,13 +963,8 @@ mod tests {
         let enforcer = StubEnforcer::allow();
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
-        let v = xiaoguai_agent::HotlGate::check(
-            &gate,
-            Uuid::new_v4(),
-            "tool_call.search",
-            1.0,
-        )
-        .await;
+        let v =
+            xiaoguai_agent::HotlGate::check(&gate, Uuid::new_v4(), "tool_call.search", 1.0).await;
         assert!(matches!(v, xiaoguai_agent::HotlGateVerdict::Allow));
         assert!(reg.is_empty(), "Allow path must not register a ticket");
     }
@@ -978,13 +975,8 @@ mod tests {
         let enforcer = StubEnforcer::deny("budget exceeded");
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
-        let v = xiaoguai_agent::HotlGate::check(
-            &gate,
-            Uuid::new_v4(),
-            "tool_call.search",
-            1.0,
-        )
-        .await;
+        let v =
+            xiaoguai_agent::HotlGate::check(&gate, Uuid::new_v4(), "tool_call.search", 1.0).await;
         match v {
             xiaoguai_agent::HotlGateVerdict::Deny(reason) => {
                 assert_eq!(reason, "budget exceeded");
@@ -1000,13 +992,9 @@ mod tests {
         let enforcer = StubEnforcer::escalate("monthly budget at 110%");
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
-        let v = xiaoguai_agent::HotlGate::check(
-            &gate,
-            Uuid::new_v4(),
-            "tool_call.execute_python",
-            1.0,
-        )
-        .await;
+        let v =
+            xiaoguai_agent::HotlGate::check(&gate, Uuid::new_v4(), "tool_call.execute_python", 1.0)
+                .await;
         let (request_id, scope, ticket) = match v {
             xiaoguai_agent::HotlGateVerdict::Suspend {
                 request_id,
@@ -1043,7 +1031,10 @@ mod tests {
             .await_decision(&cancel)
             .await
             .expect("ticket must yield the resolved verdict");
-        assert_eq!(got.verdict, xiaoguai_agent::hotl_gate::HotlResolution::Allow);
+        assert_eq!(
+            got.verdict,
+            xiaoguai_agent::hotl_gate::HotlResolution::Allow
+        );
         assert_eq!(got.decided_by.as_deref(), Some("alice@example.com"));
     }
 
@@ -1053,13 +1044,8 @@ mod tests {
         let enforcer = StubEnforcer::infra_error("pg connection refused");
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
-        let v = xiaoguai_agent::HotlGate::check(
-            &gate,
-            Uuid::new_v4(),
-            "tool_call.search",
-            1.0,
-        )
-        .await;
+        let v =
+            xiaoguai_agent::HotlGate::check(&gate, Uuid::new_v4(), "tool_call.search", 1.0).await;
         match v {
             xiaoguai_agent::HotlGateVerdict::Deny(reason) => {
                 assert!(
@@ -1094,13 +1080,8 @@ mod tests {
         let enforcer = StubEnforcer::escalate("budget breach");
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
-        let v = xiaoguai_agent::HotlGate::check(
-            &gate,
-            Uuid::new_v4(),
-            "tool_call.search",
-            1.0,
-        )
-        .await;
+        let v =
+            xiaoguai_agent::HotlGate::check(&gate, Uuid::new_v4(), "tool_call.search", 1.0).await;
         let (new_request_id, _scope, _ticket) = match v {
             xiaoguai_agent::HotlGateVerdict::Suspend {
                 request_id,

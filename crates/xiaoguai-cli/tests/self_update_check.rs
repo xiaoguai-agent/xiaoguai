@@ -98,7 +98,7 @@ async fn start_mock_server_same_version() -> (String, mockito::ServerGuard) {
 
 // ── library-level tests of SelfUpdateArgs ─────────────────────────────────
 
-/// When the remote reports the same version, run_self_update returns Ok and
+/// When the remote reports the same version, `run_self_update` returns Ok and
 /// the message says "Already up-to-date".
 #[tokio::test]
 async fn self_update_already_up_to_date() {

@@ -20,7 +20,7 @@ use crate::repositories::tenant_ctx::begin_tenant_tx;
 pub trait McpServerRepository: Send + Sync {
     async fn create(&self, tenant: Option<&str>, server: &McpServer) -> RepoResult<()>;
     async fn find_by_id(&self, tenant: Option<&str>, id: &str) -> RepoResult<Option<McpServer>>;
-    /// System-wide rows (tenant_id IS NULL), ordered by name + version.
+    /// System-wide rows (`tenant_id` IS NULL), ordered by name + version.
     async fn list_global(&self) -> RepoResult<Vec<McpServer>>;
     /// System-wide rows plus rows scoped to `tenant_id`. The supplied
     /// `tenant_id` doubles as the RLS GUC value.

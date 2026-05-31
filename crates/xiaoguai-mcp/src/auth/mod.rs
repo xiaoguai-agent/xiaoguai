@@ -20,7 +20,7 @@ pub mod at_rest;
 pub mod oauth2_pkce;
 
 pub use at_rest::{
-    AeadKey, AtRestError, Keyring, ENV_KEY_CURRENT, ENV_KEY_PREV, ENVELOPE_VERSION, KEY_LEN,
+    AeadKey, AtRestError, Keyring, ENVELOPE_VERSION, ENV_KEY_CURRENT, ENV_KEY_PREV, KEY_LEN,
     NONCE_LEN,
 };
 pub use oauth2_pkce::{

@@ -297,7 +297,7 @@ pub fn should_refresh(bundle: &TokenBundle, now: DateTime<Utc>) -> bool {
 ///
 /// `put` MUST be atomic with respect to refresh-token rotation: a
 /// concurrent reader either sees the old bundle or the new bundle,
-/// never a torn read of (new access_token, old refresh_token).
+/// never a torn read of (new `access_token`, old `refresh_token`).
 #[async_trait]
 pub trait TokenStore: Send + Sync {
     async fn get(&self, server_id: &str, tenant_id: &str) -> McpResult<Option<TokenBundle>>;

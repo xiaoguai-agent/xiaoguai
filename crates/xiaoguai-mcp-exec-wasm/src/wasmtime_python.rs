@@ -523,7 +523,12 @@ mod tests {
             .await
             .expect("WASI run");
         std::env::remove_var("XG_TEST_LEAK_KEY");
-        assert_eq!(r.stdout.trim(), "absent", "L3 env scrub failed: {}", r.stdout);
+        assert_eq!(
+            r.stdout.trim(),
+            "absent",
+            "L3 env scrub failed: {}",
+            r.stdout
+        );
     }
 
     #[tokio::test]
@@ -585,12 +590,10 @@ print("contact: alice@example.com", file=sys.stderr)
         let backend = std::sync::Arc::new(WasmtimePythonBackend::new(WasmExecConfig::default()));
         let b1 = backend.clone();
         let b2 = backend.clone();
-        let h1 = tokio::spawn(async move {
-            b1.run("g = 'A'; print(g)", Duration::from_secs(10)).await
-        });
-        let h2 = tokio::spawn(async move {
-            b2.run("g = 'B'; print(g)", Duration::from_secs(10)).await
-        });
+        let h1 =
+            tokio::spawn(async move { b1.run("g = 'A'; print(g)", Duration::from_secs(10)).await });
+        let h2 =
+            tokio::spawn(async move { b2.run("g = 'B'; print(g)", Duration::from_secs(10)).await });
         let r1 = h1.await.unwrap().unwrap();
         let r2 = h2.await.unwrap().unwrap();
         // Each interpreter is its own Store; global `g` is independent.

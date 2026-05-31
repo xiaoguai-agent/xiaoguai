@@ -130,7 +130,7 @@ impl PartialEq for HotlGateVerdict {
     }
 }
 
-/// Sprint-12 (S12-1). Outcome of an operator's HotL decision, returned
+/// Sprint-12 (S12-1). Outcome of an operator's `HotL` decision, returned
 /// by [`HotlSuspensionTicket::await_decision`] when the operator (or the
 /// timeout helper) sends a verdict through the registry's `oneshot`
 /// sender. Mirrors the wire shape of `POST /v1/hotl/decisions` in
@@ -267,9 +267,7 @@ impl HotlSuspensionTicket {
         self,
         cancel: &CancellationToken,
     ) -> Result<HotlDecisionVerdict, HotlTicketError> {
-        let Self {
-            rx, expires_at, ..
-        } = self;
+        let Self { rx, expires_at, .. } = self;
         tokio::select! {
             // Bias the select so cancellation always wins ties — this matches
             // the loop's documented "cancel wins" semantics from DEC-LLD-AGENT-004

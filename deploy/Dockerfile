@@ -27,7 +27,7 @@
 #   xiaoguai-im-mattermost  xiaoguai-im-slack
 #   xiaoguai-orchestrator
 
-ARG RUST_VERSION=1.88
+ARG RUST_VERSION=1.93
 ARG NODE_VERSION=20
 
 # ── stage 1: install cargo-chef ──────────────────────────────────────────────

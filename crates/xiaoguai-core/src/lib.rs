@@ -306,10 +306,9 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // wiring off when the signing key env var is empty.
     let pg_audit_sink: Option<Arc<PgAuditSink>> =
         match std::env::var(&settings.audit.signing_key_env) {
-            Ok(key) if !key.is_empty() => Some(Arc::new(PgAuditSink::new(
-                pool.clone(),
-                key.into_bytes(),
-            ))),
+            Ok(key) if !key.is_empty() => {
+                Some(Arc::new(PgAuditSink::new(pool.clone(), key.into_bytes())))
+            }
             _ => None,
         };
 
@@ -317,26 +316,23 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         Option<Arc<dyn AuditReader>>,
         Option<Arc<dyn AuditVerifier>>,
         Option<Arc<dyn xiaoguai_api::audit::AuditChainExporter>>,
-    ) = match &pg_audit_sink {
-        Some(sink) => {
-            let adapter = Arc::new(PgAuditAdapter::new(sink.clone()));
-            tracing::info!(
-                env = %settings.audit.signing_key_env,
-                "serve: audit reader+verifier+exporter wired (PgAuditSink)"
-            );
-            (
-                Some(adapter.clone() as Arc<dyn AuditReader>),
-                Some(adapter.clone() as Arc<dyn AuditVerifier>),
-                Some(adapter as Arc<dyn xiaoguai_api::audit::AuditChainExporter>),
-            )
-        }
-        None => {
-            tracing::warn!(
-                env = %settings.audit.signing_key_env,
-                "serve: audit signing key not set — /v1/admin/audit, /v1/admin/audit/verify, and /v1/audit/exports will return 503"
-            );
-            (None, None, None)
-        }
+    ) = if let Some(sink) = &pg_audit_sink {
+        let adapter = Arc::new(PgAuditAdapter::new(sink.clone()));
+        tracing::info!(
+            env = %settings.audit.signing_key_env,
+            "serve: audit reader+verifier+exporter wired (PgAuditSink)"
+        );
+        (
+            Some(adapter.clone() as Arc<dyn AuditReader>),
+            Some(adapter.clone() as Arc<dyn AuditVerifier>),
+            Some(adapter as Arc<dyn xiaoguai_api::audit::AuditChainExporter>),
+        )
+    } else {
+        tracing::warn!(
+            env = %settings.audit.signing_key_env,
+            "serve: audit signing key not set — /v1/admin/audit, /v1/admin/audit/verify, and /v1/audit/exports will return 503"
+        );
+        (None, None, None)
     };
 
     let mcp_servers_repo: Arc<dyn xiaoguai_storage::repositories::McpServerRepository> =
@@ -675,9 +671,9 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // the audit key is unset we keep the four slots `None` — the
         // /v1/skills/proposals/* routes return 503 and `propose_skill`
         // stays unregistered.
-        skill_proposals: pg_audit_sink.as_ref().map(|_| {
-            xiaoguai_tasks::skill_author_pg::PgSkillProposalRepository::arc(pool.clone())
-        }),
+        skill_proposals: pg_audit_sink
+            .as_ref()
+            .map(|_| xiaoguai_tasks::skill_author_pg::PgSkillProposalRepository::arc(pool.clone())),
         tenant_settings: pg_audit_sink
             .as_ref()
             .map(|_| xiaoguai_tasks::skill_author_pg::PgTenantSettings::arc(pool.clone())),
@@ -687,13 +683,14 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         skill_audit: pg_audit_sink
             .as_ref()
             .map(|sink| crate::skill_author_bridge::AuditSinkAdapter::arc(sink.clone())),
-        skills_dir: std::env::var_os("XIAOGUAI_SKILLS_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
+        skills_dir: std::env::var_os("XIAOGUAI_SKILLS_DIR").map_or_else(
+            || {
                 let home = std::env::var_os("HOME")
                     .map_or_else(|| std::path::PathBuf::from("."), std::path::PathBuf::from);
                 home.join(".xiaoguai").join("skills")
-            }),
+            },
+            std::path::PathBuf::from,
+        ),
         // v1.8.0 (sprint-10b S10b-1): persona CRUD wired via the PG-backed
         // repository when a pool is available. `None` here would surface as
         // 503 from `/v1/personas/*`; production always has a Postgres pool.

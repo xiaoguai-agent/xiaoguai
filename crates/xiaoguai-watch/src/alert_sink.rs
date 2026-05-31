@@ -132,6 +132,10 @@ impl AlertmanagerInbox {
     pub async fn len(&self) -> usize {
         self.inner.lock().await.len()
     }
+
+    pub async fn is_empty(&self) -> bool {
+        self.inner.lock().await.is_empty()
+    }
 }
 
 // ── WatchSource impl ──────────────────────────────────────────────────────────

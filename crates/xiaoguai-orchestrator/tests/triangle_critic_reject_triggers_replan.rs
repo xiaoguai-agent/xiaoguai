@@ -34,10 +34,7 @@ async fn triangle_critic_reject_triggers_replan() {
     let planner_backend = CannedBackend::new("planner", vec![&plan_round_0, &plan_round_1]);
 
     // Worker returns one answer per round.
-    let worker_backend = CannedBackend::new(
-        "worker",
-        vec!["off-topic answer", "on-topic answer"],
-    );
+    let worker_backend = CannedBackend::new("worker", vec!["off-topic answer", "on-topic answer"]);
 
     // Critic: round-0 task gets rejected; round-1 task gets approved.
     let critic_reject = make_critic_response("reject", "wrong domain entirely");

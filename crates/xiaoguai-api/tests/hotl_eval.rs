@@ -109,7 +109,7 @@ async fn eval_at_threshold_still_allow() {
 
 // ── scenario 3: above threshold → escalate ───────────────────────────────────
 
-/// The (N+1)-th event when threshold=N must Escalate when escalate_to is set.
+/// The (N+1)-th event when threshold=N must Escalate when `escalate_to` is set.
 #[tokio::test]
 async fn eval_above_threshold_escalates() {
     const N: i32 = 10;
@@ -140,7 +140,7 @@ async fn eval_above_threshold_escalates() {
     }
 }
 
-/// The (N+1)-th event when threshold=N with no escalate_to must Deny.
+/// The (N+1)-th event when threshold=N with no `escalate_to` must Deny.
 #[tokio::test]
 async fn eval_above_threshold_denies_when_no_escalate_to() {
     const N: i32 = 5;
@@ -381,7 +381,7 @@ async fn eval_policy_hot_update_relaxed_threshold() {
 // `escalate_to` string into the Escalate verdict so downstream routing
 // (IM gateway, webhook dispatcher) receives the correct tier address.
 
-/// Low-risk scope (email_send) → Escalate carries tier-1 address.
+/// Low-risk scope (`email_send`) → Escalate carries tier-1 address.
 #[tokio::test]
 async fn eval_tier_routing_low_risk() {
     let tid = Uuid::new_v4();
@@ -403,7 +403,7 @@ async fn eval_tier_routing_low_risk() {
     }
 }
 
-/// Medium-risk scope (llm_call) → Escalate carries tier-2 address.
+/// Medium-risk scope (`llm_call`) → Escalate carries tier-2 address.
 #[tokio::test]
 async fn eval_tier_routing_medium_risk() {
     let tid = Uuid::new_v4();
@@ -425,7 +425,7 @@ async fn eval_tier_routing_medium_risk() {
     }
 }
 
-/// High-risk scope (external_api) → Escalate carries tier-3 address.
+/// High-risk scope (`external_api`) → Escalate carries tier-3 address.
 #[tokio::test]
 async fn eval_tier_routing_high_risk() {
     let tid = Uuid::new_v4();
@@ -487,7 +487,7 @@ async fn eval_tier_routing_deny_beats_escalate() {
 
 // ── bonus: USD cost budget escalation ────────────────────────────────────────
 
-/// USD budget breach with escalate_to set must Escalate (not Deny).
+/// USD budget breach with `escalate_to` set must Escalate (not Deny).
 #[tokio::test]
 async fn eval_usd_budget_breach_escalates() {
     let tid = Uuid::new_v4();

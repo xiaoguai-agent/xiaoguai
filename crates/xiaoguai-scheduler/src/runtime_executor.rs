@@ -38,7 +38,7 @@ const OUTPUT_PREVIEW_MAX: usize = 500;
 /// `sessions.id` to render the scheduler-driven transcript.
 ///
 /// The writer is responsible for choosing a stable `user_id` for
-/// scheduled runs (production wires a synthetic "scheduler:<job_id>"
+/// scheduled runs (production wires a synthetic "scheduler:<`job_id`>"
 /// user); the trait takes only what's strictly required.
 #[async_trait]
 pub trait ScheduledSessionWriter: Send + Sync {

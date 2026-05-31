@@ -28,9 +28,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use xiaoguai_personas::{
-    CreatePersonaRequest, PersonaError, UpdatePersonaRequest,
-};
+use xiaoguai_personas::{CreatePersonaRequest, PersonaError, UpdatePersonaRequest};
 
 use crate::state::AppState;
 

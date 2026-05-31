@@ -16,9 +16,7 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-use xiaoguai_agent::{
-    AgentConfig, AgentEvent, AllowAllGate, ReactAgent, StopReason, Toolbox,
-};
+use xiaoguai_agent::{AgentConfig, AgentEvent, AllowAllGate, ReactAgent, StopReason, Toolbox};
 use xiaoguai_llm::mock::ScriptStep;
 use xiaoguai_llm::{LlmBackend, Message, MockBackend, ToolCallSpec};
 

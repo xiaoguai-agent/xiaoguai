@@ -14,6 +14,4 @@
 
 pub mod triangle;
 
-pub use triangle::{
-    OrchEvent, SessionId, TriangleRequest, TriangleRunner, TriangleStopReason,
-};
+pub use triangle::{OrchEvent, SessionId, TriangleRequest, TriangleRunner, TriangleStopReason};

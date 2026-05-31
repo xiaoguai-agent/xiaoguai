@@ -8,9 +8,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum ChunkingPreset {
     /// 512-token chunks, 64-token overlap. Right for prose, markdown
     /// notes, knowledge-base articles.
+    #[default]
     TextDefault,
     /// AST-aware splitting on function / class boundaries when the
     /// backend supports it, else 256-token chunks. Right for source
@@ -19,12 +21,6 @@ pub enum ChunkingPreset {
     /// 1024-token chunks, 128-token overlap, page-anchored citations.
     /// Right for academic / report PDFs.
     PdfHeavy,
-}
-
-impl Default for ChunkingPreset {
-    fn default() -> Self {
-        Self::TextDefault
-    }
 }
 
 impl ChunkingPreset {

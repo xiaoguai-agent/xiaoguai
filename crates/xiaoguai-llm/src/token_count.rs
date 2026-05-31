@@ -32,7 +32,7 @@ pub fn estimate_tokens(s: &str) -> usize {
     if s.is_empty() {
         return 0;
     }
-    (s.chars().count() + 3) / 4
+    s.chars().count().div_ceil(4)
 }
 
 /// Per-message overhead added by the chat-completion wire format
@@ -103,7 +103,7 @@ mod tests {
             content: "abcd".into(), // 1 token
             tool_calls: vec![ToolCallSpec {
                 id: "call_1".into(),
-                name: "execute".into(),  // 2 tokens (6 chars → ceil(6/4)=2)
+                name: "execute".into(), // 2 tokens (6 chars → ceil(6/4)=2)
                 arguments_json: "{\"x\":1}".into(), // 2 tokens (7 chars)
             }],
             tool_call_id: None,

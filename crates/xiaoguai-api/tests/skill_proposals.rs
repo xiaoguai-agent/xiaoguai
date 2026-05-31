@@ -103,7 +103,9 @@ fn build_fixture() -> Fixture {
         skills_dir: tmp.path().to_path_buf(),
         personas: None,
         watchers: None,
-        decision_registry: std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
+        decision_registry: std::sync::Arc::new(
+            xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
+        ),
     };
     Fixture {
         state,

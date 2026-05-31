@@ -8,7 +8,7 @@
 //! 2. The manifest is validated against a strict whitelist schema —
 //!    agent-authored manifests reference existing tools by name; they
 //!    CANNOT declare new MCP servers or load native code.
-//! 3. The HotL gate (PR #61) is consulted under bucket `skill_author`
+//! 3. The `HotL` gate (PR #61) is consulted under bucket `skill_author`
 //!    with a default budget of 5 proposals / tenant / day.
 //! 4. On `Allow` the manifest is persisted as `pending` in
 //!    `skill_proposals`; on `Deny` the reason is fed back to the LLM.
@@ -119,7 +119,7 @@ pub enum SkillAuthorError {
     /// Manifest failed the whitelist validator.
     #[error("invalid manifest: {0}")]
     InvalidManifest(String),
-    /// HotL gate returned `Deny`.
+    /// `HotL` gate returned `Deny`.
     #[error("hotl gate denied: {0}")]
     Denied(String),
     /// Proposal coordinates clash with an existing row.
@@ -216,7 +216,7 @@ impl SandboxTier {
     }
 }
 
-/// HotL gate adapter used by this module. Mirrors
+/// `HotL` gate adapter used by this module. Mirrors
 /// `xiaoguai_agent::hotl_gate::HotlGate` but kept here to avoid a hard
 /// dependency on `xiaoguai-agent` (which would create a crate-graph
 /// cycle since agent already depends on a future tasks-bridge in core).
@@ -261,18 +261,19 @@ pub struct SkillAuthorCtx<'a> {
 /// Reject manifests that violate the whitelist schema.
 ///
 /// Rules:
-/// * Name, description, version, system_prompt: non-empty after trim.
+/// * Name, description, version, `system_prompt`: non-empty after trim.
 /// * Name: alphanumeric + `-`/`_` only (matches the existing
 ///   marketplace slug pattern).
 /// * Version: SemVer-ish (`X.Y.Z` with optional `-pre`). Conservative —
 ///   we want predictable filenames.
-/// * tool_allowlist: every entry MUST appear in `known_tools`, MUST NOT
+/// * `tool_allowlist`: every entry MUST appear in `known_tools`, MUST NOT
 ///   contain `propose_skill` (recursion guard), MUST be non-empty (a
 ///   skill with no tools is a dead skill — likely an LLM hallucination).
 /// * No other field exists on the struct (rust's type system already
 ///   enforces this) — the JSON-schema for the MCP tool also pins
 ///   `additionalProperties: false` so the LLM can't smuggle anything
 ///   past serde.
+#[allow(clippy::implicit_hasher)] // public API; caller passes the default hasher.
 pub fn validate_manifest(
     m: &SkillManifest,
     known_tools: &HashSet<String>,
@@ -330,7 +331,7 @@ pub fn validate_manifest(
     Ok(())
 }
 
-/// Conservative SemVer check: three numeric segments separated by `.`,
+/// Conservative `SemVer` check: three numeric segments separated by `.`,
 /// optionally followed by `-<alphanumeric/-/.>`. We don't pull in the
 /// `semver` crate for this one call.
 fn version_is_semver_ish(v: &str) -> bool {
@@ -339,7 +340,9 @@ fn version_is_semver_ish(v: &str) -> bool {
     if parts.len() != 3 {
         return false;
     }
-    parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    parts
+        .iter()
+        .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// Canonical name of the tool that triggers `propose`. Used both by the
@@ -347,7 +350,7 @@ fn version_is_semver_ish(v: &str) -> bool {
 /// descriptor.
 pub const PROPOSE_SKILL_TOOL_NAME: &str = "propose_skill";
 
-/// HotL gate scope passed by [`propose`].
+/// `HotL` gate scope passed by [`propose`].
 pub const SKILL_AUTHOR_GATE_SCOPE: &str = "skill_author";
 
 // ---------------------------------------------------------------------------
@@ -413,12 +416,9 @@ pub async fn propose(
     // 4. HotL gate consultation. `tenant_id` is `TEXT` in our schema but
     //    the gate trait takes `Uuid`. Failed parse → InvalidTenant
     //    (fail-closed: we don't want to silently bypass the gate).
-    let tenant_uuid = Uuid::parse_str(tenant_id)
-        .map_err(|e| SkillAuthorError::InvalidTenant(e.to_string()))?;
-    let gate_outcome = ctx
-        .gate
-        .check(tenant_uuid, SKILL_AUTHOR_GATE_SCOPE)
-        .await;
+    let tenant_uuid =
+        Uuid::parse_str(tenant_id).map_err(|e| SkillAuthorError::InvalidTenant(e.to_string()))?;
+    let gate_outcome = ctx.gate.check(tenant_uuid, SKILL_AUTHOR_GATE_SCOPE).await;
 
     let (verdict_str, reason_opt) = match &gate_outcome {
         Ok(()) => ("allow", None),
@@ -906,7 +906,9 @@ mod tests {
 
         let mut m = good_manifest();
         m.tool_allowlist.push("rm_rf".into());
-        let err = propose(&ctx, &tenant_uuid(), "agent-1", m).await.unwrap_err();
+        let err = propose(&ctx, &tenant_uuid(), "agent-1", m)
+            .await
+            .unwrap_err();
         assert!(matches!(err, SkillAuthorError::InvalidManifest(_)));
         // Validation precedes gate — no audit rows, no gate consultation.
         assert!(audit.entries().is_empty());
@@ -1011,7 +1013,10 @@ mod tests {
 
         // Three audit rows in total: propose, gate, approve.
         let actions: Vec<_> = audit.entries().iter().map(|e| e.action.clone()).collect();
-        assert_eq!(actions, vec!["skill.propose", "skill.hotl_gate", "skill.approve"]);
+        assert_eq!(
+            actions,
+            vec!["skill.propose", "skill.hotl_gate", "skill.approve"]
+        );
     }
 
     #[tokio::test]
@@ -1079,7 +1084,10 @@ mod tests {
         assert_eq!(updated.reason.as_deref(), Some("too broad"));
 
         let actions: Vec<_> = audit.entries().iter().map(|e| e.action.clone()).collect();
-        assert_eq!(actions, vec!["skill.propose", "skill.hotl_gate", "skill.reject"]);
+        assert_eq!(
+            actions,
+            vec!["skill.propose", "skill.hotl_gate", "skill.reject"]
+        );
     }
 
     // ── Repository semantics ------------------------------------------------
@@ -1113,8 +1121,14 @@ mod tests {
         let known = known_tools();
         let ctx = ctx(&*repo, &*settings, &gate, &*audit, &known);
 
-        let m1 = SkillManifest { version: "0.1.0".into(), ..good_manifest() };
-        let m2 = SkillManifest { version: "0.2.0".into(), ..good_manifest() };
+        let m1 = SkillManifest {
+            version: "0.1.0".into(),
+            ..good_manifest()
+        };
+        let m2 = SkillManifest {
+            version: "0.2.0".into(),
+            ..good_manifest()
+        };
         let r1 = propose(&ctx, &tenant_uuid(), "agent-1", m1).await.unwrap();
         // Force a measurable gap so created_at sort is stable.
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;

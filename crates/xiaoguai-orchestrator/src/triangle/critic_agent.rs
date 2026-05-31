@@ -240,8 +240,7 @@ fn parse_verdict(raw: &str) -> Result<Verdict, String> {
     let cleaned = trimmed
         .strip_prefix("```json")
         .or_else(|| trimmed.strip_prefix("```"))
-        .map(|s| s.strip_suffix("```").unwrap_or(s))
-        .unwrap_or(trimmed)
+        .map_or(trimmed, |s| s.strip_suffix("```").unwrap_or(s))
         .trim();
     let raw: RawVerdict = serde_json::from_str(cleaned).map_err(|e| e.to_string())?;
     Ok(raw.into())
@@ -374,7 +373,7 @@ mod tests {
         // 1st response (popped LAST) malformed; 2nd valid.
         let backend = CannedBackend::new(vec![
             r#"{"kind":"approve","reason":"ok"}"#, // popped first (Vec::pop is LIFO)
-            r#"not json at all"#,                  // popped first call
+            r"not json at all",                    // popped first call
         ]);
         let critic = CriticAgent::new(backend as Arc<dyn LlmBackend>, "Critic".into());
         let result = worker_result(Some("ok"), 0.9);

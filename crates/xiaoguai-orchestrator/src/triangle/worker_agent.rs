@@ -23,7 +23,6 @@
 
 use std::sync::Arc;
 
-use once_cell::sync::Lazy;
 use regex::Regex;
 use thiserror::Error;
 use tokio_stream::StreamExt;
@@ -85,7 +84,7 @@ impl WorkerAgent {
     }
 
     /// Override the inner ReAct max-iteration cap. Used by the
-    /// MaxIterations regression test to force a low ceiling.
+    /// `MaxIterations` regression test to force a low ceiling.
     #[must_use]
     pub fn with_max_iterations(mut self, n: u32) -> Self {
         self.max_iterations = n;
@@ -111,7 +110,7 @@ impl WorkerAgent {
     ///   doesn't match `task.id` (defensive against misrouted
     ///   dispatch).
     /// - [`WorkerError::BudgetTooSmall`] — `budget_tokens == 0`.
-    /// - [`WorkerError::LlmError`] — the inner ReactAgent's join
+    /// - [`WorkerError::LlmError`] — the inner `ReactAgent`'s join
     ///   handle returned a backend-level error.
     pub async fn execute(
         &self,
@@ -319,7 +318,7 @@ impl WorkerAgent {
 pub struct WorkerResult {
     pub task_id: TaskId,
     /// Final assistant text. `None` if the Worker gave up
-    /// (BudgetExhausted / MaxIterations / ToolError).
+    /// (`BudgetExhausted` / `MaxIterations` / `ToolError`).
     pub artefact: Option<String>,
     /// Best-effort: URLs + bracketed numeric refs found in the artefact.
     pub citations: Vec<String>,
@@ -410,8 +409,9 @@ fn classify_stop(
 /// text. The Worker persona convention puts the self-report at the
 /// end of the final message; taking the last match avoids false hits
 /// on cited JSON earlier in the text.
-static CONFIDENCE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#""confidence"\s*:\s*(-?[0-9]+(?:\.[0-9]+)?)"#).unwrap());
+static CONFIDENCE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r#""confidence"\s*:\s*(-?[0-9]+(?:\.[0-9]+)?)"#).unwrap()
+});
 
 fn parse_confidence(text: &str) -> f32 {
     let Some(last) = CONFIDENCE_RE.captures_iter(text).last() else {
@@ -424,9 +424,11 @@ fn parse_confidence(text: &str) -> f32 {
 
 /// URL regex — RFC 3986-lite, stops at whitespace and closing parens
 /// (so markdown `(https://x.com)` doesn't capture the trailing `)`).
-static URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"https?://[^\s)\]]+").unwrap());
+static URL_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(r"https?://[^\s)\]]+").unwrap());
 /// Bracketed-number citation regex — `[1]`, `[42]`, etc.
-static BRACKET_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[\d+\]").unwrap());
+static BRACKET_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(r"\[\d+\]").unwrap());
 
 /// Trim sentence-final punctuation from a captured URL. Without this,
 /// regex hits like `https://ref.org.` (with the trailing period)
