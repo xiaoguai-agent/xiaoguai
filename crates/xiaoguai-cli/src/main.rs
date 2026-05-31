@@ -1312,8 +1312,7 @@ async fn handle_skills(api_base: String, output: String, action: SkillsCmd) -> R
 async fn handle_proposals(api_base: String, output: String, action: ProposalsCmd) -> Result<()> {
     match action {
         ProposalsCmd::List { tenant_id, status } => {
-            let rows =
-                skills::proposals_list(&api_base, &tenant_id, status.as_deref()).await?;
+            let rows = skills::proposals_list(&api_base, &tenant_id, status.as_deref()).await?;
             if output == "table" {
                 print!("{}", skills::format_proposals_table(&rows));
             } else {

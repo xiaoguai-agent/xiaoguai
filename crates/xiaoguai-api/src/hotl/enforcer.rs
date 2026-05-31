@@ -341,7 +341,7 @@ mod tests {
         }
     }
 
-    /// 4th call with limit=3 and escalate_to set → Escalate.
+    /// 4th call with limit=3 and `escalate_to` set → Escalate.
     #[tokio::test]
     async fn fourth_call_escalates_when_escalate_to_set() {
         let tid = Uuid::new_v4();
@@ -365,7 +365,7 @@ mod tests {
         }
     }
 
-    /// 4th call with limit=3 and no escalate_to → Deny.
+    /// 4th call with limit=3 and no `escalate_to` → Deny.
     #[tokio::test]
     async fn fourth_call_denies_without_escalate_to() {
         let tid = Uuid::new_v4();
@@ -384,7 +384,7 @@ mod tests {
 
     // ── cost (USD) budget ────────────────────────────────────────────────────
 
-    /// Cumulative cost within window stays under max_usd → Allow.
+    /// Cumulative cost within window stays under `max_usd` → Allow.
     #[tokio::test]
     async fn cost_under_limit_allows() {
         let tid = Uuid::new_v4();
@@ -398,7 +398,7 @@ mod tests {
         }
     }
 
-    /// Cumulative cost exceeds max_usd → Deny (no escalate_to).
+    /// Cumulative cost exceeds `max_usd` → Deny (no `escalate_to`).
     #[tokio::test]
     async fn cost_over_limit_denies() {
         let tid = Uuid::new_v4();
@@ -448,7 +448,7 @@ mod tests {
 
     // ── scope isolation ──────────────────────────────────────────────────────
 
-    /// A policy on 'llm_call' must not affect 'email_send' counts.
+    /// A policy on '`llm_call`' must not affect '`email_send`' counts.
     #[tokio::test]
     async fn scope_isolated() {
         let tid = Uuid::new_v4();

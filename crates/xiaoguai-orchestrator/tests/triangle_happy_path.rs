@@ -36,13 +36,8 @@ async fn triangle_happy_path() {
     // The backend is shared across both Worker calls; we pre-load both
     // answers in order. The MockBackend Critic does not invoke the
     // Worker; the Worker calls the worker backend twice in sequence.
-    let worker_backend = CannedBackend::new(
-        "worker",
-        vec![
-            "answer for task one",
-            "answer for task two",
-        ],
-    );
+    let worker_backend =
+        CannedBackend::new("worker", vec!["answer for task one", "answer for task two"]);
 
     // Critic: approves both Worker results.
     let critic_a = make_critic_response("approve", "task one looks great");
@@ -83,9 +78,13 @@ async fn triangle_happy_path() {
     // - CriticVerdict { Approve } * 2
     // - Final { Completed }
     assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, OrchEvent::PlanProduced { round: 0, task_count: 2 })),
+        events.iter().any(|e| matches!(
+            e,
+            OrchEvent::PlanProduced {
+                round: 0,
+                task_count: 2
+            }
+        )),
         "expected PlanProduced(round=0, task_count=2), got {events:?}"
     );
 
@@ -99,7 +98,10 @@ async fn triangle_happy_path() {
         .iter()
         .filter(|e| matches!(e, OrchEvent::WorkerCompleted { ok: true, .. }))
         .count();
-    assert_eq!(worker_completed_ok, 2, "expected 2 successful Worker completions");
+    assert_eq!(
+        worker_completed_ok, 2,
+        "expected 2 successful Worker completions"
+    );
 
     let approvals = events
         .iter()
@@ -121,7 +123,10 @@ async fn triangle_happy_path() {
             stop_reason: TriangleStopReason::Completed,
             summary,
         } => {
-            assert!(summary.contains("approved=2"), "summary should report approved=2, got: {summary}");
+            assert!(
+                summary.contains("approved=2"),
+                "summary should report approved=2, got: {summary}"
+            );
             assert!(
                 summary.contains("task one looks great"),
                 "summary should cite approve reasons, got: {summary}"

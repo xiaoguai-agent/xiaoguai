@@ -36,7 +36,9 @@ pub enum UsageError {
 /// the model name string the LLM router recorded with the call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum UsageGroupBy {
+    #[default]
     Day,
     Provider,
     Model,
@@ -50,12 +52,6 @@ impl UsageGroupBy {
             Self::Provider => "provider",
             Self::Model => "model",
         }
-    }
-}
-
-impl Default for UsageGroupBy {
-    fn default() -> Self {
-        Self::Day
     }
 }
 

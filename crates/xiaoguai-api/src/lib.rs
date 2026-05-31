@@ -73,9 +73,7 @@ pub use scheduler::{
 };
 pub use serve::serve_with_state;
 pub use sessions_ext::{SessionForkError, SessionForker};
-pub use skill_proposals::{
-    ApproveRequest, ListProposalsQuery, ProposalRowResponse, RejectRequest,
-};
+pub use skill_proposals::{ApproveRequest, ListProposalsQuery, ProposalRowResponse, RejectRequest};
 pub use skills::{
     CatalogFile, InMemorySkillPackRepository, InstalledPackRow, KnobSchema, PackRequires,
     SkillPackEntry, SkillPackError, SkillPackRepository,
@@ -87,8 +85,8 @@ pub use usage::{
     UsageReport, UsageRow,
 };
 pub use watchers::{
-    StaticWatcherIntrospector, WatcherError, WatcherInfo, WatcherIntrospector,
-    WatcherSourceType, WatcherStatus,
+    StaticWatcherIntrospector, WatcherError, WatcherInfo, WatcherIntrospector, WatcherSourceType,
+    WatcherStatus,
 };
 pub use workspaces::{
     CreateWorkspaceRequest, InMemoryWorkspaceRepository, UpdateWorkspaceRequest, Workspace,

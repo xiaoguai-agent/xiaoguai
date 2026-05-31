@@ -15,7 +15,7 @@
 //!   the default;
 //! - `crates/xiaoguai-agent/tests/hotl_legacy_no_suspend.rs` (S12-5/9)
 //!   which pins that explicit opt-out (`suspend_on_escalate=false`)
-//!   continues to emit zero HotL events through the ReAct loop.
+//!   continues to emit zero `HotL` events through the ReAct loop.
 //!
 //! Together the three tests prove: v1.9.0 default = suspension;
 //! v1.8.x semantics still available via explicit opt-out.

@@ -67,7 +67,9 @@ fn build_state(workspaces: Option<Arc<dyn WorkspaceRepository>>) -> AppState {
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
-        decision_registry: std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
+        decision_registry: std::sync::Arc::new(
+            xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
+        ),
     }
 }
 

@@ -61,10 +61,7 @@ impl ExecServer {
     /// binaries (`xiaoguai-mcp-exec-wasm-js`) that pass a
     /// `WasmtimeJavaScriptBackend`, and by tests that inject mocks.
     #[must_use]
-    pub fn with_backend(
-        cfg: ExecConfig,
-        backend: Arc<dyn crate::runtime::ExecBackend>,
-    ) -> Self {
+    pub fn with_backend(cfg: ExecConfig, backend: Arc<dyn crate::runtime::ExecBackend>) -> Self {
         Self {
             cfg: Arc::new(cfg),
             backend,

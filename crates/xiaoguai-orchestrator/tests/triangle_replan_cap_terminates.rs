@@ -40,8 +40,7 @@ async fn triangle_replan_cap_terminates() {
 
     // Critic: reject everything.
     let critic_reject = make_critic_response("reject", "this is never acceptable");
-    let critic_backend =
-        CannedBackend::new("critic", vec![&critic_reject, &critic_reject]);
+    let critic_backend = CannedBackend::new("critic", vec![&critic_reject, &critic_reject]);
 
     let planner = Arc::new(PlannerAgent::new(
         planner_backend.clone() as Arc<dyn LlmBackend>,

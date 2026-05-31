@@ -8,7 +8,7 @@
 //!                      created_at, decided_at, decided_by)`
 //!   * `tenant_settings(tenant_id TEXT PK, settings JSONB, updated_at)`
 //!
-//! The HotL gate + audit-sink adapters live in
+//! The `HotL` gate + audit-sink adapters live in
 //! `xiaoguai-core::skill_author_bridge` so we don't pull an
 //! `xiaoguai-api`/`xiaoguai-audit` dependency cycle back into this crate.
 
@@ -43,10 +43,8 @@ struct ProposalDbRow {
 
 impl ProposalDbRow {
     fn try_into_domain(self) -> Result<ProposalRow, SkillAuthorError> {
-        let manifest: SkillManifest =
-            serde_json::from_value(self.manifest_json).map_err(|e| {
-                SkillAuthorError::Backend(format!("decode manifest_json: {e}"))
-            })?;
+        let manifest: SkillManifest = serde_json::from_value(self.manifest_json)
+            .map_err(|e| SkillAuthorError::Backend(format!("decode manifest_json: {e}")))?;
         let status = ProposalStatus::parse(&self.status).ok_or_else(|| {
             SkillAuthorError::Backend(format!("unknown proposal status {:?}", self.status))
         })?;
@@ -178,7 +176,9 @@ impl SkillProposalRepository for PgSkillProposalRepository {
         }
         .map_err(pg_err)?;
 
-        rows.into_iter().map(ProposalDbRow::try_into_domain).collect()
+        rows.into_iter()
+            .map(ProposalDbRow::try_into_domain)
+            .collect()
     }
 
     async fn set_status(
@@ -333,7 +333,10 @@ mod tests {
 
         let listed = repo.list(&tid, None).await.unwrap();
         assert_eq!(listed.len(), 1);
-        let pending = repo.list(&tid, Some(ProposalStatus::Pending)).await.unwrap();
+        let pending = repo
+            .list(&tid, Some(ProposalStatus::Pending))
+            .await
+            .unwrap();
         assert_eq!(pending.len(), 1);
 
         let approved = repo

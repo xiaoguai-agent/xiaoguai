@@ -119,10 +119,7 @@ fn write_page(content: &mut Content, header: &BundleHeader, rows: &[BundleRow]) 
             format_rfc3339_minute(header.window.from),
             format_rfc3339_minute(header.window.to)
         ),
-        format!(
-            "Generated: {}",
-            format_rfc3339_minute(header.generated_at)
-        ),
+        format!("Generated: {}", format_rfc3339_minute(header.generated_at)),
         format!(
             "Chain proof: first_id={}, last_id={}, count={}",
             header.chain_proof.first_id, header.chain_proof.last_id, header.chain_proof.count
@@ -186,10 +183,12 @@ fn write_page(content: &mut Content, header: &BundleHeader, rows: &[BundleRow]) 
             8.0,
             72.0,
             y,
-            &format!("... {} more rows (see JSON bundle for full set)", rows.len() - printed),
+            &format!(
+                "... {} more rows (see JSON bundle for full set)",
+                rows.len() - printed
+            ),
         );
     }
-
 }
 
 /// Emit one text-show operator at `(x, y)` using `font_name` at `size`.
@@ -216,6 +215,10 @@ fn format_rfc3339_minute(ts: DateTime<Utc>) -> String {
 }
 
 #[cfg(test)]
+// Test fixtures cast small `usize` counters to `i64` for `AuditEntry.ts` and
+// `StoredEntry.id`; the surrounding `n` is bounded by the test itself, so
+// `cast_possible_wrap` is a false positive in this fixture code.
+#[allow(clippy::cast_possible_wrap)]
 mod tests {
     use super::*;
     use crate::chain::{AuditEntry, ChainedAudit, StoredEntry, HMAC_LEN};

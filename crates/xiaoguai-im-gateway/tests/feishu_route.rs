@@ -80,7 +80,9 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
-        decision_registry: std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
+        decision_registry: std::sync::Arc::new(
+            xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
+        ),
     };
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
     mount_feishu(state, provider)
@@ -191,7 +193,7 @@ async fn agent_inherits_tenant_resolved_by_history_store() {
     };
     use xiaoguai_llm::Message as LlmMessage;
 
-    /// Records the request's tenant_id so the test can assert routing
+    /// Records the request's `tenant_id` so the test can assert routing
     /// flowed through `AgentConfig.tenant_id` → `ChatRequest.tenant_id`.
     struct CapturingBackend {
         captured_tenant: Arc<PlMutex<Option<String>>>,
@@ -224,7 +226,7 @@ async fn agent_inherits_tenant_resolved_by_history_store() {
         }
     }
 
-    /// Tiny stub store that always reports "ten_fixed".
+    /// Tiny stub store that always reports "`ten_fixed`".
     struct FixedTenantStore {
         inner: PlMutex<Vec<LlmMessage>>,
     }
@@ -303,7 +305,9 @@ async fn agent_inherits_tenant_resolved_by_history_store() {
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
-        decision_registry: std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
+        decision_registry: std::sync::Arc::new(
+            xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
+        ),
     };
     let sink = Arc::new(Mutex::new(Vec::new()));
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
@@ -328,8 +332,8 @@ async fn agent_inherits_tenant_resolved_by_history_store() {
 }
 
 /// v0.7.2/v0.7.3: prove that subsequent webhooks for the *same*
-/// conversation_id see the accumulated history, while a different
-/// conversation_id does not. Driven through `run_agent_and_reply`
+/// `conversation_id` see the accumulated history, while a different
+/// `conversation_id` does not. Driven through `run_agent_and_reply`
 /// directly so the test does not race the background spawn. Uses the
 /// in-memory `ConversationHistory` cast to the `ImHistoryStore` trait so
 /// the production code path (trait dispatch) is exercised.
@@ -394,7 +398,9 @@ async fn conversation_history_accumulates_per_chat() {
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
-        decision_registry: std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
+        decision_registry: std::sync::Arc::new(
+            xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
+        ),
     };
     let sink = Arc::new(Mutex::new(Vec::new()));
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));

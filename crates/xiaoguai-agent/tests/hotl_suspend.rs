@@ -105,8 +105,7 @@ async fn suspend_then_operator_allow_dispatches_tool() {
 
     let agent = ReactAgent::new(backend, toolbox, cfg);
     let cancel = CancellationToken::new();
-    let (handle, mut stream) =
-        agent.run_stream(vec![Message::user("hi")], cancel.clone());
+    let (handle, mut stream) = agent.run_stream(vec![Message::user("hi")], cancel.clone());
 
     // Collect events on a side task so we can drive the registry concurrently.
     let collected: Arc<Mutex<Vec<AgentEvent>>> = Arc::new(Mutex::new(Vec::new()));
@@ -136,11 +135,15 @@ async fn suspend_then_operator_allow_dispatches_tool() {
     let events = collected.lock().clone();
     let pending_idx = events
         .iter()
-        .position(|e| matches!(e, AgentEvent::HotlPending { request_id: r, .. } if *r == request_id))
+        .position(
+            |e| matches!(e, AgentEvent::HotlPending { request_id: r, .. } if *r == request_id),
+        )
         .expect("HotlPending emitted");
     let resolved_idx = events
         .iter()
-        .position(|e| matches!(e, AgentEvent::HotlResolved { request_id: r, .. } if *r == request_id))
+        .position(
+            |e| matches!(e, AgentEvent::HotlResolved { request_id: r, .. } if *r == request_id),
+        )
         .expect("HotlResolved emitted");
     let finished_idx = events
         .iter()

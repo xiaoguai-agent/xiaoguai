@@ -36,18 +36,21 @@ tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "r
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-# wasmtime 38 — newest line compatible with the workspace-pinned
-# Rust 1.88 (wasmtime 39+ requires 1.91+, wasmtime 45 requires 1.93).
-# The roadmap originally mentioned 27.x; 38.x is the actively-supported
-# LTS that still matches our toolchain. Bumping the workspace
-# rust-version is its own ADR conversation, deferred.
+# wasmtime 45 — CVE-safe line; clears RUSTSEC-2026-0086/0087/0089
+# (38.x panics) plus the newer 0114 (table allocation panic) and
+# 0149 (HIGH: wasmtime-wasi path_open(TRUNCATE) write-perm bypass)
+# that surfaced in the 42.x line. 45.0.0+ requires rustc 1.93
+# (Edition 2024); rust-toolchain.toml was bumped to 1.93 in the
+# same change. The prior sprint-12 attempt at 45.x was reverted
+# only because the toolchain wasn't bumped at the same time —
+# see ADR-0021 for the joined decision.
 #
 # default-features off + explicit list keeps build time reasonable
 # (avoids compiling features we never use: wat, profiling, etc.).
 # `p1` is the preview1 WASI surface; `async` covers both the wasmtime
 # async runtime and the component-model dep we need for wasi p1.
-wasmtime = { version = "38", default-features = false, features = ["async", "cranelift", "runtime", "parallel-compilation"] }
-wasmtime-wasi = { version = "38", default-features = false, features = ["p1"] }
+wasmtime = { version = "45.0.0", default-features = false, features = ["async", "cranelift", "runtime", "parallel-compilation"] }
+wasmtime-wasi = { version = "45.0.0", default-features = false, features = ["p1"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

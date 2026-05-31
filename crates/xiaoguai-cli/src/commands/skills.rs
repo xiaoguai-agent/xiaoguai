@@ -226,11 +226,7 @@ pub async fn proposals_list(
 
 /// Approve a proposal — server flips it to `installed` and writes the
 /// YAML manifest into `~/.xiaoguai/skills/`.
-pub async fn proposals_approve(
-    api_base: &str,
-    id: &str,
-    decided_by: &str,
-) -> Result<JsonValue> {
+pub async fn proposals_approve(api_base: &str, id: &str, decided_by: &str) -> Result<JsonValue> {
     let client = Client::new();
     let body = serde_json::json!({ "decided_by": decided_by });
     let resp = client
@@ -288,10 +284,7 @@ pub fn format_proposals_table(rows: &[JsonValue]) -> String {
             .get("created_at")
             .and_then(JsonValue::as_str)
             .unwrap_or("-");
-        let _ = writeln!(
-            out,
-            "{id:<24} {name:<20} {version:<8} {status:<10} {ts}"
-        );
+        let _ = writeln!(out, "{id:<24} {name:<20} {version:<8} {status:<10} {ts}");
     }
     out
 }

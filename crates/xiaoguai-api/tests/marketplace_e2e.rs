@@ -128,7 +128,9 @@ fn build_state(mcp: Option<Arc<dyn McpServerRepository>>) -> AppState {
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
-        decision_registry: std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
+        decision_registry: std::sync::Arc::new(
+            xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
+        ),
     }
 }
 
@@ -224,7 +226,7 @@ async fn install_503s_when_repo_not_wired() {
 }
 
 /// v0.9.4.1: install handler must call `McpSupervisor::reload_from_db`
-/// when a supervisor is wired into AppState. The marketplace catalog's
+/// when a supervisor is wired into `AppState`. The marketplace catalog's
 /// stdio entries use upstream npx commands that aren't on CI's PATH; the
 /// install handler logs the spawn failure and still returns 200.
 #[tokio::test]

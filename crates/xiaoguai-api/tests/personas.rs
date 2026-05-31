@@ -76,7 +76,9 @@ fn build_state(repo: Option<Arc<dyn PersonaRepository>>) -> AppState {
         skills_dir: std::path::PathBuf::new(),
         personas: repo,
         watchers: None,
-        decision_registry: std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
+        decision_registry: std::sync::Arc::new(
+            xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
+        ),
     }
 }
 

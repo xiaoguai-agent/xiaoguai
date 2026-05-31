@@ -206,7 +206,7 @@ impl Keyring {
         if envelope[0] != ENVELOPE_VERSION {
             return Err(AtRestError::Envelope("unknown envelope version byte"));
         }
-        let nonce = Nonce::from_slice(&envelope[1..1 + NONCE_LEN]);
+        let nonce = Nonce::from_slice(&envelope[1..=NONCE_LEN]);
         let ct = &envelope[1 + NONCE_LEN..];
 
         let candidates = std::iter::once(&self.current).chain(self.prev.as_ref());
@@ -279,7 +279,10 @@ mod tests {
         let kr_a = keyring_single(0x55);
         let ct = kr_a.encrypt("secret").unwrap();
         let kr_b = keyring_single(0x66);
-        assert!(matches!(kr_b.decrypt(&ct).unwrap_err(), AtRestError::Decrypt));
+        assert!(matches!(
+            kr_b.decrypt(&ct).unwrap_err(),
+            AtRestError::Decrypt
+        ));
     }
 
     #[test]
@@ -317,8 +320,14 @@ mod tests {
         let raw = [0xABu8; KEY_LEN];
         let padded = URL_SAFE.encode(raw);
         let unpadded = URL_SAFE_NO_PAD.encode(raw);
-        assert_eq!(AeadKey::from_b64url(&padded, ENV_KEY_CURRENT).unwrap().0, raw);
-        assert_eq!(AeadKey::from_b64url(&unpadded, ENV_KEY_CURRENT).unwrap().0, raw);
+        assert_eq!(
+            AeadKey::from_b64url(&padded, ENV_KEY_CURRENT).unwrap().0,
+            raw
+        );
+        assert_eq!(
+            AeadKey::from_b64url(&unpadded, ENV_KEY_CURRENT).unwrap().0,
+            raw
+        );
     }
 
     #[test]

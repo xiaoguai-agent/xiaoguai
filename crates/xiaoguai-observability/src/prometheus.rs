@@ -630,8 +630,7 @@ mod tests {
             .get();
         assert!(
             (val - 14.5).abs() < f64::EPSILON,
-            "slo_burn_rate must read back the value just set, got {}",
-            val
+            "slo_burn_rate must read back the value just set, got {val}"
         );
     }
 
@@ -666,16 +665,12 @@ mod tests {
     #[test]
     fn prometheus_hotl_suspensions_total_increments() {
         let (_reg, h) = fresh();
-        h.hotl_suspensions_total
-            .with_label_values(&["allow"])
-            .inc();
+        h.hotl_suspensions_total.with_label_values(&["allow"]).inc();
         h.hotl_suspensions_total
             .with_label_values(&["timeout"])
             .inc();
         assert_eq!(
-            h.hotl_suspensions_total
-                .with_label_values(&["allow"])
-                .get(),
+            h.hotl_suspensions_total.with_label_values(&["allow"]).get(),
             1
         );
         assert_eq!(

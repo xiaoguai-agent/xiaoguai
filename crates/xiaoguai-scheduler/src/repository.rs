@@ -43,7 +43,7 @@ pub trait JobRepository: Send + Sync {
     ) -> RepoResult<()>;
 
     /// v0.12.2 — list every enabled job whose trigger is reactive
-    /// (file_watch / webhook / git_push / db_poll). Used at boot by
+    /// (`file_watch` / webhook / `git_push` / `db_poll`). Used at boot by
     /// operator wiring that needs to register routes against
     /// [`crate::sources::FileWatchSource`] / [`crate::sources::WebhookSource`]
     /// from the persisted job rows.

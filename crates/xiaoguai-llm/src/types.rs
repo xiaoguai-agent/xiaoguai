@@ -187,7 +187,7 @@ pub struct ChatChunk {
     pub done: bool,
     /// Sprint-8 S8-10 (DEC-024): thinking-mode passthrough.
     ///
-    /// Models that expose a separate reasoning track (MiniMax M1/M2 series,
+    /// Models that expose a separate reasoning track (`MiniMax` M1/M2 series,
     /// future DeepSeek-R, Anthropic extended thinking) emit reasoning bytes
     /// on a sibling channel to `delta`. Surfaced as a separate field so the
     /// caller can render it differently, record it for audit, or feed it

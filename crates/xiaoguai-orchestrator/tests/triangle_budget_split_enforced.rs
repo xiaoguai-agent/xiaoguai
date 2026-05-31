@@ -5,7 +5,7 @@
 //! Strategy: two-task plan + a custom `TriangleBudget` of 1/89/10 so
 //! `worker_cap = 20` while `critic_cap = 200` (enough for one Critic
 //! call). Task 1 burns ~25 tokens of Worker budget. Task 2's pre-call
-//! Worker gate sees remaining = 0 → BudgetExhausted { Worker }.
+//! Worker gate sees remaining = 0 → `BudgetExhausted` { Worker }.
 //!
 //! Sprint-9 S9-6.
 
@@ -67,9 +67,7 @@ async fn triangle_budget_split_enforced() {
     ));
     let memory = InMemoryMemoryView::new();
 
-    let runner = TriangleRunner::new(
-        planner, worker, critic, memory, budget, parent_budget, 3, 3,
-    );
+    let runner = TriangleRunner::new(planner, worker, critic, memory, budget, parent_budget, 3, 3);
 
     let req = TriangleRequest {
         goal: "two-step expensive job".into(),

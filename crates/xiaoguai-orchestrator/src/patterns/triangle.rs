@@ -197,6 +197,7 @@ pub enum TriangleStopReason {
 // =====================================================================
 
 #[derive(Debug, Error)]
+#[allow(dead_code)] // Reserved for the From<*Error> surfacing path; emitted via events for now.
 enum LoopError {
     #[error("planner failed: {0}")]
     Planner(#[from] PlannerError),
@@ -507,8 +508,7 @@ async fn run_loop(
                         any_rejected = true;
                         reject_reason_this_round =
                             Some(format!("worker error on task {}: {e}", task.id));
-                        rejection_reasons
-                            .push(format!("task {}: worker error: {e}", task.id));
+                        rejection_reasons.push(format!("task {}: worker error: {e}", task.id));
                         break 'revisions;
                     }
                 };
@@ -568,10 +568,7 @@ async fn run_loop(
                 }
 
                 // 4e. Critic.review.
-                let verdict = match critic
-                    .review(&result, &task.acceptance_criteria, &sp)
-                    .await
-                {
+                let verdict = match critic.review(&result, &task.acceptance_criteria, &sp).await {
                     Ok(v) => v,
                     Err(e) => {
                         // Treat Critic failure as a rejection so the
@@ -618,18 +615,15 @@ async fn run_loop(
                         // Move to the next task.
                         continue 'tasks;
                     }
-                    Verdict::RequestRevision { feedback }
-                        if revision < max_revisions_per_task =>
-                    {
+                    Verdict::RequestRevision { feedback } if revision < max_revisions_per_task => {
                         revision += 1;
                         revision_feedback = Some(feedback);
-                        // Re-enter the 'revisions loop with the
-                        // feedback baked into the next Scratchpad.
-                        // Plain fall-through suffices (we're inside
-                        // a `loop`), but the explicit label keeps
-                        // the control flow unambiguous.
-                        #[allow(clippy::needless_continue)]
-                        continue 'revisions;
+                        // Falls through to the next iteration of the
+                        // 'revisions loop with the feedback baked into
+                        // the next Scratchpad. (Used to be an explicit
+                        // `continue 'revisions;` — clippy 1.93 flags it
+                        // as redundant since the match arm is the last
+                        // statement in the loop body.)
                     }
                     Verdict::RequestRevision { feedback } => {
                         // Revision cap hit — force a Reject path. Emit a
@@ -648,15 +642,13 @@ async fn run_loop(
                         .await;
                         any_rejected = true;
                         reject_reason_this_round = Some(reason.clone());
-                        rejection_reasons
-                            .push(format!("task {}: revision cap: {reason}", task.id));
+                        rejection_reasons.push(format!("task {}: revision cap: {reason}", task.id));
                         break 'tasks;
                     }
                     Verdict::Reject { reason } => {
                         any_rejected = true;
                         reject_reason_this_round = Some(reason.clone());
-                        rejection_reasons
-                            .push(format!("task {}: reject: {reason}", task.id));
+                        rejection_reasons.push(format!("task {}: reject: {reason}", task.id));
                         break 'tasks;
                     }
                 }
@@ -722,17 +714,16 @@ struct ApprovedArtefact {
     approve_reason: String,
 }
 
-fn build_summary(
-    last_round: u32,
-    approved: &[ApprovedArtefact],
-    rejections: &[String],
-) -> String {
+fn build_summary(last_round: u32, approved: &[ApprovedArtefact], rejections: &[String]) -> String {
     let mut s = String::with_capacity(256);
     s.push_str(&format!("plan_rounds_used={}; ", last_round + 1));
     s.push_str(&format!("approved={}; ", approved.len()));
     s.push_str(&format!("rejected={}", rejections.len()));
     for a in approved {
-        s.push_str(&format!("\n- approved task {}: {}", a.task_id, a.approve_reason));
+        s.push_str(&format!(
+            "\n- approved task {}: {}",
+            a.task_id, a.approve_reason
+        ));
         if let Some(art) = &a.artefact {
             // Truncate to keep the summary bounded.
             let trimmed = art.trim();

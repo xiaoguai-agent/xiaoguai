@@ -518,7 +518,7 @@ fn parse_query_vector(s: &str) -> RagResult<Vec<f32>> {
 fn base64url_decode(s: &str) -> RagResult<Vec<u8>> {
     // Pad to 4-byte boundary.
     let mut padded = s.to_string();
-    while padded.len() % 4 != 0 {
+    while !padded.len().is_multiple_of(4) {
         padded.push('=');
     }
     // Convert base64url alphabet → standard base64.

@@ -2,14 +2,14 @@
 //!
 //! Models the full path:
 //!   1. Agent proposes a skill with an over-broad `tool_allowlist`.
-//!   2. The HotL gate (mocked) DENIES the first proposal.
+//!   2. The `HotL` gate (mocked) DENIES the first proposal.
 //!   3. Agent re-issues a narrower proposal.
 //!   4. The gate ALLOWS the second proposal — row persisted as `pending`.
 //!   5. Admin invokes `approve_proposal` — row flips to `installed`,
 //!      manifest written as YAML to the tempdir.
 //!   6. Audit chain shows the expected actions in order.
 //!
-//! Unlike a true MockBackend agent loop this test calls `propose` /
+//! Unlike a true `MockBackend` agent loop this test calls `propose` /
 //! `approve_proposal` directly — the agent-side `propose_skill` tool
 //! plumbing is exercised by `xiaoguai-agent`'s own tests, and an
 //! end-to-end ReAct loop test belongs there (it would otherwise drag
@@ -151,7 +151,10 @@ async fn agent_proposes_then_admin_approves_full_lifecycle() {
 
     // YAML on disk and round-trip parses to the proposed manifest.
     let yaml_path = tmp.path().join("ar-collector-0.1.0.yaml");
-    assert!(yaml_path.exists(), "approval should write YAML to skills_dir");
+    assert!(
+        yaml_path.exists(),
+        "approval should write YAML to skills_dir"
+    );
     let parsed: SkillManifest =
         serde_yaml::from_str(&std::fs::read_to_string(&yaml_path).unwrap()).unwrap();
     assert_eq!(parsed, revised_draft());
