@@ -11,7 +11,7 @@
  *
  * Sprint-12 state machine (see `lld-chat-ui.md` §4.3.2):
  *   - The PRIMARY clear signal is a matching `hotl_resolved` SSE event
- *     (keyed on `pending.request_id`). When the parent passes a `resolved`
+ *     (keyed on `pending.escalation_id`). When the parent passes a `resolved`
  *     event matching this banner, `onCleared()` is invoked and the parent
  *     unmounts the banner.
  *   - The DEFENSIVE fallback is a 30 s `setTimeout` that arms after the
@@ -45,10 +45,10 @@ import { getTranslations, interpolate } from './i18n';
 
 export interface HotlPendingState {
   /**
-   * Sprint-12 wire shape (S12-2). Pairs 1:1 with the matching
-   * `hotl_resolved` event's `request_id`.
+   * Sprint-12 wire shape (S12-2), renamed in sprint-13 S13-8/S13-9.
+   * Pairs 1:1 with the matching `hotl_resolved` event's `escalation_id`.
    */
-  request_id: string;
+  escalation_id: string;
   /** Tool name whose dispatch is suspended (e.g. `execute_python`). */
   tool: string;
   /** Policy scope that matched, e.g. `tool_call.execute_python`. */
@@ -65,7 +65,7 @@ interface Props {
   pending: HotlPendingState;
   /**
    * The latest `hotl_resolved` SSE event the parent has observed. When its
-   * `request_id` matches `pending.request_id`, this banner clears via
+   * `escalation_id` matches `pending.escalation_id`, this banner clears via
    * `onCleared()`. The parent reduces `null` (no resolution yet) and the
    * event payload otherwise. New in sprint-12 S12-8.
    */
@@ -140,7 +140,7 @@ export function HotlBanner({
   adminBaseUrl = '',
 }: Props) {
   const t = getTranslations();
-  const queueUrl = `${adminBaseUrl}${ADMIN_HOTL_PATH}?request_id=${encodeURIComponent(pending.request_id)}`;
+  const queueUrl = `${adminBaseUrl}${ADMIN_HOTL_PATH}?escalation_id=${encodeURIComponent(pending.escalation_id)}`;
 
   const [state, setState] = useState<ButtonState>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -164,7 +164,7 @@ export function HotlBanner({
   // ── Primary clear path: matching `hotl_resolved` SSE event ───────────
   useEffect(() => {
     if (!resolved) return;
-    if (resolved.request_id !== pending.request_id) return;
+    if (resolved.escalation_id !== pending.escalation_id) return;
 
     // Sibling-tab conflict: local operator submitted but a different
     // decided_by won the race. Revert local submitting state + surface a
@@ -190,7 +190,7 @@ export function HotlBanner({
 
     // Allow / deny: clear immediately.
     onClearedRef.current?.();
-  }, [resolved, pending.request_id, localSubmitted, decidedBy, t.chat.hotl.conflict_toast]);
+  }, [resolved, pending.escalation_id, localSubmitted, decidedBy, t.chat.hotl.conflict_toast]);
 
   // ── Defensive 30 s fallback: arms after local submit succeeds ────────
   // Primary clear signal is `hotl_resolved`. See lld-chat-ui.md §4.3.2.

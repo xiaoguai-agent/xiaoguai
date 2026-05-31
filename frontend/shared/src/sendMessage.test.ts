@@ -248,11 +248,11 @@ describe('XiaoguaiClient.sendMessage retry loop', () => {
 
   // ── sprint-12 S12-8 — hotl_pending / hotl_resolved SSE wire shapes ────────
 
-  it('parses hotl_pending SSE chunk with sprint-12 wire shape (request_id, tool, args_redacted, scope, expires_at)', async () => {
+  it('parses hotl_pending SSE chunk with sprint-13 wire shape (escalation_id, tool, args_redacted, scope, expires_at)', async () => {
     const events: AgentEvent[] = [];
     const payload = {
       type: 'hotl_pending',
-      request_id: '11111111-1111-1111-1111-111111111111',
+      escalation_id: '11111111-1111-1111-1111-111111111111',
       tool: 'execute_python',
       args_redacted: { code: '[redacted]' },
       scope: 'tool_call.execute_python',
@@ -279,18 +279,18 @@ describe('XiaoguaiClient.sendMessage retry loop', () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       type: 'hotl_pending',
-      request_id: '11111111-1111-1111-1111-111111111111',
+      escalation_id: '11111111-1111-1111-1111-111111111111',
       tool: 'execute_python',
       scope: 'tool_call.execute_python',
       expires_at: '2026-05-31T08:12:34Z',
     });
   });
 
-  it('parses hotl_resolved SSE chunk with sprint-12 wire shape (request_id, verdict, decided_by, recorded_at)', async () => {
+  it('parses hotl_resolved SSE chunk with sprint-13 wire shape (escalation_id, verdict, decided_by, recorded_at)', async () => {
     const events: AgentEvent[] = [];
     const payload = {
       type: 'hotl_resolved',
-      request_id: '22222222-2222-2222-2222-222222222222',
+      escalation_id: '22222222-2222-2222-2222-222222222222',
       verdict: 'allow',
       decided_by: 'ops@acme.com',
       recorded_at: '2026-05-30T08:13:01Z',
@@ -316,7 +316,7 @@ describe('XiaoguaiClient.sendMessage retry loop', () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       type: 'hotl_resolved',
-      request_id: '22222222-2222-2222-2222-222222222222',
+      escalation_id: '22222222-2222-2222-2222-222222222222',
       verdict: 'allow',
       decided_by: 'ops@acme.com',
       recorded_at: '2026-05-30T08:13:01Z',
@@ -327,7 +327,7 @@ describe('XiaoguaiClient.sendMessage retry loop', () => {
     const events: AgentEvent[] = [];
     const payload = {
       type: 'hotl_resolved',
-      request_id: '33333333-3333-3333-3333-333333333333',
+      escalation_id: '33333333-3333-3333-3333-333333333333',
       verdict: 'timeout',
       decided_by: null,
       recorded_at: '2026-05-31T08:13:01Z',

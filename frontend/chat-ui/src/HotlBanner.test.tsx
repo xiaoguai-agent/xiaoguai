@@ -4,7 +4,7 @@
  * Covers:
  *  - Renders with scope and queue link when `pending` is supplied.
  *  - Banner has `role="alert"` (non-dismissible, screen-reader accessible).
- *  - Operator queue link encodes the `request_id` correctly.
+ *  - Operator queue link encodes the `escalation_id` correctly.
  *  - sprint-11 S11-3b inline decision flow (5 cases): Approve, Reject,
  *    Adjust validation, Submitting state, Error state.
  *  - sprint-12 S12-8 state machine (5 new cases): primary clear via
@@ -19,7 +19,7 @@ import type { HotlPendingState } from './HotlBanner';
 import type { HotlResolvedEvent } from '@xiaoguai/shared';
 
 const base: HotlPendingState = {
-  request_id: 'req-abc-123',
+  escalation_id: 'req-abc-123',
   tool: 'fs_write',
   scope: 'tool_call.fs_write',
   args_redacted: { path: '/tmp/x' },
@@ -38,14 +38,14 @@ describe('HotlBanner', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders a link to the operator approval queue with encoded request_id', () => {
+  it('renders a link to the operator approval queue with encoded escalation_id', () => {
     render(<HotlBanner pending={base} />);
 
     const link = screen.getByRole('link', { name: /open operator approval queue/i });
     expect(link).toBeInTheDocument();
     expect(link).toHaveAttribute(
       'href',
-      '/hotl-queue?request_id=req-abc-123',
+      '/hotl-queue?escalation_id=req-abc-123',
     );
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
@@ -57,12 +57,12 @@ describe('HotlBanner', () => {
     const link = screen.getByRole('link', { name: /open operator approval queue/i });
     expect(link).toHaveAttribute(
       'href',
-      'https://admin.example.com/hotl-queue?request_id=req-abc-123',
+      'https://admin.example.com/hotl-queue?escalation_id=req-abc-123',
     );
   });
 
-  it('encodes special characters in request_id', () => {
-    const specialId: HotlPendingState = { ...base, request_id: 'req a+b=c&d' };
+  it('encodes special characters in escalation_id', () => {
+    const specialId: HotlPendingState = { ...base, escalation_id: 'req a+b=c&d' };
     render(<HotlBanner pending={specialId} />);
 
     const link = screen.getByRole('link', { name: /open operator approval queue/i });
@@ -164,13 +164,13 @@ describe('HotlBanner', () => {
       vi.useRealTimers();
     });
 
-    /** Build a resolved event matching the base pending request_id. */
+    /** Build a resolved event matching the base pending escalation_id. */
     function resolvedEvent(
       overrides: Partial<HotlResolvedEvent> = {},
     ): HotlResolvedEvent {
       return {
         type: 'hotl_resolved',
-        request_id: base.request_id,
+        escalation_id: base.escalation_id,
         verdict: 'allow',
         decided_by: 'ops@acme.com',
         recorded_at: '2026-05-30T08:13:01Z',
