@@ -46,8 +46,12 @@ pub enum AgentEvent {
 
     /// New (sprint-12). Tool dispatch paused; waiting on operator decision.
     /// SSE event name: `hotl_pending`. Wire shape: `api-contract.md` §2.6.3.
+    ///
+    /// Sprint-13 (S13-8, DEC-HLD-016): the wire field renamed from
+    /// `request_id` to `escalation_id`. No compat alias — legacy SSE
+    /// consumers will see the new name only.
     HotlPending {
-        request_id: Uuid,
+        escalation_id: Uuid,
         tool: String,
         args_redacted: JsonValue,
         scope: String,
@@ -57,8 +61,11 @@ pub enum AgentEvent {
     /// New (sprint-12). Emitted after the ticket resolves.
     /// SSE event name: `hotl_resolved`. Wire shape: `api-contract.md` §2.6.3.
     /// `decided_by` is omitted on `Timeout`.
+    ///
+    /// Sprint-13 (S13-8, DEC-HLD-016): the wire field renamed from
+    /// `request_id` to `escalation_id`.
     HotlResolved {
-        request_id: Uuid,
+        escalation_id: Uuid,
         verdict: HotlResolution,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         decided_by: Option<String>,
@@ -97,10 +104,10 @@ mod tests {
 
     #[test]
     fn hotl_pending_round_trip() {
-        let request_id = Uuid::new_v4();
+        let escalation_id = Uuid::new_v4();
         let expires_at = Utc.with_ymd_and_hms(2026, 5, 31, 8, 12, 34).unwrap();
         let ev = AgentEvent::HotlPending {
-            request_id,
+            escalation_id,
             tool: "execute_python".into(),
             args_redacted: serde_json::json!({"code": "[redacted]"}),
             scope: "tool_call.execute_python".into(),
@@ -111,19 +118,23 @@ mod tests {
         assert_eq!(json["type"], "hotl_pending");
         assert_eq!(json["tool"], "execute_python");
         assert_eq!(json["scope"], "tool_call.execute_python");
-        assert_eq!(json["request_id"], request_id.to_string());
+        assert_eq!(json["escalation_id"], escalation_id.to_string());
+        assert!(
+            json.get("request_id").is_none(),
+            "legacy `request_id` field must not appear on the wire"
+        );
         assert_eq!(json["expires_at"], "2026-05-31T08:12:34Z");
 
         let back: AgentEvent = serde_json::from_value(json).expect("deserialize");
         match back {
             AgentEvent::HotlPending {
-                request_id: rid,
+                escalation_id: eid,
                 tool,
                 scope,
                 expires_at: ea,
                 ..
             } => {
-                assert_eq!(rid, request_id);
+                assert_eq!(eid, escalation_id);
                 assert_eq!(tool, "execute_python");
                 assert_eq!(scope, "tool_call.execute_python");
                 assert_eq!(ea, expires_at);
@@ -134,10 +145,10 @@ mod tests {
 
     #[test]
     fn hotl_resolved_allow_round_trip() {
-        let request_id = Uuid::new_v4();
+        let escalation_id = Uuid::new_v4();
         let recorded_at = Utc.with_ymd_and_hms(2026, 5, 30, 8, 13, 1).unwrap();
         let ev = AgentEvent::HotlResolved {
-            request_id,
+            escalation_id,
             verdict: HotlResolution::Allow,
             decided_by: Some("ops@acme.com".into()),
             recorded_at,
@@ -146,18 +157,23 @@ mod tests {
         let json = serde_json::to_value(&ev).expect("serialize");
         assert_eq!(json["type"], "hotl_resolved");
         assert_eq!(json["verdict"], "allow");
+        assert_eq!(json["escalation_id"], escalation_id.to_string());
+        assert!(
+            json.get("request_id").is_none(),
+            "legacy `request_id` field must not appear on the wire"
+        );
         assert_eq!(json["decided_by"], "ops@acme.com");
         assert_eq!(json["recorded_at"], "2026-05-30T08:13:01Z");
 
         let back: AgentEvent = serde_json::from_value(json).expect("deserialize");
         match back {
             AgentEvent::HotlResolved {
-                request_id: rid,
+                escalation_id: eid,
                 verdict,
                 decided_by,
                 recorded_at: ra,
             } => {
-                assert_eq!(rid, request_id);
+                assert_eq!(eid, escalation_id);
                 assert!(matches!(verdict, HotlResolution::Allow));
                 assert_eq!(decided_by.as_deref(), Some("ops@acme.com"));
                 assert_eq!(ra, recorded_at);
@@ -170,7 +186,7 @@ mod tests {
     fn hotl_resolved_timeout_serialises_lowercase() {
         // Per api-contract §2.6.3: `decided_by` is omitted when verdict = "timeout".
         let ev = AgentEvent::HotlResolved {
-            request_id: Uuid::new_v4(),
+            escalation_id: Uuid::new_v4(),
             verdict: HotlResolution::Timeout,
             decided_by: None,
             recorded_at: Utc.with_ymd_and_hms(2026, 5, 30, 8, 13, 1).unwrap(),
@@ -187,7 +203,7 @@ mod tests {
 
         // And `deny` also lower-cases.
         let deny = AgentEvent::HotlResolved {
-            request_id: Uuid::new_v4(),
+            escalation_id: Uuid::new_v4(),
             verdict: HotlResolution::Deny,
             decided_by: Some("ops@acme.com".into()),
             recorded_at: Utc.with_ymd_and_hms(2026, 5, 30, 8, 13, 1).unwrap(),

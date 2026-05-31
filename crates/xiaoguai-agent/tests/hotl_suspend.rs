@@ -28,7 +28,7 @@ use xiaoguai_llm::{LlmBackend, Message, MockBackend, ToolCallSpec};
 
 use common::{MockMcpClient, ToolResponse};
 
-/// Tuple of `(request_id, sender)` stashed by `TestSuspendGate` so tests
+/// Tuple of `(escalation_id, sender)` stashed by `TestSuspendGate` so tests
 /// can simulate `DecisionRegistry::resolve(...)` from the outside.
 type PendingEntry = (Uuid, oneshot::Sender<HotlDecisionVerdict>);
 
@@ -54,7 +54,7 @@ impl TestSuspendGate {
     }
 
     /// Block until the gate has at least one registered waiter, then return
-    /// `(request_id, sender)` for the first one. Polls because the loop runs
+    /// `(escalation_id, sender)` for the first one. Polls because the loop runs
     /// in a spawned task and may not have hit the gate yet.
     async fn take_first_pending(self: &Arc<Self>) -> PendingEntry {
         for _ in 0..200 {
@@ -70,12 +70,12 @@ impl TestSuspendGate {
 #[async_trait]
 impl HotlGate for TestSuspendGate {
     async fn check(&self, _tenant: Uuid, scope: &str, _amount: f64) -> HotlGateVerdict {
-        let request_id = Uuid::new_v4();
+        let escalation_id = Uuid::new_v4();
         let expires_at = Instant::now() + self.expiry;
-        let (ticket, sender) = HotlSuspensionTicket::new(request_id, expires_at);
-        self.pending.lock().push((request_id, sender));
+        let (ticket, sender) = HotlSuspensionTicket::new(escalation_id, expires_at);
+        self.pending.lock().push((escalation_id, sender));
         HotlGateVerdict::Suspend {
-            request_id,
+            escalation_id,
             scope: scope.to_string(),
             ticket,
         }
@@ -118,7 +118,7 @@ async fn suspend_then_operator_allow_dispatches_tool() {
     });
 
     // Wait for the gate to register a waiter, then resolve it.
-    let (request_id, sender) = gate.take_first_pending().await;
+    let (escalation_id, sender) = gate.take_first_pending().await;
     sender
         .send(HotlDecisionVerdict {
             verdict: GateResolution::Allow,
@@ -136,13 +136,13 @@ async fn suspend_then_operator_allow_dispatches_tool() {
     let pending_idx = events
         .iter()
         .position(
-            |e| matches!(e, AgentEvent::HotlPending { request_id: r, .. } if *r == request_id),
+            |e| matches!(e, AgentEvent::HotlPending { escalation_id: r, .. } if *r == escalation_id),
         )
         .expect("HotlPending emitted");
     let resolved_idx = events
         .iter()
         .position(
-            |e| matches!(e, AgentEvent::HotlResolved { request_id: r, .. } if *r == request_id),
+            |e| matches!(e, AgentEvent::HotlResolved { escalation_id: r, .. } if *r == escalation_id),
         )
         .expect("HotlResolved emitted");
     let finished_idx = events
@@ -163,11 +163,11 @@ async fn suspend_then_operator_allow_dispatches_tool() {
         .iter()
         .find_map(|e| match e {
             AgentEvent::HotlResolved {
-                request_id: r,
+                escalation_id: r,
                 verdict,
                 decided_by,
                 ..
-            } if *r == request_id => Some((verdict.clone(), decided_by.clone())),
+            } if *r == escalation_id => Some((verdict.clone(), decided_by.clone())),
             _ => None,
         })
         .expect("resolved present");
@@ -183,16 +183,16 @@ async fn suspend_then_operator_allow_dispatches_tool() {
         .expect("finished present");
     assert!(finished_ok, "Allow path must end ok=true");
 
-    // Pending HotlPending fields must mirror the request_id + tool + scope.
+    // Pending HotlPending fields must mirror the escalation_id + tool + scope.
     let pending = events
         .iter()
         .find_map(|e| match e {
             AgentEvent::HotlPending {
-                request_id: r,
+                escalation_id: r,
                 tool,
                 scope,
                 ..
-            } if *r == request_id => Some((tool.clone(), scope.clone())),
+            } if *r == escalation_id => Some((tool.clone(), scope.clone())),
             _ => None,
         })
         .expect("pending present");

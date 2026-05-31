@@ -42,9 +42,9 @@
 //! * `Allow` → dispatch the tool as today.
 //! * `Deny(reason)` → do NOT dispatch; synthesise a failed `ToolResult`
 //!   so the LLM observes the denial and can adapt.
-//! * `Suspend { request_id, scope, ticket }` (sprint-12) → do NOT dispatch
-//!   yet. The loop must emit `AgentEvent::HotlPending`, then call
-//!   `ticket.await_decision(&cancel)` to receive an operator verdict from
+//! * `Suspend { escalation_id, scope, ticket }` (sprint-12; renamed in S13-8) →
+//!   do NOT dispatch yet. The loop must emit `AgentEvent::HotlPending`, then
+//!   call `ticket.await_decision(&cancel)` to receive an operator verdict from
 //!   `DecisionRegistry`. Only the new `SuspendingHotlGate`
 //!   (see `xiaoguai-core::hotl_bridge`) ever emits this variant; today's
 //!   `EnforcerGate` keeps mapping upstream `Escalate` to `Allow` for
@@ -78,7 +78,7 @@ pub enum HotlGateVerdict {
     Deny(String),
     /// Sprint-12 (S12-1, additive). Tool dispatch is suspended pending an
     /// operator decision. The caller must emit
-    /// `AgentEvent::HotlPending { request_id, scope, ... }` and then call
+    /// `AgentEvent::HotlPending { escalation_id, scope, ... }` and then call
     /// `ticket.await_decision(&cancel)`. The resolved verdict either
     /// authorises the dispatch (Allow), synthesises a failed `ToolResult`
     /// (Deny / Timeout), or surrenders to a parent cancel
@@ -91,7 +91,7 @@ pub enum HotlGateVerdict {
     /// existing tenants observe no behaviour change until S12-12 flips
     /// the default in v1.9.0.
     Suspend {
-        request_id: uuid::Uuid,
+        escalation_id: uuid::Uuid,
         scope: String,
         ticket: HotlSuspensionTicket,
     },
@@ -194,7 +194,7 @@ pub enum HotlTicketError {
 /// Sprint-12 (S12-1). One-shot ticket returned inside
 /// `HotlGateVerdict::Suspend`. Holds the receiver half of a `oneshot`
 /// channel paired with the deadline `expires_at`. The sender half lives
-/// in `DecisionRegistry` (S12-3) keyed by `request_id`; the route handler
+/// in `DecisionRegistry` (S12-3) keyed by `escalation_id`; the route handler
 /// (`POST /v1/hotl/decisions`, S12-6) resolves it on operator decision,
 /// and the registry's companion timeout future resolves it with
 /// `HotlResolution::Timeout` if `expires_at` elapses first.
@@ -206,11 +206,11 @@ pub enum HotlTicketError {
 pub struct HotlSuspensionTicket {
     rx: oneshot::Receiver<HotlDecisionVerdict>,
     expires_at: Instant,
-    /// Same `request_id` the loop emits on the matching
+    /// Same `escalation_id` the loop emits on the matching
     /// `AgentEvent::HotlPending`. Exposed so the loop can include it in
     /// `HotlResolved` events without threading it through a separate
-    /// channel.
-    pub request_id: uuid::Uuid,
+    /// channel. (Renamed from `request_id` in sprint-13 S13-8 / DEC-HLD-016.)
+    pub escalation_id: uuid::Uuid,
 }
 
 impl HotlSuspensionTicket {
@@ -225,7 +225,7 @@ impl HotlSuspensionTicket {
 
     /// Sprint-12 (S12-3 calls this). Constructs a ticket together with
     /// its paired sender. The registry stores `sender` keyed by
-    /// `request_id` and hands the ticket back to the gate, which embeds
+    /// `escalation_id` and hands the ticket back to the gate, which embeds
     /// it inside `HotlGateVerdict::Suspend`.
     ///
     /// The pair is returned so the registry can also spawn a companion
@@ -236,14 +236,14 @@ impl HotlSuspensionTicket {
     /// (defence in depth).
     #[must_use]
     pub fn new(
-        request_id: uuid::Uuid,
+        escalation_id: uuid::Uuid,
         expires_at: Instant,
     ) -> (Self, oneshot::Sender<HotlDecisionVerdict>) {
         let (tx, rx) = oneshot::channel();
         let ticket = Self {
             rx,
             expires_at,
-            request_id,
+            escalation_id,
         };
         (ticket, tx)
     }
@@ -409,11 +409,11 @@ mod tests {
 
     #[tokio::test]
     async fn ticket_resolves_when_sender_sends_allow() {
-        let request_id = Uuid::new_v4();
+        let escalation_id = Uuid::new_v4();
         let expires_at = Instant::now() + Duration::from_secs(60);
-        let (ticket, sender) = HotlSuspensionTicket::new(request_id, expires_at);
+        let (ticket, sender) = HotlSuspensionTicket::new(escalation_id, expires_at);
 
-        assert_eq!(ticket.request_id, request_id);
+        assert_eq!(ticket.escalation_id, escalation_id);
 
         let verdict = HotlDecisionVerdict {
             verdict: HotlResolution::Allow,
@@ -433,9 +433,9 @@ mod tests {
 
     #[tokio::test]
     async fn ticket_times_out_at_expires_at() {
-        let request_id = Uuid::new_v4();
+        let escalation_id = Uuid::new_v4();
         let expires_at = Instant::now() + Duration::from_millis(50);
-        let (ticket, _sender) = HotlSuspensionTicket::new(request_id, expires_at);
+        let (ticket, _sender) = HotlSuspensionTicket::new(escalation_id, expires_at);
 
         let cancel = CancellationToken::new();
         let start = std::time::Instant::now();
@@ -455,9 +455,9 @@ mod tests {
 
     #[tokio::test]
     async fn ticket_cancels_when_token_fires() {
-        let request_id = Uuid::new_v4();
+        let escalation_id = Uuid::new_v4();
         let expires_at = Instant::now() + Duration::from_secs(60);
-        let (ticket, _sender) = HotlSuspensionTicket::new(request_id, expires_at);
+        let (ticket, _sender) = HotlSuspensionTicket::new(escalation_id, expires_at);
 
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
@@ -476,9 +476,9 @@ mod tests {
 
     #[tokio::test]
     async fn ticket_returns_channel_dropped_when_sender_dropped() {
-        let request_id = Uuid::new_v4();
+        let escalation_id = Uuid::new_v4();
         let expires_at = Instant::now() + Duration::from_secs(60);
-        let (ticket, sender) = HotlSuspensionTicket::new(request_id, expires_at);
+        let (ticket, sender) = HotlSuspensionTicket::new(escalation_id, expires_at);
 
         drop(sender);
 
