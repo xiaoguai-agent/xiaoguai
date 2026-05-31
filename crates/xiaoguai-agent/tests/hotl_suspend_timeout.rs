@@ -47,14 +47,14 @@ impl TimeoutSuspendGate {
 #[async_trait]
 impl HotlGate for TimeoutSuspendGate {
     async fn check(&self, _tenant: Uuid, scope: &str, _amount: f64) -> HotlGateVerdict {
-        let request_id = Uuid::new_v4();
+        let escalation_id = Uuid::new_v4();
         let expires_at = Instant::now() + self.expiry;
-        let (ticket, sender) = HotlSuspensionTicket::new(request_id, expires_at);
+        let (ticket, sender) = HotlSuspensionTicket::new(escalation_id, expires_at);
         // Keep the sender alive — never sends. The ticket's internal
         // sleep_until fires first and produces a Timeout verdict.
         self.senders.lock().push(sender);
         HotlGateVerdict::Suspend {
-            request_id,
+            escalation_id,
             scope: scope.to_string(),
             ticket,
         }

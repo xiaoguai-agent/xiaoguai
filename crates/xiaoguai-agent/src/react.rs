@@ -460,7 +460,7 @@ async fn dispatch_tools(
                         return (id, name, outcome);
                     }
                     HotlGateVerdict::Suspend {
-                        request_id,
+                        escalation_id,
                         scope: suspend_scope,
                         ticket,
                     } => {
@@ -485,7 +485,7 @@ async fn dispatch_tools(
                         emit(
                             &tx_inner,
                             AgentEvent::HotlPending {
-                                request_id,
+                                escalation_id,
                                 tool: name.clone(),
                                 args_redacted,
                                 scope: suspend_scope,
@@ -506,7 +506,7 @@ async fn dispatch_tools(
                                 emit(
                                     &tx_inner,
                                     AgentEvent::HotlResolved {
-                                        request_id,
+                                        escalation_id,
                                         verdict: event_verdict,
                                         decided_by: decision.decided_by.clone(),
                                         recorded_at: decision.recorded_at,
@@ -564,14 +564,14 @@ async fn dispatch_tools(
                                 // (verdict=Deny) so SSE clients clear the
                                 // pending banner.
                                 tracing::error!(
-                                    %request_id,
+                                    %escalation_id,
                                     tool = %name,
                                     "DecisionRegistry sender dropped without verdict — synthesising deny"
                                 );
                                 emit(
                                     &tx_inner,
                                     AgentEvent::HotlResolved {
-                                        request_id,
+                                        escalation_id,
                                         verdict: EventResolution::Deny,
                                         decided_by: None,
                                         recorded_at: chrono::Utc::now(),

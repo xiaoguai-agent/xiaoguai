@@ -107,7 +107,7 @@ async fn body_json(body: Body) -> Value {
 async fn decision_503_when_store_unwired() {
     let app = router(build_state(StateOptions::default()));
     let body = serde_json::json!({
-        "request_id": Uuid::new_v4().to_string(),
+        "escalation_id": Uuid::new_v4().to_string(),
         "verdict": "allow",
         "decided_by": "alice"
     });
@@ -134,9 +134,9 @@ async fn approve_happy_path_records_and_returns_201() {
         decision_store: Some(Arc::clone(&decisions)),
         ..Default::default()
     }));
-    let request_id = Uuid::new_v4();
+    let escalation_id = Uuid::new_v4();
     let body = serde_json::json!({
-        "request_id": request_id.to_string(),
+        "escalation_id": escalation_id.to_string(),
         "verdict": "allow",
         "decided_by": "alice"
     });
@@ -153,7 +153,7 @@ async fn approve_happy_path_records_and_returns_201() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let json = body_json(resp.into_body()).await;
-    assert_eq!(json["request_id"], request_id.to_string());
+    assert_eq!(json["escalation_id"], escalation_id.to_string());
     assert_eq!(json["verdict"], "allow");
     assert_eq!(
         json["resumed"], false,
@@ -177,7 +177,7 @@ async fn deny_happy_path() {
         ..Default::default()
     }));
     let body = serde_json::json!({
-        "request_id": Uuid::new_v4().to_string(),
+        "escalation_id": Uuid::new_v4().to_string(),
         "verdict": "deny",
         "decided_by": "bob"
     });
@@ -210,7 +210,7 @@ async fn approve_and_remember_creates_policy_atomically() {
         ..Default::default()
     }));
     let body = serde_json::json!({
-        "request_id": Uuid::new_v4().to_string(),
+        "escalation_id": Uuid::new_v4().to_string(),
         "verdict": "allow",
         "decided_by": "alice",
         "raise_policy": {
@@ -265,7 +265,7 @@ async fn raise_policy_with_no_limits_returns_400() {
         ..Default::default()
     }));
     let body = serde_json::json!({
-        "request_id": Uuid::new_v4().to_string(),
+        "escalation_id": Uuid::new_v4().to_string(),
         "verdict": "allow",
         "decided_by": "alice",
         "raise_policy": {
@@ -288,18 +288,18 @@ async fn raise_policy_with_no_limits_returns_400() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
-// ── 6. Duplicate request_id returns 409 ──────────────────────────────────────
+// ── 6. Duplicate escalation_id returns 409 ───────────────────────────────────
 
 #[tokio::test]
-async fn duplicate_request_id_returns_409() {
+async fn duplicate_escalation_id_returns_409() {
     let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());
     let app = router(build_state(StateOptions {
         decision_store: Some(Arc::clone(&decisions)),
         ..Default::default()
     }));
-    let request_id = Uuid::new_v4();
+    let escalation_id = Uuid::new_v4();
     let body = serde_json::json!({
-        "request_id": request_id.to_string(),
+        "escalation_id": escalation_id.to_string(),
         "verdict": "allow",
         "decided_by": "alice"
     });
@@ -320,7 +320,7 @@ async fn duplicate_request_id_returns_409() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    // Second POST with the same request_id: 409.
+    // Second POST with the same escalation_id: 409.
     let resp = app
         .oneshot(
             Request::builder()
@@ -354,7 +354,7 @@ async fn unauthorized_when_bearer_missing() {
         ..Default::default()
     }));
     let body = serde_json::json!({
-        "request_id": Uuid::new_v4().to_string(),
+        "escalation_id": Uuid::new_v4().to_string(),
         "verdict": "allow",
         "decided_by": "alice"
     });
@@ -400,7 +400,7 @@ async fn forbidden_when_rbac_denies_hotl_decide_scope() {
         ..Default::default()
     }));
     let body = serde_json::json!({
-        "request_id": Uuid::new_v4().to_string(),
+        "escalation_id": Uuid::new_v4().to_string(),
         "verdict": "allow",
         "decided_by": "alice"
     });
@@ -419,10 +419,15 @@ async fn forbidden_when_rbac_denies_hotl_decide_scope() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
-// ── 9. `escalation_id` alias parses ──────────────────────────────────────────
-
+// ── 9. `escalation_id` is the canonical field — body echoes it back ──────────
+//
+// Sprint-13 S13-8 / DEC-HLD-016: the field renamed from `request_id` to
+// `escalation_id`. The response body must mirror the canonical name; the
+// legacy `request_id` key must NOT appear. Bodies that POST the legacy
+// name are rejected with a structured 400 (covered separately in
+// `tests/hotl_escalation_id_rename.rs`).
 #[tokio::test]
-async fn escalation_id_alias_parses() {
+async fn response_body_uses_canonical_escalation_id() {
     let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());
     let app = router(build_state(StateOptions {
         decision_store: Some(Arc::clone(&decisions)),
@@ -430,9 +435,6 @@ async fn escalation_id_alias_parses() {
     }));
     let escalation_id = Uuid::new_v4();
     let body = serde_json::json!({
-        // Use the wire field name from the SSE event — the route accepts
-        // it as a serde alias for request_id so the existing frontend +
-        // e2e mocks keep working.
         "escalation_id": escalation_id.to_string(),
         "verdict": "allow",
         "decided_by": "alice"
@@ -450,7 +452,11 @@ async fn escalation_id_alias_parses() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let json = body_json(resp.into_body()).await;
-    assert_eq!(json["request_id"], escalation_id.to_string());
+    assert_eq!(json["escalation_id"], escalation_id.to_string());
+    assert!(
+        json.get("request_id").is_none(),
+        "response body must NOT include the legacy `request_id` field after S13-8: {json}"
+    );
 }
 
 // ── 10. Audit sink receives the entry (defence-in-depth coverage) ────────────
@@ -466,7 +472,7 @@ async fn audit_sink_receives_decision_entry() {
         ..Default::default()
     }));
     let body = serde_json::json!({
-        "request_id": Uuid::new_v4().to_string(),
+        "escalation_id": Uuid::new_v4().to_string(),
         "verdict": "deny",
         "decided_by": "alice"
     });
@@ -492,16 +498,16 @@ async fn audit_sink_receives_decision_entry() {
 // ── 11. S12-6: live waiter is resolved → resumed:true ────────────────────────
 //
 // Pre-register a ticket on the shared `DecisionRegistry`, then POST
-// `/v1/hotl/decisions` for the same request_id. The response MUST carry
+// `/v1/hotl/decisions` for the same escalation_id. The response MUST carry
 // `resumed: true` AND the awaiting ticket must resolve with the operator's
 // verdict before a bounded timeout.
 #[tokio::test]
 async fn decision_resolves_live_waiter_returns_resumed_true() {
     let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());
     let registry = Arc::new(DecisionRegistry::new());
-    let request_id = Uuid::new_v4();
+    let escalation_id = Uuid::new_v4();
     // Park a ticket so the route handler has someone to wake.
-    let ticket = registry.register(request_id, Instant::now() + Duration::from_secs(60));
+    let ticket = registry.register(escalation_id, Instant::now() + Duration::from_secs(60));
 
     let app = router(build_state(StateOptions {
         decision_store: Some(Arc::clone(&decisions)),
@@ -509,7 +515,7 @@ async fn decision_resolves_live_waiter_returns_resumed_true() {
         ..Default::default()
     }));
     let body = serde_json::json!({
-        "request_id": request_id.to_string(),
+        "escalation_id": escalation_id.to_string(),
         "verdict": "allow",
         "decided_by": "alice"
     });
@@ -556,7 +562,7 @@ async fn decision_with_no_waiter_returns_resumed_false() {
         ..Default::default()
     }));
     let body = serde_json::json!({
-        "request_id": Uuid::new_v4().to_string(),
+        "escalation_id": Uuid::new_v4().to_string(),
         "verdict": "allow",
         "decided_by": "alice"
     });
@@ -583,17 +589,17 @@ async fn decision_with_no_waiter_returns_resumed_false() {
 //
 // Register a ticket with a 50ms expiry, let the background sleeper fire
 // `resolve(.., Timeout)` (which removes the entry from the map), then
-// POST `/v1/hotl/decisions` for that same request_id. The decision row
+// POST `/v1/hotl/decisions` for that same escalation_id. The decision row
 // is fresh from the store's perspective (no duplicate), so the response is
 // 201 + `resumed: false` (no live waiter when the late decision arrived).
 #[tokio::test]
 async fn late_decision_after_timeout_returns_resumed_false() {
     let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());
     let registry = Arc::new(DecisionRegistry::new());
-    let request_id = Uuid::new_v4();
+    let escalation_id = Uuid::new_v4();
 
     // Short-lived ticket; immediately await it so we observe the timeout.
-    let ticket = registry.register(request_id, Instant::now() + Duration::from_millis(50));
+    let ticket = registry.register(escalation_id, Instant::now() + Duration::from_millis(50));
     let cancel = CancellationToken::new();
     let settled = ticket
         .await_decision(&cancel)
@@ -618,7 +624,7 @@ async fn late_decision_after_timeout_returns_resumed_false() {
         ..Default::default()
     }));
     let body = serde_json::json!({
-        "request_id": request_id.to_string(),
+        "escalation_id": escalation_id.to_string(),
         "verdict": "allow",
         "decided_by": "alice"
     });

@@ -451,27 +451,27 @@ impl DecisionRegistry {
     }
 
     /// Sprint-12 (S12-3 back-compat). In-memory register: no persistence,
-    /// just install a oneshot sender keyed on `request_id`. Used by the
+    /// just install a oneshot sender keyed on `escalation_id`. Used by the
     /// 20+ pre-sprint-13 integration tests that don't care about the
     /// store path. Production (`SuspendingHotlGate`) calls
     /// [`Self::register_persisted`] instead.
     pub fn register(
         self: &Arc<Self>,
-        request_id: Uuid,
+        escalation_id: Uuid,
         expires_at: Instant,
     ) -> HotlSuspensionTicket {
-        let (ticket, sender) = HotlSuspensionTicket::new(request_id, expires_at);
+        let (ticket, sender) = HotlSuspensionTicket::new(escalation_id, expires_at);
         let slot = WaiterSlot {
             sender,
             registered_at: Instant::now(),
         };
-        self.waiters.insert(request_id, slot);
+        self.waiters.insert(escalation_id, slot);
         self.metrics.on_register();
 
         let this = Arc::clone(self);
         tokio::spawn(async move {
             tokio::time::sleep_until(expires_at).await;
-            this.fire_timeout(request_id);
+            this.fire_timeout(escalation_id);
         });
 
         ticket
@@ -483,8 +483,8 @@ impl DecisionRegistry {
     ///
     /// Production (`POST /v1/hotl/decisions`) calls
     /// [`Self::resolve_persisted`] instead.
-    pub fn resolve(&self, request_id: Uuid, verdict: HotlDecisionVerdict) -> bool {
-        let Some((_, slot)) = self.waiters.remove(&request_id) else {
+    pub fn resolve(&self, escalation_id: Uuid, verdict: HotlDecisionVerdict) -> bool {
+        let Some((_, slot)) = self.waiters.remove(&escalation_id) else {
             return false;
         };
         let held = slot.registered_at.elapsed();

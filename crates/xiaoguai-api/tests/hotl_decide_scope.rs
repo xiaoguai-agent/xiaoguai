@@ -150,9 +150,9 @@ async fn decide_with_scope_returns_201() {
     let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());
     let app = router(build_state_with(decisions, validator, authz));
 
-    let request_id = Uuid::new_v4();
+    let escalation_id = Uuid::new_v4();
     let body = serde_json::json!({
-        "request_id": request_id.to_string(),
+        "escalation_id": escalation_id.to_string(),
         "verdict": "allow",
         "decided_by": "alice"
     });
@@ -170,7 +170,7 @@ async fn decide_with_scope_returns_201() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let json = body_json(resp.into_body()).await;
-    assert_eq!(json["request_id"], request_id.to_string());
+    assert_eq!(json["escalation_id"], escalation_id.to_string());
     assert_eq!(json["verdict"], "allow");
 }
 
@@ -193,7 +193,7 @@ async fn decide_without_scope_returns_403() {
     let app = router(build_state_with(decisions, validator, authz));
 
     let body = serde_json::json!({
-        "request_id": Uuid::new_v4().to_string(),
+        "escalation_id": Uuid::new_v4().to_string(),
         "verdict": "allow",
         "decided_by": "alice"
     });
@@ -235,7 +235,7 @@ async fn decide_with_empty_scopes_returns_403() {
     let app = router(build_state_with(decisions, validator, authz));
 
     let body = serde_json::json!({
-        "request_id": Uuid::new_v4().to_string(),
+        "escalation_id": Uuid::new_v4().to_string(),
         "verdict": "allow",
         "decided_by": "alice"
     });
