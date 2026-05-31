@@ -10,6 +10,7 @@ description = "OIDC JWT validation + Casbin RBAC."
 
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
+xiaoguai-storage = { path = "../xiaoguai-storage" }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -23,6 +24,10 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 parking_lot = { workspace = true }
 once_cell = { workspace = true }
+uuid = { workspace = true }
+# Sprint-13 S13-4: JSONPath evaluator for HotL arg redaction. 0.3.x is the
+# audited line (R13-3 risk row). Used only inside `RedactionRules::apply`.
+jsonpath_lib = "0.3"
 
 [dev-dependencies]
 mockito = { workspace = true }

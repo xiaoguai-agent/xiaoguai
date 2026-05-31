@@ -3296,6 +3296,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonpath_lib"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eaa63191d68230cccb81c5aa23abd53ed64d83337cacbb25a7b8c7979523774f"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jsonwebtoken"
 version = "10.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5753,6 +5764,7 @@ version = "1.0.150"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9"
 dependencies = [
+ "indexmap 2.14.0",
  "itoa",
  "memchr",
  "serde",
@@ -8750,6 +8762,7 @@ dependencies = [
  "async-trait",
  "casbin",
  "chrono",
+ "jsonpath_lib",
  "jsonwebtoken",
  "mockito",
  "once_cell",
@@ -8760,6 +8773,8 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "uuid",
+ "xiaoguai-storage",
  "xiaoguai-types",
 ]
 
