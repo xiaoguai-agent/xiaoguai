@@ -1,6 +1,6 @@
 //! `MinimaxBackend` integration tests.
 //!
-//! All HTTP is intercepted by mockito — no real MiniMax API calls.
+//! All HTTP is intercepted by mockito — no real `MiniMax` API calls.
 
 use futures::StreamExt;
 use xiaoguai_llm::{ChatRequest, FinishReason, LlmBackend, Message, MinimaxBackend};

@@ -492,7 +492,7 @@ fn build_supervisor(sink: &Arc<MockAuditSink>) -> Supervisor {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// The planner emits exactly the 4 onboarding steps and the supervisor
-/// reaches GoalAchieved after dispatching all of them.
+/// reaches `GoalAchieved` after dispatching all of them.
 #[tokio::test]
 async fn plan_produces_four_subtasks() {
     let sink = MockAuditSink::new();
@@ -509,8 +509,8 @@ async fn plan_produces_four_subtasks() {
 }
 
 /// The four steps are dispatched in the correct dependency order.
-/// account_provisioning must precede meeting_scheduling, welcome_messaging,
-/// and buddy_assignment; buddy_assignment must come after welcome_messaging.
+/// `account_provisioning` must precede `meeting_scheduling`, `welcome_messaging`,
+/// and `buddy_assignment`; `buddy_assignment` must come after `welcome_messaging`.
 #[tokio::test]
 async fn subtasks_dispatched_in_correct_order() {
     let sink = MockAuditSink::new();
@@ -612,7 +612,7 @@ async fn meeting_scheduler_writes_four_meetings() {
     assert!(sink.has_meeting("IT Setup"));
 }
 
-/// Welcome messenger sends 2 IM messages (welcome_dm + group_chat).
+/// Welcome messenger sends 2 IM messages (`welcome_dm` + `group_chat`).
 #[tokio::test]
 async fn welcome_messenger_sends_two_im_messages() {
     let sink = MockAuditSink::new();
@@ -643,7 +643,7 @@ async fn buddy_assigner_notifies_buddy_via_im() {
     );
 }
 
-/// Total IM sends across the run: 2 (welcome_dm + group_chat) + 1 (buddy_notify) = 3.
+/// Total IM sends across the run: 2 (`welcome_dm` + `group_chat`) + 1 (`buddy_notify`) = 3.
 #[tokio::test]
 async fn total_im_sends_across_run_is_three() {
     let sink = MockAuditSink::new();
@@ -658,7 +658,7 @@ async fn total_im_sends_across_run_is_three() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// If the meeting-scheduler fails, the supervisor continues and the other
-/// steps (welcome_messaging, buddy_assignment) still complete.
+/// steps (`welcome_messaging`, `buddy_assignment`) still complete.
 #[tokio::test]
 async fn meeting_scheduler_failure_does_not_abort_run() {
     let sink = MockAuditSink::new();
@@ -818,7 +818,7 @@ async fn failed_step_still_writes_audit_entry() {
     );
 }
 
-/// A budget of 2 steps stops after 2 dispatches (BudgetExhausted), even
+/// A budget of 2 steps stops after 2 dispatches (`BudgetExhausted`), even
 /// though 4 steps are planned.
 #[tokio::test]
 async fn budget_exhaustion_stops_after_two_steps() {

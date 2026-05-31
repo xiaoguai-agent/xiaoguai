@@ -531,13 +531,10 @@ async fn decision_resolves_live_waiter_returns_resumed_true() {
 
     // Ticket must resolve to the operator's verdict (Allow, decided_by alice).
     let cancel = CancellationToken::new();
-    let settled = tokio::time::timeout(
-        Duration::from_secs(2),
-        ticket.await_decision(&cancel),
-    )
-    .await
-    .expect("ticket must resolve before the bounded timeout")
-    .expect("ticket must not error out");
+    let settled = tokio::time::timeout(Duration::from_secs(2), ticket.await_decision(&cancel))
+        .await
+        .expect("ticket must resolve before the bounded timeout")
+        .expect("ticket must not error out");
     assert_eq!(settled.verdict, HotlResolution::Allow);
     assert_eq!(settled.decided_by.as_deref(), Some("alice"));
 }

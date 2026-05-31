@@ -344,7 +344,7 @@ type Aes256CbcDec = Decryptor<Aes256>;
 type Aes256CbcEnc = Encryptor<Aes256>;
 
 fn aes256_cbc_decrypt(key: &[u8; 32], iv: &[u8; 16], data: &[u8]) -> Result<Vec<u8>, String> {
-    if data.len() % 16 != 0 || data.is_empty() {
+    if !data.len().is_multiple_of(16) || data.is_empty() {
         return Err(format!(
             "ciphertext length {} is not a multiple of 16",
             data.len()
@@ -362,7 +362,7 @@ fn aes256_cbc_decrypt(key: &[u8; 32], iv: &[u8; 16], data: &[u8]) -> Result<Vec<
 }
 
 fn aes256_cbc_encrypt(key: &[u8; 32], iv: &[u8; 16], data: &[u8]) -> Result<Vec<u8>, String> {
-    if data.len() % 16 != 0 || data.is_empty() {
+    if !data.len().is_multiple_of(16) || data.is_empty() {
         return Err(format!(
             "plaintext length {} is not a multiple of 16",
             data.len()

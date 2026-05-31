@@ -14,9 +14,7 @@
 
 use futures::StreamExt;
 use tracing::warn;
-use xiaoguai_llm::{
-    estimate_message_tokens, ChatRequest, LlmBackend, Message, Role, ToolChoice,
-};
+use xiaoguai_llm::{estimate_message_tokens, ChatRequest, LlmBackend, Message, Role, ToolChoice};
 
 /// Trim `messages` so the non-system tail has at most `window` entries.
 /// When `window == 0` the function is a no-op (sentinel for "unbounded").
@@ -127,8 +125,9 @@ pub async fn compact(
     backend: &dyn LlmBackend,
     cfg: CompactionConfig,
 ) -> (Vec<Message>, CompactionOutcome) {
-    let (system, tail): (Vec<_>, Vec<_>) =
-        messages.into_iter().partition(|m| matches!(m.role, Role::System));
+    let (system, tail): (Vec<_>, Vec<_>) = messages
+        .into_iter()
+        .partition(|m| matches!(m.role, Role::System));
 
     if tail.len() <= cfg.keep_recent {
         let mut out = system;
@@ -226,11 +225,8 @@ fn walk_split_back_past_tool_pairs(tail: &[Message], mut split: usize) -> usize 
         let prev = &tail[split - 1];
         let next_is_tool_reply = tail
             .get(split)
-            .map(|m| matches!(m.role, Role::Tool))
-            .unwrap_or(false);
-        if matches!(prev.role, Role::Assistant)
-            && !prev.tool_calls.is_empty()
-            && next_is_tool_reply
+            .is_some_and(|m| matches!(m.role, Role::Tool));
+        if matches!(prev.role, Role::Assistant) && !prev.tool_calls.is_empty() && next_is_tool_reply
         {
             split -= 1;
             continue;
@@ -253,7 +249,7 @@ async fn summarise(
              plain-text summary in 500 tokens or fewer. Keep concrete \
              facts (names, IDs, file paths, error codes, decisions). \
              Drop pleasantries and commentary. Do NOT invent facts \
-             not present in the input."
+             not present in the input.",
         ),
         Message::user(format!("Summarise:\n\n{rendered}")),
     ];
@@ -289,7 +285,10 @@ fn render_for_summary(head: &[Message]) -> String {
             s.push('\n');
         }
         for tc in &m.tool_calls {
-            s.push_str(&format!("[tool_call name={} args={}]\n", tc.name, tc.arguments_json));
+            s.push_str(&format!(
+                "[tool_call name={} args={}]\n",
+                tc.name, tc.arguments_json
+            ));
         }
         s.push('\n');
     }
@@ -448,7 +447,9 @@ mod tests {
         assert!(matches!(out[0].role, Role::System));
         assert!(matches!(out[1].role, Role::System));
         assert!(out[1].content.contains("Compacted summary"));
-        assert!(out[1].content.contains("Earlier the user asked about 20 things."));
+        assert!(out[1]
+            .content
+            .contains("Earlier the user asked about 20 things."));
         // The last 6 messages are the recent verbatim trio of pairs.
         assert_eq!(out[2].content, "question 17");
         assert_eq!(out[7].content, "answer 19");

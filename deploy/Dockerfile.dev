@@ -17,7 +17,7 @@
 #     benefits from the cached registry.
 #   • dev profile (opt-level=1) used for faster compile times.
 
-ARG RUST_VERSION=1.88
+ARG RUST_VERSION=1.93
 ARG NODE_VERSION=20
 
 # ── frontend (same as production) ────────────────────────────────────────────

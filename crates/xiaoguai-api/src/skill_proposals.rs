@@ -154,7 +154,9 @@ pub async fn list_proposals(
         ),
     };
     let rows = repo.list(&tenant, status).await.map_err(err_to_api)?;
-    Ok(Json(rows.into_iter().map(ProposalRowResponse::from).collect()))
+    Ok(Json(
+        rows.into_iter().map(ProposalRowResponse::from).collect(),
+    ))
 }
 
 /// `POST /v1/skills/proposals/:id/approve`

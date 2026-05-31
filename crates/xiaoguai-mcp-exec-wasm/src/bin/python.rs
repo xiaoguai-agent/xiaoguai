@@ -20,8 +20,7 @@ use clap::Parser;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, Content, Implementation, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolAnnotations,
-    ToolsCapability,
+    PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolAnnotations, ToolsCapability,
 };
 use rmcp::service::{RequestContext, RoleServer, ServiceExt};
 use rmcp::transport::io::stdio;
@@ -44,7 +43,11 @@ const MAX_TIMEOUT_SECS: u64 = 60;
 )]
 struct Cli {
     /// Hard wall-clock cap per call (seconds).
-    #[arg(long, env = "XIAOGUAI_MCP_EXEC_WASM__TIMEOUT_SECS", default_value_t = 30)]
+    #[arg(
+        long,
+        env = "XIAOGUAI_MCP_EXEC_WASM__TIMEOUT_SECS",
+        default_value_t = 30
+    )]
     timeout_secs: u64,
 
     /// Memory cap (megabytes). Default 256 — pyodide baseline is ~30 MB.
@@ -189,8 +192,7 @@ fn exec_result_to_content(r: &ExecResult) -> (Vec<Content>, bool) {
         "truncated": r.truncated,
         "timed_out": r.timed_out,
     });
-    let text =
-        serde_json::to_string(&payload).unwrap_or_else(|e| format!(r#"{{"error":"{e}"}}"#));
+    let text = serde_json::to_string(&payload).unwrap_or_else(|e| format!(r#"{{"error":"{e}"}}"#));
     (vec![Content::text(text)], false)
 }
 

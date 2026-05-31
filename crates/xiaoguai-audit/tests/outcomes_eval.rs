@@ -122,7 +122,7 @@ async fn single_hop_attribution_chain() {
 
 /// Multi-hop: input → agent-A → agent-B → tool-call → agent-C → final outcome.
 ///
-/// All five "hops" share the same session_id. The chain reader (snapshot
+/// All five "hops" share the same `session_id`. The chain reader (snapshot
 /// filtered by session + ordered by insertion) returns all 5 nodes in order.
 #[tokio::test]
 async fn multi_hop_chain_depth_5() {
@@ -288,7 +288,7 @@ async fn time_window_excludes_old_outcomes() {
     // Instead we assert via OutcomeRange directly on pre-built OutcomeRecord
     // slices passed to aggregate() after the fact — using the public
     // OutcomeSummary::from_records helper which accepts arbitrary timestamps.
-    let records = vec![
+    let records = [
         make_record_at(
             "tenant-tw",
             Some("s1"),

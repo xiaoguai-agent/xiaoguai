@@ -40,7 +40,9 @@ pub fn shared_engine() -> &'static Engine {
         let mut cfg = Config::new();
         cfg.epoch_interruption(true);
         cfg.consume_fuel(false);
-        cfg.async_support(true);
+        // `async_support` was a no-op getter/setter in older wasmtime and is
+        // deprecated in 42.x; async is opt-in via `Linker::*_async` / `Store`
+        // futures, no engine-level toggle needed.
         let engine = Engine::new(&cfg).expect("wasmtime engine init");
         spawn_tick_thread(engine.clone());
         engine

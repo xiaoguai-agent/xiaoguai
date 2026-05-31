@@ -1,7 +1,7 @@
 # ADR-0001 — Pin Rust toolchain to 1.88.0
 
 Date: 2026-05-21
-Status: Accepted
+Status: Superseded by [ADR-0021](0021-rust-toolchain-bump-193.md) (2026-05-31)
 
 ## Context
 

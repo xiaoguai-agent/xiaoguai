@@ -95,18 +95,24 @@ mod tests {
     #[test]
     fn verdict_kind_maps_consistently() {
         assert_eq!(
-            Verdict::Approve { reason: "".into() }.kind(),
+            Verdict::Approve {
+                reason: String::new()
+            }
+            .kind(),
             VerdictKind::Approve
         );
         assert_eq!(
             Verdict::RequestRevision {
-                feedback: "".into()
+                feedback: String::new()
             }
             .kind(),
             VerdictKind::RequestRevision
         );
         assert_eq!(
-            Verdict::Reject { reason: "".into() }.kind(),
+            Verdict::Reject {
+                reason: String::new()
+            }
+            .kind(),
             VerdictKind::Reject
         );
     }

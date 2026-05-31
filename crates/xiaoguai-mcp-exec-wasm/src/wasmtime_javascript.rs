@@ -508,16 +508,23 @@ mod tests {
     #[tokio::test]
     async fn concurrent_calls_do_not_share_state() {
         skip_unless_assets!();
-        let backend = std::sync::Arc::new(WasmtimeJavaScriptBackend::new(WasmExecConfig::default()));
+        let backend =
+            std::sync::Arc::new(WasmtimeJavaScriptBackend::new(WasmExecConfig::default()));
         let b1 = backend.clone();
         let b2 = backend.clone();
         let h1 = tokio::spawn(async move {
-            b1.run("globalThis.g = 'A'; console.log(globalThis.g)", Duration::from_secs(10))
-                .await
+            b1.run(
+                "globalThis.g = 'A'; console.log(globalThis.g)",
+                Duration::from_secs(10),
+            )
+            .await
         });
         let h2 = tokio::spawn(async move {
-            b2.run("globalThis.g = 'B'; console.log(globalThis.g)", Duration::from_secs(10))
-                .await
+            b2.run(
+                "globalThis.g = 'B'; console.log(globalThis.g)",
+                Duration::from_secs(10),
+            )
+            .await
         });
         let r1 = h1.await.unwrap().unwrap();
         let r2 = h2.await.unwrap().unwrap();

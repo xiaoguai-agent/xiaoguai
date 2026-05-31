@@ -75,7 +75,9 @@ fn build_state(memory_store: Option<Arc<dyn MemoryStore>>) -> AppState {
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
-        decision_registry: std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
+        decision_registry: std::sync::Arc::new(
+            xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
+        ),
     }
 }
 

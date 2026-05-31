@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Stable identifier for a single task within one plan. Quarantine
-/// key for the per-task `Scratchpad`. UUIDv4 — picked here for
+/// key for the per-task `Scratchpad`. `UUIDv4` — picked here for
 /// `Copy`-ability and lack of cross-process serialisation drift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TaskId(pub Uuid);
@@ -35,7 +35,7 @@ impl std::fmt::Display for TaskId {
     }
 }
 
-/// What the Critic checks for to decide Approve / RequestRevision /
+/// What the Critic checks for to decide Approve / `RequestRevision` /
 /// Reject. The Planner emits this alongside each task description so
 /// the Critic has a stable rubric to grade against (without it the
 /// Critic would have to infer criteria, leading to noisy verdicts).

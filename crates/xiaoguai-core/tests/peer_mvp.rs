@@ -282,7 +282,9 @@ fn build_state(
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
-        decision_registry: std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
+        decision_registry: std::sync::Arc::new(
+            xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
+        ),
     };
     (state, sessions, messages)
 }
@@ -347,7 +349,7 @@ async fn front_door_toolbox_lists_specialist_tool() {
 
 /// End-to-end: POST a chat message to the front-door, the front-door's
 /// scripted LLM emits a `tool_call` for the specialist's tool, the
-/// front-door's ReactAgent dispatches that call across MCP to the
+/// front-door's `ReactAgent` dispatches that call across MCP to the
 /// specialist, the specialist's `SummariserBackend` answers, the
 /// front-door's LLM emits a final text reply, and the persisted
 /// message history contains the specialist's reply in the tool

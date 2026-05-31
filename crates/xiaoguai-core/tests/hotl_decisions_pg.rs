@@ -30,8 +30,8 @@ use xiaoguai_audit::AuditEntry;
 use xiaoguai_core::hotl_bridge::{PgHotlAuditSink, PgHotlDecisionStore};
 
 async fn pg_pool() -> PgPool {
-    let url = std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set for PG integration tests");
+    let url =
+        std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for PG integration tests");
     PgPool::connect(&url).await.expect("pg connect")
 }
 

@@ -11,8 +11,8 @@
 //!
 //! Method:
 //! - Each task description embeds a distinct sentinel
-//!   (TASK_A_SENTINEL / TASK_B_SENTINEL).
-//! - The Worker's CannedBackend mirrors that sentinel verbatim into
+//!   (`TASK_A_SENTINEL` / `TASK_B_SENTINEL`).
+//! - The Worker's `CannedBackend` mirrors that sentinel verbatim into
 //!   the final assistant text — so it lands in the scratchpad.
 //! - After the run, we inspect the captured Critic `ChatRequest`s:
 //!   - Call 1 (reviewing Worker A) must contain the A-sentinel and
@@ -48,14 +48,8 @@ async fn triangle_scratchpad_quarantine() {
     let plan = make_planner_response(
         "two-task quarantine",
         &[
-            (
-                &format!("first job — produce {SENTINEL_A}"),
-                "non-empty",
-            ),
-            (
-                &format!("second job — produce {SENTINEL_B}"),
-                "non-empty",
-            ),
+            (&format!("first job — produce {SENTINEL_A}"), "non-empty"),
+            (&format!("second job — produce {SENTINEL_B}"), "non-empty"),
         ],
     );
     let planner_backend = CannedBackend::new("planner", vec![&plan]);

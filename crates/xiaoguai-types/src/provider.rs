@@ -42,7 +42,7 @@ pub enum ProviderKind {
     /// Models: `llama-3.3-70b-versatile`, `mixtral-8x7b-32768`.
     #[serde(rename = "groq")]
     Groq,
-    /// MiniMax OpenAI-compatible `/v1/chat/completions`. Auth via Bearer
+    /// `MiniMax` OpenAI-compatible `/v1/chat/completions`. Auth via Bearer
     /// token. Models: `MiniMax-M1`, `MiniMax-M2`, `MiniMax-M2.5`,
     /// `MiniMax-M2.7`, `abab6.5-chat`. M1/M2 series stream
     /// `reasoning_content` deltas on chunks; we surface them via

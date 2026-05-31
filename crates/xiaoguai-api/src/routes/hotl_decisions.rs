@@ -13,7 +13,7 @@
 //! `DecisionRegistry::resolve`:
 //!
 //! * `true`  — a `SuspendingHotlGate` (S12-4) had parked a loop on this
-//!   request_id; it is now released with the operator's verdict.
+//!   `request_id`; it is now released with the operator's verdict.
 //! * `false` — no live waiter existed (legacy `EnforcerGate` path that
 //!   never suspends, OR the ticket already timed out / was cancelled).
 //!

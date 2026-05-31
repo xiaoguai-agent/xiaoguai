@@ -2,12 +2,12 @@
 //! `execute_javascript`.
 //!
 //! Mirrors PR #66's compaction E2E pattern: builds a partial test
-//! harness around `execute_javascript_call` + a stub HotL enforcer +
+//! harness around `execute_javascript_call` + a stub `HotL` enforcer +
 //! a stub audit sink, drives one "agent turn" that gates a tool call
-//! via the HotL counter and emits an audit row, then asserts:
+//! via the `HotL` counter and emits an audit row, then asserts:
 //!
 //! 1. The tool executes successfully and returns stdout.
-//! 2. The HotL counter (`tool_call.execute_javascript` scope)
+//! 2. The `HotL` counter (`tool_call.execute_javascript` scope)
 //!    increments by exactly 1.
 //! 3. An audit row with action `tool.invoke` and resource
 //!    `mcp:execute_javascript` is appended.
@@ -23,7 +23,7 @@ use std::sync::Mutex;
 use xiaoguai_mcp_exec_js::exec::ExecConfig;
 use xiaoguai_mcp_exec_js::tools::{execute_javascript_call, ExecuteJavascriptArgs};
 
-/// Stub HotL counter — records each `(scope, verdict)` event so the
+/// Stub `HotL` counter — records each `(scope, verdict)` event so the
 /// test can verify the agent loop consulted the gate before dispatch.
 #[derive(Default)]
 struct StubHotl {

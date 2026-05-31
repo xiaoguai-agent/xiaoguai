@@ -1,9 +1,9 @@
-//! MiniMax provider backend (DEC-024 / Sprint-8 S8-10).
+//! `MiniMax` provider backend (DEC-024 / Sprint-8 S8-10).
 //!
 //! Endpoint: `https://api.minimax.io/v1/chat/completions`
 //! Auth: `Authorization: Bearer <key>` (OpenAI-compatible)
 //!
-//! MiniMax is OpenAI wire-compatible for messages + tool calls. The
+//! `MiniMax` is OpenAI wire-compatible for messages + tool calls. The
 //! distinguishing feature is **thinking-mode passthrough**: the M1/M2
 //! family streams a `reasoning_content` field on each choice-delta
 //! carrying the model's chain-of-thought. We surface it via
@@ -32,7 +32,7 @@ use crate::types::{
     ChatChunk, ChatRequest, FinishReason, Message, Role, ToolCallSpec, ToolChoice, ToolSpec,
 };
 
-/// Default MiniMax HTTPS base URL.
+/// Default `MiniMax` HTTPS base URL.
 pub const MINIMAX_DEFAULT_BASE: &str = "https://api.minimax.io";
 
 #[derive(Debug, Clone)]
@@ -135,7 +135,7 @@ struct MmChoice {
 struct MmDelta {
     #[serde(default)]
     content: Option<String>,
-    /// MiniMax M1/M2 thinking-mode delta.
+    /// `MiniMax` M1/M2 thinking-mode delta.
     #[serde(default)]
     reasoning_content: Option<String>,
     #[serde(default)]

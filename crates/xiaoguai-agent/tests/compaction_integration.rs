@@ -16,7 +16,7 @@ use xiaoguai_llm::{
     estimate_message_tokens, ChatChunk, ChatRequest, LlmBackend, Message, ToolCallSpec,
 };
 
-/// Backend that returns a fixed summary. Used to make compact()
+/// Backend that returns a fixed summary. Used to make `compact()`
 /// deterministic in tests.
 struct FixedSummaryBackend;
 
@@ -113,7 +113,11 @@ async fn compaction_shrinks_large_history_via_summary() {
     );
     // The synthetic summary message must mention concrete facts from
     // the canned summary — proves the summary content was preserved.
-    let combined: String = out.iter().map(|m| m.content.as_str()).collect::<Vec<_>>().join("\n");
+    let combined: String = out
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(combined.contains("cluster-id=prod-east-7"));
     assert!(combined.contains("audit signing key rotation"));
 }

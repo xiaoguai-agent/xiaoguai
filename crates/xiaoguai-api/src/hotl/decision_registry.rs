@@ -239,6 +239,12 @@ impl Default for DecisionRegistry {
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+// `metrics_lock()` is a `std::sync::Mutex` held across `.await` in these
+// tests purely to serialise the process-wide Prometheus gauge — the critical
+// sections never block on async work, so the `await_holding_lock` lint is
+// a false positive here. Allowed at module scope to avoid sprinkling
+// `#[allow(...)]` on every async test.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use std::sync::OnceLock;

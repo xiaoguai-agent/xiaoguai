@@ -6,7 +6,7 @@
 //! responses and records every `ChatRequest` it saw.
 //!
 //! Each test wires three `CannedBackend`s (one per agent) and asserts
-//! on the OrchEvent stream.
+//! on the `OrchEvent` stream.
 
 #![allow(dead_code)]
 
@@ -116,7 +116,7 @@ pub fn make_planner_response(goal: &str, tasks: &[(&str, &str)]) -> String {
     )
 }
 
-/// Build a Critic JSON payload — `kind` ∈ "approve", "request_revision",
+/// Build a Critic JSON payload — `kind` ∈ "approve", "`request_revision`",
 /// "reject"; the second arg is the reason/feedback string.
 pub fn make_critic_response(kind: &str, body: &str) -> String {
     let field = match kind {

@@ -116,7 +116,7 @@ pub struct SkillAuthorWiring {
 }
 
 /// Compose the production wiring from a Postgres pool + an already-built
-/// HotL enforcer + an already-built audit sink. Called once at boot.
+/// `HotL` enforcer + an already-built audit sink. Called once at boot.
 #[must_use]
 pub fn build_skill_author_wiring(
     pool: sqlx::PgPool,
@@ -150,9 +150,7 @@ mod tests {
 
     impl CannedEnforcer {
         fn ok(v: HotlVerdict) -> Self {
-            Self {
-                verdict: Ok(v),
-            }
+            Self { verdict: Ok(v) }
         }
 
         fn err() -> Self {
@@ -166,12 +164,7 @@ mod tests {
 
     #[async_trait]
     impl HotlEnforcer for CannedEnforcer {
-        async fn check(
-            &self,
-            _tenant_id: Uuid,
-            _scope: &str,
-            _amount: f64,
-        ) -> HotlVerdictResult {
+        async fn check(&self, _tenant_id: Uuid, _scope: &str, _amount: f64) -> HotlVerdictResult {
             match &self.verdict {
                 Ok(v) => Ok(v.clone()),
                 Err(e) => Err(match e {
@@ -196,7 +189,10 @@ mod tests {
             "daily cap reached".into(),
         )));
         let gate = EnforcerGateAdapter::new(enforcer);
-        let err = gate.check(Uuid::new_v4(), "skill_author").await.unwrap_err();
+        let err = gate
+            .check(Uuid::new_v4(), "skill_author")
+            .await
+            .unwrap_err();
         assert_eq!(err, "daily cap reached");
     }
 
@@ -215,7 +211,10 @@ mod tests {
     async fn enforcer_gate_fail_closed_on_infra_error() {
         let enforcer = Arc::new(CannedEnforcer::err());
         let gate = EnforcerGateAdapter::new(enforcer);
-        let err = gate.check(Uuid::new_v4(), "skill_author").await.unwrap_err();
+        let err = gate
+            .check(Uuid::new_v4(), "skill_author")
+            .await
+            .unwrap_err();
         assert!(err.contains("hotl infra"), "got: {err}");
     }
 

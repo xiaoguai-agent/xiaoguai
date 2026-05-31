@@ -192,14 +192,14 @@ mod tests {
         let msg = err.to_string();
         // Operators searching the runbook by version pin or fetch
         // script name should see them in the error.
-        assert!(msg.contains(PYODIDE_PATH_ENV), "missing env var hint: {msg}");
+        assert!(
+            msg.contains(PYODIDE_PATH_ENV),
+            "missing env var hint: {msg}"
+        );
         assert!(
             msg.contains("fetch-wasm-assets.sh"),
             "missing script hint: {msg}"
         );
-        assert!(
-            msg.contains(PYODIDE_VERSION),
-            "missing version hint: {msg}"
-        );
+        assert!(msg.contains(PYODIDE_VERSION), "missing version hint: {msg}");
     }
 }

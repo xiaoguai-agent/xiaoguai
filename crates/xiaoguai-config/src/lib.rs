@@ -280,12 +280,12 @@ fn default_eval_suites_dir() -> String {
 /// pre-sprint-12 behaviour.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentSettings {
-    /// HotL (human-on-the-loop) gating knobs.
+    /// `HotL` (human-on-the-loop) gating knobs.
     #[serde(default)]
     pub hotl: HotlSettings,
 }
 
-/// Sprint-12 (S12-0 + S12-12): HotL gating knobs.
+/// Sprint-12 (S12-0 + S12-12): `HotL` gating knobs.
 ///
 /// `suspend_on_escalate` was introduced as a scaffold in S12-0 (v1.8.x,
 /// defaulted `false`) so tenants could opt into the upcoming behaviour

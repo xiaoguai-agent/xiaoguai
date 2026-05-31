@@ -179,7 +179,9 @@ mod tests {
         let json = serde_json::to_value(&ev).expect("serialize");
         assert_eq!(json["verdict"], "timeout");
         assert!(
-            json.get("decided_by").map_or(true, |v| v.is_null()) || !json.as_object().unwrap().contains_key("decided_by"),
+            json.get("decided_by")
+                .is_none_or(serde_json::Value::is_null)
+                || !json.as_object().unwrap().contains_key("decided_by"),
             "decided_by must be omitted on timeout, got: {json}"
         );
 

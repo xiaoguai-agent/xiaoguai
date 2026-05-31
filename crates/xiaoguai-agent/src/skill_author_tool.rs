@@ -2,7 +2,7 @@
 //!
 //! `xiaoguai-tasks::skill_author::propose` is the real work; this module
 //! is a thin synthetic `McpClient` that the agent's toolbox can register
-//! alongside real MCP servers. The ReAct loop's existing per-tool HotL
+//! alongside real MCP servers. The ReAct loop's existing per-tool `HotL`
 //! gate (PR #61) covers `tool_call.propose_skill`; the rate-limit budget
 //! for proposals themselves uses the `skill_author` bucket and is
 //! consulted inside `xiaoguai-tasks::skill_author::propose`. That
@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use xiaoguai_mcp::{
-    McpClient, McpError, McpResult, ServerInfo, ToolDescriptor, ToolResult, ContentBlock,
+    ContentBlock, McpClient, McpError, McpResult, ServerInfo, ToolDescriptor, ToolResult,
 };
 
 /// Canonical name of the tool. Kept here AND in
@@ -147,9 +147,8 @@ impl McpClient for ProposeSkillClient {
                 "ProposeSkillClient cannot dispatch tool {name:?}"
             )));
         }
-        let parsed: ProposeSkillArgs = serde_json::from_value(args).map_err(|e| {
-            McpError::Protocol(format!("propose_skill args invalid: {e}"))
-        })?;
+        let parsed: ProposeSkillArgs = serde_json::from_value(args)
+            .map_err(|e| McpError::Protocol(format!("propose_skill args invalid: {e}")))?;
         match self
             .inner
             .invoke(&self.tenant_id, &self.proposed_by, parsed)
@@ -227,7 +226,10 @@ mod tests {
         let d = ProposeSkillClient::descriptor();
         assert_eq!(d.name, "propose_skill");
         let schema = d.input_schema;
-        assert_eq!(schema["additionalProperties"], serde_json::Value::Bool(false));
+        assert_eq!(
+            schema["additionalProperties"],
+            serde_json::Value::Bool(false)
+        );
         let required = schema["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v == "tool_allowlist"));
     }
@@ -241,7 +243,10 @@ mod tests {
         // additionalProperties=false (validators on the LLM side honor
         // it; ours does not — but the schema is the contract).
         let schema = ProposeSkillClient::input_schema();
-        assert_eq!(schema["additionalProperties"], serde_json::Value::Bool(false));
+        assert_eq!(
+            schema["additionalProperties"],
+            serde_json::Value::Bool(false)
+        );
     }
 
     #[tokio::test]
@@ -284,7 +289,10 @@ mod tests {
     async fn call_tool_rejects_other_tool_names() {
         let backend = StubBackend::new(Ok("x".into()));
         let client = ProposeSkillClient::new(backend, "tenant-a", "agent-1");
-        let err = client.call_tool("execute_python", serde_json::json!({})).await.unwrap_err();
+        let err = client
+            .call_tool("execute_python", serde_json::json!({}))
+            .await
+            .unwrap_err();
         assert!(matches!(err, McpError::Protocol(_)));
     }
 
