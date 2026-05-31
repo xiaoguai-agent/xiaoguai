@@ -1,4 +1,4 @@
-//! Sprint-13 S13-7 — per-scope HotL expiry lookup in `SuspendingHotlGate`.
+//! Sprint-13 S13-7 — per-scope `HotL` expiry lookup in `SuspendingHotlGate`.
 //!
 //! Pins the v1.10 behaviour: when the gate maps an upstream `Escalate`
 //! verdict to `HotlGateVerdict::Suspend`, the minted ticket's `expires_at`

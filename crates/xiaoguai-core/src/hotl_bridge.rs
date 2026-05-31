@@ -438,10 +438,22 @@ impl xiaoguai_agent::HotlGate for EnforcerGate {
 /// two with `agent.hotl.suspend_on_escalate`. The `default_expiry` is the
 /// upper bound the loop will block waiting for an operator decision (the
 /// design default is 24h; tests pass shorter durations).
+///
+/// Sprint-13 (S13-7): an optional per-scope-class `expiry` table overrides
+/// `default_expiry` on a per-call basis. The lookup is keyed on the
+/// prefix of the scope before the first `.` (the "scope class" — e.g.
+/// `mcp.oauth.consent` → `mcp`). Missing keys fall back to
+/// `default_expiry`; an empty map preserves the v1.9.x single-knob
+/// behaviour byte-for-byte. The lookup is per-call (no caching) so
+/// tenants editing their config at runtime are honoured on the next
+/// escalation.
 pub struct SuspendingHotlGate {
     inner: Arc<dyn HotlEnforcer>,
     registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
     default_expiry: std::time::Duration,
+    /// Sprint-13 S13-7: scope-class → expiry override map. Empty by
+    /// default; populated from `agent.hotl.expiry` in `run_serve`.
+    expiry: std::collections::HashMap<String, std::time::Duration>,
 }
 
 impl std::fmt::Debug for SuspendingHotlGate {
@@ -450,21 +462,39 @@ impl std::fmt::Debug for SuspendingHotlGate {
             .field("inner", &"Arc<dyn HotlEnforcer>")
             .field("registry", &"Arc<DecisionRegistry>")
             .field("default_expiry", &self.default_expiry)
+            .field("expiry_overrides", &self.expiry.len())
             .finish()
     }
 }
 
 impl SuspendingHotlGate {
+    /// Construct a gate with only a default expiry (no per-scope
+    /// overrides). Equivalent to `with_expiry(.., HashMap::new())`.
+    /// Retained for source-compatibility with the sprint-12 wiring; new
+    /// call sites should prefer [`Self::with_expiry`].
     #[must_use]
     pub fn new(
         inner: Arc<dyn HotlEnforcer>,
         registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
         default_expiry: std::time::Duration,
     ) -> Self {
+        Self::with_expiry(inner, registry, default_expiry, std::collections::HashMap::new())
+    }
+
+    /// Sprint-13 S13-7: construct a gate with a per-scope-class expiry
+    /// table. See the struct doc for lookup semantics.
+    #[must_use]
+    pub fn with_expiry(
+        inner: Arc<dyn HotlEnforcer>,
+        registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
+        default_expiry: std::time::Duration,
+        expiry: std::collections::HashMap<String, std::time::Duration>,
+    ) -> Self {
         Self {
             inner,
             registry,
             default_expiry,
+            expiry,
         }
     }
 
@@ -476,8 +506,40 @@ impl SuspendingHotlGate {
         registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
         default_expiry: std::time::Duration,
     ) -> Arc<dyn xiaoguai_agent::HotlGate> {
-        Arc::new(Self::new(inner, registry, default_expiry))
+        Self::arc_with_expiry(inner, registry, default_expiry, std::collections::HashMap::new())
     }
+
+    /// Sprint-13 S13-7: Arc helper that also threads the per-scope-class
+    /// expiry table. `build_hotl_gate` uses this when the suspend gate
+    /// is selected.
+    #[must_use]
+    pub fn arc_with_expiry(
+        inner: Arc<dyn HotlEnforcer>,
+        registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
+        default_expiry: std::time::Duration,
+        expiry: std::collections::HashMap<String, std::time::Duration>,
+    ) -> Arc<dyn xiaoguai_agent::HotlGate> {
+        Arc::new(Self::with_expiry(inner, registry, default_expiry, expiry))
+    }
+}
+
+/// Sprint-13 S13-7. Resolve the expiry `Duration` for a given scope by
+/// looking up the scope's class (the prefix before the first `.`) in
+/// the per-scope `expiry` map. Falls back to `default_expiry` when:
+///
+/// * the scope has no `.` and the whole scope isn't in the map, or
+/// * the scope's class isn't in the map.
+///
+/// Stateless on purpose: every invocation re-reads the map, so a
+/// runtime config reload is honoured by the very next escalation
+/// without resetting the gate.
+fn resolve_expiry(
+    expiry: &std::collections::HashMap<String, std::time::Duration>,
+    default_expiry: std::time::Duration,
+    scope: &str,
+) -> std::time::Duration {
+    let class = scope.split_once('.').map_or(scope, |(c, _)| c);
+    expiry.get(class).copied().unwrap_or(default_expiry)
 }
 
 #[async_trait]
@@ -501,7 +563,10 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
             }
             Ok(HotlVerdict::Escalate(reason)) => {
                 let request_id = Uuid::new_v4();
-                let expires_at = tokio::time::Instant::now() + self.default_expiry;
+                // Sprint-13 S13-7: per-call lookup; runtime config edits
+                // are honoured on the next escalation.
+                let window = resolve_expiry(&self.expiry, self.default_expiry, scope);
+                let expires_at = tokio::time::Instant::now() + window;
                 let ticket = self.registry.register(request_id, expires_at);
                 tracing::info!(
                     tenant_id = %tenant_id,
@@ -547,8 +612,31 @@ pub fn build_hotl_gate(
     registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
     default_expiry: std::time::Duration,
 ) -> Arc<dyn xiaoguai_agent::HotlGate> {
+    build_hotl_gate_with_expiry(
+        suspend_on_escalate,
+        enforcer,
+        registry,
+        default_expiry,
+        std::collections::HashMap::new(),
+    )
+}
+
+/// Sprint-13 S13-7. `build_hotl_gate` variant that also threads the
+/// per-scope-class expiry map into `SuspendingHotlGate`. The map is
+/// ignored when `suspend_on_escalate == false` (the legacy
+/// `EnforcerGate` has no suspend window to override). `run_serve` calls
+/// this directly; the older 4-arg signature delegates here with an
+/// empty map for source-compatibility with sprint-12 test fixtures.
+#[must_use]
+pub fn build_hotl_gate_with_expiry(
+    suspend_on_escalate: bool,
+    enforcer: Arc<dyn HotlEnforcer>,
+    registry: Arc<xiaoguai_api::hotl::decision_registry::DecisionRegistry>,
+    default_expiry: std::time::Duration,
+    expiry: std::collections::HashMap<String, std::time::Duration>,
+) -> Arc<dyn xiaoguai_agent::HotlGate> {
     if suspend_on_escalate {
-        SuspendingHotlGate::arc(enforcer, registry, default_expiry)
+        SuspendingHotlGate::arc_with_expiry(enforcer, registry, default_expiry, expiry)
     } else {
         EnforcerGate::arc(enforcer)
     }
@@ -734,6 +822,57 @@ mod tests {
         let reason = build_reason(&policy, 6, 2.0);
         assert!(reason.contains("count 6 > max_count 5"));
         assert!(reason.contains("cost $2.0000 > max_usd $1.5000"));
+    }
+
+    // ── Sprint-13 S13-7: resolve_expiry helper ────────────────────────────────
+
+    #[test]
+    fn resolve_expiry_uses_class_match_when_present() {
+        let mut expiry = std::collections::HashMap::new();
+        expiry.insert("mcp".to_string(), std::time::Duration::from_secs(4 * 3600));
+        let default_expiry = std::time::Duration::from_secs(24 * 3600);
+        let got = resolve_expiry(&expiry, default_expiry, "mcp.oauth.consent");
+        assert_eq!(got, std::time::Duration::from_secs(4 * 3600));
+    }
+
+    #[test]
+    fn resolve_expiry_falls_back_to_default_when_class_missing() {
+        let mut expiry = std::collections::HashMap::new();
+        expiry.insert("mcp".to_string(), std::time::Duration::from_secs(4 * 3600));
+        let default_expiry = std::time::Duration::from_secs(24 * 3600);
+        let got = resolve_expiry(&expiry, default_expiry, "tool_call.execute_python");
+        assert_eq!(got, default_expiry);
+    }
+
+    #[test]
+    fn resolve_expiry_falls_back_on_malformed_scope() {
+        // No '.' in the scope; class is the whole string. The empty key
+        // exists in the map but the scope class is `weird`, not `""`,
+        // so the lookup misses and falls back to default.
+        let mut expiry = std::collections::HashMap::new();
+        expiry.insert(String::new(), std::time::Duration::from_secs(1));
+        expiry.insert("mcp".to_string(), std::time::Duration::from_secs(4 * 3600));
+        let default_expiry = std::time::Duration::from_secs(24 * 3600);
+        let got = resolve_expiry(&expiry, default_expiry, "weird");
+        assert_eq!(got, default_expiry);
+    }
+
+    #[test]
+    fn resolve_expiry_with_empty_map_returns_default() {
+        let expiry = std::collections::HashMap::new();
+        let default_expiry = std::time::Duration::from_secs(24 * 3600);
+        let got = resolve_expiry(&expiry, default_expiry, "tool_call.search");
+        assert_eq!(got, default_expiry);
+    }
+
+    #[test]
+    fn resolve_expiry_matches_scope_without_dot_when_class_present() {
+        // Scope == class (no dot suffix). The whole scope is the class.
+        let mut expiry = std::collections::HashMap::new();
+        expiry.insert("mcp".to_string(), std::time::Duration::from_secs(4 * 3600));
+        let default_expiry = std::time::Duration::from_secs(24 * 3600);
+        let got = resolve_expiry(&expiry, default_expiry, "mcp");
+        assert_eq!(got, std::time::Duration::from_secs(4 * 3600));
     }
 
     #[test]
