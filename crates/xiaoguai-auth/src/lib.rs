@@ -6,6 +6,8 @@
 
 pub mod jwt;
 pub mod rbac;
+pub mod redaction;
 
 pub use jwt::{Claims, JwtError, JwtValidator};
 pub use rbac::{Authz, DbPolicyRow, RbacError};
+pub use redaction::{AuthError, RedactionRules};
