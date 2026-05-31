@@ -39,6 +39,16 @@ use xiaoguai_storage::repositories::{
     hotl_redaction::{HotlRedactionRepo, RedactionPolicyRow},
 };
 
+/// `applies_to` tag for the SSE emission path. The audit-side tag is
+/// `"audit"` and is handled in sprint-14.
+const APPLIES_TO_SSE: &str = "sse";
+
+/// `*` is the wildcard scope marker (matches any caller scope).
+const WILDCARD_SCOPE: &str = "*";
+
+/// The string we substitute in place of any matched JSON leaf.
+const REDACTED_PLACEHOLDER: &str = "***";
+
 /// Errors raised by `xiaoguai-auth::redaction`.
 ///
 /// Today this only wraps `RepoError` from the load path; once admin CRUD
@@ -55,7 +65,6 @@ pub enum AuthError {
 /// Cheap to clone? No — the rule vector is moved in. Construct once at
 /// request-context build time and pass by reference to the gate (`&Self`).
 #[derive(Debug)]
-#[allow(dead_code)] // GREEN commit wires `rules` + `warned_empty` into `apply`.
 pub struct RedactionRules {
     rules: Vec<RedactionPolicyRow>,
     /// Set to `true` the first time `apply()` is called on an empty rule
@@ -110,9 +119,31 @@ impl RedactionRules {
     /// is treated as a no-match (we log an error so it surfaces in alerts,
     /// but we do not panic at request time).
     #[must_use]
-    pub fn apply(&self, _scope: &str, _args: &Value) -> Value {
-        // S13-4 RED: real implementation arrives in the GREEN commit.
-        todo!("apply not yet implemented (S13-4 RED)")
+    pub fn apply(&self, scope: &str, args: &Value) -> Value {
+        if self.rules.is_empty() {
+            self.warn_empty_once();
+            return args.clone();
+        }
+
+        let Some(rule) = self.pick_matching_rule(scope) else {
+            return args.clone();
+        };
+
+        match jsonpath_lib::replace_with(args.clone(), &rule.jsonpath, &mut |_| {
+            Some(Value::String(REDACTED_PLACEHOLDER.into()))
+        }) {
+            Ok(masked) => masked,
+            Err(err) => {
+                tracing::error!(
+                    target: "xiaoguai_auth::redaction",
+                    policy_id = %rule.id,
+                    jsonpath = %rule.jsonpath,
+                    error = %err,
+                    "JSONPath evaluation failed; emitting args verbatim (no mask)",
+                );
+                args.clone()
+            }
+        }
     }
 
     /// Return the id of the first rule that would match `scope` on the SSE
@@ -121,9 +152,8 @@ impl RedactionRules {
     ///
     /// Returns `None` if no rule matches (including the empty-rule-set case).
     #[must_use]
-    pub fn matching_rule_id(&self, _scope: &str) -> Option<Uuid> {
-        // S13-4 RED: real implementation arrives in the GREEN commit.
-        todo!("matching_rule_id not yet implemented (S13-4 RED)")
+    pub fn matching_rule_id(&self, scope: &str) -> Option<Uuid> {
+        self.pick_matching_rule(scope).map(|r| r.id)
     }
 
     /// Test-only observable: how many warn-once emissions have fired on
@@ -135,8 +165,29 @@ impl RedactionRules {
         self.warn_count.load(Ordering::Relaxed)
     }
 
-    // GREEN commit will add `pick_matching_rule` and `warn_empty_once`
-    // helpers + the `jsonpath_lib` evaluator wiring.
+    fn pick_matching_rule(&self, scope: &str) -> Option<&RedactionPolicyRow> {
+        self.rules.iter().find(|r| {
+            (r.scope == scope || r.scope == WILDCARD_SCOPE)
+                && r.applies_to.iter().any(|t| t == APPLIES_TO_SSE)
+        })
+    }
+
+    fn warn_empty_once(&self) {
+        // `compare_exchange` returns Ok only for the first thread that
+        // flips false -> true. Subsequent threads see the existing `true`
+        // and skip the warn — exactly the "once per instance" semantic.
+        if self
+            .warned_empty
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            tracing::warn!(
+                target: "xiaoguai_auth::redaction",
+                "no HotL redaction policy configured — tool-call args emitted verbatim on SSE",
+            );
+            self.warn_count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 }
 
 #[cfg(test)]
