@@ -373,14 +373,18 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     let decision_registry =
         std::sync::Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new());
     // Per design (`lld-agent.md` §4.5): default suspend window is 24h.
-    // Per-scope overrides are tracked as a sprint-13 follow-up.
+    // Sprint-13 S13-7: per-scope-class overrides land via
+    // `agent.hotl.expiry` (S13-0 surface) — empty map preserves the
+    // single-knob v1.9.x behaviour byte-for-byte.
     let hotl_default_expiry = std::time::Duration::from_secs(24 * 3600);
-    let hotl_gate: Arc<dyn xiaoguai_agent::HotlGate> = crate::hotl_bridge::build_hotl_gate(
-        settings.agent.hotl.suspend_on_escalate,
-        hotl_enforcer_arc.clone(),
-        decision_registry.clone(),
-        hotl_default_expiry,
-    );
+    let hotl_gate: Arc<dyn xiaoguai_agent::HotlGate> =
+        crate::hotl_bridge::build_hotl_gate_with_expiry(
+            settings.agent.hotl.suspend_on_escalate,
+            hotl_enforcer_arc.clone(),
+            decision_registry.clone(),
+            hotl_default_expiry,
+            settings.agent.hotl.expiry.clone(),
+        );
     tracing::info!(
         suspend_on_escalate = settings.agent.hotl.suspend_on_escalate,
         "serve: HOTL gate selected per agent.hotl.suspend_on_escalate"
