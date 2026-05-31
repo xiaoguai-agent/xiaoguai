@@ -125,6 +125,18 @@ pub struct MetricHandles {
     /// resolve. Observed on every resolve including timeouts and
     /// cancellations.
     pub hotl_suspension_duration_seconds: Histogram,
+
+    // ── Sprint-13 S13-5 — DecisionRegistry boot-replay telemetry ─────────────
+    /// Per-row outcome of `DecisionRegistry::replay_from_storage`. Labels:
+    ///
+    /// * `reattached` — row had `status='pending'` AND `expires_at > now`
+    ///   at the SQL boundary, an in-memory waiter was minted, `sleep_until`
+    ///   companion task was spawned.
+    /// * `expired` — defensive: row slipped from "unexpired at SQL filter"
+    ///   to "expired by spawn time" (rare clock-skew / scheduler delay).
+    /// * `failed` — replay loop hit a downstream error mid-batch (e.g.
+    ///   spawn failure) for this row and continued with the next.
+    pub hotl_registry_replayed_total: IntCounterVec,
 }
 
 /// Initialise the Prometheus registry.
@@ -333,6 +345,15 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     )
     .context("register hotl_suspension_duration_seconds")?;
 
+    // Sprint-13 S13-5: DecisionRegistry boot-replay outcome counter.
+    let hotl_registry_replayed_total = register_int_counter_vec_with_registry!(
+        "hotl_registry_replayed_total",
+        "DecisionRegistry boot-replay outcomes per row (reattached | expired | failed)",
+        &["outcome"],
+        registry
+    )
+    .context("register hotl_registry_replayed_total")?;
+
     let handles = MetricHandles {
         http_request_duration,
         llm_call_duration,
@@ -354,6 +375,7 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
         hotl_suspensions_total,
         hotl_suspended_loops_gauge,
         hotl_suspension_duration_seconds,
+        hotl_registry_replayed_total,
     };
 
     // Store globally so macros can look them up without threading the
@@ -501,6 +523,12 @@ pub fn hotl_suspended_loops_gauge() -> Option<&'static Gauge> {
 /// Sprint-12 S12-3 — wall-clock time held between register and resolve.
 pub fn hotl_suspension_duration_seconds() -> Option<&'static Histogram> {
     HANDLES.get().map(|h| &h.hotl_suspension_duration_seconds)
+}
+
+/// Counter: `xiaoguai_hotl_registry_replayed_total{outcome}`.
+/// Sprint-13 S13-5 — per-row outcome of `DecisionRegistry::replay_from_storage`.
+pub fn hotl_registry_replayed_total() -> Option<&'static IntCounterVec> {
+    HANDLES.get().map(|h| &h.hotl_registry_replayed_total)
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

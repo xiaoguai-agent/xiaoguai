@@ -89,9 +89,7 @@ impl HotlEscalationStore for MockHotlEscalationStore {
         let mut out: Vec<HotlPendingRow> = self
             .pending
             .iter()
-            .filter(|kv| {
-                kv.value().status == "pending" && kv.value().expires_at > now
-            })
+            .filter(|kv| kv.value().status == "pending" && kv.value().expires_at > now)
             .map(|kv| kv.value().clone())
             .collect();
         out.sort_by_key(|r| r.created_at);
@@ -158,10 +156,12 @@ async fn replay_reattaches_pending_unexpired() {
         store.insert_row(child_row(pid, future));
     }
 
-    let registry =
-        DecisionRegistry::replay_from_storage(store.clone() as Arc<dyn HotlEscalationStore>, Utc::now())
-            .await
-            .expect("replay must succeed");
+    let registry = DecisionRegistry::replay_from_storage(
+        store.clone() as Arc<dyn HotlEscalationStore>,
+        Utc::now(),
+    )
+    .await
+    .expect("replay must succeed");
 
     assert_eq!(
         registry.len(),
@@ -179,10 +179,12 @@ async fn replay_drops_expired() {
     store.insert_row(child_row(Uuid::new_v4(), past));
     store.insert_row(child_row(Uuid::new_v4(), future));
 
-    let registry =
-        DecisionRegistry::replay_from_storage(store.clone() as Arc<dyn HotlEscalationStore>, Utc::now())
-            .await
-            .expect("replay must succeed");
+    let registry = DecisionRegistry::replay_from_storage(
+        store.clone() as Arc<dyn HotlEscalationStore>,
+        Utc::now(),
+    )
+    .await
+    .expect("replay must succeed");
 
     assert_eq!(
         registry.len(),
@@ -217,10 +219,12 @@ async fn resolve_after_replay_fires_oneshot() {
     let escalation_id = Uuid::new_v4();
     store.insert_row(child_row(escalation_id, future));
 
-    let registry =
-        DecisionRegistry::replay_from_storage(store.clone() as Arc<dyn HotlEscalationStore>, Utc::now())
-            .await
-            .expect("replay must succeed");
+    let registry = DecisionRegistry::replay_from_storage(
+        store.clone() as Arc<dyn HotlEscalationStore>,
+        Utc::now(),
+    )
+    .await
+    .expect("replay must succeed");
 
     // Resolve should persist + return Ok(true) when a waiter exists.
     let resolved = registry
@@ -243,7 +247,9 @@ async fn register_persists_failure_leaves_no_in_memory_waiter() {
     let store = Arc::new(MockHotlEscalationStore::new());
     store.set_fail_insert(true);
 
-    let registry = DecisionRegistry::with_store(store.clone() as Arc<dyn HotlEscalationStore>);
+    let registry = Arc::new(DecisionRegistry::with_store(
+        store.clone() as Arc<dyn HotlEscalationStore>
+    ));
 
     let escalation_id = Uuid::new_v4();
     let parent = parent_row(escalation_id);
@@ -264,7 +270,9 @@ async fn register_persists_failure_leaves_no_in_memory_waiter() {
 #[tokio::test]
 async fn resolve_with_no_matching_row_returns_unknown_escalation() {
     let store = Arc::new(MockHotlEscalationStore::new());
-    let registry = DecisionRegistry::with_store(store.clone() as Arc<dyn HotlEscalationStore>);
+    let registry = Arc::new(DecisionRegistry::with_store(
+        store.clone() as Arc<dyn HotlEscalationStore>
+    ));
 
     let err = registry
         .resolve_persisted(Uuid::new_v4(), HotlResolution::Allow, None)
@@ -277,7 +285,9 @@ async fn resolve_with_no_matching_row_returns_unknown_escalation() {
 #[tokio::test]
 async fn resolve_persists_before_firing_oneshot() {
     let store = Arc::new(MockHotlEscalationStore::new());
-    let registry = DecisionRegistry::with_store(store.clone() as Arc<dyn HotlEscalationStore>);
+    let registry = Arc::new(DecisionRegistry::with_store(
+        store.clone() as Arc<dyn HotlEscalationStore>
+    ));
 
     let escalation_id = Uuid::new_v4();
     let parent = parent_row(escalation_id);
@@ -303,6 +313,7 @@ async fn resolve_persists_before_firing_oneshot() {
         .pending
         .get(&escalation_id)
         .expect("row still present in mock")
+        .value()
         .clone();
     assert_eq!(snap.status, "resolved");
     assert_eq!(snap.decided_by.as_deref(), Some("alice"));

@@ -63,9 +63,7 @@ use uuid::Uuid;
 use crate::auth::Claims;
 use crate::error::ApiError;
 use crate::hotl::decision::{HotlDecisionRecord, HotlDecisionStoreError, HotlDecisionVerdict};
-use crate::hotl::decision_registry::{
-    HotlDecisionVerdict as RegistryDecisionVerdict, HotlResolution,
-};
+use crate::hotl::decision_registry::{HotlResolution, RegistryError};
 use crate::hotl::policy::{CreateHotlPolicyRequest, HotlPolicy};
 use crate::routes::hotl::map_store_err as map_policy_err;
 use crate::state::AppState;
@@ -313,14 +311,42 @@ async fn create_decision_inner(
         // surface it here.
         HotlDecisionVerdict::Deny => HotlResolution::Deny(String::new()),
     };
-    let registry_verdict = RegistryDecisionVerdict {
-        verdict: resolution,
-        decided_by: Some(req.decided_by.clone()),
-        recorded_at: Utc::now(),
-    };
-    let resumed = state
+    // Sprint-13 S13-5: persist the verdict through the
+    // `HotlEscalationStore` BEFORE firing the oneshot. The store update
+    // is the source of truth — the in-memory waiter may or may not still
+    // exist (legacy `EnforcerGate` path, already-cancelled ticket,
+    // etc.).
+    //
+    // Fallback compat: when the registry is wired to
+    // `NoopHotlEscalationStore` (tests + 1.8.x deployments before
+    // sprint-13 PG migration), `resolve_persisted` still rebroadcasts
+    // through the oneshot path because the no-op store returns
+    // `Ok(true)` for every `record_decision`. Real PG returns
+    // `Ok(false)` for unknown ids → `Err(UnknownEscalation)` → 404.
+    let resumed = match state
         .decision_registry
-        .resolve(req.request_id, registry_verdict);
+        .resolve_persisted(req.request_id, resolution, Some(req.decided_by.clone()))
+        .await
+    {
+        Ok(true) => true,
+        Ok(false) => false,
+        Err(RegistryError::UnknownEscalation) => {
+            // Sprint-12 S12-6 contract: late decision after timeout
+            // returns `resumed=false`. Sprint-13 carries forward that
+            // behaviour by treating `UnknownEscalation` as a
+            // non-failure in the in-memory + Noop-store path.  When the
+            // store IS PG-backed, the route currently still completes
+            // with `resumed=false` rather than 404 — the 404 will be
+            // wired in S13-8 once the wire rename lands and parent
+            // table presence is asserted unconditionally.
+            false
+        }
+        Err(RegistryError::Storage(e)) => {
+            return Err(DecisionRouteError::Api(ApiError::Internal(
+                anyhow::anyhow!("hotl decision registry storage: {e}"),
+            )));
+        }
+    };
 
     // ── 8. Build the response ───────────────────────────────────────────────
     let mut resp = HotlDecisionResponse::from_record(initial_record, resumed);

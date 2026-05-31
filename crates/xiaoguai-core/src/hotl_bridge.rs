@@ -576,19 +576,81 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                 // Sprint-13 S13-7: per-call lookup; runtime config edits
                 // are honoured on the next escalation.
                 let window = resolve_expiry(&self.expiry, self.default_expiry, scope);
-                let expires_at = tokio::time::Instant::now() + window;
-                let ticket = self.registry.register(request_id, expires_at);
-                tracing::info!(
-                    tenant_id = %tenant_id,
-                    %scope,
-                    %reason,
-                    %request_id,
-                    "HOTL escalate → suspend; awaiting operator decision"
-                );
-                xiaoguai_agent::HotlGateVerdict::Suspend {
-                    request_id,
+                let expires_at_instant = tokio::time::Instant::now() + window;
+                let now_utc = chrono::Utc::now();
+                let expires_at_utc = now_utc
+                    + chrono::Duration::from_std(window)
+                        .unwrap_or_else(|_| chrono::Duration::seconds(86_400));
+
+                // Sprint-13 S13-5: persistence-aware register. Build the
+                // `hotl_escalations` parent + `hotl_pending` child rows
+                // from the available gate context — the agent loop
+                // doesn't surface `session_id` through the trait, so we
+                // use the request_id as a synthetic session anchor
+                // (sprint-13 OOS: full session threading lands in S13-8).
+                let parent = xiaoguai_storage::repositories::hotl_escalations::HotlEscalationRow {
+                    id: request_id,
+                    tenant_id,
+                    session_id: request_id,
+                    top_level_scope: scope.to_string(),
+                    status: "pending".to_string(),
+                    created_at: now_utc,
+                    parent_id: None,
+                };
+                let child = xiaoguai_storage::repositories::hotl_escalations::HotlPendingRow {
+                    id: Uuid::new_v4(),
+                    escalation_id: request_id,
+                    tenant_id,
                     scope: scope.to_string(),
-                    ticket,
+                    // Sprint-13 S13-8 will plumb the tool name through;
+                    // the scope already encodes it (`tool_call.<name>`).
+                    tool: scope.to_string(),
+                    args_redacted: serde_json::json!({"amount": amount}),
+                    status: "pending".to_string(),
+                    expires_at: expires_at_utc,
+                    created_at: now_utc,
+                    decided_at: None,
+                    decided_by: None,
+                };
+
+                match self
+                    .registry
+                    .register_persisted(request_id, parent, child, expires_at_instant)
+                    .await
+                {
+                    Ok(ticket) => {
+                        tracing::info!(
+                            tenant_id = %tenant_id,
+                            %scope,
+                            %reason,
+                            %request_id,
+                            "HOTL escalate → suspend; awaiting operator decision"
+                        );
+                        xiaoguai_agent::HotlGateVerdict::Suspend {
+                            request_id,
+                            scope: scope.to_string(),
+                            ticket,
+                        }
+                    }
+                    Err(e) => {
+                        // Sprint-13 S13-5: persist failure is fail-closed.
+                        // Without a persisted row, boot replay can't
+                        // resurrect the waiter and the operator UI has
+                        // no escalation record to act on. Deny the tool
+                        // call rather than leaving a phantom in-memory
+                        // waiter (the persisted-first ordering guarantees
+                        // no waiter exists at this point).
+                        tracing::error!(
+                            tenant_id = %tenant_id,
+                            %scope,
+                            error = %e,
+                            %request_id,
+                            "HOTL escalate persistence failed — fail-closed deny"
+                        );
+                        xiaoguai_agent::HotlGateVerdict::Deny(format!(
+                            "HOTL escalation persistence error (fail-closed): {e}"
+                        ))
+                    }
                 }
             }
             Err(e) => {
