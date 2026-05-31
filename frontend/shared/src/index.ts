@@ -571,8 +571,12 @@ export interface HotlDecisionRaisePolicy {
 
 /** Body for `POST /v1/hotl/decisions`. */
 export interface SubmitHotlDecisionRequest {
-  /** Canonical name; backend also accepts `escalation_id` as a serde alias. */
-  request_id: string;
+  /**
+   * Sprint-13 S13-9 rename — backend wire field renamed from `request_id`.
+   * The legacy alias was removed in S13-8 (v1.10.0); chat-ui v1.10.0 is
+   * incompatible with backend < v1.10.0.
+   */
+  escalation_id: string;
   verdict: HotlDecisionVerdict;
   decided_by: string;
   raise_policy?: HotlDecisionRaisePolicy;
@@ -581,7 +585,7 @@ export interface SubmitHotlDecisionRequest {
 /** `201 Created` body returned by `POST /v1/hotl/decisions`. */
 export interface HotlDecisionResponse {
   id: string;
-  request_id: string;
+  escalation_id: string;
   verdict: HotlDecisionVerdict;
   /** RFC 3339 timestamp. */
   recorded_at: string;
@@ -792,8 +796,8 @@ export interface CreateBoardRequest {
  */
 export interface HotlPendingEvent {
   type: 'hotl_pending';
-  /** Suspended decision id; pairs 1:1 with `HotlResolvedEvent.request_id`. */
-  request_id: string;
+  /** Suspended escalation id; pairs 1:1 with `HotlResolvedEvent.escalation_id`. */
+  escalation_id: string;
   /** Tool name whose dispatch is suspended (e.g. `execute_python`). */
   tool: string;
   /** Policy-driven redaction of the tool arguments (opaque JSON shape). */
@@ -807,15 +811,16 @@ export interface HotlPendingEvent {
 /**
  * Emitted by `xiaoguai-agent` after the suspended decision resolves —
  * either via operator verdict (`POST /v1/hotl/decisions`) or the
- * server-side timeout. Frontend keys the `<HotlBanner>` on `request_id`
+ * server-side timeout. Frontend keys the `<HotlBanner>` on `escalation_id`
  * and clears the matching pending state on receipt.
  *
  * Wire shape per `api-contract.md` §2.6.3. `decided_by` is `null` when
- * `verdict === 'timeout'`.
+ * `verdict === 'timeout'`. The `request_id` legacy field was retired in
+ * sprint-13 S13-8 (backend) / S13-9 (chat-ui).
  */
 export interface HotlResolvedEvent {
   type: 'hotl_resolved';
-  request_id: string;
+  escalation_id: string;
   verdict: 'allow' | 'deny' | 'timeout';
   decided_by: string | null;
   recorded_at: string;
