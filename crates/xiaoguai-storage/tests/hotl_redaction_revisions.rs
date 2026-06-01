@@ -192,13 +192,7 @@ async fn concurrent_identical_inserts_one_fails() {
     });
     let h2 = tokio::spawn(async move {
         repo_b
-            .insert_policy(
-                tenant,
-                scope,
-                jsonpath,
-                vec!["sse".into()],
-                "alice".into(),
-            )
+            .insert_policy(tenant, scope, jsonpath, vec!["sse".into()], "alice".into())
             .await
     });
 
@@ -471,11 +465,12 @@ async fn tenant_settings_redaction_required_default_false() {
         .await
         .expect("seed tenant_settings");
 
-    let val: (bool,) =
-        sqlx::query_as("SELECT redaction_policy_required FROM tenant_settings WHERE tenant_id = $1")
-            .bind("t1")
-            .fetch_one(&pool)
-            .await
-            .expect("query column");
+    let val: (bool,) = sqlx::query_as(
+        "SELECT redaction_policy_required FROM tenant_settings WHERE tenant_id = $1",
+    )
+    .bind("t1")
+    .fetch_one(&pool)
+    .await
+    .expect("query column");
     assert!(!val.0, "redaction_policy_required must default to false");
 }

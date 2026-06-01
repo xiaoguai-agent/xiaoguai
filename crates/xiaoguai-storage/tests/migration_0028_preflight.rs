@@ -152,11 +152,9 @@ async fn migration_0028_applies_cleanly_on_post_0027_snapshot() {
     )
     .await
     .expect("seed tenants row");
-    pool.execute_unprepared(
-        "INSERT INTO tenant_settings (tenant_id) VALUES ('preflight-tenant')",
-    )
-    .await
-    .expect("seed tenant_settings row");
+    pool.execute_unprepared("INSERT INTO tenant_settings (tenant_id) VALUES ('preflight-tenant')")
+        .await
+        .expect("seed tenant_settings row");
     let val: (bool,) = sqlx::query_as(
         "SELECT redaction_policy_required FROM tenant_settings WHERE tenant_id = 'preflight-tenant'",
     )

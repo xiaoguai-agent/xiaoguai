@@ -341,13 +341,12 @@ impl HotlRedactionRepo for PgHotlRedactionRepo {
         //
         // Two queries (one to find head, one to walk back) keep the SQL
         // simple and the plans predictable on a small chain.
-        let exists: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT id FROM hotl_redaction_policies WHERE id = $1",
-        )
-        .bind(policy_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(RepoError::from_sqlx)?;
+        let exists: Option<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM hotl_redaction_policies WHERE id = $1")
+                .bind(policy_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(RepoError::from_sqlx)?;
         if exists.is_none() {
             return Err(RepoError::NotFound);
         }
