@@ -98,8 +98,14 @@ jobs:
 
       # --no-build: binaries already built above.
       # -p xiaoguai-cli: the package that carries the [package.metadata.deb] config.
+      # cargo-deb writes to target/debian/ by default; copy into dist/.
+      # (`--output dist/` exited 1 — the dir didn't exist and the trailing
+      # slash wasn't created, so there was nowhere to write the .deb.)
       - name: Build .deb
-        run: cargo deb -p xiaoguai-cli --no-build --output dist/
+        run: |
+          mkdir -p dist
+          cargo deb -p xiaoguai-cli --no-build
+          cp target/debian/*.deb dist/
 
       - name: List dist/
         run: ls -lh dist/
@@ -137,8 +143,13 @@ jobs:
         run: cargo install cargo-generate-rpm --locked --version ${{ env.CARGO_GENERATE_RPM_VERSION }}
 
       - name: Build .rpm
+        # cargo-generate-rpm's --output expects a FILE path; `--output dist/`
+        # errored "Is a directory (os error 21)". Let it write to its default
+        # target/generate-rpm/ and copy the .rpm into dist/.
         run: |
-          cargo generate-rpm -p crates/xiaoguai-cli --output dist/
+          mkdir -p dist
+          cargo generate-rpm -p crates/xiaoguai-cli
+          cp target/generate-rpm/*.rpm dist/
 
       - name: List dist/
         run: ls -lh dist/
