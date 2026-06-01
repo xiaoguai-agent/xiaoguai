@@ -49,6 +49,17 @@ pub struct Settings {
 pub struct ServerSettings {
     pub host: String,
     pub port: u16,
+    /// Optional directory holding the built web UIs. When set (and it exists),
+    /// `xiaoguai-core` serves `chat-ui` at `/` and `admin-ui` at `/admin/`
+    /// from `<static_dir>/chat-ui` and `<static_dir>/admin-ui`. When unset
+    /// (the default), the server is API-only — preserving the historical
+    /// behaviour. The container image sets this to `/app/static`; bare-metal
+    /// installs that bundle the UI point it at `<prefix>/share/static`.
+    ///
+    /// Override via YAML `server.static_dir: /app/static` or env
+    /// `XIAOGUAI_SERVER__STATIC_DIR=/app/static`.
+    #[serde(default)]
+    pub static_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -408,6 +419,7 @@ impl Default for Settings {
             server: ServerSettings {
                 host: "0.0.0.0".into(),
                 port: 7600,
+                static_dir: None,
             },
             database: DatabaseSettings {
                 url: "postgres://xiaoguai:xiaoguai@localhost:5432/xiaoguai".into(),
