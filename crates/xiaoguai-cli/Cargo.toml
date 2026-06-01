@@ -121,8 +121,12 @@ assets = [
 ]
 conf-files = ["/etc/xiaoguai/config.yaml"]
 maintainer-scripts = "../../packaging/debian"
-# Restart the daemon automatically after upgrade (systemd only).
-systemd-units = { enable = true }
+# NOTE: no `systemd-units` here. That feature makes cargo-deb inject its own
+# systemd snippets at a `#DEBHELPER#` token in the maintainer scripts — but
+# our custom postinst/prerm/postrm already enable/restart/stop the unit and
+# carry no `#DEBHELPER#` marker, so enabling it failed with "Unable to replace
+# #DEBHELPER# token in maintainer script .../postinst". The unit file ships as
+# a normal asset (above) and the scripts manage its lifecycle.
 
 # ---- cargo-generate-rpm -----------------------------------------------------
 # Build: cargo generate-rpm -p xiaoguai-cli   (after a prior cargo build --release)
