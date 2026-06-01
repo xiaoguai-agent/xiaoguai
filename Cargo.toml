@@ -58,34 +58,29 @@ readme = "README.md"
 # new versions can regenerate the workflow file with breaking changes.
 [workspace.metadata.dist]
 # Pin so `dist generate` is deterministic across maintainers' machines.
-cargo-dist-version = "0.28.0"
-# Where releases live. GitHub Releases is consistent with release.yml +
+# Bumped 0.28.0 -> 0.32.0: 0.28's generated workflow pinned the retired
+# `ubuntu-20.04` runner, so the release job sat queued forever. 0.32 emits
+# current runners.
+cargo-dist-version = "0.32.0"
+# Where releases live. GitHub Releases is consistent with release-tarball.yml +
 # release-packages.yml. Axodotdev is *not* used; we self-host signing.
 hosting = ["github"]
-# Installers: shell for Linux/macOS, powershell for Windows, homebrew for
-# the macOS-native experience. The homebrew formula is pushed to the tap
-# specified below; user provisions HOMEBREW_TAP_TOKEN as a repo secret.
-installers = ["shell", "powershell", "homebrew"]
-# Homebrew formula publish job — required when `tap` is set so the
-# workflow actually pushes the formula to the tap repo on each release.
-publish-jobs = ["homebrew"]
-# Homebrew tap repo. See Plan B §4.7 for setup.
-tap = "xiaoguai-agent/homebrew-tap"
-# Cross-platform target matrix. ubuntu-22.04 (glibc 2.35) gives a reasonable
-# lower bound matching release-packages.yml. macOS targets cover Intel +
-# Apple Silicon. Windows uses the MSVC ABI (matches the prebuilt rustup
-# default on Windows).
+# Linux-only: the cross-distro install story is the shell installer + native
+# .deb/.rpm (release-packages.yml) + bare-metal tarball (release-tarball.yml).
+# macOS/Windows + the Homebrew tap were dropped — they needed paid runners, a
+# HOMEBREW_TAP_TOKEN secret, and a tap repo, none of which are provisioned,
+# and they aren't part of the Linux install goal.
+installers = ["shell"]
+# Linux glibc targets only. ubuntu-22.04 (glibc 2.35) lower bound, matching
+# release-packages.yml (amd64) and release-tarball.yml (amd64 + arm64).
 targets = [
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
-    "x86_64-apple-darwin",
-    "aarch64-apple-darwin",
-    "x86_64-pc-windows-msvc",
 ]
-# Workflow generated at .github/workflows/release.yml by default; we keep
-# the existing release.yml (container image + SBOM) and rename the
-# generated file to release-dist.yml during `dist generate` so the two
-# coexist on the same `v*` tag.
+# `dist generate` writes .github/workflows/release.yml. It coexists on a
+# `v*` tag with release-tarball.yml (bare-metal .tar.gz + SLSA) and
+# release-packages.yml (.deb/.rpm). The old container-image workflow was
+# removed, so release.yml is now solely the dist-managed shell installer.
 ci = "github"
 # pr-run-mode = "plan" runs `dist plan` (no artefact upload) on PRs touching
 # this config, surfacing breakage early without doubling the release-tag CI.
