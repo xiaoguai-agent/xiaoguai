@@ -385,11 +385,52 @@ pub struct HotlSettings {
     /// env `XIAOGUAI_AGENT__HOTL__REDACTION_POLICY_REQUIRED=true`.
     #[serde(default)]
     pub redaction_policy_required: bool,
+
+    /// Sprint-14 S14-0 (pre-flight surface) — page size for the
+    /// boot-time `HotL` escalation replay. S14-7 will consume this knob to
+    /// page the `DecisionRegistry` boot replay so large tenants with
+    /// thousands of pending escalations don't load an unbounded batch
+    /// (sprint-13 carry-forward R13-4). S14-0 only adds the surface so
+    /// the validation contract is locked before any runtime code reads
+    /// from it.
+    ///
+    /// Default: `256`. Must be `>= 1` — a `0` page size would make the
+    /// replay loop spin without progress, so it is rejected at load time
+    /// with an error naming the offending key.
+    ///
+    /// Override via YAML `agent.hotl.replay_page_size: 512` or env
+    /// `XIAOGUAI_AGENT__HOTL__REPLAY_PAGE_SIZE=512`.
+    #[serde(
+        default = "default_replay_page_size",
+        deserialize_with = "deserialize_replay_page_size"
+    )]
+    pub replay_page_size: usize,
 }
 
 /// v1.9.0 default for `HotlSettings::suspend_on_escalate` (S12-12).
 fn default_suspend_on_escalate_true() -> bool {
     true
+}
+
+/// Sprint-14 S14-0 default for `HotlSettings::replay_page_size`.
+const fn default_replay_page_size() -> usize {
+    256
+}
+
+/// Validate `HotlSettings::replay_page_size` at deserialize time. A page
+/// size of `0` is rejected with an error that names the field so
+/// operators can pinpoint the bad key in their `config.yaml`.
+fn deserialize_replay_page_size<'de, D>(d: D) -> Result<usize, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = usize::deserialize(d)?;
+    if value < 1 {
+        return Err(serde::de::Error::custom(
+            "agent.hotl.replay_page_size must be >= 1 (got 0)",
+        ));
+    }
+    Ok(value)
 }
 
 impl Default for HotlSettings {
@@ -398,6 +439,7 @@ impl Default for HotlSettings {
             suspend_on_escalate: default_suspend_on_escalate_true(),
             expiry: HashMap::new(),
             redaction_policy_required: false,
+            replay_page_size: default_replay_page_size(),
         }
     }
 }

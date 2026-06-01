@@ -128,3 +128,16 @@ agent:
     #
     # Override via XIAOGUAI_AGENT__HOTL__REDACTION_POLICY_REQUIRED=true.
     redaction_policy_required: false
+
+    # Sprint-14 S14-0 (pre-flight surface) — page size for the boot-time
+    # HotL escalation replay. S14-7 will use this to page the
+    # DecisionRegistry boot replay so large tenants with thousands of
+    # pending escalations don't load an unbounded batch (sprint-13
+    # carry-forward R13-4). S14-0 only adds the config surface; no
+    # runtime code reads it yet. Must be >= 1 — a `0` page size would
+    # make the replay loop spin without progress and is rejected at load
+    # time with an error naming this key. Defaults to 256 so existing
+    # v1.10.x configs deserialize unchanged.
+    #
+    # Override via XIAOGUAI_AGENT__HOTL__REPLAY_PAGE_SIZE=512.
+    replay_page_size: 256
