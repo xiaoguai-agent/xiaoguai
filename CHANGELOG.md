@@ -15,6 +15,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v1.10.1] — 2026-06-01
+
+Release-publishing hotfix. No runtime code changes — `v1.10.0` and `v1.10.1`
+are byte-identical at runtime. This release exists solely to actually publish
+the install artifacts that every tag since `v1.8.1` silently failed to produce.
+
+### Fixed
+- **Container image now publishes to GHCR.** `.dockerignore` excluded `catalog/`,
+  so `deploy/Dockerfile`'s `COPY catalog ./catalog` failed with `"/catalog": not
+  found` and the `release-image` build broke on every `v*` tag since v1.8.1
+  (also the long-red `e2e` PR check). The binary embeds `catalog/skill_packs.json`
+  via `include_str!`, so the directory must be in the build context.
+- **Bare-metal tarballs now attach to the GitHub Release.** The SLSA
+  `verify-provenance` job looked for `xiaoguai-1.10.0-…` (leading `v` stripped)
+  while `build-tarball.sh` produces `xiaoguai-v1.10.0-…`; the resulting
+  "no such file" / digest-mismatch failure skipped the `publish` job. Verify now
+  uses the tag ref verbatim. Same `v`-strip fixed in the release-body verify docs.
+- **`docker compose up` now brings up the full stack** (#156). The
+  `otel-collector` container could never go healthy — the contrib image is
+  distroless (no shell/wget for its `CMD-SHELL` healthcheck) and the collector
+  config never enabled the `health_check` extension — so dependents on
+  `condition: service_healthy` (`xiaoguai-core`, `prometheus`) were blocked and
+  the stack aborted. Enabled the `health_check` extension on :13133 and switched
+  dependents to `service_started` (observability must not gate the app).
+
 ## [v1.10.0] — 2026-05-31
 
 HotL hardening — persistence, redaction, per-scope expiry, `escalation_id` rename. See [`release-notes-v1.10.0.md`](release-notes-v1.10.0.md) for full notes and [`docs/HANDOFF-2026-05-31-sprint-13-shipped.md`](docs/HANDOFF-2026-05-31-sprint-13-shipped.md) for the engineering handoff.
