@@ -1,6 +1,6 @@
-//! sprint-14 S14-2: canonical JSONPath redaction fixtures.
+//! sprint-14 S14-2: canonical `JSONPath` redaction fixtures.
 //!
-//! Emits a single JSON file containing (jsonpath, input, expected_masked)
+//! Emits a single JSON file containing (`jsonpath`, input, `expected_masked`)
 //! triples that both the Rust `RedactionRules::apply` tests and the
 //! sprint-14 S14-6 frontend parity tests will read. By generating from
 //! one source the backend mask and the operator-facing preview can

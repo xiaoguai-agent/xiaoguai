@@ -1,0 +1,220 @@
+{
+  "$schema_version": 1,
+  "$mask": "***",
+  "$generator": "xiaoguai-auth/src/bin/jsonpath-fixture-gen.rs",
+  "cases": [
+    {
+      "name": "top_level_scalar",
+      "jsonpaths": [
+        "$.password"
+      ],
+      "input": {
+        "password": "x",
+        "other": "y"
+      },
+      "expected_masked": {
+        "password": "***",
+        "other": "y"
+      },
+      "notes": "Top-level field mask; siblings untouched."
+    },
+    {
+      "name": "nested_object",
+      "jsonpaths": [
+        "$.user.email"
+      ],
+      "input": {
+        "user": {
+          "email": "a@b.com",
+          "name": "Alice"
+        }
+      },
+      "expected_masked": {
+        "user": {
+          "email": "***",
+          "name": "Alice"
+        }
+      },
+      "notes": "Nested-object field mask."
+    },
+    {
+      "name": "array_element",
+      "jsonpaths": [
+        "$.items[0].secret"
+      ],
+      "input": {
+        "items": [
+          {
+            "secret": "s1",
+            "label": "a"
+          },
+          {
+            "secret": "s2",
+            "label": "b"
+          }
+        ]
+      },
+      "expected_masked": {
+        "items": [
+          {
+            "secret": "***",
+            "label": "a"
+          },
+          {
+            "secret": "s2",
+            "label": "b"
+          }
+        ]
+      },
+      "notes": "Array index targets exactly one element; others untouched."
+    },
+    {
+      "name": "wildcard_flat",
+      "jsonpaths": [
+        "$.*"
+      ],
+      "input": {
+        "a": 1,
+        "b": 2,
+        "c": 3
+      },
+      "expected_masked": {
+        "a": "***",
+        "b": "***",
+        "c": "***"
+      },
+      "notes": "Wildcard on flat object masks every top-level value."
+    },
+    {
+      "name": "recursive_descent",
+      "jsonpaths": [
+        "$..token"
+      ],
+      "input": {
+        "outer": {
+          "token": "t1",
+          "child": {
+            "token": "t2",
+            "ok": 1
+          }
+        },
+        "token": "t0"
+      },
+      "expected_masked": {
+        "outer": {
+          "token": "***",
+          "child": {
+            "token": "***",
+            "ok": 1
+          }
+        },
+        "token": "***"
+      },
+      "notes": "Recursive descent matches every `token` at any depth."
+    },
+    {
+      "name": "non_matching_path",
+      "jsonpaths": [
+        "$.does_not_exist"
+      ],
+      "input": {
+        "a": 1,
+        "b": 2
+      },
+      "expected_masked": {
+        "a": 1,
+        "b": 2
+      },
+      "notes": "No-op when the path doesn't match anything."
+    },
+    {
+      "name": "empty_input",
+      "jsonpaths": [
+        "$.anything"
+      ],
+      "input": {},
+      "expected_masked": {},
+      "notes": "Empty object: no fields to mask, no-op."
+    },
+    {
+      "name": "two_paths_simultaneously",
+      "jsonpaths": [
+        "$.a",
+        "$.b"
+      ],
+      "input": {
+        "a": 1,
+        "b": 2,
+        "c": 3
+      },
+      "expected_masked": {
+        "a": "***",
+        "b": "***",
+        "c": 3
+      },
+      "notes": "Apply two paths in sequence; both fields masked, `c` preserved."
+    },
+    {
+      "name": "array_wildcard_field",
+      "jsonpaths": [
+        "$.users[*].api_key"
+      ],
+      "input": {
+        "users": [
+          {
+            "name": "a",
+            "api_key": "k1"
+          },
+          {
+            "name": "b",
+            "api_key": "k2"
+          }
+        ]
+      },
+      "expected_masked": {
+        "users": [
+          {
+            "name": "a",
+            "api_key": "***"
+          },
+          {
+            "name": "b",
+            "api_key": "***"
+          }
+        ]
+      },
+      "notes": "Wildcard array index + field selector masks every element's field."
+    },
+    {
+      "name": "deeply_nested",
+      "jsonpaths": [
+        "$.a.b.c.d.password"
+      ],
+      "input": {
+        "a": {
+          "b": {
+            "c": {
+              "d": {
+                "password": "p",
+                "other": "o"
+              }
+            }
+          }
+        }
+      },
+      "expected_masked": {
+        "a": {
+          "b": {
+            "c": {
+              "d": {
+                "password": "***",
+                "other": "o"
+              }
+            }
+          }
+        }
+      },
+      "notes": "Mask survives arbitrarily deep nesting."
+    }
+  ]
+}

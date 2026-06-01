@@ -22,7 +22,7 @@
 //! INSERT-new-active=true under READ COMMITTED + the partial unique index
 //! `WHERE active = true`. INSERT-first would have both the prior and the
 //! new row satisfying the partial-index predicate simultaneously → 23505
-//! unique_violation. PostgreSQL's `CREATE UNIQUE INDEX ... WHERE` cannot be
+//! `unique_violation`. PostgreSQL's `CREATE UNIQUE INDEX ... WHERE` cannot be
 //! `DEFERRABLE` — only conventional `ALTER TABLE ... ADD CONSTRAINT ...
 //! DEFERRABLE` can, and that path doesn't accept partial predicates. So
 //! sequencing inside the tx is the only correct mechanism. Step-3 review
@@ -36,7 +36,7 @@
 //! to play within tenant isolation. The mutation methods (S14-2) are invoked
 //! from the admin API (S14-3), which authenticates as an admin role and
 //! does **not** rely on RLS for tenant scoping — the API handler authorises
-//! the tenant_id explicitly. The repo therefore uses the raw pool for
+//! the `tenant_id` explicitly. The repo therefore uses the raw pool for
 //! mutations, consistent with `HotlEscalationStore` in
 //! `repositories/hotl_escalations.rs`.
 
@@ -140,7 +140,7 @@ pub trait HotlRedactionRepo: Send + Sync {
     ///
     /// `actor` is recorded by the S14-4 audit hook (Wave 3) — this repo
     /// accepts the argument but does not yet write it; the column for
-    /// "deactivated_by" doesn't exist on the table (audit-log only).
+    /// `deactivated_by` doesn't exist on the table (audit-log only).
     async fn deactivate_policy(&self, policy_id: Uuid, actor: String) -> RepoResult<()>;
 
     /// Walk the supersedes chain starting at any id in the chain.

@@ -207,6 +207,11 @@ mod tests {
             jsonpath: jsonpath.into(),
             applies_to: applies_to.iter().map(|s| (*s).into()).collect(),
             created_at: Utc::now(),
+            // Sprint-14 S14-2: revision-tracking fields. Tests construct
+            // synthetic active rules, so `active = true` + no prior.
+            active: true,
+            created_by: "test".to_string(),
+            supersedes_policy_id: None,
         }
     }
 
