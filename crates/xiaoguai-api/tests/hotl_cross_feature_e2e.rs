@@ -263,7 +263,8 @@ async fn body_json(body: Body) -> Value {
 /// 2. `DecisionRegistry::replay_from_storage` rebuilds the in-memory
 ///    waiter map (S13-5) — both rows must surface as reattached.
 /// 3. `POST /v1/hotl/decisions` for one of the ids using an operator JWT
-///    WITHOUT `hotl:decide` scope → 403 + `required_scope=hotl:decide`
+///    WITHOUT `hotl:decide` scope → 403 + nested envelope
+///    `error.details.scope = "hotl:decide"` (sprint-14 S14-1)
 ///    body (S13-10).
 /// 4. `POST` the same id with `hotl:decide` scope → 201, body uses
 ///    `escalation_id` (S13-8), `resumed=true` (S13-5 waiter resolved),
@@ -349,7 +350,13 @@ async fn restart_replay_then_resolve_via_route_with_scope_check() {
         "S13-10: JWT without hotl:decide must be rejected"
     );
     let json = body_json(resp.into_body()).await;
-    assert_eq!(json["required_scope"], "hotl:decide");
+    // Sprint-14 S14-1: api-contract §1.6 nested envelope (was flat
+    // `required_scope` field in sprint-13).
+    assert_eq!(json["error"]["code"], "scope_required", "json: {json}");
+    assert_eq!(
+        json["error"]["details"]["scope"], "hotl:decide",
+        "json: {json}"
+    );
     assert_eq!(
         store.child_status(id_a).as_deref(),
         Some("pending"),

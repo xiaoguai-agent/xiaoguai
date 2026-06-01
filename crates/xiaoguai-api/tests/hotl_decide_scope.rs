@@ -7,8 +7,14 @@
 //! 1. a DB-backed merge into the in-memory `Authz` enforcer (hybrid
 //!    adapter — CSV remains source of truth, DB rows are additive); and
 //! 2. a scope check inside the `create_decision` handler that returns
-//!    `403 Forbidden` with `{"error":"forbidden","required_scope":"hotl:decide"}`
+//!    `403 Forbidden` with the api-contract §1.6 nested envelope
+//!    `{"error":{"code":"scope_required","message":"...","details":{"scope":"hotl:decide"}}}`
 //!    when the bearer token's scopes do not include `hotl:decide`.
+//!
+//! Sprint-14 S14-1: the inline check was replaced by the
+//! `RequireScope<HotlDecide>` axum extractor and the response envelope
+//! migrated from the flat `{error, required_scope}` shape to the nested
+//! shape above. Tests below assert the nested shape.
 //!
 //! Tests:
 //! - `decide_with_scope_returns_201` — operator JWT carrying
@@ -175,8 +181,8 @@ async fn decide_with_scope_returns_201() {
 }
 
 /// Operator JWT with `["read:audit"]` only is rejected at the scope
-/// gate. Body must include the structured `required_scope` slug so the
-/// chat-ui can render a precise error.
+/// gate. Body must include the nested `error.details.scope` slug
+/// (sprint-14 S14-1 envelope) so the chat-ui can render a precise error.
 #[tokio::test]
 async fn decide_without_scope_returns_403() {
     let mut authz = Authz::new_default().await.expect("authz");
@@ -211,8 +217,12 @@ async fn decide_without_scope_returns_403() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let json = body_json(resp.into_body()).await;
-    assert_eq!(json["error"], "forbidden");
-    assert_eq!(json["required_scope"], "hotl:decide");
+    // Sprint-14 S14-1 nested envelope (api-contract §1.6).
+    assert_eq!(json["error"]["code"], "scope_required", "json: {json}");
+    assert_eq!(
+        json["error"]["details"]["scope"], "hotl:decide",
+        "json: {json}"
+    );
 }
 
 /// Empty scopes (legacy JWT issued before sprint-13 — no `scopes` claim)
@@ -253,7 +263,8 @@ async fn decide_with_empty_scopes_returns_403() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let json = body_json(resp.into_body()).await;
-    assert_eq!(json["required_scope"], "hotl:decide");
+    // Sprint-14 S14-1 nested envelope.
+    assert_eq!(json["error"]["details"]["scope"], "hotl:decide");
 }
 
 /// Boot-time defensive assertion: after merging the seeded DB row the
