@@ -458,7 +458,11 @@ impl Settings {
     pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self, String> {
         let cfg = ::config::Config::builder()
             .add_source(::config::File::from(path.as_ref()))
-            .add_source(::config::Environment::with_prefix("XIAOGUAI").separator("__"))
+            .add_source(
+                ::config::Environment::with_prefix("XIAOGUAI")
+                    .prefix_separator("_")
+                    .separator("__"),
+            )
             .build()
             .map_err(|e| e.to_string())?;
         cfg.try_deserialize().map_err(|e| e.to_string())
@@ -475,7 +479,11 @@ impl Settings {
                 &defaults_yaml,
                 ::config::FileFormat::Yaml,
             ))
-            .add_source(::config::Environment::with_prefix("XIAOGUAI").separator("__"))
+            .add_source(
+                ::config::Environment::with_prefix("XIAOGUAI")
+                    .prefix_separator("_")
+                    .separator("__"),
+            )
             .build()
             .map_err(|e| e.to_string())?;
         cfg.try_deserialize().map_err(|e| e.to_string())
@@ -485,6 +493,26 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: env overrides must reach nested keys. `with_prefix("XIAOGUAI")`
+    /// without `prefix_separator("_")` left a leading `_` on the stripped key, so
+    /// `XIAOGUAI_DATABASE__URL` never mapped to `database.url` — every env-based
+    /// deployment silently used the default localhost DB and crashed on boot.
+    /// Restores process env afterwards.
+    #[test]
+    fn load_from_env_applies_nested_overrides() {
+        const DB: &str = "postgres://u:p@envhost:5432/db";
+        std::env::set_var("XIAOGUAI_DATABASE__URL", DB);
+        std::env::set_var("XIAOGUAI_SERVER__PORT", "9999");
+        let s = Settings::load_from_env().expect("load_from_env");
+        std::env::remove_var("XIAOGUAI_DATABASE__URL");
+        std::env::remove_var("XIAOGUAI_SERVER__PORT");
+
+        assert_eq!(s.database.url, DB, "nested env override must apply");
+        assert_eq!(s.server.port, 9999, "nested env override must apply");
+        // Unset fields keep their in-code defaults.
+        assert_eq!(s.database.max_connections, default_pg_max_connections());
+    }
 
     /// Sprint-12 S12-12 — default flip for v1.9.0. `suspend_on_escalate`
     /// now defaults to `true` so fresh deployments suspend on Escalate.
