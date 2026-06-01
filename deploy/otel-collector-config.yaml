@@ -20,6 +20,15 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
+extensions:
+  # Health endpoint on :13133 (`/`). Gives the collector a real readiness
+  # signal for manual / prometheus probing. NOTE: the docker-compose service
+  # does NOT gate dependents on this via a container healthcheck — the
+  # collector-contrib image is distroless (no shell/wget), so a CMD-SHELL
+  # check can't execute. Dependents wait on `service_started` instead.
+  health_check:
+    endpoint: 0.0.0.0:13133
+
 processors:
   batch:
     timeout: 5s
@@ -37,6 +46,7 @@ exporters:
     verbosity: basic
 
 service:
+  extensions: [health_check]
   pipelines:
     traces:
       receivers: [otlp]
