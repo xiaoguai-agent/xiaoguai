@@ -43,9 +43,12 @@ supply-chain/
 examples/
 recipes/
 packs/
-catalog/
 python/
 proto/
+# NOTE: catalog/ is intentionally NOT excluded — deploy/Dockerfile does
+# `COPY catalog ./catalog` and the binary embeds catalog/skill_packs.json via
+# `include_str!` at compile time. Excluding it broke `COPY catalog`
+# ("/catalog": not found) and failed every release-image build since v1.8.1.
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
 *.log
