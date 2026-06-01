@@ -95,25 +95,29 @@ priority = "optional"
 # must be rooted in a single crate, and xiaoguai-cli is the package that
 # produces the user-facing `xiaoguai` binary.
 #
-# cargo-deb resolves paths relative to the *workspace root*, not this
-# Cargo.toml, so all paths below start from the repository root.
+# cargo-deb (v2.x) resolves `target/` asset sources against the workspace
+# target dir, but ALL OTHER relative sources against this package's manifest
+# dir (crates/xiaoguai-cli/), not the workspace root. So repo-root files must
+# be reached with `../../` (same as `extended-description-file` above). An
+# earlier root-relative form failed with "asset path did not match:
+# crates/xiaoguai-cli/deploy/systemd/xiaoguai-core.service".
 assets = [
     # server binary (built from crates/xiaoguai-core but cross-compiled into
     # the same target/ tree; --no-build means CI must build both before
-    # running cargo-deb).
+    # running cargo-deb). `target/` is resolved against the workspace target.
     ["target/release/xiaoguai-core",    "usr/local/bin/xiaoguai-core",    "755"],
     # CLI binary
     ["target/release/xiaoguai",         "usr/local/bin/xiaoguai",         "755"],
     # systemd unit file — installed to /lib/systemd/system so it works on
     # both Debian and Ubuntu without a drop-in override.
-    ["deploy/systemd/xiaoguai-core.service", "lib/systemd/system/xiaoguai-core.service", "644"],
+    ["../../deploy/systemd/xiaoguai-core.service", "lib/systemd/system/xiaoguai-core.service", "644"],
     # Default config (ships as .example; postinst copies if missing)
-    ["deploy/config.example.yaml",      "etc/xiaoguai/config.yaml.example", "644"],
+    ["../../deploy/config.example.yaml",      "etc/xiaoguai/config.yaml.example", "644"],
     # Runbook (operator reference PDF/MD — Markdown lives in the repo)
-    ["docs/runbooks/operator.md",       "usr/share/doc/xiaoguai/operator-runbook.md", "644"],
+    ["../../docs/runbooks/operator.md",       "usr/share/doc/xiaoguai/operator-runbook.md", "644"],
     # Package docs
-    ["README.md",                        "usr/share/doc/xiaoguai/README.md", "644"],
-    ["LICENSE",                          "usr/share/doc/xiaoguai/copyright",  "644"],
+    ["../../README.md",                        "usr/share/doc/xiaoguai/README.md", "644"],
+    ["../../LICENSE",                          "usr/share/doc/xiaoguai/copyright",  "644"],
 ]
 conf-files = ["/etc/xiaoguai/config.yaml"]
 maintainer-scripts = "../../packaging/debian"
