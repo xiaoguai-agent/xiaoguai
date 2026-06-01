@@ -22,7 +22,11 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector image (not plain postgres) — migrations 0001 + 0019 do
+    # `CREATE EXTENSION vector` for the embeddings/memory tables. Plain
+    # postgres:16-alpine lacks pgvector and migration boot fails with
+    # 'extension "vector" is not available'.
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: xiaoguai
       POSTGRES_PASSWORD: xiaoguai
@@ -110,8 +114,10 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
     ports:
-      # Bind to localhost only in dev for safety.
-      - "127.0.0.1:3000:3000"
+      # Bind to localhost only in dev for safety. Host port is overridable —
+      # :3000 is commonly taken (other Grafana/Node apps); set GRAFANA_HOST_PORT
+      # to avoid 'address already in use' without editing this file.
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-3000}:3000"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"]
       interval: 10s
