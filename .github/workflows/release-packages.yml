@@ -96,10 +96,18 @@ jobs:
       - name: Install cargo-deb
         run: cargo install cargo-deb --locked --version ${{ env.CARGO_DEB_VERSION }}
 
-      # --no-build: binaries already built above.
-      # -p xiaoguai-cli: the package that carries the [package.metadata.deb] config.
+      # Run from the package dir so CWD == the manifest dir. cargo-deb resolves
+      # `assets` relative to the manifest dir but `extended-description-file`
+      # relative to CWD; running here makes both bases identical, so every
+      # `../../<repo-root-file>` path resolves consistently (a root-CWD run
+      # failed: "unable to read extended description from file: ../../README.md").
+      # --no-build: binaries already built above. cargo-deb writes to the
+      # workspace target/debian/; copy into dist/.
       - name: Build .deb
-        run: cargo deb -p xiaoguai-cli --no-build --output dist/
+        run: |
+          mkdir -p dist
+          (cd crates/xiaoguai-cli && cargo deb --no-build)
+          cp target/debian/*.deb dist/
 
       - name: List dist/
         run: ls -lh dist/
@@ -137,8 +145,13 @@ jobs:
         run: cargo install cargo-generate-rpm --locked --version ${{ env.CARGO_GENERATE_RPM_VERSION }}
 
       - name: Build .rpm
+        # cargo-generate-rpm's --output expects a FILE path; `--output dist/`
+        # errored "Is a directory (os error 21)". Let it write to its default
+        # target/generate-rpm/ and copy the .rpm into dist/.
         run: |
-          cargo generate-rpm -p crates/xiaoguai-cli --output dist/
+          mkdir -p dist
+          cargo generate-rpm -p crates/xiaoguai-cli
+          cp target/generate-rpm/*.rpm dist/
 
       - name: List dist/
         run: ls -lh dist/
