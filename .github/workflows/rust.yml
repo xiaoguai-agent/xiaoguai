@@ -42,6 +42,25 @@ jobs:
         run: cargo build --workspace --all-targets
       - name: Test
         run: cargo test --workspace
+      # GR-SEC-16 (sprint-14 S14-2): the only sanctioned UPDATE on
+      # `hotl_redaction_policies` lives inside `supersede_policy` /
+      # `deactivate_policy` in `repositories/hotl_redaction.rs` (and the
+      # ALTER TABLE / partial-index DDL in the migrations dir). Any other
+      # call site bypasses the revision-chain invariants — fail CI.
+      - name: GR-SEC-16 — single-source UPDATE on hotl_redaction_policies
+        run: |
+          set -e
+          matches="$(grep -rn "UPDATE hotl_redaction_policies" \
+              --include="*.rs" --include="*.sql" crates/ \
+              | grep -v "crates/xiaoguai-storage/migrations/" \
+              | grep -v "crates/xiaoguai-storage/src/repositories/hotl_redaction.rs" \
+              || true)"
+          if [ -n "$matches" ]; then
+            echo "GR-SEC-16 violation — UPDATE hotl_redaction_policies found outside the sanctioned path:" >&2
+            echo "$matches" >&2
+            exit 1
+          fi
+          echo "GR-SEC-16 OK — UPDATE hotl_redaction_policies confined to repositories/hotl_redaction.rs + migrations/."
 
   migrations-smoke:
     name: Migrations smoke (Postgres via testcontainers)
@@ -53,3 +72,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run ignored migration test
         run: cargo test -p xiaoguai-storage migrations_apply_clean -- --include-ignored
+      # sprint-14 S14-2: preflight migration 0028 against a seeded post-0027
+      # snapshot to guarantee the partial unique index doesn't reject any
+      # production-shape rows on upgrade.
+      - name: Run migration 0028 preflight smoke
+        run: cargo test -p xiaoguai-storage --test migration_0028_preflight -- --include-ignored
