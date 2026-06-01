@@ -32,6 +32,13 @@ the install artifacts that every tag since `v1.8.1` silently failed to produce.
   while `build-tarball.sh` produces `xiaoguai-v1.10.0-…`; the resulting
   "no such file" / digest-mismatch failure skipped the `publish` job. Verify now
   uses the tag ref verbatim. Same `v`-strip fixed in the release-body verify docs.
+- **`docker compose up` now brings up the full stack** (#156). The
+  `otel-collector` container could never go healthy — the contrib image is
+  distroless (no shell/wget for its `CMD-SHELL` healthcheck) and the collector
+  config never enabled the `health_check` extension — so dependents on
+  `condition: service_healthy` (`xiaoguai-core`, `prometheus`) were blocked and
+  the stack aborted. Enabled the `health_check` extension on :13133 and switched
+  dependents to `service_started` (observability must not gate the app).
 
 ## [v1.10.0] — 2026-05-31
 
