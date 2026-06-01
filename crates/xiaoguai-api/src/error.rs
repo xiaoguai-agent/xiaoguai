@@ -72,6 +72,20 @@ pub enum ApiError {
         error: Option<UnauthorizedReason>,
         description: Option<String>,
     },
+    /// 403 Forbidden — the request's bearer token authenticated, but did
+    /// not carry the OAuth-style scope required by the route. Rendered
+    /// with the api-contract §1.6 nested envelope:
+    ///
+    /// ```json
+    /// {"error":{"code":"scope_required",
+    ///           "message":"missing required scope: <slug>",
+    ///           "details":{"scope":"<slug>"}}}
+    /// ```
+    ///
+    /// Sprint-14 S14-1 (DEC-HLD-018). Constructed via
+    /// [`ApiError::scope_required`].
+    #[error("missing required scope: {scope}")]
+    ScopeRequired { scope: &'static str },
     #[error("bad request: {0}")]
     BadRequest(String),
     #[error("invalid request: {0}")]
@@ -128,6 +142,14 @@ impl ApiError {
             description: Some(description.into()),
         }
     }
+
+    /// Shorthand: bearer token authenticated but did not carry the
+    /// scope required by the route. Renders as 403 with the
+    /// api-contract §1.6 nested envelope (see [`Self::ScopeRequired`]).
+    #[must_use]
+    pub fn scope_required(scope: &'static str) -> Self {
+        Self::ScopeRequired { scope }
+    }
 }
 
 /// Escape `"` and `\` in a `WWW-Authenticate` quoted-string value.
@@ -173,9 +195,41 @@ struct ErrorBody<'a> {
     message: String,
 }
 
+/// Nested envelope variant used by [`ApiError::ScopeRequired`] — matches
+/// api-contract §1.6 `{"error":{"code","message","details"}}`. Sprint-14
+/// S14-1 introduces this shape for new error codes; existing 4xx error
+/// codes keep the flat [`ErrorBody`] shape until a broader migration
+/// (out of scope for this sprint).
+#[derive(Serialize)]
+struct NestedErrorBody<'a> {
+    error: NestedErrorInner<'a>,
+}
+
+#[derive(Serialize)]
+struct NestedErrorInner<'a> {
+    code: &'a str,
+    message: String,
+    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
+    details: serde_json::Value,
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         match self {
+            // Sprint-14 S14-1: nested envelope per api-contract §1.6.
+            // BREAKING vs sprint-13's flat
+            // `{"error":"forbidden","required_scope":"..."}` shape.
+            Self::ScopeRequired { scope } => {
+                let message = format!("missing required scope: {scope}");
+                let body = Json(NestedErrorBody {
+                    error: NestedErrorInner {
+                        code: "scope_required",
+                        message,
+                        details: serde_json::json!({ "scope": scope }),
+                    },
+                });
+                (StatusCode::FORBIDDEN, body).into_response()
+            }
             Self::Unauthorized {
                 realm,
                 ref error,
@@ -244,9 +298,10 @@ impl IntoResponse for ApiError {
                             "agent failure".to_string(),
                         )
                     }
-                    // Unauthorized arm is handled above; this branch is
-                    // unreachable but required for exhaustiveness.
-                    Self::Unauthorized { .. } => unreachable!(),
+                    // Unauthorized + ScopeRequired arms are handled
+                    // above; these branches are unreachable but required
+                    // for exhaustiveness.
+                    Self::Unauthorized { .. } | Self::ScopeRequired { .. } => unreachable!(),
                 };
                 (status, Json(ErrorBody { code, message })).into_response()
             }
@@ -494,5 +549,32 @@ mod tests {
         let resp = err.into_response();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert!(resp.headers().get(header::WWW_AUTHENTICATE).is_none());
+    }
+
+    // ── ScopeRequired (sprint-14 S14-1) — nested envelope ────────────────
+
+    #[tokio::test]
+    async fn scope_required_renders_nested_envelope() {
+        use axum::body::to_bytes;
+        let err = ApiError::scope_required("hotl:decide");
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let bytes = to_bytes(resp.into_body(), 1024).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["error"]["code"], "scope_required");
+        assert_eq!(v["error"]["details"]["scope"], "hotl:decide");
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains("hotl:decide"),
+            "message should include the scope: {v}"
+        );
+    }
+
+    #[test]
+    fn scope_required_constructor_carries_scope() {
+        let err = ApiError::scope_required("hotl:policy:write");
+        match err {
+            ApiError::ScopeRequired { scope } => assert_eq!(scope, "hotl:policy:write"),
+            other => panic!("wrong variant: {other:?}"),
+        }
     }
 }

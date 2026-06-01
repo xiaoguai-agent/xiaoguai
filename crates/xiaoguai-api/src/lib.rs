@@ -16,6 +16,7 @@ pub mod hotl;
 pub mod incidents;
 pub mod marketplace;
 pub mod mcp_serve;
+pub mod middleware;
 pub mod outcomes;
 pub mod rate_limit;
 pub mod rbac;
