@@ -564,7 +564,10 @@ mod tests {
         assert_eq!(v["error"]["code"], "scope_required");
         assert_eq!(v["error"]["details"]["scope"], "hotl:decide");
         assert!(
-            v["error"]["message"].as_str().unwrap().contains("hotl:decide"),
+            v["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("hotl:decide"),
             "message should include the scope: {v}"
         );
     }
