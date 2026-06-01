@@ -36,7 +36,7 @@ cargo run -p xiaoguai-cli -- remote \
 ## Bare-metal install (v1.1.6)
 
 For deployments that don't run Docker, every `v*` tag publishes
-release tarballs alongside the container image:
+bare-metal release tarballs:
 
 ```
 xiaoguai-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz

@@ -53,7 +53,6 @@ admin console, see [`docs/user-guide/quickstart.md`](docs/user-guide/quickstart.
 | Debian / Ubuntu (amd64) | Download `xiaoguai_*.deb` from the [latest release](https://github.com/xiaoguai-agent/xiaoguai/releases/latest) and `sudo dpkg -i xiaoguai_*.deb` |
 | RHEL / Fedora (amd64) | Download `xiaoguai-*.rpm` from the same release and `sudo rpm -i xiaoguai-*.rpm` |
 | Linux tarball (amd64 / arm64, glibc 2.31+) | Download `xiaoguai-*-linux-gnu.tar.xz`, extract, and place `xiaoguai` on `$PATH` |
-| Container (any Linux) | `docker pull ghcr.io/xiaoguai-agent/xiaoguai:latest` |
 | Build from source | `cargo install --path crates/xiaoguai-cli --locked` |
 
 The sandboxed code-execution MCP server (`xiaoguai-mcp-exec`) ships as a
