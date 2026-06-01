@@ -75,7 +75,12 @@ RUN pnpm install --frozen-lockfile
 COPY frontend/shared    ./shared
 COPY frontend/admin-ui  ./admin-ui
 COPY frontend/chat-ui   ./chat-ui
-RUN pnpm -r build
+# Build shared first (the apps import it), then each app. admin-ui is built
+# with VITE_BASE=/admin/ so it can be served under /admin/ alongside chat-ui
+# at / by xiaoguai-core's static-UI server. chat-ui keeps the default base `/`.
+RUN pnpm --filter @xiaoguai/shared build \
+ && pnpm --filter @xiaoguai/chat-ui build \
+ && VITE_BASE=/admin/ pnpm --filter @xiaoguai/admin-ui build
 
 # ── stage 4: cook deps + compile binaries ────────────────────────────────────
 FROM chef AS builder
@@ -118,15 +123,22 @@ WORKDIR /app
 COPY --from=builder /xiaoguai-core /usr/local/bin/xiaoguai-core
 COPY --from=builder /xiaoguai      /usr/local/bin/xiaoguai
 
-# Frontend static assets served by xiaoguai-core's embedded file server.
-COPY --from=frontend /app/admin-ui/dist ./static/admin-ui
+# Frontend static assets. xiaoguai-core serves these when
+# XIAOGUAI_SERVER__STATIC_DIR points at this dir (set below): chat-ui at /,
+# admin-ui at /admin/.
 COPY --from=frontend /app/chat-ui/dist  ./static/chat-ui
+COPY --from=frontend /app/admin-ui/dist ./static/admin-ui
 
 # Defaults overridden via env (XIAOGUAI_*) or a mounted config.yaml.
 ENV RUST_LOG=info,sqlx=warn
+# Serve the bundled web UI out of the box. Set XIAOGUAI_SERVER__STATIC_DIR=""
+# to run API-only.
+ENV XIAOGUAI_SERVER__STATIC_DIR=/app/static
 
 USER nonroot:nonroot
-EXPOSE 8080
+# The server binds the config port (default 7600; see server.port /
+# XIAOGUAI_SERVER__PORT). EXPOSE is documentation only.
+EXPOSE 7600
 
 ENTRYPOINT ["/usr/local/bin/xiaoguai-core"]
 CMD ["serve"]

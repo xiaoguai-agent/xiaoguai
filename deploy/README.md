@@ -10,17 +10,21 @@ v1.0 adds Helm + bare-metal tarball.
 docker compose -f deploy/docker-compose.yml up --build
 
 # in another terminal — first chat:
-curl http://localhost:8080/healthz       # → ok
-curl -X POST http://localhost:8080/v1/sessions \
+curl http://localhost:7600/healthz       # → ok
+curl -X POST http://localhost:7600/v1/sessions \
   -H 'content-type: application/json' \
   -d '{"user_id":"usr_dev","tenant_id":"ten_dev","model":"mock"}'
 ```
+
+The compose image bundles the web UI: open **http://localhost:7600/** for
+chat-ui and **http://localhost:7600/admin/** for the admin console (the
+server serves them from `/app/static` via `XIAOGUAI_SERVER__STATIC_DIR`).
 
 Or with the bundled CLI (assumes a local Rust toolchain):
 
 ```bash
 cargo run -p xiaoguai-cli -- remote \
-  --server http://localhost:8080 \
+  --server http://localhost:7600 \
   chat --user-id usr_dev --tenant-id ten_dev --prompt 'hello'
 ```
 

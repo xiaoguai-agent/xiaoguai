@@ -772,9 +772,10 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                 settings.server.host, settings.server.port
             )
         })?;
-    let (local, fut) = serve_with_state_and_extras(addr, state, im_router)
-        .await
-        .context("bind api")?;
+    let (local, fut) =
+        serve_with_state_and_extras(addr, state, im_router, settings.server.static_dir.clone())
+            .await
+            .context("bind api")?;
     tracing::info!(%local, "serve: api listening");
 
     // v1.1.6.2: notify systemd that all subsystems are up (Type=notify).
@@ -1039,6 +1040,7 @@ async fn serve_with_state_and_extras(
     addr: std::net::SocketAddr,
     state: xiaoguai_api::AppState,
     extra: Option<axum::Router>,
+    static_dir: Option<String>,
 ) -> Result<(
     std::net::SocketAddr,
     impl std::future::Future<Output = std::io::Result<()>>,
@@ -1048,6 +1050,22 @@ async fn serve_with_state_and_extras(
     let mut app = xiaoguai_api::router(state);
     if let Some(r) = extra {
         app = app.merge(r);
+    }
+
+    // Optional web-UI serving (chat-ui at `/`, admin-ui at `/admin/`). Only
+    // when `server.static_dir` is set AND exists; otherwise the server stays
+    // API-only. Mounted after the API router so `/v1` + `/healthz` win.
+    if let Some(dir) = static_dir {
+        let path = std::path::Path::new(&dir);
+        if path.is_dir() {
+            app = xiaoguai_api::static_ui::mount_static_ui(app, path);
+            tracing::info!(static_dir = %dir, "serve: web UI mounted (chat-ui at /, admin-ui at /admin)");
+        } else {
+            tracing::warn!(
+                static_dir = %dir,
+                "serve: server.static_dir is set but not a directory; serving API only"
+            );
+        }
     }
 
     // v1.2.11: Prometheus + OTLP telemetry.
