@@ -115,13 +115,13 @@ impl ScopeName for HotlDecide {
     const VALUE: &'static str = "hotl:decide";
 }
 
-/// Scope slug for reading per-tenant HotL redaction policies (S14-3+).
+/// Scope slug for reading per-tenant `HotL` redaction policies (S14-3+).
 pub struct HotlPolicyRead;
 impl ScopeName for HotlPolicyRead {
     const VALUE: &'static str = "hotl:policy:read";
 }
 
-/// Scope slug for mutating per-tenant HotL redaction policies (S14-3+).
+/// Scope slug for mutating per-tenant `HotL` redaction policies (S14-3+).
 pub struct HotlPolicyWrite;
 impl ScopeName for HotlPolicyWrite {
     const VALUE: &'static str = "hotl:policy:write";
