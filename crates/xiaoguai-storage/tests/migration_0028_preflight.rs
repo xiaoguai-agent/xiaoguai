@@ -148,7 +148,7 @@ async fn migration_0028_applies_cleanly_on_post_0027_snapshot() {
 
     // ---- 6. tenant_settings has the new column with the right default. --
     pool.execute_unprepared(
-        "INSERT INTO tenants (id, name) VALUES ('preflight-tenant', 'preflight-tenant')",
+        "INSERT INTO tenants (id, name, display_name) VALUES ('preflight-tenant', 'preflight-tenant', 'preflight-tenant')",
     )
     .await
     .expect("seed tenants row");

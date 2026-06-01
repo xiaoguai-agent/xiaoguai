@@ -458,7 +458,7 @@ async fn tenant_settings_redaction_required_default_false() {
     // there and defaults correctly.
     let pool = start_pg().await;
     // Insert a tenant row (FK target).
-    pool.execute("INSERT INTO tenants (id, name) VALUES ('t1', 't1')")
+    pool.execute("INSERT INTO tenants (id, name, display_name) VALUES ('t1', 't1', 't1')")
         .await
         .expect("seed tenant");
     pool.execute("INSERT INTO tenant_settings (tenant_id) VALUES ('t1')")

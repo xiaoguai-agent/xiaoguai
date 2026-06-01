@@ -39,6 +39,19 @@
 //! the `tenant_id` explicitly. The repo therefore uses the raw pool for
 //! mutations, consistent with `HotlEscalationStore` in
 //! `repositories/hotl_escalations.rs`.
+//!
+//! Because RLS is *enabled* (not `FORCE`d), the raw-pool mutations only
+//! work when the connection's DB role owns the table or carries
+//! `BYPASSRLS`. The `USING (tenant_id = current_setting('app.current_tenant_id'))`
+//! predicate evaluates to NULL when the GUC is unset, so a least-privilege
+//! (non-owner) app role would silently see zero rows / rejected writes
+//! here. The default dev role (`xiaoguai`, the schema owner) and the CI
+//! Postgres (`postgres`) both satisfy this. Deployments that run the API
+//! under a non-owner role must either grant `BYPASSRLS` to that role or
+//! set `app.current_tenant_id` on the connection before calling these
+//! mutations. This is a known constraint shared with `HotlEscalationStore`;
+//! tightening it to a tenant-GUC-on-every-mutation model is tracked for a
+//! later sprint.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
