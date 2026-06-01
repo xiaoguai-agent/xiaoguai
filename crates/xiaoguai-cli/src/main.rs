@@ -683,7 +683,7 @@ enum ProviderCmd {
         #[arg(long)]
         name: String,
         /// One of: `ollama`, `openai_compat`, `anthropic`, `gemini`, `bedrock`,
-        /// `azure_openai`, `mistral`, `groq`.
+        /// `azure_openai`, `mistral`, `groq`, `minimax`.
         #[arg(long)]
         kind: String,
         #[arg(long)]

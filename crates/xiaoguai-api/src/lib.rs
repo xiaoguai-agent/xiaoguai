@@ -27,6 +27,7 @@ pub mod skill_proposals;
 pub mod skills;
 pub mod sse;
 pub mod state;
+pub mod static_ui;
 pub mod today;
 pub mod usage;
 pub mod watchers;

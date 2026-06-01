@@ -14,6 +14,13 @@ server:
   # the service with a reverse proxy on the same host.
   host: 0.0.0.0
   port: 7600
+  # Optional: directory holding the built web UIs. When set (and present),
+  # the server serves chat-ui at / and admin-ui at /admin/ from
+  # <static_dir>/chat-ui and <static_dir>/admin-ui. Leave unset for an
+  # API-only server. The container image bundles them at /app/static and
+  # sets this automatically (XIAOGUAI_SERVER__STATIC_DIR). admin-ui must be
+  # built with Vite base "/admin/" (the image build does this).
+  # static_dir: /app/static
 
 database:
   # Postgres connection string. The service applies the bundled migrations

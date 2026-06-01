@@ -137,6 +137,9 @@ services:
     environment:
       XIAOGUAI_SERVER__HOST: 0.0.0.0
       XIAOGUAI_SERVER__PORT: "7600"
+      # Serve the bundled web UI (chat-ui at /, admin-ui at /admin/) baked into
+      # the image at /app/static. Set to "" for an API-only server.
+      XIAOGUAI_SERVER__STATIC_DIR: /app/static
       XIAOGUAI_DATABASE__URL: postgres://xiaoguai:xiaoguai@postgres:5432/xiaoguai
       XIAOGUAI_CACHE__URL: redis://valkey:6379
       # v0.6 ships MockBackend by default; v0.6.1 will wire LlmRouter.
