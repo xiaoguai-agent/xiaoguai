@@ -208,7 +208,11 @@ jobs:
       - name: Install slsa-verifier
         run: |
           # Pin to a known-good release; bump deliberately.
-          VERSION=v2.6.0
+          # v2.7.0 added "handle dssev001 tlog entry types" (PR #799); v2.6.0
+          # rejected the generator's DSSE Rekor entries with
+          # "unexpected tlog entry type: expected intoto:0.0.2, got dsse:0.0.1",
+          # which failed verify-provenance and skipped the publish job.
+          VERSION=v2.7.1
           curl -fsSL \
             "https://github.com/slsa-framework/slsa-verifier/releases/download/${VERSION}/slsa-verifier-linux-amd64" \
             -o /usr/local/bin/slsa-verifier
