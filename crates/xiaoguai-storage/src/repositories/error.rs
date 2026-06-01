@@ -1,6 +1,7 @@
 //! Shared error type for all repository operations.
 
 use thiserror::Error;
+use uuid::Uuid;
 
 #[derive(Debug, Error)]
 pub enum RepoError {
@@ -28,6 +29,15 @@ pub enum RepoError {
     /// production `PgSessionRepository` implements the real copy.
     #[error("unsupported: {0}")]
     Unsupported(String),
+
+    /// sprint-14 S14-2: a `supersede_policy` attempt found the prior row
+    /// no longer at the head of its revision chain. `current_head_id` is
+    /// the active head id at the time of the check (or the prior id
+    /// itself when the prior was deactivated without supersede).
+    /// The admin API surfaces this as HTTP 409 with the head id in the
+    /// response body so the operator can rebase and retry.
+    #[error("stale revision; current head is {current_head_id}")]
+    StaleRevision { current_head_id: Uuid },
 }
 
 pub type RepoResult<T> = Result<T, RepoError>;

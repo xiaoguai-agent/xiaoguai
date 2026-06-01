@@ -21,7 +21,9 @@ pub use hotl_escalations::{
     HotlDecisionVerdict, HotlEscalationRow, HotlEscalationStore, HotlPendingRow,
     PgHotlEscalationRepository,
 };
-pub use hotl_redaction::{HotlRedactionRepo, PgHotlRedactionRepo, RedactionPolicyRow};
+pub use hotl_redaction::{
+    HotlRedactionRepo, PgHotlRedactionRepo, RedactionPolicyRow, SupersedeFields,
+};
 pub use im::{
     ExternalConversation, ExternalIdentity, ImConversation, ImIdentity, ImIdentityRepository,
     PgImIdentityRepository,
