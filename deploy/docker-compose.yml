@@ -65,12 +65,12 @@ services:
     image: otel/opentelemetry-collector-contrib:latest
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:13133/ || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 10s
+    # No container healthcheck: the collector-contrib image is distroless
+    # (no shell / wget), so a CMD-SHELL probe can never run and the container
+    # would sit "unhealthy" forever — which previously blocked every dependent
+    # (xiaoguai-core, prometheus) from starting via `condition: service_healthy`.
+    # The collector exposes a health_check extension on :13133 for manual /
+    # prometheus probing; dependents wait on `service_started` instead.
 
   # ---------- wave-3: Prometheus ----------
 
@@ -81,7 +81,7 @@ services:
       - prometheus_data:/prometheus
     depends_on:
       otel-collector:
-        condition: service_healthy
+        condition: service_started
     ports:
       # Bind to localhost only in dev for safety.
       - "127.0.0.1:9090:9090"
@@ -130,7 +130,10 @@ services:
       redis:
         condition: service_healthy
       otel-collector:
-        condition: service_healthy
+        # Observability must not gate the core app — telemetry export is
+        # best-effort and retried. `service_started` (not `service_healthy`)
+        # so the collector being slow/unhealthy never blocks xiaoguai-core.
+        condition: service_started
     environment:
       XIAOGUAI_SERVER__HOST: 0.0.0.0
       XIAOGUAI_SERVER__PORT: "7600"
