@@ -215,14 +215,13 @@ jobs:
           chmod +x /usr/local/bin/slsa-verifier
 
       - name: Verify provenance for x86_64 tarball
-        env:
-          TARBALL: dist/xiaoguai-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
         run: |
-          # Strip leading 'v' for filename match if needed; the tarball script
-          # uses the bare semver in the filename.
-          VERSION="${{ github.ref_name }}"
-          VERSION_BARE="${VERSION#v}"
-          TARBALL="dist/xiaoguai-${VERSION_BARE}-x86_64-unknown-linux-gnu.tar.gz"
+          # build-tarball.sh names the artifact `xiaoguai-v${VERSION}-<target>.tar.gz`
+          # i.e. the tag ref_name (WITH its leading 'v') — e.g. xiaoguai-v1.10.0-...
+          # The earlier code stripped the 'v' and looked for xiaoguai-1.10.0-...,
+          # which never existed → "no such file" + digest-mismatch, skipping the
+          # publish job. Use ref_name verbatim so it matches the built filename.
+          TARBALL="dist/xiaoguai-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz"
           slsa-verifier verify-artifact "${TARBALL}" \
             --provenance-path "dist/${{ needs.provenance.outputs.provenance-name }}" \
             --source-uri "github.com/xiaoguai-agent/xiaoguai" \
@@ -281,7 +280,8 @@ jobs:
             # Download the tarball + certificate + signature
             VERSION="${{ github.ref_name }}"
             ARCH=x86_64-unknown-linux-gnu   # or aarch64-unknown-linux-gnu
-            BASE="xiaoguai-${VERSION#v}-${ARCH}"
+            # Filenames keep the tag's leading 'v' (build-tarball.sh: xiaoguai-v${VERSION}-...)
+            BASE="xiaoguai-${VERSION}-${ARCH}"
 
             cosign verify-blob \
               --certificate  "${BASE}.tar.gz.pem" \
