@@ -36,6 +36,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Format check
         run: cargo fmt --check
+      - name: Lint — forbid inline scope gates (sprint-14 S14-1)
+        run: bash tools/lint-scope-gates.sh
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Build
