@@ -33,5 +33,11 @@ jsonpath_lib = "0.3"
 mockito = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
+[[bin]]
+# sprint-14 S14-2: canonical JSONPath redaction fixtures shared between
+# backend tests and the S14-6 frontend parity test.
+name = "jsonpath-fixture-gen"
+path = "src/bin/jsonpath-fixture-gen.rs"
+
 [lints]
 workspace = true
