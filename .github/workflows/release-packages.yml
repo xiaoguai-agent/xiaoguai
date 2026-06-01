@@ -96,15 +96,17 @@ jobs:
       - name: Install cargo-deb
         run: cargo install cargo-deb --locked --version ${{ env.CARGO_DEB_VERSION }}
 
-      # --no-build: binaries already built above.
-      # -p xiaoguai-cli: the package that carries the [package.metadata.deb] config.
-      # cargo-deb writes to target/debian/ by default; copy into dist/.
-      # (`--output dist/` exited 1 — the dir didn't exist and the trailing
-      # slash wasn't created, so there was nowhere to write the .deb.)
+      # Run from the package dir so CWD == the manifest dir. cargo-deb resolves
+      # `assets` relative to the manifest dir but `extended-description-file`
+      # relative to CWD; running here makes both bases identical, so every
+      # `../../<repo-root-file>` path resolves consistently (a root-CWD run
+      # failed: "unable to read extended description from file: ../../README.md").
+      # --no-build: binaries already built above. cargo-deb writes to the
+      # workspace target/debian/; copy into dist/.
       - name: Build .deb
         run: |
           mkdir -p dist
-          cargo deb -p xiaoguai-cli --no-build
+          (cd crates/xiaoguai-cli && cargo deb --no-build)
           cp target/debian/*.deb dist/
 
       - name: List dist/
