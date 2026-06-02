@@ -15,6 +15,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v1.10.3] — 2026-06-02
+
+Web-UI provider management + dependency refresh. The install artifacts
+(.deb/.rpm/tarball) carry the new admin Providers pane.
+
+### Added
+- **Configure LLM providers from the admin UI** (#178). The Providers pane
+  (previously a stub) is now a working form: register a **local model URL**
+  (Ollama / any OpenAI-compatible server) or a **hosted API** (MiniMax, Zhipu,
+  OpenAI/codex, DeepSeek, …) with the API key entered in the browser.
+  - Backend: `LlmProvider.api_key` stored in the DB (migration
+    `0028_llm_provider_api_key.sql`); `GET/POST/DELETE /v1/admin/providers`.
+    The router prefers a stored `api_key` over the `api_key_env` env-var
+    indirection — seeded providers keep working unchanged. The stored key is
+    never returned (`has_api_key` only).
+  - Caveat: the LLM router is built at boot, so a newly added/removed provider
+    takes effect on the next server restart.
+
+### Changed
+- Removed the cargo-dist release workflow (#177) — it required the workspace
+  version to equal the tag, incompatible with this repo's git-tag versioning,
+  and duplicated the native `.deb`/`.rpm` + tarball.
+- Dependency bumps (#162–172): react-router-dom 6→7, TypeScript 5.9→6.0,
+  react-syntax-highlighter 15→16, happy-dom 15→20, i18next 26.2→26.3, the
+  cargo minor/patch group, and several GitHub Action bumps.
+
 ## [v1.10.2] — 2026-06-02
 
 Web UI ships in the install packages, plus the first release where the whole
