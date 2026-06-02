@@ -41,11 +41,19 @@ impl RepoError {
                 .code()
                 .map(std::borrow::Cow::into_owned)
                 .unwrap_or_default();
-            // Postgres SQLSTATE codes
+            let msg = db_err.message();
+            // SQLite extended result codes for constraint violations.
             match code.as_str() {
-                "23505" => return Self::DuplicateKey(db_err.message().to_string()),
-                "23503" => return Self::ForeignKey(db_err.message().to_string()),
+                "2067" | "1555" => return Self::DuplicateKey(msg.to_string()),
+                "787" => return Self::ForeignKey(msg.to_string()),
                 _ => {}
+            }
+            // Message-text fallback (builds that report only primary code 19).
+            if msg.contains("UNIQUE constraint failed") {
+                return Self::DuplicateKey(msg.to_string());
+            }
+            if msg.contains("FOREIGN KEY constraint failed") {
+                return Self::ForeignKey(msg.to_string());
             }
         }
         if matches!(err, sqlx::Error::RowNotFound) {

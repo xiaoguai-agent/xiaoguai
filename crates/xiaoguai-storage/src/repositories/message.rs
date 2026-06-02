@@ -9,7 +9,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{types::Json, FromRow, PgPool};
+use sqlx::{types::Json, FromRow, SqlitePool};
 use xiaoguai_types::{ContentBlock, Message, MessageId, MessageRole, SessionId};
 
 use crate::repositories::error::{RepoError, RepoResult};
@@ -31,12 +31,12 @@ pub trait MessageRepository: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct PgMessageRepository {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgMessageRepository {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
@@ -89,7 +89,7 @@ impl MessageRepository for PgMessageRepository {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         sqlx::query(
             "INSERT INTO messages (id, session_id, role, content, created_at)
-             VALUES ($1, $2, $3, $4, $5)",
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(message.id.as_str())
         .bind(message.session_id.as_str())
@@ -119,9 +119,9 @@ impl MessageRepository for PgMessageRepository {
         let rows: Vec<MessageRow> = sqlx::query_as(
             "SELECT id, session_id, role, content, created_at
              FROM messages
-             WHERE session_id = $1
+             WHERE session_id = ?
              ORDER BY created_at ASC, id ASC
-             LIMIT $2 OFFSET $3",
+             LIMIT ? OFFSET ?",
         )
         .bind(session_id)
         .bind(limit)
@@ -136,7 +136,7 @@ impl MessageRepository for PgMessageRepository {
     async fn count_by_session(&self, tenant: Option<&str>, session_id: &str) -> RepoResult<i64> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         let (count,): (i64,) =
-            sqlx::query_as("SELECT count(*) FROM messages WHERE session_id = $1")
+            sqlx::query_as("SELECT count(*) FROM messages WHERE session_id = ?")
                 .bind(session_id)
                 .fetch_one(&mut *tx)
                 .await
@@ -147,7 +147,7 @@ impl MessageRepository for PgMessageRepository {
 
     async fn delete_by_session(&self, tenant: Option<&str>, session_id: &str) -> RepoResult<u64> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
-        let result = sqlx::query("DELETE FROM messages WHERE session_id = $1")
+        let result = sqlx::query("DELETE FROM messages WHERE session_id = ?")
             .bind(session_id)
             .execute(&mut *tx)
             .await
