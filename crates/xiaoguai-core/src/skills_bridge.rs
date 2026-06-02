@@ -12,24 +12,24 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use xiaoguai_api::skills::{InstalledPackRow, SkillPackError, SkillPackRepository};
 
 // ── struct ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct PgSkillPackRepository {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgSkillPackRepository {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
     #[must_use]
-    pub fn arc(pool: PgPool) -> Arc<dyn SkillPackRepository> {
+    pub fn arc(pool: SqlitePool) -> Arc<dyn SkillPackRepository> {
         Arc::new(Self::new(pool))
     }
 }
@@ -39,21 +39,23 @@ fn pg_err(e: sqlx::Error) -> SkillPackError {
     SkillPackError::Backend(e.to_string())
 }
 
-/// Detect PG `unique_violation` (SQLSTATE 23505).
+/// Detect a SQLite `UNIQUE constraint failed` violation.
 fn is_unique_violation(e: &sqlx::Error) -> bool {
     if let sqlx::Error::Database(db) = e {
-        // sqlx exposes the SQLSTATE code via `code()`.
-        return db.code().as_deref() == Some("23505");
+        return db.message().contains("UNIQUE constraint failed");
     }
     false
 }
 
 // ── DB row shape ──────────────────────────────────────────────────────────────
+//
+// DEC-033: `installed_skill_packs.tenant_id` column dropped. The domain
+// `InstalledPackRow` keeps a `tenant_id: String` field, synthesized to the
+// owner id on read.
 
 #[derive(sqlx::FromRow)]
 struct PackRow {
     id: String,
-    tenant_id: String,
     pack_slug: String,
     version: String,
     config: serde_json::Value,
@@ -64,7 +66,7 @@ impl From<PackRow> for InstalledPackRow {
     fn from(r: PackRow) -> Self {
         Self {
             id: r.id,
-            tenant_id: r.tenant_id,
+            tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
             pack_slug: r.pack_slug,
             version: r.version,
             config: r.config,
@@ -78,13 +80,13 @@ impl From<PackRow> for InstalledPackRow {
 #[async_trait]
 impl SkillPackRepository for PgSkillPackRepository {
     async fn list(&self, tenant_id: &str) -> Result<Vec<InstalledPackRow>, SkillPackError> {
+        // DEC-033: tenant_id column dropped; vestigial param ignored.
+        let _ = tenant_id;
         let rows: Vec<PackRow> = sqlx::query_as(
-            "SELECT id::TEXT, tenant_id::TEXT, pack_slug, version, config, installed_at \
+            "SELECT id, pack_slug, version, config, installed_at \
              FROM installed_skill_packs \
-             WHERE tenant_id = $1::UUID \
              ORDER BY installed_at ASC",
         )
-        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await
         .map_err(pg_err)?;
@@ -93,13 +95,13 @@ impl SkillPackRepository for PgSkillPackRepository {
     }
 
     async fn install(&self, row: InstalledPackRow) -> Result<InstalledPackRow, SkillPackError> {
+        // DEC-033: tenant_id column dropped from installed_skill_packs.
         let result = sqlx::query(
             "INSERT INTO installed_skill_packs \
-                (id, tenant_id, pack_slug, version, config, installed_at) \
-             VALUES ($1::UUID, $2::UUID, $3, $4, $5, $6)",
+                (id, pack_slug, version, config, installed_at) \
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(&row.id)
-        .bind(&row.tenant_id)
         .bind(&row.pack_slug)
         .bind(&row.version)
         .bind(&row.config)
@@ -115,7 +117,7 @@ impl SkillPackRepository for PgSkillPackRepository {
     }
 
     async fn uninstall(&self, id: &str) -> Result<(), SkillPackError> {
-        let result = sqlx::query("DELETE FROM installed_skill_packs WHERE id = $1::UUID")
+        let result = sqlx::query("DELETE FROM installed_skill_packs WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
             .await

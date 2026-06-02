@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use xiaoguai_memory::{
     EmbeddingProvider, InMemoryEmbedder, MemoryStore, OllamaEmbedder, PgMemoryStore,
 };
@@ -51,7 +51,7 @@ impl EmbedderChoice {
 /// Returned as a trait object so `AppState.memory_store` stays backend-agnostic;
 /// flipping `/v1/memories` from 503 to live.
 #[must_use]
-pub fn build_memory_store(pool: PgPool) -> Arc<dyn MemoryStore> {
+pub fn build_memory_store(pool: SqlitePool) -> Arc<dyn MemoryStore> {
     let host = std::env::var("OLLAMA_HOST").ok();
     let choice = EmbedderChoice::from_ollama_host(host.as_deref());
     tracing::info!(?choice, "memory: selected embedding backend");

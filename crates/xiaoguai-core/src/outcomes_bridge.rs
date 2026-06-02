@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use xiaoguai_api::outcomes::{
     OutcomeWriter, OutcomesApiError, OutcomesReader, RecordOutcomeRequest,
 };
@@ -24,19 +24,19 @@ use xiaoguai_audit::outcomes::{Aggregate, OutcomeDay, OutcomeRange, OutcomeSumma
 
 #[derive(Debug, Clone)]
 pub struct PgOutcomesBackend {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgOutcomesBackend {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
     /// Convenience: return as `Arc<Self>` so it can be split into two typed
     /// `Arc<dyn ...>` in `AppState` by cloning the inner `Arc`.
     #[must_use]
-    pub fn arc(pool: PgPool) -> Arc<Self> {
+    pub fn arc(pool: SqlitePool) -> Arc<Self> {
         Arc::new(Self::new(pool))
     }
 }
@@ -67,19 +67,22 @@ impl OutcomeWriter for PgOutcomesBackend {
         let metadata =
             serde_json::to_value(&req.metadata).unwrap_or_else(|_| serde_json::json!({}));
 
+        // DEC-033: tenant_id column dropped. metadata is stored as TEXT;
+        // serialize the JSON value to a string for the bind.
+        let _ = &req.tenant_id;
+        let metadata_str = serde_json::to_string(&metadata).unwrap_or_else(|_| "{}".to_string());
         sqlx::query(
             "INSERT INTO agent_outcomes \
-                (tenant_id, session_id, agent_name, kind, value, unit, description, metadata) \
-             VALUES ($1::UUID, $2::UUID, $3, $4, $5, $6, $7, $8)",
+                (session_id, agent_name, kind, value, unit, description, metadata) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(&req.tenant_id)
         .bind(&req.session_id)
         .bind(&req.agent_name)
         .bind(&req.kind)
         .bind(req.value)
         .bind(&req.unit)
         .bind(&req.description)
-        .bind(&metadata)
+        .bind(&metadata_str)
         .execute(&self.pool)
         .await
         .map_err(pg_err)?;
@@ -112,18 +115,19 @@ impl OutcomesReader for PgOutcomesBackend {
         tenant_id: &str,
         range: OutcomeRange,
     ) -> Result<OutcomeSummary, OutcomesApiError> {
+        // DEC-033: tenant_id column dropped; vestigial param ignored.
+        // since/until are each referenced twice → numbered binds required.
+        let _ = tenant_id;
         let rows: Vec<SummaryRow> = sqlx::query_as(
             "SELECT kind, \
-                    COALESCE(SUM(value), 0.0)::FLOAT8 AS total, \
-                    COUNT(*)::BIGINT AS cnt \
+                    COALESCE(SUM(value), 0.0) AS total, \
+                    COUNT(*) AS cnt \
              FROM agent_outcomes \
-             WHERE tenant_id = $1::UUID \
-               AND ($2::TIMESTAMPTZ IS NULL OR attributed_at >= $2) \
-               AND ($3::TIMESTAMPTZ IS NULL OR attributed_at <= $3) \
+             WHERE (?1 IS NULL OR attributed_at >= ?1) \
+               AND (?2 IS NULL OR attributed_at <= ?2) \
              GROUP BY kind \
              ORDER BY kind",
         )
-        .bind(tenant_id)
         .bind(range.since)
         .bind(range.until)
         .fetch_all(&self.pool)
@@ -157,20 +161,23 @@ impl OutcomesReader for PgOutcomesBackend {
         kind: Option<&str>,
         range: OutcomeRange,
     ) -> Result<Vec<OutcomeDay>, OutcomesApiError> {
+        // DEC-033: tenant_id dropped. `attributed_at` is stored as the
+        // SQLite datetime('now') text format ("YYYY-MM-DD HH:MM:SS"), so
+        // substr(.,1,10) yields the day bucket. kind/since/until each
+        // referenced twice → numbered binds.
+        let _ = tenant_id;
         let rows: Vec<TimeseriesRow> = sqlx::query_as(
-            "SELECT to_char(attributed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date, \
+            "SELECT substr(attributed_at, 1, 10) AS date, \
                     kind, \
-                    COALESCE(SUM(value), 0.0)::FLOAT8 AS total, \
-                    COUNT(*)::BIGINT AS cnt \
+                    COALESCE(SUM(value), 0.0) AS total, \
+                    COUNT(*) AS cnt \
              FROM agent_outcomes \
-             WHERE tenant_id = $1::UUID \
-               AND ($2::TEXT  IS NULL OR kind = $2) \
-               AND ($3::TIMESTAMPTZ IS NULL OR attributed_at >= $3) \
-               AND ($4::TIMESTAMPTZ IS NULL OR attributed_at <= $4) \
+             WHERE (?1 IS NULL OR kind = ?1) \
+               AND (?2 IS NULL OR attributed_at >= ?2) \
+               AND (?3 IS NULL OR attributed_at <= ?3) \
              GROUP BY date, kind \
              ORDER BY date ASC, kind ASC",
         )
-        .bind(tenant_id)
         .bind(kind)
         .bind(range.since)
         .bind(range.until)
@@ -203,15 +210,16 @@ impl OutcomesReader for PgOutcomesBackend {
             }
         }
 
+        // DEC-033: tenant_id dropped. kind/since/until each referenced
+        // twice → numbered binds.
+        let _ = tenant_id;
         let row: (Option<f64>, Option<i64>) = sqlx::query_as(
-            "SELECT SUM(value)::FLOAT8, COUNT(*)::BIGINT \
+            "SELECT SUM(value), COUNT(*) \
              FROM agent_outcomes \
-             WHERE tenant_id = $1::UUID \
-               AND ($2::TEXT  IS NULL OR kind = $2) \
-               AND ($3::TIMESTAMPTZ IS NULL OR attributed_at >= $3) \
-               AND ($4::TIMESTAMPTZ IS NULL OR attributed_at <= $4)",
+             WHERE (?1 IS NULL OR kind = ?1) \
+               AND (?2 IS NULL OR attributed_at >= ?2) \
+               AND (?3 IS NULL OR attributed_at <= ?3)",
         )
-        .bind(tenant_id)
         .bind(kind)
         .bind(range.since)
         .bind(range.until)

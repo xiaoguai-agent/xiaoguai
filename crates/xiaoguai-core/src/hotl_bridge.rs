@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 use xiaoguai_api::hotl::{
     audit::HotlAuditSink,
@@ -35,12 +35,12 @@ use xiaoguai_audit::AuditEntry;
 
 #[derive(Debug, Clone)]
 pub struct PgHotlPolicyStore {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgHotlPolicyStore {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
@@ -60,7 +60,6 @@ fn pg_err(e: sqlx::Error) -> HotlPolicyStoreError {
 #[derive(sqlx::FromRow)]
 struct PolicyRow {
     id: Uuid,
-    tenant_id: Uuid,
     scope: String,
     window_seconds: i32,
     max_count: Option<i32>,
@@ -72,7 +71,8 @@ impl From<PolicyRow> for HotlPolicy {
     fn from(r: PolicyRow) -> Self {
         Self {
             id: r.id,
-            tenant_id: r.tenant_id,
+            // DEC-033: single implicit owner; no per-tenant scoping.
+            tenant_id: Uuid::nil(),
             scope: r.scope,
             window_seconds: r.window_seconds,
             max_count: r.max_count,
@@ -90,28 +90,27 @@ impl HotlPolicyStore for PgHotlPolicyStore {
         scope: Option<&str>,
     ) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
         // Use a dynamic query to handle the optional `scope` filter cleanly.
+        // DEC-033: tenant_id column dropped; vestigial param ignored.
+        let _ = tenant_id;
         let rows: Vec<PolicyRow> = if let Some(s) = scope {
             sqlx::query_as(
-                "SELECT id, tenant_id, scope, window_seconds, \
-                        max_count, max_usd::FLOAT8, escalate_to \
+                "SELECT id, scope, window_seconds, \
+                        max_count, max_usd, escalate_to \
                  FROM hotl_policies \
-                 WHERE tenant_id = $1 AND scope = $2 \
+                 WHERE scope = ? \
                  ORDER BY created_at ASC",
             )
-            .bind(tenant_id)
             .bind(s)
             .fetch_all(&self.pool)
             .await
             .map_err(pg_err)?
         } else {
             sqlx::query_as(
-                "SELECT id, tenant_id, scope, window_seconds, \
-                        max_count, max_usd::FLOAT8, escalate_to \
+                "SELECT id, scope, window_seconds, \
+                        max_count, max_usd, escalate_to \
                  FROM hotl_policies \
-                 WHERE tenant_id = $1 \
                  ORDER BY created_at ASC",
             )
-            .bind(tenant_id)
             .fetch_all(&self.pool)
             .await
             .map_err(pg_err)?
@@ -151,13 +150,13 @@ impl HotlPolicyStore for PgHotlPolicyStore {
         }
 
         let id = Uuid::new_v4();
+        // DEC-033: tenant_id column dropped from hotl_policies.
         sqlx::query(
             "INSERT INTO hotl_policies \
-                (id, tenant_id, scope, window_seconds, max_count, max_usd, escalate_to) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                (id, scope, window_seconds, max_count, max_usd, escalate_to) \
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(id)
-        .bind(req.tenant_id)
         .bind(&req.scope)
         .bind(req.window_seconds)
         .bind(req.max_count)
@@ -179,7 +178,7 @@ impl HotlPolicyStore for PgHotlPolicyStore {
     }
 
     async fn delete(&self, id: Uuid) -> Result<(), HotlPolicyStoreError> {
-        let result = sqlx::query("DELETE FROM hotl_policies WHERE id = $1")
+        let result = sqlx::query("DELETE FROM hotl_policies WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
             .await
@@ -211,13 +210,13 @@ impl HotlPolicyStore for PgHotlPolicyStore {
 /// 5. PG error → fail-closed (Deny).
 #[derive(Debug, Clone)]
 pub struct PgHotlEnforcer {
-    pool: PgPool,
+    pool: SqlitePool,
     store: Arc<PgHotlPolicyStore>,
 }
 
 impl PgHotlEnforcer {
     #[must_use]
-    pub fn new(pool: PgPool, store: Arc<PgHotlPolicyStore>) -> Self {
+    pub fn new(pool: SqlitePool, store: Arc<PgHotlPolicyStore>) -> Self {
         Self { pool, store }
     }
 }
@@ -242,13 +241,12 @@ impl HotlEnforcer for PgHotlEnforcer {
         }
 
         // Optimistic insert before comparison (same semantics as in-memory).
-        if let Err(e) =
-            sqlx::query("INSERT INTO hotl_usage_log (tenant_id, scope, amount) VALUES ($1, $2, $3)")
-                .bind(tenant_id)
-                .bind(scope)
-                .bind(amount)
-                .execute(&self.pool)
-                .await
+        // DEC-033: tenant_id column dropped from hotl_usage_log.
+        if let Err(e) = sqlx::query("INSERT INTO hotl_usage_log (scope, amount) VALUES (?, ?)")
+            .bind(scope)
+            .bind(amount)
+            .execute(&self.pool)
+            .await
         {
             tracing::error!(?e, "HOTL usage log insert failed — fail-closed");
             return Ok(HotlVerdict::Deny(format!(
@@ -262,14 +260,14 @@ impl HotlEnforcer for PgHotlEnforcer {
             // Windowed SUM: count and cost aggregated in one query.
             // Use `$3 * interval '1 second'` to safely bind an integer
             // window_seconds without relying on string interpolation.
+            // DEC-033: tenant_id dropped. SQLite date math via datetime()
+            // string modifier; CAST to REAL so COUNT(*) decodes as f64.
             let row: (Option<f64>, Option<f64>) = match sqlx::query_as(
-                "SELECT COUNT(*)::FLOAT8, SUM(amount)::FLOAT8 \
+                "SELECT CAST(COUNT(*) AS REAL), CAST(SUM(amount) AS REAL) \
                  FROM hotl_usage_log \
-                 WHERE tenant_id = $1 \
-                   AND scope = $2 \
-                   AND occurred_at >= now() - ($3 * interval '1 second')",
+                 WHERE scope = ? \
+                   AND occurred_at >= datetime('now', '-' || ? || ' seconds')",
             )
-            .bind(tenant_id)
             .bind(scope)
             .bind(i64::from(policy.window_seconds))
             .fetch_one(&self.pool)
@@ -1001,18 +999,18 @@ fn build_reason(policy: &HotlPolicy, count: usize, sum: f64) -> String {
 
 #[derive(Debug, Clone)]
 pub struct PgHotlDecisionStore {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgHotlDecisionStore {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
     /// Box-and-Arc helper so callers in `run_serve` don't repeat the dyn coercion.
     #[must_use]
-    pub fn arc(pool: PgPool) -> Arc<dyn HotlDecisionStore> {
+    pub fn arc(pool: SqlitePool) -> Arc<dyn HotlDecisionStore> {
         Arc::new(Self::new(pool))
     }
 }
@@ -1020,10 +1018,6 @@ impl PgHotlDecisionStore {
 fn decision_pg_err(e: sqlx::Error) -> HotlDecisionStoreError {
     HotlDecisionStoreError::Other(e.to_string())
 }
-
-/// PostgreSQL `unique_violation` code, per
-/// <https://www.postgresql.org/docs/current/errcodes-appendix.html>.
-const PG_UNIQUE_VIOLATION: &str = "23505";
 
 #[async_trait]
 impl HotlDecisionStore for PgHotlDecisionStore {
@@ -1035,33 +1029,38 @@ impl HotlDecisionStore for PgHotlDecisionStore {
         decided_by: String,
         raised_policy_id: Option<Uuid>,
     ) -> Result<HotlDecisionRecord, HotlDecisionStoreError> {
+        // DEC-033: `hotl_decisions` has no tenant_id column and the
+        // idempotency column is `request_id` (UNIQUE). We bind the
+        // `escalation_id` value into `request_id`. The vestigial
+        // `tenant_id` param is ignored.
+        let _ = tenant_id;
         let id = Uuid::new_v4();
 
-        let row: (Uuid, Uuid, Uuid, String, String, Option<Uuid>, DateTime<Utc>) =
-            sqlx::query_as(
-                "INSERT INTO hotl_decisions \
-                    (id, escalation_id, tenant_id, verdict, decided_by, raised_policy_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6) \
-                 RETURNING id, escalation_id, tenant_id, verdict, decided_by, raised_policy_id, recorded_at",
-            )
-            .bind(id)
-            .bind(escalation_id)
-            .bind(tenant_id)
-            .bind(verdict.as_str())
-            .bind(&decided_by)
-            .bind(raised_policy_id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| {
-                if let sqlx::Error::Database(db_err) = &e {
-                    if db_err.code().as_deref() == Some(PG_UNIQUE_VIOLATION) {
-                        return HotlDecisionStoreError::Duplicate(escalation_id);
-                    }
+        let row: (Uuid, Uuid, String, String, Option<Uuid>, DateTime<Utc>) = sqlx::query_as(
+            "INSERT INTO hotl_decisions \
+                    (id, request_id, verdict, decided_by, raised_policy_id) \
+                 VALUES (?, ?, ?, ?, ?) \
+                 RETURNING id, request_id, verdict, decided_by, raised_policy_id, recorded_at",
+        )
+        .bind(id)
+        .bind(escalation_id)
+        .bind(verdict.as_str())
+        .bind(&decided_by)
+        .bind(raised_policy_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| {
+            // SQLite surfaces unique violations as a database error whose
+            // message contains "UNIQUE constraint failed".
+            if let sqlx::Error::Database(db_err) = &e {
+                if db_err.message().contains("UNIQUE constraint failed") {
+                    return HotlDecisionStoreError::Duplicate(escalation_id);
                 }
-                decision_pg_err(e)
-            })?;
+            }
+            decision_pg_err(e)
+        })?;
 
-        let returned_verdict = match row.3.as_str() {
+        let returned_verdict = match row.2.as_str() {
             "allow" => HotlDecisionVerdict::Allow,
             "deny" => HotlDecisionVerdict::Deny,
             other => {
@@ -1074,11 +1073,12 @@ impl HotlDecisionStore for PgHotlDecisionStore {
         Ok(HotlDecisionRecord {
             id: row.0,
             request_id: row.1,
-            tenant_id: row.2,
+            // DEC-033: single implicit owner.
+            tenant_id: Uuid::nil(),
             verdict: returned_verdict,
-            decided_by: row.4,
-            raised_policy_id: row.5,
-            recorded_at: row.6,
+            decided_by: row.3,
+            raised_policy_id: row.4,
+            recorded_at: row.5,
         })
     }
 }

@@ -226,15 +226,8 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // boots without the env var.
     check_mcp_oauth_keyring(&pool).await?;
 
-    // v1.1.4.1: build the read/write pool router.
-    // `DATABASE_REPLICA_URLS` (comma-separated) — optional; defaults to
-    // primary-only when absent, preserving v1.1.4 behaviour exactly.
-    let rw_pool = {
-        let replicas = ReadWritePool::replicas_from_env(settings.database.max_connections)
-            .await
-            .context("replica pool connect")?;
-        ReadWritePool::new(pool.clone(), replicas)
-    };
+    // SQLite is single-writer/single-file (DEC-033) — no replicas to route to.
+    let rw_pool = ReadWritePool::new(pool.clone());
 
     // v0.6.2: read system-wide LLM providers and assemble a router. The
     // resulting `LlmRouter` implements `LlmBackend`, so it drops in
@@ -819,7 +812,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
 /// `XIAOGUAI_IM__USE_IN_PROCESS_HISTORY=true`.
 fn build_im_history(
     settings: &xiaoguai_config::Settings,
-    pool: &sqlx::PgPool,
+    pool: &sqlx::SqlitePool,
     state: &xiaoguai_api::AppState,
     default_model: &str,
 ) -> std::sync::Arc<dyn xiaoguai_im_gateway::ImHistoryStore> {
@@ -1183,7 +1176,7 @@ fn build_auth(
 /// auth (dev mode) skip both the merge and the assertion.
 async fn build_authz(
     settings: &Settings,
-    pool: &sqlx::PgPool,
+    pool: &sqlx::SqlitePool,
 ) -> Result<Option<std::sync::Arc<xiaoguai_auth::Authz>>> {
     use std::sync::Arc;
     if !settings.auth.required {
@@ -1270,7 +1263,7 @@ fn audit_redaction_enabled() -> bool {
 /// case-from-session source reads `sessions` + `audit_log` directly.
 fn build_eval_service(
     settings: &Settings,
-    pool: sqlx::PgPool,
+    pool: sqlx::SqlitePool,
 ) -> std::sync::Arc<xiaoguai_api::EvalService> {
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1302,7 +1295,7 @@ fn build_eval_service(
 /// # Errors
 /// Returns an error if the `mcp_oauth_tokens` table has ≥ 1 row AND
 /// `XIAOGUAI_MCP_OAUTH_TOKEN_KEY` cannot be loaded.
-async fn check_mcp_oauth_keyring(pool: &sqlx::PgPool) -> Result<()> {
+async fn check_mcp_oauth_keyring(pool: &sqlx::SqlitePool) -> Result<()> {
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcp_oauth_tokens")
         .fetch_one(pool)
         .await
