@@ -588,7 +588,7 @@ impl WebhookTokenValidator for PgWebhookTokenValidator {
         }
         // Best-effort timestamp update — never block the push on this.
         if let Err(e) = sqlx::query(
-            "UPDATE scheduler_webhook_tokens SET last_used_at = datetime('now') WHERE token = ?",
+            "UPDATE scheduler_webhook_tokens SET last_used_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE token = ?",
         )
         .bind(token)
         .execute(&self.pool)

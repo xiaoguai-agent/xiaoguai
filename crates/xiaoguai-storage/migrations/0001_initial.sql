@@ -6,7 +6,7 @@ CREATE TABLE users (
     id              TEXT PRIMARY KEY,
     email           TEXT NOT NULL UNIQUE,
     display_name    TEXT NOT NULL,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     last_login_at   TEXT
 );
 
@@ -22,8 +22,8 @@ CREATE TABLE sessions (
     title           TEXT,
     model           TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'active',
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 CREATE INDEX ix_sessions_user_updated ON sessions (user_id, updated_at DESC);
 
@@ -32,6 +32,6 @@ CREATE TABLE messages (
     session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     role            TEXT NOT NULL,
     content         TEXT NOT NULL,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 CREATE INDEX ix_messages_session ON messages (session_id, created_at);

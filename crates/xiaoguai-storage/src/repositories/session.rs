@@ -192,7 +192,7 @@ impl SessionRepository for PgSessionRepository {
 
     async fn touch(&self, tenant: Option<&str>, id: &str) -> RepoResult<()> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
-        let result = sqlx::query("UPDATE sessions SET updated_at = datetime('now') WHERE id = ?")
+        let result = sqlx::query("UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
             .bind(id)
             .execute(&mut *tx)
             .await
@@ -207,7 +207,7 @@ impl SessionRepository for PgSessionRepository {
     async fn archive(&self, tenant: Option<&str>, id: &str) -> RepoResult<()> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         let result = sqlx::query(
-            "UPDATE sessions SET status = 'archived', updated_at = datetime('now') WHERE id = ?",
+            "UPDATE sessions SET status = 'archived', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
         )
         .bind(id)
         .execute(&mut *tx)

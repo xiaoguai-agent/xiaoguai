@@ -11,7 +11,7 @@ CREATE TABLE agent_outcomes (
     value           REAL NOT NULL,
     unit            TEXT,           -- 'usd' | 'hours' | 'count'
     description     TEXT,
-    attributed_at   TEXT DEFAULT (datetime('now')),
+    attributed_at   TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     metadata        TEXT DEFAULT '{}'
 );
 

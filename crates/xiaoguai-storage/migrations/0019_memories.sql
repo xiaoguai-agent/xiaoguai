@@ -15,7 +15,7 @@ CREATE TABLE memories (
     tags                TEXT            NOT NULL DEFAULT '[]',
     -- NULL = never expires
     ttl_at              TEXT,
-    created_at          TEXT            NOT NULL DEFAULT (datetime('now')),
+    created_at          TEXT            NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     last_recalled_at    TEXT,
     recall_count        INTEGER         NOT NULL DEFAULT 0
 );
@@ -30,7 +30,7 @@ CREATE TABLE recall_traces (
     query_embedding     BLOB            NOT NULL,
     -- Array of {id, score} objects for the memories returned (JSON).
     memories_recalled   TEXT            NOT NULL DEFAULT '[]',
-    recalled_at         TEXT            NOT NULL DEFAULT (datetime('now'))
+    recalled_at         TEXT            NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX recall_traces_recalled_at_idx ON recall_traces (recalled_at DESC);

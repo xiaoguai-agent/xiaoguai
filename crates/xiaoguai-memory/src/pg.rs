@@ -299,7 +299,7 @@ impl MemoryStore for PgMemoryStore {
                    created_at, last_recalled_at, recall_count
             FROM memories
             WHERE (?1 IS NULL OR kind = ?1)
-              AND (ttl_at IS NULL OR ttl_at >= datetime('now'))
+              AND (ttl_at IS NULL OR ttl_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             ",
         )
         .bind(req.kind_filter.map(|k| k.as_str().to_owned()))
@@ -424,7 +424,7 @@ impl MemoryStore for PgMemoryStore {
 
     async fn cleanup_expired(&self) -> MemoryResult<u64> {
         let result = sqlx::query(
-            "DELETE FROM memories WHERE ttl_at IS NOT NULL AND ttl_at < datetime('now')",
+            "DELETE FROM memories WHERE ttl_at IS NOT NULL AND ttl_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
         )
         .execute(&self.pool)
         .await?;

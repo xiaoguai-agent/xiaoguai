@@ -3,7 +3,7 @@
 
 CREATE TABLE token_usage (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts                  TEXT NOT NULL DEFAULT (datetime('now')),
+    ts                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     user_id             TEXT,
     session_id          TEXT,
     provider_id         TEXT NOT NULL,

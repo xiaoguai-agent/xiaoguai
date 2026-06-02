@@ -6,6 +6,6 @@ CREATE TABLE installed_skill_packs (
     pack_slug    TEXT        NOT NULL,
     version      TEXT        NOT NULL,
     config       TEXT        NOT NULL DEFAULT '{}',
-    installed_at TEXT        NOT NULL DEFAULT (datetime('now')),
+    installed_at TEXT        NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE (pack_slug)
 );

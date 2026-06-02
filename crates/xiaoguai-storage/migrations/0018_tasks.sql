@@ -6,7 +6,7 @@ CREATE TABLE boards (
     id              TEXT        PRIMARY KEY,
     name            TEXT        NOT NULL,
     default_board   BOOLEAN     NOT NULL DEFAULT FALSE,
-    created_at      TEXT        NOT NULL DEFAULT (datetime('now')),
+    created_at      TEXT        NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     -- Dispatch policy: 'fifo' | 'priority' | 'round_robin'
     dispatch_policy TEXT        NOT NULL DEFAULT 'fifo',
     pool_size       INTEGER     NOT NULL DEFAULT 5,
@@ -31,8 +31,8 @@ CREATE TABLE tasks (
     assignee_agent  TEXT,
     parent_task_id  TEXT        REFERENCES tasks (id) ON DELETE SET NULL,
     blocked_reason  TEXT,
-    created_at      TEXT        NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT        NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT        NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at      TEXT        NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX tasks_board_column_idx ON tasks (board_id, board_column);
@@ -48,7 +48,7 @@ CREATE TABLE task_state_log (
     to_column   TEXT        NOT NULL,
     actor       TEXT        NOT NULL,
     reason      TEXT,
-    occurred_at TEXT        NOT NULL DEFAULT (datetime('now'))
+    occurred_at TEXT        NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX task_state_log_task_idx ON task_state_log (task_id, occurred_at);

@@ -7,7 +7,7 @@
 CREATE TABLE tenant_settings (
     tenant_id   TEXT PRIMARY KEY,
     settings    TEXT NOT NULL DEFAULT '{}',
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE skill_proposals (
@@ -19,7 +19,7 @@ CREATE TABLE skill_proposals (
     manifest_json   TEXT NOT NULL,
     status          TEXT NOT NULL CHECK (status IN ('pending','approved','rejected','installed')),
     reason          TEXT,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     decided_at      TEXT,
     decided_by      TEXT,
     UNIQUE (name, version)

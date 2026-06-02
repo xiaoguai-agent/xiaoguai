@@ -8,6 +8,6 @@ INSERT INTO llm_providers (
     'minimax-system', 'minimax', 'minimax', 'https://api.minimax.io',
     '["MiniMax-M1","MiniMax-M2","MiniMax-M2.5","MiniMax-M2.7","abab6.5-chat"]',
     '[]', 200, 'MINIMAX_API_KEY',
-    datetime('now'), datetime('now')
+    strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 )
 ON CONFLICT DO NOTHING;

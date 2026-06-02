@@ -10,7 +10,7 @@ CREATE TABLE workspaces (
     id          TEXT        PRIMARY KEY,
     name        TEXT        NOT NULL,
     archived    BOOLEAN     NOT NULL DEFAULT FALSE,
-    created_at  TEXT        NOT NULL DEFAULT (datetime('now')),
+    created_at  TEXT        NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE (name)
 );
 

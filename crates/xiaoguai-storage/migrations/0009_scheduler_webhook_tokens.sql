@@ -7,7 +7,7 @@
 CREATE TABLE scheduler_webhook_tokens (
     token           TEXT PRIMARY KEY,
     route_id        TEXT NOT NULL,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     last_used_at    TEXT
 );
 
