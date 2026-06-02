@@ -45,19 +45,19 @@ admin console, see [`docs/user-guide/quickstart.md`](docs/user-guide/quickstart.
 
 ### Install pre-built binaries
 
+All Linux packages bundle the web UI — after install, open `http://<host>:7600/`
+(chat) and `/admin/` (console).
+
 | Platform | Command |
 |---|---|
-| macOS (Homebrew tap) | `brew tap xiaoguai-agent/tap && brew install xiaoguai` |
-| Linux + macOS (universal installer) | `curl --proto '=https' --tlsv1.2 -LsSf https://github.com/xiaoguai-agent/xiaoguai/releases/latest/download/xiaoguai-cli-installer.sh \| sh` |
-| Windows (PowerShell) | `irm https://github.com/xiaoguai-agent/xiaoguai/releases/latest/download/xiaoguai-cli-installer.ps1 \| iex` |
-| Debian / Ubuntu (amd64) | Download `xiaoguai_*.deb` from the [latest release](https://github.com/xiaoguai-agent/xiaoguai/releases/latest) and `sudo dpkg -i xiaoguai_*.deb` |
-| RHEL / Fedora (amd64) | Download `xiaoguai-*.rpm` from the same release and `sudo rpm -i xiaoguai-*.rpm` |
-| Linux tarball (amd64 / arm64, glibc 2.31+) | Download `xiaoguai-*-linux-gnu.tar.xz`, extract, and place `xiaoguai` on `$PATH` |
+| Debian / Ubuntu (amd64) | Download `xiaoguai-cli_*_amd64.deb` from the [latest release](https://github.com/xiaoguai-agent/xiaoguai/releases/latest) and `sudo apt install ./xiaoguai-cli_*_amd64.deb` |
+| RHEL / Fedora / Rocky (amd64) | Download `xiaoguai-cli-*.x86_64.rpm` from the same release and `sudo rpm -i xiaoguai-cli-*.x86_64.rpm` |
+| Bare-metal tarball (amd64 / arm64, glibc 2.35+) | Download `xiaoguai-vX.Y.Z-<arch>-unknown-linux-gnu.tar.gz`, extract, and `sudo bash scripts/install.sh` (systemd) |
+| Container / full stack | `docker compose -f deploy/docker-compose.yml up --build` |
 | Build from source | `cargo install --path crates/xiaoguai-cli --locked` |
 
-The sandboxed code-execution MCP server (`xiaoguai-mcp-exec`) ships as a
-sibling release: `brew install xiaoguai-mcp-exec` (macOS) or the
-matching `xiaoguai-mcp-exec-installer.sh` / `.ps1`.
+The sandboxed code-execution MCP server (`xiaoguai-mcp-exec`) builds from
+this workspace: `cargo install --path crates/xiaoguai-mcp-exec --locked`.
 
 After install, the canonical entrypoint is `xiaoguai serve`. The
 `xiaoguai-core` shim from earlier versions still works (the .deb wires
