@@ -34,6 +34,7 @@ fn sample_provider(name: &str, tenant_id: Option<TenantId>) -> LlmProvider {
         default_for_models: vec!["deepseek-chat".into()],
         fallback_order: 10,
         api_key_env: Some("DEEPSEEK_API_KEY".into()),
+        api_key: None,
         created_at: now,
         updated_at: now,
         cost_per_1k_input_usd: Some(0.27),

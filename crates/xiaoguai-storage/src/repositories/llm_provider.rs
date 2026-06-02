@@ -55,6 +55,10 @@ struct LlmProviderRow {
     default_for_models: serde_json::Value,
     fallback_order: i32,
     api_key_env: Option<String>,
+    /// Directly-stored API key (web-UI providers); NULL for env-var /
+    /// unauthenticated providers. Added in migration 0029.
+    #[sqlx(default)]
+    api_key: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     /// v1.1.1.1 — may be NULL if the column was added after the row was
@@ -80,6 +84,7 @@ impl LlmProviderRow {
             default_for_models,
             fallback_order: self.fallback_order,
             api_key_env: self.api_key_env,
+            api_key: self.api_key,
             created_at: self.created_at,
             updated_at: self.updated_at,
             cost_per_1k_input_usd: self.cost_per_1k_input_usd,
@@ -89,7 +94,7 @@ impl LlmProviderRow {
 }
 
 const SELECT_COLUMNS: &str = "id, tenant_id, name, kind, endpoint, models, default_for_models, \
-     fallback_order, api_key_env, created_at, updated_at, \
+     fallback_order, api_key_env, api_key, created_at, updated_at, \
      cost_per_1k_input_usd, cost_per_1k_output_usd";
 
 #[async_trait]
@@ -101,9 +106,9 @@ impl LlmProviderRepository for PgLlmProviderRepository {
         sqlx::query(
             "INSERT INTO llm_providers \
              (id, tenant_id, name, kind, endpoint, models, default_for_models, \
-              fallback_order, api_key_env, created_at, updated_at, \
+              fallback_order, api_key_env, api_key, created_at, updated_at, \
               cost_per_1k_input_usd, cost_per_1k_output_usd) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         )
         .bind(prov.id.as_str())
         .bind(prov.tenant_id.as_ref().map(AsRef::as_ref))
@@ -114,6 +119,7 @@ impl LlmProviderRepository for PgLlmProviderRepository {
         .bind(defaults)
         .bind(prov.fallback_order)
         .bind(prov.api_key_env.as_deref())
+        .bind(prov.api_key.as_deref())
         .bind(prov.created_at)
         .bind(prov.updated_at)
         .bind(prov.cost_per_1k_input_usd)

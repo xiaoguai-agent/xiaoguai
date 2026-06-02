@@ -102,6 +102,11 @@ pub struct LlmProvider {
     /// Name of the env var holding the API key. None for unauthenticated
     /// endpoints (e.g. local Ollama).
     pub api_key_env: Option<String>,
+    /// API key stored directly (web-UI–registered providers). Takes precedence
+    /// over `api_key_env` when present; `None` for env-var or unauthenticated
+    /// providers. Never serialised back to clients — the API layer projects it
+    /// to a `has_api_key` boolean.
+    pub api_key: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     /// v1.1.1.1 — 2026-Q2 list pricing per provider docs.
