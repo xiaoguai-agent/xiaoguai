@@ -15,6 +15,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v1.10.2] — 2026-06-02
+
+Web UI ships in the install packages, plus the first release where the whole
+Linux install pipeline actually works end-to-end. No breaking changes.
+
+### Added
+- **Backend serves the web UI** (#161). When `server.static_dir` is set (or a
+  bundle is found next to the binary) `xiaoguai-core` serves **chat-ui at `/`**
+  and **admin-ui at `/admin/`** on the API port — no separate frontend process.
+- **Web UI bundled into `.deb` / `.rpm` / tarball** (#175). The server
+  auto-detects `/usr/local/share/xiaoguai/static` relative to the binary, so a
+  native install (`apt`/`dnf`/tarball) gives a working browser UI with zero
+  config. The Docker image keeps setting `XIAOGUAI_SERVER__STATIC_DIR=/app/static`.
+- **chat-ui: admin console link + language switcher** (#174). A sidebar entry
+  links to `/admin/`; a 中文 / English / 日本語 switcher (persisted) drives the
+  newly internationalized main UI.
+- CLI `provider register --kind` help now lists `minimax` (the backend already
+  existed; #161).
+
+### Fixed
+- **`docker compose up` works out of the box** (#173). `XIAOGUAI_*` env vars
+  were silently ignored (`Environment::with_prefix` lacked `prefix_separator`),
+  so the server used the default localhost DB and crashed; postgres lacked
+  pgvector (migration boot failed); grafana's hard-coded :3000 aborted the
+  stack. Env overrides apply, `pgvector/pgvector:pg16`, `GRAFANA_HOST_PORT`.
+- **Release pipeline publishes again** — slsa-verifier bumped v2.6.0 → v2.7.1
+  so tarballs auto-attach (#157); the broken multi-arch container workflow was
+  removed (#158); native `.deb`/`.rpm` build + install-smoke green (#159);
+  cargo-dist regenerated as Linux-only on 0.32.0, unsticking the queued
+  installer job (#160).
+
+### Install
+- Container: build/run via `deploy/docker-compose.yml` (web UI at
+  `http://localhost:7600/`, admin at `/admin/`).
+- Native: `.deb` (Debian/Ubuntu), `.rpm` (RHEL/Fedora/Rocky), bare-metal
+  tarball + `scripts/install.sh` (systemd) — all bundle the web UI.
+- For dev/single-tenant use, set `auth.required: false` (no IdP needed).
+
 ## [v1.10.1] — 2026-06-01
 
 Release-publishing hotfix. No runtime code changes — `v1.10.0` and `v1.10.1`
