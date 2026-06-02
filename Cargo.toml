@@ -34,6 +34,7 @@ members = [
     "crates/xiaoguai-personas",
     "crates/xiaoguai-memory",
     "crates/xiaoguai-tasks",
+    "crates/xiaoguai-migrate-smoke",
 ]
 
 [workspace.package]
@@ -91,8 +92,8 @@ tonic-build = "0.12"
 prost = "0.14"
 prost-build = "0.13"
 
-# database
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "macros", "uuid", "chrono", "json", "migrate"] }
+# database — embedded SQLite (DEC-033 single-user pivot; no Postgres, single code path)
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "uuid", "chrono", "json", "migrate"] }
 
 # valkey / redis-compatible client (valkey-rs once stable; for now redis crate works against valkey)
 redis = { version = "1.2", features = ["tokio-comp", "connection-manager"] }
