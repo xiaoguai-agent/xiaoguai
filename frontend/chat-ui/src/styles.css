@@ -602,6 +602,38 @@ html,
   border-top: 1px solid var(--border-soft);
 }
 
+/* Footer row holds the language + theme toggles side by side. */
+.sidebar-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* Admin console link sits above the footer row (styled via .nav-link). */
+.sidebar-footer .admin-link {
+  display: block;
+  margin-bottom: var(--space-2);
+}
+
+.lang-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.lang-toggle-select {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 2px 4px;
+  font-size: 12px;
+}
+
 .theme-toggle {
   display: inline-flex;
   border: 1px solid var(--border);

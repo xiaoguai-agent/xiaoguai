@@ -46,5 +46,24 @@
       "timeout_annotation": "判定がタイムアウトしました — ツール呼び出しは拒否されました",
       "conflict_toast": "他のレビュー担当者が先に判定しました — あなたの操作は反映されませんでした"
     }
+  },
+  "ui": {
+    "new_chat": "+ 新しいチャット",
+    "skills": "スキル",
+    "admin": "管理",
+    "language_label": "言語",
+    "no_sessions": "セッションがありません。メッセージを送信して作成してください。",
+    "welcome_title": "こんにちは、Xiaoguai です",
+    "welcome_subtitle": "何かお手伝いできることはありますか？",
+    "composer_placeholder": "Xiaoguai にメッセージを送信…",
+    "composer_hint": "Shift+Enter で改行",
+    "stop": "停止",
+    "send": "送信",
+    "stop_generating": "生成を停止",
+    "send_message": "メッセージを送信",
+    "thinking": "思考中",
+    "branch": "分岐",
+    "branch_title": "この時点から新しい会話を分岐",
+    "branch_label": "ここから分岐"
   }
 }

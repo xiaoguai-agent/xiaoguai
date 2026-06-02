@@ -15,6 +15,7 @@ import type { HotlPendingState } from './HotlBanner';
 import { AiDisclosureBanner } from './AiDisclosureBanner';
 import { SseReconnectBanner } from './SseReconnectBanner';
 import { WatchIndicator } from './WatchIndicator';
+import { useI18n } from './i18n/I18nProvider';
 
 type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
 
@@ -59,6 +60,7 @@ function autoGrow(ta: HTMLTextAreaElement | null) {
 }
 
 export function ChatPage({ onSessionCreated }: Props) {
+  const { t } = useI18n();
   const { id: routeId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [sessionId, setSessionId] = useState<string | undefined>(routeId);
@@ -341,8 +343,8 @@ export function ChatPage({ onSessionCreated }: Props) {
       <div className={`messages${bubbles.length === 0 ? ' messages-empty' : ''}`} ref={scrollRef}>
         {bubbles.length === 0 ? (
           <div className="welcome">
-            <h1 className="welcome-title">Hi, I&apos;m Xiaoguai</h1>
-            <p className="welcome-subtitle">What can I help you with?</p>
+            <h1 className="welcome-title">{t.ui.welcome_title}</h1>
+            <p className="welcome-subtitle">{t.ui.welcome_subtitle}</p>
             <div className="welcome-chips">
               {SUGGESTIONS.map((prompt) => (
                 <button
@@ -375,15 +377,15 @@ export function ChatPage({ onSessionCreated }: Props) {
                 void send();
               }
             }}
-            placeholder="Message Xiaoguai…"
+            placeholder={t.ui.composer_placeholder}
           />
           {streaming ? (
             <button
               type="button"
               className="composer-btn stop"
               onClick={cancel}
-              aria-label="Stop generating"
-              title="Stop"
+              aria-label={t.ui.stop_generating}
+              title={t.ui.stop}
             >
               <StopIcon />
             </button>
@@ -393,14 +395,14 @@ export function ChatPage({ onSessionCreated }: Props) {
               className="composer-btn send"
               onClick={() => void send()}
               disabled={!draft.trim()}
-              aria-label="Send message"
-              title="Send"
+              aria-label={t.ui.send_message}
+              title={t.ui.send}
             >
               <SendIcon />
             </button>
           )}
         </div>
-        <div className="composer-hint">Shift+Enter for newline</div>
+        <div className="composer-hint">{t.ui.composer_hint}</div>
       </div>
     </>
   );
@@ -438,6 +440,7 @@ function Bubble({
   bubble: DisplayBubble;
   onFork: (messageId: string) => void;
 }) {
+  const { t } = useI18n();
   const className =
     bubble.kind === 'tool'
       ? `bubble tool copy-host${bubble.toolError ? ' error' : ''}`
@@ -462,16 +465,16 @@ function Bubble({
         <button
           type="button"
           className="bubble-action bubble-fork"
-          title="Branch a new conversation from this point"
-          aria-label="Branch from here"
+          title={t.ui.branch_title}
+          aria-label={t.ui.branch_label}
           onClick={() => onFork(bubble.messageId!)}
         >
-          Branch
+          {t.ui.branch}
         </button>
       )}
       {renderMarkdown ? <MarkdownBody text={bubble.text} /> : bubble.text}
       {isEmptyStreaming && (
-        <span className="streaming-dots" aria-label="thinking">
+        <span className="streaming-dots" aria-label={t.ui.thinking}>
           <span />
           <span />
           <span />
