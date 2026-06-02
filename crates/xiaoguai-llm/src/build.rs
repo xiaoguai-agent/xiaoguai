@@ -66,23 +66,39 @@ impl EnvResolver for OsEnvResolver {
 
 /// Resolve the API key env-var for a provider that *requires* a key.
 /// Returns the key value or an empty string (with a warning) if unset.
+/// Resolve a provider's API key: a directly-stored `api_key` (web-UI
+/// providers) wins over the `api_key_env` env-var indirection. Returns `None`
+/// when neither yields a value (the caller decides whether that's a warning).
+fn resolve_optional_key(
+    row: &xiaoguai_types::LlmProvider,
+    env: &dyn EnvResolver,
+) -> Option<String> {
+    if let Some(k) = row.api_key.as_deref() {
+        if !k.is_empty() {
+            return Some(k.to_string());
+        }
+    }
+    row.api_key_env.as_deref().and_then(|key| env.get(key))
+}
+
 fn resolve_required_key(
     row: &xiaoguai_types::LlmProvider,
     env: &dyn EnvResolver,
     report: &mut BuildReport,
 ) -> String {
+    if let Some(v) = resolve_optional_key(row, env) {
+        return v;
+    }
     if let Some(key) = row.api_key_env.as_deref() {
-        if let Some(v) = env.get(key) {
-            return v;
-        }
         report.warn(format!(
-            "provider {} ({}): env var {key} is unset; backend will be unauthenticated",
+            "provider {} ({}): env var {key} is unset and no stored api_key; \
+             backend will be unauthenticated",
             row.name,
             row.id.as_str()
         ));
     } else {
         report.warn(format!(
-            "provider {} ({}): no api_key_env set for {} provider",
+            "provider {} ({}): no api_key or api_key_env set for {} provider",
             row.name,
             row.id.as_str(),
             row.kind.as_str()
@@ -113,18 +129,16 @@ pub fn build_router(rows: &[LlmProvider], env: &dyn EnvResolver) -> (LlmRouter, 
         let backend: Arc<dyn LlmBackend> = match row.kind {
             ProviderKind::Ollama => Arc::new(OllamaBackend::new(row.endpoint.clone())),
             ProviderKind::OpenAiCompat => {
-                let api_key = row.api_key_env.as_deref().and_then(|key| {
-                    let v = env.get(key);
-                    if v.is_none() {
-                        report.warn(format!(
-                            "provider {} ({}): env var {key} is unset; backend will run \
-                             unauthenticated",
-                            row.name,
-                            row.id.as_str()
-                        ));
-                    }
-                    v
-                });
+                let api_key = resolve_optional_key(row, env);
+                if api_key.is_none() && row.api_key_env.is_some() {
+                    report.warn(format!(
+                        "provider {} ({}): env var {} is unset and no stored api_key; \
+                         backend will run unauthenticated",
+                        row.name,
+                        row.id.as_str(),
+                        row.api_key_env.as_deref().unwrap_or("")
+                    ));
+                }
                 Arc::new(OpenAiCompatBackend::new(row.endpoint.clone(), api_key))
             }
             ProviderKind::Anthropic => {
@@ -266,6 +280,7 @@ mod tests {
             default_for_models: defaults.iter().map(|m| (*m).to_string()).collect(),
             fallback_order: order,
             api_key_env: api_key_env.map(str::to_string),
+            api_key: None,
             created_at: now,
             updated_at: now,
             cost_per_1k_input_usd: None,
@@ -410,5 +425,44 @@ mod tests {
         );
         let (_, report) = build_router(&[row], &resolver);
         assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn stored_api_key_wins_over_env_var() {
+        // Web-UI providers carry the key directly; it must win even when the
+        // env var is unset, and produce no "unauthenticated" warning.
+        let mut row = provider(
+            "minimax-web",
+            ProviderKind::MiniMax,
+            "https://api.minimax.io",
+            vec!["MiniMax-M2"],
+            100,
+            Some("MISSING_ENV"),
+        );
+        row.api_key = Some("stored-secret".to_string());
+        let empty = |_: &str| None;
+        assert_eq!(
+            resolve_optional_key(&row, &empty),
+            Some("stored-secret".to_string())
+        );
+        let (_, report) = build_router(&[row], &empty);
+        assert!(report.warnings.is_empty(), "stored key → no warning");
+    }
+
+    #[test]
+    fn falls_back_to_env_when_no_stored_key() {
+        let row = provider(
+            "deepseek",
+            ProviderKind::OpenAiCompat,
+            "https://api.deepseek.com/v1",
+            vec![],
+            100,
+            Some("DEEPSEEK_API_KEY"),
+        );
+        let resolver = |k: &str| (k == "DEEPSEEK_API_KEY").then(|| "from-env".to_string());
+        assert_eq!(
+            resolve_optional_key(&row, &resolver),
+            Some("from-env".to_string())
+        );
     }
 }

@@ -1173,6 +1173,45 @@ function generateIdempotencyKey(): string {
   return `${hex(0xffffffff)}-${hex(0xffff)}-${hex(0xffff)}-${hex(0xffff)}-${hex(0xffffffff)}${hex(0xffff)}`;
 }
 
+/** Provider `kind` values accepted by `POST /v1/admin/providers`. */
+export type ProviderKind =
+  | 'ollama'
+  | 'openai_compat'
+  | 'anthropic'
+  | 'gemini'
+  | 'bedrock'
+  | 'azure_openai'
+  | 'mistral'
+  | 'groq'
+  | 'minimax';
+
+/** A configured LLM provider as returned by the admin API. The stored API key
+ *  is never serialised — only `has_api_key`. */
+export interface LlmProviderView {
+  id: string;
+  name: string;
+  kind: string;
+  endpoint: string;
+  models: string[];
+  default_for_models: string[];
+  fallback_order: number;
+  api_key_env: string | null;
+  has_api_key: boolean;
+}
+
+/** Request body for `POST /v1/admin/providers`. Supply `api_key` for a hosted
+ *  API, or leave both keys blank for a local URL (Ollama / OpenAI-compatible). */
+export interface CreateProviderRequest {
+  name: string;
+  kind: ProviderKind;
+  endpoint: string;
+  models?: string[];
+  default_for_models?: string[];
+  fallback_order?: number;
+  api_key?: string;
+  api_key_env?: string;
+}
+
 /** Exponential backoff schedule for sendMessage retries (ms), capped at 30 s. */
 const RECONNECT_BACKOFF_MS: readonly number[] = [1000, 2000, 4000, 8000, 16000];
 
@@ -1253,6 +1292,30 @@ export class XiaoguaiClient {
 
   listMcpServers(): Promise<McpServerResponse[]> {
     return this.request<McpServerResponse[]>('GET', '/v1/mcp/servers');
+  }
+
+  /** List configured LLM providers (local URLs + hosted APIs). The stored
+   *  API key is never returned — only `has_api_key`. */
+  listProviders(): Promise<LlmProviderView[]> {
+    return this.request<LlmProviderView[]>('GET', '/v1/admin/providers');
+  }
+
+  /** Register a provider — a local model URL (`ollama` / `openai_compat`) or a
+   *  hosted API (`minimax`, `openai_compat` for Zhipu/OpenAI/DeepSeek, …).
+   *  Takes effect on the next server restart (the router is built at boot). */
+  createProvider(req: CreateProviderRequest): Promise<LlmProviderView> {
+    return this.request<LlmProviderView>('POST', '/v1/admin/providers', req);
+  }
+
+  /** Delete a provider by id. */
+  async deleteProvider(id: string): Promise<void> {
+    const resp = await this.fetchImpl(
+      `${this.baseUrl}/v1/admin/providers/${encodeURIComponent(id)}`,
+      { method: 'DELETE', headers: this.headers() },
+    );
+    if (!resp.ok) {
+      throw new ApiError(resp.status, 'http_error', `HTTP ${resp.status}`);
+    }
   }
 
   /** v0.6.3 — admin directory of tenants. Requires `system_admin` when

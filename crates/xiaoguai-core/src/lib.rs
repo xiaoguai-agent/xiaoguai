@@ -762,6 +762,13 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         build_feishu_gateway(&state, im_history.clone()),
         build_dingtalk_gateway(&state, im_history.clone()),
         build_wecom_gateway(&state, im_history.clone()),
+        // Web-UI LLM provider management (list/create/delete). Self-contained
+        // router (state = the repo), like the IM gateways — merged outside the
+        // v1 RBAC layer. New providers persist immediately but the LlmRouter
+        // picks them up on next restart (built once at boot).
+        Some(xiaoguai_api::routes::providers::build_router(Arc::new(
+            PgLlmProviderRepository::new(pool.clone()),
+        ))),
     ]);
 
     let addr: SocketAddr = format!("{}:{}", settings.server.host, settings.server.port)

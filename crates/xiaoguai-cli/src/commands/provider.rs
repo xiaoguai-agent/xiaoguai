@@ -61,6 +61,9 @@ pub async fn register(repo: &dyn LlmProviderRepository, args: RegisterArgs) -> R
         default_for_models: args.default_for,
         fallback_order: args.fallback_order,
         api_key_env: args.api_key_env,
+        // The register CLI uses env-var indirection; a directly-stored key is a
+        // web-UI-only path (POST /v1/admin/providers).
+        api_key: None,
         created_at: now,
         updated_at: now,
         // Cost rates are not supplied via the register CLI; operators set
