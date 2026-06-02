@@ -27,6 +27,10 @@ CONF_DIR="${CONF_DIR:-/etc/xiaoguai}"
 STATE_DIR="${STATE_DIR:-/var/lib/xiaoguai}"
 LOG_DIR="${LOG_DIR:-/var/log/xiaoguai}"
 UNIT_DIR="${UNIT_DIR:-/etc/systemd/system}"
+# Web UI bundle location. The server auto-detects this relative to the binary
+# (<bin>/../share/xiaoguai/static) and also probes it absolutely, so installing
+# here makes the browser UI work with no extra config.
+STATIC_DIR="${STATIC_DIR:-/usr/local/share/xiaoguai/static}"
 
 XIAOGUAI_USER="${XIAOGUAI_USER:-xiaoguai}"
 XIAOGUAI_GROUP="${XIAOGUAI_GROUP:-xiaoguai}"
@@ -156,6 +160,14 @@ mkdir -p "$CONF_DIR"
 install_file "$ROOT_DIR/share/config.example.yaml" "$CONF_DIR/config.example.yaml" 0644
 install_tree "$ROOT_DIR/share/migrations" "$CONF_DIR/migrations" 0644
 install_tree "$ROOT_DIR/share/catalog"    "$CONF_DIR/catalog"    0644
+
+# Web UI bundle (chat-ui + admin-ui). Optional — only present in UI-bundled
+# tarballs. Installed outside CONF_DIR so the read-only /etc/xiaoguai hardening
+# in the systemd unit doesn't apply; the server reads it relative to the binary.
+if [[ -d "$ROOT_DIR/share/xiaoguai/static/chat-ui" ]]; then
+    log "installing web UI -> $STATIC_DIR"
+    install_tree "$ROOT_DIR/share/xiaoguai/static" "$STATIC_DIR" 0644
+fi
 
 # ---- 4. systemd unit ------------------------------------------------------
 

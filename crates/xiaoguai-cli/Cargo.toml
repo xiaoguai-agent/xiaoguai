@@ -118,6 +118,12 @@ assets = [
     # Package docs
     ["../../README.md",                        "usr/share/doc/xiaoguai/README.md", "644"],
     ["../../LICENSE",                          "usr/share/doc/xiaoguai/copyright",  "644"],
+    # Built web UIs (chat-ui at /, admin-ui at /admin/). The server
+    # auto-detects /usr/local/share/xiaoguai/static relative to the binary
+    # and serves it — so `apt install` gives a working browser UI. CI builds
+    # the dist (pnpm; admin-ui with VITE_BASE=/admin/) before cargo-deb.
+    ["../../frontend/chat-ui/dist/**/*",  "usr/local/share/xiaoguai/static/chat-ui/",  "644"],
+    ["../../frontend/admin-ui/dist/**/*", "usr/local/share/xiaoguai/static/admin-ui/", "644"],
 ]
 conf-files = ["/etc/xiaoguai/config.yaml"]
 maintainer-scripts = "../../packaging/debian"
@@ -140,6 +146,11 @@ assets = [
     { source = "docs/runbooks/operator.md",        dest = "/usr/share/doc/xiaoguai/operator-runbook.md", mode = "0644" },
     { source = "README.md",                         dest = "/usr/share/doc/xiaoguai/README.md",      mode = "0644" },
     { source = "LICENSE",                           dest = "/usr/share/doc/xiaoguai/LICENSE",         mode = "0644" },
+    # Built web UIs — see the [package.metadata.deb] note above. The server
+    # auto-detects /usr/local/share/xiaoguai/static and serves chat-ui at /,
+    # admin-ui at /admin/.
+    { source = "frontend/chat-ui/dist/**/*",  dest = "/usr/local/share/xiaoguai/static/chat-ui/",  mode = "0644" },
+    { source = "frontend/admin-ui/dist/**/*", dest = "/usr/local/share/xiaoguai/static/admin-ui/", mode = "0644" },
 ]
 # %pre — ensure the system user exists before files land on disk.
 pre_install_script = "packaging/rpm/scriptlets/pre_install.sh"

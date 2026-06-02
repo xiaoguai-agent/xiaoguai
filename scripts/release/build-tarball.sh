@@ -98,6 +98,7 @@ for target in "${TARGETS[@]}"; do
         "$stage_dir/bin" \
         "$stage_dir/share/migrations" \
         "$stage_dir/share/catalog" \
+        "$stage_dir/share/xiaoguai/static" \
         "$stage_dir/systemd" \
         "$stage_dir/scripts"
 
@@ -111,6 +112,19 @@ for target in "${TARGETS[@]}"; do
     cp deploy/config.example.yaml "$stage_dir/share/config.example.yaml"
     cp -R crates/xiaoguai-storage/migrations/. "$stage_dir/share/migrations/"
     cp -R crates/xiaoguai-api/catalog/. "$stage_dir/share/catalog/"
+
+    # share/xiaoguai/static/ — the built web UIs (chat-ui at /, admin-ui at
+    # /admin/). Built by CI before this script (pnpm; admin-ui with
+    # VITE_BASE=/admin/). install.sh drops these at
+    # /usr/local/share/xiaoguai/static, which the server auto-detects relative
+    # to the binary and serves. If the dist is absent (e.g. a binary-only
+    # local build) the tarball still ships — the server just runs API-only.
+    if [[ -d frontend/chat-ui/dist && -d frontend/admin-ui/dist ]]; then
+        cp -R frontend/chat-ui/dist  "$stage_dir/share/xiaoguai/static/chat-ui"
+        cp -R frontend/admin-ui/dist "$stage_dir/share/xiaoguai/static/admin-ui"
+    else
+        log "    WARN: frontend/{chat-ui,admin-ui}/dist not found — tarball will be API-only"
+    fi
 
     # systemd/
     cp deploy/systemd/xiaoguai-core.service "$stage_dir/systemd/xiaoguai-core.service"
