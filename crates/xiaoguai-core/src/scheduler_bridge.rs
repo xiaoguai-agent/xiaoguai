@@ -554,12 +554,12 @@ impl JobExecutor for RagReindexExecutor {
 /// `last_used_at` on every successful validation; update failures are
 /// logged but do not block the push.
 pub struct PgWebhookTokenValidator {
-    pool: sqlx::PgPool,
+    pool: sqlx::SqlitePool,
 }
 
 impl PgWebhookTokenValidator {
     #[must_use]
-    pub fn new(pool: sqlx::PgPool) -> Self {
+    pub fn new(pool: sqlx::SqlitePool) -> Self {
         Self { pool }
     }
 }
@@ -571,31 +571,32 @@ impl WebhookTokenValidator for PgWebhookTokenValidator {
         token: &str,
         route_id: &str,
     ) -> Result<Option<String>, WebhookTokenError> {
-        // Admin-side query, RLS bypassed (we trust the caller to gate by
-        // tenant after validation). Cross-tenant query is exactly what
-        // we need: the token IS the proof of ownership.
+        // DEC-033: tenant_id column dropped; the token IS the proof of
+        // ownership for the single implicit owner. A matching row resolves
+        // to OWNER_TENANT_ID.
         let row: Option<(String,)> = sqlx::query_as(
-            "SELECT tenant_id FROM scheduler_webhook_tokens
-             WHERE token = $1 AND route_id = $2",
+            "SELECT token FROM scheduler_webhook_tokens
+             WHERE token = ? AND route_id = ?",
         )
         .bind(token)
         .bind(route_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| WebhookTokenError::Backend(e.to_string()))?;
-        let Some((tenant_id,)) = row else {
+        if row.is_none() {
             return Ok(None);
-        };
+        }
         // Best-effort timestamp update — never block the push on this.
-        if let Err(e) =
-            sqlx::query("UPDATE scheduler_webhook_tokens SET last_used_at = NOW() WHERE token = $1")
-                .bind(token)
-                .execute(&self.pool)
-                .await
+        if let Err(e) = sqlx::query(
+            "UPDATE scheduler_webhook_tokens SET last_used_at = datetime('now') WHERE token = ?",
+        )
+        .bind(token)
+        .execute(&self.pool)
+        .await
         {
             tracing::warn!(error = %e, "scheduler_webhook_tokens last_used_at update failed");
         }
-        Ok(Some(tenant_id))
+        Ok(Some(xiaoguai_storage::OWNER_TENANT_ID.to_string()))
     }
 }
 
@@ -603,12 +604,12 @@ impl WebhookTokenValidator for PgWebhookTokenValidator {
 /// `scheduler_webhook_tokens`. Generates 32-byte opaque tokens via
 /// uuid v4 + `simple` encoding; admins capture them on create response.
 pub struct PgWebhookTokenAdmin {
-    pool: sqlx::PgPool,
+    pool: sqlx::SqlitePool,
 }
 
 impl PgWebhookTokenAdmin {
     #[must_use]
-    pub fn new(pool: sqlx::PgPool) -> Self {
+    pub fn new(pool: sqlx::SqlitePool) -> Self {
         Self { pool }
     }
 }
@@ -638,12 +639,12 @@ impl WebhookTokenAdmin for PgWebhookTokenAdmin {
         }
         let token = generate_webhook_token();
         let now = chrono::Utc::now();
+        // DEC-033: tenant_id column dropped — single implicit owner.
         sqlx::query(
-            "INSERT INTO scheduler_webhook_tokens (token, tenant_id, route_id, created_at)
-             VALUES ($1, $2, $3, $4)",
+            "INSERT INTO scheduler_webhook_tokens (token, route_id, created_at)
+             VALUES (?, ?, ?)",
         )
         .bind(&token)
-        .bind(tenant_id)
         .bind(route_id)
         .bind(now)
         .execute(&self.pool)
@@ -664,45 +665,30 @@ impl WebhookTokenAdmin for PgWebhookTokenAdmin {
         limit: i64,
     ) -> Result<Vec<WebhookTokenRecord>, WebhookTokenAdminError> {
         let limit = limit.clamp(1, 1000);
+        // DEC-033: tenant_id column dropped; the vestigial `tenant_id`
+        // filter param is ignored (single implicit owner namespace).
+        let _ = tenant_id;
         let rows: Vec<(
-            String,
             String,
             String,
             chrono::DateTime<chrono::Utc>,
             Option<chrono::DateTime<chrono::Utc>>,
-        )> = match tenant_id {
-            Some(t) => {
-                sqlx::query_as(
-                    "SELECT token, tenant_id, route_id, created_at, last_used_at
-                 FROM scheduler_webhook_tokens
-                 WHERE tenant_id = $1
-                 ORDER BY created_at DESC
-                 LIMIT $2",
-                )
-                .bind(t)
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await
-            }
-            None => {
-                sqlx::query_as(
-                    "SELECT token, tenant_id, route_id, created_at, last_used_at
+        )> = sqlx::query_as(
+            "SELECT token, route_id, created_at, last_used_at
                  FROM scheduler_webhook_tokens
                  ORDER BY created_at DESC
-                 LIMIT $1",
-                )
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await
-            }
-        }
+                 LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
         .map_err(|e| WebhookTokenAdminError::Backend(e.to_string()))?;
         Ok(rows
             .into_iter()
             .map(
-                |(token, tenant_id, route_id, created_at, last_used_at)| WebhookTokenRecord {
+                |(token, route_id, created_at, last_used_at)| WebhookTokenRecord {
                     token,
-                    tenant_id,
+                    tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
                     route_id,
                     created_at,
                     last_used_at,
@@ -712,7 +698,7 @@ impl WebhookTokenAdmin for PgWebhookTokenAdmin {
     }
 
     async fn revoke(&self, token: &str) -> Result<(), WebhookTokenAdminError> {
-        let res = sqlx::query("DELETE FROM scheduler_webhook_tokens WHERE token = $1")
+        let res = sqlx::query("DELETE FROM scheduler_webhook_tokens WHERE token = ?")
             .bind(token)
             .execute(&self.pool)
             .await

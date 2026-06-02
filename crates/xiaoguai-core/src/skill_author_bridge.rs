@@ -119,7 +119,7 @@ pub struct SkillAuthorWiring {
 /// `HotL` enforcer + an already-built audit sink. Called once at boot.
 #[must_use]
 pub fn build_skill_author_wiring(
-    pool: sqlx::PgPool,
+    pool: sqlx::SqlitePool,
     hotl_enforcer: Arc<dyn HotlEnforcer>,
     audit_sink: Arc<PgAuditSink>,
 ) -> SkillAuthorWiring {

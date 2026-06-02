@@ -15,7 +15,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{types::Json, PgPool};
+use sqlx::{types::Json, SqlitePool};
 use xiaoguai_api::eval::{
     CaseFromSessionSource, EvalServiceError, SessionForCase, ToolInvocationRecord,
 };
@@ -23,12 +23,12 @@ use xiaoguai_llm::{Message as LlmMessage, Role as LlmRole};
 use xiaoguai_types::ContentBlock;
 
 pub struct PgCaseFromSessionSource {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgCaseFromSessionSource {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
@@ -47,20 +47,22 @@ impl CaseFromSessionSource for PgCaseFromSessionSource {
         &self,
         session_id: &str,
     ) -> Result<Option<SessionForCase>, EvalServiceError> {
-        let Some(tenant_id): Option<String> =
-            sqlx::query_scalar("SELECT tenant_id FROM sessions WHERE id = $1")
+        // DEC-033: sessions has no tenant_id column. We only need to know
+        // the session exists; the domain `tenant_id` is synthesized to None.
+        let exists: Option<String> =
+            sqlx::query_scalar("SELECT id FROM sessions WHERE id = ?")
                 .bind(session_id)
                 .fetch_optional(&self.pool)
                 .await
-                .map_err(map_err)?
-        else {
+                .map_err(map_err)?;
+        if exists.is_none() {
             return Ok(None);
-        };
+        }
 
         let message_rows: Vec<MessageRow> = sqlx::query_as(
             "SELECT role, content, created_at
              FROM messages
-             WHERE session_id = $1
+             WHERE session_id = ?
              ORDER BY created_at ASC",
         )
         .bind(session_id)
@@ -99,7 +101,7 @@ impl CaseFromSessionSource for PgCaseFromSessionSource {
             "SELECT details
              FROM audit_log
              WHERE action = 'tool.invoke'
-               AND details->>'session_id' = $1
+               AND json_extract(details, '$.session_id') = ?
              ORDER BY ts ASC",
         )
         .bind(session_id)
@@ -129,7 +131,8 @@ impl CaseFromSessionSource for PgCaseFromSessionSource {
 
         Ok(Some(SessionForCase {
             session_id: session_id.to_string(),
-            tenant_id: Some(tenant_id),
+            // DEC-033: single implicit owner; no per-session tenant scoping.
+            tenant_id: None,
             input_messages,
             tool_invocations,
             final_assistant_text,

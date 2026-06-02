@@ -96,40 +96,40 @@ impl UsageReader for PgUsageReader {
         // (Provider group_by) and is a reasonable aggregation for Day/Model
         // buckets when a single provider dominates. Operators can always
         // switch to group_by=provider to get precise per-provider costs.
+        // DEC-033: token_usage / llm_providers lost their tenant_id columns
+        // (single implicit owner). The vestigial `tenant_id` filter is
+        // dropped; since/until are each referenced twice → numbered binds.
         let bucket_sql = bucket_expr(query.group_by);
         let sql = format!(
             "SELECT {bucket_sql} AS bucket, \
-                    COALESCE(SUM(tu.prompt_tokens), 0)::BIGINT AS in_tokens, \
-                    COALESCE(SUM(tu.completion_tokens), 0)::BIGINT AS out_tokens, \
+                    COALESCE(SUM(tu.prompt_tokens), 0) AS in_tokens, \
+                    COALESCE(SUM(tu.completion_tokens), 0) AS out_tokens, \
                     CASE \
                         WHEN COUNT(*) FILTER \
                              (WHERE lp.cost_per_1k_input_usd IS NULL \
                                OR   lp.cost_per_1k_output_usd IS NULL) = 0 \
                         THEN ( \
-                            SUM(tu.prompt_tokens::FLOAT8 * lp.cost_per_1k_input_usd) \
-                          + SUM(tu.completion_tokens::FLOAT8 * lp.cost_per_1k_output_usd) \
+                            SUM(CAST(tu.prompt_tokens AS REAL) * lp.cost_per_1k_input_usd) \
+                          + SUM(CAST(tu.completion_tokens AS REAL) * lp.cost_per_1k_output_usd) \
                         ) / 1000.0 \
                         ELSE NULL \
-                    END::FLOAT8 AS cost_usd \
+                    END AS cost_usd \
              FROM token_usage tu \
              LEFT JOIN llm_providers lp \
                     ON lp.id = tu.provider_id \
-                   AND lp.tenant_id IS NULL \
-             WHERE ($1::TEXT        IS NULL OR tu.tenant_id = $1) \
-               AND ($2::TIMESTAMPTZ IS NULL OR tu.ts >= $2) \
-               AND ($3::TIMESTAMPTZ IS NULL OR tu.ts <= $3) \
+             WHERE (?1 IS NULL OR tu.ts >= ?1) \
+               AND (?2 IS NULL OR tu.ts <= ?2) \
              GROUP BY bucket \
              ORDER BY bucket ASC"
         );
 
         let rows = if let Some(t) = &query.tenant_id {
-            // Tenant-scoped query: runs inside an RLS transaction on the
-            // primary (writes to the same Pg session that SET LOCAL app.tenant).
+            // Tenant scoping is vestigial under DEC-033; `begin_tenant_tx`
+            // opens a plain SQLite transaction and ignores the tenant.
             let mut tx = begin_tenant_tx(self.pool.writer(), Some(t))
                 .await
-                .map_err(|e| UsageError::Backend(format!("begin tenant tx: {e}")))?;
+                .map_err(|e| UsageError::Backend(format!("begin tx: {e}")))?;
             let rows = sqlx::query(&sql)
-                .bind(Some(t.clone()))
                 .bind(query.since)
                 .bind(query.until)
                 .fetch_all(&mut *tx)
@@ -138,9 +138,7 @@ impl UsageReader for PgUsageReader {
             tx.commit().await.map_err(map_err)?;
             rows
         } else {
-            // Cross-tenant admin view: pure read, route to replica.
             sqlx::query(&sql)
-                .bind::<Option<String>>(None)
                 .bind(query.since)
                 .bind(query.until)
                 .fetch_all(self.pool.reader())
@@ -156,7 +154,7 @@ impl UsageReader for PgUsageReader {
 ///
 /// Accumulates token totals and cost cents, propagating `None` cost to the
 /// report level when any bucket lacked provider pricing data.
-fn build_report(rows: Vec<sqlx::postgres::PgRow>) -> UsageReport {
+fn build_report(rows: Vec<sqlx::sqlite::SqliteRow>) -> UsageReport {
     let mut total_in: u64 = 0;
     let mut total_out: u64 = 0;
     let mut total_cost_cents: u64 = 0;
@@ -235,7 +233,9 @@ fn cents_from_usd(usd: f64) -> u64 {
 
 fn bucket_expr(group_by: UsageGroupBy) -> &'static str {
     match group_by {
-        UsageGroupBy::Day => "to_char(tu.ts AT TIME ZONE 'UTC', 'YYYY-MM-DD')",
+        // DEC-033: `tu.ts` is stored as the SQLite datetime('now') text
+        // format ("YYYY-MM-DD HH:MM:SS"); substr(.,1,10) is the day bucket.
+        UsageGroupBy::Day => "substr(tu.ts, 1, 10)",
         UsageGroupBy::Provider => "tu.provider_id",
         UsageGroupBy::Model => "tu.model",
     }
