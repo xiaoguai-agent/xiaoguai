@@ -10,6 +10,7 @@ description = "Durable Kanban task board (ADR-0019): persistence layer (boards, 
 
 [dependencies]
 xiaoguai-audit = { path = "../xiaoguai-audit" }
+xiaoguai-storage = { path = "../xiaoguai-storage" }
 async-trait = { workspace = true }
 parking_lot = { workspace = true }
 serde = { workspace = true }
