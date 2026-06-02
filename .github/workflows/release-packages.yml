@@ -71,6 +71,29 @@ jobs:
             target/release/xiaoguai
           retention-days: 1
 
+      # Build the web UIs so the .deb/.rpm bundle them (the server serves
+      # /usr/local/share/xiaoguai/static). admin-ui needs VITE_BASE=/admin/.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build web UIs
+        working-directory: frontend
+        run: |
+          npm install -g pnpm@9.12.0
+          pnpm install --frozen-lockfile
+          pnpm --filter @xiaoguai/shared build
+          pnpm --filter @xiaoguai/chat-ui build
+          VITE_BASE=/admin/ pnpm --filter @xiaoguai/admin-ui build
+
+      - name: Upload web UI dist
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-dist
+          path: |
+            frontend/chat-ui/dist
+            frontend/admin-ui/dist
+          retention-days: 1
+
   # ============================================================
   # 2. Build the .deb package
   # ============================================================
@@ -89,6 +112,14 @@ jobs:
         with:
           name: binaries-x86_64
           path: target/release
+
+      # Restore the built web UIs (chat-ui/dist + admin-ui/dist) so the .deb
+      # bundles them — see [package.metadata.deb] assets.
+      - name: Download web UI dist
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: frontend
 
       - name: Fix binary permissions
         run: chmod 0755 target/release/xiaoguai-core target/release/xiaoguai
@@ -137,6 +168,14 @@ jobs:
         with:
           name: binaries-x86_64
           path: target/release
+
+      # Restore the built web UIs so the .rpm bundles them — see
+      # [package.metadata.generate-rpm] assets.
+      - name: Download web UI dist
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: frontend
 
       - name: Fix binary permissions
         run: chmod 0755 target/release/xiaoguai-core target/release/xiaoguai
