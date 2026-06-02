@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { RecentOutcomesPanel } from './RecentOutcomesPanel';
+import { useI18n } from './i18n/I18nProvider';
 
 interface Props {
   sessions: Array<{ id: string; title: string }>;
@@ -12,6 +13,7 @@ interface Props {
 export function SessionList({ sessions, children }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
+  const { t } = useI18n();
   // v1.3.x — extract the active session id from the route so
   // RecentOutcomesPanel can poll for session-scoped outcomes.
   const { id: activeSessionId } = useParams<{ id: string }>();
@@ -22,17 +24,15 @@ export function SessionList({ sessions, children }: Props) {
   return (
     <aside className="sidebar">
       <h2>Xiaoguai</h2>
-      <button onClick={() => navigate('/')}>+ New chat</button>
+      <button onClick={() => navigate('/')}>{t.ui.new_chat}</button>
 
       {/* v1.2.28 — Skills pane nav entry */}
       <Link to="/skills" className={`nav-link${onSkills ? ' active' : ''}`}>
-        Skills
+        {t.ui.skills}
       </Link>
 
       {sessions.length === 0 ? (
-        <p style={{ color: 'var(--muted)', fontSize: 12 }}>
-          No sessions yet. Send a message to create one.
-        </p>
+        <p style={{ color: 'var(--muted)', fontSize: 12 }}>{t.ui.no_sessions}</p>
       ) : (
         sessions.map((s) => {
           const active = location.pathname === `/sessions/${s.id}`;

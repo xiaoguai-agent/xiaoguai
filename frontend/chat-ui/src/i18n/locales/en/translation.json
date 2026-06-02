@@ -46,5 +46,24 @@
       "timeout_annotation": "Decision timed out — tool call denied",
       "conflict_toast": "Another reviewer decided first — your action was not applied"
     }
+  },
+  "ui": {
+    "new_chat": "+ New chat",
+    "skills": "Skills",
+    "admin": "Admin",
+    "language_label": "Language",
+    "no_sessions": "No sessions yet. Send a message to create one.",
+    "welcome_title": "Hi, I'm Xiaoguai",
+    "welcome_subtitle": "What can I help you with?",
+    "composer_placeholder": "Message Xiaoguai…",
+    "composer_hint": "Shift+Enter for newline",
+    "stop": "Stop",
+    "send": "Send",
+    "stop_generating": "Stop generating",
+    "send_message": "Send message",
+    "thinking": "thinking",
+    "branch": "Branch",
+    "branch_title": "Branch a new conversation from this point",
+    "branch_label": "Branch from here"
   }
 }

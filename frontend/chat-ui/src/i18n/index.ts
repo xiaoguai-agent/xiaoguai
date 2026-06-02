@@ -10,7 +10,17 @@ import en from './locales/en/translation.json';
 import zhCN from './locales/zh-CN/translation.json';
 import ja from './locales/ja/translation.json';
 
-type Locale = 'en' | 'zh-CN' | 'ja';
+export type Locale = 'en' | 'zh-CN' | 'ja';
+
+/** Locales offered in the language switcher, with native display labels. */
+export const AVAILABLE_LOCALES: ReadonlyArray<{ code: Locale; label: string }> = [
+  { code: 'en', label: 'English' },
+  { code: 'zh-CN', label: '中文' },
+  { code: 'ja', label: '日本語' },
+];
+
+/** localStorage key holding the operator's explicit language choice. */
+const LOCALE_STORAGE_KEY = 'xiaoguai.locale';
 
 interface TranslationShape {
   ai_disclosure: {
@@ -18,6 +28,26 @@ interface TranslationShape {
     dismiss_label: string;
     learn_more_label: string;
     banner_aria_label: string;
+  };
+  /** Main chat-ui surface strings (sidebar, welcome, composer). */
+  ui: {
+    new_chat: string;
+    skills: string;
+    admin: string;
+    language_label: string;
+    no_sessions: string;
+    welcome_title: string;
+    welcome_subtitle: string;
+    composer_placeholder: string;
+    composer_hint: string;
+    stop: string;
+    send: string;
+    stop_generating: string;
+    send_message: string;
+    thinking: string;
+    branch: string;
+    branch_title: string;
+    branch_label: string;
   };
   chat: {
     sse: {
@@ -59,8 +89,36 @@ function detectLocale(): Locale {
   return 'en';
 }
 
+/** True when `value` is one of the bundled locales. */
+function isLocale(value: string | null): value is Locale {
+  return value === 'en' || value === 'zh-CN' || value === 'ja';
+}
+
+/**
+ * Resolve the active locale: an explicit stored choice wins over the
+ * auto-detected browser locale. Safe when `localStorage` is unavailable.
+ */
+export function getStoredLocale(): Locale {
+  try {
+    const stored = typeof localStorage !== 'undefined' ? localStorage.getItem(LOCALE_STORAGE_KEY) : null;
+    if (isLocale(stored)) return stored;
+  } catch {
+    // localStorage can throw (private mode / disabled) — fall back to detection.
+  }
+  return detectLocale();
+}
+
+/** Persist the operator's explicit language choice. */
+export function setStoredLocale(locale: Locale): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+  } catch {
+    // Best-effort: a non-persisted switch still applies for the session.
+  }
+}
+
 export function getTranslations(locale?: Locale): TranslationShape {
-  const resolved: Locale = locale ?? detectLocale();
+  const resolved: Locale = locale ?? getStoredLocale();
   return bundles[resolved] ?? bundles['en'];
 }
 
