@@ -10,8 +10,8 @@ CREATE TABLE mcp_oauth_tokens (
     access_token  TEXT NOT NULL,
     refresh_token TEXT,
     expires_at    TEXT NOT NULL,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE (server_id)
 );
 

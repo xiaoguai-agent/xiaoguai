@@ -233,7 +233,7 @@ fn cents_from_usd(usd: f64) -> u64 {
 
 fn bucket_expr(group_by: UsageGroupBy) -> &'static str {
     match group_by {
-        // DEC-033: `tu.ts` is stored as the SQLite datetime('now') text
+        // DEC-033: `tu.ts` is stored as the SQLite strftime('%Y-%m-%dT%H:%M:%SZ', 'now') text
         // format ("YYYY-MM-DD HH:MM:SS"); substr(.,1,10) is the day bucket.
         UsageGroupBy::Day => "substr(tu.ts, 1, 10)",
         UsageGroupBy::Provider => "tu.provider_id",

@@ -313,7 +313,7 @@ impl TaskBoardRepository for PgTaskBoardRepository {
             r"
             UPDATE tasks
             SET    board_column   = ?2,
-                   updated_at     = datetime('now'),
+                   updated_at     = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
                    blocked_reason = CASE WHEN ?3 THEN NULL ELSE blocked_reason END
             WHERE  id = ?1
             RETURNING id, board_id, board_column, title, description, priority,
@@ -378,7 +378,7 @@ impl TaskBoardRepository for PgTaskBoardRepository {
             UPDATE tasks
             SET    board_column   = 'running',
                    assignee_agent = ?2,
-                   updated_at     = datetime('now')
+                   updated_at     = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
             WHERE  id = ?1
             RETURNING id, board_id, board_column, title, description, priority,
                       assignee_agent, parent_task_id, blocked_reason, created_at, updated_at
@@ -430,7 +430,7 @@ impl TaskBoardRepository for PgTaskBoardRepository {
             UPDATE tasks
             SET    board_column   = 'blocked',
                    blocked_reason = ?2,
-                   updated_at     = datetime('now')
+                   updated_at     = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
             WHERE  id = ?1
             RETURNING id, board_id, board_column, title, description, priority,
                       assignee_agent, parent_task_id, blocked_reason, created_at, updated_at

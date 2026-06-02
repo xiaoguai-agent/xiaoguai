@@ -11,8 +11,8 @@ CREATE TABLE llm_providers (
     default_for_models  TEXT NOT NULL DEFAULT '[]',
     fallback_order      INTEGER NOT NULL DEFAULT 100,
     api_key_env         TEXT,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE UNIQUE INDEX ux_llm_providers_name ON llm_providers (name);

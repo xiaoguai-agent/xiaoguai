@@ -11,7 +11,7 @@ CREATE TABLE hotl_policies (
     max_count       INTEGER,
     max_usd         REAL,
     escalate_to     TEXT,
-    created_at      TEXT DEFAULT (datetime('now'))
+    created_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX hotl_policies_scope ON hotl_policies (scope);
@@ -21,7 +21,7 @@ CREATE TABLE hotl_usage_log (
     scope       TEXT NOT NULL,
     amount      REAL NOT NULL,
     escalated   BOOLEAN DEFAULT FALSE,
-    occurred_at TEXT DEFAULT (datetime('now'))
+    occurred_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX hotl_usage_scope_time ON hotl_usage_log (scope, occurred_at);

@@ -12,8 +12,8 @@ CREATE TABLE scheduled_jobs (
     enabled         BOOLEAN NOT NULL DEFAULT TRUE,
     next_fire_at    TEXT,
     last_fire_at    TEXT,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX ix_scheduled_jobs_due
@@ -30,7 +30,7 @@ CREATE TABLE scheduled_job_runs (
     session_id      TEXT REFERENCES sessions(id) ON DELETE SET NULL,
     error_message   TEXT,
     output_preview  TEXT,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX ix_scheduled_job_runs_job

@@ -13,7 +13,7 @@ CREATE TABLE hotl_escalations (
     top_level_scope  TEXT NOT NULL,
     status           TEXT NOT NULL DEFAULT 'pending'
                          CHECK (status IN ('pending', 'resolved', 'expired')),
-    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     parent_id        TEXT REFERENCES hotl_escalations(id) ON DELETE CASCADE
 );
 
@@ -31,7 +31,7 @@ CREATE TABLE hotl_pending (
     status          TEXT NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'resolved', 'expired')),
     expires_at      TEXT NOT NULL,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     decided_at      TEXT,
     decided_by      TEXT
 );
@@ -49,7 +49,7 @@ CREATE TABLE hotl_redaction_policies (
     scope       TEXT NOT NULL,
     jsonpath    TEXT NOT NULL,
     applies_to  TEXT NOT NULL DEFAULT '["sse"]',
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX hotl_redaction_policies_scope_idx ON hotl_redaction_policies (scope);

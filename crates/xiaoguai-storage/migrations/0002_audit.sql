@@ -2,7 +2,7 @@
 
 CREATE TABLE audit_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts          TEXT NOT NULL DEFAULT (datetime('now')),
+    ts          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     actor       TEXT NOT NULL,
     action      TEXT NOT NULL,
     resource    TEXT,

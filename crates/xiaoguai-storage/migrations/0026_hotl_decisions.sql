@@ -7,7 +7,7 @@ CREATE TABLE hotl_decisions (
     verdict          TEXT NOT NULL CHECK (verdict IN ('allow', 'deny')),
     decided_by       TEXT NOT NULL,
     raised_policy_id TEXT,
-    recorded_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    recorded_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX hotl_decisions_recent ON hotl_decisions (recorded_at DESC);

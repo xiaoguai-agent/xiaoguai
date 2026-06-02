@@ -9,7 +9,7 @@ CREATE TABLE personas (
     default_model   TEXT,
     tool_allowlist  TEXT,
     escalation_tier TEXT,
-    created_at      TEXT        NOT NULL DEFAULT (datetime('now')),
+    created_at      TEXT        NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     archived        BOOLEAN     NOT NULL DEFAULT FALSE,
     UNIQUE (name)
 );
@@ -19,7 +19,7 @@ CREATE INDEX personas_active_name_idx ON personas (name) WHERE NOT archived;
 CREATE TABLE session_personas (
     session_id  TEXT        NOT NULL,
     persona_id  TEXT        NOT NULL REFERENCES personas (id) ON DELETE RESTRICT,
-    attached_at TEXT        NOT NULL DEFAULT (datetime('now')),
+    attached_at TEXT        NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     PRIMARY KEY (session_id)
 );
 

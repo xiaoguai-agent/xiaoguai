@@ -162,7 +162,7 @@ impl OutcomesReader for PgOutcomesBackend {
         range: OutcomeRange,
     ) -> Result<Vec<OutcomeDay>, OutcomesApiError> {
         // DEC-033: tenant_id dropped. `attributed_at` is stored as the
-        // SQLite datetime('now') text format ("YYYY-MM-DD HH:MM:SS"), so
+        // SQLite strftime('%Y-%m-%dT%H:%M:%SZ', 'now') text format ("YYYY-MM-DD HH:MM:SS"), so
         // substr(.,1,10) yields the day bucket. kind/since/until each
         // referenced twice → numbered binds.
         let _ = tenant_id;

@@ -117,7 +117,7 @@ impl JobRepository for PgJobRepository {
     ) -> RepoResult<()> {
         let updated = sqlx::query(
             "UPDATE scheduled_jobs
-             SET last_fire_at = ?2, next_fire_at = ?3, updated_at = datetime('now')
+             SET last_fire_at = ?2, next_fire_at = ?3, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
              WHERE id = ?1",
         )
         .bind(id)

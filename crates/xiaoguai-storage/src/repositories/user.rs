@@ -243,7 +243,7 @@ impl UserRepository for PgUserRepository {
     async fn record_login(&self, id: &str) -> RepoResult<()> {
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
 
-        let result = sqlx::query("UPDATE users SET last_login_at = datetime('now') WHERE id = ?")
+        let result = sqlx::query("UPDATE users SET last_login_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
             .bind(id)
             .execute(&mut *tx)
             .await

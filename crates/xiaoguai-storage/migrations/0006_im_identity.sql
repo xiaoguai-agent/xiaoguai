@@ -9,7 +9,7 @@ CREATE TABLE im_identities (
     tenant_external_id  TEXT NOT NULL,
     user_external_id    TEXT NOT NULL,
     user_id             TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     PRIMARY KEY (provider, tenant_external_id, user_external_id)
 );
 CREATE INDEX ix_im_identities_user ON im_identities (user_id);
@@ -19,7 +19,7 @@ CREATE TABLE im_conversations (
     tenant_external_id  TEXT NOT NULL,
     conversation_id     TEXT NOT NULL,
     session_id          TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     PRIMARY KEY (provider, tenant_external_id, conversation_id)
 );
 CREATE INDEX ix_im_conversations_session ON im_conversations (session_id);

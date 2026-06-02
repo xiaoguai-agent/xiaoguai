@@ -11,8 +11,8 @@ CREATE TABLE mcp_servers (
     env_keys    TEXT NOT NULL DEFAULT '[]',
     endpoint    TEXT,                          -- sse / http only
     enabled     BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE UNIQUE INDEX ux_mcp_servers_name_version ON mcp_servers (name, version);

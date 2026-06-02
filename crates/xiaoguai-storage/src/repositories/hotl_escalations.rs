@@ -276,7 +276,7 @@ impl HotlEscalationStore for PgHotlEscalationRepository {
     ) -> RepoResult<bool> {
         let result = sqlx::query(
             "UPDATE hotl_pending \
-             SET status = ?, decided_by = ?, decided_at = datetime('now') \
+             SET status = ?, decided_by = ?, decided_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') \
              WHERE escalation_id = ? AND status = 'pending'",
         )
         .bind(verdict.status_str())
