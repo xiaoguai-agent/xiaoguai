@@ -36,7 +36,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
-use sqlx::{types::Json, FromRow, PgPool};
+use sqlx::{types::Json, FromRow, SqlitePool};
 use uuid::Uuid;
 
 use crate::repositories::error::{RepoError, RepoResult};
@@ -116,7 +116,6 @@ pub struct HotlPendingRow {
 struct HotlPendingDbRow {
     id: Uuid,
     escalation_id: Uuid,
-    tenant_id: Uuid,
     scope: String,
     tool: String,
     args_redacted: Json<JsonValue>,
@@ -132,7 +131,9 @@ impl From<HotlPendingDbRow> for HotlPendingRow {
         Self {
             id: row.id,
             escalation_id: row.escalation_id,
-            tenant_id: row.tenant_id,
+            // tenant_id is vestigial under the single-user pivot (no column);
+            // synthesise the nil UUID so the public row shape is preserved.
+            tenant_id: Uuid::nil(),
             scope: row.scope,
             tool: row.tool,
             args_redacted: row.args_redacted.0,
@@ -189,17 +190,17 @@ pub trait HotlEscalationStore: Send + Sync {
 /// which is by design cross-tenant.
 #[derive(Debug, Clone)]
 pub struct PgHotlEscalationRepository {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgHotlEscalationRepository {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
 
-const PENDING_COLUMNS: &str = "id, escalation_id, tenant_id, scope, tool, args_redacted, \
+const PENDING_COLUMNS: &str = "id, escalation_id, scope, tool, args_redacted, \
                                status, expires_at, created_at, decided_at, decided_by";
 
 #[async_trait]
@@ -213,11 +214,10 @@ impl HotlEscalationStore for PgHotlEscalationRepository {
 
         sqlx::query(
             "INSERT INTO hotl_escalations \
-             (id, tenant_id, session_id, top_level_scope, status, created_at, parent_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             (id, session_id, top_level_scope, status, created_at, parent_id) \
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(parent.id)
-        .bind(parent.tenant_id)
         .bind(parent.session_id)
         .bind(&parent.top_level_scope)
         .bind(&parent.status)
@@ -229,9 +229,9 @@ impl HotlEscalationStore for PgHotlEscalationRepository {
 
         sqlx::query(
             "INSERT INTO hotl_pending \
-             (id, escalation_id, tenant_id, scope, tool, args_redacted, status, \
+             (id, escalation_id, scope, tool, args_redacted, status, \
               expires_at, created_at, decided_at, decided_by) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(child.id)
         // Force the FK to match the parent we just wrote — ignore whatever
@@ -239,7 +239,6 @@ impl HotlEscalationStore for PgHotlEscalationRepository {
         // invariant "child.escalation_id == returned parent id" is
         // unconditional.
         .bind(parent.id)
-        .bind(child.tenant_id)
         .bind(&child.scope)
         .bind(&child.tool)
         .bind(Json(&child.args_redacted))
@@ -259,7 +258,7 @@ impl HotlEscalationStore for PgHotlEscalationRepository {
     async fn list_pending_unexpired(&self, now: DateTime<Utc>) -> RepoResult<Vec<HotlPendingRow>> {
         let rows: Vec<HotlPendingDbRow> = sqlx::query_as(&format!(
             "SELECT {PENDING_COLUMNS} FROM hotl_pending \
-             WHERE status = 'pending' AND expires_at > $1 \
+             WHERE status = 'pending' AND expires_at > ? \
              ORDER BY created_at ASC"
         ))
         .bind(now)
@@ -277,8 +276,8 @@ impl HotlEscalationStore for PgHotlEscalationRepository {
     ) -> RepoResult<bool> {
         let result = sqlx::query(
             "UPDATE hotl_pending \
-             SET status = $1, decided_by = $2, decided_at = now() \
-             WHERE escalation_id = $3 AND status = 'pending'",
+             SET status = ?, decided_by = ?, decided_at = datetime('now') \
+             WHERE escalation_id = ? AND status = 'pending'",
         )
         .bind(verdict.status_str())
         .bind(decided_by.as_deref())

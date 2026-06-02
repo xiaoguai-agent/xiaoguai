@@ -14,10 +14,11 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{FromRow, PgPool, Postgres, QueryBuilder};
+use sqlx::{FromRow, QueryBuilder, Sqlite, SqlitePool};
 
 use crate::repositories::error::{RepoError, RepoResult};
 use crate::repositories::tenant_ctx::begin_tenant_tx;
+use crate::OWNER_TENANT_ID;
 
 #[derive(Debug, Clone)]
 pub struct TokenUsageEntry {
@@ -37,7 +38,6 @@ pub struct TokenUsageEntry {
 struct TokenUsageRow {
     id: i64,
     ts: DateTime<Utc>,
-    tenant_id: String,
     user_id: Option<String>,
     session_id: Option<String>,
     provider_id: String,
@@ -60,7 +60,7 @@ impl From<TokenUsageRow> for StoredTokenUsage {
             id: row.id,
             entry: TokenUsageEntry {
                 ts: row.ts,
-                tenant_id: row.tenant_id,
+                tenant_id: OWNER_TENANT_ID.to_string(),
                 user_id: row.user_id,
                 session_id: row.session_id,
                 provider_id: row.provider_id,
@@ -94,12 +94,12 @@ pub trait TokenUsageRepository: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct PgTokenUsageRepository {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgTokenUsageRepository {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
@@ -115,14 +115,13 @@ impl TokenUsageRepository for PgTokenUsageRepository {
             return Ok(());
         }
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
-        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
             "INSERT INTO token_usage \
-             (ts, tenant_id, user_id, session_id, provider_id, model, \
+             (ts, user_id, session_id, provider_id, model, \
               prompt_tokens, completion_tokens, total_tokens, request_id) ",
         );
         qb.push_values(entries.iter(), |mut b, e| {
             b.push_bind(e.ts)
-                .push_bind(&e.tenant_id)
                 .push_bind(e.user_id.as_deref())
                 .push_bind(e.session_id.as_deref())
                 .push_bind(&e.provider_id)
@@ -152,12 +151,11 @@ impl TokenUsageRepository for PgTokenUsageRepository {
         }
         let mut tx = begin_tenant_tx(&self.pool, Some(tenant_id)).await?;
         let rows = sqlx::query_as::<_, TokenUsageRow>(
-            "SELECT id, ts, tenant_id, user_id, session_id, provider_id, model, \
+            "SELECT id, ts, user_id, session_id, provider_id, model, \
              prompt_tokens, completion_tokens, total_tokens, request_id \
-             FROM token_usage WHERE tenant_id = $1 \
-             ORDER BY ts DESC LIMIT $2",
+             FROM token_usage \
+             ORDER BY ts DESC LIMIT ?",
         )
-        .bind(tenant_id)
         .bind(limit)
         .fetch_all(&mut *tx)
         .await

@@ -5,23 +5,25 @@
 //!
 //! Two tables (see `0006_im_identity.sql`):
 //!
-//! * `im_identities`    — `(provider, tenant_ext, user_ext)` → `(tenant_id, user_id)`
+//! * `im_identities`    — `(provider, tenant_ext, user_ext)` → `user_id`
 //! * `im_conversations` — `(provider, tenant_ext, conv_id)`  → `session_id`
 //!
 //! The repo exposes two `resolve_or_create_*` helpers. Each is idempotent:
-//! the first webhook for a chat creates the tenant + user + session rows
-//! inside a single transaction; every subsequent webhook hits the PK index
-//! and returns the stored IDs.
+//! the first webhook for a chat creates the user + session rows inside a
+//! single transaction; every subsequent webhook hits the PK index and
+//! returns the stored IDs. Under the single-user pivot (DEC-033) there is no
+//! `tenants` table; the resolved `tenant_id` is always [`OWNER_TENANT_ID`].
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, Sqlite, SqlitePool};
 use xiaoguai_types::{
     ids::{SessionId, TenantId, UserId},
-    Session, SessionStatus, Tenant, TenantRole, TenantStatus, User,
+    Session, SessionStatus, TenantRole, User,
 };
 
 use crate::repositories::error::{RepoError, RepoResult};
+use crate::OWNER_TENANT_ID;
 
 /// External identity payload coming off an IM webhook.
 #[derive(Debug, Clone)]
@@ -81,19 +83,18 @@ pub trait ImIdentityRepository: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct PgImIdentityRepository {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgImIdentityRepository {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
 
 #[derive(Debug, FromRow)]
 struct IdentityRow {
-    tenant_id: String,
     user_id: String,
 }
 
@@ -111,8 +112,8 @@ impl ImIdentityRepository for PgImIdentityRepository {
     ) -> RepoResult<ImIdentity> {
         // Fast path: hit the PK index.
         if let Some(row) = sqlx::query_as::<_, IdentityRow>(
-            "SELECT tenant_id, user_id FROM im_identities \
-             WHERE provider = $1 AND tenant_external_id = $2 AND user_external_id = $3",
+            "SELECT user_id FROM im_identities \
+             WHERE provider = ? AND tenant_external_id = ? AND user_external_id = ?",
         )
         .bind(ext.provider)
         .bind(ext.tenant_external_id)
@@ -122,29 +123,20 @@ impl ImIdentityRepository for PgImIdentityRepository {
         .map_err(RepoError::from_sqlx)?
         {
             return Ok(ImIdentity {
-                tenant_id: row.tenant_id,
+                tenant_id: OWNER_TENANT_ID.to_string(),
                 user_id: row.user_id,
             });
         }
 
-        // Slow path: create tenant + user + mapping in one tx. Wrap with
+        // Slow path: create user + mapping in one tx. Wrap with
         // `ON CONFLICT DO NOTHING` semantics + a re-select so two concurrent
-        // webhooks for the same identity converge safely.
+        // webhooks for the same identity converge safely. No tenants table
+        // under the single-user pivot — every user belongs to the owner.
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
 
-        let synthetic_tenant = Tenant {
-            id: TenantId::new(),
-            name: synthetic_tenant_name(ext.provider, ext.tenant_external_id),
-            display_name: display_hint.map_or_else(
-                || synthetic_tenant_name(ext.provider, ext.tenant_external_id),
-                str::to_string,
-            ),
-            created_at: Utc::now(),
-            status: TenantStatus::Active,
-        };
         let synthetic_user = User {
             id: UserId::new(),
-            tenant_id: synthetic_tenant.id.clone(),
+            tenant_id: TenantId::from(OWNER_TENANT_ID.to_string()),
             email: synthetic_user_email(ext.provider, ext.tenant_external_id, ext.user_external_id),
             display_name: display_hint
                 .map_or_else(|| ext.user_external_id.to_string(), str::to_string),
@@ -153,36 +145,25 @@ impl ImIdentityRepository for PgImIdentityRepository {
             last_login_at: None,
         };
 
-        // Tenants table has no RLS; safe to insert without GUC.
-        // Use ON CONFLICT (name) DO NOTHING so a race doesn't blow up.
-        let tenant_id = upsert_tenant(&mut tx, &synthetic_tenant).await?;
-
-        // Users + RLS: set GUC before insert so the policy allows the row.
-        sqlx::query("SELECT set_config('app.current_tenant_id', $1, true)")
-            .bind(&tenant_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(RepoError::from_sqlx)?;
-        let user_id = upsert_user(&mut tx, &synthetic_user, &tenant_id).await?;
+        let user_id = upsert_user(&mut tx, &synthetic_user).await?;
 
         // Mapping insert. ON CONFLICT DO NOTHING + re-select handles races.
         sqlx::query(
             "INSERT INTO im_identities \
-             (provider, tenant_external_id, user_external_id, tenant_id, user_id) \
-             VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
+             (provider, tenant_external_id, user_external_id, user_id) \
+             VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
         )
         .bind(ext.provider)
         .bind(ext.tenant_external_id)
         .bind(ext.user_external_id)
-        .bind(&tenant_id)
         .bind(&user_id)
         .execute(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
 
         let row: IdentityRow = sqlx::query_as(
-            "SELECT tenant_id, user_id FROM im_identities \
-             WHERE provider = $1 AND tenant_external_id = $2 AND user_external_id = $3",
+            "SELECT user_id FROM im_identities \
+             WHERE provider = ? AND tenant_external_id = ? AND user_external_id = ?",
         )
         .bind(ext.provider)
         .bind(ext.tenant_external_id)
@@ -194,7 +175,7 @@ impl ImIdentityRepository for PgImIdentityRepository {
         tx.commit().await.map_err(RepoError::from_sqlx)?;
 
         Ok(ImIdentity {
-            tenant_id: row.tenant_id,
+            tenant_id: OWNER_TENANT_ID.to_string(),
             user_id: row.user_id,
         })
     }
@@ -207,7 +188,7 @@ impl ImIdentityRepository for PgImIdentityRepository {
     ) -> RepoResult<ImConversation> {
         if let Some(row) = sqlx::query_as::<_, ConversationRow>(
             "SELECT session_id FROM im_conversations \
-             WHERE provider = $1 AND tenant_external_id = $2 AND conversation_id = $3",
+             WHERE provider = ? AND tenant_external_id = ? AND conversation_id = ?",
         )
         .bind(conv.provider)
         .bind(conv.tenant_external_id)
@@ -222,11 +203,6 @@ impl ImIdentityRepository for PgImIdentityRepository {
         }
 
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
-        sqlx::query("SELECT set_config('app.current_tenant_id', $1, true)")
-            .bind(&identity.tenant_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(RepoError::from_sqlx)?;
 
         let session = Session {
             id: SessionId::new(),
@@ -242,11 +218,10 @@ impl ImIdentityRepository for PgImIdentityRepository {
         };
 
         sqlx::query(
-            "INSERT INTO sessions (id, tenant_id, user_id, title, model, status, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, 'active', $6, $7)",
+            "INSERT INTO sessions (id, user_id, title, model, status, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, 'active', ?, ?)",
         )
         .bind(session.id.as_str())
-        .bind(session.tenant_id.as_str())
         .bind(session.user_id.as_str())
         .bind(session.title.as_deref())
         .bind(&session.model)
@@ -259,7 +234,7 @@ impl ImIdentityRepository for PgImIdentityRepository {
         sqlx::query(
             "INSERT INTO im_conversations \
              (provider, tenant_external_id, conversation_id, session_id) \
-             VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+             VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
         )
         .bind(conv.provider)
         .bind(conv.tenant_external_id)
@@ -271,7 +246,7 @@ impl ImIdentityRepository for PgImIdentityRepository {
 
         let row: ConversationRow = sqlx::query_as(
             "SELECT session_id FROM im_conversations \
-             WHERE provider = $1 AND tenant_external_id = $2 AND conversation_id = $3",
+             WHERE provider = ? AND tenant_external_id = ? AND conversation_id = ?",
         )
         .bind(conv.provider)
         .bind(conv.tenant_external_id)
@@ -283,7 +258,7 @@ impl ImIdentityRepository for PgImIdentityRepository {
         // If a concurrent insert beat us to it the session row we just
         // created is now an orphan; clean it up so we don't leak rows.
         if row.session_id != session.id.as_str() {
-            sqlx::query("DELETE FROM sessions WHERE id = $1")
+            sqlx::query("DELETE FROM sessions WHERE id = ?")
                 .bind(session.id.as_str())
                 .execute(&mut *tx)
                 .await
@@ -297,9 +272,10 @@ impl ImIdentityRepository for PgImIdentityRepository {
     }
 }
 
-/// Synthetic tenant name guaranteed to be unique per `(provider, tenant_ext)`.
-/// The `tenants.name` column has a UNIQUE constraint, so we need a stable
-/// encoding rather than a random suffix.
+/// Synthetic tenant name encoding, stable per `(provider, tenant_ext)`.
+/// Unused in the single-user pivot (no `tenants` table); retained only for
+/// the `synthetic_names_are_stable` regression test.
+#[cfg(test)]
 fn synthetic_tenant_name(provider: &str, tenant_ext: &str) -> String {
     format!("im:{provider}:{tenant_ext}")
 }
@@ -315,45 +291,14 @@ fn synthetic_session_title(provider: &str, conv: &str) -> String {
     format!("{provider}:{conv}")
 }
 
-/// Insert the tenant if absent, returning the id of the existing or
-/// newly-created row.
-async fn upsert_tenant(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    tenant: &Tenant,
-) -> RepoResult<String> {
+/// Insert the user if absent, returning the id. `email` is globally unique
+/// under the single-user pivot, so a race converges on the existing row.
+async fn upsert_user(tx: &mut sqlx::Transaction<'_, Sqlite>, user: &User) -> RepoResult<String> {
     sqlx::query(
-        "INSERT INTO tenants (id, name, display_name, status, created_at) \
-         VALUES ($1, $2, $3, 'active', $4) ON CONFLICT (name) DO NOTHING",
-    )
-    .bind(tenant.id.as_str())
-    .bind(&tenant.name)
-    .bind(&tenant.display_name)
-    .bind(tenant.created_at)
-    .execute(&mut **tx)
-    .await
-    .map_err(RepoError::from_sqlx)?;
-
-    let (id,): (String,) = sqlx::query_as("SELECT id FROM tenants WHERE name = $1")
-        .bind(&tenant.name)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(RepoError::from_sqlx)?;
-    Ok(id)
-}
-
-/// Insert the user if absent, returning the id. Caller must have set the
-/// `app.current_tenant_id` GUC for this transaction.
-async fn upsert_user(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    user: &User,
-    tenant_id: &str,
-) -> RepoResult<String> {
-    sqlx::query(
-        "INSERT INTO users (id, tenant_id, email, display_name, created_at) \
-         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (tenant_id, email) DO NOTHING",
+        "INSERT INTO users (id, email, display_name, created_at) \
+         VALUES (?, ?, ?, ?) ON CONFLICT (email) DO NOTHING",
     )
     .bind(user.id.as_str())
-    .bind(tenant_id)
     .bind(&user.email)
     .bind(&user.display_name)
     .bind(user.created_at)
@@ -361,13 +306,11 @@ async fn upsert_user(
     .await
     .map_err(RepoError::from_sqlx)?;
 
-    let (id,): (String,) =
-        sqlx::query_as("SELECT id FROM users WHERE tenant_id = $1 AND email = $2")
-            .bind(tenant_id)
-            .bind(&user.email)
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(RepoError::from_sqlx)?;
+    let (id,): (String,) = sqlx::query_as("SELECT id FROM users WHERE email = ?")
+        .bind(&user.email)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(RepoError::from_sqlx)?;
     Ok(id)
 }
 

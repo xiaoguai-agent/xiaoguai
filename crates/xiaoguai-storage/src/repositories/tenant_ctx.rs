@@ -1,54 +1,25 @@
-//! Per-request tenant context helper for RLS-aware queries.
+//! Transaction helper — vestigial tenant scoping (DEC-033 single-user).
 //!
-//! Every Postgres operation against an RLS-enabled table (`users`,
-//! `sessions`, `messages`, `llm_providers`, `token_usage`, `mcp_servers`)
-//! must run inside a transaction that has set
-//! `app.current_tenant_id` to the caller's tenant. The policies reference
-//! that GUC; without it set, a non-superuser role sees an empty result.
+//! Under Postgres every RLS-protected query ran inside a transaction that set
+//! the `app.current_tenant_id` GUC. SQLite has no RLS and the single-user pivot
+//! has one implicit owner, so there is nothing to scope: [`begin_tenant_tx`]
+//! now just opens a plain transaction and ignores the `tenant` argument.
 //!
-//! Pattern used by every repo method touching one of those tables:
-//!
-//! ```ignore
-//! let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
-//! sqlx::query("...").bind(...).execute(&mut *tx).await?;
-//! tx.commit().await?;
-//! ```
-//!
-//! When `tenant` is `None` the transaction is still opened but no GUC is
-//! set. That path exists for two callers:
-//!
-//! 1. Admin / cross-tenant CLI operations (e.g. `xiaoguai provider list`)
-//!    that should bypass tenant filtering. In production these run as a
-//!    superuser-ish role; in tests the container's `postgres` user
-//!    bypasses non-FORCE policies.
-//! 2. The `tenants` table itself, which has no RLS — it's the registry
-//!    used to bootstrap tenants. Repos for that table take no tenant arg.
-//!
-//! `SELECT set_config(name, value, is_local=true)` is preferred over the
-//! statement form `SET LOCAL` because it accepts a bound parameter — `SET`
-//! is a parse-time keyword and cannot be parameterised.
+//! The signature is retained so the repository bodies (which call
+//! `begin_tenant_tx(&self.pool, tenant)`) keep compiling unchanged; the
+//! `tenant` parameter on the repository trait methods is likewise vestigial.
 
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
 use crate::repositories::error::{RepoError, RepoResult};
 
-/// Open a transaction and, when `tenant` is `Some`, scope it to that
-/// tenant via `set_config('app.current_tenant_id', $1, true)`.
+/// Open a transaction. The `tenant` argument is ignored (no RLS under SQLite).
 ///
 /// The returned transaction must be committed by the caller; dropping it
-/// without committing rolls back, which is fine for read-only paths but
-/// will lose writes.
+/// without committing rolls back.
 pub async fn begin_tenant_tx<'p>(
-    pool: &'p PgPool,
-    tenant: Option<&str>,
-) -> RepoResult<Transaction<'p, Postgres>> {
-    let mut tx = pool.begin().await.map_err(RepoError::from_sqlx)?;
-    if let Some(t) = tenant {
-        sqlx::query("SELECT set_config('app.current_tenant_id', $1, true)")
-            .bind(t)
-            .execute(&mut *tx)
-            .await
-            .map_err(RepoError::from_sqlx)?;
-    }
-    Ok(tx)
+    pool: &'p SqlitePool,
+    _tenant: Option<&str>,
+) -> RepoResult<Transaction<'p, Sqlite>> {
+    pool.begin().await.map_err(RepoError::from_sqlx)
 }

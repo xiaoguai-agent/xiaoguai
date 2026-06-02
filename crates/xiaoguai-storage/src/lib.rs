@@ -8,6 +8,13 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::module_name_repetitions, clippy::missing_errors_doc)]
 
+/// The single implicit owner's tenant id (DEC-033). The `tenant_id` columns are
+/// gone from the SQLite schema, but domain types in `xiaoguai-types` still carry
+/// a `TenantId`; repositories synthesise this constant on read and ignore the
+/// vestigial `tenant` parameter on write. A later cleanup may drop the field
+/// from the domain types entirely.
+pub const OWNER_TENANT_ID: &str = "ten_local_owner";
+
 pub mod cache;
 pub mod db;
 pub mod migrations;
