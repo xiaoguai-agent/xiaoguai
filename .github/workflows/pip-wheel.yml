@@ -108,7 +108,7 @@ jobs:
           python-version: '3.12'
 
       - name: Build wheel
-        uses: pypa/cibuildwheel@v2.21.3
+        uses: pypa/cibuildwheel@v3.4.1
         with:
           package-dir: python/xiaoguai
           output-dir: wheelhouse
