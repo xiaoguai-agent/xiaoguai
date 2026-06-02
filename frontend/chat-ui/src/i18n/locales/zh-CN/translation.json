@@ -46,5 +46,24 @@
       "timeout_annotation": "决定超时 — 工具调用被拒绝",
       "conflict_toast": "另一位审核者已先做出决定 — 您的操作未被应用"
     }
+  },
+  "ui": {
+    "new_chat": "+ 新对话",
+    "skills": "技能",
+    "admin": "管理",
+    "language_label": "语言",
+    "no_sessions": "暂无会话。发送消息以创建。",
+    "welcome_title": "你好，我是小怪",
+    "welcome_subtitle": "有什么可以帮你的？",
+    "composer_placeholder": "给小怪发消息…",
+    "composer_hint": "Shift+Enter 换行",
+    "stop": "停止",
+    "send": "发送",
+    "stop_generating": "停止生成",
+    "send_message": "发送消息",
+    "thinking": "思考中",
+    "branch": "分支",
+    "branch_title": "从此处分支出新对话",
+    "branch_label": "从此处分支"
   }
 }

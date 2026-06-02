@@ -4,6 +4,8 @@ import { SessionList } from './SessionList';
 import { ChatPage } from './ChatPage';
 import { SkillsPage } from './Skills';
 import { ThemeToggle } from './ThemeToggle';
+import { LanguageToggle } from './LanguageToggle';
+import { useI18n } from './i18n/I18nProvider';
 
 /**
  * Top-level shell — owns the in-memory session list (sessions don't have a
@@ -15,11 +17,21 @@ import { ThemeToggle } from './ThemeToggle';
  */
 export function App() {
   const [sessions, setSessions] = useState<Array<{ id: string; title: string }>>([]);
+  const { t } = useI18n();
 
   return (
     <div className="layout">
       <SessionList sessions={sessions}>
-        <ThemeToggle />
+        {/* Sidebar footer (bottom-left): admin console link + language +
+            theme. admin-ui is served by the backend at /admin/, so a plain
+            link navigates there (it's a separate SPA). */}
+        <a className="nav-link admin-link" href="/admin/">
+          {t.ui.admin}
+        </a>
+        <div className="sidebar-footer-row">
+          <LanguageToggle />
+          <ThemeToggle />
+        </div>
       </SessionList>
       <main className="main">
         <Routes>
