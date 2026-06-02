@@ -49,6 +49,21 @@ jobs:
       - name: Install `cross`
         run: cargo install cross --locked --version 0.2.5
 
+      # Build the web UIs so build-tarball.sh bundles them under
+      # share/xiaoguai/static (the server auto-detects + serves them).
+      # admin-ui needs VITE_BASE=/admin/.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build web UIs
+        working-directory: frontend
+        run: |
+          npm install -g pnpm@9.12.0
+          pnpm install --frozen-lockfile
+          pnpm --filter @xiaoguai/shared build
+          pnpm --filter @xiaoguai/chat-ui build
+          VITE_BASE=/admin/ pnpm --filter @xiaoguai/admin-ui build
+
       - name: Build tarball
         run: |
           # Derive VERSION: strip leading 'v' from a tag ref, or use a

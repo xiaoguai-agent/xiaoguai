@@ -1031,6 +1031,54 @@ fn build_wecom_gateway(
     Some(mount_wecom_with_history(state.clone(), provider, history))
 }
 
+/// Resolve which directory (if any) holds the web UI to serve.
+///
+/// Precedence:
+///   1. An explicit `server.static_dir`. A non-empty value that is a real
+///      directory is used; an empty string is an explicit opt-out (API-only);
+///      a non-empty value that isn't a directory warns and falls through to
+///      API-only.
+///   2. When unset, probe the conventional bundle locations so native installs
+///      (.deb/.rpm/tarball ship the built UI under `share/xiaoguai/static`,
+///      next to the binary) serve it with zero configuration. The first
+///      candidate that exists and contains a `chat-ui` sub-directory wins.
+fn resolve_static_dir(configured: Option<&str>) -> Option<std::path::PathBuf> {
+    use std::path::{Path, PathBuf};
+
+    let has_ui = |dir: &Path| dir.is_dir() && dir.join("chat-ui").is_dir();
+
+    if let Some(raw) = configured {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None; // explicit opt-out
+        }
+        let path = PathBuf::from(trimmed);
+        if path.is_dir() {
+            return Some(path);
+        }
+        tracing::warn!(
+            static_dir = %trimmed,
+            "serve: server.static_dir is set but not a directory; serving API only"
+        );
+        return None;
+    }
+
+    // Unset → probe conventional locations relative to the binary, then system
+    // share dirs. Candidates are ordered most- to least-specific.
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            candidates.push(bin_dir.join("static")); // exe-adjacent (Docker WORKDIR-style)
+                                                     // tarball/.deb/.rpm: <prefix>/bin/xiaoguai-core + <prefix>/share/xiaoguai/static
+            candidates.push(bin_dir.join("../share/xiaoguai/static"));
+        }
+    }
+    candidates.push(PathBuf::from("/usr/local/share/xiaoguai/static"));
+    candidates.push(PathBuf::from("/usr/share/xiaoguai/static"));
+
+    candidates.into_iter().find(|c| has_ui(c))
+}
+
 /// Bind the main API router and merge the optional IM gateway router on
 /// top. Equivalent to `serve_with_state` but accepts a second router
 /// fragment so we can compose IM webhooks without adding a public API
@@ -1052,20 +1100,16 @@ async fn serve_with_state_and_extras(
         app = app.merge(r);
     }
 
-    // Optional web-UI serving (chat-ui at `/`, admin-ui at `/admin/`). Only
-    // when `server.static_dir` is set AND exists; otherwise the server stays
-    // API-only. Mounted after the API router so `/v1` + `/healthz` win.
-    if let Some(dir) = static_dir {
-        let path = std::path::Path::new(&dir);
-        if path.is_dir() {
-            app = xiaoguai_api::static_ui::mount_static_ui(app, path);
-            tracing::info!(static_dir = %dir, "serve: web UI mounted (chat-ui at /, admin-ui at /admin)");
-        } else {
-            tracing::warn!(
-                static_dir = %dir,
-                "serve: server.static_dir is set but not a directory; serving API only"
-            );
-        }
+    // Optional web-UI serving (chat-ui at `/`, admin-ui at `/admin/`), mounted
+    // after the API router so `/v1` + `/healthz` win. An explicit
+    // `server.static_dir` wins; otherwise we probe the conventional bundle
+    // locations so native installs (.deb/.rpm/tarball, which ship the built UI
+    // under `share/xiaoguai/static`) serve it with zero config.
+    if let Some(path) = resolve_static_dir(static_dir.as_deref()) {
+        app = xiaoguai_api::static_ui::mount_static_ui(app, &path);
+        tracing::info!(static_dir = %path.display(), "serve: web UI mounted (chat-ui at /, admin-ui at /admin)");
+    } else {
+        tracing::info!("serve: no web UI bundle found — serving API only");
     }
 
     // v1.2.11: Prometheus + OTLP telemetry.
@@ -1274,5 +1318,29 @@ async fn check_mcp_oauth_keyring(pool: &sqlx::PgPool) -> Result<()> {
             "mcp_oauth_tokens contains {count} row(s) but the encryption keyring is unavailable: {e}.\n\
              Set XIAOGUAI_MCP_OAUTH_TOKEN_KEY (32-byte base64url AES-256-GCM key) and restart."
         )),
+    }
+}
+
+#[cfg(test)]
+mod static_dir_tests {
+    use super::resolve_static_dir;
+
+    #[test]
+    fn empty_string_is_explicit_opt_out() {
+        assert!(resolve_static_dir(Some("")).is_none());
+        assert!(resolve_static_dir(Some("   ")).is_none());
+    }
+
+    #[test]
+    fn nonexistent_explicit_dir_falls_through_to_none() {
+        assert!(resolve_static_dir(Some("/no/such/xiaoguai/static")).is_none());
+    }
+
+    #[test]
+    fn explicit_existing_dir_is_used() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let resolved = resolve_static_dir(Some(dir.path().to_str().unwrap()))
+            .expect("an existing explicit dir resolves");
+        assert_eq!(resolved, dir.path());
     }
 }
