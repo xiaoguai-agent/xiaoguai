@@ -1,28 +1,25 @@
-//! Postgres + pgvector memory store.
-//!
-//! ## Prerequisite
-//!
-//! The `vector` Postgres extension must be installed before running migrations:
-//! ```sql
-//! CREATE EXTENSION IF NOT EXISTS vector;
-//! ```
+//! Embedded SQLite memory store (single-user, DEC-033).
 //!
 //! ## Migration
 //!
 //! Run `crates/xiaoguai-storage/migrations/0019_memories.sql` via
 //! `sqlx::migrate!` / `db::migrate`.
 //!
-//! ## Similarity search
+//! ## Similarity search (no pgvector)
 //!
-//! Uses pgvector's `<=>` (cosine distance) operator on the `content_embedding`
-//! HNSW index. The returned score is `1 - cosine_distance` to match the
-//! `[0, 1]` convention used by [`InMemoryMemoryStore`].
+//! pgvector is gone. `content_embedding` / `query_embedding` are stored as a
+//! `BLOB` of 384 little-endian `f32` values. Recall applies the SQL-expressible
+//! filters (kind, tags, ttl), then decodes each embedding BLOB and computes
+//! cosine similarity in Rust, sorts descending, and takes the top-k. A full
+//! scan is acceptable at single-user scale (this is also Phase 3's approach).
+//! The returned score is cosine similarity in `[0, 1]` to match the convention
+//! used by [`InMemoryMemoryStore`].
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::{postgres::PgRow, PgPool, Row};
+use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use uuid::Uuid;
 
 use crate::embedder::EmbeddingProvider;
@@ -33,39 +30,99 @@ use crate::types::{
     UpdateMemoryRequest,
 };
 
+/// Synthetic owner id used in single-user mode (DEC-033). `tenant_id` is dropped
+/// from the schema; the domain `Memory` type still carries a required `Uuid`,
+/// so reads synthesize a stable nil id.
+const OWNER_TENANT_ID: &str = "ten_local_owner";
+
 pub struct PgMemoryStore {
-    pool: PgPool,
+    pool: SqlitePool,
     embedder: Arc<dyn EmbeddingProvider>,
 }
 
 impl PgMemoryStore {
-    pub fn new(pool: PgPool, embedder: Arc<dyn EmbeddingProvider>) -> Self {
+    pub fn new(pool: SqlitePool, embedder: Arc<dyn EmbeddingProvider>) -> Self {
+        let _ = OWNER_TENANT_ID; // single-user owner marker; tenant_id is synthesized as nil
         Self { pool, embedder }
     }
 }
 
+// ─── Embedding BLOB (de)serialization ────────────────────────────────────────
+
+/// Serialize an embedding `&[f32]` into a `Vec<u8>` of little-endian f32 bytes.
+fn embedding_to_blob(v: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(v.len() * 4);
+    for f in v {
+        bytes.extend_from_slice(&f.to_le_bytes());
+    }
+    bytes
+}
+
+/// Decode a `BLOB` of little-endian f32 bytes back into a `Vec<f32>`.
+/// Trailing bytes that don't form a complete f32 are ignored.
+fn blob_to_embedding(b: &[u8]) -> Vec<f32> {
+    b.chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
+}
+
+/// Cosine similarity in `[0, 1]` between two equal-length vectors. Returns `0.0`
+/// when either vector is empty, dimensions mismatch, or a magnitude is zero.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let mut dot = 0.0f32;
+    let mut na = 0.0f32;
+    let mut nb = 0.0f32;
+    for (x, y) in a.iter().zip(b.iter()) {
+        dot += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
+    (dot / (na.sqrt() * nb.sqrt())).clamp(0.0, 1.0)
+}
+
+// ─── tags JSON (de)serialization ─────────────────────────────────────────────
+
+/// Serialize tags into a JSON array string for the `tags TEXT` column.
+fn tags_to_json(tags: &[String]) -> String {
+    serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_owned())
+}
+
+/// Parse a `tags TEXT` JSON array column into `Vec<String>`.
+fn json_to_tags(s: &str) -> Vec<String> {
+    serde_json::from_str(s).unwrap_or_default()
+}
+
 // ─── Row → Memory conversion ─────────────────────────────────────────────────
 
-fn row_to_memory(row: &PgRow) -> Result<Memory, sqlx::Error> {
+fn row_to_memory(row: &SqliteRow) -> Result<Memory, sqlx::Error> {
     let kind_str: String = row.try_get("kind")?;
     let kind: MemoryKind = kind_str
         .parse()
         .map_err(|e: MemoryError| sqlx::Error::Decode(e.to_string().into()))?;
 
-    // pgvector returns the vector as a string "[0.1,0.2,...]"; parse it.
-    let embedding_raw: Option<String> = row.try_get("content_embedding")?;
-    let content_embedding = embedding_raw
-        .as_deref()
-        .map(parse_pgvector_str)
-        .unwrap_or_default();
+    let embedding_blob: Vec<u8> = row.try_get("content_embedding")?;
+    let content_embedding = blob_to_embedding(&embedding_blob);
+
+    let id_str: String = row.try_get("id")?;
+    let id = Uuid::parse_str(&id_str)
+        .map_err(|e| sqlx::Error::Decode(format!("invalid memory id {id_str:?}: {e}").into()))?;
+
+    let tags_str: String = row.try_get("tags").unwrap_or_else(|_| "[]".to_owned());
 
     Ok(Memory {
-        id: row.try_get("id")?,
-        tenant_id: row.try_get("tenant_id")?,
+        id,
+        // tenant_id dropped from the schema; synthesize nil in single-user mode.
+        tenant_id: Uuid::nil(),
         kind,
         content: row.try_get("content")?,
         content_embedding,
-        tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+        tags: json_to_tags(&tags_str),
         ttl_at: row.try_get("ttl_at")?,
         created_at: row.try_get("created_at")?,
         last_recalled_at: row.try_get("last_recalled_at")?,
@@ -73,89 +130,63 @@ fn row_to_memory(row: &PgRow) -> Result<Memory, sqlx::Error> {
     })
 }
 
-/// Parse a pgvector literal "[0.1,0.2,...]" into `Vec<f32>`.
-fn parse_pgvector_str(s: &str) -> Vec<f32> {
-    let inner = s.trim_matches(|c| c == '[' || c == ']');
-    if inner.is_empty() {
-        return Vec::new();
-    }
-    inner
-        .split(',')
-        .filter_map(|tok| tok.trim().parse::<f32>().ok())
-        .collect()
-}
-
-/// Format a `Vec<f32>` as a pgvector literal "[0.1,0.2,...]".
-fn format_pgvector(v: &[f32]) -> String {
-    let inner = v
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("[{inner}]")
-}
-
-/// Safe usize → i64 conversion: clamps to `i64::MAX` rather than wrapping.
-/// In practice `limit`, `offset`, and `top_k` are small user-supplied values.
-#[allow(clippy::cast_possible_wrap)]
-fn to_i64(n: usize) -> i64 {
-    n as i64
-}
-
 #[async_trait]
 impl MemoryStore for PgMemoryStore {
     async fn list_memories(
         &self,
-        tenant_id: Uuid,
+        _tenant_id: Uuid,
         kind_filter: Option<MemoryKind>,
         tag_filter: &[String],
         limit: usize,
         offset: usize,
     ) -> MemoryResult<Vec<Memory>> {
-        // Dynamic filter build — kind is optional, tags must be a superset.
+        // Single-user: tenant_id is gone. Apply kind + tag filters in SQL, then
+        // enforce tag-superset semantics in Rust (one EXISTS per tag is awkward
+        // with a variable tag count; filtering the small result set is simpler).
         let rows = sqlx::query(
             r"
-            SELECT id, tenant_id, kind, content,
-                   content_embedding::text, tags, ttl_at,
+            SELECT id, kind, content, content_embedding, tags, ttl_at,
                    created_at, last_recalled_at, recall_count
             FROM memories
-            WHERE tenant_id = $1
-              AND ($2::text IS NULL OR kind = $2)
-              AND ($3::text[] IS NULL OR tags @> $3)
+            WHERE (?1 IS NULL OR kind = ?1)
             ORDER BY created_at DESC
-            LIMIT $4 OFFSET $5
             ",
         )
-        .bind(tenant_id)
         .bind(kind_filter.map(|k| k.as_str().to_owned()))
-        .bind(if tag_filter.is_empty() {
-            None
-        } else {
-            Some(tag_filter.to_vec())
-        })
-        .bind(to_i64(limit))
-        .bind(to_i64(offset))
         .fetch_all(&self.pool)
         .await?;
 
-        rows.iter()
+        let memories = rows
+            .iter()
             .map(row_to_memory)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| MemoryError::Database(e.to_string()))
+            .map_err(|e| MemoryError::Database(e.to_string()))?;
+
+        // tags @> tag_filter  ==>  memory.tags is a superset of tag_filter.
+        let filtered = memories
+            .into_iter()
+            .filter(|m| {
+                tag_filter
+                    .iter()
+                    .all(|want| m.tags.iter().any(|have| have == want))
+            })
+            .skip(offset)
+            .take(limit)
+            .collect();
+
+        Ok(filtered)
     }
 
-    async fn get_memory(&self, id: Uuid, tenant_id: Uuid) -> MemoryResult<Memory> {
+    async fn get_memory(&self, id: Uuid, _tenant_id: Uuid) -> MemoryResult<Memory> {
         let row = sqlx::query(
             r"
-            SELECT id, tenant_id, kind, content,
-                   content_embedding::text, tags, ttl_at,
+            SELECT id, kind, content, content_embedding, tags, ttl_at,
                    created_at, last_recalled_at, recall_count
             FROM memories
-            WHERE id = $1 AND tenant_id = $2
+            WHERE id = ?1
             ",
         )
-        .bind(id)
-        .bind(tenant_id)
+        .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await?
         .ok_or(MemoryError::NotFound(id))?;
@@ -165,23 +196,22 @@ impl MemoryStore for PgMemoryStore {
 
     async fn create_memory(&self, req: CreateMemoryRequest) -> MemoryResult<Memory> {
         let embedding = self.embedder.embed(&req.content).await?;
-        let embedding_lit = format_pgvector(&embedding);
+        let embedding_blob = embedding_to_blob(&embedding);
         let now = Utc::now();
         let id = Uuid::new_v4();
 
         sqlx::query(
             r"
             INSERT INTO memories
-              (id, tenant_id, kind, content, content_embedding, tags, ttl_at, created_at, recall_count)
-            VALUES ($1, $2, $3, $4, $5::vector, $6, $7, $8, 0)
+              (id, kind, content, content_embedding, tags, ttl_at, created_at, recall_count)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)
             ",
         )
-        .bind(id)
-        .bind(req.tenant_id)
+        .bind(id.to_string())
         .bind(req.kind.as_str())
         .bind(&req.content)
-        .bind(&embedding_lit)
-        .bind(&req.tags)
+        .bind(&embedding_blob)
+        .bind(tags_to_json(&req.tags))
         .bind(req.ttl_at)
         .bind(now)
         .execute(&self.pool)
@@ -204,7 +234,7 @@ impl MemoryStore for PgMemoryStore {
     async fn update_memory(
         &self,
         id: Uuid,
-        tenant_id: Uuid,
+        _tenant_id: Uuid,
         req: UpdateMemoryRequest,
     ) -> MemoryResult<Memory> {
         // Re-embed if content changes.
@@ -214,32 +244,29 @@ impl MemoryStore for PgMemoryStore {
             None
         };
 
-        // Build SET clause dynamically.
         let content_update = req.content.as_deref().unwrap_or("");
-        let emb_lit = new_embedding.as_deref().map(format_pgvector);
+        let emb_blob = new_embedding.as_deref().map(embedding_to_blob);
 
-        // Use a single UPDATE that returns the full row.
+        // Single UPDATE that returns the full row. SQLite supports RETURNING.
         let row = sqlx::query(
             r"
             UPDATE memories SET
-              content          = CASE WHEN $3 THEN $4 ELSE content END,
-              content_embedding = CASE WHEN $5 THEN $6::vector ELSE content_embedding END,
-              tags             = CASE WHEN $7 THEN $8 ELSE tags END,
-              ttl_at           = CASE WHEN $9 THEN $10 ELSE ttl_at END
-            WHERE id = $1 AND tenant_id = $2
-            RETURNING id, tenant_id, kind, content,
-                      content_embedding::text, tags, ttl_at,
+              content           = CASE WHEN ?2 THEN ?3 ELSE content END,
+              content_embedding = CASE WHEN ?4 THEN ?5 ELSE content_embedding END,
+              tags              = CASE WHEN ?6 THEN ?7 ELSE tags END,
+              ttl_at            = CASE WHEN ?8 THEN ?9 ELSE ttl_at END
+            WHERE id = ?1
+            RETURNING id, kind, content, content_embedding, tags, ttl_at,
                       created_at, last_recalled_at, recall_count
             ",
         )
-        .bind(id)
-        .bind(tenant_id)
+        .bind(id.to_string())
         .bind(req.content.is_some())
         .bind(content_update)
-        .bind(emb_lit.is_some())
-        .bind(emb_lit.as_deref().unwrap_or("[]"))
+        .bind(emb_blob.is_some())
+        .bind(emb_blob.unwrap_or_default())
         .bind(req.tags.is_some())
-        .bind(req.tags.unwrap_or_default())
+        .bind(tags_to_json(req.tags.as_deref().unwrap_or(&[])))
         .bind(req.ttl_at.is_some())
         .bind(req.ttl_at.flatten())
         .fetch_optional(&self.pool)
@@ -249,10 +276,9 @@ impl MemoryStore for PgMemoryStore {
         row_to_memory(&row).map_err(|e| MemoryError::Database(e.to_string()))
     }
 
-    async fn delete_memory(&self, id: Uuid, tenant_id: Uuid) -> MemoryResult<()> {
-        let result = sqlx::query("DELETE FROM memories WHERE id = $1 AND tenant_id = $2")
-            .bind(id)
-            .bind(tenant_id)
+    async fn delete_memory(&self, id: Uuid, _tenant_id: Uuid) -> MemoryResult<()> {
+        let result = sqlx::query("DELETE FROM memories WHERE id = ?1")
+            .bind(id.to_string())
             .execute(&self.pool)
             .await?;
 
@@ -264,55 +290,61 @@ impl MemoryStore for PgMemoryStore {
 
     async fn recall_memories(&self, req: RecallRequest) -> MemoryResult<Vec<RecalledMemory>> {
         let query_embedding = self.embedder.embed(&req.query).await?;
-        let emb_lit = format_pgvector(&query_embedding);
 
+        // SQL-expressible filters only: kind + non-expired ttl. The vector
+        // similarity is computed in Rust below (brute-force cosine scan).
         let rows = sqlx::query(
             r"
-            SELECT id, tenant_id, kind, content,
-                   content_embedding::text, tags, ttl_at,
-                   created_at, last_recalled_at, recall_count,
-                   1 - (content_embedding <=> $3::vector) AS score
+            SELECT id, kind, content, content_embedding, tags, ttl_at,
+                   created_at, last_recalled_at, recall_count
             FROM memories
-            WHERE tenant_id = $1
-              AND ($4::text IS NULL OR kind = $4)
-              AND ($5::text[] IS NULL OR tags @> $5)
-            ORDER BY content_embedding <=> $3::vector
-            LIMIT $2
+            WHERE (?1 IS NULL OR kind = ?1)
+              AND (ttl_at IS NULL OR ttl_at >= datetime('now'))
             ",
         )
-        .bind(req.tenant_id)
-        .bind(to_i64(req.top_k))
-        .bind(&emb_lit)
         .bind(req.kind_filter.map(|k| k.as_str().to_owned()))
-        .bind(if req.tag_filter.is_empty() {
-            None
-        } else {
-            Some(req.tag_filter.clone())
-        })
         .fetch_all(&self.pool)
         .await?;
 
+        let candidates = rows
+            .iter()
+            .map(row_to_memory)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| MemoryError::Database(e.to_string()))?;
+
+        // Tag-superset filter + cosine scoring in Rust.
+        let mut scored: Vec<(Memory, f32)> = candidates
+            .into_iter()
+            .filter(|m| {
+                req.tag_filter
+                    .iter()
+                    .all(|want| m.tags.iter().any(|have| have == want))
+            })
+            .map(|m| {
+                let score = cosine_similarity(&query_embedding, &m.content_embedding);
+                (m, score)
+            })
+            .collect();
+
+        // Sort by similarity descending; take top-k.
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+        scored.truncate(req.top_k);
+
         let now = Utc::now();
-        let mut recalled: Vec<RecalledMemory> = Vec::with_capacity(rows.len());
-        let mut refs: Vec<RecalledMemoryRef> = Vec::with_capacity(rows.len());
+        let mut recalled: Vec<RecalledMemory> = Vec::with_capacity(scored.len());
+        let mut refs: Vec<RecalledMemoryRef> = Vec::with_capacity(scored.len());
 
-        for row in &rows {
-            let memory = row_to_memory(row).map_err(|e| MemoryError::Database(e.to_string()))?;
-            // f64 → f32 truncation is acceptable: scores are in [0,1],
-            // well within f32 precision.
-            #[allow(clippy::cast_possible_truncation)]
-            let score = row.try_get::<f64, _>("score").unwrap_or(0.0) as f32;
-
+        for (memory, score) in scored {
             // Update recall metadata.
             sqlx::query(
                 r"
                 UPDATE memories
-                SET last_recalled_at = $1, recall_count = recall_count + 1
-                WHERE id = $2
+                SET last_recalled_at = ?1, recall_count = recall_count + 1
+                WHERE id = ?2
                 ",
             )
             .bind(now)
-            .bind(memory.id)
+            .bind(memory.id.to_string())
             .execute(&self.pool)
             .await?;
 
@@ -323,19 +355,19 @@ impl MemoryStore for PgMemoryStore {
             recalled.push(RecalledMemory { memory, score });
         }
 
-        // Write recall trace.
+        // Write recall trace (query embedding stored as BLOB too).
         let trace_id = Uuid::new_v4();
-        let refs_json = serde_json::to_value(&refs)?;
+        let refs_json = serde_json::to_string(&refs)?;
         sqlx::query(
             r"
             INSERT INTO recall_traces
               (id, session_id, query_embedding, memories_recalled, recalled_at)
-            VALUES ($1, $2, $3::vector, $4, $5)
+            VALUES (?1, ?2, ?3, ?4, ?5)
             ",
         )
-        .bind(trace_id)
-        .bind(req.session_id)
-        .bind(&emb_lit)
+        .bind(trace_id.to_string())
+        .bind(req.session_id.map(|s| s.to_string()))
+        .bind(embedding_to_blob(&query_embedding))
         .bind(refs_json)
         .bind(now)
         .execute(&self.pool)
@@ -347,58 +379,55 @@ impl MemoryStore for PgMemoryStore {
     async fn find_similar(
         &self,
         memory_id: Uuid,
-        tenant_id: Uuid,
+        _tenant_id: Uuid,
         top_k: usize,
     ) -> MemoryResult<Vec<RecalledMemory>> {
+        // Fetch the anchor's embedding first; missing anchor => NotFound.
+        let anchor = self
+            .get_memory(memory_id, Uuid::nil())
+            .await
+            .map_err(|e| match e {
+                MemoryError::NotFound(_) => MemoryError::NotFound(memory_id),
+                other => other,
+            })?;
+
         let rows = sqlx::query(
             r"
-            SELECT m.id, m.tenant_id, m.kind, m.content,
-                   m.content_embedding::text, m.tags, m.ttl_at,
-                   m.created_at, m.last_recalled_at, m.recall_count,
-                   1 - (m.content_embedding <=> anchor.content_embedding) AS score
-            FROM memories m,
-                 (SELECT content_embedding FROM memories WHERE id = $1 AND tenant_id = $2) AS anchor
-            WHERE m.tenant_id = $2 AND m.id != $1
-            ORDER BY m.content_embedding <=> anchor.content_embedding
-            LIMIT $3
+            SELECT id, kind, content, content_embedding, tags, ttl_at,
+                   created_at, last_recalled_at, recall_count
+            FROM memories
+            WHERE id != ?1
             ",
         )
-        .bind(memory_id)
-        .bind(tenant_id)
-        .bind(to_i64(top_k))
+        .bind(memory_id.to_string())
         .fetch_all(&self.pool)
         .await?;
 
-        if rows.is_empty() {
-            // Could be missing anchor — check explicitly.
-            let exists: Option<(Uuid,)> =
-                sqlx::query_as("SELECT id FROM memories WHERE id = $1 AND tenant_id = $2")
-                    .bind(memory_id)
-                    .bind(tenant_id)
-                    .fetch_optional(&self.pool)
-                    .await?;
-            if exists.is_none() {
-                return Err(MemoryError::NotFound(memory_id));
-            }
-        }
-
-        rows.iter()
+        let mut scored: Vec<(Memory, f32)> = rows
+            .iter()
             .map(|row| {
                 let memory =
                     row_to_memory(row).map_err(|e| MemoryError::Database(e.to_string()))?;
-                // f64 → f32 truncation acceptable: scores are in [0,1].
-                #[allow(clippy::cast_possible_truncation)]
-                let score = row.try_get::<f64, _>("score").unwrap_or(0.0) as f32;
-                Ok(RecalledMemory { memory, score })
+                let score = cosine_similarity(&anchor.content_embedding, &memory.content_embedding);
+                Ok::<_, MemoryError>((memory, score))
             })
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+        scored.truncate(top_k);
+
+        Ok(scored
+            .into_iter()
+            .map(|(memory, score)| RecalledMemory { memory, score })
+            .collect())
     }
 
     async fn cleanup_expired(&self) -> MemoryResult<u64> {
-        let result =
-            sqlx::query("DELETE FROM memories WHERE ttl_at IS NOT NULL AND ttl_at < now()")
-                .execute(&self.pool)
-                .await?;
+        let result = sqlx::query(
+            "DELETE FROM memories WHERE ttl_at IS NOT NULL AND ttl_at < datetime('now')",
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected())
     }
 }

@@ -9450,6 +9450,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "xiaoguai-audit",
+ "xiaoguai-storage",
 ]
 
 [[package]]
