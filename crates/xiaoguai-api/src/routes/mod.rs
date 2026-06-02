@@ -8,6 +8,7 @@ pub mod mcp;
 pub mod memory;
 pub mod outcomes;
 pub mod personas;
+pub mod providers;
 pub mod scheduler_public;
 pub mod sessions;
 pub mod tenants;
