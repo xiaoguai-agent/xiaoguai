@@ -1,27 +1,19 @@
-//! Integration tests for `PgMcpServerRepository` against testcontainers PG.
+//! Integration tests for `PgMcpServerRepository` (embedded `SQLite`, DEC-033).
 //!
-//! `#[ignore = "requires Docker"]` like all other repo tests in this crate.
+//! No Docker — each test opens a temp `SQLite` database via `common::test_setup`.
+//! `tenant_id` is dropped on write and reads back as `None`; uniqueness is on
+//! `(name, version)` across the single owner namespace.
 
 mod common;
 
 use chrono::{SubsecRound, Utc};
-use xiaoguai_storage::repositories::{
-    McpServerRepository, PgMcpServerRepository, PgTenantRepository, RepoError, TenantRepository,
-};
+use common::test_setup;
+use xiaoguai_storage::repositories::{McpServerRepository, PgMcpServerRepository, RepoError};
+use xiaoguai_storage::OWNER_TENANT_ID;
 use xiaoguai_types::{
     ids::{McpServerInstanceId, TenantId},
-    McpServer, McpTransport, Tenant, TenantStatus,
+    McpServer, McpTransport,
 };
-
-fn sample_tenant(name: &str) -> Tenant {
-    Tenant {
-        id: TenantId::new(),
-        name: name.into(),
-        display_name: format!("Display {name}"),
-        created_at: Utc::now().trunc_subsecs(6),
-        status: TenantStatus::Active,
-    }
-}
 
 fn sample_stdio(name: &str, ver: &str, tenant: Option<TenantId>) -> McpServer {
     let now = Utc::now().trunc_subsecs(6);
@@ -45,9 +37,8 @@ fn sample_stdio(name: &str, ver: &str, tenant: Option<TenantId>) -> McpServer {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
-async fn create_and_find_by_id_global() {
-    let (pool, _pg) = common::test_setup().await;
+async fn create_and_find_by_id() {
+    let (pool, _guard) = test_setup().await;
     let repo = PgMcpServerRepository::new(pool);
     let server = sample_stdio("fs", "1.0.0", None);
     repo.create(None, &server).await.expect("create");
@@ -57,6 +48,7 @@ async fn create_and_find_by_id_global() {
         .expect("query")
         .expect("present");
     assert_eq!(found.name, "fs");
+    assert!(found.tenant_id.is_none());
     assert_eq!(found.transport, McpTransport::Stdio);
     assert_eq!(found.args.len(), 2);
     assert_eq!(found.env_keys, vec!["FS_ROOT"]);
@@ -64,37 +56,25 @@ async fn create_and_find_by_id_global() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
-async fn list_for_tenant_filters_correctly() {
-    let (pool, _pg) = common::test_setup().await;
-    let trepo = PgTenantRepository::new(pool.clone());
-    let t1 = sample_tenant("t1");
-    let t2 = sample_tenant("t2");
-    trepo.create(&t1).await.unwrap();
-    trepo.create(&t2).await.unwrap();
-
+async fn list_returns_all_rows() {
+    let (pool, _guard) = test_setup().await;
     let repo = PgMcpServerRepository::new(pool);
-    repo.create(None, &sample_stdio("global", "1.0", None))
+    repo.create(None, &sample_stdio("a", "1.0", None))
         .await
         .unwrap();
-    repo.create(None, &sample_stdio("t1-only", "1.0", Some(t1.id.clone())))
-        .await
-        .unwrap();
-    repo.create(None, &sample_stdio("t2-only", "1.0", Some(t2.id.clone())))
+    repo.create(None, &sample_stdio("b", "1.0", None))
         .await
         .unwrap();
 
-    let rows = repo.list_for_tenant(t1.id.as_str()).await.unwrap();
+    let rows = repo.list_for_tenant(OWNER_TENANT_ID).await.unwrap();
     let names: Vec<&str> = rows.iter().map(|s| s.name.as_str()).collect();
-    assert!(names.contains(&"global"));
-    assert!(names.contains(&"t1-only"));
-    assert!(!names.contains(&"t2-only"), "leaked t2: {names:?}");
+    assert!(names.contains(&"a"));
+    assert!(names.contains(&"b"));
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
-async fn duplicate_name_version_in_scope_rejected() {
-    let (pool, _pg) = common::test_setup().await;
+async fn duplicate_name_version_rejected() {
+    let (pool, _guard) = test_setup().await;
     let repo = PgMcpServerRepository::new(pool);
     repo.create(None, &sample_stdio("fs", "1.0.0", None))
         .await
@@ -107,9 +87,8 @@ async fn duplicate_name_version_in_scope_rejected() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn same_name_different_version_ok() {
-    let (pool, _pg) = common::test_setup().await;
+    let (pool, _guard) = test_setup().await;
     let repo = PgMcpServerRepository::new(pool);
     repo.create(None, &sample_stdio("fs", "1.0.0", None))
         .await
@@ -120,9 +99,8 @@ async fn same_name_different_version_ok() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn delete_idempotent() {
-    let (pool, _pg) = common::test_setup().await;
+    let (pool, _guard) = test_setup().await;
     let repo = PgMcpServerRepository::new(pool);
     let s = sample_stdio("d", "1.0", None);
     repo.create(None, &s).await.unwrap();

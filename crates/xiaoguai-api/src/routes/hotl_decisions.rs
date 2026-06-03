@@ -25,11 +25,10 @@
 //!
 //! ## Tenant identity
 //!
-//! Tenant id is taken from `Claims.tenant_id` (populated by the
-//! `require_bearer` middleware) — never from the request body. When the
-//! API runs in unauthed dev/test mode the handler falls back to a
-//! zero UUID; production deployments wire `auth: Some(...)` so this
-//! fallback is unreachable.
+//! Under the single-user pivot (DEC-033) there is one implicit owner, so the
+//! decision row is always written against the nil tenant UUID. The field is
+//! retained only because the persistence layer still threads a `tenant_id`
+//! column; it carries no isolation semantics.
 //!
 //! ## `raise_policy` semantics
 //!
@@ -52,7 +51,7 @@
 //! The handler does not implement idempotent-replay semantics — operators
 //! who double-click see a clear error rather than a silent no-op.
 
-use axum::extract::{Extension, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -60,19 +59,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::auth::Claims;
 use crate::error::ApiError;
 use crate::hotl::decision::{HotlDecisionRecord, HotlDecisionStoreError, HotlDecisionVerdict};
 use crate::hotl::decision_registry::{HotlResolution, RegistryError};
 use crate::hotl::policy::{CreateHotlPolicyRequest, HotlPolicy};
 use crate::routes::hotl::map_store_err as map_policy_err;
 use crate::state::AppState;
-
-/// Scope slug guarding `POST /v1/hotl/decisions` (sprint-13 S13-10,
-/// DEC-HLD-016, GR-SEC-14). Operators carry this scope in their JWT;
-/// requests without it are rejected with a structured 403 so the
-/// chat-ui can render a precise error.
-pub const HOTL_DECIDE_SCOPE: &str = "hotl:decide";
 
 // ── wire DTOs ─────────────────────────────────────────────────────────────────
 
@@ -162,12 +154,8 @@ impl HotlDecisionResponse {
 ///   currently unreachable from a well-formed request (kept on the wire
 ///   so 3a.2 can return it without a client breaking change).
 /// - `409 Conflict` — `escalation_id` already has a recorded decision.
-/// - `401 Unauthorized` / `403 Forbidden` — handled by middleware.
-pub async fn create_decision(
-    State(state): State<AppState>,
-    claims: Option<Extension<Claims>>,
-    body: axum::body::Bytes,
-) -> Response {
+/// - `401 Unauthorized` — handled by the owner-auth middleware.
+pub async fn create_decision(State(state): State<AppState>, body: axum::body::Bytes) -> Response {
     // Sprint-13 S13-8 / DEC-HLD-016: pre-flight check for the legacy
     // `request_id` field so callers get a structured rename diagnostic
     // (400 with `{field: "escalation_id"}`) instead of a generic
@@ -189,10 +177,9 @@ pub async fn create_decision(
             return ApiError::InvalidRequest(format!("invalid request body: {e}")).into_response();
         }
     };
-    match create_decision_inner(state, claims, req).await {
+    match create_decision_inner(state, req).await {
         Ok((status, body)) => (status, body).into_response(),
-        Err(DecisionRouteError::MissingScope(scope)) => forbidden_missing_scope(scope),
-        Err(DecisionRouteError::Api(api)) => api.into_response(),
+        Err(api) => api.into_response(),
     }
 }
 
@@ -211,58 +198,30 @@ fn rename_diagnostic_response() -> Response {
 
 async fn create_decision_inner(
     state: AppState,
-    claims: Option<Extension<Claims>>,
     req: CreateHotlDecisionRequest,
-) -> Result<(StatusCode, Json<HotlDecisionResponse>), DecisionRouteError> {
-    // ── 0. Scope gate (sprint-13 S13-10, DEC-HLD-016, GR-SEC-14) ────────────
-    //
-    // Enforce `hotl:decide` when Claims are present. When `claims` is
-    // `None` we're in unauthed dev/test mode and the gate is a no-op —
-    // production deploys always wire `auth: Some(...)`, so this fallback
-    // is unreachable in real environments. The gate runs BEFORE any
-    // store touch so a forbidden caller cannot probe for a 503 ("is the
-    // store wired?") signal.
-    if let Some(Extension(c)) = claims.as_ref() {
-        if !c.scopes.iter().any(|s| s == HOTL_DECIDE_SCOPE) {
-            return Err(DecisionRouteError::MissingScope(HOTL_DECIDE_SCOPE));
-        }
-    }
-
+) -> Result<(StatusCode, Json<HotlDecisionResponse>), ApiError> {
     // ── 1. Required wiring ───────────────────────────────────────────────────
-    let store = state.hotl_decision_store.as_ref().ok_or_else(|| {
-        DecisionRouteError::Api(ApiError::ServiceUnavailable(
-            "HOTL decision store not wired".into(),
-        ))
-    })?;
+    let store = state
+        .hotl_decision_store
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("HOTL decision store not wired".into()))?;
 
-    // ── 2. Tenant id from Claims, never from body ───────────────────────────
-    // Auth-required mode: Claims.tenant_id is a string (mirrors the rest of
-    // the API). Parse it as a UUID; reject if malformed. Dev/test mode
-    // (`auth: None`) → fall back to a zero UUID so the handler still works
-    // in the unauthed integration tests that mirror `tests/hotl.rs`.
-    let tenant_id = match claims.as_ref() {
-        Some(Extension(c)) => Uuid::parse_str(&c.tenant_id).map_err(|_| {
-            ApiError::InvalidRequest(format!(
-                "tenant_id in claims is not a valid UUID: {}",
-                c.tenant_id
-            ))
-        })?,
-        None => Uuid::nil(),
-    };
+    // ── 2. Owner tenant (DEC-033 single-user) ───────────────────────────────
+    // One implicit owner → the decision row is written against the nil tenant
+    // UUID; the column is vestigial and carries no isolation semantics.
+    let tenant_id = Uuid::nil();
 
     // ── 3. Validate raise_policy shape before touching the DB ───────────────
     if let Some(rp) = &req.raise_policy {
         if rp.max_count.is_none() && rp.max_usd.is_none() {
             return Err(ApiError::InvalidRequest(
                 "raise_policy: at least one of max_count or max_usd must be set".into(),
-            )
-            .into());
+            ));
         }
         if rp.window_seconds <= 0 {
             return Err(ApiError::InvalidRequest(
                 "raise_policy: window_seconds must be > 0".into(),
-            )
-            .into());
+            ));
         }
     }
 
@@ -376,8 +335,8 @@ async fn create_decision_inner(
             false
         }
         Err(RegistryError::Storage(e)) => {
-            return Err(DecisionRouteError::Api(ApiError::Internal(
-                anyhow::anyhow!("hotl decision registry storage: {e}"),
+            return Err(ApiError::Internal(anyhow::anyhow!(
+                "hotl decision registry storage: {e}"
             )));
         }
     };
@@ -387,37 +346,6 @@ async fn create_decision_inner(
     resp.policy_created = policy_created;
 
     Ok((StatusCode::CREATED, Json(resp)))
-}
-
-// ── route-local error type ────────────────────────────────────────────────────
-
-/// Route-local error wrapper so the scope-gate (`MissingScope`) can
-/// return a structured `{error, required_scope}` body that does not fit
-/// the [`ApiError`] envelope. All other errors flow through `Api` and
-/// render via [`ApiError::into_response`].
-pub enum DecisionRouteError {
-    /// The bearer token did not carry the required scope; render as 403
-    /// with `{"error":"forbidden","required_scope":"<slug>"}`.
-    MissingScope(&'static str),
-    /// All other errors — service unavailable, conflict, etc.
-    Api(ApiError),
-}
-
-impl From<ApiError> for DecisionRouteError {
-    fn from(value: ApiError) -> Self {
-        Self::Api(value)
-    }
-}
-
-/// Render the 403 body the chat-ui expects when the operator JWT lacks
-/// `hotl:decide`. Kept narrow on purpose — the body shape is part of
-/// the wire contract documented in api-contract.md §2.6.2.
-fn forbidden_missing_scope(required_scope: &'static str) -> Response {
-    let body = serde_json::json!({
-        "error": "forbidden",
-        "required_scope": required_scope,
-    });
-    (StatusCode::FORBIDDEN, Json(body)).into_response()
 }
 
 // ── error mapping ─────────────────────────────────────────────────────────────

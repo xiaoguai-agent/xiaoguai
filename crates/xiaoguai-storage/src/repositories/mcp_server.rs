@@ -7,11 +7,8 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{FromRow, PgPool};
-use xiaoguai_types::{
-    ids::{McpServerInstanceId, TenantId},
-    McpServer, McpTransport,
-};
+use sqlx::{FromRow, SqlitePool};
+use xiaoguai_types::{ids::McpServerInstanceId, McpServer, McpTransport};
 
 use crate::repositories::error::{RepoError, RepoResult};
 use crate::repositories::tenant_ctx::begin_tenant_tx;
@@ -30,12 +27,12 @@ pub trait McpServerRepository: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct PgMcpServerRepository {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgMcpServerRepository {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
@@ -43,7 +40,6 @@ impl PgMcpServerRepository {
 #[derive(Debug, FromRow)]
 struct McpServerRow {
     id: String,
-    tenant_id: Option<String>,
     name: String,
     version: String,
     transport: String,
@@ -65,7 +61,7 @@ impl McpServerRow {
         let env_keys: Vec<String> = serde_json::from_value(self.env_keys)?;
         Ok(McpServer {
             id: McpServerInstanceId::from(self.id),
-            tenant_id: self.tenant_id.map(TenantId::from),
+            tenant_id: None,
             name: self.name,
             version: self.version,
             transport,
@@ -80,7 +76,7 @@ impl McpServerRow {
     }
 }
 
-const SELECT_COLUMNS: &str = "id, tenant_id, name, version, transport, command, args, \
+const SELECT_COLUMNS: &str = "id, name, version, transport, command, args, \
      env_keys, endpoint, enabled, created_at, updated_at";
 
 #[async_trait]
@@ -91,12 +87,11 @@ impl McpServerRepository for PgMcpServerRepository {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         sqlx::query(
             "INSERT INTO mcp_servers \
-             (id, tenant_id, name, version, transport, command, args, env_keys, \
+             (id, name, version, transport, command, args, env_keys, \
               endpoint, enabled, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(s.id.as_str())
-        .bind(s.tenant_id.as_ref().map(AsRef::as_ref))
         .bind(&s.name)
         .bind(&s.version)
         .bind(s.transport.as_str())
@@ -117,7 +112,7 @@ impl McpServerRepository for PgMcpServerRepository {
     async fn find_by_id(&self, tenant: Option<&str>, id: &str) -> RepoResult<Option<McpServer>> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         let row = sqlx::query_as::<_, McpServerRow>(&format!(
-            "SELECT {SELECT_COLUMNS} FROM mcp_servers WHERE id = $1"
+            "SELECT {SELECT_COLUMNS} FROM mcp_servers WHERE id = ?"
         ))
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -131,7 +126,6 @@ impl McpServerRepository for PgMcpServerRepository {
         let mut tx = begin_tenant_tx(&self.pool, None).await?;
         let rows = sqlx::query_as::<_, McpServerRow>(&format!(
             "SELECT {SELECT_COLUMNS} FROM mcp_servers \
-             WHERE tenant_id IS NULL \
              ORDER BY name ASC, version ASC, created_at ASC"
         ))
         .fetch_all(&mut *tx)
@@ -145,10 +139,8 @@ impl McpServerRepository for PgMcpServerRepository {
         let mut tx = begin_tenant_tx(&self.pool, Some(tenant_id)).await?;
         let rows = sqlx::query_as::<_, McpServerRow>(&format!(
             "SELECT {SELECT_COLUMNS} FROM mcp_servers \
-             WHERE tenant_id IS NULL OR tenant_id = $1 \
-             ORDER BY (tenant_id IS NOT NULL) ASC, name ASC, version ASC, created_at ASC"
+             ORDER BY name ASC, version ASC, created_at ASC"
         ))
-        .bind(tenant_id)
         .fetch_all(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
@@ -158,7 +150,7 @@ impl McpServerRepository for PgMcpServerRepository {
 
     async fn delete(&self, tenant: Option<&str>, id: &str) -> RepoResult<()> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
-        sqlx::query("DELETE FROM mcp_servers WHERE id = $1")
+        sqlx::query("DELETE FROM mcp_servers WHERE id = ?")
             .bind(id)
             .execute(&mut *tx)
             .await

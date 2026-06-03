@@ -12,7 +12,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{
@@ -27,7 +27,6 @@ use crate::{
 #[derive(sqlx::FromRow)]
 struct BoardRow {
     id: Uuid,
-    tenant_id: Uuid,
     name: String,
     default_board: bool,
     dispatch_policy: String,
@@ -39,7 +38,9 @@ impl From<BoardRow> for Board {
     fn from(r: BoardRow) -> Self {
         Self {
             id: r.id,
-            tenant_id: r.tenant_id,
+            // tenant_id is vestigial under the single-user pivot (no column);
+            // synthesise the nil UUID so the public domain shape is preserved.
+            tenant_id: Uuid::nil(),
             name: r.name,
             default_board: r.default_board,
             dispatch_policy: r.dispatch_policy,
@@ -141,13 +142,13 @@ fn db_err(e: sqlx::Error) -> TaskError {
 /// from `xiaoguai-storage`'s connection pool helper.
 #[derive(Debug, Clone)]
 pub struct PgTaskBoardRepository {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgTaskBoardRepository {
     /// Create a new repository backed by `pool`.
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
@@ -157,15 +158,14 @@ impl TaskBoardRepository for PgTaskBoardRepository {
     // ---- Boards --------------------------------------------------------
 
     async fn list_boards(&self, tenant_id: Uuid) -> Result<Vec<Board>, TaskError> {
+        let _ = tenant_id; // vestigial under single-user pivot
         let rows = sqlx::query_as::<_, BoardRow>(
             r"
-            SELECT id, tenant_id, name, default_board, dispatch_policy, pool_size, created_at
+            SELECT id, name, default_board, dispatch_policy, pool_size, created_at
             FROM   boards
-            WHERE  tenant_id = $1
             ORDER  BY name
             ",
         )
-        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await
         .map_err(db_err)?;
@@ -181,14 +181,13 @@ impl TaskBoardRepository for PgTaskBoardRepository {
         let row = sqlx::query_as::<_, BoardRow>(
             r"
             INSERT INTO boards
-                (id, tenant_id, name, default_board, dispatch_policy, pool_size)
+                (id, name, default_board, dispatch_policy, pool_size)
             VALUES
-                ($1, $2, $3, $4, $5, $6)
-            RETURNING id, tenant_id, name, default_board, dispatch_policy, pool_size, created_at
+                (?, ?, ?, ?, ?)
+            RETURNING id, name, default_board, dispatch_policy, pool_size, created_at
             ",
         )
         .bind(id)
-        .bind(req.tenant_id)
         .bind(&req.name)
         .bind(req.default_board)
         .bind(&dispatch_policy)
@@ -196,11 +195,10 @@ impl TaskBoardRepository for PgTaskBoardRepository {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| match &e {
-            sqlx::Error::Database(d) if d.constraint() == Some("boards_tenant_name_key") => {
-                TaskError::InvalidArgument(format!(
-                    "board '{}' already exists for tenant",
-                    req.name
-                ))
+            sqlx::Error::Database(d)
+                if d.message().contains("boards.name") || d.message().contains("UNIQUE") =>
+            {
+                TaskError::InvalidArgument(format!("board '{}' already exists", req.name))
             }
             _ => db_err(e),
         })?;
@@ -220,8 +218,8 @@ impl TaskBoardRepository for PgTaskBoardRepository {
             SELECT id, board_id, board_column, title, description, priority,
                    assignee_agent, parent_task_id, blocked_reason, created_at, updated_at
             FROM   tasks
-            WHERE  board_id = $1
-              AND  ($2::text IS NULL OR board_column = $2)
+            WHERE  board_id = ?1
+              AND  (?2 IS NULL OR board_column = ?2)
             ORDER  BY priority DESC, created_at ASC
             ",
         )
@@ -250,7 +248,7 @@ impl TaskBoardRepository for PgTaskBoardRepository {
                 (id, board_id, board_column, title, description, priority,
                  assignee_agent, parent_task_id)
             VALUES
-                ($1, $2, $3, $4, $5, $6, $7, $8)
+                (?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id, board_id, board_column, title, description, priority,
                       assignee_agent, parent_task_id, blocked_reason, created_at, updated_at
             ",
@@ -271,7 +269,7 @@ impl TaskBoardRepository for PgTaskBoardRepository {
         sqlx::query(
             r"
             INSERT INTO task_state_log (task_id, from_column, to_column, actor, reason)
-            VALUES ($1, NULL, $2, 'system', 'created')
+            VALUES (?, NULL, ?, 'system', 'created')
             ",
         )
         .bind(id)
@@ -295,7 +293,7 @@ impl TaskBoardRepository for PgTaskBoardRepository {
 
         // Fetch current column before update.
         let current: Option<(String,)> =
-            sqlx::query_as("SELECT board_column FROM tasks WHERE id = $1 FOR UPDATE")
+            sqlx::query_as("SELECT board_column FROM tasks WHERE id = ?")
                 .bind(task_id)
                 .fetch_optional(&mut *tx)
                 .await
@@ -313,10 +311,10 @@ impl TaskBoardRepository for PgTaskBoardRepository {
         let task_row = sqlx::query_as::<_, TaskRow>(
             r"
             UPDATE tasks
-            SET    board_column   = $2,
-                   updated_at     = now(),
-                   blocked_reason = CASE WHEN $3 THEN NULL ELSE blocked_reason END
-            WHERE  id = $1
+            SET    board_column   = ?2,
+                   updated_at     = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+                   blocked_reason = CASE WHEN ?3 THEN NULL ELSE blocked_reason END
+            WHERE  id = ?1
             RETURNING id, board_id, board_column, title, description, priority,
                       assignee_agent, parent_task_id, blocked_reason, created_at, updated_at
             ",
@@ -331,7 +329,7 @@ impl TaskBoardRepository for PgTaskBoardRepository {
         sqlx::query(
             r"
             INSERT INTO task_state_log (task_id, from_column, to_column, actor, reason)
-            VALUES ($1, $2, $3, $4, $5)
+            VALUES (?, ?, ?, ?, ?)
             ",
         )
         .bind(task_id)
@@ -354,14 +352,14 @@ impl TaskBoardRepository for PgTaskBoardRepository {
     ) -> Result<Option<Task>, TaskError> {
         let mut tx = self.pool.begin().await.map_err(db_err)?;
 
-        // SELECT ... FOR UPDATE SKIP LOCKED — safe concurrent dispatch.
+        // SQLite serialises writers (single-writer WAL), so the Postgres
+        // `FOR UPDATE SKIP LOCKED` concurrency guard is unnecessary here.
         let candidate: Option<(Uuid,)> = sqlx::query_as(
             r"
             SELECT id FROM tasks
-            WHERE  board_id = $1 AND board_column = 'ready'
+            WHERE  board_id = ? AND board_column = 'ready'
             ORDER  BY priority DESC, created_at ASC
             LIMIT  1
-            FOR UPDATE SKIP LOCKED
             ",
         )
         .bind(board_id)
@@ -378,9 +376,9 @@ impl TaskBoardRepository for PgTaskBoardRepository {
             r"
             UPDATE tasks
             SET    board_column   = 'running',
-                   assignee_agent = $2,
-                   updated_at     = now()
-            WHERE  id = $1
+                   assignee_agent = ?2,
+                   updated_at     = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+            WHERE  id = ?1
             RETURNING id, board_id, board_column, title, description, priority,
                       assignee_agent, parent_task_id, blocked_reason, created_at, updated_at
             ",
@@ -394,7 +392,7 @@ impl TaskBoardRepository for PgTaskBoardRepository {
         sqlx::query(
             r"
             INSERT INTO task_state_log (task_id, from_column, to_column, actor, reason)
-            VALUES ($1, 'ready', 'running', $2, 'dispatched')
+            VALUES (?, 'ready', 'running', ?, 'dispatched')
             ",
         )
         .bind(task_id)
@@ -416,7 +414,7 @@ impl TaskBoardRepository for PgTaskBoardRepository {
         let mut tx = self.pool.begin().await.map_err(db_err)?;
 
         let current: Option<(String,)> =
-            sqlx::query_as("SELECT board_column FROM tasks WHERE id = $1 FOR UPDATE")
+            sqlx::query_as("SELECT board_column FROM tasks WHERE id = ?")
                 .bind(task_id)
                 .fetch_optional(&mut *tx)
                 .await
@@ -430,9 +428,9 @@ impl TaskBoardRepository for PgTaskBoardRepository {
             r"
             UPDATE tasks
             SET    board_column   = 'blocked',
-                   blocked_reason = $2,
-                   updated_at     = now()
-            WHERE  id = $1
+                   blocked_reason = ?2,
+                   updated_at     = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+            WHERE  id = ?1
             RETURNING id, board_id, board_column, title, description, priority,
                       assignee_agent, parent_task_id, blocked_reason, created_at, updated_at
             ",
@@ -446,7 +444,7 @@ impl TaskBoardRepository for PgTaskBoardRepository {
         sqlx::query(
             r"
             INSERT INTO task_state_log (task_id, from_column, to_column, actor, reason)
-            VALUES ($1, $2, 'blocked', $3, $4)
+            VALUES (?, ?, 'blocked', ?, ?)
             ",
         )
         .bind(task_id)
@@ -466,7 +464,7 @@ impl TaskBoardRepository for PgTaskBoardRepository {
             r"
             SELECT id, task_id, from_column, to_column, actor, reason, occurred_at
             FROM   task_state_log
-            WHERE  task_id = $1
+            WHERE  task_id = ?
             ORDER  BY occurred_at ASC, id ASC
             ",
         )

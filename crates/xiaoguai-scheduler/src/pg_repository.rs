@@ -1,32 +1,20 @@
-//! PostgreSQL-backed [`JobRepository`] + [`JobRunRepository`].
+//! SQLite-backed [`JobRepository`] + [`JobRunRepository`] (DEC-033 single-user).
 //!
 //! The in-memory impls in [`crate::repository`] cover tests and the
-//! `RunnerOptions::default` operator path. v0.12.0 lands these PG
-//! versions so a real deployment keeps `scheduled_jobs` /
-//! `scheduled_job_runs` durable across restarts.
+//! `RunnerOptions::default` operator path. These persist `scheduled_jobs` /
+//! `scheduled_job_runs` durably across restarts.
 //!
-//! Schema: migration `0007_scheduled_jobs.sql` (shipped in v0.10.0).
-//! Each query opens a tenant-scoped transaction via
-//! [`xiaoguai_storage::repositories::begin_tenant_tx`] so the existing
-//! RLS policies bind correctly. When a `ScheduledJob.tenant_id` is
-//! `None` the helper opens a plain transaction; the policies allow the
-//! row when `tenant_id IS NULL`.
-//!
-//! Notes:
-//!
-//! * `list_due` filters reactive triggers out at the application layer
-//!   (same as the in-memory impl). We could push that into SQL via a
-//!   `jsonb_extract_path_text(trigger, 'type') IN ('cron','interval','proactive')`
-//!   predicate; the v0.10.1 plan called for it and we'll add it the
-//!   first time a tenant with O(10k) reactive jobs profiles a slow tick.
-//! * `insert` on `JobRun` uses `RETURNING id` so the caller gets the
-//!   `BIGSERIAL` value back in one round trip.
+//! Schema: migration `0007_scheduled_jobs.sql`. `tenant_id` was dropped under
+//! the single-user pivot, so the (vestigial) `tenant_id` on the domain types is
+//! neither stored nor read back (it resolves to `None`). Each write opens a
+//! plain transaction via [`xiaoguai_storage::repositories::begin_tenant_tx`]
+//! (the `tenant` argument is ignored — there is no RLS under `SQLite`).
 
 use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, Row};
+use sqlx::{Row, SqlitePool};
 use xiaoguai_storage::repositories::begin_tenant_tx;
 
 use crate::job::{JobRun, JobRunStatus, ScheduledJob};
@@ -35,12 +23,12 @@ use crate::retry::RetryPolicy;
 use crate::trigger::Trigger;
 
 pub struct PgJobRepository {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgJobRepository {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
@@ -53,24 +41,22 @@ impl JobRepository for PgJobRepository {
             .map_err(repo_err)?;
         sqlx::query(
             "INSERT INTO scheduled_jobs
-                (id, tenant_id, name, description, trigger, payload, retry_policy, sinks,
+                (id, name, description, trigger, payload, retry_policy, sinks,
                  enabled, next_fire_at, last_fire_at, created_at, updated_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT (id) DO UPDATE SET
-                tenant_id = EXCLUDED.tenant_id,
-                name = EXCLUDED.name,
-                description = EXCLUDED.description,
-                trigger = EXCLUDED.trigger,
-                payload = EXCLUDED.payload,
-                retry_policy = EXCLUDED.retry_policy,
-                sinks = EXCLUDED.sinks,
-                enabled = EXCLUDED.enabled,
-                next_fire_at = EXCLUDED.next_fire_at,
-                last_fire_at = EXCLUDED.last_fire_at,
-                updated_at = EXCLUDED.updated_at",
+                name = excluded.name,
+                description = excluded.description,
+                trigger = excluded.trigger,
+                payload = excluded.payload,
+                retry_policy = excluded.retry_policy,
+                sinks = excluded.sinks,
+                enabled = excluded.enabled,
+                next_fire_at = excluded.next_fire_at,
+                last_fire_at = excluded.last_fire_at,
+                updated_at = excluded.updated_at",
         )
         .bind(&job.id)
-        .bind(job.tenant_id.as_deref())
         .bind(&job.name)
         .bind(job.description.as_deref())
         .bind(serde_json::to_value(&job.trigger).map_err(serde_err)?)
@@ -90,11 +76,7 @@ impl JobRepository for PgJobRepository {
     }
 
     async fn get(&self, id: &str) -> RepoResult<ScheduledJob> {
-        // `tenant_id` unknown at the call site; open without a GUC and
-        // let the (super)user role read across. The trait contract is
-        // "get by primary key" — callers that want tenant-scoped reads
-        // use `list_due`, which is what production hits anyway.
-        let row = sqlx::query("SELECT * FROM scheduled_jobs WHERE id = $1")
+        let row = sqlx::query("SELECT * FROM scheduled_jobs WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
             .await
@@ -107,9 +89,9 @@ impl JobRepository for PgJobRepository {
         let rows = sqlx::query(
             "SELECT * FROM scheduled_jobs
              WHERE enabled IS TRUE
-               AND (next_fire_at IS NULL OR next_fire_at <= $1)
+               AND (next_fire_at IS NULL OR next_fire_at <= ?1)
              ORDER BY COALESCE(next_fire_at, created_at)
-             LIMIT $2",
+             LIMIT ?2",
         )
         .bind(now)
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
@@ -135,8 +117,8 @@ impl JobRepository for PgJobRepository {
     ) -> RepoResult<()> {
         let updated = sqlx::query(
             "UPDATE scheduled_jobs
-             SET last_fire_at = $2, next_fire_at = $3, updated_at = NOW()
-             WHERE id = $1",
+             SET last_fire_at = ?2, next_fire_at = ?3, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+             WHERE id = ?1",
         )
         .bind(id)
         .bind(last_fire_at)
@@ -151,15 +133,14 @@ impl JobRepository for PgJobRepository {
     }
 
     async fn list_reactive(&self) -> RepoResult<Vec<ScheduledJob>> {
-        // Push the type filter into SQL so we don't pull every enabled
-        // job through the application layer just to discard most of
-        // them. The expression `trigger->>'type'` reads the discriminant
-        // out of the JSONB column populated by serde's
+        // Push the type filter into SQL so we don't pull every enabled job
+        // through the application layer. `json_extract(trigger, '$.type')` reads
+        // the discriminant out of the JSON-TEXT column populated by serde's
         // `#[serde(tag = "type")]` representation.
         let rows = sqlx::query(
             "SELECT * FROM scheduled_jobs
              WHERE enabled IS TRUE
-               AND trigger->>'type' IN ('file_watch','webhook','git_push','db_poll')",
+               AND json_extract(trigger, '$.type') IN ('file_watch','webhook','git_push','db_poll')",
         )
         .fetch_all(&self.pool)
         .await
@@ -177,12 +158,12 @@ impl JobRepository for PgJobRepository {
 }
 
 pub struct PgJobRunRepository {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgJobRunRepository {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
@@ -195,13 +176,12 @@ impl JobRunRepository for PgJobRunRepository {
             .map_err(repo_err)?;
         let row = sqlx::query(
             "INSERT INTO scheduled_job_runs
-                (job_id, tenant_id, status, attempt, started_at, finished_at,
+                (job_id, status, attempt, started_at, finished_at,
                  session_id, error_message, output_preview, created_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             VALUES (?,?,?,?,?,?,?,?,?)
              RETURNING id",
         )
         .bind(&run.job_id)
-        .bind(run.tenant_id.as_deref())
         .bind(run.status.as_str())
         .bind(i32::try_from(run.attempt).unwrap_or(i32::MAX))
         .bind(run.started_at)
@@ -229,12 +209,12 @@ impl JobRunRepository for PgJobRunRepository {
     ) -> RepoResult<()> {
         let updated = sqlx::query(
             "UPDATE scheduled_job_runs
-             SET status = $2,
-                 finished_at = COALESCE($3, finished_at),
-                 error_message = COALESCE($4, error_message),
-                 output_preview = COALESCE($5, output_preview),
-                 session_id = COALESCE($6, session_id)
-             WHERE id = $1",
+             SET status = ?2,
+                 finished_at = COALESCE(?3, finished_at),
+                 error_message = COALESCE(?4, error_message),
+                 output_preview = COALESCE(?5, output_preview),
+                 session_id = COALESCE(?6, session_id)
+             WHERE id = ?1",
         )
         .bind(id)
         .bind(status.as_str())
@@ -254,9 +234,9 @@ impl JobRunRepository for PgJobRunRepository {
     async fn list_for_job(&self, job_id: &str, limit: usize) -> RepoResult<Vec<JobRun>> {
         let rows = sqlx::query(
             "SELECT * FROM scheduled_job_runs
-             WHERE job_id = $1
+             WHERE job_id = ?1
              ORDER BY id DESC
-             LIMIT $2",
+             LIMIT ?2",
         )
         .bind(job_id)
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
@@ -267,7 +247,7 @@ impl JobRunRepository for PgJobRunRepository {
     }
 }
 
-fn row_to_job(r: &sqlx::postgres::PgRow) -> RepoResult<ScheduledJob> {
+fn row_to_job(r: &sqlx::sqlite::SqliteRow) -> RepoResult<ScheduledJob> {
     let trigger: serde_json::Value = r.try_get("trigger").map_err(sqlx_err)?;
     let trigger: Trigger = serde_json::from_value(trigger).map_err(serde_err)?;
     let payload: serde_json::Value = r.try_get("payload").map_err(sqlx_err)?;
@@ -277,7 +257,8 @@ fn row_to_job(r: &sqlx::postgres::PgRow) -> RepoResult<ScheduledJob> {
     let sinks: Vec<String> = serde_json::from_value(sinks).map_err(serde_err)?;
     Ok(ScheduledJob {
         id: r.try_get("id").map_err(sqlx_err)?,
-        tenant_id: r.try_get("tenant_id").map_err(sqlx_err)?,
+        // tenant_id column dropped under the single-user pivot.
+        tenant_id: None,
         name: r.try_get("name").map_err(sqlx_err)?,
         description: r.try_get("description").map_err(sqlx_err)?,
         trigger,
@@ -292,14 +273,15 @@ fn row_to_job(r: &sqlx::postgres::PgRow) -> RepoResult<ScheduledJob> {
     })
 }
 
-fn row_to_run(r: &sqlx::postgres::PgRow) -> RepoResult<JobRun> {
+fn row_to_run(r: &sqlx::sqlite::SqliteRow) -> RepoResult<JobRun> {
     let status_str: String = r.try_get("status").map_err(sqlx_err)?;
     let status = parse_status(&status_str)?;
     let attempt: i32 = r.try_get("attempt").map_err(sqlx_err)?;
     Ok(JobRun {
         id: r.try_get("id").map_err(sqlx_err)?,
         job_id: r.try_get("job_id").map_err(sqlx_err)?,
-        tenant_id: r.try_get("tenant_id").map_err(sqlx_err)?,
+        // tenant_id column dropped under the single-user pivot.
+        tenant_id: None,
         status,
         attempt: u32::try_from(attempt).unwrap_or(0),
         started_at: r.try_get("started_at").map_err(sqlx_err)?,
@@ -342,7 +324,7 @@ fn repo_err(e: xiaoguai_storage::repositories::error::RepoError) -> RepoError {
 }
 
 /// Quick wait so tests can be reasonably deterministic about commit
-/// ordering when assertions follow an insert. The PG repo itself
-/// doesn't sleep; the helper is only used by callers (e.g. tests).
+/// ordering when assertions follow an insert. The repo itself doesn't
+/// sleep; the helper is only used by callers (e.g. tests).
 #[allow(dead_code)]
 pub(crate) const POST_INSERT_SETTLE: Duration = Duration::from_millis(10);

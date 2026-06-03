@@ -1,67 +1,37 @@
-//! Integration tests for [`PgMessageRepository`].
+//! Integration tests for [`PgMessageRepository`] (embedded `SQLite`, DEC-033).
 //!
-//! Marked `#[ignore]` — requires Docker (testcontainers Postgres).
-//!
-//! ## RLS caveat
-//!
-//! The testcontainer superuser bypasses non-FORCE RLS, so tenant-isolation
-//! policies are not exercised here. A separate end-to-end suite (out of scope
-//! for this sub-agent) covers that path against a non-superuser app role.
+//! No Docker — each test opens a temp `SQLite` database via `common::test_setup`.
 
-#![cfg(test)]
+mod common;
 
 use chrono::{Duration, Utc};
+use common::test_setup;
 use serde_json::json;
-use sqlx::PgPool;
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync},
+use sqlx::SqlitePool;
+use xiaoguai_storage::repositories::{
+    MessageRepository, PgMessageRepository, PgSessionRepository, SessionRepository,
 };
-use xiaoguai_storage::{
-    db,
-    repositories::{
-        MessageRepository, PgMessageRepository, PgSessionRepository, SessionRepository,
-    },
-};
+use xiaoguai_storage::OWNER_TENANT_ID;
 use xiaoguai_types::{
     ContentBlock, Message, MessageId, MessageRole, Session, SessionId, SessionStatus, TenantId,
     UserId,
 };
 
-async fn test_setup() -> (PgPool, ContainerAsync<Postgres>) {
-    let pg = Postgres::default().start().await.expect("start pg");
-    let port = pg.get_host_port_ipv4(5432).await.expect("port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = db::connect(&url, 5).await.expect("connect");
-    db::migrate(&pool).await.expect("migrate");
-    (pool, pg)
-}
-
-async fn seed_tenant_user(pool: &PgPool) -> (TenantId, UserId) {
-    let tenant_id = TenantId::new();
+/// Seed a user via raw SQL so the session FK is satisfied. The `users` table no
+/// longer carries `tenant_id`; we return a synthetic owner id for fixtures.
+async fn seed_user(pool: &SqlitePool) -> (TenantId, UserId) {
     let user_id = UserId::new();
-    sqlx::query("INSERT INTO tenants (id, name, display_name) VALUES ($1, $2, $3)")
-        .bind(tenant_id.as_str())
-        .bind(format!("tenant-{}", tenant_id.as_str()))
-        .bind("Test Tenant")
+    sqlx::query("INSERT INTO users (id, email, display_name) VALUES (?, ?, ?)")
+        .bind(user_id.as_str())
+        .bind(format!("u-{}@example.com", user_id.as_str()))
+        .bind("Test User")
         .execute(pool)
         .await
-        .expect("insert tenant");
-    sqlx::query(
-        "INSERT INTO users (id, tenant_id, email, display_name)
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(user_id.as_str())
-    .bind(tenant_id.as_str())
-    .bind(format!("u-{}@example.com", user_id.as_str()))
-    .bind("Test User")
-    .execute(pool)
-    .await
-    .expect("insert user");
-    (tenant_id, user_id)
+        .expect("insert user");
+    (TenantId::from(OWNER_TENANT_ID.to_string()), user_id)
 }
 
-async fn seed_session(pool: &PgPool, tenant: &TenantId, user: &UserId) -> SessionId {
+async fn seed_session(pool: &SqlitePool, tenant: &TenantId, user: &UserId) -> SessionId {
     let now = Utc::now();
     let s = Session {
         id: SessionId::new(),
@@ -98,10 +68,9 @@ fn fixture_message(
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn append_and_list_roundtrip_text_content() {
-    let (pool, _pg) = test_setup().await;
-    let (tenant, user) = seed_tenant_user(&pool).await;
+    let (pool, _guard) = test_setup().await;
+    let (tenant, user) = seed_user(&pool).await;
     let session_id = seed_session(&pool, &tenant, &user).await;
     let repo = PgMessageRepository::new(pool.clone());
 
@@ -128,10 +97,9 @@ async fn append_and_list_roundtrip_text_content() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn append_jsonb_tool_call_and_tool_result_roundtrip() {
-    let (pool, _pg) = test_setup().await;
-    let (tenant, user) = seed_tenant_user(&pool).await;
+    let (pool, _guard) = test_setup().await;
+    let (tenant, user) = seed_user(&pool).await;
     let session_id = seed_session(&pool, &tenant, &user).await;
     let repo = PgMessageRepository::new(pool.clone());
 
@@ -198,10 +166,9 @@ async fn append_jsonb_tool_call_and_tool_result_roundtrip() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn list_orders_by_created_at_ascending_with_pagination() {
-    let (pool, _pg) = test_setup().await;
-    let (tenant, user) = seed_tenant_user(&pool).await;
+    let (pool, _guard) = test_setup().await;
+    let (tenant, user) = seed_user(&pool).await;
     let session_id = seed_session(&pool, &tenant, &user).await;
     let repo = PgMessageRepository::new(pool.clone());
 
@@ -244,10 +211,9 @@ async fn list_orders_by_created_at_ascending_with_pagination() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn cascading_delete_when_session_dropped() {
-    let (pool, _pg) = test_setup().await;
-    let (tenant, user) = seed_tenant_user(&pool).await;
+    let (pool, _guard) = test_setup().await;
+    let (tenant, user) = seed_user(&pool).await;
     let session_id = seed_session(&pool, &tenant, &user).await;
     let msg_repo = PgMessageRepository::new(pool.clone());
     let sess_repo = PgSessionRepository::new(pool.clone());
@@ -285,10 +251,9 @@ async fn cascading_delete_when_session_dropped() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn delete_by_session_returns_rowcount_and_is_idempotent() {
-    let (pool, _pg) = test_setup().await;
-    let (tenant, user) = seed_tenant_user(&pool).await;
+    let (pool, _guard) = test_setup().await;
+    let (tenant, user) = seed_user(&pool).await;
     let session_id = seed_session(&pool, &tenant, &user).await;
     let repo = PgMessageRepository::new(pool.clone());
 

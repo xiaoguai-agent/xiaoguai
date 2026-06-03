@@ -1,134 +1,101 @@
 //! sprint-13 S13-1: schema round-trip for migration `0027_hotl_escalations_split.sql`.
 //!
-//! Asserts the migration produces:
-//! - `hotl_escalations` parent table (with RLS enabled + `tenant_isolation` policy)
-//! - `hotl_pending` child table with `escalation_id` FK
-//! - `hotl_redaction_policies` table (with RLS)
-//! - `casbin_rule` seed row for `(p, hotl:decide, /v1/hotl/decisions, POST, allow)`
-//! - **No** path-based fallback row `(p, *, /v1/hotl/decisions, POST, *)`
+//! Embedded `SQLite` (DEC-033). No Docker — `common::test_setup` applies every
+//! migration to a temp database. Asserts the migration produces:
+//! - `hotl_escalations` parent table + `hotl_pending` child with `escalation_id` FK
+//! - `hotl_redaction_policies` table (ships empty, writable)
 //!
-//! The backfill scenario described in the sprint plan §S13-1 (3 v1.9-shape
-//! `hotl_pending` rows → 3 parents + 3 children) is implemented by inserting
-//! 3 (parent, child) pairs through the post-migration schema and checking
-//! the 1-to-1 invariant + zero orphans. Because the live v1.9.x branch never
-//! shipped a `hotl_pending` table (migration 0026 only added `hotl_decisions`),
-//! the backfill block in 0027 is a NO-OP today; the round-trip below
-//! emulates the same end-state shape that the backfill would produce had
-//! prior `hotl_pending` rows existed.
+//! The former `casbin_rule` seed was removed with Casbin RBAC (DEC-033).
 //!
-//! Marked `#[ignore]` — Docker required, same convention as the other
-//! testcontainers-backed migration tests in this crate.
+//! Under the single-user pivot the `tenant_id` columns + RLS are dropped, UUIDs
+//! are TEXT, and JSON payloads (`args_redacted`, `applies_to`) are TEXT.
 
-#![cfg(test)]
+mod common;
 
 use chrono::{Duration, Utc};
+use common::test_setup;
 use sqlx::Row;
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ImageExt},
-};
 use uuid::Uuid;
-use xiaoguai_storage::db;
+
+/// Whether a table exists in the `SQLite` catalog.
+async fn table_exists(pool: &sqlx::SqlitePool, name: &str) -> bool {
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .bind(name)
+            .fetch_one(pool)
+            .await
+            .expect("query sqlite_master");
+    count > 0
+}
+
+/// Whether a column exists on a table (via `PRAGMA table_info`).
+async fn column_exists(pool: &sqlx::SqlitePool, table: &str, column: &str) -> bool {
+    let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+        .fetch_all(pool)
+        .await
+        .expect("pragma table_info");
+    rows.iter().any(|r| {
+        let name: String = r.try_get("name").unwrap_or_default();
+        name == column
+    })
+}
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn migration_0027_creates_parent_child_redaction_and_casbin_seed() {
-    // pgvector image — migration 0019 needs the `vector` extension.
-    let pg = Postgres::default()
-        .with_name("pgvector/pgvector")
-        .with_tag("pg16")
-        .start()
-        .await
-        .expect("start pg");
-    let port = pg.get_host_port_ipv4(5432).await.expect("port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = db::connect(&url, 5).await.expect("connect");
-    db::migrate(&pool).await.expect("migrate");
+    let (pool, _guard) = test_setup().await;
 
     // ---- 1. Schema shape ----------------------------------------------------
 
-    let escalations_exists: (bool,) = sqlx::query_as(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
-         WHERE table_name = 'hotl_escalations')",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("query escalations table");
     assert!(
-        escalations_exists.0,
+        table_exists(&pool, "hotl_escalations").await,
         "hotl_escalations parent table missing"
     );
-
-    let pending_exists: (bool,) = sqlx::query_as(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
-         WHERE table_name = 'hotl_pending')",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("query pending table");
-    assert!(pending_exists.0, "hotl_pending child table missing");
-
-    let redaction_exists: (bool,) = sqlx::query_as(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
-         WHERE table_name = 'hotl_redaction_policies')",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("query redaction table");
-    assert!(redaction_exists.0, "hotl_redaction_policies table missing");
-
-    let casbin_exists: (bool,) = sqlx::query_as(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
-         WHERE table_name = 'casbin_rule')",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("query casbin table");
-    assert!(casbin_exists.0, "casbin_rule seed table missing");
+    assert!(
+        table_exists(&pool, "hotl_pending").await,
+        "hotl_pending child table missing"
+    );
+    assert!(
+        table_exists(&pool, "hotl_redaction_policies").await,
+        "hotl_redaction_policies table missing"
+    );
+    assert!(
+        !table_exists(&pool, "casbin_rule").await,
+        "casbin_rule must be gone (Casbin removed under DEC-033)"
+    );
 
     // `hotl_pending` must NOT carry a `request_id` column post-migration —
     // the rename to `escalation_id` is canonical (DEC-HLD-016).
-    let request_id_col: (bool,) = sqlx::query_as(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-         WHERE table_name = 'hotl_pending' AND column_name = 'request_id')",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("query column");
     assert!(
-        !request_id_col.0,
+        !column_exists(&pool, "hotl_pending", "request_id").await,
         "hotl_pending.request_id should be removed (replaced by escalation_id FK)"
     );
-
-    let escalation_id_col: (bool,) = sqlx::query_as(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-         WHERE table_name = 'hotl_pending' AND column_name = 'escalation_id')",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("query column");
     assert!(
-        escalation_id_col.0,
+        column_exists(&pool, "hotl_pending", "escalation_id").await,
         "hotl_pending.escalation_id (FK to hotl_escalations.id) missing"
+    );
+    // tenant_id columns are dropped under the single-user pivot.
+    assert!(
+        !column_exists(&pool, "hotl_pending", "tenant_id").await,
+        "hotl_pending.tenant_id should be dropped under the pivot"
+    );
+    assert!(
+        !column_exists(&pool, "hotl_escalations", "tenant_id").await,
+        "hotl_escalations.tenant_id should be dropped under the pivot"
     );
 
     // ---- 2. Insert 3 (parent, child) pairs ---------------------------------
 
-    let tenant_id = Uuid::new_v4();
-    let session_id = Uuid::new_v4();
     let now = Utc::now();
-
     let mut parent_ids = Vec::new();
     for i in 0..3 {
         let parent_id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO hotl_escalations \
-             (id, tenant_id, session_id, top_level_scope, created_at, parent_id) \
-             VALUES ($1, $2, $3, $4, $5, NULL)",
+             (id, session_id, top_level_scope, created_at, parent_id) \
+             VALUES (?, ?, ?, ?, NULL)",
         )
-        .bind(parent_id)
-        .bind(tenant_id)
-        .bind(session_id)
+        .bind(parent_id.to_string())
+        .bind(Uuid::new_v4().to_string())
         .bind(format!("tool_call.scope_{i}"))
         .bind(now)
         .execute(&pool)
@@ -138,16 +105,15 @@ async fn migration_0027_creates_parent_child_redaction_and_casbin_seed() {
 
         sqlx::query(
             "INSERT INTO hotl_pending \
-             (id, escalation_id, tenant_id, scope, tool, args_redacted, status, \
+             (id, escalation_id, scope, tool, args_redacted, status, \
               expires_at, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(Uuid::new_v4())
-        .bind(parent_id)
-        .bind(tenant_id)
+        .bind(Uuid::new_v4().to_string())
+        .bind(parent_id.to_string())
         .bind(format!("tool_call.scope_{i}"))
         .bind("execute_python")
-        .bind(serde_json::json!({"code": "print(1)"}))
+        .bind(serde_json::json!({"code": "print(1)"}).to_string())
         .bind("pending")
         .bind(now + Duration::hours(24))
         .bind(now)
@@ -183,8 +149,8 @@ async fn migration_0027_creates_parent_child_redaction_and_casbin_seed() {
     );
 
     // FK ON DELETE CASCADE: deleting a parent removes its child.
-    sqlx::query("DELETE FROM hotl_escalations WHERE id = $1")
-        .bind(parent_ids[0])
+    sqlx::query("DELETE FROM hotl_escalations WHERE id = ?")
+        .bind(parent_ids[0].to_string())
         .execute(&pool)
         .await
         .expect("delete parent");
@@ -210,45 +176,15 @@ async fn migration_0027_creates_parent_child_redaction_and_casbin_seed() {
 
     sqlx::query(
         "INSERT INTO hotl_redaction_policies \
-         (id, tenant_id, scope, jsonpath, applies_to, created_at) \
-         VALUES ($1, $2, $3, $4, $5, $6)",
+         (id, scope, jsonpath, applies_to, created_at) \
+         VALUES (?, ?, ?, ?, ?)",
     )
-    .bind(Uuid::new_v4())
-    .bind(tenant_id)
+    .bind(Uuid::new_v4().to_string())
     .bind("tool_call.execute_python")
     .bind("$.password")
-    .bind(vec!["sse".to_string()])
+    .bind(serde_json::json!(["sse"]).to_string())
     .bind(now)
     .execute(&pool)
     .await
     .expect("insert redaction policy");
-
-    // ---- 4. Casbin seed: hotl:decide present, path-based rule absent --------
-
-    let row = sqlx::query(
-        "SELECT ptype, v0, v1, v2, v3 FROM casbin_rule \
-         WHERE ptype = 'p' AND v0 = 'hotl:decide' \
-           AND v1 = '/v1/hotl/decisions' AND v2 = 'POST'",
-    )
-    .fetch_optional(&pool)
-    .await
-    .expect("query casbin seed");
-    let row = row.expect("expected (p, hotl:decide, /v1/hotl/decisions, POST, allow) seed row");
-    let v3: String = row.try_get("v3").unwrap_or_default();
-    assert_eq!(
-        v3, "allow",
-        "hotl:decide scope rule's effect must be 'allow'"
-    );
-
-    let path_based: (i64,) = sqlx::query_as(
-        "SELECT count(*) FROM casbin_rule \
-         WHERE ptype = 'p' AND v0 = '*' AND v1 = '/v1/hotl/decisions' AND v2 = 'POST'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("count path-based");
-    assert_eq!(
-        path_based.0, 0,
-        "path-based fallback rule (p, *, /v1/hotl/decisions, POST, *) must be removed"
-    );
 }

@@ -1,26 +1,26 @@
-//! Sprint-12 S12-7 — PG round-trip coverage for `PgHotlDecisionStore` and
-//! `PgHotlAuditSink`.
+//! Sprint-12 S12-7 — `SQLite` round-trip coverage for `PgHotlDecisionStore`
+//! and `PgHotlAuditSink`.
+//!
+//! `DEC-033` (single-user `SQLite` pivot): these were `#[ignore]`'d Postgres
+//! tests requiring `DATABASE_URL`. They now run against a temp `SQLite` DB on
+//! every `cargo test`. The `hotl_decisions` table lost its `tenant_id` column
+//! (the idempotency key is `request_id`); the synthesized `tenant_id` on the
+//! returned record is `Uuid::nil()`. The audit sink ignores `tenant_id` on
+//! both write and read and synthesizes `OWNER_TENANT_ID` on read.
 //!
 //! Three cases:
 //!
-//!   1. `pg_create_then_find_round_trip` — record a decision, then snapshot
-//!      via a sibling `SELECT` and assert the row shape matches what the
-//!      store returned.
-//!   2. `pg_create_duplicate_request_id_returns_conflict` — second insert
-//!      with the same `request_id` must surface `HotlDecisionStoreError::Duplicate`
-//!      (the UNIQUE constraint on the column).
-//!   3. `pg_audit_sink_writes_then_visible_to_downstream_reader` — `PgHotlAuditSink::append`
-//!      delegates to `xiaoguai_audit::PgAuditSink::append`, so the row must
-//!      be visible via the same sink's `list` reader (which is what the
-//!      `/v1/admin/audit` route uses in production).
-//!
-//! These tests are `#[ignore]` and require a live PG via `DATABASE_URL`,
-//! matching the pattern in `outcomes_bridge.rs` / `hotl_bridge.rs::tests`.
-//! CI runs them via the existing PG fixture.
+//!   1. `create_then_find_round_trip` — record a decision, then snapshot via
+//!      a sibling `SELECT` and assert the row shape matches.
+//!   2. `create_duplicate_request_id_returns_conflict` — second insert with
+//!      the same `request_id` must surface `HotlDecisionStoreError::Duplicate`.
+//!   3. `audit_sink_writes_then_visible_to_downstream_reader` —
+//!      `PgHotlAuditSink::append` delegates to `PgAuditSink::append`, so the
+//!      row must be visible via the same sink's `list` reader.
 
 #![cfg(test)]
 
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 use xiaoguai_api::hotl::audit::HotlAuditSink;
 use xiaoguai_api::hotl::decision::{
@@ -29,19 +29,22 @@ use xiaoguai_api::hotl::decision::{
 use xiaoguai_audit::AuditEntry;
 use xiaoguai_core::hotl_bridge::{PgHotlAuditSink, PgHotlDecisionStore};
 
-async fn pg_pool() -> PgPool {
-    let url =
-        std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for PG integration tests");
-    PgPool::connect(&url).await.expect("pg connect")
+async fn sqlite_pool() -> (tempfile::TempDir, SqlitePool) {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = xiaoguai_storage::db::connect(dir.path().join("t.db").to_str().unwrap(), 5)
+        .await
+        .unwrap();
+    xiaoguai_storage::db::migrate(&pool).await.unwrap();
+    (dir, pool)
 }
 
 #[tokio::test]
-#[ignore = "requires live PG; run with DATABASE_URL set"]
-async fn pg_create_then_find_round_trip() {
-    let pool = pg_pool().await;
+async fn create_then_find_round_trip() {
+    let (_dir, pool) = sqlite_pool().await;
     let store = PgHotlDecisionStore::new(pool.clone());
 
     let request_id = Uuid::new_v4();
+    // tenant_id is vestigial under DEC-033 (synthesized to nil on read).
     let tenant_id = Uuid::new_v4();
     let policy_id = Uuid::new_v4();
 
@@ -57,15 +60,17 @@ async fn pg_create_then_find_round_trip() {
         .expect("record should succeed");
 
     assert_eq!(recorded.request_id, request_id);
-    assert_eq!(recorded.tenant_id, tenant_id);
+    // DEC-033: single implicit owner → tenant_id synthesizes to nil.
+    assert_eq!(recorded.tenant_id, Uuid::nil());
     assert_eq!(recorded.verdict, HotlDecisionVerdict::Allow);
     assert_eq!(recorded.decided_by, "alice@example.com");
     assert_eq!(recorded.raised_policy_id, Some(policy_id));
 
-    // Cross-check by selecting the row directly.
-    let row: (Uuid, Uuid, String, String, Option<Uuid>) = sqlx::query_as(
-        "SELECT id, tenant_id, verdict, decided_by, raised_policy_id \
-         FROM hotl_decisions WHERE request_id = $1",
+    // Cross-check by selecting the row directly. No tenant_id column under
+    // DEC-033; bind via `?` placeholders.
+    let row: (Uuid, String, String, Option<Uuid>) = sqlx::query_as(
+        "SELECT id, verdict, decided_by, raised_policy_id \
+         FROM hotl_decisions WHERE request_id = ?",
     )
     .bind(request_id)
     .fetch_one(&pool)
@@ -73,23 +78,14 @@ async fn pg_create_then_find_round_trip() {
     .expect("row must exist");
 
     assert_eq!(row.0, recorded.id);
-    assert_eq!(row.1, tenant_id);
-    assert_eq!(row.2, "allow");
-    assert_eq!(row.3, "alice@example.com");
-    assert_eq!(row.4, Some(policy_id));
-
-    // Cleanup.
-    sqlx::query("DELETE FROM hotl_decisions WHERE request_id = $1")
-        .bind(request_id)
-        .execute(&pool)
-        .await
-        .ok();
+    assert_eq!(row.1, "allow");
+    assert_eq!(row.2, "alice@example.com");
+    assert_eq!(row.3, Some(policy_id));
 }
 
 #[tokio::test]
-#[ignore = "requires live PG; run with DATABASE_URL set"]
-async fn pg_create_duplicate_request_id_returns_conflict() {
-    let pool = pg_pool().await;
+async fn create_duplicate_request_id_returns_conflict() {
+    let (_dir, pool) = sqlite_pool().await;
     let store = PgHotlDecisionStore::new(pool.clone());
 
     let request_id = Uuid::new_v4();
@@ -121,18 +117,11 @@ async fn pg_create_duplicate_request_id_returns_conflict() {
         matches!(err, HotlDecisionStoreError::Duplicate(id) if id == request_id),
         "expected Duplicate({request_id}), got {err:?}"
     );
-
-    sqlx::query("DELETE FROM hotl_decisions WHERE request_id = $1")
-        .bind(request_id)
-        .execute(&pool)
-        .await
-        .ok();
 }
 
 #[tokio::test]
-#[ignore = "requires live PG; run with DATABASE_URL set"]
-async fn pg_audit_sink_writes_then_visible_to_downstream_reader() {
-    let pool = pg_pool().await;
+async fn audit_sink_writes_then_visible_to_downstream_reader() {
+    let (_dir, pool) = sqlite_pool().await;
     let signing_key = b"sprint12-s12-7-integration-test-key".to_vec();
     let pg_sink = std::sync::Arc::new(xiaoguai_audit::chain::sink::PgAuditSink::new(
         pool.clone(),
@@ -140,6 +129,7 @@ async fn pg_audit_sink_writes_then_visible_to_downstream_reader() {
     ));
     let hotl_sink = PgHotlAuditSink::new(pg_sink.clone());
 
+    // tenant_id is vestigial under DEC-033 (ignored on write/read).
     let tenant_id = format!("ten_{}", Uuid::new_v4().simple());
     let request_id = Uuid::new_v4();
     let entry = AuditEntry {
@@ -159,26 +149,20 @@ async fn pg_audit_sink_writes_then_visible_to_downstream_reader() {
         .await
         .expect("audit append must succeed");
 
+    // The temp DB starts empty, so the single append is the only row.
     let rows = pg_sink
         .list(&tenant_id, None, None, 10)
         .await
         .expect("read back");
 
-    assert_eq!(rows.len(), 1, "expected exactly one row for fresh tenant");
+    assert_eq!(rows.len(), 1, "expected exactly one row in the fresh DB");
     let stored = &rows[0];
-    assert_eq!(stored.entry.tenant_id, tenant_id);
+    // DEC-033: tenant_id column dropped; reader synthesizes the owner id.
+    assert_eq!(stored.entry.tenant_id, xiaoguai_storage::OWNER_TENANT_ID);
     assert_eq!(stored.entry.action, "hotl.decision");
     assert_eq!(stored.entry.actor, "alice@example.com");
     assert_eq!(
         stored.entry.resource.as_deref(),
         Some(format!("escalation:{request_id}").as_str())
     );
-
-    // Cleanup audit_log rows for this tenant (each test gets a unique id so
-    // we never collide, but be polite).
-    sqlx::query("DELETE FROM audit_log WHERE tenant_id = $1")
-        .bind(&tenant_id)
-        .execute(&pool)
-        .await
-        .ok();
 }

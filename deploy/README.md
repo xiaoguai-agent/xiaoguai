@@ -1,7 +1,17 @@
 # `deploy/`
 
-Operational artifacts. v0.9 ships docker-compose + a multi-stage Dockerfile;
-v1.0 adds Helm + bare-metal tarball.
+Operational artifacts. The supported path is a single self-contained binary
+with an embedded SQLite store (DEC-033 single-user pivot): `docker-compose.yml`
+(one `xiaoguai-core` service), the `.deb`/`.rpm`/tarball, and the `systemd/`
+unit. No Postgres, Valkey, or Redis.
+
+Optional telemetry: layer `docker-compose.observability.yml` on top (opt-in;
+the binary exposes `/metrics` + OTLP only when built with the `observability`
+cargo feature, off by default).
+
+> The multi-tenant-era Kubernetes/Helm/Istio/kustomize/Terraform and
+> Postgres-HA artifacts were removed under the single-user pivot — see git
+> history before the DEC-033 cutover if you need them.
 
 ## Quick bring-up
 
@@ -13,7 +23,7 @@ docker compose -f deploy/docker-compose.yml up --build
 curl http://localhost:7600/healthz       # → ok
 curl -X POST http://localhost:7600/v1/sessions \
   -H 'content-type: application/json' \
-  -d '{"user_id":"usr_dev","tenant_id":"ten_dev","model":"mock"}'
+  -d '{"user_id":"usr_dev","model":"mock"}'
 ```
 
 The compose image bundles the web UI: open **http://localhost:7600/** for
@@ -25,7 +35,7 @@ Or with the bundled CLI (assumes a local Rust toolchain):
 ```bash
 cargo run -p xiaoguai-cli -- remote \
   --server http://localhost:7600 \
-  chat --user-id usr_dev --tenant-id ten_dev --prompt 'hello'
+  chat --user-id usr_dev --prompt 'hello'
 ```
 
 ## Layers

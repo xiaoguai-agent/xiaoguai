@@ -14,7 +14,6 @@ xiaoguai-storage = { path = "../xiaoguai-storage" }
 xiaoguai-audit = { path = "../xiaoguai-audit" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
 xiaoguai-mcp = { path = "../xiaoguai-mcp" }
-xiaoguai-auth = { path = "../xiaoguai-auth" }
 xiaoguai-agent = { path = "../xiaoguai-agent" }
 # v1.5.x — Tier-2 D.1 agent-authored skill proposals.
 xiaoguai-tasks = { path = "../xiaoguai-tasks" }
@@ -29,6 +28,7 @@ xiaoguai-eval = { path = "../xiaoguai-eval" }
 # v0.9.1: serve our own Toolbox as an MCP server at /v1/mcp/serve.
 rmcp = { workspace = true, features = ["server", "transport-streamable-http-server", "transport-streamable-http-server-session"] }
 axum = { workspace = true }
+base64 = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 tokio = { workspace = true }

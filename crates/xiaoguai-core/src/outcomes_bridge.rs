@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use xiaoguai_api::outcomes::{
     OutcomeWriter, OutcomesApiError, OutcomesReader, RecordOutcomeRequest,
 };
@@ -24,19 +24,19 @@ use xiaoguai_audit::outcomes::{Aggregate, OutcomeDay, OutcomeRange, OutcomeSumma
 
 #[derive(Debug, Clone)]
 pub struct PgOutcomesBackend {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgOutcomesBackend {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
     /// Convenience: return as `Arc<Self>` so it can be split into two typed
     /// `Arc<dyn ...>` in `AppState` by cloning the inner `Arc`.
     #[must_use]
-    pub fn arc(pool: PgPool) -> Arc<Self> {
+    pub fn arc(pool: SqlitePool) -> Arc<Self> {
         Arc::new(Self::new(pool))
     }
 }
@@ -67,19 +67,22 @@ impl OutcomeWriter for PgOutcomesBackend {
         let metadata =
             serde_json::to_value(&req.metadata).unwrap_or_else(|_| serde_json::json!({}));
 
+        // DEC-033: tenant_id column dropped. metadata is stored as TEXT;
+        // serialize the JSON value to a string for the bind.
+        let _ = &req.tenant_id;
+        let metadata_str = serde_json::to_string(&metadata).unwrap_or_else(|_| "{}".to_string());
         sqlx::query(
             "INSERT INTO agent_outcomes \
-                (tenant_id, session_id, agent_name, kind, value, unit, description, metadata) \
-             VALUES ($1::UUID, $2::UUID, $3, $4, $5, $6, $7, $8)",
+                (session_id, agent_name, kind, value, unit, description, metadata) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(&req.tenant_id)
         .bind(&req.session_id)
         .bind(&req.agent_name)
         .bind(&req.kind)
         .bind(req.value)
         .bind(&req.unit)
         .bind(&req.description)
-        .bind(&metadata)
+        .bind(&metadata_str)
         .execute(&self.pool)
         .await
         .map_err(pg_err)?;
@@ -112,18 +115,19 @@ impl OutcomesReader for PgOutcomesBackend {
         tenant_id: &str,
         range: OutcomeRange,
     ) -> Result<OutcomeSummary, OutcomesApiError> {
+        // DEC-033: tenant_id column dropped; vestigial param ignored.
+        // since/until are each referenced twice → numbered binds required.
+        let _ = tenant_id;
         let rows: Vec<SummaryRow> = sqlx::query_as(
             "SELECT kind, \
-                    COALESCE(SUM(value), 0.0)::FLOAT8 AS total, \
-                    COUNT(*)::BIGINT AS cnt \
+                    COALESCE(SUM(value), 0.0) AS total, \
+                    COUNT(*) AS cnt \
              FROM agent_outcomes \
-             WHERE tenant_id = $1::UUID \
-               AND ($2::TIMESTAMPTZ IS NULL OR attributed_at >= $2) \
-               AND ($3::TIMESTAMPTZ IS NULL OR attributed_at <= $3) \
+             WHERE (?1 IS NULL OR attributed_at >= ?1) \
+               AND (?2 IS NULL OR attributed_at <= ?2) \
              GROUP BY kind \
              ORDER BY kind",
         )
-        .bind(tenant_id)
         .bind(range.since)
         .bind(range.until)
         .fetch_all(&self.pool)
@@ -157,20 +161,23 @@ impl OutcomesReader for PgOutcomesBackend {
         kind: Option<&str>,
         range: OutcomeRange,
     ) -> Result<Vec<OutcomeDay>, OutcomesApiError> {
+        // DEC-033: tenant_id dropped. `attributed_at` is stored as the
+        // SQLite strftime('%Y-%m-%dT%H:%M:%SZ', 'now') text format ("YYYY-MM-DD HH:MM:SS"), so
+        // substr(.,1,10) yields the day bucket. kind/since/until each
+        // referenced twice → numbered binds.
+        let _ = tenant_id;
         let rows: Vec<TimeseriesRow> = sqlx::query_as(
-            "SELECT to_char(attributed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date, \
+            "SELECT substr(attributed_at, 1, 10) AS date, \
                     kind, \
-                    COALESCE(SUM(value), 0.0)::FLOAT8 AS total, \
-                    COUNT(*)::BIGINT AS cnt \
+                    COALESCE(SUM(value), 0.0) AS total, \
+                    COUNT(*) AS cnt \
              FROM agent_outcomes \
-             WHERE tenant_id = $1::UUID \
-               AND ($2::TEXT  IS NULL OR kind = $2) \
-               AND ($3::TIMESTAMPTZ IS NULL OR attributed_at >= $3) \
-               AND ($4::TIMESTAMPTZ IS NULL OR attributed_at <= $4) \
+             WHERE (?1 IS NULL OR kind = ?1) \
+               AND (?2 IS NULL OR attributed_at >= ?2) \
+               AND (?3 IS NULL OR attributed_at <= ?3) \
              GROUP BY date, kind \
              ORDER BY date ASC, kind ASC",
         )
-        .bind(tenant_id)
         .bind(kind)
         .bind(range.since)
         .bind(range.until)
@@ -203,15 +210,16 @@ impl OutcomesReader for PgOutcomesBackend {
             }
         }
 
+        // DEC-033: tenant_id dropped. kind/since/until each referenced
+        // twice → numbered binds.
+        let _ = tenant_id;
         let row: (Option<f64>, Option<i64>) = sqlx::query_as(
-            "SELECT SUM(value)::FLOAT8, COUNT(*)::BIGINT \
+            "SELECT SUM(value), COUNT(*) \
              FROM agent_outcomes \
-             WHERE tenant_id = $1::UUID \
-               AND ($2::TEXT  IS NULL OR kind = $2) \
-               AND ($3::TIMESTAMPTZ IS NULL OR attributed_at >= $3) \
-               AND ($4::TIMESTAMPTZ IS NULL OR attributed_at <= $4)",
+             WHERE (?1 IS NULL OR kind = ?1) \
+               AND (?2 IS NULL OR attributed_at >= ?2) \
+               AND (?3 IS NULL OR attributed_at <= ?3)",
         )
-        .bind(tenant_id)
         .bind(kind)
         .bind(range.since)
         .bind(range.until)
@@ -280,19 +288,21 @@ mod tests {
         }
     }
 
-    // ── PG integration tests ──────────────────────────────────────────────────
-    // Run with: DATABASE_URL=postgres://... cargo test -p xiaoguai-core
-    //           --ignore-rust-version -- --ignored outcomes_pg_
+    // ── SQLite integration tests (DEC-033) ────────────────────────────────────
 
-    async fn pg_pool() -> sqlx::PgPool {
-        let url =
-            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for PG bridge tests");
-        sqlx::PgPool::connect(&url).await.expect("pg connect")
+    async fn sqlite_backend() -> (tempfile::TempDir, PgOutcomesBackend) {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = xiaoguai_storage::db::connect(dir.path().join("t.db").to_str().unwrap(), 5)
+            .await
+            .unwrap();
+        xiaoguai_storage::db::migrate(&pool).await.unwrap();
+        (dir, PgOutcomesBackend::new(pool))
     }
 
-    fn req(tenant_id: &str, kind: &str, value: f64) -> RecordOutcomeRequest {
+    fn req(kind: &str, value: f64) -> RecordOutcomeRequest {
         RecordOutcomeRequest {
-            tenant_id: tenant_id.into(),
+            // tenant_id is vestigial under DEC-033 (single owner).
+            tenant_id: xiaoguai_storage::OWNER_TENANT_ID.into(),
             session_id: Some("sess-1".into()),
             agent_name: "sales-bot".into(),
             kind: kind.into(),
@@ -304,24 +314,16 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
-    async fn outcomes_pg_record_and_aggregate() {
+    async fn outcomes_record_and_aggregate() {
         use xiaoguai_api::outcomes::{OutcomeWriter, OutcomesReader};
-        let pool = pg_pool().await;
-        let backend = PgOutcomesBackend::new(pool);
-        let tid = uuid::Uuid::new_v4().to_string();
+        let (_dir, backend) = sqlite_backend().await;
+        let tid = xiaoguai_storage::OWNER_TENANT_ID;
 
-        backend
-            .record(req(&tid, "revenue_usd", 500.0))
-            .await
-            .unwrap();
-        backend
-            .record(req(&tid, "revenue_usd", 300.0))
-            .await
-            .unwrap();
+        backend.record(req("revenue_usd", 500.0)).await.unwrap();
+        backend.record(req("revenue_usd", 300.0)).await.unwrap();
 
         let agg = backend
-            .aggregate(&tid, Some("revenue_usd"), OutcomeRange::default())
+            .aggregate(tid, Some("revenue_usd"), OutcomeRange::default())
             .await
             .unwrap();
         assert!((agg.sum - 800.0).abs() < 0.001);
@@ -330,24 +332,16 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
-    async fn outcomes_pg_timeseries_day_buckets() {
+    async fn outcomes_timeseries_day_buckets() {
         use xiaoguai_api::outcomes::{OutcomeWriter, OutcomesReader};
-        let pool = pg_pool().await;
-        let backend = PgOutcomesBackend::new(pool);
-        let tid = uuid::Uuid::new_v4().to_string();
+        let (_dir, backend) = sqlite_backend().await;
+        let tid = xiaoguai_storage::OWNER_TENANT_ID;
 
-        backend
-            .record(req(&tid, "deals_closed", 1.0))
-            .await
-            .unwrap();
-        backend
-            .record(req(&tid, "deals_closed", 2.0))
-            .await
-            .unwrap();
+        backend.record(req("deals_closed", 1.0)).await.unwrap();
+        backend.record(req("deals_closed", 2.0)).await.unwrap();
 
         let ts = backend
-            .timeseries(&tid, Some("deals_closed"), OutcomeRange::default())
+            .timeseries(tid, Some("deals_closed"), OutcomeRange::default())
             .await
             .unwrap();
         assert_eq!(ts.len(), 1, "both records in one day bucket");
@@ -355,53 +349,21 @@ mod tests {
         assert_eq!(ts[0].count, 2);
     }
 
-    #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
-    async fn outcomes_pg_cross_tenant_isolation() {
-        use xiaoguai_api::outcomes::{OutcomeWriter, OutcomesReader};
-        let pool = pg_pool().await;
-        let backend = PgOutcomesBackend::new(pool);
-        let tid_a = uuid::Uuid::new_v4().to_string();
-        let tid_b = uuid::Uuid::new_v4().to_string();
-
-        backend
-            .record(req(&tid_a, "revenue_usd", 1000.0))
-            .await
-            .unwrap();
-        backend
-            .record(req(&tid_b, "revenue_usd", 9999.0))
-            .await
-            .unwrap();
-
-        let agg = backend
-            .aggregate(&tid_a, Some("revenue_usd"), OutcomeRange::default())
-            .await
-            .unwrap();
-        assert!((agg.sum - 1000.0).abs() < 0.001, "must not see tenant B");
-    }
+    // DELETED outcomes_pg_cross_tenant_isolation: under DEC-033 there is one
+    // implicit owner and the tenant_id param is ignored, so cross-tenant
+    // isolation is no longer a meaningful behaviour to assert.
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
-    async fn outcomes_pg_summary_groups_by_kind() {
+    async fn outcomes_summary_groups_by_kind() {
         use xiaoguai_api::outcomes::{OutcomeWriter, OutcomesReader};
-        let pool = pg_pool().await;
-        let backend = PgOutcomesBackend::new(pool);
-        let tid = uuid::Uuid::new_v4().to_string();
+        let (_dir, backend) = sqlite_backend().await;
+        let tid = xiaoguai_storage::OWNER_TENANT_ID;
 
-        backend
-            .record(req(&tid, "revenue_usd", 100.0))
-            .await
-            .unwrap();
-        backend
-            .record(req(&tid, "cost_saved_usd", 50.0))
-            .await
-            .unwrap();
-        backend.record(req(&tid, "hours_saved", 8.0)).await.unwrap();
+        backend.record(req("revenue_usd", 100.0)).await.unwrap();
+        backend.record(req("cost_saved_usd", 50.0)).await.unwrap();
+        backend.record(req("hours_saved", 8.0)).await.unwrap();
 
-        let summary = backend
-            .summary(&tid, OutcomeRange::default())
-            .await
-            .unwrap();
+        let summary = backend.summary(tid, OutcomeRange::default()).await.unwrap();
         assert!(summary.by_kind.contains_key("revenue_usd"));
         assert!(summary.by_kind.contains_key("cost_saved_usd"));
         assert!((summary.by_kind["revenue_usd"].sum - 100.0).abs() < 0.001);

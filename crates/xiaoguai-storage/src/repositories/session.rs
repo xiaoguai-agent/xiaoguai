@@ -14,11 +14,12 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, SqlitePool};
 use xiaoguai_types::{MessageId, Session, SessionId, SessionStatus, TenantId, UserId};
 
 use crate::repositories::error::{RepoError, RepoResult};
 use crate::repositories::tenant_ctx::begin_tenant_tx;
+use crate::OWNER_TENANT_ID;
 
 #[async_trait]
 pub trait SessionRepository: Send + Sync {
@@ -61,12 +62,12 @@ pub trait SessionRepository: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct PgSessionRepository {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgSessionRepository {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
@@ -74,7 +75,6 @@ impl PgSessionRepository {
 #[derive(Debug, FromRow)]
 struct SessionRow {
     id: String,
-    tenant_id: String,
     user_id: String,
     title: Option<String>,
     model: String,
@@ -99,7 +99,7 @@ impl SessionRow {
         };
         Ok(Session {
             id: SessionId::from(self.id),
-            tenant_id: TenantId::from(self.tenant_id),
+            tenant_id: TenantId::from(OWNER_TENANT_ID.to_string()),
             user_id: UserId::from(self.user_id),
             title: self.title,
             created_at: self.created_at,
@@ -112,8 +112,7 @@ impl SessionRow {
     }
 }
 
-const SESSION_COLUMNS: &str =
-    "id, tenant_id, user_id, title, model, status, created_at, updated_at, \
+const SESSION_COLUMNS: &str = "id, user_id, title, model, status, created_at, updated_at, \
                                parent_session_id, forked_from_message_id";
 
 fn status_str(s: SessionStatus) -> &'static str {
@@ -128,11 +127,10 @@ impl SessionRepository for PgSessionRepository {
     async fn create(&self, tenant: Option<&str>, session: &Session) -> RepoResult<()> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         sqlx::query(
-            "INSERT INTO sessions (id, tenant_id, user_id, title, model, status, created_at, updated_at, parent_session_id, forked_from_message_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "INSERT INTO sessions (id, user_id, title, model, status, created_at, updated_at, parent_session_id, forked_from_message_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.as_str())
-        .bind(session.tenant_id.as_str())
         .bind(session.user_id.as_str())
         .bind(session.title.as_deref())
         .bind(&session.model)
@@ -151,7 +149,7 @@ impl SessionRepository for PgSessionRepository {
     async fn find_by_id(&self, tenant: Option<&str>, id: &str) -> RepoResult<Option<Session>> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         let row: Option<SessionRow> = sqlx::query_as(&format!(
-            "SELECT {SESSION_COLUMNS} FROM sessions WHERE id = $1"
+            "SELECT {SESSION_COLUMNS} FROM sessions WHERE id = ?"
         ))
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -177,9 +175,9 @@ impl SessionRepository for PgSessionRepository {
         let rows: Vec<SessionRow> = sqlx::query_as(&format!(
             "SELECT {SESSION_COLUMNS}
              FROM sessions
-             WHERE user_id = $1
+             WHERE user_id = ?
              ORDER BY updated_at DESC
-             LIMIT $2 OFFSET $3"
+             LIMIT ? OFFSET ?"
         ))
         .bind(user_id)
         .bind(limit)
@@ -193,11 +191,13 @@ impl SessionRepository for PgSessionRepository {
 
     async fn touch(&self, tenant: Option<&str>, id: &str) -> RepoResult<()> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
-        let result = sqlx::query("UPDATE sessions SET updated_at = NOW() WHERE id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await
-            .map_err(RepoError::from_sqlx)?;
+        let result = sqlx::query(
+            "UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(RepoError::from_sqlx)?;
         if result.rows_affected() == 0 {
             return Err(RepoError::NotFound);
         }
@@ -208,7 +208,7 @@ impl SessionRepository for PgSessionRepository {
     async fn archive(&self, tenant: Option<&str>, id: &str) -> RepoResult<()> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         let result = sqlx::query(
-            "UPDATE sessions SET status = 'archived', updated_at = NOW() WHERE id = $1",
+            "UPDATE sessions SET status = 'archived', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
         )
         .bind(id)
         .execute(&mut *tx)
@@ -225,7 +225,7 @@ impl SessionRepository for PgSessionRepository {
         // Idempotent — deleting a non-existent row is not an error. FK CASCADE
         // wipes child messages.
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
-        sqlx::query("DELETE FROM sessions WHERE id = $1")
+        sqlx::query("DELETE FROM sessions WHERE id = ?")
             .bind(id)
             .execute(&mut *tx)
             .await
@@ -256,7 +256,7 @@ impl SessionRepository for PgSessionRepository {
         // isolation here — a caller asking us to fork another tenant's
         // session sees `NotFound` rather than a leaked row.
         let cutoff_ts: Option<DateTime<Utc>> =
-            sqlx::query_scalar("SELECT created_at FROM messages WHERE id = $1 AND session_id = $2")
+            sqlx::query_scalar("SELECT created_at FROM messages WHERE id = ? AND session_id = ?")
                 .bind(from_message_id)
                 .bind(parent_id)
                 .fetch_optional(&mut *tx)
@@ -266,11 +266,10 @@ impl SessionRepository for PgSessionRepository {
 
         // (2) Insert the new session row.
         sqlx::query(
-            "INSERT INTO sessions (id, tenant_id, user_id, title, model, status, created_at, updated_at, parent_session_id, forked_from_message_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "INSERT INTO sessions (id, user_id, title, model, status, created_at, updated_at, parent_session_id, forked_from_message_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(new_session.id.as_str())
-        .bind(new_session.tenant_id.as_str())
         .bind(new_session.user_id.as_str())
         .bind(new_session.title.as_deref())
         .bind(&new_session.model)
@@ -287,9 +286,9 @@ impl SessionRepository for PgSessionRepository {
         // prefixed so it's visually distinct from app-generated ids.
         sqlx::query(
             "INSERT INTO messages (id, session_id, role, content, created_at)
-             SELECT 'msg_' || gen_random_uuid()::text, $1, role, content, created_at
+             SELECT 'msg_' || lower(hex(randomblob(16))), ?, role, content, created_at
              FROM messages
-             WHERE session_id = $2 AND created_at <= $3
+             WHERE session_id = ? AND created_at <= ?
              ORDER BY created_at ASC, id ASC",
         )
         .bind(new_session.id.as_str())

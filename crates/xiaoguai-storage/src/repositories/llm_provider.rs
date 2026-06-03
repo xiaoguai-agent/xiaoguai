@@ -9,11 +9,8 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{FromRow, PgPool};
-use xiaoguai_types::{
-    ids::{ProviderId, TenantId},
-    LlmProvider, ProviderKind,
-};
+use sqlx::{FromRow, SqlitePool};
+use xiaoguai_types::{ids::ProviderId, LlmProvider, ProviderKind};
 
 use crate::repositories::error::{RepoError, RepoResult};
 use crate::repositories::tenant_ctx::begin_tenant_tx;
@@ -34,12 +31,12 @@ pub trait LlmProviderRepository: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct PgLlmProviderRepository {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgLlmProviderRepository {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
@@ -47,7 +44,6 @@ impl PgLlmProviderRepository {
 #[derive(Debug, FromRow)]
 struct LlmProviderRow {
     id: String,
-    tenant_id: Option<String>,
     name: String,
     kind: String,
     endpoint: String,
@@ -76,7 +72,7 @@ impl LlmProviderRow {
         let default_for_models: Vec<String> = serde_json::from_value(self.default_for_models)?;
         Ok(LlmProvider {
             id: ProviderId::from(self.id),
-            tenant_id: self.tenant_id.map(TenantId::from),
+            tenant_id: None,
             name: self.name,
             kind,
             endpoint: self.endpoint,
@@ -93,7 +89,7 @@ impl LlmProviderRow {
     }
 }
 
-const SELECT_COLUMNS: &str = "id, tenant_id, name, kind, endpoint, models, default_for_models, \
+const SELECT_COLUMNS: &str = "id, name, kind, endpoint, models, default_for_models, \
      fallback_order, api_key_env, api_key, created_at, updated_at, \
      cost_per_1k_input_usd, cost_per_1k_output_usd";
 
@@ -105,13 +101,12 @@ impl LlmProviderRepository for PgLlmProviderRepository {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         sqlx::query(
             "INSERT INTO llm_providers \
-             (id, tenant_id, name, kind, endpoint, models, default_for_models, \
+             (id, name, kind, endpoint, models, default_for_models, \
               fallback_order, api_key_env, api_key, created_at, updated_at, \
               cost_per_1k_input_usd, cost_per_1k_output_usd) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(prov.id.as_str())
-        .bind(prov.tenant_id.as_ref().map(AsRef::as_ref))
         .bind(&prov.name)
         .bind(prov.kind.as_str())
         .bind(&prov.endpoint)
@@ -134,7 +129,7 @@ impl LlmProviderRepository for PgLlmProviderRepository {
     async fn find_by_id(&self, tenant: Option<&str>, id: &str) -> RepoResult<Option<LlmProvider>> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
         let row = sqlx::query_as::<_, LlmProviderRow>(&format!(
-            "SELECT {SELECT_COLUMNS} FROM llm_providers WHERE id = $1"
+            "SELECT {SELECT_COLUMNS} FROM llm_providers WHERE id = ?"
         ))
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -148,7 +143,6 @@ impl LlmProviderRepository for PgLlmProviderRepository {
         let mut tx = begin_tenant_tx(&self.pool, None).await?;
         let rows = sqlx::query_as::<_, LlmProviderRow>(&format!(
             "SELECT {SELECT_COLUMNS} FROM llm_providers \
-             WHERE tenant_id IS NULL \
              ORDER BY fallback_order ASC, created_at ASC"
         ))
         .fetch_all(&mut *tx)
@@ -160,14 +154,11 @@ impl LlmProviderRepository for PgLlmProviderRepository {
 
     async fn list_for_tenant(&self, tenant_id: &str) -> RepoResult<Vec<LlmProvider>> {
         let mut tx = begin_tenant_tx(&self.pool, Some(tenant_id)).await?;
-        // Globals first (tenant_id IS NULL sorts NULLs LAST by default, so use a
-        // computed key that puts globals before tenant rows when fallback_order ties).
+        // Single namespace under the pivot: every row is owner-wide.
         let rows = sqlx::query_as::<_, LlmProviderRow>(&format!(
             "SELECT {SELECT_COLUMNS} FROM llm_providers \
-             WHERE tenant_id IS NULL OR tenant_id = $1 \
-             ORDER BY fallback_order ASC, (tenant_id IS NOT NULL) ASC, created_at ASC"
+             ORDER BY fallback_order ASC, created_at ASC"
         ))
-        .bind(tenant_id)
         .fetch_all(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
@@ -177,7 +168,7 @@ impl LlmProviderRepository for PgLlmProviderRepository {
 
     async fn delete(&self, tenant: Option<&str>, id: &str) -> RepoResult<()> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
-        sqlx::query("DELETE FROM llm_providers WHERE id = $1")
+        sqlx::query("DELETE FROM llm_providers WHERE id = ?")
             .bind(id)
             .execute(&mut *tx)
             .await

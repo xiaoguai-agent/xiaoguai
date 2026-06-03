@@ -199,13 +199,13 @@ Next steps:
        sudo cp $CONF_DIR/config.example.yaml $CONF_DIR/config.yaml
        sudo $EDITOR $CONF_DIR/config.yaml
 
-     At minimum set:
-       database.url   — your postgres connection string
-       cache.url      — your valkey/redis URL
+     Defaults work out of the box (embedded SQLite, no external services).
+     You may optionally set:
+       database.url   — SQLite path (empty = ~/.xiaoguai/data.db)
        audit.hmac_key — a 32+ byte secret (rotate from the example value!)
 
-  2. Provision Postgres + Valkey if you haven't already. Migrations
-     under $CONF_DIR/migrations apply automatically on first boot.
+  2. No Postgres/Valkey to provision — state is an embedded SQLite file
+     created on first boot; migrations apply automatically.
 
   3. Start the service:
        sudo systemctl start xiaoguai-core

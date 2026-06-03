@@ -1,48 +1,91 @@
 //! Integration tests for `xiaoguai backup` / `xiaoguai restore`.
 //!
-//! These tests use a `pg_dump` shim (a small shell script that writes
-//! deterministic SQL) so the suite runs without a real Postgres instance.
+//! Under the DEC-033 single-user pivot the application state is a single `SQLite`
+//! file (`data.db`). These tests seed a temp `SQLite` store (via the storage
+//! crate's `connect` + `migrate`), insert a couple of rows, then assert the
+//! backup archive round-trips that file — i.e. restoring reproduces a database
+//! containing the seeded rows.
 
 use std::io::Read;
-use std::path::PathBuf;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use sqlx::Row;
 use tempfile::TempDir;
 use xiaoguai_cli::commands::backup::{build_tar_gz, run_restore, ArchiveEntry, RestoreArgs};
 
-// ── shim helpers ───────────────────────────────────────────────────────────
+// ── SQLite seed helper ──────────────────────────────────────────────────────
 
-/// Write a `pg_dump` shim script to `dir/pg_dump` and return its path.
-/// The shim ignores all arguments and writes a fixed SQL snippet to stdout.
-#[cfg(unix)]
-fn write_pg_dump_shim(dir: &std::path::Path) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let shim = dir.join("pg_dump");
-    std::fs::write(
-        &shim,
-        "#!/bin/sh\necho '-- pg_dump shim output'\necho 'SELECT 1;'\n",
+/// Create a migrated `SQLite` store at `path` and insert two `token_usage` rows.
+/// Returns the number of rows inserted.
+async fn seed_sqlite(path: &std::path::Path) -> i64 {
+    let url = format!("sqlite://{}", path.display());
+    let pool = xiaoguai_storage::connect(&url, 1)
+        .await
+        .expect("connect sqlite");
+    xiaoguai_storage::migrate(&pool).await.expect("migrate");
+
+    sqlx::query(
+        "INSERT INTO token_usage (provider_id, model, prompt_tokens, completion_tokens, total_tokens) \
+         VALUES (?, ?, ?, ?, ?)",
     )
-    .expect("write shim");
-    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).expect("chmod shim");
-    shim
+    .bind("openai-gpt-4o")
+    .bind("gpt-4o")
+    .bind(100_i64)
+    .bind(50_i64)
+    .bind(150_i64)
+    .execute(&pool)
+    .await
+    .expect("insert row 1");
+
+    sqlx::query(
+        "INSERT INTO token_usage (provider_id, model, prompt_tokens, completion_tokens, total_tokens) \
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("ollama-local")
+    .bind("qwen2.5-coder")
+    .bind(10_i64)
+    .bind(5_i64)
+    .bind(15_i64)
+    .execute(&pool)
+    .await
+    .expect("insert row 2");
+
+    let row = sqlx::query("SELECT COUNT(*) AS n FROM token_usage")
+        .fetch_one(&pool)
+        .await
+        .expect("count");
+    row.try_get::<i64, _>("n").expect("read count")
+}
+
+/// Open `path` and return the `token_usage` row count.
+async fn count_rows(path: &std::path::Path) -> i64 {
+    let url = format!("sqlite://{}", path.display());
+    let pool = xiaoguai_storage::connect(&url, 1)
+        .await
+        .expect("reopen sqlite");
+    let row = sqlx::query("SELECT COUNT(*) AS n FROM token_usage")
+        .fetch_one(&pool)
+        .await
+        .expect("count");
+    row.try_get::<i64, _>("n").expect("read count")
 }
 
 // ── unit-level round-trip (library functions, no subprocess) ──────────────
 
 /// Round-trip through `build_tar_gz` + extraction logic.
 ///
-/// Tests archive + checksum logic without `pg_dump` or the binary.
+/// Tests archive + checksum logic without a real database or the binary.
 #[test]
 fn archive_round_trip_checksum_passes() {
     let entries = vec![
         ArchiveEntry {
-            path: "pg_dump.sql".into(),
-            data: b"SELECT 1;".to_vec(),
+            path: "data.db".into(),
+            data: b"SQLite format 3\x00fake".to_vec(),
         },
         ArchiveEntry {
             path: "config/config.yaml".into(),
-            data: b"database_url: postgres://localhost/test".to_vec(),
+            data: b"database:\n  url: \"\"".to_vec(),
         },
     ];
 
@@ -68,8 +111,8 @@ fn archive_round_trip_checksum_passes() {
         .collect();
 
     assert!(
-        paths.contains(&"pg_dump.sql".to_string()),
-        "pg_dump.sql not found, got: {paths:?}"
+        paths.contains(&"data.db".to_string()),
+        "data.db not found, got: {paths:?}"
     );
     assert!(
         paths.contains(&"config/config.yaml".to_string()),
@@ -85,8 +128,8 @@ fn restore_rejects_tampered_archive() {
     // Build an archive with a deliberately wrong checksum.
     let entries = vec![
         ArchiveEntry {
-            path: "pg_dump.sql".into(),
-            data: b"SELECT 1;".to_vec(),
+            path: "data.db".into(),
+            data: b"SQLite format 3\x00".to_vec(),
         },
         ArchiveEntry {
             path: "sha256sum.txt".into(),
@@ -103,6 +146,7 @@ fn restore_rejects_tampered_archive() {
         outdir,
         force: false,
         identity: None,
+        restore_db_to: None,
     });
 
     assert!(
@@ -122,8 +166,8 @@ fn restore_refuses_overwrite_without_force() {
     let tmp = TempDir::new().expect("temp dir");
 
     let entries = vec![ArchiveEntry {
-        path: "pg_dump.sql".into(),
-        data: b"SELECT 1;".to_vec(),
+        path: "data.db".into(),
+        data: b"SQLite format 3\x00".to_vec(),
     }];
     let gz = build_tar_gz(&entries).expect("build");
     let archive_path = tmp.path().join("backup.tar.gz");
@@ -138,6 +182,7 @@ fn restore_refuses_overwrite_without_force() {
         outdir,
         force: false,
         identity: None,
+        restore_db_to: None,
     });
 
     assert!(
@@ -151,39 +196,37 @@ fn restore_refuses_overwrite_without_force() {
     );
 }
 
-// ── binary-level backup tests (require `pg_dump` shim on `$PATH`) ─────────
+// ── binary-level backup tests (real SQLite store) ──────────────────────────
 
-/// Full backup + restore round-trip via the CLI binary with a mocked `pg_dump`.
+/// Full backup + restore round-trip via the CLI binary against a seeded `SQLite`
+/// store, asserting the restored DB carries the seeded rows.
 #[test]
-#[cfg(unix)]
-fn backup_restore_round_trip_with_pg_dump_shim() {
+fn backup_restore_round_trip_sqlite() {
     let dir = TempDir::new().expect("temp dir");
-    let shim_dir = dir.path().join("bin");
-    std::fs::create_dir_all(&shim_dir).expect("create bin dir");
-    write_pg_dump_shim(&shim_dir);
 
-    // Prepend shim dir to PATH so the binary finds our fake pg_dump.
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    let new_path = format!("{}:{original_path}", shim_dir.display());
+    // Seed a real SQLite store.
+    let db_path = dir.path().join("data.db");
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let seeded = rt.block_on(seed_sqlite(&db_path));
+    assert_eq!(seeded, 2, "seed should insert 2 rows");
 
-    // Set up a fake config dir.
+    // Fake config dir (so the archive also carries config/, exercising that path).
     let config_dir = dir.path().join("config");
     std::fs::create_dir_all(&config_dir).expect("create config dir");
     std::fs::write(config_dir.join("config.yaml"), b"fake: config").expect("write config");
 
     let backup_file = dir.path().join("backup.tar.gz");
 
-    // Run backup.
+    // Run backup with --database-url pointing at the seeded store.
     Command::cargo_bin("xiaoguai")
         .expect("binary")
-        .env("PATH", &new_path)
         .env("XIAOGUAI_CONFIG_DIR", &config_dir)
         .args([
             "backup",
             "--out",
             backup_file.to_str().unwrap(),
             "--database-url",
-            "postgresql://user:pass@localhost/testdb",
+            db_path.to_str().unwrap(),
         ])
         .assert()
         .success()
@@ -195,8 +238,9 @@ fn backup_restore_round_trip_with_pg_dump_shim() {
         "backup file is empty"
     );
 
-    // Run restore.
+    // Restore the archive to a directory AND to a fresh live DB path.
     let restore_dir = dir.path().join("restored");
+    let restored_db = dir.path().join("restored-data.db");
     Command::cargo_bin("xiaoguai")
         .expect("binary")
         .args([
@@ -205,39 +249,40 @@ fn backup_restore_round_trip_with_pg_dump_shim() {
             backup_file.to_str().unwrap(),
             "--outdir",
             restore_dir.to_str().unwrap(),
+            "--restore-db",
+            restored_db.to_str().unwrap(),
         ])
         .assert()
         .success()
         .stdout(predicate::str::contains("restore complete"));
 
-    // pg_dump.sql should be inside the restored directory.
-    let pg_dump_sql = restore_dir.join("pg_dump.sql");
-    assert!(pg_dump_sql.exists(), "pg_dump.sql not found in restore dir");
-    let sql = std::fs::read_to_string(&pg_dump_sql).expect("read sql");
-    assert!(
-        sql.contains("pg_dump shim output") || sql.contains("SELECT 1"),
-        "restored pg_dump.sql has wrong content: {sql}"
-    );
+    // data.db should be inside the restored directory.
+    let extracted_db = restore_dir.join("data.db");
+    assert!(extracted_db.exists(), "data.db not found in restore dir");
+
+    // The live-restored DB must reopen and carry the seeded rows.
+    assert!(restored_db.exists(), "restored live DB not written");
+    let n = rt.block_on(count_rows(&restored_db));
+    assert_eq!(n, 2, "restored DB must carry the 2 seeded rows");
 }
 
-/// `backup --out` fails gracefully when `pg_dump` is not on `PATH`.
+/// `backup --out` fails gracefully when the `SQLite` store does not exist.
 #[test]
-fn backup_fails_gracefully_without_pg_dump() {
+fn backup_fails_gracefully_without_store() {
     let dir = TempDir::new().expect("temp dir");
     let backup_file = dir.path().join("backup.tar.gz");
+    let missing_db = dir.path().join("nope.db");
 
     Command::cargo_bin("xiaoguai")
         .expect("binary")
-        // Empty PATH so pg_dump cannot be found.
-        .env("PATH", "")
         .args([
             "backup",
             "--out",
             backup_file.to_str().unwrap(),
             "--database-url",
-            "postgresql://user:pass@localhost/testdb",
+            missing_db.to_str().unwrap(),
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("pg_dump").or(predicate::str::contains("PATH")));
+        .stderr(predicate::str::contains("does not exist").or(predicate::str::contains("data.db")));
 }

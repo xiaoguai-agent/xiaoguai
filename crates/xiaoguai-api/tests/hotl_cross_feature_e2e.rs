@@ -3,16 +3,17 @@
 //! Part 1 lives in `crates/xiaoguai-core/tests/hotl_cross_feature_e2e.rs`
 //! and pins the gate-side suspend semantics.
 //!
-//! This file pins the **restart-replay + scope-gate combo** end-to-end
-//! through the `POST /v1/hotl/decisions` route:
+//! This file pins the **restart-replay → resolve** path end-to-end through
+//! the `POST /v1/hotl/decisions` route:
 //!
 //! * S13-5  — `DecisionRegistry::replay_from_storage` reattaches all
 //!            still-pending unexpired rows on boot.
 //! * S13-8  — the route accepts `escalation_id` (no `request_id` alias).
-//! * S13-10 — Casbin `hotl:decide` scope is required; missing scope ⇒ 403,
-//!            present scope + matching live waiter ⇒ 201 with
-//!            `resumed: true` and the suspended ticket settles with the
-//!            operator's verdict.
+//!
+//! The former S13-10 Casbin `hotl:decide` scope-gate axis was removed by the
+//! single-owner pivot (DEC-033) — there is no RBAC/scope under owner auth, so
+//! a matching live waiter resolves to 201 + `resumed: true` and the suspended
+//! ticket settles with the operator's verdict.
 //!
 //! Bundle scope per the sprint-13 plan §1.1 — this test aggregates
 //! already-passing surfaces. RED was decorative; the regression bundle
@@ -47,7 +48,6 @@ use xiaoguai_api::hotl::audit::{HotlAuditSink, InMemoryHotlAuditSink};
 use xiaoguai_api::hotl::decision::{HotlDecisionStore, InMemoryHotlDecisionStore};
 use xiaoguai_api::hotl::decision_registry::DecisionRegistry;
 use xiaoguai_api::{router, AppState, CancelRegistry};
-use xiaoguai_auth::{Authz, DbPolicyRow};
 use xiaoguai_llm::mock::ScriptStep;
 use xiaoguai_llm::{LlmBackend, MockBackend};
 use xiaoguai_storage::repositories::error::RepoResult;
@@ -167,28 +167,10 @@ fn child_row(escalation_id: Uuid, scope: &str, expires_at: DateTime<Utc>) -> Hot
     }
 }
 
-/// Migration 0027 row that S13-10 expects to be merged into the Casbin
-/// enforcer. Mirrors `hotl_decide_scope.rs::seeded_hotl_decide_row`.
-fn seeded_hotl_decide_row() -> DbPolicyRow {
-    DbPolicyRow {
-        ptype: "p".into(),
-        v0: Some("hotl:decide".into()),
-        v1: Some("/v1/hotl/decisions".into()),
-        v2: Some("POST".into()),
-        v3: Some("allow".into()),
-        v4: None,
-        v5: None,
-    }
-}
-
-fn claims_with(scopes: Vec<&str>) -> Claims {
+fn owner_claims() -> Claims {
     Claims {
         sub: "alice".into(),
         tenant_id: "00000000-0000-0000-0000-000000000abc".into(),
-        // `system_admin` satisfies the existing path-based RBAC layer;
-        // the scope check is layered on top.
-        roles: vec!["system_admin".into()],
-        scopes: scopes.into_iter().map(String::from).collect(),
     }
 }
 
@@ -196,7 +178,6 @@ fn build_state(
     decisions: Arc<dyn HotlDecisionStore>,
     audit: Arc<dyn HotlAuditSink>,
     auth: Arc<dyn TokenValidator>,
-    authz: Arc<Authz>,
     registry: Arc<DecisionRegistry>,
 ) -> AppState {
     let backend: Arc<dyn LlmBackend> =
@@ -210,9 +191,6 @@ fn build_state(
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: None,
         auth: Some(auth),
-        authz: Some(authz),
-        tenants: None,
-        rate_limiter: None,
         audit: None,
         audit_verifier: None,
         audit_chain_exporter: None,
@@ -228,7 +206,6 @@ fn build_state(
         webhook_token_validator: None,
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
-        rate_limit_state: None,
         hotl_policy_store: None,
         hotl_enforcer: None,
         hotl_decision_store: Some(decisions),
@@ -254,25 +231,23 @@ async fn body_json(body: Body) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
-// ── test 2: restart-replay + scope-gate combo ────────────────────────────────
+// ── test 2: restart-replay → resolve via route ───────────────────────────────
 
-/// End-to-end restart + scope-gate scenario:
+/// End-to-end restart scenario (DEC-033 drops the former S13-10 scope-gate
+/// axis — there is no RBAC/scope under single-owner auth):
 ///
 /// 1. Pre-seed 2 `hotl_pending` rows on the mock store (simulating a
-///    pre-restart PG snapshot).
+///    pre-restart snapshot).
 /// 2. `DecisionRegistry::replay_from_storage` rebuilds the in-memory
 ///    waiter map (S13-5) — both rows must surface as reattached.
-/// 3. `POST /v1/hotl/decisions` for one of the ids using an operator JWT
-///    WITHOUT `hotl:decide` scope → 403 + `required_scope=hotl:decide`
-///    body (S13-10).
-/// 4. `POST` the same id with `hotl:decide` scope → 201, body uses
+/// 3. `POST /v1/hotl/decisions` for one id → 201, body uses
 ///    `escalation_id` (S13-8), `resumed=true` (S13-5 waiter resolved),
 ///    audit sink captured the decision row (sprint-11 contract).
-/// 5. The pending row's status in the store is now `resolved` — the
+/// 4. The pending row's status in the store is now `resolved` — the
 ///    DB write happened BEFORE the in-memory oneshot fired (S13-5
 ///    persist-first ordering).
 #[tokio::test]
-async fn restart_replay_then_resolve_via_route_with_scope_check() {
+async fn restart_replay_then_resolve_via_route() {
     // ── pre-restart fixture: 2 pending rows on the "previous" PG. ──────
     let store = MockEscalationStore::arc();
     let future = Utc::now() + chrono::Duration::hours(1);
@@ -303,81 +278,21 @@ async fn restart_replay_then_resolve_via_route_with_scope_check() {
         "S13-5: both pre-seeded pending rows must be reattached as live waiters"
     );
 
-    // ── boot: authz merges the seeded `hotl:decide` rule. ──────────────
-    let mut authz = Authz::new_default().await.expect("authz");
-    authz
-        .merge_db_policies(vec![seeded_hotl_decide_row()])
-        .await
-        .expect("S13-10: merge_db_policies for hotl:decide");
-    let authz = Arc::new(authz);
-
     let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());
     let audit_sink_obj = Arc::new(InMemoryHotlAuditSink::new());
     let audit: Arc<dyn HotlAuditSink> = audit_sink_obj.clone();
 
-    // ── 3. operator WITHOUT hotl:decide scope → 403. ───────────────────
-    let validator_noscope: Arc<dyn TokenValidator> = Arc::new(StubValidator {
-        claims: claims_with(vec!["read:audit"]),
+    // ── 3. resolve the escalation via the route → 201, resumed=true. ───
+    let validator: Arc<dyn TokenValidator> = Arc::new(StubValidator {
+        claims: owner_claims(),
     });
-    let app_noscope = router(build_state(
-        decisions.clone(),
-        audit.clone(),
-        validator_noscope,
-        authz.clone(),
-        registry.clone(),
-    ));
-    let body_noscope = serde_json::json!({
-        "escalation_id": id_a.to_string(),
-        "verdict": "allow",
-        "decided_by": "alice"
-    });
-    let resp = app_noscope
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/hotl/decisions")
-                .header(header::AUTHORIZATION, "Bearer t")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&body_noscope).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        resp.status(),
-        StatusCode::FORBIDDEN,
-        "S13-10: JWT without hotl:decide must be rejected"
-    );
-    let json = body_json(resp.into_body()).await;
-    assert_eq!(json["required_scope"], "hotl:decide");
-    assert_eq!(
-        store.child_status(id_a).as_deref(),
-        Some("pending"),
-        "S13-10: scope rejection must NOT mutate the pending row"
-    );
-    assert_eq!(
-        registry.len(),
-        2,
-        "S13-10: scope rejection must NOT consume the live waiter"
-    );
-
-    // ── 4. operator WITH hotl:decide scope → 201, resumed=true. ────────
-    let validator_scoped: Arc<dyn TokenValidator> = Arc::new(StubValidator {
-        claims: claims_with(vec!["hotl:decide"]),
-    });
-    let app_scoped = router(build_state(
-        decisions,
-        audit,
-        validator_scoped,
-        authz,
-        registry.clone(),
-    ));
+    let app = router(build_state(decisions, audit, validator, registry.clone()));
     let body_scoped = serde_json::json!({
         "escalation_id": id_a.to_string(),
         "verdict": "allow",
         "decided_by": "alice"
     });
-    let resp = app_scoped
+    let resp = app
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -392,7 +307,7 @@ async fn restart_replay_then_resolve_via_route_with_scope_check() {
     assert_eq!(
         resp.status(),
         StatusCode::CREATED,
-        "S13-10: JWT with hotl:decide must be accepted"
+        "decision route must accept the authenticated owner"
     );
     let json = body_json(resp.into_body()).await;
     assert_eq!(

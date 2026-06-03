@@ -1,49 +1,38 @@
-//! End-to-end tests for `PgJobRepository` + `PgJobRunRepository` against
-//! a real Postgres in a container. All tests `#[ignore]` so CI's fast
-//! path stays Docker-free (consistent with `xiaoguai-storage`'s own
-//! testcontainer suites — see those for prior art).
+//! End-to-end tests for `PgJobRepository` + `PgJobRunRepository` against a
+//! temp `SQLite` database (DEC-033 single-user pivot). The repos are now
+//! `SQLite`-backed; these run on every `cargo test` (no Docker, no `#[ignore]`).
 //!
-//! Run with `cargo test -p xiaoguai-scheduler --test pg_repository_e2e -- --ignored`.
+//! `tenant_id` was dropped under the pivot: the domain types still carry an
+//! `Option<String>` field but it is neither stored nor read back, so it always
+//! round-trips as `None`.
 
 use std::sync::Arc;
 
 use chrono::Utc;
-use sqlx::PgPool;
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync},
-};
+use sqlx::SqlitePool;
+use tempfile::TempDir;
 use xiaoguai_scheduler::{
     JobRepository, JobRun, JobRunRepository, JobRunStatus, PgJobRepository, PgJobRunRepository,
     ScheduledJob, Trigger,
 };
 use xiaoguai_storage::db;
 
-async fn setup() -> (PgPool, ContainerAsync<Postgres>) {
-    let pg = Postgres::default().start().await.expect("start pg");
-    let port = pg.get_host_port_ipv4(5432).await.expect("port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = db::connect(&url, 5).await.expect("connect");
+/// Returns a connected+migrated temp `SQLite` pool. The returned `TempDir` must
+/// stay alive for the duration of the test (dropping it deletes the DB file).
+async fn setup() -> (SqlitePool, TempDir) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("t.db");
+    let pool = db::connect(path.to_str().expect("utf8 path"), 5)
+        .await
+        .expect("connect");
     db::migrate(&pool).await.expect("migrate");
-    (pool, pg)
+    (pool, dir)
 }
 
-async fn insert_tenant(pool: &PgPool, id: &str) {
-    sqlx::query(
-        "INSERT INTO tenants (id, name, display_name, status, created_at)
-         VALUES ($1, $1, $1, 'active', NOW())
-         ON CONFLICT (id) DO NOTHING",
-    )
-    .bind(id)
-    .execute(pool)
-    .await
-    .expect("insert tenant");
-}
-
-fn sample_job(id: &str, tenant: Option<String>) -> ScheduledJob {
+fn sample_job(id: &str) -> ScheduledJob {
     ScheduledJob::new(
         id,
-        tenant,
+        None,
         format!("job-{id}"),
         Trigger::interval(60).unwrap(),
         serde_json::json!({"prompt": "scan"}),
@@ -54,7 +43,7 @@ fn sample_run(job: &ScheduledJob) -> JobRun {
     JobRun {
         id: 0,
         job_id: job.id.clone(),
-        tenant_id: job.tenant_id.clone(),
+        tenant_id: None,
         status: JobRunStatus::Running,
         attempt: 1,
         started_at: Some(Utc::now()),
@@ -67,35 +56,28 @@ fn sample_run(job: &ScheduledJob) -> JobRun {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn upsert_then_get_round_trips_job() {
-    let (pool, _pg) = setup().await;
-    insert_tenant(&pool, "tenant-x").await;
+    let (pool, _dir) = setup().await;
     let repo = Arc::new(PgJobRepository::new(pool.clone()));
 
-    let job = sample_job("j1", Some("tenant-x".into()));
+    let job = sample_job("j1");
     repo.upsert(&job).await.unwrap();
 
     let back = repo.get("j1").await.unwrap();
     assert_eq!(back.id, "j1");
-    assert_eq!(back.tenant_id.as_deref(), Some("tenant-x"));
+    // tenant_id dropped under single-user pivot: always reads back None.
+    assert_eq!(back.tenant_id, None);
     assert!(back.enabled);
     assert!(back.trigger.is_scheduled());
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn list_due_returns_scheduled_jobs_with_no_next_fire() {
-    let (pool, _pg) = setup().await;
-    insert_tenant(&pool, "tenant-x").await;
+    let (pool, _dir) = setup().await;
     let repo = Arc::new(PgJobRepository::new(pool.clone()));
 
-    repo.upsert(&sample_job("a", Some("tenant-x".into())))
-        .await
-        .unwrap();
-    repo.upsert(&sample_job("b", Some("tenant-x".into())))
-        .await
-        .unwrap();
+    repo.upsert(&sample_job("a")).await.unwrap();
+    repo.upsert(&sample_job("b")).await.unwrap();
 
     let due = repo.list_due(Utc::now(), 10).await.unwrap();
     let ids: Vec<_> = due.iter().map(|j| j.id.clone()).collect();
@@ -104,18 +86,14 @@ async fn list_due_returns_scheduled_jobs_with_no_next_fire() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn list_due_filters_reactive_jobs() {
-    let (pool, _pg) = setup().await;
-    insert_tenant(&pool, "tenant-x").await;
+    let (pool, _dir) = setup().await;
     let repo = Arc::new(PgJobRepository::new(pool.clone()));
 
-    let mut reactive = sample_job("react", Some("tenant-x".into()));
+    let mut reactive = sample_job("react");
     reactive.trigger = Trigger::file_watch("/tmp/watch").unwrap();
     repo.upsert(&reactive).await.unwrap();
-    repo.upsert(&sample_job("scheduled", Some("tenant-x".into())))
-        .await
-        .unwrap();
+    repo.upsert(&sample_job("scheduled")).await.unwrap();
 
     let due = repo.list_due(Utc::now(), 10).await.unwrap();
     let ids: Vec<_> = due.iter().map(|j| j.id.clone()).collect();
@@ -124,24 +102,20 @@ async fn list_due_filters_reactive_jobs() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn list_reactive_returns_only_reactive_enabled_jobs() {
-    let (pool, _pg) = setup().await;
-    insert_tenant(&pool, "tenant-x").await;
+    let (pool, _dir) = setup().await;
     let repo = Arc::new(PgJobRepository::new(pool.clone()));
 
-    let mut watch = sample_job("watch-1", Some("tenant-x".into()));
+    let mut watch = sample_job("watch-1");
     watch.trigger = Trigger::file_watch("/var/notes").unwrap();
     repo.upsert(&watch).await.unwrap();
 
-    let mut disabled = sample_job("watch-disabled", Some("tenant-x".into()));
+    let mut disabled = sample_job("watch-disabled");
     disabled.trigger = Trigger::file_watch("/var/disabled").unwrap();
     disabled.enabled = false;
     repo.upsert(&disabled).await.unwrap();
 
-    repo.upsert(&sample_job("scheduled", Some("tenant-x".into())))
-        .await
-        .unwrap();
+    repo.upsert(&sample_job("scheduled")).await.unwrap();
 
     let got = repo.list_reactive().await.unwrap();
     let ids: Vec<_> = got.iter().map(|j| j.id.clone()).collect();
@@ -151,15 +125,11 @@ async fn list_reactive_returns_only_reactive_enabled_jobs() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn record_fire_updates_bookkeeping() {
-    let (pool, _pg) = setup().await;
-    insert_tenant(&pool, "tenant-x").await;
+    let (pool, _dir) = setup().await;
     let repo = Arc::new(PgJobRepository::new(pool.clone()));
 
-    repo.upsert(&sample_job("j1", Some("tenant-x".into())))
-        .await
-        .unwrap();
+    repo.upsert(&sample_job("j1")).await.unwrap();
     let now = Utc::now();
     let next = now + chrono::Duration::seconds(60);
     repo.record_fire("j1", now, Some(next)).await.unwrap();
@@ -173,14 +143,12 @@ async fn record_fire_updates_bookkeeping() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn run_repo_insert_assigns_id_and_update_status_round_trips() {
-    let (pool, _pg) = setup().await;
-    insert_tenant(&pool, "tenant-x").await;
+    let (pool, _dir) = setup().await;
     let jobs = Arc::new(PgJobRepository::new(pool.clone()));
     let runs = Arc::new(PgJobRunRepository::new(pool.clone()));
 
-    let job = sample_job("j1", Some("tenant-x".into()));
+    let job = sample_job("j1");
     jobs.upsert(&job).await.unwrap();
 
     let a = runs.insert(sample_run(&job)).await.unwrap();
@@ -208,9 +176,8 @@ async fn run_repo_insert_assigns_id_and_update_status_round_trips() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn record_fire_on_missing_job_errors() {
-    let (pool, _pg) = setup().await;
+    let (pool, _dir) = setup().await;
     let repo = PgJobRepository::new(pool.clone());
     let err = repo
         .record_fire("nope", Utc::now(), None)

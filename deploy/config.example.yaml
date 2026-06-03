@@ -4,7 +4,7 @@
 # Every setting can also be overridden by an environment variable using the
 # XIAOGUAI_ prefix and `__` as a nested-key separator. Example:
 #
-#     XIAOGUAI_DATABASE__URL=postgres://...
+#     XIAOGUAI_DATABASE__URL=/var/lib/xiaoguai/data.db
 #     XIAOGUAI_AUTH__REQUIRED=true
 #
 # Env overrides win over file values. CLI flags win over env.
@@ -23,23 +23,29 @@ server:
   # static_dir: /app/static
 
 database:
-  # Postgres connection string. The service applies the bundled migrations
-  # (in /etc/xiaoguai/migrations after install) automatically on boot.
-  url: postgres://xiaoguai:CHANGEME@localhost:5432/xiaoguai
+  # Embedded SQLite store (DEC-033 single-user). A filesystem path or a
+  # `sqlite://...` URL. Leave EMPTY (the default) to use
+  # `$XDG_DATA_HOME/xiaoguai/data.db` or `~/.xiaoguai/data.db` — the file and
+  # its parent dir are created on first boot and migrations apply automatically.
+  # No external database server is required.
+  url: ""
   max_connections: 16
 
 cache:
-  # Valkey / Redis URL. Used for idempotency keys + per-tenant caches.
-  url: redis://localhost:6379
+  # Optional Valkey / Redis URL for idempotency keys + caches. Leave EMPTY
+  # (the default) to use an in-process cache — no Redis/Valkey sidecar needed
+  # for a single-user deployment.
+  url: ""
   key_prefix: "xiaoguai:"
 
 auth:
-  # JWT validation knobs. Leave `required: false` for dev / single-tenant
-  # bring-up; flip to `true` once you front the service with an IdP.
-  issuer: https://idp.example.com
-  audience: xiaoguai-core
-  jwks_url: https://idp.example.com/.well-known/jwks.json
-  required: false
+  # Single-owner access gate (DEC-033). There is no OIDC/RBAC/multi-tenancy —
+  # the API is protected by one username + password checked via HTTP Basic.
+  # Leave BOTH empty for an open localhost dev run; set them (ideally via the
+  # XIAOGUAI_AUTH__USERNAME / XIAOGUAI_AUTH__PASSWORD env vars, not this file)
+  # before exposing the service on a URL.
+  username: ""
+  password: ""
 
 audit:
   # HMAC-SHA256 signing key for the tamper-evident audit chain. This dev

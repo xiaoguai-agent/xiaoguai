@@ -243,7 +243,7 @@ impl OutcomeRecorder for InMemoryOutcomeRecorder {
         }
         // Emit Prometheus metrics for outcomes recording.
         if let Some(ctr) = xiaoguai_observability::outcomes_recorded_total() {
-            ctr.with_label_values(&[tenant_id, kind]).inc();
+            ctr.with_label_values(&[kind]).inc();
         }
         // Chain depth: derive from the metadata "chain_depth" field if present,
         // otherwise default to 1 (single-turn attribution).

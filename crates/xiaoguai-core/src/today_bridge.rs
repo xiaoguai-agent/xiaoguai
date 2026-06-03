@@ -90,51 +90,51 @@ impl PgTodayReader {
         // Chat sessions = sessions not present in im_conversations.
         // Preview/count/tool_count come from a single grouped scan of
         // `messages` over the candidate session ids.
+        // DEC-033: sessions/im_conversations have no tenant_id. SQLite has
+        // no LATERAL — the per-session aggregates become correlated scalar
+        // subqueries. `since`/`limit` referenced once each → anonymous `?`.
+        // The preview extracts the first text ContentBlock from the JSON
+        // array stored in `messages.content` via json_each.
         let rows: Vec<ChatRow> = sqlx::query_as::<_, ChatRow>(
             "WITH candidate AS (
-                 SELECT s.id, s.tenant_id, s.user_id, s.created_at, s.updated_at
+                 SELECT s.id, s.user_id, s.created_at, s.updated_at
                  FROM sessions s
                  LEFT JOIN im_conversations c ON c.session_id = s.id
                  WHERE c.session_id IS NULL
-                   AND ($1::timestamptz IS NULL OR s.updated_at >= $1)
+                   AND (? IS NULL OR s.updated_at >= ?)
                  ORDER BY s.updated_at DESC
-                 LIMIT $2
+                 LIMIT ?
              )
              SELECT
                  c.id,
-                 c.tenant_id,
                  c.user_id,
                  c.created_at,
                  c.updated_at,
-                 COALESCE(m.message_count, 0)::BIGINT AS message_count,
-                 COALESCE(m.tool_count, 0)::BIGINT    AS tool_count,
-                 m.last_preview                       AS last_preview
+                 (SELECT COUNT(*) FROM messages WHERE session_id = c.id)
+                     AS message_count,
+                 (SELECT COUNT(*) FROM messages
+                  WHERE session_id = c.id AND role = 'tool')
+                     AS tool_count,
+                 (
+                     SELECT substr(
+                         COALESCE(
+                             (SELECT json_extract(je.value, '$.text')
+                              FROM json_each(m2.content) je
+                              WHERE json_extract(je.value, '$.type') = 'text'
+                              LIMIT 1),
+                             ''
+                         ),
+                         1, 200
+                     )
+                     FROM messages m2
+                     WHERE m2.session_id = c.id
+                     ORDER BY m2.created_at DESC
+                     LIMIT 1
+                 ) AS last_preview
              FROM candidate c
-             LEFT JOIN LATERAL (
-                 SELECT
-                     COUNT(*)::BIGINT AS message_count,
-                     COUNT(*) FILTER (WHERE role = 'tool')::BIGINT AS tool_count,
-                     (
-                         SELECT LEFT(
-                             COALESCE(
-                                 (jsonb_path_query_first(
-                                     content,
-                                     '$[*] ? (@.type == \"text\") .text'
-                                 ))::text,
-                                 ''
-                             ),
-                             200
-                         )
-                         FROM messages m2
-                         WHERE m2.session_id = c.id
-                         ORDER BY m2.created_at DESC
-                         LIMIT 1
-                     ) AS last_preview
-                 FROM messages
-                 WHERE session_id = c.id
-             ) m ON TRUE
              ORDER BY c.updated_at DESC",
         )
+        .bind(q.since)
         .bind(q.since)
         .bind(q.limit)
         .fetch_all(self.pool.reader())
@@ -146,7 +146,7 @@ impl PgTodayReader {
             .map(|r| TodayItem::Chat {
                 ts: r.updated_at,
                 session_id: r.id,
-                tenant_id: r.tenant_id,
+                tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
                 user_id: r.user_id,
                 started_at: r.created_at,
                 last_message_preview: clean_preview(r.last_preview),
@@ -157,46 +157,43 @@ impl PgTodayReader {
     }
 
     async fn fetch_im(&self, q: &TodayQuery) -> Result<Vec<TodayItem>, TodayError> {
+        // DEC-033: no tenant_id. SQLite: correlated subqueries, json_each
+        // preview, anonymous binds (since used twice, limit once).
         let rows: Vec<ImRow> = sqlx::query_as::<_, ImRow>(
             "WITH candidate AS (
-                 SELECT s.id, s.tenant_id, s.created_at, s.updated_at,
+                 SELECT s.id, s.created_at, s.updated_at,
                         c.provider, c.conversation_id
                  FROM sessions s
                  JOIN im_conversations c ON c.session_id = s.id
-                 WHERE ($1::timestamptz IS NULL OR s.updated_at >= $1)
+                 WHERE (? IS NULL OR s.updated_at >= ?)
                  ORDER BY s.updated_at DESC
-                 LIMIT $2
+                 LIMIT ?
              )
              SELECT
-                 c.id, c.tenant_id, c.created_at, c.updated_at,
+                 c.id, c.created_at, c.updated_at,
                  c.provider, c.conversation_id,
-                 COALESCE(m.message_count, 0)::BIGINT AS message_count,
-                 m.last_preview AS last_preview
+                 (SELECT COUNT(*) FROM messages WHERE session_id = c.id)
+                     AS message_count,
+                 (
+                     SELECT substr(
+                         COALESCE(
+                             (SELECT json_extract(je.value, '$.text')
+                              FROM json_each(m2.content) je
+                              WHERE json_extract(je.value, '$.type') = 'text'
+                              LIMIT 1),
+                             ''
+                         ),
+                         1, 200
+                     )
+                     FROM messages m2
+                     WHERE m2.session_id = c.id
+                     ORDER BY m2.created_at DESC
+                     LIMIT 1
+                 ) AS last_preview
              FROM candidate c
-             LEFT JOIN LATERAL (
-                 SELECT
-                     COUNT(*)::BIGINT AS message_count,
-                     (
-                         SELECT LEFT(
-                             COALESCE(
-                                 (jsonb_path_query_first(
-                                     content,
-                                     '$[*] ? (@.type == \"text\") .text'
-                                 ))::text,
-                                 ''
-                             ),
-                             200
-                         )
-                         FROM messages m2
-                         WHERE m2.session_id = c.id
-                         ORDER BY m2.created_at DESC
-                         LIMIT 1
-                     ) AS last_preview
-                 FROM messages
-                 WHERE session_id = c.id
-             ) m ON TRUE
              ORDER BY c.updated_at DESC",
         )
+        .bind(q.since)
         .bind(q.since)
         .bind(q.limit)
         .fetch_all(self.pool.reader())
@@ -208,7 +205,7 @@ impl PgTodayReader {
             .map(|r| TodayItem::Im {
                 ts: r.updated_at,
                 session_id: r.id,
-                tenant_id: r.tenant_id,
+                tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
                 provider: r.provider,
                 chat_id: r.conversation_id,
                 started_at: r.created_at,
@@ -224,25 +221,28 @@ impl PgTodayReader {
         // <run.id>, details->'trigger'->>'type' = 'proactive' →
         // details->'trigger'->>'reason'). We LEFT JOIN on the actor /
         // run_id pair; non-proactive runs simply produce NULL.
+        // DEC-033: scheduled_job_runs has no tenant_id. JSON ops use
+        // json_extract; audit `details` is TEXT. since used twice, limit once.
         let rows: Vec<SchedRow> = sqlx::query_as::<_, SchedRow>(
             "SELECT
-                 r.id, r.job_id, r.tenant_id, r.status, r.attempt,
+                 r.id, r.job_id, r.status, r.attempt,
                  r.started_at, r.finished_at, r.created_at,
                  r.error_message, r.output_preview,
                  (
-                     SELECT a.details->'trigger'->>'reason'
+                     SELECT json_extract(a.details, '$.trigger.reason')
                      FROM audit_log a
                      WHERE a.actor = ('scheduler:' || r.job_id)
-                       AND (a.details->>'run_id')::BIGINT = r.id
-                       AND a.details->'trigger'->>'type' = 'proactive'
+                       AND CAST(json_extract(a.details, '$.run_id') AS INTEGER) = r.id
+                       AND json_extract(a.details, '$.trigger.type') = 'proactive'
                      ORDER BY a.id DESC
                      LIMIT 1
                  ) AS reason
              FROM scheduled_job_runs r
-             WHERE ($1::timestamptz IS NULL OR r.created_at >= $1)
+             WHERE (? IS NULL OR r.created_at >= ?)
              ORDER BY r.created_at DESC
-             LIMIT $2",
+             LIMIT ?",
         )
+        .bind(q.since)
         .bind(q.since)
         .bind(q.limit)
         .fetch_all(self.pool.reader())
@@ -254,7 +254,8 @@ impl PgTodayReader {
             .map(|r| TodayItem::Scheduled {
                 ts: r.created_at,
                 job_id: r.job_id,
-                tenant_id: r.tenant_id,
+                // DEC-033: single implicit owner; no per-run tenant.
+                tenant_id: None,
                 run_id: r.id,
                 attempt: r.attempt,
                 status: r.status,
@@ -270,7 +271,6 @@ impl PgTodayReader {
 #[derive(sqlx::FromRow)]
 struct ChatRow {
     id: String,
-    tenant_id: String,
     user_id: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -282,7 +282,6 @@ struct ChatRow {
 #[derive(sqlx::FromRow)]
 struct ImRow {
     id: String,
-    tenant_id: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     provider: String,
@@ -295,7 +294,6 @@ struct ImRow {
 struct SchedRow {
     id: i64,
     job_id: String,
-    tenant_id: Option<String>,
     status: String,
     attempt: i32,
     started_at: Option<DateTime<Utc>>,

@@ -1,79 +1,63 @@
-# Cache fallback: in-process vs Valkey/Redis
+# Cache: in-process only (no external cache)
 
-Xiaoguai's cache layer (rate-limiting buckets, IM session locks, smoke
-heartbeats, etc.) supports two interchangeable backends. The active mode is
-chosen at boot from a single knob: `cache.url`.
+Xiaoguai's cache layer (smoke heartbeats, IM session locks, scheduler webhook
+nonces, etc.) runs **entirely in-process**. There is no Redis, no Valkey, no
+external broker. After the single-user SQLite pivot (DEC-033) each person runs
+their own single-binary instance, so an out-of-process shared cache buys
+nothing — there is only ever one process to share with.
 
-## The two modes
+## The one mode
 
-| Mode          | When selected                                                    | Storage             | Survives restart | Multi-replica safe |
-| ------------- | ---------------------------------------------------------------- | ------------------- | ---------------- | ------------------ |
-| Redis/Valkey  | `cache.url` starts with `redis://` or `rediss://`               | external broker     | yes              | yes                |
-| In-process    | `cache.url` is empty or any other scheme (e.g. `memory://`)     | DashMap in heap     | no               | no                 |
+| Mode       | Storage         | Survives restart | Notes                                  |
+| ---------- | --------------- | ---------------- | -------------------------------------- |
+| In-process | DashMap in heap | no               | the only backend; nothing to configure |
 
-At startup the binary emits one of:
+At startup the binary emits:
 
 ```
-cache: connected to Redis/Valkey                        # Redis mode
-cache: in-process backend (no Redis/Valkey URL configured)   # fallback mode
+cache: in-process backend
 ```
 
-The `xiaoguai smoke` subcommand likewise logs `smoke: cache: in-process (no
-round-trip)` in the fallback path — the set/get round-trip is skipped because
-it would only prove that an in-memory map works.
+The `xiaoguai smoke` subcommand logs `smoke: cache: in-process (no round-trip)`
+— the set/get round-trip is skipped because it would only prove that an
+in-memory map works.
 
-## When to use which
+## Why in-process is the right (and only) default
 
-**Use the in-process fallback when:**
+- Single-owner, single-process deploy: each user runs one `xiaoguai serve`
+  reachable over their own URL. There are no replicas to coordinate, so
+  shared cache state is meaningless.
+- Cached values are intentionally ephemeral — smoke heartbeats, IM session
+  locks, scheduler webhook nonces. None of them must persist across a
+  restart; losing them on restart is correct behaviour.
+- Durable state lives in the embedded SQLite database file
+  (`data.db`), not in the cache. The cache never holds the system of record.
 
-- single-tenant, single-process deploy (e.g. an air-gapped enterprise box
-  where shipping Valkey adds operational weight for no gain)
-- local development without a Valkey container running
-- ephemeral demo / smoke environments
+## Configuration
 
-**Use Redis/Valkey when:**
-
-- two or more replicas of `xiaoguai serve` share rate-limit buckets or IM
-  session locks
-- you need cache state to survive process restarts (e.g. long-lived
-  scheduler webhook nonces)
-- regulatory or SRE requirements demand an out-of-process state store
-
-## Configuring the knob
-
-`config.yaml`:
+There is nothing to point at — the cache has no external dependency. The
+`cache` config block, if present, only carries a key prefix:
 
 ```yaml
 cache:
-  url: ""                  # empty → in-process fallback
-  key_prefix: "xiaoguai:"
+  key_prefix: "xiaoguai:"   # optional; namespaces in-heap keys
 ```
 
-```yaml
-cache:
-  url: "redis://localhost:6379/0"   # Redis/Valkey mode
-  key_prefix: "xiaoguai:"
-```
-
-Environment override (per the config layering rules):
-
-```bash
-XIAOGUAI_CACHE__URL=""             # force in-process
-XIAOGUAI_CACHE__URL=redis://h:6379 # force Redis
-```
+No `cache.url` is consulted. Any Redis/Valkey URL from an older config is
+ignored; if you are migrating from a pre-pivot deployment, you may delete the
+`cache.url` line and tear down any Redis/Valkey container — it is no longer
+used.
 
 ## Operational notes
 
-- The in-process backend honors sub-second TTLs verbatim. The Redis backend
-  clamps TTLs to 1 s (Redis `EX` granularity).
-- The in-process store is per-`Cache`-instance — two `Cache::connect("",
-  ...)` calls inside the same process return independent maps. Production
-  wiring constructs exactly one `Cache` per service.
-- Switching modes requires a restart. There is no live failover from Redis
-  to in-process; if Redis becomes unreachable the affected operations
-  return `CacheError::Redis` and callers handle it.
-- Migration path: when scaling from one replica to multi-replica, stand up
-  Valkey, set `XIAOGUAI_CACHE__URL=redis://…`, restart. No data migration
-  is needed because the in-process state is intentionally ephemeral
-  (rate-limit windows, session locks, smoke heartbeats — none of which
-  must persist).
+- The in-process backend honors sub-second TTLs verbatim (no external broker
+  granularity clamping).
+- The in-process store is per-`Cache`-instance — two `Cache::connect(...)`
+  calls inside the same process return independent maps. Production wiring
+  constructs exactly one `Cache` per service.
+- Restarting `xiaoguai serve` clears the cache. This is expected: rate-limit
+  windows, session locks, and smoke heartbeats are recomputed on demand, and
+  durable data is read back from `data.db`.
+- There is no live failover concept — there is no second backend to fail over
+  to. If you previously relied on cache state surviving a restart, move that
+  data into the SQLite database instead.
