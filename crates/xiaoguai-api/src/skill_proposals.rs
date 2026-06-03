@@ -27,6 +27,7 @@ use xiaoguai_tasks::skill_author::{
 
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
+use xiaoguai_storage::OWNER_TENANT_ID;
 
 // ---------------------------------------------------------------------------
 // Wire types
@@ -143,9 +144,12 @@ pub async fn list_proposals(
     Query(q): Query<ListProposalsQuery>,
 ) -> ApiResult<Json<Vec<ProposalRowResponse>>> {
     let repo = proposals_repo(&state)?;
-    let tenant = q
-        .tenant_id
-        .ok_or_else(|| ApiError::InvalidRequest("tenant_id is required".into()))?;
+    // DEC-033 single-owner: proposals are keyed by tenant_id (migration 0021
+    // keeps it as PK), but there is only one owner; default when omitted/empty.
+    let tenant = match q.tenant_id {
+        Some(t) if !t.is_empty() => t,
+        _ => OWNER_TENANT_ID.to_string(),
+    };
     let status = match q.status.as_deref() {
         None => None,
         Some(s) => Some(

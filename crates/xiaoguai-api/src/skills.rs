@@ -24,6 +24,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
+use xiaoguai_storage::OWNER_TENANT_ID;
 
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
@@ -233,9 +234,12 @@ pub async fn list_installed(
     Query(q): Query<InstalledQuery>,
 ) -> ApiResult<Json<Vec<InstalledPackRow>>> {
     let repo = skill_repo(&state)?;
-    let tenant = q
-        .tenant
-        .ok_or_else(|| ApiError::InvalidRequest("`tenant` query parameter is required".into()))?;
+    // DEC-033 single-owner: tenant is vestigial (the repo returns all installs
+    // regardless); default to the owner tenant when omitted or empty.
+    let tenant = match q.tenant {
+        Some(t) if !t.is_empty() => t,
+        _ => OWNER_TENANT_ID.to_string(),
+    };
     let rows = repo.list(&tenant).await.map_err(skill_err_to_api)?;
     Ok(Json(rows))
 }

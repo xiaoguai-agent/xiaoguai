@@ -100,11 +100,14 @@ describe('<AuditPane>', () => {
     expect(badges[1]?.getAttribute('data-state')).toBe('broken');
   });
 
-  it('hides the Export button when the audit.export scope is missing', async () => {
+  it('shows the Export button regardless of scopes (single owner, fail-open)', async () => {
+    // Under the single-user pivot ScopeProvider fails open and the owner
+    // holds every scope, so the Export button always renders even when the
+    // (now-ignored) scopes mock is empty.
     const client = makeClient();
     renderPane(client, { scopes: SCOPES_EMPTY });
     await waitFor(() => expect(screen.getAllByTestId('chain-badge')).toHaveLength(2));
-    expect(screen.queryByTestId('audit-export-btn')).toBeNull();
+    expect(screen.queryByTestId('audit-export-btn')).not.toBeNull();
   });
 
   it('triggers createAuditExport + synthesised download on click', async () => {

@@ -180,13 +180,21 @@ async fn pdf_format_returns_501_not_implemented() {
 }
 
 #[tokio::test]
-async fn missing_tenant_id_returns_400() {
-    let exporter = Arc::new(StaticAuditChainExporter::new());
+async fn empty_tenant_id_defaults_to_owner() {
+    // DEC-033 single-owner: an empty tenant_id defaults to the owner tenant
+    // (the missing-tenant guard is gone), so the request reaches the exporter
+    // keyed by the owner tenant rather than 400ing at the route.
+    let exporter = Arc::new(StaticAuditChainExporter::new().with(
+        xiaoguai_storage::OWNER_TENANT_ID,
+        "soc2",
+        "json",
+        Ok(b"{}".to_vec()),
+    ));
     let app = router(build_state(Some(exporter)));
     let mut body = request_body();
     body["tenant_id"] = json!("");
     let (status, _body, _ct) = post(app, body).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]

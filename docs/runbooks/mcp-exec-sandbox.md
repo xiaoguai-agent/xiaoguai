@@ -6,6 +6,14 @@ fresh tempdir CWD, an `ulimit -v` memory cap, a wall-clock deadline, and
 a scrubbed environment. Sensitive operations are gated upstream by the
 agent loop's HotL enforcer (see [Tier-2 prereq](../../PR_61)).
 
+> **Single-user deployment (DEC-033).** Xiaoguai is one self-contained
+> Rust binary (`xiaoguai serve`, systemd unit `xiaoguai-core.service`)
+> with an embedded SQLite database — no Postgres, no Kubernetes, no
+> tenants. Inspect state with `sqlite3 ~/.xiaoguai/data.db` (under
+> systemd: `/var/lib/xiaoguai/data.db`). There is a single implicit
+> **owner**. When `auth.username` / `auth.password` are set the API is
+> behind HTTP Basic (`-u "$USER:$PASS"`); otherwise the gate is open.
+
 ## Architecture
 
 ```
@@ -70,16 +78,19 @@ spawns the server on demand from then on.
 
 ## Seed a HotL policy
 
+The CLI still carries a `--tenant-id` flag in the single-user build;
+pass the literal owner id `owner`:
+
 ```sh
 xiaoguai hotl policy create \
-  --tenant-id acme \
+  --tenant-id owner \
   --scope tool_call.execute_python \
   --window-secs 3600 \
   --max-count 50 \
-  --escalate-to "ops@acme.com"
+  --escalate-to "ops@example.com"
 ```
 
-Tune `max-count` based on what the tenant actually does. 50/hour is a
+Tune `max-count` based on what your agents actually do. 50/hour is a
 reasonable starting point for analyst-style workloads; bump to 500/hour
 for ETL-heavy agents.
 
@@ -177,51 +188,70 @@ covers steps 4.5 + 4.6 of
    policy is in place.
 2. Opens a `/v1/sessions` session, sends a prompt that should result in
    `execute_python(7**7)`, asserts the reply contains `823543`.
-3. Asserts the `audit_log` row exists and the `hotl_usage_log` `Allow`
-   counter incremented by 1.
-4. Flips the HotL policy to Deny, resends a similar prompt, asserts the
+3. Asserts a `tool.invoke` `audit_log` row was written for
+   `execute_python` and that a `hotl_usage_log` row for scope
+   `tool_call.execute_python` was appended.
+4. Flips the HotL policy to deny, resends a similar prompt, asserts the
    deny reason propagates back to the user and that the new `audit_log`
-   row has `result='denied'`.
+   row's `action` is `tool.deny`.
 
 Before running the script you need:
 
 | Prereq | How to set up |
 |---|---|
-| `xiaoguai serve` running on `:7601` | `xiaoguai --config ~/.xiaoguai/local.yaml serve` |
-| Tenant + agent identity | Plan A step 4.2 |
-| mcp-exec registered tenant-scoped | `xiaoguai mcp register --name exec-sandbox --transport stdio --command $(which xiaoguai-mcp-exec) --tenant "$TENANT"` |
-| HotL policy `bucket=exec` allowing `execute_python` | Plan A step 4.4 |
+| `xiaoguai serve` running | `xiaoguai serve --config ~/.xiaoguai/config.yaml` |
+| Agent identity (the implicit owner) | no tenant provisioning needed |
+| mcp-exec registered | `xiaoguai mcp register --name exec-sandbox --transport stdio --command $(which xiaoguai-mcp-exec)` (omit `--tenant` — there is one implicit owner) |
+| HotL policy allowing `execute_python` | see "Seed a HotL policy" above |
 
-Then:
+> **Note — `docs/scripts/demo-mcp-exec.sh` predates the SQLite pivot.**
+> As shipped it still expects a Postgres `DATABASE_URL`, a `demo`
+> tenant, and `x-tenant-id` headers. It must be ported to the
+> single-user model (drop `DATABASE_URL`/tenant, read the SQLite store
+> directly) before it will run against a DEC-033 deployment. The steps
+> below describe the equivalent checks you can run by hand today.
 
-```bash
-export DATABASE_URL=postgres://...
-export TENANT="$(psql "$DATABASE_URL" -At -c \
-    "SELECT id FROM tenants WHERE slug='demo';")"
-bash docs/scripts/demo-mcp-exec.sh
-```
-
-The script exits non-zero on any verification failure so an asciinema
-recording stops cleanly on regression. To capture a cast:
+Manual equivalent of the demo's verification:
 
 ```bash
-asciinema rec \
-  --title 'xiaoguai agent → mcp-exec → HotL E2E' \
-  -c "bash docs/scripts/demo-mcp-exec.sh" \
-  docs/asciinema/agent-mcp-exec-e2e.cast
+DB=~/.xiaoguai/data.db   # /var/lib/xiaoguai/data.db under systemd
+
+# 1. The server is registered:
+sqlite3 "$DB" "SELECT count(*) FROM mcp_servers WHERE name='exec-sandbox';"
+
+# 2. Capture the tool-invoke count before the run:
+sqlite3 "$DB" "
+  SELECT count(*) FROM audit_log
+  WHERE action='tool.invoke' AND resource LIKE '%execute_python%';"
+
+# 3. Drive a session that calls execute_python(7**7) via the API, then
+#    re-run the count above — it should have incremented.
+
+# 4. After flipping the HotL policy to deny and re-prompting, the most
+#    recent tool-gate row is a denial (`tool.deny`):
+sqlite3 "$DB" "
+  SELECT action FROM audit_log
+  WHERE action IN ('tool.invoke','tool.deny')
+    AND resource LIKE '%execute_python%'
+  ORDER BY id DESC LIMIT 1;"
+# Expect 'tool.deny' on the deny path.
 ```
 
-The four SQL probes the demo asserts:
+The tool-execution path records audit rows with `action` =
+`tool.invoke` (allowed) or `tool.deny` (gated), with the tool name in
+`resource` / `details` — the SQLite `audit_log` has no separate
+`tool_name` / `result` columns. The HotL enforcer tracks usage in
+`hotl_usage_log` keyed by `scope` (e.g. `tool_call.execute_python`);
+inspect it with:
 
-```sql
--- session-level
-SELECT count(*) FROM mcp_servers WHERE name='exec-sandbox';
-SELECT count(*) FROM audit_log WHERE action='tool.execute' AND tool_name='execute_python';
-SELECT count(*) FROM hotl_usage_log WHERE outcome='Allow' AND tool_name='execute_python';
-SELECT result FROM audit_log WHERE action='tool.execute' AND tool_name='execute_python' ORDER BY ts DESC LIMIT 1;
+```bash
+sqlite3 ~/.xiaoguai/data.db "
+  SELECT scope, amount, escalated, occurred_at
+  FROM hotl_usage_log
+  WHERE scope = 'tool_call.execute_python'
+  ORDER BY id DESC LIMIT 5;"
 ```
 
-If you see anything other than yes / yes / yes / `'denied'` after a full
-run, see the Triage table in
+If the deny path does not behave as expected, see the Triage table in
 [`docs/plans/2026-05-28-agent-mcp-exec-e2e.md`](../plans/2026-05-28-agent-mcp-exec-e2e.md)
 §5.

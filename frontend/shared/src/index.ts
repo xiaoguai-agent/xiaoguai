@@ -107,14 +107,6 @@ export interface McpServerResponse {
   tenant_id: string | null;
 }
 
-/** v0.6.3 — directory entry served by `GET /v1/admin/tenants`. */
-export interface TenantResponse {
-  id: string;
-  name: string;
-  display_name: string;
-  status: 'active' | 'suspended' | 'archived';
-}
-
 /** v0.6.4 — HMAC-chained audit row served by `GET /v1/admin/audit`. */
 export interface AuditEntryView {
   id: number;
@@ -414,7 +406,8 @@ export interface OutcomeRecord {
 
 /** Query knobs accepted by `GET /v1/outcomes`. */
 export interface ListOutcomesQuery {
-  tenant_id: string;
+  /** Optional under the single-user pivot — the backend defaults the owner. */
+  tenant_id?: string;
   range?: OutcomesRange;
   kind?: string;
 }
@@ -995,13 +988,6 @@ export interface UpdatePersonaRequest {
   escalation_tier?: string | null;
 }
 
-// ---- v1.8.0 (sprint-10b S10b-6) — admin /me/scopes -----------------------
-
-/** Response body for `GET /v1/admin/me/scopes`. */
-export interface MyScopesResponse {
-  scopes: string[];
-}
-
 // ---- v1.8.0 (sprint-10b S10b-3) — Skill Proposals ------------------------
 
 /**
@@ -1352,19 +1338,6 @@ export class XiaoguaiClient {
     }
   }
 
-  /** v0.6.3 — admin directory of tenants. Requires `system_admin` when
-   *  RBAC is on. */
-  listTenants(opts?: { limit?: number; offset?: number }): Promise<TenantResponse[]> {
-    const params = new URLSearchParams();
-    if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
-    if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
-    const qs = params.toString();
-    return this.request<TenantResponse[]>(
-      'GET',
-      `/v1/admin/tenants${qs ? `?${qs}` : ''}`,
-    );
-  }
-
   /** v0.6.4 — HMAC-chained audit rows for a single tenant. */
   listAudit(q: ListAuditQuery): Promise<AuditEntryView[]> {
     const params = new URLSearchParams({ tenant_id: q.tenant_id });
@@ -1640,14 +1613,17 @@ export class XiaoguaiClient {
 
   /** ROI summary cards — aggregated by kind. */
   getOutcomesSummary(opts: {
-    tenant_id: string;
+    /** Optional under the single-user pivot — the backend defaults the owner. */
+    tenant_id?: string;
     range?: OutcomesRange;
-  }): Promise<OutcomesSummaryResponse> {
-    const params = new URLSearchParams({ tenant_id: opts.tenant_id });
+  } = {}): Promise<OutcomesSummaryResponse> {
+    const params = new URLSearchParams();
+    if (opts.tenant_id) params.set('tenant_id', opts.tenant_id);
     if (opts.range) params.set('range', opts.range);
+    const qs = params.toString();
     return this.request<OutcomesSummaryResponse>(
       'GET',
-      `/v1/outcomes/summary?${params.toString()}`,
+      `/v1/outcomes/summary${qs ? `?${qs}` : ''}`,
     );
   }
 
@@ -1741,16 +1717,19 @@ export class XiaoguaiClient {
 
   /** Daily time-series — bar chart data. */
   getOutcomesTimeseries(opts: {
-    tenant_id: string;
+    /** Optional under the single-user pivot — the backend defaults the owner. */
+    tenant_id?: string;
     range?: OutcomesRange;
     kind?: string;
-  }): Promise<OutcomesTimeseriesResponse> {
-    const params = new URLSearchParams({ tenant_id: opts.tenant_id });
+  } = {}): Promise<OutcomesTimeseriesResponse> {
+    const params = new URLSearchParams();
+    if (opts.tenant_id) params.set('tenant_id', opts.tenant_id);
     if (opts.range) params.set('range', opts.range);
     if (opts.kind) params.set('kind', opts.kind);
+    const qs = params.toString();
     return this.request<OutcomesTimeseriesResponse>(
       'GET',
-      `/v1/outcomes/timeseries?${params.toString()}`,
+      `/v1/outcomes/timeseries${qs ? `?${qs}` : ''}`,
     );
   }
 
@@ -1851,11 +1830,13 @@ export class XiaoguaiClient {
    * v1.3.x — raw list of outcome records for a tenant.
    * Backs the List view in the Outcomes browser pane.
    */
-  listOutcomes(q: ListOutcomesQuery): Promise<OutcomeRecord[]> {
-    const params = new URLSearchParams({ tenant_id: q.tenant_id });
+  listOutcomes(q: ListOutcomesQuery = {}): Promise<OutcomeRecord[]> {
+    const params = new URLSearchParams();
+    if (q.tenant_id) params.set('tenant_id', q.tenant_id);
     if (q.range) params.set('range', q.range);
     if (q.kind) params.set('kind', q.kind);
-    return this.request<OutcomeRecord[]>('GET', `/v1/outcomes?${params.toString()}`);
+    const qs = params.toString();
+    return this.request<OutcomeRecord[]>('GET', `/v1/outcomes${qs ? `?${qs}` : ''}`);
   }
 
   // ---- v1.4 (planned) — Anomaly detector endpoints -----------------------
@@ -2018,22 +1999,6 @@ export class XiaoguaiClient {
       }
       throw new ApiError(resp.status, code, message);
     }
-  }
-
-  // ---- v1.8.0 (sprint-10b S10b-6) — /me/scopes ------------------------
-
-  /**
-   * Resolve the bearer subject's effective scope list. Powers the
-   * `<RequireScope>` component in admin-ui.
-   *
-   * Fail-open contract: when the endpoint returns 404 (older backend
-   * without this route), the caller should render gated children rather
-   * than hide them. The client just propagates the ApiError; the
-   * provider in admin-ui handles the 404 fallback. See
-   * DEC-LLD-ADMIN-UI-002 + LLD-ADMIN-UI-001 §4.8.
-   */
-  listMyScopes(): Promise<MyScopesResponse> {
-    return this.request<MyScopesResponse>('GET', '/v1/admin/me/scopes');
   }
 
   // ---- v1.8.0 (sprint-10b S10b-3) — Skill Proposals -------------------

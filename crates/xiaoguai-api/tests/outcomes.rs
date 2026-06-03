@@ -278,7 +278,9 @@ async fn summary_503_when_unwired() {
 }
 
 #[tokio::test]
-async fn summary_rejects_empty_tenant() {
+async fn summary_defaults_empty_tenant_to_owner() {
+    // DEC-033 single-owner: an empty tenant_id defaults to the owner tenant
+    // and the request succeeds rather than 400ing.
     let app = router(state_with_backend(fresh_backend()));
     let resp = app
         .oneshot(
@@ -290,7 +292,7 @@ async fn summary_rejects_empty_tenant() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]
