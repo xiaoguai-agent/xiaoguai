@@ -33,7 +33,6 @@ import type {
   OutcomesSummaryResponse,
   OutcomesTimeseriesResponse,
   SessionResponse,
-  TenantResponse,
 } from '@xiaoguai/shared';
 import { client } from '../client';
 
@@ -235,13 +234,11 @@ function ChainTreeNode({ node, depth, outcomesBySession }: ChainTreeProps): JSX.
 // ---------------------------------------------------------------------------
 
 interface ListViewProps {
-  tenants: TenantResponse[];
   onDrillIn: (sessionId: string) => void;
 }
 
-function ListView({ tenants, onDrillIn }: ListViewProps): JSX.Element {
+function ListView({ onDrillIn }: ListViewProps): JSX.Element {
   const { t } = useTranslation();
-  const [tenantId, setTenantId] = useState('');
   const [range, setRange] = useState<OutcomesRange>('7d');
   const [kindFilter, setKindFilter] = useState('');
   const [sessionSearch, setSessionSearch] = useState('');
@@ -252,13 +249,12 @@ function ListView({ tenants, onDrillIn }: ListViewProps): JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!tenantId.trim()) return;
     setLoading(true);
     setError(null);
     setPage(0);
     try {
+      // tenant_id omitted: the backend defaults the single owner.
       const rows = await client.listOutcomes({
-        tenant_id: tenantId.trim(),
         range,
         kind: kindFilter.trim() || undefined,
       });
@@ -274,7 +270,7 @@ function ListView({ tenants, onDrillIn }: ListViewProps): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [tenantId, range, kindFilter, t]);
+  }, [range, kindFilter, t]);
 
   useEffect(() => {
     void load();
@@ -293,23 +289,6 @@ function ListView({ tenants, onDrillIn }: ListViewProps): JSX.Element {
     <>
       {/* Filters */}
       <div className="today-filters" role="group" aria-label={t('pane.outcomes.filters_label')}>
-        <label>
-          {t('common.tenant')}{' '}
-          <input
-            list="outcomes-tenant-list"
-            value={tenantId}
-            onChange={(e) => setTenantId(e.target.value)}
-            placeholder={t('pane.outcomes.tenant_placeholder')}
-            className="search"
-          />
-          <datalist id="outcomes-tenant-list">
-            {tenants.map((tn) => (
-              <option key={tn.id} value={tn.id}>
-                {tn.display_name}
-              </option>
-            ))}
-          </datalist>
-        </label>
         <label>
           {t('pane.outcomes.range_label')}{' '}
           <select
@@ -358,11 +337,7 @@ function ListView({ tenants, onDrillIn }: ListViewProps): JSX.Element {
 
       {error && <div className="error">{t('common.failed', { message: error })}</div>}
 
-      {!tenantId.trim() && !loading && (
-        <div className="empty">{t('pane.outcomes.empty_no_tenant')}</div>
-      )}
-
-      {tenantId.trim() && !loading && filtered.length === 0 && !error && (
+      {!loading && filtered.length === 0 && !error && (
         <div className="empty">{t('pane.outcomes.empty_no_records')}</div>
       )}
 
@@ -483,13 +458,11 @@ function SessionView({ initialSessionId }: SessionViewProps): JSX.Element {
         const tree = buildChainTree(sessions, root.id);
         setChain(tree);
 
-        // Best-effort: fetch outcomes for the target session only (tenant unknown here).
-        // The row-click path passes session_id; we piggyback on listOutcomes with a wide range.
+        // Best-effort: fetch outcomes for the target session only.
+        // The row-click path passes session_id; we piggyback on listOutcomes
+        // with a wide range. tenant_id is omitted — the backend defaults the owner.
         try {
-          const rows = await client.listOutcomes({
-            tenant_id: sessions[0]?.tenant_id ?? '',
-            range: '30d',
-          });
+          const rows = await client.listOutcomes({ range: '30d' });
           const bySession = new Map<string, OutcomeRecord[]>();
           for (const r of rows) {
             if (r.session_id) {
@@ -563,13 +536,8 @@ function SessionView({ initialSessionId }: SessionViewProps): JSX.Element {
 // Tab: Summary view (ROI cards + bar chart + per-agent table)
 // ---------------------------------------------------------------------------
 
-interface SummaryViewProps {
-  tenants: TenantResponse[];
-}
-
-function SummaryView({ tenants }: SummaryViewProps): JSX.Element {
+function SummaryView(): JSX.Element {
   const { t } = useTranslation();
-  const [tenantId, setTenantId] = useState('');
   const [range, setRange] = useState<OutcomesRange>('7d');
   const [summary, setSummary] = useState<OutcomesSummaryResponse | null>(null);
   const [timeseries, setTimeseries] = useState<OutcomesTimeseriesResponse | null>(null);
@@ -581,14 +549,14 @@ function SummaryView({ tenants }: SummaryViewProps): JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!tenantId.trim()) return;
     setLoading(true);
     setError(null);
     try {
+      // tenant_id omitted: the backend defaults the single owner.
       const [s, ts, raw] = await Promise.all([
-        client.getOutcomesSummary({ tenant_id: tenantId.trim(), range }),
-        client.getOutcomesTimeseries({ tenant_id: tenantId.trim(), range }),
-        client.listOutcomes({ tenant_id: tenantId.trim(), range }),
+        client.getOutcomesSummary({ range }),
+        client.getOutcomesTimeseries({ range }),
+        client.listOutcomes({ range }),
       ]);
       setSummary(s);
       setTimeseries(ts);
@@ -606,7 +574,7 @@ function SummaryView({ tenants }: SummaryViewProps): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [tenantId, range, t]);
+  }, [range, t]);
 
   useEffect(() => {
     void load();
@@ -621,23 +589,6 @@ function SummaryView({ tenants }: SummaryViewProps): JSX.Element {
   return (
     <>
       <div className="today-filters" role="group" aria-label={t('pane.outcomes.filters_label')}>
-        <label>
-          {t('common.tenant')}{' '}
-          <input
-            list="outcomes-summary-tenant-list"
-            value={tenantId}
-            onChange={(e) => setTenantId(e.target.value)}
-            placeholder={t('pane.outcomes.tenant_placeholder')}
-            className="search"
-          />
-          <datalist id="outcomes-summary-tenant-list">
-            {tenants.map((tn) => (
-              <option key={tn.id} value={tn.id}>
-                {tn.display_name}
-              </option>
-            ))}
-          </datalist>
-        </label>
         <label>
           {t('pane.outcomes.range_label')}{' '}
           <select
@@ -658,8 +609,6 @@ function SummaryView({ tenants }: SummaryViewProps): JSX.Element {
       </div>
 
       {error && <div className="error">{t('common.failed', { message: error })}</div>}
-
-      {!tenantId.trim() && <div className="empty">{t('pane.outcomes.empty_no_tenant')}</div>}
 
       {summaryEntries.length > 0 && (
         <div className="outcomes-cards" aria-label={t('pane.outcomes.summary_cards_label')}>
@@ -773,18 +722,6 @@ export function OutcomesPane(): JSX.Element {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<Tab>('list');
   const [drillSessionId, setDrillSessionId] = useState('');
-  const [tenants, setTenants] = useState<TenantResponse[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    client
-      .listTenants({ limit: 200 })
-      .then((rows) => {
-        if (!cancelled) setTenants(rows);
-      })
-      .catch(() => {/* leave empty */});
-    return () => { cancelled = true; };
-  }, []);
 
   function handleDrillIn(sessionId: string): void {
     setDrillSessionId(sessionId);
@@ -833,15 +770,11 @@ export function OutcomesPane(): JSX.Element {
 
       {/* Tab panels */}
       <div role="tabpanel">
-        {activeTab === 'list' && (
-          <ListView tenants={tenants} onDrillIn={handleDrillIn} />
-        )}
+        {activeTab === 'list' && <ListView onDrillIn={handleDrillIn} />}
         {activeTab === 'session' && (
           <SessionView initialSessionId={drillSessionId} />
         )}
-        {activeTab === 'summary' && (
-          <SummaryView tenants={tenants} />
-        )}
+        {activeTab === 'summary' && <SummaryView />}
       </div>
     </>
   );

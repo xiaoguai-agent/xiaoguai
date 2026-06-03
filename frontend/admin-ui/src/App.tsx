@@ -5,7 +5,6 @@ import { SchedulerPane } from './panes/Scheduler';
 import { EvalPane } from './panes/Eval';
 import { McpServersPane } from './panes/McpServers';
 import { MarketplacePane } from './panes/Marketplace';
-import { TenantsPane } from './panes/Tenants';
 import { ProvidersPane } from './panes/Providers';
 import { AuditPane } from './panes/Audit';
 import { UsagePane } from './panes/Usage';
@@ -57,9 +56,6 @@ export function App() {
           Kanban
         </NavLink>
         <div className="nav-section">Manage</div>
-        <NavLink to="/tenants" className={({ isActive }) => (isActive ? 'active' : '')}>
-          {t('nav.tenants')}
-        </NavLink>
         <NavLink to="/providers" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.providers')}
         </NavLink>
@@ -109,7 +105,6 @@ export function App() {
           <Route path="/marketplace" element={<MarketplacePane />} />
           <Route path="/skills" element={<SkillPacksPane />} />
           <Route path="/mcp-servers" element={<McpServersPane />} />
-          <Route path="/tenants" element={<TenantsPane />} />
           <Route path="/providers" element={<ProvidersPane />} />
           <Route path="/hotl-policies" element={<HotlPoliciesPane />} />
           <Route path="/audit" element={<AuditPane />} />

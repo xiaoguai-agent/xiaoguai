@@ -25,6 +25,7 @@
 
 use async_trait::async_trait;
 use thiserror::Error;
+use xiaoguai_storage::OWNER_TENANT_ID;
 
 #[derive(Debug, Error)]
 pub enum WebhookPushError {
@@ -294,11 +295,13 @@ impl WebhookTokenAdmin for InMemoryWebhookTokenAdmin {
         tenant_id: &str,
         route_id: &str,
     ) -> Result<WebhookTokenRecord, WebhookTokenAdminError> {
-        if tenant_id.is_empty() {
-            return Err(WebhookTokenAdminError::InvalidArgument(
-                "tenant_id required".into(),
-            ));
-        }
+        // DEC-033 single-owner: tenant_id is vestigial; default to the owner
+        // tenant when the caller omits it.
+        let tenant_id = if tenant_id.is_empty() {
+            OWNER_TENANT_ID
+        } else {
+            tenant_id
+        };
         if route_id.is_empty() {
             return Err(WebhookTokenAdminError::InvalidArgument(
                 "route_id required".into(),
@@ -432,10 +435,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn in_memory_token_admin_rejects_empty_args() {
+    async fn in_memory_token_admin_defaults_empty_tenant_and_rejects_empty_route() {
         let admin = InMemoryWebhookTokenAdmin::default();
-        let err = admin.create("", "deploy").await.unwrap_err();
-        assert!(matches!(err, WebhookTokenAdminError::InvalidArgument(_)));
+        // DEC-033 single-owner: an empty tenant_id defaults to the owner
+        // tenant rather than being rejected.
+        let row = admin.create("", "deploy").await.unwrap();
+        assert_eq!(row.tenant_id, OWNER_TENANT_ID);
+        // route_id is still required.
         let err = admin.create("t", "").await.unwrap_err();
         assert!(matches!(err, WebhookTokenAdminError::InvalidArgument(_)));
     }

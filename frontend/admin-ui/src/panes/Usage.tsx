@@ -1,21 +1,17 @@
 /**
  * v1.1.1 — Token Usage pane.
  *
- * Wraps `GET /v1/usage`. Three controls: tenant_id (free text + select
- * populated from `/v1/admin/tenants`), since/until date pickers (default
- * = last 30 days), group_by select (Day / Provider / Model). Renders a
- * total card and a row table.
+ * Wraps `GET /v1/usage`. Two controls: since/until date pickers (default
+ * = last 30 days) and a group_by select (Day / Provider / Model). Under
+ * the single-user pivot the backend defaults the owner tenant, so there
+ * is no tenant selector. Renders a total card and a row table.
  *
  * No charts in this tag — v1.1.1.1 adds a Recharts bar chart.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type {
-  TenantResponse,
-  UsageGroupBy,
-  UsageReport,
-} from '@xiaoguai/shared';
+import type { UsageGroupBy, UsageReport } from '@xiaoguai/shared';
 import { client } from '../client';
 import { formatCents } from '../utils/cost';
 
@@ -70,8 +66,6 @@ function groupByColHeader(groupBy: UsageGroupBy, t: (key: string) => string): st
 
 export function UsagePane(): JSX.Element {
   const { t } = useTranslation();
-  const [tenants, setTenants] = useState<TenantResponse[]>([]);
-  const [tenantId, setTenantId] = useState<string>('');
   const [since, setSince] = useState<string>(defaultSince());
   const [until, setUntil] = useState<string>(defaultUntil());
   const [groupBy, setGroupBy] = useState<UsageGroupBy>('day');
@@ -79,28 +73,12 @@ export function UsagePane(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Best-effort tenant list — endpoint is admin-gated and may 503 in dev.
-  useEffect(() => {
-    let cancelled = false;
-    client
-      .listTenants({ limit: 200 })
-      .then((rows) => {
-        if (!cancelled) setTenants(rows);
-      })
-      .catch(() => {
-        /* leave the free-text input as the only option */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      // tenant_id omitted: the backend defaults the single owner.
       const r = await client.getUsage({
-        tenant_id: tenantId.trim() || undefined,
         since: since ? toIsoStart(since) : undefined,
         until: until ? toIsoEnd(until) : undefined,
         group_by: groupBy,
@@ -112,7 +90,7 @@ export function UsagePane(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [tenantId, since, until, groupBy]);
+  }, [since, until, groupBy]);
 
   useEffect(() => {
     void refresh();
@@ -139,23 +117,6 @@ export function UsagePane(): JSX.Element {
       </header>
 
       <div className="today-filters" role="group" aria-label={t('pane.usage.filter_aria')}>
-        <label>
-          {t('pane.usage.label_tenant')}{' '}
-          <input
-            list="usage-tenant-list"
-            value={tenantId}
-            onChange={(e) => setTenantId(e.target.value)}
-            placeholder={t('pane.usage.placeholder_all_tenants')}
-            className="search"
-          />
-          <datalist id="usage-tenant-list">
-            {tenants.map((ten) => (
-              <option key={ten.id} value={ten.id}>
-                {ten.display_name}
-              </option>
-            ))}
-          </datalist>
-        </label>
         <label>
           {t('pane.usage.label_since')}{' '}
           <input type="date" value={since} onChange={(e) => setSince(e.target.value)} />
@@ -187,9 +148,6 @@ export function UsagePane(): JSX.Element {
           <div className="timeline-card-body">
             <div className="timeline-card-row">
               <span className="kind-tag kind-tag-chat">{t('pane.usage.totals_tag')}</span>
-              <span className="tenant">
-                {tenantId.trim() || t('pane.usage.placeholder_all_tenants')}
-              </span>
             </div>
             <div className="timeline-card-headline">
               {totalRow.input.toLocaleString()} in /{' '}
