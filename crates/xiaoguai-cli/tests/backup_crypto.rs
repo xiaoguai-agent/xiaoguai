@@ -92,7 +92,7 @@ fn sha256_known_answer_abc() {
 fn restore_accepts_matching_checksum_and_extracts() {
     let tmp = TempDir::new().expect("temp dir");
     let gz = build_valid_archive(&[
-        ("pg_dump.sql", b"SELECT 1;"),
+        ("data.db", b"SELECT 1;"),
         ("config/config.yaml", b"database_url: postgres://x/y"),
     ]);
     let archive_path = tmp.path().join("good.tar.gz");
@@ -104,10 +104,11 @@ fn restore_accepts_matching_checksum_and_extracts() {
         outdir: outdir.clone(),
         force: false,
         identity: None,
+        restore_db_to: None,
     })
     .expect("restore should accept a valid checksum");
 
-    let sql = std::fs::read(outdir.join("pg_dump.sql")).expect("read extracted sql");
+    let sql = std::fs::read(outdir.join("data.db")).expect("read extracted sql");
     assert_eq!(sql, b"SELECT 1;");
     // Nested entry: restore must create parent dirs under outdir.
     let cfg = std::fs::read(outdir.join("config/config.yaml")).expect("read nested entry");
@@ -126,12 +127,12 @@ fn restore_rejects_corrupted_entry_data() {
     let mut inner = Sha256::new();
     inner.update(good_data);
     let mut h = Sha256::new();
-    h.update(format!("pg_dump.sql\x00{}\n", hex::encode(inner.finalize())).as_bytes());
+    h.update(format!("data.db\x00{}\n", hex::encode(inner.finalize())).as_bytes());
     let stored_checksum = hex::encode(h.finalize());
 
     let tampered = vec![
         ArchiveEntry {
-            path: "pg_dump.sql".into(),
+            path: "data.db".into(),
             data: b"SELECT 2;".to_vec(), // does NOT match stored checksum
         },
         ArchiveEntry {
@@ -148,6 +149,7 @@ fn restore_rejects_corrupted_entry_data() {
         outdir: tmp.path().join("out"),
         force: false,
         identity: None,
+        restore_db_to: None,
     });
     let msg = format!("{:?}", result.expect_err("must reject corrupted data"));
     assert!(
@@ -257,7 +259,7 @@ fn encrypted_archive_round_trips_through_restore() {
     let tmp = TempDir::new().expect("temp dir");
     let (id_path, rec_path) = write_keypair(tmp.path(), "k");
 
-    let gz = build_valid_archive(&[("pg_dump.sql", b"SELECT 42;")]);
+    let gz = build_valid_archive(&[("data.db", b"SELECT 42;")]);
     let ct = age_encrypt(&gz, &rec_path).expect("encrypt archive");
     let enc_path = tmp.path().join("backup.tar.gz.age");
     std::fs::write(&enc_path, &ct).expect("write encrypted archive");
@@ -268,10 +270,11 @@ fn encrypted_archive_round_trips_through_restore() {
         outdir: outdir.clone(),
         force: false,
         identity: Some(id_path),
+        restore_db_to: None,
     })
     .expect("encrypted restore should succeed with the right identity");
 
-    let sql = std::fs::read(outdir.join("pg_dump.sql")).expect("read extracted sql");
+    let sql = std::fs::read(outdir.join("data.db")).expect("read extracted sql");
     assert_eq!(sql, b"SELECT 42;");
 }
 
@@ -283,7 +286,7 @@ fn encrypted_restore_with_wrong_identity_fails() {
     let (_id_a, rec_a) = write_keypair(tmp.path(), "a");
     let (id_b, _rec_b) = write_keypair(tmp.path(), "b");
 
-    let gz = build_valid_archive(&[("pg_dump.sql", b"SELECT 1;")]);
+    let gz = build_valid_archive(&[("data.db", b"SELECT 1;")]);
     let ct = age_encrypt(&gz, &rec_a).expect("encrypt to A");
     let enc_path = tmp.path().join("backup.tar.gz.age");
     std::fs::write(&enc_path, &ct).expect("write");
@@ -293,6 +296,7 @@ fn encrypted_restore_with_wrong_identity_fails() {
         outdir: tmp.path().join("out"),
         force: false,
         identity: Some(id_b),
+        restore_db_to: None,
     });
     let msg = format!("{:?}", result.expect_err("wrong identity must fail"));
     assert!(
@@ -313,6 +317,7 @@ fn restore_missing_input_errors() {
         outdir: tmp.path().join("out"),
         force: false,
         identity: None,
+        restore_db_to: None,
     });
     let msg = format!("{:?}", result.expect_err("missing input must error"));
     assert!(
@@ -334,6 +339,7 @@ fn restore_garbage_gzip_errors() {
         outdir: tmp.path().join("out"),
         force: false,
         identity: None,
+        restore_db_to: None,
     });
     let msg = format!("{:?}", result.expect_err("garbage gzip must error"));
     assert!(

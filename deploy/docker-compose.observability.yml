@@ -1,0 +1,76 @@
+# Optional observability overlay for the single-binary stack (DEC-033).
+#
+# Telemetry is OPT-IN under the single-user pivot: the default
+# deploy/docker-compose.yml ships none of this. Layer it on with:
+#
+#   docker compose -f deploy/docker-compose.yml \
+#                  -f deploy/docker-compose.observability.yml up --build
+#
+# Note: the server only emits OTLP / exposes /metrics when built with the
+# `observability` cargo feature. A default image links no exporter, so this
+# overlay is a no-op against such a build beyond running the collector/Ues.
+#
+# Adds: otel-collector (OTLP gRPC :4317 / HTTP :4318), prometheus
+# (127.0.0.1:9090), grafana (127.0.0.1:3000), and points xiaoguai-core at the
+# collector.
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    # Distroless image (no shell): no CMD-SHELL healthcheck; dependents wait on
+    # `service_started`. The collector exposes a health_check extension on :13133.
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      otel-collector:
+        condition: service_started
+    ports:
+      - "127.0.0.1:9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  grafana:
+    image: grafana/grafana:latest
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: xiaoguai
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # Point the app at the collector (only effective with the `observability` build).
+  xiaoguai-core:
+    depends_on:
+      otel-collector:
+        condition: service_started
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_TRACES_SAMPLE_RATE: "0.1"
+
+volumes:
+  prometheus_data:
+  grafana_data:

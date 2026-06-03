@@ -64,12 +64,21 @@ pub struct ServerSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseSettings {
+    /// SQLite store location (DEC-033). A filesystem path or `sqlite://…` URL.
+    /// Empty (the default) resolves to `$XDG_DATA_HOME/xiaoguai/data.db` or
+    /// `~/.xiaoguai/data.db` — so a clean box can `serve` with no config.
+    #[serde(default = "default_db_url")]
     pub url: String,
-    #[serde(default = "default_pg_max_connections")]
+    #[serde(default = "default_db_max_connections")]
     pub max_connections: u32,
 }
 
-const fn default_pg_max_connections() -> u32 {
+/// Empty = resolve to the default per-user SQLite path at connect time.
+fn default_db_url() -> String {
+    String::new()
+}
+
+const fn default_db_max_connections() -> u32 {
     16
 }
 
@@ -422,8 +431,8 @@ impl Default for Settings {
                 static_dir: None,
             },
             database: DatabaseSettings {
-                url: "postgres://xiaoguai:xiaoguai@localhost:5432/xiaoguai".into(),
-                max_connections: default_pg_max_connections(),
+                url: default_db_url(),
+                max_connections: default_db_max_connections(),
             },
             cache: CacheSettings {
                 url: "redis://localhost:6379".into(),
@@ -511,7 +520,7 @@ mod tests {
         assert_eq!(s.database.url, DB, "nested env override must apply");
         assert_eq!(s.server.port, 9999, "nested env override must apply");
         // Unset fields keep their in-code defaults.
-        assert_eq!(s.database.max_connections, default_pg_max_connections());
+        assert_eq!(s.database.max_connections, default_db_max_connections());
     }
 
     /// Sprint-12 S12-12 — default flip for v1.9.0. `suspend_on_escalate`
