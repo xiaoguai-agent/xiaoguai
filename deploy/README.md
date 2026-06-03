@@ -1,7 +1,16 @@
 # `deploy/`
 
-Operational artifacts. v0.9 ships docker-compose + a multi-stage Dockerfile;
-v1.0 adds Helm + bare-metal tarball.
+Operational artifacts. The supported path is a single self-contained binary
+with an embedded SQLite store (DEC-033 single-user pivot): `docker-compose.yml`
+(one `xiaoguai-core` service), the `.deb`/`.rpm`/tarball, and the `systemd/`
+unit. No Postgres, Valkey, or Redis.
+
+> **Legacy (multi-tenant era — unmaintained under the single-user pivot):**
+> `docker-compose.ha.yml`, `helm/`, `istio/`, `kustomize/`, `terraform/`, and
+> `ha/` target the previous multi-tenant Postgres deployment and are **no longer
+> maintained**. They will be removed in a future release. For single-user
+> deployment use `docker-compose.yml` or `scripts/release/install.sh`. Optional
+> telemetry: layer `docker-compose.observability.yml` on top.
 
 ## Quick bring-up
 

@@ -1,14 +1,12 @@
 [Unit]
 Description=Xiaoguai Core API server
 Documentation=https://github.com/xiaoguai-agent/xiaoguai
-# Wait for the network stack to be fully up before starting; local
-# postgres / valkey are likely to be available before us but we don't
-# strictly require them on the same host (they may be remote).
-After=network-online.target postgresql.service valkey-server.service
+# Single-user pivot (DEC-033): state is an embedded SQLite file under
+# ~/.xiaoguai (or the service user's $XDG_DATA_HOME) — no external database
+# or cache service to order against. Wait only for the network stack (the
+# server still binds a listener and may reach an LLM endpoint).
+After=network-online.target
 Requires=network-online.target
-# Soft-wants — if either is co-located we want them up first, but if
-# they're remote we don't fail at boot.
-Wants=postgresql.service valkey-server.service
 
 [Service]
 # v1.1.6.2: Type=notify — systemd waits for READY=1 before declaring
