@@ -1,14 +1,13 @@
-//! `/v1/admin/*` — cross-tenant administrative endpoints.
+//! `/v1/admin/*` — administrative endpoints.
 //!
-//! v0.6.3 added the tenant directory listing. v0.6.4 adds
-//! `GET /v1/admin/audit?tenant_id=...` backed by the HMAC-chained audit
-//! log (`xiaoguai-audit::PgAuditSink` in production via the
-//! [`AuditReader`] bridge).
+//! `GET /v1/admin/audit?tenant_id=...` is backed by the HMAC-chained audit
+//! log (`xiaoguai-audit::PgAuditSink` in production via the [`AuditReader`]
+//! bridge).
 //!
-//! All admin endpoints are gated by the Casbin policy
-//! (`system_admin, *, *, *`) when `AppState.authz` is `Some(...)`.
-//! When `authz` is `None` (dev mode) the endpoints are reachable by
-//! any caller — same trust model as the rest of the API in dev.
+//! Under DEC-033 these endpoints carry no RBAC of their own — when
+//! `AppState.auth` is set every caller is the single static owner; when it
+//! is unset (dev mode) they are reachable without a credential, the same
+//! trust model as the rest of the API.
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
@@ -16,7 +15,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use xiaoguai_eval::EvalReport;
-use xiaoguai_types::{Tenant, TenantStatus};
 
 use crate::audit::{AuditEntryView, VerifyReport};
 use crate::error::{ApiError, ApiResult};
@@ -37,12 +35,6 @@ const DEFAULT_TODAY_LIMIT: i64 = 50;
 const MAX_TODAY_LIMIT: i64 = 500;
 
 #[derive(Debug, Deserialize, Default)]
-pub struct ListTenantsQuery {
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, Default)]
 pub struct ListAuditQuery {
     /// Required. The audit chain is per-tenant; cross-tenant listing
     /// would need a separate endpoint with stricter policy.
@@ -52,40 +44,6 @@ pub struct ListAuditQuery {
     pub since: Option<DateTime<Utc>>,
     /// RFC 3339 timestamp; inclusive upper bound.
     pub until: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TenantResponse {
-    pub id: String,
-    pub name: String,
-    pub display_name: String,
-    pub status: TenantStatus,
-}
-
-impl From<Tenant> for TenantResponse {
-    fn from(t: Tenant) -> Self {
-        Self {
-            id: t.id.to_string(),
-            name: t.name,
-            display_name: t.display_name,
-            status: t.status,
-        }
-    }
-}
-
-/// # Errors
-/// Returns an error if the tenant repository is not wired or the query fails.
-pub async fn list_tenants(
-    State(state): State<AppState>,
-    Query(q): Query<ListTenantsQuery>,
-) -> ApiResult<Json<Vec<TenantResponse>>> {
-    let repo = state.tenants.as_ref().ok_or_else(|| {
-        ApiError::Internal(anyhow::anyhow!("tenant repository not wired into AppState"))
-    })?;
-    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let offset = q.offset.unwrap_or(0).max(0);
-    let rows = repo.list(limit, offset).await?;
-    Ok(Json(rows.into_iter().map(Into::into).collect()))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -585,142 +543,4 @@ fn eval_err_to_api(e: EvalServiceError) -> ApiError {
         EvalServiceError::SuiteTimedOut { .. } => ApiError::GatewayTimeout(e.to_string()),
         EvalServiceError::Backend(_) => ApiError::Internal(anyhow::anyhow!("{e}")),
     }
-}
-
-// ----------------------------------------------------------------------
-// v1.8.0 (sprint-10b S10b-6) — /me/scopes endpoint.
-// ----------------------------------------------------------------------
-//
-// The frontend `<RequireScope>` component needs an action-style vocabulary
-// (`personas.read`, `skill.approve`, ...) to decide which buttons to
-// render. Internally the policy is path-based (`/personas/*, write`); the
-// translation lives in `ADMIN_SCOPE_MAP` below.
-//
-// Naming convention: `<area>.<verb>`.
-// - `read`     → list / get
-// - `write`    → create / update
-// - `delete`   → archive / hard delete (collapsed onto `write` for ops
-//                whose only DELETE handler is logical archival; broken
-//                out into a separate scope when destructive)
-// - `approve`  → mutating endpoints that gate a separate trust path
-//                (skill proposals)
-// - `export`   → bulk-extraction endpoints with regulator-sensitive
-//                payloads (audit chain bundle download)
-//
-// Fail-open: when `AppState.authz` is `None` we return the full scope
-// set (test deploys + dev mode behave the same as the per-route layer).
-
-/// Response body for `GET /v1/admin/me/scopes`.
-#[derive(Debug, Serialize)]
-pub struct MyScopesResponse {
-    pub scopes: Vec<String>,
-}
-
-/// Static `(resource_pattern, action, scope_name)` table. Lives here
-/// rather than in the policy CSV so the API layer can advertise the
-/// vocabulary the UI is allowed to use without leaking the underlying
-/// Casbin path patterns into the frontend.
-///
-/// Keep this list aligned with `crates/xiaoguai-auth/policies/rbac_policy.csv`.
-/// Adding a new admin scope here without a corresponding policy line will
-/// make the entry effectively invisible (Casbin will deny everyone).
-const ADMIN_SCOPE_MAP: &[(&str, &str, &str)] = &[
-    // Personas — sprint-10b S10b-2 Personas pane.
-    ("/personas/", "read", "personas.read"),
-    ("/personas/", "write", "personas.write"),
-    ("/personas/", "delete", "personas.delete"),
-    // Memory browser — already shipped, now scope-gated.
-    ("/memories/", "read", "memories.read"),
-    ("/memories/", "write", "memories.write"),
-    ("/memories/", "delete", "memories.delete"),
-    // Watchers introspection — sprint-10b S10b-5.
-    ("/watchers/", "read", "watchers.read"),
-    ("/watchers/", "write", "watchers.write"),
-    // Skill pack proposals — Tier-2 D.1. Approve/reject is a `write`
-    // on `/skills/proposals/*`; the gate name is `skill.approve` so
-    // the SkillProposals pane can mount it on a single button.
-    ("/skills/proposals/", "write", "skill.approve"),
-    // Audit export — regulator-grade bundle download (T5).
-    ("/audit/exports/", "write", "audit.export"),
-    // Audit read — the audit log browser.
-    ("/audit/", "read", "audit.read"),
-    // Sessions — admin can view sessions across tenants.
-    ("/sessions/", "read", "sessions.read"),
-    ("/sessions/", "write", "sessions.write"),
-];
-
-/// `GET /v1/admin/me/scopes` — resolve the bearer subject's effective
-/// scope list against the bundled Casbin policy.
-///
-/// Behaviour:
-/// - When `AppState.auth` is wired, the bearer middleware has already
-///   populated `Claims`. We call `Authz::check` once per `(scope, role)`
-///   pair and return the union of matches.
-/// - When `AppState.authz` is `None` (no enforcer wired), we **return
-///   every known scope** (fail-open per DEC-LLD-ADMIN-UI-002). This
-///   matches the per-route layer's behaviour: in dev mode anything goes,
-///   and the UI mirrors that by not hiding any buttons.
-/// - When `auth` is `None` but `authz` is `Some`, the endpoint is
-///   unreachable in practice (the bearer layer is the only producer of
-///   `Claims` extensions). We still fall back to fail-open.
-///
-/// No additional Casbin scope is required — anyone authenticated may
-/// read their own scope list.
-///
-/// # Errors
-/// Returns an error if the Casbin enforcer is wired but errors during
-/// scope evaluation (treated as a 500; the UI then falls open).
-pub async fn list_my_scopes(
-    State(state): State<AppState>,
-    req: axum::extract::Request,
-) -> ApiResult<Json<MyScopesResponse>> {
-    let Some(authz) = state.authz.as_ref() else {
-        // Fail-open dev mode: surface every known scope.
-        return Ok(Json(MyScopesResponse {
-            scopes: ADMIN_SCOPE_MAP
-                .iter()
-                .map(|(_, _, scope)| (*scope).to_string())
-                .collect(),
-        }));
-    };
-
-    let Some(claims) = req.extensions().get::<crate::auth::Claims>().cloned() else {
-        // Bearer middleware would normally short-circuit before we get
-        // here; if it's not wired but authz is, fail open.
-        return Ok(Json(MyScopesResponse {
-            scopes: ADMIN_SCOPE_MAP
-                .iter()
-                .map(|(_, _, scope)| (*scope).to_string())
-                .collect(),
-        }));
-    };
-
-    let mut scopes: Vec<String> = Vec::new();
-    for (resource, action, scope_name) in ADMIN_SCOPE_MAP {
-        let mut allowed = false;
-        for role in &claims.roles {
-            match authz.check(role, &claims.tenant_id, resource, action).await {
-                Ok(true) => {
-                    allowed = true;
-                    break;
-                }
-                Ok(false) => {}
-                Err(err) => {
-                    tracing::warn!(
-                        ?err,
-                        role = %role,
-                        tenant = %claims.tenant_id,
-                        resource = %resource,
-                        action = %action,
-                        "me/scopes: enforcer error; skipping scope"
-                    );
-                }
-            }
-        }
-        if allowed {
-            scopes.push((*scope_name).to_string());
-        }
-    }
-
-    Ok(Json(MyScopesResponse { scopes }))
 }

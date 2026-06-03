@@ -9,9 +9,7 @@ mod common;
 
 use chrono::{SubsecRound, Utc};
 use common::test_setup;
-use xiaoguai_storage::repositories::{
-    LlmProviderRepository, PgLlmProviderRepository, RepoError,
-};
+use xiaoguai_storage::repositories::{LlmProviderRepository, PgLlmProviderRepository, RepoError};
 use xiaoguai_storage::OWNER_TENANT_ID;
 use xiaoguai_types::{ids::TenantId, LlmProvider, ProviderId, ProviderKind};
 
@@ -64,10 +62,7 @@ async fn create_with_tenant_id_reads_back_as_none() {
     let (pool, _guard) = test_setup().await;
     let repo = PgLlmProviderRepository::new(pool);
     // A fixture carrying a tenant id still persists, but tenant_id is not stored.
-    let prov = sample_provider(
-        "scoped",
-        Some(TenantId::from(OWNER_TENANT_ID.to_string())),
-    );
+    let prov = sample_provider("scoped", Some(TenantId::from(OWNER_TENANT_ID.to_string())));
     repo.create(None, &prov).await.expect("create");
 
     let found = repo

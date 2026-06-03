@@ -101,8 +101,14 @@ async fn list_pagination() {
         repo.create(&u).await.expect("create");
     }
 
-    let page1 = repo.list_by_tenant(OWNER_TENANT_ID, 2, 0).await.expect("list");
-    let page2 = repo.list_by_tenant(OWNER_TENANT_ID, 2, 2).await.expect("list");
+    let page1 = repo
+        .list_by_tenant(OWNER_TENANT_ID, 2, 0)
+        .await
+        .expect("list");
+    let page2 = repo
+        .list_by_tenant(OWNER_TENANT_ID, 2, 2)
+        .await
+        .expect("list");
 
     assert_eq!(page1.len(), 2);
     assert_eq!(page2.len(), 2);

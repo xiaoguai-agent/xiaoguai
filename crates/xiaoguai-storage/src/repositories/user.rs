@@ -147,13 +147,12 @@ impl UserRepository for PgUserRepository {
     async fn find_by_id(&self, id: &str) -> RepoResult<Option<User>> {
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
 
-        let row = sqlx::query_as::<_, UserRow>(&format!(
-            "SELECT {USER_COLUMNS} FROM users WHERE id = ?"
-        ))
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(RepoError::from_sqlx)?;
+        let row =
+            sqlx::query_as::<_, UserRow>(&format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?"))
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(RepoError::from_sqlx)?;
 
         let result = match row {
             Some(r) => {
@@ -243,11 +242,13 @@ impl UserRepository for PgUserRepository {
     async fn record_login(&self, id: &str) -> RepoResult<()> {
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
 
-        let result = sqlx::query("UPDATE users SET last_login_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await
-            .map_err(RepoError::from_sqlx)?;
+        let result = sqlx::query(
+            "UPDATE users SET last_login_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(RepoError::from_sqlx)?;
 
         tx.commit().await.map_err(RepoError::from_sqlx)?;
 

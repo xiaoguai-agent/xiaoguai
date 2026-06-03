@@ -6,31 +6,20 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "OIDC JWT validation + Casbin RBAC."
+description = "HotL argument redaction (DEC-HLD-014)."
 
 [dependencies]
-xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-storage = { path = "../xiaoguai-storage" }
-async-trait = { workspace = true }
-tokio = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
-jsonwebtoken = { workspace = true }
-casbin = { workspace = true }
-reqwest = { workspace = true }
-anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-chrono = { workspace = true }
-parking_lot = { workspace = true }
-once_cell = { workspace = true }
 uuid = { workspace = true }
 # Sprint-13 S13-4: JSONPath evaluator for HotL arg redaction. 0.3.x is the
 # audited line (R13-3 risk row). Used only inside `RedactionRules::apply`.
 jsonpath_lib = "0.3"
 
 [dev-dependencies]
-mockito = { workspace = true }
+chrono = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]

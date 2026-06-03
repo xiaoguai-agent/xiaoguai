@@ -196,8 +196,7 @@ impl TaskBoardRepository for PgTaskBoardRepository {
         .await
         .map_err(|e| match &e {
             sqlx::Error::Database(d)
-                if d.message().contains("boards.name")
-                    || d.message().contains("UNIQUE") =>
+                if d.message().contains("boards.name") || d.message().contains("UNIQUE") =>
             {
                 TaskError::InvalidArgument(format!("board '{}' already exists", req.name))
             }

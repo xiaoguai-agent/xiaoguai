@@ -4,8 +4,8 @@
 //! migration to a temp database. Asserts the migration produces:
 //! - `hotl_escalations` parent table + `hotl_pending` child with `escalation_id` FK
 //! - `hotl_redaction_policies` table (ships empty, writable)
-//! - `casbin_rule` seed row for `(p, hotl:decide, /v1/hotl/decisions, POST, allow)`
-//! - **No** path-based fallback row `(p, *, /v1/hotl/decisions, POST, *)`
+//!
+//! The former `casbin_rule` seed was removed with Casbin RBAC (DEC-033).
 //!
 //! Under the single-user pivot the `tenant_id` columns + RLS are dropped, UUIDs
 //! are TEXT, and JSON payloads (`args_redacted`, `applies_to`) are TEXT.
@@ -59,8 +59,8 @@ async fn migration_0027_creates_parent_child_redaction_and_casbin_seed() {
         "hotl_redaction_policies table missing"
     );
     assert!(
-        table_exists(&pool, "casbin_rule").await,
-        "casbin_rule seed table missing"
+        !table_exists(&pool, "casbin_rule").await,
+        "casbin_rule must be gone (Casbin removed under DEC-033)"
     );
 
     // `hotl_pending` must NOT carry a `request_id` column post-migration —
@@ -187,30 +187,4 @@ async fn migration_0027_creates_parent_child_redaction_and_casbin_seed() {
     .execute(&pool)
     .await
     .expect("insert redaction policy");
-
-    // ---- 4. Casbin seed: hotl:decide present, path-based rule absent --------
-
-    let row = sqlx::query(
-        "SELECT ptype, v0, v1, v2, v3 FROM casbin_rule \
-         WHERE ptype = 'p' AND v0 = 'hotl:decide' \
-           AND v1 = '/v1/hotl/decisions' AND v2 = 'POST'",
-    )
-    .fetch_optional(&pool)
-    .await
-    .expect("query casbin seed");
-    let row = row.expect("expected (p, hotl:decide, /v1/hotl/decisions, POST, allow) seed row");
-    let v3: String = row.try_get("v3").unwrap_or_default();
-    assert_eq!(v3, "allow", "hotl:decide scope rule's effect must be 'allow'");
-
-    let path_based: (i64,) = sqlx::query_as(
-        "SELECT count(*) FROM casbin_rule \
-         WHERE ptype = 'p' AND v0 = '*' AND v1 = '/v1/hotl/decisions' AND v2 = 'POST'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("count path-based");
-    assert_eq!(
-        path_based.0, 0,
-        "path-based fallback rule (p, *, /v1/hotl/decisions, POST, *) must be removed"
-    );
 }

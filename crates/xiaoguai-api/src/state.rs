@@ -15,12 +15,9 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 use xiaoguai_agent::{AgentConfig, Toolbox};
-use xiaoguai_auth::Authz;
 use xiaoguai_llm::LlmBackend;
 use xiaoguai_mcp::McpSupervisor;
-use xiaoguai_storage::repositories::{
-    McpServerRepository, MessageRepository, SessionRepository, TenantRepository,
-};
+use xiaoguai_storage::repositories::{McpServerRepository, MessageRepository, SessionRepository};
 
 use crate::audit::{AuditChainExporter, AuditReader, AuditVerifier};
 use crate::auth::TokenValidator;
@@ -99,23 +96,10 @@ pub struct AppState {
     /// Optional MCP registry — when `None` the `/v1/mcp/servers` endpoint
     /// returns 503.
     pub mcp_servers: Option<Arc<dyn McpServerRepository>>,
-    /// `None` = auth disabled (handlers fall back to body identity).
-    /// `Some(...)` = require Bearer token on `/v1/**`.
+    /// `None` = auth disabled (handlers fall back to owner identity, fine
+    /// for a localhost dev run). `Some(...)` = require a matching
+    /// `Authorization: Basic` username/password on `/v1/**` (DEC-033).
     pub auth: Option<Arc<dyn TokenValidator>>,
-    /// `None` = per-route RBAC enforcement is disabled (dev / smoke
-    /// runs); `Some(...)` = the rbac middleware enforces the Casbin
-    /// policy after `require_bearer` has populated `Claims`.
-    pub authz: Option<Arc<Authz>>,
-    /// `None` = no `/v1/admin/tenants` endpoint; `Some(...)` exposes it.
-    pub tenants: Option<Arc<dyn TenantRepository>>,
-    /// `None` = no rate-limit middleware. `Some(...)` is the token
-    /// bucket store keyed by `tenant_id`.
-    pub rate_limiter: Option<Arc<crate::rate_limit::RateLimiter>>,
-    /// v1.2.20: per-tenant, per-route-class rate-limit state. When set,
-    /// the router mounts [`crate::rate_limit::rate_limit_middleware`] which
-    /// classifies routes and enforces per-class quotas. Takes precedence
-    /// over the legacy `rate_limiter` field when both are set.
-    pub rate_limit_state: Option<Arc<crate::rate_limit::RateLimitState>>,
     /// `None` = `/v1/admin/audit` returns 503. `Some(...)` exposes the
     /// HMAC-chained audit log; production wires the
     /// `xiaoguai-audit::PgAuditSink` reader.

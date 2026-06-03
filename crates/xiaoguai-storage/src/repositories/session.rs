@@ -112,8 +112,7 @@ impl SessionRow {
     }
 }
 
-const SESSION_COLUMNS: &str =
-    "id, user_id, title, model, status, created_at, updated_at, \
+const SESSION_COLUMNS: &str = "id, user_id, title, model, status, created_at, updated_at, \
                                parent_session_id, forked_from_message_id";
 
 fn status_str(s: SessionStatus) -> &'static str {
@@ -192,11 +191,13 @@ impl SessionRepository for PgSessionRepository {
 
     async fn touch(&self, tenant: Option<&str>, id: &str) -> RepoResult<()> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
-        let result = sqlx::query("UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await
-            .map_err(RepoError::from_sqlx)?;
+        let result = sqlx::query(
+            "UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(RepoError::from_sqlx)?;
         if result.rows_affected() == 0 {
             return Err(RepoError::NotFound);
         }

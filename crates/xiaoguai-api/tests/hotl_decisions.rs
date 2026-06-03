@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::{to_bytes, Body};
-use axum::http::{header, Request, StatusCode};
+use axum::http::{Request, StatusCode};
 use serde_json::Value;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -25,7 +25,6 @@ use xiaoguai_api::hotl::decision::{HotlDecisionStore, InMemoryHotlDecisionStore}
 use xiaoguai_api::hotl::decision_registry::{DecisionRegistry, HotlResolution, HotlTicketError};
 use xiaoguai_api::hotl::policy::{HotlPolicyStore, InMemoryHotlPolicyStore};
 use xiaoguai_api::{router, AppState, CancelRegistry};
-use xiaoguai_auth::Authz;
 use xiaoguai_llm::mock::ScriptStep;
 use xiaoguai_llm::{LlmBackend, MockBackend};
 
@@ -39,7 +38,6 @@ struct StateOptions {
     policy_store: Option<Arc<dyn HotlPolicyStore>>,
     audit_sink: Option<Arc<dyn HotlAuditSink>>,
     auth: Option<Arc<dyn TokenValidator>>,
-    authz: Option<Arc<Authz>>,
     decision_registry: Option<Arc<DecisionRegistry>>,
 }
 
@@ -55,9 +53,6 @@ fn build_state(opts: StateOptions) -> AppState {
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: None,
         auth: opts.auth,
-        authz: opts.authz,
-        tenants: None,
-        rate_limiter: None,
         audit: None,
         audit_verifier: None,
         audit_chain_exporter: None,
@@ -73,7 +68,6 @@ fn build_state(opts: StateOptions) -> AppState {
         webhook_token_validator: None,
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
-        rate_limit_state: None,
         hotl_policy_store: opts.policy_store,
         hotl_enforcer: None,
         hotl_decision_store: opts.decision_store,
@@ -343,8 +337,6 @@ async fn unauthorized_when_bearer_missing() {
         claims: Claims {
             sub: "u".into(),
             tenant_id: "00000000-0000-0000-0000-000000000abc".into(),
-            roles: vec!["system_admin".into()],
-            scopes: vec![],
         },
     });
     let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());
@@ -373,53 +365,7 @@ async fn unauthorized_when_bearer_missing() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
-// ── 8. Forbidden when role has no policy match ──────────────────────────────
-//
-// The current Casbin policy file has no `/hotl/*` rules — only
-// `system_admin, *, *, *` matches by default. A role like `nobody` has no
-// matching rule, so the middleware returns 403. This documents the
-// expected behaviour for 3a.1 (no dedicated `hotl:decide` scope yet);
-// once the policy file gains a `/hotl/decisions, write` rule for
-// `tenant_admin`, the test will need to use a more restricted role.
-#[tokio::test]
-async fn forbidden_when_rbac_denies_hotl_decide_scope() {
-    let validator: Arc<dyn TokenValidator> = Arc::new(StubValidator {
-        claims: Claims {
-            sub: "u".into(),
-            tenant_id: "00000000-0000-0000-0000-000000000abc".into(),
-            roles: vec!["nobody".into()],
-            scopes: vec![],
-        },
-    });
-    let authz = Arc::new(Authz::new_default().await.expect("authz"));
-    let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());
-    let app = router(build_state(StateOptions {
-        decision_store: Some(decisions),
-        auth: Some(validator),
-        authz: Some(authz),
-        ..Default::default()
-    }));
-    let body = serde_json::json!({
-        "escalation_id": Uuid::new_v4().to_string(),
-        "verdict": "allow",
-        "decided_by": "alice"
-    });
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/hotl/decisions")
-                .header(header::AUTHORIZATION, "Bearer t")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&body).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-}
-
-// ── 9. `escalation_id` is the canonical field — body echoes it back ──────────
+// ── 8. `escalation_id` is the canonical field — body echoes it back ──────────
 //
 // Sprint-13 S13-8 / DEC-HLD-016: the field renamed from `request_id` to
 // `escalation_id`. The response body must mirror the canonical name; the

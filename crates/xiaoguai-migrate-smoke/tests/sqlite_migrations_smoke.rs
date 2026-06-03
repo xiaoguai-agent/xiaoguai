@@ -28,12 +28,11 @@ const EXPECTED_TABLES: &[&str] = &[
     "hotl_escalations",
     "hotl_pending",
     "hotl_redaction_policies",
-    "casbin_rule",
     "skill_proposals",
 ];
 
 /// Tables that must NOT exist under the single-user pivot.
-const FORBIDDEN_TABLES: &[&str] = &["tenants"];
+const FORBIDDEN_TABLES: &[&str] = &["tenants", "casbin_rule"];
 
 #[tokio::test]
 async fn migrations_apply_to_fresh_sqlite() {
@@ -90,14 +89,6 @@ async fn migrations_apply_to_fresh_sqlite() {
     .await
     .expect("query ollama seed");
     assert_eq!(ollama_default, 1, "0020 ollama-default seed did not apply");
-
-    // Seed sanity: 0027 casbin hotl:decide grant is present.
-    let casbin_grant: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM casbin_rule WHERE v0 = 'hotl:decide'")
-            .fetch_one(&pool)
-            .await
-            .expect("query casbin seed");
-    assert_eq!(casbin_grant, 1, "0027 casbin hotl:decide seed did not apply");
 
     // content_embedding must be a BLOB column (pgvector -> BLOB).
     assert!(

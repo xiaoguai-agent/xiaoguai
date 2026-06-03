@@ -89,10 +89,7 @@ async fn load_for_tenant_sorts_exact_scope_before_wildcard() {
     insert_policy(&pool, "*", "$.catch_all", &["sse"]).await;
     insert_policy(&pool, "tool_call.execute_python", "$.password", &["sse"]).await;
 
-    let rows = repo
-        .load_for_tenant(Uuid::new_v4())
-        .await
-        .expect("load");
+    let rows = repo.load_for_tenant(Uuid::new_v4()).await.expect("load");
     assert_eq!(rows.len(), 2);
     assert_eq!(
         rows[0].scope, "tool_call.execute_python",

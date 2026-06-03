@@ -49,12 +49,11 @@ impl CaseFromSessionSource for PgCaseFromSessionSource {
     ) -> Result<Option<SessionForCase>, EvalServiceError> {
         // DEC-033: sessions has no tenant_id column. We only need to know
         // the session exists; the domain `tenant_id` is synthesized to None.
-        let exists: Option<String> =
-            sqlx::query_scalar("SELECT id FROM sessions WHERE id = ?")
-                .bind(session_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(map_err)?;
+        let exists: Option<String> = sqlx::query_scalar("SELECT id FROM sessions WHERE id = ?")
+            .bind(session_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_err)?;
         if exists.is_none() {
             return Ok(None);
         }

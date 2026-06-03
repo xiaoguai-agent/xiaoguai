@@ -93,22 +93,32 @@ fn default_cache_prefix() -> String {
     "xiaoguai:".into()
 }
 
+/// Single-owner access gate (DEC-033). The API has no OIDC, RBAC, scopes,
+/// or tenants — it is protected by one configured username + password
+/// checked via HTTP Basic auth. When either field is empty the gate is
+/// disabled and the server runs open (convenient for a localhost run);
+/// front it with a credential before exposing it on a URL.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthSettings {
-    /// Expected JWT `iss` value.
-    pub issuer: String,
-    /// Expected JWT `aud` value.
-    pub audience: String,
-    /// JWKS URL (e.g. `https://idp.example.com/.well-known/jwks.json`).
-    pub jwks_url: String,
-    /// When `true`, the API server requires a Bearer JWT on `/v1/**` and
-    /// the rbac middleware enforces Casbin policies. When `false`
-    /// (default) the server runs in dev mode: claims fall back to the
-    /// request body, and rbac is bypassed.
+    /// Owner username. Empty = auth disabled.
     ///
-    /// Override via `XIAOGUAI_AUTH__REQUIRED=true`.
+    /// Override via `XIAOGUAI_AUTH__USERNAME=...`.
     #[serde(default)]
-    pub required: bool,
+    pub username: String,
+    /// Owner password. Empty = auth disabled. Keep this in the `.env` /
+    /// secret store, not in a checked-in config file.
+    ///
+    /// Override via `XIAOGUAI_AUTH__PASSWORD=...`.
+    #[serde(default)]
+    pub password: String,
+}
+
+impl AuthSettings {
+    /// The gate is active only when both credentials are non-empty.
+    #[must_use]
+    pub fn is_enabled(&self) -> bool {
+        !self.username.is_empty() && !self.password.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -439,10 +449,8 @@ impl Default for Settings {
                 key_prefix: default_cache_prefix(),
             },
             auth: AuthSettings {
-                issuer: "https://idp.example.com".into(),
-                audience: "xiaoguai-core".into(),
-                jwks_url: "https://idp.example.com/.well-known/jwks.json".into(),
-                required: false,
+                username: String::new(),
+                password: String::new(),
             },
             audit: AuditSettings {
                 hmac_key: "dev-only-change-me-32-bytes-min".into(),
@@ -565,7 +573,7 @@ mod tests {
             .expect("tmpfile");
         writeln!(
             f,
-            "server:\n  host: 127.0.0.1\n  port: 7600\ndatabase:\n  url: postgres://u:p@h/d\ncache:\n  url: redis://localhost:6379\nauth:\n  issuer: a\n  audience: b\n  jwks_url: c\naudit:\n  hmac_key: dev-only-change-me-32-bytes-min\nagent:\n  hotl:\n    suspend_on_escalate: false\n"
+            "server:\n  host: 127.0.0.1\n  port: 7600\ndatabase:\n  url: postgres://u:p@h/d\ncache:\n  url: redis://localhost:6379\nauth:\n  username: owner\n  password: pw\naudit:\n  hmac_key: dev-only-change-me-32-bytes-min\nagent:\n  hotl:\n    suspend_on_escalate: false\n"
         )
         .expect("write tmp yaml");
         let s = Settings::load_from_file(f.path()).expect("yaml load");

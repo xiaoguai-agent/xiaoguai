@@ -1,83 +1,138 @@
 //! Request authentication layer.
 //!
-//! v0.6 introduces a `TokenValidator` trait so the API layer can swap
-//! between the real `xiaoguai-auth` `JwtValidator` (production, fetches
-//! JWKS) and a deterministic stub (tests + dev). The trait keeps
-//! `xiaoguai-api` decoupled from `jsonwebtoken` so test builds stay light.
+//! Under the single-user SQLite pivot (DEC-033) authentication collapses to
+//! a single static **owner** identity. There is no OIDC, no Casbin, no
+//! roles, no scopes, no tenants — every authenticated request is the owner.
 //!
-//! When `AppState::auth` is `None`, the middleware behaves as a no-op —
-//! handlers get `Option<Claims>` and may fall back to body-supplied
-//! identity. When it's `Some(...)`, every `/v1/**` request must carry a
-//! valid Bearer token; healthz and `/v1/openapi.json` remain public.
+//! The optional access gate is a single configured **username + password**
+//! checked via HTTP Basic auth. When `AppState::auth` is `None` (no
+//! credential configured) the middleware is not mounted and handlers fall
+//! back to a body-supplied / owner identity — convenient for a localhost
+//! dev run. When it is `Some(...)`, every `/v1/**` request must carry a
+//! matching `Authorization: Basic base64(user:pass)` header; `/healthz` and
+//! `/v1/openapi.json` stay public.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::extract::Request;
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::Next;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Claims surfaced to handlers. Mirrors the subset of `xiaoguai-auth`
-/// claims that the API layer actually uses.
+/// Realm advertised on the `WWW-Authenticate` challenge so browsers render
+/// their native Basic-auth prompt.
+const BASIC_REALM: &str = "xiaoguai";
+
+/// Identity surfaced to handlers. A single static owner under DEC-033.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
+    /// Owner subject — the configured username (or a synthetic owner id in
+    /// dev mode where no credential is set).
     pub sub: String,
+    /// Vestigial single-owner tenant id (always
+    /// [`xiaoguai_storage::OWNER_TENANT_ID`]). Kept so repository calls that
+    /// still thread an `Option<&str>` tenant argument compile unchanged; it
+    /// carries no isolation semantics and is slated for a later cleanup.
     pub tenant_id: String,
-    pub roles: Vec<String>,
-    /// OAuth 2.0-style scope strings (sprint-13 S13-10). Empty for
-    /// legacy tokens issued before sprint-13. Scope-gated handlers
-    /// (e.g. `POST /v1/hotl/decisions`) check membership and return
-    /// 403 on miss; non-scope-gated routes ignore this field.
-    #[serde(default)]
-    pub scopes: Vec<String>,
+}
+
+impl Claims {
+    /// Build the owner identity for `sub`.
+    #[must_use]
+    pub fn owner(sub: impl Into<String>) -> Self {
+        Self {
+            sub: sub.into(),
+            tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Error)]
 pub enum AuthError {
-    #[error("missing bearer token")]
+    #[error("missing credentials")]
     Missing,
-    #[error("invalid bearer token: {0}")]
+    #[error("invalid credentials: {0}")]
     Invalid(String),
 }
 
 #[async_trait]
 pub trait TokenValidator: Send + Sync {
-    async fn validate(&self, token: &str) -> Result<Claims, AuthError>;
+    /// Validate the credential carried by the `Authorization` header — the
+    /// portion after the scheme word. Returns the owner [`Claims`] on
+    /// success.
+    async fn validate(&self, credential: &str) -> Result<Claims, AuthError>;
 }
 
-/// Bridge `xiaoguai-auth::JwtValidator` into our trait without leaking the
-/// dependency further. Production callers wrap their `JwtValidator` once
-/// at boot time.
-pub struct JwtTokenValidator<V>(pub Arc<V>);
+/// Production validator: a single static username/password checked via HTTP
+/// Basic. The `credential` is the base64 blob after `Basic `.
+pub struct StaticCredentialValidator {
+    username: String,
+    password: String,
+}
 
-#[async_trait]
-impl TokenValidator for JwtTokenValidator<xiaoguai_auth::JwtValidator> {
-    async fn validate(&self, token: &str) -> Result<Claims, AuthError> {
-        match self.0.validate(token).await {
-            Ok(c) => Ok(Claims {
-                sub: c.sub,
-                tenant_id: c.tenant_id,
-                roles: c.roles,
-                scopes: c.scopes,
-            }),
-            Err(e) => Err(AuthError::Invalid(e.to_string())),
+impl StaticCredentialValidator {
+    #[must_use]
+    pub fn new(username: impl Into<String>, password: impl Into<String>) -> Self {
+        Self {
+            username: username.into(),
+            password: password.into(),
         }
     }
 }
 
-/// Deterministic stub for tests + dev. Returns the configured claims for
-/// any non-empty token; rejects empty tokens as `Missing`.
+#[async_trait]
+impl TokenValidator for StaticCredentialValidator {
+    async fn validate(&self, credential: &str) -> Result<Claims, AuthError> {
+        if credential.is_empty() {
+            return Err(AuthError::Missing);
+        }
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(credential.trim())
+            .map_err(|_| AuthError::Invalid("malformed Basic credential".into()))?;
+        let text = String::from_utf8(decoded)
+            .map_err(|_| AuthError::Invalid("non-utf8 credential".into()))?;
+        let (user, pass) = text
+            .split_once(':')
+            .ok_or_else(|| AuthError::Invalid("credential missing ':'".into()))?;
+        // Compare both fields without short-circuiting so request timing
+        // does not leak which field mismatched.
+        let ok = ct_eq(user.as_bytes(), self.username.as_bytes())
+            & ct_eq(pass.as_bytes(), self.password.as_bytes());
+        if ok {
+            Ok(Claims::owner(&self.username))
+        } else {
+            Err(AuthError::Invalid("username or password mismatch".into()))
+        }
+    }
+}
+
+/// Length-independent byte comparison to avoid a trivial timing oracle on
+/// the configured password.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Deterministic stub for tests + dev. Returns the configured claims for any
+/// non-empty credential; rejects an empty credential as `Missing`.
 pub struct StubValidator {
     pub claims: Claims,
 }
 
 #[async_trait]
 impl TokenValidator for StubValidator {
-    async fn validate(&self, token: &str) -> Result<Claims, AuthError> {
-        if token.is_empty() {
+    async fn validate(&self, credential: &str) -> Result<Claims, AuthError> {
+        if credential.is_empty() {
             return Err(AuthError::Missing);
         }
         Ok(self.claims.clone())
@@ -86,27 +141,41 @@ impl TokenValidator for StubValidator {
 
 /// Axum middleware that authenticates `/v1/**` routes when an
 /// `Arc<dyn TokenValidator>` is present in app state. Public routes
-/// (healthz, openapi) should be mounted outside this layer.
+/// (healthz, openapi) are mounted outside this layer.
 ///
-/// # Errors
-/// Returns `401 Unauthorized` if the bearer token is missing or invalid.
-pub async fn require_bearer(
+/// On failure it returns `401 Unauthorized` with a
+/// `WWW-Authenticate: Basic realm="xiaoguai"` challenge so browsers prompt
+/// for the owner's username + password.
+pub async fn require_auth(
     validator: Arc<dyn TokenValidator>,
     mut req: Request,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Response {
     let header_val = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
-    let token = header_val.strip_prefix("Bearer ").unwrap_or("");
-    let claims = validator
-        .validate(token)
-        .await
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    req.extensions_mut().insert(claims);
-    Ok(next.run(req).await)
+    // Strip the scheme word ("Basic"/"Bearer") and hand the remainder to the
+    // validator. The static validator treats it as base64(user:pass); the
+    // test stub treats any non-empty string as valid.
+    let credential = header_val.split_once(' ').map_or(header_val, |(_, c)| c);
+    match validator.validate(credential).await {
+        Ok(claims) => {
+            req.extensions_mut().insert(claims);
+            next.run(req).await
+        }
+        Err(_) => unauthorized_response(),
+    }
+}
+
+fn unauthorized_response() -> Response {
+    let mut resp = StatusCode::UNAUTHORIZED.into_response();
+    let challenge = format!("Basic realm=\"{BASIC_REALM}\"");
+    if let Ok(v) = HeaderValue::from_str(&challenge) {
+        resp.headers_mut().insert(header::WWW_AUTHENTICATE, v);
+    }
+    resp
 }
 
 #[cfg(test)]
@@ -114,14 +183,9 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn stub_rejects_empty_token() {
+    async fn stub_rejects_empty_credential() {
         let v = StubValidator {
-            claims: Claims {
-                sub: "u".into(),
-                tenant_id: "t".into(),
-                roles: vec![],
-                scopes: vec![],
-            },
+            claims: Claims::owner("u"),
         };
         assert!(matches!(v.validate("").await, Err(AuthError::Missing)));
     }
@@ -129,15 +193,34 @@ mod tests {
     #[tokio::test]
     async fn stub_accepts_non_empty() {
         let v = StubValidator {
-            claims: Claims {
-                sub: "alice".into(),
-                tenant_id: "ten_a".into(),
-                roles: vec!["admin".into()],
-                scopes: vec![],
-            },
+            claims: Claims::owner("alice"),
         };
         let c = v.validate("anything").await.expect("ok");
         assert_eq!(c.sub, "alice");
-        assert_eq!(c.tenant_id, "ten_a");
+        assert_eq!(c.tenant_id, xiaoguai_storage::OWNER_TENANT_ID);
+    }
+
+    #[tokio::test]
+    async fn static_validator_accepts_matching_basic_credential() {
+        let v = StaticCredentialValidator::new("owner", "s3cret");
+        let cred = base64::engine::general_purpose::STANDARD.encode("owner:s3cret");
+        let c = v.validate(&cred).await.expect("ok");
+        assert_eq!(c.sub, "owner");
+    }
+
+    #[tokio::test]
+    async fn static_validator_rejects_wrong_password() {
+        let v = StaticCredentialValidator::new("owner", "s3cret");
+        let cred = base64::engine::general_purpose::STANDARD.encode("owner:nope");
+        assert!(matches!(
+            v.validate(&cred).await,
+            Err(AuthError::Invalid(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn static_validator_rejects_empty() {
+        let v = StaticCredentialValidator::new("owner", "s3cret");
+        assert!(matches!(v.validate("").await, Err(AuthError::Missing)));
     }
 }
