@@ -44,7 +44,8 @@ export interface SessionResponse {
 
 export interface CreateSessionRequest {
   user_id: string;
-  tenant_id: string;
+  /** DEC-033: optional — the backend defaults it to the single owner. */
+  tenant_id?: string;
   model: string;
   title?: string;
 }
@@ -901,33 +902,20 @@ const AI_DISCLOSURE_CONFIG_DEFAULTS: AiDisclosureConfig = {
 };
 
 /**
- * Fetch the AI disclosure banner config for a tenant.
+ * Resolve the AI disclosure banner config.
  *
- * NOTE: The backend field `ai_disclosure_banner` on
- * `GET /v1/tenants/:id/config` does not yet exist (separate task).
- * This function hits the endpoint and extracts the field when present;
- * if the field is absent or the request fails, defaults are returned.
+ * DEC-033: the per-tenant `GET /v1/tenants/:id/config` endpoint was removed
+ * with multi-tenancy, so this now simply returns the built-in defaults
+ * (banner enabled + dismissible). The signature is kept for call-site
+ * stability; the args are accepted but unused. Operators who want to
+ * override the banner can do so via the optional `config` prop on
+ * `<AiDisclosureBanner>` instead.
  */
 export async function getAiDisclosureConfig(
-  tenantId: string,
-  opts?: { baseUrl?: string; token?: string; fetchImpl?: typeof fetch },
+  _tenantId?: string,
+  _opts?: { baseUrl?: string; fetchImpl?: typeof fetch },
 ): Promise<AiDisclosureConfig> {
-  const base = (opts?.baseUrl ?? '').replace(/\/+$/, '');
-  const fetchImpl = opts?.fetchImpl ?? fetch;
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
-  if (opts?.token) headers['authorization'] = `Bearer ${opts.token}`;
-  try {
-    const resp = await fetchImpl(
-      `${base}/v1/tenants/${encodeURIComponent(tenantId)}/config`,
-      { headers },
-    );
-    if (!resp.ok) return AI_DISCLOSURE_CONFIG_DEFAULTS;
-    const body = (await resp.json()) as { ai_disclosure_banner?: AiDisclosureConfig };
-    if (!body.ai_disclosure_banner) return AI_DISCLOSURE_CONFIG_DEFAULTS;
-    return { ...AI_DISCLOSURE_CONFIG_DEFAULTS, ...body.ai_disclosure_banner };
-  } catch {
-    return AI_DISCLOSURE_CONFIG_DEFAULTS;
-  }
+  return AI_DISCLOSURE_CONFIG_DEFAULTS;
 }
 
 // ---- v1.3.x — watch event indicators ------------------------------------
@@ -1128,10 +1116,39 @@ import type {
 
 // ---- Client --------------------------------------------------------------
 
+/**
+ * Single-owner HTTP Basic credentials (DEC-033). The backend has no OIDC /
+ * bearer tokens / tenants — access is gated by one configured
+ * username + password. When the backend runs open (no credential set) this
+ * is omitted and no `Authorization` header is sent.
+ */
+export interface BasicCredentials {
+  username: string;
+  password: string;
+}
+
 export interface ApiClientOptions {
   baseUrl: string;
-  token?: string;
+  /** HTTP Basic credentials. Omit for an open (localhost-dev) backend. */
+  basicAuth?: BasicCredentials;
+  /**
+   * Invoked when any request returns 401. The UI registers this to surface a
+   * login prompt. Also settable post-construction via
+   * {@link XiaoguaiClient.setUnauthorizedHandler}.
+   */
+  onUnauthorized?: () => void;
   fetchImpl?: typeof fetch;
+}
+
+/** Base64-encode a UTF-8 string for the HTTP Basic `Authorization` header. */
+function encodeBasic(username: string, password: string): string {
+  const raw = `${username}:${password}`;
+  if (typeof btoa === 'function') {
+    // btoa is latin1-only; round-trip through UTF-8 so non-ASCII creds work.
+    return btoa(unescape(encodeURIComponent(raw)));
+  }
+  // Node / SSR fallback.
+  return Buffer.from(raw, 'utf-8').toString('base64');
 }
 
 export class ApiError extends Error {
@@ -1217,19 +1234,32 @@ const RECONNECT_BACKOFF_MS: readonly number[] = [1000, 2000, 4000, 8000, 16000];
 
 export class XiaoguaiClient {
   private readonly baseUrl: string;
-  private readonly token?: string;
+  private basicAuth?: BasicCredentials;
+  private onUnauthorized?: () => void;
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: ApiClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
-    this.token = opts.token;
+    this.basicAuth = opts.basicAuth;
+    this.onUnauthorized = opts.onUnauthorized;
     this.fetchImpl = opts.fetchImpl ?? fetch;
+  }
+
+  /** Set (or clear, with `undefined`) the HTTP Basic credentials at runtime —
+   *  e.g. after the user submits the login form. */
+  setBasicAuth(creds: BasicCredentials | undefined): void {
+    this.basicAuth = creds;
+  }
+
+  /** Register (or clear) the 401 handler that opens the login prompt. */
+  setUnauthorizedHandler(fn: (() => void) | undefined): void {
+    this.onUnauthorized = fn;
   }
 
   private headers(): Record<string, string> {
     const h: Record<string, string> = { 'content-type': 'application/json' };
-    if (this.token) {
-      h['authorization'] = `Bearer ${this.token}`;
+    if (this.basicAuth) {
+      h['authorization'] = `Basic ${encodeBasic(this.basicAuth.username, this.basicAuth.password)}`;
     }
     return h;
   }
@@ -1241,6 +1271,10 @@ export class XiaoguaiClient {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     if (!resp.ok) {
+      // 401 → the owner credential is missing/wrong; let the UI prompt login.
+      if (resp.status === 401) {
+        this.onUnauthorized?.();
+      }
       let code = 'http_error';
       let message = `HTTP ${resp.status}`;
       try {
