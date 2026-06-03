@@ -1,4 +1,4 @@
-//! SQLite implementation of [`WorkspaceRepository`] (v1.3.x).
+//! `SQLite` implementation of [`WorkspaceRepository`] (v1.3.x).
 //!
 //! Reads and writes the `workspaces` table introduced by migration 0017.
 //! Follows the same bridge pattern as [`crate::sessions_bridge`] and

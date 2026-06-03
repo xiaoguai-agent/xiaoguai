@@ -44,11 +44,11 @@ reconstruction is a planned query helper.
 See: [Outcome](#outcome) · [Audit log](#audit-log) · `crates/xiaoguai-api/tests/outcomes.rs`
 
 **Audit log**
-An append-only, HMAC-chained table in Postgres (migration `0004`) that records every privileged
-action: chat turns, tool calls, scheduler runs, IM messages, and admin operations. Each row carries
-`prev_hash` and `hash` fields so that tampering is detectable offline via
-`xiaoguai admin audit verify --tenant <id>`. Rotating the chain key is documented in the operator
-runbook.
+An append-only, HMAC-chained table in the embedded SQLite store (migration `0004`) that records
+every privileged action: chat turns, tool calls, scheduler runs, IM messages, and admin operations.
+Each row carries `prev_hash` and `hash` fields so that tampering is detectable offline (a compliance
+export re-verifies the chain and refuses on a break). Rotating the chain key is documented in the
+operator runbook.
 See: [ADR-0008](../../architecture/adr/0008-tool-result-provenance.md) · [Operator Security](operator/security.md) · `crates/xiaoguai-audit/`
 
 ---
@@ -139,10 +139,9 @@ See: [HotL](#hotl) · [HotL verdict](#hotl-verdict) · `crates/xiaoguai-api/test
 
 **GeoDNS**
 DNS-based traffic routing that resolves a hostname to different IP addresses based on the
-requester's geographic region, used for latency optimization and regional failover. Xiaoguai's
-multi-region deployment plan (v1.2+) uses GeoDNS to direct clients to the nearest HA cluster,
-with health-check-based failover when a region goes dark.
-See: [High Availability](operator/ha.md) · [RTO/RPO](#rtorpo)
+requester's geographic region. The multi-region / HA deployment model it served was removed
+under the single-user pivot (DEC-033) — each person now runs their own single-binary instance.
+See: [RTO/RPO](#rtorpo)
 
 **GPAI**
 General Purpose AI — the EU AI Act category for models trained on broad data capable of performing
@@ -280,9 +279,9 @@ See: [DSAR](#dsar) · [Tenant](#tenant) · `docs/compliance/gdpr/`
 
 **RTO/RPO**
 Recovery Time Objective (maximum tolerable downtime) and Recovery Point Objective (maximum tolerable
-data loss). Xiaoguai's HA topology targets an RTO of minutes (nginx retry + standby node) and an
-RPO near-zero (PG logical replication). Exact SLA commitments are deployment-specific.
-See: [High Availability](operator/ha.md) · `docs/runbooks/ha.md`
+data loss). Under the single-user pivot (DEC-033) state is one embedded SQLite file: recovery is
+restoring the most recent `xiaoguai backup` snapshot, so RPO is the backup interval and RTO is the
+time to copy the file back and restart. Exact targets are deployment-specific.
 
 ---
 

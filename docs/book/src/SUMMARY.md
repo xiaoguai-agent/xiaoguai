@@ -22,7 +22,6 @@
 
 - [Overview](operator/overview.md)
 - [Day-2 Operations](operator/day2.md)
-- [High Availability](operator/ha.md)
 - [Systemd Hardening](operator/systemd.md)
 - [Security](operator/security.md)
 - [Release Signing](operator/release-signing.md)

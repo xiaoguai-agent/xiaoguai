@@ -20,7 +20,7 @@ use crate::error::{PersonaError, PersonaResult};
 use crate::model::{CreatePersonaRequest, Persona, SessionPersona, UpdatePersonaRequest};
 use crate::traits::PersonaRepository;
 
-/// SQLite implementation. Clone is cheap — `SqlitePool` is an `Arc` internally.
+/// `SQLite` implementation. Clone is cheap — `SqlitePool` is an `Arc` internally.
 #[derive(Debug, Clone)]
 pub struct PgPersonaRepository {
     pool: SqlitePool,
@@ -39,9 +39,8 @@ impl PgPersonaRepository {
 ///
 /// `None` → SQL NULL (unrestricted). `Some(list)` → JSON array text (`'[]'`
 /// when empty = deny all).
-fn allowlist_to_text(list: &Option<Vec<String>>) -> Option<String> {
-    list.as_ref()
-        .map(|l| serde_json::to_string(l).unwrap_or_else(|_| "[]".to_string()))
+fn allowlist_to_text(list: Option<&Vec<String>>) -> Option<String> {
+    list.map(|l| serde_json::to_string(l).unwrap_or_else(|_| "[]".to_string()))
 }
 
 /// Parse stored JSON-array TEXT back into an optional allowlist.
@@ -136,7 +135,7 @@ impl PersonaRepository for PgPersonaRepository {
     async fn create(&self, req: &CreatePersonaRequest) -> PersonaResult<Persona> {
         let id = Uuid::new_v4();
         let now = Utc::now();
-        let allowlist = allowlist_to_text(&req.tool_allowlist);
+        let allowlist = allowlist_to_text(req.tool_allowlist.as_ref());
         let row: PersonaRow = sqlx::query_as(
             "INSERT INTO personas \
                (id, name, system_prompt, default_model, \
@@ -172,7 +171,7 @@ impl PersonaRepository for PgPersonaRepository {
             None => current.tool_allowlist.clone(),
             Some(inner) => inner.clone(),
         };
-        let new_allowlist_text = allowlist_to_text(&new_allowlist);
+        let new_allowlist_text = allowlist_to_text(new_allowlist.as_ref());
         let new_model: Option<&str> = req
             .default_model
             .as_deref()

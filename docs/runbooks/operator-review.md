@@ -1,7 +1,7 @@
 # Operator review — HotL queue triage
 
 Applies to: **xiaoguai v1.9.0+** (sprint-12 default-on suspension).
-Companion to the tenant-facing [hotl-escalations user guide](../user-guide/hotl-escalations.md)
+Companion to the [hotl-escalations user guide](../user-guide/hotl-escalations.md)
 and the firefighting [hotl-escalation-stuck](./hotl-escalation-stuck.md)
 runbook.
 
@@ -10,11 +10,15 @@ queue, decide tickets, interpret timeouts, read the audit chain.
 
 ---
 
-## Required scope
+## Access
 
-Casbin policy: `hotl:decide` on the target tenant. Without it the
-Admin UI HotL pane shows tickets read-only and `POST /v1/hotl/decisions`
-returns 403.
+xiaoguai runs as a single self-contained instance with one owner. The
+HotL decision endpoint (`POST /v1/hotl/decisions`) and the Admin UI HotL
+pane are reachable by the authenticated owner — there is no scope gate
+or per-tenant authorization. If `auth.username` / `auth.password` are set
+(env `XIAOGUAI_AUTH__USERNAME` / `XIAOGUAI_AUTH__PASSWORD`), authenticate
+with HTTP Basic; if they are empty, the instance is open on localhost and
+no credentials are needed.
 
 ## Review the queue
 
@@ -23,7 +27,6 @@ returns 403.
 | Column | Meaning |
 |---|---|
 | `escalation_id` | UUID v4; matches `hotl_pending` SSE event and audit row. |
-| `tenant` | Originating tenant. |
 | `scope` | `tool_call.<name>` — the gated tool. |
 | `amount` | Risk weight as evaluated by `HotlEnforcer`. |
 | `reason` | Free-text reason from the policy match. |
@@ -31,13 +34,17 @@ returns 403.
 | `requester` | Conversation owner. |
 
 Decide via inline **Approve** / **Deny** buttons. Both POST to
-`/v1/hotl/decisions` with `decided_by` derived from your JWT claims.
+`/v1/hotl/decisions`. Since every authenticated request is the single
+owner, `decided_by` is recorded from the `note` / request body rather
+than from any token claim.
 
 CLI equivalent (handy for scripted approvals or remote ops):
 
 ```bash
+# If auth is configured, pass owner credentials with HTTP Basic;
+# drop -u entirely when the instance is open on localhost.
 curl -X POST "${BASE}/v1/hotl/decisions" \
-  -H "Authorization: Bearer ${OPERATOR_JWT}" \
+  -u "${XIAOGUAI_AUTH__USERNAME}:${XIAOGUAI_AUTH__PASSWORD}" \
   -H "Content-Type: application/json" \
   -d '{"escalation_id":"<uuid>","verdict":"approve","note":"reviewed by oncall"}'
 ```
@@ -53,7 +60,7 @@ Deny but audits separately. In Admin UI → HotL → History these rows
 show:
 
 - `verdict` column: `timeout` (amber pill, distinct from human `deny`).
-- `decided_by`: empty (no JWT claim — the timer fired).
+- `decided_by`: empty (no operator note — the timer fired).
 - `decided_at`: minted_at + 24h.
 
 In the chat conversation the user sees a
@@ -71,9 +78,9 @@ state. Check:
    for the available review bandwidth?
 
 If timeouts are bursty (queue spike during an incident), consider
-temporarily setting `agent.hotl.suspend_on_escalate: false` per
-tenant to fall back to v1.8.x "log and proceed", then re-enable once
-queue health is restored.
+temporarily setting `agent.hotl.suspend_on_escalate: false` to fall
+back to v1.8.x "log and proceed", then re-enable once queue health is
+restored.
 
 ## Audit log reading
 
@@ -82,14 +89,14 @@ Each HotL ticket generates three signed audit rows:
 | Action | When | Notable fields |
 |---|---|---|
 | `hotl.suspended` | Ticket minted | `escalation_id`, `scope`, `amount`, `reason` |
-| `hotl.decided` | Operator decides | `escalation_id`, `verdict` (`approve`/`deny`), `decided_by` (from JWT), `note` |
+| `hotl.decided` | Operator decides | `escalation_id`, `verdict` (`approve`/`deny`), `decided_by` (from the decision note), `note` |
 | `hotl.timeout` | Timer fires (no decision) | `escalation_id`, `verdict=timeout`, `expired_at` |
 
 Verify chain integrity (catches tampering with operator decisions):
 
 ```bash
-curl -H "Authorization: Bearer ${ADMIN_JWT}" \
-  "${BASE}/v1/audit?tenant_id=${TID}&action=hotl.decided&limit=50" \
+curl -u "${XIAOGUAI_AUTH__USERNAME}:${XIAOGUAI_AUTH__PASSWORD}" \
+  "${BASE}/v1/audit?action=hotl.decided&limit=50" \
   | jq -r '.entries[] | [.id, .action, .prev_hmac[:8], .hmac[:8]] | @tsv'
 ```
 
@@ -123,4 +130,4 @@ break-glass moves when any of them go red.
 2. P95 suspension latency >12h sustained for 1h → engineering on-call
    (likely DecisionRegistry / SSE delivery issue).
 3. Audit chain broken or rotation gap unexplained → security on-call;
-   freeze writes to the affected tenant and pull the export bundle.
+   stop the instance to freeze writes and pull the export bundle.

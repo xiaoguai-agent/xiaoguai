@@ -28,24 +28,27 @@ Rust source is not touched here. Adjacent runbooks:
 
 The `/v1/memories` family (CRUD + `recall` + `similar/:id`) was previously
 wired to return **503 Service Unavailable** because no `memory_store` was
-configured. It is now live: at boot, `xiaoguai-core` builds a `PgMemoryStore`
-over the existing Postgres pool and selects an embedding backend from the
-`OLLAMA_HOST` environment variable.
+configured. It is now live: at boot, `xiaoguai-core` builds a SQLite-backed
+memory store over the embedded `data.db` and selects an embedding backend
+from the `OLLAMA_HOST` environment variable.
 
 | `OLLAMA_HOST` | Embedding backend | Notes |
 |---|---|---|
 | **set** (non-blank) | `OllamaEmbedder` (air-gapped, local) | Model `all-minilm`, 384-dim. No API key, no outbound cloud call. Requires a reachable Ollama with the model pulled. |
 | **unset / blank** | `InMemoryEmbedder` | Deterministic, dependency-free, in-process. **Carries no semantic meaning** — fine for smoke tests and local boot, not for production recall quality. |
 
-Both backends produce **384-dimensional** vectors, matching the
-`content_embedding vector(384)` column created by migration
-`0019_memories.sql`. Because the dimension matches either way, **switching
+Both backends produce **384-dimensional** vectors. Embeddings are stored
+as a `content_embedding` BLOB column (384 × `f32`, little-endian) created
+by migration `0019_memories.sql`. There is no vector-database extension:
+similarity is computed by a brute-force cosine pass in Rust over the
+owner's stored vectors, which is sub-millisecond at single-user scale.
+Because the dimension is fixed by the encoder either way, **switching
 backends needs no schema change** — only a restart.
 
-> **Prerequisite (both backends):** migration `0019_memories.sql` requires the
-> pgvector extension. The migration runs `CREATE EXTENSION IF NOT EXISTS vector`
-> itself, but the extension must be *installable* in your Postgres image
-> (e.g. `pgvector/pgvector`, or `CREATE EXTENSION` privileges on a managed DB).
+> **Prerequisite (both backends):** none beyond the embedded SQLite
+> `data.db`. Migration `0019_memories.sql` just creates the `memories`
+> table with the embedding BLOB column — there is no extension to install
+> and no external datastore to provision.
 
 ### Companion behaviour — `OLLAMA_HOST` also repoints the chat backend
 
@@ -101,9 +104,10 @@ same as leaving it unset.
 Restart so the embedder is rebuilt:
 
 ```bash
+# systemd:
+sudo systemctl restart xiaoguai-core
+# docker-compose:
 docker compose -f deploy/docker-compose.yml restart xiaoguai-core
-# Kubernetes:
-kubectl rollout restart deploy/xiaoguai
 ```
 
 Confirm the selection in the logs — `build_memory_store` logs the chosen
@@ -119,28 +123,33 @@ docker compose -f deploy/docker-compose.yml logs xiaoguai-core \
 Smoke-test that `/v1/memories` is live (no longer 503):
 
 ```bash
-curl -s "http://localhost:7600/v1/memories?tenant_id=$TENANT" \
-  -H "Authorization: Bearer $OPERATOR_JWT" | jq
+# Pass owner credentials with HTTP Basic if auth is configured;
+# omit -u when the instance is open on localhost.
+curl -s "http://localhost:7600/v1/memories" \
+  -u "$XIAOGUAI_AUTH__USERNAME:$XIAOGUAI_AUTH__PASSWORD" | jq
 # → 200 with a (possibly empty) list, NOT 503
 ```
 
 ### Using a non-default embedding model (dimension change)
 
-`all-minilm` is the only model that works against the stock schema. Other
-Ollama embedding models emit different dimensions and **require a schema
-migration to widen the `vector(N)` column** before use:
+`all-minilm` is the only model the stock build embeds with. The
+`content_embedding` BLOB column itself is dimension-agnostic — it stores
+whatever `f32` vector you write — but the brute-force cosine pass assumes
+all stored vectors share one dimension. Mixing models with different
+dimensions in the same `data.db` produces meaningless similarity scores
+(and the cosine pass treats a length mismatch as no match), so a model
+swap is effectively a re-embed of the whole table, not an in-place change:
 
-| Model | Dimensions | Schema change needed |
+| Model | Dimensions | Notes |
 |---|:---:|---|
-| `all-minilm` | 384 | none (default) |
-| `nomic-embed-text` | 768 | alter to `vector(768)` |
-| `mxbai-embed-large` | 1024 | alter to `vector(1024)` |
+| `all-minilm` | 384 | default |
+| `nomic-embed-text` | 768 | re-embed all rows after switching |
+| `mxbai-embed-large` | 1024 | re-embed all rows after switching |
 
 The boot-time backend selection always builds `OllamaEmbedder` with the
 `all-minilm`/384-dim defaults; using another model is not an env toggle today
-(it needs a code change plus the matching migration). Mixing dimensions
-(e.g. embeddings written at 768-dim into a `vector(384)` column) fails at the
-Postgres layer.
+(it needs a code change). If you switch, clear and re-embed existing
+`memories` rows so the BLOBs are all the same dimension.
 
 ---
 
@@ -168,11 +177,8 @@ are scrubbed.
 
 ### What is NOT touched
 
-Two fields pass through verbatim, by design:
+One field passes through verbatim, by design:
 
-- **`tenant_id`** — scopes the per-tenant audit chain; the sink queries by it.
-  Redacting it would orphan the chain. (Note this means a `tenant_id` that
-  happens to *look* like an email is **not** redacted.)
 - **`action`** — a fixed verb (`session.create`, `tool.invoke`, …), never PII.
 
 Redaction is immutable: it returns a new entry; the input is never mutated.
@@ -207,9 +213,9 @@ docker compose -f deploy/docker-compose.yml logs xiaoguai-core \
 ## 4. Troubleshooting
 
 **1. `/v1/memories` returns 503.** The `memory_store` was not wired. This
-should no longer happen on this branch (it is always built at boot from the PG
-pool). If you still see 503, the build is from before the bridge landed, or
-the pool itself failed to construct — check the boot logs for the
+should no longer happen on this branch (it is always built at boot over the
+embedded `data.db`). If you still see 503, the build is from before the
+bridge landed, or the database failed to open — check the boot logs for the
 `memory: selected embedding backend` line; if it is absent, the bridge never
 ran.
 
@@ -228,10 +234,12 @@ curl -s http://$OLLAMA_HOST_NO_SCHEME/api/tags | jq '.models[].name'
 # expect: "all-minilm:latest" (and "qwen2.5-coder:latest" for chat)
 ```
 
-**3. Dimension mismatch on insert.** Postgres rejects the vector if its length
-≠ 384 against a `vector(384)` column. Cause: an embedding model other than
-`all-minilm` was used without the matching schema migration. Either revert to
-`all-minilm` or widen the column (see §2).
+**3. Dimension mismatch on recall.** The BLOB column accepts any length, but
+the brute-force cosine pass skips (or scores meaninglessly) vectors whose
+length ≠ the query's. Cause: an embedding model other than `all-minilm` was
+used, so the `data.db` now holds mixed-dimension BLOBs. Either revert to
+`all-minilm` or clear and re-embed every `memories` row at the new dimension
+(see §2).
 
 **4. Recall quality is poor / nonsensical with `OLLAMA_HOST` unset.** That is
 the `InMemoryEmbedder` — a deterministic hash, not a semantic model. It exists
@@ -240,8 +248,8 @@ it is **not** for production recall. Set `OLLAMA_HOST` (and pull `all-minilm`)
 for real semantic memory.
 
 **5. PII still appears in `audit_log`.** Confirm redaction is actually on
-(boot log line above). Note the documented exceptions: `tenant_id` and `action`
-are never redacted, and the pattern set is conservative (emails, IPv4,
+(boot log line above). Note the documented exception: `action` is
+never redacted, and the pattern set is conservative (emails, IPv4,
 `Bearer` tokens, AWS keys) — IPv6, other token schemes, and free-form secrets
 are out of scope for this release. Do **not** `DELETE`/`UPDATE` rows to scrub
 them after the fact: that breaks the append-only chain (see

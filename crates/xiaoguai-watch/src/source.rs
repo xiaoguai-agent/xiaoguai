@@ -134,7 +134,7 @@ impl WatchSource for SqlSource {
     }
 }
 
-/// Convert a SQLite row into a JSON object map.
+/// Convert a `SQLite` row into a JSON object map.
 ///
 /// Each column becomes a key. Values are decoded by the column's runtime
 /// type info; `NULL` becomes `Value::Null`. Unknown/text-storage values

@@ -1,6 +1,6 @@
 //! Single-writer pool handle (DEC-033 single-user pivot).
 //!
-//! SQLite is one file with one writer — there are no read replicas to route to.
+//! `SQLite` is one file with one writer — there are no read replicas to route to.
 //! [`ReadWritePool`] is now a thin wrapper over a single [`SqlitePool`] that
 //! keeps the `reader()` / `writer()` shape so call sites in the repository and
 //! bridge layers don't have to change. Both accessors return the same pool.
@@ -10,7 +10,7 @@
 
 use sqlx::sqlite::SqlitePool;
 
-/// A handle to the single-user SQLite pool.
+/// A handle to the single-user `SQLite` pool.
 ///
 /// `reader()` and `writer()` both return the one underlying pool — the
 /// distinction is retained only so existing call sites keep compiling.
@@ -33,7 +33,7 @@ impl ReadWritePool {
         &self.pool
     }
 
-    /// Returns the underlying pool. (No replicas under SQLite — same as
+    /// Returns the underlying pool. (No replicas under `SQLite` — same as
     /// [`writer()`][Self::writer].)
     #[must_use]
     #[inline]

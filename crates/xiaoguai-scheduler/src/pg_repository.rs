@@ -8,7 +8,7 @@
 //! the single-user pivot, so the (vestigial) `tenant_id` on the domain types is
 //! neither stored nor read back (it resolves to `None`). Each write opens a
 //! plain transaction via [`xiaoguai_storage::repositories::begin_tenant_tx`]
-//! (the `tenant` argument is ignored — there is no RLS under SQLite).
+//! (the `tenant` argument is ignored — there is no RLS under `SQLite`).
 
 use std::time::Duration;
 

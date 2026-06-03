@@ -64,7 +64,7 @@ pub struct ServerSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseSettings {
-    /// SQLite store location (DEC-033). A filesystem path or `sqlite://…` URL.
+    /// `SQLite` store location (DEC-033). A filesystem path or `sqlite://…` URL.
     /// Empty (the default) resolves to `$XDG_DATA_HOME/xiaoguai/data.db` or
     /// `~/.xiaoguai/data.db` — so a clean box can `serve` with no config.
     #[serde(default = "default_db_url")]
@@ -73,7 +73,7 @@ pub struct DatabaseSettings {
     pub max_connections: u32,
 }
 
-/// Empty = resolve to the default per-user SQLite path at connect time.
+/// Empty = resolve to the default per-user `SQLite` path at connect time.
 fn default_db_url() -> String {
     String::new()
 }

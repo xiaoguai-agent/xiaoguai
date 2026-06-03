@@ -47,7 +47,7 @@ pub trait UserRepository: Send + Sync {
     async fn record_login(&self, id: &str) -> RepoResult<()>;
 }
 
-/// SQLite implementation of [`UserRepository`].
+/// `SQLite` implementation of [`UserRepository`].
 #[derive(Debug, Clone)]
 pub struct PgUserRepository {
     pool: SqlitePool,
