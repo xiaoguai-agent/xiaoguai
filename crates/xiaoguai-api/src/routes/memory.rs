@@ -165,16 +165,12 @@ pub async fn get_memory(
         return memory_unavailable().into_response();
     };
 
-    let tenant_id = match params.get("tenant_id").and_then(|s| s.parse::<Uuid>().ok()) {
-        Some(t) => t,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": "tenant_id required"})),
-            )
-                .into_response();
-        }
-    };
+    // DEC-033 single-owner: tenant_id is vestigial (the store ignores it);
+    // default to the nil UUID when the caller omits it.
+    let tenant_id = params
+        .get("tenant_id")
+        .and_then(|s| s.parse::<Uuid>().ok())
+        .unwrap_or_else(Uuid::nil);
 
     match store.get_memory(id, tenant_id).await {
         Ok(m) => Json(MemoryResponse { data: m }).into_response(),
@@ -228,16 +224,12 @@ pub async fn update_memory(
         return memory_unavailable().into_response();
     };
 
-    let tenant_id = match params.get("tenant_id").and_then(|s| s.parse::<Uuid>().ok()) {
-        Some(t) => t,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": "tenant_id required"})),
-            )
-                .into_response();
-        }
-    };
+    // DEC-033 single-owner: tenant_id is vestigial (the store ignores it);
+    // default to the nil UUID when the caller omits it.
+    let tenant_id = params
+        .get("tenant_id")
+        .and_then(|s| s.parse::<Uuid>().ok())
+        .unwrap_or_else(Uuid::nil);
 
     let req = UpdateMemoryRequest {
         content: body.content,
@@ -262,16 +254,12 @@ pub async fn delete_memory(
         return memory_unavailable().into_response();
     };
 
-    let tenant_id = match params.get("tenant_id").and_then(|s| s.parse::<Uuid>().ok()) {
-        Some(t) => t,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": "tenant_id required"})),
-            )
-                .into_response();
-        }
-    };
+    // DEC-033 single-owner: tenant_id is vestigial (the store ignores it);
+    // default to the nil UUID when the caller omits it.
+    let tenant_id = params
+        .get("tenant_id")
+        .and_then(|s| s.parse::<Uuid>().ok())
+        .unwrap_or_else(Uuid::nil);
 
     match store.delete_memory(id, tenant_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),

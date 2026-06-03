@@ -3,6 +3,16 @@
 Adding a new Discord, Telegram, Mattermost, or Slack adapter instance.
 For Feishu, DingTalk, and WeCom see `docs/plans/2026-05-24-v1.1.3.md`.
 
+> **Single-user deployment (DEC-033).** Xiaoguai is one self-contained
+> Rust binary (`xiaoguai serve`, systemd unit `xiaoguai-core.service`)
+> with an embedded SQLite database — no Kubernetes, no Helm, no external
+> datastore. Secrets are delivered as `XIAOGUAI_*` environment variables
+> through a systemd drop-in (or a `chmod 600` env file), not a Kubernetes
+> Secret. Operate the process with `systemctl` / `journalctl` and inspect
+> state with `sqlite3 ~/.xiaoguai/data.db` (under systemd:
+> `/var/lib/xiaoguai/data.db`). There is a single implicit **owner** — no
+> tenants.
+
 ---
 
 ## Supported adapters (wave-3)
@@ -18,7 +28,7 @@ For Feishu, DingTalk, and WeCom see `docs/plans/2026-05-24-v1.1.3.md`.
 
 ## Pre-checks
 
-Before touching env vars or Helm, confirm:
+Before touching env vars, confirm:
 
 - [ ] Bot token obtained from the platform developer portal
 - [ ] Webhook secret / signing secret generated (min 16 random bytes;
@@ -38,24 +48,27 @@ Before touching env vars or Helm, confirm:
 
 ## Configure: environment variables
 
-All secrets go in Kubernetes Secrets, never in `config.yaml` or Helm
-`values.yaml`.
+Secrets are passed as environment variables, never committed to
+`config.yaml`. Put them in a systemd drop-in (`chmod 600`):
+
+```ini
+# /etc/systemd/system/xiaoguai-core.service.d/im.conf
+[Service]
+EnvironmentFile=/etc/xiaoguai/im.env
+```
+
+…with the secrets in `/etc/xiaoguai/im.env` (`chmod 600`, owned by the
+`xiaoguai` service user). After editing, `systemctl daemon-reload &&
+systemctl restart xiaoguai-core`. For a non-systemd / dev run, `export`
+the same variables in the shell that launches `xiaoguai serve`.
 
 ### Discord
 
-```bash
-kubectl create secret generic xiaoguai-im-discord \
-  --from-literal=XIAOGUAI_IM_DISCORD_BOT_TOKEN="Bot YOUR_TOKEN" \
-  --from-literal=XIAOGUAI_IM_DISCORD_PUBLIC_KEY="YOUR_APP_PUBLIC_KEY_HEX" \
-  --from-literal=XIAOGUAI_IM_DISCORD_REPLY_CHANNEL_ID="CHANNEL_SNOWFLAKE_ID"
-```
-
-Helm `values.yaml` addition:
-
-```yaml
-envFrom:
-  - secretRef:
-      name: xiaoguai-im-discord
+```sh
+# /etc/xiaoguai/im.env
+XIAOGUAI_IM_DISCORD_BOT_TOKEN="Bot YOUR_TOKEN"
+XIAOGUAI_IM_DISCORD_PUBLIC_KEY="YOUR_APP_PUBLIC_KEY_HEX"
+XIAOGUAI_IM_DISCORD_REPLY_CHANNEL_ID="CHANNEL_SNOWFLAKE_ID"
 ```
 
 The adapter mounts at `POST /v1/im/discord/webhook`. Register this URL
@@ -64,10 +77,10 @@ Endpoint URL.
 
 ### Telegram
 
-```bash
-kubectl create secret generic xiaoguai-im-telegram \
-  --from-literal=XIAOGUAI_IM_TELEGRAM_BOT_TOKEN="123456:ABC-your-token" \
-  --from-literal=XIAOGUAI_IM_TELEGRAM_WEBHOOK_SECRET="your-webhook-secret"
+```sh
+# /etc/xiaoguai/im.env
+XIAOGUAI_IM_TELEGRAM_BOT_TOKEN="123456:ABC-your-token"
+XIAOGUAI_IM_TELEGRAM_WEBHOOK_SECRET="your-webhook-secret"
 ```
 
 Register the webhook with Telegram:
@@ -79,20 +92,16 @@ curl -s "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
 # → {"ok":true,"result":true,"description":"Webhook was set"}
 ```
 
-For long-poll mode (behind NAT, dev only):
-
-```bash
-# Do NOT register a webhook — set this env var instead:
-XIAOGUAI_IM_TELEGRAM_LONG_POLL=true
-```
+For long-poll mode (behind NAT, dev only) set
+`XIAOGUAI_IM_TELEGRAM_LONG_POLL=true` instead of registering a webhook.
 
 ### Mattermost
 
-```bash
-kubectl create secret generic xiaoguai-im-mattermost \
-  --from-literal=XIAOGUAI_IM_MATTERMOST_BOT_TOKEN="your-bot-access-token" \
-  --from-literal=XIAOGUAI_IM_MATTERMOST_WEBHOOK_TOKEN="your-outgoing-webhook-token" \
-  --from-literal=XIAOGUAI_IM_MATTERMOST_BASE_URL="https://mm.example.com"
+```sh
+# /etc/xiaoguai/im.env
+XIAOGUAI_IM_MATTERMOST_BOT_TOKEN="your-bot-access-token"
+XIAOGUAI_IM_MATTERMOST_WEBHOOK_TOKEN="your-outgoing-webhook-token"
+XIAOGUAI_IM_MATTERMOST_BASE_URL="https://mm.example.com"
 ```
 
 In the Mattermost admin panel: Integrations → Outgoing Webhooks →
@@ -104,23 +113,20 @@ For slash commands: Integrations → Slash Commands →
 
 ### Slack
 
-```bash
-kubectl create secret generic xiaoguai-im-slack \
-  --from-literal=XIAOGUAI_IM_SLACK_BOT_TOKEN="xoxb-your-bot-token" \
-  --from-literal=XIAOGUAI_IM_SLACK_SIGNING_SECRET="your-signing-secret"
+```sh
+# /etc/xiaoguai/im.env
+XIAOGUAI_IM_SLACK_BOT_TOKEN="xoxb-your-bot-token"
+XIAOGUAI_IM_SLACK_SIGNING_SECRET="your-signing-secret"
 ```
 
 In the Slack App manifest, set Request URL to
 `https://your-domain.example.com/v1/im/slack/webhook`.
 
-For Socket Mode (dev, behind NAT):
+For Socket Mode (dev, behind NAT) add the app-level token and flag:
 
-```bash
-kubectl create secret generic xiaoguai-im-slack \
-  --from-literal=XIAOGUAI_IM_SLACK_BOT_TOKEN="xoxb-your-bot-token" \
-  --from-literal=XIAOGUAI_IM_SLACK_SIGNING_SECRET="your-signing-secret" \
-  --from-literal=XIAOGUAI_IM_SLACK_APP_TOKEN="xapp-your-app-level-token"
-# Set XIAOGUAI_IM_SLACK_SOCKET_MODE=true
+```sh
+XIAOGUAI_IM_SLACK_APP_TOKEN="xapp-your-app-level-token"
+XIAOGUAI_IM_SLACK_SOCKET_MODE=true
 ```
 
 ---
@@ -128,13 +134,13 @@ kubectl create secret generic xiaoguai-im-slack \
 ## Deploy
 
 ```bash
-# Apply the secret + roll the deployment:
-kubectl apply -f xiaoguai-im-<adapter>-secret.yaml
-helm upgrade xiaoguai deploy/helm/xiaoguai --reuse-values
+# Reload the unit so the new EnvironmentFile is picked up, then restart:
+systemctl daemon-reload
+systemctl restart xiaoguai-core
 
-# Verify pods are healthy:
-kubectl rollout status deploy/xiaoguai --timeout=120s
-kubectl exec deploy/xiaoguai -- /usr/local/bin/xiaoguai-core smoke
+# Verify the service is healthy:
+systemctl status xiaoguai-core --no-pager
+xiaoguai smoke
 ```
 
 ---
@@ -142,16 +148,9 @@ kubectl exec deploy/xiaoguai -- /usr/local/bin/xiaoguai-core smoke
 ## Verify
 
 ```bash
-# Send a test message via the adapter's webhook endpoint:
-xg im test discord   # Discord ping round-trip
-xg im test telegram  # Telegram sendMessage echo
-xg im test mattermost
-xg im test slack
-
-# If the xg CLI is not available, hit the endpoint directly:
-# Discord PING (type=1):
+# Discord PING (type=1) round-trip:
 curl -s -X POST \
-  "http://xiaoguai-core.svc:8080/v1/im/discord/webhook" \
+  "http://localhost:8080/v1/im/discord/webhook" \
   -H "Content-Type: application/json" \
   -H "X-Signature-Ed25519: <computed-sig>" \
   -H "X-Signature-Timestamp: $(date +%s)" \
@@ -159,11 +158,14 @@ curl -s -X POST \
 # → {"type":1}  (PONG)
 
 # Confirm the audit log shows an inbound event:
-psql "$DATABASE_URL" -c "
-  SELECT action, details->>'adapter' AS adapter, created_at
+sqlite3 ~/.xiaoguai/data.db "
+  SELECT action, json_extract(details,'\$.adapter') AS adapter, ts
   FROM audit_log
   WHERE action LIKE 'im.%'
-  ORDER BY created_at DESC LIMIT 5;"
+  ORDER BY ts DESC LIMIT 5;"
+
+# Or tail the live logs while you send a real message:
+journalctl -u xiaoguai-core -f | grep -i im
 ```
 
 ---
@@ -213,8 +215,9 @@ cache the results or use `channels:read` with a long TTL.
 
 ## Postmortem checklist
 
-- [ ] Signature verified end-to-end (`xg im test` passes)
+- [ ] Signature verified end-to-end (PING/PONG round-trip passes)
 - [ ] Channel ID confirmed correct (not the channel name)
-- [ ] Secrets stored in Kubernetes Secret, not in config files or Helm values
+- [ ] Secrets stored in a `chmod 600` env file / systemd drop-in, not in
+      `config.yaml`
 - [ ] Audit log shows inbound events after the first real message
 - [ ] Rate limit tier confirmed for all API methods used

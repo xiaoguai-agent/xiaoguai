@@ -3,13 +3,29 @@
 `POST /v1/skills/install` returns `503`, or the DB row is recorded but
 the pack's tools are not available to agents.
 
+> **Single-user deployment (DEC-033).** Xiaoguai is one self-contained
+> Rust binary (`xiaoguai serve`, systemd unit `xiaoguai-core.service`)
+> with an embedded SQLite database — no Postgres, no Kubernetes. Inspect
+> state with `sqlite3 ~/.xiaoguai/data.db` (under systemd:
+> `/var/lib/xiaoguai/data.db`) and operate the process with `systemctl` /
+> `journalctl`. There is a single implicit **owner** — no tenants.
+
 > **v1.2 caveat — runtime loader not yet active.**
-> Installing a pack writes a row to `skill_packs` and returns `200` with
-> the installation record, but the runtime tool-loader is not wired
-> (`v1.3` item).  After a successful `install` call the pack's tools will
-> not appear in the agent's `Toolbox` until the service is restarted _and_
-> the v1.3 hot-reload path ships.  Document this honestly to users who ask
-> "why isn't my pack doing anything?".
+> Installing a pack writes a row to `installed_skill_packs` and returns
+> `200` with the installation record, but the runtime tool-loader is not
+> wired (`v1.3` item).  After a successful `install` call the pack's tools
+> will not appear in the agent's `Toolbox` until the service is restarted
+> _and_ the v1.3 hot-reload path ships.  Document this honestly to users
+> who ask "why isn't my pack doing anything?".
+
+---
+
+## Auth note
+
+When `auth.username` / `auth.password` are set (env
+`XIAOGUAI_AUTH__USERNAME` / `XIAOGUAI_AUTH__PASSWORD`), pass
+`-u "$USER:$PASS"` on every `curl`. When no credential is configured the
+API gate is **open** — drop the `-u` flag.
 
 ---
 
@@ -18,8 +34,8 @@ the pack's tools are not available to agents.
 - `POST /v1/skills/install` returns `503 Service Unavailable`.
 - Install call returns `200` with an `id`, but agents don't gain the
   pack's tools.
-- `GET /v1/skills/installed?tenant=<id>` returns `503`.
-- Install returns `409 Conflict` when the tenant already has the pack.
+- `GET /v1/skills/installed` returns `503`.
+- Install returns `409 Conflict` when the pack is already installed.
 - `POST /v1/skills/install` returns `404` — pack slug not in catalog.
 
 ---
@@ -29,8 +45,7 @@ the pack's tools are not available to agents.
 **1. Confirm the catalog is reachable (never needs the repo):**
 
 ```bash
-curl -s \
-  "http://xiaoguai-core.svc:8080/v1/skills/catalog" \
+curl -s "http://localhost:8080/v1/skills/catalog" \
   | jq '.packs[].slug'
 # Expected slugs: ar-collections, incident-triage, pr-review,
 #                 hr-onboarding, rag-legal, rag-finance, rag-hr
@@ -39,31 +54,31 @@ curl -s \
 If this returns `503`, the core binary itself is unhealthy — start
 with `GET /healthz`.
 
-**2. Check whether the skill_pack repository is wired:**
+**2. Check whether the skill-pack repository is wired:**
 
 ```bash
-curl -s \
-  "http://xiaoguai-core.svc:8080/v1/skills/installed?tenant=$TENANT_ID"
-# 503 → skill_packs not wired in AppState (likely missing DB migration or
-#       config knob)
+curl -s "http://localhost:8080/v1/skills/installed"
+# 503 → installed_skill_packs not wired in AppState (likely a missing
+#       migration or config knob)
 # 200 → wired; proceed to step 3
 ```
 
-If `503`, confirm migration 0013 ran (the `skill_packs` table):
+If `503`, confirm the `installed_skill_packs` migration ran (migrations
+run automatically at boot):
 
 ```bash
-kubectl exec deploy/xiaoguai -- psql "$DATABASE_URL" -c \
-  "SELECT version FROM _sqlx_migrations WHERE version = 13;"
-# No row → migration not applied; restart the pod (migrations run at boot)
+sqlite3 ~/.xiaoguai/data.db \
+  "SELECT name FROM sqlite_master WHERE type='table' AND name='installed_skill_packs';"
+# No row → migration not applied; check `journalctl -u xiaoguai-core`
+#          for migration errors, then `systemctl restart xiaoguai-core`
 ```
 
 **3. Check DB state for the installed pack:**
 
 ```bash
-psql "$DATABASE_URL" -c "
-  SELECT id, tenant_id, pack_slug, version, installed_at, config
-  FROM skill_packs
-  WHERE tenant_id = '$TENANT_ID'
+sqlite3 ~/.xiaoguai/data.db "
+  SELECT id, pack_slug, version, installed_at, config
+  FROM installed_skill_packs
   ORDER BY installed_at DESC;"
 ```
 
@@ -74,13 +89,11 @@ v1.2 state — see the caveat above.
 
 ```bash
 # Uninstall first, then reinstall:
-curl -s -X DELETE \
-  -H "Authorization: Bearer $ADMIN_JWT" \
-  "http://xiaoguai-core.svc:8080/v1/skills/$INSTALL_ID"
+curl -s -X DELETE -u "$USER:$PASS" \
+  "http://localhost:8080/v1/skills/$INSTALL_ID"
 
 # Confirm it's gone:
-curl -s \
-  "http://xiaoguai-core.svc:8080/v1/skills/installed?tenant=$TENANT_ID" \
+curl -s "http://localhost:8080/v1/skills/installed" \
   | jq '.[] | select(.pack_slug == "'"$PACK_SLUG"'")'
 # Expect empty
 ```
@@ -99,42 +112,48 @@ rag-legal       rag-finance      rag-hr
 
 ## Remediate
 
-### Option A — Restart the pod (apply pending migration)
+### Option A — Restart the service (apply a pending migration)
 
 ```bash
-kubectl rollout restart deploy/xiaoguai
-kubectl rollout status deploy/xiaoguai --timeout=120s
-kubectl exec deploy/xiaoguai -- /usr/local/bin/xiaoguai-core smoke
+systemctl restart xiaoguai-core
+systemctl status xiaoguai-core --no-pager
+xiaoguai smoke
 ```
 
 ### Option B — Manual install via SQL (when API is 503 but DB is up)
 
+`installed_skill_packs.id` is a TEXT primary key — supply your own
+identifier (the API normally generates one):
+
 ```bash
-psql "$DATABASE_URL" -c "
-  INSERT INTO skill_packs (tenant_id, pack_slug, version, config)
+sqlite3 ~/.xiaoguai/data.db "
+  INSERT INTO installed_skill_packs (id, pack_slug, version, config)
   VALUES (
-    '$TENANT_ID',
+    '$INSTALL_ID',
     '$PACK_SLUG',
     '1.0.0',
     '{}'
   )
-  ON CONFLICT (tenant_id, pack_slug) DO NOTHING
-  RETURNING id, pack_slug, version;"
+  ON CONFLICT (pack_slug) DO NOTHING;"
+
+sqlite3 ~/.xiaoguai/data.db \
+  "SELECT id, pack_slug, version FROM installed_skill_packs WHERE pack_slug = '$PACK_SLUG';"
 ```
 
 ### Option C — Make tools available now (v1.2 workaround)
 
 Until v1.3 hot-reload ships, the only way to make a freshly installed
-pack's tools active is to restart the pod. The installed row persists
-across restarts because it is in PG, not in memory.
+pack's tools active is to restart the service. The installed row
+persists across restarts because it is in the SQLite store, not in
+memory.
 
 ```bash
 # Confirm the DB row exists:
-psql "$DATABASE_URL" -c \
-  "SELECT id, pack_slug FROM skill_packs WHERE tenant_id = '$TENANT_ID';"
+sqlite3 ~/.xiaoguai/data.db \
+  "SELECT id, pack_slug FROM installed_skill_packs;"
 
 # Restart to apply:
-kubectl rollout restart deploy/xiaoguai
+systemctl restart xiaoguai-core
 
 # Tools from the installed pack are now available to new sessions.
 # Existing sessions may need to be cancelled and re-started.
@@ -153,16 +172,14 @@ Communicate to the end user:
 
 ```bash
 # Confirm the pack is in the installed list:
-curl -s \
-  "http://xiaoguai-core.svc:8080/v1/skills/installed?tenant=$TENANT_ID" \
+curl -s "http://localhost:8080/v1/skills/installed" \
   | jq '.[] | {id, pack_slug, version}'
 
 # Start a test session and call a tool from the pack:
-curl -s -X POST \
-  -H "Authorization: Bearer $USER_JWT" \
+curl -s -X POST -u "$USER:$PASS" \
   -H "Content-Type: application/json" \
   -d '{"model":"default","message":"list the tools available to you"}' \
-  "http://xiaoguai-core.svc:8080/v1/sessions"
+  "http://localhost:8080/v1/sessions"
 ```
 
 ---
@@ -170,6 +187,6 @@ curl -s -X POST \
 ## Postmortem checklist
 
 - [ ] Root cause: 503 (repo unwired) / 409 (duplicate) / 404 (bad slug)
-- [ ] Migration 0013 confirmed on all replicas
+- [ ] `installed_skill_packs` table confirmed present after boot
 - [ ] Users notified about v1.2 restart requirement if tools weren't active
 - [ ] v1.3 hot-reload tracked in backlog (no action needed here)

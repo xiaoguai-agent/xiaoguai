@@ -28,6 +28,7 @@ use crate::scheduler::{
 };
 use crate::state::AppState;
 use crate::today::{TodayItem, TodayKind, TodayQuery};
+use xiaoguai_storage::OWNER_TENANT_ID;
 
 const DEFAULT_LIMIT: i64 = 100;
 const MAX_LIMIT: i64 = 1000;
@@ -77,14 +78,12 @@ pub async fn verify_audit(
         .audit_verifier
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("audit verifier not wired".into()))?;
-    let tenant_id = q
-        .tenant_id
-        .ok_or_else(|| ApiError::InvalidRequest("tenant_id is required".into()))?;
-    if tenant_id.is_empty() {
-        return Err(ApiError::InvalidRequest(
-            "tenant_id must not be empty".into(),
-        ));
-    }
+    // DEC-033 single-owner: tenant_id is vestigial (the chain is single-owner);
+    // default to the owner tenant when the caller omits it or sends empty.
+    let tenant_id = match q.tenant_id {
+        Some(t) if !t.is_empty() => t,
+        _ => OWNER_TENANT_ID.to_string(),
+    };
     let report = verifier
         .verify_tenant(&tenant_id)
         .await
@@ -152,14 +151,12 @@ pub async fn list_audit(
         .audit
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("audit reader not wired".into()))?;
-    let tenant_id = q
-        .tenant_id
-        .ok_or_else(|| ApiError::InvalidRequest("tenant_id is required".into()))?;
-    if tenant_id.is_empty() {
-        return Err(ApiError::InvalidRequest(
-            "tenant_id must not be empty".into(),
-        ));
-    }
+    // DEC-033 single-owner: tenant_id is vestigial (the reader returns all
+    // data regardless); default to the owner tenant when omitted or empty.
+    let tenant_id = match q.tenant_id {
+        Some(t) if !t.is_empty() => t,
+        _ => OWNER_TENANT_ID.to_string(),
+    };
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let rows = reader
         .list(&tenant_id, q.since, q.until, limit)

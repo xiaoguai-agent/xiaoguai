@@ -270,7 +270,9 @@ async fn list_returns_503_when_proposals_unwired() {
 }
 
 #[tokio::test]
-async fn list_returns_400_when_tenant_missing() {
+async fn list_defaults_to_owner_when_tenant_missing() {
+    // DEC-033 single-owner: a missing tenant_id defaults to the owner tenant
+    // and the request succeeds rather than 400ing.
     let fx = build_fixture();
     let app = router(fx.state.clone());
     let req = Request::builder()
@@ -279,7 +281,7 @@ async fn list_returns_400_when_tenant_missing() {
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 /// Reads but doesn't assert; just makes sure the path resolution is what
