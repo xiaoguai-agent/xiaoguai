@@ -127,7 +127,6 @@ export function ChatPage({ onSessionCreated }: Props) {
       try {
         const session = await client.createSession({
           user_id: DEV_USER_ID,
-          tenant_id: DEV_TENANT_ID,
           model: DEFAULT_MODEL,
           title: text.slice(0, 40),
         });
