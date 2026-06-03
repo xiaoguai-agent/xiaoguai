@@ -243,26 +243,67 @@ fn bucket_expr(group_by: UsageGroupBy) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    //! Query-string smoke tests. The full PG end-to-end test would need
-    //! a testcontainer (`#[ignore]` per project conventions); these
-    //! confirm the `group_by` → SQL fragment mapping the bridge feeds
-    //! into the query builder.
+    //! Query-string smoke tests + a `SQLite` round-trip. These confirm the
+    //! `group_by` → SQL fragment mapping the bridge feeds into the query
+    //! builder, and that the aggregation actually parses + groups against
+    //! a real (temp) `SQLite` database under `DEC-033`.
 
     use super::*;
 
     #[test]
     fn bucket_expr_per_group_by() {
-        assert!(bucket_expr(UsageGroupBy::Day).contains("to_char"));
+        // DEC-033: the day bucket now uses SQLite `substr`, not PG `to_char`.
+        assert!(bucket_expr(UsageGroupBy::Day).contains("substr"));
         assert_eq!(bucket_expr(UsageGroupBy::Provider), "tu.provider_id");
         assert_eq!(bucket_expr(UsageGroupBy::Model), "tu.model");
     }
 
     #[tokio::test]
-    #[ignore = "requires PG testcontainer; covered manually via xiaoguai-storage smoke"]
     async fn aggregate_round_trip() {
-        // Placeholder for a future testcontainer-backed test. The
-        // StaticUsageReader unit tests already cover the aggregation
-        // semantics; this would assert the SQL parses + groups
-        // identically against a real Postgres.
+        let dir = tempfile::tempdir().unwrap();
+        let pool = xiaoguai_storage::db::connect(
+            dir.path().join("t.db").to_str().unwrap(),
+            5,
+        )
+        .await
+        .unwrap();
+        xiaoguai_storage::db::migrate(&pool).await.unwrap();
+
+        // Seed one provider with rates and two token_usage rows on the
+        // same day so the Day bucket aggregates both.
+        sqlx::query(
+            "INSERT INTO llm_providers \
+                 (id, name, kind, endpoint, cost_per_1k_input_usd, cost_per_1k_output_usd) \
+             VALUES ('prov-a', 'Provider A', 'openai_compat', 'http://x', 1.0, 2.0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO token_usage (provider_id, model, prompt_tokens, completion_tokens, ts) \
+             VALUES ('prov-a', 'm1', 1000, 500, '2026-01-01T10:00:00Z'), \
+                    ('prov-a', 'm1', 2000, 1000, '2026-01-01T12:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let reader = PgUsageReader::new(pool.into());
+        let report = reader
+            .aggregate(UsageQuery {
+                tenant_id: None,
+                since: None,
+                until: None,
+                group_by: UsageGroupBy::Day,
+            })
+            .await
+            .expect("aggregate");
+
+        assert_eq!(report.rows.len(), 1, "both rows fall in one day bucket");
+        assert_eq!(report.rows[0].bucket, "2026-01-01");
+        assert_eq!(report.total_input_tokens, 3000);
+        assert_eq!(report.total_output_tokens, 1500);
+        // cost = (3000*1.0 + 1500*2.0) / 1000 = 6.0 USD = 600 cents
+        assert_eq!(report.cost_cents, Some(600));
     }
 }

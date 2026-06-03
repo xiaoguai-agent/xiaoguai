@@ -152,9 +152,10 @@ mod tests {
     #[test]
     fn pack_row_converts_to_installed_pack_row() {
         let now = Utc::now();
+        // DEC-033: PackRow no longer carries tenant_id; the conversion
+        // synthesizes the single owner id.
         let pr = PackRow {
             id: "id-1".into(),
-            tenant_id: "tenant-1".into(),
             pack_slug: "rag-hr".into(),
             version: "1.0.0".into(),
             config: serde_json::json!({"top_k": 5}),
@@ -162,25 +163,28 @@ mod tests {
         };
         let row: InstalledPackRow = pr.into();
         assert_eq!(row.id, "id-1");
+        assert_eq!(row.tenant_id, xiaoguai_storage::OWNER_TENANT_ID);
         assert_eq!(row.pack_slug, "rag-hr");
         assert_eq!(row.config["top_k"], 5);
         assert_eq!(row.installed_at, now);
     }
 
-    // ── PG integration tests ──────────────────────────────────────────────────
-    // Run with: DATABASE_URL=postgres://... cargo test -p xiaoguai-core
-    //           --ignore-rust-version -- --ignored skills_pg_
+    // ── SQLite integration tests (DEC-033) ────────────────────────────────────
 
-    async fn pg_pool() -> sqlx::PgPool {
-        let url =
-            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for PG bridge tests");
-        sqlx::PgPool::connect(&url).await.expect("pg connect")
+    async fn sqlite_pool() -> (tempfile::TempDir, SqlitePool) {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = xiaoguai_storage::db::connect(dir.path().join("t.db").to_str().unwrap(), 5)
+            .await
+            .unwrap();
+        xiaoguai_storage::db::migrate(&pool).await.unwrap();
+        (dir, pool)
     }
 
-    fn make_row(tenant_id: &str, slug: &str) -> InstalledPackRow {
+    fn make_row(slug: &str) -> InstalledPackRow {
         InstalledPackRow {
             id: Uuid::new_v4().to_string(),
-            tenant_id: tenant_id.to_string(),
+            // tenant_id is vestigial under DEC-033 (synthesized on read).
+            tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
             pack_slug: slug.to_string(),
             version: "1.0.0".into(),
             config: serde_json::json!({"top_k": 10}),
@@ -189,34 +193,31 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
-    async fn skills_pg_install_list_uninstall() {
-        let pool = pg_pool().await;
+    async fn skills_install_list_uninstall() {
+        let (_dir, pool) = sqlite_pool().await;
         let repo = PgSkillPackRepository::new(pool);
-        let tid = Uuid::new_v4().to_string();
 
-        let row = make_row(&tid, "rag-hr");
+        let row = make_row("rag-hr");
         let saved = repo.install(row.clone()).await.unwrap();
         assert_eq!(saved.pack_slug, "rag-hr");
 
-        let listed = repo.list(&tid).await.unwrap();
+        let listed = repo.list(xiaoguai_storage::OWNER_TENANT_ID).await.unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, row.id);
 
         repo.uninstall(&saved.id).await.unwrap();
-        let after = repo.list(&tid).await.unwrap();
+        let after = repo.list(xiaoguai_storage::OWNER_TENANT_ID).await.unwrap();
         assert!(after.is_empty());
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
-    async fn skills_pg_duplicate_install_returns_already_installed() {
-        let pool = pg_pool().await;
+    async fn skills_duplicate_install_returns_already_installed() {
+        let (_dir, pool) = sqlite_pool().await;
         let repo = PgSkillPackRepository::new(pool);
-        let tid = Uuid::new_v4().to_string();
 
-        repo.install(make_row(&tid, "pr-review")).await.unwrap();
-        let err = repo.install(make_row(&tid, "pr-review")).await.unwrap_err();
+        repo.install(make_row("pr-review")).await.unwrap();
+        // DEC-033: UNIQUE constraint is now on `pack_slug` alone.
+        let err = repo.install(make_row("pr-review")).await.unwrap_err();
         assert!(
             matches!(err, SkillPackError::AlreadyInstalled),
             "second install must be AlreadyInstalled: {err:?}"
@@ -224,9 +225,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
-    async fn skills_pg_uninstall_missing_is_not_found() {
-        let pool = pg_pool().await;
+    async fn skills_uninstall_missing_is_not_found() {
+        let (_dir, pool) = sqlite_pool().await;
         let repo = PgSkillPackRepository::new(pool);
         let err = repo
             .uninstall(&Uuid::new_v4().to_string())
@@ -235,24 +235,7 @@ mod tests {
         assert!(matches!(err, SkillPackError::NotFound));
     }
 
-    #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
-    async fn skills_pg_list_scopes_by_tenant() {
-        let pool = pg_pool().await;
-        let repo = PgSkillPackRepository::new(pool);
-        let tid_a = Uuid::new_v4().to_string();
-        let tid_b = Uuid::new_v4().to_string();
-
-        repo.install(make_row(&tid_a, "rag-legal")).await.unwrap();
-        repo.install(make_row(&tid_a, "rag-finance")).await.unwrap();
-        repo.install(make_row(&tid_b, "rag-hr")).await.unwrap();
-
-        let a = repo.list(&tid_a).await.unwrap();
-        assert_eq!(a.len(), 2);
-        let b = repo.list(&tid_b).await.unwrap();
-        assert_eq!(b.len(), 1);
-        assert_eq!(b[0].pack_slug, "rag-hr");
-        let c = repo.list(&Uuid::new_v4().to_string()).await.unwrap();
-        assert!(c.is_empty());
-    }
+    // DELETED skills_pg_list_scopes_by_tenant: under DEC-033 there is one
+    // implicit owner and `list` returns all rows regardless of tenant_id, so
+    // per-tenant isolation is no longer a meaningful behaviour to assert.
 }
