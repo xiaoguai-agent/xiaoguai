@@ -47,11 +47,13 @@ jobs:
 
       - name: Install mdbook-linkcheck
         run: |
-          curl -sL https://github.com/Michael-F-Bryan/mdbook-linkcheck/releases/download/v0.7.7/code-v0.7.7-x86_64-unknown-linux-gnu.tar.gz \
-            | tar xz -C /usr/local/bin mdbook-linkcheck 2>/dev/null || \
-          curl -sL https://github.com/Michael-F-Bryan/mdbook-linkcheck/releases/download/v0.7.7/mdbook-linkcheck.x86_64-unknown-linux-gnu.zip \
-            -o /tmp/linkcheck.zip && unzip -q /tmp/linkcheck.zip -d /usr/local/bin/ || true
-          which mdbook-linkcheck && mdbook-linkcheck --version || echo "linkcheck not available; skipping"
+          curl -sSL https://github.com/Michael-F-Bryan/mdbook-linkcheck/releases/download/v0.7.7/mdbook-linkcheck.x86_64-unknown-linux-gnu.zip \
+            -o /tmp/linkcheck.zip
+          unzip -o -q /tmp/linkcheck.zip -d /usr/local/bin/
+          # The zip does not preserve the executable bit; without this the
+          # linkcheck backend fails to spawn with "Permission denied".
+          chmod +x /usr/local/bin/mdbook-linkcheck
+          mdbook-linkcheck --version
 
       - name: Build book
         run: mdbook build docs/book

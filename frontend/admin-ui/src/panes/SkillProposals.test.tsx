@@ -289,13 +289,16 @@ describe('<SkillProposalsPane>', () => {
     await waitFor(() => expect(screen.queryByText('github-search')).toBeNull());
   });
 
-  it('hides approve / reject buttons when the bearer lacks skill.approve', async () => {
+  it('shows approve / reject buttons regardless of scopes (single owner, fail-open)', async () => {
+    // Under the single-user pivot ScopeProvider fails open and the owner
+    // holds every scope, so approve/reject always render even when the
+    // (now-ignored) scopes mock is empty.
     const proposal = makeProposal({ id: 'p1' });
     const client = makeClient({ list: async () => [proposal] });
     renderPane(client, { scopes: SCOPES_EMPTY });
     await waitFor(() => expect(screen.getByText('github-search')).toBeTruthy());
-    expect(screen.queryByLabelText('approve github-search')).toBeNull();
-    expect(screen.queryByLabelText('reject github-search')).toBeNull();
+    expect(screen.queryByLabelText('approve github-search')).not.toBeNull();
+    expect(screen.queryByLabelText('reject github-search')).not.toBeNull();
   });
 
   it('renders the 503 banner when listSkillProposals throws ApiError(503)', async () => {

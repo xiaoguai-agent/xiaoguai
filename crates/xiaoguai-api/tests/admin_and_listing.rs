@@ -276,7 +276,9 @@ async fn admin_audit_verify_503s_when_verifier_not_wired() {
 }
 
 #[tokio::test]
-async fn admin_audit_verify_400s_when_tenant_missing() {
+async fn admin_audit_verify_defaults_tenant_to_owner_when_missing() {
+    // DEC-033 single-owner: a missing tenant_id defaults to the owner tenant
+    // and the request succeeds rather than 400ing.
     use xiaoguai_api::{AuditVerifier, StaticAuditVerifier};
     let v: Arc<dyn AuditVerifier> = Arc::new(StaticAuditVerifier::default());
     let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
@@ -291,11 +293,13 @@ async fn admin_audit_verify_400s_when_tenant_missing() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]
-async fn admin_audit_400s_when_tenant_id_missing() {
+async fn admin_audit_defaults_tenant_to_owner_when_missing() {
+    // DEC-033 single-owner: a missing tenant_id defaults to the owner tenant
+    // and the request succeeds rather than 400ing.
     use xiaoguai_api::{AuditReader, StaticAuditReader};
     let reader: Arc<dyn AuditReader> = Arc::new(StaticAuditReader::default());
     let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
@@ -310,7 +314,7 @@ async fn admin_audit_400s_when_tenant_id_missing() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 // ----------------------------------------------------------------------

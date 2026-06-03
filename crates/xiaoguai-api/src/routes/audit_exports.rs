@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::audit::{ExportError, ExportRequest};
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
+use xiaoguai_storage::OWNER_TENANT_ID;
 
 /// Wire shape for `POST /v1/audit/exports`.
 #[derive(Debug, Deserialize)]
@@ -57,17 +58,17 @@ struct ChainBrokenBody {
 /// See the module docs for the status-code mapping.
 pub async fn export_audit(
     State(state): State<AppState>,
-    Json(req): Json<AuditExportRequest>,
+    Json(mut req): Json<AuditExportRequest>,
 ) -> ApiResult<Response<Body>> {
     let exporter = state
         .audit_chain_exporter
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("audit chain exporter not wired".into()))?;
 
+    // DEC-033 single-owner: tenant_id is vestigial; default to the owner
+    // tenant when the caller omits it.
     if req.tenant_id.is_empty() {
-        return Err(ApiError::InvalidRequest(
-            "tenant_id must not be empty".into(),
-        ));
+        req.tenant_id = OWNER_TENANT_ID.to_string();
     }
     if req.framework.is_empty() {
         return Err(ApiError::InvalidRequest(

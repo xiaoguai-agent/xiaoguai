@@ -10,6 +10,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use xiaoguai_audit::outcomes::OutcomeRange;
+use xiaoguai_storage::OWNER_TENANT_ID;
 
 use crate::error::{ApiError, ApiResult};
 use crate::outcomes::{
@@ -29,7 +30,7 @@ use crate::state::AppState;
 /// Returns an error if the outcome writer is not wired, inputs are invalid, or the write fails.
 pub async fn record_outcome(
     State(state): State<AppState>,
-    Json(req): Json<RecordOutcomeRequest>,
+    Json(mut req): Json<RecordOutcomeRequest>,
 ) -> ApiResult<(StatusCode, Json<RecordOutcomeResponse>)> {
     let writer = state
         .outcome_writer
@@ -50,10 +51,10 @@ pub async fn record_outcome(
             "value must be non-negative".into(),
         ));
     }
+    // DEC-033 single-owner: tenant_id is vestigial (the writer ignores it);
+    // default to the owner tenant when the caller omits it.
     if req.tenant_id.is_empty() {
-        return Err(ApiError::InvalidRequest(
-            "tenant_id must not be empty".into(),
-        ));
+        req.tenant_id = OWNER_TENANT_ID.to_string();
     }
 
     writer
@@ -85,15 +86,17 @@ pub struct SummaryQuery {
 /// Returns an error if the outcomes reader is not wired, the range is invalid, or the query fails.
 pub async fn outcomes_summary(
     State(state): State<AppState>,
-    Query(q): Query<SummaryQuery>,
+    Query(mut q): Query<SummaryQuery>,
 ) -> ApiResult<Json<OutcomesSummaryResponse>> {
     let reader = state
         .outcomes_reader
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("outcomes reader not wired".into()))?;
 
+    // DEC-033 single-owner: tenant_id is vestigial (the reader returns all
+    // data regardless); default to the owner tenant when omitted.
     if q.tenant_id.is_empty() {
-        return Err(ApiError::InvalidRequest("tenant_id is required".into()));
+        q.tenant_id = OWNER_TENANT_ID.to_string();
     }
 
     let range_str = q.range.as_deref().unwrap_or("30d");
@@ -131,15 +134,17 @@ pub struct TimeseriesQuery {
 /// Returns an error if the outcomes reader is not wired, the range is invalid, or the query fails.
 pub async fn outcomes_timeseries(
     State(state): State<AppState>,
-    Query(q): Query<TimeseriesQuery>,
+    Query(mut q): Query<TimeseriesQuery>,
 ) -> ApiResult<Json<OutcomesTimeseriesResponse>> {
     let reader = state
         .outcomes_reader
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("outcomes reader not wired".into()))?;
 
+    // DEC-033 single-owner: tenant_id is vestigial (the reader returns all
+    // data regardless); default to the owner tenant when omitted.
     if q.tenant_id.is_empty() {
-        return Err(ApiError::InvalidRequest("tenant_id is required".into()));
+        q.tenant_id = OWNER_TENANT_ID.to_string();
     }
 
     let range_str = q.range.as_deref().unwrap_or("30d");
