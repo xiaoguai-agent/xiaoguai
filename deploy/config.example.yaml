@@ -4,7 +4,7 @@
 # Every setting can also be overridden by an environment variable using the
 # XIAOGUAI_ prefix and `__` as a nested-key separator. Example:
 #
-#     XIAOGUAI_DATABASE__URL=postgres://...
+#     XIAOGUAI_DATABASE__URL=/var/lib/xiaoguai/data.db
 #     XIAOGUAI_AUTH__REQUIRED=true
 #
 # Env overrides win over file values. CLI flags win over env.
@@ -23,14 +23,19 @@ server:
   # static_dir: /app/static
 
 database:
-  # Postgres connection string. The service applies the bundled migrations
-  # (in /etc/xiaoguai/migrations after install) automatically on boot.
-  url: postgres://xiaoguai:CHANGEME@localhost:5432/xiaoguai
+  # Embedded SQLite store (DEC-033 single-user). A filesystem path or a
+  # `sqlite://...` URL. Leave EMPTY (the default) to use
+  # `$XDG_DATA_HOME/xiaoguai/data.db` or `~/.xiaoguai/data.db` — the file and
+  # its parent dir are created on first boot and migrations apply automatically.
+  # No external database server is required.
+  url: ""
   max_connections: 16
 
 cache:
-  # Valkey / Redis URL. Used for idempotency keys + per-tenant caches.
-  url: redis://localhost:6379
+  # Optional Valkey / Redis URL for idempotency keys + caches. Leave EMPTY
+  # (the default) to use an in-process cache — no Redis/Valkey sidecar needed
+  # for a single-user deployment.
+  url: ""
   key_prefix: "xiaoguai:"
 
 auth:

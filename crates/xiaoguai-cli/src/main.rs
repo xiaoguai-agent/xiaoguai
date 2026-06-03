@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
     anomaly, audit_export, backup, chat, completions, eval, hotl, manpages, mcp, outcomes,
-    provider, remote, self_update, skills, tasks, watch,
+    provider, remote, self_update, skills, stats, tasks, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -104,13 +104,14 @@ enum Cmd {
         outdir: String,
     },
 
-    /// Create a backup archive (`pg_dump` + config + audit DB).
+    /// Create a backup archive (`SQLite` snapshot + config + audit DB).
     Backup {
         /// Output path for the `.tar.gz` file.
         #[arg(long)]
         out: String,
-        /// PostgreSQL connection URL.  Defaults to `$DATABASE_URL`.
-        #[arg(long, env = "DATABASE_URL")]
+        /// Configured `database.url`. Empty (the default) resolves to the
+        /// single-user store at `~/.xiaoguai/data.db`.
+        #[arg(long, env = "DATABASE_URL", default_value = "")]
         database_url: String,
         /// Encrypt the archive with an age public-key file.
         #[arg(long)]
@@ -122,15 +123,21 @@ enum Cmd {
         /// Path to the backup `.tar.gz` (or `.tar.gz.age`) file.
         #[arg(long = "in")]
         input: String,
-        /// Directory to extract into.
+        /// Directory to extract the full archive into.
         #[arg(long, default_value = "./restore-out")]
         outdir: String,
-        /// Overwrite existing output directory.
+        /// Overwrite an existing output directory (and the live store when
+        /// `--restore-db` is given).
         #[arg(long)]
         force: bool,
         /// Age identity file for decryption (required for encrypted backups).
         #[arg(long)]
         identity: Option<String>,
+        /// Also restore the archived `data.db` into the live `SQLite` store
+        /// (the existing file is saved as `<path>.bak` first). Empty string =
+        /// the default `~/.xiaoguai/data.db`.
+        #[arg(long, num_args = 0..=1, default_missing_value = "")]
+        restore_db: Option<String>,
     },
 
     /// Check for and apply binary updates from GitHub Releases.
@@ -138,6 +145,25 @@ enum Cmd {
         /// Only report whether an update is available; do not download.
         #[arg(long)]
         check: bool,
+    },
+
+    /// Summarise local LLM token usage and estimated cost.
+    ///
+    /// Reads the `token_usage` ledger in the `SQLite` store, joined to provider
+    /// cost rates. Cost is `—` when the provider has no rate configured.
+    Stats {
+        /// Group-by dimension: `model` (default), `day`, or `session`.
+        #[arg(long, default_value = "model")]
+        by: String,
+        /// Inclusive lower bound on `ts` (e.g. `2026-06-01`).
+        #[arg(long)]
+        since: Option<String>,
+        /// Inclusive upper bound on `ts` (e.g. `2026-06-30`).
+        #[arg(long)]
+        until: Option<String>,
+        /// Emit JSON instead of a text table.
+        #[arg(long)]
+        json: bool,
     },
 
     // ------------------------------------------------------------------
@@ -807,7 +833,7 @@ async fn build_provider_repo(config: Option<&str>) -> Result<PgLlmProviderReposi
     let settings = load_settings(config)?;
     let pool = connect(&settings.database.url, settings.database.max_connections)
         .await
-        .context("connect to postgres")?;
+        .context("open SQLite store")?;
     Ok(PgLlmProviderRepository::new(pool))
 }
 
@@ -815,8 +841,41 @@ async fn build_mcp_repo(config: Option<&str>) -> Result<PgMcpServerRepository> {
     let settings = load_settings(config)?;
     let pool = connect(&settings.database.url, settings.database.max_connections)
         .await
-        .context("connect to postgres")?;
+        .context("open SQLite store")?;
     Ok(PgMcpServerRepository::new(pool))
+}
+
+async fn handle_stats(
+    config: Option<&str>,
+    by: String,
+    since: Option<String>,
+    until: Option<String>,
+    json: bool,
+) -> Result<()> {
+    let group_by = stats::GroupBy::parse(&by)?;
+    let settings = load_settings(config)?;
+    let pool = connect(&settings.database.url, settings.database.max_connections)
+        .await
+        .context("open SQLite store")?;
+    let rows = stats::query(
+        &pool,
+        &stats::StatsArgs {
+            by: group_by,
+            since,
+            until,
+        },
+    )
+    .await?;
+    if rows.is_empty() {
+        println!("no usage recorded yet");
+        return Ok(());
+    }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&stats::to_json(&rows))?);
+    } else {
+        print!("{}", stats::format_table(&rows, group_by));
+    }
+    Ok(())
 }
 
 async fn handle_chat(
@@ -1559,12 +1618,15 @@ async fn main() -> Result<()> {
             outdir,
             force,
             identity,
+            restore_db,
         } => {
+            let restore_db_to = restore_db.map(|url| backup::resolve_sqlite_path(&url));
             backup::run_restore(backup::RestoreArgs {
                 input: std::path::PathBuf::from(input),
                 outdir: std::path::PathBuf::from(outdir),
                 force,
                 identity: identity.map(std::path::PathBuf::from),
+                restore_db_to,
             })?;
             println!("restore complete");
             Ok(())
@@ -1576,6 +1638,12 @@ async fn main() -> Result<()> {
             })
             .await
         }
+        Cmd::Stats {
+            by,
+            since,
+            until,
+            json,
+        } => handle_stats(cfg, by, since, until, json).await,
         // Wave-3
         Cmd::Hotl {
             api_base,

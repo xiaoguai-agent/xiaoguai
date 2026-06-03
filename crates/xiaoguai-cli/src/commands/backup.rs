@@ -1,10 +1,14 @@
 //! `xiaoguai backup` / `xiaoguai restore` — data protection subcommands.
 //!
+//! Under the DEC-033 single-user pivot the entire application state is one
+//! `SQLite` file (`~/.xiaoguai/data.db` by default).
+//!
 //! # Backup
 //!
 //! Produces a `<file>.tar.gz` containing:
 //!
-//! - `pg_dump.sql` — plain-text `pg_dump` of the target database
+//! - `data.db` — a consistent `SQLite` snapshot taken with `VACUUM INTO`, which
+//!   is WAL-safe and yields a single clean file with no `-wal`/`-shm` sidecars
 //! - `config/` — everything under `~/.xiaoguai/` (or `$XIAOGUAI_CONFIG_DIR`)
 //! - `audit.db` — audit `SQLite` snapshot (if it exists)
 //!
@@ -22,6 +26,10 @@ use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
+
+use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection};
+use sqlx::{ConnectOptions, Connection};
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -63,53 +71,112 @@ pub fn audit_log(msg: &str) {
     }
 }
 
-// ── pg_dump ────────────────────────────────────────────────────────────────
+// ── SQLite snapshot ──────────────────────────────────────────────────────────
 
-/// Find `pg_dump` on `$PATH`.
-fn find_pg_dump() -> Result<PathBuf> {
-    which_in_path("pg_dump").context(
-        "pg_dump not found on PATH. Install postgresql-client and ensure pg_dump is in PATH.",
-    )
-}
-
-fn which_in_path(name: &str) -> Option<PathBuf> {
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths).find_map(|dir| {
-            let candidate = dir.join(name);
-            if candidate.is_file() {
-                Some(candidate)
-            } else {
-                None
-            }
-        })
-    })
-}
-
-/// Run `pg_dump` and return the SQL as a byte vector.
+/// Turn a configured `database.url` into the concrete `SQLite` file path.
 ///
-/// `database_url` is passed via `PGPASSWORD` / `PGHOST` / … env vars (or a
-/// full connection URI).  We spawn `pg_dump` with `--format=plain` so the dump
-/// is a human-readable SQL file.
+/// Mirrors `xiaoguai_storage::db`'s private resolver: an empty string or the
+/// literal `"default"` resolves to [`xiaoguai_storage::db::default_db_path`];
+/// otherwise a `sqlite://` / `sqlite:` prefix is stripped and the remainder is
+/// used as a filesystem path.
+#[must_use]
+pub fn resolve_sqlite_path(url: &str) -> PathBuf {
+    let trimmed = url.trim();
+    if trimmed.is_empty() || trimmed == "default" {
+        return xiaoguai_storage::db::default_db_path();
+    }
+    let stripped = trimmed
+        .strip_prefix("sqlite://")
+        .or_else(|| trimmed.strip_prefix("sqlite:"))
+        .unwrap_or(trimmed);
+    if stripped.is_empty() || stripped == ":memory:" {
+        return xiaoguai_storage::db::default_db_path();
+    }
+    PathBuf::from(stripped)
+}
+
+/// Take a consistent `SQLite` snapshot of `db_path` into a fresh file and return
+/// its bytes.
+///
+/// Uses `VACUUM INTO`, which is safe with respect to WAL mode: it produces a
+/// single, fully-checkpointed database file with no `-wal`/`-shm` sidecars and
+/// without interrupting concurrent readers. The snapshot is written to a temp
+/// file (in the same parent dir as the source so it stays on one filesystem),
+/// read back into memory, and the temp file is removed.
 ///
 /// # Errors
-/// Returns an error if `pg_dump` cannot be spawned, exits non-zero, or the
-/// output is not valid UTF-8.
-pub fn run_pg_dump(pg_dump_path: &Path, database_url: &str) -> Result<Vec<u8>> {
-    // Parse the URL to extract components pg_dump understands.
-    // Simplest approach: pass the full URL via the `--dbname` flag, which
-    // pg_dump 9.3+ accepts as a connection string URI.
-    let output = std::process::Command::new(pg_dump_path)
-        .args(["--format=plain", "--no-password"])
-        .arg("--dbname")
-        .arg(database_url)
-        .output()
-        .context("spawn pg_dump")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("pg_dump exited with {}: {stderr}", output.status);
+/// Returns an error if the source DB is missing, cannot be opened, the
+/// `VACUUM INTO` fails, or the snapshot file cannot be read.
+pub fn snapshot_sqlite(db_path: &Path) -> Result<Vec<u8>> {
+    if !db_path.is_file() {
+        bail!(
+            "SQLite store {} does not exist — nothing to back up. \
+             Run the app once (or `xiaoguai serve`) to create it.",
+            db_path.display()
+        );
     }
-    Ok(output.stdout)
+
+    // Snapshot target: a sibling temp file (same dir → same filesystem so the
+    // SQLite backup is atomic-on-rename and we don't cross device boundaries).
+    let parent = db_path.parent().unwrap_or_else(|| Path::new("."));
+    let snap = tempfile::Builder::new()
+        .prefix(".xiaoguai-backup-")
+        .suffix(".db")
+        .tempfile_in(parent)
+        .context("create snapshot temp file")?;
+    // VACUUM INTO requires the destination not to exist yet.
+    let snap_path = snap.path().to_path_buf();
+    drop(snap); // remove the placeholder; keep the path
+    let _ = std::fs::remove_file(&snap_path);
+
+    run_vacuum_into(db_path, &snap_path).context("VACUUM INTO snapshot failed")?;
+
+    let bytes = std::fs::read(&snap_path)
+        .with_context(|| format!("read snapshot file {}", snap_path.display()))?;
+    let _ = std::fs::remove_file(&snap_path);
+    Ok(bytes)
+}
+
+/// Open `src` read-only and run `VACUUM INTO 'dest'`.
+///
+/// `run_backup` is a synchronous public API that is also invoked from inside
+/// the binary's async `main`. Driving a runtime here directly would panic with
+/// "Cannot start a runtime from within a runtime", so the snapshot work runs on
+/// a dedicated OS thread that owns its own current-thread runtime.
+fn run_vacuum_into(src: &Path, dest: &Path) -> Result<()> {
+    let src = src.to_path_buf();
+    let dest = dest.to_path_buf();
+    std::thread::scope(|scope| {
+        scope
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .context("build snapshot runtime")?;
+                rt.block_on(async move {
+                    let opts =
+                        SqliteConnectOptions::from_str(&format!("sqlite://{}", src.display()))
+                            .unwrap_or_else(|_| SqliteConnectOptions::new().filename(&src))
+                            .filename(&src)
+                            .read_only(true);
+                    let mut conn: SqliteConnection = opts
+                        .connect()
+                        .await
+                        .with_context(|| format!("open SQLite store {}", src.display()))?;
+                    // VACUUM INTO does not accept bind parameters; the
+                    // destination is a tempfile path we created, not user input.
+                    let dest_lit = dest.display().to_string().replace('\'', "''");
+                    sqlx::query(&format!("VACUUM INTO '{dest_lit}'"))
+                        .execute(&mut conn)
+                        .await
+                        .context("execute VACUUM INTO")?;
+                    conn.close().await.context("close snapshot connection")?;
+                    Ok::<(), anyhow::Error>(())
+                })
+            })
+            .join()
+            .map_err(|_| anyhow::anyhow!("snapshot thread panicked"))?
+    })
 }
 
 // ── SHA-256 ────────────────────────────────────────────────────────────────
@@ -273,7 +340,7 @@ pub fn age_decrypt(ciphertext: &[u8], identity_path: &Path) -> Result<Vec<u8>> {
 pub struct BackupArgs {
     /// Output path for the `.tar.gz` (or `.tar.gz.age` if encrypted).
     pub out: PathBuf,
-    /// Database connection URL (postgresql://…).
+    /// Configured `database.url`. Empty / `"default"` → the default store path.
     pub database_url: String,
     /// Optional age public-key file for encryption.
     pub encrypt: Option<PathBuf>,
@@ -284,31 +351,33 @@ pub struct BackupArgs {
 /// Returns the final output path written.
 ///
 /// # Errors
-/// Returns an error if any step (`pg_dump`, tar, age encrypt, file write) fails.
+/// Returns an error if any step (`SQLite` snapshot, tar, age encrypt, file write)
+/// fails.
 #[allow(
     clippy::needless_pass_by_value,
     reason = "public API — callers construct and pass by value"
 )]
 pub fn run_backup(args: BackupArgs) -> Result<PathBuf> {
-    let pg_dump_bin = find_pg_dump()?;
-
-    // 1. pg_dump
-    let sql = run_pg_dump(&pg_dump_bin, &args.database_url)
-        .context("pg_dump failed — check DATABASE_URL and pg_dump PATH")?;
+    // 1. SQLite snapshot (WAL-safe via VACUUM INTO).
+    let db_path = resolve_sqlite_path(&args.database_url);
+    let db_bytes = snapshot_sqlite(&db_path)?;
 
     // 2. Collect config directory.
     let cfg_dir = config_dir();
     let mut entries: Vec<ArchiveEntry> = Vec::new();
 
-    // pg_dump goes first.
+    // The SQLite store snapshot goes first.
     entries.push(ArchiveEntry {
-        path: "pg_dump.sql".into(),
-        data: sql,
+        path: "data.db".into(),
+        data: db_bytes,
     });
 
-    // Config dir contents.
+    // Config dir contents. Skip the live SQLite store + its WAL/SHM sidecars:
+    // the clean `data.db` snapshot above is the canonical copy, and the live
+    // file may carry an uncheckpointed WAL we deliberately avoided.
     if cfg_dir.is_dir() {
-        collect_dir(&cfg_dir, "config", &mut entries)?;
+        let skip = sqlite_sidecar_names(&db_path, &cfg_dir);
+        collect_dir(&cfg_dir, "config", &skip, &mut entries)?;
     }
 
     // Audit DB snapshot (optional).
@@ -362,16 +431,40 @@ pub fn run_backup(args: BackupArgs) -> Result<PathBuf> {
     Ok(final_path)
 }
 
+/// File names (relative to the config dir) to skip when collecting it: the live
+/// `SQLite` store plus its `-wal`/`-shm` sidecars, when they live under `cfg_dir`.
+fn sqlite_sidecar_names(db_path: &Path, cfg_dir: &Path) -> Vec<String> {
+    let mut skip = Vec::new();
+    if db_path.parent() == Some(cfg_dir) {
+        if let Some(name) = db_path.file_name().and_then(|n| n.to_str()) {
+            skip.push(name.to_string());
+            skip.push(format!("{name}-wal"));
+            skip.push(format!("{name}-shm"));
+        }
+    }
+    skip
+}
+
 /// Recursively collect files under `dir` as archive entries with paths
-/// relative to `prefix`.
-fn collect_dir(dir: &Path, prefix: &str, entries: &mut Vec<ArchiveEntry>) -> Result<()> {
+/// relative to `prefix`, skipping any top-level file whose name is in `skip`.
+fn collect_dir(
+    dir: &Path,
+    prefix: &str,
+    skip: &[String],
+    entries: &mut Vec<ArchiveEntry>,
+) -> Result<()> {
     for entry in std::fs::read_dir(dir).with_context(|| format!("read dir {}", dir.display()))? {
         let entry = entry.with_context(|| format!("read dir entry in {}", dir.display()))?;
         let path = entry.path();
         let file_name = entry.file_name();
-        let child_prefix = format!("{prefix}/{}", file_name.to_string_lossy());
+        let name_str = file_name.to_string_lossy();
+        if path.is_file() && skip.iter().any(|s| s.as_str() == name_str) {
+            continue;
+        }
+        let child_prefix = format!("{prefix}/{name_str}");
         if path.is_dir() {
-            collect_dir(&path, &child_prefix, entries)?;
+            // Sidecar skipping only applies at the config-dir top level.
+            collect_dir(&path, &child_prefix, &[], entries)?;
         } else {
             let data =
                 std::fs::read(&path).with_context(|| format!("read file {}", path.display()))?;
@@ -407,12 +500,17 @@ fn compute_manifest_checksum(entries: &[ArchiveEntry]) -> String {
 pub struct RestoreArgs {
     /// Input `.tar.gz` (or `.tar.gz.age`) path.
     pub input: PathBuf,
-    /// Directory to extract into.  Must not exist unless `--force`.
+    /// Directory to extract the full archive into.  Must not exist unless
+    /// `--force`.
     pub outdir: PathBuf,
-    /// If true, overwrite existing outdir.
+    /// If true, overwrite an existing outdir and an existing live `SQLite` store.
     pub force: bool,
     /// Optional age identity file for decryption.
     pub identity: Option<PathBuf>,
+    /// When set, the archived `data.db` payload is also written to this live
+    /// `SQLite` path (the running store). An existing file is preserved as
+    /// `<path>.bak` first, and is only overwritten when `force` is true.
+    pub restore_db_to: Option<PathBuf>,
 }
 
 /// Run `xiaoguai restore`.
@@ -515,10 +613,78 @@ pub fn run_restore(args: RestoreArgs) -> Result<()> {
             .with_context(|| format!("write extracted file {}", dest.display()))?;
     }
 
+    // 7. Optionally restore the SQLite store to its live path.
+    if let Some(db_target) = &args.restore_db_to {
+        let db_bytes = file_map.get("data.db").ok_or_else(|| {
+            anyhow::anyhow!(
+                "archive has no data.db entry — cannot restore the SQLite store. \
+                 (Archives created before the SQLite pivot carry pg_dump.sql instead.)"
+            )
+        })?;
+        restore_sqlite_file(db_bytes, db_target, args.force)?;
+        audit_log(&format!(
+            "restore wrote SQLite store target={} size={}",
+            db_target.display(),
+            db_bytes.len()
+        ));
+    }
+
     audit_log(&format!(
         "restore completed input={} outdir={}",
         args.input.display(),
         args.outdir.display()
     ));
+    Ok(())
+}
+
+/// Write the archived `data.db` bytes to the live `SQLite` `target` path.
+///
+/// Safety:
+/// - An existing target is preserved as `<target>.bak` before being replaced.
+/// - Without `force`, an existing target is refused (no clobber).
+/// - Stale `-wal`/`-shm` sidecars next to the target are removed so the
+///   restored file is the authoritative state.
+/// - The write is atomic (temp file in the same dir → rename).
+fn restore_sqlite_file(data: &[u8], target: &Path, force: bool) -> Result<()> {
+    if target.exists() && !force {
+        bail!(
+            "SQLite store {} already exists. Pass --force to replace it \
+             (the current file is saved as <path>.bak first).",
+            target.display()
+        );
+    }
+
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create parent dir for {}", target.display()))?;
+        }
+    }
+
+    // Preserve the current store as <target>.bak.
+    if target.exists() {
+        let bak = {
+            let mut p = target.as_os_str().to_os_string();
+            p.push(".bak");
+            PathBuf::from(p)
+        };
+        std::fs::rename(target, &bak)
+            .with_context(|| format!("back up existing store to {}", bak.display()))?;
+    }
+
+    // Atomic write into place.
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let tmp = tempfile::NamedTempFile::new_in(parent).context("create temp file for restore")?;
+    std::fs::write(tmp.path(), data)
+        .with_context(|| format!("write restored data.db to temp {}", tmp.path().display()))?;
+    tmp.persist(target)
+        .with_context(|| format!("move restored data.db into place at {}", target.display()))?;
+
+    // Drop stale WAL/SHM sidecars so the restored file is authoritative.
+    for suffix in ["-wal", "-shm"] {
+        let mut side = target.as_os_str().to_os_string();
+        side.push(suffix);
+        let _ = std::fs::remove_file(PathBuf::from(side));
+    }
     Ok(())
 }
