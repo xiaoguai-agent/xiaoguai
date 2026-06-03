@@ -1220,22 +1220,23 @@ mod tests {
         assert!(!reason.contains("max_usd"));
     }
 
-    // ── PG integration tests ──────────────────────────────────────────────────
-    // Run with: DATABASE_URL=postgres://... cargo test -p xiaoguai-core
-    //           --ignore-rust-version -- --ignored hotl_pg_
+    // ── SQLite integration tests (DEC-033) ────────────────────────────────────
 
-    async fn pg_pool() -> sqlx::PgPool {
-        let url =
-            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for PG bridge tests");
-        sqlx::PgPool::connect(&url).await.expect("pg connect")
+    async fn sqlite_pool() -> (tempfile::TempDir, SqlitePool) {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = xiaoguai_storage::db::connect(dir.path().join("t.db").to_str().unwrap(), 5)
+            .await
+            .unwrap();
+        xiaoguai_storage::db::migrate(&pool).await.unwrap();
+        (dir, pool)
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
-    async fn hotl_pg_store_create_list_delete() {
-        let pool = pg_pool().await;
+    async fn hotl_store_create_list_delete() {
+        let (_dir, pool) = sqlite_pool().await;
         let store = PgHotlPolicyStore::new(pool);
-        let tid = Uuid::new_v4();
+        // tenant_id is vestigial under DEC-033 (single owner).
+        let tid = Uuid::nil();
 
         let created = store
             .create(xiaoguai_api::hotl::policy::CreateHotlPolicyRequest {
@@ -1252,7 +1253,7 @@ mod tests {
         let list = store.list(tid, None).await.unwrap();
         assert!(list.iter().any(|p| p.id == created.id));
 
-        // Scoped filter works.
+        // Scoped filter still works (scope column survives DEC-033).
         let scoped = store.list(tid, Some("llm_call")).await.unwrap();
         assert_eq!(scoped.len(), 1);
         let empty = store.list(tid, Some("email_send")).await.unwrap();
@@ -1264,9 +1265,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
-    async fn hotl_pg_store_delete_missing_is_not_found() {
-        let pool = pg_pool().await;
+    async fn hotl_store_delete_missing_is_not_found() {
+        let (_dir, pool) = sqlite_pool().await;
         let store = PgHotlPolicyStore::new(pool);
         let err = store.delete(Uuid::new_v4()).await.unwrap_err();
         assert!(matches!(
@@ -1275,49 +1275,27 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
-    async fn hotl_pg_store_tenant_isolation() {
-        let pool = pg_pool().await;
-        let store = PgHotlPolicyStore::new(pool);
-        let tid_a = Uuid::new_v4();
-        let tid_b = Uuid::new_v4();
-
-        store
-            .create(xiaoguai_api::hotl::policy::CreateHotlPolicyRequest {
-                tenant_id: tid_a,
-                scope: "llm_call".into(),
-                window_seconds: 60,
-                max_count: Some(5),
-                max_usd: None,
-                escalate_to: None,
-            })
-            .await
-            .unwrap();
-
-        let b_rows = store.list(tid_b, None).await.unwrap();
-        assert!(b_rows.is_empty(), "tenant B must not see tenant A rows");
-    }
+    // DELETED hotl_pg_store_tenant_isolation: under DEC-033 there is one
+    // implicit owner; `list` ignores tenant_id and returns all rows, so
+    // per-tenant isolation is no longer a meaningful behaviour to assert.
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
-    async fn hotl_pg_enforcer_no_policy_allows() {
-        let pool = pg_pool().await;
+    async fn hotl_enforcer_no_policy_allows() {
+        let (_dir, pool) = sqlite_pool().await;
         let store = Arc::new(PgHotlPolicyStore::new(pool.clone()));
         let enforcer = PgHotlEnforcer::new(pool, store);
         let v = enforcer
-            .check(Uuid::new_v4(), "llm_call", 1.0)
+            .check(Uuid::nil(), "llm_call", 1.0)
             .await
             .unwrap();
         assert_eq!(v, HotlVerdict::Allow);
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
-    async fn hotl_pg_enforcer_count_breach_denies() {
-        let pool = pg_pool().await;
+    async fn hotl_enforcer_count_breach_denies() {
+        let (_dir, pool) = sqlite_pool().await;
         let store = Arc::new(PgHotlPolicyStore::new(pool.clone()));
-        let tid = Uuid::new_v4();
+        let tid = Uuid::nil();
 
         store
             .create(xiaoguai_api::hotl::policy::CreateHotlPolicyRequest {

@@ -372,7 +372,7 @@ mod tests {
 
     #[tokio::test]
     async fn sql_source_rejects_http_spec() {
-        let pool = sqlx::PgPool::connect_lazy("postgres://invalid/db").unwrap();
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         let spec = WatchSourceSpec::Http {
             url: "http://x".into(),
             jsonpath: "$[*]".into(),

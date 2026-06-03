@@ -283,7 +283,7 @@ impl TenantSettingsReader for PgTenantSettings {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — gated on a live PG instance
+// Tests — embedded SQLite (single-user pivot, DEC-033)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -292,10 +292,17 @@ mod tests {
     use crate::skill_author::SkillManifest;
     use uuid::Uuid;
 
-    async fn pg_pool() -> PgPool {
-        let url = std::env::var("DATABASE_URL")
-            .expect("DATABASE_URL must be set for skill_author_pg tests");
-        PgPool::connect(&url).await.expect("pg connect")
+    /// Open a fresh migrated temp-file SQLite pool. Returns the pool plus the
+    /// `TempDir` guard, which the caller must keep alive for the test's
+    /// duration (dropping it deletes the database file).
+    async fn sqlite_pool() -> (SqlitePool, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        let pool = xiaoguai_storage::db::connect(path.to_str().unwrap(), 5)
+            .await
+            .unwrap();
+        xiaoguai_storage::db::migrate(&pool).await.unwrap();
+        (pool, dir)
     }
 
     fn manifest(name: &str) -> SkillManifest {
@@ -323,9 +330,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
     async fn skill_author_pg_insert_get_list_set_status() {
-        let pool = pg_pool().await;
+        let (pool, _dir) = sqlite_pool().await;
         let repo = PgSkillProposalRepository::new(pool);
         let tid = Uuid::new_v4().to_string();
         let inserted = repo.insert(row(&tid, "test-skill")).await.unwrap();
@@ -350,9 +356,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
     async fn skill_author_pg_duplicate_returns_duplicate() {
-        let pool = pg_pool().await;
+        let (pool, _dir) = sqlite_pool().await;
         let repo = PgSkillProposalRepository::new(pool);
         let tid = Uuid::new_v4().to_string();
         let r1 = row(&tid, "dup-skill");
@@ -366,23 +371,21 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
     async fn tenant_settings_reader_returns_false_when_unset() {
-        let pool = pg_pool().await;
+        let (pool, _dir) = sqlite_pool().await;
         let settings = PgTenantSettings::new(pool);
         let unknown = Uuid::new_v4().to_string();
         assert!(!settings.allow_skill_authoring(&unknown).await.unwrap());
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
     async fn tenant_settings_reader_returns_true_after_upsert() {
-        let pool = pg_pool().await;
+        let (pool, _dir) = sqlite_pool().await;
         let settings = PgTenantSettings::new(pool.clone());
         let tid = Uuid::new_v4().to_string();
         sqlx::query(
             "INSERT INTO tenant_settings (tenant_id, settings) \
-             VALUES ($1, $2::jsonb) \
+             VALUES (?, ?) \
              ON CONFLICT (tenant_id) DO UPDATE SET settings = EXCLUDED.settings",
         )
         .bind(&tid)
