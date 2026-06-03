@@ -525,7 +525,7 @@ doesn't match the recomputed value.** The two common causes:
    to redact a row, append a tombstone follow-up entry and leave the
    original in place. PII is scrubbed (emails, IPv4, `Bearer` tokens,
    AWS keys) **before** signing — see
-   [`local-memory-and-redaction.md`](local-memory-and-redaction.md) §3
+   [`local-memory-and-redaction.md`](https://github.com/xiaoguai-agent/xiaoguai/blob/main/docs/runbooks/local-memory-and-redaction.md) §3
    (`XIAOGUAI_AUDIT_REDACT_PII`, on by default).
 2. **HMAC key rotation without the verification window.** See the
    "Rotating the audit HMAC key" section above. While both keys are
