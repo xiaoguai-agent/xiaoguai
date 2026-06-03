@@ -1,40 +1,27 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import i18n from './i18n/index';
 import { App } from './App';
+import { AuthGate } from './auth/AuthGate';
 import { ScopeProvider } from './hooks/useScopes';
-import { decideAuthAction, performAuthAction } from './auth/handleAuthError';
 import './styles.css';
 
-// Sprint-10b S10b-9 — global 401 handler (DEC-025 §3, REQ-UI-006).
-// XiaoguaiClient throws ApiError; any unhandled 401 reaches this listener,
-// which either redirects to VITE_LOGIN_URL or surfaces a session-expired
-// toast when the env var is empty. 403 is delegated to <RequireScope>.
-window.addEventListener('unhandledrejection', (ev) => {
-  const action = decideAuthAction(ev.reason, import.meta.env.VITE_LOGIN_URL);
-  performAuthAction(action, {
-    redirect: (url) => {
-      window.location.href = url;
-    },
-    toast: (key) => {
-      // Minimal placeholder — production deploys wire a proper toast at
-      // integration time. window.alert is intentionally crude so that
-      // air-gapped dev deploys never silently hang on a 401.
-      // eslint-disable-next-line no-alert
-      window.alert(i18n.t(key));
-    },
-  });
-});
+// DEC-033: auth is a single-owner HTTP Basic credential. A 401 (the backend
+// has a credential set and we don't have it / it's wrong) is handled by
+// <AuthGate>, which shows a login modal — superseding the old
+// redirect-to-VITE_LOGIN_URL flow (DEC-025) that assumed an OIDC reverse proxy.
+//
+// <ScopeProvider> is retained but now no-ops: there is no RBAC/scopes under
+// single-owner, so it fails open and every <RequireScope> renders.
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
-      {/* v1.8.0 (sprint-10b S10b-6) — load /v1/admin/me/scopes once
-          on mount; <RequireScope> reads from this context. */}
-      <ScopeProvider>
-        <App />
-      </ScopeProvider>
+      <AuthGate>
+        <ScopeProvider>
+          <App />
+        </ScopeProvider>
+      </AuthGate>
     </BrowserRouter>
   </React.StrictMode>,
 );
