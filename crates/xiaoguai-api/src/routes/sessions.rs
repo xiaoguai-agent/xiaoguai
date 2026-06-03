@@ -83,14 +83,21 @@ pub async fn create_session(
     claims: Option<Extension<Claims>>,
     Json(req): Json<CreateSessionRequest>,
 ) -> ApiResult<(StatusCode, Json<SessionResponse>)> {
-    // Claims override body identity when present (auth-required mode).
+    // Claims override body identity when present (owner-auth mode).
     let (user_id, tenant_id) = match claims.as_ref() {
         Some(Extension(c)) => (c.sub.clone(), c.tenant_id.clone()),
         None => (req.user_id.clone(), req.tenant_id.clone()),
     };
-    if user_id.is_empty() || tenant_id.is_empty() || req.model.is_empty() {
+    // DEC-033 single-owner: `tenant_id` is vestigial — default it to the
+    // implicit owner so callers need only supply `user_id` + `model`.
+    let tenant_id = if tenant_id.is_empty() {
+        xiaoguai_storage::OWNER_TENANT_ID.to_string()
+    } else {
+        tenant_id
+    };
+    if user_id.is_empty() || req.model.is_empty() {
         return Err(ApiError::BadRequest(
-            "user_id, tenant_id, and model are required".into(),
+            "user_id and model are required".into(),
         ));
     }
     let now = Utc::now();
