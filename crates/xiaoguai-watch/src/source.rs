@@ -13,6 +13,7 @@
 
 use async_trait::async_trait;
 use serde_json::Value;
+use sqlx::{Column, Row, ValueRef};
 use thiserror::Error;
 use tracing::instrument;
 
@@ -86,7 +87,7 @@ pub trait WatchSource: Send + Sync {
 /// Column names become object keys; values are serialised via `sqlx`'s
 /// built-in JSON support.
 pub struct SqlSource {
-    pool: sqlx::PgPool,
+    pool: sqlx::SqlitePool,
     query: String,
 }
 
@@ -102,7 +103,7 @@ impl SqlSource {
     /// # Errors
     ///
     /// Returns [`SourceError::Config`] when `spec` is not a `Sql` variant.
-    pub fn new(pool: sqlx::PgPool, spec: &WatchSourceSpec) -> Result<Self, SourceError> {
+    pub fn new(pool: sqlx::SqlitePool, spec: &WatchSourceSpec) -> Result<Self, SourceError> {
         match spec {
             WatchSourceSpec::Sql { query } => Ok(Self {
                 pool,
@@ -119,25 +120,61 @@ impl SqlSource {
 impl WatchSource for SqlSource {
     #[instrument(skip(self), fields(query = %self.query))]
     async fn poll(&self) -> Result<Vec<Match>, SourceError> {
-        // Wrap the stored SELECT in `row_to_json` so we get a JSON object
-        // per row without needing to enumerate columns.  This is the most
-        // reliable approach for arbitrary user-supplied SELECT statements.
-        let wrapped = format!("SELECT row_to_json(t) AS obj FROM ({}) t", self.query);
-        let rows: Vec<(serde_json::Value,)> =
-            sqlx::query_as(&wrapped).fetch_all(&self.pool).await?;
+        // SQLite has no `row_to_json`, so we run the user SELECT directly and
+        // decode each row generically: column names become object keys and
+        // values are mapped to JSON based on the column's runtime type. This
+        // is the most reliable approach for arbitrary user-supplied SELECTs.
+        let rows = sqlx::query(&self.query).fetch_all(&self.pool).await?;
 
         let matches = rows
             .into_iter()
-            .filter_map(|(v,)| {
-                if v.is_null() {
-                    None
-                } else {
-                    Some(Match::from_value(v))
-                }
-            })
+            .map(|row| Match(sqlite_row_to_json(&row)))
             .collect();
         Ok(matches)
     }
+}
+
+/// Convert a `SQLite` row into a JSON object map.
+///
+/// Each column becomes a key. Values are decoded by the column's runtime
+/// type info; `NULL` becomes `Value::Null`. Unknown/text-storage values
+/// fall back to a UTF-8 string.
+fn sqlite_row_to_json(row: &sqlx::sqlite::SqliteRow) -> serde_json::Map<String, Value> {
+    let mut map = serde_json::Map::new();
+    for col in row.columns() {
+        let name = col.name();
+        let value = sqlite_value_to_json(row, col);
+        map.insert(name.to_string(), value);
+    }
+    map
+}
+
+fn sqlite_value_to_json(row: &sqlx::sqlite::SqliteRow, col: &sqlx::sqlite::SqliteColumn) -> Value {
+    let idx = col.ordinal();
+    // NULL check via the raw value reference.
+    if let Ok(raw) = row.try_get_raw(idx) {
+        if raw.is_null() {
+            return Value::Null;
+        }
+    }
+    // Prefer a native JSON decode (handles json columns); then fall back
+    // across the SQLite storage classes by attempting typed `try_get`s.
+    if let Ok(v) = row.try_get::<Value, _>(idx) {
+        return v;
+    }
+    if let Ok(v) = row.try_get::<i64, _>(idx) {
+        return Value::from(v);
+    }
+    if let Ok(v) = row.try_get::<f64, _>(idx) {
+        return Value::from(v);
+    }
+    if let Ok(v) = row.try_get::<bool, _>(idx) {
+        return Value::from(v);
+    }
+    if let Ok(v) = row.try_get::<String, _>(idx) {
+        return Value::from(v);
+    }
+    Value::Null
 }
 
 // ---------------------------------------------------------------------------
@@ -335,7 +372,7 @@ mod tests {
 
     #[tokio::test]
     async fn sql_source_rejects_http_spec() {
-        let pool = sqlx::PgPool::connect_lazy("postgres://invalid/db").unwrap();
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         let spec = WatchSourceSpec::Http {
             url: "http://x".into(),
             jsonpath: "$[*]".into(),

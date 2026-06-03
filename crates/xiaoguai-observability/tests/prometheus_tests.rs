@@ -29,23 +29,6 @@ fn test_llm_histogram_emits_on_observation() {
     );
 }
 
-/// Observe an HTTP request duration and verify `histogram_count` > 0.
-#[test]
-fn test_http_histogram_emits_on_observation() {
-    let (registry, handles) = init_prometheus().expect("init_prometheus failed");
-
-    handles
-        .http_request_duration
-        .with_label_values(&["GET", "/v1/sessions", "200"])
-        .observe(0.042);
-
-    let text = gather_text(&registry);
-    assert!(
-        text.contains("xiaoguai_http_request_duration_seconds_count"),
-        "http duration histogram count not found in:\n{text}"
-    );
-}
-
 /// Observe a scheduler tick duration and verify the metric appears.
 #[test]
 fn test_scheduler_tick_histogram_emits_on_observation() {
@@ -89,8 +72,8 @@ fn test_histogram_accumulates_multiple_observations() {
 fn test_metrics_text_format_is_valid_prometheus() {
     let (registry, handles) = init_prometheus().expect("init_prometheus failed");
     handles
-        .http_request_duration
-        .with_label_values(&["POST", "/v1/messages", "201"])
+        .llm_call_duration
+        .with_label_values(&["ollama", "qwen2.5"])
         .observe(0.07);
 
     let text = gather_text(&registry);

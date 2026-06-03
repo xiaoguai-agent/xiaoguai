@@ -14,14 +14,13 @@ An outcome is a single business-value attribution event recorded by an agent
 after it completes a task. Each outcome ties a measured value (a dollar amount,
 a count, hours saved, etc.) to:
 
-- the **tenant** it belongs to,
 - the **session** that produced it (optional but recommended),
 - the **agent** that did the work, and
 - the **outcome kind** that classifies what was measured.
 
 Outcomes are append-only and immutable once recorded. They are stored in the
-`agent_outcomes` Postgres table (migration `0012_outcomes.sql`) alongside the
-audit log.
+`agent_outcomes` table in the embedded SQLite database (`data.db`, migration
+`0012_outcomes.sql`) alongside the audit log.
 
 ## Outcome kinds
 
@@ -57,29 +56,27 @@ proper graph traversal (and cycle detection) is planned; the eval
 `cycle_protection_does_not_infinite_loop` is marked `#[ignore]` until that
 reader is implemented.
 
-## Cross-tenant isolation
-
-Every read and aggregate operation filters strictly by `tenant_id`. Records from
-tenant A are never visible in queries for tenant B — even when both tenants
-recorded outcomes with identical `session_id` and `agent_name` values. This is
-validated by the `cross_tenant_isolation` eval scenario and mirrors the
-row-level security model used throughout the rest of the platform.
-
 ## Recording an outcome
 
-Agents call `POST /v1/outcomes` authenticated with a tenant bearer token:
+Agents call `POST /v1/outcomes`. When `auth.username`/`auth.password` are
+configured, authenticate with HTTP Basic as the owner; when no credential is
+set the endpoint is open:
 
 ```
 POST /v1/outcomes
 Content-Type: application/json
-Authorization: Bearer <agent-token>
+# Authorization: Basic ... (omit when no credential is configured)
+```
+
+```
+curl -u user:pass -X POST http://localhost:8080/v1/outcomes \
+  -H 'Content-Type: application/json' -d @outcome.json
 ```
 
 **Body:**
 
 ```json
 {
-  "tenant_id": "acme-corp",
   "session_id": "sess_abc123",
   "agent_name": "sales-assist",
   "kind": "revenue_usd",
@@ -92,7 +89,6 @@ Authorization: Bearer <agent-token>
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `tenant_id` | yes | Must be non-empty |
 | `agent_name` | yes | Must be non-empty |
 | `kind` | yes | Must be non-empty; one of the built-in kinds or a custom string |
 | `value` | yes | Must be >= 0 |
@@ -102,8 +98,8 @@ Authorization: Bearer <agent-token>
 | `metadata` | no | Arbitrary JSON context (CRM IDs, ticket URLs, etc.) |
 
 Returns **201 Created** on success. Returns 400 on validation failure (negative
-value, empty kind or agent_name, empty tenant_id). Returns 503 when the outcome
-backend is not wired.
+value, empty kind or agent_name). Returns 503 when the outcome backend is not
+wired.
 
 ## Summary query
 
@@ -111,15 +107,14 @@ backend is not wired.
 dashboard cards:
 
 ```
-GET /v1/outcomes/summary?tenant_id=acme-corp&range=30d
-Authorization: Bearer <admin-token>
+GET /v1/outcomes/summary?range=30d
+# Authorization: Basic ... (omit when no credential is configured)
 ```
 
 **Response:**
 
 ```json
 {
-  "tenant_id": "acme-corp",
   "range": "30d",
   "summary": {
     "by_kind": {
@@ -146,15 +141,14 @@ Any other value returns HTTP 400.
 `GET /v1/outcomes/timeseries` returns daily buckets for bar-chart rendering:
 
 ```
-GET /v1/outcomes/timeseries?tenant_id=acme-corp&range=7d&kind=revenue_usd
-Authorization: Bearer <admin-token>
+GET /v1/outcomes/timeseries?range=7d&kind=revenue_usd
+# Authorization: Basic ... (omit when no credential is configured)
 ```
 
 **Response:**
 
 ```json
 {
-  "tenant_id": "acme-corp",
   "range": "7d",
   "days": [
     {"date": "2026-05-19", "kind": "revenue_usd", "sum": 25000.0, "count": 6},
@@ -186,13 +180,13 @@ action trace and query `agent_outcomes` on `session_id` for the value attributio
 
 There is no automatic expiry in v1.2.4. Outcome records are retained
 indefinitely. Operators who need to age out records should do so via a scheduled
-Postgres job. A configurable retention window is planned for a future release.
+SQLite maintenance job. A configurable retention window is planned for a future
+release.
 
 ## Validation rules
 
 | Rule | HTTP status |
 |------|------------|
-| `tenant_id` must be non-empty | 400 |
 | `agent_name` must be non-empty | 400 |
 | `kind` must be non-empty | 400 |
 | `value` must be >= 0 | 400 |

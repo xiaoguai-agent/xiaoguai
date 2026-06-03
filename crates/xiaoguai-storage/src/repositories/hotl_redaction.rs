@@ -21,14 +21,14 @@
 //! so the `*` rule only applies when no exact match exists.
 
 use chrono::{DateTime, Utc};
-use sqlx::{FromRow, PgPool};
+use sqlx::{types::Json, FromRow, SqlitePool};
 use uuid::Uuid;
 
 use crate::repositories::error::{RepoError, RepoResult};
 use crate::repositories::tenant_ctx::begin_tenant_tx;
 
 /// A single row from `hotl_redaction_policies`.
-#[derive(Debug, Clone, FromRow, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RedactionPolicyRow {
     pub id: Uuid,
     pub tenant_id: Uuid,
@@ -40,6 +40,19 @@ pub struct RedactionPolicyRow {
     /// Where the redaction applies — typical values are `sse` and `audit`.
     pub applies_to: Vec<String>,
     pub created_at: DateTime<Utc>,
+}
+
+/// `FromRow` shim. The `tenant_id` column is gone under the single-user pivot,
+/// and `applies_to` is stored as a JSON-array TEXT column, so it can't decode
+/// straight into `Vec<String>` — the `Json<T>` wrapper handles it. The public
+/// [`RedactionPolicyRow`] is reconstructed in [`PgHotlRedactionRepo::load_for_tenant`].
+#[derive(Debug, FromRow)]
+struct RedactionPolicyDbRow {
+    id: Uuid,
+    scope: String,
+    jsonpath: String,
+    applies_to: Json<Vec<String>>,
+    created_at: DateTime<Utc>,
 }
 
 /// Read-only access to `hotl_redaction_policies`.
@@ -54,15 +67,15 @@ pub trait HotlRedactionRepo: Send + Sync {
     async fn load_for_tenant(&self, tenant_id: Uuid) -> RepoResult<Vec<RedactionPolicyRow>>;
 }
 
-/// Postgres-backed implementation.
+/// SQLite-backed implementation.
 #[derive(Debug, Clone)]
 pub struct PgHotlRedactionRepo {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgHotlRedactionRepo {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
@@ -70,22 +83,30 @@ impl PgHotlRedactionRepo {
 #[async_trait::async_trait]
 impl HotlRedactionRepo for PgHotlRedactionRepo {
     async fn load_for_tenant(&self, tenant_id: Uuid) -> RepoResult<Vec<RedactionPolicyRow>> {
-        // `app.current_tenant_id` is a TEXT GUC; the RLS policy compares
-        // `tenant_id::text = current_setting(...)`. Format the UUID as a
-        // plain hyphenated string to match Postgres's default UUID cast.
+        // Single namespace under the pivot: every policy row is owner-wide.
+        // The vestigial `tenant_id` arg is echoed back onto each row so the
+        // public shape is preserved for downstream consumers.
         let tenant_str = tenant_id.to_string();
         let mut tx = begin_tenant_tx(&self.pool, Some(&tenant_str)).await?;
-        let rows = sqlx::query_as::<_, RedactionPolicyRow>(
-            "SELECT id, tenant_id, scope, jsonpath, applies_to, created_at \
+        let rows = sqlx::query_as::<_, RedactionPolicyDbRow>(
+            "SELECT id, scope, jsonpath, applies_to, created_at \
              FROM hotl_redaction_policies \
-             WHERE tenant_id = $1 \
              ORDER BY (scope = '*') ASC, scope ASC",
         )
-        .bind(tenant_id)
         .fetch_all(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
         tx.commit().await.map_err(RepoError::from_sqlx)?;
-        Ok(rows)
+        Ok(rows
+            .into_iter()
+            .map(|r| RedactionPolicyRow {
+                id: r.id,
+                tenant_id,
+                scope: r.scope,
+                jsonpath: r.jsonpath,
+                applies_to: r.applies_to.0,
+                created_at: r.created_at,
+            })
+            .collect())
     }
 }

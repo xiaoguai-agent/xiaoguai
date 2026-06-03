@@ -5,9 +5,8 @@ This guide covers day-2 operations for Xiaoguai deployments.
 ## Chapters
 
 - [Day-2 Operations](day2.md) — migrations, HMAC key rotation, disaster recovery, observability
-- [High Availability](ha.md) — PG logical replication + Valkey Cluster + nginx topology (v1.1.4)
 - [Systemd Hardening](systemd.md) — bare-metal production unit with capability drops and sandboxing
-- [Security](security.md) — OIDC, RBAC, RLS, audit chain, bandit scanning
+- [Security](security.md) — single-owner auth, audit chain, bandit scanning
 - [Release Signing](release-signing.md) — cosign + SLSA attestations
 - [Human-on-the-Loop Policy](human-on-the-loop.md) — budget-based escalation for agent actions (v1.2.3)
 - [Outcome Telemetry](outcome-telemetry.md) — ROI attribution chains and dashboard queries (v1.2.4)
@@ -16,15 +15,15 @@ This guide covers day-2 operations for Xiaoguai deployments.
 
 | Path | Best for |
 |------|---------|
-| **docker-compose** | Local development and single-node evaluation |
-| **Helm chart** | Kubernetes production deployments |
-| **Bare-metal tarball** | VMs or bare-metal without container runtime |
+| **docker-compose** | Local evaluation; bundles the web UI |
+| **Bare-metal tarball / `.deb` / `.rpm`** | VMs or bare-metal (systemd) |
 | **pip wheel** | Python-centric environments, scripting, CI |
 
 ## Prerequisites
 
-All paths share the same external dependencies:
+Under the single-user pivot (DEC-033) there are **no external datastores**.
+State is one embedded SQLite file (created on first boot); the cache falls
+back in-process. The only thing to front a public deployment with is:
 
-- **Postgres 16** (or compatible) with `wal_level = logical` if HA is required
-- **Valkey 8** (or Redis 7.x) — not Redis 7.4+ (SSPL license incompatibility)
-- **TLS termination** — nginx, Caddy, or cloud load balancer in front of `:8080`
+- **TLS termination** — nginx, Caddy, or a cloud load balancer in front of
+  `:8080`, plus a configured `auth.username`/`auth.password` (HTTP Basic).

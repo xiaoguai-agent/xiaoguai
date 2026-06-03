@@ -139,7 +139,7 @@ impl HotlEnforcer for InMemoryHotlEnforcer {
         // Fail-closed: if the policy store is simulated as broken, deny.
         if self.fail_store {
             let verdict = HotlVerdict::Deny("policy store unavailable (fail-closed)".into());
-            emit_hotl_metrics(&tenant_id, scope, &verdict, _timer_start);
+            emit_hotl_metrics(scope, &verdict, _timer_start);
             return Ok(verdict);
         }
 
@@ -148,14 +148,14 @@ impl HotlEnforcer for InMemoryHotlEnforcer {
             Err(e) => {
                 tracing::error!(?e, "HOTL policy store error — fail-closed");
                 let verdict = HotlVerdict::Deny(format!("policy store error: {e} (fail-closed)"));
-                emit_hotl_metrics(&tenant_id, scope, &verdict, _timer_start);
+                emit_hotl_metrics(scope, &verdict, _timer_start);
                 return Ok(verdict);
             }
         };
 
         // If no policy is declared for this scope, allow unconditionally.
         if policies.is_empty() {
-            emit_hotl_metrics(&tenant_id, scope, &HotlVerdict::Allow, _timer_start);
+            emit_hotl_metrics(scope, &HotlVerdict::Allow, _timer_start);
             return Ok(HotlVerdict::Allow);
         }
 
@@ -200,7 +200,7 @@ impl HotlEnforcer for InMemoryHotlEnforcer {
             }
         }
 
-        emit_hotl_metrics(&tenant_id, scope, &verdict, _timer_start);
+        emit_hotl_metrics(scope, &verdict, _timer_start);
         Ok(verdict)
     }
 }
@@ -213,10 +213,9 @@ fn verdict_label(v: &HotlVerdict) -> &'static str {
     }
 }
 
-fn emit_hotl_metrics(tenant_id: &Uuid, scope: &str, verdict: &HotlVerdict, start: Instant) {
-    let tenant = tenant_id.to_string();
+fn emit_hotl_metrics(scope: &str, verdict: &HotlVerdict, start: Instant) {
     if let Some(ctr) = xiaoguai_observability::hotl_usage_total() {
-        ctr.with_label_values(&[tenant.as_str(), scope, verdict_label(verdict)])
+        ctr.with_label_values(&[scope, verdict_label(verdict)])
             .inc();
     }
     if let Some(hist) = xiaoguai_observability::hotl_check_duration() {

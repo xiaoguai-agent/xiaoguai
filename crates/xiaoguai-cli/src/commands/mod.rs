@@ -18,5 +18,6 @@ pub mod provider;
 pub mod remote;
 pub mod self_update;
 pub mod skills;
+pub mod stats;
 pub mod tasks;
 pub mod watch;

@@ -1,14 +1,13 @@
--- v0.5.1 audit log with hmac chain
+-- v0.5.1 audit log with hmac chain (SQLite single-user). tenant_id dropped.
 
 CREATE TABLE audit_log (
-    id          BIGSERIAL PRIMARY KEY,
-    ts          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    tenant_id   TEXT NOT NULL,
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     actor       TEXT NOT NULL,
     action      TEXT NOT NULL,
     resource    TEXT,
-    details     JSONB,
-    prev_hmac   BYTEA,
-    hmac        BYTEA NOT NULL
+    details     TEXT,
+    prev_hmac   BLOB,
+    hmac        BLOB NOT NULL
 );
-CREATE INDEX ix_audit_tenant_ts ON audit_log (tenant_id, ts);
+CREATE INDEX ix_audit_ts ON audit_log (ts);

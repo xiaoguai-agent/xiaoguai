@@ -17,8 +17,6 @@ pub mod incidents;
 pub mod marketplace;
 pub mod mcp_serve;
 pub mod outcomes;
-pub mod rate_limit;
-pub mod rbac;
 pub mod routes;
 pub mod scheduler;
 pub mod serve;
@@ -37,7 +35,7 @@ pub use audit::{
     AuditChainExporter, AuditEntryView, AuditError, AuditReader, AuditVerifier, ExportError,
     ExportRequest, StaticAuditChainExporter, StaticAuditReader, StaticAuditVerifier, VerifyReport,
 };
-pub use auth::{Claims, JwtTokenValidator, StubValidator, TokenValidator};
+pub use auth::{Claims, StaticCredentialValidator, StubValidator, TokenValidator};
 pub use error::{ApiError, ApiResult, UnauthorizedReason};
 pub use eval::{
     build_case_yaml, list_suites_in, CaseFromSessionRequest, CaseFromSessionResponse,
@@ -59,11 +57,6 @@ pub use outcomes::{
     OutcomesReader, OutcomesSummaryResponse, OutcomesTimeseriesResponse, RecordOutcomeRequest,
     RecordOutcomeResponse,
 };
-pub use rate_limit::{
-    rate_limit, rate_limit_middleware, InMemoryBackend, RateClass, RateLimitBackend,
-    RateLimitState, RateLimiter, RedisBackend, RouteClass,
-};
-pub use rbac::{method_to_action, path_to_resource, require_authorized};
 pub use routes::router;
 pub use scheduler::{
     InMemoryWebhookTokenAdmin, NlJobCompileError, NlJobCompiler, RecordingJobUpserter,

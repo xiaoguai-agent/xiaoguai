@@ -11,8 +11,9 @@ small teams, and anyone with a compliance or traceability constraint.
 Every tool call writes an HMAC-chained audit row. Every scheduled job
 carries a retry policy, a replayable transcript, and a reason field.
 Every model interaction has a regression-eval safety net. The whole
-thing ships as a single Rust binary plus Postgres and Valkey — no
-Python runtime, no JVM, no JS server on the hot path.
+thing ships as a single self-contained Rust binary with an embedded
+SQLite store — no external database, no Python runtime, no JVM, no JS
+server on the hot path.
 
 We are not trying to out-prompt the prompt-magic vendors, out-polish
 the UI vendors, or out-host the marketplace vendors. We compete on
@@ -38,10 +39,10 @@ docker compose -f deploy/docker-compose.yml up --build
 open http://localhost:8080/healthz   # → ok
 ```
 
-That's a full stack — `xiaoguai-core` on `:8080`, Postgres 16, Valkey
-8 — running on `MockBackend` so it's self-contained out of the box.
-For the chat UI, real LLM providers, MCP server registration, and the
-admin console, see [`docs/user-guide/quickstart.md`](docs/user-guide/quickstart.md).
+That's the whole thing — one `xiaoguai-core` service on `:8080` with an
+embedded SQLite store, running on `MockBackend` so it's self-contained out
+of the box. For the chat UI, real LLM providers, MCP server registration,
+and the admin console, see [`docs/user-guide/quickstart.md`](docs/user-guide/quickstart.md).
 
 ### Install pre-built binaries
 
@@ -64,24 +65,16 @@ After install, the canonical entrypoint is `xiaoguai serve`. The
 it in for systemd backward-compat) but new operators should use the
 unified CLI.
 
-## Kubernetes observability (optional)
+## Observability (optional)
 
-An optional Helm sub-chart at `deploy/helm/xiaoguai-observability/` bundles
-Prometheus, Grafana, Loki, and Tempo with pre-provisioned datasources, the
-Wave-3 overview dashboard, SLO alert rules, and a ServiceMonitor targeting
-xiaoguai-core `/metrics`. All four components can be individually disabled.
+Telemetry is opt-in. Build with the `observability` cargo feature to expose
+`/metrics` (Prometheus) + OTLP trace export — off by default. For a local
+Prometheus/Grafana/OTel-collector stack, layer the optional compose file:
 
 ```bash
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo add grafana https://grafana.github.io/helm-charts
-helm dependency update deploy/helm/xiaoguai-observability
-helm upgrade --install xiaoguai-obs deploy/helm/xiaoguai-observability \
-  -f deploy/helm/xiaoguai-observability/values-dev.yaml \
-  -n monitoring --create-namespace
+docker compose -f deploy/docker-compose.yml \
+  -f deploy/docker-compose.observability.yml up --build
 ```
-
-See [`deploy/helm/xiaoguai-observability/README.md`](deploy/helm/xiaoguai-observability/README.md)
-for dependency versions, persistent storage requirements, and production overrides.
 
 ## Architecture
 
@@ -123,11 +116,11 @@ substrate  ┌──────┴───────────────
            │  xiaoguai-types   domain types + ID newtypes               │
            │  xiaoguai-config  Settings (server / db / cache / auth /   │
            │                   audit / scheduler / im / eval)           │
-           │  xiaoguai-storage sqlx + Pg repos + Valkey cache + RLS-    │
-           │                   aware migrations                         │
-           │  xiaoguai-audit   ChainedAudit (HMAC) + PgAuditSink        │
-           │  xiaoguai-auth    JwtValidator (RS256/ES256, JWKS cache)   │
-           │                   + Casbin                                 │
+           │  xiaoguai-storage sqlx + embedded SQLite repos +          │
+           │                   in-process cache fallback                │
+           │  xiaoguai-audit   ChainedAudit (HMAC) + SQLite sink        │
+           │  xiaoguai-auth    HotL argument redaction (single-owner    │
+           │                   pivot; no OIDC/Casbin — DEC-033)         │
            └────────────────────────────────────────────────────────────┘
 ```
 
@@ -179,8 +172,9 @@ Hard guarantees the platform enforces in code (not just docs):
 - HMAC-chained `audit_log` rows for every tool call, scheduled run,
   and IM-routed message. Chain verification is exposed at
   `/v1/admin/audit/verify`.
-- Postgres row-level security on every tenant-scoped table.
-- OIDC RS256 / ES256 JWT validation with JWKS cache + Casbin RBAC.
+- Single-owner access gate: an optional configured username/password
+  (HTTP Basic) protects the API when exposed on a URL (DEC-033 — no
+  OIDC/RBAC/multi-tenancy; each person runs their own instance).
 - Per-user proactive-push budget with a mandatory `reason` field —
   sinks may refuse delivery if the reason is empty.
 
@@ -207,8 +201,8 @@ feedback, then prioritise."* The candidate backlog, per
   admin-ui — every UI-affecting tag from v0.8.1 onward was tuned by
   reading, not eyeballing.
 - Conversation fork, public-cloud LLM provider configs, `/usage`
-  endpoint, HA (PG replica + Valkey cluster), multi-agent
-  orchestration — see the roadmap §3 v1.0+ section.
+  endpoint, multi-agent orchestration — see the roadmap §3 v1.0+
+  section.
 
 ## License
 
@@ -262,10 +256,11 @@ v1.3 lands — see the honest status section below.
 | **Cloud LLM v2** | `ProviderKind` gains `Bedrock` (SigV4), `AzureOpenAi`, `Mistral`, and `Groq` — all behind the existing `LlmBackend` trait; circuit breakers and cost-quota defence carry over automatically. |
 | **Observability** | New `xiaoguai-observability` crate; opt-in Prometheus scrape endpoint (`/metrics`) and OTLP trace export; zero telemetry by default (ADR-0013 preserved). |
 
-### Quickstart — wave-3 full stack
+### Quickstart — with telemetry
 
-The base `docker-compose.yml` brings up `xiaoguai-core + postgres + valkey`.
-Add the observability sidecar profile for the full wave-3 stack:
+The base `docker-compose.yml` brings up a single `xiaoguai-core` service
+(embedded SQLite). Layer `deploy/docker-compose.observability.yml` on top for
+the optional Prometheus / Grafana / OTel-collector stack:
 
 ```yaml
 # deploy/docker-compose.wave3.yml  (create or adapt from the snippet below)

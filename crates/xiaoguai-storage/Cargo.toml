@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Storage layer for Xiaoguai (Postgres + Valkey repositories)."
+description = "Storage layer for Xiaoguai (embedded SQLite + Valkey repositories)."
 
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
@@ -25,8 +25,7 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-testcontainers = "0.24"
-testcontainers-modules = { version = "0.12", features = ["postgres", "redis"] }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]

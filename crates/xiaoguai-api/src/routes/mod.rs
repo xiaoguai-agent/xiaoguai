@@ -11,7 +11,6 @@ pub mod personas;
 pub mod providers;
 pub mod scheduler_public;
 pub mod sessions;
-pub mod tenants;
 pub mod usage;
 pub mod watchers;
 
@@ -24,18 +23,16 @@ use crate::skill_proposals;
 use crate::skills;
 use crate::workspaces;
 
-use crate::auth::require_bearer;
-use crate::rate_limit::{rate_limit, rate_limit_middleware};
-use crate::rbac::require_authorized;
+use crate::auth::require_auth;
 use crate::state::AppState;
 
 /// Build the v0.5.5+ router. Layers (outermost → innermost):
 ///   - tracing (request/response spans)
 ///   - permissive CORS (origin tightening lands with production auth)
-///   - optional bearer-token auth on `/v1/**` when `state.auth = Some(...)`.
-///     `/healthz` and `/v1/openapi.json` are always public.
-///   - optional Casbin per-route enforcement when `state.authz = Some(...)`.
-///     Layer order: auth → rbac → handler so the rbac layer sees `Claims`.
+///   - optional username/password (HTTP Basic) auth on `/v1/**` when
+///     `state.auth = Some(...)`. `/healthz` and `/v1/openapi.json` are always
+///     public. Under DEC-033 there is no RBAC layer — every authenticated
+///     request is the single static owner.
 #[allow(clippy::too_many_lines)]
 pub fn router(state: AppState) -> Router {
     let public = Router::new().route("/healthz", get(healthz));
@@ -60,19 +57,11 @@ pub fn router(state: AppState) -> Router {
             "/v1/mcp/marketplace/install",
             post(crate::marketplace::install_from_marketplace),
         )
-        .route("/v1/admin/tenants", get(admin::list_tenants))
-        // v1.3.x — per-tenant client config (chat-ui AiDisclosureBanner).
-        .route("/v1/tenants/{id}/config", get(tenants::get_tenant_config))
         .route("/v1/admin/audit", get(admin::list_audit))
         .route("/v1/admin/audit/verify", get(admin::verify_audit))
         // T5 (Tier-3) — compliance bundle export (SOC2/GDPR/HIPAA).
         .route("/v1/audit/exports", post(audit_exports::export_audit))
         .route("/v1/admin/today", get(admin::list_today))
-        // v1.8.0 (sprint-10b S10b-6) — per-subject scope resolver.
-        // Backs frontend `<RequireScope>` so the UI can decide which
-        // mutating buttons to render. No extra Casbin scope required
-        // (anyone authenticated may read their own scopes).
-        .route("/v1/admin/me/scopes", get(admin::list_my_scopes))
         .route("/v1/admin/eval/suites", get(admin::list_eval_suites))
         .route("/v1/admin/eval/run", post(admin::run_eval_suite))
         .route(
@@ -213,75 +202,28 @@ pub fn router(state: AppState) -> Router {
         );
 
     // Layer order (inner → outer, since `route_layer` adds outward):
-    //   handler → rate_limit → rbac → require_bearer
-    // so `require_bearer` runs first and populates Claims, then rbac
-    // checks the policy, then rate_limit consumes a token, then the
-    // handler runs.
-    //
-    // v1.2.20: prefer the richer `rate_limit_state` (per-class, route-aware)
-    // when available; fall back to the legacy single-class `rate_limiter`.
-    let v1 = if let Some(rls) = state.rate_limit_state.clone() {
-        v1.route_layer(axum::middleware::from_fn(move |req, next| {
-            let s = rls.clone();
-            async move { rate_limit_middleware(s, req, next).await }
-        }))
-    } else if let Some(limiter) = state.rate_limiter.clone() {
-        v1.route_layer(axum::middleware::from_fn(move |req, next| {
-            let l = limiter.clone();
-            async move { rate_limit(l, req, next).await }
-        }))
-    } else {
-        v1
-    };
-
-    let v1 = if let Some(authz) = state.authz.clone() {
-        v1.route_layer(axum::middleware::from_fn(move |req, next| {
-            let a = authz.clone();
-            async move { require_authorized(a, req, next).await }
-        }))
-    } else {
-        v1
-    };
-
+    //   handler → require_auth
+    // so `require_auth` runs first and populates the owner `Claims`, then the
+    // handler runs. Under DEC-033 there is no RBAC or rate-limit layer.
     let v1 = if let Some(validator) = state.auth.clone() {
         v1.route_layer(axum::middleware::from_fn(move |req, next| {
             let v = validator.clone();
-            async move { require_bearer(v, req, next).await }
+            async move { require_auth(v, req, next).await }
         }))
     } else {
         v1
     };
 
-    // v0.12.x.1: public (token-gated) scheduler webhook. Sits OUTSIDE
-    // the bearer/Casbin layer stack — external integrators (GitHub
-    // push, Slack events) authenticate via the `X-Xiaoguai-Token`
-    // header validated against the per-tenant token table. The
-    // existing admin route at `/v1/admin/scheduler/webhooks/{route_id}`
-    // stays inside the v1 layer for internal callers.
-    //
-    // Rate limiting is still applied so a flood of bad tokens can't
-    // saturate the runner; bearer auth is intentionally skipped.
+    // v0.12.x.1: public (token-gated) scheduler webhook. Sits OUTSIDE the
+    // owner-auth layer — external integrators (GitHub push, Slack events)
+    // authenticate via the `X-Xiaoguai-Token` header validated against the
+    // webhook token table. The admin route at
+    // `/v1/admin/scheduler/webhooks/{route_id}` stays inside the v1 layer for
+    // internal callers.
     let public_v1 = Router::new().route(
         "/v1/scheduler/webhooks/{route_id}",
         post(scheduler_public::scheduler_webhook_public),
     );
-    // v1.2.20: scheduler webhooks get the richer rate_limit_state middleware
-    // (which classifies them as RouteClass::SchedulerWebhook) or falls back to
-    // the legacy single-class limiter. Flooding with bad tokens still gets
-    // rate-limited; bearer auth is intentionally skipped on this route.
-    let public_v1 = if let Some(rls) = state.rate_limit_state.clone() {
-        public_v1.route_layer(axum::middleware::from_fn(move |req, next| {
-            let s = rls.clone();
-            async move { rate_limit_middleware(s, req, next).await }
-        }))
-    } else if let Some(limiter) = state.rate_limiter.clone() {
-        public_v1.route_layer(axum::middleware::from_fn(move |req, next| {
-            let l = limiter.clone();
-            async move { rate_limit(l, req, next).await }
-        }))
-    } else {
-        public_v1
-    };
 
     // v0.9.1: optionally publish xiaoguai's Toolbox as an MCP server at
     // `/v1/mcp/serve`. Sits outside the v1 layer stack on purpose —

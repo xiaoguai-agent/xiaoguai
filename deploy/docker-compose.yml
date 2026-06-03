@@ -1,166 +1,36 @@
-# Canonical Xiaoguai dev / smoke stack.
+# Canonical Xiaoguai dev / smoke stack (DEC-033 single-user, single binary).
 #
 # Usage:
-#   cd <repo root>
 #   docker compose -f deploy/docker-compose.yml up --build
 #
-# Brings up:
-#   - postgres 16        (state for sessions / messages / mcp / providers / audit)
-#   - valkey 8           (cache + idempotency keys)
-#   - redis 7            (wave-3: rate-limit backend + optional outcome cache)
-#   - otel-collector     (wave-3: OTLP receiver; gRPC :4317, HTTP :4318)
-#   - prometheus         (wave-3: scrapes otel-collector; UI on 127.0.0.1:9090)
-#   - grafana            (wave-3: dashboards on 127.0.0.1:3000)
-#   - xiaoguai-core      (HTTP API on :7600)
+# Brings up a SINGLE service — xiaoguai-core — with an EMBEDDED SQLite store and
+# an in-process cache. No Postgres, no Valkey, no Redis. State persists in the
+# `xiaoguai_data` named volume (data.db under /data/xiaoguai inside the
+# container). `docker compose down -v` is the canonical reset.
 #
-# Optional add-ons (not enabled by default):
-#   - ollama          uncomment the ollama service to run a local LLM
-#   - mcp-fs          a stdio MCP server reading the host's ./scratch dir
-#
-# The compose file deliberately mounts named volumes for state so `docker
-# compose down -v` is the canonical reset.
+# Optional observability (otel-collector + prometheus + grafana) lives in
+# deploy/docker-compose.observability.yml — layer it on with:
+#   docker compose -f deploy/docker-compose.yml \
+#                  -f deploy/docker-compose.observability.yml up --build
 
 services:
-  postgres:
-    # pgvector image (not plain postgres) — migrations 0001 + 0019 do
-    # `CREATE EXTENSION vector` for the embeddings/memory tables. Plain
-    # postgres:16-alpine lacks pgvector and migration boot fails with
-    # 'extension "vector" is not available'.
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_USER: xiaoguai
-      POSTGRES_PASSWORD: xiaoguai
-      POSTGRES_DB: xiaoguai
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U xiaoguai"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  valkey:
-    image: valkey/valkey:8-alpine
-    command: ["valkey-server", "--save", "60", "1"]
-    volumes:
-      - valkey_data:/data
-    healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  # ---------- wave-3: Redis (rate-limit + outcome cache) ----------
-
-  redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  # ---------- wave-3: OpenTelemetry Collector ----------
-
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
-    volumes:
-      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
-    # No container healthcheck: the collector-contrib image is distroless
-    # (no shell / wget), so a CMD-SHELL probe can never run and the container
-    # would sit "unhealthy" forever — which previously blocked every dependent
-    # (xiaoguai-core, prometheus) from starting via `condition: service_healthy`.
-    # The collector exposes a health_check extension on :13133 for manual /
-    # prometheus probing; dependents wait on `service_started` instead.
-
-  # ---------- wave-3: Prometheus ----------
-
-  prometheus:
-    image: prom/prometheus:latest
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    depends_on:
-      otel-collector:
-        condition: service_started
-    ports:
-      # Bind to localhost only in dev for safety.
-      - "127.0.0.1:9090:9090"
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=7d"
-      - "--web.enable-lifecycle"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/healthy || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-
-  # ---------- wave-3: Grafana ----------
-
-  grafana:
-    image: grafana/grafana:latest
-    depends_on:
-      prometheus:
-        condition: service_healthy
-    environment:
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
-      GF_SECURITY_ADMIN_PASSWORD: xiaoguai
-    volumes:
-      - grafana_data:/var/lib/grafana
-    ports:
-      # Bind to localhost only in dev for safety. Host port is overridable —
-      # :3000 is commonly taken (other Grafana/Node apps); set GRAFANA_HOST_PORT
-      # to avoid 'address already in use' without editing this file.
-      - "127.0.0.1:${GRAFANA_HOST_PORT:-3000}:3000"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-
   xiaoguai-core:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    depends_on:
-      postgres:
-        condition: service_healthy
-      valkey:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      otel-collector:
-        # Observability must not gate the core app — telemetry export is
-        # best-effort and retried. `service_started` (not `service_healthy`)
-        # so the collector being slow/unhealthy never blocks xiaoguai-core.
-        condition: service_started
     environment:
       XIAOGUAI_SERVER__HOST: 0.0.0.0
       XIAOGUAI_SERVER__PORT: "7600"
       # Serve the bundled web UI (chat-ui at /, admin-ui at /admin/) baked into
       # the image at /app/static. Set to "" for an API-only server.
       XIAOGUAI_SERVER__STATIC_DIR: /app/static
-      XIAOGUAI_DATABASE__URL: postgres://xiaoguai:xiaoguai@postgres:5432/xiaoguai
-      XIAOGUAI_CACHE__URL: redis://valkey:6379
-      # v0.6 ships MockBackend by default; v0.6.1 will wire LlmRouter.
+      # Empty DB url -> embedded SQLite at $XDG_DATA_HOME/xiaoguai/data.db.
+      XDG_DATA_HOME: /data
+      # Empty cache url -> in-process cache (no Redis/Valkey sidecar).
+      XIAOGUAI_CACHE__URL: ""
       RUST_LOG: info,sqlx=warn
-      # wave-3: rate-limit backend
-      RATE_LIMIT_BACKEND: redis
-      RATE_LIMIT_REDIS_URL: redis://redis:6379/0
-      # wave-3: observability
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
-      OTEL_TRACES_SAMPLE_RATE: "0.1"
-      # wave-3: feature flags (safe defaults — opt-in at runtime)
-      HOTL_ENABLED: "false"
-      OUTCOME_RECORDER_ENABLED: "false"
-      SKILL_PACK_REPO_ENABLED: "false"
-      POLICY_ENFORCEMENT_ENABLED: "false"
+    volumes:
+      - xiaoguai_data:/data
     ports:
       - "7600:7600"
 
@@ -174,10 +44,5 @@ services:
   #     - "11434:11434"
 
 volumes:
-  pg_data:
-  valkey_data:
+  xiaoguai_data:
   # ollama_data:
-  # wave-3
-  redis_data:
-  prometheus_data:
-  grafana_data:

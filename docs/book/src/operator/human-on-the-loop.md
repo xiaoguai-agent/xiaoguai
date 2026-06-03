@@ -25,13 +25,12 @@ webhook-invoke wiring are tracked as follow-up items.
 
 ## Policy model
 
-Each HotL policy is one row in `hotl_policies` and controls one
-`(tenant_id, scope)` pair over a rolling time window.
+Each HotL policy is one row in `hotl_policies` and controls one `scope`
+over a rolling time window.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | UUID | Auto-generated primary key |
-| `tenant_id` | UUID | The tenant this policy belongs to |
 | `scope` | string | Action category: `llm_call`, `email_send`, `external_api`, or any custom string |
 | `window_seconds` | integer | Rolling window width; must be > 0 |
 | `max_count` | integer? | Maximum invocation count inside the window; `null` = no count limit |
@@ -57,7 +56,7 @@ When the enforcer runs before an action it returns one of three verdicts:
 | `Escalate(reason)` | Budget exceeded; `escalate_to` is set | Action proceeds; escalation notification dispatched asynchronously |
 | `Deny(reason)` | Budget exceeded with no `escalate_to`, or store unreachable | Action is aborted; caller returns an error to the user |
 
-When two policies for the same `(tenant, scope)` are both breached and one has
+When two policies for the same `scope` are both breached and one has
 `escalate_to` while the other does not, **Deny beats Escalate** — the stricter
 outcome wins.
 
@@ -84,14 +83,13 @@ downstream routing handles.
 ```
 POST /v1/hotl/policies
 Content-Type: application/json
-Authorization: Bearer <admin-token>
+# Authorization: Basic ... (omit when no credential is configured)
 ```
 
 **Body:**
 
 ```json
 {
-  "tenant_id": "550e8400-e29b-41d4-a716-446655440000",
   "scope": "llm_call",
   "window_seconds": 3600,
   "max_count": 100,
@@ -105,7 +103,6 @@ Authorization: Bearer <admin-token>
 ```json
 {
   "id": "7c7b2b3a-...",
-  "tenant_id": "550e8400-...",
   "scope": "llm_call",
   "window_seconds": 3600,
   "max_count": 100,
@@ -117,10 +114,10 @@ Authorization: Bearer <admin-token>
 ### List policies
 
 ```
-GET /v1/hotl/policies?tenant_id=<uuid>[&scope=llm_call]
+GET /v1/hotl/policies[?scope=llm_call]
 ```
 
-Returns all active policies for the tenant, optionally filtered by scope.
+Returns all active policies, optionally filtered by scope.
 Returns HTTP 503 when the HotL store is not wired (feature not enabled).
 
 ### Delete a policy
@@ -138,7 +135,7 @@ on the next `check` call — there is no cache TTL to wait for.
 2. It returns `HotlVerdict::Escalate(reason)` to the caller; the action proceeds.
 3. The caller logs the escalation and dispatches an async notification to the
    address embedded in `reason` (IM gateway or email sink, depending on the
-   address format and what the tenant has configured).
+   address format and what the owner has configured).
 4. An operator reviews the notification and either acknowledges the breach or
    tightens the policy via the admin UI or REST API.
 
@@ -148,7 +145,7 @@ a future milestone.
 
 ## Fail-closed behaviour
 
-If the Postgres store backing `HotlPolicyStore` is unreachable when the
+If the SQLite store backing `HotlPolicyStore` is unreachable when the
 enforcer runs, it returns `Deny` — the system prefers refusing one LLM call
 over allowing unbounded spend when the budget ledger is down. This fail-closed
 contract is validated by the `eval_under_threshold_all_allow` / `fail_closed`
@@ -171,11 +168,11 @@ covers this contract.
 | `max_usd` must be >= 0 if set | 400 |
 | Store not wired | 503 |
 
-## Multi-tenant isolation
+## Scope isolation
 
-Policies and usage counters are scoped to `tenant_id`. One tenant exhausting
-its budget has no effect on another tenant's counter. This is validated by
-the `eval_multi_tenant_isolation` scenario.
+Policies and usage counters are scoped per `scope`. One scope exhausting its
+budget has no effect on another scope's counter. This is validated by the
+`eval_multi_tenant_isolation` scenario.
 
 ## Known limitations
 

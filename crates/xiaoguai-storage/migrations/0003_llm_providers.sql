@@ -1,40 +1,19 @@
--- LLM provider registry.
---
--- A row is either:
---   * tenant-scoped (`tenant_id` non-NULL) — visible only inside that tenant
---   * system-wide  (`tenant_id` NULL)      — visible to every tenant
---
--- Tenants override system defaults via the higher precedence of their own
--- row in `default_for_models`. The router walks `fallback_order` ascending
--- when no explicit/default match exists.
+-- LLM provider registry (SQLite single-user). One owner; every row is visible.
+-- The Postgres tenant-vs-global split (tenant_id NULL = global) collapses to a
+-- single namespace, so names are simply unique across the table.
 
 CREATE TABLE llm_providers (
     id                  TEXT PRIMARY KEY,
-    tenant_id           TEXT REFERENCES tenants(id) ON DELETE CASCADE,
     name                TEXT NOT NULL,
     kind                TEXT NOT NULL,
     endpoint            TEXT NOT NULL,
-    models              JSONB NOT NULL DEFAULT '[]'::jsonb,
-    default_for_models  JSONB NOT NULL DEFAULT '[]'::jsonb,
-    fallback_order      INT NOT NULL DEFAULT 100,
+    models              TEXT NOT NULL DEFAULT '[]',
+    default_for_models  TEXT NOT NULL DEFAULT '[]',
+    fallback_order      INTEGER NOT NULL DEFAULT 100,
     api_key_env         TEXT,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
--- Names are unique within a scope. We use COALESCE(tenant_id,'') so the
--- NULL-as-global rows still participate in uniqueness checks.
-CREATE UNIQUE INDEX ux_llm_providers_scope_name
-    ON llm_providers (COALESCE(tenant_id, ''), name);
-
-CREATE INDEX ix_llm_providers_scope_fallback
-    ON llm_providers (COALESCE(tenant_id, ''), fallback_order);
-
-ALTER TABLE llm_providers ENABLE ROW LEVEL SECURITY;
-
--- Tenant rows visible only to that tenant; global rows visible to all.
-CREATE POLICY tenant_or_global_isolation ON llm_providers
-    USING (
-        tenant_id IS NULL
-        OR tenant_id = current_setting('app.current_tenant_id', true)
-    );
+CREATE UNIQUE INDEX ux_llm_providers_name ON llm_providers (name);
+CREATE INDEX ix_llm_providers_fallback ON llm_providers (fallback_order);

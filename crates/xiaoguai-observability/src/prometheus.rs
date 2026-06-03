@@ -4,14 +4,12 @@
 //!
 //! | Name | Type | Labels | Description |
 //! |---|---|---|---|
-//! | `xiaoguai_http_request_duration_seconds` | Histogram | `method`, `path`, `status` | HTTP request latency |
 //! | `xiaoguai_llm_call_duration_seconds` | Histogram | `provider`, `model` | LLM call latency |
 //! | `xiaoguai_scheduler_tick_duration_seconds` | Histogram | — | Scheduler tick latency |
-//! | `xiaoguai_hotl_usage_total` | Counter | `tenant`, `scope`, `verdict` | HOTL enforcer decisions |
+//! | `xiaoguai_hotl_usage_total` | Counter | `scope`, `verdict` | HOTL enforcer decisions |
 //! | `xiaoguai_hotl_check_duration_seconds` | Histogram | — | HOTL enforcer check latency |
-//! | `xiaoguai_outcomes_recorded_total` | Counter | `tenant`, `kind` | Outcome attributions recorded |
+//! | `xiaoguai_outcomes_recorded_total` | Counter | `kind` | Outcome attributions recorded |
 //! | `xiaoguai_outcomes_chain_depth` | Histogram | — | Chain depth per recorded outcome |
-//! | `xiaoguai_rate_limit_hits_total` | Counter | `tenant`, `route`, `decision` | Rate-limit decisions |
 //! | `xiaoguai_anomaly_detections_total` | Counter | `detector`, `severity` | Anomaly detector fires |
 //! | `xiaoguai_watch_wakeups_total` | Counter | `watcher_id`, `outcome` | Watch task wakeup results |
 //! | `xiaoguai_im_messages_total` | Counter | `adapter`, `direction` | IM gateway messages |
@@ -41,10 +39,9 @@ use axum::{
 };
 use once_cell::sync::OnceCell;
 use prometheus::{
-    exponential_buckets, register_gauge_vec_with_registry, register_gauge_with_registry,
-    register_histogram_vec_with_registry, register_histogram_with_registry,
-    register_int_counter_vec_with_registry, Gauge, GaugeVec, Histogram, HistogramVec,
-    IntCounterVec, Registry,
+    exponential_buckets, register_gauge_with_registry, register_histogram_vec_with_registry,
+    register_histogram_with_registry, register_int_counter_vec_with_registry, Gauge, Histogram,
+    HistogramVec, IntCounterVec, Registry,
 };
 
 /// Bucket boundaries shared by HTTP and LLM histograms (seconds).
@@ -59,24 +56,20 @@ static HANDLES: OnceCell<MetricHandles> = OnceCell::new();
 /// All metric handles in one struct so they can be cloned cheaply.
 #[derive(Clone)]
 pub struct MetricHandles {
-    /// HTTP request latency histogram, labelled by `(method, path, status)`.
-    pub http_request_duration: HistogramVec,
     /// LLM provider call latency histogram, labelled by `(provider, model)`.
     pub llm_call_duration: HistogramVec,
     /// Scheduler tick latency histogram (unlabelled).
     pub scheduler_tick_duration: Histogram,
 
     // ── Wave-3 metrics ──────────────────────────────────────────────────────
-    /// HOTL enforcer decisions: `(tenant, scope, verdict)`.
+    /// HOTL enforcer decisions: `(scope, verdict)`.
     pub hotl_usage_total: IntCounterVec,
     /// HOTL enforcer check latency (unlabelled).
     pub hotl_check_duration: Histogram,
-    /// Outcome attributions recorded: `(tenant, kind)`.
+    /// Outcome attributions recorded: `(kind)`.
     pub outcomes_recorded_total: IntCounterVec,
     /// Chain depth per recorded outcome.
     pub outcomes_chain_depth: Histogram,
-    /// Rate-limit decisions: `(tenant, route, decision)`.
-    pub rate_limit_hits_total: IntCounterVec,
     /// Anomaly detector fires: `(detector, severity)`.
     pub anomaly_detections_total: IntCounterVec,
     /// Watch task wakeup results: `(watcher_id, outcome)`.
@@ -97,19 +90,6 @@ pub struct MetricHandles {
     /// (`MiniMax` M1/M2, future DeepSeek-R, etc.). Counters by `(provider, model)`.
     /// Increments by the estimated reasoning-token count per delta.
     pub llm_reasoning_tokens_total: IntCounterVec,
-
-    // ── Sprint-10 S10-3 — SLO contracts (DEC-022) ───────────────────────────
-    /// Per-scrape burn-rate ratio for each (signal, window, surface) tuple.
-    /// `> 1.0` means the error budget is being burnt faster than allowed.
-    /// See `lld-observability.md` §4.4 + `docs/runbooks/slo.md`.
-    /// Labels: `(signal, window, surface, tenant)` — `tenant` is `""` for
-    /// the global series and populated only when a tenant override applies
-    /// (LLD §4.4 cardinality budget).
-    pub slo_burn_rate: GaugeVec,
-    /// Counter of per-tenant SLO override JSONB parse failures (lenient
-    /// parse → fall back to declaration default + bump counter). SREs watch
-    /// this to notice silently-ignored overrides. Labelled by `(tenant, key)`.
-    pub slo_override_parse_failed_total: IntCounterVec,
 
     // ── Sprint-12 S12-3 — HOTL suspend/resume telemetry ─────────────────────
     /// Resolved HOTL suspensions, labelled by terminal verdict
@@ -174,15 +154,6 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     )
     .context("build latency buckets")?;
 
-    let http_request_duration = register_histogram_vec_with_registry!(
-        "http_request_duration_seconds",
-        "HTTP request latency in seconds",
-        &["method", "path", "status"],
-        latency_buckets.clone(),
-        registry
-    )
-    .context("register http_request_duration_seconds")?;
-
     let llm_call_duration = register_histogram_vec_with_registry!(
         "llm_call_duration_seconds",
         "LLM provider call latency in seconds",
@@ -204,8 +175,8 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
 
     let hotl_usage_total = register_int_counter_vec_with_registry!(
         "hotl_usage_total",
-        "HOTL enforcer decisions, labelled by tenant, scope, and verdict",
-        &["tenant", "scope", "verdict"],
+        "HOTL enforcer decisions, labelled by scope and verdict",
+        &["scope", "verdict"],
         registry
     )
     .context("register hotl_usage_total")?;
@@ -220,8 +191,8 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
 
     let outcomes_recorded_total = register_int_counter_vec_with_registry!(
         "outcomes_recorded_total",
-        "Outcome attributions recorded, labelled by tenant and kind",
-        &["tenant", "kind"],
+        "Outcome attributions recorded, labelled by kind",
+        &["kind"],
         registry
     )
     .context("register outcomes_recorded_total")?;
@@ -234,14 +205,6 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
         registry
     )
     .context("register outcomes_chain_depth")?;
-
-    let rate_limit_hits_total = register_int_counter_vec_with_registry!(
-        "rate_limit_hits_total",
-        "Rate-limit decisions, labelled by tenant, route class, and decision",
-        &["tenant", "route", "decision"],
-        registry
-    )
-    .context("register rate_limit_hits_total")?;
 
     let anomaly_detections_total = register_int_counter_vec_with_registry!(
         "anomaly_detections_total",
@@ -302,23 +265,6 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     )
     .context("register llm_reasoning_tokens_total")?;
 
-    // Sprint-10 S10-3: SLO contracts (DEC-022).
-    let slo_burn_rate = register_gauge_vec_with_registry!(
-        "slo_burn_rate",
-        "Per-scrape SLO burn-rate ratio. >1.0 means error budget is being burnt faster than allowed (see docs/runbooks/slo.md).",
-        &["signal", "window", "surface", "tenant"],
-        registry
-    )
-    .context("register slo_burn_rate")?;
-
-    let slo_override_parse_failed_total = register_int_counter_vec_with_registry!(
-        "slo_override_parse_failed_total",
-        "Per-tenant SLO override JSONB parse failures (lenient fallback to declaration default)",
-        &["tenant", "key"],
-        registry
-    )
-    .context("register slo_override_parse_failed_total")?;
-
     // Sprint-12 S12-3: HOTL suspend/resume telemetry.
     let hotl_suspensions_total = register_int_counter_vec_with_registry!(
         "hotl_suspensions_total",
@@ -355,14 +301,12 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     .context("register hotl_registry_replayed_total")?;
 
     let handles = MetricHandles {
-        http_request_duration,
         llm_call_duration,
         scheduler_tick_duration,
         hotl_usage_total,
         hotl_check_duration,
         outcomes_recorded_total,
         outcomes_chain_depth,
-        rate_limit_hits_total,
         anomaly_detections_total,
         watch_wakeups_total,
         im_messages_total,
@@ -370,8 +314,6 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
         compaction_fallback_total,
         compaction_token_savings,
         llm_reasoning_tokens_total,
-        slo_burn_rate,
-        slo_override_parse_failed_total,
         hotl_suspensions_total,
         hotl_suspended_loops_gauge,
         hotl_suspension_duration_seconds,
@@ -431,7 +373,7 @@ pub fn mount_metrics(router: Router, registry: Registry) -> Router {
 // (e.g. in unit tests that bypass the full initialisation).  Callers silently
 // skip the increment rather than panicking.
 
-/// Counter: `xiaoguai_hotl_usage_total{tenant, scope, verdict}`.
+/// Counter: `xiaoguai_hotl_usage_total{scope, verdict}`.
 pub fn hotl_usage_total() -> Option<&'static IntCounterVec> {
     HANDLES.get().map(|h| &h.hotl_usage_total)
 }
@@ -441,7 +383,7 @@ pub fn hotl_check_duration() -> Option<&'static Histogram> {
     HANDLES.get().map(|h| &h.hotl_check_duration)
 }
 
-/// Counter: `xiaoguai_outcomes_recorded_total{tenant, kind}`.
+/// Counter: `xiaoguai_outcomes_recorded_total{kind}`.
 pub fn outcomes_recorded_total() -> Option<&'static IntCounterVec> {
     HANDLES.get().map(|h| &h.outcomes_recorded_total)
 }
@@ -449,11 +391,6 @@ pub fn outcomes_recorded_total() -> Option<&'static IntCounterVec> {
 /// Histogram: `xiaoguai_outcomes_chain_depth`.
 pub fn outcomes_chain_depth() -> Option<&'static Histogram> {
     HANDLES.get().map(|h| &h.outcomes_chain_depth)
-}
-
-/// Counter: `xiaoguai_rate_limit_hits_total{tenant, route, decision}`.
-pub fn rate_limit_hits_total() -> Option<&'static IntCounterVec> {
-    HANDLES.get().map(|h| &h.rate_limit_hits_total)
 }
 
 /// Counter: `xiaoguai_anomaly_detections_total{detector, severity}`.
@@ -493,18 +430,6 @@ pub fn compaction_token_savings() -> Option<&'static Histogram> {
 /// increment in that case.
 pub fn llm_reasoning_tokens_total() -> Option<&'static IntCounterVec> {
     HANDLES.get().map(|h| &h.llm_reasoning_tokens_total)
-}
-
-/// Gauge: `xiaoguai_slo_burn_rate{signal, window, surface, tenant}`.
-/// Sprint-10 S10-3 / DEC-022.
-pub fn slo_burn_rate() -> Option<&'static GaugeVec> {
-    HANDLES.get().map(|h| &h.slo_burn_rate)
-}
-
-/// Counter: `xiaoguai_slo_override_parse_failed_total{tenant, key}`.
-/// Sprint-10 S10-3 / DEC-022.
-pub fn slo_override_parse_failed_total() -> Option<&'static IntCounterVec> {
-    HANDLES.get().map(|h| &h.slo_override_parse_failed_total)
 }
 
 /// Counter: `xiaoguai_hotl_suspensions_total{verdict}`.
@@ -547,11 +472,11 @@ mod tests {
     fn prometheus_hotl_usage_total_increments() {
         let (_reg, h) = fresh();
         h.hotl_usage_total
-            .with_label_values(&["t1", "llm_call", "allow"])
+            .with_label_values(&["llm_call", "allow"])
             .inc();
         let val = h
             .hotl_usage_total
-            .with_label_values(&["t1", "llm_call", "allow"])
+            .with_label_values(&["llm_call", "allow"])
             .get();
         assert!(val > 0, "hotl_usage_total must be > 0 after inc()");
     }
@@ -572,11 +497,11 @@ mod tests {
     fn prometheus_outcomes_recorded_total_increments() {
         let (_reg, h) = fresh();
         h.outcomes_recorded_total
-            .with_label_values(&["tenant_a", "revenue_usd"])
+            .with_label_values(&["revenue_usd"])
             .inc();
         let val = h
             .outcomes_recorded_total
-            .with_label_values(&["tenant_a", "revenue_usd"])
+            .with_label_values(&["revenue_usd"])
             .get();
         assert!(val > 0, "outcomes_recorded_total must be > 0 after inc()");
     }
@@ -590,19 +515,6 @@ mod tests {
             1,
             "outcomes_chain_depth must record one observation"
         );
-    }
-
-    #[test]
-    fn prometheus_rate_limit_hits_total_increments() {
-        let (_reg, h) = fresh();
-        h.rate_limit_hits_total
-            .with_label_values(&["t2", "default", "deny"])
-            .inc();
-        let val = h
-            .rate_limit_hits_total
-            .with_label_values(&["t2", "default", "deny"])
-            .get();
-        assert!(val > 0, "rate_limit_hits_total must be > 0 after inc()");
     }
 
     #[test]
@@ -644,50 +556,6 @@ mod tests {
         assert!(val > 0, "im_messages_total must be > 0 after inc()");
     }
 
-    // Sprint-10 S10-3 — DEC-022 SLO contracts.
-
-    #[test]
-    fn prometheus_slo_burn_rate_set_get() {
-        let (_reg, h) = fresh();
-        h.slo_burn_rate
-            .with_label_values(&["latency", "fast", "/v1/chat/*", ""])
-            .set(14.5);
-        let val = h
-            .slo_burn_rate
-            .with_label_values(&["latency", "fast", "/v1/chat/*", ""])
-            .get();
-        assert!(
-            (val - 14.5).abs() < f64::EPSILON,
-            "slo_burn_rate must read back the value just set, got {val}"
-        );
-    }
-
-    #[test]
-    fn prometheus_slo_burn_rate_tenant_label() {
-        // Per-tenant override series carry a non-empty tenant label.
-        let (_reg, h) = fresh();
-        h.slo_burn_rate
-            .with_label_values(&["errors", "slow", "/v1/sessions/*/messages", "tenant_x"])
-            .set(2.1);
-        let global = h
-            .slo_burn_rate
-            .with_label_values(&["errors", "slow", "/v1/sessions/*/messages", ""])
-            .get();
-        let per_tenant = h
-            .slo_burn_rate
-            .with_label_values(&["errors", "slow", "/v1/sessions/*/messages", "tenant_x"])
-            .get();
-        // Global series should remain at 0 (untouched); per-tenant carries the new value.
-        assert!(
-            (global - 0.0).abs() < f64::EPSILON,
-            "global series must remain 0"
-        );
-        assert!(
-            (per_tenant - 2.1).abs() < f64::EPSILON,
-            "per-tenant series must equal 2.1"
-        );
-    }
-
     // Sprint-12 S12-3 — HOTL suspend/resume telemetry.
 
     #[test]
@@ -724,21 +592,5 @@ mod tests {
         let (_reg, h) = fresh();
         h.hotl_suspension_duration_seconds.observe(2.5);
         assert_eq!(h.hotl_suspension_duration_seconds.get_sample_count(), 1);
-    }
-
-    #[test]
-    fn prometheus_slo_override_parse_failed_total_increments() {
-        let (_reg, h) = fresh();
-        h.slo_override_parse_failed_total
-            .with_label_values(&["tenant_x", "slo_latency_p95_ms"])
-            .inc();
-        let val = h
-            .slo_override_parse_failed_total
-            .with_label_values(&["tenant_x", "slo_latency_p95_ms"])
-            .get();
-        assert_eq!(
-            val, 1,
-            "override-parse-failed counter must record exactly 1"
-        );
     }
 }

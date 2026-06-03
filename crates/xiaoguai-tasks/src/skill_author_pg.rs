@@ -17,7 +17,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 
 use crate::skill_author::{
     ProposalRow, ProposalStatus, SkillAuthorError, SkillManifest, SkillProposalRepository,
@@ -31,9 +31,8 @@ use crate::skill_author::{
 #[derive(sqlx::FromRow)]
 struct ProposalDbRow {
     id: String,
-    tenant_id: String,
     proposed_by: String,
-    manifest_json: JsonValue,
+    manifest_json: sqlx::types::Json<JsonValue>,
     status: String,
     reason: Option<String>,
     created_at: DateTime<Utc>,
@@ -43,14 +42,16 @@ struct ProposalDbRow {
 
 impl ProposalDbRow {
     fn try_into_domain(self) -> Result<ProposalRow, SkillAuthorError> {
-        let manifest: SkillManifest = serde_json::from_value(self.manifest_json)
+        let manifest: SkillManifest = serde_json::from_value(self.manifest_json.0)
             .map_err(|e| SkillAuthorError::Backend(format!("decode manifest_json: {e}")))?;
         let status = ProposalStatus::parse(&self.status).ok_or_else(|| {
             SkillAuthorError::Backend(format!("unknown proposal status {:?}", self.status))
         })?;
         Ok(ProposalRow {
             id: self.id,
-            tenant_id: self.tenant_id,
+            // tenant_id is vestigial under the single-user pivot (no column);
+            // synthesise the owner tenant so the public domain shape is preserved.
+            tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
             proposed_by: self.proposed_by,
             manifest,
             status,
@@ -69,7 +70,11 @@ fn pg_err(e: sqlx::Error) -> SkillAuthorError {
 
 fn is_unique_violation(e: &sqlx::Error) -> bool {
     if let sqlx::Error::Database(db) = e {
-        return db.code().as_deref() == Some("23505");
+        // SQLite extended result codes for UNIQUE/PK constraint violations.
+        if matches!(db.code().as_deref(), Some("2067" | "1555")) {
+            return true;
+        }
+        return db.message().contains("UNIQUE constraint failed");
     }
     false
 }
@@ -81,17 +86,17 @@ fn is_unique_violation(e: &sqlx::Error) -> bool {
 /// Postgres-backed `SkillProposalRepository` against `skill_proposals`.
 #[derive(Debug, Clone)]
 pub struct PgSkillProposalRepository {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgSkillProposalRepository {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
     #[must_use]
-    pub fn arc(pool: PgPool) -> Arc<dyn SkillProposalRepository> {
+    pub fn arc(pool: SqlitePool) -> Arc<dyn SkillProposalRepository> {
         Arc::new(Self::new(pool))
     }
 }
@@ -105,17 +110,16 @@ impl SkillProposalRepository for PgSkillProposalRepository {
         let description = row.manifest.description.clone();
         let result = sqlx::query(
             "INSERT INTO skill_proposals \
-                (id, tenant_id, proposed_by, name, description, version, \
+                (id, proposed_by, name, description, version, \
                  manifest_json, status, reason, created_at, decided_at, decided_by) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&row.id)
-        .bind(&row.tenant_id)
         .bind(&row.proposed_by)
         .bind(&row.manifest.name)
         .bind(&description)
         .bind(&row.manifest.version)
-        .bind(&manifest_json)
+        .bind(sqlx::types::Json(&manifest_json))
         .bind(status_str)
         .bind(row.reason.as_deref())
         .bind(row.created_at)
@@ -133,10 +137,10 @@ impl SkillProposalRepository for PgSkillProposalRepository {
 
     async fn get(&self, id: &str) -> Result<Option<ProposalRow>, SkillAuthorError> {
         let row: Option<ProposalDbRow> = sqlx::query_as(
-            "SELECT id, tenant_id, proposed_by, manifest_json, status, reason, \
+            "SELECT id, proposed_by, manifest_json, status, reason, \
                     created_at, decided_at, decided_by \
              FROM skill_proposals \
-             WHERE id = $1",
+             WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -150,27 +154,25 @@ impl SkillProposalRepository for PgSkillProposalRepository {
         tenant_id: &str,
         status: Option<ProposalStatus>,
     ) -> Result<Vec<ProposalRow>, SkillAuthorError> {
+        let _ = tenant_id; // vestigial under single-user pivot
         let rows: Vec<ProposalDbRow> = if let Some(s) = status {
             sqlx::query_as(
-                "SELECT id, tenant_id, proposed_by, manifest_json, status, reason, \
+                "SELECT id, proposed_by, manifest_json, status, reason, \
                         created_at, decided_at, decided_by \
                  FROM skill_proposals \
-                 WHERE tenant_id = $1 AND status = $2 \
+                 WHERE status = ? \
                  ORDER BY created_at DESC",
             )
-            .bind(tenant_id)
             .bind(s.as_str())
             .fetch_all(&self.pool)
             .await
         } else {
             sqlx::query_as(
-                "SELECT id, tenant_id, proposed_by, manifest_json, status, reason, \
+                "SELECT id, proposed_by, manifest_json, status, reason, \
                         created_at, decided_at, decided_by \
                  FROM skill_proposals \
-                 WHERE tenant_id = $1 \
                  ORDER BY created_at DESC",
             )
-            .bind(tenant_id)
             .fetch_all(&self.pool)
             .await
         }
@@ -191,10 +193,10 @@ impl SkillProposalRepository for PgSkillProposalRepository {
         let now = Utc::now();
         let updated: Option<ProposalDbRow> = sqlx::query_as(
             "UPDATE skill_proposals \
-             SET status = $2, decided_by = $3, decided_at = $4, \
-                 reason = COALESCE($5, reason) \
-             WHERE id = $1 \
-             RETURNING id, tenant_id, proposed_by, manifest_json, status, reason, \
+             SET status = ?2, decided_by = ?3, decided_at = ?4, \
+                 reason = COALESCE(?5, reason) \
+             WHERE id = ?1 \
+             RETURNING id, proposed_by, manifest_json, status, reason, \
                        created_at, decided_at, decided_by",
         )
         .bind(id)
@@ -219,17 +221,17 @@ impl SkillProposalRepository for PgSkillProposalRepository {
 /// Postgres-backed `TenantSettingsReader` against `tenant_settings`.
 #[derive(Debug, Clone)]
 pub struct PgTenantSettings {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl PgTenantSettings {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
     #[must_use]
-    pub fn arc(pool: PgPool) -> Arc<dyn TenantSettingsReader> {
+    pub fn arc(pool: SqlitePool) -> Arc<dyn TenantSettingsReader> {
         Arc::new(Self::new(pool))
     }
 }
@@ -242,12 +244,12 @@ impl TenantSettingsReader for PgTenantSettings {
         // `'true'` is the only enabling value (case-sensitive). Any other
         // text (including `'false'`, `'1'`, anything malformed) maps to
         // disabled — fail-closed.
+        let _ = tenant_id; // vestigial under single-user pivot
         let val: Option<String> = sqlx::query_scalar(
-            "SELECT settings->>'allow_skill_authoring' \
+            "SELECT json_extract(settings, '$.allow_skill_authoring') \
              FROM tenant_settings \
-             WHERE tenant_id = $1",
+             LIMIT 1",
         )
-        .bind(tenant_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(pg_err)?
@@ -262,12 +264,12 @@ impl TenantSettingsReader for PgTenantSettings {
         // DEC-019: `settings->>'sandbox_tier'` is parsed lenient (case
         // insensitive, "L3" → L3, anything else → L1). Missing row /
         // missing key → L1 (safe default per PHILO §14).
+        let _ = tenant_id; // vestigial under single-user pivot
         let val: Option<String> = sqlx::query_scalar(
-            "SELECT settings->>'sandbox_tier' \
+            "SELECT json_extract(settings, '$.sandbox_tier') \
              FROM tenant_settings \
-             WHERE tenant_id = $1",
+             LIMIT 1",
         )
-        .bind(tenant_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(pg_err)?
@@ -281,7 +283,7 @@ impl TenantSettingsReader for PgTenantSettings {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — gated on a live PG instance
+// Tests — embedded SQLite (single-user pivot, DEC-033)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -290,10 +292,17 @@ mod tests {
     use crate::skill_author::SkillManifest;
     use uuid::Uuid;
 
-    async fn pg_pool() -> PgPool {
-        let url = std::env::var("DATABASE_URL")
-            .expect("DATABASE_URL must be set for skill_author_pg tests");
-        PgPool::connect(&url).await.expect("pg connect")
+    /// Open a fresh migrated temp-file `SQLite` pool. Returns the pool plus the
+    /// `TempDir` guard, which the caller must keep alive for the test's
+    /// duration (dropping it deletes the database file).
+    async fn sqlite_pool() -> (SqlitePool, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        let pool = xiaoguai_storage::db::connect(path.to_str().unwrap(), 5)
+            .await
+            .unwrap();
+        xiaoguai_storage::db::migrate(&pool).await.unwrap();
+        (pool, dir)
     }
 
     fn manifest(name: &str) -> SkillManifest {
@@ -321,9 +330,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
     async fn skill_author_pg_insert_get_list_set_status() {
-        let pool = pg_pool().await;
+        let (pool, _dir) = sqlite_pool().await;
         let repo = PgSkillProposalRepository::new(pool);
         let tid = Uuid::new_v4().to_string();
         let inserted = repo.insert(row(&tid, "test-skill")).await.unwrap();
@@ -348,9 +356,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
     async fn skill_author_pg_duplicate_returns_duplicate() {
-        let pool = pg_pool().await;
+        let (pool, _dir) = sqlite_pool().await;
         let repo = PgSkillProposalRepository::new(pool);
         let tid = Uuid::new_v4().to_string();
         let r1 = row(&tid, "dup-skill");
@@ -364,23 +371,21 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
     async fn tenant_settings_reader_returns_false_when_unset() {
-        let pool = pg_pool().await;
+        let (pool, _dir) = sqlite_pool().await;
         let settings = PgTenantSettings::new(pool);
         let unknown = Uuid::new_v4().to_string();
         assert!(!settings.allow_skill_authoring(&unknown).await.unwrap());
     }
 
     #[tokio::test]
-    #[ignore = "requires live PG; run with DATABASE_URL set"]
     async fn tenant_settings_reader_returns_true_after_upsert() {
-        let pool = pg_pool().await;
+        let (pool, _dir) = sqlite_pool().await;
         let settings = PgTenantSettings::new(pool.clone());
         let tid = Uuid::new_v4().to_string();
         sqlx::query(
             "INSERT INTO tenant_settings (tenant_id, settings) \
-             VALUES ($1, $2::jsonb) \
+             VALUES (?, ?) \
              ON CONFLICT (tenant_id) DO UPDATE SET settings = EXCLUDED.settings",
         )
         .bind(&tid)

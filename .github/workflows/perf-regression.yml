@@ -25,8 +25,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  DATABASE_URL: postgres://postgres:dev@localhost/xiaoguai
-  RATE_LIMIT_BACKEND: redis
 
 jobs:
   perf-test:
@@ -34,29 +32,7 @@ jobs:
     runs-on: ubuntu-latest-4-cores  # beefier runner for stable perf numbers
     timeout-minutes: 45
 
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: dev
-          POSTGRES_DB: xiaoguai
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    # DEC-033: embedded SQLite + in-process cache — no postgres/redis services.
 
     steps:
       # -----------------------------------------------------------------------
@@ -78,26 +54,12 @@ jobs:
         run: cargo build --release -p xiaoguai-core
 
       # -----------------------------------------------------------------------
-      # 3. Apply database migrations
+      # 3. Start xiaoguai-core in the background
       # -----------------------------------------------------------------------
-      - name: Apply migrations
-        env:
-          PGPASSWORD: dev
-        run: |
-          for f in crates/xiaoguai-storage/migrations/*.sql; do
-            echo "Applying $f"
-            psql -h localhost -U postgres -d xiaoguai -f "$f"
-          done
-
-      # -----------------------------------------------------------------------
-      # 4. Start xiaoguai-core in the background
-      # -----------------------------------------------------------------------
+      # Embedded SQLite (DEC-033) applies all migrations on first boot — no
+      # separate migration step, no external datastore.
       - name: Start xiaoguai-core
         run: ./target/release/xiaoguai-core &
-        env:
-          DATABASE_URL: ${{ env.DATABASE_URL }}
-          RATE_LIMIT_BACKEND: ${{ env.RATE_LIMIT_BACKEND }}
-          REDIS_URL: redis://localhost:6379
 
       - name: Wait for /healthz
         run: |
