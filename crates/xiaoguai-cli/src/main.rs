@@ -616,7 +616,9 @@ enum RemoteCmd {
     Chat {
         #[arg(long)]
         user_id: String,
-        #[arg(long)]
+        /// Vestigial under the single-owner pivot (DEC-033) — the server
+        /// ignores it. Kept as an optional flag for back-compat.
+        #[arg(long, default_value = "")]
         tenant_id: String,
         #[arg(long, default_value = "qwen2.5-coder")]
         model: String,
