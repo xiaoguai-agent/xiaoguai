@@ -18,7 +18,10 @@ CREATE TABLE user_roles (
 
 CREATE TABLE sessions (
     id              TEXT PRIMARY KEY,
-    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- DEC-033 single-user: `user_id` is a free-form chatter label, not a
+    -- provisioned account. The REST/web-chat flow does not create `users`
+    -- rows (only the IM gateway does), so there is no FK to users(id).
+    user_id         TEXT NOT NULL,
     title           TEXT,
     model           TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'active',
