@@ -8577,7 +8577,6 @@ dependencies = [
  "prometheus",
  "prometheus-parse",
  "serde",
- "serde_yaml",
  "thiserror 2.0.18",
  "tokio",
  "tower 0.5.3",

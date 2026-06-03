@@ -1,5 +1,5 @@
 //! Convenience macros that emit both a `tracing` span and a Prometheus
-//! histogram observation for LLM calls and HTTP requests.
+//! histogram observation for LLM calls and scheduler ticks.
 //!
 //! # Why macros instead of functions?
 //!
@@ -11,16 +11,11 @@
 //! # Examples
 //!
 //! ```rust,ignore
-//! use xiaoguai_observability::{instrument_llm_call, instrument_http_request};
+//! use xiaoguai_observability::instrument_llm_call;
 //!
 //! // Instrument an LLM call — records span + histogram.
 //! let result = instrument_llm_call!("ollama", "qwen2.5", async {
 //!     backend.chat(&messages).await
-//! });
-//!
-//! // Instrument an HTTP handler — records span + histogram.
-//! let resp = instrument_http_request!("GET", "/v1/sessions", "200", async {
-//!     handler(req).await
 //! });
 //! ```
 
@@ -44,32 +39,6 @@ macro_rules! instrument_llm_call {
             __handles
                 .llm_call_duration
                 .with_label_values(&[$provider, $model])
-                .observe(__elapsed);
-        }
-        __result
-    }};
-}
-
-/// Record an HTTP request with `tracing` + Prometheus.
-///
-/// Parameters: `method`, `path`, `status` (all `&str`), async block.
-#[macro_export]
-macro_rules! instrument_http_request {
-    ($method:expr, $path:expr, $status:expr, $fut:expr) => {{
-        let _span = tracing::info_span!(
-            "http.request",
-            http.method = $method,
-            http.target = $path,
-            http.status_code = $status,
-        )
-        .entered();
-        let __t0 = std::time::Instant::now();
-        let __result = $fut.await;
-        let __elapsed = __t0.elapsed().as_secs_f64();
-        if let Some(__handles) = $crate::prometheus::global_handles() {
-            __handles
-                .http_request_duration
-                .with_label_values(&[$method, $path, $status])
                 .observe(__elapsed);
         }
         __result
