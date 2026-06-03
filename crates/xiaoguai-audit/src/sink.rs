@@ -1,7 +1,7 @@
-//! SQLite persistence sink for the HMAC-chained audit log.
+//! `SQLite` persistence sink for the HMAC-chained audit log.
 //!
 //! `append()` is atomic via a transaction over the latest row — this serializes
-//! appends for the single-user owner chain. SQLite's write transaction already
+//! appends for the single-user owner chain. `SQLite`'s write transaction already
 //! provides the exclusive lock that Postgres' `SELECT ... FOR UPDATE` gave us.
 //!
 //! Schema is provided by `xiaoguai-storage/migrations/0002_audit.sql`
@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 
 /// Single-user owner chain identity. The audit `tenant_id` column was dropped in
-/// the SQLite pivot; the HMAC chain still signs over a `tenant_id` field, so we
+/// the `SQLite` pivot; the HMAC chain still signs over a `tenant_id` field, so we
 /// synthesize this fixed owner id on read to keep `verify_chain` valid.
 const OWNER_TENANT_ID: &str = "ten_local_owner";
 
@@ -73,7 +73,7 @@ impl PgAuditSink {
     ///
     /// Reads the latest row's `hmac`, computes the new `hmac`, and inserts.
     /// The whole sequence runs inside a single transaction so concurrent
-    /// appends serialize correctly (SQLite's write lock provides the exclusion
+    /// appends serialize correctly (`SQLite`'s write lock provides the exclusion
     /// that Postgres' `SELECT ... FOR UPDATE` used to).
     pub async fn append(&self, entry: AuditEntry) -> Result<StoredEntry, ChainError> {
         // Redact PII/secrets before signing so the stored row and its HMAC are

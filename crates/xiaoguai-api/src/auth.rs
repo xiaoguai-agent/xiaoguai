@@ -1,6 +1,6 @@
 //! Request authentication layer.
 //!
-//! Under the single-user SQLite pivot (DEC-033) authentication collapses to
+//! Under the single-user `SQLite` pivot (DEC-033) authentication collapses to
 //! a single static **owner** identity. There is no OIDC, no Casbin, no
 //! roles, no scopes, no tenants — every authenticated request is the owner.
 //!

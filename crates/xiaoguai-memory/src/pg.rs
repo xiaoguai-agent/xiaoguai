@@ -1,4 +1,4 @@
-//! Embedded SQLite memory store (single-user, DEC-033).
+//! Embedded `SQLite` memory store (single-user, DEC-033).
 //!
 //! ## Migration
 //!

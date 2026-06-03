@@ -1,82 +1,186 @@
 # Operator runbook
 
-Day-2 procedures for Xiaoguai v1.0 deployments. Each procedure is short
-on prose and long on copy-paste commands; tune to your cluster as
-needed.
+Day-2 procedures for a Xiaoguai single-binary deployment (DEC-033).
+Each procedure is short on prose and long on copy-paste commands; tune to
+your host as needed.
+
+Xiaoguai now ships as **one self-contained Rust binary** backed by an
+**embedded SQLite database file** — there is no Postgres, no Valkey/Redis,
+no Kubernetes, and no external datastore to operate. The cache is
+in-process. State lives in a single file:
+
+```
+$XDG_DATA_HOME/xiaoguai/data.db    # when XDG_DATA_HOME is set
+~/.xiaoguai/data.db                # otherwise (the systemd service user's home)
+```
+
+Under the packaged systemd unit the service user is `xiaoguai` and its
+state lives beneath `/var/lib/xiaoguai`. There is **one implicit owner**
+— no tenants, no multi-tenancy. Access (when you turn it on) is a single
+static username + password over HTTP Basic.
 
 ## Bring-up
 
-Helm-based:
+Bare-metal / systemd, from a release tarball (`.deb`/`.rpm` follow the
+same shape):
 
 ```bash
-helm install xiaoguai deploy/helm/xiaoguai \
-  --create-namespace --namespace xiaoguai \
-  --set image.tag=v1.0.0 \
-  --values your-values.yaml
+curl -LO https://github.com/xiaoguai-agent/xiaoguai/releases/download/vX.Y.Z/xiaoguai-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf xiaoguai-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
+cd xiaoguai-vX.Y.Z-x86_64-unknown-linux-gnu
+
+sudo bash scripts/install.sh                       # provisions the xiaoguai system user + unit
+sudo cp /etc/xiaoguai/config.example.yaml /etc/xiaoguai/config.yaml
+sudo $EDITOR /etc/xiaoguai/config.yaml             # set auth + audit hmac (see below)
+sudo systemctl enable --now xiaoguai-core
 ```
 
-`your-values.yaml` must reference four pre-created Secrets — see
-`deploy/helm/xiaoguai/values.yaml` for the keys each must contain.
+The unit is `xiaoguai-core.service`; its `ExecStart` is
+`/usr/local/bin/xiaoguai serve --config /etc/xiaoguai/config.yaml`.
+There are no Secrets to pre-create — credentials go in env vars or a
+drop-in (see "Configuration & secrets"). For a throwaway localhost run
+you can skip the unit entirely:
+
+```bash
+xiaoguai serve        # creates ~/.xiaoguai/data.db on first boot, runs open
+```
+
+Docker Compose users run the single service:
+
+```bash
+docker compose up -d xiaoguai      # one service; the SQLite file lives on a mounted volume
+```
+
+## Configuration & secrets
+
+Config is a single YAML file (`/etc/xiaoguai/config.yaml` under systemd)
+plus environment overrides. Every key has an `XIAOGUAI_<SECTION>__<KEY>`
+env form. Keep credentials in env / a `.env` / a drop-in — **never** in a
+checked-in config file.
+
+```yaml
+# /etc/xiaoguai/config.yaml
+auth:
+  username: owner          # empty username OR password = auth disabled (open)
+  password: ""             # leave empty here; set via env below
+audit:
+  hmac_key: dev-only-change-me     # dev/smoke only
+  signing_key_env: XIAOGUAI_AUDIT_SIGNING_KEY   # prod key read from this env var
+```
+
+```bash
+# systemd drop-in: /etc/systemd/system/xiaoguai-core.service.d/override.conf
+[Service]
+Environment="XIAOGUAI_AUTH__USERNAME=owner"
+Environment="XIAOGUAI_AUTH__PASSWORD=<owner-password>"
+Environment="XIAOGUAI_AUDIT_SIGNING_KEY=<32+ byte hex>"
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart xiaoguai-core
+```
+
+**Auth is a single static owner over HTTP Basic.** When both
+`auth.username` and `auth.password` are non-empty, every non-public route
+requires `-u "$XIAOGUAI_USER:$XIAOGUAI_PASS"`. When either is empty the
+gate is **disabled** and the server runs open — fine on `localhost`, but
+front it with a credential (or a reverse proxy) before binding a routable
+address. `/healthz` is always public. There is no OIDC, no JWT, no
+Casbin, no RBAC, and no scopes.
 
 ## Migrations
 
-The binary runs `xiaoguai-storage::migrations` on startup. To inspect
-the applied state:
+Migrations are embedded in the binary and applied **automatically on
+boot** (`sqlx::migrate!` against the SQLite file). There is nothing to
+run by hand. To confirm the server can open the store and pass its
+bootstrap checks:
 
 ```bash
-kubectl exec -it deploy/xiaoguai -- /usr/local/bin/xiaoguai-core smoke
+xiaoguai smoke        # exits 0 on success, non-zero on any failure
 ```
 
-`smoke` connects to every dependency and exits non-zero on failure.
+To inspect the applied migration state directly:
+
+```bash
+sqlite3 ~/.xiaoguai/data.db \
+  "SELECT version, description, success FROM _sqlx_migrations ORDER BY version;"
+```
 
 ## Rotating the audit HMAC key
 
+The chain is signed with the key named by `audit.signing_key_env`
+(default `XIAOGUAI_AUDIT_SIGNING_KEY`). Rotation:
+
 ```bash
-# 1. Export the chain end-pointer:
-kubectl exec deploy/xiaoguai -- xiaoguai admin audit head > prev.json
+# 1. Snapshot the DB first (so you can fall back if rotation goes wrong):
+xiaoguai backup --out /var/backups/xiaoguai-pre-rotate.tar.gz
 
-# 2. Create the new secret:
-kubectl create secret generic xiaoguai-audit-next \
-  --from-literal=hmac_key="$(openssl rand -hex 32)"
+# 2. Generate the new key and set it in the drop-in (keep the old value
+#    commented nearby for the verification window):
+openssl rand -hex 32
 
-# 3. Rolling upgrade with the new secret name:
-helm upgrade xiaoguai deploy/helm/xiaoguai \
-  --set secrets.audit=xiaoguai-audit-next \
-  --reuse-values
+# /etc/systemd/system/xiaoguai-core.service.d/override.conf
+#   Environment="XIAOGUAI_AUDIT_SIGNING_KEY=<new-hex>"
 
-# 4. Keep both secrets around for the verification window
-#    (recommended: 30 days). The audit verifier accepts entries signed
-#    by either key during that window.
+# 3. Reload and restart:
+sudo systemctl daemon-reload && sudo systemctl restart xiaoguai-core
 ```
+
+Rows signed with the previous key still verify only while that key is
+available to the verifier. Keep the old key for your verification window
+(recommended: 30 days). Cutting the window short before the verifier has
+re-baselined regresses verification — see the audit-chain section.
 
 ## Disaster recovery
 
-| Scenario                                | Procedure                                                                |
-|-----------------------------------------|--------------------------------------------------------------------------|
-| Postgres lost                           | Restore latest backup → run `xiaoguai-core smoke` → roll pods.            |
-| Valkey lost                             | Cache; restart pods. No data loss.                                       |
-| Tenant data leak suspected              | `xiaoguai admin audit verify --tenant <id>` — chain inconsistency = tamper. |
-| Image registry compromised              | `cosign verify ...` before redeploy; revoke + re-sign latest tag.         |
+There is exactly one piece of durable state: `data.db`. Recovery is
+"restore the most recent snapshot of that file".
+
+| Scenario                       | Procedure                                                                                     |
+|--------------------------------|-----------------------------------------------------------------------------------------------|
+| `data.db` lost / corrupted     | Restore the latest `xiaoguai backup` snapshot (see below) → `xiaoguai smoke` → start the unit. |
+| In-process cache "lost"        | Nothing to do — the cache is in-process. A `systemctl restart xiaoguai-core` rebuilds it; no data loss. |
+| Data tamper suspected          | `xiaoguai audit export …` verifies the chain in-window; a verify failure (409) = tampered chain. See "Audit chain". |
+| Binary integrity in doubt      | `cosign verify …` the release artifact before reinstalling; re-pull the signed tarball.        |
+
+Restore writes `data.db` atomically (the live file is saved as
+`<path>.bak` first):
+
+```bash
+sudo systemctl stop xiaoguai-core
+xiaoguai restore --in /var/backups/xiaoguai-2026-06-03.tar.gz \
+  --restore-db ~/.xiaoguai/data.db --force
+sudo systemctl start xiaoguai-core
+```
+
+`xiaoguai backup` produces a `.tar.gz` (optionally age-encrypted with
+`--encrypt <pubkey>`) containing the SQLite snapshot + config; schedule
+it from cron / a systemd timer.
 
 ## Observability quick refs
 
-| Channel          | Endpoint                            | Notes                                  |
-|------------------|-------------------------------------|----------------------------------------|
-| Liveness         | `GET /healthz`                      | Always 200 when the process is healthy. |
-| Metrics          | `GET /metrics` (v0.6.1)             | Prometheus exposition.                  |
-| Logs             | `stdout`                            | JSON, structured via `tracing-subscriber`. |
-| Audit            | `audit_log` table                   | HMAC-chained.                           |
+| Channel    | Endpoint / location              | Notes                                                                 |
+|------------|----------------------------------|-----------------------------------------------------------------------|
+| Liveness   | `GET /healthz`                   | Always 200 when the process is healthy; public (no auth).             |
+| Metrics    | `GET /metrics`                   | **Opt-in.** Prometheus exposition only when built with the `observability` cargo feature (off by default). OTLP export is gated the same way. |
+| Logs       | `stdout` / `journalctl -u xiaoguai-core` | JSON, structured via `tracing-subscriber`.                            |
+| Audit      | `audit_log` table in `data.db`   | HMAC-chained, append-only.                                            |
+
+The default release build does **not** expose `/metrics` or emit OTLP. If
+you need them, deploy a build with `--features observability`; otherwise
+those references do not apply.
 
 ## Killing a runaway session
 
 ```bash
-curl -X POST http://xiaoguai-core.svc:8080/v1/sessions/<sess-id>/cancel \
-  -H 'authorization: Bearer <operator-jwt>'
+curl -X POST http://localhost:8080/v1/sessions/<sess-id>/cancel \
+  -u "$XIAOGUAI_USER:$XIAOGUAI_PASS"
 ```
 
-The agent loop polls the registry token between iterations + before each
-fanout, so cancellation latency is bounded by the slowest in-flight tool
-call.
+(Drop the `-u` flag if you run with auth disabled.) The agent loop polls
+the cancellation flag between iterations and before each fanout, so
+cancellation latency is bounded by the slowest in-flight tool call.
 
 ## On-call escalation matrix
 
@@ -85,15 +189,13 @@ URLs here.)
 
 ## Scheduler operations
 
-Added in v1.0.1 to cover everything that landed in the v0.10.x →
-v0.12.x band.
+Covers the reactive + scheduled job machinery.
 
 ### Scheduler overview
 
-The scheduler is `xiaoguai_scheduler::JobRunner`, owned by
-`xiaoguai-core` and spawned on a dedicated tokio task when
-`[scheduler].enabled = true`. It drives two arms inside a single
-`tokio::select!`:
+The scheduler is `xiaoguai_scheduler::JobRunner`, owned by the serving
+binary and spawned on a dedicated tokio task when `[scheduler].enabled =
+true`. It drives two arms inside a single `tokio::select!`:
 
 | Arm                | What it does                                                                                  |
 |--------------------|-----------------------------------------------------------------------------------------------|
@@ -126,12 +228,12 @@ Four push sinks live in `xiaoguai_scheduler::sinks`:
 | `Feishu`   | Reuses `xiaoguai-im-feishu::FeishuClient` + `TokenCache` | `[scheduler.sinks.feishu]`   | Renders proactive fires with a `【主动推送】<reason>` prefix.           |
 | `Telegram` | `POST <base>/bot<token>/sendMessage`            | `[scheduler.sinks.telegram]`  | Renders proactive fires with a `🔔` bell prefix.                      |
 | `Email`    | JSON webhook to your relay                      | `[scheduler.sinks.email]`     | No SMTP. Body includes `{ to, from, subject, body, payload }`.       |
-| `Inbox`    | In-memory FIFO drained by the v0.11.1 Today pane | `[scheduler.sinks.inbox]`     | At-most-once across server restarts; persistence is a v0.12.x.1 item. |
+| `Inbox`    | In-memory FIFO drained by the Today pane         | `[scheduler.sinks.inbox]`     | At-most-once across server restarts; persistence is a follow-up item. |
 
-All sinks enforce the reason-required rule from roadmap §5.5: a
-payload with `is_proactive = true` and `reason` empty is refused
-**at the sink edge** with `SinkError::Invalid("reason required")`
-before any network call happens.
+All sinks enforce the reason-required rule: a payload with
+`is_proactive = true` and `reason` empty is refused **at the sink edge**
+with `SinkError::Invalid("reason required")` before any network call
+happens.
 
 ### Enabling the scheduler
 
@@ -153,37 +255,33 @@ export XIAOGUAI_SCHEDULER__TICK_INTERVAL_SECS=30
 
 What gets spawned at boot when `enabled = true`:
 
-- `PgJobRepository` + `PgJobRunRepository` over the existing PG pool.
+- The job + job-run repositories over the shared `SQLite` pool.
 - `RuntimeJobExecutor` wrapping the shared `xiaoguai_runtime::RuntimeContext`.
-- `PgScheduledSessionWriter` (v0.12.1) so every scheduled run pins a
-  `session_id` for the audit-first console to drill into.
-- `PgSchedulerAuditAppender` adapter over the existing `PgAuditSink`
-  so scheduler audit rows join the same HMAC chain as REST + IM rows.
+- A scheduled-session writer so every scheduled run pins a `session_id`
+  for the audit-first console to drill into.
+- A scheduler audit appender so scheduler audit rows join the same HMAC
+  chain as REST + IM rows.
 - `WebhookSource` (always when scheduler is on).
 - `FileWatchSource` (only when `[scheduler.file_watch].enabled = true`).
 - `tokio::spawn(JobRunner::run_loop(rx, Some(30s)))`.
 
-Migration check — the scheduler tables ship in
-`0007_scheduled_jobs.sql` (added in v0.10.0). Confirm the migration
-applied:
+Migration check — the scheduler tables ship in `0007_scheduled_jobs.sql`.
+Migrations apply on boot, so confirm by querying the file:
 
 ```bash
-kubectl exec deploy/xiaoguai -- /usr/local/bin/xiaoguai-core smoke
-# ...or directly:
-kubectl exec deploy/xiaoguai -- psql "$DATABASE_URL" -c \
-  "SELECT version, installed_on FROM _sqlx_migrations WHERE version = 7;"
+sqlite3 ~/.xiaoguai/data.db \
+  "SELECT version, description FROM _sqlx_migrations WHERE version = 7;"
 ```
 
-The two tables created are `scheduled_jobs` and `scheduled_job_runs`,
-both RLS-scoped on `tenant_id` with the same `current_setting(
-'app.current_tenant_id', true)` predicate as the rest of v0.6.1's
-tenant-aware tables.
+The two tables created are `scheduled_jobs` and `scheduled_job_runs`
+(JSON columns are `TEXT`; there are no `tenant_id` columns or row-level
+security — this is a single-owner store).
 
 ### Configuring push sinks
 
 Each sink reads its config from `[scheduler.sinks.<name>]`. Fields
 are stored as opaque JSON in `xiaoguai-config` to avoid a
-crate-graph cycle; `xiaoguai-core` deserialises into the typed
+crate-graph cycle; the serving binary deserialises into the typed
 config struct at sink-construction time. Example:
 
 ```yaml
@@ -214,10 +312,9 @@ production secret convention:
 | Email    | none required (the relay handles auth)           | Use a per-environment relay URL behind your VPC if you need transport-level auth.      |
 | Inbox    | none                                             | In-process.                                                                            |
 
-Helm: stash each secret in a Kubernetes Secret + mount via `envFrom`.
-The deployment chart's `values.yaml` already follows this pattern for
-the audit HMAC key (`secrets.audit`); add `secrets.scheduler` the
-same way.
+Under systemd, set these in the unit drop-in
+(`/etc/systemd/system/xiaoguai-core.service.d/override.conf`) alongside
+the auth + audit-key env vars, then `daemon-reload` + `restart`.
 
 To bind a sink to a job, list the sink id in the job's `sinks`
 column:
@@ -237,7 +334,7 @@ Endpoint:
 ```
 POST /v1/admin/scheduler/webhooks/:route_id
 Content-Type: application/json
-Authorization: Bearer <operator-jwt>
+Authorization: Basic <owner-credential>   # omit when auth is disabled
 
 <arbitrary JSON body>
 
@@ -246,25 +343,26 @@ Authorization: Bearer <operator-jwt>
 → 503 Service Unavailable             # WebhookSource not wired (scheduler off)
 ```
 
-Today (v0.12.0–v0.12.2) the route is **admin-bearer-gated** — same
-gate as the rest of `/v1/admin/*`, enforced by the Casbin
-middleware. External integrators (GitHub push events, Slack event
-subscriptions) can't hit it directly without an operator-issued
-admin JWT.
+The route lives under `/v1/admin/*`, so it is gated by the same single
+owner Basic-auth credential as the rest of the API (or open when no
+credential is set). External integrators (GitHub push events, Slack
+event subscriptions) hit it with the owner credential:
 
-**Per-tenant API tokens for this route are deferred to v0.12.x.1.**
-Until that ships, the operational pattern is one of:
+```bash
+curl -X POST http://localhost:8080/v1/admin/scheduler/webhooks/github-push-main \
+  -u "$XIAOGUAI_USER:$XIAOGUAI_PASS" \
+  -H 'content-type: application/json' -d '{"ref":"refs/heads/main"}'
+```
 
-- Front the route with your own reverse-proxy auth that converts a
-  per-tenant token to the admin JWT.
-- Run a tiny adapter inside your cluster that holds the admin JWT
-  and re-publishes whitelisted events.
+If you need to expose the route to third parties without sharing the
+owner credential, front it with your own reverse proxy that injects the
+Basic credential, or run a tiny adapter that re-publishes whitelisted
+events.
 
 To bind a route to a job, create a `ScheduledJob` whose trigger is
 `{"type":"webhook","route_id":"github-push-main"}` and POST your
-external event JSON to
-`/v1/admin/scheduler/webhooks/github-push-main`. The same route id
-can be bound to multiple jobs — every match fires.
+external event JSON to the matching path. The same route id can be bound
+to multiple jobs — every match fires.
 
 ### File-watch source
 
@@ -298,10 +396,10 @@ misconfigured route does not kill the source.
 
 Caveats:
 
-- **Debounce window (v1.1.10+).** The source now uses
-  `notify-debouncer-full` to coalesce bursts of OS events into a
-  single `TriggerEvent` per logical change.  The debounce window
-  defaults to **250 ms** and is controlled by the env var:
+- **Debounce window.** The source uses `notify-debouncer-full` to
+  coalesce bursts of OS events into a single `TriggerEvent` per logical
+  change. The debounce window defaults to **250 ms** and is controlled
+  by the env var:
 
   ```
   FILE_WATCH_DEBOUNCE_MS=250   # integer milliseconds; 0 disables coalescing
@@ -334,27 +432,27 @@ Trigger shape in the JSON `scheduled_jobs.trigger` column:
 }
 ```
 
-Two non-negotiables from roadmap §5.5 are enforced in the runner:
+Two non-negotiables are enforced in the runner:
 
-1. **Per-user-per-day budget**, default 3 fires/day. Configurable via
-   `RunnerOptions::budget_limit_per_user_per_day`; today the operator
-   binary picks `DEFAULT_PROACTIVE_BUDGET_PER_DAY = 3`. Exhausting
-   the budget produces a `scheduler.proactive_denied` audit row so
-   the Today pane can show *why* a tenant stopped getting pings.
+1. **Daily fire budget**, default 3 fires/day. Configurable via
+   `RunnerOptions::budget_limit_per_user_per_day`; today the binary
+   picks `DEFAULT_PROACTIVE_BUDGET_PER_DAY = 3`. Exhausting the budget
+   produces a `scheduler.proactive_denied` audit row so the Today pane
+   can show *why* proactive pings stopped.
 2. **Reason required on push payloads.** The runner threads the
    checker's reason into every audit row and the push payload. The
    four real sinks refuse delivery on `is_proactive = true` +
    `reason` empty before any network call.
 
 **Fail-safe defaults — "no checker installed ⇒ no fires" is
-intentional.** Until v1.1 wires a real cheap-model checker, the
-operator binary leaves `JobRunner::with_proactive_checker(...)`
-unset and proactive jobs tick silently. Same story for the budget
-ledger: missing ledger ⇒ no fires. A misconfigured deployment must
-not be able to bypass the budget by leaving a piece out.
+intentional.** Until a real cheap-model checker is wired, the binary
+leaves `JobRunner::with_proactive_checker(...)` unset and proactive jobs
+tick silently. Same story for the budget ledger: missing ledger ⇒ no
+fires. A misconfigured deployment must not be able to bypass the budget
+by leaving a piece out.
 
 To wire a custom `ProactiveChecker` today, you need a code change in
-the operator binary — the trait is:
+the binary — the trait is:
 
 ```rust
 #[async_trait]
@@ -379,7 +477,7 @@ let runner = JobRunner::new(jobs, runs, executor, audit_appender)
 ```
 
 Exposing the checker as a config knob (so an operator can flip
-backends without recompiling) is a v1.1 item.
+backends without recompiling) is a future item.
 
 ### Audit chain
 
@@ -393,41 +491,51 @@ Every fired attempt — proactive, reactive, or scheduled — writes an
 | `resource` | The job id repeated, for filter consistency with non-scheduler rows |
 | `details`  | JSON merging `{ outcome, attempt, ... }` with any reactive-source detail under `trigger` |
 
-The HMAC chain doesn't distinguish scheduler-actor rows from
-user-actor rows — they're entries in the same per-tenant chain.
+There is **one HMAC chain for the whole instance** (single owner). The
+chain doesn't distinguish scheduler-actor rows from user-actor rows —
+they're entries in the same append-only chain.
 
-Verify with the v0.6.5 endpoint:
+Verify the chain in-window via the compliance export, which runs chain
+verification before rendering and exits non-zero (409) on a break:
 
 ```bash
-curl -s -H "Authorization: Bearer $ADMIN_JWT" \
-  "http://xiaoguai-core.svc:8080/v1/admin/audit/verify?tenant_id=$TENANT"
-# → 200 { "valid": true, "head_sequence": 4711, "head_hmac": "..." }
-# → 200 { "valid": false, "broken_at_sequence": 3392, ... }
+xiaoguai audit export \
+  --framework soc2 \
+  --from 2026-01-01T00:00:00Z --to 2026-06-03T00:00:00Z \
+  --output /tmp/audit-bundle.json
+# → exits 0 + writes the bundle when the chain is intact
+# → exits non-zero (409) with a machine-readable error when the chain is broken
+```
+
+You can also inspect rows directly in the store:
+
+```bash
+sqlite3 ~/.xiaoguai/data.db \
+  "SELECT id, ts, actor, action FROM audit_log ORDER BY id DESC LIMIT 20;"
 ```
 
 **A broken chain means the on-disk `audit_log.hmac` for some row
 doesn't match the recomputed value.** The two common causes:
 
-1. **Operator `DELETE` against `audit_log`.** The most common cause.
-   The chain links each row's HMAC to the previous row's HMAC; a
-   deleted row leaves a gap and every subsequent verify fails. The
-   audit chain is **append-only by design**; never `DELETE` or
-   `UPDATE` rows in `audit_log`. If you need to redact a row,
-   replace its `details` with a tombstone via a follow-up entry and
-   leave the original in place. To prevent PII from reaching the chain
-   in the first place, audit entries are scrubbed (emails, IPv4,
-   `Bearer` tokens, AWS keys) **before** signing — see
+1. **Operator `DELETE`/`UPDATE` against `audit_log`.** The most common
+   cause. The chain links each row's `hmac` to the previous row's
+   `prev_hmac`; a deleted or edited row leaves a gap and every
+   subsequent verify fails. The audit chain is **append-only by
+   design**; never `DELETE` or `UPDATE` rows in `audit_log`. If you need
+   to redact a row, append a tombstone follow-up entry and leave the
+   original in place. PII is scrubbed (emails, IPv4, `Bearer` tokens,
+   AWS keys) **before** signing — see
    [`local-memory-and-redaction.md`](local-memory-and-redaction.md) §3
    (`XIAOGUAI_AUDIT_REDACT_PII`, on by default).
 2. **HMAC key rotation without the verification window.** See the
-   "Rotating the audit HMAC key" section above. During the 30-day
-   window the verifier accepts entries signed by either key; cut the
+   "Rotating the audit HMAC key" section above. While both keys are
+   available the verifier accepts entries signed by either key; cut the
    window short and verifications regress.
 
-Recovery: identify the broken sequence number from the verify
-response, pull the row + the two adjacent rows out of PG, and
-investigate. There is no automated repair — the chain is the source
-of truth.
+Recovery: identify the broken row id from the export error, pull that
+row plus the two adjacent rows out of `data.db`, and investigate. There
+is no automated repair — the chain is the source of truth. If you need
+to discard the break, restore the latest pre-break `xiaoguai backup`.
 
 ### Troubleshooting
 
@@ -438,35 +546,36 @@ Five scenarios from real operational history:
 
 ```bash
 # Find the run row:
-psql "$DATABASE_URL" -c \
+sqlite3 ~/.xiaoguai/data.db \
   "SELECT id, job_id, started_at, attempt FROM scheduled_job_runs
-   WHERE status = 'running' AND started_at < now() - interval '30 minutes';"
+   WHERE status = 'running' AND started_at < datetime('now','-30 minutes');"
 
-# Cancel via the session it pinned (v0.12.1 wired the synthetic session):
-curl -X POST "http://xiaoguai-core.svc:8080/v1/sessions/$SESS_ID/cancel" \
-  -H "Authorization: Bearer $OPERATOR_JWT"
+# Cancel via the session it pinned (every scheduled run pins a session):
+curl -X POST "http://localhost:8080/v1/sessions/$SESS_ID/cancel" \
+  -u "$XIAOGUAI_USER:$XIAOGUAI_PASS"
 ```
 
-If the executor isn't honouring cancellation (e.g. blocked on a
-sync network call), restart the pod; the run row stays `running`
-until manual cleanup. The runner doesn't time-out runs automatically;
-that's a v1.1 item.
+If the executor isn't honouring cancellation (e.g. blocked on a sync
+network call), `systemctl restart xiaoguai-core`; the run row stays
+`running` until manual cleanup. The runner doesn't time-out runs
+automatically; that's a future item.
 
 **2. Runaway proactive budget.** A misconfigured checker fires every
-tick. The budget ledger is in-memory today, keyed on `(user_id, day_utc)`.
+tick. The budget ledger is in-memory today, keyed on `(user_id, day_utc)`
+— for the single owner that's effectively one daily counter.
 
 ```bash
-# Restart the pod to drain the in-memory ledger:
-kubectl rollout restart deploy/xiaoguai
+# Restart the service to drain the in-memory ledger:
+sudo systemctl restart xiaoguai-core
 
 # Then disable the offending job until you've fixed the checker:
-psql "$DATABASE_URL" -c \
-  "UPDATE scheduled_jobs SET enabled = false WHERE id = '$JOB_ID';"
+sqlite3 ~/.xiaoguai/data.db \
+  "UPDATE scheduled_jobs SET enabled = 0 WHERE id = '$JOB_ID';"
 ```
 
-The v0.12.0 PG-backed ledger is deferred; until it ships, a pod
-restart is the drain knob. The `scheduler.proactive_denied` rows in
-`audit_log` tell you which tenant blew the budget.
+A persistent ledger is deferred; until it ships, a service restart is
+the drain knob. The `scheduler.proactive_denied` rows in `audit_log`
+tell you when the budget was blown.
 
 **3. Webhook 404.** `POST /v1/admin/scheduler/webhooks/:route_id`
 returns 404.
@@ -474,39 +583,34 @@ returns 404.
 The route_id has no jobs bound. Verify:
 
 ```bash
-psql "$DATABASE_URL" -c \
+sqlite3 ~/.xiaoguai/data.db \
   "SELECT id, enabled FROM scheduled_jobs
-   WHERE trigger->>'type' = 'webhook'
-     AND trigger->>'route_id' = '$ROUTE_ID';"
+   WHERE json_extract(trigger, '\$.type') = 'webhook'
+     AND json_extract(trigger, '\$.route_id') = '$ROUTE_ID';"
 ```
 
-Common causes: typo in `route_id`, job disabled (`enabled = false`),
-or scheduler off (`[scheduler].enabled = false`) so the
-`WebhookSource` was never wired — in which case you'd get 503
-instead. Note that the route only fires `enabled = true` jobs; a
-disabled job binding still counts but won't fire.
+Common causes: typo in `route_id`, job disabled (`enabled = 0`), or
+scheduler off (`[scheduler].enabled = false`) so the `WebhookSource` was
+never wired — in which case you'd get 503 instead. Note the route only
+fires `enabled = true` jobs; a disabled job binding still counts but
+won't fire.
 
-**4. Audit chain break.** `GET /v1/admin/audit/verify` returns
-`valid: false`.
+**4. Audit chain break.** `xiaoguai audit export` exits non-zero with a
+409 chain-verification error.
 
 ```bash
-# Identify the broken sequence:
-curl -s -H "Authorization: Bearer $ADMIN_JWT" \
-  "http://xiaoguai-core.svc:8080/v1/admin/audit/verify?tenant_id=$TENANT" | jq
-
-# Pull the adjacent rows:
-psql "$DATABASE_URL" -c \
-  "SELECT sequence, actor, action, hmac, prev_hmac FROM audit_log
-   WHERE tenant_id = '$TENANT'
-     AND sequence BETWEEN $BROKEN_AT - 1 AND $BROKEN_AT + 1;"
+# Identify the broken row id from the export error JSON, then pull the
+# adjacent rows out of the store:
+sqlite3 ~/.xiaoguai/data.db \
+  "SELECT id, ts, actor, action, hex(hmac), hex(prev_hmac) FROM audit_log
+   WHERE id BETWEEN $BROKEN_AT - 1 AND $BROKEN_AT + 1;"
 ```
 
-The most common cause is a manual `DELETE` against `audit_log`. The
-second most common is HMAC key rotation that cut the verification
+The most common cause is a manual `DELETE`/`UPDATE` against `audit_log`.
+The second most common is HMAC key rotation that cut the verification
 window short. The chain is append-only and there is no automated
-repair — investigate, decide whether to accept the break (and
-re-baseline the verifier's expected head pointer) or restore from
-backup.
+repair — investigate, then decide whether to accept the break or restore
+the latest pre-break `xiaoguai backup`.
 
 **5. File-watch missing events on macOS.** Events fire for files at
 `/var/notes/...` but the job never runs.
@@ -514,9 +618,7 @@ backup.
 macOS's fsevent backend resolves `/var` to `/private/var`. If the
 job's trigger is configured with the symlinked path (`/var/notes`)
 but the source sees the canonical path (`/private/var/notes`),
-events match nothing. The v0.10.1 integration test canonicalises
-explicitly; the operator-visible knob is: register routes using the
-**canonical path**.
+events match nothing. Register routes using the **canonical path**.
 
 ```bash
 # Confirm the canonical form:
@@ -531,33 +633,33 @@ don't have the redirect.
 
 ## Sessions + IM history operations
 
-The IM gateway (v0.7.x) and the scheduler (v0.12.1) both write into
-`sessions` + `messages`. Two knobs an operator should know:
+The IM gateway and the scheduler both write into `sessions` + `messages`
+in `data.db`. Two knobs an operator should know:
 
-**`[im].use_in_process_history` — escape hatch.** Default `false`.
-When `false`, the IM gateway uses `PgImHistoryStore` so multi-replica
-webhooks stay consistent (any pod can answer any conversation; the
-PG row is the source of truth). When `true`, the gateway keeps the
-v0.7.2 in-process `ConversationHistory` instead.
+**`[im].use_in_process_history` — escape hatch.** Default `false`. When
+`false`, the IM gateway reads/writes conversation history through the
+`SQLite` store (the `data.db` row is the source of truth, so history
+survives restarts). When `true`, the gateway keeps an in-process
+`ConversationHistory` instead — handy for ephemeral debugging, but
+history is then lost on restart.
 
 ```bash
-# Single-replica dev / debug only:
+# Ephemeral dev / debug only — history not persisted:
 export XIAOGUAI_IM__USE_IN_PROCESS_HISTORY=true
 ```
 
-**Never turn this on in production HA deployments.** A second
-replica fielding the same conversation will read empty history and
-re-introduce duplicate turns.
+Because this is a single-instance deployment there is no multi-replica
+consistency concern; the only trade-off is durability across restarts.
 
 **`[im].max_messages_per_conversation` — replay cap.** Default 50.
-The IM history store reads at most this many trailing turns when
-assembling the agent's input — older messages stay in the DB for
-audit but are not replayed into the agent. Bump this for use cases
-where the agent needs a longer per-conversation context window;
-mind the LLM token budget.
+The IM history reader assembles at most this many trailing turns into
+the agent's input — older messages stay in `data.db` for audit but are
+not replayed into the agent. Bump this for use cases where the agent
+needs a longer per-conversation context window; mind the LLM token
+budget.
 
-**Synthetic session per scheduled run (v0.12.1).** Every fired
-`ScheduledJob` writes a `sessions` row with:
+**Synthetic session per scheduled run.** Every fired `ScheduledJob`
+writes a `sessions` row with:
 
 | Field        | Value                                            |
 |--------------|--------------------------------------------------|
@@ -565,13 +667,13 @@ mind the LLM token budget.
 | `user_id`    | `scheduler:<job_id>` — stable, prefix-recognisable.          |
 | `title`      | `scheduled: <job.name>`                                       |
 | `model`      | `job.payload.model` (falls back to `"scheduler"`).            |
-| `status`     | `Active`                                                       |
+| `status`     | `active`                                                      |
 
-The `PgScheduledSessionWriter` runs **after** the runtime completes,
-so a writer failure can't cancel an already-completed agent run —
-the LLM work isn't wasted. The audit-first console (v0.11.1) joins
-`scheduled_job_runs.session_id → sessions.id → messages` to drill
-from a scheduled-run row into the chat-style transcript.
+The scheduled-session writer runs **after** the runtime completes, so a
+writer failure can't cancel an already-completed agent run — the LLM
+work isn't wasted. The audit-first console joins
+`scheduled_job_runs.session_id → sessions.id → messages` to drill from a
+scheduled-run row into the chat-style transcript.
 
 Filter scheduler-driven sessions out of regular chat-ui listings by
 the `scheduler:` user_id prefix:
@@ -585,12 +687,6 @@ Inversely, find every session for a specific job:
 ```sql
 SELECT s.id, s.created_at, s.title
 FROM sessions s
-WHERE s.user_id = 'scheduler:' || $1   -- $1 = job id
+WHERE s.user_id = 'scheduler:' || ?   -- bind the job id
 ORDER BY s.created_at DESC;
 ```
-
-If a scheduled job's `tenant_id` is `NULL` the writer bails with a
-clear error and the job-run row's `error_message` carries it — RLS
-gives no useful behaviour for null-tenant sessions and the
-audit-first console can't surface them. Bind scheduled jobs to a
-tenant.

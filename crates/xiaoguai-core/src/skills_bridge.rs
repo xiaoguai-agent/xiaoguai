@@ -39,7 +39,7 @@ fn pg_err(e: sqlx::Error) -> SkillPackError {
     SkillPackError::Backend(e.to_string())
 }
 
-/// Detect a SQLite `UNIQUE constraint failed` violation.
+/// Detect a `SQLite` `UNIQUE constraint failed` violation.
 fn is_unique_violation(e: &sqlx::Error) -> bool {
     if let sqlx::Error::Database(db) = e {
         return db.message().contains("UNIQUE constraint failed");

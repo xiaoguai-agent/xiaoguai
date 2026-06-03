@@ -1,15 +1,16 @@
-# Per-environment setup playbook — wave-3
+# Per-environment setup playbook
 
-Covers bringing up Xiaoguai with the wave-3 feature set (HotL, outcomes
-recording, rate limiting, skill packs, observability, anomaly detection)
-in **dev**, **staging**, and **prod**. Rust source is not touched here;
-for source-level build steps see `docs/runbooks/k8s-helm.md` and
-`deploy/README.md`.
+Covers bringing up Xiaoguai in **dev**, **staging**, and **prod**. After the
+single-user SQLite pivot (DEC-033) Xiaoguai is a single self-contained Rust
+binary with an embedded SQLite database file — there is no Postgres, no
+Redis/Valkey, and no other external datastore. Each person runs their own
+instance reachable over their own URL. Rust source is not touched here; for
+source-level build steps see `deploy/README.md`.
 
 Adjacent runbooks referenced throughout:
-- `docs/runbooks/observability.md` — OTLP / Prometheus detail
-- `docs/runbooks/k8s-helm.md` — full Helm values reference
-- `docs/runbooks/ha.md` — HA topology day-2 ops
+- `docs/runbooks/cache-fallback.md` — the in-process cache (no external cache)
+- `docs/runbooks/slo.md` — latency / error objectives
+- `docs/runbooks/disaster-recovery-wave3.md` — backup / restore of `data.db`
 - `docs/runbooks/hotl-escalation-stuck.md` — HotL troubleshooting
 - `docs/runbooks/pack-install-troubleshoot.md` — skill pack diagnostics
 - `docs/runbooks/outcome-chain-debug.md` — outcomes chain debug
@@ -32,287 +33,260 @@ Adjacent runbooks referenced throughout:
 | Tool | Version |
 |------|---------|
 | rustup / Rust toolchain | 1.91+ (`rust-toolchain.toml` pins the exact version) |
-| pnpm | ≥ 9 |
-| Docker + Compose plugin | v2.x (`docker compose version` must work) |
-| PostgreSQL client (`psql`) | ≥ 15 (or use the compose container) |
-| helm | ≥ 3.12 (optional — only if testing the chart locally) |
+| pnpm | ≥ 9 (only if building the web UI) |
+
+No database server, cache server, or container runtime is required — the
+binary embeds SQLite and the cache runs in-process. Docker Compose is
+optional and only bundles the single binary for convenience.
 
 ### Bring up the stack
 
-The canonical compose file lives at `deploy/docker-compose.yml`.
-Wave-3 add-ons (Redis, otel-collector, Prometheus, Grafana) are tracked
-on branch `chore/compose-wave3` and may not yet be merged to main.
-Until they land, apply the wave-3 override explicitly:
+The simplest path is to run the binary directly:
 
 ```bash
-# If chore/compose-wave3 is merged into your local main:
-docker compose -f deploy/docker-compose.yml up -d
-
-# If the wave-3 branch is not yet on main, cherry-pick the override:
-git fetch origin chore/compose-wave3
-git show origin/chore/compose-wave3:deploy/docker-compose.wave3.yml \
-  > /tmp/docker-compose.wave3.yml
-docker compose \
-  -f deploy/docker-compose.yml \
-  -f /tmp/docker-compose.wave3.yml \
-  up -d
+# Build and run; the binary creates its SQLite file on first start.
+cargo run --bin xiaoguai -- serve
 ```
 
-Expected containers once both files are applied:
+It listens on port 7600 and creates its database at
+`$XDG_DATA_HOME/xiaoguai/data.db` (or `~/.xiaoguai/data.db` if `XDG_DATA_HOME`
+is unset). Override the data directory with `XIAOGUAI_DATA_DIR` if you want it
+elsewhere.
 
-| Container | Port | Purpose |
-|-----------|------|---------|
-| `xiaoguai-core` | 7600 | API server |
-| `postgres` | 5432 | Primary DB |
-| `redis` / `valkey` | 6379 | Cache + rate-limit backend |
-| `otel-collector` | 4317 (gRPC) | OTLP ingest |
-| `prometheus` | 9090 | Metrics scrape |
-| `grafana` | 3000 | Dashboards |
+The optional compose file at `deploy/docker-compose.yml` runs the same single
+binary in a container:
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d
+```
+
+Expected containers / processes:
+
+| Process | Port | Purpose |
+|---------|------|---------|
+| `xiaoguai` (`xiaoguai serve`) | 7600 | API server + embedded SQLite |
+
+There is no separate `postgres`, `redis`/`valkey`, `otel-collector`,
+`prometheus`, or `grafana` to run. Metrics/tracing are opt-in behind the
+`observability` cargo feature (off by default) — build with that feature only
+if you actually need `/metrics` or OTLP.
 
 ### Apply migrations
 
-Migrations run automatically at server startup via SQLx. Confirm all
-wave-3 migrations applied:
+Migrations run automatically at server startup via SQLx against the embedded
+SQLite database. There is nothing to apply by hand. To confirm the schema is
+current, just start the binary and watch for `All migrations applied` in the
+log, or restart it:
 
 ```bash
-psql "$DATABASE_URL" -c \
+docker compose -f deploy/docker-compose.yml restart xiaoguai
+```
+
+If you ever need to inspect the database directly, point the `sqlite3` CLI at
+the data file:
+
+```bash
+sqlite3 "${XDG_DATA_HOME:-$HOME/.local/share}/xiaoguai/data.db" \
   "SELECT version, description FROM _sqlx_migrations ORDER BY version;"
 ```
 
-Wave-3 requires migrations **0011**, **0012**, and **0015**.
-If any are missing, restart the core container — it will apply them:
-
-```bash
-docker compose -f deploy/docker-compose.yml restart xiaoguai-core
-```
-
-Migration order matters: 0011 must precede 0012 (see §4 — Common
-pitfalls). Migration 0015 is independent but must come after both.
-
 ### Seed demo data
 
-The seed script lives on branch `feat/seed-wave3-demo` (may not yet
-be on main):
+If a seed script ships with your checkout, run it against the running
+instance:
 
 ```bash
-# If the branch is merged:
-bash scripts/seed-wave3-demo.sh
-
-# If not yet merged, run from the branch:
-git fetch origin feat/seed-wave3-demo
-git checkout origin/feat/seed-wave3-demo -- scripts/seed-wave3-demo.sh
-bash scripts/seed-wave3-demo.sh
+bash scripts/seed-demo.sh
 ```
 
-The script creates a demo tenant, seeds agent outcome records, installs
-a sample skill pack, and registers a HotL policy.
+The script seeds a sample set of agent outcome records, installs a sample
+skill pack, and registers a HotL policy for the single owner. (There are no
+tenants to create — the instance has exactly one owner.)
 
 ### Smoke test order
 
-Run each step and confirm it returns success before proceeding:
+Run each step and confirm it returns success before proceeding. With auth
+unset (empty username/password) the local instance is open on localhost; if
+you set `auth.username`/`auth.password`, pass them via HTTP Basic:
 
 ```bash
 BASE="http://localhost:7600"
+# If auth is configured, add: -u "$XIAOGUAI_AUTH_USERNAME:$XIAOGUAI_AUTH_PASSWORD"
 
 # 1. API health
 curl -sf "$BASE/healthz" | grep ok
 
 # 2. Record an outcome
 curl -sf -X POST "$BASE/v1/outcomes" \
-  -H "Authorization: Bearer $DEV_JWT" \
   -H "Content-Type: application/json" \
   -d '{"agent_name":"smoke","kind":"task_complete","value":1}' \
   | jq .id
 
 # 3. Create a HotL policy
 curl -sf -X POST "$BASE/v1/hotl/policies" \
-  -H "Authorization: Bearer $DEV_JWT" \
   -H "Content-Type: application/json" \
   -d '{"scope":"smoke","max_count":10,"window_seconds":60}' \
   | jq .id
 
 # 4. Install a skill pack
 curl -sf -X POST "$BASE/v1/skills/install" \
-  -H "Authorization: Bearer $DEV_JWT" \
   -H "Content-Type: application/json" \
-  -d '{"pack_slug":"incident-triage","tenant_id":"demo"}' \
+  -d '{"pack_slug":"incident-triage"}' \
   | jq .id
 
 # 5. Start a watch
 curl -sf -X POST "$BASE/v1/watch" \
-  -H "Authorization: Bearer $DEV_JWT" \
   -H "Content-Type: application/json" \
-  -d '{"tenant_id":"demo","scope":"smoke"}' \
+  -d '{"scope":"smoke"}' \
   | jq .watch_id
 
 # 6. Trigger anomaly run
 curl -sf -X POST "$BASE/v1/anomaly/run" \
-  -H "Authorization: Bearer $DEV_JWT" \
   -H "Content-Type: application/json" \
-  -d '{"tenant_id":"demo"}' \
+  -d '{}' \
   | jq .status
 ```
 
 ### Tear down
 
 ```bash
-docker compose -f deploy/docker-compose.yml down -v
+docker compose -f deploy/docker-compose.yml down
 ```
 
-The `-v` flag removes named volumes (postgres data, redis data). Omit
-it to preserve data between restarts.
+There are no `postgres` or `redis` volumes to purge — the only durable state
+is the SQLite `data.db` file. To start completely fresh, stop the binary and
+delete that file:
+
+```bash
+rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/xiaoguai/data.db"
+```
+
+Back it up first with `xiaoguai backup` if you want to keep the data.
 
 ---
 
 ## 2. Staging
 
-Staging mirrors prod configuration but holds no real production data.
-Wave-3 features run at full fidelity: HotL enforced, outcomes recording
-on, rate limiting active, OTLP traces at 100% sample rate.
+Staging mirrors prod configuration but holds no real production data. It is
+still a single binary with its own `data.db`. HotL is enforced and outcomes
+recording is on.
 
-### Helm install
+### Install
 
-```bash
-CHART=deploy/helm/xiaoguai
-NS=xiaoguai-staging
-
-kubectl create namespace $NS
-
-# Pre-create secrets (see k8s-helm.md §4 for secret rotation procedure)
-kubectl -n $NS create secret generic xiaoguai-database \
-  --from-literal=url="$STAGING_DATABASE_URL"
-kubectl -n $NS create secret generic xiaoguai-cache \
-  --from-literal=url="$STAGING_REDIS_URL"
-kubectl -n $NS create secret generic xiaoguai-auth \
-  --from-literal=issuer="$STAGING_OIDC_ISSUER" \
-  --from-literal=audience="xiaoguai-staging" \
-  --from-literal=jwks_url="$STAGING_JWKS_URL"
-kubectl -n $NS create secret generic xiaoguai-audit \
-  --from-literal=hmac_key="$(openssl rand -hex 32)"
-
-helm upgrade --install xiaoguai $CHART \
-  --namespace $NS \
-  -f deploy/helm/xiaoguai/values-staging.yaml \
-  --wait --timeout 5m
-```
-
-Kustomize alternative (if you prefer not to use Helm):
+Staging runs the same single binary as prod, just with a separate data
+directory and (optionally) its own auth credentials. Install the package
+(`.deb` / `.rpm` / tarball) or run the container, then start the service:
 
 ```bash
-kubectl apply -k deploy/kustomize/overlays/staging
+# systemd (package install): the unit runs `xiaoguai serve`.
+sudo systemctl enable --now xiaoguai
+
+# or container:
+docker run -d --name xiaoguai-staging -p 7600:7600 \
+  -v xiaoguai-staging-data:/var/lib/xiaoguai \
+  -e XIAOGUAI_AUTH__USERNAME="$STAGING_AUTH_USER" \
+  -e XIAOGUAI_AUTH__PASSWORD="$STAGING_AUTH_PASS" \
+  -e XIAOGUAI_AUDIT__HMAC_KEY="$(openssl rand -hex 32)" \
+  ghcr.io/xiaoguai-agent/xiaoguai:latest
 ```
 
-The staging overlay file lives at `deploy/kustomize/overlays/staging/`.
-It inherits from `deploy/kustomize/base/` and sets replica counts,
-resource limits, and OTLP sample rate to 1.0.
+Auth is a single static owner over HTTP Basic. Set `auth.username` /
+`auth.password` in `config.yaml`, or the env vars
+`XIAOGUAI_AUTH__USERNAME` / `XIAOGUAI_AUTH__PASSWORD`. Leaving them empty
+serves an open instance — acceptable for a localhost-only dev box, not for a
+shared staging host. There is no OIDC, JWT, Casbin, RBAC, or scopes to
+configure.
 
-**Secret rotation:** follow `docs/runbooks/release-signing.md` §3 for
-the HMAC key rotation procedure. All other secret rotation steps are
-in `k8s-helm.md` §4.
+The HMAC audit-chain key (`XIAOGUAI_AUDIT__HMAC_KEY`, 32 bytes hex) is the
+only other secret and is unchanged by the pivot.
 
-### OTLP traces (100% sample)
+### Observability (optional)
 
-Staging exports every span. Confirm the collector is reachable from
-pods before deploying:
-
-```bash
-kubectl -n $NS run otlp-probe --image=curlimages/curl --restart=Never \
-  --rm -it -- curl -s -o /dev/null -w "%{http_code}" \
-  http://otel-collector.observability.svc:4318/v1/traces
-# Expect 405 (method not allowed on GET — collector is up)
-```
-
-If the probe cannot reach the collector, check NetworkPolicy (see §4 —
-Common pitfalls).
+`/metrics` and OTLP export are opt-in behind the `observability` cargo
+feature, off by default. Only build/run the observability-enabled binary if
+you need them; otherwise skip this entirely.
 
 ### Load test
 
-After the Helm install stabilises (all pods Ready), run the wave-3 mixed
-workload:
+After the service is up and `/healthz` returns `ok`, run the mixed workload:
 
 ```bash
 k6 run scripts/loadtest/k6/scenarios/mixed.js \
   --env BASE_URL="https://staging.xiaoguai.example.com" \
-  --env JWT="$STAGING_LOAD_JWT" \
   --vus 20 --duration 5m
 ```
 
 ### Acceptance criteria before promoting to prod
 
-- [ ] `GET /healthz` returns `ok` on all pods
+- [ ] `GET /healthz` returns `ok`
 - [ ] Error rate (5xx) < 0.5% sustained over the load test
-- [ ] Latency p95 ≤ perf budget (see `docs/runbooks/observability.md` §Alarm thresholds)
-- [ ] All wave-3 migrations confirmed applied (0011, 0012, 0015)
+- [ ] Latency p95 ≤ target (see `docs/runbooks/slo.md`)
+- [ ] Migrations confirmed applied (start log shows `All migrations applied`)
 - [ ] HotL policies enforced (test with a policy that immediately blocks — see `hotl-escalation-stuck.md`)
 - [ ] Outcomes chain intact (run `outcome-chain-debug.md` step 1 on the load-test session ID)
-- [ ] Grafana wave-3 dashboard shows no red panels (Grafana at `deploy/kustomize/overlays/staging/` mounts the dashboard)
+- [ ] `xiaoguai backup` produces a restorable snapshot (verify per `disaster-recovery-wave3.md` §1)
 - [ ] k6 run exits with 0 failures
 
 ---
 
 ## 3. Prod
 
-Prod defaults are conservative. Observability is on from day one; HotL
-and rate limiting are enabled gradually after a 24-hour soak.
+Prod defaults are conservative. HotL and outcomes recording are enabled
+gradually after a 24-hour soak. Prod is still one binary, one `data.db` — no
+HA, no replicas, no multi-region. Resilience comes from regular
+`xiaoguai backup` snapshots and the ability to restore `data.db`.
 
 ### Pre-flight checklist
 
-- [ ] Backup completed — follow `docs/runbooks/ha.md` §7 (Backup and Restore)
-- [ ] Rollback plan documented: `helm rollback xiaoguai <previous-revision> -n xiaoguai` or `kubectl apply -k deploy/kustomize/overlays/prod` at the previous commit
+- [ ] Backup completed — run `xiaoguai backup` (see `disaster-recovery-wave3.md` §1)
+- [ ] Rollback plan documented: keep the previous package version / container image so you can reinstall and restore the pre-upgrade `data.db` snapshot
 - [ ] Change window approved by on-call lead
 - [ ] `docs/runbooks/hotl-escalation-stuck.md` open in a tab — most likely failure mode post-deploy
 
 ### Apply migrations
 
-If you can tolerate a brief maintenance window, restart the deployment
-— migrations run at startup automatically:
+Migrations run at startup automatically. Restart the service to apply any
+pending migration:
 
 ```bash
-kubectl -n xiaoguai rollout restart deploy/xiaoguai
-kubectl -n xiaoguai rollout status deploy/xiaoguai --timeout=5m
+sudo systemctl restart xiaoguai
+sudo systemctl status xiaoguai
 ```
 
-For zero-downtime rolling migrations: migrations 0011/0012/0015 are all
-additive (new tables or new columns with defaults). They are safe to
-apply while old pods are still serving traffic. The deployment's
-readiness probe blocks new pods from taking traffic until migrations
-complete.
+SQLite migrations 0011/0012/0015 are additive (new tables or new columns with
+defaults). On a single-process instance there is no rolling upgrade — there is
+a brief restart while the new binary starts and applies migrations. Take a
+`xiaoguai backup` immediately before restarting so you can roll back the data
+file if a migration misbehaves.
 
 ### Phased rollout
 
-**Phase 1 — Observability on (deploy day)**
+Because there is a single owner and a single process, "rollout" is feature
+enablement on the one instance rather than fleet-wide staging.
 
-```bash
-helm upgrade xiaoguai deploy/helm/xiaoguai \
-  --namespace xiaoguai \
-  -f deploy/helm/xiaoguai/values-prod.yaml \
-  --set observability.enabled=true \
-  --set hotl.enabled=false \
-  --set rateLimit.enabled=false \
-  --set outcomesRecording.enabled=false \
-  --wait --timeout 5m
+**Phase 1 — deploy (deploy day)**
+
+Install/upgrade the binary with HotL and outcomes recording off:
+
+```yaml
+# config.yaml
+agent:
+  hotl:
+    enabled: false
+outcomes:
+  recording: false
 ```
 
-Confirm Prometheus is scraping and Grafana wave-3 dashboard is green.
+Restart and confirm `/healthz` is `ok`.
 
-**Phase 2 — Outcomes recording on (after observability stable)**
+**Phase 2 — outcomes recording on (after the instance is stable)**
 
-```bash
-helm upgrade xiaoguai deploy/helm/xiaoguai \
-  --namespace xiaoguai \
-  -f deploy/helm/xiaoguai/values-prod.yaml \
-  --set observability.enabled=true \
-  --set outcomesRecording.enabled=true \
-  --set hotl.enabled=false \
-  --set rateLimit.enabled=false \
-  --reuse-values --wait
-```
+Set `outcomes.recording: true` and restart.
 
 **Phase 3 — 24-hour soak**
 
-Monitor error rate and p95 latency against the perf budget (see
-`docs/runbooks/observability.md` §Alarm thresholds). Do not proceed
-to phase 4 if either threshold is breached.
+Monitor error rate and p95 latency against the targets in
+`docs/runbooks/slo.md`. Do not proceed to phase 4 if either is breached.
 
 **Phase 4 — HotL on low-risk scopes**
 
@@ -320,7 +294,7 @@ Enable HotL for read-only or low-impact agent scopes first:
 
 ```bash
 curl -sf -X POST "https://api.xiaoguai.example.com/v1/hotl/policies" \
-  -H "Authorization: Bearer $PROD_ADMIN_JWT" \
+  -u "$PROD_AUTH_USER:$PROD_AUTH_PASS" \
   -H "Content-Type: application/json" \
   -d '{
     "scope": "incident-triage",
@@ -333,129 +307,106 @@ curl -sf -X POST "https://api.xiaoguai.example.com/v1/hotl/policies" \
 Expand to additional scopes once no HotL escalations are stuck (see
 `docs/runbooks/hotl-escalation-stuck.md`).
 
-**Phase 5 — Rate limiting on**
-
-```bash
-helm upgrade xiaoguai deploy/helm/xiaoguai \
-  --namespace xiaoguai \
-  -f deploy/helm/xiaoguai/values-prod.yaml \
-  --set observability.enabled=true \
-  --set outcomesRecording.enabled=true \
-  --set hotl.enabled=true \
-  --set rateLimit.enabled=true \
-  --reuse-values --wait
-```
-
 ### Post-deploy verification
 
 ```bash
 BASE="https://api.xiaoguai.example.com"
-
-# Error rate baseline (last 5 min) — requires Prometheus access
-# p95 latency vs perf budget — check Grafana wave-3 dashboard
+AUTH="-u $PROD_AUTH_USER:$PROD_AUTH_PASS"
 
 # API health
 curl -sf "$BASE/healthz" | grep ok
 
 # Outcomes recording
-curl -sf "$BASE/v1/outcomes/summary" \
-  -H "Authorization: Bearer $PROD_ADMIN_JWT" | jq .total
+curl -sf $AUTH "$BASE/v1/outcomes/summary" | jq .total
 
 # HotL policies in force
-curl -sf "$BASE/v1/hotl/policies" \
-  -H "Authorization: Bearer $PROD_ADMIN_JWT" | jq 'length'
+curl -sf $AUTH "$BASE/v1/hotl/policies" | jq 'length'
 ```
 
-Grafana wave-3 dashboard should show:
-- All panels green (no alert firing)
+Confirm:
 - Error rate < 0.1%
-- p95 latency within the budget declared in `docs/runbooks/observability.md`
+- p95 latency within the target declared in `docs/runbooks/slo.md`
+- A fresh `xiaoguai backup` succeeds after the upgrade
 
 ---
 
 ## 4. Common pitfalls
 
-### Missing secret refs — pod CrashLoopBackOff
+### Missing auth / HMAC config — instance refuses to start or serves open
 
-**Symptom:** pods enter `CrashLoopBackOff` immediately after deploy;
-`kubectl logs` shows `missing environment variable` or
-`Secret "xiaoguai-cache" not found`.
+**Symptom:** the service exits at startup with `missing environment variable`
+for the audit HMAC key, or it starts but is reachable without credentials on a
+shared host.
 
-**Fix:** create all four required secrets before running `helm upgrade`:
-`xiaoguai-database`, `xiaoguai-cache`, `xiaoguai-auth`,
-`xiaoguai-audit`. See `k8s-helm.md` §4 for the exact key names each
-secret must contain. The HMAC key in `xiaoguai-audit` must be exactly
-32 bytes hex-encoded.
+**Fix:** set `XIAOGUAI_AUDIT__HMAC_KEY` (exactly 32 bytes hex-encoded) on any
+non-throwaway instance. On a shared/staging/prod host also set
+`XIAOGUAI_AUTH__USERNAME` / `XIAOGUAI_AUTH__PASSWORD` (or the `auth.username` /
+`auth.password` config keys) so the single owner is protected by HTTP Basic.
+Empty auth is only acceptable for a localhost-only dev box.
 
 ---
 
-### OTLP collector not reachable from pods (NetworkPolicy)
+### Data directory not writable — startup fails on `data.db`
 
-**Symptom:** core pods start but trace export fails silently; Grafana
-shows no spans; `kubectl logs` may show
-`OTLP export failed: connection refused`.
+**Symptom:** the binary exits with a SQLite "unable to open database file" or
+"attempt to write a readonly database" error.
 
 **Diagnosis:**
 
 ```bash
-kubectl -n xiaoguai exec deploy/xiaoguai -- \
-  curl -s -o /dev/null -w "%{http_code}" \
-  http://otel-collector.observability.svc:4318/v1/traces
-# Anything other than 405 is a network problem
+# Confirm the resolved data directory exists and is writable by the service user.
+ls -ld "${XDG_DATA_HOME:-$HOME/.local/share}/xiaoguai"
 ```
 
-**Fix:** if your cluster has a NetworkPolicy-capable CNI (Cilium /
-Calico / Antrea), ensure the `xiaoguai` namespace has an egress rule
-that permits TCP 4317 and 4318 to the `observability` namespace. The
-Helm chart creates this rule when `networkPolicy.enabled=true` — verify
-the value is set in `values-staging.yaml` / `values-prod.yaml`.
+**Fix:** ensure the data directory (`$XDG_DATA_HOME/xiaoguai` or
+`~/.xiaoguai`, or `XIAOGUAI_DATA_DIR` if set) exists and is owned by the user
+running `xiaoguai serve`. The systemd unit's service user must own
+`/var/lib/xiaoguai`.
 
 ---
 
 ### Migration order — 0011 applied without 0012
 
-**Symptom:** service starts, but HotL policy creation returns `500`; DB
-logs show `column hotl_policies.window_seconds does not exist`.
+**Symptom:** service starts, but HotL policy creation returns `500`; logs show
+`column hotl_policies.window_seconds does not exist`.
 
-**Cause:** migration 0012 adds `window_seconds` to the `hotl_policies`
-table. It depends on the table created by 0011. If 0012 was not applied
-(e.g., pod crashed mid-startup and the restart was skipped), the column
-is absent.
+**Cause:** migration 0012 adds `window_seconds` to the `hotl_policies` table.
+It depends on the table created by 0011. If 0012 was not applied (e.g. the
+process crashed mid-startup and the restart was skipped), the column is
+absent.
 
 **Fix:**
 
 ```bash
 # Confirm which migrations ran
-psql "$DATABASE_URL" -c \
+sqlite3 "${XDG_DATA_HOME:-$HOME/.local/share}/xiaoguai/data.db" \
   "SELECT version FROM _sqlx_migrations ORDER BY version;"
 
-# If 0012 is missing, restart the pod — SQLx will apply the pending migration
-kubectl -n xiaoguai rollout restart deploy/xiaoguai
-kubectl -n xiaoguai rollout status deploy/xiaoguai --timeout=3m
+# If 0012 is missing, restart the service — SQLx applies the pending migration
+sudo systemctl restart xiaoguai
+sudo systemctl status xiaoguai
 ```
 
-Do not manually apply migrations with `psql` — let SQLx manage the
+Do not manually apply migrations with the `sqlite3` CLI — let SQLx manage the
 sequence to avoid checksum mismatches.
 
 ---
 
-### Skill pack install row recorded but no activation (v1.2 caveat)
+### Skill pack install row recorded but no activation
 
-**Symptom:** `POST /v1/skills/install` returns `200` with an `id`, the
-row appears in the `skill_packs` table, but the pack's tools are not
-visible to agents and `GET /v1/skills/installed` lists the pack with no
-active tools.
+**Symptom:** `POST /v1/skills/install` returns `200` with an `id`, the row
+appears in the `skill_packs` table, but the pack's tools are not visible to
+agents and `GET /v1/skills/installed` lists the pack with no active tools.
 
-**Cause:** this is expected behaviour in v1.2. The DB row is written
-and the install is acknowledged, but the runtime tool-loader hot-reload
-path is not yet wired (`v1.3` deliverable). The pack's tools will not
-appear in the agent's `Toolbox` until the v1.3 loader ships.
+**Cause:** the DB row is written and the install is acknowledged, but the
+runtime tool-loader hot-reload path may not be wired for the pack version
+installed.
 
-**Workaround:** restart the core deployment after installing packs to
-load them at startup:
+**Workaround:** restart the service after installing packs to load them at
+startup:
 
 ```bash
-kubectl -n xiaoguai rollout restart deploy/xiaoguai
+sudo systemctl restart xiaoguai
 ```
 
 See `docs/runbooks/pack-install-troubleshoot.md` for full diagnostics

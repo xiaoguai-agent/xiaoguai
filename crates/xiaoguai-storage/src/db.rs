@@ -1,4 +1,4 @@
-//! Embedded SQLite connection + migration helpers (DEC-033 single-user pivot).
+//! Embedded `SQLite` connection + migration helpers (DEC-033 single-user pivot).
 //!
 //! One file, one writer, no replicas. The store lives at `~/.xiaoguai/data.db`
 //! (or `$XDG_DATA_HOME/xiaoguai/data.db` when `XDG_DATA_HOME` is set). WAL mode
@@ -32,7 +32,7 @@ fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
-/// Turn a configured `database.url` into a concrete SQLite file path.
+/// Turn a configured `database.url` into a concrete `SQLite` file path.
 ///
 /// Accepts a bare filesystem path, a `sqlite://…` / `sqlite:…` URL, or an empty
 /// string / the literal `"default"` (both resolve to [`default_db_path`]).
@@ -51,10 +51,10 @@ fn resolve_path(url: &str) -> PathBuf {
     PathBuf::from(stripped)
 }
 
-/// Open (creating if missing) the single-user SQLite pool.
+/// Open (creating if missing) the single-user `SQLite` pool.
 ///
 /// `url` is the configured `database.url`; pass an empty string to use the
-/// default store path. `max_connections` caps the pool — SQLite is a single
+/// default store path. `max_connections` caps the pool — `SQLite` is a single
 /// writer, so a small pool (reads share, writes serialise) is plenty.
 ///
 /// # Errors

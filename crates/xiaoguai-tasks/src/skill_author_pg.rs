@@ -292,7 +292,7 @@ mod tests {
     use crate::skill_author::SkillManifest;
     use uuid::Uuid;
 
-    /// Open a fresh migrated temp-file SQLite pool. Returns the pool plus the
+    /// Open a fresh migrated temp-file `SQLite` pool. Returns the pool plus the
     /// `TempDir` guard, which the caller must keep alive for the test's
     /// duration (dropping it deletes the database file).
     async fn sqlite_pool() -> (SqlitePool, tempfile::TempDir) {

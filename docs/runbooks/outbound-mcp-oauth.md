@@ -15,9 +15,10 @@ transports. The acquisition + storage paths are:
   on `127.0.0.1:<random-port>`, prints the consent URL, waits for
   the browser redirect (5 min default), and exchanges the code for
   a `TokenBundle`.
-- **Storage**: tokens are persisted to `mcp_oauth_tokens`
-  (RLS-isolated by `tenant_id`). The table is created by migration
-  `0022_mcp_oauth_tokens.sql`.
+- **Storage**: tokens are persisted to the `mcp_oauth_tokens` table in
+  the embedded SQLite database (`data.db`). There is a single owner per
+  instance, so the table holds only this owner's tokens — no row-level
+  isolation. The table is created by migration `0022_mcp_oauth_tokens.sql`.
 - **Refresh**: on every outbound HTTP connect, if the stored
   `expires_at` is within 60s, `xiaoguai-mcp` calls
   `grant_type=refresh_token` and atomically updates the bundle.
@@ -30,7 +31,6 @@ xiaoguai mcp register \
   --name notion \
   --transport http \
   --endpoint https://mcp.notion.so/v1 \
-  --tenant tenant_acme \
   --auth oauth2-pkce \
   --auth-url https://auth.notion.so/oauth/authorize \
   --token-url https://auth.notion.so/oauth/token \
@@ -63,8 +63,7 @@ code for a token bundle, persists it, and exits.
 | `--auth-url` | `--auth=oauth2-pkce` | `/authorize` endpoint. |
 | `--token-url` | `--auth=oauth2-pkce` | `/token` endpoint. |
 | `--client-id` | `--auth=oauth2-pkce` | Public client identifier registered with the IdP. |
-| `--scopes` | optional | Comma-separated list. Joined with spaces in the authorize URL. |
-| `--tenant` | OAuth flow | Required — tokens are per-tenant, no system-wide OAuth in this release. |
+| `--scopes` | optional | Comma-separated list of the *remote MCP server's* OAuth scopes. Joined with spaces in the authorize URL. |
 
 ## Threat model
 
@@ -72,8 +71,8 @@ code for a token bundle, persists it, and exits.
 |---|---|---|---|
 | `code_verifier` (PKCE) | one consent flow (~5 min) | RAM (CLI process) | Never written to disk; dropped after `exchange_code`. |
 | Authorization `code` | seconds | RAM | Single-use per RFC 6749; bound to the `redirect_uri` by the IdP. |
-| `access_token` | minutes–hours | `mcp_oauth_tokens.access_token` | RLS by `tenant_id`. Refreshed within 60 s of `expires_at`. |
-| `refresh_token` | days–months | `mcp_oauth_tokens.refresh_token` | RLS by `tenant_id`. **Not encrypted at the application layer** (see "Deferred"). |
+| `access_token` | minutes–hours | `mcp_oauth_tokens.access_token` | Single-owner SQLite row. Refreshed within 60 s of `expires_at`. |
+| `refresh_token` | days–months | `mcp_oauth_tokens.refresh_token` | Single-owner SQLite row. **Not encrypted at the application layer** (see "Deferred"). |
 | OAuth client config (`auth_url`, `token_url`, `client_id`, `scopes`) | until revoke | `mcp_servers.auth` JSONB | Public — no secrets. |
 
 ### What's defended
@@ -85,19 +84,22 @@ code for a token bundle, persists it, and exits.
 - **Auth-code injection**: PKCE binds the authorization code to the
   caller (verifier ⇄ challenge), preventing a malicious app from
   redeeming an intercepted code.
-- **Tenant isolation**: `mcp_oauth_tokens` is gated by RLS policy
-  `tenant_isolation_mcp_oauth_tokens` — tenant A cannot read tenant
-  B's tokens even if both share the same `server_id`.
+- **Single-owner storage**: xiaoguai runs as one self-contained
+  instance per person, each over their own URL. `mcp_oauth_tokens`
+  lives in that instance's local `data.db` and contains only the
+  owner's tokens. Isolation is the OS file boundary on `data.db`
+  (protect it with filesystem permissions), not a database policy.
 - **TLS verification**: ON by default. `XIAOGUAI_MCP_OAUTH_INSECURE=1`
   is the only escape hatch and emits `tracing::warn` at every
   client build.
 
 ### What's NOT defended (operator's responsibility)
 
-- **DB-at-rest encryption** for refresh tokens. Use PostgreSQL TDE
-  / cloud volume encryption / `pgcrypto` column-level if your
-  threat model needs it. App-level envelope encryption is a
-  deferred hardening PR (see end of this doc).
+- **DB-at-rest encryption** for refresh tokens. The `data.db` file is
+  plaintext SQLite; use full-disk encryption (FileVault / LUKS / dm-crypt)
+  or an encrypted volume if your threat model needs it, and lock down the
+  file permissions. App-level envelope encryption is a deferred hardening
+  PR (see end of this doc).
 - **Local-machine compromise** during the consent flow. The
   `code_verifier` lives in process memory; an attacker with
   arbitrary local code execution can read it.
@@ -137,7 +139,7 @@ WARN  TLS verification DISABLED for OAuth token endpoint;
       do NOT use in production env=XIAOGUAI_MCP_OAUTH_INSECURE
 ```
 
-**Never** set this on a production tenant. The OAuth tokens you
+**Never** set this in production. The OAuth tokens you
 acquire while it's set are still durably stored — they're just
 acquired over an unverified TLS channel. Rotate them after fixing
 the certificate chain.
@@ -177,13 +179,13 @@ Documented for clarity — the brief explicitly defers these:
   supported.
 - **RFC 7662 token introspection**. xiaoguai only refreshes on
   expiry; it does not pre-validate access tokens against the IdP.
-- **Application-layer encryption-at-rest** for refresh tokens. RLS
-  handles tenant isolation; volume-level / TDE encryption is the
-  operator's responsibility. A future hardening PR may add envelope
-  encryption with a key handle in `XIAOGUAI_OAUTH_KEK_ENV` modelled
-  on `xiaoguai-audit::signing_key`.
+- **Application-layer encryption-at-rest** for refresh tokens. The
+  tokens sit in the local `data.db`; full-disk / volume-level encryption
+  is the operator's responsibility. A future hardening PR may add
+  envelope encryption with a key handle in `XIAOGUAI_OAUTH_KEK_ENV`
+  modelled on `xiaoguai-audit::signing_key`.
 - **UI for token management**. CLI only. List with
-  `xiaoguai mcp list --tenant <id>`; rotate by re-registering;
+  `xiaoguai mcp list`; rotate by re-registering;
   delete with `xiaoguai mcp remove --id <id>`.
 - **Supervisor-side auto-reconnect after token refresh**. When the
   long-running `xiaoguai serve` supervisor opens an HTTP MCP
@@ -194,20 +196,22 @@ Documented for clarity — the brief explicitly defers these:
 
 ## Migration runbook
 
-```bash
-# Apply schema:
-psql "$DATABASE_URL" -f crates/xiaoguai-storage/migrations/0022_mcp_oauth_tokens.sql
+Migrations run automatically against the embedded `data.db` at boot;
+the steps below are only for manual inspection. Substitute your
+instance's database path for `data.db` (default lives under the
+xiaoguai data directory).
 
+```bash
 # Inspect:
-psql "$DATABASE_URL" -c "\d mcp_oauth_tokens"
-psql "$DATABASE_URL" -c "\d mcp_servers" | grep -i auth
+sqlite3 data.db ".schema mcp_oauth_tokens"
+sqlite3 data.db ".schema mcp_servers" | grep -i auth
 ```
 
-Rollback:
+Rollback (stop the instance first so nothing is mid-write):
 
 ```bash
-psql "$DATABASE_URL" -c "DROP TABLE mcp_oauth_tokens;"
-psql "$DATABASE_URL" -c "ALTER TABLE mcp_servers DROP COLUMN auth;"
+sqlite3 data.db "DROP TABLE mcp_oauth_tokens;"
+sqlite3 data.db "ALTER TABLE mcp_servers DROP COLUMN auth;"
 ```
 
 The migration is additive: dropping the table + column leaves the
@@ -218,24 +222,19 @@ rest of the registry untouched, and `xiaoguai mcp register` without
 
 ```bash
 # 1. Sanity-check the schema:
-psql "$DATABASE_URL" -c "SELECT column_name FROM information_schema.columns \
-                          WHERE table_name = 'mcp_oauth_tokens' ORDER BY ordinal_position;"
+sqlite3 data.db "SELECT name FROM pragma_table_info('mcp_oauth_tokens');"
 
-# 2. Register against a sandbox IdP (e.g. Auth0 test tenant):
+# 2. Register against a sandbox IdP (e.g. an Auth0 test app):
 xiaoguai mcp register --auth oauth2-pkce \
   --name auth0-sandbox --transport http \
   --endpoint https://example-mcp.local \
   --auth-url https://example.auth0.com/authorize \
   --token-url https://example.auth0.com/oauth/token \
   --client-id <PUBLIC_CLIENT_ID> \
-  --scopes mcp.read --tenant tenant_sandbox
+  --scopes mcp.read
 
 # 3. Confirm the bundle landed in storage:
-psql "$DATABASE_URL" -c "SELECT server_id, tenant_id, expires_at FROM mcp_oauth_tokens;"
-
-# 4. Confirm RLS:
-psql "$DATABASE_URL" -c "SET app.current_tenant_id = 'tenant_other'; SELECT * FROM mcp_oauth_tokens;"
-# (should return 0 rows)
+sqlite3 data.db "SELECT server_id, expires_at FROM mcp_oauth_tokens;"
 ```
 
 ## See also

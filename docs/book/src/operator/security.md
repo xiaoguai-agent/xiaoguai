@@ -2,24 +2,33 @@
 
 ## Authentication and authorization
 
-Xiaoguai uses OIDC RS256/ES256 JWT validation with a JWKS cache. Set
-`XIAOGUAI_AUTH_REQUIRED=true` to enforce authentication on all `/v1/**` endpoints.
+Under the single-user pivot (DEC-033) each person runs their own instance, so
+there is no OIDC, no JWT, no Casbin, no RBAC, no scopes, and no multi-tenancy.
+Access collapses to a **single static owner** protected by an optional
+username + password checked via HTTP Basic:
 
-RBAC is handled by Casbin with a model that supports tenant-scoped role assignments.
-Roles are stored in Postgres and loaded at startup.
+- Set `auth.username` + `auth.password` (or env `XIAOGUAI_AUTH__USERNAME` /
+  `XIAOGUAI_AUTH__PASSWORD`) and every `/v1/**` request must carry a matching
+  `Authorization: Basic …` header.
+- Leave both empty for an open localhost dev run.
 
-## Multi-tenant data isolation
+Set the credential before exposing the service on a URL; front it with TLS
+(nginx/Caddy/cloud LB) for transport security.
 
-Every tenant-scoped table in Postgres has row-level security (RLS) enabled. The application
-layer also filters by `tenant_id` on every query. A leaked JWT cannot access another tenant's
-data without also having a matching `tenant_id` claim.
+## Data isolation
+
+State is one embedded SQLite file owned by the OS user that runs the binary —
+isolation is the filesystem boundary, not database RLS. There are no tenants
+and no per-tenant scoping. Protect the data directory (`~/.xiaoguai/` or
+`$XDG_DATA_HOME/xiaoguai/`) with normal file permissions and, for sensitive
+deployments, full-disk / volume encryption.
 
 ## Audit chain
 
 The audit log is append-only and HMAC-chained. Each row carries:
 
 - `id` — UUID
-- `tenant_id`, `user_id`, `session_id`
+- `user_id`, `session_id`
 - `event_kind` — one of `chat_turn`, `tool_call`, `scheduler_run`, `im_message`, …
 - `payload` — JSON
 - `prev_hash` — HMAC of the previous row
@@ -28,7 +37,7 @@ The audit log is append-only and HMAC-chained. Each row carries:
 To verify the chain:
 
 ```bash
-xiaoguai admin audit verify --tenant <tenant-id>
+xiaoguai admin audit verify
 ```
 
 A chain inconsistency means tampered data.
@@ -37,10 +46,11 @@ A chain inconsistency means tampered data.
 
 See [Day-2 Operations](day2.md) for the full procedure. The summary:
 
-1. Export the chain head pointer
-2. Create a new Kubernetes secret with a fresh key (`openssl rand -hex 32`)
-3. Rolling upgrade with the new secret name
-4. Keep both secrets for the 30-day verification window
+1. Export the chain head pointer.
+2. Generate a fresh key (`openssl rand -hex 32`) and set it in the configured
+   signing-key env var (`XIAOGUAI_AUDIT_SIGNING_KEY` by default).
+3. Restart the service with the new key.
+4. Keep the old key for the 30-day verification window.
 
 ## Supply chain security
 
@@ -55,12 +65,10 @@ The CI `deny.yml` workflow enforces:
 
 | Secret | Where stored |
 |--------|-------------|
-| Postgres DSN | K8s Secret / `.env` |
-| Valkey URL | K8s Secret / `.env` |
-| Audit HMAC key | K8s Secret (rotatable) |
-| OIDC JWKS endpoint | Config / env |
-| IM webhook secrets (Feishu/DingTalk/WeCom) | K8s Secret / `.env` |
-| Scheduler webhook tokens | Postgres `scheduler_webhook_tokens` table (hashed) |
+| Owner password (`auth.password`) | env `XIAOGUAI_AUTH__PASSWORD` / `.env` |
+| Audit HMAC key | env (rotatable) — `XIAOGUAI_AUDIT_SIGNING_KEY` |
+| IM webhook secrets (Feishu/DingTalk/WeCom) | `.env` |
+| Scheduler webhook tokens | `scheduler_webhook_tokens` table (hashed, in `data.db`) |
 
 Never commit secrets to git. The `cargo-deny` check will flag `rustsec://` advisories for
 crates with known secret-handling bugs.

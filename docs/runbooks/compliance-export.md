@@ -9,34 +9,34 @@ is intact.
 ## Quick reference
 
 ```bash
-# CLI — produces a JSON bundle.
+# CLI — produces a JSON bundle for this instance's owner.
 xiaoguai audit export \
   --api-base http://localhost:8080 \
-  --tenant-id tenant-acme \
   --framework soc2 \
   --from 2026-01-01T00:00:00Z \
   --to   2026-04-01T00:00:00Z \
-  --output ./acme-q1-2026-soc2.json \
+  --output ./q1-2026-soc2.json \
   --format json
 
 # CSV is the auditor-friendly projection of the same data.
 xiaoguai audit export \
-  --tenant-id tenant-acme --framework gdpr \
+  --framework gdpr \
   --from 2026-01-01T00:00:00Z --to 2026-04-01T00:00:00Z \
-  --output ./acme-q1-2026-gdpr.csv --format csv
+  --output ./q1-2026-gdpr.csv --format csv
 ```
 
 ```bash
 # HTTP — same shape, returns the rendered bundle inline.
+# Pass owner credentials with -u if auth is configured; drop it on open localhost.
 curl -X POST http://localhost:8080/v1/audit/exports \
+  -u "${XIAOGUAI_AUTH__USERNAME}:${XIAOGUAI_AUTH__PASSWORD}" \
   -H 'Content-Type: application/json' \
   -d '{
-    "tenant_id":"tenant-acme",
     "framework":"hipaa",
     "format":"json",
     "from":"2026-01-01T00:00:00Z",
     "to":"2026-04-01T00:00:00Z"
-  }' > acme-q1-2026-hipaa.json
+  }' > q1-2026-hipaa.json
 ```
 
 ## What the bundle contains
@@ -46,7 +46,6 @@ curl -X POST http://localhost:8080/v1/audit/exports \
   "header": {
     "framework": "soc2-cc72",
     "framework_label": "SOC2 CC7.2 (System Monitoring)",
-    "tenant_id": "tenant-acme",
     "window": { "from": "...", "to": "..." },
     "generated_at": "2026-05-29T...",
     "chain_proof": {
@@ -64,8 +63,10 @@ curl -X POST http://localhost:8080/v1/audit/exports \
 }
 ```
 
-The `chain_proof` is the load-bearing field. An auditor with access to a
-read-only Postgres replica can re-walk the rows offline using the canonical
+The `chain_proof` is the load-bearing field. An auditor given a copy of the
+embedded `data.db` (take a consistent snapshot with `xiaoguai backup`, or
+copy the live file while the instance is stopped — there is no separate
+replica to read from) can re-walk the rows offline using the canonical
 encoding from `crates/xiaoguai-audit/src/chain.rs` and confirm the
 `end_hmac_hex` matches the recomputed terminal HMAC. Any tampering inside
 the window would have made the export refuse to render (see "chain
@@ -116,8 +117,8 @@ Actions kept:
 - `consent.grant`, `consent.revoke` — consent management events.
 
 Gaps:
-- The retention period is configured per tenant but not embedded in each
-  audit row. Surface it from the tenant config when you assemble the
+- The retention period is configured for the instance but not embedded in
+  each audit row. Surface it from the instance config when you assemble the
   evidence pack.
 - Cross-border transfers (Art. 44) are not modelled in the current action
   set. If your deployment crosses borders, add a `data.transfer` event
@@ -141,20 +142,20 @@ Gaps:
 - Resource tagging (`phi:patient/42`) is the responsibility of the tool
   itself. Forgotten tags = invisible to HIPAA export. We recommend a
   pre-commit hook that flags new MCP tools touching PHI-shaped data.
-- Encryption status (§164.312(a)(2)(iv)) is not in the audit chain — it's
-  enforced upstream at the storage layer (`xiaoguai-storage` uses TLS to
-  Postgres; PG itself uses transparent-data-encryption per operator
-  config).
+- Encryption status (§164.312(a)(2)(iv)) is not in the audit chain — for
+  the embedded SQLite store it is the operator's responsibility to encrypt
+  the `data.db` file at rest (full-disk encryption such as FileVault / LUKS,
+  or an encrypted volume).
 
 ## Sample auditor question mappings
 
 | Question | Command |
 |---|---|
-| "Show me all access to PHI in Q1 2026." | `xiaoguai audit export --framework hipaa --tenant-id <id> --from 2026-01-01T00:00:00Z --to 2026-04-01T00:00:00Z --output q1-hipaa.csv --format csv` |
+| "Show me all access to PHI in Q1 2026." | `xiaoguai audit export --framework hipaa --from 2026-01-01T00:00:00Z --to 2026-04-01T00:00:00Z --output q1-hipaa.csv --format csv` |
 | "Prove the audit log is reviewed monthly." | Search the SOC2 bundle for `action=audit.verify` rows — one per cron tick. |
-| "What personal data did agent X touch last week?" | `xiaoguai audit export --framework gdpr --tenant-id <id> --from 2026-W21-MON --to 2026-W21-SUN` then grep `actor=agent:X`. |
+| "What personal data did agent X touch last week?" | `xiaoguai audit export --framework gdpr --from 2026-W21-MON --to 2026-W21-SUN` then grep `actor=agent:X`. |
 | "Who got denied by HotL last 24h, and why?" | SOC2 bundle filtered to `action=policy.deny` — `details_summary` carries the reason. |
-| "Did the chain break at any point in Q1?" | The export itself refuses if the chain broke inside the window. Plus: `GET /v1/admin/audit/verify?tenant_id=...` walks the global chain. |
+| "Did the chain break at any point in Q1?" | The export itself refuses if the chain broke inside the window. Plus: `GET /v1/admin/audit/verify` walks the whole chain. |
 
 ## Chain broken — what now?
 
@@ -173,9 +174,9 @@ The CLI exits non-zero with the same JSON on stderr. There is **no
 
 Diagnose:
 
-1. `GET /v1/admin/audit/verify?tenant_id=<id>` — confirms the global break
+1. `GET /v1/admin/audit/verify` — confirms the break across the whole chain
    (the export only verifies the window slice).
-2. Pull the offending row: `GET /v1/admin/audit?tenant_id=<id>&since=<ts-1h>&until=<ts+1h>`
+2. Pull the offending row: `GET /v1/admin/audit?since=<ts-1h>&until=<ts+1h>`
    and identify the broken `id`.
 3. Compare `prev_hmac` of the broken row to `hmac` of the previous row.
    If they don't match → row was inserted out-of-band or a previous row
@@ -188,16 +189,18 @@ Diagnose:
 ## Operational caps and limits
 
 - **Window row cap: 100 000.** The exporter pulls at most 100k rows from
-  Postgres per call. Larger windows should be requested in chunks; the
-  underlying chain is per-tenant so chunking on `ts` is safe.
+  the embedded SQLite store per call. Larger windows should be requested in
+  chunks; the chain is a single append-only sequence, so chunking on `ts`
+  is safe.
 - **No background jobs.** The export is synchronous. For very large
   bundles, expect the HTTP call to take seconds-to-minutes — increase
   client timeouts accordingly.
 - **No PDF yet.** `--format pdf` returns HTTP 501 / non-zero CLI exit
   with `pdf_unimplemented`. Tracked as a post-T5 follow-up; the surface
   area (`render_pdf` stub function) is in place.
-- **No cross-tenant export.** The audit chain is per-tenant, so is the
-  export. There is no admin override.
+- **One chain per instance.** Each person runs their own instance with its
+  own `data.db` and its own single audit chain; the export covers that
+  chain. There is no aggregation across instances.
 
 ## Operator setup
 
@@ -219,12 +222,12 @@ XIAOGUAI_AUDIT_SIGNING_KEY=$(aws ssm get-parameter --name /xiaoguai/audit/key --
 1. **PDF rendering.** `crates/xiaoguai-audit/src/export.rs::render_pdf`
    is a stub. Likely use `printpdf` or `genpdf`; needs a layout pass on
    what the bundle looks like printed.
-2. **Streaming / paginated export** for tenants whose windows exceed the
+2. **Streaming / paginated export** for instances whose windows exceed the
    100k row cap.
-3. **Runtime template DSL.** Customers occasionally ask for a tenant-
-   specific framework profile. The current template engine is static
-   `match` arms; a future YAML-driven projection would let tenants
-   declare their own filters without forking the crate.
+3. **Runtime template DSL.** Operators occasionally ask for a custom
+   framework profile. The current template engine is static `match` arms;
+   a future YAML-driven projection would let an operator declare their own
+   filters without forking the crate.
 4. **Bundle re-signing.** The chain proof in the header is the integrity
    guarantee; we don't currently sign the *bundle* itself. A future
    detached signature (e.g. minisign over the rendered bytes) would let

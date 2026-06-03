@@ -1,5 +1,5 @@
 //! Phase-1 verification gate (DEC-033): apply every ported migration to a fresh
-//! SQLite file and assert the resulting schema is correct + single-user-shaped.
+//! `SQLite` file and assert the resulting schema is correct + single-user-shaped.
 //!
 //! The migrations are embedded from the sibling storage crate so this test does
 //! not depend on `xiaoguai-storage` itself (still PgPool-typed until Phase 2).
