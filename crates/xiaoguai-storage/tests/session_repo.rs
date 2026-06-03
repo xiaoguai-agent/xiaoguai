@@ -1,67 +1,30 @@
-//! Integration tests for [`PgSessionRepository`].
+//! Integration tests for [`PgSessionRepository`] (embedded `SQLite`, DEC-033).
 //!
-//! These tests spin up a real Postgres in a container (testcontainers) and
-//! exercise CRUD + pagination + ordering. They are marked `#[ignore]` so they
-//! only run when Docker is available (`cargo test -- --ignored`).
-//!
-//! ## RLS caveat
-//!
-//! The container's `postgres` user is a SUPERUSER, which bypasses RLS unless
-//! the policy is declared `FORCE`. Our migration does NOT use `FORCE`, so RLS
-//! is effectively *advisory* in this test harness. Production code MUST run
-//! as a non-superuser role; that path is covered by separate end-to-end tests
-//! once a dedicated app role is provisioned.
+//! No Docker — each test opens a temp `SQLite` database via `common::test_setup`
+//! and exercises CRUD + pagination + ordering.
 
-#![cfg(test)]
+mod common;
 
 use chrono::{Duration, Utc};
-use sqlx::PgPool;
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync},
-};
-use xiaoguai_storage::{
-    db,
-    repositories::{PgSessionRepository, RepoError, SessionRepository},
-};
+use common::test_setup;
+use sqlx::SqlitePool;
+use xiaoguai_storage::repositories::{PgSessionRepository, RepoError, SessionRepository};
+use xiaoguai_storage::OWNER_TENANT_ID;
 use xiaoguai_types::{Session, SessionId, SessionStatus, TenantId, UserId};
 
-/// Local fallback for the shared `tests/common/mod.rs` helper owned by
-/// sub-agent A. Function name kept identical (`test_setup`) so the file can
-/// be merged with `mod common;` later without touching tests.
-async fn test_setup() -> (PgPool, ContainerAsync<Postgres>) {
-    let pg = Postgres::default().start().await.expect("start pg");
-    let port = pg.get_host_port_ipv4(5432).await.expect("port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = db::connect(&url, 5).await.expect("connect");
-    db::migrate(&pool).await.expect("migrate");
-    (pool, pg)
-}
-
-/// Seed a tenant + user via raw SQL so we satisfy FK constraints without
-/// reaching into other sub-agents' repos.
-async fn seed_tenant_user(pool: &PgPool) -> (TenantId, UserId) {
-    let tenant_id = TenantId::new();
+/// Seed a user via raw SQL so the session FK (`sessions.user_id`) is satisfied.
+/// The `users` table no longer carries `tenant_id`; we return a synthetic owner
+/// `TenantId` only to build `Session` fixtures.
+async fn seed_user(pool: &SqlitePool) -> (TenantId, UserId) {
     let user_id = UserId::new();
-    sqlx::query("INSERT INTO tenants (id, name, display_name) VALUES ($1, $2, $3)")
-        .bind(tenant_id.as_str())
-        .bind(format!("tenant-{}", tenant_id.as_str()))
-        .bind("Test Tenant")
+    sqlx::query("INSERT INTO users (id, email, display_name) VALUES (?, ?, ?)")
+        .bind(user_id.as_str())
+        .bind(format!("u-{}@example.com", user_id.as_str()))
+        .bind("Test User")
         .execute(pool)
         .await
-        .expect("insert tenant");
-    sqlx::query(
-        "INSERT INTO users (id, tenant_id, email, display_name)
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(user_id.as_str())
-    .bind(tenant_id.as_str())
-    .bind(format!("u-{}@example.com", user_id.as_str()))
-    .bind("Test User")
-    .execute(pool)
-    .await
-    .expect("insert user");
-    (tenant_id, user_id)
+        .expect("insert user");
+    (TenantId::from(OWNER_TENANT_ID.to_string()), user_id)
 }
 
 fn fixture_session(tenant: &TenantId, user: &UserId, model: &str) -> Session {
@@ -81,10 +44,9 @@ fn fixture_session(tenant: &TenantId, user: &UserId, model: &str) -> Session {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn create_then_find_roundtrip() {
-    let (pool, _pg) = test_setup().await;
-    let (tenant, user) = seed_tenant_user(&pool).await;
+    let (pool, _guard) = test_setup().await;
+    let (tenant, user) = seed_user(&pool).await;
     let repo = PgSessionRepository::new(pool.clone());
 
     let session = fixture_session(&tenant, &user, "gpt-4o-mini");
@@ -108,10 +70,9 @@ async fn create_then_find_roundtrip() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn list_by_user_orders_by_updated_at_desc_with_pagination() {
-    let (pool, _pg) = test_setup().await;
-    let (tenant, user) = seed_tenant_user(&pool).await;
+    let (pool, _guard) = test_setup().await;
+    let (tenant, user) = seed_user(&pool).await;
     let repo = PgSessionRepository::new(pool.clone());
 
     // Create 5 sessions with staggered updated_at; oldest first so DESC order
@@ -155,10 +116,9 @@ async fn list_by_user_orders_by_updated_at_desc_with_pagination() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn touch_bumps_updated_at_and_errors_on_missing() {
-    let (pool, _pg) = test_setup().await;
-    let (tenant, user) = seed_tenant_user(&pool).await;
+    let (pool, _guard) = test_setup().await;
+    let (tenant, user) = seed_user(&pool).await;
     let repo = PgSessionRepository::new(pool.clone());
 
     let mut session = fixture_session(&tenant, &user, "gpt-4o-mini");
@@ -180,10 +140,9 @@ async fn touch_bumps_updated_at_and_errors_on_missing() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn archive_sets_status_and_errors_on_missing() {
-    let (pool, _pg) = test_setup().await;
-    let (tenant, user) = seed_tenant_user(&pool).await;
+    let (pool, _guard) = test_setup().await;
+    let (tenant, user) = seed_user(&pool).await;
     let repo = PgSessionRepository::new(pool.clone());
 
     let session = fixture_session(&tenant, &user, "gpt-4o-mini");
@@ -204,10 +163,9 @@ async fn archive_sets_status_and_errors_on_missing() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn delete_is_idempotent_and_cascades_via_fk() {
-    let (pool, _pg) = test_setup().await;
-    let (tenant, user) = seed_tenant_user(&pool).await;
+    let (pool, _guard) = test_setup().await;
+    let (tenant, user) = seed_user(&pool).await;
     let repo = PgSessionRepository::new(pool.clone());
 
     let session = fixture_session(&tenant, &user, "gpt-4o-mini");
@@ -230,10 +188,9 @@ async fn delete_is_idempotent_and_cascades_via_fk() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker"]
 async fn duplicate_create_returns_duplicate_key() {
-    let (pool, _pg) = test_setup().await;
-    let (tenant, user) = seed_tenant_user(&pool).await;
+    let (pool, _guard) = test_setup().await;
+    let (tenant, user) = seed_user(&pool).await;
     let repo = PgSessionRepository::new(pool.clone());
 
     let session = fixture_session(&tenant, &user, "gpt-4o-mini");

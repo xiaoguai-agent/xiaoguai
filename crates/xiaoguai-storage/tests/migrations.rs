@@ -1,44 +1,49 @@
-//! Migration smoke test against an ephemeral Postgres container.
+//! Migration smoke test against an embedded `SQLite` database (DEC-033).
 //!
-//! Tests are marked `#[ignore]` by default since they require Docker. Run via
-//! `cargo test -p xiaoguai-storage -- --ignored`.
+//! No Docker — `common::test_setup` opens a temp database and applies every
+//! migration. Asserts the suite applies clean and key tables exist.
 
-#[cfg(test)]
-mod containerized {
-    use testcontainers_modules::{
-        postgres::Postgres,
-        testcontainers::{runners::AsyncRunner, ImageExt},
-    };
-    use xiaoguai_storage::db;
+mod common;
 
-    #[tokio::test]
-    #[ignore = "requires Docker"]
-    async fn migrations_apply_clean() {
-        // pgvector image (postgres + the `vector` extension) — migration 0019
-        // creates a vector(384) column, which plain `postgres` can't provide.
-        let pg = Postgres::default()
-            .with_name("pgvector/pgvector")
-            .with_tag("pg16")
-            .start()
+use common::test_setup;
+
+/// Whether a table exists in the `SQLite` catalog.
+async fn table_exists(pool: &sqlx::SqlitePool, name: &str) -> bool {
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .bind(name)
+            .fetch_one(pool)
             .await
-            .expect("start pg");
-        let port = pg.get_host_port_ipv4(5432).await.expect("port");
-        let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-        let pool = db::connect(&url, 5).await.expect("connect");
-        db::migrate(&pool).await.expect("migrate");
+            .expect("query sqlite_master");
+    count > 0
+}
 
-        let count: (i64,) = sqlx::query_as("SELECT count(*) FROM tenants")
-            .fetch_one(&pool)
-            .await
-            .expect("query");
-        assert_eq!(count.0, 0);
+#[tokio::test]
+async fn migrations_apply_clean() {
+    // test_setup() panics if any migration fails to apply.
+    let (pool, _guard) = test_setup().await;
 
-        let exists: (bool,) = sqlx::query_as(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'audit_log')",
-        )
+    // Single-user schema: no `tenants` table.
+    assert!(
+        !table_exists(&pool, "tenants").await,
+        "tenants table should be gone under the single-user pivot"
+    );
+
+    // Core tables created by 0001 + later migrations.
+    assert!(table_exists(&pool, "users").await, "users table should exist");
+    assert!(
+        table_exists(&pool, "sessions").await,
+        "sessions table should exist"
+    );
+    assert!(
+        table_exists(&pool, "audit_log").await,
+        "audit_log table should exist"
+    );
+
+    // The `users` table is empty on a fresh database.
+    let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM users")
         .fetch_one(&pool)
         .await
-        .expect("query");
-        assert!(exists.0, "audit_log table should exist");
-    }
+        .expect("count users");
+    assert_eq!(count, 0);
 }
