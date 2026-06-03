@@ -15,11 +15,10 @@ repos:
     rev: v4.6.0
     hooks:
       - id: check-yaml
-        name: check-yaml (skip helm templates + GH actions matrix)
+        name: check-yaml (skip GH actions matrix)
         args: [--unsafe]
         exclude: |
           (?x)^(
-            deploy/helm/.*/templates/.*\.yaml   |
             \.github/workflows/.*\.ya?ml
           )$
 

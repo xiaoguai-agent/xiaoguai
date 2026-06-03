@@ -39,12 +39,13 @@ cache:
   key_prefix: "xiaoguai:"
 
 auth:
-  # JWT validation knobs. Leave `required: false` for dev / single-tenant
-  # bring-up; flip to `true` once you front the service with an IdP.
-  issuer: https://idp.example.com
-  audience: xiaoguai-core
-  jwks_url: https://idp.example.com/.well-known/jwks.json
-  required: false
+  # Single-owner access gate (DEC-033). There is no OIDC/RBAC/multi-tenancy —
+  # the API is protected by one username + password checked via HTTP Basic.
+  # Leave BOTH empty for an open localhost dev run; set them (ideally via the
+  # XIAOGUAI_AUTH__USERNAME / XIAOGUAI_AUTH__PASSWORD env vars, not this file)
+  # before exposing the service on a URL.
+  username: ""
+  password: ""
 
 audit:
   # HMAC-SHA256 signing key for the tamper-evident audit chain. This dev
