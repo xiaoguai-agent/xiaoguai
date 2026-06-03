@@ -8,7 +8,7 @@
 //! |---|---|
 //! | [`prometheus`] | Registry init, metric handles, `/metrics` route |
 //! | [`otlp`] | OTLP/gRPC trace pipeline via `tracing-opentelemetry` |
-//! | [`instrument`] | Macros: `instrument_llm_call!`, `instrument_http_request!`, `instrument_scheduler_tick!` |
+//! | [`instrument`] | Macros: `instrument_llm_call!`, `instrument_scheduler_tick!` |
 //!
 //! ## Quick start (xiaoguai-core)
 //!
@@ -33,7 +33,7 @@ pub mod instrument;
 pub mod otlp;
 pub mod prometheus;
 pub mod redact;
-pub mod slo;
+pub mod signal;
 
 pub use otlp::{init_otlp, shutdown_tracer};
 pub use prometheus::{
@@ -41,15 +41,10 @@ pub use prometheus::{
     compaction_triggered_total, global_handles, hotl_check_duration, hotl_registry_replayed_total,
     hotl_suspended_loops_gauge, hotl_suspension_duration_seconds, hotl_suspensions_total,
     hotl_usage_total, im_messages_total, init_prometheus, mount_metrics, outcomes_chain_depth,
-    outcomes_recorded_total, slo_burn_rate, slo_override_parse_failed_total, watch_wakeups_total,
-    MetricHandles,
+    outcomes_recorded_total, watch_wakeups_total, MetricHandles,
 };
 pub use redact::RedactingSpanExporter;
-pub use slo::{
-    load_slos, parse_alert_severity_override, parse_error_budget_pct_override,
-    parse_latency_p95_ms_override, parse_saturation_ratio_override, ContractSurface, PageChain,
-    Signal, Slo, SloError, SloFile, Threshold, Window,
-};
+pub use signal::Signal;
 
 use anyhow::Result;
 use axum::Router;
