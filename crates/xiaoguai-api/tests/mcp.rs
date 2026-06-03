@@ -106,9 +106,6 @@ fn build_state(auth: Option<Arc<dyn TokenValidator>>, mcp: Arc<InMemoryMcpRepo>)
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: Some(mcp),
         auth,
-        authz: None,
-        tenants: None,
-        rate_limiter: None,
         audit: None,
         audit_verifier: None,
         audit_chain_exporter: None,
@@ -124,7 +121,6 @@ fn build_state(auth: Option<Arc<dyn TokenValidator>>, mcp: Arc<InMemoryMcpRepo>)
         webhook_token_validator: None,
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
-        rate_limit_state: None,
         hotl_policy_store: None,
         hotl_enforcer: None,
         hotl_decision_store: None,
@@ -184,8 +180,6 @@ async fn authed_caller_sees_globals_plus_their_tenant() {
         claims: Claims {
             sub: "alice".into(),
             tenant_id: "ten_a".into(),
-            roles: vec![],
-            scopes: vec![],
         },
     });
     let app = router(build_state(Some(validator), mcp));

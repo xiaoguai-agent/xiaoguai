@@ -13,9 +13,8 @@
 //! stored key is NEVER returned — list items expose only `has_api_key`.
 //!
 //! NOTE: the `LlmRouter` is built once at boot, so a newly created/deleted
-//! provider takes effect on the next server restart (same as the boot-time
-//! Casbin merge). The endpoints persist immediately; the running router does
-//! not hot-reload.
+//! provider takes effect on the next server restart. The endpoints persist
+//! immediately; the running router does not hot-reload.
 
 use std::sync::Arc;
 

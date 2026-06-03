@@ -261,12 +261,9 @@ mod tests {
     #[tokio::test]
     async fn aggregate_round_trip() {
         let dir = tempfile::tempdir().unwrap();
-        let pool = xiaoguai_storage::db::connect(
-            dir.path().join("t.db").to_str().unwrap(),
-            5,
-        )
-        .await
-        .unwrap();
+        let pool = xiaoguai_storage::db::connect(dir.path().join("t.db").to_str().unwrap(), 5)
+            .await
+            .unwrap();
         xiaoguai_storage::db::migrate(&pool).await.unwrap();
 
         // Seed one provider with rates and two token_usage rows on the

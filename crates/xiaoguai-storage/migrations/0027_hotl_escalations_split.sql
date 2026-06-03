@@ -54,20 +54,5 @@ CREATE TABLE hotl_redaction_policies (
 
 CREATE INDEX hotl_redaction_policies_scope_idx ON hotl_redaction_policies (scope);
 
--- Minimal Casbin-compatible rule table (ptype, v0..v5). Seeded with the
--- hotl:decide scope grant so the DB-backed adapter can enforce it at runtime.
-CREATE TABLE casbin_rule (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    ptype   TEXT NOT NULL,
-    v0      TEXT,
-    v1      TEXT,
-    v2      TEXT,
-    v3      TEXT,
-    v4      TEXT,
-    v5      TEXT
-);
-
-CREATE INDEX casbin_rule_ptype_idx ON casbin_rule (ptype);
-
-INSERT INTO casbin_rule (ptype, v0, v1, v2, v3)
-VALUES ('p', 'hotl:decide', '/v1/hotl/decisions', 'POST', 'allow');
+-- DEC-033: Casbin RBAC was removed (single static owner, no scopes). The
+-- former `casbin_rule` table + `hotl:decide` seed are gone with it.

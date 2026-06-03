@@ -51,7 +51,6 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use xiaoguai_audit::{AuditEntry, ChainedAudit};
-use xiaoguai_auth::{Authz, JwtValidator};
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{cache::Cache, db, ReadWritePool};
 
@@ -97,7 +96,7 @@ pub async fn run_with_cli() -> Result<()> {
         version = env!("CARGO_PKG_VERSION"),
         cfg.db = %settings.database.url,
         cfg.cache = %settings.cache.url,
-        cfg.jwks = %settings.auth.jwks_url,
+        cfg.auth_enabled = settings.auth.is_enabled(),
         "xiaoguai-core starting"
     );
 
@@ -158,22 +157,10 @@ pub async fn run_smoke(settings: &Settings) -> Result<()> {
         tracing::info!("smoke: valkey ok");
     }
 
-    tracing::info!("smoke: initializing JWT validator (no network call)");
-    let _jwt = JwtValidator::new(
-        settings.auth.issuer.clone(),
-        settings.auth.audience.clone(),
-        settings.auth.jwks_url.clone(),
+    tracing::info!(
+        auth_enabled = settings.auth.is_enabled(),
+        "smoke: owner-auth gate configured (DEC-033: no OIDC/RBAC)"
     );
-    tracing::info!("smoke: jwt validator ok");
-
-    tracing::info!("smoke: loading Casbin RBAC");
-    let authz = Authz::new_default().await.context("rbac load")?;
-    let allowed = authz
-        .check("system_admin", "smoke-tenant", "/sessions/anything", "read")
-        .await
-        .context("rbac check")?;
-    anyhow::ensure!(allowed, "system_admin should be allowed");
-    tracing::info!("smoke: rbac ok");
 
     tracing::info!("smoke: audit chain round-trip");
     let chain = ChainedAudit::new(settings.audit.hmac_key.as_bytes());
@@ -201,7 +188,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     use xiaoguai_agent::{AgentConfig, Toolbox};
     use xiaoguai_api::{
         audit::{AuditReader, AuditVerifier},
-        AppState, CancelRegistry, RateClass, RateLimitState,
+        AppState, CancelRegistry,
     };
     use xiaoguai_audit::chain::sink::PgAuditSink;
     use xiaoguai_llm::{build_router, LlmBackend, MockBackend, OsEnvResolver};
@@ -210,7 +197,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     use xiaoguai_observability;
     use xiaoguai_storage::repositories::{
         LlmProviderRepository, PgLlmProviderRepository, PgMcpServerRepository, PgMessageRepository,
-        PgSessionRepository, PgTenantRepository,
+        PgSessionRepository,
     };
 
     use crate::audit_bridge::PgAuditAdapter;
@@ -604,11 +591,6 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: Some(mcp_servers_repo),
         auth,
-        authz: build_authz(settings, &pool).await.context("build authz")?,
-        tenants: Some(Arc::new(PgTenantRepository::new(pool.clone()))),
-        // v0.6.3 / v1.2.20: per-tenant rate limiting. Legacy single-class
-        // limiter is superseded by rate_limit_state (set at end of struct).
-        rate_limiter: None,
         audit: audit_reader,
         audit_verifier,
         audit_chain_exporter,
@@ -653,7 +635,6 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         webhook_token_validator,
         webhook_token_admin,
         scheduler_jobs_reader,
-        rate_limit_state: Some(RateLimitState::in_memory(RateClass::Standard)),
         // v1.2.3: HOTL boundary policy — PgHotlPolicyStore + PgHotlEnforcer
         // wired here (migration 0011 provides both tables). One store +
         // one enforcer is shared between the CRUD handle, the
@@ -1133,113 +1114,32 @@ async fn serve_with_state_and_extras(
     Ok((local, fut))
 }
 
-/// Wire the JWT validator when `auth.required` is on. Returns `None` to
-/// keep the dev-mode "body-supplied identity" path; returns
-/// `Some(JwtTokenValidator)` to require Bearer tokens on `/v1/**`.
+/// Wire the single-owner auth gate (DEC-033). Returns `None` to keep the
+/// open dev-mode path (handlers fall back to the owner identity); returns
+/// `Some(StaticCredentialValidator)` to require a matching HTTP Basic
+/// username/password on `/v1/**` when both credentials are configured.
 fn build_auth(
     settings: &Settings,
 ) -> Option<std::sync::Arc<dyn xiaoguai_api::auth::TokenValidator>> {
     use std::sync::Arc;
-    use xiaoguai_api::auth::{JwtTokenValidator, TokenValidator};
-    if !settings.auth.required {
+    use xiaoguai_api::auth::{StaticCredentialValidator, TokenValidator};
+    if !settings.auth.is_enabled() {
+        tracing::warn!(
+            "serve: owner auth gate DISABLED (no username/password configured) — \
+             bind to localhost or set auth.username + auth.password before exposing on a URL"
+        );
         return None;
     }
-    let validator = xiaoguai_auth::JwtValidator::new(
-        settings.auth.issuer.clone(),
-        settings.auth.audience.clone(),
-        settings.auth.jwks_url.clone(),
+    let validator = StaticCredentialValidator::new(
+        settings.auth.username.clone(),
+        settings.auth.password.clone(),
     );
-    let arc_validator = Arc::new(validator);
-    let wrapper: Arc<dyn TokenValidator> = Arc::new(JwtTokenValidator(arc_validator));
+    let wrapper: Arc<dyn TokenValidator> = Arc::new(validator);
     tracing::info!(
-        issuer = %settings.auth.issuer,
-        audience = %settings.auth.audience,
-        "serve: JWT validator enabled (auth.required=true)"
+        username = %settings.auth.username,
+        "serve: owner auth gate enabled (HTTP Basic)"
     );
     Some(wrapper)
-}
-
-/// Load the Casbin policy and return an `Authz`. When auth is disabled
-/// we still build it — the route middleware checks `auth.required` to
-/// decide whether to enforce. This keeps boot deterministic: if the
-/// shipped policy file fails to parse, the binary fails fast.
-///
-/// ## Hybrid DB-backed merge (sprint-13 S13-10)
-///
-/// After the compiled-in CSV is loaded, we additionally pull rows from
-/// the `casbin_rule` table (seeded by migration 0027) and merge them
-/// into the in-memory enforcer. The hot-path check stays in memory;
-/// the DB query happens exactly once per process. We then assert the
-/// seeded `hotl:decide` rule is present — a partial migration that
-/// failed to seed the row trips a panic at boot rather than letting an
-/// un-enforceable route slip through. Tenants that explicitly disable
-/// auth (dev mode) skip both the merge and the assertion.
-async fn build_authz(
-    settings: &Settings,
-    pool: &sqlx::SqlitePool,
-) -> Result<Option<std::sync::Arc<xiaoguai_auth::Authz>>> {
-    use std::sync::Arc;
-    if !settings.auth.required {
-        return Ok(None);
-    }
-    let mut authz = xiaoguai_auth::Authz::new_default()
-        .await
-        .context("load casbin policy")?;
-
-    // Pull rows seeded by migration 0027. Schema mirrors the Casbin
-    // sql-adapter convention (`ptype`, `v0..v5`).
-    let rows = sqlx::query_as::<
-        _,
-        (
-            String,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        ),
-    >("SELECT ptype, v0, v1, v2, v3, v4, v5 FROM casbin_rule")
-    .fetch_all(pool)
-    .await
-    .context("load casbin_rule rows")?;
-
-    let merged: Vec<xiaoguai_auth::DbPolicyRow> = rows
-        .into_iter()
-        .map(
-            |(ptype, v0, v1, v2, v3, v4, v5)| xiaoguai_auth::DbPolicyRow {
-                ptype,
-                v0,
-                v1,
-                v2,
-                v3,
-                v4,
-                v5,
-            },
-        )
-        .collect();
-    let merged_count = merged.len();
-    authz
-        .merge_db_policies(merged)
-        .await
-        .context("merge casbin_rule rows")?;
-    tracing::info!(merged_count, "serve: Casbin DB-merged rows loaded");
-
-    // Defensive boot-time assertion (DEC-HLD-016 / S13-10): the seeded
-    // `hotl:decide` scope rule MUST be present after the merge. If it's
-    // missing, migration 0027 ran partially (or not at all) and the
-    // hotl decisions route would silently allow anyone — fail fast.
-    let required = ["hotl:decide", "/v1/hotl/decisions", "POST", "allow"];
-    if !authz.has_policy_rule(&required).await {
-        anyhow::bail!(
-            "Casbin policy missing required rule: (p, {required:?}). \
-             Did migration 0027_hotl_escalations_split.sql run? \
-             See DEC-HLD-016 / sprint-13 S13-10."
-        );
-    }
-    tracing::info!("serve: Casbin hotl:decide rule asserted present");
-
-    Ok(Some(Arc::new(authz)))
 }
 
 /// Whether to scrub PII/secrets from audit entries before signing.

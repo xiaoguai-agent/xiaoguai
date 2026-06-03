@@ -30,7 +30,10 @@ async fn migrations_apply_clean() {
     );
 
     // Core tables created by 0001 + later migrations.
-    assert!(table_exists(&pool, "users").await, "users table should exist");
+    assert!(
+        table_exists(&pool, "users").await,
+        "users table should exist"
+    );
     assert!(
         table_exists(&pool, "sessions").await,
         "sessions table should exist"

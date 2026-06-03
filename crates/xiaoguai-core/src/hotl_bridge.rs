@@ -1284,10 +1284,7 @@ mod tests {
         let (_dir, pool) = sqlite_pool().await;
         let store = Arc::new(PgHotlPolicyStore::new(pool.clone()));
         let enforcer = PgHotlEnforcer::new(pool, store);
-        let v = enforcer
-            .check(Uuid::nil(), "llm_call", 1.0)
-            .await
-            .unwrap();
+        let v = enforcer.check(Uuid::nil(), "llm_call", 1.0).await.unwrap();
         assert_eq!(v, HotlVerdict::Allow);
     }
 

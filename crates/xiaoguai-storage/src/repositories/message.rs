@@ -135,12 +135,11 @@ impl MessageRepository for PgMessageRepository {
 
     async fn count_by_session(&self, tenant: Option<&str>, session_id: &str) -> RepoResult<i64> {
         let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
-        let (count,): (i64,) =
-            sqlx::query_as("SELECT count(*) FROM messages WHERE session_id = ?")
-                .bind(session_id)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(RepoError::from_sqlx)?;
+        let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM messages WHERE session_id = ?")
+            .bind(session_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(RepoError::from_sqlx)?;
         tx.commit().await.map_err(RepoError::from_sqlx)?;
         Ok(count)
     }

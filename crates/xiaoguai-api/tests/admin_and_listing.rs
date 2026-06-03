@@ -1,73 +1,33 @@
-//! Integration coverage for v0.6.3: GET /v1/sessions listing,
-//! GET /v1/admin/tenants, and the per-tenant rate-limit middleware.
+//! Integration coverage for v0.6.3: GET /v1/sessions listing + the admin
+//! audit/today/eval/scheduler surfaces. The tenant-directory, per-tenant
+//! rate-limit, and per-tenant config tests were removed with the
+//! single-owner pivot (DEC-033) — those routes no longer exist.
 
 mod common;
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use axum::body::{to_bytes, Body};
 use axum::http::{header, Request, StatusCode};
-use parking_lot::Mutex;
 use serde_json::Value;
 use tower::ServiceExt;
 use xiaoguai_agent::{AgentConfig, Toolbox};
-use xiaoguai_api::auth::{Claims, StubValidator, TokenValidator};
-use xiaoguai_api::{router, AppState, CancelRegistry, RateClass, RateLimitState, RateLimiter};
+use xiaoguai_api::auth::TokenValidator;
+use xiaoguai_api::{router, AppState, CancelRegistry};
 use xiaoguai_llm::mock::ScriptStep;
 use xiaoguai_llm::{LlmBackend, MockBackend};
-use xiaoguai_storage::repositories::{RepoResult, TenantRepository};
-use xiaoguai_types::{Session, SessionId, SessionStatus, Tenant, TenantId, TenantStatus, UserId};
+use xiaoguai_types::{Session, SessionId, SessionStatus, TenantId, UserId};
 
 use common::{InMemoryMessageRepo, InMemorySessionRepo};
 
-#[derive(Default)]
-struct InMemoryTenantRepo {
-    rows: Mutex<Vec<Tenant>>,
-}
-
-impl InMemoryTenantRepo {
-    fn arc() -> Arc<Self> {
-        Arc::new(Self::default())
-    }
-    fn push(&self, t: Tenant) {
-        self.rows.lock().push(t);
-    }
-}
-
-#[async_trait]
-impl TenantRepository for InMemoryTenantRepo {
-    async fn create(&self, t: &Tenant) -> RepoResult<()> {
-        self.rows.lock().push(t.clone());
-        Ok(())
-    }
-    async fn find_by_id(&self, id: &str) -> RepoResult<Option<Tenant>> {
-        Ok(self
-            .rows
-            .lock()
-            .iter()
-            .find(|t| t.id.as_str() == id)
-            .cloned())
-    }
-    async fn find_by_name(&self, name: &str) -> RepoResult<Option<Tenant>> {
-        Ok(self.rows.lock().iter().find(|t| t.name == name).cloned())
-    }
-    async fn list(&self, limit: i64, offset: i64) -> RepoResult<Vec<Tenant>> {
-        let rows = self.rows.lock().clone();
-        let offset = usize::try_from(offset.max(0)).unwrap_or(0);
-        let limit = usize::try_from(limit.max(0)).unwrap_or(0);
-        Ok(rows.into_iter().skip(offset).take(limit).collect())
-    }
-    async fn delete(&self, id: &str) -> RepoResult<()> {
-        self.rows.lock().retain(|t| t.id.as_str() != id);
-        Ok(())
-    }
-}
-
+/// Build a test `AppState`. The 2nd/3rd params are vestigial under DEC-033
+/// (the tenant repository + rate limiter were removed); they are kept as
+/// `Option<()>` only so the many existing `build_state(s, None, None, None)`
+/// call sites compile unchanged.
 fn build_state(
     sessions: Arc<InMemorySessionRepo>,
-    tenants: Option<Arc<dyn TenantRepository>>,
-    limiter: Option<Arc<RateLimiter>>,
+    _tenants: Option<()>,
+    _limiter: Option<()>,
     auth: Option<Arc<dyn TokenValidator>>,
 ) -> AppState {
     let backend: Arc<dyn LlmBackend> =
@@ -81,9 +41,6 @@ fn build_state(
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: None,
         auth,
-        authz: None,
-        tenants,
-        rate_limiter: limiter,
         audit: None,
         audit_verifier: None,
         audit_chain_exporter: None,
@@ -99,7 +56,6 @@ fn build_state(
         webhook_token_validator: None,
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
-        rate_limit_state: None,
         hotl_policy_store: None,
         hotl_enforcer: None,
         hotl_decision_store: None,
@@ -190,141 +146,6 @@ async fn list_sessions_400s_when_user_id_missing_and_no_claims() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
-async fn admin_tenants_lists_all() {
-    let tenants = InMemoryTenantRepo::arc();
-    tenants.push(Tenant {
-        id: TenantId::from("ten_a".to_string()),
-        name: "alpha".into(),
-        display_name: "Alpha".into(),
-        created_at: chrono::Utc::now(),
-        status: TenantStatus::Active,
-    });
-    tenants.push(Tenant {
-        id: TenantId::from("ten_b".to_string()),
-        name: "beta".into(),
-        display_name: "Beta".into(),
-        created_at: chrono::Utc::now(),
-        status: TenantStatus::Suspended,
-    });
-    let app = router(build_state(
-        InMemorySessionRepo::arc(),
-        Some(tenants),
-        None,
-        None,
-    ));
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/v1/admin/tenants")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let v = body_arr(resp.into_body()).await;
-    assert_eq!(v.len(), 2);
-    let names: Vec<&str> = v.iter().filter_map(|t| t["name"].as_str()).collect();
-    assert!(names.contains(&"alpha"));
-    assert!(names.contains(&"beta"));
-}
-
-#[tokio::test]
-async fn admin_tenants_500s_when_repo_not_wired() {
-    let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/v1/admin/tenants")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
-}
-
-#[tokio::test]
-async fn rate_limit_returns_429_when_bucket_drained() {
-    // v1.2.20: use RateLimitState with Free class (burst 20).
-    // Drain all 20 burst tokens; the 21st request must get 429.
-    let rls = RateLimitState::in_memory(RateClass::Free);
-    let validator: Arc<dyn TokenValidator> = Arc::new(StubValidator {
-        claims: Claims {
-            sub: "alice".into(),
-            tenant_id: "ten_a".into(),
-            roles: vec![],
-            scopes: vec![],
-        },
-    });
-    let mut state = build_state(InMemorySessionRepo::arc(), None, None, Some(validator));
-    state.rate_limit_state = Some(rls);
-    let app = router(state);
-    let mk = || {
-        Request::builder()
-            .uri("/v1/sessions/sess_x")
-            .header(header::AUTHORIZATION, "Bearer t")
-            .body(Body::empty())
-            .unwrap()
-    };
-    // Drain the burst (20 tokens) — all get 404 (session not found,
-    // which means the handler ran: middleware allowed them through).
-    let burst = RateClass::Free.burst() as usize;
-    for _ in 0..burst {
-        let r = app.clone().oneshot(mk()).await.unwrap();
-        assert_eq!(r.status(), StatusCode::NOT_FOUND);
-    }
-    // 21st: bucket empty → 429.
-    let last = app.clone().oneshot(mk()).await.unwrap();
-    assert_eq!(last.status(), StatusCode::TOO_MANY_REQUESTS);
-}
-
-/// v1.2.20: 429 response must include `Retry-After` header and a JSON body
-/// with `error.code = "rate_limit_exceeded"`.
-#[tokio::test]
-async fn rate_limit_429_response_shape() {
-    let rls = RateLimitState::in_memory(RateClass::Free);
-    let validator: Arc<dyn TokenValidator> = Arc::new(StubValidator {
-        claims: Claims {
-            sub: "bob".into(),
-            tenant_id: "ten_shape".into(),
-            roles: vec![],
-            scopes: vec![],
-        },
-    });
-    let mut state = build_state(InMemorySessionRepo::arc(), None, None, Some(validator));
-    state.rate_limit_state = Some(rls);
-    let app = router(state);
-    let mk = || {
-        Request::builder()
-            .uri("/v1/sessions/sess_shape")
-            .header(axum::http::header::AUTHORIZATION, "Bearer t")
-            .body(Body::empty())
-            .unwrap()
-    };
-    // Drain burst.
-    let burst = RateClass::Free.burst() as usize;
-    for _ in 0..burst {
-        app.clone().oneshot(mk()).await.unwrap();
-    }
-    // Next request → 429.
-    let resp = app.oneshot(mk()).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
-    // Must have Retry-After header.
-    assert!(
-        resp.headers().contains_key("retry-after"),
-        "429 must include Retry-After header"
-    );
-    // Body must be JSON with error.code = "rate_limit_exceeded".
-    let body_bytes = to_bytes(resp.into_body(), 4096).await.unwrap();
-    let json: Value = serde_json::from_slice(&body_bytes).expect("429 body must be JSON");
-    assert_eq!(
-        json["error"]["code"], "rate_limit_exceeded",
-        "error.code must be rate_limit_exceeded"
-    );
 }
 
 #[tokio::test]
@@ -490,31 +311,6 @@ async fn admin_audit_400s_when_tenant_id_missing() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
-async fn rate_limit_is_bypassed_without_claims() {
-    // No auth → no Claims → no tenant key → middleware lets every request
-    // through even though the rate_limit_state is wired.
-    let rls = RateLimitState::in_memory(RateClass::Free);
-    let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
-    state.rate_limit_state = Some(rls);
-    let app = router(state);
-    for _ in 0..5 {
-        let resp = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/sessions/sess_x")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        // 404 because session doesn't exist; the point is the middleware
-        // didn't 429.
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-    }
 }
 
 // ----------------------------------------------------------------------
@@ -1578,81 +1374,4 @@ mod scheduler_jobs_reader {
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
         assert_eq!(reader.fire_calls.lock().as_slice(), &["a".to_string()]);
     }
-}
-
-// ── v1.3.x: GET /v1/tenants/:id/config (chat-ui AiDisclosureBanner) ─────────
-
-async fn body_obj(body: Body) -> Value {
-    let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
-    serde_json::from_slice(&bytes).unwrap()
-}
-
-#[tokio::test]
-async fn tenant_config_returns_ai_disclosure_banner() {
-    let tenants = InMemoryTenantRepo::arc();
-    tenants.push(Tenant {
-        id: TenantId::from("ten_a".to_string()),
-        name: "alpha".into(),
-        display_name: "Alpha".into(),
-        created_at: chrono::Utc::now(),
-        status: TenantStatus::Active,
-    });
-    let app = router(build_state(
-        InMemorySessionRepo::arc(),
-        Some(tenants),
-        None,
-        None,
-    ));
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/v1/tenants/ten_a/config")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let v = body_obj(resp.into_body()).await;
-    // Contract shape required by chat-ui + the wave3 Pact interaction.
-    assert_eq!(v["tenant_id"], "ten_a");
-    assert_eq!(v["ai_disclosure_banner"]["enabled"], true);
-    assert_eq!(v["ai_disclosure_banner"]["dismissible"], true);
-    assert!(v["ai_disclosure_banner"]["text"].is_string());
-}
-
-#[tokio::test]
-async fn tenant_config_404_when_tenant_unknown() {
-    let tenants = InMemoryTenantRepo::arc();
-    let app = router(build_state(
-        InMemorySessionRepo::arc(),
-        Some(tenants),
-        None,
-        None,
-    ));
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/v1/tenants/ten_missing/config")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn tenant_config_500_when_repo_not_wired() {
-    let app = router(build_state(InMemorySessionRepo::arc(), None, None, None));
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/v1/tenants/ten_a/config")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }

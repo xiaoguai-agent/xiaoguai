@@ -5,11 +5,7 @@
 //! keeps concurrent readers from blocking the single writer; `foreign_keys` is
 //! enabled so the schema's `REFERENCES` clauses are enforced at runtime.
 
-use std::{
-    path::PathBuf,
-    str::FromStr,
-    time::Duration,
-};
+use std::{path::PathBuf, str::FromStr, time::Duration};
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 

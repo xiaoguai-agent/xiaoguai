@@ -29,8 +29,6 @@ fn build_state_with_auth() -> AppState {
         claims: Claims {
             sub: "alice".into(),
             tenant_id: "ten_a".into(),
-            roles: vec!["user".into()],
-            scopes: vec![],
         },
     });
     AppState {
@@ -42,9 +40,6 @@ fn build_state_with_auth() -> AppState {
         cancels: Arc::new(CancelRegistry::new()),
         mcp_servers: None,
         auth: Some(validator),
-        authz: None,
-        tenants: None,
-        rate_limiter: None,
         audit: None,
         audit_verifier: None,
         audit_chain_exporter: None,
@@ -60,7 +55,6 @@ fn build_state_with_auth() -> AppState {
         webhook_token_validator: None,
         webhook_token_admin: None,
         scheduler_jobs_reader: None,
-        rate_limit_state: None,
         hotl_policy_store: None,
         hotl_enforcer: None,
         hotl_decision_store: None,
