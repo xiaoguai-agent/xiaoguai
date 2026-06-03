@@ -11,7 +11,6 @@
 //! | `xiaoguai_hotl_check_duration_seconds` | Histogram | — | HOTL enforcer check latency |
 //! | `xiaoguai_outcomes_recorded_total` | Counter | `tenant`, `kind` | Outcome attributions recorded |
 //! | `xiaoguai_outcomes_chain_depth` | Histogram | — | Chain depth per recorded outcome |
-//! | `xiaoguai_rate_limit_hits_total` | Counter | `tenant`, `route`, `decision` | Rate-limit decisions |
 //! | `xiaoguai_anomaly_detections_total` | Counter | `detector`, `severity` | Anomaly detector fires |
 //! | `xiaoguai_watch_wakeups_total` | Counter | `watcher_id`, `outcome` | Watch task wakeup results |
 //! | `xiaoguai_im_messages_total` | Counter | `adapter`, `direction` | IM gateway messages |
@@ -75,8 +74,6 @@ pub struct MetricHandles {
     pub outcomes_recorded_total: IntCounterVec,
     /// Chain depth per recorded outcome.
     pub outcomes_chain_depth: Histogram,
-    /// Rate-limit decisions: `(tenant, route, decision)`.
-    pub rate_limit_hits_total: IntCounterVec,
     /// Anomaly detector fires: `(detector, severity)`.
     pub anomaly_detections_total: IntCounterVec,
     /// Watch task wakeup results: `(watcher_id, outcome)`.
@@ -235,14 +232,6 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
     )
     .context("register outcomes_chain_depth")?;
 
-    let rate_limit_hits_total = register_int_counter_vec_with_registry!(
-        "rate_limit_hits_total",
-        "Rate-limit decisions, labelled by tenant, route class, and decision",
-        &["tenant", "route", "decision"],
-        registry
-    )
-    .context("register rate_limit_hits_total")?;
-
     let anomaly_detections_total = register_int_counter_vec_with_registry!(
         "anomaly_detections_total",
         "Anomaly detector fires, labelled by detector type and severity",
@@ -362,7 +351,6 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
         hotl_check_duration,
         outcomes_recorded_total,
         outcomes_chain_depth,
-        rate_limit_hits_total,
         anomaly_detections_total,
         watch_wakeups_total,
         im_messages_total,
@@ -449,11 +437,6 @@ pub fn outcomes_recorded_total() -> Option<&'static IntCounterVec> {
 /// Histogram: `xiaoguai_outcomes_chain_depth`.
 pub fn outcomes_chain_depth() -> Option<&'static Histogram> {
     HANDLES.get().map(|h| &h.outcomes_chain_depth)
-}
-
-/// Counter: `xiaoguai_rate_limit_hits_total{tenant, route, decision}`.
-pub fn rate_limit_hits_total() -> Option<&'static IntCounterVec> {
-    HANDLES.get().map(|h| &h.rate_limit_hits_total)
 }
 
 /// Counter: `xiaoguai_anomaly_detections_total{detector, severity}`.
@@ -590,19 +573,6 @@ mod tests {
             1,
             "outcomes_chain_depth must record one observation"
         );
-    }
-
-    #[test]
-    fn prometheus_rate_limit_hits_total_increments() {
-        let (_reg, h) = fresh();
-        h.rate_limit_hits_total
-            .with_label_values(&["t2", "default", "deny"])
-            .inc();
-        let val = h
-            .rate_limit_hits_total
-            .with_label_values(&["t2", "default", "deny"])
-            .get();
-        assert!(val > 0, "rate_limit_hits_total must be > 0 after inc()");
     }
 
     #[test]
