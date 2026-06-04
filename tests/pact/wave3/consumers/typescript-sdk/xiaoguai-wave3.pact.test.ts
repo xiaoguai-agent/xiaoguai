@@ -78,7 +78,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
             { headers: { Authorization: BEARER } }
           );
           expect(res.status).toBe(200);
-          const body = await res.json();
+          const body = (await res.json()) as any;
           expect(Array.isArray(body)).toBe(true);
           expect(body.length).toBeGreaterThan(0);
         });
@@ -132,7 +132,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
             }),
           });
           expect(res.status).toBe(201);
-          const body = await res.json();
+          const body = (await res.json()) as any;
           expect(body).toHaveProperty("id");
           expect(body.scope).toBe("llm_call");
         });
@@ -148,7 +148,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
           states: [
             {
               description: "HotL policy exists",
-              params: { id: POLICY_UUID },
+              parameters: { id: POLICY_UUID },
             },
           ],
           uponReceiving: `a GET /v1/hotl/policies/${POLICY_UUID} request`,
@@ -169,7 +169,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
             { headers: { Authorization: BEARER } }
           );
           expect(res.status).toBe(200);
-          const body = await res.json();
+          const body = (await res.json()) as any;
           expect(body).toHaveProperty("id");
         });
     });
@@ -184,7 +184,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
           states: [
             {
               description: "HotL policy exists",
-              params: { id: POLICY_UUID },
+              parameters: { id: POLICY_UUID },
             },
           ],
           uponReceiving: `a PUT /v1/hotl/policies/${POLICY_UUID} request`,
@@ -247,7 +247,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
           states: [
             {
               description: "HotL policy exists",
-              params: { id: POLICY_UUID },
+              parameters: { id: POLICY_UUID },
             },
           ],
           uponReceiving: `a DELETE /v1/hotl/policies/${POLICY_UUID} request`,
@@ -321,7 +321,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
             }),
           });
           expect(res.status).toBe(200);
-          const body = await res.json();
+          const body = (await res.json()) as any;
           expect(body.verdict).toBe("allow");
         });
     });
@@ -384,7 +384,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
             }),
           });
           expect(res.status).toBe(201);
-          const body = await res.json();
+          const body = (await res.json()) as any;
           expect(body.ok).toBe(true);
         });
     });
@@ -428,7 +428,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
             { headers: { Authorization: BEARER } }
           );
           expect(res.status).toBe(200);
-          const body = await res.json();
+          const body = (await res.json()) as any;
           expect(body).toHaveProperty("summary");
           expect(body.summary).toHaveProperty("by_kind");
         });
@@ -470,7 +470,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
             { headers: { Authorization: BEARER } }
           );
           expect(res.status).toBe(200);
-          const body = await res.json();
+          const body = (await res.json()) as any;
           expect(Array.isArray(body.days)).toBe(true);
         });
     });
@@ -519,7 +519,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
             { headers: { Authorization: BEARER } }
           );
           expect(res.status).toBe(200);
-          const body = await res.json();
+          const body = (await res.json()) as any;
           expect(Array.isArray(body)).toBe(true);
         });
     });
@@ -570,7 +570,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
             }),
           });
           expect(res.status).toBe(201);
-          const body = await res.json();
+          const body = (await res.json()) as any;
           expect(body).toHaveProperty("id");
           expect(body.pack_slug).toBe("pr-review");
         });
@@ -586,7 +586,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
           states: [
             {
               description: "skill pack installation exists",
-              params: { id: INSTALL_UUID },
+              parameters: { id: INSTALL_UUID },
             },
           ],
           uponReceiving: `a DELETE /v1/skills/install/${INSTALL_UUID} request`,
