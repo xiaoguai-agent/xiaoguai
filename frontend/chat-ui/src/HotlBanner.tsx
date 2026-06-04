@@ -194,13 +194,17 @@ export function HotlBanner({
 
   // ── Defensive 30 s fallback: arms after local submit succeeds ────────
   // Primary clear signal is `hotl_resolved`. See lld-chat-ui.md §4.3.2.
+  // Once a matching `hotl_resolved` SSE arrives, the primary-clear effect
+  // owns the clear — re-running this effect cancels the armed timer (via
+  // cleanup) and returns early so the fallback never double-fires onCleared.
   useEffect(() => {
     if (!localSubmitted) return;
+    if (resolved && resolved.escalation_id === pending.escalation_id) return;
     const tid = setTimeout(() => {
       onClearedRef.current?.();
     }, FALLBACK_CLEAR_MS);
     return () => clearTimeout(tid);
-  }, [localSubmitted]);
+  }, [localSubmitted, resolved, pending.escalation_id]);
 
   function buildRaisePolicy(): HotlDecisionRaisePolicy | null {
     if (!adjust.open) return null;
