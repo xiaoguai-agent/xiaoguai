@@ -107,7 +107,6 @@ async fn record_outcome_returns_201() {
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
-                        "tenant_id": "tenant_a",
                         "session_id": "sess_1",
                         "agent_name": "sales-bot",
                         "kind": "revenue_usd",
@@ -139,7 +138,6 @@ async fn record_outcome_rejects_negative_value() {
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
-                        "tenant_id": "t1",
                         "agent_name": "bot",
                         "kind": "revenue_usd",
                         "value": -10.0
@@ -164,7 +162,6 @@ async fn record_outcome_rejects_empty_kind() {
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
-                        "tenant_id": "t1",
                         "agent_name": "bot",
                         "kind": "",
                         "value": 10.0
@@ -189,7 +186,6 @@ async fn record_outcome_503_when_unwired() {
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
-                        "tenant_id": "t1",
                         "agent_name": "bot",
                         "kind": "revenue_usd",
                         "value": 100.0
@@ -216,7 +212,6 @@ async fn summary_returns_by_kind_map() {
     // Write directly via the backend to avoid another HTTP round-trip.
     backend
         .record(RecordOutcomeRequest {
-            tenant_id: "ten".into(),
             session_id: None,
             agent_name: "bot".into(),
             kind: "revenue_usd".into(),
@@ -229,7 +224,6 @@ async fn summary_returns_by_kind_map() {
         .unwrap();
     backend
         .record(RecordOutcomeRequest {
-            tenant_id: "ten".into(),
             session_id: None,
             agent_name: "bot".into(),
             kind: "hours_saved".into(),
@@ -246,7 +240,7 @@ async fn summary_returns_by_kind_map() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/v1/outcomes/summary?tenant_id=ten&range=30d")
+                .uri("/v1/outcomes/summary?range=30d")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -254,7 +248,6 @@ async fn summary_returns_by_kind_map() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
-    assert_eq!(body["tenant_id"], "ten");
     assert_eq!(body["range"], "30d");
     let rev = &body["summary"]["by_kind"]["revenue_usd"];
     assert!((rev["sum"].as_f64().unwrap() - 100.0).abs() < f64::EPSILON);
@@ -268,7 +261,7 @@ async fn summary_503_when_unwired() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/v1/outcomes/summary?tenant_id=ten")
+                .uri("/v1/outcomes/summary")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -286,7 +279,7 @@ async fn summary_defaults_empty_tenant_to_owner() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/v1/outcomes/summary?tenant_id=")
+                .uri("/v1/outcomes/summary")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -302,7 +295,7 @@ async fn summary_rejects_unknown_range() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/v1/outcomes/summary?tenant_id=ten&range=99y")
+                .uri("/v1/outcomes/summary?range=99y")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -322,7 +315,6 @@ async fn timeseries_returns_day_buckets() {
     for _ in 0..3 {
         backend
             .record(RecordOutcomeRequest {
-                tenant_id: "ten".into(),
                 session_id: None,
                 agent_name: "bot".into(),
                 kind: "deals_closed".into(),
@@ -340,7 +332,7 @@ async fn timeseries_returns_day_buckets() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/v1/outcomes/timeseries?tenant_id=ten&range=7d&kind=deals_closed")
+                .uri("/v1/outcomes/timeseries?range=7d&kind=deals_closed")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -348,7 +340,6 @@ async fn timeseries_returns_day_buckets() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
-    assert_eq!(body["tenant_id"], "ten");
     let days = body["days"].as_array().unwrap();
     assert_eq!(days.len(), 1);
     assert!((days[0]["sum"].as_f64().unwrap() - 3.0).abs() < f64::EPSILON);
@@ -362,7 +353,7 @@ async fn timeseries_503_when_unwired() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/v1/outcomes/timeseries?tenant_id=ten")
+                .uri("/v1/outcomes/timeseries")
                 .body(Body::empty())
                 .unwrap(),
         )

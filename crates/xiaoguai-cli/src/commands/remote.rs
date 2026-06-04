@@ -163,7 +163,6 @@ fn require_2xx(resp: &reqwest::Response) -> Result<()> {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateSessionRequest {
     pub user_id: String,
-    pub tenant_id: String,
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -172,7 +171,6 @@ pub struct CreateSessionRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SessionResponse {
     pub id: String,
-    pub tenant_id: String,
     pub user_id: String,
     #[serde(default)]
     pub title: Option<String>,

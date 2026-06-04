@@ -7,7 +7,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{ProviderId, TenantId};
+use crate::ids::ProviderId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProviderKind {
@@ -91,8 +91,6 @@ impl ProviderKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmProvider {
     pub id: ProviderId,
-    /// `None` means a system-wide provider visible to every tenant.
-    pub tenant_id: Option<TenantId>,
     pub name: String,
     pub kind: ProviderKind,
     pub endpoint: String,

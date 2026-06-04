@@ -82,7 +82,6 @@ impl OutcomeKind {
 /// A single recorded outcome event. Mirrors the `agent_outcomes` row shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutcomeRecord {
-    pub tenant_id: String,
     pub session_id: Option<String>,
     pub agent_name: String,
     pub kind: String,
@@ -166,7 +165,6 @@ pub trait OutcomeRecorder: Send + Sync {
     #[allow(clippy::too_many_arguments)]
     async fn record(
         &self,
-        tenant_id: &str,
         session_id: Option<&str>,
         agent_name: &str,
         kind: &str,
@@ -176,14 +174,13 @@ pub trait OutcomeRecorder: Send + Sync {
         metadata: serde_json::Value,
     ) -> Result<(), OutcomeError>;
 
-    /// Aggregate outcome values for a tenant over a time range.
+    /// Aggregate outcome values over a time range.
     ///
     /// Returns the sum, count, and average of `value` for every row whose
-    /// `(tenant_id, kind)` pair matches and whose `attributed_at` falls
-    /// within `range`.  `kind = None` returns cross-kind totals.
+    /// `kind` matches and whose `attributed_at` falls within `range`.
+    /// `kind = None` returns cross-kind totals.
     async fn aggregate(
         &self,
-        tenant_id: &str,
         kind: Option<&str>,
         range: OutcomeRange,
     ) -> Result<Aggregate, OutcomeError>;
@@ -222,7 +219,6 @@ impl InMemoryOutcomeRecorder {
 impl OutcomeRecorder for InMemoryOutcomeRecorder {
     async fn record(
         &self,
-        tenant_id: &str,
         session_id: Option<&str>,
         agent_name: &str,
         kind: &str,
@@ -255,7 +251,6 @@ impl OutcomeRecorder for InMemoryOutcomeRecorder {
             hist.observe(chain_depth);
         }
         let rec = OutcomeRecord {
-            tenant_id: tenant_id.to_owned(),
             session_id: session_id.map(ToOwned::to_owned),
             agent_name: agent_name.to_owned(),
             kind: kind.to_owned(),
@@ -271,7 +266,6 @@ impl OutcomeRecorder for InMemoryOutcomeRecorder {
 
     async fn aggregate(
         &self,
-        tenant_id: &str,
         kind: Option<&str>,
         range: OutcomeRange,
     ) -> Result<Aggregate, OutcomeError> {
@@ -285,7 +279,6 @@ impl OutcomeRecorder for InMemoryOutcomeRecorder {
         let records = self.records.lock().unwrap();
         let values: Vec<f64> = records
             .iter()
-            .filter(|r| r.tenant_id == tenant_id)
             .filter(|r| kind.is_none_or(|k| r.kind == k))
             .filter(|r| range.since.is_none_or(|s| r.attributed_at >= s))
             .filter(|r| range.until.is_none_or(|u| r.attributed_at <= u))
@@ -370,20 +363,12 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    type EntrySpec<'a> = (
-        &'a str,
-        Option<&'a str>,
-        &'a str,
-        &'a str,
-        f64,
-        Option<&'a str>,
-    );
+    type EntrySpec<'a> = (Option<&'a str>, &'a str, &'a str, f64, Option<&'a str>);
 
     async fn recorder_with_entries(entries: &[EntrySpec<'_>]) -> InMemoryOutcomeRecorder {
         let r = InMemoryOutcomeRecorder::new();
-        for (tenant, session, agent, kind, value, unit) in entries {
+        for (session, agent, kind, value, unit) in entries {
             r.record(
-                tenant,
                 *session,
                 agent,
                 kind,
@@ -402,7 +387,6 @@ mod tests {
     async fn record_and_retrieve_snapshot() {
         let r = InMemoryOutcomeRecorder::new();
         r.record(
-            "t1",
             Some("s1"),
             "bot",
             "revenue_usd",
@@ -415,7 +399,6 @@ mod tests {
         .unwrap();
         let snap = r.snapshot();
         assert_eq!(snap.len(), 1);
-        assert_eq!(snap[0].tenant_id, "t1");
         assert_eq!(snap[0].kind, "revenue_usd");
         assert!((snap[0].value - 100.0).abs() < f64::EPSILON);
         assert_eq!(snap[0].metadata["deal_id"], "D1");
@@ -424,13 +407,13 @@ mod tests {
     #[tokio::test]
     async fn aggregate_sum_count_avg() {
         let r = recorder_with_entries(&[
-            ("ten", None, "bot", "hours_saved", 2.0, Some("hours")),
-            ("ten", None, "bot", "hours_saved", 4.0, Some("hours")),
-            ("ten", None, "bot", "hours_saved", 6.0, Some("hours")),
+            (None, "bot", "hours_saved", 2.0, Some("hours")),
+            (None, "bot", "hours_saved", 4.0, Some("hours")),
+            (None, "bot", "hours_saved", 6.0, Some("hours")),
         ])
         .await;
         let agg = r
-            .aggregate("ten", Some("hours_saved"), OutcomeRange::default())
+            .aggregate(Some("hours_saved"), OutcomeRange::default())
             .await
             .unwrap();
         assert!((agg.sum - 12.0).abs() < f64::EPSILON);
@@ -439,14 +422,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aggregate_filters_by_tenant() {
+    async fn aggregate_filters_by_kind() {
         let r = recorder_with_entries(&[
-            ("ten_a", None, "bot", "deals_closed", 1.0, None),
-            ("ten_b", None, "bot", "deals_closed", 99.0, None),
+            (None, "bot", "deals_closed", 1.0, None),
+            (None, "bot", "tickets_resolved", 99.0, None),
         ])
         .await;
         let agg = r
-            .aggregate("ten_a", Some("deals_closed"), OutcomeRange::default())
+            .aggregate(Some("deals_closed"), OutcomeRange::default())
             .await
             .unwrap();
         assert!((agg.sum - 1.0).abs() < f64::EPSILON);
@@ -456,15 +439,12 @@ mod tests {
     #[tokio::test]
     async fn aggregate_cross_kind_totals() {
         let r = recorder_with_entries(&[
-            ("ten", None, "bot", "revenue_usd", 50.0, None),
-            ("ten", None, "bot", "cost_saved_usd", 30.0, None),
-            ("ten", None, "bot", "hours_saved", 10.0, None),
+            (None, "bot", "revenue_usd", 50.0, None),
+            (None, "bot", "cost_saved_usd", 30.0, None),
+            (None, "bot", "hours_saved", 10.0, None),
         ])
         .await;
-        let agg = r
-            .aggregate("ten", None, OutcomeRange::default())
-            .await
-            .unwrap();
+        let agg = r.aggregate(None, OutcomeRange::default()).await.unwrap();
         assert!((agg.sum - 90.0).abs() < f64::EPSILON);
         assert_eq!(agg.count, 3);
     }
@@ -473,7 +453,7 @@ mod tests {
     async fn aggregate_empty_returns_zero() {
         let r = InMemoryOutcomeRecorder::new();
         let agg = r
-            .aggregate("nobody", Some("revenue_usd"), OutcomeRange::default())
+            .aggregate(Some("revenue_usd"), OutcomeRange::default())
             .await
             .unwrap();
         assert!(agg.sum.abs() < f64::EPSILON);
@@ -488,7 +468,6 @@ mod tests {
         let earlier = Utc.with_ymd_and_hms(2026, 5, 24, 0, 0, 0).unwrap();
         let err = r
             .aggregate(
-                "ten",
                 None,
                 OutcomeRange {
                     since: Some(later),
@@ -505,7 +484,6 @@ mod tests {
         let r = InMemoryOutcomeRecorder::new();
         let err = r
             .record(
-                "t1",
                 None,
                 "bot",
                 "revenue_usd",
@@ -523,16 +501,7 @@ mod tests {
     async fn record_rejects_empty_kind() {
         let r = InMemoryOutcomeRecorder::new();
         let err = r
-            .record(
-                "t1",
-                None,
-                "bot",
-                "",
-                1.0,
-                None,
-                None,
-                serde_json::Value::Null,
-            )
+            .record(None, "bot", "", 1.0, None, None, serde_json::Value::Null)
             .await
             .unwrap_err();
         assert!(matches!(err, OutcomeError::InvalidArgument(_)));
@@ -558,7 +527,6 @@ mod tests {
     fn outcome_summary_from_records() {
         let records = vec![
             OutcomeRecord {
-                tenant_id: "t".into(),
                 session_id: None,
                 agent_name: "bot".into(),
                 kind: "revenue_usd".into(),
@@ -569,7 +537,6 @@ mod tests {
                 metadata: serde_json::Value::Null,
             },
             OutcomeRecord {
-                tenant_id: "t".into(),
                 session_id: None,
                 agent_name: "bot".into(),
                 kind: "revenue_usd".into(),
@@ -580,7 +547,6 @@ mod tests {
                 metadata: serde_json::Value::Null,
             },
             OutcomeRecord {
-                tenant_id: "t".into(),
                 session_id: None,
                 agent_name: "bot".into(),
                 kind: "hours_saved".into(),
@@ -605,7 +571,6 @@ mod tests {
         let d1 = Utc.with_ymd_and_hms(2026, 5, 20, 1, 0, 0).unwrap();
         let d2 = Utc.with_ymd_and_hms(2026, 5, 21, 9, 0, 0).unwrap();
         let make = |ts: DateTime<Utc>, kind: &str, value: f64| OutcomeRecord {
-            tenant_id: "t".into(),
             session_id: None,
             agent_name: "bot".into(),
             kind: kind.to_owned(),

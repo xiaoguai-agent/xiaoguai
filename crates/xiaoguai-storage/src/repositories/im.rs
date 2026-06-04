@@ -12,18 +12,22 @@
 //! the first webhook for a chat creates the user + session rows inside a
 //! single transaction; every subsequent webhook hits the PK index and
 //! returns the stored IDs. Under the single-user pivot (DEC-033) there is no
-//! `tenants` table; the resolved `tenant_id` is always [`OWNER_TENANT_ID`].
+//! `tenants` table; every resolved user/session belongs to the one owner.
+//!
+//! Note: the `tenant_external_id` / `tenant_key` carried by
+//! [`ExternalIdentity`] / [`ExternalConversation`] is the IM **platform**
+//! tenant (Feishu/Lark `tenant_key`), part of the external addressing key —
+//! it is unrelated to the (removed) internal domain tenant.
 
 use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::{FromRow, Sqlite, SqlitePool};
 use xiaoguai_types::{
-    ids::{SessionId, TenantId, UserId},
+    ids::{SessionId, UserId},
     Session, SessionStatus, TenantRole, User,
 };
 
 use crate::repositories::error::{RepoError, RepoResult};
-use crate::OWNER_TENANT_ID;
 
 /// External identity payload coming off an IM webhook.
 #[derive(Debug, Clone)]
@@ -44,7 +48,6 @@ pub struct ExternalConversation<'a> {
 /// Resolved internal IDs after auto-creation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImIdentity {
-    pub tenant_id: String,
     pub user_id: String,
 }
 
@@ -61,8 +64,8 @@ const DEFAULT_IM_MODEL: &str = "im-default";
 
 #[async_trait]
 pub trait ImIdentityRepository: Send + Sync {
-    /// Resolve `(provider, tenant_ext, user_ext)` → internal `(tenant_id,
-    /// user_id)`, auto-creating the tenant + user rows on first sight.
+    /// Resolve `(provider, tenant_ext, user_ext)` → internal `user_id`,
+    /// auto-creating the user row on first sight.
     /// `display_hint` is used as the synthetic display name when creating.
     async fn resolve_or_create_identity(
         &self,
@@ -123,7 +126,6 @@ impl ImIdentityRepository for PgImIdentityRepository {
         .map_err(RepoError::from_sqlx)?
         {
             return Ok(ImIdentity {
-                tenant_id: OWNER_TENANT_ID.to_string(),
                 user_id: row.user_id,
             });
         }
@@ -136,7 +138,6 @@ impl ImIdentityRepository for PgImIdentityRepository {
 
         let synthetic_user = User {
             id: UserId::new(),
-            tenant_id: TenantId::from(OWNER_TENANT_ID.to_string()),
             email: synthetic_user_email(ext.provider, ext.tenant_external_id, ext.user_external_id),
             display_name: display_hint
                 .map_or_else(|| ext.user_external_id.to_string(), str::to_string),
@@ -175,7 +176,6 @@ impl ImIdentityRepository for PgImIdentityRepository {
         tx.commit().await.map_err(RepoError::from_sqlx)?;
 
         Ok(ImIdentity {
-            tenant_id: OWNER_TENANT_ID.to_string(),
             user_id: row.user_id,
         })
     }
@@ -206,7 +206,6 @@ impl ImIdentityRepository for PgImIdentityRepository {
 
         let session = Session {
             id: SessionId::new(),
-            tenant_id: TenantId::from(identity.tenant_id.clone()),
             user_id: UserId::from(identity.user_id.clone()),
             title: Some(synthetic_session_title(conv.provider, conv.conversation_id)),
             created_at: Utc::now(),

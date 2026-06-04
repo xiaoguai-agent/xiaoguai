@@ -133,13 +133,6 @@ pub struct ChatRequest {
     pub tools: Vec<ToolSpec>,
     #[serde(default, skip_serializing_if = "is_default_tool_choice")]
     pub tool_choice: ToolChoice,
-    /// v0.6.4: optional tenant scope used by `LlmRouter::LlmBackend` to
-    /// build a per-request `ResolveCtx`. Backends ignore this field; only
-    /// the router consumes it. Storing it on `ChatRequest` (rather than
-    /// adding a new trait method) keeps the `LlmBackend` surface
-    /// object-safe and unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tenant_id: Option<String>,
 }
 
 fn is_default_tool_choice(c: &ToolChoice) -> bool {
@@ -157,7 +150,6 @@ impl ChatRequest {
             max_tokens: None,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
-            tenant_id: None,
         }
     }
 }

@@ -34,7 +34,6 @@ pub enum TodayItem {
     Chat {
         ts: DateTime<Utc>,
         session_id: String,
-        tenant_id: String,
         user_id: String,
         started_at: DateTime<Utc>,
         last_message_preview: Option<String>,
@@ -44,7 +43,6 @@ pub enum TodayItem {
     Im {
         ts: DateTime<Utc>,
         session_id: String,
-        tenant_id: String,
         provider: String,
         chat_id: String,
         started_at: DateTime<Utc>,
@@ -54,7 +52,6 @@ pub enum TodayItem {
     Scheduled {
         ts: DateTime<Utc>,
         job_id: String,
-        tenant_id: Option<String>,
         run_id: i64,
         attempt: i32,
         status: String,
@@ -164,11 +161,10 @@ impl TodayReader for StaticTodayReader {
 mod tests {
     use super::*;
 
-    fn chat(ts: DateTime<Utc>, tenant: &str) -> TodayItem {
+    fn chat(ts: DateTime<Utc>, _tenant: &str) -> TodayItem {
         TodayItem::Chat {
             ts,
             session_id: "sess_c".into(),
-            tenant_id: tenant.into(),
             user_id: "u".into(),
             started_at: ts,
             last_message_preview: Some("hi".into()),
@@ -181,7 +177,6 @@ mod tests {
         TodayItem::Im {
             ts,
             session_id: "sess_i".into(),
-            tenant_id: "ten".into(),
             provider: "feishu".into(),
             chat_id: "oc".into(),
             started_at: ts,
@@ -194,7 +189,6 @@ mod tests {
         TodayItem::Scheduled {
             ts,
             job_id: "job_a".into(),
-            tenant_id: Some("ten".into()),
             run_id,
             attempt: 1,
             status: "succeeded".into(),

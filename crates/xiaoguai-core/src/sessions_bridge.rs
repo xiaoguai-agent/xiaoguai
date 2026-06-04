@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use xiaoguai_api::{SessionForkError, SessionForker};
 use xiaoguai_storage::repositories::{RepoError, SessionRepository};
-use xiaoguai_types::{Session, SessionId, SessionStatus, TenantId, UserId};
+use xiaoguai_types::{Session, SessionId, SessionStatus, UserId};
 
 pub struct PgSessionForker {
     sessions: Arc<dyn SessionRepository>,
@@ -33,17 +33,15 @@ impl PgSessionForker {
 impl SessionForker for PgSessionForker {
     async fn fork(
         &self,
-        tenant: &str,
         parent_id: &str,
         from_message_id: &str,
         title: Option<String>,
     ) -> Result<Session, SessionForkError> {
         // Load the parent so we can copy model/user/title-default into
-        // the child and confirm tenant + active status before paying
-        // for the copy.
+        // the child and confirm active status before paying for the copy.
         let parent = self
             .sessions
-            .find_by_id(Some(tenant), parent_id)
+            .find_by_id(parent_id)
             .await
             .map_err(repo_err)?
             .ok_or(SessionForkError::ParentNotFound)?;
@@ -63,7 +61,6 @@ impl SessionForker for PgSessionForker {
 
         let new_session = Session {
             id: SessionId::new(),
-            tenant_id: TenantId::from(tenant.to_string()),
             user_id: UserId::from(parent.user_id.as_str().to_string()),
             title: new_title,
             created_at: now,
@@ -77,7 +74,7 @@ impl SessionForker for PgSessionForker {
         };
 
         self.sessions
-            .fork(Some(tenant), parent_id, from_message_id, &new_session)
+            .fork(parent_id, from_message_id, &new_session)
             .await
             .map_err(repo_err)?;
         Ok(new_session)
@@ -140,39 +137,32 @@ mod tests {
 
     #[async_trait]
     impl SessionRepository for ForkableRepo {
-        async fn create(&self, _t: Option<&str>, s: &Session) -> RepoResult<()> {
+        async fn create(&self, s: &Session) -> RepoResult<()> {
             self.sessions.lock().push(s.clone());
             Ok(())
         }
-        async fn find_by_id(&self, t: Option<&str>, id: &str) -> RepoResult<Option<Session>> {
+        async fn find_by_id(&self, id: &str) -> RepoResult<Option<Session>> {
             Ok(self
                 .sessions
                 .lock()
                 .iter()
-                .find(|s| s.id.as_str() == id && t.is_none_or(|tn| s.tenant_id.as_str() == tn))
+                .find(|s| s.id.as_str() == id)
                 .cloned())
         }
-        async fn list_by_user(
-            &self,
-            _t: Option<&str>,
-            _u: &str,
-            _l: i64,
-            _o: i64,
-        ) -> RepoResult<Vec<Session>> {
+        async fn list_by_user(&self, _u: &str, _l: i64, _o: i64) -> RepoResult<Vec<Session>> {
             Ok(Vec::new())
         }
-        async fn touch(&self, _t: Option<&str>, _id: &str) -> RepoResult<()> {
+        async fn touch(&self, _id: &str) -> RepoResult<()> {
             Ok(())
         }
-        async fn archive(&self, _t: Option<&str>, _id: &str) -> RepoResult<()> {
+        async fn archive(&self, _id: &str) -> RepoResult<()> {
             Ok(())
         }
-        async fn delete(&self, _t: Option<&str>, _id: &str) -> RepoResult<()> {
+        async fn delete(&self, _id: &str) -> RepoResult<()> {
             Ok(())
         }
         async fn fork(
             &self,
-            _tenant: Option<&str>,
             parent_id: &str,
             from_message_id: &str,
             new_session: &Session,
@@ -214,11 +204,10 @@ mod tests {
         }
     }
 
-    fn mk_session(id: &str, tenant: &str) -> Session {
+    fn mk_session(id: &str) -> Session {
         let now = Utc::now();
         Session {
             id: SessionId::from(id.to_string()),
-            tenant_id: TenantId::from(tenant.to_string()),
             user_id: UserId::from("u".to_string()),
             title: Some("Hello".into()),
             created_at: now,
@@ -246,7 +235,7 @@ mod tests {
     #[tokio::test]
     async fn fork_copies_messages_up_to_cutoff() {
         let repo = Arc::new(ForkableRepo::default());
-        repo.seed_session(mk_session("s1", "t"));
+        repo.seed_session(mk_session("s1"));
         for i in 0..5 {
             repo.seed_message(mk_message(
                 &format!("m{i}"),
@@ -256,7 +245,7 @@ mod tests {
             ));
         }
         let forker = PgSessionForker::new(repo.clone());
-        let new_session = forker.fork("t", "s1", "m2", None).await.unwrap();
+        let new_session = forker.fork("s1", "m2", None).await.unwrap();
 
         // Parent untouched (5 messages).
         assert_eq!(repo.messages_for("s1").len(), 5);
@@ -286,10 +275,10 @@ mod tests {
     #[tokio::test]
     async fn fork_unknown_message_returns_message_not_found() {
         let repo = Arc::new(ForkableRepo::default());
-        repo.seed_session(mk_session("s1", "t"));
+        repo.seed_session(mk_session("s1"));
         repo.seed_message(mk_message("m0", "s1", 0, "hello"));
         let forker = PgSessionForker::new(repo);
-        let err = forker.fork("t", "s1", "missing", None).await.unwrap_err();
+        let err = forker.fork("s1", "missing", None).await.unwrap_err();
         assert!(matches!(err, SessionForkError::MessageNotFound), "{err:?}");
     }
 
@@ -297,30 +286,19 @@ mod tests {
     async fn fork_unknown_parent_returns_parent_not_found() {
         let repo = Arc::new(ForkableRepo::default());
         let forker = PgSessionForker::new(repo);
-        let err = forker.fork("t", "missing", "m0", None).await.unwrap_err();
-        assert!(matches!(err, SessionForkError::ParentNotFound), "{err:?}");
-    }
-
-    #[tokio::test]
-    async fn fork_other_tenant_returns_parent_not_found() {
-        let repo = Arc::new(ForkableRepo::default());
-        repo.seed_session(mk_session("s1", "tenant-a"));
-        repo.seed_message(mk_message("m0", "s1", 0, "hello"));
-        let forker = PgSessionForker::new(repo);
-        // Different tenant → opaque 404 (don't leak existence).
-        let err = forker.fork("tenant-b", "s1", "m0", None).await.unwrap_err();
+        let err = forker.fork("missing", "m0", None).await.unwrap_err();
         assert!(matches!(err, SessionForkError::ParentNotFound), "{err:?}");
     }
 
     #[tokio::test]
     async fn fork_archived_session_returns_conflict() {
         let repo = Arc::new(ForkableRepo::default());
-        let mut s = mk_session("s1", "t");
+        let mut s = mk_session("s1");
         s.status = SessionStatus::Archived;
         repo.seed_session(s);
         repo.seed_message(mk_message("m0", "s1", 0, "hello"));
         let forker = PgSessionForker::new(repo);
-        let err = forker.fork("t", "s1", "m0", None).await.unwrap_err();
+        let err = forker.fork("s1", "m0", None).await.unwrap_err();
         assert!(
             matches!(err, SessionForkError::ParentNotForkable(_)),
             "{err:?}"
@@ -330,11 +308,11 @@ mod tests {
     #[tokio::test]
     async fn fork_explicit_title_wins() {
         let repo = Arc::new(ForkableRepo::default());
-        repo.seed_session(mk_session("s1", "t"));
+        repo.seed_session(mk_session("s1"));
         repo.seed_message(mk_message("m0", "s1", 0, "x"));
         let forker = PgSessionForker::new(repo);
         let s = forker
-            .fork("t", "s1", "m0", Some("Custom title".into()))
+            .fork("s1", "m0", Some("Custom title".into()))
             .await
             .unwrap();
         assert_eq!(s.title.as_deref(), Some("Custom title"));

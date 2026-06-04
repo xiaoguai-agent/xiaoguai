@@ -15,7 +15,6 @@ use serde::Serialize;
 #[derive(Debug, Clone)]
 pub struct ExportArgs {
     pub api_base: String,
-    pub tenant_id: String,
     /// Short framework name — `"soc2"`, `"gdpr"`, `"hipaa"`.
     pub framework: String,
     /// RFC3339 inclusive lower bound.
@@ -29,7 +28,6 @@ pub struct ExportArgs {
 
 #[derive(Serialize)]
 struct WireRequest<'a> {
-    tenant_id: &'a str,
     framework: &'a str,
     format: &'a str,
     from: &'a str,
@@ -48,7 +46,6 @@ pub async fn run(args: ExportArgs) -> Result<()> {
     let client = Client::new();
     let url = format!("{}/v1/audit/exports", args.api_base.trim_end_matches('/'));
     let body = WireRequest {
-        tenant_id: &args.tenant_id,
         framework: &args.framework,
         format: &args.format,
         from: &args.from,

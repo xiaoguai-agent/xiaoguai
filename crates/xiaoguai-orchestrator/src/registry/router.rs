@@ -6,22 +6,19 @@
 //!
 //! # Ranking rules (applied in order, all tie-broken by the next rule)
 //!
-//! 1. **Tenant preference** — same-tenant agents rank above global agents when
-//!    the intent carries a `tenant_id`.
-//! 2. **Cost hint** — lower `cost_hint` wins.
-//! 3. **Round-robin** — among equally-ranked agents the router picks the next
+//! 1. **Cost hint** — lower `cost_hint` wins.
+//! 2. **Round-robin** — among equally-ranked agents the router picks the next
 //!    one via an atomic counter so no single agent monopolises load.
 //!
 //! # Deferred
 //! - Soft capability matching (e.g. semantic similarity scores).
-//! - Weight override via per-tenant policy rules.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::error::OrchestratorError;
 
-use super::{AgentRef, AgentRegistry, Capability, TenantScope};
+use super::{AgentRef, AgentRegistry, Capability};
 
 // ── Intent ────────────────────────────────────────────────────────────────────
 
@@ -32,8 +29,6 @@ pub struct Intent {
     pub goal: String,
     /// Capabilities that the selected agent *must* cover.
     pub required_capabilities: Vec<Capability>,
-    /// Optional tenant context.  When set, same-tenant agents are preferred.
-    pub tenant_id: Option<String>,
 }
 
 impl Intent {
@@ -42,14 +37,7 @@ impl Intent {
         Self {
             goal: goal.into(),
             required_capabilities,
-            tenant_id: None,
         }
-    }
-
-    #[must_use]
-    pub fn with_tenant(mut self, tenant_id: impl Into<String>) -> Self {
-        self.tenant_id = Some(tenant_id.into());
-        self
     }
 }
 
@@ -105,7 +93,7 @@ impl CapabilityRouter {
         }
 
         // Apply ranking.
-        self.rank(&mut candidates, intent);
+        self.rank(&mut candidates);
 
         let primary = candidates.remove(0);
         Ok(Dispatch {
@@ -117,10 +105,9 @@ impl CapabilityRouter {
     /// Sort `candidates` in-place according to the ranking rules.
     ///
     /// Sort key per candidate (lexicographically ascending = higher priority first):
-    ///   1. `tenant_score` descending (negated so smaller = better)
-    ///   2. `cost_hint` ascending (f64 bits, NaN → MAX)
-    ///   3. round-robin position (rotated by `rr_counter`)
-    fn rank(&self, candidates: &mut Vec<AgentRef>, intent: &Intent) {
+    ///   1. `cost_hint` ascending (f64 bits, NaN → MAX)
+    ///   2. round-robin position (rotated by `rr_counter`)
+    fn rank(&self, candidates: &mut Vec<AgentRef>) {
         let rr = self.rr_counter.fetch_add(1, Ordering::Relaxed);
         let n = candidates.len();
 
@@ -129,12 +116,9 @@ impl CapabilityRouter {
         sorted_names.sort_unstable();
 
         // Build a sort key for each candidate; keep the index stable.
-        let keys: Vec<(u8, u64, usize)> = candidates
+        let keys: Vec<(u64, usize)> = candidates
             .iter()
             .map(|a| {
-                // Tenant score: higher = better → negate for ascending sort.
-                let ts =
-                    2u8.saturating_sub(tenant_score(&a.spec.locality, intent.tenant_id.as_deref()));
                 // Cost: convert to sortable bits (NaN → MAX).
                 let cost_bits = if a.spec.cost_hint.is_nan() {
                     u64::MAX
@@ -147,7 +131,7 @@ impl CapabilityRouter {
                     .position(|&s| s == a.name.as_str())
                     .unwrap_or(0);
                 let rr_pos = if n == 0 { 0 } else { (pos + n - (rr % n)) % n };
-                (ts, cost_bits, rr_pos)
+                (cost_bits, rr_pos)
             })
             .collect();
 
@@ -156,21 +140,6 @@ impl CapabilityRouter {
         indices.sort_by_key(|&i| keys[i]);
         let sorted: Vec<AgentRef> = indices.into_iter().map(|i| candidates[i].clone()).collect();
         *candidates = sorted;
-    }
-}
-
-/// Returns a priority score for tenant scoping.
-/// `2` = exact tenant match, `1` = global, `0` = different tenant.
-fn tenant_score(locality: &TenantScope, tenant_id: Option<&str>) -> u8 {
-    match locality {
-        TenantScope::Global => 1,
-        TenantScope::Tenant(t) => {
-            if tenant_id == Some(t.as_str()) {
-                2
-            } else {
-                0
-            }
-        }
     }
 }
 
@@ -187,38 +156,31 @@ mod tests {
     fn make_router() -> (Arc<AgentRegistry>, CapabilityRouter) {
         let registry = Arc::new(AgentRegistry::new());
 
-        // agent-cheap: billing only, cost 1.0, global
+        // agent-cheap: billing only, cost 1.0
         registry
             .register(Arc::new(EchoAgent {
-                spec: make_spec(
-                    "agent-cheap",
-                    vec![("billing", "draft_email")],
-                    1.0,
-                    TenantScope::Global,
-                ),
+                spec: make_spec("agent-cheap", vec![("billing", "draft_email")], 1.0),
             }))
             .unwrap();
 
-        // agent-mid: billing + lang.zh-CN, cost 2.0, global
+        // agent-mid: billing + lang.zh-CN, cost 2.0
         registry
             .register(Arc::new(EchoAgent {
                 spec: make_spec(
                     "agent-mid",
                     vec![("billing", "draft_email"), ("lang", "zh-CN")],
                     2.0,
-                    TenantScope::Global,
                 ),
             }))
             .unwrap();
 
-        // agent-tenant: billing + lang.zh-CN, cost 3.0, Tenant("acme")
+        // agent-pricey: billing + lang.zh-CN, cost 3.0
         registry
             .register(Arc::new(EchoAgent {
                 spec: make_spec(
-                    "agent-tenant",
+                    "agent-pricey",
                     vec![("billing", "draft_email"), ("lang", "zh-CN")],
                     3.0,
-                    TenantScope::Tenant("acme".to_owned()),
                 ),
             }))
             .unwrap();
@@ -252,27 +214,8 @@ mod tests {
         );
         let dispatch = router.route(&intent).unwrap();
         // agent-cheap does NOT cover lang.zh-CN → not in candidates.
-        // agent-mid (cost 2.0, global) should beat agent-tenant (cost 3.0, global for non-acme).
+        // agent-mid (cost 2.0) should beat agent-pricey (cost 3.0).
         assert_eq!(dispatch.primary.name, "agent-mid");
-    }
-
-    #[test]
-    fn route_tenant_context_prefers_same_tenant() {
-        let (_r, router) = make_router();
-        let intent = Intent::new(
-            "draft email in Chinese for acme",
-            vec![
-                Capability::new("billing", "draft_email"),
-                Capability::new("lang", "zh-CN"),
-            ],
-        )
-        .with_tenant("acme");
-        let dispatch = router.route(&intent).unwrap();
-        // agent-tenant matches tenant "acme" → ranked above agent-mid despite higher cost.
-        assert_eq!(dispatch.primary.name, "agent-tenant");
-        // agent-mid is the fallback.
-        assert_eq!(dispatch.fallbacks.len(), 1);
-        assert_eq!(dispatch.fallbacks[0].name, "agent-mid");
     }
 
     #[test]
@@ -292,28 +235,5 @@ mod tests {
         let dispatch = router.route(&intent).unwrap();
         // All 3 agents cover billing.draft_email; primary + 2 fallbacks.
         assert_eq!(dispatch.fallbacks.len(), 2);
-    }
-
-    // ── Tenant scoring helpers ─────────────────────────────────────────────────
-
-    #[test]
-    fn tenant_score_exact_match() {
-        assert_eq!(
-            tenant_score(&TenantScope::Tenant("acme".to_owned()), Some("acme")),
-            2
-        );
-    }
-
-    #[test]
-    fn tenant_score_global() {
-        assert_eq!(tenant_score(&TenantScope::Global, Some("acme")), 1);
-    }
-
-    #[test]
-    fn tenant_score_wrong_tenant() {
-        assert_eq!(
-            tenant_score(&TenantScope::Tenant("other".to_owned()), Some("acme")),
-            0
-        );
     }
 }

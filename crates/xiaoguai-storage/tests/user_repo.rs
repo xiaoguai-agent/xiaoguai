@@ -7,22 +7,11 @@ mod common;
 use chrono::{SubsecRound, Utc};
 use common::test_setup;
 use xiaoguai_storage::repositories::{PgUserRepository, RepoError, UserRepository};
-use xiaoguai_storage::OWNER_TENANT_ID;
-use xiaoguai_types::{
-    ids::{TenantId, UserId},
-    TenantRole as Role, User,
-};
+use xiaoguai_types::{ids::UserId, TenantRole as Role, User};
 
-/// Synthetic owner tenant id. Under the single-user pivot the `tenants` table is
-/// gone; this is only used to build `User` fixtures (never persisted).
-fn owner_tenant() -> TenantId {
-    TenantId::from(OWNER_TENANT_ID.to_string())
-}
-
-fn sample_user(tenant_id: &TenantId, email: &str, roles: Vec<Role>) -> User {
+fn sample_user(email: &str, roles: Vec<Role>) -> User {
     User {
         id: UserId::new(),
-        tenant_id: tenant_id.clone(),
         email: email.to_string(),
         display_name: email.to_string(),
         roles,
@@ -36,11 +25,7 @@ async fn create_and_find_by_id_round_trip() {
     let (pool, _guard) = test_setup().await;
     let repo = PgUserRepository::new(pool);
 
-    let user = sample_user(
-        &owner_tenant(),
-        "alice@example.com",
-        vec![Role::TenantAdmin, Role::Member],
-    );
+    let user = sample_user("alice@example.com", vec![Role::TenantAdmin, Role::Member]);
     repo.create(&user).await.expect("create");
 
     let found = repo
@@ -50,8 +35,6 @@ async fn create_and_find_by_id_round_trip() {
         .expect("present");
 
     assert_eq!(found.id.as_str(), user.id.as_str());
-    // tenant_id is synthesised from OWNER_TENANT_ID on read.
-    assert_eq!(found.tenant_id.as_str(), OWNER_TENANT_ID);
     assert_eq!(found.email, "alice@example.com");
     assert_eq!(found.roles.len(), 2);
     assert!(found.roles.contains(&Role::TenantAdmin));
@@ -73,18 +56,18 @@ async fn find_by_email_round_trip() {
     let (pool, _guard) = test_setup().await;
     let repo = PgUserRepository::new(pool);
 
-    let user = sample_user(&owner_tenant(), "shared@example.com", vec![Role::Member]);
+    let user = sample_user("shared@example.com", vec![Role::Member]);
     repo.create(&user).await.expect("create");
 
     let found = repo
-        .find_by_email(OWNER_TENANT_ID, "shared@example.com")
+        .find_by_email("shared@example.com")
         .await
         .expect("find")
         .expect("present");
     assert_eq!(found.id.as_str(), user.id.as_str());
 
     let missing = repo
-        .find_by_email(OWNER_TENANT_ID, "nobody@example.com")
+        .find_by_email("nobody@example.com")
         .await
         .expect("query");
     assert!(missing.is_none());
@@ -96,19 +79,13 @@ async fn list_pagination() {
     let repo = PgUserRepository::new(pool);
 
     for i in 0..4 {
-        let mut u = sample_user(&owner_tenant(), &format!("u{i}@x.com"), vec![Role::Member]);
+        let mut u = sample_user(&format!("u{i}@x.com"), vec![Role::Member]);
         u.created_at = Utc::now().trunc_subsecs(6) + chrono::Duration::milliseconds(i);
         repo.create(&u).await.expect("create");
     }
 
-    let page1 = repo
-        .list_by_tenant(OWNER_TENANT_ID, 2, 0)
-        .await
-        .expect("list");
-    let page2 = repo
-        .list_by_tenant(OWNER_TENANT_ID, 2, 2)
-        .await
-        .expect("list");
+    let page1 = repo.list(2, 0).await.expect("list");
+    let page2 = repo.list(2, 2).await.expect("list");
 
     assert_eq!(page1.len(), 2);
     assert_eq!(page2.len(), 2);
@@ -123,7 +100,7 @@ async fn delete_then_find_returns_none_and_is_idempotent() {
     let (pool, _guard) = test_setup().await;
     let repo = PgUserRepository::new(pool);
 
-    let user = sample_user(&owner_tenant(), "bye@example.com", vec![Role::Member]);
+    let user = sample_user("bye@example.com", vec![Role::Member]);
     repo.create(&user).await.expect("create");
 
     repo.delete(user.id.as_str()).await.expect("delete");
@@ -142,8 +119,8 @@ async fn duplicate_email_is_rejected() {
     let (pool, _guard) = test_setup().await;
     let repo = PgUserRepository::new(pool);
 
-    let u1 = sample_user(&owner_tenant(), "dup@example.com", vec![Role::Member]);
-    let u2 = sample_user(&owner_tenant(), "dup@example.com", vec![Role::Member]);
+    let u1 = sample_user("dup@example.com", vec![Role::Member]);
+    let u2 = sample_user("dup@example.com", vec![Role::Member]);
     repo.create(&u1).await.expect("first");
 
     let err = repo.create(&u2).await.expect_err("should fail");
@@ -158,7 +135,7 @@ async fn record_login_updates_last_login_at() {
     let (pool, _guard) = test_setup().await;
     let repo = PgUserRepository::new(pool);
 
-    let user = sample_user(&owner_tenant(), "login@example.com", vec![Role::Member]);
+    let user = sample_user("login@example.com", vec![Role::Member]);
     repo.create(&user).await.expect("create");
 
     repo.record_login(user.id.as_str()).await.expect("login");

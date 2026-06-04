@@ -1,0 +1,106 @@
+{
+  "consumer": {
+    "name": "chat-ui"
+  },
+  "interactions": [
+    {
+      "description": "a GET /v1/outcomes/summary request with session_id filter",
+      "providerState": "tenant has recorded outcomes for session sess_abc123",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer test-token"
+        },
+        "method": "GET",
+        "path": "/v1/outcomes/summary",
+        "query": "range=30d&session_id=sess%5fabc123"
+      },
+      "response": {
+        "body": {
+          "range": "30d",
+          "summary": {
+            "by_kind": {
+              "revenue_usd": {
+                "avg": 1250,
+                "count": 1,
+                "sum": 1250
+              }
+            }
+          }
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "$.body.range": {
+            "match": "type"
+          },
+          "$.body.summary": {
+            "match": "type"
+          },
+          "$.body.summary.by_kind": {
+            "match": "type"
+          },
+          "$.body.summary.by_kind.revenue_usd": {
+            "match": "type"
+          },
+          "$.body.summary.by_kind.revenue_usd.avg": {
+            "match": "type"
+          },
+          "$.body.summary.by_kind.revenue_usd.count": {
+            "match": "type"
+          },
+          "$.body.summary.by_kind.revenue_usd.sum": {
+            "match": "type"
+          }
+        },
+        "status": 200
+      }
+    },
+    {
+      "description": "a POST /v1/hotl/check from chat-ui before sending a message",
+      "providerState": "tenant HotL policy exists and budget is within limits",
+      "request": {
+        "body": {
+          "amount": 1,
+          "scope": "llm_call"
+        },
+        "headers": {
+          "Authorization": "Bearer test-token",
+          "Content-Type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/hotl/check"
+      },
+      "response": {
+        "body": {
+          "reason": null,
+          "verdict": "allow"
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "$.body.verdict": {
+            "match": "type"
+          }
+        },
+        "status": 200
+      }
+    }
+  ],
+  "metadata": {
+    "pact-js": {
+      "version": "13.2.0"
+    },
+    "pactRust": {
+      "ffi": "0.4.22",
+      "models": "1.2.3"
+    },
+    "pactSpecification": {
+      "version": "2.0.0"
+    }
+  },
+  "provider": {
+    "name": "xiaoguai"
+  }
+}

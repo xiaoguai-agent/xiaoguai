@@ -49,7 +49,7 @@ struct AlwaysEscalate;
 
 #[async_trait]
 impl HotlEnforcer for AlwaysEscalate {
-    async fn check(&self, _tenant: Uuid, _scope: &str, _amount: f64) -> HotlVerdictResult {
+    async fn check(&self, _scope: &str, _amount: f64) -> HotlVerdictResult {
         Ok(HotlVerdict::Escalate("test escalate".into()))
     }
 }
@@ -73,7 +73,7 @@ impl StubRedactionRepo {
 
 #[async_trait]
 impl HotlRedactionRepo for StubRedactionRepo {
-    async fn load_for_tenant(&self, _tenant_id: Uuid) -> RepoResult<Vec<RedactionPolicyRow>> {
+    async fn load_all(&self) -> RepoResult<Vec<RedactionPolicyRow>> {
         Ok(self.rows.clone())
     }
 }
@@ -105,7 +105,6 @@ impl HotlAuditSink for CaptureAuditSink {
 fn rule(scope: &str, jsonpath: &str) -> RedactionPolicyRow {
     RedactionPolicyRow {
         id: Uuid::new_v4(),
-        tenant_id: Uuid::new_v4(),
         scope: scope.into(),
         jsonpath: jsonpath.into(),
         applies_to: vec!["sse".into()],
@@ -143,11 +142,7 @@ async fn gate_applies_rule_set_when_match_exists() {
     let args_in = json!({ "password": "secret", "user": "alice" });
 
     let verdict = <SuspendingHotlGate as xiaoguai_agent::HotlGate>::check_with_args(
-        &gate,
-        Uuid::new_v4(),
-        scope,
-        1.0,
-        &args_in,
+        &gate, scope, 1.0, &args_in,
     )
     .await;
 
@@ -185,7 +180,6 @@ async fn gate_emits_verbatim_args_when_no_rule() {
 
     let verdict = <SuspendingHotlGate as xiaoguai_agent::HotlGate>::check_with_args(
         &gate,
-        Uuid::new_v4(),
         "tool_call.search",
         1.0,
         &args_in,
@@ -224,7 +218,6 @@ async fn gate_fail_closed_when_required_and_no_rule() {
     let args_in = json!({ "password": "secret" });
     let verdict = <SuspendingHotlGate as xiaoguai_agent::HotlGate>::check_with_args(
         &gate,
-        Uuid::new_v4(),
         "tool_call.execute_python",
         1.0,
         &args_in,
@@ -270,11 +263,7 @@ async fn gate_threads_redaction_policy_id_to_audit() {
 
     let args_in = json!({ "password": "secret" });
     let _verdict = <SuspendingHotlGate as xiaoguai_agent::HotlGate>::check_with_args(
-        &gate,
-        Uuid::new_v4(),
-        scope,
-        1.0,
-        &args_in,
+        &gate, scope, 1.0, &args_in,
     )
     .await;
 

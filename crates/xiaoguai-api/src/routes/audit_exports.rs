@@ -1,13 +1,12 @@
 //! `POST /v1/audit/exports` — T5 compliance export.
 //!
-//! Builds a SOC2 / GDPR / HIPAA bundle over `[from, to]` for one tenant.
-//! The underlying adapter re-verifies chain continuity inside the window
-//! and refuses if broken — there is no `skip_verify` flag.
+//! Builds a SOC2 / GDPR / HIPAA bundle over `[from, to]`. The underlying
+//! adapter re-verifies chain continuity inside the window and refuses if
+//! broken — there is no `skip_verify` flag.
 //!
 //! Status code mapping:
 //! - 200 OK + body — bundle rendered, `Content-Type` matches `format`.
-//! - 400 Bad Request — missing/invalid `tenant_id`, `framework`, `format`,
-//!   or `from > to`.
+//! - 400 Bad Request — missing/invalid `framework`, `format`, or `from > to`.
 //! - 409 Conflict — chain broken inside the window. Body is the structured
 //!   error JSON with `first_broken_id` + `first_broken_ts`.
 //! - 501 Not Implemented — PDF format (stub).
@@ -24,12 +23,10 @@ use serde::{Deserialize, Serialize};
 use crate::audit::{ExportError, ExportRequest};
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
-use xiaoguai_storage::OWNER_TENANT_ID;
 
 /// Wire shape for `POST /v1/audit/exports`.
 #[derive(Debug, Deserialize)]
 pub struct AuditExportRequest {
-    pub tenant_id: String,
     /// Short framework name — `"soc2"`, `"gdpr"`, `"hipaa"`. The adapter
     /// also accepts the long forms (`"soc2-cc7.2"`, etc.) — see
     /// `xiaoguai_audit::Framework::parse`.
@@ -58,18 +55,13 @@ struct ChainBrokenBody {
 /// See the module docs for the status-code mapping.
 pub async fn export_audit(
     State(state): State<AppState>,
-    Json(mut req): Json<AuditExportRequest>,
+    Json(req): Json<AuditExportRequest>,
 ) -> ApiResult<Response<Body>> {
     let exporter = state
         .audit_chain_exporter
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("audit chain exporter not wired".into()))?;
 
-    // DEC-033 single-owner: tenant_id is vestigial; default to the owner
-    // tenant when the caller omits it.
-    if req.tenant_id.is_empty() {
-        req.tenant_id = OWNER_TENANT_ID.to_string();
-    }
     if req.framework.is_empty() {
         return Err(ApiError::InvalidRequest(
             "framework must not be empty".into(),
@@ -94,7 +86,9 @@ pub async fn export_audit(
 
     let result = exporter
         .export(ExportRequest {
-            tenant_id: req.tenant_id,
+            // Single implicit owner: the audit chain HMAC is signed/verified
+            // with the audit-crate OWNER value, so the export tenant must match.
+            tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
             framework: req.framework,
             format: req.format,
             from: req.from,

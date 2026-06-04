@@ -24,7 +24,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use uuid::Uuid;
 use xiaoguai_api::hotl::decision_registry::DecisionRegistry;
 use xiaoguai_api::hotl::enforcer::{HotlEnforcer, HotlVerdict, HotlVerdictResult};
 use xiaoguai_config::Settings;
@@ -38,7 +37,7 @@ struct AlwaysEscalate;
 
 #[async_trait]
 impl HotlEnforcer for AlwaysEscalate {
-    async fn check(&self, _tenant: Uuid, _scope: &str, _amount: f64) -> HotlVerdictResult {
+    async fn check(&self, _scope: &str, _amount: f64) -> HotlVerdictResult {
         Ok(HotlVerdict::Escalate("test escalate".into()))
     }
 }
@@ -83,7 +82,7 @@ async fn default_run_serve_selects_suspending_gate() {
         Duration::from_secs(24 * 3600),
     );
 
-    let verdict = gate.check(Uuid::new_v4(), "tool_call.search", 1.0).await;
+    let verdict = gate.check("tool_call.search", 1.0).await;
     assert!(
         matches!(verdict, xiaoguai_agent::HotlGateVerdict::Suspend { .. }),
         "v1.9.0 default config must wire SuspendingHotlGate; got {verdict:?}"

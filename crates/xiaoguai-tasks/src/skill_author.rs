@@ -4,12 +4,12 @@
 //! `propose_skill` MCP tool registered in `xiaoguai-agent`. The dispatch
 //! lands here:
 //!
-//! 1. [`propose`] checks the per-tenant opt-in flag (off by default).
+//! 1. [`propose`] checks the opt-in flag (off by default).
 //! 2. The manifest is validated against a strict whitelist schema —
 //!    agent-authored manifests reference existing tools by name; they
 //!    CANNOT declare new MCP servers or load native code.
 //! 3. The `HotL` gate (PR #61) is consulted under bucket `skill_author`
-//!    with a default budget of 5 proposals / tenant / day.
+//!    with a default budget of 5 proposals / day.
 //! 4. On `Allow` the manifest is persisted as `pending` in
 //!    `skill_proposals`; on `Deny` the reason is fed back to the LLM.
 //! 5. A human admin later calls [`approve_proposal`] (wrapped by an HTTP
@@ -20,7 +20,7 @@
 //! `skill.approve` — together they form a tamper-evident chain of
 //! everything an agent authored.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-use xiaoguai_audit::AuditEntry;
+use xiaoguai_audit::{AuditEntry, OWNER_TENANT_ID};
 
 // ---------------------------------------------------------------------------
 // Domain types
@@ -95,7 +95,6 @@ impl ProposalStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProposalRow {
     pub id: String,
-    pub tenant_id: String,
     pub proposed_by: String,
     pub manifest: SkillManifest,
     pub status: ProposalStatus,
@@ -111,10 +110,10 @@ pub struct ProposalRow {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum SkillAuthorError {
-    /// Tenant has not opted in to agent-authored skills. The propose
+    /// The owner has not opted in to agent-authored skills. The propose
     /// path returns this *before* any audit emission so off-by-default
     /// is also off-the-record.
-    #[error("agent-authored skills are not enabled for this tenant")]
+    #[error("agent-authored skills are not enabled")]
     Disabled,
     /// Manifest failed the whitelist validator.
     #[error("invalid manifest: {0}")]
@@ -134,9 +133,6 @@ pub enum SkillAuthorError {
     /// Manifest file already exists on disk at approval time.
     #[error("skill file already exists on disk")]
     SkillFileExists,
-    /// `tenant_id` could not be parsed as a UUID for the gate.
-    #[error("tenant id is not a uuid: {0}")]
-    InvalidTenant(String),
     /// Repository / storage / IO failure.
     #[error("backend error: {0}")]
     Backend(String),
@@ -154,7 +150,6 @@ pub trait SkillProposalRepository: Send + Sync {
     async fn get(&self, id: &str) -> Result<Option<ProposalRow>, SkillAuthorError>;
     async fn list(
         &self,
-        tenant_id: &str,
         status: Option<ProposalStatus>,
     ) -> Result<Vec<ProposalRow>, SkillAuthorError>;
     async fn set_status(
@@ -166,22 +161,22 @@ pub trait SkillProposalRepository: Send + Sync {
     ) -> Result<ProposalRow, SkillAuthorError>;
 }
 
-/// Per-tenant opt-in flag store. Backed by `tenant_settings` JSONB.
+/// Owner opt-in flag store. Backed by `tenant_settings` JSONB.
 #[async_trait]
 pub trait TenantSettingsReader: Send + Sync {
-    async fn allow_skill_authoring(&self, tenant_id: &str) -> Result<bool, SkillAuthorError>;
+    async fn allow_skill_authoring(&self) -> Result<bool, SkillAuthorError>;
 
-    /// DEC-019: returns the sandbox tier the operator wants for this
-    /// tenant. Used by the MCP supervisor in `xiaoguai-core` to decide
-    /// which exec server binary to spawn (`xiaoguai-mcp-exec` for L1
-    /// vs `xiaoguai-mcp-exec-wasm-py` for L3). Defaults to
-    /// [`SandboxTier::L1`] when the tenant has no explicit setting —
+    /// DEC-019: returns the sandbox tier the operator wants. Used by the
+    /// MCP supervisor in `xiaoguai-core` to decide which exec server
+    /// binary to spawn (`xiaoguai-mcp-exec` for L1 vs
+    /// `xiaoguai-mcp-exec-wasm-py` for L3). Defaults to
+    /// [`SandboxTier::L1`] when there is no explicit setting —
     /// L1 is safe-by-default per PHILO §14.
-    async fn sandbox_tier(&self, tenant_id: &str) -> Result<SandboxTier, SkillAuthorError>;
+    async fn sandbox_tier(&self) -> Result<SandboxTier, SkillAuthorError>;
 }
 
 /// Sandbox tier for code-execution MCP servers (DEC-019). Operators set
-/// this per tenant via `tenant_settings.settings->>'sandbox_tier'`.
+/// this via `tenant_settings.settings->>'sandbox_tier'`.
 ///
 /// L1 is the process-isolated default (`xiaoguai-mcp-exec` +
 /// `xiaoguai-mcp-exec-js`); L3 is the wasmtime capability sandbox
@@ -196,7 +191,7 @@ pub enum SandboxTier {
 }
 
 impl SandboxTier {
-    /// Parse a tenant's stored string ("L1" / "L3"; case-insensitive).
+    /// Parse the stored string ("L1" / "L3"; case-insensitive).
     /// Unknown values fall back to L1 (safe default per PHILO §14).
     #[must_use]
     pub fn from_str_lenient(s: &str) -> Self {
@@ -227,7 +222,7 @@ impl SandboxTier {
 pub trait SkillAuthorGate: Send + Sync {
     /// Returns `Ok(())` on Allow, `Err(reason)` on Deny / infra failure
     /// (fail-closed, matches PR #61 semantics).
-    async fn check(&self, tenant_id: Uuid, scope: &str) -> Result<(), String>;
+    async fn check(&self, scope: &str) -> Result<(), String>;
 }
 
 /// Audit sink seam — single-call surface so test fixtures stay tiny.
@@ -358,7 +353,6 @@ pub const SKILL_AUTHOR_GATE_SCOPE: &str = "skill_author";
 // ---------------------------------------------------------------------------
 
 fn audit_entry(
-    tenant_id: &str,
     actor: &str,
     action: &'static str,
     resource: Option<String>,
@@ -366,7 +360,9 @@ fn audit_entry(
 ) -> AuditEntry {
     AuditEntry {
         ts: Utc::now(),
-        tenant_id: tenant_id.to_string(),
+        // Audit chain: sign with the owner identity that `verify_chain`
+        // rebuilds with (single-owner model, DEC-033 / DEC-HLD-021).
+        tenant_id: OWNER_TENANT_ID.to_string(),
         actor: actor.to_string(),
         action: action.to_string(),
         resource,
@@ -383,25 +379,23 @@ fn audit_entry(
 /// module.
 pub async fn propose(
     ctx: &SkillAuthorCtx<'_>,
-    tenant_id: &str,
     proposed_by: &str,
     manifest: SkillManifest,
 ) -> Result<ProposalRow, SkillAuthorError> {
     // 1. Off-by-default check. Quiet drop — no audit row when disabled,
     //    so an enumeration attack can't be detected from the audit log.
-    if !ctx.settings.allow_skill_authoring(tenant_id).await? {
+    if !ctx.settings.allow_skill_authoring().await? {
         return Err(SkillAuthorError::Disabled);
     }
 
     // 2. Whitelist validation. Runs before gate so a malformed manifest
-    //    doesn't burn the tenant's daily budget.
+    //    doesn't burn the daily budget.
     validate_manifest(&manifest, ctx.known_tools)?;
 
     // 3. Audit emit `skill.propose` BEFORE the gate so we have a record
     //    even if the gate denies.
     ctx.audit
         .record(audit_entry(
-            tenant_id,
             proposed_by,
             "skill.propose",
             Some(format!("skill:{}@{}", manifest.name, manifest.version)),
@@ -413,12 +407,8 @@ pub async fn propose(
         ))
         .await?;
 
-    // 4. HotL gate consultation. `tenant_id` is `TEXT` in our schema but
-    //    the gate trait takes `Uuid`. Failed parse → InvalidTenant
-    //    (fail-closed: we don't want to silently bypass the gate).
-    let tenant_uuid =
-        Uuid::parse_str(tenant_id).map_err(|e| SkillAuthorError::InvalidTenant(e.to_string()))?;
-    let gate_outcome = ctx.gate.check(tenant_uuid, SKILL_AUTHOR_GATE_SCOPE).await;
+    // 4. HotL gate consultation.
+    let gate_outcome = ctx.gate.check(SKILL_AUTHOR_GATE_SCOPE).await;
 
     let (verdict_str, reason_opt) = match &gate_outcome {
         Ok(()) => ("allow", None),
@@ -426,7 +416,6 @@ pub async fn propose(
     };
     ctx.audit
         .record(audit_entry(
-            tenant_id,
             proposed_by,
             "skill.hotl_gate",
             Some(format!("skill:{}@{}", manifest.name, manifest.version)),
@@ -445,7 +434,6 @@ pub async fn propose(
     // 5. Insert the row.
     let row = ProposalRow {
         id: Uuid::new_v4().to_string(),
-        tenant_id: tenant_id.to_string(),
         proposed_by: proposed_by.to_string(),
         manifest,
         status: ProposalStatus::Pending,
@@ -487,7 +475,6 @@ pub async fn approve_proposal(
 
     ctx.audit
         .record(audit_entry(
-            &row.tenant_id,
             decided_by,
             "skill.approve",
             Some(format!(
@@ -531,7 +518,6 @@ pub async fn reject_proposal(
 
     ctx.audit
         .record(audit_entry(
-            &row.tenant_id,
             decided_by,
             "skill.reject",
             Some(format!(
@@ -590,9 +576,7 @@ impl SkillProposalRepository for InMemorySkillProposalRepository {
     async fn insert(&self, row: ProposalRow) -> Result<ProposalRow, SkillAuthorError> {
         let mut rows = self.rows.lock();
         let clash = rows.iter().any(|r| {
-            r.tenant_id == row.tenant_id
-                && r.manifest.name == row.manifest.name
-                && r.manifest.version == row.manifest.version
+            r.manifest.name == row.manifest.name && r.manifest.version == row.manifest.version
         });
         if clash {
             return Err(SkillAuthorError::Duplicate);
@@ -607,13 +591,11 @@ impl SkillProposalRepository for InMemorySkillProposalRepository {
 
     async fn list(
         &self,
-        tenant_id: &str,
         status: Option<ProposalStatus>,
     ) -> Result<Vec<ProposalRow>, SkillAuthorError> {
         let rows = self.rows.lock();
         let mut out: Vec<ProposalRow> = rows
             .iter()
-            .filter(|r| r.tenant_id == tenant_id)
             .filter(|r| status.is_none_or(|s| r.status == s))
             .cloned()
             .collect();
@@ -644,11 +626,11 @@ impl SkillProposalRepository for InMemorySkillProposalRepository {
     }
 }
 
-/// In-memory `TenantSettingsReader` — returns whatever was inserted.
+/// In-memory `TenantSettingsReader` — returns whatever was set.
 #[derive(Debug, Default)]
 pub struct InMemoryTenantSettings {
-    allowed: Mutex<HashSet<String>>,
-    tiers: Mutex<HashMap<String, SandboxTier>>,
+    allowed: Mutex<bool>,
+    tier: Mutex<Option<SandboxTier>>,
 }
 
 impl InMemoryTenantSettings {
@@ -657,29 +639,24 @@ impl InMemoryTenantSettings {
         Arc::new(Self::default())
     }
 
-    pub fn allow(&self, tenant_id: &str) {
-        self.allowed.lock().insert(tenant_id.to_string());
+    pub fn allow(&self) {
+        *self.allowed.lock() = true;
     }
 
-    /// Set the sandbox tier for a tenant (DEC-019). Default is L1.
-    pub fn set_sandbox_tier(&self, tenant_id: &str, tier: SandboxTier) {
-        self.tiers.lock().insert(tenant_id.to_string(), tier);
+    /// Set the sandbox tier (DEC-019). Default is L1.
+    pub fn set_sandbox_tier(&self, tier: SandboxTier) {
+        *self.tier.lock() = Some(tier);
     }
 }
 
 #[async_trait]
 impl TenantSettingsReader for InMemoryTenantSettings {
-    async fn allow_skill_authoring(&self, tenant_id: &str) -> Result<bool, SkillAuthorError> {
-        Ok(self.allowed.lock().contains(tenant_id))
+    async fn allow_skill_authoring(&self) -> Result<bool, SkillAuthorError> {
+        Ok(*self.allowed.lock())
     }
 
-    async fn sandbox_tier(&self, tenant_id: &str) -> Result<SandboxTier, SkillAuthorError> {
-        Ok(self
-            .tiers
-            .lock()
-            .get(tenant_id)
-            .copied()
-            .unwrap_or(SandboxTier::L1))
+    async fn sandbox_tier(&self) -> Result<SandboxTier, SkillAuthorError> {
+        Ok(self.tier.lock().unwrap_or(SandboxTier::L1))
     }
 }
 
@@ -689,7 +666,7 @@ pub struct AllowAllSkillGate;
 
 #[async_trait]
 impl SkillAuthorGate for AllowAllSkillGate {
-    async fn check(&self, _tenant_id: Uuid, _scope: &str) -> Result<(), String> {
+    async fn check(&self, _scope: &str) -> Result<(), String> {
         Ok(())
     }
 }
@@ -711,7 +688,7 @@ impl DenySkillGate {
 
 #[async_trait]
 impl SkillAuthorGate for DenySkillGate {
-    async fn check(&self, _tenant_id: Uuid, _scope: &str) -> Result<(), String> {
+    async fn check(&self, _scope: &str) -> Result<(), String> {
         Err(self.reason.clone())
     }
 }
@@ -736,7 +713,7 @@ impl DenyThenAllowGate {
 
 #[async_trait]
 impl SkillAuthorGate for DenyThenAllowGate {
-    async fn check(&self, _tenant_id: Uuid, _scope: &str) -> Result<(), String> {
+    async fn check(&self, _scope: &str) -> Result<(), String> {
         let mut left = self.remaining_denies.lock();
         if *left > 0 {
             *left -= 1;
@@ -781,11 +758,6 @@ impl SkillAuditSink for InMemoryAuditSink {
 mod tests {
     use super::*;
     use std::collections::HashSet;
-
-    fn tenant_uuid() -> String {
-        // Stable, parseable UUID so the gate path works in tests.
-        "00000000-0000-0000-0000-000000000001".to_string()
-    }
 
     fn known_tools() -> HashSet<String> {
         ["search", "fetch_url"]
@@ -886,9 +858,7 @@ mod tests {
         let known = known_tools();
         let ctx = ctx(&*repo, &*settings, &gate, &*audit, &known);
 
-        let err = propose(&ctx, &tenant_uuid(), "agent-1", good_manifest())
-            .await
-            .unwrap_err();
+        let err = propose(&ctx, "agent-1", good_manifest()).await.unwrap_err();
         assert!(matches!(err, SkillAuthorError::Disabled));
         // Off-by-default is also off-the-record — no audit row.
         assert!(audit.entries().is_empty());
@@ -898,7 +868,7 @@ mod tests {
     async fn propose_with_unknown_tool_rejected_before_gate() {
         let repo = InMemorySkillProposalRepository::new();
         let settings = InMemoryTenantSettings::new();
-        settings.allow(&tenant_uuid());
+        settings.allow();
         let gate = DenySkillGate::new("would-have-denied");
         let audit = InMemoryAuditSink::new();
         let known = known_tools();
@@ -906,9 +876,7 @@ mod tests {
 
         let mut m = good_manifest();
         m.tool_allowlist.push("rm_rf".into());
-        let err = propose(&ctx, &tenant_uuid(), "agent-1", m)
-            .await
-            .unwrap_err();
+        let err = propose(&ctx, "agent-1", m).await.unwrap_err();
         assert!(matches!(err, SkillAuthorError::InvalidManifest(_)));
         // Validation precedes gate — no audit rows, no gate consultation.
         assert!(audit.entries().is_empty());
@@ -918,15 +886,13 @@ mod tests {
     async fn propose_with_denied_gate_returns_denied_and_records_two_audit_rows() {
         let repo = InMemorySkillProposalRepository::new();
         let settings = InMemoryTenantSettings::new();
-        settings.allow(&tenant_uuid());
+        settings.allow();
         let gate = DenySkillGate::new("budget exceeded");
         let audit = InMemoryAuditSink::new();
         let known = known_tools();
         let ctx = ctx(&*repo, &*settings, &gate, &*audit, &known);
 
-        let err = propose(&ctx, &tenant_uuid(), "agent-1", good_manifest())
-            .await
-            .unwrap_err();
+        let err = propose(&ctx, "agent-1", good_manifest()).await.unwrap_err();
         match err {
             SkillAuthorError::Denied(r) => assert_eq!(r, "budget exceeded"),
             other => panic!("expected Denied, got {other:?}"),
@@ -936,51 +902,29 @@ mod tests {
         assert_eq!(entries[0].action, "skill.propose");
         assert_eq!(entries[1].action, "skill.hotl_gate");
         // Storage was NOT touched — gate denial drops the proposal.
-        assert!(repo.list(&tenant_uuid(), None).await.unwrap().is_empty());
+        assert!(repo.list(None).await.unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn propose_with_allowed_gate_persists_pending_row() {
         let repo = InMemorySkillProposalRepository::new();
         let settings = InMemoryTenantSettings::new();
-        settings.allow(&tenant_uuid());
+        settings.allow();
         let gate = AllowAllSkillGate;
         let audit = InMemoryAuditSink::new();
         let known = known_tools();
         let ctx = ctx(&*repo, &*settings, &gate, &*audit, &known);
 
-        let row = propose(&ctx, &tenant_uuid(), "agent-1", good_manifest())
-            .await
-            .unwrap();
+        let row = propose(&ctx, "agent-1", good_manifest()).await.unwrap();
         assert_eq!(row.status, ProposalStatus::Pending);
         assert_eq!(audit.entries().len(), 2);
         assert_eq!(
-            repo.list(&tenant_uuid(), Some(ProposalStatus::Pending))
+            repo.list(Some(ProposalStatus::Pending))
                 .await
                 .unwrap()
                 .len(),
             1
         );
-    }
-
-    #[tokio::test]
-    async fn propose_with_non_uuid_tenant_fails_after_propose_audit() {
-        let repo = InMemorySkillProposalRepository::new();
-        let settings = InMemoryTenantSettings::new();
-        settings.allow("not-a-uuid");
-        let gate = AllowAllSkillGate;
-        let audit = InMemoryAuditSink::new();
-        let known = known_tools();
-        let ctx = ctx(&*repo, &*settings, &gate, &*audit, &known);
-
-        let err = propose(&ctx, "not-a-uuid", "agent-1", good_manifest())
-            .await
-            .unwrap_err();
-        assert!(matches!(err, SkillAuthorError::InvalidTenant(_)));
-        // skill.propose row was already emitted; the gate row was not.
-        let entries = audit.entries();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].action, "skill.propose");
     }
 
     // ── approve / reject ----------------------------------------------------
@@ -990,15 +934,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let repo = InMemorySkillProposalRepository::new();
         let settings = InMemoryTenantSettings::new();
-        settings.allow(&tenant_uuid());
+        settings.allow();
         let gate = AllowAllSkillGate;
         let audit = InMemoryAuditSink::new();
         let known = known_tools();
         let ctx = ctx(&*repo, &*settings, &gate, &*audit, &known);
 
-        let row = propose(&ctx, &tenant_uuid(), "agent-1", good_manifest())
-            .await
-            .unwrap();
+        let row = propose(&ctx, "agent-1", good_manifest()).await.unwrap();
         let updated = approve_proposal(&ctx, &row.id, "admin-1", tmp.path())
             .await
             .unwrap();
@@ -1040,7 +982,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let repo = InMemorySkillProposalRepository::new();
         let settings = InMemoryTenantSettings::new();
-        settings.allow(&tenant_uuid());
+        settings.allow();
         let gate = AllowAllSkillGate;
         let audit = InMemoryAuditSink::new();
         let known = known_tools();
@@ -1049,9 +991,7 @@ mod tests {
         // Pre-create the YAML at the target path.
         std::fs::write(tmp.path().join("ar-collector-0.1.0.yaml"), "stale: true").unwrap();
 
-        let row = propose(&ctx, &tenant_uuid(), "agent-1", good_manifest())
-            .await
-            .unwrap();
+        let row = propose(&ctx, "agent-1", good_manifest()).await.unwrap();
         let err = approve_proposal(&ctx, &row.id, "admin-1", tmp.path())
             .await
             .unwrap_err();
@@ -1068,15 +1008,13 @@ mod tests {
         let _ = tmp;
         let repo = InMemorySkillProposalRepository::new();
         let settings = InMemoryTenantSettings::new();
-        settings.allow(&tenant_uuid());
+        settings.allow();
         let gate = AllowAllSkillGate;
         let audit = InMemoryAuditSink::new();
         let known = known_tools();
         let ctx = ctx(&*repo, &*settings, &gate, &*audit, &known);
 
-        let row = propose(&ctx, &tenant_uuid(), "agent-1", good_manifest())
-            .await
-            .unwrap();
+        let row = propose(&ctx, "agent-1", good_manifest()).await.unwrap();
         let updated = reject_proposal(&ctx, &row.id, "admin-1", "too broad")
             .await
             .unwrap();
@@ -1097,7 +1035,6 @@ mod tests {
         let repo = InMemorySkillProposalRepository::new();
         let mk = |id: &str| ProposalRow {
             id: id.into(),
-            tenant_id: tenant_uuid(),
             proposed_by: "agent-1".into(),
             manifest: good_manifest(),
             status: ProposalStatus::Pending,
@@ -1115,7 +1052,7 @@ mod tests {
     async fn list_filters_by_status_and_orders_newest_first() {
         let repo = InMemorySkillProposalRepository::new();
         let settings = InMemoryTenantSettings::new();
-        settings.allow(&tenant_uuid());
+        settings.allow();
         let gate = AllowAllSkillGate;
         let audit = InMemoryAuditSink::new();
         let known = known_tools();
@@ -1129,12 +1066,12 @@ mod tests {
             version: "0.2.0".into(),
             ..good_manifest()
         };
-        let r1 = propose(&ctx, &tenant_uuid(), "agent-1", m1).await.unwrap();
+        let r1 = propose(&ctx, "agent-1", m1).await.unwrap();
         // Force a measurable gap so created_at sort is stable.
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        let r2 = propose(&ctx, &tenant_uuid(), "agent-1", m2).await.unwrap();
+        let r2 = propose(&ctx, "agent-1", m2).await.unwrap();
 
-        let all = repo.list(&tenant_uuid(), None).await.unwrap();
+        let all = repo.list(None).await.unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].id, r2.id, "newest first");
         assert_eq!(all[1].id, r1.id);
@@ -1186,16 +1123,14 @@ mod tests {
     #[tokio::test]
     async fn in_memory_tenant_settings_sandbox_tier_defaults_to_l1() {
         let s = InMemoryTenantSettings::new();
-        // Untouched tenant → L1 default.
-        assert_eq!(s.sandbox_tier("t-fresh").await.unwrap(), SandboxTier::L1);
+        // Untouched → L1 default.
+        assert_eq!(s.sandbox_tier().await.unwrap(), SandboxTier::L1);
     }
 
     #[tokio::test]
     async fn in_memory_tenant_settings_sandbox_tier_round_trip() {
         let s = InMemoryTenantSettings::new();
-        s.set_sandbox_tier("t-l3", SandboxTier::L3);
-        assert_eq!(s.sandbox_tier("t-l3").await.unwrap(), SandboxTier::L3);
-        // Other tenants still get the default.
-        assert_eq!(s.sandbox_tier("t-other").await.unwrap(), SandboxTier::L1);
+        s.set_sandbox_tier(SandboxTier::L3);
+        assert_eq!(s.sandbox_tier().await.unwrap(), SandboxTier::L3);
     }
 }

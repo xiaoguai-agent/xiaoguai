@@ -88,20 +88,6 @@ impl RuntimeContext {
         }
     }
 
-    /// Return a clone with `agent_config.tenant_id` set. The original
-    /// pattern at every call site was "clone `agent_defaults`, set
-    /// `tenant_id`, build agent" — encode it once here.
-    #[must_use]
-    pub fn with_tenant(&self, tenant_id: Option<String>) -> Self {
-        let mut cfg = self.agent_config.clone();
-        cfg.tenant_id = tenant_id;
-        Self {
-            backend: self.backend.clone(),
-            toolbox: self.toolbox.clone(),
-            agent_config: cfg,
-        }
-    }
-
     /// Return a clone with `agent_config.model` overridden. Used by the
     /// REST handler which lets a per-request `model` override the session
     /// default.
@@ -373,13 +359,5 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(outcome.reply_text, "ok");
-    }
-
-    #[tokio::test]
-    async fn with_tenant_sets_agent_config_tenant() {
-        let ctx = ctx_with_response("ok");
-        let scoped = ctx.with_tenant(Some("tenant-x".into()));
-        assert_eq!(scoped.agent_config.tenant_id.as_deref(), Some("tenant-x"));
-        assert!(ctx.agent_config.tenant_id.is_none());
     }
 }

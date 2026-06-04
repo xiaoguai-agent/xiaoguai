@@ -97,8 +97,6 @@ pub struct KanbanCard {
     pub column: CardColumn,
     /// Arbitrary task payload, consumed by the [`TaskExecutor`].
     pub payload: serde_json::Value,
-    /// Tenant scoping — opaque string; passed through to attribution.
-    pub tenant_id: Option<String>,
     /// How many times execution has been attempted (1-indexed).
     pub attempt: u32,
     /// Human-readable reason when column is [`CardColumn::Blocked`].
@@ -120,7 +118,6 @@ impl KanbanCard {
             title: title.into(),
             column: CardColumn::Ready,
             payload,
-            tenant_id: None,
             attempt: 0,
             blocked_reason: None,
             outcome: None,
@@ -128,11 +125,5 @@ impl KanbanCard {
             claimed_at: None,
             completed_at: None,
         }
-    }
-
-    #[must_use]
-    pub fn with_tenant(mut self, tenant_id: impl Into<String>) -> Self {
-        self.tenant_id = Some(tenant_id.into());
-        self
     }
 }

@@ -104,7 +104,7 @@ async fn expired_access_token_triggers_refresh_and_updates_store() {
         // Already expired.
         expires_at: Utc::now() - ChronoDuration::seconds(10),
     };
-    store.put("srv-1", "t-1", &stale).await.unwrap();
+    store.put("srv-1", &stale).await.unwrap();
     assert!(should_refresh(&stale, Utc::now()));
 
     let oauth_cfg = cfg(&server.url());
@@ -112,14 +112,14 @@ async fn expired_access_token_triggers_refresh_and_updates_store() {
     let refreshed = refresh_pkce(&http, &oauth_cfg, &stale)
         .await
         .expect("refresh ok");
-    store.put("srv-1", "t-1", &refreshed).await.unwrap();
+    store.put("srv-1", &refreshed).await.unwrap();
 
     assert_eq!(refreshed.access_token, "NEW_AT");
     // RFC 6749 §6: when no new refresh_token is returned, keep the old one.
     assert_eq!(refreshed.refresh_token.as_deref(), Some("OLD_RT"));
     assert!(refreshed.expires_at > Utc::now() + ChronoDuration::seconds(REFRESH_LEEWAY_SECS));
 
-    let from_store = store.get("srv-1", "t-1").await.unwrap().unwrap();
+    let from_store = store.get("srv-1").await.unwrap().unwrap();
     assert_eq!(from_store.access_token, "NEW_AT");
     assert_eq!(from_store.refresh_token.as_deref(), Some("OLD_RT"));
     mock_refresh.assert_async().await;
@@ -145,23 +145,23 @@ async fn refresh_token_rotation_persists_new_refresh_token() {
         refresh_token: Some("OLD_RT".into()),
         expires_at: Utc::now() - ChronoDuration::seconds(10),
     };
-    store.put("srv-2", "t-2", &stale).await.unwrap();
+    store.put("srv-2", &stale).await.unwrap();
 
     let oauth_cfg = cfg(&server.url());
     let http = build_http_client().unwrap();
     let refreshed = refresh_pkce(&http, &oauth_cfg, &stale).await.unwrap();
     // Atomic update: new bundle written in one `put`.
-    store.put("srv-2", "t-2", &refreshed).await.unwrap();
+    store.put("srv-2", &refreshed).await.unwrap();
 
-    let from_store = store.get("srv-2", "t-2").await.unwrap().unwrap();
+    let from_store = store.get("srv-2").await.unwrap().unwrap();
     assert_eq!(from_store.access_token, "NEW_AT");
     assert_eq!(from_store.refresh_token.as_deref(), Some("NEW_RT"));
     mock_refresh.assert_async().await;
 
-    // Snapshot must not contain stale (server_id, tenant_id) leakage.
+    // Snapshot is keyed by server_id alone.
     let snap = store.snapshot();
     assert_eq!(snap.len(), 1);
-    assert!(snap.contains_key(&("srv-2".to_string(), "t-2".to_string())));
+    assert!(snap.contains_key("srv-2"));
 }
 
 #[tokio::test]

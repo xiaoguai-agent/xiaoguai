@@ -24,7 +24,6 @@ from pact.matchers import EachLike, Like, Term  # type: ignore[import-untyped]
 
 PACT_DIR = str(Path(__file__).parent.parent.parent / "pacts")
 
-TENANT_UUID = "11111111-1111-1111-1111-111111111111"
 POLICY_UUID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 INSTALL_UUID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 BEARER = "Bearer test-token"
@@ -33,7 +32,6 @@ UUID_PATTERN = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 
 POLICY_BODY = {
     "id": Term(UUID_PATTERN, POLICY_UUID),
-    "tenant_id": Term(UUID_PATTERN, TENANT_UUID),
     "scope": Like("llm_call"),
     "window_seconds": Like(3600),
     "max_count": Like(100),
@@ -69,7 +67,6 @@ def test_list_hotl_policies(pact: Consumer) -> None:
         .with_request(
             method="GET",
             path="/v1/hotl/policies",
-            query={"tenant_id": TENANT_UUID},
             headers={"Authorization": BEARER},
         )
         .will_respond_with(
@@ -82,7 +79,6 @@ def test_list_hotl_policies(pact: Consumer) -> None:
     with pact:
         resp = requests.get(
             f"{pact.uri}/v1/hotl/policies",
-            params={"tenant_id": TENANT_UUID},
             headers={"Authorization": BEARER},
             timeout=5,
         )
@@ -105,7 +101,6 @@ def test_create_hotl_policy(pact: Consumer) -> None:
                 "Content-Type": "application/json",
             },
             body={
-                "tenant_id": TENANT_UUID,
                 "scope": "llm_call",
                 "window_seconds": 3600,
                 "max_count": 100,
@@ -124,7 +119,6 @@ def test_create_hotl_policy(pact: Consumer) -> None:
         resp = requests.post(
             f"{pact.uri}/v1/hotl/policies",
             json={
-                "tenant_id": TENANT_UUID,
                 "scope": "llm_call",
                 "window_seconds": 3600,
                 "max_count": 100,
@@ -180,7 +174,6 @@ def test_update_hotl_policy(pact: Consumer) -> None:
                 "Content-Type": "application/json",
             },
             body={
-                "tenant_id": TENANT_UUID,
                 "scope": "llm_call",
                 "window_seconds": 7200,
                 "max_count": 200,
@@ -199,7 +192,6 @@ def test_update_hotl_policy(pact: Consumer) -> None:
         resp = requests.put(
             f"{pact.uri}/v1/hotl/policies/{POLICY_UUID}",
             json={
-                "tenant_id": TENANT_UUID,
                 "scope": "llm_call",
                 "window_seconds": 7200,
                 "max_count": 200,
@@ -247,7 +239,6 @@ def test_hotl_check_allow(pact: Consumer) -> None:
                 "Content-Type": "application/json",
             },
             body={
-                "tenant_id": TENANT_UUID,
                 "scope": "llm_call",
                 "amount": 0.0025,
             },
@@ -262,7 +253,7 @@ def test_hotl_check_allow(pact: Consumer) -> None:
     with pact:
         resp = requests.post(
             f"{pact.uri}/v1/hotl/check",
-            json={"tenant_id": TENANT_UUID, "scope": "llm_call", "amount": 0.0025},
+            json={"scope": "llm_call", "amount": 0.0025},
             headers={"Authorization": BEARER},
             timeout=5,
         )
@@ -288,7 +279,6 @@ def test_record_outcome(pact: Consumer) -> None:
                 "Content-Type": "application/json",
             },
             body={
-                "tenant_id": "tenant_acme",
                 "session_id": "sess_abc123",
                 "agent_name": "sales-bot",
                 "kind": "revenue_usd",
@@ -309,7 +299,6 @@ def test_record_outcome(pact: Consumer) -> None:
         resp = requests.post(
             f"{pact.uri}/v1/outcomes",
             json={
-                "tenant_id": "tenant_acme",
                 "session_id": "sess_abc123",
                 "agent_name": "sales-bot",
                 "kind": "revenue_usd",
@@ -333,14 +322,13 @@ def test_outcomes_summary(pact: Consumer) -> None:
         .with_request(
             method="GET",
             path="/v1/outcomes/summary",
-            query={"tenant_id": "tenant_acme", "range": "7d"},
+            query={"range": "7d"},
             headers={"Authorization": BEARER},
         )
         .will_respond_with(
             status=200,
             headers={"Content-Type": "application/json"},
             body={
-                "tenant_id": Like("tenant_acme"),
                 "range": Like("7d"),
                 "summary": Like(
                     {
@@ -362,7 +350,7 @@ def test_outcomes_summary(pact: Consumer) -> None:
     with pact:
         resp = requests.get(
             f"{pact.uri}/v1/outcomes/summary",
-            params={"tenant_id": "tenant_acme", "range": "7d"},
+            params={"range": "7d"},
             headers={"Authorization": BEARER},
             timeout=5,
         )
@@ -380,14 +368,13 @@ def test_outcomes_timeseries(pact: Consumer) -> None:
         .with_request(
             method="GET",
             path="/v1/outcomes/timeseries",
-            query={"tenant_id": "tenant_acme", "range": "7d"},
+            query={"range": "7d"},
             headers={"Authorization": BEARER},
         )
         .will_respond_with(
             status=200,
             headers={"Content-Type": "application/json"},
             body={
-                "tenant_id": Like("tenant_acme"),
                 "range": Like("7d"),
                 "days": EachLike(
                     {
@@ -404,7 +391,7 @@ def test_outcomes_timeseries(pact: Consumer) -> None:
     with pact:
         resp = requests.get(
             f"{pact.uri}/v1/outcomes/timeseries",
-            params={"tenant_id": "tenant_acme", "range": "7d"},
+            params={"range": "7d"},
             headers={"Authorization": BEARER},
             timeout=5,
         )
@@ -419,7 +406,6 @@ def test_outcomes_timeseries(pact: Consumer) -> None:
 
 INSTALLED_PACK_BODY = {
     "id": Term(UUID_PATTERN, INSTALL_UUID),
-    "tenant_id": Like("tenant_acme"),
     "pack_slug": Like("pr-review"),
     "version": Like("1.0.0"),
     "config": Like({}),
@@ -435,7 +421,6 @@ def test_list_installed_skills(pact: Consumer) -> None:
         .with_request(
             method="GET",
             path="/v1/skills/installed",
-            query={"tenant_id": "tenant_acme"},
             headers={"Authorization": BEARER},
         )
         .will_respond_with(
@@ -448,7 +433,6 @@ def test_list_installed_skills(pact: Consumer) -> None:
     with pact:
         resp = requests.get(
             f"{pact.uri}/v1/skills/installed",
-            params={"tenant_id": "tenant_acme"},
             headers={"Authorization": BEARER},
             timeout=5,
         )
@@ -468,7 +452,7 @@ def test_install_skill_pack(pact: Consumer) -> None:
                 "Authorization": BEARER,
                 "Content-Type": "application/json",
             },
-            body={"tenant_id": "tenant_acme", "pack_slug": "pr-review", "config": {}},
+            body={"pack_slug": "pr-review", "config": {}},
         )
         .will_respond_with(
             status=201,
@@ -480,7 +464,7 @@ def test_install_skill_pack(pact: Consumer) -> None:
     with pact:
         resp = requests.post(
             f"{pact.uri}/v1/skills/install",
-            json={"tenant_id": "tenant_acme", "pack_slug": "pr-review", "config": {}},
+            json={"pack_slug": "pr-review", "config": {}},
             headers={"Authorization": BEARER},
             timeout=5,
         )

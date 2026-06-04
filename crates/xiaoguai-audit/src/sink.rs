@@ -11,10 +11,9 @@
 use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 
-/// Single-user owner chain identity. The audit `tenant_id` column was dropped in
-/// the `SQLite` pivot; the HMAC chain still signs over a `tenant_id` field, so we
-/// synthesize this fixed owner id on read to keep `verify_chain` valid.
-const OWNER_TENANT_ID: &str = "ten_local_owner";
+/// Single-user owner chain identity, synthesized on read to keep `verify_chain`
+/// valid. Re-exported from the crate root so append sites sign the same value.
+use crate::OWNER_TENANT_ID;
 
 // We are loaded with `#[path = "sink.rs"] pub mod sink;` from `chain.rs`,
 // so the parent module is `chain` and re-exports live at `crate::chain::...`.

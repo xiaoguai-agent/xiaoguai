@@ -118,7 +118,6 @@ async fn create_session_returns_201_and_body() {
     let app = router(state);
     let body = json!({
         "user_id": "usr_a",
-        "tenant_id": "ten_a",
         "model": "mock-model",
         "title": "demo"
     });
@@ -134,7 +133,7 @@ async fn create_session_returns_201_and_body() {
 async fn create_session_rejects_empty_fields() {
     let (state, _) = build_state(vec![ScriptStep::text("noop")]);
     let app = router(state);
-    let body = json!({"user_id":"","tenant_id":"","model":""});
+    let body = json!({"user_id":"","model":""});
     let resp = app.oneshot(json_post("/v1/sessions", body)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let v = body_to_value(resp.into_body()).await;
@@ -152,7 +151,6 @@ async fn get_session_returns_404_for_unknown() {
 async fn create_and_get_session_id(app: axum::Router) -> (axum::Router, String) {
     let body = json!({
         "user_id": "usr_a",
-        "tenant_id": "ten_a",
         "model": "mock-model"
     });
     let resp = app

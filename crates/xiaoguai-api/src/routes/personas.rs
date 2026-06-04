@@ -9,7 +9,7 @@
 //!
 //! | Method | Path                              | Description                              |
 //! |--------|-----------------------------------|------------------------------------------|
-//! | GET    | `/v1/personas?tenant_id=<uuid>`   | List active personas for the tenant      |
+//! | GET    | `/v1/personas`                    | List active personas                     |
 //! | POST   | `/v1/personas`                    | Create a persona                         |
 //! | GET    | `/v1/personas/:id`                | Fetch a persona by UUID                  |
 //! | PATCH  | `/v1/personas/:id`                | Partial-update a persona                 |
@@ -21,7 +21,7 @@
 //! The handlers delegate to `xiaoguai_personas::PersonaRepository` —
 //! storage details never leak through this layer.
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -72,25 +72,17 @@ fn map_err(e: PersonaError) -> Response {
 // ─── Query / body types ───────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-pub struct TenantQuery {
-    pub tenant_id: Uuid,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct AttachBody {
     pub persona_id: Uuid,
 }
 
 // ─── Persona CRUD handlers ────────────────────────────────────────────────────
 
-pub async fn list_personas(
-    State(state): State<AppState>,
-    Query(q): Query<TenantQuery>,
-) -> Response {
+pub async fn list_personas(State(state): State<AppState>) -> Response {
     let Some(repo) = state.personas.clone() else {
         return personas_unavailable();
     };
-    match repo.list(q.tenant_id).await {
+    match repo.list().await {
         Ok(ps) => (StatusCode::OK, Json(ps)).into_response(),
         Err(e) => map_err(e),
     }

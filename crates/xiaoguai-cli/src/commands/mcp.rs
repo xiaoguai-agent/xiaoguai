@@ -25,10 +25,7 @@ use xiaoguai_mcp::auth::{
     OAuth2PkceConfig, TokenBundle, TokenStore,
 };
 use xiaoguai_storage::repositories::McpServerRepository;
-use xiaoguai_types::{
-    ids::{McpServerInstanceId, TenantId},
-    McpServer, McpTransport,
-};
+use xiaoguai_types::{ids::McpServerInstanceId, McpServer, McpTransport};
 
 /// How long to wait for the user to click the consent link. The CLI
 /// blocks for this duration before giving up.
@@ -43,7 +40,6 @@ pub struct RegisterArgs {
     pub args: Vec<String>,
     pub env_keys: Vec<String>,
     pub endpoint: Option<String>,
-    pub tenant: Option<String>,
 }
 
 /// Subset of register args used by the OAuth 2.1 PKCE flow.
@@ -91,10 +87,8 @@ pub async fn register(repo: &dyn McpServerRepository, args: RegisterArgs) -> Res
     }
 
     let now = Utc::now();
-    let tenant_guc = args.tenant.clone();
     let server = McpServer {
         id: McpServerInstanceId::new(),
-        tenant_id: args.tenant.map(TenantId::from),
         name: args.name,
         version: args.version,
         transport,
@@ -106,25 +100,19 @@ pub async fn register(repo: &dyn McpServerRepository, args: RegisterArgs) -> Res
         created_at: now,
         updated_at: now,
     };
-    repo.create(tenant_guc.as_deref(), &server).await?;
+    repo.create(&server).await?;
     Ok(server)
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct ListArgs {
-    pub tenant: Option<String>,
-}
+pub struct ListArgs {}
 
 /// List MCP servers from the repository.
 ///
 /// # Errors
 /// Returns an error if the repository query fails.
-pub async fn list(repo: &dyn McpServerRepository, args: ListArgs) -> Result<Vec<McpServer>> {
-    let rows = match args.tenant {
-        Some(t) => repo.list_for_tenant(&t).await?,
-        None => repo.list_global().await?,
-    };
-    Ok(rows)
+pub async fn list(repo: &dyn McpServerRepository, _args: ListArgs) -> Result<Vec<McpServer>> {
+    Ok(repo.list().await?)
 }
 
 #[derive(Debug, Clone)]
@@ -141,9 +129,7 @@ pub async fn remove(repo: &dyn McpServerRepository, args: RemoveArgs) -> Result<
     if args.id.trim().is_empty() {
         return Err(anyhow!("--id must not be empty"));
     }
-    // Admin CLI: caller may not know the tenant; rely on superuser/owner
-    // bypass for RLS. v0.6.2 should add a `--tenant` flag to scope deletes.
-    repo.delete(None, &args.id).await?;
+    repo.delete(&args.id).await?;
     Ok(())
 }
 
@@ -327,7 +313,6 @@ pub async fn register_oauth_with_listener(
     let now = Utc::now();
     let server = McpServer {
         id: McpServerInstanceId::new(),
-        tenant_id: base.tenant.clone().map(TenantId::from),
         name: base.name,
         version: base.version,
         transport,
@@ -339,14 +324,12 @@ pub async fn register_oauth_with_listener(
         created_at: now,
         updated_at: now,
     };
-    repo.create(base.tenant.as_deref(), &server)
+    repo.create(&server)
         .await
         .map_err(|e| anyhow!("create mcp_server row: {e}"))?;
-    let tenant_id = base.tenant.clone().ok_or_else(|| {
-        anyhow!("--tenant is required for OAuth-authed MCP servers (per-tenant token isolation)")
-    })?;
+    // OAuth token bundles are keyed by server id (single implicit owner).
     store
-        .put(server.id.as_str(), &tenant_id, &bundle)
+        .put(server.id.as_str(), &bundle)
         .await
         .map_err(|e| anyhow!("persist token bundle: {e}"))?;
     Ok((server, bundle, oauth_cfg))
@@ -357,18 +340,13 @@ pub fn format_table(rows: &[McpServer]) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
     out.push_str(
-        "ID                                     SCOPE       TRANSPORT  NAME             VERSION  ENABLED\n",
+        "ID                                     TRANSPORT  NAME             VERSION  ENABLED\n",
     );
     for s in rows {
-        let scope = s
-            .tenant_id
-            .as_ref()
-            .map_or_else(|| "global".to_string(), |t| t.as_str().to_string());
         let _ = writeln!(
             out,
-            "{:38} {:11} {:10} {:16} {:8} {}",
+            "{:38} {:10} {:16} {:8} {}",
             s.id.as_str(),
-            scope,
             s.transport.as_str(),
             s.name,
             s.version,

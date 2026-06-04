@@ -20,12 +20,6 @@ pub enum MemoryError {
 
     #[error("serialisation error: {0}")]
     Serialisation(#[from] serde_json::Error),
-
-    #[error("tenant isolation violation: requested {requested}, context {context}")]
-    TenantIsolation {
-        requested: uuid::Uuid,
-        context: uuid::Uuid,
-    },
 }
 
 #[cfg(feature = "pg")]

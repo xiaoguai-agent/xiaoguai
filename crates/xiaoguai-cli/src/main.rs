@@ -171,7 +171,7 @@ enum Cmd {
     // ------------------------------------------------------------------
     /// Administer Human-on-the-Loop (HOTL) budget policies.
     ///
-    /// Manages spend/count caps per tenant and action scope. Enforcer
+    /// Manages spend/count caps per action scope. Enforcer
     /// integration ships in v1.3; on 503 a friendly message is printed.
     Hotl {
         /// Base URL of the `xiaoguai-api` server.
@@ -210,7 +210,7 @@ enum Cmd {
 
     /// Manage the skill-pack marketplace.
     ///
-    /// Lists catalog packs, installs or uninstalls packs for a tenant.
+    /// Lists catalog packs, installs or uninstalls packs.
     /// Pg bridge ships in v1.3; on 503 a friendly message is printed.
     Skills {
         /// Base URL of the `xiaoguai-api` server.
@@ -298,9 +298,6 @@ enum AuditCmd {
     /// machine-readable error JSON and this command exits non-zero. There
     /// is no `--skip-verify` flag by design.
     Export {
-        /// Tenant id (required — chain is per-tenant).
-        #[arg(long)]
-        tenant_id: String,
         /// Framework short name — `soc2` | `gdpr` | `hipaa`.
         #[arg(long)]
         framework: String,
@@ -333,9 +330,6 @@ enum HotlCmd {
     },
     /// Run a one-shot budget check against the live enforcer.
     Check {
-        /// Tenant context.
-        #[arg(long)]
-        tenant_id: String,
         /// Action category (e.g. `llm_call`, `email_send`).
         #[arg(long)]
         scope: String,
@@ -349,9 +343,6 @@ enum HotlCmd {
 enum HotlPolicyCmd {
     /// Create a new HOTL budget policy.
     Create {
-        /// Tenant the policy applies to.
-        #[arg(long)]
-        tenant_id: String,
         /// Action category.
         #[arg(long)]
         scope: String,
@@ -368,11 +359,8 @@ enum HotlPolicyCmd {
         #[arg(long)]
         escalate_to: Option<String>,
     },
-    /// List policies for a tenant.
+    /// List policies.
     List {
-        /// Tenant to filter.
-        #[arg(long)]
-        tenant_id: String,
         /// Further filter by action category.
         #[arg(long)]
         scope: Option<String>,
@@ -410,8 +398,6 @@ enum OutcomesCmd {
     /// Record one outcome attribution.
     Record {
         #[arg(long)]
-        tenant_id: String,
-        #[arg(long)]
         agent_name: String,
         /// One of: `revenue_usd`, `cost_saved_usd`, `hours_saved`, `deals_closed`,
         /// `tickets_resolved`, custom.
@@ -429,8 +415,6 @@ enum OutcomesCmd {
     },
     /// List raw outcome records.
     List {
-        #[arg(long)]
-        tenant_id: String,
         /// Time range shorthand: `24h`, `7d`, `30d` (default: `30d`).
         #[arg(long, default_value = "30d")]
         range: String,
@@ -441,15 +425,11 @@ enum OutcomesCmd {
     },
     /// Aggregated ROI summary.
     Summary {
-        #[arg(long)]
-        tenant_id: String,
         #[arg(long, default_value = "30d")]
         range: String,
     },
     /// Day-by-day breakdown of outcome values.
     Timeseries {
-        #[arg(long)]
-        tenant_id: String,
         #[arg(long, default_value = "30d")]
         range: String,
         #[arg(long)]
@@ -461,8 +441,6 @@ enum OutcomesCmd {
 enum SkillsCmd {
     /// List catalog packs or installed packs.
     List {
-        #[arg(long)]
-        tenant_id: Option<String>,
         /// Filter catalog by category.
         #[arg(long)]
         category: Option<String>,
@@ -470,10 +448,8 @@ enum SkillsCmd {
         #[arg(long)]
         installed: bool,
     },
-    /// Install a catalog pack for a tenant.
+    /// Install a catalog pack.
     Install {
-        #[arg(long)]
-        tenant_id: String,
         /// Catalog slug (see `xiaoguai skills list`).
         #[arg(long)]
         pack: String,
@@ -483,8 +459,6 @@ enum SkillsCmd {
     },
     /// Install a local pack definition (planned for v1.3).
     InstallFromFile {
-        #[arg(long)]
-        tenant_id: String,
         #[arg(long)]
         file: String,
     },
@@ -502,10 +476,8 @@ enum SkillsCmd {
 
 #[derive(Subcommand)]
 enum ProposalsCmd {
-    /// List proposals for a tenant, optionally filtered by status.
+    /// List proposals, optionally filtered by status.
     List {
-        #[arg(long)]
-        tenant_id: String,
         /// One of: pending, approved, rejected, installed.
         #[arg(long)]
         status: Option<String>,
@@ -532,17 +504,12 @@ enum ProposalsCmd {
 #[derive(Subcommand)]
 enum WatchCmd {
     /// List registered watch specs.
-    List {
-        #[arg(long)]
-        tenant_id: Option<String>,
-    },
+    List,
     /// Register and activate a watch spec from a YAML file.
     Start {
         /// Path to `WatchSpec` YAML file.
         #[arg(long)]
         file: String,
-        #[arg(long)]
-        tenant_id: Option<String>,
     },
     /// Deactivate a watcher by id.
     Stop {
@@ -616,10 +583,6 @@ enum RemoteCmd {
     Chat {
         #[arg(long)]
         user_id: String,
-        /// Vestigial under the single-owner pivot (DEC-033) — the server
-        /// ignores it. Kept as an optional flag for back-compat.
-        #[arg(long, default_value = "")]
-        tenant_id: String,
         #[arg(long, default_value = "qwen2.5-coder")]
         model: String,
         #[arg(long)]
@@ -670,9 +633,6 @@ enum McpCmd {
         /// Endpoint URL (required for transport=sse|http).
         #[arg(long)]
         endpoint: Option<String>,
-        /// Tenant id for tenant-scoped servers. Omit for system-wide.
-        #[arg(long)]
-        tenant: Option<String>,
         // ---- Tier-3 T4: OAuth 2.1 PKCE ----
         /// Auth method. Currently only `oauth2-pkce` is recognised;
         /// omit for static or no-auth servers.
@@ -691,11 +651,8 @@ enum McpCmd {
         #[arg(long, value_delimiter = ',', default_value = "")]
         scopes: Vec<String>,
     },
-    /// List MCP servers (omit `--tenant` for globals only).
-    List {
-        #[arg(long)]
-        tenant: Option<String>,
-    },
+    /// List MCP servers.
+    List,
     /// Remove an MCP server by id.
     Remove {
         #[arg(long)]
@@ -728,15 +685,9 @@ enum ProviderCmd {
         /// Name of the env var holding the API key.
         #[arg(long)]
         api_key_env: Option<String>,
-        /// Tenant id for tenant-scoped providers. Omit for system-wide.
-        #[arg(long)]
-        tenant: Option<String>,
     },
-    /// List providers in a given scope (omit `--tenant` for globals only).
-    List {
-        #[arg(long)]
-        tenant: Option<String>,
-    },
+    /// List providers.
+    List,
     /// Remove a provider by id.
     Remove {
         #[arg(long)]
@@ -909,7 +860,6 @@ async fn handle_provider(config: Option<&str>, action: ProviderCmd) -> Result<()
             default_for,
             fallback_order,
             api_key_env,
-            tenant,
         } => {
             let p = provider::register(
                 repo,
@@ -921,14 +871,13 @@ async fn handle_provider(config: Option<&str>, action: ProviderCmd) -> Result<()
                     default_for: default_for.into_iter().filter(|s| !s.is_empty()).collect(),
                     fallback_order,
                     api_key_env,
-                    tenant,
                 },
             )
             .await?;
             println!("registered {} ({})", p.id, p.name);
         }
-        ProviderCmd::List { tenant } => {
-            let rows = provider::list(repo, provider::ListArgs { tenant }).await?;
+        ProviderCmd::List => {
+            let rows = provider::list(repo, provider::ListArgs {}).await?;
             print!("{}", provider::format_table(&rows));
         }
         ProviderCmd::Remove { id } => {
@@ -951,7 +900,6 @@ async fn handle_mcp(config: Option<&str>, action: McpCmd) -> Result<()> {
             args,
             env_keys,
             endpoint,
-            tenant,
             auth,
             auth_url,
             token_url,
@@ -973,7 +921,6 @@ async fn handle_mcp(config: Option<&str>, action: McpCmd) -> Result<()> {
                             args,
                             env_keys,
                             endpoint,
-                            tenant,
                         },
                     )
                     .await?;
@@ -994,7 +941,6 @@ async fn handle_mcp(config: Option<&str>, action: McpCmd) -> Result<()> {
                         args,
                         env_keys,
                         endpoint,
-                        tenant,
                     };
                     let oauth_args = mcp::OAuthRegisterArgs {
                         auth_url: auth_url.unwrap_or_default(),
@@ -1028,8 +974,8 @@ async fn handle_mcp(config: Option<&str>, action: McpCmd) -> Result<()> {
                 }
             }
         }
-        McpCmd::List { tenant } => {
-            let rows = mcp::list(repo, mcp::ListArgs { tenant }).await?;
+        McpCmd::List => {
+            let rows = mcp::list(repo, mcp::ListArgs {}).await?;
             print!("{}", mcp::format_table(&rows));
         }
         McpCmd::Remove { id } => {
@@ -1050,7 +996,6 @@ async fn handle_remote(server: String, action: RemoteCmd) -> Result<()> {
         }
         RemoteCmd::Chat {
             user_id,
-            tenant_id,
             model,
             prompt,
             title,
@@ -1058,7 +1003,6 @@ async fn handle_remote(server: String, action: RemoteCmd) -> Result<()> {
             let session = client
                 .create_session(&remote::CreateSessionRequest {
                     user_id,
-                    tenant_id,
                     model,
                     title,
                 })
@@ -1158,7 +1102,6 @@ async fn handle_hotl(api_base: String, output: String, action: HotlCmd) -> Resul
     match action {
         HotlCmd::Policy { action } => match action {
             HotlPolicyCmd::Create {
-                tenant_id,
                 scope,
                 window_secs,
                 max_count,
@@ -1167,7 +1110,6 @@ async fn handle_hotl(api_base: String, output: String, action: HotlCmd) -> Resul
             } => {
                 let v = hotl::policy_create(hotl::PolicyCreateArgs {
                     api_base,
-                    tenant_id,
                     scope,
                     window_secs,
                     max_count,
@@ -1177,13 +1119,8 @@ async fn handle_hotl(api_base: String, output: String, action: HotlCmd) -> Resul
                 .await?;
                 print_value(&v, &output)?;
             }
-            HotlPolicyCmd::List { tenant_id, scope } => {
-                let rows = hotl::policy_list(hotl::PolicyListArgs {
-                    api_base,
-                    tenant_id,
-                    scope,
-                })
-                .await?;
+            HotlPolicyCmd::List { scope } => {
+                let rows = hotl::policy_list(hotl::PolicyListArgs { api_base, scope }).await?;
                 if output == "table" {
                     print!("{}", hotl::format_policy_table(&rows));
                 } else {
@@ -1218,14 +1155,9 @@ async fn handle_hotl(api_base: String, output: String, action: HotlCmd) -> Resul
                 println!("deleted {id_clone}");
             }
         },
-        HotlCmd::Check {
-            tenant_id,
-            scope,
-            amount,
-        } => {
+        HotlCmd::Check { scope, amount } => {
             let resp = hotl::check(hotl::CheckArgs {
                 api_base,
-                tenant_id,
                 scope,
                 amount,
             })
@@ -1242,7 +1174,6 @@ async fn handle_hotl(api_base: String, output: String, action: HotlCmd) -> Resul
 async fn handle_outcomes(api_base: String, output: String, action: OutcomesCmd) -> Result<()> {
     match action {
         OutcomesCmd::Record {
-            tenant_id,
             agent_name,
             kind,
             value,
@@ -1252,7 +1183,6 @@ async fn handle_outcomes(api_base: String, output: String, action: OutcomesCmd) 
         } => {
             let v = outcomes::record(outcomes::RecordArgs {
                 api_base,
-                tenant_id,
                 agent_name,
                 kind,
                 value,
@@ -1263,15 +1193,9 @@ async fn handle_outcomes(api_base: String, output: String, action: OutcomesCmd) 
             .await?;
             print_value(&v, &output)?;
         }
-        OutcomesCmd::List {
-            tenant_id,
-            range,
-            kind,
-            limit,
-        } => {
+        OutcomesCmd::List { range, kind, limit } => {
             let rows = outcomes::list(outcomes::ListArgs {
                 api_base,
-                tenant_id,
                 range,
                 kind,
                 limit,
@@ -1283,27 +1207,17 @@ async fn handle_outcomes(api_base: String, output: String, action: OutcomesCmd) 
                 print_value(&serde_json::to_value(&rows)?, &output)?;
             }
         }
-        OutcomesCmd::Summary { tenant_id, range } => {
-            let rows = outcomes::summary(outcomes::SummaryArgs {
-                api_base,
-                tenant_id,
-                range,
-            })
-            .await?;
+        OutcomesCmd::Summary { range } => {
+            let rows = outcomes::summary(outcomes::SummaryArgs { api_base, range }).await?;
             if output == "table" {
                 print!("{}", outcomes::format_summary_table(&rows));
             } else {
                 print_value(&serde_json::to_value(&rows)?, &output)?;
             }
         }
-        OutcomesCmd::Timeseries {
-            tenant_id,
-            range,
-            kind,
-        } => {
+        OutcomesCmd::Timeseries { range, kind } => {
             let v = outcomes::timeseries(outcomes::TimeseriesArgs {
                 api_base,
-                tenant_id,
                 range,
                 kind,
             })
@@ -1317,13 +1231,11 @@ async fn handle_outcomes(api_base: String, output: String, action: OutcomesCmd) 
 async fn handle_skills(api_base: String, output: String, action: SkillsCmd) -> Result<()> {
     match action {
         SkillsCmd::List {
-            tenant_id,
             category,
             installed,
         } => {
             let rows = skills::list(skills::ListArgs {
                 api_base,
-                tenant_id,
                 category,
                 installed,
             })
@@ -1338,14 +1250,9 @@ async fn handle_skills(api_base: String, output: String, action: SkillsCmd) -> R
                 print_value(&serde_json::to_value(&rows)?, &output)?;
             }
         }
-        SkillsCmd::Install {
-            tenant_id,
-            pack,
-            config,
-        } => {
+        SkillsCmd::Install { pack, config } => {
             let v = skills::install(skills::InstallArgs {
                 api_base,
-                tenant_id,
                 pack,
                 config,
             })
@@ -1372,8 +1279,8 @@ async fn handle_skills(api_base: String, output: String, action: SkillsCmd) -> R
 
 async fn handle_proposals(api_base: String, output: String, action: ProposalsCmd) -> Result<()> {
     match action {
-        ProposalsCmd::List { tenant_id, status } => {
-            let rows = skills::proposals_list(&api_base, &tenant_id, status.as_deref()).await?;
+        ProposalsCmd::List { status } => {
+            let rows = skills::proposals_list(&api_base, status.as_deref()).await?;
             if output == "table" {
                 print!("{}", skills::format_proposals_table(&rows));
             } else {
@@ -1398,23 +1305,18 @@ async fn handle_proposals(api_base: String, output: String, action: ProposalsCmd
 
 async fn handle_watch(api_base: String, output: String, action: WatchCmd) -> Result<()> {
     match action {
-        WatchCmd::List { tenant_id } => {
-            let rows = watch::list(watch::ListArgs {
-                api_base,
-                tenant_id,
-            })
-            .await?;
+        WatchCmd::List => {
+            let rows = watch::list(watch::ListArgs { api_base }).await?;
             if output == "table" {
                 print!("{}", watch::format_list_table(&rows));
             } else {
                 print_value(&serde_json::to_value(&rows)?, &output)?;
             }
         }
-        WatchCmd::Start { file, tenant_id } => {
+        WatchCmd::Start { file } => {
             let v = watch::start(watch::StartArgs {
                 api_base,
                 file: std::path::PathBuf::from(file),
-                tenant_id,
             })
             .await?;
             print_value(&v, &output)?;
@@ -1682,7 +1584,6 @@ async fn main() -> Result<()> {
 async fn handle_audit(api_base: String, action: AuditCmd) -> Result<()> {
     match action {
         AuditCmd::Export {
-            tenant_id,
             framework,
             from,
             to,
@@ -1691,7 +1592,6 @@ async fn handle_audit(api_base: String, action: AuditCmd) -> Result<()> {
         } => {
             audit_export::run(audit_export::ExportArgs {
                 api_base,
-                tenant_id,
                 framework,
                 from,
                 to,

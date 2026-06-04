@@ -112,9 +112,7 @@ fn resolve_required_key(
 /// Order of operations:
 ///   1. Construct one backend per row according to its `ProviderKind`.
 ///   2. Build a [`RouterConfig`]:
-///      - `system_default_for_model` from each row's `default_for_models`
-///        (system-wide rows only — tenant-scoped defaults are a v0.6.2
-///        deferred item).
+///      - `system_default_for_model` from each row's `default_for_models`.
 ///      - `fallback_order` from system-wide rows sorted by their stored
 ///        `fallback_order` field, breaking ties by `created_at` ascending.
 ///
@@ -230,10 +228,8 @@ pub fn build_router(rows: &[LlmProvider], env: &dyn EnvResolver) -> (LlmRouter, 
         }
     }
 
-    // Sort system-wide rows for deterministic fallback order. Tenant rows
-    // would feed into `tenant_default_for_model`; we only handle globals
-    // in this slice.
-    let mut globals: Vec<&LlmProvider> = rows.iter().filter(|r| r.tenant_id.is_none()).collect();
+    // Sort rows for deterministic fallback order.
+    let mut globals: Vec<&LlmProvider> = rows.iter().collect();
     globals.sort_by(|a, b| {
         a.fallback_order
             .cmp(&b.fallback_order)
@@ -272,7 +268,6 @@ mod tests {
         let now = Utc::now();
         LlmProvider {
             id: ProviderId::new(),
-            tenant_id: None,
             name: name.to_string(),
             kind,
             endpoint: endpoint.to_string(),
@@ -306,7 +301,6 @@ mod tests {
             tool_choice: crate::ToolChoice::Auto,
             temperature: None,
             max_tokens: None,
-            tenant_id: None,
         };
         assert!(router.resolve(ctx, &req).is_empty());
     }
@@ -330,7 +324,6 @@ mod tests {
             tool_choice: crate::ToolChoice::Auto,
             temperature: None,
             max_tokens: None,
-            tenant_id: None,
         };
         let resolved = router.resolve(ctx, &req);
         assert_eq!(resolved, vec![b.id.clone(), c.id.clone(), a.id.clone()]);
@@ -364,7 +357,6 @@ mod tests {
             tool_choice: crate::ToolChoice::Auto,
             temperature: None,
             max_tokens: None,
-            tenant_id: None,
         };
         let resolved = router.resolve(ctx, &req);
         assert_eq!(

@@ -16,10 +16,9 @@ use crate::types::{
 pub trait MemoryStore: Send + Sync + 'static {
     // ─── CRUD ───────────────────────────────────────────────────────────────
 
-    /// Return all memories for `tenant_id`, optionally filtered by kind and/or tags.
+    /// Return all memories, optionally filtered by kind and/or tags.
     async fn list_memories(
         &self,
-        tenant_id: Uuid,
         kind_filter: Option<crate::types::MemoryKind>,
         tag_filter: &[String],
         limit: usize,
@@ -27,21 +26,16 @@ pub trait MemoryStore: Send + Sync + 'static {
     ) -> MemoryResult<Vec<Memory>>;
 
     /// Fetch a single memory by id. Returns `Err(NotFound)` when missing.
-    async fn get_memory(&self, id: Uuid, tenant_id: Uuid) -> MemoryResult<Memory>;
+    async fn get_memory(&self, id: Uuid) -> MemoryResult<Memory>;
 
     /// Persist a new memory. The backend embeds `req.content` automatically.
     async fn create_memory(&self, req: CreateMemoryRequest) -> MemoryResult<Memory>;
 
     /// Update mutable fields on an existing memory. Re-embeds content when it changes.
-    async fn update_memory(
-        &self,
-        id: Uuid,
-        tenant_id: Uuid,
-        req: UpdateMemoryRequest,
-    ) -> MemoryResult<Memory>;
+    async fn update_memory(&self, id: Uuid, req: UpdateMemoryRequest) -> MemoryResult<Memory>;
 
     /// Hard-delete a memory by id.
-    async fn delete_memory(&self, id: Uuid, tenant_id: Uuid) -> MemoryResult<()>;
+    async fn delete_memory(&self, id: Uuid) -> MemoryResult<()>;
 
     // ─── Semantic retrieval ──────────────────────────────────────────────────
 
@@ -53,7 +47,6 @@ pub trait MemoryStore: Send + Sync + 'static {
     async fn find_similar(
         &self,
         memory_id: Uuid,
-        tenant_id: Uuid,
         top_k: usize,
     ) -> MemoryResult<Vec<RecalledMemory>>;
 

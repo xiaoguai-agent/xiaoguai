@@ -56,10 +56,6 @@ pub struct AgentConfig {
     /// Temperature passed through to every request. `None` = backend default.
     pub temperature: Option<f32>,
     pub model: String,
-    /// v0.6.4: tenant scope propagated onto every `ChatRequest` so an
-    /// `LlmRouter` underneath the backend can pick per-tenant defaults
-    /// + fallback chains. `None` = system default routing (legacy path).
-    pub tenant_id: Option<String>,
     /// Tier-2 prereq: optional HOTL budget gate consulted before every
     /// tool dispatch. `None` (the default) preserves legacy behaviour —
     /// all tools execute unconditionally. When `Some`, the loop calls
@@ -89,7 +85,6 @@ impl AgentConfig {
             history_window: 32,
             temperature: Some(0.2),
             model: model.into(),
-            tenant_id: None,
             hotl_gate: None,
             compaction: None,
         }
@@ -262,7 +257,6 @@ fn build_request(
 ) -> ChatRequest {
     let mut req = ChatRequest::new(config.model.clone(), messages.to_vec());
     req.temperature = config.temperature;
-    req.tenant_id.clone_from(&config.tenant_id);
     if !tool_specs.is_empty() {
         req.tools = tool_specs.to_vec();
         req.tool_choice = ToolChoice::Auto;
@@ -377,7 +371,6 @@ async fn run_inner(
             &toolbox,
             &turn.tool_calls,
             config.hotl_gate.as_ref(),
-            config.tenant_id.as_deref(),
             &tx,
             &cancel,
         )
@@ -403,7 +396,6 @@ async fn dispatch_tools(
     toolbox: &Toolbox,
     calls: &[ToolCallSpec],
     hotl_gate: Option<&SharedHotlGate>,
-    tenant_id: Option<&str>,
     tx: &mpsc::Sender<AgentEvent>,
     cancel: &CancellationToken,
 ) -> Vec<ToolDispatchOutcome> {
@@ -420,12 +412,6 @@ async fn dispatch_tools(
         )
         .await;
     }
-
-    // Pre-resolve tenant Uuid once; if the agent has no tenant scope (or
-    // it does not parse as a Uuid), the gate is skipped — there's no
-    // policy bucket to charge against. This matches the upstream
-    // `send_message` HOTL check semantics.
-    let tenant_uuid = tenant_id.and_then(|s| uuid::Uuid::parse_str(s).ok());
 
     // Build per-call futures. Each future captures its `ToolCallSpec` so the
     // result row stays addressable by id when we zip with the original list.
@@ -445,16 +431,16 @@ async fn dispatch_tools(
         let tx_inner = tx.clone();
         let cancel_inner = cancel.clone();
         async move {
-            // 1. HOTL pre-check. None gate (or absent tenant) → bypass.
-            if let (Some(gate), Some(tid)) = (gate.as_ref(), tenant_uuid) {
+            // 1. HOTL pre-check. No gate → bypass.
+            if let Some(gate) = gate.as_ref() {
                 let scope = format!("tool_call.{name}");
                 // Sprint-13 S13-6: hand the parsed args to the gate so
                 // `SuspendingHotlGate` can run them through the
-                // per-tenant `RedactionRules`. The default trait impl
-                // backfills `args_redacted` with the verbatim args for
-                // adapters that don't override.
+                // `RedactionRules`. The default trait impl backfills
+                // `args_redacted` with the verbatim args for adapters
+                // that don't override.
                 let args_for_gate = parse_args(&args_json);
-                let verdict = gate.check_with_args(tid, &scope, 1.0, &args_for_gate).await;
+                let verdict = gate.check_with_args(&scope, 1.0, &args_for_gate).await;
                 match verdict {
                     HotlGateVerdict::Allow => {}
                     HotlGateVerdict::Deny(reason) => {

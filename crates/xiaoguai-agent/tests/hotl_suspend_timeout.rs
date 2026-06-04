@@ -46,7 +46,7 @@ impl TimeoutSuspendGate {
 
 #[async_trait]
 impl HotlGate for TimeoutSuspendGate {
-    async fn check(&self, _tenant: Uuid, scope: &str, _amount: f64) -> HotlGateVerdict {
+    async fn check(&self, scope: &str, _amount: f64) -> HotlGateVerdict {
         let escalation_id = Uuid::new_v4();
         let expires_at = Instant::now() + self.expiry;
         let (ticket, sender) = HotlSuspensionTicket::new(escalation_id, expires_at);
@@ -80,8 +80,7 @@ async fn suspend_with_no_decision_resolves_as_timeout() {
     ]));
     let gate = TimeoutSuspendGate::new(Duration::from_millis(50));
     let gate_dyn: Arc<dyn HotlGate> = gate.clone();
-    let mut cfg = AgentConfig::new("mock").with_hotl_gate(gate_dyn);
-    cfg.tenant_id = Some(Uuid::new_v4().to_string());
+    let cfg = AgentConfig::new("mock").with_hotl_gate(gate_dyn);
 
     let agent = ReactAgent::new(backend, toolbox, cfg);
     let (outcome, events) = agent

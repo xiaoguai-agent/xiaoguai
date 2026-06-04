@@ -1,5 +1,4 @@
-//! `GET /v1/mcp/servers` listing — globals for anonymous callers,
-//! globals + tenant rows when claims are present.
+//! `GET /v1/mcp/servers` listing — single-owner returns all servers.
 
 mod common;
 
@@ -19,7 +18,7 @@ use xiaoguai_api::{
 use xiaoguai_llm::mock::ScriptStep;
 use xiaoguai_llm::{LlmBackend, MockBackend};
 use xiaoguai_storage::repositories::{McpServerRepository, RepoResult};
-use xiaoguai_types::{McpServer, McpServerInstanceId, McpTransport, TenantId};
+use xiaoguai_types::{McpServer, McpServerInstanceId, McpTransport};
 
 use common::{InMemoryMessageRepo, InMemorySessionRepo};
 
@@ -39,11 +38,11 @@ impl InMemoryMcpRepo {
 
 #[async_trait]
 impl McpServerRepository for InMemoryMcpRepo {
-    async fn create(&self, _tenant: Option<&str>, s: &McpServer) -> RepoResult<()> {
+    async fn create(&self, s: &McpServer) -> RepoResult<()> {
         self.rows.lock().push(s.clone());
         Ok(())
     }
-    async fn find_by_id(&self, _tenant: Option<&str>, id: &str) -> RepoResult<Option<McpServer>> {
+    async fn find_by_id(&self, id: &str) -> RepoResult<Option<McpServer>> {
         Ok(self
             .rows
             .lock()
@@ -51,36 +50,18 @@ impl McpServerRepository for InMemoryMcpRepo {
             .find(|s| s.id.as_str() == id)
             .cloned())
     }
-    async fn list_global(&self) -> RepoResult<Vec<McpServer>> {
-        Ok(self
-            .rows
-            .lock()
-            .iter()
-            .filter(|s| s.tenant_id.is_none())
-            .cloned()
-            .collect())
+    async fn list(&self) -> RepoResult<Vec<McpServer>> {
+        Ok(self.rows.lock().iter().cloned().collect())
     }
-    async fn list_for_tenant(&self, tenant_id: &str) -> RepoResult<Vec<McpServer>> {
-        Ok(self
-            .rows
-            .lock()
-            .iter()
-            .filter(|s| {
-                s.tenant_id.is_none() || s.tenant_id.as_ref().map(AsRef::as_ref) == Some(tenant_id)
-            })
-            .cloned()
-            .collect())
-    }
-    async fn delete(&self, _tenant: Option<&str>, _id: &str) -> RepoResult<()> {
+    async fn delete(&self, _id: &str) -> RepoResult<()> {
         Ok(())
     }
 }
 
-fn dummy_server(name: &str, tenant: Option<&str>) -> McpServer {
+fn dummy_server(name: &str, _tenant: Option<&str>) -> McpServer {
     let now = chrono::Utc::now();
     McpServer {
         id: McpServerInstanceId::new(),
-        tenant_id: tenant.map(|t| TenantId::from(t.to_string())),
         name: name.to_string(),
         version: "1.0.0".into(),
         transport: McpTransport::Stdio,
@@ -149,10 +130,10 @@ async fn body_arr(body: Body) -> Vec<Value> {
 }
 
 #[tokio::test]
-async fn anonymous_caller_sees_only_globals() {
+async fn anonymous_caller_sees_all_servers() {
     let mcp = InMemoryMcpRepo::arc();
-    mcp.push(dummy_server("global-a", None));
-    mcp.push(dummy_server("tenant-only", Some("ten_a")));
+    mcp.push(dummy_server("server-a", None));
+    mcp.push(dummy_server("server-b", None));
     let app = router(build_state(None, mcp));
     let resp = app
         .oneshot(
@@ -165,21 +146,18 @@ async fn anonymous_caller_sees_only_globals() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let v = body_arr(resp.into_body()).await;
-    assert_eq!(v.len(), 1);
-    assert_eq!(v[0]["name"], "global-a");
+    assert_eq!(v.len(), 2);
 }
 
 #[tokio::test]
-async fn authed_caller_sees_globals_plus_their_tenant() {
+async fn authed_caller_sees_all_servers() {
     let mcp = InMemoryMcpRepo::arc();
-    mcp.push(dummy_server("global-a", None));
-    mcp.push(dummy_server("tenant-only", Some("ten_a")));
-    mcp.push(dummy_server("other-tenant", Some("ten_b")));
+    mcp.push(dummy_server("server-a", None));
+    mcp.push(dummy_server("server-b", None));
 
     let validator: Arc<dyn TokenValidator> = Arc::new(StubValidator {
         claims: Claims {
             sub: "alice".into(),
-            tenant_id: "ten_a".into(),
         },
     });
     let app = router(build_state(Some(validator), mcp));
@@ -193,7 +171,6 @@ async fn authed_caller_sees_globals_plus_their_tenant() {
     assert_eq!(resp.status(), StatusCode::OK);
     let v = body_arr(resp.into_body()).await;
     let names: Vec<&str> = v.iter().filter_map(|r| r["name"].as_str()).collect();
-    assert!(names.contains(&"global-a"));
-    assert!(names.contains(&"tenant-only"));
-    assert!(!names.contains(&"other-tenant"));
+    assert!(names.contains(&"server-a"));
+    assert!(names.contains(&"server-b"));
 }

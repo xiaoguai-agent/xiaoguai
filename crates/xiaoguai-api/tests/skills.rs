@@ -138,7 +138,7 @@ async fn installed_503_when_repo_not_wired() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/v1/skills/installed?tenant=t1")
+                .uri("/v1/skills/installed")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -160,7 +160,6 @@ async fn install_then_list_then_uninstall() {
         .oneshot(post_json(
             "/v1/skills/install",
             serde_json::json!({
-                "tenant_id": "t1",
                 "pack_slug": "rag-hr",
                 "config": { "top_k": 10 }
             }),
@@ -178,7 +177,7 @@ async fn install_then_list_then_uninstall() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/v1/skills/installed?tenant=t1")
+                .uri("/v1/skills/installed")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -205,7 +204,7 @@ async fn install_then_list_then_uninstall() {
     let after_uninstall_resp = app
         .oneshot(
             Request::builder()
-                .uri("/v1/skills/installed?tenant=t1")
+                .uri("/v1/skills/installed")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -227,7 +226,7 @@ async fn duplicate_install_returns_conflict() {
         .clone()
         .oneshot(post_json(
             "/v1/skills/install",
-            serde_json::json!({"tenant_id": "t1", "pack_slug": "pr-review"}),
+            serde_json::json!({"pack_slug": "pr-review"}),
         ))
         .await
         .unwrap();
@@ -236,7 +235,7 @@ async fn duplicate_install_returns_conflict() {
     let r2 = app
         .oneshot(post_json(
             "/v1/skills/install",
-            serde_json::json!({"tenant_id": "t1", "pack_slug": "pr-review"}),
+            serde_json::json!({"pack_slug": "pr-review"}),
         ))
         .await
         .unwrap();
@@ -253,54 +252,41 @@ async fn install_unknown_slug_returns_not_found() {
     let resp = app
         .oneshot(post_json(
             "/v1/skills/install",
-            serde_json::json!({"tenant_id": "t1", "pack_slug": "no-such-pack"}),
+            serde_json::json!({"pack_slug": "no-such-pack"}),
         ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
-// ── list scopes by tenant ────────────────────────────────────────────────────
+// ── list installed packs (single-owner, DEC-033) ─────────────────────────────
 
 #[tokio::test]
-async fn list_installed_scopes_by_tenant() {
+async fn list_installed_returns_all_installed_packs() {
     let repo = InMemorySkillPackRepository::new();
     let app = router(build_state(Some(
         repo.clone() as Arc<dyn SkillPackRepository>
     )));
 
-    for (tenant, slug) in &[("t1", "rag-legal"), ("t1", "rag-finance"), ("t2", "rag-hr")] {
+    for slug in &["rag-legal", "rag-finance", "rag-hr"] {
         app.clone()
             .oneshot(post_json(
                 "/v1/skills/install",
-                serde_json::json!({"tenant_id": tenant, "pack_slug": slug}),
+                serde_json::json!({ "pack_slug": slug }),
             ))
             .await
             .unwrap();
     }
 
-    let t1_resp = app
-        .clone()
+    let resp = app
         .oneshot(
             Request::builder()
-                .uri("/v1/skills/installed?tenant=t1")
+                .uri("/v1/skills/installed")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    let t1 = body_json(t1_resp.into_body()).await;
-    assert_eq!(t1.as_array().unwrap().len(), 2);
-
-    let t2_resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/v1/skills/installed?tenant=t2")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let t2 = body_json(t2_resp.into_body()).await;
-    assert_eq!(t2.as_array().unwrap().len(), 1);
+    let installed = body_json(resp.into_body()).await;
+    assert_eq!(installed.as_array().unwrap().len(), 3);
 }

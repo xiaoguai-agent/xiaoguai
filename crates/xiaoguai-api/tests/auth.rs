@@ -28,7 +28,6 @@ fn build_state_with_auth() -> AppState {
     let validator: Arc<dyn TokenValidator> = Arc::new(StubValidator {
         claims: Claims {
             sub: "alice".into(),
-            tenant_id: "ten_a".into(),
         },
     });
     AppState {
@@ -99,7 +98,7 @@ async fn missing_token_yields_401_on_v1_routes() {
     let resp = app
         .oneshot(post(
             "/v1/sessions",
-            &json!({"user_id":"u","tenant_id":"t","model":"m"}),
+            &json!({"user_id":"u","model":"m"}),
             None,
         ))
         .await
@@ -129,7 +128,7 @@ async fn valid_token_lets_request_through_and_claims_override_body() {
     let resp = app
         .oneshot(post(
             "/v1/sessions",
-            &json!({"user_id":"mallory","tenant_id":"ten_evil","model":"m"}),
+            &json!({"user_id":"mallory","model":"m"}),
             Some("any-token-the-stub-accepts"),
         ))
         .await
@@ -137,7 +136,6 @@ async fn valid_token_lets_request_through_and_claims_override_body() {
     assert_eq!(resp.status(), StatusCode::CREATED);
     let v = body_to_value(resp.into_body()).await;
     assert_eq!(v["user_id"], "alice");
-    assert_eq!(v["tenant_id"], "ten_a");
 }
 
 #[tokio::test]
@@ -148,9 +146,7 @@ async fn empty_bearer_token_is_rejected_as_401() {
         .uri("/v1/sessions")
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::AUTHORIZATION, "Bearer ")
-        .body(Body::from(
-            json!({"user_id":"u","tenant_id":"t","model":"m"}).to_string(),
-        ))
+        .body(Body::from(json!({"user_id":"u","model":"m"}).to_string()))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);

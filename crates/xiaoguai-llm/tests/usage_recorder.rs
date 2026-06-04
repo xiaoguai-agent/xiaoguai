@@ -9,7 +9,7 @@ use xiaoguai_llm::{
     ChatRequest, LlmBackend, LlmError, LlmRouter, MemoryUsageSink, Message, MockBackend,
     ResolveCtx, RouterConfig,
 };
-use xiaoguai_types::{ProviderId, SessionId, TenantId, UserId};
+use xiaoguai_types::{ProviderId, SessionId, UserId};
 
 fn make_req(model: &str) -> ChatRequest {
     ChatRequest::new(model, vec![Message::user("hi")])
@@ -40,11 +40,9 @@ async fn one_record_per_successful_call() {
     )
     .with_usage_sink(sink.clone());
 
-    let tenant = TenantId::from("ten_a".to_string());
     let user = UserId::from("usr_b".to_string());
     let session = SessionId::from("sess_c".to_string());
     let ctx = ResolveCtx {
-        tenant_id: Some(&tenant),
         user_id: Some(&user),
         session_id: Some(&session),
         request_id: Some("req_42"),
@@ -58,7 +56,6 @@ async fn one_record_per_successful_call() {
     let records = sink.records();
     assert_eq!(records.len(), 1);
     let r = &records[0];
-    assert_eq!(r.tenant_id.as_ref().map(AsRef::as_ref), Some("ten_a"));
     assert_eq!(r.user_id.as_ref().map(AsRef::as_ref), Some("usr_b"));
     assert_eq!(r.session_id.as_ref().map(AsRef::as_ref), Some("sess_c"));
     assert_eq!(r.provider_id.as_str(), prov.as_str());

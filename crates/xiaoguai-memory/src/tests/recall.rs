@@ -30,18 +30,12 @@ fn store() -> InMemoryMemoryStore {
     InMemoryMemoryStore::new(Arc::new(InMemoryEmbedder::new(64)))
 }
 
-fn tenant() -> Uuid {
-    Uuid::new_v4()
-}
-
 #[tokio::test]
 async fn recall_returns_most_similar_first() {
     let s = store();
-    let tid = tenant();
 
     // Insert three memories with different content.
     s.create_memory(CreateMemoryRequest {
-        tenant_id: tid,
         kind: MemoryKind::Facts,
         content: "cats are great pets and companions".to_owned(),
         tags: vec![],
@@ -51,7 +45,6 @@ async fn recall_returns_most_similar_first() {
     .unwrap();
 
     s.create_memory(CreateMemoryRequest {
-        tenant_id: tid,
         kind: MemoryKind::Facts,
         content: "cats make wonderful animal friends".to_owned(),
         tags: vec![],
@@ -61,7 +54,6 @@ async fn recall_returns_most_similar_first() {
     .unwrap();
 
     s.create_memory(CreateMemoryRequest {
-        tenant_id: tid,
         kind: MemoryKind::Facts,
         content: "quantum mechanics describes subatomic particle behaviour".to_owned(),
         tags: vec![],
@@ -72,7 +64,6 @@ async fn recall_returns_most_similar_first() {
 
     let recalled = s
         .recall_memories(RecallRequest {
-            tenant_id: tid,
             query: "cats are great as pets".to_owned(),
             top_k: 3,
             kind_filter: None,
@@ -106,11 +97,9 @@ async fn recall_returns_most_similar_first() {
 #[tokio::test]
 async fn recall_updates_metadata() {
     let s = store();
-    let tid = tenant();
 
     let m = s
         .create_memory(CreateMemoryRequest {
-            tenant_id: tid,
             kind: MemoryKind::Episodes,
             content: "session summary from 2026-01-01".to_owned(),
             tags: vec![],
@@ -123,7 +112,6 @@ async fn recall_updates_metadata() {
     assert!(m.last_recalled_at.is_none());
 
     s.recall_memories(RecallRequest {
-        tenant_id: tid,
         query: "session summary".to_owned(),
         top_k: 5,
         kind_filter: None,
@@ -133,7 +121,7 @@ async fn recall_updates_metadata() {
     .await
     .unwrap();
 
-    let updated = s.get_memory(m.id, tid).await.unwrap();
+    let updated = s.get_memory(m.id).await.unwrap();
     assert_eq!(updated.recall_count, 1);
     assert!(updated.last_recalled_at.is_some());
 }
@@ -141,11 +129,9 @@ async fn recall_updates_metadata() {
 #[tokio::test]
 async fn recall_respects_top_k() {
     let s = store();
-    let tid = tenant();
 
     for i in 0..10u32 {
         s.create_memory(CreateMemoryRequest {
-            tenant_id: tid,
             kind: MemoryKind::Facts,
             content: format!("memory number {i} about something interesting"),
             tags: vec![],
@@ -157,7 +143,6 @@ async fn recall_respects_top_k() {
 
     let recalled = s
         .recall_memories(RecallRequest {
-            tenant_id: tid,
             query: "interesting memory".to_owned(),
             top_k: 3,
             kind_filter: None,
@@ -173,11 +158,9 @@ async fn recall_respects_top_k() {
 #[tokio::test]
 async fn find_similar_excludes_self() {
     let s = store();
-    let tid = tenant();
 
     let anchor = s
         .create_memory(CreateMemoryRequest {
-            tenant_id: tid,
             kind: MemoryKind::Facts,
             content: "user prefers dark mode interface".to_owned(),
             tags: vec![],
@@ -187,7 +170,6 @@ async fn find_similar_excludes_self() {
         .unwrap();
 
     s.create_memory(CreateMemoryRequest {
-        tenant_id: tid,
         kind: MemoryKind::Facts,
         content: "user prefers dark color scheme".to_owned(),
         tags: vec![],
@@ -196,7 +178,7 @@ async fn find_similar_excludes_self() {
     .await
     .unwrap();
 
-    let similar = s.find_similar(anchor.id, tid, 5).await.unwrap();
+    let similar = s.find_similar(anchor.id, 5).await.unwrap();
 
     assert!(
         similar.iter().all(|r| r.memory.id != anchor.id),
@@ -207,10 +189,8 @@ async fn find_similar_excludes_self() {
 #[tokio::test]
 async fn recall_with_kind_filter() {
     let s = store();
-    let tid = tenant();
 
     s.create_memory(CreateMemoryRequest {
-        tenant_id: tid,
         kind: MemoryKind::Facts,
         content: "user is based in London".to_owned(),
         tags: vec![],
@@ -220,7 +200,6 @@ async fn recall_with_kind_filter() {
     .unwrap();
 
     s.create_memory(CreateMemoryRequest {
-        tenant_id: tid,
         kind: MemoryKind::Episodes,
         content: "user is based in London, discussed budget".to_owned(),
         tags: vec![],
@@ -231,7 +210,6 @@ async fn recall_with_kind_filter() {
 
     let recalled = s
         .recall_memories(RecallRequest {
-            tenant_id: tid,
             query: "user location London".to_owned(),
             top_k: 10,
             kind_filter: Some(MemoryKind::Facts),

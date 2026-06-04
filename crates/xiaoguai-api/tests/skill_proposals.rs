@@ -32,10 +32,6 @@ struct Fixture {
     tmp: tempfile::TempDir,
 }
 
-fn tenant_uuid() -> &'static str {
-    "00000000-0000-0000-0000-000000000099"
-}
-
 fn good_manifest() -> SkillManifest {
     SkillManifest {
         name: "ar-collector".into(),
@@ -52,7 +48,7 @@ fn build_fixture() -> Fixture {
     let repo = InMemorySkillProposalRepository::new();
     let repo_arc: Arc<dyn SkillProposalRepository> = repo.clone();
     let settings = InMemoryTenantSettings::new();
-    settings.allow(tenant_uuid());
+    settings.allow();
     let settings_arc: Arc<dyn TenantSettingsReader> = settings;
     let gate_arc: Arc<dyn SkillAuthorGate> = Arc::new(AllowAllSkillGate);
     let audit = InMemoryAuditSink::new();
@@ -121,7 +117,6 @@ async fn seed_pending(fx: &Fixture, name: &str) -> ProposalRow {
     m.name = name.into();
     let row = ProposalRow {
         id: format!("prop-{name}"),
-        tenant_id: tenant_uuid().to_string(),
         proposed_by: "agent-1".into(),
         manifest: m,
         status: ProposalStatus::Pending,
@@ -143,7 +138,7 @@ async fn list_proposals_returns_seeded_rows_newest_first() {
     let app = router(fx.state.clone());
     let req = Request::builder()
         .method(Method::GET)
-        .uri(format!("/v1/skills/proposals?tenant_id={}", tenant_uuid()))
+        .uri("/v1/skills/proposals")
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -168,10 +163,7 @@ async fn list_proposals_filters_by_status() {
     let app = router(fx.state.clone());
     let req = Request::builder()
         .method(Method::GET)
-        .uri(format!(
-            "/v1/skills/proposals?tenant_id={}&status=pending",
-            tenant_uuid()
-        ))
+        .uri("/v1/skills/proposals?status=pending")
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -262,7 +254,7 @@ async fn list_returns_503_when_proposals_unwired() {
     let app = router(fx.state.clone());
     let req = Request::builder()
         .method(Method::GET)
-        .uri(format!("/v1/skills/proposals?tenant_id={}", tenant_uuid()))
+        .uri("/v1/skills/proposals")
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();

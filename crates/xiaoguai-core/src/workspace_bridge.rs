@@ -6,10 +6,9 @@
 //! business logic.
 //!
 //! DEC-033 single-user pivot: the `workspaces.tenant_id` column was dropped
-//! (one implicit owner). The domain [`Workspace`] type still carries a
-//! `tenant_id: Uuid` field, so reads synthesize `Uuid::nil()`. The `id`
-//! column is now `TEXT` with no DB-side default, so `create` generates a
-//! v4 UUID app-side. The UNIQUE constraint is now just `(name)`.
+//! (one implicit owner). The `id` column is now `TEXT` with no DB-side
+//! default, so `create` generates a v4 UUID app-side. The UNIQUE constraint
+//! is now just `(name)`.
 
 use std::sync::Arc;
 
@@ -37,8 +36,6 @@ impl From<WorkspaceRow> for Workspace {
     fn from(r: WorkspaceRow) -> Self {
         Self {
             id: r.id,
-            // Single implicit owner under DEC-033; no per-tenant scoping.
-            tenant_id: Uuid::nil(),
             name: r.name,
             archived: r.archived,
             created_at: r.created_at,
@@ -69,11 +66,7 @@ impl PgWorkspaceRepository {
 
 #[async_trait]
 impl WorkspaceRepository for PgWorkspaceRepository {
-    async fn list(
-        &self,
-        _tenant_id: Uuid,
-        include_archived: bool,
-    ) -> Result<Vec<Workspace>, WorkspaceError> {
+    async fn list(&self, include_archived: bool) -> Result<Vec<Workspace>, WorkspaceError> {
         let rows = if include_archived {
             sqlx::query_as::<_, WorkspaceRow>(
                 "SELECT id, name, archived, created_at
@@ -206,7 +199,7 @@ impl WorkspaceRepository for PgWorkspaceRepository {
         Ok(())
     }
 
-    async fn get_default(&self, _tenant_id: Uuid) -> Result<Workspace, WorkspaceError> {
+    async fn get_default(&self) -> Result<Workspace, WorkspaceError> {
         let row = sqlx::query_as::<_, WorkspaceRow>(
             "SELECT id, name, archived, created_at
              FROM workspaces

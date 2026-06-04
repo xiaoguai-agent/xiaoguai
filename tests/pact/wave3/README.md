@@ -45,55 +45,34 @@ tests/pact/wave3/
     └── chat-ui/                 ← @pact-foundation/pact (PactV3)
         ├── package.json
         ├── tsconfig.json
-        └── xiaoguai-wave3.pact.test.ts   (3 interactions)
+        └── xiaoguai-wave3.pact.test.ts   (2 interactions)
 ```
 
 ## Interactions summary
 
 | # | Consumer | Method | Path | State |
 |---|----------|--------|------|-------|
-| 1 | all | GET | `/v1/hotl/policies?tenant_id=` | tenant has one HotL policy |
+| 1 | all | GET | `/v1/hotl/policies` | HotL policy exists |
 | 2 | all | POST | `/v1/hotl/policies` | HotL policy store is available |
 | 3 | all | GET | `/v1/hotl/policies/:id` | HotL policy exists |
 | 4 | all | PUT | `/v1/hotl/policies/:id` | HotL policy exists |
 | 5 | all | DELETE | `/v1/hotl/policies/:id` | HotL policy exists |
 | 6 | all | POST | `/v1/hotl/check` | budget within limits |
 | 7 | all | POST | `/v1/outcomes` | outcome writer available |
-| 8 | all | GET | `/v1/outcomes/summary?range=7d` | tenant has recorded outcomes |
-| 9 | all | GET | `/v1/outcomes/timeseries?range=7d` | tenant has recorded outcomes |
-| 10 | all | GET | `/v1/skills/installed?tenant_id=` | tenant has installed skill packs |
+| 8 | all | GET | `/v1/outcomes/summary?range=7d` | owner has recorded outcomes |
+| 9 | all | GET | `/v1/outcomes/timeseries?range=7d` | owner has recorded outcomes |
+| 10 | all | GET | `/v1/skills/installed` | owner has installed skill packs |
 | 11 | all | POST | `/v1/skills/install` | pr-review in catalog |
 | 12 | all | DELETE | `/v1/skills/install/:id` | installation exists |
 | C1 | chat-ui | GET | `/v1/outcomes/summary?session_id=` | session has outcomes |
 | C2 | chat-ui | POST | `/v1/hotl/check` | budget within limits |
-| **C3** | **chat-ui** | **GET** | **`/v1/tenants/:id/config`** | **GAP — not implemented** |
 
-### Contract gap: `GET /v1/tenants/:id/config`
-
-Interaction C3 (`GET /v1/tenants/:id/config`) is consumed by chat-ui's
-`AiDisclosureBanner` component, which renders a configurable disclosure
-notice required for EU AI Act / enterprise compliance. The component
-expects:
-
-```json
-{
-  "tenant_id": "<uuid>",
-  "ai_disclosure_banner": {
-    "enabled": true,
-    "text": "This assistant is powered by AI. Responses may not be accurate."
-  }
-}
-```
-
-The route is **not mounted** in `crates/xiaoguai-api/src/routes/mod.rs`.
-Provider verification will fail on this interaction until the endpoint is
-implemented. This failure is intentional — Pact has surfaced the gap.
-
-**Resolution** (wave-4):
-1. Add `GET /v1/tenants/:id/config` handler in `crates/xiaoguai-api/src/routes/tenants.rs`
-2. Back it with `AppState.tenant_config_store` (new store, similar pattern to `hotl_policy_store`)
-3. Remove the `[PROVIDER GAP]` label from the chat-ui test description
-4. Re-run provider verification to confirm passing
+> **DEC-033 single-owner:** the `tenant_id` query/body/response field was
+> removed across every interaction. The implicit owner is the only principal,
+> so requests no longer scope by tenant and responses no longer echo it.
+> The former chat-ui interaction C3 (`GET /v1/tenants/:id/config`) was dropped
+> entirely — per-tenant config does not exist under single-owner, and chat-ui
+> no longer calls that endpoint.
 
 ## Running consumer tests
 
@@ -143,16 +122,14 @@ PROVIDER_BASE_URL=http://localhost:8080 \
 
 ### Expected output (pre-bridge state)
 
-Interactions backed by `PgHotlPolicyStore`, `PgOutcomeRecorder`, and
-`PgSkillPackRepository` will return `503 Service Unavailable` until those
-store bridges land. The `ai_disclosure_banner` endpoint will return `404`
-until implemented. All other interactions (healthz routing, bearer auth
-middleware, error envelopes) should verify successfully.
+Interactions are backed by the in-memory store implementations wired in
+`--dev` mode (single-owner SQLite). All interactions (healthz routing, bearer
+auth middleware, error envelopes, HotL/outcomes/skills handlers) should verify
+successfully.
 
 ```
-12 interactions (typescript-sdk), 0 failures   # hotl/check, outcomes record
-...
-1 failure  (chat-ui → GET /v1/tenants/:id/config)  ← expected, see gap above
+12 interactions (typescript-sdk), 0 failures
+2 interactions  (chat-ui),       0 failures
 ```
 
 ## Adding a new consumer

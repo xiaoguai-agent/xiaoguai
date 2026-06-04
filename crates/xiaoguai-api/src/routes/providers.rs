@@ -104,7 +104,7 @@ pub fn build_router(repo: Repo) -> Router {
 }
 
 async fn list(State(repo): State<Repo>) -> Response {
-    match repo.list_global().await {
+    match repo.list().await {
         Ok(rows) => {
             Json(rows.into_iter().map(ProviderView::from).collect::<Vec<_>>()).into_response()
         }
@@ -130,7 +130,6 @@ async fn create(State(repo): State<Repo>, Json(req): Json<CreateProviderRequest>
     let now = Utc::now();
     let prov = LlmProvider {
         id: ProviderId::new(),
-        tenant_id: None,
         name: req.name.trim().to_string(),
         kind,
         endpoint: trimmed_endpoint,
@@ -145,14 +144,14 @@ async fn create(State(repo): State<Repo>, Json(req): Json<CreateProviderRequest>
         cost_per_1k_output_usd: None,
     };
 
-    match repo.create(None, &prov).await {
+    match repo.create(&prov).await {
         Ok(()) => (StatusCode::CREATED, Json(ProviderView::from(prov))).into_response(),
         Err(e) => server_error(&e),
     }
 }
 
 async fn delete_provider(State(repo): State<Repo>, Path(id): Path<String>) -> Response {
-    match repo.delete(None, &id).await {
+    match repo.delete(&id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => server_error(&e),
     }
@@ -186,15 +185,11 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProviderRepository for MemRepo {
-        async fn create(&self, _tenant: Option<&str>, prov: &LlmProvider) -> RepoResult<()> {
+        async fn create(&self, prov: &LlmProvider) -> RepoResult<()> {
             self.rows.lock().unwrap().push(prov.clone());
             Ok(())
         }
-        async fn find_by_id(
-            &self,
-            _tenant: Option<&str>,
-            id: &str,
-        ) -> RepoResult<Option<LlmProvider>> {
+        async fn find_by_id(&self, id: &str) -> RepoResult<Option<LlmProvider>> {
             Ok(self
                 .rows
                 .lock()
@@ -203,13 +198,10 @@ mod tests {
                 .find(|p| p.id.as_str() == id)
                 .cloned())
         }
-        async fn list_global(&self) -> RepoResult<Vec<LlmProvider>> {
+        async fn list(&self) -> RepoResult<Vec<LlmProvider>> {
             Ok(self.rows.lock().unwrap().clone())
         }
-        async fn list_for_tenant(&self, _tenant_id: &str) -> RepoResult<Vec<LlmProvider>> {
-            self.list_global().await
-        }
-        async fn delete(&self, _tenant: Option<&str>, id: &str) -> RepoResult<()> {
+        async fn delete(&self, id: &str) -> RepoResult<()> {
             let mut g = self.rows.lock().unwrap();
             let before = g.len();
             g.retain(|p| p.id.as_str() != id);

@@ -2,8 +2,6 @@
 
 use std::sync::Arc;
 
-use uuid::Uuid;
-
 use crate::embedder::InMemoryEmbedder;
 use crate::store::InMemoryMemoryStore;
 use crate::traits::MemoryStore;
@@ -13,17 +11,11 @@ fn store() -> InMemoryMemoryStore {
     InMemoryMemoryStore::new(Arc::new(InMemoryEmbedder::new(16)))
 }
 
-fn tenant() -> Uuid {
-    Uuid::new_v4()
-}
-
 #[tokio::test]
 async fn list_with_tag_filter() {
     let s = store();
-    let tid = tenant();
 
     s.create_memory(CreateMemoryRequest {
-        tenant_id: tid,
         kind: MemoryKind::Facts,
         content: "tagged memory with project tag".to_owned(),
         tags: vec!["project".to_owned(), "alpha".to_owned()],
@@ -33,7 +25,6 @@ async fn list_with_tag_filter() {
     .unwrap();
 
     s.create_memory(CreateMemoryRequest {
-        tenant_id: tid,
         kind: MemoryKind::Facts,
         content: "untagged memory".to_owned(),
         tags: vec![],
@@ -43,7 +34,7 @@ async fn list_with_tag_filter() {
     .unwrap();
 
     let tagged = s
-        .list_memories(tid, None, &["project".to_owned()], 50, 0)
+        .list_memories(None, &["project".to_owned()], 50, 0)
         .await
         .unwrap();
 
@@ -54,10 +45,8 @@ async fn list_with_tag_filter() {
 #[tokio::test]
 async fn list_requires_all_tags() {
     let s = store();
-    let tid = tenant();
 
     s.create_memory(CreateMemoryRequest {
-        tenant_id: tid,
         kind: MemoryKind::Facts,
         content: "has both tags".to_owned(),
         tags: vec!["a".to_owned(), "b".to_owned()],
@@ -67,7 +56,6 @@ async fn list_requires_all_tags() {
     .unwrap();
 
     s.create_memory(CreateMemoryRequest {
-        tenant_id: tid,
         kind: MemoryKind::Facts,
         content: "has only tag a".to_owned(),
         tags: vec!["a".to_owned()],
@@ -78,7 +66,7 @@ async fn list_requires_all_tags() {
 
     // Requesting both tags should only return the first memory.
     let both = s
-        .list_memories(tid, None, &["a".to_owned(), "b".to_owned()], 50, 0)
+        .list_memories(None, &["a".to_owned(), "b".to_owned()], 50, 0)
         .await
         .unwrap();
     assert_eq!(both.len(), 1);
@@ -88,10 +76,8 @@ async fn list_requires_all_tags() {
 #[tokio::test]
 async fn recall_with_tag_filter() {
     let s = store();
-    let tid = tenant();
 
     s.create_memory(CreateMemoryRequest {
-        tenant_id: tid,
         kind: MemoryKind::Facts,
         content: "user is a premium subscriber".to_owned(),
         tags: vec!["billing".to_owned()],
@@ -101,7 +87,6 @@ async fn recall_with_tag_filter() {
     .unwrap();
 
     s.create_memory(CreateMemoryRequest {
-        tenant_id: tid,
         kind: MemoryKind::Facts,
         content: "user is a premium subscriber and has premium features".to_owned(),
         tags: vec!["billing".to_owned(), "features".to_owned()],
@@ -112,7 +97,6 @@ async fn recall_with_tag_filter() {
 
     let recalled = s
         .recall_memories(RecallRequest {
-            tenant_id: tid,
             query: "premium user subscription".to_owned(),
             top_k: 10,
             kind_filter: None,

@@ -142,7 +142,6 @@ impl HotlEscalationStore for MockEscalationStore {
 fn parent_row(id: Uuid, scope: &str) -> HotlEscalationRow {
     HotlEscalationRow {
         id,
-        tenant_id: Uuid::new_v4(),
         session_id: Uuid::new_v4(),
         top_level_scope: scope.to_string(),
         status: "pending".to_string(),
@@ -155,7 +154,6 @@ fn child_row(escalation_id: Uuid, scope: &str, expires_at: DateTime<Utc>) -> Hot
     HotlPendingRow {
         id: Uuid::new_v4(),
         escalation_id,
-        tenant_id: Uuid::new_v4(),
         scope: scope.to_string(),
         tool: scope.to_string(),
         args_redacted: serde_json::json!({}),
@@ -170,7 +168,6 @@ fn child_row(escalation_id: Uuid, scope: &str, expires_at: DateTime<Utc>) -> Hot
 fn owner_claims() -> Claims {
     Claims {
         sub: "alice".into(),
-        tenant_id: "00000000-0000-0000-0000-000000000abc".into(),
     }
 }
 

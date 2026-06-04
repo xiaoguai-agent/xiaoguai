@@ -67,9 +67,8 @@ impl OutcomeWriter for PgOutcomesBackend {
         let metadata =
             serde_json::to_value(&req.metadata).unwrap_or_else(|_| serde_json::json!({}));
 
-        // DEC-033: tenant_id column dropped. metadata is stored as TEXT;
-        // serialize the JSON value to a string for the bind.
-        let _ = &req.tenant_id;
+        // metadata is stored as TEXT; serialize the JSON value to a string
+        // for the bind.
         let metadata_str = serde_json::to_string(&metadata).unwrap_or_else(|_| "{}".to_string());
         sqlx::query(
             "INSERT INTO agent_outcomes \
@@ -110,14 +109,8 @@ struct TimeseriesRow {
 
 #[async_trait]
 impl OutcomesReader for PgOutcomesBackend {
-    async fn summary(
-        &self,
-        tenant_id: &str,
-        range: OutcomeRange,
-    ) -> Result<OutcomeSummary, OutcomesApiError> {
-        // DEC-033: tenant_id column dropped; vestigial param ignored.
+    async fn summary(&self, range: OutcomeRange) -> Result<OutcomeSummary, OutcomesApiError> {
         // since/until are each referenced twice → numbered binds required.
-        let _ = tenant_id;
         let rows: Vec<SummaryRow> = sqlx::query_as(
             "SELECT kind, \
                     COALESCE(SUM(value), 0.0) AS total, \
@@ -157,15 +150,12 @@ impl OutcomesReader for PgOutcomesBackend {
 
     async fn timeseries(
         &self,
-        tenant_id: &str,
         kind: Option<&str>,
         range: OutcomeRange,
     ) -> Result<Vec<OutcomeDay>, OutcomesApiError> {
-        // DEC-033: tenant_id dropped. `attributed_at` is stored as the
-        // SQLite strftime('%Y-%m-%dT%H:%M:%SZ', 'now') text format ("YYYY-MM-DD HH:MM:SS"), so
-        // substr(.,1,10) yields the day bucket. kind/since/until each
-        // referenced twice → numbered binds.
-        let _ = tenant_id;
+        // `attributed_at` is stored as the SQLite strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+        // text format ("YYYY-MM-DD HH:MM:SS"), so substr(.,1,10) yields the day
+        // bucket. kind/since/until each referenced twice → numbered binds.
         let rows: Vec<TimeseriesRow> = sqlx::query_as(
             "SELECT substr(attributed_at, 1, 10) AS date, \
                     kind, \
@@ -198,7 +188,6 @@ impl OutcomesReader for PgOutcomesBackend {
 
     async fn aggregate(
         &self,
-        tenant_id: &str,
         kind: Option<&str>,
         range: OutcomeRange,
     ) -> Result<Aggregate, OutcomesApiError> {
@@ -210,9 +199,7 @@ impl OutcomesReader for PgOutcomesBackend {
             }
         }
 
-        // DEC-033: tenant_id dropped. kind/since/until each referenced
-        // twice → numbered binds.
-        let _ = tenant_id;
+        // kind/since/until each referenced twice → numbered binds.
         let row: (Option<f64>, Option<i64>) = sqlx::query_as(
             "SELECT SUM(value), COUNT(*) \
              FROM agent_outcomes \
@@ -245,7 +232,6 @@ mod tests {
     fn record_request_negative_value_rejected() {
         // Validate the guard logic without a DB connection.
         let req = RecordOutcomeRequest {
-            tenant_id: "tenant-a".into(),
             session_id: None,
             agent_name: "bot".into(),
             kind: "revenue_usd".into(),
@@ -262,7 +248,6 @@ mod tests {
     #[test]
     fn record_request_empty_kind_rejected() {
         let req = RecordOutcomeRequest {
-            tenant_id: "tenant-a".into(),
             session_id: None,
             agent_name: "bot".into(),
             kind: String::new(),
@@ -301,8 +286,6 @@ mod tests {
 
     fn req(kind: &str, value: f64) -> RecordOutcomeRequest {
         RecordOutcomeRequest {
-            // tenant_id is vestigial under DEC-033 (single owner).
-            tenant_id: xiaoguai_storage::OWNER_TENANT_ID.into(),
             session_id: Some("sess-1".into()),
             agent_name: "sales-bot".into(),
             kind: kind.into(),
@@ -317,13 +300,12 @@ mod tests {
     async fn outcomes_record_and_aggregate() {
         use xiaoguai_api::outcomes::{OutcomeWriter, OutcomesReader};
         let (_dir, backend) = sqlite_backend().await;
-        let tid = xiaoguai_storage::OWNER_TENANT_ID;
 
         backend.record(req("revenue_usd", 500.0)).await.unwrap();
         backend.record(req("revenue_usd", 300.0)).await.unwrap();
 
         let agg = backend
-            .aggregate(tid, Some("revenue_usd"), OutcomeRange::default())
+            .aggregate(Some("revenue_usd"), OutcomeRange::default())
             .await
             .unwrap();
         assert!((agg.sum - 800.0).abs() < 0.001);
@@ -335,13 +317,12 @@ mod tests {
     async fn outcomes_timeseries_day_buckets() {
         use xiaoguai_api::outcomes::{OutcomeWriter, OutcomesReader};
         let (_dir, backend) = sqlite_backend().await;
-        let tid = xiaoguai_storage::OWNER_TENANT_ID;
 
         backend.record(req("deals_closed", 1.0)).await.unwrap();
         backend.record(req("deals_closed", 2.0)).await.unwrap();
 
         let ts = backend
-            .timeseries(tid, Some("deals_closed"), OutcomeRange::default())
+            .timeseries(Some("deals_closed"), OutcomeRange::default())
             .await
             .unwrap();
         assert_eq!(ts.len(), 1, "both records in one day bucket");
@@ -357,13 +338,12 @@ mod tests {
     async fn outcomes_summary_groups_by_kind() {
         use xiaoguai_api::outcomes::{OutcomeWriter, OutcomesReader};
         let (_dir, backend) = sqlite_backend().await;
-        let tid = xiaoguai_storage::OWNER_TENANT_ID;
 
         backend.record(req("revenue_usd", 100.0)).await.unwrap();
         backend.record(req("cost_saved_usd", 50.0)).await.unwrap();
         backend.record(req("hours_saved", 8.0)).await.unwrap();
 
-        let summary = backend.summary(tid, OutcomeRange::default()).await.unwrap();
+        let summary = backend.summary(OutcomeRange::default()).await.unwrap();
         assert!(summary.by_kind.contains_key("revenue_usd"));
         assert!(summary.by_kind.contains_key("cost_saved_usd"));
         assert!((summary.by_kind["revenue_usd"].sum - 100.0).abs() < 0.001);

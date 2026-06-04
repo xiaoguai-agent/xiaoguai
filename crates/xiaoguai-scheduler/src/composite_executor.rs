@@ -95,7 +95,7 @@ mod tests {
     }
 
     fn make_job(payload: serde_json::Value) -> ScheduledJob {
-        ScheduledJob::new("j", None, "j", Trigger::interval(60).unwrap(), payload)
+        ScheduledJob::new("j", "j", Trigger::interval(60).unwrap(), payload)
     }
 
     #[tokio::test]

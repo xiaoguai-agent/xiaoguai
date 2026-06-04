@@ -51,7 +51,6 @@ impl std::str::FromStr for MemoryKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Memory {
     pub id: Uuid,
-    pub tenant_id: Uuid,
     pub kind: MemoryKind,
     /// Natural-language content of the memory.
     pub content: String,
@@ -70,7 +69,6 @@ pub struct Memory {
 /// Request to create a new memory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateMemoryRequest {
-    pub tenant_id: Uuid,
     pub kind: MemoryKind,
     pub content: String,
     pub tags: Vec<String>,
@@ -88,7 +86,6 @@ pub struct UpdateMemoryRequest {
 /// Parameters for semantic recall.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecallRequest {
-    pub tenant_id: Uuid,
     pub query: String,
     pub top_k: usize,
     /// Optional filter: only recall memories of this kind.

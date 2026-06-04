@@ -223,7 +223,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // still boot and serve a deterministic response.
     let provider_repo = PgLlmProviderRepository::new(pool.clone());
     let mut rows = provider_repo
-        .list_global()
+        .list()
         .await
         .context("pg list llm providers")?;
     // Local-first: OLLAMA_HOST repoints the seeded `ollama-local` provider at a

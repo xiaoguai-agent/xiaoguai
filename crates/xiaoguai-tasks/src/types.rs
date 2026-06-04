@@ -68,14 +68,13 @@ impl std::fmt::Display for Column {
 // Board
 // ---------------------------------------------------------------------------
 
-/// A single Kanban board, scoped to a tenant.
+/// A single Kanban board.
 ///
-/// Boards organise tasks for one team, pack, or environment.  A tenant may
-/// have many boards; exactly one can be marked `default_board`.
+/// Boards organise tasks for one team, pack, or environment. There may be
+/// many boards; exactly one can be marked `default_board`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
     pub id: Uuid,
-    pub tenant_id: Uuid,
     pub name: String,
     pub default_board: bool,
     pub dispatch_policy: String,
@@ -86,7 +85,6 @@ pub struct Board {
 /// Input for [`crate::traits::TaskBoardRepository::create_board`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateBoardRequest {
-    pub tenant_id: Uuid,
     pub name: String,
     pub default_board: bool,
     pub dispatch_policy: Option<String>,
@@ -190,7 +188,6 @@ mod tests {
     fn board_serialises_to_json() {
         let board = Board {
             id: Uuid::new_v4(),
-            tenant_id: Uuid::new_v4(),
             name: "ops".into(),
             default_board: true,
             dispatch_policy: "fifo".into(),

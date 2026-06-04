@@ -29,7 +29,6 @@ use xiaoguai_scheduler::{
 fn job_for_path(id: &str, path: &Path) -> ScheduledJob {
     ScheduledJob::new(
         id,
-        Some("tenant-x".into()),
         id,
         Trigger::file_watch(path.display().to_string()).unwrap(),
         serde_json::json!({"prompt": "scan"}),

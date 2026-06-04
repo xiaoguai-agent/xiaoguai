@@ -5,7 +5,7 @@
 //! - `LlmRouter` wraps each successful stream in a [`UsageRecordingStream`].
 //! - When the wrapped stream yields a chunk with `done == true`, the recorder
 //!   calls [`UsageSink::record`] once with a [`UsageRecord`] template that
-//!   was filled in by the router at call time (tenant / user / session /
+//!   was filled in by the router at call time (user / session /
 //!   provider / model / request id).
 //! - Token counts (`prompt_tokens` etc.) stay `None` in v0.5.2 — wiring the
 //!   provider-specific extraction (OpenAI's terminal `usage` block, Ollama's
@@ -22,7 +22,7 @@ use futures::stream::StreamExt;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::warn;
-use xiaoguai_types::{ProviderId, SessionId, TenantId, UserId};
+use xiaoguai_types::{ProviderId, SessionId, UserId};
 
 use crate::backend::{ChatStream, LlmError};
 use crate::types::ChatChunk;
@@ -30,7 +30,6 @@ use crate::types::ChatChunk;
 #[derive(Debug, Clone)]
 pub struct UsageRecord {
     pub ts: DateTime<Utc>,
-    pub tenant_id: Option<TenantId>,
     pub user_id: Option<UserId>,
     pub session_id: Option<SessionId>,
     pub provider_id: ProviderId,
@@ -133,7 +132,6 @@ mod tests {
     fn dummy_record() -> UsageRecord {
         UsageRecord {
             ts: Utc::now(),
-            tenant_id: None,
             user_id: None,
             session_id: None,
             provider_id: ProviderId::from("prov_x".to_string()),

@@ -10,7 +10,6 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use xiaoguai_audit::outcomes::OutcomeRange;
-use xiaoguai_storage::OWNER_TENANT_ID;
 
 use crate::error::{ApiError, ApiResult};
 use crate::outcomes::{
@@ -30,7 +29,7 @@ use crate::state::AppState;
 /// Returns an error if the outcome writer is not wired, inputs are invalid, or the write fails.
 pub async fn record_outcome(
     State(state): State<AppState>,
-    Json(mut req): Json<RecordOutcomeRequest>,
+    Json(req): Json<RecordOutcomeRequest>,
 ) -> ApiResult<(StatusCode, Json<RecordOutcomeResponse>)> {
     let writer = state
         .outcome_writer
@@ -51,11 +50,6 @@ pub async fn record_outcome(
             "value must be non-negative".into(),
         ));
     }
-    // DEC-033 single-owner: tenant_id is vestigial (the writer ignores it);
-    // default to the owner tenant when the caller omits it.
-    if req.tenant_id.is_empty() {
-        req.tenant_id = OWNER_TENANT_ID.to_string();
-    }
 
     writer
         .record(req)
@@ -74,7 +68,6 @@ pub async fn record_outcome(
 
 #[derive(Debug, Deserialize, Default)]
 pub struct SummaryQuery {
-    pub tenant_id: String,
     /// `"24h"` | `"7d"` | `"30d"`. Defaults to `"30d"`.
     pub range: Option<String>,
 }
@@ -86,30 +79,23 @@ pub struct SummaryQuery {
 /// Returns an error if the outcomes reader is not wired, the range is invalid, or the query fails.
 pub async fn outcomes_summary(
     State(state): State<AppState>,
-    Query(mut q): Query<SummaryQuery>,
+    Query(q): Query<SummaryQuery>,
 ) -> ApiResult<Json<OutcomesSummaryResponse>> {
     let reader = state
         .outcomes_reader
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("outcomes reader not wired".into()))?;
 
-    // DEC-033 single-owner: tenant_id is vestigial (the reader returns all
-    // data regardless); default to the owner tenant when omitted.
-    if q.tenant_id.is_empty() {
-        q.tenant_id = OWNER_TENANT_ID.to_string();
-    }
-
     let range_str = q.range.as_deref().unwrap_or("30d");
     let range = OutcomeRange::from_shorthand(range_str)
         .map_err(|e| ApiError::InvalidRequest(e.to_string()))?;
 
     let summary = reader
-        .summary(&q.tenant_id, range)
+        .summary(range)
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("outcomes summary: {e}")))?;
 
     Ok(Json(OutcomesSummaryResponse {
-        tenant_id: q.tenant_id,
         range: range_str.to_owned(),
         summary,
     }))
@@ -121,7 +107,6 @@ pub async fn outcomes_summary(
 
 #[derive(Debug, Deserialize, Default)]
 pub struct TimeseriesQuery {
-    pub tenant_id: String,
     /// `"24h"` | `"7d"` | `"30d"`. Defaults to `"30d"`.
     pub range: Option<String>,
     /// Optional kind filter: `"revenue_usd"` | `"hours_saved"` | …
@@ -134,30 +119,23 @@ pub struct TimeseriesQuery {
 /// Returns an error if the outcomes reader is not wired, the range is invalid, or the query fails.
 pub async fn outcomes_timeseries(
     State(state): State<AppState>,
-    Query(mut q): Query<TimeseriesQuery>,
+    Query(q): Query<TimeseriesQuery>,
 ) -> ApiResult<Json<OutcomesTimeseriesResponse>> {
     let reader = state
         .outcomes_reader
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("outcomes reader not wired".into()))?;
 
-    // DEC-033 single-owner: tenant_id is vestigial (the reader returns all
-    // data regardless); default to the owner tenant when omitted.
-    if q.tenant_id.is_empty() {
-        q.tenant_id = OWNER_TENANT_ID.to_string();
-    }
-
     let range_str = q.range.as_deref().unwrap_or("30d");
     let range = OutcomeRange::from_shorthand(range_str)
         .map_err(|e| ApiError::InvalidRequest(e.to_string()))?;
 
     let days = reader
-        .timeseries(&q.tenant_id, q.kind.as_deref(), range)
+        .timeseries(q.kind.as_deref(), range)
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("outcomes timeseries: {e}")))?;
 
     Ok(Json(OutcomesTimeseriesResponse {
-        tenant_id: q.tenant_id,
         range: range_str.to_owned(),
         days,
     }))

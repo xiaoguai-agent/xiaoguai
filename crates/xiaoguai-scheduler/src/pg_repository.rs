@@ -4,18 +4,15 @@
 //! `RunnerOptions::default` operator path. These persist `scheduled_jobs` /
 //! `scheduled_job_runs` durably across restarts.
 //!
-//! Schema: migration `0007_scheduled_jobs.sql`. `tenant_id` was dropped under
-//! the single-user pivot, so the (vestigial) `tenant_id` on the domain types is
-//! neither stored nor read back (it resolves to `None`). Each write opens a
-//! plain transaction via [`xiaoguai_storage::repositories::begin_tenant_tx`]
-//! (the `tenant` argument is ignored — there is no RLS under `SQLite`).
+//! Schema: migration `0007_scheduled_jobs.sql`. The single-user pivot
+//! (DEC-033) dropped the `tenant_id` column; each write opens a plain
+//! transaction.
 
 use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
-use xiaoguai_storage::repositories::begin_tenant_tx;
 
 use crate::job::{JobRun, JobRunStatus, ScheduledJob};
 use crate::repository::{JobRepository, JobRunRepository, RepoError, RepoResult};
@@ -36,9 +33,7 @@ impl PgJobRepository {
 #[async_trait]
 impl JobRepository for PgJobRepository {
     async fn upsert(&self, job: &ScheduledJob) -> RepoResult<()> {
-        let mut tx = begin_tenant_tx(&self.pool, job.tenant_id.as_deref())
-            .await
-            .map_err(repo_err)?;
+        let mut tx = self.pool.begin().await.map_err(sqlx_err)?;
         sqlx::query(
             "INSERT INTO scheduled_jobs
                 (id, name, description, trigger, payload, retry_policy, sinks,
@@ -171,9 +166,7 @@ impl PgJobRunRepository {
 #[async_trait]
 impl JobRunRepository for PgJobRunRepository {
     async fn insert(&self, run: JobRun) -> RepoResult<JobRun> {
-        let mut tx = begin_tenant_tx(&self.pool, run.tenant_id.as_deref())
-            .await
-            .map_err(repo_err)?;
+        let mut tx = self.pool.begin().await.map_err(sqlx_err)?;
         let row = sqlx::query(
             "INSERT INTO scheduled_job_runs
                 (job_id, status, attempt, started_at, finished_at,
@@ -257,8 +250,6 @@ fn row_to_job(r: &sqlx::sqlite::SqliteRow) -> RepoResult<ScheduledJob> {
     let sinks: Vec<String> = serde_json::from_value(sinks).map_err(serde_err)?;
     Ok(ScheduledJob {
         id: r.try_get("id").map_err(sqlx_err)?,
-        // tenant_id column dropped under the single-user pivot.
-        tenant_id: None,
         name: r.try_get("name").map_err(sqlx_err)?,
         description: r.try_get("description").map_err(sqlx_err)?,
         trigger,
@@ -280,8 +271,6 @@ fn row_to_run(r: &sqlx::sqlite::SqliteRow) -> RepoResult<JobRun> {
     Ok(JobRun {
         id: r.try_get("id").map_err(sqlx_err)?,
         job_id: r.try_get("job_id").map_err(sqlx_err)?,
-        // tenant_id column dropped under the single-user pivot.
-        tenant_id: None,
         status,
         attempt: u32::try_from(attempt).unwrap_or(0),
         started_at: r.try_get("started_at").map_err(sqlx_err)?,
@@ -316,11 +305,6 @@ fn sqlx_err(e: sqlx::Error) -> RepoError {
 #[allow(clippy::needless_pass_by_value)]
 fn serde_err(e: serde_json::Error) -> RepoError {
     RepoError::Backend(format!("serde: {e}"))
-}
-
-#[allow(clippy::needless_pass_by_value)]
-fn repo_err(e: xiaoguai_storage::repositories::error::RepoError) -> RepoError {
-    RepoError::Backend(e.to_string())
 }
 
 /// Quick wait so tests can be reasonably deterministic about commit

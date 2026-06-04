@@ -1,24 +1,16 @@
 //! `UserRepository` — SQLite-backed user CRUD with role join.
 //!
 //! Single-user pivot (DEC-033): the `users` table dropped its `tenant_id`
-//! column and row-level security; `email` is globally unique. The vestigial
-//! `tenant_id` arguments on `find_by_email` / `list_by_tenant` are ignored,
-//! and the required `User::tenant_id` domain field is synthesised from
-//! [`OWNER_TENANT_ID`] on read.
+//! column and row-level security; `email` is globally unique.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
-use xiaoguai_types::{
-    ids::{TenantId, UserId},
-    TenantRole as Role, User,
-};
+use xiaoguai_types::{ids::UserId, TenantRole as Role, User};
 
 use crate::repositories::error::{RepoError, RepoResult};
-use crate::OWNER_TENANT_ID;
 
-/// Abstract user storage. Operations are tenant-scoped where possible; the
-/// `id`-only lookups discover the tenant first then re-enter under RLS.
+/// Abstract user storage.
 #[async_trait]
 pub trait UserRepository: Send + Sync {
     /// Insert a new user along with their roles. Roles are persisted to the
@@ -29,16 +21,11 @@ pub trait UserRepository: Send + Sync {
     /// when the user does not exist.
     async fn find_by_id(&self, id: &str) -> RepoResult<Option<User>>;
 
-    /// Look up a user by `(tenant_id, email)`. Returns `Ok(None)` when missing.
-    async fn find_by_email(&self, tenant_id: &str, email: &str) -> RepoResult<Option<User>>;
+    /// Look up a user by `email`. Returns `Ok(None)` when missing.
+    async fn find_by_email(&self, email: &str) -> RepoResult<Option<User>>;
 
-    /// List users for a tenant, ordered by `created_at` ascending.
-    async fn list_by_tenant(
-        &self,
-        tenant_id: &str,
-        limit: i64,
-        offset: i64,
-    ) -> RepoResult<Vec<User>>;
+    /// List users, ordered by `created_at` ascending.
+    async fn list(&self, limit: i64, offset: i64) -> RepoResult<Vec<User>>;
 
     /// Delete a user. `ON DELETE CASCADE` removes role rows. Idempotent.
     async fn delete(&self, id: &str) -> RepoResult<()>;
@@ -104,7 +91,6 @@ async fn load_roles(tx: &mut Transaction<'_, Sqlite>, user_id: &str) -> RepoResu
 fn row_into_user(row: UserRow, roles: Vec<Role>) -> User {
     User {
         id: UserId::from(row.id),
-        tenant_id: TenantId::from(OWNER_TENANT_ID.to_string()),
         email: row.email,
         display_name: row.display_name,
         roles,
@@ -166,7 +152,7 @@ impl UserRepository for PgUserRepository {
         Ok(result)
     }
 
-    async fn find_by_email(&self, _tenant_id: &str, email: &str) -> RepoResult<Option<User>> {
+    async fn find_by_email(&self, email: &str) -> RepoResult<Option<User>> {
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
 
         let row = sqlx::query_as::<_, UserRow>(&format!(
@@ -190,12 +176,7 @@ impl UserRepository for PgUserRepository {
         Ok(result)
     }
 
-    async fn list_by_tenant(
-        &self,
-        _tenant_id: &str,
-        limit: i64,
-        offset: i64,
-    ) -> RepoResult<Vec<User>> {
+    async fn list(&self, limit: i64, offset: i64) -> RepoResult<Vec<User>> {
         if limit < 0 || offset < 0 {
             return Err(RepoError::InvalidArgument(
                 "limit and offset must be non-negative".to_string(),
