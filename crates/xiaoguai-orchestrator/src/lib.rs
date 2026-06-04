@@ -54,7 +54,7 @@ pub use registry::conflict::{AgentConflict, ConflictArbitrator, ConflictPolicy, 
 pub use registry::router::{CapabilityRouter, Dispatch, Intent};
 pub use registry::store::{InMemoryStore, PgStore, RegistryStore};
 pub use registry::{
-    Agent, AgentRef, AgentRegistry, AgentSpec, Capability, ResultShape, TaskShape, TenantScope,
+    Agent, AgentRef, AgentRegistry, AgentSpec, Capability, ResultShape, TaskShape,
 };
 pub use supervisor::{RunOutcome, RunReport, StepResult, Supervisor};
 pub use worker::{Task, Worker, WorkerResult};

@@ -2,8 +2,8 @@
 //!
 //! # Model
 //!
-//! A **resource** is the triple `(tenant_id, resource_kind, resource_id)` — e.g.
-//! `("acme", "invoice", "INV-001")`.  Only one agent may *write* to a resource at
+//! A **resource** is the pair `(resource_kind, resource_id)` — e.g.
+//! `("invoice", "INV-001")`.  Only one agent may *write* to a resource at
 //! a time; concurrent reads are unconstrained (callers decide what constitutes a
 //! write by choosing when to acquire a run lock).
 //!
@@ -36,19 +36,13 @@ use tokio::sync::{oneshot, Notify};
 /// The identity of a resource that an agent run operates on.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ResourceKey {
-    pub tenant_id: String,
     pub resource_kind: String,
     pub resource_id: String,
 }
 
 impl ResourceKey {
-    pub fn new(
-        tenant_id: impl Into<String>,
-        resource_kind: impl Into<String>,
-        resource_id: impl Into<String>,
-    ) -> Self {
+    pub fn new(resource_kind: impl Into<String>, resource_id: impl Into<String>) -> Self {
         Self {
-            tenant_id: tenant_id.into(),
             resource_kind: resource_kind.into(),
             resource_id: resource_id.into(),
         }
@@ -57,11 +51,7 @@ impl ResourceKey {
 
 impl std::fmt::Display for ResourceKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}/{}/{}",
-            self.tenant_id, self.resource_kind, self.resource_id
-        )
+        write!(f, "{}/{}", self.resource_kind, self.resource_id)
     }
 }
 
@@ -297,7 +287,7 @@ mod tests {
     use tokio::time::{timeout, Duration};
 
     fn res(id: &str) -> ResourceKey {
-        ResourceKey::new("tenant-1", "invoice", id)
+        ResourceKey::new("invoice", id)
     }
 
     // ── Reject policy ─────────────────────────────────────────────────────────
