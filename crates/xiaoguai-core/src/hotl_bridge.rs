@@ -819,7 +819,9 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                         if let Some(sink) = &self.audit_sink {
                             let entry = xiaoguai_audit::AuditEntry {
                                 ts: now_utc,
-                                tenant_id: tenant_id.to_string(),
+                                // Must match verify_chain's rebuilt value (audit
+                                // OWNER), not the vestigial tenant uuid.
+                                tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
                                 actor: "system".into(),
                                 action: "hotl.escalation".into(),
                                 resource: Some(format!("escalation:{escalation_id}")),

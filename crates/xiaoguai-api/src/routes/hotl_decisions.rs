@@ -275,7 +275,9 @@ async fn create_decision_inner(
     if let Some(sink) = &state.hotl_audit {
         let entry = xiaoguai_audit::AuditEntry {
             ts: Utc::now(),
-            tenant_id: tenant_id.to_string(),
+            // Must equal the value verify_chain rebuilds with (audit OWNER), not
+            // the vestigial nil tenant uuid, or the chain fails to verify.
+            tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
             actor: req.decided_by.clone(),
             action: "hotl.decision".into(),
             resource: Some(format!("escalation:{}", req.escalation_id)),

@@ -436,10 +436,9 @@ impl JobRunner {
         }
         let entry = AuditEntry {
             ts: Utc::now(),
-            tenant_id: job
-                .tenant_id
-                .clone()
-                .unwrap_or_else(|| SYSTEM_TENANT.into()),
+            // Audit chain: must equal the value verify_chain rebuilds with
+            // (audit OWNER), not the job's tenant / SYSTEM_TENANT fallback.
+            tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
             actor: format!("scheduler:{}", job.id),
             action: "scheduler.proactive_denied".into(),
             resource: Some(format!("job:{}", job.id)),
@@ -481,10 +480,9 @@ impl JobRunner {
         }
         let entry = AuditEntry {
             ts: Utc::now(),
-            tenant_id: job
-                .tenant_id
-                .clone()
-                .unwrap_or_else(|| SYSTEM_TENANT.into()),
+            // Audit chain: must equal the value verify_chain rebuilds with
+            // (audit OWNER), not the job's tenant / SYSTEM_TENANT fallback.
+            tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
             actor: format!("scheduler:{}", job.id),
             action: "scheduler.job_run".into(),
             resource: Some(format!("job:{}", job.id)),
@@ -656,7 +654,9 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].action, "scheduler.job_run");
         assert_eq!(entries[0].actor, "scheduler:j1");
-        assert_eq!(entries[0].tenant_id, "tenant-x");
+        // Audit entries sign the owner identity (verify_chain rebuilds the same),
+        // not the job's tenant — see xiaoguai_audit::OWNER_TENANT_ID.
+        assert_eq!(entries[0].tenant_id, xiaoguai_audit::OWNER_TENANT_ID);
         assert_eq!(entries[0].resource.as_deref(), Some("job:j1"));
         assert_eq!(
             entries[0].details["run_id"],
