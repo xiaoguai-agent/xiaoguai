@@ -1,8 +1,14 @@
 # Runbook — Agent-authored skills (Tier-2 D.1)
 
-> Status: shipped in v1.5.x (Tier-2). HotL-gated, admin-approved.
-> Off by default. The agent cannot author skills until an operator
-> opts the tenant in.
+> Status: shipped in v1.5.x (Tier-2). HotL-gated, owner-approved.
+> Off by default. The agent cannot author skills until the owner opts in.
+>
+> **Single-owner SQLite (DEC-033).** This product runs as one implicit owner
+> over embedded SQLite — there is no Postgres, no `tenant_id`, and no Casbin
+> RBAC. The `tenant_settings` table keeps its name but is a single-owner
+> key/value store whose primary key is the owner id `ten_local_owner`. Use
+> `sqlite3` against the data file (default `~/.xiaoguai/data.db`), or the
+> CLI/REST surfaces below, instead of `psql`.
 
 ---
 
@@ -14,14 +20,14 @@ anti-pattern — "letting the LLM author its own escapes". Three layers
 of defence cover it:
 
 1. **Off by default.** The `propose_skill` tool is unregistered unless
-   the tenant has `allow_skill_authoring=true` in `tenant_settings`.
+   the owner has `allow_skill_authoring=true` in `tenant_settings`.
 2. **HotL gate (bucket `skill_author`).** Every accepted proposal
    consumes one budget unit; default policy caps at 5 proposals /
-   tenant / day. A 6th draft is denied at the gate and the reason is
+   day. A 6th draft is denied at the gate and the reason is
    fed back to the LLM (it cannot retry the same draft, but it can
    wait or revise).
-3. **Admin approval.** A `pending` proposal is just a DB row. Nothing
-   becomes loadable until a tenant admin calls
+3. **Owner approval.** A `pending` proposal is just a DB row. Nothing
+   becomes loadable until the owner calls
    `POST /v1/skills/proposals/:id/approve`, which writes the YAML
    manifest to `~/.xiaoguai/skills/` (override with
    `XIAOGUAI_SKILLS_DIR`).
@@ -36,23 +42,26 @@ Additional whitelist enforcement at proposal time:
 
 ---
 
-## Enabling per tenant
+## Enabling skill authoring (owner opt-in)
 
-```sql
-INSERT INTO tenant_settings (tenant_id, settings)
-VALUES ('<tenant-uuid>', '{"allow_skill_authoring": true}')
-ON CONFLICT (tenant_id) DO UPDATE
-   SET settings = tenant_settings.settings || EXCLUDED.settings,
-       updated_at = NOW();
+The flag lives in the single owner's `tenant_settings` row, keyed by the owner
+id `ten_local_owner`. With `sqlite3` against the data file:
+
+```bash
+sqlite3 ~/.xiaoguai/data.db \
+  "INSERT INTO tenant_settings (tenant_id, settings)
+   VALUES ('ten_local_owner', json('{\"allow_skill_authoring\": true}'))
+   ON CONFLICT(tenant_id) DO UPDATE
+     SET settings = json_set(tenant_settings.settings, '\$.allow_skill_authoring', json('true'));"
 ```
 
 Disable again:
 
-```sql
-UPDATE tenant_settings
-   SET settings = settings || '{"allow_skill_authoring": false}',
-       updated_at = NOW()
- WHERE tenant_id = '<tenant-uuid>';
+```bash
+sqlite3 ~/.xiaoguai/data.db \
+  "UPDATE tenant_settings
+      SET settings = json_set(settings, '\$.allow_skill_authoring', json('false'))
+    WHERE tenant_id = 'ten_local_owner';"
 ```
 
 The check is read on every `propose_skill` invocation — no restart
@@ -62,17 +71,15 @@ required.
 
 ## HotL budget
 
-Seed the policy bucket. Adjust `max_count` per your operational
-tolerance.
+Seed the policy bucket via the CLI (or `POST /v1/hotl/policies`). Adjust
+`--max-count` per your operational tolerance. There is no `tenant_id` — the
+policy applies to the single owner:
 
-```sql
-INSERT INTO hotl_policies (id, tenant_id, scope, window_seconds, max_count, max_usd)
-VALUES (gen_random_uuid()::text,
-        '<tenant-uuid>',
-        'skill_author',
-        86400,   -- 1 day rolling window
-        5,
-        NULL);
+```bash
+xiaoguai hotl policy create \
+  --scope skill_author \
+  --window-secs 86400 \   # 1 day rolling window
+  --max-count 5
 ```
 
 The gate is consulted with `scope = 'skill_author'` and `amount = 1.0`
@@ -86,8 +93,8 @@ as a synthetic tool failure.
 CLI:
 
 ```bash
-xiaoguai skills proposals list --tenant-id <id>
-xiaoguai skills proposals list --tenant-id <id> --status pending
+xiaoguai skills proposals list
+xiaoguai skills proposals list --status pending
 
 xiaoguai skills proposals approve --id <prop-id> --decided-by alice@acme
 xiaoguai skills proposals reject --id <prop-id> \
@@ -119,7 +126,7 @@ There is no automatic uninstall yet. To revoke:
 
 1. Delete the YAML file: `rm ~/.xiaoguai/skills/<name>-<version>.yaml`
 2. Delete the DB row:
-   `DELETE FROM skill_proposals WHERE id = '<prop-id>';`
+   `sqlite3 ~/.xiaoguai/data.db "DELETE FROM skill_proposals WHERE id = '<prop-id>';"`
 3. Restart the server.
 
 Tracked follow-up: `xiaoguai skills proposals revoke <id>` that does
@@ -171,20 +178,14 @@ serde (top-level keys are typed and `additionalProperties` is false).
 
 ---
 
-## Casbin policy
+## Access control
 
-The approve/reject endpoints expect callers to carry the
-`tenant_admin` (or `system_admin`) role. Add the rule to your default
-policy CSV (location depends on your `xiaoguai-auth` deployment):
-
-```
-p, tenant_admin, /v1/skills/proposals/*, approve
-p, system_admin, /v1/skills/proposals/*, approve
-```
-
-If RBAC enforcement is not wired (`state.authz = None`) the endpoint
-falls back to the existing `require_bearer` path; in that case
-restrict access at the network layer.
+Single-owner (DEC-033): there is no Casbin RBAC and no roles. The
+approve/reject endpoints are reached by the one owner identity. Protect them
+by configuring the HTTP Basic gate (`auth.username` / `auth.password`, or the
+`XIAOGUAI_AUTH__USERNAME` / `XIAOGUAI_AUTH__PASSWORD` env vars) and/or
+restricting `/v1/admin/**` and `/v1/skills/proposals/**` at the network layer
+(reverse proxy / firewall).
 
 ---
 
