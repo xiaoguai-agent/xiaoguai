@@ -7,15 +7,11 @@
 //! The boot flow lives in [`run_with_cli`] so both the legacy `xiaoguai-core`
 //! binary and the unified `xiaoguai serve` subcommand can drive it.
 //!
-//! ## Tier-1b: in-process cache fallback
+//! ## In-process cache
 //!
-//! When `cache.url` is empty (or any non-`redis://` URL) the storage layer
-//! boots an in-process `DashMap` instead of opening a Redis/Valkey
-//! connection. This makes the single-binary, air-gapped path viable: a
-//! single-tenant deploy can run with just the xiaoguai binary, no external services
-//! sidecar. The boot log emits a distinct `tracing::info!` line so operators
-//! can confirm at startup which backend is live. See
-//! `docs/runbooks/cache-fallback.md`.
+//! The cache is a process-local `DashMap` — there is no Valkey/Redis sidecar.
+//! This keeps the single-binary, air-gapped path viable: a single-owner deploy
+//! runs with just the xiaoguai binary, no external services.
 
 #![forbid(unsafe_code)]
 //!
@@ -95,7 +91,6 @@ pub async fn run_with_cli() -> Result<()> {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         cfg.db = %settings.database.url,
-        cfg.cache = %settings.cache.url,
         cfg.auth_enabled = settings.auth.is_enabled(),
         "xiaoguai-core starting"
     );
@@ -130,32 +125,10 @@ pub async fn run_smoke(settings: &Settings) -> Result<()> {
     anyhow::ensure!(row.0 == 1, "db select 1 returned {}", row.0);
     tracing::info!("smoke: db ok");
 
-    tracing::info!("smoke: connecting to cache");
-    let cache = Cache::connect(&settings.cache.url, settings.cache.key_prefix.clone())
-        .await
-        .context("cache connect")?;
-    if cache.is_in_process() {
-        // The in-process backend is a process-local DashMap; a set/get
-        // round-trip would only prove that DashMap works. Skip the trip and
-        // log the mode so operators see at startup which path is live.
-        tracing::info!("smoke: cache: in-process (no round-trip)");
-    } else {
-        let ts = chrono::Utc::now().to_rfc3339();
-        cache
-            .set(
-                "smoke/heartbeat",
-                &ts,
-                Some(std::time::Duration::from_secs(60)),
-            )
-            .await
-            .context("valkey set")?;
-        let got: Option<String> = cache.get("smoke/heartbeat").await.context("valkey get")?;
-        anyhow::ensure!(
-            got.as_deref() == Some(ts.as_str()),
-            "valkey round-trip mismatch"
-        );
-        tracing::info!("smoke: valkey ok");
-    }
+    // The cache is a process-local DashMap; constructing it is infallible and
+    // a round-trip would only prove that DashMap works, so just build it.
+    let _cache = Cache::new(settings.cache.key_prefix.clone());
+    tracing::info!("smoke: cache: in-process");
 
     tracing::info!(
         auth_enabled = settings.auth.is_enabled(),

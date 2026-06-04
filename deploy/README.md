@@ -45,7 +45,7 @@ cargo run -p xiaoguai-cli -- remote \
 | Rust build                               | `Dockerfile` (rust:slim-bookworm)        |
 | Runtime                                  | `Dockerfile` (distroless cc-debian12)    |
 | Stack composition                        | `docker-compose.yml`                     |
-| State (pg, valkey)                       | named volumes `pg_data`, `valkey_data`   |
+| State                                    | named volume `xiaoguai_data` (embedded SQLite) |
 
 ## Bare-metal install (v1.1.6)
 

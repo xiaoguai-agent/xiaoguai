@@ -32,10 +32,9 @@ database:
   max_connections: 16
 
 cache:
-  # Optional Valkey / Redis URL for idempotency keys + caches. Leave EMPTY
-  # (the default) to use an in-process cache — no Redis/Valkey sidecar needed
-  # for a single-user deployment.
-  url: ""
+  # The cache (idempotency keys + short-lived caches) is process-local —
+  # there is no external Valkey/Redis to configure. The whole `cache:` section
+  # is optional; only the key prefix is tunable.
   key_prefix: "xiaoguai:"
 
 auth:

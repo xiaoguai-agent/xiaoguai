@@ -1,4 +1,4 @@
-//! Storage layer — embedded `SQLite` (via sqlx) + Valkey/Redis cache.
+//! Storage layer — embedded `SQLite` (via sqlx) + in-process cache.
 //!
 //! All business crates depend on this for persistence. No SQL leaks past the
 //! repository boundary. Single-user deployment (DEC-033): one `SQLite` file, one

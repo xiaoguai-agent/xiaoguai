@@ -15,10 +15,10 @@ nothing — there is only ever one process to share with.
 At startup the binary emits:
 
 ```
-cache: in-process backend
+smoke: cache: in-process
 ```
 
-The `xiaoguai smoke` subcommand logs `smoke: cache: in-process (no round-trip)`
+The `xiaoguai smoke` subcommand logs `smoke: cache: in-process`
 — the set/get round-trip is skipped because it would only prove that an
 in-memory map works.
 
@@ -43,7 +43,7 @@ cache:
   key_prefix: "xiaoguai:"   # optional; namespaces in-heap keys
 ```
 
-No `cache.url` is consulted. Any Redis/Valkey URL from an older config is
+The `cache.url` field was removed entirely. Any Redis/Valkey URL in an older config is
 ignored; if you are migrating from a pre-pivot deployment, you may delete the
 `cache.url` line and tear down any Redis/Valkey container — it is no longer
 used.
@@ -52,7 +52,7 @@ used.
 
 - The in-process backend honors sub-second TTLs verbatim (no external broker
   granularity clamping).
-- The in-process store is per-`Cache`-instance — two `Cache::connect(...)`
+- The in-process store is per-`Cache`-instance — two `Cache::new(...)`
   calls inside the same process return independent maps. Production wiring
   constructs exactly one `Cache` per service.
 - Restarting `xiaoguai serve` clears the cache. This is expected: rate-limit
