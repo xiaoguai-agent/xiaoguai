@@ -304,10 +304,7 @@ mod tests {
     #[tokio::test]
     async fn create_task_lands_in_triage_by_default() {
         let repo = InMemoryTaskBoardRepository::new();
-        let board = repo
-            .create_board(make_board_req())
-            .await
-            .unwrap();
+        let board = repo.create_board(make_board_req()).await.unwrap();
         let task = repo.create_task(make_task_req(board.id)).await.unwrap();
         assert_eq!(task.column, Column::Triage);
         assert_eq!(task.priority, 128);
@@ -317,10 +314,7 @@ mod tests {
     #[tokio::test]
     async fn create_task_with_explicit_column_and_priority() {
         let repo = InMemoryTaskBoardRepository::new();
-        let board = repo
-            .create_board(make_board_req())
-            .await
-            .unwrap();
+        let board = repo.create_board(make_board_req()).await.unwrap();
         let req = CreateTaskRequest {
             board_id: board.id,
             title: "Ready task".into(),
@@ -338,10 +332,7 @@ mod tests {
     #[tokio::test]
     async fn create_task_rejects_out_of_range_priority() {
         let repo = InMemoryTaskBoardRepository::new();
-        let board = repo
-            .create_board(make_board_req())
-            .await
-            .unwrap();
+        let board = repo.create_board(make_board_req()).await.unwrap();
         let req = CreateTaskRequest {
             board_id: board.id,
             title: "Bad".into(),
@@ -360,10 +351,7 @@ mod tests {
     #[tokio::test]
     async fn list_tasks_filtered_by_column() {
         let repo = InMemoryTaskBoardRepository::new();
-        let board = repo
-            .create_board(make_board_req())
-            .await
-            .unwrap();
+        let board = repo.create_board(make_board_req()).await.unwrap();
 
         // triage (default)
         repo.create_task(make_task_req(board.id)).await.unwrap();
@@ -397,10 +385,7 @@ mod tests {
     #[tokio::test]
     async fn update_task_column_records_history() {
         let repo = InMemoryTaskBoardRepository::new();
-        let board = repo
-            .create_board(make_board_req())
-            .await
-            .unwrap();
+        let board = repo.create_board(make_board_req()).await.unwrap();
         let task = repo.create_task(make_task_req(board.id)).await.unwrap();
 
         repo.update_task_column(task.id, Column::Todo, "user-1", Some("approved"))
@@ -430,10 +415,7 @@ mod tests {
     #[tokio::test]
     async fn dispatch_next_ready_picks_highest_priority() {
         let repo = InMemoryTaskBoardRepository::new();
-        let board = repo
-            .create_board(make_board_req())
-            .await
-            .unwrap();
+        let board = repo.create_board(make_board_req()).await.unwrap();
 
         for priority in [100u8, 200u8, 50u8] {
             let req = CreateTaskRequest {
@@ -462,10 +444,7 @@ mod tests {
     #[tokio::test]
     async fn dispatch_next_ready_returns_none_when_queue_empty() {
         let repo = InMemoryTaskBoardRepository::new();
-        let board = repo
-            .create_board(make_board_req())
-            .await
-            .unwrap();
+        let board = repo.create_board(make_board_req()).await.unwrap();
 
         let result = repo.dispatch_next_ready(board.id, "agent-1").await.unwrap();
         assert!(result.is_none());
@@ -474,10 +453,7 @@ mod tests {
     #[tokio::test]
     async fn block_task_sets_blocked_reason() {
         let repo = InMemoryTaskBoardRepository::new();
-        let board = repo
-            .create_board(make_board_req())
-            .await
-            .unwrap();
+        let board = repo.create_board(make_board_req()).await.unwrap();
         let task = repo.create_task(make_task_req(board.id)).await.unwrap();
 
         let blocked = repo
@@ -495,10 +471,7 @@ mod tests {
     #[tokio::test]
     async fn blocked_reason_cleared_on_column_change() {
         let repo = InMemoryTaskBoardRepository::new();
-        let board = repo
-            .create_board(make_board_req())
-            .await
-            .unwrap();
+        let board = repo.create_board(make_board_req()).await.unwrap();
         let task = repo.create_task(make_task_req(board.id)).await.unwrap();
 
         repo.block_task(task.id, "agent-2", "needs approval")
@@ -524,10 +497,7 @@ mod tests {
     #[tokio::test]
     async fn full_lifecycle_history_ordered_by_occurred_at() {
         let repo = InMemoryTaskBoardRepository::new();
-        let board = repo
-            .create_board(make_board_req())
-            .await
-            .unwrap();
+        let board = repo.create_board(make_board_req()).await.unwrap();
         let task = repo.create_task(make_task_req(board.id)).await.unwrap();
 
         repo.update_task_column(task.id, Column::Todo, "u", None)

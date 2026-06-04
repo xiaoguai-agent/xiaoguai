@@ -82,10 +82,7 @@ impl From<PolicyRow> for HotlPolicy {
 
 #[async_trait]
 impl HotlPolicyStore for PgHotlPolicyStore {
-    async fn list(
-        &self,
-        scope: Option<&str>,
-    ) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
+    async fn list(&self, scope: Option<&str>) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
         // Use a dynamic query to handle the optional `scope` filter cleanly.
         let rows: Vec<PolicyRow> = if let Some(s) = scope {
             sqlx::query_as(
@@ -183,10 +180,7 @@ impl HotlPolicyStore for PgHotlPolicyStore {
         Ok(())
     }
 
-    async fn policies_for(
-        &self,
-        scope: &str,
-    ) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
+    async fn policies_for(&self, scope: &str) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
         self.list(Some(scope)).await
     }
 }
@@ -689,10 +683,8 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                 // knowing the policy state we can't decide whether
                 // redaction was required, so we deny rather than risk
                 // leaking unredacted args on SSE.
-                let rules = match xiaoguai_auth::RedactionRules::from_storage(
-                    &*self.redaction_repo,
-                )
-                .await
+                let rules = match xiaoguai_auth::RedactionRules::from_storage(&*self.redaction_repo)
+                    .await
                 {
                     Ok(r) => r,
                     Err(e) => {
@@ -1360,8 +1352,7 @@ mod tests {
         let enforcer = StubEnforcer::allow();
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
-        let v =
-            xiaoguai_agent::HotlGate::check(&gate, "tool_call.search", 1.0).await;
+        let v = xiaoguai_agent::HotlGate::check(&gate, "tool_call.search", 1.0).await;
         assert!(matches!(v, xiaoguai_agent::HotlGateVerdict::Allow));
         assert!(reg.is_empty(), "Allow path must not register a ticket");
     }
@@ -1372,8 +1363,7 @@ mod tests {
         let enforcer = StubEnforcer::deny("budget exceeded");
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
-        let v =
-            xiaoguai_agent::HotlGate::check(&gate, "tool_call.search", 1.0).await;
+        let v = xiaoguai_agent::HotlGate::check(&gate, "tool_call.search", 1.0).await;
         match v {
             xiaoguai_agent::HotlGateVerdict::Deny(reason) => {
                 assert_eq!(reason, "budget exceeded");
@@ -1389,9 +1379,7 @@ mod tests {
         let enforcer = StubEnforcer::escalate("monthly budget at 110%");
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
-        let v =
-            xiaoguai_agent::HotlGate::check(&gate, "tool_call.execute_python", 1.0)
-                .await;
+        let v = xiaoguai_agent::HotlGate::check(&gate, "tool_call.execute_python", 1.0).await;
         let (escalation_id, scope, ticket) = match v {
             xiaoguai_agent::HotlGateVerdict::Suspend {
                 escalation_id,
@@ -1442,8 +1430,7 @@ mod tests {
         let enforcer = StubEnforcer::infra_error("pg connection refused");
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
-        let v =
-            xiaoguai_agent::HotlGate::check(&gate, "tool_call.search", 1.0).await;
+        let v = xiaoguai_agent::HotlGate::check(&gate, "tool_call.search", 1.0).await;
         match v {
             xiaoguai_agent::HotlGateVerdict::Deny(reason) => {
                 assert!(
@@ -1478,8 +1465,7 @@ mod tests {
         let enforcer = StubEnforcer::escalate("budget breach");
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
-        let v =
-            xiaoguai_agent::HotlGate::check(&gate, "tool_call.search", 1.0).await;
+        let v = xiaoguai_agent::HotlGate::check(&gate, "tool_call.search", 1.0).await;
         let (new_escalation_id, _scope, _ticket) = match v {
             xiaoguai_agent::HotlGateVerdict::Suspend {
                 escalation_id,

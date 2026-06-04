@@ -276,20 +276,8 @@ async fn time_window_excludes_old_outcomes() {
     // slices passed to aggregate() after the fact — using the public
     // OutcomeSummary::from_records helper which accepts arbitrary timestamps.
     let records = [
-        make_record_at(
-            Some("s1"),
-            "agent-old",
-            "hours_saved",
-            8.0,
-            old_ts,
-        ),
-        make_record_at(
-            Some("s1"),
-            "agent-recent",
-            "hours_saved",
-            3.0,
-            recent_ts,
-        ),
+        make_record_at(Some("s1"), "agent-old", "hours_saved", 8.0, old_ts),
+        make_record_at(Some("s1"), "agent-recent", "hours_saved", 3.0, recent_ts),
     ];
 
     // 24-hour window — only the recent record falls within.
@@ -344,10 +332,7 @@ async fn time_window_excludes_old_outcomes() {
         since: Some(later),
         until: Some(earlier),
     };
-    let err = recorder
-        .aggregate(None, inverted_range)
-        .await
-        .unwrap_err();
+    let err = recorder.aggregate(None, inverted_range).await.unwrap_err();
     assert!(
         matches!(err, xiaoguai_audit::OutcomeError::InvalidArgument(_)),
         "inverted range must be rejected"
@@ -577,15 +562,7 @@ fn timeseries_three_day_buckets() {
 fn timeseries_same_day_different_hours_same_bucket() {
     let base = Utc.with_ymd_and_hms(2026, 5, 23, 0, 0, 0).unwrap();
     let records: Vec<OutcomeRecord> = (0..3)
-        .map(|h| {
-            make_record_at(
-                None,
-                "bot",
-                "hours_saved",
-                1.0,
-                base + Duration::hours(h),
-            )
-        })
+        .map(|h| make_record_at(None, "bot", "hours_saved", 1.0, base + Duration::hours(h)))
         .collect();
 
     let buckets = timeseries(&records);

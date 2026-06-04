@@ -58,10 +58,7 @@ async fn create_then_find_roundtrip() {
     assert_eq!(fetched.model, "gpt-4o-mini");
     assert_eq!(fetched.status, SessionStatus::Active);
 
-    let missing = repo
-        .find_by_id("sess_doesnotexist")
-        .await
-        .expect("find");
+    let missing = repo.find_by_id("sess_doesnotexist").await.expect("find");
     assert!(missing.is_none());
 }
 
@@ -83,27 +80,18 @@ async fn list_by_user_orders_by_updated_at_desc_with_pagination() {
         ids.push(s.id);
     }
 
-    let page1 = repo
-        .list_by_user(user.as_str(), 2, 0)
-        .await
-        .expect("page1");
+    let page1 = repo.list_by_user(user.as_str(), 2, 0).await.expect("page1");
     assert_eq!(page1.len(), 2);
     // Newest (highest updated_at, last inserted) first.
     assert_eq!(page1[0].id.as_str(), ids[4].as_str());
     assert_eq!(page1[1].id.as_str(), ids[3].as_str());
 
-    let page2 = repo
-        .list_by_user(user.as_str(), 2, 2)
-        .await
-        .expect("page2");
+    let page2 = repo.list_by_user(user.as_str(), 2, 2).await.expect("page2");
     assert_eq!(page2.len(), 2);
     assert_eq!(page2[0].id.as_str(), ids[2].as_str());
     assert_eq!(page2[1].id.as_str(), ids[1].as_str());
 
-    let page3 = repo
-        .list_by_user(user.as_str(), 2, 4)
-        .await
-        .expect("page3");
+    let page3 = repo.list_by_user(user.as_str(), 2, 4).await.expect("page3");
     assert_eq!(page3.len(), 1);
     assert_eq!(page3[0].id.as_str(), ids[0].as_str());
 
@@ -143,9 +131,7 @@ async fn archive_sets_status_and_errors_on_missing() {
 
     let session = fixture_session(&user, "gpt-4o-mini");
     repo.create(&session).await.expect("create");
-    repo.archive(session.id.as_str())
-        .await
-        .expect("archive");
+    repo.archive(session.id.as_str()).await.expect("archive");
 
     let after = repo
         .find_by_id(session.id.as_str())
@@ -168,19 +154,12 @@ async fn delete_is_idempotent_and_cascades_via_fk() {
     repo.create(&session).await.expect("create");
 
     // First delete removes the row.
-    repo.delete(session.id.as_str())
-        .await
-        .expect("delete1");
-    let gone = repo
-        .find_by_id(session.id.as_str())
-        .await
-        .expect("find");
+    repo.delete(session.id.as_str()).await.expect("delete1");
+    let gone = repo.find_by_id(session.id.as_str()).await.expect("find");
     assert!(gone.is_none());
 
     // Second delete is a no-op (idempotent).
-    repo.delete(session.id.as_str())
-        .await
-        .expect("delete2");
+    repo.delete(session.id.as_str()).await.expect("delete2");
 }
 
 #[tokio::test]

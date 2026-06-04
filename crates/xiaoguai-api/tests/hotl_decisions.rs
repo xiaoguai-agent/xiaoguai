@@ -333,9 +333,7 @@ async fn duplicate_escalation_id_returns_409() {
 #[tokio::test]
 async fn unauthorized_when_bearer_missing() {
     let validator: Arc<dyn TokenValidator> = Arc::new(StubValidator {
-        claims: Claims {
-            sub: "u".into(),
-        },
+        claims: Claims { sub: "u".into() },
     });
     let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());
     let app = router(build_state(StateOptions {

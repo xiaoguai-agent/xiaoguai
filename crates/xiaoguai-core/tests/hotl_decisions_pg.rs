@@ -86,12 +86,7 @@ async fn create_duplicate_request_id_returns_conflict() {
     let request_id = Uuid::new_v4();
 
     store
-        .record(
-            request_id,
-            HotlDecisionVerdict::Allow,
-            "alice".into(),
-            None,
-        )
+        .record(request_id, HotlDecisionVerdict::Allow, "alice".into(), None)
         .await
         .expect("first record");
 

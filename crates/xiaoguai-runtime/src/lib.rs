@@ -360,5 +360,4 @@ mod tests {
         .unwrap();
         assert_eq!(outcome.reply_text, "ok");
     }
-
 }

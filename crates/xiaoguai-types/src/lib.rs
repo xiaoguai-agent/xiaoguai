@@ -16,9 +16,7 @@ pub mod session;
 pub mod tool_call;
 pub mod user;
 
-pub use ids::{
-    McpServerInstanceId, MessageId, ProviderId, SessionId, ToolCallId, UserId,
-};
+pub use ids::{McpServerInstanceId, MessageId, ProviderId, SessionId, ToolCallId, UserId};
 pub use mcp_server::{McpServer, McpTransport};
 pub use provider::{LlmProvider, ProviderKind};
 pub use redact::redact_str;

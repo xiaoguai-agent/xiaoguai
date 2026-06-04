@@ -604,10 +604,7 @@ fn generate_webhook_token() -> String {
 
 #[async_trait]
 impl WebhookTokenAdmin for PgWebhookTokenAdmin {
-    async fn create(
-        &self,
-        route_id: &str,
-    ) -> Result<WebhookTokenRecord, WebhookTokenAdminError> {
+    async fn create(&self, route_id: &str) -> Result<WebhookTokenRecord, WebhookTokenAdminError> {
         if route_id.is_empty() {
             return Err(WebhookTokenAdminError::InvalidArgument(
                 "route_id required".into(),
@@ -948,12 +945,7 @@ mod tests {
             async fn find_by_id(&self, _id: &str) -> RepoResult<Option<Session>> {
                 Ok(None)
             }
-            async fn list_by_user(
-                &self,
-                _u: &str,
-                _l: i64,
-                _o: i64,
-            ) -> RepoResult<Vec<Session>> {
+            async fn list_by_user(&self, _u: &str, _l: i64, _o: i64) -> RepoResult<Vec<Session>> {
                 Ok(Vec::new())
             }
             async fn touch(&self, _id: &str) -> RepoResult<()> {

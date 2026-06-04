@@ -221,11 +221,7 @@ impl MemoryStore for PgMemoryStore {
         })
     }
 
-    async fn update_memory(
-        &self,
-        id: Uuid,
-        req: UpdateMemoryRequest,
-    ) -> MemoryResult<Memory> {
+    async fn update_memory(&self, id: Uuid, req: UpdateMemoryRequest) -> MemoryResult<Memory> {
         // Re-embed if content changes.
         let new_embedding = if let Some(ref text) = req.content {
             Some(self.embedder.embed(text).await?)
@@ -371,13 +367,10 @@ impl MemoryStore for PgMemoryStore {
         top_k: usize,
     ) -> MemoryResult<Vec<RecalledMemory>> {
         // Fetch the anchor's embedding first; missing anchor => NotFound.
-        let anchor = self
-            .get_memory(memory_id)
-            .await
-            .map_err(|e| match e {
-                MemoryError::NotFound(_) => MemoryError::NotFound(memory_id),
-                other => other,
-            })?;
+        let anchor = self.get_memory(memory_id).await.map_err(|e| match e {
+            MemoryError::NotFound(_) => MemoryError::NotFound(memory_id),
+            other => other,
+        })?;
 
         let rows = sqlx::query(
             r"

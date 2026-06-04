@@ -113,9 +113,7 @@ async fn append_jsonb_tool_call_and_tool_result_roundtrip() {
             },
         ],
     );
-    repo.append(&assistant_msg)
-        .await
-        .expect("append assistant");
+    repo.append(&assistant_msg).await.expect("append assistant");
 
     let tool_msg = fixture_message(
         &session_id,

@@ -24,7 +24,7 @@
 //! `redis` crate version 1.x speaks RESP2/RESP3 and works against both. See
 //! ADR-0005 for the Valkey vs Redis 7.4+ licensing rationale.
 //!
-//! ## Tenant scoping
+//! ## Key prefixing
 //!
 //! Every [`Cache`] carries a static `prefix` (e.g. `"xiaoguai:"`).
 
@@ -430,7 +430,6 @@ mod tests {
         let got_a: Option<Sample> = a.get("k").await.expect("get a");
         assert_eq!(got_a, Some(v));
     }
-
 
     #[tokio::test]
     async fn in_process_delete_returns_true_for_existing_false_for_missing() {

@@ -84,8 +84,7 @@ pub struct WebhookTokenRecord {
 /// route doesn't drag the admin surface in.
 #[async_trait]
 pub trait WebhookTokenAdmin: Send + Sync {
-    async fn create(&self, route_id: &str)
-        -> Result<WebhookTokenRecord, WebhookTokenAdminError>;
+    async fn create(&self, route_id: &str) -> Result<WebhookTokenRecord, WebhookTokenAdminError>;
     /// List tokens. Returns at most `limit` rows (default 100, max 1000).
     async fn list(&self, limit: i64) -> Result<Vec<WebhookTokenRecord>, WebhookTokenAdminError>;
     /// Revoke (delete) a token. Returns `NotFound` if no row matched.
@@ -264,10 +263,7 @@ pub struct InMemoryWebhookTokenAdmin {
 
 #[async_trait]
 impl WebhookTokenAdmin for InMemoryWebhookTokenAdmin {
-    async fn create(
-        &self,
-        route_id: &str,
-    ) -> Result<WebhookTokenRecord, WebhookTokenAdminError> {
+    async fn create(&self, route_id: &str) -> Result<WebhookTokenRecord, WebhookTokenAdminError> {
         if route_id.is_empty() {
             return Err(WebhookTokenAdminError::InvalidArgument(
                 "route_id required".into(),

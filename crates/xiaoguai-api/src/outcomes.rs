@@ -265,10 +265,7 @@ mod tests {
         b.record(req("tickets_resolved", 5.0)).await.unwrap();
         // "24h" should include just-recorded entries.
         let range = OutcomeRange::from_shorthand("24h").unwrap();
-        let agg = b
-            .aggregate(Some("tickets_resolved"), range)
-            .await
-            .unwrap();
+        let agg = b.aggregate(Some("tickets_resolved"), range).await.unwrap();
         assert_eq!(agg.count, 1);
     }
 

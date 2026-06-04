@@ -127,10 +127,7 @@ async fn sqlite_memory_crud_and_cosine_recall() {
     );
 
     // Reading the memory back surfaces the persisted 384-dim embedding.
-    let fetched = store
-        .get_memory(cat.id)
-        .await
-        .expect("get_memory");
+    let fetched = store.get_memory(cat.id).await.expect("get_memory");
     assert_eq!(
         fetched.content_embedding.len(),
         EXPECTED_DIM,
@@ -215,10 +212,7 @@ async fn pg_ollama_semantic_recall_ranks_closest_first() {
         recalled[0].score
     );
 
-    let fetched = store
-        .get_memory(cat.id)
-        .await
-        .expect("get_memory");
+    let fetched = store.get_memory(cat.id).await.expect("get_memory");
     assert_eq!(
         fetched.content_embedding.len(),
         EXPECTED_DIM,

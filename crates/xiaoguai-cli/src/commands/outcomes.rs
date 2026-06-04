@@ -115,10 +115,7 @@ pub struct SummaryArgs {
 
 pub async fn summary(args: SummaryArgs) -> Result<Vec<JsonValue>> {
     let client = Client::new();
-    let url = format!(
-        "{}/v1/outcomes/summary?range={}",
-        args.api_base, args.range
-    );
+    let url = format!("{}/v1/outcomes/summary?range={}", args.api_base, args.range);
     let resp = client
         .get(&url)
         .send()

@@ -131,9 +131,7 @@ async fn register_rejects_empty_version() {
 async fn duplicate_in_scope_rejected() {
     let repo = MemoryRepo::default();
     register(&repo, args_stdio("dup")).await.unwrap();
-    let err = register(&repo, args_stdio("dup"))
-        .await
-        .expect_err("dup");
+    let err = register(&repo, args_stdio("dup")).await.expect_err("dup");
     let s = err.to_string();
     assert!(
         s.contains("duplicate") || s.contains("DuplicateKey"),

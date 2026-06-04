@@ -63,9 +63,7 @@ fn args_ok(name: &str) -> RegisterArgs {
 #[tokio::test]
 async fn register_creates_and_returns_provider() {
     let repo = MemoryRepo::default();
-    let p = register(&repo, args_ok("deepseek"))
-        .await
-        .expect("ok");
+    let p = register(&repo, args_ok("deepseek")).await.expect("ok");
     assert_eq!(p.name, "deepseek");
     assert_eq!(p.kind, ProviderKind::OpenAiCompat);
     assert!(p.id.as_str().starts_with("prov_"));
@@ -106,9 +104,7 @@ async fn register_rejects_empty_endpoint() {
 async fn duplicate_within_scope_is_rejected() {
     let repo = MemoryRepo::default();
     register(&repo, args_ok("dup")).await.expect("first");
-    let err = register(&repo, args_ok("dup"))
-        .await
-        .expect_err("dup");
+    let err = register(&repo, args_ok("dup")).await.expect_err("dup");
     let s = err.to_string();
     assert!(
         s.contains("duplicate") || s.contains("DuplicateKey"),
@@ -155,9 +151,7 @@ async fn remove_rejects_empty_id() {
 #[tokio::test]
 async fn format_table_renders_headers_and_rows() {
     let repo = MemoryRepo::default();
-    register(&repo, args_ok("deepseek"))
-        .await
-        .expect("ok");
+    register(&repo, args_ok("deepseek")).await.expect("ok");
     let rows = list(&repo, ListArgs {}).await.expect("ok");
     let table = format_table(&rows);
     assert!(table.contains("ID"));

@@ -405,10 +405,7 @@ mod tests {
     async fn no_policy_allows_unconditionally() {
         let store = Arc::new(InMemoryHotlPolicyStore::new());
         let enforcer = InMemoryHotlEnforcer::new(store);
-        let v = enforcer
-            .check("llm_call", 1.0)
-            .await
-            .unwrap();
+        let v = enforcer.check("llm_call", 1.0).await.unwrap();
         assert_eq!(v, HotlVerdict::Allow);
     }
 
@@ -421,10 +418,7 @@ mod tests {
         let mut enforcer = InMemoryHotlEnforcer::new(store);
         enforcer.fail_store = true;
 
-        let v = enforcer
-            .check("llm_call", 1.0)
-            .await
-            .unwrap();
+        let v = enforcer.check("llm_call", 1.0).await.unwrap();
         assert!(
             matches!(v, HotlVerdict::Deny(_)),
             "fail-closed must return Deny, got {v:?}"

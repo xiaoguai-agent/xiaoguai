@@ -52,12 +52,8 @@ async fn create_and_find_by_id() {
 async fn list_returns_all_rows() {
     let (pool, _guard) = test_setup().await;
     let repo = PgMcpServerRepository::new(pool);
-    repo.create(&sample_stdio("a", "1.0"))
-        .await
-        .unwrap();
-    repo.create(&sample_stdio("b", "1.0"))
-        .await
-        .unwrap();
+    repo.create(&sample_stdio("a", "1.0")).await.unwrap();
+    repo.create(&sample_stdio("b", "1.0")).await.unwrap();
 
     let rows = repo.list().await.unwrap();
     let names: Vec<&str> = rows.iter().map(|s| s.name.as_str()).collect();
@@ -69,13 +65,8 @@ async fn list_returns_all_rows() {
 async fn duplicate_name_version_rejected() {
     let (pool, _guard) = test_setup().await;
     let repo = PgMcpServerRepository::new(pool);
-    repo.create(&sample_stdio("fs", "1.0.0"))
-        .await
-        .unwrap();
-    let err = repo
-        .create(&sample_stdio("fs", "1.0.0"))
-        .await
-        .unwrap_err();
+    repo.create(&sample_stdio("fs", "1.0.0")).await.unwrap();
+    let err = repo.create(&sample_stdio("fs", "1.0.0")).await.unwrap_err();
     assert!(matches!(err, RepoError::DuplicateKey(_)), "{err:?}");
 }
 
@@ -83,12 +74,8 @@ async fn duplicate_name_version_rejected() {
 async fn same_name_different_version_ok() {
     let (pool, _guard) = test_setup().await;
     let repo = PgMcpServerRepository::new(pool);
-    repo.create(&sample_stdio("fs", "1.0.0"))
-        .await
-        .unwrap();
-    repo.create(&sample_stdio("fs", "1.1.0"))
-        .await
-        .unwrap();
+    repo.create(&sample_stdio("fs", "1.0.0")).await.unwrap();
+    repo.create(&sample_stdio("fs", "1.1.0")).await.unwrap();
 }
 
 #[tokio::test]
@@ -99,9 +86,5 @@ async fn delete_idempotent() {
     repo.create(&s).await.unwrap();
     repo.delete(s.id.as_str()).await.unwrap();
     repo.delete(s.id.as_str()).await.unwrap();
-    assert!(repo
-        .find_by_id(s.id.as_str())
-        .await
-        .unwrap()
-        .is_none());
+    assert!(repo.find_by_id(s.id.as_str()).await.unwrap().is_none());
 }

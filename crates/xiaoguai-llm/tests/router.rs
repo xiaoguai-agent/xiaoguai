@@ -164,8 +164,10 @@ async fn explicit_provider_missing_is_error() {
 #[tokio::test]
 async fn llm_backend_impl_uses_system_default() {
     let p_sys = ProviderId::new();
-    let backends: Vec<(ProviderId, Arc<dyn LlmBackend>)> =
-        vec![(p_sys.clone(), Arc::new(MockBackend::with_response("system")))];
+    let backends: Vec<(ProviderId, Arc<dyn LlmBackend>)> = vec![(
+        p_sys.clone(),
+        Arc::new(MockBackend::with_response("system")),
+    )];
 
     let mut sys_table = HashMap::new();
     sys_table.insert("m".to_string(), p_sys.clone());

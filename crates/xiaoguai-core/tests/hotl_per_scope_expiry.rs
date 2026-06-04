@@ -66,9 +66,7 @@ async fn drive_and_extract(
     scope: &str,
 ) -> (tokio::time::Instant, tokio::time::Instant) {
     let before = tokio::time::Instant::now();
-    let verdict =
-        <SuspendingHotlGate as xiaoguai_agent::HotlGate>::check(gate, scope, 1.0)
-            .await;
+    let verdict = <SuspendingHotlGate as xiaoguai_agent::HotlGate>::check(gate, scope, 1.0).await;
     let ticket = match verdict {
         xiaoguai_agent::HotlGateVerdict::Suspend { ticket, .. } => ticket,
         other => panic!("expected Suspend, got {other:?}"),

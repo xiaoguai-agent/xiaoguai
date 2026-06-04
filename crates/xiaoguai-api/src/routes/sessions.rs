@@ -124,10 +124,7 @@ pub async fn list_sessions(
         .ok_or_else(|| ApiError::BadRequest("user_id is required".into()))?;
     let limit = q.limit.unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, 1000);
     let offset = q.offset.unwrap_or(0).max(0);
-    let rows = state
-        .sessions
-        .list_by_user(&user_id, limit, offset)
-        .await?;
+    let rows = state.sessions.list_by_user(&user_id, limit, offset).await?;
     Ok(Json(rows.into_iter().map(Into::into).collect()))
 }
 

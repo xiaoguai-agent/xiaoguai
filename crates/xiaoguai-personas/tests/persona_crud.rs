@@ -213,10 +213,7 @@ async fn multi_persona() {
 #[tokio::test]
 async fn tool_allowlist_enforcement_unrestricted() {
     let repo = InMemoryPersonaRepository::new();
-    let p = repo
-        .create(&make_create("Unrestricted"))
-        .await
-        .unwrap();
+    let p = repo.create(&make_create("Unrestricted")).await.unwrap();
     assert!(tool_allowed(&p, "bash"));
     assert!(tool_allowed(&p, "web_search"));
     let tools = vec!["a".to_string(), "b".to_string()];

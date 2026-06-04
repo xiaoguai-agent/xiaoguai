@@ -152,10 +152,7 @@ pub async fn list_memories(
 }
 
 /// `GET /v1/memories/:id`
-pub async fn get_memory(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> impl IntoResponse {
+pub async fn get_memory(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
     let Some(store) = state.memory_store.as_ref() else {
         return memory_unavailable().into_response();
     };

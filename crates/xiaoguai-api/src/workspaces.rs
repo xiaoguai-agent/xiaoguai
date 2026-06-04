@@ -338,15 +338,11 @@ mod tests {
     #[tokio::test]
     async fn duplicate_name_rejected() {
         let repo = InMemoryWorkspaceRepository::new();
-        repo.create(CreateWorkspaceRequest {
-            name: "ops".into(),
-        })
-        .await
-        .unwrap();
+        repo.create(CreateWorkspaceRequest { name: "ops".into() })
+            .await
+            .unwrap();
         let err = repo
-            .create(CreateWorkspaceRequest {
-                name: "ops".into(),
-            })
+            .create(CreateWorkspaceRequest { name: "ops".into() })
             .await
             .unwrap_err();
         assert!(matches!(err, WorkspaceError::NameConflict));
@@ -435,9 +431,7 @@ mod tests {
     async fn empty_name_rejected() {
         let repo = InMemoryWorkspaceRepository::new();
         let err = repo
-            .create(CreateWorkspaceRequest {
-                name: "  ".into(),
-            })
+            .create(CreateWorkspaceRequest { name: "  ".into() })
             .await
             .unwrap_err();
         assert!(matches!(err, WorkspaceError::InvalidArgument(_)));

@@ -142,10 +142,7 @@ async fn gate_applies_rule_set_when_match_exists() {
     let args_in = json!({ "password": "secret", "user": "alice" });
 
     let verdict = <SuspendingHotlGate as xiaoguai_agent::HotlGate>::check_with_args(
-        &gate,
-        scope,
-        1.0,
-        &args_in,
+        &gate, scope, 1.0, &args_in,
     )
     .await;
 
@@ -266,10 +263,7 @@ async fn gate_threads_redaction_policy_id_to_audit() {
 
     let args_in = json!({ "password": "secret" });
     let _verdict = <SuspendingHotlGate as xiaoguai_agent::HotlGate>::check_with_args(
-        &gate,
-        scope,
-        1.0,
-        &args_in,
+        &gate, scope, 1.0, &args_in,
     )
     .await;
 

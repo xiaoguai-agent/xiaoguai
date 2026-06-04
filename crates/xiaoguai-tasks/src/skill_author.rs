@@ -858,9 +858,7 @@ mod tests {
         let known = known_tools();
         let ctx = ctx(&*repo, &*settings, &gate, &*audit, &known);
 
-        let err = propose(&ctx, "agent-1", good_manifest())
-            .await
-            .unwrap_err();
+        let err = propose(&ctx, "agent-1", good_manifest()).await.unwrap_err();
         assert!(matches!(err, SkillAuthorError::Disabled));
         // Off-by-default is also off-the-record — no audit row.
         assert!(audit.entries().is_empty());
@@ -878,9 +876,7 @@ mod tests {
 
         let mut m = good_manifest();
         m.tool_allowlist.push("rm_rf".into());
-        let err = propose(&ctx, "agent-1", m)
-            .await
-            .unwrap_err();
+        let err = propose(&ctx, "agent-1", m).await.unwrap_err();
         assert!(matches!(err, SkillAuthorError::InvalidManifest(_)));
         // Validation precedes gate — no audit rows, no gate consultation.
         assert!(audit.entries().is_empty());
@@ -896,9 +892,7 @@ mod tests {
         let known = known_tools();
         let ctx = ctx(&*repo, &*settings, &gate, &*audit, &known);
 
-        let err = propose(&ctx, "agent-1", good_manifest())
-            .await
-            .unwrap_err();
+        let err = propose(&ctx, "agent-1", good_manifest()).await.unwrap_err();
         match err {
             SkillAuthorError::Denied(r) => assert_eq!(r, "budget exceeded"),
             other => panic!("expected Denied, got {other:?}"),
@@ -921,9 +915,7 @@ mod tests {
         let known = known_tools();
         let ctx = ctx(&*repo, &*settings, &gate, &*audit, &known);
 
-        let row = propose(&ctx, "agent-1", good_manifest())
-            .await
-            .unwrap();
+        let row = propose(&ctx, "agent-1", good_manifest()).await.unwrap();
         assert_eq!(row.status, ProposalStatus::Pending);
         assert_eq!(audit.entries().len(), 2);
         assert_eq!(
@@ -948,9 +940,7 @@ mod tests {
         let known = known_tools();
         let ctx = ctx(&*repo, &*settings, &gate, &*audit, &known);
 
-        let row = propose(&ctx, "agent-1", good_manifest())
-            .await
-            .unwrap();
+        let row = propose(&ctx, "agent-1", good_manifest()).await.unwrap();
         let updated = approve_proposal(&ctx, &row.id, "admin-1", tmp.path())
             .await
             .unwrap();
@@ -1001,9 +991,7 @@ mod tests {
         // Pre-create the YAML at the target path.
         std::fs::write(tmp.path().join("ar-collector-0.1.0.yaml"), "stale: true").unwrap();
 
-        let row = propose(&ctx, "agent-1", good_manifest())
-            .await
-            .unwrap();
+        let row = propose(&ctx, "agent-1", good_manifest()).await.unwrap();
         let err = approve_proposal(&ctx, &row.id, "admin-1", tmp.path())
             .await
             .unwrap_err();
@@ -1026,9 +1014,7 @@ mod tests {
         let known = known_tools();
         let ctx = ctx(&*repo, &*settings, &gate, &*audit, &known);
 
-        let row = propose(&ctx, "agent-1", good_manifest())
-            .await
-            .unwrap();
+        let row = propose(&ctx, "agent-1", good_manifest()).await.unwrap();
         let updated = reject_proposal(&ctx, &row.id, "admin-1", "too broad")
             .await
             .unwrap();

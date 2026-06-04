@@ -32,11 +32,7 @@ pub trait MemoryStore: Send + Sync + 'static {
     async fn create_memory(&self, req: CreateMemoryRequest) -> MemoryResult<Memory>;
 
     /// Update mutable fields on an existing memory. Re-embeds content when it changes.
-    async fn update_memory(
-        &self,
-        id: Uuid,
-        req: UpdateMemoryRequest,
-    ) -> MemoryResult<Memory>;
+    async fn update_memory(&self, id: Uuid, req: UpdateMemoryRequest) -> MemoryResult<Memory>;
 
     /// Hard-delete a memory by id.
     async fn delete_memory(&self, id: Uuid) -> MemoryResult<()>;

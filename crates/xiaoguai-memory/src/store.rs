@@ -88,11 +88,7 @@ impl MemoryStore for InMemoryMemoryStore {
         Ok(memory)
     }
 
-    async fn update_memory(
-        &self,
-        id: Uuid,
-        req: UpdateMemoryRequest,
-    ) -> MemoryResult<Memory> {
+    async fn update_memory(&self, id: Uuid, req: UpdateMemoryRequest) -> MemoryResult<Memory> {
         // Re-embed when content changes.
         let new_embedding = if let Some(ref text) = req.content {
             Some(self.embedder.embed(text).await?)

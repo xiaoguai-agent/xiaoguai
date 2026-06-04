@@ -440,10 +440,7 @@ async fn eval_no_policy_unconditional_allow() {
     let enforcer = InMemoryHotlEnforcer::new(store);
 
     for i in 0..50 {
-        let v = enforcer
-            .check("llm_call", 999.0)
-            .await
-            .unwrap();
+        let v = enforcer.check("llm_call", 999.0).await.unwrap();
         assert_eq!(
             v,
             HotlVerdict::Allow,

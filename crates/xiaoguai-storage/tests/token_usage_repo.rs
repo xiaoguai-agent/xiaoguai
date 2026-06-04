@@ -37,10 +37,7 @@ async fn batch_insert_and_list() {
     ];
     repo.record_batch(&batch).await.expect("batch insert");
 
-    let listed = repo
-        .list(10)
-        .await
-        .expect("list");
+    let listed = repo.list(10).await.expect("list");
     assert_eq!(listed.len(), 3);
 }
 
@@ -49,10 +46,7 @@ async fn empty_batch_is_noop() {
     let (pool, _guard) = test_setup().await;
     let repo = PgTokenUsageRepository::new(pool);
     repo.record_batch(&[]).await.expect("empty batch");
-    let listed = repo
-        .list(10)
-        .await
-        .expect("list");
+    let listed = repo.list(10).await.expect("list");
     assert!(listed.is_empty());
 }
 
@@ -73,10 +67,7 @@ async fn null_token_counts_are_stored() {
         request_id: None,
     };
     repo.record_batch(&[entry]).await.expect("insert");
-    let listed = repo
-        .list(1)
-        .await
-        .expect("list");
+    let listed = repo.list(1).await.expect("list");
     assert_eq!(listed.len(), 1);
     assert!(listed[0].entry.prompt_tokens.is_none());
     assert!(listed[0].entry.completion_tokens.is_none());
@@ -89,9 +80,6 @@ async fn list_respects_limit() {
     let repo = PgTokenUsageRepository::new(pool);
     let batch: Vec<_> = (0..5).map(|i| sample_entry(i, i)).collect();
     repo.record_batch(&batch).await.expect("batch");
-    let listed = repo
-        .list(3)
-        .await
-        .expect("list");
+    let listed = repo.list(3).await.expect("list");
     assert_eq!(listed.len(), 3);
 }

@@ -25,9 +25,7 @@ async fn create_and_find_by_id_round_trip() {
     let (pool, _guard) = test_setup().await;
     let repo = PgUserRepository::new(pool);
 
-    let user = sample_user("alice@example.com",
-        vec![Role::TenantAdmin, Role::Member],
-    );
+    let user = sample_user("alice@example.com", vec![Role::TenantAdmin, Role::Member]);
     repo.create(&user).await.expect("create");
 
     let found = repo
@@ -86,14 +84,8 @@ async fn list_pagination() {
         repo.create(&u).await.expect("create");
     }
 
-    let page1 = repo
-        .list(2, 0)
-        .await
-        .expect("list");
-    let page2 = repo
-        .list(2, 2)
-        .await
-        .expect("list");
+    let page1 = repo.list(2, 0).await.expect("list");
+    let page2 = repo.list(2, 2).await.expect("list");
 
     assert_eq!(page1.len(), 2);
     assert_eq!(page2.len(), 2);

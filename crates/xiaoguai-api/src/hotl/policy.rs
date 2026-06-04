@@ -59,8 +59,7 @@ pub enum HotlPolicyStoreError {
 #[async_trait]
 pub trait HotlPolicyStore: Send + Sync + std::fmt::Debug {
     /// Return all policies (optionally filtered by `scope`).
-    async fn list(&self, scope: Option<&str>)
-        -> Result<Vec<HotlPolicy>, HotlPolicyStoreError>;
+    async fn list(&self, scope: Option<&str>) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError>;
 
     /// Persist a new policy. Generates and returns the `id`.
     async fn create(
@@ -73,8 +72,7 @@ pub trait HotlPolicyStore: Send + Sync + std::fmt::Debug {
 
     /// Return all active policies for `scope` — called by the enforcer
     /// before every gated action.
-    async fn policies_for(&self, scope: &str)
-        -> Result<Vec<HotlPolicy>, HotlPolicyStoreError>;
+    async fn policies_for(&self, scope: &str) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError>;
 }
 
 // ── in-memory implementation (tests / dev) ────────────────────────────────────
@@ -102,10 +100,7 @@ impl InMemoryHotlPolicyStore {
 
 #[async_trait]
 impl HotlPolicyStore for InMemoryHotlPolicyStore {
-    async fn list(
-        &self,
-        scope: Option<&str>,
-    ) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
+    async fn list(&self, scope: Option<&str>) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
         let guard = self.inner.lock();
         let rows = guard
             .iter()
@@ -166,10 +161,7 @@ impl HotlPolicyStore for InMemoryHotlPolicyStore {
         Ok(())
     }
 
-    async fn policies_for(
-        &self,
-        scope: &str,
-    ) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
+    async fn policies_for(&self, scope: &str) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
         self.list(Some(scope)).await
     }
 }

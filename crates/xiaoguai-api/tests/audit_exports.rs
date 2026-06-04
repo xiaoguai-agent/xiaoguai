@@ -129,9 +129,12 @@ async fn happy_path_returns_bundle_bytes_with_correct_content_type() {
 #[tokio::test]
 async fn csv_response_uses_text_csv_content_type() {
     let canned = b"# bundle-header: {}\r\nid,ts,actor,action,resource,details_summary\r\n".to_vec();
-    let exporter =
-        Arc::new(StaticAuditChainExporter::new().with(
-        xiaoguai_audit::OWNER_TENANT_ID, "soc2", "csv", Ok(canned.clone())));
+    let exporter = Arc::new(StaticAuditChainExporter::new().with(
+        xiaoguai_audit::OWNER_TENANT_ID,
+        "soc2",
+        "csv",
+        Ok(canned.clone()),
+    ));
     let app = router(build_state(Some(exporter)));
     let mut body = request_body();
     body["format"] = json!("csv");

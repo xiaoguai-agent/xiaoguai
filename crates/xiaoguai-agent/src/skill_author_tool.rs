@@ -50,8 +50,7 @@ pub trait ProposeSkillBackend: Send + Sync + std::fmt::Debug {
     /// Returns `Ok(proposal_id)` on success, `Err(human-readable_reason)`
     /// on validator/gate denial. The reason becomes the synthetic
     /// tool-result content the agent observes.
-    async fn invoke(&self, proposed_by: &str, args: ProposeSkillArgs)
-        -> Result<String, String>;
+    async fn invoke(&self, proposed_by: &str, args: ProposeSkillArgs) -> Result<String, String>;
 }
 
 /// Synthetic MCP client exposing `propose_skill`. Stateless beyond the

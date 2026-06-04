@@ -61,9 +61,7 @@ pub struct VerifyAuditResponse {
 ///
 /// # Errors
 /// Returns an error if the verifier is not wired or the query fails.
-pub async fn verify_audit(
-    State(state): State<AppState>,
-) -> ApiResult<Json<VerifyAuditResponse>> {
+pub async fn verify_audit(State(state): State<AppState>) -> ApiResult<Json<VerifyAuditResponse>> {
     let verifier = state
         .audit_verifier
         .as_ref()
@@ -387,10 +385,7 @@ pub async fn scheduler_list_tokens(
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("webhook token admin not wired".into()))?;
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let rows = admin
-        .list(limit)
-        .await
-        .map_err(token_admin_err_to_api)?;
+    let rows = admin.list(limit).await.map_err(token_admin_err_to_api)?;
     Ok(Json(rows.into_iter().map(Into::into).collect()))
 }
 

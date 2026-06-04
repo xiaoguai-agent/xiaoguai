@@ -90,10 +90,13 @@ impl JobExecutor for RuntimeJobExecutor {
             .ok_or_else(|| "scheduled job payload missing string field `prompt`".to_string())?;
 
         let history = vec![LlmMessage::user(prompt)];
-        let outcome =
-            run_to_completion(&self.ctx, history, tokio_util::sync::CancellationToken::new())
-            .await
-            .map_err(|e| format!("runtime: {e}"))?;
+        let outcome = run_to_completion(
+            &self.ctx,
+            history,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .map_err(|e| format!("runtime: {e}"))?;
 
         // v0.12.1: optionally persist a synthetic session so the
         // audit-first console can drill into the transcript. We do this

@@ -131,10 +131,7 @@ async fn agent_proposes_then_admin_approves_full_lifecycle() {
         ]
     );
     // Pending visible in the list view.
-    let pending = repo
-        .list(Some(ProposalStatus::Pending))
-        .await
-        .unwrap();
+    let pending = repo.list(Some(ProposalStatus::Pending)).await.unwrap();
     assert_eq!(pending.len(), 1);
 
     // ── Step 4: Admin approves ───────────────────────────────────────────
@@ -174,10 +171,7 @@ async fn agent_proposes_then_admin_approves_full_lifecycle() {
         .await
         .unwrap()
         .is_empty());
-    let installed_list = repo
-        .list(Some(ProposalStatus::Installed))
-        .await
-        .unwrap();
+    let installed_list = repo.list(Some(ProposalStatus::Installed)).await.unwrap();
     assert_eq!(installed_list.len(), 1);
 }
 
