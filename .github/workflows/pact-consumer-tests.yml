@@ -109,19 +109,22 @@ jobs:
         # '@latest' floats to releases that require a newer Go toolchain than
         # setup-go provides (e.g. v2.5.1 needs Go >= 1.25 vs. our 1.22), and a
         # CLI/library version mismatch also breaks the downloaded native FFI lib.
+        #
+        # Install the FFI lib into /tmp: pact-go v2.0.7 bakes
+        #   -L/tmp ... -Wl,-rpath -Wl,/tmp -lpact_ffi
+        # into its cgo LDFLAGS, so /tmp is searched both at link time (-L) and
+        # at run time (rpath). The previous --libDir /tmp/pact_lib was on none
+        # of pact-go's baked -L paths, so the test failed to link -lpact_ffi.
         run: |
           go install github.com/pact-foundation/pact-go/v2@v2.0.7
-          pact-go install --libDir /tmp/pact_lib 2>/dev/null || true
+          pact-go install --libDir /tmp
         working-directory: tests/pact/wave3/consumers/go-sdk
-        env:
-          PACT_GO_LIB_DOWNLOAD_PATH: /tmp/pact_lib
 
       - name: Run Pact consumer tests
         working-directory: tests/pact/wave3/consumers/go-sdk
         run: go test ./... -v -timeout 120s
         env:
-          LD_LIBRARY_PATH: /tmp/pact_lib
-          PACT_GO_LIB_DOWNLOAD_PATH: /tmp/pact_lib
+          LD_LIBRARY_PATH: /tmp
 
       - name: Upload pact file
         uses: actions/upload-artifact@v7

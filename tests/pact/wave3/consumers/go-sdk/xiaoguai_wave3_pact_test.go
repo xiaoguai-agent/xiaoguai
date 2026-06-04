@@ -23,6 +23,7 @@ import (
 
 	"github.com/pact-foundation/pact-go/v2/consumer"
 	"github.com/pact-foundation/pact-go/v2/matchers"
+	"github.com/pact-foundation/pact-go/v2/models"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,7 +153,7 @@ func TestListHotlPolicies(t *testing.T) {
 		AddInteraction().
 		Given("tenant has one HotL policy").
 		UponReceiving("a GET /v1/hotl/policies request for tenant 11111111").
-		WithRequestPathMatcher("/v1/hotl/policies", "GET", func(b *consumer.V3RequestBuilder) {
+		WithRequest("GET", "/v1/hotl/policies", func(b *consumer.V3RequestBuilder) {
 			b.Query("tenant_id", matchers.String(tenantUUID)).
 				Header("Authorization", matchers.String(bearer))
 		}).
@@ -182,7 +183,7 @@ func TestCreateHotlPolicy(t *testing.T) {
 		AddInteraction().
 		Given("HotL policy store is available").
 		UponReceiving("a POST /v1/hotl/policies request").
-		WithRequestPathMatcher("/v1/hotl/policies", "POST", func(b *consumer.V3RequestBuilder) {
+		WithRequest("POST", "/v1/hotl/policies", func(b *consumer.V3RequestBuilder) {
 			b.Header("Authorization", matchers.String(bearer)).
 				Header("Content-Type", matchers.String("application/json")).
 				JSONBody(map[string]any{
@@ -228,9 +229,9 @@ func TestGetHotlPolicy(t *testing.T) {
 
 	mock.
 		AddInteraction().
-		GivenWithParameter("HotL policy exists", map[string]any{"id": policyUUID}).
+		GivenWithParameter(models.ProviderState{Name: "HotL policy exists", Parameters: map[string]any{"id": policyUUID}}).
 		UponReceiving(fmt.Sprintf("a GET /v1/hotl/policies/%s request", policyUUID)).
-		WithRequestPathMatcher(fmt.Sprintf("/v1/hotl/policies/%s", policyUUID), "GET",
+		WithRequest("GET", fmt.Sprintf("/v1/hotl/policies/%s", policyUUID),
 			func(b *consumer.V3RequestBuilder) {
 				b.Header("Authorization", matchers.String(bearer))
 			}).
@@ -262,9 +263,9 @@ func TestUpdateHotlPolicy(t *testing.T) {
 
 	mock.
 		AddInteraction().
-		GivenWithParameter("HotL policy exists", map[string]any{"id": policyUUID}).
+		GivenWithParameter(models.ProviderState{Name: "HotL policy exists", Parameters: map[string]any{"id": policyUUID}}).
 		UponReceiving(fmt.Sprintf("a PUT /v1/hotl/policies/%s request", policyUUID)).
-		WithRequestPathMatcher(fmt.Sprintf("/v1/hotl/policies/%s", policyUUID), "PUT",
+		WithRequest("PUT", fmt.Sprintf("/v1/hotl/policies/%s", policyUUID),
 			func(b *consumer.V3RequestBuilder) {
 				b.Header("Authorization", matchers.String(bearer)).
 					Header("Content-Type", matchers.String("application/json")).
@@ -308,9 +309,9 @@ func TestDeleteHotlPolicy(t *testing.T) {
 
 	mock.
 		AddInteraction().
-		GivenWithParameter("HotL policy exists", map[string]any{"id": policyUUID}).
+		GivenWithParameter(models.ProviderState{Name: "HotL policy exists", Parameters: map[string]any{"id": policyUUID}}).
 		UponReceiving(fmt.Sprintf("a DELETE /v1/hotl/policies/%s request", policyUUID)).
-		WithRequestPathMatcher(fmt.Sprintf("/v1/hotl/policies/%s", policyUUID), "DELETE",
+		WithRequest("DELETE", fmt.Sprintf("/v1/hotl/policies/%s", policyUUID),
 			func(b *consumer.V3RequestBuilder) {
 				b.Header("Authorization", matchers.String(bearer))
 			}).
@@ -337,7 +338,7 @@ func TestHotlCheckAllow(t *testing.T) {
 		AddInteraction().
 		Given("tenant HotL policy exists and budget is within limits").
 		UponReceiving("a POST /v1/hotl/check request within budget").
-		WithRequestPathMatcher("/v1/hotl/check", "POST", func(b *consumer.V3RequestBuilder) {
+		WithRequest("POST", "/v1/hotl/check", func(b *consumer.V3RequestBuilder) {
 			b.Header("Authorization", matchers.String(bearer)).
 				Header("Content-Type", matchers.String("application/json")).
 				JSONBody(map[string]any{
@@ -386,7 +387,7 @@ func TestRecordOutcome(t *testing.T) {
 		AddInteraction().
 		Given("outcome writer is available").
 		UponReceiving("a POST /v1/outcomes request").
-		WithRequestPathMatcher("/v1/outcomes", "POST", func(b *consumer.V3RequestBuilder) {
+		WithRequest("POST", "/v1/outcomes", func(b *consumer.V3RequestBuilder) {
 			b.Header("Authorization", matchers.String(bearer)).
 				Header("Content-Type", matchers.String("application/json")).
 				JSONBody(map[string]any{
@@ -438,7 +439,7 @@ func TestOutcomesSummary(t *testing.T) {
 		AddInteraction().
 		Given("tenant has recorded outcomes").
 		UponReceiving("a GET /v1/outcomes/summary request for 7d").
-		WithRequestPathMatcher("/v1/outcomes/summary", "GET", func(b *consumer.V3RequestBuilder) {
+		WithRequest("GET", "/v1/outcomes/summary", func(b *consumer.V3RequestBuilder) {
 			b.Query("tenant_id", matchers.String("tenant_acme")).
 				Query("range", matchers.String("7d")).
 				Header("Authorization", matchers.String(bearer))
@@ -484,7 +485,7 @@ func TestOutcomesTimeseries(t *testing.T) {
 		AddInteraction().
 		Given("tenant has recorded outcomes").
 		UponReceiving("a GET /v1/outcomes/timeseries request for 7d").
-		WithRequestPathMatcher("/v1/outcomes/timeseries", "GET", func(b *consumer.V3RequestBuilder) {
+		WithRequest("GET", "/v1/outcomes/timeseries", func(b *consumer.V3RequestBuilder) {
 			b.Query("tenant_id", matchers.String("tenant_acme")).
 				Query("range", matchers.String("7d")).
 				Header("Authorization", matchers.String(bearer))
@@ -540,7 +541,7 @@ func TestListInstalledSkills(t *testing.T) {
 		AddInteraction().
 		Given("tenant has installed skill packs").
 		UponReceiving("a GET /v1/skills/installed request").
-		WithRequestPathMatcher("/v1/skills/installed", "GET", func(b *consumer.V3RequestBuilder) {
+		WithRequest("GET", "/v1/skills/installed", func(b *consumer.V3RequestBuilder) {
 			b.Query("tenant_id", matchers.String("tenant_acme")).
 				Header("Authorization", matchers.String(bearer))
 		}).
@@ -570,7 +571,7 @@ func TestInstallSkillPack(t *testing.T) {
 		AddInteraction().
 		Given("skill pack pr-review exists in catalog").
 		UponReceiving("a POST /v1/skills/install request").
-		WithRequestPathMatcher("/v1/skills/install", "POST", func(b *consumer.V3RequestBuilder) {
+		WithRequest("POST", "/v1/skills/install", func(b *consumer.V3RequestBuilder) {
 			b.Header("Authorization", matchers.String(bearer)).
 				Header("Content-Type", matchers.String("application/json")).
 				JSONBody(map[string]any{
@@ -610,9 +611,9 @@ func TestUninstallSkillPack(t *testing.T) {
 
 	mock.
 		AddInteraction().
-		GivenWithParameter("skill pack installation exists", map[string]any{"id": installUUID}).
+		GivenWithParameter(models.ProviderState{Name: "skill pack installation exists", Parameters: map[string]any{"id": installUUID}}).
 		UponReceiving(fmt.Sprintf("a DELETE /v1/skills/install/%s request", installUUID)).
-		WithRequestPathMatcher(fmt.Sprintf("/v1/skills/install/%s", installUUID), "DELETE",
+		WithRequest("DELETE", fmt.Sprintf("/v1/skills/install/%s", installUUID),
 			func(b *consumer.V3RequestBuilder) {
 				b.Header("Authorization", matchers.String(bearer))
 			}).
