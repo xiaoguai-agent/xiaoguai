@@ -38,6 +38,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The tarball filename already uses the tag VERSION (below), but the
+      # binary's own `--version` reads Cargo.toml — inject the tag version so
+      # the two agree. Cargo.toml stays 0.1.0 in git (cargo-dist was dropped).
+      - name: Set workspace version from tag
+        if: github.ref_type == 'tag'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = \"0.1.0\"/version = \"${VERSION}\"/" Cargo.toml
+          echo "Cargo.toml workspace version -> ${VERSION}"
+
       - uses: dtolnay/rust-toolchain@1.93.0
         with:
           targets: ${{ matrix.target }}
