@@ -240,7 +240,7 @@ async fn summary_returns_by_kind_map() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/v1/outcomes/summary?tenant_id=ten&range=30d")
+                .uri("/v1/outcomes/summary?range=30d")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -261,7 +261,7 @@ async fn summary_503_when_unwired() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/v1/outcomes/summary?tenant_id=ten")
+                .uri("/v1/outcomes/summary")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -279,7 +279,7 @@ async fn summary_defaults_empty_tenant_to_owner() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/v1/outcomes/summary?tenant_id=")
+                .uri("/v1/outcomes/summary")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -295,7 +295,7 @@ async fn summary_rejects_unknown_range() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/v1/outcomes/summary?tenant_id=ten&range=99y")
+                .uri("/v1/outcomes/summary?range=99y")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -332,7 +332,7 @@ async fn timeseries_returns_day_buckets() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/v1/outcomes/timeseries?tenant_id=ten&range=7d&kind=deals_closed")
+                .uri("/v1/outcomes/timeseries?range=7d&kind=deals_closed")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -353,7 +353,7 @@ async fn timeseries_503_when_unwired() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/v1/outcomes/timeseries?tenant_id=ten")
+                .uri("/v1/outcomes/timeseries")
                 .body(Body::empty())
                 .unwrap(),
         )

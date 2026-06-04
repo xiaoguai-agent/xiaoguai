@@ -2,7 +2,7 @@
 //!
 //! Boots the production router with an `InMemoryPersonaRepository` behind
 //! `AppState.personas` and exercises:
-//!   * `GET /v1/personas?tenant_id=…` returns 200 + JSON array (was 404
+//!   * `GET /v1/personas` returns 200 + JSON array (was 404
 //!     before mounting).
 //!   * `POST /v1/personas` round-trips through to the repository.
 //!   * The 503 fallback applies when `personas` is `None`.
@@ -20,7 +20,6 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
-use uuid::Uuid;
 use xiaoguai_agent::{AgentConfig, Toolbox};
 use xiaoguai_api::{router, AppState, CancelRegistry};
 use xiaoguai_llm::mock::ScriptStep;
@@ -83,9 +82,8 @@ async fn list_personas_returns_200_with_empty_array_when_repo_is_empty() {
     let repo: Arc<dyn PersonaRepository> = Arc::new(InMemoryPersonaRepository::new());
     let app = router(build_state(Some(repo)));
 
-    let tenant_id = Uuid::new_v4();
     let req = Request::builder()
-        .uri(format!("/v1/personas?tenant_id={tenant_id}"))
+        .uri("/v1/personas")
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -108,7 +106,6 @@ async fn create_then_list_round_trip() {
     let repo: Arc<dyn PersonaRepository> = Arc::new(InMemoryPersonaRepository::new());
     let app = router(build_state(Some(repo)));
 
-    let tenant_id = Uuid::new_v4();
     let create_body = serde_json::json!({
         "name": "Support Bot",
         "system_prompt": "You are a helpful support agent.",
@@ -126,7 +123,7 @@ async fn create_then_list_round_trip() {
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     let req = Request::builder()
-        .uri(format!("/v1/personas?tenant_id={tenant_id}"))
+        .uri("/v1/personas")
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -141,9 +138,8 @@ async fn create_then_list_round_trip() {
 #[tokio::test]
 async fn list_personas_returns_503_when_repo_is_none() {
     let app = router(build_state(None));
-    let tenant_id = Uuid::new_v4();
     let req = Request::builder()
-        .uri(format!("/v1/personas?tenant_id={tenant_id}"))
+        .uri("/v1/personas")
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();

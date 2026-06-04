@@ -856,7 +856,6 @@ mod scheduler_nl_jobs {
     fn sample_job() -> serde_json::Value {
         serde_json::json!({
             "id": "j-from-llm",
-            "tenant_id": null,
             "name": "scan-hn-daily",
             "description": null,
             "trigger": {"type": "cron", "expr": "0 0 8 * * *"},
@@ -1194,7 +1193,7 @@ mod scheduler_token_admin {
             .oneshot(
                 Request::builder()
                     .method("GET")
-                    .uri("/v1/admin/scheduler/tokens?tenant_id=t")
+                    .uri("/v1/admin/scheduler/tokens")
                     .body(Body::empty())
                     .unwrap(),
             )

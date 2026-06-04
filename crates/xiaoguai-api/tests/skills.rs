@@ -138,7 +138,7 @@ async fn installed_503_when_repo_not_wired() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/v1/skills/installed?tenant=t1")
+                .uri("/v1/skills/installed")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -177,7 +177,7 @@ async fn install_then_list_then_uninstall() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/v1/skills/installed?tenant=t1")
+                .uri("/v1/skills/installed")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -204,7 +204,7 @@ async fn install_then_list_then_uninstall() {
     let after_uninstall_resp = app
         .oneshot(
             Request::builder()
-                .uri("/v1/skills/installed?tenant=t1")
+                .uri("/v1/skills/installed")
                 .body(Body::empty())
                 .unwrap(),
         )

@@ -84,7 +84,7 @@ async fn list_503_when_store_not_wired() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri(format!("/v1/hotl/policies?tenant_id={}", Uuid::new_v4()))
+                .uri("/v1/hotl/policies")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -124,11 +124,10 @@ async fn create_503_when_store_not_wired() {
 async fn list_empty_for_unknown_tenant() {
     let store: Arc<dyn HotlPolicyStore> = Arc::new(InMemoryHotlPolicyStore::new());
     let app = router(build_state(Some(store)));
-    let tid = Uuid::new_v4();
     let resp = app
         .oneshot(
             Request::builder()
-                .uri(format!("/v1/hotl/policies?tenant_id={tid}"))
+                .uri("/v1/hotl/policies")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -175,7 +174,6 @@ async fn create_returns_201_with_policy() {
 async fn create_then_list_shows_policy() {
     let store: Arc<dyn HotlPolicyStore> = Arc::new(InMemoryHotlPolicyStore::new());
     let app = router(build_state(Some(store)));
-    let tid = Uuid::new_v4();
 
     let req_body = serde_json::to_vec(&CreateHotlPolicyRequest {
         scope: "email_send".into(),
@@ -205,7 +203,7 @@ async fn create_then_list_shows_policy() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri(format!("/v1/hotl/policies?tenant_id={tid}"))
+                .uri("/v1/hotl/policies")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -222,7 +220,6 @@ async fn create_then_list_shows_policy() {
 async fn delete_existing_returns_204() {
     let store: Arc<dyn HotlPolicyStore> = Arc::new(InMemoryHotlPolicyStore::new());
     let app = router(build_state(Some(store)));
-    let tid = Uuid::new_v4();
 
     // Create first.
     let req_body = serde_json::to_vec(&CreateHotlPolicyRequest {
@@ -266,7 +263,7 @@ async fn delete_existing_returns_204() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri(format!("/v1/hotl/policies?tenant_id={tid}"))
+                .uri("/v1/hotl/policies")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -350,7 +347,6 @@ async fn create_with_no_limits_returns_400() {
 async fn list_scope_filter_works() {
     let store: Arc<dyn HotlPolicyStore> = Arc::new(InMemoryHotlPolicyStore::new());
     let app = router(build_state(Some(Arc::clone(&store))));
-    let tid = Uuid::new_v4();
 
     // Create two policies with different scopes.
     for scope in ["llm_call", "email_send"] {
@@ -370,7 +366,7 @@ async fn list_scope_filter_works() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri(format!("/v1/hotl/policies?tenant_id={tid}&scope=llm_call"))
+                .uri("/v1/hotl/policies?scope=llm_call")
                 .body(Body::empty())
                 .unwrap(),
         )

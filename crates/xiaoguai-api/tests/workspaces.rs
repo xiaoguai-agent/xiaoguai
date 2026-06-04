@@ -85,7 +85,7 @@ async fn list_503_when_unwired() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/v1/workspaces?tenant_id={}", Uuid::new_v4()))
+                .uri("/v1/workspaces")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -98,12 +98,11 @@ async fn list_503_when_unwired() {
 async fn list_empty_for_new_tenant() {
     let repo = InMemoryWorkspaceRepository::new();
     let app = router(build_state(Some(repo)));
-    let tenant = Uuid::new_v4();
     let resp = app
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/v1/workspaces?tenant_id={tenant}"))
+                .uri("/v1/workspaces")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -289,7 +288,6 @@ async fn archive_unknown_returns_404() {
 #[tokio::test]
 async fn seed_default_then_list_finds_it() {
     let repo = InMemoryWorkspaceRepository::new();
-    let tenant = Uuid::new_v4();
     repo.seed_default();
 
     let app = router(build_state(Some(repo)));
@@ -297,7 +295,7 @@ async fn seed_default_then_list_finds_it() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/v1/workspaces?tenant_id={tenant}"))
+                .uri("/v1/workspaces")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -313,7 +311,6 @@ async fn seed_default_then_list_finds_it() {
 #[tokio::test]
 async fn cannot_archive_default_workspace_returns_400() {
     let repo = InMemoryWorkspaceRepository::new();
-    let tenant = Uuid::new_v4();
     repo.seed_default();
 
     // Find the default workspace id via list.
@@ -322,7 +319,7 @@ async fn cannot_archive_default_workspace_returns_400() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/v1/workspaces?tenant_id={tenant}"))
+                .uri("/v1/workspaces")
                 .body(Body::empty())
                 .unwrap(),
         )
