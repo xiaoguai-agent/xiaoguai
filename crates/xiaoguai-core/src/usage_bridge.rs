@@ -32,11 +32,11 @@ use xiaoguai_api::usage::{
 };
 use xiaoguai_storage::ReadWritePool;
 
-pub struct PgUsageReader {
+pub struct SqliteUsageReader {
     pool: ReadWritePool,
 }
 
-impl PgUsageReader {
+impl SqliteUsageReader {
     #[must_use]
     pub fn new(pool: ReadWritePool) -> Self {
         Self { pool }
@@ -57,7 +57,7 @@ fn map_err(e: sqlx::Error) -> UsageError {
 }
 
 #[async_trait]
-impl UsageReader for PgUsageReader {
+impl UsageReader for SqliteUsageReader {
     async fn aggregate(&self, query: UsageQuery) -> Result<UsageReport, UsageError> {
         if let (Some(since), Some(until)) = (query.since, query.until) {
             if since > until {
@@ -261,7 +261,7 @@ mod tests {
         .await
         .unwrap();
 
-        let reader = PgUsageReader::new(pool.into());
+        let reader = SqliteUsageReader::new(pool.into());
         let report = reader
             .aggregate(UsageQuery {
                 since: None,

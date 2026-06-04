@@ -1,7 +1,7 @@
 //! `/v1/admin/*` — administrative endpoints.
 //!
 //! `GET /v1/admin/audit` is backed by the HMAC-chained audit log
-//! (`xiaoguai-audit::PgAuditSink` in production via the [`AuditReader`]
+//! (`xiaoguai-audit::SqliteAuditSink` in production via the [`AuditReader`]
 //! bridge).
 //!
 //! Under DEC-033 these endpoints carry no RBAC of their own — when

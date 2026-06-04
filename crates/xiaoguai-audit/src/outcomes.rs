@@ -8,7 +8,7 @@
 //! - The trait lives here so route handlers remain storage-agnostic.
 //! - [`InMemoryOutcomeRecorder`] is the in-process implementation for unit
 //!   tests; it records calls so tests can assert without touching PG.
-//! - `PgOutcomeRecorder` lives in `xiaoguai-core/src/outcomes_bridge.rs`
+//! - `SqliteOutcomeRecorder` lives in `xiaoguai-core/src/outcomes_bridge.rs`
 //!   (wired at runtime against the `agent_outcomes` table, migration 0012).
 
 use std::collections::BTreeMap;

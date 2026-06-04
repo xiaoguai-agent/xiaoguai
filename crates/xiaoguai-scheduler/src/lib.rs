@@ -70,7 +70,6 @@ pub mod budget;
 pub mod composite_executor;
 pub mod executor;
 pub mod job;
-pub mod pg_repository;
 pub mod proactive;
 pub mod repository;
 pub mod retry;
@@ -79,6 +78,7 @@ pub mod runtime_executor;
 pub mod sink;
 pub mod sinks;
 pub mod sources;
+pub mod sqlite_repository;
 pub mod trigger;
 pub mod trigger_source;
 
@@ -89,7 +89,6 @@ pub use budget::{
 pub use composite_executor::CompositeExecutor;
 pub use executor::{EchoExecutor, ExecutionOutcome, JobExecutor};
 pub use job::{JobRun, JobRunStatus, ScheduledJob};
-pub use pg_repository::{PgJobRepository, PgJobRunRepository};
 pub use proactive::{
     AlwaysFireChecker, NeverFireChecker, ProactiveChecker, ProactiveCtx, ProactiveError,
     ScriptedChecker,
@@ -106,6 +105,7 @@ pub use sinks::{
     TelegramPushSink, TelegramSinkConfig,
 };
 pub use sources::{FileWatchRoute, FileWatchSource, WebhookRoute, WebhookSource};
+pub use sqlite_repository::{SqliteJobRepository, SqliteJobRunRepository};
 pub use trigger::{Trigger, TriggerError};
 pub use trigger_source::{
     event_channel, EventReceiver, EventSender, SourceError, TriggerEvent, TriggerSource,

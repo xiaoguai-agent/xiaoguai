@@ -11,22 +11,22 @@
 //! generalises that into the [`ImHistoryStore`] trait, with two impls:
 //!
 //! * [`ConversationHistory`] (in-process, single-replica) — default.
-//! * [`PgImHistoryStore`] — durable, multi-replica. Maps external IM IDs
+//! * [`SqliteImHistoryStore`] — durable, multi-replica. Maps external IM IDs
 //!   to internal tenant/user/session rows via the `im_identities` /
 //!   `im_conversations` tables.
 
 #![forbid(unsafe_code)]
 
 pub mod history;
-pub mod pg_history;
 pub mod provider;
 pub mod router;
+pub mod sqlite_history;
 
 pub use history::{ConversationHistory, ConversationIdent, HistoryError, ImHistoryStore};
-pub use pg_history::PgImHistoryStore;
 pub use provider::{ImEvent, ImProvider, IncomingMessage, OutgoingReply, ProviderError, Webhook};
 pub use router::{
     mount_dingtalk, mount_dingtalk_with_history, mount_feishu, mount_feishu_with_history,
     mount_wecom, mount_wecom_with_history, run_agent_and_reply, GatewayState,
     DEFAULT_HISTORY_TURNS,
 };
+pub use sqlite_history::SqliteImHistoryStore;

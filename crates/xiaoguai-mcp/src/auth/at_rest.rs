@@ -4,8 +4,7 @@
 //!
 //! `mcp_oauth_tokens.refresh_token` is the long-lived credential for an
 //! outbound MCP server. Up to and including PR #73 / DEC-015 it was stored
-//! cleartext in Postgres — RLS provided tenant-isolation but a Postgres
-//! backup leak or read-replica compromise meant the refresh tokens were
+//! cleartext at rest — a database backup leak or file-system compromise meant the refresh tokens were
 //! exfiltrable. This module closes that gap: refresh tokens are
 //! authenticated-encrypted with a key the operator supplies out-of-band
 //! and which the DB has never seen.

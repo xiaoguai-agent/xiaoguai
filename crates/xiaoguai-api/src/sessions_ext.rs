@@ -6,7 +6,7 @@
 //! to coordinate atomically. Rather than have the api crate know
 //! about the production impl's transaction handling, we expose a
 //! narrow [`SessionForker`] trait here. `xiaoguai-core` wires
-//! `PgSessionForker` (in `sessions_bridge.rs`) which delegates to the
+//! `SqliteSessionForker` (in `sessions_bridge.rs`) which delegates to the
 //! Pg repos' single-tx `fork` method.
 
 use async_trait::async_trait;

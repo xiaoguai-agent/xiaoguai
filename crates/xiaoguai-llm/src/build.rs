@@ -3,7 +3,7 @@
 //!
 //! Stateless helpers, pure over the row list + an env-var resolver. The
 //! `xiaoguai-core` binary calls these on boot after pulling rows from
-//! Postgres; unit tests can drive them with fixture data and an
+//! the `SQLite` store; unit tests can drive them with fixture data and an
 //! in-memory resolver.
 
 use std::collections::HashMap;

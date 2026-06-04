@@ -173,7 +173,7 @@ impl ReplayOutcome {
 /// Sprint-13 S13-5. In-process no-op `HotlEscalationStore` for unit
 /// tests that don't care about persistence. Every write is a no-op and
 /// every read returns an empty vec. Production NEVER uses this — the
-/// `run_serve` wiring constructs `PgHotlEscalationRepository`.
+/// `run_serve` wiring constructs `SqliteHotlEscalationRepository`.
 #[derive(Debug, Default)]
 pub struct NoopHotlEscalationStore;
 
@@ -215,7 +215,7 @@ impl HotlEscalationStore for NoopHotlEscalationStore {
 pub struct DecisionRegistry {
     waiters: DashMap<Uuid, WaiterSlot>,
     /// Sprint-13 S13-5: persistence layer. `NoopHotlEscalationStore` in
-    /// tests; `PgHotlEscalationRepository` in production.
+    /// tests; `SqliteHotlEscalationRepository` in production.
     store: Arc<dyn HotlEscalationStore>,
     metrics: DecisionRegistryMetrics,
 }
@@ -238,7 +238,7 @@ struct WaiterSlot {
 
 impl DecisionRegistry {
     /// Sprint-13 S13-5: construct a registry wired to the given store.
-    /// `run_serve` calls this with `PgHotlEscalationRepository`; tests
+    /// `run_serve` calls this with `SqliteHotlEscalationRepository`; tests
     /// pass `NoopHotlEscalationStore` via [`Self::in_memory`].
     #[must_use]
     pub fn with_store(store: Arc<dyn HotlEscalationStore>) -> Self {

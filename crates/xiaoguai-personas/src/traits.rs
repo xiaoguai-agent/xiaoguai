@@ -1,6 +1,6 @@
 //! `PersonaRepository` trait — the only interface business code touches.
 //!
-//! Implementations may be backed by Postgres (`PgPersonaRepository`), an
+//! Implementations may be `SQLite`-backed (`SqlitePersonaRepository`), an
 //! in-memory store for tests, or any future alternative. Storage details
 //! never leak past this boundary.
 

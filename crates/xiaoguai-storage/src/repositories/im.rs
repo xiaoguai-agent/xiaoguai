@@ -85,11 +85,11 @@ pub trait ImIdentityRepository: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub struct PgImIdentityRepository {
+pub struct SqliteImIdentityRepository {
     pool: SqlitePool,
 }
 
-impl PgImIdentityRepository {
+impl SqliteImIdentityRepository {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -107,7 +107,7 @@ struct ConversationRow {
 }
 
 #[async_trait]
-impl ImIdentityRepository for PgImIdentityRepository {
+impl ImIdentityRepository for SqliteImIdentityRepository {
     async fn resolve_or_create_identity(
         &self,
         ext: ExternalIdentity<'_>,

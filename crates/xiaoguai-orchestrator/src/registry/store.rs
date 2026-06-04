@@ -4,7 +4,7 @@
 //!
 //! The `RegistryStore` trait decouples the in-memory `AgentRegistry` from any
 //! backing store.  The crate ships `InMemoryStore` as the production-ready
-//! default.  `PgStore` is stubbed with `TODO` markers so implementors have a
+//! default.  `SqliteStore` is stubbed with `TODO` markers so implementors have a
 //! clear integration path.
 //!
 //! ## Why not embed persistence in `AgentRegistry`?
@@ -26,7 +26,7 @@
 //! ```
 //!
 //! # Deferred
-//! - `PgStore` full implementation (v1.3) — blocked on deciding the PG schema
+//! - `SqliteStore` full implementation (v1.3) — blocked on deciding the PG schema
 //!   for capability arrays and cost columns.
 //! - Distributed gossip / watch channel for multi-node registry sync (v1.4).
 
@@ -96,9 +96,9 @@ impl RegistryStore for InMemoryStore {
     }
 }
 
-// ── PgStore stub ─────────────────────────────────────────────────────────────
+// ── SqliteStore stub ─────────────────────────────────────────────────────────────
 
-/// PostgreSQL-backed registry store.
+/// `SQLite`-backed registry store.
 ///
 /// **Deferred to v1.3** — the PG schema for capability arrays and cost
 /// columns, and the migration file are not yet defined.
@@ -106,50 +106,50 @@ impl RegistryStore for InMemoryStore {
 /// All methods currently return `OrchestratorError::Internal("not implemented")`.
 /// The struct is intentionally public so callers can depend on the type and
 /// swap it in when the impl lands.
-pub struct PgStore {
-    // TODO(v1.3): `pool: sqlx::PgPool` — held here once the migration and
+pub struct SqliteStore {
+    // TODO(v1.3): `pool: sqlx::SqlitePool` — held here once the migration and
     //   DDL (`agent_registry` table with JSONB `capabilities` column) land.
     _private: (),
 }
 
-impl PgStore {
-    /// Construct a `PgStore`.
+impl SqliteStore {
+    /// Construct a `SqliteStore`.
     ///
-    /// TODO(v1.3): accept a `sqlx::PgPool` argument.
+    /// TODO(v1.3): accept a `sqlx::SqlitePool` argument.
     #[must_use]
     pub fn new() -> Self {
         Self { _private: () }
     }
 }
 
-impl Default for PgStore {
+impl Default for SqliteStore {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl RegistryStore for PgStore {
+impl RegistryStore for SqliteStore {
     async fn save(&self, _spec: &AgentSpec) -> Result<(), OrchestratorError> {
         // TODO(v1.3): INSERT INTO agent_registry (name, version, capabilities,
         //   cost_hint) VALUES ($1, $2, $3::jsonb, $4)
         //   ON CONFLICT (name) DO UPDATE SET ...
         Err(OrchestratorError::Internal(
-            "PgStore::save not yet implemented (deferred to v1.3)".to_owned(),
+            "SqliteStore::save not yet implemented (deferred to v1.3)".to_owned(),
         ))
     }
 
     async fn remove(&self, _name: &str) -> Result<(), OrchestratorError> {
         // TODO(v1.3): DELETE FROM agent_registry WHERE name = $1
         Err(OrchestratorError::Internal(
-            "PgStore::remove not yet implemented (deferred to v1.3)".to_owned(),
+            "SqliteStore::remove not yet implemented (deferred to v1.3)".to_owned(),
         ))
     }
 
     async fn load_all(&self) -> Result<Vec<AgentSpec>, OrchestratorError> {
         // TODO(v1.3): SELECT * FROM agent_registry ORDER BY name
         Err(OrchestratorError::Internal(
-            "PgStore::load_all not yet implemented (deferred to v1.3)".to_owned(),
+            "SqliteStore::load_all not yet implemented (deferred to v1.3)".to_owned(),
         ))
     }
 }
@@ -229,18 +229,18 @@ mod tests {
         assert_eq!(names, ["agent-a", "agent-b"]);
     }
 
-    // ── PgStore stub ──────────────────────────────────────────────────────────
+    // ── SqliteStore stub ──────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn pg_store_save_returns_not_implemented() {
-        let store = PgStore::new();
+        let store = SqliteStore::new();
         let err = store.save(&spec_a()).await.unwrap_err();
         assert!(err.to_string().contains("not yet implemented"));
     }
 
     #[tokio::test]
     async fn pg_store_load_all_returns_not_implemented() {
-        let store = PgStore::new();
+        let store = SqliteStore::new();
         let err = store.load_all().await.unwrap_err();
         assert!(err.to_string().contains("not yet implemented"));
     }

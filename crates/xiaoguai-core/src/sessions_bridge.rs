@@ -1,6 +1,6 @@
 //! v1.1.2 — production impl of [`xiaoguai_api::SessionForker`].
 //!
-//! Wraps `PgSessionRepository::fork`, which does the atomic three-step
+//! Wraps `SqliteSessionRepository::fork`, which does the atomic three-step
 //! (verify cutoff → insert child → copy prefix) under one Pg transaction.
 //! The bridge translates `RepoError` into `SessionForkError` so the api
 //! layer can map cleanly onto HTTP status codes.
@@ -13,11 +13,11 @@ use xiaoguai_api::{SessionForkError, SessionForker};
 use xiaoguai_storage::repositories::{RepoError, SessionRepository};
 use xiaoguai_types::{Session, SessionId, SessionStatus, UserId};
 
-pub struct PgSessionForker {
+pub struct SqliteSessionForker {
     sessions: Arc<dyn SessionRepository>,
 }
 
-impl PgSessionForker {
+impl SqliteSessionForker {
     #[must_use]
     pub fn new(sessions: Arc<dyn SessionRepository>) -> Self {
         Self { sessions }
@@ -30,7 +30,7 @@ impl PgSessionForker {
 }
 
 #[async_trait]
-impl SessionForker for PgSessionForker {
+impl SessionForker for SqliteSessionForker {
     async fn fork(
         &self,
         parent_id: &str,
@@ -244,7 +244,7 @@ mod tests {
                 &format!("turn-{i}"),
             ));
         }
-        let forker = PgSessionForker::new(repo.clone());
+        let forker = SqliteSessionForker::new(repo.clone());
         let new_session = forker.fork("s1", "m2", None).await.unwrap();
 
         // Parent untouched (5 messages).
@@ -277,7 +277,7 @@ mod tests {
         let repo = Arc::new(ForkableRepo::default());
         repo.seed_session(mk_session("s1"));
         repo.seed_message(mk_message("m0", "s1", 0, "hello"));
-        let forker = PgSessionForker::new(repo);
+        let forker = SqliteSessionForker::new(repo);
         let err = forker.fork("s1", "missing", None).await.unwrap_err();
         assert!(matches!(err, SessionForkError::MessageNotFound), "{err:?}");
     }
@@ -285,7 +285,7 @@ mod tests {
     #[tokio::test]
     async fn fork_unknown_parent_returns_parent_not_found() {
         let repo = Arc::new(ForkableRepo::default());
-        let forker = PgSessionForker::new(repo);
+        let forker = SqliteSessionForker::new(repo);
         let err = forker.fork("missing", "m0", None).await.unwrap_err();
         assert!(matches!(err, SessionForkError::ParentNotFound), "{err:?}");
     }
@@ -297,7 +297,7 @@ mod tests {
         s.status = SessionStatus::Archived;
         repo.seed_session(s);
         repo.seed_message(mk_message("m0", "s1", 0, "hello"));
-        let forker = PgSessionForker::new(repo);
+        let forker = SqliteSessionForker::new(repo);
         let err = forker.fork("s1", "m0", None).await.unwrap_err();
         assert!(
             matches!(err, SessionForkError::ParentNotForkable(_)),
@@ -310,7 +310,7 @@ mod tests {
         let repo = Arc::new(ForkableRepo::default());
         repo.seed_session(mk_session("s1"));
         repo.seed_message(mk_message("m0", "s1", 0, "x"));
-        let forker = PgSessionForker::new(repo);
+        let forker = SqliteSessionForker::new(repo);
         let s = forker
             .fork("s1", "m0", Some("Custom title".into()))
             .await

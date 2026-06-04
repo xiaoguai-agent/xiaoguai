@@ -30,12 +30,12 @@ use crate::types::{
     UpdateMemoryRequest,
 };
 
-pub struct PgMemoryStore {
+pub struct SqliteMemoryStore {
     pool: SqlitePool,
     embedder: Arc<dyn EmbeddingProvider>,
 }
 
-impl PgMemoryStore {
+impl SqliteMemoryStore {
     pub fn new(pool: SqlitePool, embedder: Arc<dyn EmbeddingProvider>) -> Self {
         Self { pool, embedder }
     }
@@ -123,7 +123,7 @@ fn row_to_memory(row: &SqliteRow) -> Result<Memory, sqlx::Error> {
 }
 
 #[async_trait]
-impl MemoryStore for PgMemoryStore {
+impl MemoryStore for SqliteMemoryStore {
     async fn list_memories(
         &self,
         kind_filter: Option<MemoryKind>,

@@ -142,7 +142,7 @@ pub enum SkillAuthorError {
 // Traits — repository, settings, audit, gate adapter
 // ---------------------------------------------------------------------------
 
-/// Persistence seam for `skill_proposals`. Production wires a Postgres
+/// Persistence seam for `skill_proposals`. Production wires a `SQLite`
 /// impl from `xiaoguai-tasks::pg`; tests use [`InMemorySkillProposalRepository`].
 #[async_trait]
 pub trait SkillProposalRepository: Send + Sync {
@@ -226,7 +226,7 @@ pub trait SkillAuthorGate: Send + Sync {
 }
 
 /// Audit sink seam — single-call surface so test fixtures stay tiny.
-/// Production wires a thin adapter over `PgAuditSink::append` from
+/// Production wires a thin adapter over `SqliteAuditSink::append` from
 /// `xiaoguai-audit`; tests use [`InMemoryAuditSink`].
 #[async_trait]
 pub trait SkillAuditSink: Send + Sync {

@@ -2,7 +2,7 @@
 //!
 //! Uses the in-memory `InMemorySessionRepo` + a small `StaticForker`
 //! shim so we exercise the handler → forker → response wire path
-//! without spinning up Postgres. The end-to-end "fork copies the
+//! without spinning a database. The end-to-end "fork copies the
 //! prefix" semantics is covered by `sessions_bridge.rs` unit tests
 //! and (when env permits) the Pg integration suite.
 

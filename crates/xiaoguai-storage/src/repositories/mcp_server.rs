@@ -20,11 +20,11 @@ pub trait McpServerRepository: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub struct PgMcpServerRepository {
+pub struct SqliteMcpServerRepository {
     pool: SqlitePool,
 }
 
-impl PgMcpServerRepository {
+impl SqliteMcpServerRepository {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -73,7 +73,7 @@ const SELECT_COLUMNS: &str = "id, name, version, transport, command, args, \
      env_keys, endpoint, enabled, created_at, updated_at";
 
 #[async_trait]
-impl McpServerRepository for PgMcpServerRepository {
+impl McpServerRepository for SqliteMcpServerRepository {
     async fn create(&self, s: &McpServer) -> RepoResult<()> {
         let args = serde_json::to_value(&s.args)?;
         let env_keys = serde_json::to_value(&s.env_keys)?;

@@ -25,11 +25,11 @@ pub trait MessageRepository: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub struct PgMessageRepository {
+pub struct SqliteMessageRepository {
     pool: SqlitePool,
 }
 
-impl PgMessageRepository {
+impl SqliteMessageRepository {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -78,7 +78,7 @@ fn role_str(r: MessageRole) -> &'static str {
 }
 
 #[async_trait]
-impl MessageRepository for PgMessageRepository {
+impl MessageRepository for SqliteMessageRepository {
     async fn append(&self, message: &Message) -> RepoResult<()> {
         let content = Json(&message.content);
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;

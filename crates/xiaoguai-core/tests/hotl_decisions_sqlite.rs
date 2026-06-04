@@ -1,5 +1,5 @@
-//! Sprint-12 S12-7 — `SQLite` round-trip coverage for `PgHotlDecisionStore`
-//! and `PgHotlAuditSink`.
+//! Sprint-12 S12-7 — `SQLite` round-trip coverage for `SqliteHotlDecisionStore`
+//! and `SqliteHotlAuditSink`.
 //!
 //! `DEC-033` (single-user `SQLite` pivot): these were `#[ignore]`'d Postgres
 //! tests requiring `DATABASE_URL`. They now run against a temp `SQLite` DB on
@@ -15,7 +15,7 @@
 //!   2. `create_duplicate_request_id_returns_conflict` — second insert with
 //!      the same `request_id` must surface `HotlDecisionStoreError::Duplicate`.
 //!   3. `audit_sink_writes_then_visible_to_downstream_reader` —
-//!      `PgHotlAuditSink::append` delegates to `PgAuditSink::append`, so the
+//!      `SqliteHotlAuditSink::append` delegates to `SqliteAuditSink::append`, so the
 //!      row must be visible via the same sink's `list` reader.
 
 #![cfg(test)]
@@ -27,7 +27,7 @@ use xiaoguai_api::hotl::decision::{
     HotlDecisionStore, HotlDecisionStoreError, HotlDecisionVerdict,
 };
 use xiaoguai_audit::AuditEntry;
-use xiaoguai_core::hotl_bridge::{PgHotlAuditSink, PgHotlDecisionStore};
+use xiaoguai_core::hotl_bridge::{SqliteHotlAuditSink, SqliteHotlDecisionStore};
 
 async fn sqlite_pool() -> (tempfile::TempDir, SqlitePool) {
     let dir = tempfile::tempdir().unwrap();
@@ -41,7 +41,7 @@ async fn sqlite_pool() -> (tempfile::TempDir, SqlitePool) {
 #[tokio::test]
 async fn create_then_find_round_trip() {
     let (_dir, pool) = sqlite_pool().await;
-    let store = PgHotlDecisionStore::new(pool.clone());
+    let store = SqliteHotlDecisionStore::new(pool.clone());
 
     let request_id = Uuid::new_v4();
     let policy_id = Uuid::new_v4();
@@ -81,7 +81,7 @@ async fn create_then_find_round_trip() {
 #[tokio::test]
 async fn create_duplicate_request_id_returns_conflict() {
     let (_dir, pool) = sqlite_pool().await;
-    let store = PgHotlDecisionStore::new(pool.clone());
+    let store = SqliteHotlDecisionStore::new(pool.clone());
 
     let request_id = Uuid::new_v4();
 
@@ -105,11 +105,11 @@ async fn create_duplicate_request_id_returns_conflict() {
 async fn audit_sink_writes_then_visible_to_downstream_reader() {
     let (_dir, pool) = sqlite_pool().await;
     let signing_key = b"sprint12-s12-7-integration-test-key".to_vec();
-    let pg_sink = std::sync::Arc::new(xiaoguai_audit::chain::sink::PgAuditSink::new(
+    let pg_sink = std::sync::Arc::new(xiaoguai_audit::chain::sink::SqliteAuditSink::new(
         pool.clone(),
         signing_key,
     ));
-    let hotl_sink = PgHotlAuditSink::new(pg_sink.clone());
+    let hotl_sink = SqliteHotlAuditSink::new(pg_sink.clone());
 
     // tenant_id is vestigial under DEC-033 (ignored on write/read).
     let tenant_id = format!("ten_{}", Uuid::new_v4().simple());

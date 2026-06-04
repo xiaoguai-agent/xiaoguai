@@ -12,9 +12,9 @@ description = "Long-term memory with semantic retrieval — pgvector HNSW + in-m
 # Migration 0019_memories.sql creates the tables; run `db::migrate` as usual.
 
 [features]
-default = ["pg"]
+default = ["sqlite"]
 # pg: full PgMemoryStore + pgvector HNSW similarity (requires pgvector extension).
-pg = ["sqlx"]
+sqlite = ["sqlx"]
 # openai: OpenAIEmbedder via async-openai.
 openai = ["async-openai"]
 # local: ONNX-based local embedder (future; trait stub only).
@@ -37,7 +37,7 @@ chrono       = { workspace = true }
 tokio        = { workspace = true }
 parking_lot  = { workspace = true }
 
-# pg feature: sqlx for Postgres + pgvector queries.
+# sqlite feature: enables the sqlx (embedded SQLite) memory store.
 sqlx = { workspace = true, optional = true }
 
 # openai feature: embedding via OpenAI API.

@@ -6,7 +6,7 @@
 //! bridge layers don't have to change. Both accessors return the same pool.
 //!
 //! The replica-routing machinery (`DATABASE_REPLICA_URLS`, round-robin) that
-//! existed for the Postgres deployment has been removed.
+//! existed for the former Postgres deployment has been removed.
 
 use sqlx::sqlite::SqlitePool;
 

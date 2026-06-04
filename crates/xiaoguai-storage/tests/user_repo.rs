@@ -1,4 +1,4 @@
-//! Integration tests for `PgUserRepository` (embedded `SQLite`, DEC-033).
+//! Integration tests for `SqliteUserRepository` (embedded `SQLite`, DEC-033).
 //!
 //! No Docker — each test opens a temp `SQLite` database via `common::test_setup`.
 
@@ -6,7 +6,7 @@ mod common;
 
 use chrono::{SubsecRound, Utc};
 use common::test_setup;
-use xiaoguai_storage::repositories::{PgUserRepository, RepoError, UserRepository};
+use xiaoguai_storage::repositories::{RepoError, SqliteUserRepository, UserRepository};
 use xiaoguai_types::{ids::UserId, TenantRole as Role, User};
 
 fn sample_user(email: &str, roles: Vec<Role>) -> User {
@@ -23,7 +23,7 @@ fn sample_user(email: &str, roles: Vec<Role>) -> User {
 #[tokio::test]
 async fn create_and_find_by_id_round_trip() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgUserRepository::new(pool);
+    let repo = SqliteUserRepository::new(pool);
 
     let user = sample_user("alice@example.com", vec![Role::TenantAdmin, Role::Member]);
     repo.create(&user).await.expect("create");
@@ -45,7 +45,7 @@ async fn create_and_find_by_id_round_trip() {
 #[tokio::test]
 async fn find_by_id_returns_none_when_missing() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgUserRepository::new(pool);
+    let repo = SqliteUserRepository::new(pool);
 
     let result = repo.find_by_id("usr_missing").await.expect("query");
     assert!(result.is_none());
@@ -54,7 +54,7 @@ async fn find_by_id_returns_none_when_missing() {
 #[tokio::test]
 async fn find_by_email_round_trip() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgUserRepository::new(pool);
+    let repo = SqliteUserRepository::new(pool);
 
     let user = sample_user("shared@example.com", vec![Role::Member]);
     repo.create(&user).await.expect("create");
@@ -76,7 +76,7 @@ async fn find_by_email_round_trip() {
 #[tokio::test]
 async fn list_pagination() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgUserRepository::new(pool);
+    let repo = SqliteUserRepository::new(pool);
 
     for i in 0..4 {
         let mut u = sample_user(&format!("u{i}@x.com"), vec![Role::Member]);
@@ -98,7 +98,7 @@ async fn list_pagination() {
 #[tokio::test]
 async fn delete_then_find_returns_none_and_is_idempotent() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgUserRepository::new(pool);
+    let repo = SqliteUserRepository::new(pool);
 
     let user = sample_user("bye@example.com", vec![Role::Member]);
     repo.create(&user).await.expect("create");
@@ -117,7 +117,7 @@ async fn delete_then_find_returns_none_and_is_idempotent() {
 #[tokio::test]
 async fn duplicate_email_is_rejected() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgUserRepository::new(pool);
+    let repo = SqliteUserRepository::new(pool);
 
     let u1 = sample_user("dup@example.com", vec![Role::Member]);
     let u2 = sample_user("dup@example.com", vec![Role::Member]);
@@ -133,7 +133,7 @@ async fn duplicate_email_is_rejected() {
 #[tokio::test]
 async fn record_login_updates_last_login_at() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgUserRepository::new(pool);
+    let repo = SqliteUserRepository::new(pool);
 
     let user = sample_user("login@example.com", vec![Role::Member]);
     repo.create(&user).await.expect("create");

@@ -1,4 +1,4 @@
-//! Integration tests for `PgLlmProviderRepository` (embedded `SQLite`, DEC-033).
+//! Integration tests for `SqliteLlmProviderRepository` (embedded `SQLite`, DEC-033).
 //!
 //! No Docker — each test opens a temp `SQLite` database via `common::test_setup`.
 //! Single-owner deployment: `list` returns the whole table.
@@ -7,7 +7,9 @@ mod common;
 
 use chrono::{SubsecRound, Utc};
 use common::test_setup;
-use xiaoguai_storage::repositories::{LlmProviderRepository, PgLlmProviderRepository, RepoError};
+use xiaoguai_storage::repositories::{
+    LlmProviderRepository, RepoError, SqliteLlmProviderRepository,
+};
 use xiaoguai_types::{LlmProvider, ProviderId, ProviderKind};
 
 fn sample_provider(name: &str) -> LlmProvider {
@@ -32,7 +34,7 @@ fn sample_provider(name: &str) -> LlmProvider {
 #[tokio::test]
 async fn create_and_find_by_id() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgLlmProviderRepository::new(pool);
+    let repo = SqliteLlmProviderRepository::new(pool);
     let prov = sample_provider("deepseek-global");
 
     repo.create(&prov).await.expect("create");
@@ -54,7 +56,7 @@ async fn create_and_find_by_id() {
 #[tokio::test]
 async fn duplicate_name_is_rejected() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgLlmProviderRepository::new(pool);
+    let repo = SqliteLlmProviderRepository::new(pool);
     let p1 = sample_provider("dup");
     let p2 = sample_provider("dup");
 
@@ -66,7 +68,7 @@ async fn duplicate_name_is_rejected() {
 #[tokio::test]
 async fn list_returns_all_rows_ordered_by_fallback() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgLlmProviderRepository::new(pool);
+    let repo = SqliteLlmProviderRepository::new(pool);
     repo.create(&sample_provider("p-1")).await.expect("p1");
     repo.create(&sample_provider("p-2")).await.expect("p2");
     repo.create(&sample_provider("p-3")).await.expect("p3");
@@ -81,7 +83,7 @@ async fn list_returns_all_rows_ordered_by_fallback() {
 #[tokio::test]
 async fn delete_idempotent() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgLlmProviderRepository::new(pool);
+    let repo = SqliteLlmProviderRepository::new(pool);
     let prov = sample_provider("del-me");
     repo.create(&prov).await.expect("create");
     repo.delete(prov.id.as_str()).await.expect("first delete");

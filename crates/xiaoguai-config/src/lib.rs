@@ -127,7 +127,7 @@ pub struct AuditSettings {
     /// In production load via env or external secrets manager.
     pub hmac_key: String,
     /// v0.6.5: env-var name to read the production audit signing key from
-    /// when wiring `PgAuditSink` in `xiaoguai-core`. The dev `hmac_key`
+    /// when wiring `SqliteAuditSink` in `xiaoguai-core`. The dev `hmac_key`
     /// above is fine for `smoke` and tests but must NOT be used for the
     /// production audit chain — operators set this knob and stash the
     /// real key in the named env var.
@@ -468,7 +468,7 @@ impl Settings {
     /// Load settings from a YAML file + environment overrides.
     ///
     /// Environment variables use the `XIAOGUAI_` prefix and `__` separator,
-    /// e.g. `XIAOGUAI_DATABASE__URL=postgres://...`.
+    /// e.g. `XIAOGUAI_DATABASE__URL=sqlite://...`.
     ///
     /// # Errors
     /// Returns a textual error if the file cannot be read or parsed.
@@ -518,7 +518,7 @@ mod tests {
     /// Restores process env afterwards.
     #[test]
     fn load_from_env_applies_nested_overrides() {
-        const DB: &str = "postgres://u:p@envhost:5432/db";
+        const DB: &str = "sqlite:///tmp/envhost.db";
         std::env::set_var("XIAOGUAI_DATABASE__URL", DB);
         std::env::set_var("XIAOGUAI_SERVER__PORT", "9999");
         let s = Settings::load_from_env().expect("load_from_env");
@@ -573,7 +573,7 @@ mod tests {
             .expect("tmpfile");
         writeln!(
             f,
-            "server:\n  host: 127.0.0.1\n  port: 7600\ndatabase:\n  url: postgres://u:p@h/d\ncache:\n  url: redis://localhost:6379\nauth:\n  username: owner\n  password: pw\naudit:\n  hmac_key: dev-only-change-me-32-bytes-min\nagent:\n  hotl:\n    suspend_on_escalate: false\n"
+            "server:\n  host: 127.0.0.1\n  port: 7600\ndatabase:\n  url: sqlite:///tmp/h.db\ncache:\n  url: redis://localhost:6379\nauth:\n  username: owner\n  password: pw\naudit:\n  hmac_key: dev-only-change-me-32-bytes-min\nagent:\n  hotl:\n    suspend_on_escalate: false\n"
         )
         .expect("write tmp yaml");
         let s = Settings::load_from_file(f.path()).expect("yaml load");

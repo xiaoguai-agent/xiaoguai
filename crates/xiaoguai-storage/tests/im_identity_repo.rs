@@ -1,4 +1,4 @@
-//! v0.7.3: Integration tests for `PgImIdentityRepository` (`SQLite`, DEC-033).
+//! v0.7.3: Integration tests for `SqliteImIdentityRepository` (`SQLite`, DEC-033).
 //!
 //! No Docker — each test opens a temp `SQLite` database via `common::test_setup`
 //! and exercises the `resolve_or_create_*` helpers. Single-owner deployment: no
@@ -9,13 +9,13 @@ mod common;
 
 use common::test_setup;
 use xiaoguai_storage::repositories::{
-    ExternalConversation, ExternalIdentity, ImIdentityRepository, PgImIdentityRepository,
+    ExternalConversation, ExternalIdentity, ImIdentityRepository, SqliteImIdentityRepository,
 };
 
 #[tokio::test]
 async fn first_webhook_auto_creates_user_and_mapping() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgImIdentityRepository::new(pool.clone());
+    let repo = SqliteImIdentityRepository::new(pool.clone());
 
     let identity = repo
         .resolve_or_create_identity(
@@ -50,7 +50,7 @@ async fn first_webhook_auto_creates_user_and_mapping() {
 #[tokio::test]
 async fn second_webhook_for_same_identity_reuses_rows() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgImIdentityRepository::new(pool.clone());
+    let repo = SqliteImIdentityRepository::new(pool.clone());
 
     let a = repo
         .resolve_or_create_identity(
@@ -87,7 +87,7 @@ async fn second_webhook_for_same_identity_reuses_rows() {
 #[tokio::test]
 async fn conversations_are_per_external_pair() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgImIdentityRepository::new(pool.clone());
+    let repo = SqliteImIdentityRepository::new(pool.clone());
 
     let identity = repo
         .resolve_or_create_identity(
@@ -151,7 +151,7 @@ async fn conversations_are_per_external_pair() {
 #[tokio::test]
 async fn different_tenant_externals_produce_distinct_users() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgImIdentityRepository::new(pool.clone());
+    let repo = SqliteImIdentityRepository::new(pool.clone());
 
     let x = repo
         .resolve_or_create_identity(
