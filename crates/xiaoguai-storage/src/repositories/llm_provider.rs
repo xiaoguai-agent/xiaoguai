@@ -20,11 +20,11 @@ pub trait LlmProviderRepository: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub struct PgLlmProviderRepository {
+pub struct SqliteLlmProviderRepository {
     pool: SqlitePool,
 }
 
-impl PgLlmProviderRepository {
+impl SqliteLlmProviderRepository {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -83,7 +83,7 @@ const SELECT_COLUMNS: &str = "id, name, kind, endpoint, models, default_for_mode
      cost_per_1k_input_usd, cost_per_1k_output_usd";
 
 #[async_trait]
-impl LlmProviderRepository for PgLlmProviderRepository {
+impl LlmProviderRepository for SqliteLlmProviderRepository {
     async fn create(&self, prov: &LlmProvider) -> RepoResult<()> {
         let models = serde_json::to_value(&prov.models)?;
         let defaults = serde_json::to_value(&prov.default_for_models)?;

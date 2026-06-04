@@ -73,11 +73,11 @@ pub trait TokenUsageRepository: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub struct PgTokenUsageRepository {
+pub struct SqliteTokenUsageRepository {
     pool: SqlitePool,
 }
 
-impl PgTokenUsageRepository {
+impl SqliteTokenUsageRepository {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -85,7 +85,7 @@ impl PgTokenUsageRepository {
 }
 
 #[async_trait]
-impl TokenUsageRepository for PgTokenUsageRepository {
+impl TokenUsageRepository for SqliteTokenUsageRepository {
     async fn record_batch(&self, entries: &[TokenUsageEntry]) -> RepoResult<()> {
         if entries.is_empty() {
             return Ok(());

@@ -52,7 +52,7 @@ pub use plan::{Plan, PlanStep, RiskLevel, StepStatus};
 pub use planner::Planner;
 pub use registry::conflict::{AgentConflict, ConflictArbitrator, ConflictPolicy, ResourceKey};
 pub use registry::router::{CapabilityRouter, Dispatch, Intent};
-pub use registry::store::{InMemoryStore, PgStore, RegistryStore};
+pub use registry::store::{InMemoryStore, RegistryStore, SqliteStore};
 pub use registry::{Agent, AgentRef, AgentRegistry, AgentSpec, Capability, ResultShape, TaskShape};
 pub use supervisor::{RunOutcome, RunReport, StepResult, Supervisor};
 pub use worker::{Task, Worker, WorkerResult};

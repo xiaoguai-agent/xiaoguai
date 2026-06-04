@@ -1,4 +1,4 @@
-//! v0.6.5 — bridge `xiaoguai-audit::PgAuditSink` into the api crate's
+//! v0.6.5 — bridge `xiaoguai-audit::SqliteAuditSink` into the api crate's
 //! `AuditReader` + `AuditVerifier` traits.
 //!
 //! Lives in `xiaoguai-core` because the api crate intentionally doesn't
@@ -15,19 +15,19 @@ use xiaoguai_api::audit::{
     AuditChainExporter, AuditEntryView, AuditError, AuditReader, AuditVerifier,
     ExportError as ApiExportError, ExportRequest, VerifyReport,
 };
-use xiaoguai_audit::chain::sink::PgAuditSink;
+use xiaoguai_audit::chain::sink::SqliteAuditSink;
 use xiaoguai_audit::{
     export_bundle as audit_export_bundle, render as audit_render, ChainError, ExportError,
     ExportWindow, Format, Framework,
 };
 
-pub struct PgAuditAdapter {
-    sink: Arc<PgAuditSink>,
+pub struct SqliteAuditAdapter {
+    sink: Arc<SqliteAuditSink>,
 }
 
-impl PgAuditAdapter {
+impl SqliteAuditAdapter {
     #[must_use]
-    pub fn new(sink: Arc<PgAuditSink>) -> Self {
+    pub fn new(sink: Arc<SqliteAuditSink>) -> Self {
         Self { sink }
     }
 }
@@ -41,7 +41,7 @@ fn chain_err(e: ChainError) -> AuditError {
 }
 
 #[async_trait]
-impl AuditReader for PgAuditAdapter {
+impl AuditReader for SqliteAuditAdapter {
     async fn list(
         &self,
         tenant_id: &str,
@@ -77,7 +77,7 @@ impl AuditReader for PgAuditAdapter {
 const EXPORT_ROW_CAP: i64 = 100_000;
 
 #[async_trait]
-impl AuditChainExporter for PgAuditAdapter {
+impl AuditChainExporter for SqliteAuditAdapter {
     async fn export(&self, req: ExportRequest) -> Result<Vec<u8>, ApiExportError> {
         let framework =
             Framework::parse(&req.framework).map_err(|s| ApiExportError::InvalidArgument {
@@ -121,7 +121,7 @@ fn map_export_err(e: ExportError) -> ApiExportError {
 }
 
 #[async_trait]
-impl AuditVerifier for PgAuditAdapter {
+impl AuditVerifier for SqliteAuditAdapter {
     async fn verify_tenant(&self, tenant_id: &str) -> Result<VerifyReport, AuditError> {
         // We need a row count for the success case; pull the same list
         // (`verify_tenant` would walk it twice otherwise). For broken

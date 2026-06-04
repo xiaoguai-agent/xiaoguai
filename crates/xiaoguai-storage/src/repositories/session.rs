@@ -34,7 +34,7 @@ pub trait SessionRepository: Send + Sync {
     ///
     /// Default impl returns `Unsupported` so test mocks that don't care
     /// about forking compile unchanged; only the production
-    /// `PgSessionRepository` overrides this.
+    /// `SqliteSessionRepository` overrides this.
     async fn fork(
         &self,
         _parent_id: &str,
@@ -48,11 +48,11 @@ pub trait SessionRepository: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub struct PgSessionRepository {
+pub struct SqliteSessionRepository {
     pool: SqlitePool,
 }
 
-impl PgSessionRepository {
+impl SqliteSessionRepository {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -109,7 +109,7 @@ fn status_str(s: SessionStatus) -> &'static str {
 }
 
 #[async_trait]
-impl SessionRepository for PgSessionRepository {
+impl SessionRepository for SqliteSessionRepository {
     async fn create(&self, session: &Session) -> RepoResult<()> {
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         sqlx::query(

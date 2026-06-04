@@ -7,7 +7,7 @@
 //! # Design note
 //! The `OutcomeRecorder` API is a flat record + aggregate model; there is no
 //! dedicated chain-reconstruction reader trait in this crate (that lives in
-//! `xiaoguai-core` as `PgOutcomeRecorder`). Attribution "chains" are modelled
+//! `xiaoguai-core` as `SqliteOutcomeRecorder`). Attribution "chains" are modelled
 //! here through shared `session_id` values: every node in a logical call chain
 //! records under the same session, identified by `agent_name`. The
 //! `InMemoryOutcomeRecorder::snapshot()` method gives us the raw records for

@@ -10,9 +10,9 @@
 //!    `xiaoguai-scheduler` — see `crates/xiaoguai-api/src/scheduler.rs`)
 //!    push events into the scheduler at runtime.
 //!
-//! 2. [`PgSchedulerAuditAppender`] — implements
+//! 2. [`SqliteSchedulerAuditAppender`] — implements
 //!    `xiaoguai_scheduler::AuditAppender` by forwarding to the
-//!    `PgAuditSink` already wired in v0.6.5. Keeps every scheduler-driven
+//!    `SqliteAuditSink` already wired in v0.6.5. Keeps every scheduler-driven
 //!    run in the HMAC audit chain alongside REST and IM traffic.
 //!
 //! 3. [`build_runtime_ctx`] — assembles the `RuntimeContext` the
@@ -26,11 +26,11 @@
 //!    `ScheduledJob`. The generated `id` is replaced with a fresh
 //!    `uuid::Uuid::new_v4()` so the model can't pick a colliding id.
 //!
-//! 5. **v0.12.1** [`PgScheduledJobUpserter`] — implements
+//! 5. **v0.12.1** [`SqliteScheduledJobUpserter`] — implements
 //!    `xiaoguai_api::ScheduledJobUpserter` by deserialising the JSON
-//!    body into a real `ScheduledJob` and calling `PgJobRepository::upsert`.
+//!    body into a real `ScheduledJob` and calling `SqliteJobRepository::upsert`.
 //!
-//! 6. **v0.12.1** [`PgScheduledSessionWriter`] — implements
+//! 6. **v0.12.1** [`SqliteScheduledSessionWriter`] — implements
 //!    `xiaoguai_scheduler::ScheduledSessionWriter`. Creates a
 //!    synthetic session row (tenant + user + session) and persists the
 //!    runtime's `new_messages` slice. The audit-first console joins
@@ -65,14 +65,14 @@ use xiaoguai_api::scheduler::{
     WebhookPusher, WebhookTokenAdmin, WebhookTokenAdminError, WebhookTokenError,
     WebhookTokenRecord, WebhookTokenValidator,
 };
-use xiaoguai_audit::{chain::sink::PgAuditSink, AuditEntry};
+use xiaoguai_audit::{chain::sink::SqliteAuditSink, AuditEntry};
 use xiaoguai_config::FileWatchSettings;
 use xiaoguai_llm::{ChatRequest, LlmBackend, Message as LlmMessage, Role as LlmRole};
 use xiaoguai_rag::RagClient;
 use xiaoguai_runtime::RuntimeContext;
 use xiaoguai_scheduler::{
     AuditAppender, EventSender, ExecutionOutcome, FileWatchRoute, FileWatchSource, JobExecutor,
-    JobRepository, JobRunner, PgJobRepository, ScheduledJob, ScheduledSessionWriter, Trigger,
+    JobRepository, JobRunner, ScheduledJob, ScheduledSessionWriter, SqliteJobRepository, Trigger,
     TriggerSource, WebhookSource,
 };
 use xiaoguai_storage::repositories::{MessageRepository, SessionRepository};
@@ -106,19 +106,19 @@ impl WebhookPusher for WebhookSourceAdapter {
     }
 }
 
-pub struct PgSchedulerAuditAppender {
-    sink: Arc<PgAuditSink>,
+pub struct SqliteSchedulerAuditAppender {
+    sink: Arc<SqliteAuditSink>,
 }
 
-impl PgSchedulerAuditAppender {
+impl SqliteSchedulerAuditAppender {
     #[must_use]
-    pub fn new(sink: Arc<PgAuditSink>) -> Self {
+    pub fn new(sink: Arc<SqliteAuditSink>) -> Self {
         Self { sink }
     }
 }
 
 #[async_trait]
-impl AuditAppender for PgSchedulerAuditAppender {
+impl AuditAppender for SqliteSchedulerAuditAppender {
     async fn append(&self, entry: AuditEntry) -> Result<(), String> {
         self.sink
             .append(entry)
@@ -290,19 +290,19 @@ fn build_rationale(job: &ScheduledJob) -> String {
 // v0.12.1 — PG-backed ScheduledJob upserter.
 // ----------------------------------------------------------------------
 
-pub struct PgScheduledJobUpserter {
-    repo: Arc<PgJobRepository>,
+pub struct SqliteScheduledJobUpserter {
+    repo: Arc<SqliteJobRepository>,
 }
 
-impl PgScheduledJobUpserter {
+impl SqliteScheduledJobUpserter {
     #[must_use]
-    pub fn new(repo: Arc<PgJobRepository>) -> Self {
+    pub fn new(repo: Arc<SqliteJobRepository>) -> Self {
         Self { repo }
     }
 }
 
 #[async_trait]
-impl ScheduledJobUpserter for PgScheduledJobUpserter {
+impl ScheduledJobUpserter for SqliteScheduledJobUpserter {
     async fn upsert(&self, body: serde_json::Value) -> Result<(), ScheduledJobUpsertError> {
         let job: ScheduledJob = serde_json::from_value(body)
             .map_err(|e| ScheduledJobUpsertError::InvalidJob(e.to_string()))?;
@@ -323,12 +323,12 @@ impl ScheduledJobUpserter for PgScheduledJobUpserter {
 /// rather than a real user avatar.
 const SCHEDULER_USER_PREFIX: &str = "scheduler";
 
-pub struct PgScheduledSessionWriter {
+pub struct SqliteScheduledSessionWriter {
     sessions: Arc<dyn SessionRepository>,
     messages: Arc<dyn MessageRepository>,
 }
 
-impl PgScheduledSessionWriter {
+impl SqliteScheduledSessionWriter {
     #[must_use]
     pub fn new(sessions: Arc<dyn SessionRepository>, messages: Arc<dyn MessageRepository>) -> Self {
         Self { sessions, messages }
@@ -336,7 +336,7 @@ impl PgScheduledSessionWriter {
 }
 
 #[async_trait]
-impl ScheduledSessionWriter for PgScheduledSessionWriter {
+impl ScheduledSessionWriter for SqliteScheduledSessionWriter {
     async fn create_and_record(
         &self,
         job: &ScheduledJob,
@@ -541,11 +541,11 @@ impl JobExecutor for RagReindexExecutor {
 /// `scheduler_webhook_tokens` (migration 0008). Best-effort updates
 /// `last_used_at` on every successful validation; update failures are
 /// logged but do not block the push.
-pub struct PgWebhookTokenValidator {
+pub struct SqliteWebhookTokenValidator {
     pool: sqlx::SqlitePool,
 }
 
-impl PgWebhookTokenValidator {
+impl SqliteWebhookTokenValidator {
     #[must_use]
     pub fn new(pool: sqlx::SqlitePool) -> Self {
         Self { pool }
@@ -553,7 +553,7 @@ impl PgWebhookTokenValidator {
 }
 
 #[async_trait]
-impl WebhookTokenValidator for PgWebhookTokenValidator {
+impl WebhookTokenValidator for SqliteWebhookTokenValidator {
     async fn validate(&self, token: &str, route_id: &str) -> Result<bool, WebhookTokenError> {
         // The token IS the proof of ownership for the single implicit owner.
         let row: Option<(String,)> = sqlx::query_as(
@@ -585,11 +585,11 @@ impl WebhookTokenValidator for PgWebhookTokenValidator {
 /// PG-backed [`WebhookTokenAdmin`] CRUD against
 /// `scheduler_webhook_tokens`. Generates 32-byte opaque tokens via
 /// uuid v4 + `simple` encoding; admins capture them on create response.
-pub struct PgWebhookTokenAdmin {
+pub struct SqliteWebhookTokenAdmin {
     pool: sqlx::SqlitePool,
 }
 
-impl PgWebhookTokenAdmin {
+impl SqliteWebhookTokenAdmin {
     #[must_use]
     pub fn new(pool: sqlx::SqlitePool) -> Self {
         Self { pool }
@@ -603,7 +603,7 @@ fn generate_webhook_token() -> String {
 }
 
 #[async_trait]
-impl WebhookTokenAdmin for PgWebhookTokenAdmin {
+impl WebhookTokenAdmin for SqliteWebhookTokenAdmin {
     async fn create(&self, route_id: &str) -> Result<WebhookTokenRecord, WebhookTokenAdminError> {
         if route_id.is_empty() {
             return Err(WebhookTokenAdminError::InvalidArgument(
@@ -678,21 +678,21 @@ impl WebhookTokenAdmin for PgWebhookTokenAdmin {
 // ----------------------------------------------------------------------
 
 /// Bridges `xiaoguai-api::ScheduledJobsReader` onto the
-/// `PgJobRepository` + a live `JobRunner` for out-of-band fires.
-pub struct PgScheduledJobsReader {
-    jobs: Arc<PgJobRepository>,
+/// `SqliteJobRepository` + a live `JobRunner` for out-of-band fires.
+pub struct SqliteScheduledJobsReader {
+    jobs: Arc<SqliteJobRepository>,
     runner: Arc<JobRunner>,
 }
 
-impl PgScheduledJobsReader {
+impl SqliteScheduledJobsReader {
     #[must_use]
-    pub fn new(jobs: Arc<PgJobRepository>, runner: Arc<JobRunner>) -> Self {
+    pub fn new(jobs: Arc<SqliteJobRepository>, runner: Arc<JobRunner>) -> Self {
         Self { jobs, runner }
     }
 }
 
 #[async_trait]
-impl ScheduledJobsReader for PgScheduledJobsReader {
+impl ScheduledJobsReader for SqliteScheduledJobsReader {
     async fn list(&self, limit: i64) -> Result<Vec<ScheduledJobSummary>, ScheduledJobsReadError> {
         // Pull a generous slice across "due" + "everything else"; the
         // admin pane doesn't yet need pagination. `list_due` covers
@@ -913,7 +913,7 @@ mod tests {
     async fn writer_persists_session_and_messages() {
         let sessions = Arc::new(MemSessionRepo::default());
         let messages = Arc::new(MemMessageRepo::default());
-        let writer = PgScheduledSessionWriter::new(
+        let writer = SqliteScheduledSessionWriter::new(
             sessions.clone() as Arc<dyn SessionRepository>,
             messages.clone() as Arc<dyn MessageRepository>,
         );
@@ -958,7 +958,7 @@ mod tests {
                 Ok(())
             }
         }
-        let writer = PgScheduledSessionWriter::new(
+        let writer = SqliteScheduledSessionWriter::new(
             Arc::new(FailingSessions) as Arc<dyn SessionRepository>,
             Arc::new(MemMessageRepo::default()) as Arc<dyn MessageRepository>,
         );

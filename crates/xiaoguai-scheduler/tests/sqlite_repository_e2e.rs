@@ -1,4 +1,4 @@
-//! End-to-end tests for `PgJobRepository` + `PgJobRunRepository` against a
+//! End-to-end tests for `SqliteJobRepository` + `SqliteJobRunRepository` against a
 //! temp `SQLite` database (DEC-033 single-user pivot). The repos are now
 //! `SQLite`-backed; these run on every `cargo test` (no Docker, no `#[ignore]`).
 
@@ -8,8 +8,8 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 use xiaoguai_scheduler::{
-    JobRepository, JobRun, JobRunRepository, JobRunStatus, PgJobRepository, PgJobRunRepository,
-    ScheduledJob, Trigger,
+    JobRepository, JobRun, JobRunRepository, JobRunStatus, ScheduledJob, SqliteJobRepository,
+    SqliteJobRunRepository, Trigger,
 };
 use xiaoguai_storage::db;
 
@@ -52,7 +52,7 @@ fn sample_run(job: &ScheduledJob) -> JobRun {
 #[tokio::test]
 async fn upsert_then_get_round_trips_job() {
     let (pool, _dir) = setup().await;
-    let repo = Arc::new(PgJobRepository::new(pool.clone()));
+    let repo = Arc::new(SqliteJobRepository::new(pool.clone()));
 
     let job = sample_job("j1");
     repo.upsert(&job).await.unwrap();
@@ -66,7 +66,7 @@ async fn upsert_then_get_round_trips_job() {
 #[tokio::test]
 async fn list_due_returns_scheduled_jobs_with_no_next_fire() {
     let (pool, _dir) = setup().await;
-    let repo = Arc::new(PgJobRepository::new(pool.clone()));
+    let repo = Arc::new(SqliteJobRepository::new(pool.clone()));
 
     repo.upsert(&sample_job("a")).await.unwrap();
     repo.upsert(&sample_job("b")).await.unwrap();
@@ -80,7 +80,7 @@ async fn list_due_returns_scheduled_jobs_with_no_next_fire() {
 #[tokio::test]
 async fn list_due_filters_reactive_jobs() {
     let (pool, _dir) = setup().await;
-    let repo = Arc::new(PgJobRepository::new(pool.clone()));
+    let repo = Arc::new(SqliteJobRepository::new(pool.clone()));
 
     let mut reactive = sample_job("react");
     reactive.trigger = Trigger::file_watch("/tmp/watch").unwrap();
@@ -96,7 +96,7 @@ async fn list_due_filters_reactive_jobs() {
 #[tokio::test]
 async fn list_reactive_returns_only_reactive_enabled_jobs() {
     let (pool, _dir) = setup().await;
-    let repo = Arc::new(PgJobRepository::new(pool.clone()));
+    let repo = Arc::new(SqliteJobRepository::new(pool.clone()));
 
     let mut watch = sample_job("watch-1");
     watch.trigger = Trigger::file_watch("/var/notes").unwrap();
@@ -119,7 +119,7 @@ async fn list_reactive_returns_only_reactive_enabled_jobs() {
 #[tokio::test]
 async fn record_fire_updates_bookkeeping() {
     let (pool, _dir) = setup().await;
-    let repo = Arc::new(PgJobRepository::new(pool.clone()));
+    let repo = Arc::new(SqliteJobRepository::new(pool.clone()));
 
     repo.upsert(&sample_job("j1")).await.unwrap();
     let now = Utc::now();
@@ -137,8 +137,8 @@ async fn record_fire_updates_bookkeeping() {
 #[tokio::test]
 async fn run_repo_insert_assigns_id_and_update_status_round_trips() {
     let (pool, _dir) = setup().await;
-    let jobs = Arc::new(PgJobRepository::new(pool.clone()));
-    let runs = Arc::new(PgJobRunRepository::new(pool.clone()));
+    let jobs = Arc::new(SqliteJobRepository::new(pool.clone()));
+    let runs = Arc::new(SqliteJobRunRepository::new(pool.clone()));
 
     let job = sample_job("j1");
     jobs.upsert(&job).await.unwrap();
@@ -170,7 +170,7 @@ async fn run_repo_insert_assigns_id_and_update_status_round_trips() {
 #[tokio::test]
 async fn record_fire_on_missing_job_errors() {
     let (pool, _dir) = setup().await;
-    let repo = PgJobRepository::new(pool.clone());
+    let repo = SqliteJobRepository::new(pool.clone());
     let err = repo
         .record_fire("nope", Utc::now(), None)
         .await

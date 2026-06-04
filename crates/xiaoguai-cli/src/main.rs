@@ -11,7 +11,8 @@ use xiaoguai_config::Settings;
 use xiaoguai_storage::{
     connect,
     repositories::{
-        LlmProviderRepository, McpServerRepository, PgLlmProviderRepository, PgMcpServerRepository,
+        LlmProviderRepository, McpServerRepository, SqliteLlmProviderRepository,
+        SqliteMcpServerRepository,
     },
 };
 
@@ -59,13 +60,13 @@ enum Cmd {
         model: String,
     },
 
-    /// Administer the LLM provider registry (Postgres-backed).
+    /// Administer the LLM provider registry (`SQLite`-backed).
     Provider {
         #[command(subcommand)]
         action: ProviderCmd,
     },
 
-    /// Administer the MCP server registry (Postgres-backed).
+    /// Administer the MCP server registry (`SQLite`-backed).
     Mcp {
         #[command(subcommand)]
         action: McpCmd,
@@ -73,7 +74,7 @@ enum Cmd {
 
     /// Talk to a running `xiaoguai-api` over HTTP/SSE.
     Remote {
-        /// Base URL of the API server, e.g. `http://localhost:8080`.
+        /// Base URL of the API server, e.g. `http://localhost:7600`.
         #[arg(long)]
         server: String,
         #[command(subcommand)]
@@ -178,7 +179,7 @@ enum Cmd {
         #[arg(
             long,
             env = "XIAOGUAI_API_BASE",
-            default_value = "http://localhost:8080"
+            default_value = "http://localhost:7600"
         )]
         api_base: String,
         /// Output format.
@@ -198,7 +199,7 @@ enum Cmd {
         #[arg(
             long,
             env = "XIAOGUAI_API_BASE",
-            default_value = "http://localhost:8080"
+            default_value = "http://localhost:7600"
         )]
         api_base: String,
         /// Output format.
@@ -217,7 +218,7 @@ enum Cmd {
         #[arg(
             long,
             env = "XIAOGUAI_API_BASE",
-            default_value = "http://localhost:8080"
+            default_value = "http://localhost:7600"
         )]
         api_base: String,
         /// Output format.
@@ -237,7 +238,7 @@ enum Cmd {
         #[arg(
             long,
             env = "XIAOGUAI_API_BASE",
-            default_value = "http://localhost:8080"
+            default_value = "http://localhost:7600"
         )]
         api_base: String,
         /// Output format.
@@ -256,7 +257,7 @@ enum Cmd {
         #[arg(
             long,
             env = "XIAOGUAI_API_BASE",
-            default_value = "http://localhost:8080"
+            default_value = "http://localhost:7600"
         )]
         api_base: String,
         /// Output format.
@@ -268,8 +269,8 @@ enum Cmd {
 
     /// Kanban task board management (v1.4-ready — requires /v1/tasks backend).
     Tasks {
-        /// Base URL of the API server, e.g. `http://localhost:8080`.
-        #[arg(long, global = true, default_value = "http://localhost:8080")]
+        /// Base URL of the API server, e.g. `http://localhost:7600`.
+        #[arg(long, global = true, default_value = "http://localhost:7600")]
         api_base: String,
         #[command(subcommand)]
         action: TasksCmd,
@@ -281,7 +282,7 @@ enum Cmd {
         #[arg(
             long,
             env = "XIAOGUAI_API_BASE",
-            default_value = "http://localhost:8080"
+            default_value = "http://localhost:7600"
         )]
         api_base: String,
         #[command(subcommand)]
@@ -782,20 +783,20 @@ fn load_settings(config: Option<&str>) -> Result<Settings> {
     }
 }
 
-async fn build_provider_repo(config: Option<&str>) -> Result<PgLlmProviderRepository> {
+async fn build_provider_repo(config: Option<&str>) -> Result<SqliteLlmProviderRepository> {
     let settings = load_settings(config)?;
     let pool = connect(&settings.database.url, settings.database.max_connections)
         .await
         .context("open SQLite store")?;
-    Ok(PgLlmProviderRepository::new(pool))
+    Ok(SqliteLlmProviderRepository::new(pool))
 }
 
-async fn build_mcp_repo(config: Option<&str>) -> Result<PgMcpServerRepository> {
+async fn build_mcp_repo(config: Option<&str>) -> Result<SqliteMcpServerRepository> {
     let settings = load_settings(config)?;
     let pool = connect(&settings.database.url, settings.database.max_connections)
         .await
         .context("open SQLite store")?;
-    Ok(PgMcpServerRepository::new(pool))
+    Ok(SqliteMcpServerRepository::new(pool))
 }
 
 async fn handle_stats(
@@ -949,7 +950,7 @@ async fn handle_mcp(config: Option<&str>, action: McpCmd) -> Result<()> {
                         scopes,
                     };
                     // In-memory store for the consent flow; production
-                    // wiring of a PgTokenStore is a follow-up (see
+                    // wiring of a SqliteTokenStore is a follow-up (see
                     // docs/plans/2026-05-29-tier3-oauth-pkce-outbound-mcp.md §7).
                     let store: Arc<dyn TokenStore> = Arc::new(InMemoryTokenStore::new());
                     let (server, bundle, _oauth_cfg) = mcp::register_oauth_with_listener(

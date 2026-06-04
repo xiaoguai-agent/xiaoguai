@@ -61,7 +61,7 @@ pub struct GatewayState {
     pub provider: Arc<dyn ImProvider>,
     /// Conversation history store. Default is the in-process
     /// [`ConversationHistory`]; production wires the PG-backed
-    /// `PgImHistoryStore`.
+    /// `SqliteImHistoryStore`.
     pub history: Arc<dyn ImHistoryStore>,
 }
 
@@ -78,7 +78,7 @@ pub fn mount_feishu(app: AppState, feishu: Arc<dyn ImProvider>) -> Router {
 
 /// Like [`mount_feishu`] but lets the caller share an [`ImHistoryStore`]
 /// across multiple mounts (e.g. when the same process serves Feishu +
-/// DingTalk + WeCom) or substitute a different backend (`PgImHistoryStore`
+/// DingTalk + WeCom) or substitute a different backend (`SqliteImHistoryStore`
 /// for multi-replica deployments).
 pub fn mount_feishu_with_history(
     app: AppState,
@@ -99,7 +99,7 @@ pub fn mount_dingtalk(app: AppState, provider: Arc<dyn ImProvider>) -> Router {
 
 /// v1.1.3: same as [`mount_dingtalk`] but lets the caller share an
 /// [`ImHistoryStore`] across mounts (recommended in multi-replica
-/// deployments — use [`PgImHistoryStore`] for cross-process safety).
+/// deployments — use [`SqliteImHistoryStore`] for cross-process safety).
 pub fn mount_dingtalk_with_history(
     app: AppState,
     provider: Arc<dyn ImProvider>,

@@ -1,4 +1,4 @@
-//! Integration tests for [`PgMessageRepository`] (embedded `SQLite`, DEC-033).
+//! Integration tests for [`SqliteMessageRepository`] (embedded `SQLite`, DEC-033).
 //!
 //! No Docker — each test opens a temp `SQLite` database via `common::test_setup`.
 
@@ -9,7 +9,7 @@ use common::test_setup;
 use serde_json::json;
 use sqlx::SqlitePool;
 use xiaoguai_storage::repositories::{
-    MessageRepository, PgMessageRepository, PgSessionRepository, SessionRepository,
+    MessageRepository, SessionRepository, SqliteMessageRepository, SqliteSessionRepository,
 };
 use xiaoguai_types::{
     ContentBlock, Message, MessageId, MessageRole, Session, SessionId, SessionStatus, UserId,
@@ -42,7 +42,7 @@ async fn seed_session(pool: &SqlitePool, user: &UserId) -> SessionId {
         forked_from_message_id: None,
     };
     let id = s.id.clone();
-    PgSessionRepository::new(pool.clone())
+    SqliteSessionRepository::new(pool.clone())
         .create(&s)
         .await
         .expect("create session");
@@ -68,7 +68,7 @@ async fn append_and_list_roundtrip_text_content() {
     let (pool, _guard) = test_setup().await;
     let user = seed_user(&pool).await;
     let session_id = seed_session(&pool, &user).await;
-    let repo = PgMessageRepository::new(pool.clone());
+    let repo = SqliteMessageRepository::new(pool.clone());
 
     let msg = fixture_message(
         &session_id,
@@ -97,7 +97,7 @@ async fn append_jsonb_tool_call_and_tool_result_roundtrip() {
     let (pool, _guard) = test_setup().await;
     let user = seed_user(&pool).await;
     let session_id = seed_session(&pool, &user).await;
-    let repo = PgMessageRepository::new(pool.clone());
+    let repo = SqliteMessageRepository::new(pool.clone());
 
     let assistant_msg = fixture_message(
         &session_id,
@@ -164,7 +164,7 @@ async fn list_orders_by_created_at_ascending_with_pagination() {
     let (pool, _guard) = test_setup().await;
     let user = seed_user(&pool).await;
     let session_id = seed_session(&pool, &user).await;
-    let repo = PgMessageRepository::new(pool.clone());
+    let repo = SqliteMessageRepository::new(pool.clone());
 
     let base = Utc::now() - Duration::minutes(30);
     let mut ids = Vec::with_capacity(4);
@@ -209,8 +209,8 @@ async fn cascading_delete_when_session_dropped() {
     let (pool, _guard) = test_setup().await;
     let user = seed_user(&pool).await;
     let session_id = seed_session(&pool, &user).await;
-    let msg_repo = PgMessageRepository::new(pool.clone());
-    let sess_repo = PgSessionRepository::new(pool.clone());
+    let msg_repo = SqliteMessageRepository::new(pool.clone());
+    let sess_repo = SqliteSessionRepository::new(pool.clone());
 
     for _ in 0..3 {
         let m = fixture_message(
@@ -249,7 +249,7 @@ async fn delete_by_session_returns_rowcount_and_is_idempotent() {
     let (pool, _guard) = test_setup().await;
     let user = seed_user(&pool).await;
     let session_id = seed_session(&pool, &user).await;
-    let repo = PgMessageRepository::new(pool.clone());
+    let repo = SqliteMessageRepository::new(pool.clone());
 
     for _ in 0..2 {
         let m = fixture_message(

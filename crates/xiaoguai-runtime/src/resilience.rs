@@ -72,7 +72,7 @@ use tracing::{error, warn};
 
 /// Breaker name for outbound LLM provider calls.
 pub const BREAKER_LLM: &str = "llm";
-/// Breaker name for Postgres query calls (primary + replicas).
+/// Breaker name for database query calls.
 pub const BREAKER_PG: &str = "pg";
 /// Breaker name for outbound webhook HTTP deliveries (per route).
 pub const BREAKER_WEBHOOK: &str = "webhook";

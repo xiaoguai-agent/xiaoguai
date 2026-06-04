@@ -2,7 +2,7 @@
 //!
 //! All routes return 503 Service Unavailable when `AppState.personas` is
 //! `None`, preserving the pattern established by memory, hotl, outcomes, and
-//! `skill_packs` routes. Production wires a `PgPersonaRepository` from
+//! `skill_packs` routes. Production wires a `SqlitePersonaRepository` from
 //! `xiaoguai-personas::pg`.
 //!
 //! ## Routes (mounted in [`crate::routes::router`])

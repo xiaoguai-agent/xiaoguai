@@ -18,11 +18,11 @@ use xiaoguai_api::skills::{InstalledPackRow, SkillPackError, SkillPackRepository
 // ── struct ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
-pub struct PgSkillPackRepository {
+pub struct SqliteSkillPackRepository {
     pool: SqlitePool,
 }
 
-impl PgSkillPackRepository {
+impl SqliteSkillPackRepository {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -77,7 +77,7 @@ impl From<PackRow> for InstalledPackRow {
 // ── trait impl ────────────────────────────────────────────────────────────────
 
 #[async_trait]
-impl SkillPackRepository for PgSkillPackRepository {
+impl SkillPackRepository for SqliteSkillPackRepository {
     async fn list(&self) -> Result<Vec<InstalledPackRow>, SkillPackError> {
         let rows: Vec<PackRow> = sqlx::query_as(
             "SELECT id, pack_slug, version, config, installed_at \
@@ -189,7 +189,7 @@ mod tests {
     #[tokio::test]
     async fn skills_install_list_uninstall() {
         let (_dir, pool) = sqlite_pool().await;
-        let repo = PgSkillPackRepository::new(pool);
+        let repo = SqliteSkillPackRepository::new(pool);
 
         let row = make_row("rag-hr");
         let saved = repo.install(row.clone()).await.unwrap();
@@ -207,7 +207,7 @@ mod tests {
     #[tokio::test]
     async fn skills_duplicate_install_returns_already_installed() {
         let (_dir, pool) = sqlite_pool().await;
-        let repo = PgSkillPackRepository::new(pool);
+        let repo = SqliteSkillPackRepository::new(pool);
 
         repo.install(make_row("pr-review")).await.unwrap();
         // DEC-033: UNIQUE constraint is now on `pack_slug` alone.
@@ -221,7 +221,7 @@ mod tests {
     #[tokio::test]
     async fn skills_uninstall_missing_is_not_found() {
         let (_dir, pool) = sqlite_pool().await;
-        let repo = PgSkillPackRepository::new(pool);
+        let repo = SqliteSkillPackRepository::new(pool);
         let err = repo
             .uninstall(&Uuid::new_v4().to_string())
             .await

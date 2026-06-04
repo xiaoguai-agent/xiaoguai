@@ -21,18 +21,18 @@ use super::{AuditEntry, ChainError, ChainedAudit, StoredEntry, HMAC_LEN};
 // `Redactor` lives at the crate root (mod `redact`), not in the `chain` parent.
 use crate::Redactor;
 
-/// SQLite-backed append-only audit sink.
+/// `SQLite`-backed append-only audit sink.
 #[derive(Clone)]
-pub struct PgAuditSink {
+pub struct SqliteAuditSink {
     pool: SqlitePool,
     chain: ChainedAudit,
     /// Optional PII/secret redactor applied before signing. `None` = pass-through.
     redactor: Option<Redactor>,
 }
 
-impl std::fmt::Debug for PgAuditSink {
+impl std::fmt::Debug for SqliteAuditSink {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PgAuditSink")
+        f.debug_struct("SqliteAuditSink")
             .field("chain", &self.chain)
             .field("pool", &"SqlitePool { .. }")
             .field("redactor", &self.redactor)
@@ -40,7 +40,7 @@ impl std::fmt::Debug for PgAuditSink {
     }
 }
 
-impl PgAuditSink {
+impl SqliteAuditSink {
     /// Build a sink from a connection pool and HMAC signing key.
     ///
     /// No redaction is applied — use [`with_redactor`](Self::with_redactor) to

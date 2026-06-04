@@ -19,7 +19,7 @@
 //!   [`xiaoguai_llm::LlmBackend`] together with a strict JSON-schema
 //!   prompt and parses the response back into a `ScheduledJob`.
 //! * [`ScheduledJobUpserter`] — backs `POST /v1/admin/scheduler/jobs`.
-//!   Production impl wraps the `PgJobRepository`. The boundary uses
+//!   Production impl wraps the `SqliteJobRepository`. The boundary uses
 //!   `serde_json::Value` so the api crate stays free of the
 //!   `ScheduledJob` type definition.
 
@@ -48,7 +48,7 @@ pub enum WebhookTokenError {
 ///
 /// This trait fronts the `scheduler_webhook_tokens` table — see
 /// `crates/xiaoguai-storage/migrations/0008_scheduler_webhook_tokens.sql`.
-/// The production impl (`PgWebhookTokenValidator` in `xiaoguai-core`)
+/// The production impl (`SqliteWebhookTokenValidator` in `xiaoguai-core`)
 /// also best-effort updates `last_used_at`; failures there are logged
 /// but do not block the push (the audit row is the source of truth).
 #[async_trait]

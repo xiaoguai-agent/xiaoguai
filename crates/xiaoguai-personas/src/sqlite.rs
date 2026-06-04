@@ -1,10 +1,10 @@
-//! SQLite-backed `PersonaRepository` implementation (DEC-033 single-user pivot).
+//! `SQLite`-backed `PersonaRepository` implementation (DEC-033 single-user pivot).
 //!
 //! Single-namespace store: the multi-tenant `tenant_id` columns are gone. The
 //! `personas` table has a partial index on `name` (active rows) so list +
 //! name-lookup queries stay cheap. `session_personas` has `session_id` as its
 //! PRIMARY KEY which enforces the one-persona-per-session invariant at the DB
-//! level; the upsert path in [`PgPersonaRepository::attach_persona_to_session`]
+//! level; the upsert path in [`SqlitePersonaRepository::attach_persona_to_session`]
 //! relies on this via `ON CONFLICT DO UPDATE`.
 //!
 //! Postgres `tool_allowlist TEXT[]` is now stored as TEXT holding a JSON array
@@ -22,11 +22,11 @@ use crate::traits::PersonaRepository;
 
 /// `SQLite` implementation. Clone is cheap — `SqlitePool` is an `Arc` internally.
 #[derive(Debug, Clone)]
-pub struct PgPersonaRepository {
+pub struct SqlitePersonaRepository {
     pool: SqlitePool,
 }
 
-impl PgPersonaRepository {
+impl SqlitePersonaRepository {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -102,7 +102,7 @@ impl From<SessionPersonaRow> for SessionPersona {
 // ── Trait implementation ──────────────────────────────────────────────────────
 
 #[async_trait]
-impl PersonaRepository for PgPersonaRepository {
+impl PersonaRepository for SqlitePersonaRepository {
     async fn list(&self) -> PersonaResult<Vec<Persona>> {
         let rows: Vec<PersonaRow> = sqlx::query_as(
             "SELECT id, name, system_prompt, default_model, \

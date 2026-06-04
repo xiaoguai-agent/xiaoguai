@@ -1,4 +1,4 @@
-//! Postgres-backed conversation history for IM webhooks.
+//! `SQLite`-backed conversation history for IM webhooks.
 //!
 //! Resolves `(provider, tenant_ext, user_ext, conversation_id)` to internal
 //! `(user_id, session_id)` via the `im_identities` /
@@ -30,9 +30,9 @@ use xiaoguai_types::{
 
 use crate::history::{ConversationIdent, HistoryError, ImHistoryStore};
 
-/// PG-backed conversation history. Hold an `Arc<PgImHistoryStore>` in
+/// PG-backed conversation history. Hold an `Arc<SqliteImHistoryStore>` in
 /// `GatewayState` exactly like the in-memory `ConversationHistory`.
-pub struct PgImHistoryStore {
+pub struct SqliteImHistoryStore {
     identities: Arc<dyn ImIdentityRepository>,
     sessions: Arc<dyn SessionRepository>,
     messages: Arc<dyn MessageRepository>,
@@ -45,7 +45,7 @@ pub struct PgImHistoryStore {
     max_turns: i64,
 }
 
-impl PgImHistoryStore {
+impl SqliteImHistoryStore {
     #[must_use]
     pub fn new(
         identities: Arc<dyn ImIdentityRepository>,
@@ -64,9 +64,9 @@ impl PgImHistoryStore {
     }
 }
 
-impl std::fmt::Debug for PgImHistoryStore {
+impl std::fmt::Debug for SqliteImHistoryStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PgImHistoryStore")
+        f.debug_struct("SqliteImHistoryStore")
             .field("default_model", &self.default_model)
             .field("max_turns", &self.max_turns)
             .finish_non_exhaustive()
@@ -123,7 +123,7 @@ fn domain_to_llm(msg: &DomainMessage) -> Option<LlmMessage> {
 }
 
 #[async_trait]
-impl ImHistoryStore for PgImHistoryStore {
+impl ImHistoryStore for SqliteImHistoryStore {
     async fn snapshot(&self, ident: &ConversationIdent) -> Result<Vec<LlmMessage>, HistoryError> {
         let identity = self
             .identities

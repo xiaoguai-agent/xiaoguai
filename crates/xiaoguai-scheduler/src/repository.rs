@@ -3,7 +3,7 @@
 //! In keeping with the rest of the workspace (see `xiaoguai-storage`
 //! repositories + `xiaoguai-rag` `InMemoryRagClient`), the production
 //! contract is the trait; in-memory impls back tests and let the
-//! runner be exercised without booting Postgres. PG-backed impls are
+//! runner be exercised without a database. PG-backed impls are
 //! added together with the `xiaoguai-runtime` extraction in v0.12.0.
 
 use std::collections::HashMap;

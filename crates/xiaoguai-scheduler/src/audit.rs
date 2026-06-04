@@ -5,10 +5,10 @@
 //! `xiaoguai-storage` directly — it would create a circular crate
 //! graph once `xiaoguai-storage` learns about scheduled-job tables.
 //! Instead the runner takes an [`AuditAppender`] trait object;
-//! `xiaoguai-core` wires a thin shim around `PgAuditSink`.
+//! `xiaoguai-core` wires a thin shim around `SqliteAuditSink`.
 //!
 //! The trait imports [`xiaoguai_audit::AuditEntry`] so the wire shape
-//! matches what `PgAuditSink::append` already accepts.
+//! matches what `SqliteAuditSink::append` already accepts.
 
 use async_trait::async_trait;
 use parking_lot::Mutex;

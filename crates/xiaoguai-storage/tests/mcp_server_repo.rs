@@ -1,4 +1,4 @@
-//! Integration tests for `PgMcpServerRepository` (embedded `SQLite`, DEC-033).
+//! Integration tests for `SqliteMcpServerRepository` (embedded `SQLite`, DEC-033).
 //!
 //! No Docker — each test opens a temp `SQLite` database via `common::test_setup`.
 //! Single-owner deployment: uniqueness is on `(name, version)`.
@@ -7,7 +7,7 @@ mod common;
 
 use chrono::{SubsecRound, Utc};
 use common::test_setup;
-use xiaoguai_storage::repositories::{McpServerRepository, PgMcpServerRepository, RepoError};
+use xiaoguai_storage::repositories::{McpServerRepository, RepoError, SqliteMcpServerRepository};
 use xiaoguai_types::{ids::McpServerInstanceId, McpServer, McpTransport};
 
 fn sample_stdio(name: &str, ver: &str) -> McpServer {
@@ -33,7 +33,7 @@ fn sample_stdio(name: &str, ver: &str) -> McpServer {
 #[tokio::test]
 async fn create_and_find_by_id() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgMcpServerRepository::new(pool);
+    let repo = SqliteMcpServerRepository::new(pool);
     let server = sample_stdio("fs", "1.0.0");
     repo.create(&server).await.expect("create");
     let found = repo
@@ -51,7 +51,7 @@ async fn create_and_find_by_id() {
 #[tokio::test]
 async fn list_returns_all_rows() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgMcpServerRepository::new(pool);
+    let repo = SqliteMcpServerRepository::new(pool);
     repo.create(&sample_stdio("a", "1.0")).await.unwrap();
     repo.create(&sample_stdio("b", "1.0")).await.unwrap();
 
@@ -64,7 +64,7 @@ async fn list_returns_all_rows() {
 #[tokio::test]
 async fn duplicate_name_version_rejected() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgMcpServerRepository::new(pool);
+    let repo = SqliteMcpServerRepository::new(pool);
     repo.create(&sample_stdio("fs", "1.0.0")).await.unwrap();
     let err = repo.create(&sample_stdio("fs", "1.0.0")).await.unwrap_err();
     assert!(matches!(err, RepoError::DuplicateKey(_)), "{err:?}");
@@ -73,7 +73,7 @@ async fn duplicate_name_version_rejected() {
 #[tokio::test]
 async fn same_name_different_version_ok() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgMcpServerRepository::new(pool);
+    let repo = SqliteMcpServerRepository::new(pool);
     repo.create(&sample_stdio("fs", "1.0.0")).await.unwrap();
     repo.create(&sample_stdio("fs", "1.1.0")).await.unwrap();
 }
@@ -81,7 +81,7 @@ async fn same_name_different_version_ok() {
 #[tokio::test]
 async fn delete_idempotent() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgMcpServerRepository::new(pool);
+    let repo = SqliteMcpServerRepository::new(pool);
     let s = sample_stdio("d", "1.0");
     repo.create(&s).await.unwrap();
     repo.delete(s.id.as_str()).await.unwrap();

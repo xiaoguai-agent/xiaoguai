@@ -1,4 +1,4 @@
-//! Wires long-term memory ([`PgMemoryStore`]) into the API state.
+//! Wires long-term memory ([`SqliteMemoryStore`]) into the API state.
 //!
 //! The embedding backend is selected for the deployment topology: an
 //! air-gapped install points `OLLAMA_HOST` at a local Ollama server and gets
@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 use xiaoguai_memory::{
-    EmbeddingProvider, InMemoryEmbedder, MemoryStore, OllamaEmbedder, PgMemoryStore,
+    EmbeddingProvider, InMemoryEmbedder, MemoryStore, OllamaEmbedder, SqliteMemoryStore,
 };
 
 /// Which embedding backend long-term memory should use.
@@ -55,7 +55,7 @@ pub fn build_memory_store(pool: SqlitePool) -> Arc<dyn MemoryStore> {
     let host = std::env::var("OLLAMA_HOST").ok();
     let choice = EmbedderChoice::from_ollama_host(host.as_deref());
     tracing::info!(?choice, "memory: selected embedding backend");
-    Arc::new(PgMemoryStore::new(pool, choice.into_provider()))
+    Arc::new(SqliteMemoryStore::new(pool, choice.into_provider()))
 }
 
 #[cfg(test)]

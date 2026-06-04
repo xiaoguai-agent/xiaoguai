@@ -5,10 +5,10 @@
 //!
 //! | Trait | Production impl |
 //! |---|---|
-//! | `SkillProposalRepository` | `xiaoguai_tasks::skill_author_pg::PgSkillProposalRepository` |
-//! | `TenantSettingsReader`    | `xiaoguai_tasks::skill_author_pg::PgTenantSettings` |
+//! | `SkillProposalRepository` | `xiaoguai_tasks::skill_author_sqlite::SqliteSkillProposalRepository` |
+//! | `TenantSettingsReader`    | `xiaoguai_tasks::skill_author_sqlite::SqliteTenantSettings` |
 //! | `SkillAuthorGate`         | [`EnforcerGateAdapter`] over `xiaoguai-api::HotlEnforcer` |
-//! | `SkillAuditSink`          | [`AuditSinkAdapter`] over `xiaoguai-audit::PgAuditSink` |
+//! | `SkillAuditSink`          | [`AuditSinkAdapter`] over `xiaoguai-audit::SqliteAuditSink` |
 //!
 //! The two adapters live here (not in `xiaoguai-tasks`) so the tasks
 //! crate doesn't need to depend on `xiaoguai-api` or `xiaoguai-audit`
@@ -23,13 +23,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use xiaoguai_api::hotl::enforcer::{HotlEnforcer, HotlVerdict};
-use xiaoguai_audit::chain::sink::PgAuditSink;
+use xiaoguai_audit::chain::sink::SqliteAuditSink;
 use xiaoguai_audit::AuditEntry;
 use xiaoguai_tasks::skill_author::{
     SkillAuditSink, SkillAuthorError, SkillAuthorGate, SkillProposalRepository,
     TenantSettingsReader,
 };
-use xiaoguai_tasks::skill_author_pg::{PgSkillProposalRepository, PgTenantSettings};
+use xiaoguai_tasks::skill_author_sqlite::{SqliteSkillProposalRepository, SqliteTenantSettings};
 
 // ---------------------------------------------------------------------------
 // Adapters
@@ -74,19 +74,19 @@ impl SkillAuthorGate for EnforcerGateAdapter {
     }
 }
 
-/// Adapter mapping a `PgAuditSink` onto the `SkillAuditSink` interface.
+/// Adapter mapping a `SqliteAuditSink` onto the `SkillAuditSink` interface.
 pub struct AuditSinkAdapter {
-    sink: Arc<PgAuditSink>,
+    sink: Arc<SqliteAuditSink>,
 }
 
 impl AuditSinkAdapter {
     #[must_use]
-    pub fn new(sink: Arc<PgAuditSink>) -> Self {
+    pub fn new(sink: Arc<SqliteAuditSink>) -> Self {
         Self { sink }
     }
 
     #[must_use]
-    pub fn arc(sink: Arc<PgAuditSink>) -> Arc<dyn SkillAuditSink> {
+    pub fn arc(sink: Arc<SqliteAuditSink>) -> Arc<dyn SkillAuditSink> {
         Arc::new(Self::new(sink))
     }
 }
@@ -114,17 +114,17 @@ pub struct SkillAuthorWiring {
     pub audit: Arc<dyn SkillAuditSink>,
 }
 
-/// Compose the production wiring from a Postgres pool + an already-built
+/// Compose the production wiring from a `SQLite` pool + an already-built
 /// `HotL` enforcer + an already-built audit sink. Called once at boot.
 #[must_use]
 pub fn build_skill_author_wiring(
     pool: sqlx::SqlitePool,
     hotl_enforcer: Arc<dyn HotlEnforcer>,
-    audit_sink: Arc<PgAuditSink>,
+    audit_sink: Arc<SqliteAuditSink>,
 ) -> SkillAuthorWiring {
     SkillAuthorWiring {
-        proposals: PgSkillProposalRepository::arc(pool.clone()),
-        settings: PgTenantSettings::arc(pool),
+        proposals: SqliteSkillProposalRepository::arc(pool.clone()),
+        settings: SqliteTenantSettings::arc(pool),
         gate: EnforcerGateAdapter::arc(hotl_enforcer),
         audit: AuditSinkAdapter::arc(audit_sink),
     }
@@ -212,7 +212,7 @@ mod tests {
     }
 
     // Construct an audit entry; we only need its shape — the adapter
-    // delegates to PgAuditSink::append which is exercised by the audit
+    // delegates to SqliteAuditSink::append which is exercised by the audit
     // crate's own integration tests.
     fn sample_entry() -> AuditEntry {
         AuditEntry {

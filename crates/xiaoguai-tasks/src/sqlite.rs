@@ -1,4 +1,4 @@
-//! Postgres-backed [`TaskBoardRepository`] implementation.
+//! `SQLite`-backed [`TaskBoardRepository`] implementation.
 //!
 //! Uses the tables created by migration 0018 (`boards`, `tasks`,
 //! `task_state_log`).  All queries use `sqlx::query_as!` / `sqlx::query!`
@@ -130,19 +130,19 @@ fn db_err(e: sqlx::Error) -> TaskError {
 }
 
 // ---------------------------------------------------------------------------
-// PgTaskBoardRepository
+// SqliteTaskBoardRepository
 // ---------------------------------------------------------------------------
 
-/// Postgres-backed [`TaskBoardRepository`].
+/// `SQLite`-backed [`TaskBoardRepository`].
 ///
-/// Construct with [`PgTaskBoardRepository::new`] and a `PgPool` obtained
+/// Construct with [`SqliteTaskBoardRepository::new`] and a `SqlitePool` obtained
 /// from `xiaoguai-storage`'s connection pool helper.
 #[derive(Debug, Clone)]
-pub struct PgTaskBoardRepository {
+pub struct SqliteTaskBoardRepository {
     pool: SqlitePool,
 }
 
-impl PgTaskBoardRepository {
+impl SqliteTaskBoardRepository {
     /// Create a new repository backed by `pool`.
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
@@ -151,7 +151,7 @@ impl PgTaskBoardRepository {
 }
 
 #[async_trait]
-impl TaskBoardRepository for PgTaskBoardRepository {
+impl TaskBoardRepository for SqliteTaskBoardRepository {
     // ---- Boards --------------------------------------------------------
 
     async fn list_boards(&self) -> Result<Vec<Board>, TaskError> {

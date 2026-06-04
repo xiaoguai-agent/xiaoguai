@@ -1,6 +1,6 @@
 //! LLM provider domain type.
 //!
-//! Mirrors the `llm_providers` Postgres table. Secret values are **not**
+//! Mirrors the `llm_providers` table. Secret values are **not**
 //! stored — only the name of the environment variable from which the runtime
 //! reads the API key (`api_key_env`).
 

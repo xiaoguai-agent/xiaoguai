@@ -1,7 +1,7 @@
 //! [`CardStore`] trait + [`InMemoryCardStore`].
 //!
 //! The in-memory store is the production-shaped contract. When the parallel
-//! branch `feat/kanban-backend-tasks` lands, a `PgCardStore` will implement
+//! branch `feat/kanban-backend-tasks` lands, a `SqliteCardStore` will implement
 //! the same trait — the dispatcher uses `Arc<dyn CardStore>` and doesn't care
 //! which backend is wired.
 //!

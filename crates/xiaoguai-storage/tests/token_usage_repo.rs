@@ -1,4 +1,4 @@
-//! Integration tests for `PgTokenUsageRepository` (embedded `SQLite`, DEC-033).
+//! Integration tests for `SqliteTokenUsageRepository` (embedded `SQLite`, DEC-033).
 //!
 //! No Docker — each test opens a temp `SQLite` database via `common::test_setup`.
 //! Single-owner deployment: `list` returns the whole ledger.
@@ -8,7 +8,7 @@ mod common;
 use chrono::{SubsecRound, Utc};
 use common::test_setup;
 use xiaoguai_storage::repositories::{
-    PgTokenUsageRepository, TokenUsageEntry, TokenUsageRepository,
+    SqliteTokenUsageRepository, TokenUsageEntry, TokenUsageRepository,
 };
 
 fn sample_entry(prompt: i32, completion: i32) -> TokenUsageEntry {
@@ -28,7 +28,7 @@ fn sample_entry(prompt: i32, completion: i32) -> TokenUsageEntry {
 #[tokio::test]
 async fn batch_insert_and_list() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgTokenUsageRepository::new(pool);
+    let repo = SqliteTokenUsageRepository::new(pool);
 
     let batch = vec![
         sample_entry(10, 20),
@@ -44,7 +44,7 @@ async fn batch_insert_and_list() {
 #[tokio::test]
 async fn empty_batch_is_noop() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgTokenUsageRepository::new(pool);
+    let repo = SqliteTokenUsageRepository::new(pool);
     repo.record_batch(&[]).await.expect("empty batch");
     let listed = repo.list(10).await.expect("list");
     assert!(listed.is_empty());
@@ -53,7 +53,7 @@ async fn empty_batch_is_noop() {
 #[tokio::test]
 async fn null_token_counts_are_stored() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgTokenUsageRepository::new(pool);
+    let repo = SqliteTokenUsageRepository::new(pool);
 
     let entry = TokenUsageEntry {
         ts: Utc::now().trunc_subsecs(6),
@@ -77,7 +77,7 @@ async fn null_token_counts_are_stored() {
 #[tokio::test]
 async fn list_respects_limit() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgTokenUsageRepository::new(pool);
+    let repo = SqliteTokenUsageRepository::new(pool);
     let batch: Vec<_> = (0..5).map(|i| sample_entry(i, i)).collect();
     repo.record_batch(&batch).await.expect("batch");
     let listed = repo.list(3).await.expect("list");

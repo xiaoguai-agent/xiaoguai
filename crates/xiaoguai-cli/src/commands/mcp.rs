@@ -1,5 +1,5 @@
 //! `xiaoguai mcp {register,list,remove}` — administer the MCP server
-//! registry stored in Postgres.
+//! registry stored in `SQLite`.
 //!
 //! Mirrors `commands::provider` exactly: pure functions taking a
 //! `&dyn McpServerRepository`, so unit tests can swap in an in-memory

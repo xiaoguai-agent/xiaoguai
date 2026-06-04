@@ -1,4 +1,4 @@
-//! SQLite-backed [`JobRepository`] + [`JobRunRepository`] (DEC-033 single-user).
+//! `SQLite`-backed [`JobRepository`] + [`JobRunRepository`] (DEC-033 single-user).
 //!
 //! The in-memory impls in [`crate::repository`] cover tests and the
 //! `RunnerOptions::default` operator path. These persist `scheduled_jobs` /
@@ -19,11 +19,11 @@ use crate::repository::{JobRepository, JobRunRepository, RepoError, RepoResult};
 use crate::retry::RetryPolicy;
 use crate::trigger::Trigger;
 
-pub struct PgJobRepository {
+pub struct SqliteJobRepository {
     pool: SqlitePool,
 }
 
-impl PgJobRepository {
+impl SqliteJobRepository {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -31,7 +31,7 @@ impl PgJobRepository {
 }
 
 #[async_trait]
-impl JobRepository for PgJobRepository {
+impl JobRepository for SqliteJobRepository {
     async fn upsert(&self, job: &ScheduledJob) -> RepoResult<()> {
         let mut tx = self.pool.begin().await.map_err(sqlx_err)?;
         sqlx::query(
@@ -152,11 +152,11 @@ impl JobRepository for PgJobRepository {
     }
 }
 
-pub struct PgJobRunRepository {
+pub struct SqliteJobRunRepository {
     pool: SqlitePool,
 }
 
-impl PgJobRunRepository {
+impl SqliteJobRunRepository {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -164,7 +164,7 @@ impl PgJobRunRepository {
 }
 
 #[async_trait]
-impl JobRunRepository for PgJobRunRepository {
+impl JobRunRepository for SqliteJobRunRepository {
     async fn insert(&self, run: JobRun) -> RepoResult<JobRun> {
         let mut tx = self.pool.begin().await.map_err(sqlx_err)?;
         let row = sqlx::query(

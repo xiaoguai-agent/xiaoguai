@@ -102,11 +102,11 @@ pub struct AppState {
     pub auth: Option<Arc<dyn TokenValidator>>,
     /// `None` = `/v1/admin/audit` returns 503. `Some(...)` exposes the
     /// HMAC-chained audit log; production wires the
-    /// `xiaoguai-audit::PgAuditSink` reader.
+    /// `xiaoguai-audit::SqliteAuditSink` reader.
     pub audit: Option<Arc<dyn AuditReader>>,
     /// v0.6.5: `None` = `/v1/admin/audit/verify` returns 503.
     /// `Some(...)` exposes per-tenant chain integrity verification;
-    /// production wires `PgAuditSink` (which implements both reader and
+    /// production wires `SqliteAuditSink` (which implements both reader and
     /// verifier behind the same sink).
     pub audit_verifier: Option<Arc<dyn AuditVerifier>>,
     /// v1.5 (T5): `None` = `POST /v1/audit/exports` returns 503.
@@ -127,7 +127,7 @@ pub struct AppState {
     /// v0.11.1: composite read across chat / IM / scheduled sources used
     /// by `GET /v1/admin/today`, the audit-first console's landing pane.
     /// `None` makes the endpoint return 503 — production wires a
-    /// `PgTodayReader` adapter in `xiaoguai-core`.
+    /// `SqliteTodayReader` adapter in `xiaoguai-core`.
     pub today: Option<Arc<dyn TodayReader>>,
     /// v0.11.2: eval pane substrate — runner + case-from-session
     /// source + suites directory. `None` makes every `/v1/admin/eval/*`
@@ -146,22 +146,22 @@ pub struct AppState {
     pub nl_job_compiler: Option<Arc<dyn NlJobCompiler>>,
     /// v0.12.1: scheduled-job upsert sink for `POST /v1/admin/scheduler/jobs`.
     /// `None` makes the endpoint return 503; production wires the
-    /// `PgJobRepository` via a thin adapter in `xiaoguai-core`.
+    /// `SqliteJobRepository` via a thin adapter in `xiaoguai-core`.
     pub job_upserter: Option<Arc<dyn ScheduledJobUpserter>>,
     /// v1.1.2: conversation fork — backs
     /// `POST /v1/sessions/:id/fork`. `None` makes the route return
-    /// 503; production wires `PgSessionForker` in
+    /// 503; production wires `SqliteSessionForker` in
     /// `xiaoguai-core::sessions_bridge`.
     pub session_forker: Option<Arc<dyn SessionForker>>,
     /// v1.1.1: token-usage aggregator backing `GET /v1/usage`. `None`
     /// makes the endpoint return 503; production wires a
-    /// `PgUsageReader` in `xiaoguai-core/src/usage_bridge.rs`.
+    /// `SqliteUsageReader` in `xiaoguai-core/src/usage_bridge.rs`.
     pub usage_reader: Option<Arc<dyn UsageReader>>,
     /// v0.12.x.1: per-tenant webhook token validator backing
     /// `POST /v1/scheduler/webhooks/:route_id` (note: NOT under /admin —
     /// the admin route stays bearer-gated). `None` makes the public
     /// webhook endpoint return 503; production wires
-    /// `PgWebhookTokenValidator` from `xiaoguai-core`.
+    /// `SqliteWebhookTokenValidator` from `xiaoguai-core`.
     pub webhook_token_validator: Option<Arc<dyn WebhookTokenValidator>>,
     /// v0.12.x.1: admin CRUD for webhook tokens backing
     /// `/v1/admin/scheduler/tokens`. `None` makes the admin endpoints
@@ -174,7 +174,7 @@ pub struct AppState {
     pub scheduler_jobs_reader: Option<Arc<dyn ScheduledJobsReader>>,
     /// v1.2.3: HOTL boundary policy store — backs
     /// `GET|POST|DELETE /v1/hotl/policies`. `None` makes the endpoints
-    /// return 503; production wires a `PgHotlPolicyStore` in
+    /// return 503; production wires a `SqliteHotlPolicyStore` in
     /// `xiaoguai-core`.
     pub hotl_policy_store: Option<Arc<dyn HotlPolicyStore>>,
     /// v1.2.3: HOTL budget enforcer called from gated action sites
@@ -183,7 +183,7 @@ pub struct AppState {
     pub hotl_enforcer: Option<Arc<dyn HotlEnforcer>>,
     /// v1.8.x sprint-11 (S11-3a.1): record-of-decision store backing
     /// `POST /v1/hotl/decisions`. `None` makes the endpoint return 503;
-    /// production wires `PgHotlDecisionStore` from `xiaoguai-core`.
+    /// production wires `SqliteHotlDecisionStore` from `xiaoguai-core`.
     ///
     /// 3a.1 ships the decision-record + `raise_policy` route only — the
     /// agent loop does NOT suspend on `Escalate` yet, so the response's
@@ -203,11 +203,11 @@ pub struct AppState {
     /// (best-effort — audit failures must NOT block the operation).
     /// Distinct from `audit` (read-only) and `audit_chain_exporter`
     /// (compliance export); production wires a thin adapter around
-    /// `xiaoguai_audit::PgAuditSink`.
+    /// `xiaoguai_audit::SqliteAuditSink`.
     pub hotl_audit: Option<Arc<dyn HotlAuditSink>>,
     /// v1.2.4: outcome telemetry write side — backs `POST /v1/outcomes`.
     /// `None` makes the endpoint return 503; production wires
-    /// `PgOutcomeRecorder` via an adapter in `xiaoguai-core`.
+    /// `SqliteOutcomeRecorder` via an adapter in `xiaoguai-core`.
     pub outcome_writer: Option<Arc<dyn OutcomeWriter>>,
     /// v1.2.4: outcome telemetry read side — backs
     /// `GET /v1/outcomes/summary` and `GET /v1/outcomes/timeseries`.
@@ -216,21 +216,21 @@ pub struct AppState {
     /// v1.2.28: skill pack install/uninstall store backing
     /// `GET /v1/skills/installed`, `POST /v1/skills/install`, and
     /// `DELETE /v1/skills/install/:id`. `None` makes those endpoints
-    /// return 503; production wires `PgSkillPackRepository` from
+    /// return 503; production wires `SqliteSkillPackRepository` from
     /// `xiaoguai-core`.
     pub skill_packs: Option<Arc<dyn SkillPackRepository>>,
     /// v1.3.x: long-term memory with semantic retrieval — backs
     /// `/v1/memories` CRUD + `/v1/memories/recall` + `/v1/memories/similar/:id`.
     /// `None` makes those endpoints return 503; production wires
-    /// `PgMemoryStore` from `xiaoguai-core`.
+    /// `SqliteMemoryStore` from `xiaoguai-core`.
     pub memory_store: Option<Arc<dyn MemoryStore>>,
     /// v1.3.x: workspace CRUD backing `GET|POST|PUT|DELETE /v1/workspaces`.
     /// `None` makes those endpoints return 503; production wires
-    /// `PgWorkspaceRepository` from `xiaoguai-core/src/workspace_bridge.rs`.
+    /// `SqliteWorkspaceRepository` from `xiaoguai-core/src/workspace_bridge.rs`.
     pub workspace_repository: Option<Arc<dyn WorkspaceRepository>>,
     /// v1.5.x (Tier-2 D.1): persistence for agent-authored skill
     /// proposals. `None` makes `/v1/skills/proposals/*` endpoints return
-    /// 503; production wires `PgSkillProposalRepository`.
+    /// 503; production wires `SqliteSkillProposalRepository`.
     pub skill_proposals: Option<Arc<dyn xiaoguai_tasks::skill_author::SkillProposalRepository>>,
     /// v1.5.x: per-tenant opt-in flag store backing
     /// `allow_skill_authoring`. `None` → `propose_skill` is unavailable.
@@ -240,14 +240,14 @@ pub struct AppState {
     pub skill_author_gate: Option<Arc<dyn xiaoguai_tasks::skill_author::SkillAuthorGate>>,
     /// v1.5.x: audit sink that records `skill.propose`,
     /// `skill.hotl_gate`, `skill.approve`, `skill.reject`. Production
-    /// wires the `PgAuditSink` from `xiaoguai-audit`.
+    /// wires the `SqliteAuditSink` from `xiaoguai-audit`.
     pub skill_audit: Option<Arc<dyn xiaoguai_tasks::skill_author::SkillAuditSink>>,
     /// v1.5.x: directory the approved skill manifests are written to.
     /// Defaults to `~/.xiaoguai/skills` in production wiring.
     pub skills_dir: std::path::PathBuf,
     /// v1.8.0 (sprint-10b S10b-1): persona CRUD + session-attachment store —
     /// backs `/v1/personas/*` and `/v1/sessions/:id/persona`. `None` makes
-    /// those endpoints return 503; production wires `PgPersonaRepository`
+    /// those endpoints return 503; production wires `SqlitePersonaRepository`
     /// from `xiaoguai-personas`.
     pub personas: Option<Arc<dyn PersonaRepository>>,
     /// v1.8.0 (sprint-10b S10b-5): session-scoped watcher introspection —

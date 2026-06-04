@@ -1,7 +1,7 @@
 //! HMAC-chained audit sink adapter for HOTL decisions.
 //!
-//! Wraps `xiaoguai_audit::PgAuditSink::append` behind a trait so the API
-//! crate doesn't depend directly on the Postgres sink in tests and so the
+//! Wraps `xiaoguai_audit::SqliteAuditSink::append` behind a trait so the API
+//! crate doesn't depend directly on the audit sink in tests and so the
 //! HOTL decision route can audit `hotl.decision` events without coupling to
 //! the read-only `state.audit: Option<Arc<dyn AuditReader>>` field.
 //!
@@ -13,7 +13,7 @@ use xiaoguai_audit::AuditEntry;
 
 /// Append-only audit interface used by HOTL routes.
 ///
-/// Production wires `PgAuditSink` (which already implements `append` with
+/// Production wires `SqliteAuditSink` (which already implements `append` with
 /// redaction + HMAC chaining); tests provide an in-memory implementation
 /// that captures entries for assertion.
 #[async_trait]

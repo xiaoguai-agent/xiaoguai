@@ -22,7 +22,7 @@ pub enum MemoryError {
     Serialisation(#[from] serde_json::Error),
 }
 
-#[cfg(feature = "pg")]
+#[cfg(feature = "sqlite")]
 impl From<sqlx::Error> for MemoryError {
     fn from(e: sqlx::Error) -> Self {
         Self::Database(e.to_string())

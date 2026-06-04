@@ -10,7 +10,7 @@
 //!
 //! * [`ConversationHistory`] — original in-process `HashMap` store. Cheap,
 //!   single-replica only. Default for tests and dev.
-//! * [`crate::pg_history::PgImHistoryStore`] — durable, multi-replica safe.
+//! * [`crate::sqlite_history::SqliteImHistoryStore`] — durable, multi-replica safe.
 //!   Maps `(provider, tenant_ext, user_ext, conversation_id)` to the
 //!   internal tenant/user/session model via the `im_identities` /
 //!   `im_conversations` tables and persists each turn to the `messages`

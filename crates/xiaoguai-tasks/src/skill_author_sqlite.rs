@@ -1,4 +1,4 @@
-//! Sprint-8 S8-7 (DEC-023.3): Postgres-backed implementations of the
+//! Sprint-8 S8-7 (DEC-023.3): `SQLite`-backed implementations of the
 //! `SkillProposalRepository` and `TenantSettingsReader` seams declared
 //! in [`crate::skill_author`].
 //!
@@ -77,16 +77,16 @@ fn is_unique_violation(e: &sqlx::Error) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// PgSkillProposalRepository
+// SqliteSkillProposalRepository
 // ---------------------------------------------------------------------------
 
-/// Postgres-backed `SkillProposalRepository` against `skill_proposals`.
+/// `SQLite`-backed `SkillProposalRepository` against `skill_proposals`.
 #[derive(Debug, Clone)]
-pub struct PgSkillProposalRepository {
+pub struct SqliteSkillProposalRepository {
     pool: SqlitePool,
 }
 
-impl PgSkillProposalRepository {
+impl SqliteSkillProposalRepository {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -99,7 +99,7 @@ impl PgSkillProposalRepository {
 }
 
 #[async_trait]
-impl SkillProposalRepository for PgSkillProposalRepository {
+impl SkillProposalRepository for SqliteSkillProposalRepository {
     async fn insert(&self, row: ProposalRow) -> Result<ProposalRow, SkillAuthorError> {
         let manifest_json = serde_json::to_value(&row.manifest)
             .map_err(|e| SkillAuthorError::Backend(format!("encode manifest: {e}")))?;
@@ -210,16 +210,16 @@ impl SkillProposalRepository for PgSkillProposalRepository {
 }
 
 // ---------------------------------------------------------------------------
-// PgTenantSettings — reads `allow_skill_authoring` from JSONB
+// SqliteTenantSettings — reads `allow_skill_authoring` from JSONB
 // ---------------------------------------------------------------------------
 
-/// Postgres-backed `TenantSettingsReader` against `tenant_settings`.
+/// `SQLite`-backed `TenantSettingsReader` against `tenant_settings`.
 #[derive(Debug, Clone)]
-pub struct PgTenantSettings {
+pub struct SqliteTenantSettings {
     pool: SqlitePool,
 }
 
-impl PgTenantSettings {
+impl SqliteTenantSettings {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -232,7 +232,7 @@ impl PgTenantSettings {
 }
 
 #[async_trait]
-impl TenantSettingsReader for PgTenantSettings {
+impl TenantSettingsReader for SqliteTenantSettings {
     async fn allow_skill_authoring(&self) -> Result<bool, SkillAuthorError> {
         // `settings->>'allow_skill_authoring'` returns the JSON value as
         // text, or NULL if either the row is missing or the key is absent.
@@ -321,7 +321,7 @@ mod tests {
     #[tokio::test]
     async fn skill_author_pg_insert_get_list_set_status() {
         let (pool, _dir) = sqlite_pool().await;
-        let repo = PgSkillProposalRepository::new(pool);
+        let repo = SqliteSkillProposalRepository::new(pool);
         let inserted = repo.insert(row("test-skill")).await.unwrap();
         let got = repo.get(&inserted.id).await.unwrap().expect("present");
         assert_eq!(got.id, inserted.id);
@@ -343,7 +343,7 @@ mod tests {
     #[tokio::test]
     async fn skill_author_pg_duplicate_returns_duplicate() {
         let (pool, _dir) = sqlite_pool().await;
-        let repo = PgSkillProposalRepository::new(pool);
+        let repo = SqliteSkillProposalRepository::new(pool);
         let r1 = row("dup-skill");
         repo.insert(r1.clone()).await.unwrap();
         let r2 = ProposalRow {
@@ -357,14 +357,14 @@ mod tests {
     #[tokio::test]
     async fn tenant_settings_reader_returns_false_when_unset() {
         let (pool, _dir) = sqlite_pool().await;
-        let settings = PgTenantSettings::new(pool);
+        let settings = SqliteTenantSettings::new(pool);
         assert!(!settings.allow_skill_authoring().await.unwrap());
     }
 
     #[tokio::test]
     async fn tenant_settings_reader_returns_true_after_upsert() {
         let (pool, _dir) = sqlite_pool().await;
-        let settings = PgTenantSettings::new(pool.clone());
+        let settings = SqliteTenantSettings::new(pool.clone());
         sqlx::query(
             "INSERT INTO tenant_settings (tenant_id, settings) \
              VALUES (?, ?) \

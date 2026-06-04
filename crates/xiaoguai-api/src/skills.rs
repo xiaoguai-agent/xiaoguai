@@ -122,7 +122,7 @@ pub struct InstalledPackRow {
     pub installed_at: DateTime<Utc>,
 }
 
-/// Repository trait — production impl will be a `PgSkillPackRepository` in
+/// Repository trait — production impl will be a `SqliteSkillPackRepository` in
 /// `xiaoguai-core`; tests use [`InMemorySkillPackRepository`].
 #[async_trait]
 pub trait SkillPackRepository: Send + Sync {

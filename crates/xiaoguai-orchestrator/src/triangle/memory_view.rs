@@ -6,7 +6,7 @@
 //! to fresher state.
 //!
 //! Production impl will be in `xiaoguai-core::orchestrator_bridge`
-//! against the real `xiaoguai-memory::PgMemoryStore`. Tests use the
+//! against the real `xiaoguai-memory::SqliteMemoryStore`. Tests use the
 //! `InMemoryMemoryView` provided below.
 
 use std::sync::Arc;

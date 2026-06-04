@@ -39,7 +39,7 @@ pub struct RedactionPolicyRow {
 /// `FromRow` shim. `applies_to` is stored as a JSON-array TEXT column, so it
 /// can't decode straight into `Vec<String>` — the `Json<T>` wrapper handles
 /// it. The public [`RedactionPolicyRow`] is reconstructed in
-/// [`PgHotlRedactionRepo::load_all`].
+/// [`SqliteHotlRedactionRepo::load_all`].
 #[derive(Debug, FromRow)]
 struct RedactionPolicyDbRow {
     id: Uuid,
@@ -61,13 +61,13 @@ pub trait HotlRedactionRepo: Send + Sync {
     async fn load_all(&self) -> RepoResult<Vec<RedactionPolicyRow>>;
 }
 
-/// SQLite-backed implementation.
+/// `SQLite`-backed implementation.
 #[derive(Debug, Clone)]
-pub struct PgHotlRedactionRepo {
+pub struct SqliteHotlRedactionRepo {
     pool: SqlitePool,
 }
 
-impl PgHotlRedactionRepo {
+impl SqliteHotlRedactionRepo {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -75,7 +75,7 @@ impl PgHotlRedactionRepo {
 }
 
 #[async_trait::async_trait]
-impl HotlRedactionRepo for PgHotlRedactionRepo {
+impl HotlRedactionRepo for SqliteHotlRedactionRepo {
     async fn load_all(&self) -> RepoResult<Vec<RedactionPolicyRow>> {
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         let rows = sqlx::query_as::<_, RedactionPolicyDbRow>(

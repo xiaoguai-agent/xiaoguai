@@ -177,7 +177,7 @@ mod tests {
     use tower::ServiceExt;
     use xiaoguai_storage::repositories::error::{RepoError, RepoResult};
 
-    // A trivial in-memory repo so the router can be exercised without Postgres.
+    // A trivial in-memory repo so the router can be exercised without a database.
     #[derive(Default)]
     struct MemRepo {
         rows: std::sync::Mutex<Vec<LlmProvider>>,
