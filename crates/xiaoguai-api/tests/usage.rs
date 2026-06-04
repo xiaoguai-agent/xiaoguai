@@ -98,7 +98,6 @@ async fn usage_default_group_by_is_day() {
     let reader = Arc::new(StaticUsageReader::with_entries(vec![
         StaticUsageEntry {
             ts: d1,
-            tenant_id: "ten_a".into(),
             provider_id: "openai".into(),
             model: "gpt-4o".into(),
             input_tokens: 10,
@@ -107,7 +106,6 @@ async fn usage_default_group_by_is_day() {
         },
         StaticUsageEntry {
             ts: d2,
-            tenant_id: "ten_a".into(),
             provider_id: "openai".into(),
             model: "gpt-4o".into(),
             input_tokens: 20,
@@ -143,7 +141,6 @@ async fn usage_group_by_provider_query_param() {
     let reader = Arc::new(StaticUsageReader::with_entries(vec![
         StaticUsageEntry {
             ts,
-            tenant_id: "ten".into(),
             provider_id: "openai".into(),
             model: "gpt-4o".into(),
             input_tokens: 1,
@@ -152,7 +149,6 @@ async fn usage_group_by_provider_query_param() {
         },
         StaticUsageEntry {
             ts,
-            tenant_id: "ten".into(),
             provider_id: "anthropic".into(),
             model: "claude".into(),
             input_tokens: 2,
@@ -180,12 +176,11 @@ async fn usage_group_by_provider_query_param() {
 }
 
 #[tokio::test]
-async fn usage_tenant_filter_narrows_rows() {
+async fn usage_aggregates_all_rows() {
     let ts = Utc::now();
     let reader = Arc::new(StaticUsageReader::with_entries(vec![
         StaticUsageEntry {
             ts,
-            tenant_id: "ten_a".into(),
             provider_id: "openai".into(),
             model: "m".into(),
             input_tokens: 5,
@@ -194,7 +189,6 @@ async fn usage_tenant_filter_narrows_rows() {
         },
         StaticUsageEntry {
             ts,
-            tenant_id: "ten_b".into(),
             provider_id: "openai".into(),
             model: "m".into(),
             input_tokens: 100,
@@ -206,7 +200,7 @@ async fn usage_tenant_filter_narrows_rows() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/v1/usage?tenant_id=ten_a&group_by=model")
+                .uri("/v1/usage?group_by=model")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -214,8 +208,8 @@ async fn usage_tenant_filter_narrows_rows() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
-    assert_eq!(body["total_input_tokens"], 5);
-    assert_eq!(body["total_output_tokens"], 1);
+    assert_eq!(body["total_input_tokens"], 105);
+    assert_eq!(body["total_output_tokens"], 101);
 }
 
 #[tokio::test]

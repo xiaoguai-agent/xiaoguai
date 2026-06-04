@@ -91,7 +91,6 @@ async fn chat_round_trip_streams_text_delta_and_done() {
     let session = client
         .create_session(&CreateSessionRequest {
             user_id: "usr_a".into(),
-            tenant_id: "ten_a".into(),
             model: "mock".into(),
             title: None,
         })
@@ -128,7 +127,6 @@ async fn messages_endpoint_lists_persisted_history() {
     let session = client
         .create_session(&CreateSessionRequest {
             user_id: "usr_a".into(),
-            tenant_id: "ten_a".into(),
             model: "mock".into(),
             title: None,
         })
@@ -152,7 +150,6 @@ async fn cancel_returns_false_when_idle() {
     let session = client
         .create_session(&CreateSessionRequest {
             user_id: "u".into(),
-            tenant_id: "t".into(),
             model: "mock".into(),
             title: None,
         })

@@ -8,7 +8,7 @@
 //!
 //! | Method | Path                                   | Description                              |
 //! |--------|----------------------------------------|------------------------------------------|
-//! | GET    | `/v1/personas`                         | List active personas for the tenant      |
+//! | GET    | `/v1/personas`                         | List active personas                     |
 //! | POST   | `/v1/personas`                         | Create a persona                         |
 //! | GET    | `/v1/personas/{id}`                     | Fetch a persona by UUID                  |
 //! | PATCH  | `/v1/personas/{id}`                     | Partial-update a persona                 |
@@ -68,11 +68,6 @@ pub fn router(state: PersonaApiState) -> Router {
 // ── Request / response bodies ─────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct TenantQuery {
-    tenant_id: Uuid,
-}
-
-#[derive(Debug, Deserialize)]
 struct AttachBody {
     persona_id: Uuid,
 }
@@ -107,11 +102,8 @@ fn map_err(e: PersonaError) -> Response {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-async fn list_personas(
-    State(s): State<PersonaApiState>,
-    axum::extract::Query(q): axum::extract::Query<TenantQuery>,
-) -> impl IntoResponse {
-    match s.repo.list(q.tenant_id).await {
+async fn list_personas(State(s): State<PersonaApiState>) -> impl IntoResponse {
+    match s.repo.list().await {
         Ok(ps) => (StatusCode::OK, Json(ps)).into_response(),
         Err(e) => map_err(e).into_response(),
     }

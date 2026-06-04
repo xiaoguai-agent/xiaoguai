@@ -1,40 +1,28 @@
-//! `SessionRepository` — Postgres implementation backed by sqlx.
+//! `SessionRepository` — `SQLite` implementation backed by sqlx.
 //!
-//! Session rows are tenant-scoped; RLS policy `tenant_isolation_sessions` in
-//! `0001_initial.sql` enforces
-//! `tenant_id = current_setting('app.current_tenant_id')`.
-//!
-//! Every method takes a `tenant: Option<&str>` argument and runs inside a
-//! transaction that sets the `app.current_tenant_id` GUC via
-//! [`begin_tenant_tx`]. When `tenant` is `None` (admin / cross-tenant CLI
-//! paths) no GUC is set; under a non-superuser DB role that means RLS
-//! returns an empty result for the policy-protected columns. Tests use the
-//! testcontainers `postgres` superuser, which bypasses non-FORCE RLS, so
-//! `None` works there as a "see everything" mode.
+//! Single-owner deployment (DEC-033): there is one implicit owner, so session
+//! rows are not tenant-scoped and every method runs in a plain transaction.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, SqlitePool};
-use xiaoguai_types::{MessageId, Session, SessionId, SessionStatus, TenantId, UserId};
+use xiaoguai_types::{MessageId, Session, SessionId, SessionStatus, UserId};
 
 use crate::repositories::error::{RepoError, RepoResult};
-use crate::repositories::tenant_ctx::begin_tenant_tx;
-use crate::OWNER_TENANT_ID;
 
 #[async_trait]
 pub trait SessionRepository: Send + Sync {
-    async fn create(&self, tenant: Option<&str>, session: &Session) -> RepoResult<()>;
-    async fn find_by_id(&self, tenant: Option<&str>, id: &str) -> RepoResult<Option<Session>>;
+    async fn create(&self, session: &Session) -> RepoResult<()>;
+    async fn find_by_id(&self, id: &str) -> RepoResult<Option<Session>>;
     async fn list_by_user(
         &self,
-        tenant: Option<&str>,
         user_id: &str,
         limit: i64,
         offset: i64,
     ) -> RepoResult<Vec<Session>>;
-    async fn touch(&self, tenant: Option<&str>, id: &str) -> RepoResult<()>;
-    async fn archive(&self, tenant: Option<&str>, id: &str) -> RepoResult<()>;
-    async fn delete(&self, tenant: Option<&str>, id: &str) -> RepoResult<()>;
+    async fn touch(&self, id: &str) -> RepoResult<()>;
+    async fn archive(&self, id: &str) -> RepoResult<()>;
+    async fn delete(&self, id: &str) -> RepoResult<()>;
 
     /// v1.1.2 — clone a session and copy every message with
     /// `created_at <= cutoff.created_at` (where `cutoff` is the message
@@ -49,7 +37,6 @@ pub trait SessionRepository: Send + Sync {
     /// `PgSessionRepository` overrides this.
     async fn fork(
         &self,
-        _tenant: Option<&str>,
         _parent_id: &str,
         _from_message_id: &str,
         _new_session: &Session,
@@ -99,7 +86,6 @@ impl SessionRow {
         };
         Ok(Session {
             id: SessionId::from(self.id),
-            tenant_id: TenantId::from(OWNER_TENANT_ID.to_string()),
             user_id: UserId::from(self.user_id),
             title: self.title,
             created_at: self.created_at,
@@ -124,8 +110,8 @@ fn status_str(s: SessionStatus) -> &'static str {
 
 #[async_trait]
 impl SessionRepository for PgSessionRepository {
-    async fn create(&self, tenant: Option<&str>, session: &Session) -> RepoResult<()> {
-        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
+    async fn create(&self, session: &Session) -> RepoResult<()> {
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         sqlx::query(
             "INSERT INTO sessions (id, user_id, title, model, status, created_at, updated_at, parent_session_id, forked_from_message_id)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -146,8 +132,8 @@ impl SessionRepository for PgSessionRepository {
         Ok(())
     }
 
-    async fn find_by_id(&self, tenant: Option<&str>, id: &str) -> RepoResult<Option<Session>> {
-        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
+    async fn find_by_id(&self, id: &str) -> RepoResult<Option<Session>> {
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         let row: Option<SessionRow> = sqlx::query_as(&format!(
             "SELECT {SESSION_COLUMNS} FROM sessions WHERE id = ?"
         ))
@@ -161,7 +147,6 @@ impl SessionRepository for PgSessionRepository {
 
     async fn list_by_user(
         &self,
-        tenant: Option<&str>,
         user_id: &str,
         limit: i64,
         offset: i64,
@@ -171,7 +156,7 @@ impl SessionRepository for PgSessionRepository {
                 "limit/offset must be >= 0".to_string(),
             ));
         }
-        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         let rows: Vec<SessionRow> = sqlx::query_as(&format!(
             "SELECT {SESSION_COLUMNS}
              FROM sessions
@@ -189,8 +174,8 @@ impl SessionRepository for PgSessionRepository {
         rows.into_iter().map(SessionRow::into_domain).collect()
     }
 
-    async fn touch(&self, tenant: Option<&str>, id: &str) -> RepoResult<()> {
-        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
+    async fn touch(&self, id: &str) -> RepoResult<()> {
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         let result = sqlx::query(
             "UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
         )
@@ -205,8 +190,8 @@ impl SessionRepository for PgSessionRepository {
         Ok(())
     }
 
-    async fn archive(&self, tenant: Option<&str>, id: &str) -> RepoResult<()> {
-        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
+    async fn archive(&self, id: &str) -> RepoResult<()> {
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         let result = sqlx::query(
             "UPDATE sessions SET status = 'archived', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
         )
@@ -221,10 +206,10 @@ impl SessionRepository for PgSessionRepository {
         Ok(())
     }
 
-    async fn delete(&self, tenant: Option<&str>, id: &str) -> RepoResult<()> {
+    async fn delete(&self, id: &str) -> RepoResult<()> {
         // Idempotent — deleting a non-existent row is not an error. FK CASCADE
         // wipes child messages.
-        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         sqlx::query("DELETE FROM sessions WHERE id = ?")
             .bind(id)
             .execute(&mut *tx)
@@ -234,7 +219,7 @@ impl SessionRepository for PgSessionRepository {
         Ok(())
     }
 
-    /// v1.1.2 — atomic fork. All work happens in one tenant-scoped tx:
+    /// v1.1.2 — atomic fork. All work happens in one tx:
     /// (1) look up the cutoff message inside the parent (and verify the
     /// parent exists), (2) insert the new session row, (3) copy every
     /// message of the parent with `created_at <= cutoff.created_at`
@@ -244,17 +229,13 @@ impl SessionRepository for PgSessionRepository {
     /// the (`id` PK) constraint is preserved.
     async fn fork(
         &self,
-        tenant: Option<&str>,
         parent_id: &str,
         from_message_id: &str,
         new_session: &Session,
     ) -> RepoResult<()> {
-        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
 
         // (1) Verify the cutoff message belongs to the parent session.
-        // The session/message FK + tenant RLS together guarantee tenant
-        // isolation here — a caller asking us to fork another tenant's
-        // session sees `NotFound` rather than a leaked row.
         let cutoff_ts: Option<DateTime<Utc>> =
             sqlx::query_scalar("SELECT created_at FROM messages WHERE id = ? AND session_id = ?")
                 .bind(from_message_id)

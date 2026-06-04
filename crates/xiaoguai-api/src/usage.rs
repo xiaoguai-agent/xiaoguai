@@ -56,11 +56,9 @@ impl UsageGroupBy {
 }
 
 /// Filter knobs forwarded to the backing reader. `since` / `until` are
-/// inclusive bounds on `token_usage.ts`. `tenant_id = None` means
-/// cross-tenant aggregation (admin view across the whole deployment).
+/// inclusive bounds on `token_usage.ts`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UsageQuery {
-    pub tenant_id: Option<String>,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
     pub group_by: UsageGroupBy,
@@ -104,7 +102,6 @@ pub struct StaticUsageReader {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticUsageEntry {
     pub ts: DateTime<Utc>,
-    pub tenant_id: String,
     pub provider_id: String,
     pub model: String,
     pub input_tokens: u64,
@@ -140,11 +137,6 @@ impl UsageReader for StaticUsageReader {
         let mut any_with_cost = false;
 
         for e in &self.entries {
-            if let Some(t) = &query.tenant_id {
-                if &e.tenant_id != t {
-                    continue;
-                }
-            }
             if let Some(since) = query.since {
                 if e.ts < since {
                     continue;
@@ -211,10 +203,9 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    fn entry(ts: DateTime<Utc>, tenant: &str, provider: &str, model: &str) -> StaticUsageEntry {
+    fn entry(ts: DateTime<Utc>, _tenant: &str, provider: &str, model: &str) -> StaticUsageEntry {
         StaticUsageEntry {
             ts,
-            tenant_id: tenant.into(),
             provider_id: provider.into(),
             model: model.into(),
             input_tokens: 100,
@@ -235,7 +226,6 @@ mod tests {
         ]);
         let got = reader
             .aggregate(UsageQuery {
-                tenant_id: None,
                 since: None,
                 until: None,
                 group_by: UsageGroupBy::Day,
@@ -263,7 +253,6 @@ mod tests {
         ]);
         let by_prov = reader
             .aggregate(UsageQuery {
-                tenant_id: None,
                 since: None,
                 until: None,
                 group_by: UsageGroupBy::Provider,
@@ -276,7 +265,6 @@ mod tests {
 
         let by_model = reader
             .aggregate(UsageQuery {
-                tenant_id: None,
                 since: None,
                 until: None,
                 group_by: UsageGroupBy::Model,
@@ -287,19 +275,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn static_reader_filters_by_tenant_and_since_until() {
+    async fn static_reader_filters_by_since_until() {
         let d1 = Utc.with_ymd_and_hms(2026, 5, 20, 1, 0, 0).unwrap();
         let d2 = Utc.with_ymd_and_hms(2026, 5, 21, 1, 0, 0).unwrap();
         let d3 = Utc.with_ymd_and_hms(2026, 5, 22, 1, 0, 0).unwrap();
         let reader = StaticUsageReader::with_entries(vec![
             entry(d1, "ten_a", "openai", "gpt-4o"),
             entry(d2, "ten_a", "openai", "gpt-4o"),
-            entry(d2, "ten_b", "openai", "gpt-4o"),
             entry(d3, "ten_a", "openai", "gpt-4o"),
         ]);
         let got = reader
             .aggregate(UsageQuery {
-                tenant_id: Some("ten_a".into()),
                 since: Some(d2),
                 until: Some(d2),
                 group_by: UsageGroupBy::Day,
@@ -318,7 +304,6 @@ mod tests {
         let later = Utc.with_ymd_and_hms(2026, 5, 21, 0, 0, 0).unwrap();
         let err = reader
             .aggregate(UsageQuery {
-                tenant_id: None,
                 since: Some(later),
                 until: Some(earlier),
                 group_by: UsageGroupBy::Day,
@@ -337,7 +322,6 @@ mod tests {
         let reader = StaticUsageReader::with_entries(vec![with_cost, without_cost]);
         let got = reader
             .aggregate(UsageQuery {
-                tenant_id: None,
                 since: None,
                 until: None,
                 group_by: UsageGroupBy::Model,
@@ -397,7 +381,6 @@ mod tests {
         let cents = (usd * 100.0).round() as u64;
         StaticUsageEntry {
             ts,
-            tenant_id: "ten".into(),
             provider_id: "openai".into(),
             model: "gpt-4o".into(),
             input_tokens: input,
@@ -417,7 +400,6 @@ mod tests {
         let reader = StaticUsageReader::with_entries(vec![e]);
         let got = reader
             .aggregate(UsageQuery {
-                tenant_id: None,
                 since: None,
                 until: None,
                 group_by: UsageGroupBy::Provider,
@@ -440,7 +422,6 @@ mod tests {
         let reader = StaticUsageReader::with_entries(vec![e]);
         let got = reader
             .aggregate(UsageQuery {
-                tenant_id: None,
                 since: None,
                 until: None,
                 group_by: UsageGroupBy::Day,
@@ -458,7 +439,6 @@ mod tests {
         let ts = Utc::now();
         let e = StaticUsageEntry {
             ts,
-            tenant_id: "ten".into(),
             provider_id: "ollama-local".into(),
             model: "llama3".into(),
             input_tokens: 10_000,
@@ -468,7 +448,6 @@ mod tests {
         let reader = StaticUsageReader::with_entries(vec![e]);
         let got = reader
             .aggregate(UsageQuery {
-                tenant_id: None,
                 since: None,
                 until: None,
                 group_by: UsageGroupBy::Provider,
@@ -485,7 +464,6 @@ mod tests {
         let ts = Utc::now();
         let e = StaticUsageEntry {
             ts,
-            tenant_id: "ten".into(),
             provider_id: "mock-provider".into(),
             model: "mock-model".into(),
             input_tokens: 100,
@@ -495,7 +473,6 @@ mod tests {
         let reader = StaticUsageReader::with_entries(vec![e]);
         let got = reader
             .aggregate(UsageQuery {
-                tenant_id: None,
                 since: None,
                 until: None,
                 group_by: UsageGroupBy::Provider,
@@ -515,7 +492,6 @@ mod tests {
         let ts = Utc::now();
         let e1 = StaticUsageEntry {
             ts,
-            tenant_id: "ten".into(),
             provider_id: "openai".into(),
             model: "gpt-4o".into(),
             input_tokens: 1000,
@@ -524,7 +500,6 @@ mod tests {
         };
         let e2 = StaticUsageEntry {
             ts,
-            tenant_id: "ten".into(),
             provider_id: "anthropic".into(),
             model: "claude-haiku-4-5".into(),
             input_tokens: 0,
@@ -534,7 +509,6 @@ mod tests {
         let reader = StaticUsageReader::with_entries(vec![e1, e2]);
         let got = reader
             .aggregate(UsageQuery {
-                tenant_id: None,
                 since: None,
                 until: None,
                 group_by: UsageGroupBy::Provider,

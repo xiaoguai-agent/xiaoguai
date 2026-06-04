@@ -1,9 +1,9 @@
 //! v0.7.3: Integration tests for `PgImIdentityRepository` (`SQLite`, DEC-033).
 //!
 //! No Docker — each test opens a temp `SQLite` database via `common::test_setup`
-//! and exercises the `resolve_or_create_*` helpers. Under the single-user pivot
-//! there is no `tenants` table; the resolved `tenant_id` is always
-//! `OWNER_TENANT_ID`, and users are keyed by their synthetic email.
+//! and exercises the `resolve_or_create_*` helpers. Single-owner deployment: no
+//! `tenants` table; users are keyed by their synthetic email (which encodes the
+//! IM platform `tenant_external_id`).
 
 mod common;
 
@@ -11,7 +11,6 @@ use common::test_setup;
 use xiaoguai_storage::repositories::{
     ExternalConversation, ExternalIdentity, ImIdentityRepository, PgImIdentityRepository,
 };
-use xiaoguai_storage::OWNER_TENANT_ID;
 
 #[tokio::test]
 async fn first_webhook_auto_creates_user_and_mapping() {
@@ -29,9 +28,6 @@ async fn first_webhook_auto_creates_user_and_mapping() {
         )
         .await
         .expect("first resolve");
-
-    // Single owner under the pivot.
-    assert_eq!(identity.tenant_id, OWNER_TENANT_ID);
 
     // Mapping row exists.
     let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM im_identities")
@@ -180,10 +176,8 @@ async fn different_tenant_externals_produce_distinct_users() {
         .await
         .expect("y");
 
-    // Both resolve to the single owner tenant, but the synthetic email encodes
-    // tenant_external_id, so the users (and mappings) stay distinct.
-    assert_eq!(x.tenant_id, OWNER_TENANT_ID);
-    assert_eq!(y.tenant_id, OWNER_TENANT_ID);
+    // The synthetic email encodes tenant_external_id, so the users (and
+    // mappings) stay distinct even when user_external_id matches.
     assert_ne!(
         x.user_id, y.user_id,
         "users are distinct per tenant_external_id even when user_external_id matches"

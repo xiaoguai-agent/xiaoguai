@@ -6,7 +6,7 @@
 //!   recommended MCP servers. The catalog ships as a versioned JSON
 //!   blob baked into the binary (no marketplace backend, no remote
 //!   fetch — operators audit a single file).
-//! * `POST /v1/mcp/marketplace/install` — body `{slug, tenant_id?}`.
+//! * `POST /v1/mcp/marketplace/install` — body `{slug}`.
 //!   Looks up the slug in the catalog, materialises an `McpServer`
 //!   row, and writes it via `McpServerRepository::create`. Returns
 //!   the created row.
@@ -20,7 +20,7 @@ use axum::extract::State;
 use axum::Json;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use xiaoguai_types::{ids::McpServerInstanceId, McpServer, McpTransport, TenantId};
+use xiaoguai_types::{ids::McpServerInstanceId, McpServer, McpTransport};
 
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
@@ -95,11 +95,6 @@ pub async fn list_marketplace() -> ApiResult<Json<MarketplaceResponse>> {
 #[derive(Debug, Deserialize)]
 pub struct InstallRequest {
     pub slug: String,
-    /// `None` ⇒ install as a global (system-wide) MCP server. Mirrors
-    /// the existing `McpServer.tenant_id` semantics — `None` is shared
-    /// across every tenant.
-    #[serde(default)]
-    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -137,7 +132,6 @@ pub async fn install_from_marketplace(
     let now = Utc::now();
     let server = McpServer {
         id: McpServerInstanceId::new(),
-        tenant_id: req.tenant_id.clone().map(TenantId::from),
         name: entry.name.clone(),
         version: entry.version.clone(),
         transport,
@@ -150,7 +144,7 @@ pub async fn install_from_marketplace(
         updated_at: now,
     };
 
-    repo.create(req.tenant_id.as_deref(), &server).await?;
+    repo.create(&server).await?;
 
     // v0.9.4.1: live-pickup. If the operator wired a supervisor, ask it
     // to reconcile against the row we just wrote so the newly installed
@@ -158,10 +152,7 @@ pub async fn install_from_marketplace(
     // spawn failure (missing binary on PATH, env var unset) is logged
     // but doesn't fail the install — the DB row is the source of truth.
     if let Some(sup) = state.mcp_supervisor.as_ref() {
-        match sup
-            .reload_from_db(repo.as_ref(), req.tenant_id.as_deref())
-            .await
-        {
+        match sup.reload_from_db(repo.as_ref()).await {
             Ok(started) => {
                 if !started.is_empty() {
                     tracing::info!(

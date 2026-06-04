@@ -1,4 +1,4 @@
-//! Strongly-typed ID newtypes to prevent mixing tenant / user / session IDs.
+//! Strongly-typed ID newtypes to prevent mixing user / session IDs.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -48,7 +48,6 @@ macro_rules! id_newtype {
     };
 }
 
-id_newtype!(TenantId, "ten");
 id_newtype!(UserId, "usr");
 id_newtype!(SessionId, "sess");
 id_newtype!(MessageId, "msg");
@@ -62,11 +61,11 @@ mod tests {
 
     #[test]
     fn ids_have_distinct_prefixes() {
-        let t = TenantId::new();
         let u = UserId::new();
-        assert!(t.as_str().starts_with("ten_"));
+        let s = SessionId::new();
         assert!(u.as_str().starts_with("usr_"));
-        assert_ne!(t.as_str(), u.as_str());
+        assert!(s.as_str().starts_with("sess_"));
+        assert_ne!(u.as_str(), s.as_str());
     }
 
     #[test]

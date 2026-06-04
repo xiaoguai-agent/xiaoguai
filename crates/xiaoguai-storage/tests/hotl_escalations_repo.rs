@@ -7,8 +7,7 @@
 //! back to `verdict=timeout` for stale ids).
 //!
 //! Embedded `SQLite` (DEC-033). No Docker — each test opens a temp database via
-//! `common::test_setup`. Under the single-user pivot the `tenant_id` column is
-//! dropped: `HotlPendingRow::tenant_id` reads back as `Uuid::nil()`.
+//! `common::test_setup`. Single-owner deployment: no tenant scoping.
 
 mod common;
 
@@ -20,10 +19,9 @@ use xiaoguai_storage::repositories::hotl_escalations::{
 };
 use xiaoguai_storage::repositories::HotlDecisionVerdict;
 
-fn make_parent(tenant_id: Uuid, scope: &str) -> HotlEscalationRow {
+fn make_parent(scope: &str) -> HotlEscalationRow {
     HotlEscalationRow {
         id: Uuid::new_v4(),
-        tenant_id,
         session_id: Uuid::new_v4(),
         top_level_scope: scope.to_string(),
         status: "pending".to_string(),
@@ -32,14 +30,13 @@ fn make_parent(tenant_id: Uuid, scope: &str) -> HotlEscalationRow {
     }
 }
 
-fn make_child(tenant_id: Uuid, scope: &str, expires_in: Duration) -> HotlPendingRow {
+fn make_child(scope: &str, expires_in: Duration) -> HotlPendingRow {
     let now = Utc::now();
     HotlPendingRow {
         id: Uuid::new_v4(),
         // `escalation_id` is overwritten by `insert_pending` with the parent id
         // it actually persisted; the value provided here is irrelevant.
         escalation_id: Uuid::nil(),
-        tenant_id,
         scope: scope.to_string(),
         tool: "execute_python".to_string(),
         args_redacted: serde_json::json!({"code": "print(1)"}),
@@ -55,10 +52,8 @@ fn make_child(tenant_id: Uuid, scope: &str, expires_in: Duration) -> HotlPending
 async fn insert_pending_round_trip() {
     let (pool, _guard) = test_setup().await;
     let repo = PgHotlEscalationRepository::new(pool.clone());
-
-    let tenant_id = Uuid::new_v4();
-    let parent = make_parent(tenant_id, "tool_call.execute_python");
-    let child = make_child(tenant_id, "tool_call.execute_python", Duration::hours(24));
+    let parent = make_parent("tool_call.execute_python");
+    let child = make_child("tool_call.execute_python", Duration::hours(24));
 
     let escalation_id = repo
         .insert_pending(parent.clone(), child.clone())
@@ -78,8 +73,6 @@ async fn insert_pending_round_trip() {
 
     assert_eq!(rows.len(), 1, "should see the one row we inserted");
     assert_eq!(rows[0].escalation_id, escalation_id);
-    // tenant_id column is dropped under the pivot; reads back as nil.
-    assert_eq!(rows[0].tenant_id, Uuid::nil());
     assert_eq!(rows[0].scope, "tool_call.execute_python");
     assert_eq!(rows[0].tool, "execute_python");
     assert_eq!(rows[0].status, "pending");
@@ -89,11 +82,9 @@ async fn insert_pending_round_trip() {
 async fn list_pending_unexpired_excludes_expired() {
     let (pool, _guard) = test_setup().await;
     let repo = PgHotlEscalationRepository::new(pool.clone());
-
-    let tenant_id = Uuid::new_v4();
-    let parent = make_parent(tenant_id, "tool_call.execute_python");
+    let parent = make_parent("tool_call.execute_python");
     // expires_at = now - 1m → already expired by the time list runs.
-    let child = make_child(tenant_id, "tool_call.execute_python", Duration::minutes(-1));
+    let child = make_child("tool_call.execute_python", Duration::minutes(-1));
 
     repo.insert_pending(parent, child)
         .await
@@ -115,10 +106,8 @@ async fn list_pending_unexpired_excludes_expired() {
 async fn list_pending_unexpired_excludes_decided() {
     let (pool, _guard) = test_setup().await;
     let repo = PgHotlEscalationRepository::new(pool.clone());
-
-    let tenant_id = Uuid::new_v4();
-    let parent = make_parent(tenant_id, "tool_call.execute_python");
-    let mut child = make_child(tenant_id, "tool_call.execute_python", Duration::hours(24));
+    let parent = make_parent("tool_call.execute_python");
+    let mut child = make_child("tool_call.execute_python", Duration::hours(24));
     // Pre-mark child as already-resolved; list must skip it even though
     // expires_at is in the future.
     child.status = "resolved".to_string();
@@ -143,10 +132,8 @@ async fn list_pending_unexpired_excludes_decided() {
 async fn record_decision_resolves_pending_row() {
     let (pool, _guard) = test_setup().await;
     let repo = PgHotlEscalationRepository::new(pool.clone());
-
-    let tenant_id = Uuid::new_v4();
-    let parent = make_parent(tenant_id, "tool_call.execute_python");
-    let child = make_child(tenant_id, "tool_call.execute_python", Duration::hours(24));
+    let parent = make_parent("tool_call.execute_python");
+    let child = make_child("tool_call.execute_python", Duration::hours(24));
 
     let escalation_id = repo
         .insert_pending(parent, child)

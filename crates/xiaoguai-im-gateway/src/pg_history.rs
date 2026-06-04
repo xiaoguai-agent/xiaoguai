@@ -1,7 +1,7 @@
 //! Postgres-backed conversation history for IM webhooks.
 //!
 //! Resolves `(provider, tenant_ext, user_ext, conversation_id)` to internal
-//! `(tenant_id, user_id, session_id)` via the `im_identities` /
+//! `(user_id, session_id)` via the `im_identities` /
 //! `im_conversations` mapping tables (see `xiaoguai-storage` migration
 //! `0006_im_identity.sql`), then reads / writes the conversation's
 //! turn history through the same `MessageRepository` the REST API uses.
@@ -156,40 +156,16 @@ impl ImHistoryStore for PgImHistoryStore {
         // Easiest portable read: count + offset + ASC.
         let total = self
             .messages
-            .count_by_session(Some(&identity.tenant_id), &conv.session_id)
+            .count_by_session(&conv.session_id)
             .await
             .map_err(backend_err)?;
         let offset = (total - self.max_turns).max(0);
         let rows = self
             .messages
-            .list_by_session(
-                Some(&identity.tenant_id),
-                &conv.session_id,
-                self.max_turns,
-                offset,
-            )
+            .list_by_session(&conv.session_id, self.max_turns, offset)
             .await
             .map_err(backend_err)?;
         Ok(rows.iter().filter_map(domain_to_llm).collect())
-    }
-
-    async fn resolve_tenant(
-        &self,
-        ident: &ConversationIdent,
-    ) -> Result<Option<String>, HistoryError> {
-        let identity = self
-            .identities
-            .resolve_or_create_identity(
-                ExternalIdentity {
-                    provider: &ident.provider,
-                    tenant_external_id: &ident.tenant_external_id,
-                    user_external_id: &ident.user_external_id,
-                },
-                None,
-            )
-            .await
-            .map_err(backend_err)?;
-        Ok(Some(identity.tenant_id))
     }
 
     async fn extend(
@@ -225,17 +201,11 @@ impl ImHistoryStore for PgImHistoryStore {
 
         for msg in &msgs {
             let domain = llm_to_domain(&conv.session_id, msg);
-            self.messages
-                .append(Some(&identity.tenant_id), &domain)
-                .await
-                .map_err(backend_err)?;
+            self.messages.append(&domain).await.map_err(backend_err)?;
         }
         // Touch the session's updated_at so chat-ui sorts by recency.
         // Ignore NotFound — the session was just resolved/created above.
-        let _ = self
-            .sessions
-            .touch(Some(&identity.tenant_id), &conv.session_id)
-            .await;
+        let _ = self.sessions.touch(&conv.session_id).await;
         Ok(())
     }
 }

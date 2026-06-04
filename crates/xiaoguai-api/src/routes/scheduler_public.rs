@@ -6,14 +6,14 @@
 //! the no-token shortcut for internal callers).
 //!
 //! Authentication: `X-Xiaoguai-Token` header → `WebhookTokenValidator`.
-//! The validator returns `Ok(Some(tenant_id))` on success; the handler
-//! then forwards to the same `WebhookPusher` the admin route uses.
+//! The validator returns `Ok(true)` on success; the handler then forwards
+//! to the same `WebhookPusher` the admin route uses.
 //!
 //! Status codes (in order of precedence):
 //! * 503 — token validator OR webhook pusher unwired
-//! * 401 — token missing OR validation returned `None`
+//! * 401 — token missing OR validation returned `false`
 //! * 404 — no jobs bound to `route_id` (`delivered == 0`)
-//! * 202 — `{ "delivered": N, "tenant_id": "..." }`
+//! * 202 — `{ "delivered": N }`
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -52,11 +52,15 @@ pub async fn scheduler_webhook_public(
             "{TOKEN_HEADER} header missing or empty"
         )));
     }
-    let tenant_id = validator
+    let valid = validator
         .validate(token, &route_id)
         .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("token validate: {e}")))?
-        .ok_or_else(|| ApiError::invalid_webhook_token("invalid webhook token for this route"))?;
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("token validate: {e}")))?;
+    if !valid {
+        return Err(ApiError::invalid_webhook_token(
+            "invalid webhook token for this route",
+        ));
+    }
 
     let delivered = pusher
         .push(&route_id, body)
@@ -67,6 +71,6 @@ pub async fn scheduler_webhook_public(
     }
     Ok((
         StatusCode::ACCEPTED,
-        Json(json!({ "delivered": delivered, "tenant_id": tenant_id })),
+        Json(json!({ "delivered": delivered })),
     ))
 }

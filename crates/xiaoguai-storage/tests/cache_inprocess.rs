@@ -43,25 +43,6 @@ async fn in_process_cache_supports_full_typed_workflow() {
     };
     cache.set("items/1", &v, None).await.expect("set");
 
-    // Tenant scoping isolates the key namespace.
-    let t1 = cache.tenant_scope("t-1");
-    let t2 = cache.tenant_scope("t-2");
-    let v1 = Item {
-        id: 10,
-        label: "tenant-one".into(),
-    };
-    let v2 = Item {
-        id: 20,
-        label: "tenant-two".into(),
-    };
-    t1.set("profile", &v1, None).await.expect("t1 set");
-    t2.set("profile", &v2, None).await.expect("t2 set");
-
-    let got1: Option<Item> = t1.get("profile").await.expect("t1 get");
-    let got2: Option<Item> = t2.get("profile").await.expect("t2 get");
-    assert_eq!(got1, Some(v1));
-    assert_eq!(got2, Some(v2));
-
     // Counter path.
     assert_eq!(cache.incr("hits", 1).await.expect("incr"), 1);
     assert_eq!(cache.incr("hits", 4).await.expect("incr"), 5);

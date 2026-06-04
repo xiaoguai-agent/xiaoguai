@@ -38,9 +38,6 @@ impl From<BoardRow> for Board {
     fn from(r: BoardRow) -> Self {
         Self {
             id: r.id,
-            // tenant_id is vestigial under the single-user pivot (no column);
-            // synthesise the nil UUID so the public domain shape is preserved.
-            tenant_id: Uuid::nil(),
             name: r.name,
             default_board: r.default_board,
             dispatch_policy: r.dispatch_policy,
@@ -157,8 +154,7 @@ impl PgTaskBoardRepository {
 impl TaskBoardRepository for PgTaskBoardRepository {
     // ---- Boards --------------------------------------------------------
 
-    async fn list_boards(&self, tenant_id: Uuid) -> Result<Vec<Board>, TaskError> {
-        let _ = tenant_id; // vestigial under single-user pivot
+    async fn list_boards(&self) -> Result<Vec<Board>, TaskError> {
         let rows = sqlx::query_as::<_, BoardRow>(
             r"
             SELECT id, name, default_board, dispatch_policy, pool_size, created_at

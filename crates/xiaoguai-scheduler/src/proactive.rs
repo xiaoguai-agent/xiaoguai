@@ -41,12 +41,11 @@ pub enum ProactiveError {
 }
 
 /// Context handed to the checker on every tick. Kept narrow on
-/// purpose — the checker should rely on the prompt + tenant scope, not
-/// rummage through the full job row.
+/// purpose — the checker should rely on the prompt, not rummage through
+/// the full job row.
 #[derive(Debug, Clone)]
 pub struct ProactiveCtx {
     pub job_id: String,
-    pub tenant_id: Option<String>,
 }
 
 impl ProactiveCtx {
@@ -54,7 +53,6 @@ impl ProactiveCtx {
     pub fn from_job(job: &ScheduledJob) -> Self {
         Self {
             job_id: job.id.clone(),
-            tenant_id: job.tenant_id.clone(),
         }
     }
 }
@@ -164,7 +162,6 @@ mod tests {
     fn sample_job() -> ScheduledJob {
         ScheduledJob::new(
             "j1",
-            Some("tenant-x".into()),
             "j1",
             Trigger::proactive("any news?", 60).unwrap(),
             serde_json::json!({}),

@@ -30,7 +30,6 @@ pub enum SinkError {
 pub struct PushPayload {
     pub job_id: String,
     pub run_id: i64,
-    pub tenant_id: Option<String>,
     pub status: String,
     pub fired_at: DateTime<Utc>,
     pub output_preview: Option<String>,
@@ -141,7 +140,6 @@ mod tests {
         let p = PushPayload {
             job_id: "j1".into(),
             run_id: 1,
-            tenant_id: Some("t1".into()),
             status: "succeeded".into(),
             fired_at: Utc::now(),
             output_preview: Some("done".into()),
@@ -160,7 +158,6 @@ mod tests {
         PushPayload {
             job_id: "j1".into(),
             run_id: 1,
-            tenant_id: Some("t".into()),
             status: "succeeded".into(),
             fired_at: Utc::now(),
             output_preview: Some("x".into()),
@@ -197,7 +194,6 @@ mod tests {
         let raw = r#"{
             "job_id": "j1",
             "run_id": 1,
-            "tenant_id": null,
             "status": "succeeded",
             "fired_at": "2026-05-23T10:00:00Z",
             "output_preview": null,

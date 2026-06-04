@@ -75,7 +75,6 @@ fn build_state(exporter: Option<Arc<dyn AuditChainExporter>>) -> AppState {
 
 fn request_body() -> Value {
     json!({
-        "tenant_id": "t-acme",
         "framework": "soc2",
         "format": "json",
         "from": Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap().to_rfc3339(),
@@ -115,7 +114,7 @@ async fn returns_503_when_exporter_not_wired() {
 async fn happy_path_returns_bundle_bytes_with_correct_content_type() {
     let canned = br#"{"header":{"framework":"soc2-cc72"},"rows":[]}"#.to_vec();
     let exporter = Arc::new(StaticAuditChainExporter::new().with(
-        "t-acme",
+        xiaoguai_audit::OWNER_TENANT_ID,
         "soc2",
         "json",
         Ok(canned.clone()),
@@ -130,8 +129,12 @@ async fn happy_path_returns_bundle_bytes_with_correct_content_type() {
 #[tokio::test]
 async fn csv_response_uses_text_csv_content_type() {
     let canned = b"# bundle-header: {}\r\nid,ts,actor,action,resource,details_summary\r\n".to_vec();
-    let exporter =
-        Arc::new(StaticAuditChainExporter::new().with("t-acme", "soc2", "csv", Ok(canned.clone())));
+    let exporter = Arc::new(StaticAuditChainExporter::new().with(
+        xiaoguai_audit::OWNER_TENANT_ID,
+        "soc2",
+        "csv",
+        Ok(canned.clone()),
+    ));
     let app = router(build_state(Some(exporter)));
     let mut body = request_body();
     body["format"] = json!("csv");
@@ -145,7 +148,7 @@ async fn csv_response_uses_text_csv_content_type() {
 async fn chain_broken_returns_409_with_structured_body() {
     let broken_ts = Utc.with_ymd_and_hms(2026, 2, 15, 12, 30, 0).unwrap();
     let exporter = Arc::new(StaticAuditChainExporter::new().with(
-        "t-acme",
+        xiaoguai_audit::OWNER_TENANT_ID,
         "soc2",
         "json",
         Err(ApiExportError::ChainBroken {
@@ -165,7 +168,7 @@ async fn chain_broken_returns_409_with_structured_body() {
 #[tokio::test]
 async fn pdf_format_returns_501_not_implemented() {
     let exporter = Arc::new(StaticAuditChainExporter::new().with(
-        "t-acme",
+        xiaoguai_audit::OWNER_TENANT_ID,
         "soc2",
         "pdf",
         Err(ApiExportError::PdfUnimplemented),
@@ -180,19 +183,17 @@ async fn pdf_format_returns_501_not_implemented() {
 }
 
 #[tokio::test]
-async fn empty_tenant_id_defaults_to_owner() {
-    // DEC-033 single-owner: an empty tenant_id defaults to the owner tenant
-    // (the missing-tenant guard is gone), so the request reaches the exporter
-    // keyed by the owner tenant rather than 400ing at the route.
+async fn export_uses_owner_tenant() {
+    // DEC-033 single-owner: the export always runs against the owner tenant
+    // (no wire `tenant_id`); the route keys the exporter by the audit OWNER.
     let exporter = Arc::new(StaticAuditChainExporter::new().with(
-        xiaoguai_storage::OWNER_TENANT_ID,
+        xiaoguai_audit::OWNER_TENANT_ID,
         "soc2",
         "json",
         Ok(b"{}".to_vec()),
     ));
     let app = router(build_state(Some(exporter)));
-    let mut body = request_body();
-    body["tenant_id"] = json!("");
+    let body = request_body();
     let (status, _body, _ct) = post(app, body).await;
     assert_eq!(status, StatusCode::OK);
 }

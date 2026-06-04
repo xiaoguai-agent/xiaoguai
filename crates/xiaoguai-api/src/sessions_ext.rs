@@ -15,10 +15,7 @@ use xiaoguai_types::Session;
 
 #[derive(Debug, Error)]
 pub enum SessionForkError {
-    /// The parent session (`:id` in the URL) was not found *for this
-    /// tenant*. Maps to 404 — we deliberately don't distinguish
-    /// "doesn't exist" from "wrong tenant" so we don't leak
-    /// cross-tenant existence.
+    /// The parent session (`:id` in the URL) was not found. Maps to 404.
     #[error("parent session not found")]
     ParentNotFound,
     /// `from_message_id` doesn't belong to the parent session. Maps to
@@ -41,7 +38,6 @@ pub enum SessionForkError {
 /// Fork an existing session at a given message boundary, returning the
 /// newly-created child session. The implementation must:
 ///
-/// - Validate that the parent belongs to `tenant`.
 /// - Validate that `from_message_id` belongs to the parent.
 /// - Copy every message with `created_at <= cutoff.created_at` from
 ///   the parent into the new session.
@@ -55,7 +51,6 @@ pub enum SessionForkError {
 pub trait SessionForker: Send + Sync {
     async fn fork(
         &self,
-        tenant: &str,
         parent_id: &str,
         from_message_id: &str,
         title: Option<String>,
@@ -67,7 +62,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use std::sync::Arc;
-    use xiaoguai_types::{SessionId, SessionStatus, TenantId, UserId};
+    use xiaoguai_types::{SessionId, SessionStatus, UserId};
 
     /// Static forker that returns a pre-canned session — handy for
     /// route tests that don't care about the copy semantics, only
@@ -80,7 +75,6 @@ mod tests {
     impl SessionForker for StaticForker {
         async fn fork(
             &self,
-            _tenant: &str,
             _parent_id: &str,
             _from_message_id: &str,
             _title: Option<String>,
@@ -93,7 +87,6 @@ mod tests {
         let now = Utc::now();
         Session {
             id: SessionId::new(),
-            tenant_id: TenantId::from("t".to_string()),
             user_id: UserId::from("u".to_string()),
             title: Some("forked".into()),
             created_at: now,
@@ -110,10 +103,7 @@ mod tests {
         let f: Arc<dyn SessionForker> = Arc::new(StaticForker {
             result: Ok(fresh_session()),
         });
-        let s = f
-            .fork("t", "parent", "msg", Some("x".into()))
-            .await
-            .unwrap();
+        let s = f.fork("parent", "msg", Some("x".into())).await.unwrap();
         assert_eq!(
             s.parent_session_id.as_ref().map(SessionId::as_str),
             Some("parent")
@@ -125,7 +115,7 @@ mod tests {
         let f: Arc<dyn SessionForker> = Arc::new(StaticForker {
             result: Err("boom".into()),
         });
-        let err = f.fork("t", "p", "m", None).await.unwrap_err();
+        let err = f.fork("p", "m", None).await.unwrap_err();
         assert!(matches!(err, SessionForkError::Repository(_)));
     }
 }

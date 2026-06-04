@@ -19,15 +19,12 @@
 //!     model::CreatePersonaRequest,
 //!     enforcement::{filter_tools, tool_allowed},
 //! };
-//! use uuid::Uuid;
 //!
 //! # #[tokio::main]
 //! # async fn main() {
 //! let repo = InMemoryPersonaRepository::new();
-//! let tenant = Uuid::new_v4();
 //!
 //! let persona = repo.create(&CreatePersonaRequest {
-//!     tenant_id: tenant,
 //!     name: "Support Bot".to_string(),
 //!     system_prompt: "You are a helpful support agent. Be concise.".to_string(),
 //!     default_model: Some("gpt-4o-mini".to_string()),

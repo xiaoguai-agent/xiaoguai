@@ -71,8 +71,6 @@ impl From<PersonaRow> for Persona {
     fn from(r: PersonaRow) -> Self {
         Self {
             id: Uuid::parse_str(&r.id).unwrap_or_else(|_| Uuid::nil()),
-            // Single-namespace: synthesize the dropped tenant_id on read.
-            tenant_id: Uuid::nil(),
             name: r.name,
             system_prompt: r.system_prompt,
             default_model: r.default_model,
@@ -105,7 +103,7 @@ impl From<SessionPersonaRow> for SessionPersona {
 
 #[async_trait]
 impl PersonaRepository for PgPersonaRepository {
-    async fn list(&self, _tenant_id: Uuid) -> PersonaResult<Vec<Persona>> {
+    async fn list(&self) -> PersonaResult<Vec<Persona>> {
         let rows: Vec<PersonaRow> = sqlx::query_as(
             "SELECT id, name, system_prompt, default_model, \
                     tool_allowlist, escalation_tier, created_at, archived \

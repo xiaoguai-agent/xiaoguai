@@ -3,9 +3,8 @@
 //! Resolution order (first match wins):
 //!
 //!   1. `explicit_provider` set on the [`ResolveCtx`].
-//!   2. Tenant default for `req.model` (if `ctx.tenant_id` is set).
-//!   3. System default for `req.model`.
-//!   4. The `fallback_order` chain (used both as the default when no defaults
+//!   2. System default for `req.model`.
+//!   3. The `fallback_order` chain (used both as the default when no defaults
 //!      hit and as the chain to walk when an earlier candidate's *initial*
 //!      `chat_stream` call returns an error.
 //!
@@ -19,7 +18,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::Utc;
 use tracing::warn;
-use xiaoguai_types::{ProviderId, SessionId, TenantId, UserId};
+use xiaoguai_types::{ProviderId, SessionId, UserId};
 
 use crate::backend::{ChatStream, LlmBackend, LlmError};
 use crate::breaker::Breakers;
@@ -31,10 +30,8 @@ use crate::usage::{record_on_done, UsageRecord, UsageSink};
 /// support lands with the API server in v0.5.5.
 #[derive(Debug, Clone, Default)]
 pub struct RouterConfig {
-    /// `model_name -> provider` used when no tenant default matches.
+    /// `model_name -> provider` used when nothing more specific resolves.
     pub system_default_for_model: HashMap<String, ProviderId>,
-    /// `tenant -> { model_name -> provider }`.
-    pub tenant_default_for_model: HashMap<TenantId, HashMap<String, ProviderId>>,
     /// Providers walked in order when nothing more specific resolves and when
     /// an earlier candidate fails its initial call.
     pub fallback_order: Vec<ProviderId>,
@@ -43,7 +40,6 @@ pub struct RouterConfig {
 /// Per-request context controlling routing resolution and usage attribution.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ResolveCtx<'a> {
-    pub tenant_id: Option<&'a TenantId>,
     pub explicit_provider: Option<&'a ProviderId>,
     pub user_id: Option<&'a UserId>,
     pub session_id: Option<&'a SessionId>,
@@ -131,7 +127,6 @@ impl LlmRouter {
                         Some(sink) => {
                             let template = UsageRecord {
                                 ts: Utc::now(),
-                                tenant_id: ctx.tenant_id.cloned(),
                                 user_id: ctx.user_id.cloned(),
                                 session_id: ctx.session_id.cloned(),
                                 provider_id: provider_id.clone(),
@@ -179,14 +174,6 @@ impl LlmRouter {
             push(p.clone(), &mut out);
         }
 
-        if let Some(t) = ctx.tenant_id {
-            if let Some(table) = self.config.tenant_default_for_model.get(t) {
-                if let Some(p) = table.get(&req.model) {
-                    push(p.clone(), &mut out);
-                }
-            }
-        }
-
         if let Some(p) = self.config.system_default_for_model.get(&req.model) {
             push(p.clone(), &mut out);
         }
@@ -201,23 +188,12 @@ impl LlmRouter {
 
 /// Drop-in `LlmBackend` impl for `LlmRouter` so callers that hold an
 /// `Arc<dyn LlmBackend>` (e.g. `AppState.backend` from xiaoguai-api,
-/// `ReactAgent::new`) can be handed a router transparently.
-///
-/// v0.6.4: per-request tenant routing now flows through the optional
-/// `ChatRequest::tenant_id` field. When the caller sets it (the REST
-/// handler does this before invoking the agent), the impl builds a
-/// `ResolveCtx` with `tenant_id = Some(...)` so tenant-default + tenant
-/// fallback rules apply. When unset, behaviour is identical to v0.6.2:
-/// `ResolveCtx::default()` resolves system defaults + fallback only.
+/// `ReactAgent::new`) can be handed a router transparently. Routing
+/// resolves system defaults + fallback via `ResolveCtx::default()`.
 #[async_trait]
 impl LlmBackend for LlmRouter {
     async fn chat_stream(&self, req: ChatRequest) -> Result<ChatStream, LlmError> {
-        let tenant = req.tenant_id.as_ref().map(|s| TenantId::from(s.clone()));
-        let ctx = ResolveCtx {
-            tenant_id: tenant.as_ref(),
-            ..ResolveCtx::default()
-        };
-        self.chat_stream(ctx, req).await
+        self.chat_stream(ResolveCtx::default(), req).await
     }
 
     fn name(&self) -> &'static str {

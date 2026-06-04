@@ -9,13 +9,9 @@ use crate::retry::RetryPolicy;
 use crate::trigger::Trigger;
 
 /// A scheduled job definition.
-///
-/// `tenant_id = None` means a system-wide job (rare; useful for ops
-/// chores). All user-facing jobs scope to a tenant.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ScheduledJob {
     pub id: String,
-    pub tenant_id: Option<String>,
     pub name: String,
     pub description: Option<String>,
     pub trigger: Trigger,
@@ -39,7 +35,6 @@ impl ScheduledJob {
     #[must_use]
     pub fn new(
         id: impl Into<String>,
-        tenant_id: Option<String>,
         name: impl Into<String>,
         trigger: Trigger,
         payload: serde_json::Value,
@@ -47,7 +42,6 @@ impl ScheduledJob {
         let now = Utc::now();
         Self {
             id: id.into(),
-            tenant_id,
             name: name.into(),
             description: None,
             trigger,
@@ -95,7 +89,6 @@ impl JobRunStatus {
 pub struct JobRun {
     pub id: i64,
     pub job_id: String,
-    pub tenant_id: Option<String>,
     pub status: JobRunStatus,
     pub attempt: u32,
     pub started_at: Option<DateTime<Utc>>,

@@ -15,7 +15,6 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HotlPolicy {
     pub id: Uuid,
-    pub tenant_id: Uuid,
     /// Action category this policy applies to (e.g. `"llm_call"`).
     pub scope: String,
     /// Rolling window width in seconds.
@@ -31,7 +30,6 @@ pub struct HotlPolicy {
 /// Body accepted by `POST /v1/hotl/policies`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CreateHotlPolicyRequest {
-    pub tenant_id: Uuid,
     pub scope: String,
     pub window_seconds: i32,
     pub max_count: Option<i32>,
@@ -60,12 +58,8 @@ pub enum HotlPolicyStoreError {
 /// implementations stay interchangeable in tests.
 #[async_trait]
 pub trait HotlPolicyStore: Send + Sync + std::fmt::Debug {
-    /// Return all policies for `tenant_id` (optionally filtered by `scope`).
-    async fn list(
-        &self,
-        tenant_id: Uuid,
-        scope: Option<&str>,
-    ) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError>;
+    /// Return all policies (optionally filtered by `scope`).
+    async fn list(&self, scope: Option<&str>) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError>;
 
     /// Persist a new policy. Generates and returns the `id`.
     async fn create(
@@ -76,13 +70,9 @@ pub trait HotlPolicyStore: Send + Sync + std::fmt::Debug {
     /// Remove a policy by `id`. Returns `NotFound` if the row is absent.
     async fn delete(&self, id: Uuid) -> Result<(), HotlPolicyStoreError>;
 
-    /// Return all active policies for `(tenant_id, scope)` — called by the
-    /// enforcer before every gated action.
-    async fn policies_for(
-        &self,
-        tenant_id: Uuid,
-        scope: &str,
-    ) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError>;
+    /// Return all active policies for `scope` — called by the enforcer
+    /// before every gated action.
+    async fn policies_for(&self, scope: &str) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError>;
 }
 
 // ── in-memory implementation (tests / dev) ────────────────────────────────────
@@ -110,15 +100,11 @@ impl InMemoryHotlPolicyStore {
 
 #[async_trait]
 impl HotlPolicyStore for InMemoryHotlPolicyStore {
-    async fn list(
-        &self,
-        tenant_id: Uuid,
-        scope: Option<&str>,
-    ) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
+    async fn list(&self, scope: Option<&str>) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
         let guard = self.inner.lock();
         let rows = guard
             .iter()
-            .filter(|p| p.tenant_id == tenant_id && scope.is_none_or(|s| p.scope == s))
+            .filter(|p| scope.is_none_or(|s| p.scope == s))
             .cloned()
             .collect();
         Ok(rows)
@@ -155,7 +141,6 @@ impl HotlPolicyStore for InMemoryHotlPolicyStore {
 
         let policy = HotlPolicy {
             id: Uuid::new_v4(),
-            tenant_id: req.tenant_id,
             scope: req.scope,
             window_seconds: req.window_seconds,
             max_count: req.max_count,
@@ -176,12 +161,8 @@ impl HotlPolicyStore for InMemoryHotlPolicyStore {
         Ok(())
     }
 
-    async fn policies_for(
-        &self,
-        tenant_id: Uuid,
-        scope: &str,
-    ) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
-        self.list(tenant_id, Some(scope)).await
+    async fn policies_for(&self, scope: &str) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
+        self.list(Some(scope)).await
     }
 }
 
@@ -191,7 +172,6 @@ mod tests {
 
     fn make_req(scope: &str) -> CreateHotlPolicyRequest {
         CreateHotlPolicyRequest {
-            tenant_id: Uuid::new_v4(),
             scope: scope.into(),
             window_seconds: 60,
             max_count: Some(10),
@@ -234,7 +214,6 @@ mod tests {
     async fn rejects_negative_usd() {
         let store = InMemoryHotlPolicyStore::new();
         let req = CreateHotlPolicyRequest {
-            tenant_id: Uuid::new_v4(),
             scope: "llm_call".into(),
             window_seconds: 60,
             max_count: None,
@@ -251,12 +230,11 @@ mod tests {
     async fn create_then_list_round_trip() {
         let store = InMemoryHotlPolicyStore::new();
         let req = make_req("llm_call");
-        let tenant_id = req.tenant_id;
         let created = store.create(req).await.unwrap();
         assert_eq!(created.scope, "llm_call");
         assert_eq!(created.max_count, Some(10));
 
-        let list = store.list(tenant_id, None).await.unwrap();
+        let list = store.list(None).await.unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].id, created.id);
     }
@@ -264,11 +242,9 @@ mod tests {
     #[tokio::test]
     async fn list_filters_by_scope() {
         let store = InMemoryHotlPolicyStore::new();
-        let tid = Uuid::new_v4();
 
         store
             .create(CreateHotlPolicyRequest {
-                tenant_id: tid,
                 scope: "llm_call".into(),
                 window_seconds: 60,
                 max_count: Some(5),
@@ -279,7 +255,6 @@ mod tests {
             .unwrap();
         store
             .create(CreateHotlPolicyRequest {
-                tenant_id: tid,
                 scope: "email_send".into(),
                 window_seconds: 60,
                 max_count: Some(3),
@@ -289,7 +264,7 @@ mod tests {
             .await
             .unwrap();
 
-        let llm_only = store.list(tid, Some("llm_call")).await.unwrap();
+        let llm_only = store.list(Some("llm_call")).await.unwrap();
         assert_eq!(llm_only.len(), 1);
         assert_eq!(llm_only[0].scope, "llm_call");
     }
@@ -298,10 +273,9 @@ mod tests {
     async fn delete_existing_succeeds() {
         let store = InMemoryHotlPolicyStore::new();
         let req = make_req("llm_call");
-        let tid = req.tenant_id;
         let p = store.create(req).await.unwrap();
         store.delete(p.id).await.unwrap();
-        let remaining = store.list(tid, None).await.unwrap();
+        let remaining = store.list(None).await.unwrap();
         assert!(remaining.is_empty());
     }
 
@@ -315,10 +289,8 @@ mod tests {
     #[tokio::test]
     async fn policies_for_matches_exact_scope() {
         let store = InMemoryHotlPolicyStore::new();
-        let tid = Uuid::new_v4();
         store
             .create(CreateHotlPolicyRequest {
-                tenant_id: tid,
                 scope: "llm_call".into(),
                 window_seconds: 60,
                 max_count: Some(10),
@@ -327,32 +299,9 @@ mod tests {
             })
             .await
             .unwrap();
-        let found = store.policies_for(tid, "llm_call").await.unwrap();
+        let found = store.policies_for("llm_call").await.unwrap();
         assert_eq!(found.len(), 1);
-        let empty = store.policies_for(tid, "email_send").await.unwrap();
+        let empty = store.policies_for("email_send").await.unwrap();
         assert!(empty.is_empty());
-    }
-
-    #[tokio::test]
-    async fn list_does_not_leak_across_tenants() {
-        let store = InMemoryHotlPolicyStore::new();
-        let tid_a = Uuid::new_v4();
-        let tid_b = Uuid::new_v4();
-        store
-            .create(CreateHotlPolicyRequest {
-                tenant_id: tid_a,
-                scope: "llm_call".into(),
-                window_seconds: 60,
-                max_count: Some(5),
-                max_usd: None,
-                escalate_to: None,
-            })
-            .await
-            .unwrap();
-        let b_rows = store.list(tid_b, None).await.unwrap();
-        assert!(
-            b_rows.is_empty(),
-            "tenant B must not see tenant A's policies"
-        );
     }
 }

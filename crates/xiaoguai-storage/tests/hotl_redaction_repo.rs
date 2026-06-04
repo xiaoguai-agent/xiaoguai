@@ -1,11 +1,9 @@
-//! sprint-13 S13-3: read-only `HotlRedactionRepo::load_for_tenant` round-trip.
+//! sprint-13 S13-3: read-only `HotlRedactionRepo::load_all` round-trip.
 //!
 //! Embedded `SQLite` (DEC-033). No Docker — each test opens a temp database via
-//! `common::test_setup`. Under the single-user pivot `hotl_redaction_policies`
-//! dropped its `tenant_id` column: every policy is owner-wide and the
-//! `load_for_tenant` argument is echoed back onto each returned row. The repo
-//! still sorts exact-scope rules before the `*` catch-all (S13-4 picks the most
-//! specific match first).
+//! `common::test_setup`. Single-owner deployment: every policy is owner-wide.
+//! The repo sorts exact-scope rules before the `*` catch-all (S13-4 picks the
+//! most specific match first).
 
 mod common;
 
@@ -41,15 +39,11 @@ async fn insert_policy(
 }
 
 #[tokio::test]
-async fn load_for_tenant_empty() {
+async fn load_all_empty() {
     let (pool, _guard) = test_setup().await;
     let repo = PgHotlRedactionRepo::new(pool.clone());
 
-    let tenant_id = Uuid::new_v4();
-    let rows = repo
-        .load_for_tenant(tenant_id)
-        .await
-        .expect("load empty tenant");
+    let rows = repo.load_all().await.expect("load empty");
     assert!(
         rows.is_empty(),
         "expected empty Vec when no policies exist, got {} rows",
@@ -58,7 +52,7 @@ async fn load_for_tenant_empty() {
 }
 
 #[tokio::test]
-async fn load_for_tenant_returns_inserted_rows() {
+async fn load_all_returns_inserted_rows() {
     let (pool, _guard) = test_setup().await;
     let repo = PgHotlRedactionRepo::new(pool.clone());
 
@@ -71,17 +65,12 @@ async fn load_for_tenant_returns_inserted_rows() {
     )
     .await;
 
-    // Single namespace: every policy is owner-wide; the arg is echoed onto rows.
-    let arg = Uuid::new_v4();
-    let rows = repo.load_for_tenant(arg).await.expect("load");
+    let rows = repo.load_all().await.expect("load");
     assert_eq!(rows.len(), 2, "expected 2 policies, got {}", rows.len());
-    for row in &rows {
-        assert_eq!(row.tenant_id, arg, "row tenant_id should echo the argument");
-    }
 }
 
 #[tokio::test]
-async fn load_for_tenant_sorts_exact_scope_before_wildcard() {
+async fn load_all_sorts_exact_scope_before_wildcard() {
     let (pool, _guard) = test_setup().await;
     let repo = PgHotlRedactionRepo::new(pool.clone());
 
@@ -89,7 +78,7 @@ async fn load_for_tenant_sorts_exact_scope_before_wildcard() {
     insert_policy(&pool, "*", "$.catch_all", &["sse"]).await;
     insert_policy(&pool, "tool_call.execute_python", "$.password", &["sse"]).await;
 
-    let rows = repo.load_for_tenant(Uuid::new_v4()).await.expect("load");
+    let rows = repo.load_all().await.expect("load");
     assert_eq!(rows.len(), 2);
     assert_eq!(
         rows[0].scope, "tool_call.execute_python",

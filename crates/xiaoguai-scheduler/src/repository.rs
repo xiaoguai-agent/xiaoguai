@@ -232,7 +232,6 @@ mod tests {
     fn sample_job(id: &str) -> ScheduledJob {
         ScheduledJob::new(
             id,
-            Some("tenant-x".into()),
             id,
             Trigger::interval(60).unwrap(),
             serde_json::json!({"prompt": "hello"}),
@@ -268,7 +267,6 @@ mod tests {
 
         let reactive = ScheduledJob::new(
             "watch-1",
-            Some("t".into()),
             "watch-1",
             Trigger::file_watch("/tmp/notes").unwrap(),
             serde_json::json!({}),
@@ -277,7 +275,6 @@ mod tests {
 
         let mut disabled = ScheduledJob::new(
             "watch-2",
-            Some("t".into()),
             "watch-2",
             Trigger::file_watch("/tmp/disabled").unwrap(),
             serde_json::json!({}),
@@ -296,7 +293,6 @@ mod tests {
         let mk = |attempt: u32| JobRun {
             id: 0,
             job_id: "j1".into(),
-            tenant_id: Some("t1".into()),
             status: JobRunStatus::Pending,
             attempt,
             started_at: None,

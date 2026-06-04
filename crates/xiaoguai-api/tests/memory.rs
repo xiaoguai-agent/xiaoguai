@@ -6,7 +6,7 @@
 //! `frontend/admin-ui/src/panes/Memory.tsx`.
 //!
 //! Covers:
-//!   * `GET /v1/memories?tenant_id=…` returns 200 + `{data: []}` when the
+//!   * `GET /v1/memories` returns 200 + `{data: []}` when the
 //!     store is empty (was 404 before mounting).
 //!   * `POST /v1/memories` + `GET /v1/memories` round-trip.
 //!   * `GET /v1/memories` returns 503 when `memory_store` is `None`.
@@ -19,7 +19,6 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
-use uuid::Uuid;
 use xiaoguai_agent::{AgentConfig, Toolbox};
 use xiaoguai_api::{router, AppState, CancelRegistry};
 use xiaoguai_llm::mock::ScriptStep;
@@ -85,9 +84,8 @@ fn make_store() -> Arc<dyn MemoryStore> {
 #[tokio::test]
 async fn list_memories_returns_200_when_store_is_empty() {
     let app = router(build_state(Some(make_store())));
-    let tenant_id = Uuid::new_v4();
     let req = Request::builder()
-        .uri(format!("/v1/memories?tenant_id={tenant_id}"))
+        .uri("/v1/memories")
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -109,10 +107,8 @@ async fn list_memories_returns_200_when_store_is_empty() {
 #[tokio::test]
 async fn create_then_list_round_trip() {
     let app = router(build_state(Some(make_store())));
-    let tenant_id = Uuid::new_v4();
 
     let create_body = serde_json::json!({
-        "tenant_id": tenant_id,
         "kind": "facts",
         "content": "User prefers concise responses.",
         "tags": ["preference", "communication"],
@@ -131,7 +127,7 @@ async fn create_then_list_round_trip() {
     );
 
     let req = Request::builder()
-        .uri(format!("/v1/memories?tenant_id={tenant_id}"))
+        .uri("/v1/memories")
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -147,9 +143,8 @@ async fn create_then_list_round_trip() {
 #[tokio::test]
 async fn list_memories_returns_503_when_store_is_none() {
     let app = router(build_state(None));
-    let tenant_id = Uuid::new_v4();
     let req = Request::builder()
-        .uri(format!("/v1/memories?tenant_id={tenant_id}"))
+        .uri("/v1/memories")
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();

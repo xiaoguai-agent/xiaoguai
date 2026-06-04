@@ -33,7 +33,6 @@ async fn require_ok(resp: reqwest::Response) -> Result<reqwest::Response> {
 #[derive(Debug, Clone)]
 pub struct ListArgs {
     pub api_base: String,
-    pub tenant_id: Option<String>,
     pub category: Option<String>,
     pub installed: bool,
 }
@@ -41,11 +40,7 @@ pub struct ListArgs {
 pub async fn list(args: ListArgs) -> Result<Vec<JsonValue>> {
     let client = Client::new();
     if args.installed {
-        let tenant = args
-            .tenant_id
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("--tenant-id is required when --installed is set"))?;
-        let url = format!("{}/v1/skills/installed?tenant_id={tenant}", args.api_base);
+        let url = format!("{}/v1/skills/installed", args.api_base);
         let resp = client
             .get(&url)
             .send()
@@ -56,16 +51,8 @@ pub async fn list(args: ListArgs) -> Result<Vec<JsonValue>> {
         return Ok(v);
     }
     let mut url = format!("{}/v1/skills/catalog", args.api_base);
-    let mut query_parts: Vec<String> = Vec::new();
     if let Some(cat) = &args.category {
-        query_parts.push(format!("category={cat}"));
-    }
-    if let Some(tid) = &args.tenant_id {
-        query_parts.push(format!("tenant_id={tid}"));
-    }
-    if !query_parts.is_empty() {
-        url.push('?');
-        url.push_str(&query_parts.join("&"));
+        url.push_str(&format!("?category={cat}"));
     }
     let resp = client
         .get(&url)
@@ -84,7 +71,6 @@ pub async fn list(args: ListArgs) -> Result<Vec<JsonValue>> {
 #[derive(Debug, Clone)]
 pub struct InstallArgs {
     pub api_base: String,
-    pub tenant_id: String,
     pub pack: String,
     pub config: Option<String>,
 }
@@ -96,7 +82,6 @@ pub async fn install(args: InstallArgs) -> Result<JsonValue> {
     };
     let client = Client::new();
     let body = serde_json::json!({
-        "tenant_id": args.tenant_id,
         "pack_slug": args.pack,
         "config": config_json,
     });
@@ -202,15 +187,11 @@ pub fn format_installed_table(rows: &[JsonValue]) -> String {
 // proposals (Tier-2 D.1)
 // ---------------------------------------------------------------------------
 
-/// List agent-authored skill proposals for a tenant.
-pub async fn proposals_list(
-    api_base: &str,
-    tenant_id: &str,
-    status: Option<&str>,
-) -> Result<Vec<JsonValue>> {
-    let mut url = format!("{api_base}/v1/skills/proposals?tenant_id={tenant_id}");
+/// List agent-authored skill proposals.
+pub async fn proposals_list(api_base: &str, status: Option<&str>) -> Result<Vec<JsonValue>> {
+    let mut url = format!("{api_base}/v1/skills/proposals");
     if let Some(s) = status {
-        url.push_str("&status=");
+        url.push_str("?status=");
         url.push_str(s);
     }
     let client = Client::new();

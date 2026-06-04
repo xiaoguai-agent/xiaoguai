@@ -30,15 +30,11 @@ async fn require_ok(resp: reqwest::Response) -> Result<reqwest::Response> {
 #[derive(Debug, Clone, Default)]
 pub struct ListArgs {
     pub api_base: String,
-    pub tenant_id: Option<String>,
 }
 
 pub async fn list(args: ListArgs) -> Result<Vec<JsonValue>> {
     let client = Client::new();
-    let mut url = format!("{}/v1/watch", args.api_base);
-    if let Some(tid) = &args.tenant_id {
-        url.push_str(&format!("?tenant_id={tid}"));
-    }
+    let url = format!("{}/v1/watch", args.api_base);
     let resp = client.get(&url).send().await.context("GET /v1/watch")?;
     let resp = require_ok(resp).await?;
     let v: Vec<JsonValue> = resp.json().await.context("decode watch list body")?;
@@ -53,18 +49,12 @@ pub async fn list(args: ListArgs) -> Result<Vec<JsonValue>> {
 pub struct StartArgs {
     pub api_base: String,
     pub file: std::path::PathBuf,
-    pub tenant_id: Option<String>,
 }
 
 pub async fn start(args: StartArgs) -> Result<JsonValue> {
     let raw = std::fs::read_to_string(&args.file)
         .with_context(|| format!("read watch spec file: {}", args.file.display()))?;
-    let mut spec: JsonValue = serde_yaml::from_str(&raw).context("parse watch spec YAML")?;
-    if let Some(tid) = &args.tenant_id {
-        if let Some(obj) = spec.as_object_mut() {
-            obj.insert("tenant_id".to_string(), JsonValue::String(tid.clone()));
-        }
-    }
+    let spec: JsonValue = serde_yaml::from_str(&raw).context("parse watch spec YAML")?;
     let client = Client::new();
     let resp = client
         .post(format!("{}/v1/watch", args.api_base))

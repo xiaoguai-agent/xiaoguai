@@ -6,7 +6,7 @@
 //! AgentRegistry  ──register()──▶  DashMap<name, Arc<dyn Agent>>
 //!                ──lookup_by_capability()──▶  Vec<AgentRef>
 //!
-//! AgentSpec      carries the capability list, cost_hint, locality, and
+//! AgentSpec      carries the capability list, cost_hint, and
 //!                the shapes of task inputs / outputs this agent handles.
 //!
 //! Capability     is a structured (domain, action) tag, e.g.
@@ -86,18 +86,6 @@ pub struct ResultShape {
     pub description: String,
 }
 
-// ── TenantScope ───────────────────────────────────────────────────────────────
-
-/// The tenancy scope of an agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TenantScope {
-    /// Available to all tenants.
-    Global,
-    /// Only available to requests that carry a matching tenant id.
-    Tenant(String),
-}
-
 // ── AgentSpec ─────────────────────────────────────────────────────────────────
 
 /// Static metadata that describes an agent registered in the catalogue.
@@ -116,8 +104,6 @@ pub struct AgentSpec {
     /// Relative cost hint for ranking.  Lower is cheaper.
     /// Must be a finite, non-negative value.
     pub cost_hint: f64,
-    /// Tenant scoping for this agent.
-    pub locality: TenantScope,
 }
 
 impl AgentSpec {
@@ -314,12 +300,7 @@ pub(crate) mod test_helpers {
     }
 
     /// Build a spec with the given capabilities and `cost_hint`.
-    pub fn make_spec(
-        name: &str,
-        caps: Vec<(&str, &str)>,
-        cost: f64,
-        locality: TenantScope,
-    ) -> AgentSpec {
+    pub fn make_spec(name: &str, caps: Vec<(&str, &str)>, cost: f64) -> AgentSpec {
         AgentSpec {
             name: name.to_owned(),
             version: "0.1.0".to_owned(),
@@ -330,19 +311,12 @@ pub(crate) mod test_helpers {
             accepts: TaskShape::default(),
             returns: ResultShape::default(),
             cost_hint: cost,
-            locality,
         }
     }
 
     /// Register a test `EchoAgent`.
-    pub fn register_echo(
-        registry: &AgentRegistry,
-        name: &str,
-        caps: Vec<(&str, &str)>,
-        cost: f64,
-        locality: TenantScope,
-    ) {
-        let spec = make_spec(name, caps, cost, locality);
+    pub fn register_echo(registry: &AgentRegistry, name: &str, caps: Vec<(&str, &str)>, cost: f64) {
+        let spec = make_spec(name, caps, cost);
         registry
             .register(Arc::new(EchoAgent { spec }))
             .expect("register should not fail for unique name");
@@ -360,14 +334,12 @@ mod tests {
             "billing-agent",
             vec![("billing", "draft_email"), ("billing", "summarize")],
             1.0,
-            TenantScope::Global,
         );
         register_echo(
             &r,
             "incident-agent",
             vec![("incident", "summarize"), ("incident", "triage")],
             2.0,
-            TenantScope::Global,
         );
         register_echo(
             &r,
@@ -378,7 +350,6 @@ mod tests {
                 ("lang", "zh-CN"),
             ],
             5.0,
-            TenantScope::Tenant("tenant-A".to_owned()),
         );
         r
     }
@@ -394,9 +365,9 @@ mod tests {
     #[test]
     fn duplicate_register_returns_error() {
         let r = AgentRegistry::new();
-        register_echo(&r, "a", vec![("x", "y")], 1.0, TenantScope::Global);
+        register_echo(&r, "a", vec![("x", "y")], 1.0);
         let result = r.register(Arc::new(test_helpers::EchoAgent {
-            spec: make_spec("a", vec![("x", "y")], 1.0, TenantScope::Global),
+            spec: make_spec("a", vec![("x", "y")], 1.0),
         }));
         assert!(result.is_err());
     }
@@ -480,14 +451,14 @@ mod tests {
 
     #[test]
     fn covers_all_true_subset() {
-        let spec = make_spec("x", vec![("a", "1"), ("b", "2")], 1.0, TenantScope::Global);
+        let spec = make_spec("x", vec![("a", "1"), ("b", "2")], 1.0);
         assert!(spec.covers_all(&[Capability::new("a", "1")]));
         assert!(spec.covers_all(&[Capability::new("a", "1"), Capability::new("b", "2")]));
     }
 
     #[test]
     fn covers_all_false_missing() {
-        let spec = make_spec("x", vec![("a", "1")], 1.0, TenantScope::Global);
+        let spec = make_spec("x", vec![("a", "1")], 1.0);
         assert!(!spec.covers_all(&[Capability::new("a", "1"), Capability::new("b", "2")]));
     }
 }

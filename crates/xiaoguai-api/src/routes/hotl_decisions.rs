@@ -23,13 +23,6 @@
 //! oneshot::Sender::send`; in practice it cannot panic on a `resolve`
 //! call (per S12-3 unit tests), but the ordering rule is the safety net.
 //!
-//! ## Tenant identity
-//!
-//! Under the single-user pivot (DEC-033) there is one implicit owner, so the
-//! decision row is always written against the nil tenant UUID. The field is
-//! retained only because the persistence layer still threads a `tenant_id`
-//! column; it carries no isolation semantics.
-//!
 //! ## `raise_policy` semantics
 //!
 //! When `raise_policy` is present the handler:
@@ -87,9 +80,9 @@ pub struct CreateHotlDecisionRequest {
 
 /// Sub-DTO carried inside [`CreateHotlDecisionRequest`].
 ///
-/// Shape mirrors [`CreateHotlPolicyRequest`] minus `tenant_id` (taken from
-/// Claims, not the body). `scope` + a `window_seconds` + at least one
-/// budget (`max_count` OR `max_usd`) are required by the policy store.
+/// Shape mirrors [`CreateHotlPolicyRequest`]. `scope` + a `window_seconds` +
+/// at least one budget (`max_count` OR `max_usd`) are required by the policy
+/// store.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RaisePolicyRequest {
     pub scope: String,
@@ -206,12 +199,7 @@ async fn create_decision_inner(
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("HOTL decision store not wired".into()))?;
 
-    // ── 2. Owner tenant (DEC-033 single-user) ───────────────────────────────
-    // One implicit owner → the decision row is written against the nil tenant
-    // UUID; the column is vestigial and carries no isolation semantics.
-    let tenant_id = Uuid::nil();
-
-    // ── 3. Validate raise_policy shape before touching the DB ───────────────
+    // ── 2. Validate raise_policy shape before touching the DB ───────────────
     if let Some(rp) = &req.raise_policy {
         if rp.max_count.is_none() && rp.max_usd.is_none() {
             return Err(ApiError::InvalidRequest(
@@ -225,15 +213,9 @@ async fn create_decision_inner(
         }
     }
 
-    // ── 4. Record the decision (no raised_policy_id yet) ────────────────────
+    // ── 3. Record the decision (no raised_policy_id yet) ────────────────────
     let initial_record = store
-        .record(
-            req.escalation_id,
-            tenant_id,
-            req.verdict,
-            req.decided_by.clone(),
-            None,
-        )
+        .record(req.escalation_id, req.verdict, req.decided_by.clone(), None)
         .await
         .map_err(map_decision_err)?;
 
@@ -251,7 +233,6 @@ async fn create_decision_inner(
             )
         })?;
         let create_req = CreateHotlPolicyRequest {
-            tenant_id,
             scope: rp.scope.clone(),
             window_seconds: rp.window_seconds,
             max_count: rp.max_count,
@@ -275,7 +256,9 @@ async fn create_decision_inner(
     if let Some(sink) = &state.hotl_audit {
         let entry = xiaoguai_audit::AuditEntry {
             ts: Utc::now(),
-            tenant_id: tenant_id.to_string(),
+            // Must equal the value verify_chain rebuilds with (audit OWNER), not
+            // the vestigial nil tenant uuid, or the chain fails to verify.
+            tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
             actor: req.decided_by.clone(),
             action: "hotl.decision".into(),
             resource: Some(format!("escalation:{}", req.escalation_id)),
@@ -396,7 +379,6 @@ mod tests {
         let rec = HotlDecisionRecord {
             id: Uuid::new_v4(),
             request_id: Uuid::new_v4(),
-            tenant_id: Uuid::new_v4(),
             verdict: HotlDecisionVerdict::Allow,
             decided_by: "x".into(),
             raised_policy_id: None,

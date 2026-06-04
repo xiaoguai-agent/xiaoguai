@@ -14,13 +14,13 @@ use crate::model::{CreatePersonaRequest, Persona, SessionPersona, UpdatePersonaR
 pub trait PersonaRepository: Send + Sync {
     // ── Persona CRUD ─────────────────────────────────────────────────────────
 
-    /// List all non-archived personas belonging to `tenant_id`, ordered by name.
-    async fn list(&self, tenant_id: Uuid) -> PersonaResult<Vec<Persona>>;
+    /// List all non-archived personas, ordered by name.
+    async fn list(&self) -> PersonaResult<Vec<Persona>>;
 
     /// Fetch a single persona by its UUID. Returns `NotFound` if absent.
     async fn get(&self, id: Uuid) -> PersonaResult<Persona>;
 
-    /// Insert a new persona. Returns `DuplicateName` if `(tenant_id, name)` already exists.
+    /// Insert a new persona. Returns `DuplicateName` if `name` already exists.
     async fn create(&self, req: &CreatePersonaRequest) -> PersonaResult<Persona>;
 
     /// Apply non-`None` fields from `req` to the persona identified by `id`.

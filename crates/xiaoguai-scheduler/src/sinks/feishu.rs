@@ -177,7 +177,6 @@ mod tests {
         PushPayload {
             job_id: "j1".into(),
             run_id: 7,
-            tenant_id: Some("t1".into()),
             status: "succeeded".into(),
             fired_at: Utc::now(),
             output_preview: Some("the briefing body".into()),

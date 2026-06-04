@@ -4,9 +4,9 @@
 //!
 //! * `GET  /v1/skills/catalog`            — list all available packs (static,
 //!   read from `catalog/skill_packs.json` baked into the binary).
-//! * `GET  /v1/skills/installed?tenant=X` — list packs installed for a tenant,
+//! * `GET  /v1/skills/installed`          — list installed packs,
 //!   backed by [`SkillPackRepository`].
-//! * `POST /v1/skills/install`            — install a pack for a tenant.
+//! * `POST /v1/skills/install`            — install a pack.
 //!   Records a row in `installed_skill_packs`; does NOT hot-reload the pack
 //!   (pack runtime integration is S1's pack-loader, tracked post-v1.2).
 //! * `DELETE /v1/skills/install/:id`      — uninstall (soft-delete the row).
@@ -18,13 +18,12 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use async_trait::async_trait;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::Json;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
-use xiaoguai_storage::OWNER_TENANT_ID;
 
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
@@ -116,7 +115,6 @@ fn catalog() -> &'static CatalogFile {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InstalledPackRow {
     pub id: String,
-    pub tenant_id: String,
     pub pack_slug: String,
     pub version: String,
     /// Operator-supplied knob overrides stored as free-form JSON.
@@ -128,11 +126,11 @@ pub struct InstalledPackRow {
 /// `xiaoguai-core`; tests use [`InMemorySkillPackRepository`].
 #[async_trait]
 pub trait SkillPackRepository: Send + Sync {
-    /// Return all installed packs for `tenant_id`.
-    async fn list(&self, tenant_id: &str) -> Result<Vec<InstalledPackRow>, SkillPackError>;
+    /// Return all installed packs.
+    async fn list(&self) -> Result<Vec<InstalledPackRow>, SkillPackError>;
 
     /// Insert a new row. Returns `Err(SkillPackError::AlreadyInstalled)` when
-    /// the `UNIQUE (tenant_id, pack_slug)` constraint fires.
+    /// the `UNIQUE (pack_slug)` constraint fires.
     async fn install(&self, row: InstalledPackRow) -> Result<InstalledPackRow, SkillPackError>;
 
     /// Delete a row by `id`. Returns `Err(SkillPackError::NotFound)` when the
@@ -142,7 +140,7 @@ pub trait SkillPackRepository: Send + Sync {
 
 #[derive(Debug, Clone, Error)]
 pub enum SkillPackError {
-    #[error("pack already installed for this tenant")]
+    #[error("pack already installed")]
     AlreadyInstalled,
     #[error("not found")]
     NotFound,
@@ -171,20 +169,14 @@ impl InMemorySkillPackRepository {
 
 #[async_trait]
 impl SkillPackRepository for InMemorySkillPackRepository {
-    async fn list(&self, tenant_id: &str) -> Result<Vec<InstalledPackRow>, SkillPackError> {
+    async fn list(&self) -> Result<Vec<InstalledPackRow>, SkillPackError> {
         let rows = self.rows.lock();
-        Ok(rows
-            .iter()
-            .filter(|r| r.tenant_id == tenant_id)
-            .cloned()
-            .collect())
+        Ok(rows.iter().cloned().collect())
     }
 
     async fn install(&self, row: InstalledPackRow) -> Result<InstalledPackRow, SkillPackError> {
         let mut rows = self.rows.lock();
-        let dup = rows
-            .iter()
-            .any(|r| r.tenant_id == row.tenant_id && r.pack_slug == row.pack_slug);
+        let dup = rows.iter().any(|r| r.pack_slug == row.pack_slug);
         if dup {
             return Err(SkillPackError::AlreadyInstalled);
         }
@@ -220,33 +212,20 @@ pub async fn list_catalog() -> ApiResult<Json<CatalogFile>> {
     Ok(Json(catalog().clone()))
 }
 
-#[derive(Debug, Deserialize, Default)]
-pub struct InstalledQuery {
-    pub tenant: Option<String>,
-}
-
-/// `GET /v1/skills/installed?tenant=<tenant_id>`
+/// `GET /v1/skills/installed`
 ///
 /// # Errors
-/// Returns an error if the tenant parameter is missing or the repository fails.
+/// Returns an error if the repository fails.
 pub async fn list_installed(
     State(state): State<AppState>,
-    Query(q): Query<InstalledQuery>,
 ) -> ApiResult<Json<Vec<InstalledPackRow>>> {
     let repo = skill_repo(&state)?;
-    // DEC-033 single-owner: tenant is vestigial (the repo returns all installs
-    // regardless); default to the owner tenant when omitted or empty.
-    let tenant = match q.tenant {
-        Some(t) if !t.is_empty() => t,
-        _ => OWNER_TENANT_ID.to_string(),
-    };
-    let rows = repo.list(&tenant).await.map_err(skill_err_to_api)?;
+    let rows = repo.list().await.map_err(skill_err_to_api)?;
     Ok(Json(rows))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct InstallRequest {
-    pub tenant_id: String,
     pub pack_slug: String,
     /// Operator-supplied knob overrides. Validated against the catalog schema
     /// in a best-effort manner — unknown keys are accepted (forward compat).
@@ -273,7 +252,6 @@ pub async fn install_pack(
 
     let row = InstalledPackRow {
         id: Uuid::new_v4().to_string(),
-        tenant_id: req.tenant_id,
         pack_slug: req.pack_slug,
         version: entry.version.clone(),
         config: req.config,
@@ -391,7 +369,6 @@ mod tests {
         let repo = InMemorySkillPackRepository::new();
         let row = InstalledPackRow {
             id: Uuid::new_v4().to_string(),
-            tenant_id: "tenant-1".into(),
             pack_slug: "rag-hr".into(),
             version: "1.0.0".into(),
             config: serde_json::json!({"top_k": 10}),
@@ -400,34 +377,9 @@ mod tests {
         let saved = repo.install(row.clone()).await.unwrap();
         assert_eq!(saved.pack_slug, "rag-hr");
 
-        let listed = repo.list("tenant-1").await.unwrap();
+        let listed = repo.list().await.unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, row.id);
-    }
-
-    #[tokio::test]
-    async fn list_scopes_by_tenant() {
-        let repo = InMemorySkillPackRepository::new();
-
-        for (tenant, slug) in &[("t1", "rag-legal"), ("t1", "rag-finance"), ("t2", "rag-hr")] {
-            repo.install(InstalledPackRow {
-                id: Uuid::new_v4().to_string(),
-                tenant_id: (*tenant).to_owned(),
-                pack_slug: (*slug).to_owned(),
-                version: "1.0.0".into(),
-                config: serde_json::json!({}),
-                installed_at: Utc::now(),
-            })
-            .await
-            .unwrap();
-        }
-
-        let t1 = repo.list("t1").await.unwrap();
-        assert_eq!(t1.len(), 2);
-        let t2 = repo.list("t2").await.unwrap();
-        assert_eq!(t2.len(), 1);
-        let t3 = repo.list("t3").await.unwrap();
-        assert!(t3.is_empty());
     }
 
     #[tokio::test]
@@ -435,7 +387,6 @@ mod tests {
         let repo = InMemorySkillPackRepository::new();
         let make = || InstalledPackRow {
             id: Uuid::new_v4().to_string(),
-            tenant_id: "t1".into(),
             pack_slug: "pr-review".into(),
             version: "1.0.0".into(),
             config: serde_json::json!({}),
@@ -451,17 +402,16 @@ mod tests {
         let repo = InMemorySkillPackRepository::new();
         let row = InstalledPackRow {
             id: Uuid::new_v4().to_string(),
-            tenant_id: "t1".into(),
             pack_slug: "hr-onboarding".into(),
             version: "1.0.0".into(),
             config: serde_json::json!({}),
             installed_at: Utc::now(),
         };
         let saved = repo.install(row.clone()).await.unwrap();
-        assert_eq!(repo.list("t1").await.unwrap().len(), 1);
+        assert_eq!(repo.list().await.unwrap().len(), 1);
 
         repo.uninstall(&saved.id).await.unwrap();
-        assert!(repo.list("t1").await.unwrap().is_empty());
+        assert!(repo.list().await.unwrap().is_empty());
     }
 
     #[tokio::test]

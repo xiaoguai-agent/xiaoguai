@@ -146,7 +146,6 @@ impl PgTodayReader {
             .map(|r| TodayItem::Chat {
                 ts: r.updated_at,
                 session_id: r.id,
-                tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
                 user_id: r.user_id,
                 started_at: r.created_at,
                 last_message_preview: clean_preview(r.last_preview),
@@ -205,7 +204,6 @@ impl PgTodayReader {
             .map(|r| TodayItem::Im {
                 ts: r.updated_at,
                 session_id: r.id,
-                tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
                 provider: r.provider,
                 chat_id: r.conversation_id,
                 started_at: r.created_at,
@@ -254,8 +252,6 @@ impl PgTodayReader {
             .map(|r| TodayItem::Scheduled {
                 ts: r.created_at,
                 job_id: r.job_id,
-                // DEC-033: single implicit owner; no per-run tenant.
-                tenant_id: None,
                 run_id: r.id,
                 attempt: r.attempt,
                 status: r.status,

@@ -1,7 +1,7 @@
 //! `/v1/admin/*` — administrative endpoints.
 //!
-//! `GET /v1/admin/audit?tenant_id=...` is backed by the HMAC-chained audit
-//! log (`xiaoguai-audit::PgAuditSink` in production via the [`AuditReader`]
+//! `GET /v1/admin/audit` is backed by the HMAC-chained audit log
+//! (`xiaoguai-audit::PgAuditSink` in production via the [`AuditReader`]
 //! bridge).
 //!
 //! Under DEC-033 these endpoints carry no RBAC of their own — when
@@ -28,7 +28,6 @@ use crate::scheduler::{
 };
 use crate::state::AppState;
 use crate::today::{TodayItem, TodayKind, TodayQuery};
-use xiaoguai_storage::OWNER_TENANT_ID;
 
 const DEFAULT_LIMIT: i64 = 100;
 const MAX_LIMIT: i64 = 1000;
@@ -37,19 +36,11 @@ const MAX_TODAY_LIMIT: i64 = 500;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListAuditQuery {
-    /// Required. The audit chain is per-tenant; cross-tenant listing
-    /// would need a separate endpoint with stricter policy.
-    pub tenant_id: Option<String>,
     pub limit: Option<i64>,
     /// RFC 3339 timestamp; inclusive lower bound.
     pub since: Option<DateTime<Utc>>,
     /// RFC 3339 timestamp; inclusive upper bound.
     pub until: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct VerifyAuditQuery {
-    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -66,26 +57,17 @@ pub struct VerifyAuditResponse {
 /// 200 `{"ok": false, "broken_at": rowid}` when the chain breaks (the
 /// response is HTTP 200 on purpose so dashboards can scrape it; the
 /// `ok` flag is the alerting signal).
-/// 503 when no verifier is wired; 400 when `tenant_id` is missing.
+/// 503 when no verifier is wired.
 ///
 /// # Errors
-/// Returns an error if the verifier is not wired, the tenant ID is missing, or the query fails.
-pub async fn verify_audit(
-    State(state): State<AppState>,
-    Query(q): Query<VerifyAuditQuery>,
-) -> ApiResult<Json<VerifyAuditResponse>> {
+/// Returns an error if the verifier is not wired or the query fails.
+pub async fn verify_audit(State(state): State<AppState>) -> ApiResult<Json<VerifyAuditResponse>> {
     let verifier = state
         .audit_verifier
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("audit verifier not wired".into()))?;
-    // DEC-033 single-owner: tenant_id is vestigial (the chain is single-owner);
-    // default to the owner tenant when the caller omits it or sends empty.
-    let tenant_id = match q.tenant_id {
-        Some(t) if !t.is_empty() => t,
-        _ => OWNER_TENANT_ID.to_string(),
-    };
     let report = verifier
-        .verify_tenant(&tenant_id)
+        .verify_tenant(xiaoguai_audit::OWNER_TENANT_ID)
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("audit verify: {e}")))?;
     let body = match report {
@@ -142,7 +124,7 @@ pub async fn list_today(
 }
 
 /// # Errors
-/// Returns an error if the audit reader is not wired, tenant ID is missing, or the query fails.
+/// Returns an error if the audit reader is not wired or the query fails.
 pub async fn list_audit(
     State(state): State<AppState>,
     Query(q): Query<ListAuditQuery>,
@@ -151,15 +133,9 @@ pub async fn list_audit(
         .audit
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("audit reader not wired".into()))?;
-    // DEC-033 single-owner: tenant_id is vestigial (the reader returns all
-    // data regardless); default to the owner tenant when omitted or empty.
-    let tenant_id = match q.tenant_id {
-        Some(t) if !t.is_empty() => t,
-        _ => OWNER_TENANT_ID.to_string(),
-    };
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let rows = reader
-        .list(&tenant_id, q.since, q.until, limit)
+        .list(xiaoguai_audit::OWNER_TENANT_ID, q.since, q.until, limit)
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("audit list: {e}")))?;
     Ok(Json(rows))
@@ -265,8 +241,6 @@ pub async fn scheduler_webhook(
 #[derive(Debug, Deserialize)]
 pub struct CompileJobRequest {
     pub description: String,
-    #[serde(default)]
-    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -301,7 +275,7 @@ pub async fn scheduler_compile_job(
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("nl job compiler not wired".into()))?;
     let (suggested_job, rationale) = compiler
-        .compile(&req.description, req.tenant_id.as_deref())
+        .compile(&req.description)
         .await
         .map_err(nl_compile_err_to_api)?;
     Ok(Json(CompileJobResponse {
@@ -344,20 +318,17 @@ pub async fn scheduler_upsert_job(
 
 #[derive(Debug, Deserialize)]
 pub struct CreateTokenRequest {
-    pub tenant_id: String,
     pub route_id: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListTokensQuery {
-    pub tenant_id: Option<String>,
     pub limit: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct TokenResponse {
     pub token: String,
-    pub tenant_id: String,
     pub route_id: String,
     pub created_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -368,7 +339,6 @@ impl From<WebhookTokenRecord> for TokenResponse {
     fn from(r: WebhookTokenRecord) -> Self {
         Self {
             token: r.token,
-            tenant_id: r.tenant_id,
             route_id: r.route_id,
             created_at: r.created_at,
             last_used_at: r.last_used_at,
@@ -377,8 +347,8 @@ impl From<WebhookTokenRecord> for TokenResponse {
 }
 
 /// `POST /v1/admin/scheduler/tokens` — mint a new webhook token bound to
-/// `(tenant_id, route_id)`. The token is returned exactly once in the
-/// response body; the operator must capture it immediately.
+/// `route_id`. The token is returned exactly once in the response body;
+/// the operator must capture it immediately.
 ///
 /// # Errors
 /// Returns an error if the token admin is not wired, inputs are empty, or creation fails.
@@ -390,25 +360,19 @@ pub async fn scheduler_create_token(
         .webhook_token_admin
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("webhook token admin not wired".into()))?;
-    if req.tenant_id.trim().is_empty() {
-        return Err(ApiError::InvalidRequest(
-            "tenant_id must not be empty".into(),
-        ));
-    }
     if req.route_id.trim().is_empty() {
         return Err(ApiError::InvalidRequest(
             "route_id must not be empty".into(),
         ));
     }
     let row = admin
-        .create(req.tenant_id.trim(), req.route_id.trim())
+        .create(req.route_id.trim())
         .await
         .map_err(token_admin_err_to_api)?;
     Ok((axum::http::StatusCode::CREATED, Json(row.into())))
 }
 
-/// `GET /v1/admin/scheduler/tokens?tenant_id=...&limit=...` — list
-/// tokens, optionally scoped to one tenant.
+/// `GET /v1/admin/scheduler/tokens?limit=...` — list tokens.
 ///
 /// # Errors
 /// Returns an error if the token admin is not wired or the query fails.
@@ -421,10 +385,7 @@ pub async fn scheduler_list_tokens(
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("webhook token admin not wired".into()))?;
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let rows = admin
-        .list(q.tenant_id.as_deref(), limit)
-        .await
-        .map_err(token_admin_err_to_api)?;
+    let rows = admin.list(limit).await.map_err(token_admin_err_to_api)?;
     Ok(Json(rows.into_iter().map(Into::into).collect()))
 }
 

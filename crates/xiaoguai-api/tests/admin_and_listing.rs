@@ -16,7 +16,7 @@ use xiaoguai_api::auth::TokenValidator;
 use xiaoguai_api::{router, AppState, CancelRegistry};
 use xiaoguai_llm::mock::ScriptStep;
 use xiaoguai_llm::{LlmBackend, MockBackend};
-use xiaoguai_types::{Session, SessionId, SessionStatus, TenantId, UserId};
+use xiaoguai_types::{Session, SessionId, SessionStatus, UserId};
 
 use common::{InMemoryMessageRepo, InMemorySessionRepo};
 
@@ -78,11 +78,10 @@ fn build_state(
     }
 }
 
-fn fixture_session(user_id: &str, tenant: &str, model: &str) -> Session {
+fn fixture_session(user_id: &str, _tenant: &str, model: &str) -> Session {
     let now = chrono::Utc::now();
     Session {
         id: SessionId::new(),
-        tenant_id: TenantId::from(tenant.to_string()),
         user_id: UserId::from(user_id.to_string()),
         title: Some("t".into()),
         created_at: now,
@@ -104,15 +103,15 @@ async fn list_sessions_returns_only_that_user() {
     use xiaoguai_storage::repositories::SessionRepository;
     let sessions = InMemorySessionRepo::arc();
     sessions
-        .create(None, &fixture_session("alice", "ten_a", "m"))
+        .create(&fixture_session("alice", "ten_a", "m"))
         .await
         .unwrap();
     sessions
-        .create(None, &fixture_session("alice", "ten_a", "m"))
+        .create(&fixture_session("alice", "ten_a", "m"))
         .await
         .unwrap();
     sessions
-        .create(None, &fixture_session("bob", "ten_a", "m"))
+        .create(&fixture_session("bob", "ten_a", "m"))
         .await
         .unwrap();
     let app = router(build_state(sessions, None, None, None));
@@ -149,15 +148,15 @@ async fn list_sessions_400s_when_user_id_missing_and_no_claims() {
 }
 
 #[tokio::test]
-async fn admin_audit_returns_rows_for_tenant() {
+async fn admin_audit_returns_rows() {
     use chrono::Utc;
     use xiaoguai_api::{AuditEntryView, AuditReader, StaticAuditReader};
 
     let now = Utc::now();
-    let mk = |id: i64, tenant: &str| AuditEntryView {
+    let mk = |id: i64| AuditEntryView {
         id,
         ts: now,
-        tenant_id: tenant.into(),
+        tenant_id: xiaoguai_audit::OWNER_TENANT_ID.into(),
         actor: "system".into(),
         action: "session.create".into(),
         resource: Some(format!("sess_{id}")),
@@ -165,11 +164,8 @@ async fn admin_audit_returns_rows_for_tenant() {
         prev_hmac: "00".repeat(32),
         hmac: "ab".repeat(32),
     };
-    let reader: Arc<dyn AuditReader> = Arc::new(StaticAuditReader::with_rows(vec![
-        mk(1, "ten_a"),
-        mk(2, "ten_b"),
-        mk(3, "ten_a"),
-    ]));
+    let reader: Arc<dyn AuditReader> =
+        Arc::new(StaticAuditReader::with_rows(vec![mk(1), mk(2), mk(3)]));
 
     let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
     state.audit = Some(reader);
@@ -177,7 +173,7 @@ async fn admin_audit_returns_rows_for_tenant() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/v1/admin/audit?tenant_id=ten_a")
+                .uri("/v1/admin/audit")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -185,9 +181,8 @@ async fn admin_audit_returns_rows_for_tenant() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let v = body_arr(resp.into_body()).await;
-    assert_eq!(v.len(), 2);
+    assert_eq!(v.len(), 3);
     for row in &v {
-        assert_eq!(row["tenant_id"], "ten_a");
         assert!(row["hmac"].as_str().unwrap().len() == 64);
     }
 }
@@ -198,7 +193,7 @@ async fn admin_audit_503s_when_reader_not_wired() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/v1/admin/audit?tenant_id=ten_a")
+                .uri("/v1/admin/audit")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -211,7 +206,7 @@ async fn admin_audit_503s_when_reader_not_wired() {
 async fn admin_audit_verify_returns_ok_for_unbroken_chain() {
     use xiaoguai_api::{AuditVerifier, StaticAuditVerifier, VerifyReport};
     let v: Arc<dyn AuditVerifier> = Arc::new(StaticAuditVerifier::with_verdict(
-        "ten_a",
+        xiaoguai_audit::OWNER_TENANT_ID,
         VerifyReport::Ok { verified_count: 7 },
     ));
     let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
@@ -220,7 +215,7 @@ async fn admin_audit_verify_returns_ok_for_unbroken_chain() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/v1/admin/audit/verify?tenant_id=ten_a")
+                .uri("/v1/admin/audit/verify")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -238,7 +233,7 @@ async fn admin_audit_verify_returns_ok_for_unbroken_chain() {
 async fn admin_audit_verify_reports_broken_chain() {
     use xiaoguai_api::{AuditVerifier, StaticAuditVerifier, VerifyReport};
     let v: Arc<dyn AuditVerifier> = Arc::new(StaticAuditVerifier::with_verdict(
-        "ten_a",
+        xiaoguai_audit::OWNER_TENANT_ID,
         VerifyReport::Broken { broken_at: 42 },
     ));
     let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
@@ -247,7 +242,7 @@ async fn admin_audit_verify_reports_broken_chain() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/v1/admin/audit/verify?tenant_id=ten_a")
+                .uri("/v1/admin/audit/verify")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -266,7 +261,7 @@ async fn admin_audit_verify_503s_when_verifier_not_wired() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/v1/admin/audit/verify?tenant_id=ten_a")
+                .uri("/v1/admin/audit/verify")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -348,7 +343,6 @@ async fn admin_today_returns_merged_timeline_sorted_desc() {
         TodayItem::Chat {
             ts: t0,
             session_id: "sess_chat".into(),
-            tenant_id: "ten_a".into(),
             user_id: "u".into(),
             started_at: t0,
             last_message_preview: Some("hi".into()),
@@ -358,7 +352,6 @@ async fn admin_today_returns_merged_timeline_sorted_desc() {
         TodayItem::Scheduled {
             ts: t2,
             job_id: "job_a".into(),
-            tenant_id: Some("ten_a".into()),
             run_id: 7,
             attempt: 1,
             status: "succeeded".into(),
@@ -370,7 +363,6 @@ async fn admin_today_returns_merged_timeline_sorted_desc() {
         TodayItem::Im {
             ts: t1,
             session_id: "sess_im".into(),
-            tenant_id: "ten_a".into(),
             provider: "feishu".into(),
             chat_id: "oc_x".into(),
             started_at: t1,
@@ -399,8 +391,6 @@ async fn admin_today_returns_merged_timeline_sorted_desc() {
     assert_eq!(v[2]["kind"], "chat");
     // Proactive reason rides through.
     assert_eq!(v[0]["reason"], "hourly summary");
-    // Scheduled tenant_id is nullable but populated here.
-    assert_eq!(v[0]["tenant_id"], "ten_a");
 }
 
 #[tokio::test]
@@ -414,7 +404,6 @@ async fn admin_today_filters_by_kind_and_caps_limit() {
         items.push(TodayItem::Chat {
             ts: t - chrono::Duration::minutes(i),
             session_id: format!("sess_c_{i}"),
-            tenant_id: "ten".into(),
             user_id: "u".into(),
             started_at: t,
             last_message_preview: None,
@@ -424,7 +413,6 @@ async fn admin_today_filters_by_kind_and_caps_limit() {
         items.push(TodayItem::Scheduled {
             ts: t - chrono::Duration::seconds(i),
             job_id: "j".into(),
-            tenant_id: None,
             run_id: i,
             attempt: 1,
             status: "succeeded".into(),
@@ -484,7 +472,6 @@ async fn admin_today_passes_since_filter_through() {
         TodayItem::Chat {
             ts: old,
             session_id: "old".into(),
-            tenant_id: "ten".into(),
             user_id: "u".into(),
             started_at: old,
             last_message_preview: None,
@@ -494,7 +481,6 @@ async fn admin_today_passes_since_filter_through() {
         TodayItem::Chat {
             ts: recent,
             session_id: "new".into(),
-            tenant_id: "ten".into(),
             user_id: "u".into(),
             started_at: recent,
             last_message_preview: None,
@@ -556,7 +542,6 @@ mod eval_routes {
         let source: Arc<dyn CaseFromSessionSource> =
             Arc::new(StaticCaseFromSessionSource::with_session(SessionForCase {
                 session_id: "sess_abc".into(),
-                tenant_id: Some("ten".into()),
                 input_messages: vec![LlmMessage::user("hello")],
                 tool_invocations: vec![ToolInvocationRecord {
                     tool_name: "search".into(),
@@ -871,7 +856,6 @@ mod scheduler_nl_jobs {
     fn sample_job() -> serde_json::Value {
         serde_json::json!({
             "id": "j-from-llm",
-            "tenant_id": null,
             "name": "scan-hn-daily",
             "description": null,
             "trigger": {"type": "cron", "expr": "0 0 8 * * *"},
@@ -939,9 +923,7 @@ mod scheduler_nl_jobs {
                     .method("POST")
                     .uri("/v1/admin/scheduler/jobs/compile")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{"description":"每天 8 点扫 HN","tenant_id":"t1"}"#,
-                    ))
+                    .body(Body::from(r#"{"description":"每天 8 点扫 HN"}"#))
                     .unwrap(),
             )
             .await
@@ -1061,7 +1043,6 @@ mod scheduler_public_webhook {
         state.webhook_token_validator = Some(Arc::new(StaticWebhookTokenValidator {
             token: "secret".into(),
             route_id: "deploy".into(),
-            tenant_id: "tenant-a".into(),
         }));
         state.webhook_pusher = Some(Arc::new(AcceptAllPusher { deliver: 1 }));
         let app = router(state);
@@ -1085,7 +1066,6 @@ mod scheduler_public_webhook {
         state.webhook_token_validator = Some(Arc::new(StaticWebhookTokenValidator {
             token: "secret".into(),
             route_id: "deploy".into(),
-            tenant_id: "tenant-a".into(),
         }));
         state.webhook_pusher = Some(Arc::new(AcceptAllPusher { deliver: 1 }));
         let app = router(state);
@@ -1110,7 +1090,6 @@ mod scheduler_public_webhook {
         state.webhook_token_validator = Some(Arc::new(StaticWebhookTokenValidator {
             token: "secret".into(),
             route_id: "deploy".into(),
-            tenant_id: "tenant-a".into(),
         }));
         state.webhook_pusher = Some(Arc::new(AcceptAllPusher { deliver: 2 }));
         let app = router(state);
@@ -1130,7 +1109,6 @@ mod scheduler_public_webhook {
         let v: serde_json::Value =
             serde_json::from_slice(&to_bytes(resp.into_body(), 1024).await.unwrap()).unwrap();
         assert_eq!(v["delivered"], 2);
-        assert_eq!(v["tenant_id"], "tenant-a");
     }
 
     #[tokio::test]
@@ -1139,7 +1117,6 @@ mod scheduler_public_webhook {
         state.webhook_token_validator = Some(Arc::new(StaticWebhookTokenValidator {
             token: "secret".into(),
             route_id: "nobody".into(),
-            tenant_id: "tenant-a".into(),
         }));
         state.webhook_pusher = Some(Arc::new(AcceptAllPusher { deliver: 0 }));
         let app = router(state);
@@ -1199,7 +1176,7 @@ mod scheduler_token_admin {
                     .method("POST")
                     .uri("/v1/admin/scheduler/tokens")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"tenant_id":"t","route_id":"deploy"}"#))
+                    .body(Body::from(r#"{"route_id":"deploy"}"#))
                     .unwrap(),
             )
             .await
@@ -1208,7 +1185,6 @@ mod scheduler_token_admin {
         let row: serde_json::Value =
             serde_json::from_slice(&to_bytes(resp.into_body(), 1024).await.unwrap()).unwrap();
         let token = row["token"].as_str().unwrap().to_string();
-        assert_eq!(row["tenant_id"], "t");
         assert_eq!(row["route_id"], "deploy");
 
         // List.
@@ -1217,7 +1193,7 @@ mod scheduler_token_admin {
             .oneshot(
                 Request::builder()
                     .method("GET")
-                    .uri("/v1/admin/scheduler/tokens?tenant_id=t")
+                    .uri("/v1/admin/scheduler/tokens")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1257,7 +1233,7 @@ mod scheduler_token_admin {
     }
 
     #[tokio::test]
-    async fn tokens_create_rejects_empty_tenant_id() {
+    async fn tokens_create_rejects_empty_route_id() {
         let admin = Arc::new(InMemoryWebhookTokenAdmin::default());
         let app = router(state_with_admin(admin));
         let resp = app
@@ -1266,7 +1242,7 @@ mod scheduler_token_admin {
                     .method("POST")
                     .uri("/v1/admin/scheduler/tokens")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"tenant_id":"","route_id":"r"}"#))
+                    .body(Body::from(r#"{"route_id":""}"#))
                     .unwrap(),
             )
             .await
@@ -1283,7 +1259,6 @@ mod scheduler_jobs_reader {
     fn sample_summary(id: &str) -> ScheduledJobSummary {
         ScheduledJobSummary {
             id: id.into(),
-            tenant_id: Some("tenant-a".into()),
             name: format!("job-{id}"),
             trigger_summary: "every 60s".into(),
             enabled: true,

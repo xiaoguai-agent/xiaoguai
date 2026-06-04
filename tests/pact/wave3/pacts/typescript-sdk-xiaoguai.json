@@ -1,0 +1,511 @@
+{
+  "consumer": {
+    "name": "typescript-sdk"
+  },
+  "interactions": [
+    {
+      "description": "a DELETE /v1/hotl/policies/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa request",
+      "providerState": "HotL policy exists",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer test-token"
+        },
+        "method": "DELETE",
+        "path": "/v1/hotl/policies/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+      },
+      "response": {
+        "status": 204
+      }
+    },
+    {
+      "description": "a DELETE /v1/skills/install/cccccccc-cccc-cccc-cccc-cccccccccccc request",
+      "providerState": "skill pack installation exists",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer test-token"
+        },
+        "method": "DELETE",
+        "path": "/v1/skills/install/cccccccc-cccc-cccc-cccc-cccccccccccc"
+      },
+      "response": {
+        "status": 204
+      }
+    },
+    {
+      "description": "a GET /v1/hotl/policies request for tenant 11111111",
+      "providerState": "tenant has one HotL policy",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer test-token"
+        },
+        "method": "GET",
+        "path": "/v1/hotl/policies"
+      },
+      "response": {
+        "body": [
+          {
+            "escalate_to": "ops@example.com",
+            "id": "e2490de5-5bd3-43d5-b7c4-526e33f71304",
+            "max_count": 100,
+            "max_usd": 5,
+            "scope": "llm_call",
+            "window_seconds": 3600
+          }
+        ],
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "$.body": {
+            "match": "type",
+            "min": 1
+          },
+          "$.body[*].escalate_to": {
+            "match": "type"
+          },
+          "$.body[*].id": {
+            "match": "regex",
+            "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+          },
+          "$.body[*].max_count": {
+            "match": "integer"
+          },
+          "$.body[*].max_usd": {
+            "match": "decimal"
+          },
+          "$.body[*].scope": {
+            "match": "type"
+          },
+          "$.body[*].window_seconds": {
+            "match": "integer"
+          }
+        },
+        "status": 200
+      }
+    },
+    {
+      "description": "a GET /v1/hotl/policies/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa request",
+      "providerState": "HotL policy exists",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer test-token"
+        },
+        "method": "GET",
+        "path": "/v1/hotl/policies/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+      },
+      "response": {
+        "body": {
+          "escalate_to": "ops@example.com",
+          "id": "e2490de5-5bd3-43d5-b7c4-526e33f71304",
+          "max_count": 100,
+          "max_usd": 5,
+          "scope": "llm_call",
+          "window_seconds": 3600
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "$.body.escalate_to": {
+            "match": "type"
+          },
+          "$.body.id": {
+            "match": "regex",
+            "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+          },
+          "$.body.max_count": {
+            "match": "integer"
+          },
+          "$.body.max_usd": {
+            "match": "decimal"
+          },
+          "$.body.scope": {
+            "match": "type"
+          },
+          "$.body.window_seconds": {
+            "match": "integer"
+          }
+        },
+        "status": 200
+      }
+    },
+    {
+      "description": "a GET /v1/outcomes/summary request for 7d",
+      "providerState": "tenant has recorded outcomes",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer test-token"
+        },
+        "method": "GET",
+        "path": "/v1/outcomes/summary",
+        "query": "range=7d"
+      },
+      "response": {
+        "body": {
+          "range": "7d",
+          "summary": {
+            "by_kind": {
+              "revenue_usd": {
+                "avg": 2333.33,
+                "count": 18,
+                "sum": 42000
+              }
+            }
+          }
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "$.body.range": {
+            "match": "type"
+          },
+          "$.body.summary.by_kind": {
+            "match": "type"
+          },
+          "$.body.summary.by_kind.revenue_usd.avg": {
+            "match": "decimal"
+          },
+          "$.body.summary.by_kind.revenue_usd.count": {
+            "match": "integer"
+          },
+          "$.body.summary.by_kind.revenue_usd.sum": {
+            "match": "decimal"
+          }
+        },
+        "status": 200
+      }
+    },
+    {
+      "description": "a GET /v1/outcomes/timeseries request for 7d",
+      "providerState": "tenant has recorded outcomes",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer test-token"
+        },
+        "method": "GET",
+        "path": "/v1/outcomes/timeseries",
+        "query": "range=7d"
+      },
+      "response": {
+        "body": {
+          "days": [
+            {
+              "count": 2,
+              "date": "2026-05-20",
+              "kind": "revenue_usd",
+              "sum": 5000
+            }
+          ],
+          "range": "7d"
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "$.body.days": {
+            "match": "type",
+            "min": 1
+          },
+          "$.body.days[*].count": {
+            "match": "integer"
+          },
+          "$.body.days[*].date": {
+            "match": "type"
+          },
+          "$.body.days[*].kind": {
+            "match": "type"
+          },
+          "$.body.days[*].sum": {
+            "match": "decimal"
+          },
+          "$.body.range": {
+            "match": "type"
+          }
+        },
+        "status": 200
+      }
+    },
+    {
+      "description": "a GET /v1/skills/installed request",
+      "providerState": "tenant has installed skill packs",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer test-token"
+        },
+        "method": "GET",
+        "path": "/v1/skills/installed"
+      },
+      "response": {
+        "body": [
+          {
+            "config": {},
+            "id": "e2490de5-5bd3-43d5-b7c4-526e33f71304",
+            "installed_at": "2026-05-25T12:34:56Z",
+            "pack_slug": "pr-review",
+            "version": "1.0.0"
+          }
+        ],
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "$.body": {
+            "match": "type",
+            "min": 1
+          },
+          "$.body[*].config": {
+            "match": "type"
+          },
+          "$.body[*].id": {
+            "match": "regex",
+            "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+          },
+          "$.body[*].installed_at": {
+            "match": "type"
+          },
+          "$.body[*].pack_slug": {
+            "match": "type"
+          },
+          "$.body[*].version": {
+            "match": "type"
+          }
+        },
+        "status": 200
+      }
+    },
+    {
+      "description": "a POST /v1/hotl/check request within budget",
+      "providerState": "tenant HotL policy exists and budget is within limits",
+      "request": {
+        "body": {
+          "amount": 0.0025,
+          "scope": "llm_call"
+        },
+        "headers": {
+          "Authorization": "Bearer test-token",
+          "Content-Type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/hotl/check"
+      },
+      "response": {
+        "body": {
+          "reason": null,
+          "verdict": "allow"
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "$.body.verdict": {
+            "match": "type"
+          }
+        },
+        "status": 200
+      }
+    },
+    {
+      "description": "a POST /v1/hotl/policies request",
+      "providerState": "HotL policy store is available",
+      "request": {
+        "body": {
+          "escalate_to": "ops@example.com",
+          "max_count": 100,
+          "max_usd": 5,
+          "scope": "llm_call",
+          "window_seconds": 3600
+        },
+        "headers": {
+          "Authorization": "Bearer test-token",
+          "Content-Type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/hotl/policies"
+      },
+      "response": {
+        "body": {
+          "escalate_to": "ops@example.com",
+          "id": "e2490de5-5bd3-43d5-b7c4-526e33f71304",
+          "max_count": 100,
+          "max_usd": 5,
+          "scope": "llm_call",
+          "window_seconds": 3600
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "$.body.escalate_to": {
+            "match": "type"
+          },
+          "$.body.id": {
+            "match": "regex",
+            "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+          },
+          "$.body.max_count": {
+            "match": "integer"
+          },
+          "$.body.max_usd": {
+            "match": "decimal"
+          },
+          "$.body.scope": {
+            "match": "type"
+          },
+          "$.body.window_seconds": {
+            "match": "integer"
+          }
+        },
+        "status": 201
+      }
+    },
+    {
+      "description": "a POST /v1/outcomes request",
+      "providerState": "outcome writer is available",
+      "request": {
+        "body": {
+          "agent_name": "sales-bot",
+          "description": "Closed deal D-4471",
+          "kind": "revenue_usd",
+          "metadata": {
+            "deal_id": "D-4471"
+          },
+          "session_id": "sess_abc123",
+          "unit": "usd",
+          "value": 1250
+        },
+        "headers": {
+          "Authorization": "Bearer test-token",
+          "Content-Type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/outcomes"
+      },
+      "response": {
+        "body": {
+          "ok": true
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "status": 201
+      }
+    },
+    {
+      "description": "a POST /v1/skills/install request",
+      "providerState": "skill pack pr-review exists in catalog",
+      "request": {
+        "body": {
+          "config": {},
+          "pack_slug": "pr-review"
+        },
+        "headers": {
+          "Authorization": "Bearer test-token",
+          "Content-Type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/skills/install"
+      },
+      "response": {
+        "body": {
+          "config": {},
+          "id": "e2490de5-5bd3-43d5-b7c4-526e33f71304",
+          "installed_at": "2026-05-25T12:34:56Z",
+          "pack_slug": "pr-review",
+          "version": "1.0.0"
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "$.body.config": {
+            "match": "type"
+          },
+          "$.body.id": {
+            "match": "regex",
+            "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+          },
+          "$.body.installed_at": {
+            "match": "type"
+          },
+          "$.body.pack_slug": {
+            "match": "type"
+          },
+          "$.body.version": {
+            "match": "type"
+          }
+        },
+        "status": 201
+      }
+    },
+    {
+      "description": "a PUT /v1/hotl/policies/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa request",
+      "providerState": "HotL policy exists",
+      "request": {
+        "body": {
+          "escalate_to": null,
+          "max_count": 200,
+          "max_usd": null,
+          "scope": "llm_call",
+          "window_seconds": 7200
+        },
+        "headers": {
+          "Authorization": "Bearer test-token",
+          "Content-Type": "application/json"
+        },
+        "method": "PUT",
+        "path": "/v1/hotl/policies/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+      },
+      "response": {
+        "body": {
+          "escalate_to": "ops@example.com",
+          "id": "e2490de5-5bd3-43d5-b7c4-526e33f71304",
+          "max_count": 200,
+          "max_usd": 5,
+          "scope": "llm_call",
+          "window_seconds": 7200
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "$.body.escalate_to": {
+            "match": "type"
+          },
+          "$.body.id": {
+            "match": "regex",
+            "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+          },
+          "$.body.max_count": {
+            "match": "integer"
+          },
+          "$.body.max_usd": {
+            "match": "decimal"
+          },
+          "$.body.scope": {
+            "match": "type"
+          },
+          "$.body.window_seconds": {
+            "match": "integer"
+          }
+        },
+        "status": 200
+      }
+    }
+  ],
+  "metadata": {
+    "pact-js": {
+      "version": "13.2.0"
+    },
+    "pactRust": {
+      "ffi": "0.4.22",
+      "models": "1.2.3"
+    },
+    "pactSpecification": {
+      "version": "2.0.0"
+    }
+  },
+  "provider": {
+    "name": "xiaoguai"
+  }
+}

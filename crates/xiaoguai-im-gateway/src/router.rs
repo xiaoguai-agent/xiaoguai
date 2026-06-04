@@ -202,24 +202,13 @@ pub async fn run_agent_and_reply(
         msg.user_external_id.clone(),
         msg.conversation_id.clone(),
     );
-    // v0.6.5: ask the history store for the resolved internal tenant so
-    // the agent build picks up per-tenant LlmRouter defaults. PG stores
-    // return the synthetic tenant created on first sight; in-memory
-    // returns None and we fall back to agent_defaults verbatim.
-    let resolved_tenant = state
-        .history
-        .resolve_tenant(&ident)
-        .await
-        .map_err(|e| ProviderError::Transport(format!("history resolve tenant: {e}")))?;
     // v0.12.0: route through the shared runtime so REST / IM / scheduler
-    // build their agent the same way. Tenant scoping flows through
-    // `RuntimeContext::with_tenant`.
+    // build their agent the same way.
     let ctx = RuntimeContext::new(
         state.app.backend.clone(),
         state.app.toolbox.clone(),
         state.app.agent_defaults.clone(),
-    )
-    .with_tenant(resolved_tenant.clone());
+    );
 
     let prior = state
         .history

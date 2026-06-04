@@ -1,13 +1,12 @@
 //! Session + message domain types.
 
-use crate::ids::{MessageId, SessionId, TenantId, UserId};
+use crate::ids::{MessageId, SessionId, UserId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: SessionId,
-    pub tenant_id: TenantId,
     pub user_id: UserId,
     pub title: Option<String>,
     pub created_at: DateTime<Utc>,

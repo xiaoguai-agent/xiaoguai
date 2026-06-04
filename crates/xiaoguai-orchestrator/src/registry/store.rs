@@ -27,7 +27,7 @@
 //!
 //! # Deferred
 //! - `PgStore` full implementation (v1.3) — blocked on deciding the PG schema
-//!   for capability arrays and cost/locality columns.
+//!   for capability arrays and cost columns.
 //! - Distributed gossip / watch channel for multi-node registry sync (v1.4).
 
 use async_trait::async_trait;
@@ -100,7 +100,7 @@ impl RegistryStore for InMemoryStore {
 
 /// PostgreSQL-backed registry store.
 ///
-/// **Deferred to v1.3** — the PG schema for capability arrays, cost/locality
+/// **Deferred to v1.3** — the PG schema for capability arrays and cost
 /// columns, and the migration file are not yet defined.
 ///
 /// All methods currently return `OrchestratorError::Internal("not implemented")`.
@@ -132,7 +132,7 @@ impl Default for PgStore {
 impl RegistryStore for PgStore {
     async fn save(&self, _spec: &AgentSpec) -> Result<(), OrchestratorError> {
         // TODO(v1.3): INSERT INTO agent_registry (name, version, capabilities,
-        //   cost_hint, locality) VALUES ($1, $2, $3::jsonb, $4, $5)
+        //   cost_hint) VALUES ($1, $2, $3::jsonb, $4)
         //   ON CONFLICT (name) DO UPDATE SET ...
         Err(OrchestratorError::Internal(
             "PgStore::save not yet implemented (deferred to v1.3)".to_owned(),
@@ -159,26 +159,14 @@ impl RegistryStore for PgStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::{
-        test_helpers::make_spec, Capability, ResultShape, TaskShape, TenantScope,
-    };
+    use crate::registry::{test_helpers::make_spec, Capability, ResultShape, TaskShape};
 
     fn spec_a() -> AgentSpec {
-        make_spec(
-            "agent-a",
-            vec![("billing", "draft_email")],
-            1.0,
-            TenantScope::Global,
-        )
+        make_spec("agent-a", vec![("billing", "draft_email")], 1.0)
     }
 
     fn spec_b() -> AgentSpec {
-        make_spec(
-            "agent-b",
-            vec![("incident", "summarize")],
-            2.0,
-            TenantScope::Global,
-        )
+        make_spec("agent-b", vec![("incident", "summarize")], 2.0)
     }
 
     // ── InMemoryStore ─────────────────────────────────────────────────────────
@@ -285,7 +273,6 @@ mod tests {
                 description: "Review comments in Markdown".to_owned(),
             },
             cost_hint: 3.5,
-            locality: TenantScope::Tenant("acme".to_owned()),
         };
 
         let store = InMemoryStore::new();
@@ -296,6 +283,5 @@ mod tests {
         assert_eq!(loaded.version, "1.2.3");
         assert_eq!(loaded.capabilities.len(), 2);
         assert!((loaded.cost_hint - 3.5).abs() < f64::EPSILON);
-        assert_eq!(loaded.locality, TenantScope::Tenant("acme".to_owned()));
     }
 }

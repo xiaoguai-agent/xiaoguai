@@ -1,5 +1,5 @@
 //! Minimal MCP supervisor — owns active client instances keyed by
-//! `(tenant_id, server_name, version)`.
+//! `(server_name, version)`.
 //!
 //! v0.5.3 ships only `start / get / stop / list_active`. Idle-timeout,
 //! LRU eviction, crash-restart, and health-check pings land in v0.5.3.1.
@@ -17,31 +17,17 @@ use xiaoguai_types::{McpServer, McpTransport};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct McpKey {
-    /// Empty string = global (system-wide) — chosen sentinel so the type
-    /// stays `Hash + Eq` without needing `Option` plumbing in the map.
-    pub tenant_id: String,
     pub server_name: String,
     pub version: String,
 }
 
 impl McpKey {
     #[must_use]
-    pub fn new(
-        tenant_id: impl Into<String>,
-        server_name: impl Into<String>,
-        version: impl Into<String>,
-    ) -> Self {
+    pub fn new(server_name: impl Into<String>, version: impl Into<String>) -> Self {
         Self {
-            tenant_id: tenant_id.into(),
             server_name: server_name.into(),
             version: version.into(),
         }
-    }
-
-    /// Shorthand for "system-wide" keys (`tenant_id = ""`).
-    #[must_use]
-    pub fn global(server_name: impl Into<String>, version: impl Into<String>) -> Self {
-        Self::new("", server_name, version)
     }
 }
 
@@ -111,10 +97,9 @@ impl McpSupervisor {
 
     /// v0.9.4.1: reconcile running clients with the persisted registry.
     ///
-    /// Pulls the per-tenant `mcp_servers` slice (system-wide rows + rows
-    /// scoped to `tenant_id`) and diffs against `running_servers`. Newly
-    /// inserted rows get spawned via the matching transport; rows that
-    /// vanished get shut down. Cheap to call after every marketplace
+    /// Pulls the `mcp_servers` slice and diffs against the running set.
+    /// Newly inserted rows get spawned via the matching transport; rows
+    /// that vanished get shut down. Cheap to call after every marketplace
     /// install — the live-pickup path that v0.9.4 deferred.
     ///
     /// Returns the keys that were newly started so callers can log them.
@@ -127,54 +112,29 @@ impl McpSupervisor {
     /// Returns `McpError::Transport` if the repository query fails, or
     /// propagates `McpError` from `start` if a newly-spawned client fails
     /// to register.
-    pub async fn reload_from_db(
-        &self,
-        repo: &dyn McpServerRepository,
-        tenant_id: Option<&str>,
-    ) -> McpResult<Vec<McpKey>> {
-        let rows = match tenant_id {
-            Some(t) => repo
-                .list_for_tenant(t)
-                .await
-                .map_err(|e| McpError::Transport(format!("mcp_servers list: {e}")))?,
-            None => repo
-                .list_global()
-                .await
-                .map_err(|e| McpError::Transport(format!("mcp_servers list: {e}")))?,
-        };
+    pub async fn reload_from_db(&self, repo: &dyn McpServerRepository) -> McpResult<Vec<McpKey>> {
+        let rows = repo
+            .list()
+            .await
+            .map_err(|e| McpError::Transport(format!("mcp_servers list: {e}")))?;
 
         // Compute the desired set of keys.
         let desired: Vec<(McpKey, McpServer)> = rows
             .into_iter()
             .filter(|s| s.enabled)
             .map(|s| {
-                let key = McpKey::new(
-                    s.tenant_id
-                        .as_ref()
-                        .map(|t| t.as_str().to_string())
-                        .unwrap_or_default(),
-                    s.name.clone(),
-                    s.version.clone(),
-                );
+                let key = McpKey::new(s.name.clone(), s.version.clone());
                 (key, s)
             })
             .collect();
         let desired_keys: std::collections::HashSet<McpKey> =
             desired.iter().map(|(k, _)| k.clone()).collect();
 
-        // Stop anything in the live set that's no longer desired *for the
-        // tenants we just enumerated*. We deliberately keep clients for
-        // other tenants — caller decides whether to reload them.
+        // Stop anything in the live set that's no longer desired.
         let to_stop: Vec<McpKey> = {
             let live = self.clients.lock();
             live.keys()
-                .filter(|k| {
-                    let in_scope = match tenant_id {
-                        Some(t) => k.tenant_id == t || k.tenant_id.is_empty(),
-                        None => k.tenant_id.is_empty(),
-                    };
-                    in_scope && !desired_keys.contains(k)
-                })
+                .filter(|k| !desired_keys.contains(k))
                 .cloned()
                 .collect()
         };

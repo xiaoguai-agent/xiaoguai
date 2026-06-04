@@ -78,7 +78,7 @@ use xiaoguai_scheduler::{
 use xiaoguai_storage::repositories::{MessageRepository, SessionRepository};
 use xiaoguai_types::{
     ContentBlock, Message as DomainMessage, MessageId, MessageRole, Session, SessionId,
-    SessionStatus, TenantId, UserId,
+    SessionStatus, UserId,
 };
 
 pub struct WebhookSourceAdapter {
@@ -151,7 +151,6 @@ The JSON MUST match this shape (extra keys are not allowed):
 
 {
   "id": "PLACEHOLDER",                 // string; will be replaced server-side
-  "tenant_id": null,                   // string or null
   "name": "short-kebab-name",          // string, required
   "description": null,                 // string or null
   "trigger": <Trigger>,                // see allowed shapes below
@@ -206,7 +205,6 @@ impl NlJobCompiler for LlmNlJobCompiler {
     async fn compile(
         &self,
         description: &str,
-        tenant_id: Option<&str>,
     ) -> Result<(serde_json::Value, String), NlJobCompileError> {
         if description.trim().is_empty() {
             return Err(NlJobCompileError::InvalidArgument(
@@ -224,7 +222,6 @@ impl NlJobCompiler for LlmNlJobCompiler {
         ];
         let mut req = ChatRequest::new(self.model.clone(), messages);
         req.temperature = Some(0.1);
-        req.tenant_id = tenant_id.map(str::to_string);
 
         let mut stream = self
             .backend
@@ -346,14 +343,6 @@ impl ScheduledSessionWriter for PgScheduledSessionWriter {
         _prompt: &str,
         new_messages: &[LlmMessage],
     ) -> Result<String, String> {
-        // Scheduler jobs without a tenant skip session creation — RLS
-        // doesn't enforce a null tenant on sessions and the audit-first
-        // console doesn't surface them by user_id anyway. Return a
-        // deterministic synthetic id so the run row stays linkable.
-        let Some(tenant_id_str) = job.tenant_id.as_deref() else {
-            return Err("scheduled session requires a tenant_id on the job".into());
-        };
-
         let session_id_str = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
         let user_id_str = format!("{SCHEDULER_USER_PREFIX}:{}", job.id);
@@ -366,7 +355,6 @@ impl ScheduledSessionWriter for PgScheduledSessionWriter {
 
         let session = Session {
             id: SessionId::from(session_id_str.clone()),
-            tenant_id: TenantId::from(tenant_id_str.to_string()),
             user_id: UserId::from(user_id_str),
             title: Some(format!("scheduled: {}", job.name)),
             created_at: now,
@@ -377,14 +365,14 @@ impl ScheduledSessionWriter for PgScheduledSessionWriter {
             forked_from_message_id: None,
         };
         self.sessions
-            .create(Some(tenant_id_str), &session)
+            .create(&session)
             .await
             .map_err(|e| format!("session create: {e}"))?;
 
         for msg in new_messages {
             let domain = llm_to_domain(&session_id_str, msg);
             self.messages
-                .append(Some(tenant_id_str), &domain)
+                .append(&domain)
                 .await
                 .map_err(|e| format!("message append: {e}"))?;
         }
@@ -566,14 +554,8 @@ impl PgWebhookTokenValidator {
 
 #[async_trait]
 impl WebhookTokenValidator for PgWebhookTokenValidator {
-    async fn validate(
-        &self,
-        token: &str,
-        route_id: &str,
-    ) -> Result<Option<String>, WebhookTokenError> {
-        // DEC-033: tenant_id column dropped; the token IS the proof of
-        // ownership for the single implicit owner. A matching row resolves
-        // to OWNER_TENANT_ID.
+    async fn validate(&self, token: &str, route_id: &str) -> Result<bool, WebhookTokenError> {
+        // The token IS the proof of ownership for the single implicit owner.
         let row: Option<(String,)> = sqlx::query_as(
             "SELECT token FROM scheduler_webhook_tokens
              WHERE token = ? AND route_id = ?",
@@ -584,7 +566,7 @@ impl WebhookTokenValidator for PgWebhookTokenValidator {
         .await
         .map_err(|e| WebhookTokenError::Backend(e.to_string()))?;
         if row.is_none() {
-            return Ok(None);
+            return Ok(false);
         }
         // Best-effort timestamp update — never block the push on this.
         if let Err(e) = sqlx::query(
@@ -596,7 +578,7 @@ impl WebhookTokenValidator for PgWebhookTokenValidator {
         {
             tracing::warn!(error = %e, "scheduler_webhook_tokens last_used_at update failed");
         }
-        Ok(Some(xiaoguai_storage::OWNER_TENANT_ID.to_string()))
+        Ok(true)
     }
 }
 
@@ -622,16 +604,7 @@ fn generate_webhook_token() -> String {
 
 #[async_trait]
 impl WebhookTokenAdmin for PgWebhookTokenAdmin {
-    async fn create(
-        &self,
-        tenant_id: &str,
-        route_id: &str,
-    ) -> Result<WebhookTokenRecord, WebhookTokenAdminError> {
-        if tenant_id.is_empty() {
-            return Err(WebhookTokenAdminError::InvalidArgument(
-                "tenant_id required".into(),
-            ));
-        }
+    async fn create(&self, route_id: &str) -> Result<WebhookTokenRecord, WebhookTokenAdminError> {
         if route_id.is_empty() {
             return Err(WebhookTokenAdminError::InvalidArgument(
                 "route_id required".into(),
@@ -639,7 +612,6 @@ impl WebhookTokenAdmin for PgWebhookTokenAdmin {
         }
         let token = generate_webhook_token();
         let now = chrono::Utc::now();
-        // DEC-033: tenant_id column dropped — single implicit owner.
         sqlx::query(
             "INSERT INTO scheduler_webhook_tokens (token, route_id, created_at)
              VALUES (?, ?, ?)",
@@ -652,22 +624,14 @@ impl WebhookTokenAdmin for PgWebhookTokenAdmin {
         .map_err(|e| WebhookTokenAdminError::Backend(e.to_string()))?;
         Ok(WebhookTokenRecord {
             token,
-            tenant_id: tenant_id.to_string(),
             route_id: route_id.to_string(),
             created_at: now,
             last_used_at: None,
         })
     }
 
-    async fn list(
-        &self,
-        tenant_id: Option<&str>,
-        limit: i64,
-    ) -> Result<Vec<WebhookTokenRecord>, WebhookTokenAdminError> {
+    async fn list(&self, limit: i64) -> Result<Vec<WebhookTokenRecord>, WebhookTokenAdminError> {
         let limit = limit.clamp(1, 1000);
-        // DEC-033: tenant_id column dropped; the vestigial `tenant_id`
-        // filter param is ignored (single implicit owner namespace).
-        let _ = tenant_id;
         let rows: Vec<(
             String,
             String,
@@ -688,7 +652,6 @@ impl WebhookTokenAdmin for PgWebhookTokenAdmin {
             .map(
                 |(token, route_id, created_at, last_used_at)| WebhookTokenRecord {
                     token,
-                    tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
                     route_id,
                     created_at,
                     last_used_at,
@@ -777,7 +740,6 @@ fn scheduled_job_to_summary(job: ScheduledJob) -> ScheduledJobSummary {
     };
     ScheduledJobSummary {
         id: job.id,
-        tenant_id: job.tenant_id,
         name: job.name,
         trigger_summary,
         enabled: job.enabled,
@@ -804,21 +766,21 @@ mod tests {
     #[tokio::test]
     async fn compile_rejects_empty_description() {
         let c = make_compiler("ignored");
-        let err = c.compile("   ", None).await.unwrap_err();
+        let err = c.compile("   ").await.unwrap_err();
         assert!(matches!(err, NlJobCompileError::InvalidArgument(_)));
     }
 
     #[tokio::test]
     async fn compile_returns_unparseable_on_garbage_response() {
         let c = make_compiler("not json at all");
-        let err = c.compile("daily scan", None).await.unwrap_err();
+        let err = c.compile("daily scan").await.unwrap_err();
         assert!(matches!(err, NlJobCompileError::Unparseable(_)), "{err:?}");
     }
 
     #[tokio::test]
     async fn compile_returns_unparseable_on_wrong_shape() {
         let c = make_compiler(r#"{"foo": "bar"}"#);
-        let err = c.compile("daily scan", None).await.unwrap_err();
+        let err = c.compile("daily scan").await.unwrap_err();
         assert!(matches!(err, NlJobCompileError::Unparseable(_)), "{err:?}");
     }
 
@@ -826,7 +788,6 @@ mod tests {
     async fn compile_succeeds_and_regenerates_id() {
         let good = r#"{
             "id": "model-chose-this",
-            "tenant_id": null,
             "name": "scan-hn",
             "description": null,
             "trigger": {"type": "cron", "expr": "0 0 8 * * *"},
@@ -840,7 +801,7 @@ mod tests {
             "updated_at": "2026-05-24T00:00:00Z"
         }"#;
         let c = make_compiler(good);
-        let (json, rationale) = c.compile("每天 8 点扫 HN", None).await.unwrap();
+        let (json, rationale) = c.compile("scan HN daily at 8am").await.unwrap();
         let id = json["id"].as_str().unwrap();
         assert_ne!(id, "model-chose-this");
         // uuid v4 has 36 chars with hyphens.
@@ -851,9 +812,9 @@ mod tests {
 
     #[tokio::test]
     async fn compile_strips_code_fence() {
-        let response = "```json\n{\"id\":\"x\",\"tenant_id\":null,\"name\":\"n\",\"description\":null,\"trigger\":{\"type\":\"interval\",\"secs\":60},\"payload\":{\"prompt\":\"p\"},\"retry_policy\":{\"max_attempts\":3,\"initial_backoff_secs\":5,\"max_backoff_secs\":60,\"multiplier\":2.0},\"sinks\":[],\"enabled\":true,\"next_fire_at\":null,\"last_fire_at\":null,\"created_at\":\"2026-05-24T00:00:00Z\",\"updated_at\":\"2026-05-24T00:00:00Z\"}\n```";
+        let response = "```json\n{\"id\":\"x\",\"name\":\"n\",\"description\":null,\"trigger\":{\"type\":\"interval\",\"secs\":60},\"payload\":{\"prompt\":\"p\"},\"retry_policy\":{\"max_attempts\":3,\"initial_backoff_secs\":5,\"max_backoff_secs\":60,\"multiplier\":2.0},\"sinks\":[],\"enabled\":true,\"next_fire_at\":null,\"last_fire_at\":null,\"created_at\":\"2026-05-24T00:00:00Z\",\"updated_at\":\"2026-05-24T00:00:00Z\"}\n```";
         let c = make_compiler(response);
-        let (json, _) = c.compile("anything", None).await.unwrap();
+        let (json, _) = c.compile("anything").await.unwrap();
         assert_eq!(json["name"], "n");
     }
 
@@ -861,7 +822,6 @@ mod tests {
     fn build_rationale_describes_each_trigger() {
         let cron_job = ScheduledJob::new(
             "j1",
-            None,
             "the-name",
             Trigger::cron("0 0 8 * * *").unwrap(),
             serde_json::json!({"prompt": "x"}),
@@ -871,7 +831,6 @@ mod tests {
         assert!(r.contains("the-name"));
         let interval_job = ScheduledJob::new(
             "j2",
-            None,
             "n2",
             Trigger::interval(900).unwrap(),
             serde_json::json!({"prompt": "x"}),
@@ -889,33 +848,28 @@ mod tests {
     }
     #[async_trait]
     impl SessionRepository for MemSessionRepo {
-        async fn create(&self, _tenant: Option<&str>, session: &Session) -> RepoResult<()> {
+        async fn create(&self, session: &Session) -> RepoResult<()> {
             self.rows.lock().push(session.clone());
             Ok(())
         }
-        async fn find_by_id(
-            &self,
-            _tenant: Option<&str>,
-            _id: &str,
-        ) -> RepoResult<Option<Session>> {
+        async fn find_by_id(&self, _id: &str) -> RepoResult<Option<Session>> {
             Ok(None)
         }
         async fn list_by_user(
             &self,
-            _tenant: Option<&str>,
             _user_id: &str,
             _limit: i64,
             _offset: i64,
         ) -> RepoResult<Vec<Session>> {
             Ok(Vec::new())
         }
-        async fn touch(&self, _tenant: Option<&str>, _id: &str) -> RepoResult<()> {
+        async fn touch(&self, _id: &str) -> RepoResult<()> {
             Ok(())
         }
-        async fn archive(&self, _tenant: Option<&str>, _id: &str) -> RepoResult<()> {
+        async fn archive(&self, _id: &str) -> RepoResult<()> {
             Ok(())
         }
-        async fn delete(&self, _tenant: Option<&str>, _id: &str) -> RepoResult<()> {
+        async fn delete(&self, _id: &str) -> RepoResult<()> {
             Ok(())
         }
     }
@@ -926,39 +880,29 @@ mod tests {
     }
     #[async_trait]
     impl MessageRepository for MemMessageRepo {
-        async fn append(&self, _tenant: Option<&str>, message: &DomainMessage) -> RepoResult<()> {
+        async fn append(&self, message: &DomainMessage) -> RepoResult<()> {
             self.rows.lock().push(message.clone());
             Ok(())
         }
         async fn list_by_session(
             &self,
-            _tenant: Option<&str>,
             _session_id: &str,
             _limit: i64,
             _offset: i64,
         ) -> RepoResult<Vec<DomainMessage>> {
             Ok(Vec::new())
         }
-        async fn count_by_session(
-            &self,
-            _tenant: Option<&str>,
-            _session_id: &str,
-        ) -> RepoResult<i64> {
+        async fn count_by_session(&self, _session_id: &str) -> RepoResult<i64> {
             Ok(0)
         }
-        async fn delete_by_session(
-            &self,
-            _tenant: Option<&str>,
-            _session_id: &str,
-        ) -> RepoResult<u64> {
+        async fn delete_by_session(&self, _session_id: &str) -> RepoResult<u64> {
             Ok(0)
         }
     }
 
-    fn make_job(tenant: Option<&str>) -> ScheduledJob {
+    fn make_job() -> ScheduledJob {
         ScheduledJob::new(
             "j-scheduler",
-            tenant.map(str::to_string),
             "daily-scan",
             Trigger::interval(60).unwrap(),
             serde_json::json!({ "prompt": "ping" }),
@@ -973,7 +917,7 @@ mod tests {
             sessions.clone() as Arc<dyn SessionRepository>,
             messages.clone() as Arc<dyn MessageRepository>,
         );
-        let job = make_job(Some("tenant-x"));
+        let job = make_job();
         let msgs = vec![
             LlmMessage::user("ping"),
             LlmMessage::assistant("pong from scheduler"),
@@ -991,46 +935,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn writer_errors_when_tenant_missing() {
-        let writer = PgScheduledSessionWriter::new(
-            Arc::new(MemSessionRepo::default()) as Arc<dyn SessionRepository>,
-            Arc::new(MemMessageRepo::default()) as Arc<dyn MessageRepository>,
-        );
-        let job = make_job(None);
-        let err = writer
-            .create_and_record(&job, "ping", &[])
-            .await
-            .unwrap_err();
-        assert!(err.contains("tenant_id"));
-    }
-
-    #[tokio::test]
     async fn writer_surfaces_session_repo_error() {
         struct FailingSessions;
         #[async_trait]
         impl SessionRepository for FailingSessions {
-            async fn create(&self, _t: Option<&str>, _s: &Session) -> RepoResult<()> {
+            async fn create(&self, _s: &Session) -> RepoResult<()> {
                 Err(RepoError::InvalidArgument("nope".into()))
             }
-            async fn find_by_id(&self, _t: Option<&str>, _id: &str) -> RepoResult<Option<Session>> {
+            async fn find_by_id(&self, _id: &str) -> RepoResult<Option<Session>> {
                 Ok(None)
             }
-            async fn list_by_user(
-                &self,
-                _t: Option<&str>,
-                _u: &str,
-                _l: i64,
-                _o: i64,
-            ) -> RepoResult<Vec<Session>> {
+            async fn list_by_user(&self, _u: &str, _l: i64, _o: i64) -> RepoResult<Vec<Session>> {
                 Ok(Vec::new())
             }
-            async fn touch(&self, _t: Option<&str>, _id: &str) -> RepoResult<()> {
+            async fn touch(&self, _id: &str) -> RepoResult<()> {
                 Ok(())
             }
-            async fn archive(&self, _t: Option<&str>, _id: &str) -> RepoResult<()> {
+            async fn archive(&self, _id: &str) -> RepoResult<()> {
                 Ok(())
             }
-            async fn delete(&self, _t: Option<&str>, _id: &str) -> RepoResult<()> {
+            async fn delete(&self, _id: &str) -> RepoResult<()> {
                 Ok(())
             }
         }
@@ -1038,7 +962,7 @@ mod tests {
             Arc::new(FailingSessions) as Arc<dyn SessionRepository>,
             Arc::new(MemMessageRepo::default()) as Arc<dyn MessageRepository>,
         );
-        let job = make_job(Some("t"));
+        let job = make_job();
         let err = writer.create_and_record(&job, "x", &[]).await.unwrap_err();
         assert!(err.contains("session create"));
     }
@@ -1060,7 +984,6 @@ mod tests {
 
         let job = ScheduledJob::new(
             "watch-1",
-            None,
             "watch-1",
             Trigger::file_watch(path.to_string_lossy().to_string()).unwrap(),
             serde_json::json!({
@@ -1081,7 +1004,6 @@ mod tests {
         let executor = RagReindexExecutor::new(rag);
         let job = ScheduledJob::new(
             "x",
-            None,
             "x",
             Trigger::file_watch("/tmp/foo").unwrap(),
             serde_json::json!({"kind": "rag_reindex", "path": "/tmp/foo"}),
@@ -1096,7 +1018,6 @@ mod tests {
         let executor = RagReindexExecutor::new(rag);
         let job = ScheduledJob::new(
             "x",
-            None,
             "x",
             Trigger::file_watch("/tmp/foo").unwrap(),
             serde_json::json!({"kind": "rag_reindex", "collection_id": "notes"}),
@@ -1132,7 +1053,6 @@ mod tests {
         let jobs = xiaoguai_scheduler::InMemoryJobRepository::new();
         let job = ScheduledJob::new(
             "watch-db",
-            None,
             "watch-db",
             Trigger::file_watch(dir.path().display().to_string()).unwrap(),
             serde_json::json!({}),
@@ -1168,20 +1088,17 @@ mod tests {
     fn scheduled_job_to_summary_describes_each_trigger() {
         let cron = ScheduledJob::new(
             "j1",
-            Some("t".into()),
             "n",
             Trigger::cron("0 0 8 * * *").unwrap(),
             serde_json::json!({}),
         );
         let s = scheduled_job_to_summary(cron);
         assert_eq!(s.id, "j1");
-        assert_eq!(s.tenant_id.as_deref(), Some("t"));
         assert!(s.trigger_summary.contains("cron"));
         assert!(s.enabled);
 
         let webhook = ScheduledJob::new(
             "j2",
-            None,
             "n",
             Trigger::webhook("deploy").unwrap(),
             serde_json::json!({}),

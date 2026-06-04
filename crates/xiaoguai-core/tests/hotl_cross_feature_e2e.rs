@@ -141,7 +141,7 @@ impl StubRedactionRepo {
 
 #[async_trait]
 impl HotlRedactionRepo for StubRedactionRepo {
-    async fn load_for_tenant(&self, _tenant_id: Uuid) -> RepoResult<Vec<RedactionPolicyRow>> {
+    async fn load_all(&self) -> RepoResult<Vec<RedactionPolicyRow>> {
         if self.fail {
             return Err(RepoError::InvalidArgument("forced failure".into()));
         }
@@ -155,7 +155,7 @@ struct AlwaysEscalate;
 
 #[async_trait]
 impl HotlEnforcer for AlwaysEscalate {
-    async fn check(&self, _tenant: Uuid, _scope: &str, _amount: f64) -> HotlVerdictResult {
+    async fn check(&self, _scope: &str, _amount: f64) -> HotlVerdictResult {
         Ok(HotlVerdict::Escalate("test escalate".into()))
     }
 }
@@ -187,10 +187,9 @@ impl HotlAuditSink for CaptureAuditSink {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-fn rule(tenant_id: Uuid, scope: &str, jsonpath: &str) -> RedactionPolicyRow {
+fn rule(scope: &str, jsonpath: &str) -> RedactionPolicyRow {
     RedactionPolicyRow {
         id: Uuid::new_v4(),
-        tenant_id,
         scope: scope.into(),
         jsonpath: jsonpath.into(),
         applies_to: vec!["sse".into()],
@@ -221,9 +220,8 @@ fn rule(tenant_id: Uuid, scope: &str, jsonpath: &str) -> RedactionPolicyRow {
 ///        "<the policy id>"` (S13-6).
 #[tokio::test]
 async fn full_suspend_resume_with_redaction_persistence_and_per_scope_expiry() {
-    let tenant_id = Uuid::new_v4();
     let scope = "tool_call.execute_python";
-    let policy_row = rule(tenant_id, scope, "$.password");
+    let policy_row = rule(scope, "$.password");
     let policy_id = policy_row.id;
 
     let store = MockEscalationStore::arc();
@@ -258,7 +256,7 @@ async fn full_suspend_resume_with_redaction_persistence_and_per_scope_expiry() {
     // S13-8: verdict carries `escalation_id`, not `request_id`.
     let before_utc = Utc::now();
     let verdict = <SuspendingHotlGate as xiaoguai_agent::HotlGate>::check_with_args(
-        &gate, tenant_id, scope, 1.0, &args_in,
+        &gate, scope, 1.0, &args_in,
     )
     .await;
 
@@ -307,10 +305,6 @@ async fn full_suspend_resume_with_redaction_persistence_and_per_scope_expiry() {
     assert_eq!(
         parent.id, child.escalation_id,
         "S13-5: child.escalation_id FK must point at the parent row id"
-    );
-    assert_eq!(
-        parent.tenant_id, tenant_id,
-        "S13-5: parent row tenant_id must match the gate caller"
     );
     assert_eq!(
         parent.top_level_scope, scope,

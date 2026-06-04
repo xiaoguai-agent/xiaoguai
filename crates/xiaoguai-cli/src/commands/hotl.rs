@@ -31,7 +31,6 @@ async fn require_ok(resp: reqwest::Response) -> Result<reqwest::Response> {
 #[derive(Debug, Clone)]
 pub struct PolicyCreateArgs {
     pub api_base: String,
-    pub tenant_id: String,
     pub scope: String,
     pub window_secs: u64,
     pub max_count: Option<u64>,
@@ -45,7 +44,6 @@ pub async fn policy_create(args: PolicyCreateArgs) -> Result<JsonValue> {
     }
     let client = Client::new();
     let body = serde_json::json!({
-        "tenant_id": args.tenant_id,
         "scope": args.scope,
         "window_seconds": args.window_secs,
         "max_count": args.max_count,
@@ -66,18 +64,14 @@ pub async fn policy_create(args: PolicyCreateArgs) -> Result<JsonValue> {
 #[derive(Debug, Clone, Default)]
 pub struct PolicyListArgs {
     pub api_base: String,
-    pub tenant_id: String,
     pub scope: Option<String>,
 }
 
 pub async fn policy_list(args: PolicyListArgs) -> Result<Vec<JsonValue>> {
     let client = Client::new();
-    let mut url = format!(
-        "{}/v1/hotl/policies?tenant_id={}",
-        args.api_base, args.tenant_id
-    );
+    let mut url = format!("{}/v1/hotl/policies", args.api_base);
     if let Some(s) = &args.scope {
-        url.push_str(&format!("&scope={s}"));
+        url.push_str(&format!("?scope={s}"));
     }
     let resp = client
         .get(&url)
@@ -160,7 +154,6 @@ pub async fn policy_delete(args: PolicyDeleteArgs) -> Result<()> {
 #[derive(Debug, Clone)]
 pub struct CheckArgs {
     pub api_base: String,
-    pub tenant_id: String,
     pub scope: String,
     pub amount: f64,
 }
@@ -174,7 +167,6 @@ pub struct CheckResponse {
 pub async fn check(args: CheckArgs) -> Result<CheckResponse> {
     let client = Client::new();
     let body = serde_json::json!({
-        "tenant_id": args.tenant_id,
         "scope": args.scope,
         "amount": args.amount,
     });

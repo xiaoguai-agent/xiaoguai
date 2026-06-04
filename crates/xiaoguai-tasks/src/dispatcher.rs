@@ -57,6 +57,11 @@ use crate::executor::{ExecutorError, TaskExecutor};
 use crate::metrics::PoolMetrics;
 use crate::store::CardStore;
 
+/// Single-owner metric label. Under the single-user data model
+/// (DEC-033) every card belongs to the one owner, so the pool metrics
+/// use a single constant label value.
+const OWNER_METRIC_LABEL: &str = "owner";
+
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 /// Default pool concurrency (overridden by `KANBAN_POOL_SIZE`).
@@ -269,13 +274,9 @@ impl Worker {
     /// * Timeout → BLOCKED("agent timeout")
     /// * Exhausted retries → BLOCKED(last error message)
     async fn run(&self, mut card: KanbanCard) {
-        let tenant = card
-            .tenant_id
-            .clone()
-            .unwrap_or_else(|| "system".to_string());
-        self.metrics.inc_dispatched(&tenant);
+        self.metrics.inc_dispatched(OWNER_METRIC_LABEL);
 
-        let result = self.execute_with_retry(&mut card, &tenant).await;
+        let result = self.execute_with_retry(&mut card).await;
 
         match result {
             WorkerOutcome::Done(outcome) => {
@@ -283,20 +284,20 @@ impl Worker {
                 if let Err(e) = self.store.mark_done(card.id, outcome).await {
                     error!(card_id = %card.id, error = %e, "mark_done failed");
                 }
-                self.metrics.inc_completed(&tenant);
+                self.metrics.inc_completed(OWNER_METRIC_LABEL);
             }
             WorkerOutcome::Blocked(reason) => {
                 warn!(card_id = %card.id, reason = %reason, "card blocked");
                 if let Err(e) = self.store.mark_blocked(card.id, reason).await {
                     error!(card_id = %card.id, error = %e, "mark_blocked failed");
                 }
-                self.metrics.inc_blocked(&tenant);
+                self.metrics.inc_blocked(OWNER_METRIC_LABEL);
             }
         }
     }
 
     /// Retry loop. Returns the final [`WorkerOutcome`].
-    async fn execute_with_retry(&self, card: &mut KanbanCard, tenant: &str) -> WorkerOutcome {
+    async fn execute_with_retry(&self, card: &mut KanbanCard) -> WorkerOutcome {
         // card.attempt was incremented by claim_ready; subsequent retries
         // increment it here.
         let first_attempt = card.attempt;
@@ -319,7 +320,7 @@ impl Worker {
                         timeout_secs = self.task_timeout.as_secs(),
                         "task timed out"
                     );
-                    self.metrics.inc_timed_out(tenant);
+                    self.metrics.inc_timed_out(OWNER_METRIC_LABEL);
                     // Timeout is always terminal — do not retry.
                     return WorkerOutcome::Blocked("agent timeout".to_string());
                 }
@@ -335,11 +336,11 @@ impl Worker {
                     }
                     Err(ExecutorError::Cancelled) => {
                         // Cancellation is always terminal.
-                        self.metrics.inc_failed(tenant);
+                        self.metrics.inc_failed(OWNER_METRIC_LABEL);
                         return WorkerOutcome::Blocked("cancelled".to_string());
                     }
                     Err(err) => {
-                        self.metrics.inc_failed(tenant);
+                        self.metrics.inc_failed(OWNER_METRIC_LABEL);
                         warn!(
                             card_id = %card.id,
                             attempt,

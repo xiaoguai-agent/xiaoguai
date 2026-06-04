@@ -105,9 +105,9 @@ impl HttpMcpClient {
     /// [`crate::auth::REFRESH_LEEWAY_SECS`] seconds.
     ///
     /// Tier-3 T4 entry point. If the store has no bundle for
-    /// `(server_id, tenant_id)` and `cfg.auth_header` is also unset,
-    /// returns [`McpError::AuthRequired`] so the caller can prompt
-    /// the operator to register the server.
+    /// `server_id` and `cfg.auth_header` is also unset, returns
+    /// [`McpError::AuthRequired`] so the caller can prompt the
+    /// operator to register the server.
     ///
     /// # Errors
     /// Returns [`McpError::AuthRequired`] if no token is on file and
@@ -118,21 +118,20 @@ impl HttpMcpClient {
         store: Arc<dyn TokenStore>,
         oauth_cfg: &OAuth2PkceConfig,
         server_id: &str,
-        tenant_id: &str,
     ) -> McpResult<Self> {
-        let existing = store.get(server_id, tenant_id).await?;
+        let existing = store.get(server_id).await?;
         let bundle = match existing {
             Some(b) if should_refresh(&b, chrono::Utc::now()) => {
                 let http = build_http_client()?;
                 let refreshed = refresh_pkce(&http, oauth_cfg, &b).await?;
-                store.put(server_id, tenant_id, &refreshed).await?;
+                store.put(server_id, &refreshed).await?;
                 refreshed
             }
             Some(b) => b,
             None => {
                 if cfg.auth_header.is_none() {
                     return Err(McpError::AuthRequired(format!(
-                        "no token bundle for server_id={server_id} tenant_id={tenant_id}; \
+                        "no token bundle for server_id={server_id}; \
                          run `xiaoguai mcp register --auth oauth2-pkce ...`"
                     )));
                 }
