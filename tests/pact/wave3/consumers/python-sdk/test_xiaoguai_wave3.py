@@ -48,7 +48,7 @@ def pact():
     _pact = Consumer("python-sdk").has_pact_with(
         Provider("xiaoguai"),
         pact_dir=PACT_DIR,
-        version="3",
+        specification_version="3.0.0",
         log_dir="/tmp/pact-python-sdk",
     )
     _pact.start_service()
@@ -143,7 +143,7 @@ def test_create_hotl_policy(pact: Consumer) -> None:
 def test_get_hotl_policy(pact: Consumer) -> None:
     """Interaction 3: GET /v1/hotl/policies/:id → 200."""
     (
-        pact.given("HotL policy exists", params={"id": POLICY_UUID})
+        pact.given(f"HotL policy {POLICY_UUID} exists")
         .upon_receiving(f"a GET /v1/hotl/policies/{POLICY_UUID} request")
         .with_request(
             method="GET",
@@ -170,7 +170,7 @@ def test_get_hotl_policy(pact: Consumer) -> None:
 def test_update_hotl_policy(pact: Consumer) -> None:
     """Interaction 4: PUT /v1/hotl/policies/:id → 200."""
     (
-        pact.given("HotL policy exists", params={"id": POLICY_UUID})
+        pact.given(f"HotL policy {POLICY_UUID} exists")
         .upon_receiving(f"a PUT /v1/hotl/policies/{POLICY_UUID} request")
         .with_request(
             method="PUT",
@@ -215,7 +215,7 @@ def test_update_hotl_policy(pact: Consumer) -> None:
 def test_delete_hotl_policy(pact: Consumer) -> None:
     """Interaction 5: DELETE /v1/hotl/policies/:id → 204."""
     (
-        pact.given("HotL policy exists", params={"id": POLICY_UUID})
+        pact.given(f"HotL policy {POLICY_UUID} exists")
         .upon_receiving(f"a DELETE /v1/hotl/policies/{POLICY_UUID} request")
         .with_request(
             method="DELETE",
@@ -493,7 +493,7 @@ def test_install_skill_pack(pact: Consumer) -> None:
 def test_uninstall_skill_pack(pact: Consumer) -> None:
     """Interaction 12: DELETE /v1/skills/install/:id → 204."""
     (
-        pact.given("skill pack installation exists", params={"id": INSTALL_UUID})
+        pact.given(f"skill pack installation {INSTALL_UUID} exists")
         .upon_receiving(f"a DELETE /v1/skills/install/{INSTALL_UUID} request")
         .with_request(
             method="DELETE",
