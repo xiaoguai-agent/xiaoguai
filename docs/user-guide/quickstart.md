@@ -18,7 +18,7 @@ Compose brings up a single `xiaoguai-core` container on
 run. The first build takes ~2 min; subsequent runs are cached.
 
 > Prefer no Docker? Install a release `.deb`/`.rpm`/tarball (see the
-> [Operator Guide](../book/src/operator/overview.md)) or run from source with
+> [Operator Guide](operator/overview.md)) or run from source with
 > `cargo run -p xiaoguai-core` — it creates `./data.db` and serves on
 > `:7600` with no other dependencies.
 
