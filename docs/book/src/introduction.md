@@ -16,7 +16,7 @@ small teams, and anyone with a compliance or traceability constraint.
 
 ## Key properties
 
-- **Single Rust binary** — `xiaoguai-core` with **embedded SQLite**. No external database server, no Python runtime, no JVM, no JS server on the hot path. An optional Valkey/Redis can back the cache; with none configured it falls back to an in-process cache.
+- **Single Rust binary** — `xiaoguai-core` with **embedded SQLite**. No external database server, no Python runtime, no JVM, no JS server on the hot path. The cache is process-local (in-process) — no Valkey/Redis sidecar.
 - **Local-LLM default** — Ollama and any OpenAI-compatible endpoint work out of the box. Public-cloud LLM providers are optional.
 - **Single-owner by design** — one implicit owner; an optional HTTP Basic username + password gates the API (leave it empty for an open localhost run). No OIDC, no JWT, no Casbin, no multi-tenancy.
 - **Chinese IM native** — Feishu (飞书), DingTalk (钉钉), and WeCom (企微) adapters ship in the box.

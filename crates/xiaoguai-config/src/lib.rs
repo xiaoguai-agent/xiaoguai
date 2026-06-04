@@ -22,6 +22,9 @@ use serde::{Deserialize, Serialize};
 pub struct Settings {
     pub server: ServerSettings,
     pub database: DatabaseSettings,
+    /// In-process cache (process-local `DashMap`). Optional — omit the whole
+    /// `cache:` section to take the default key prefix.
+    #[serde(default)]
     pub cache: CacheSettings,
     pub auth: AuthSettings,
     pub audit: AuditSettings,
@@ -82,11 +85,20 @@ const fn default_db_max_connections() -> u32 {
     16
 }
 
+/// In-process cache settings. The cache is process-local (`DashMap`); there is
+/// no external Valkey/Redis to configure — only the key prefix.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheSettings {
-    pub url: String,
     #[serde(default = "default_cache_prefix")]
     pub key_prefix: String,
+}
+
+impl Default for CacheSettings {
+    fn default() -> Self {
+        Self {
+            key_prefix: default_cache_prefix(),
+        }
+    }
 }
 
 fn default_cache_prefix() -> String {
@@ -445,7 +457,6 @@ impl Default for Settings {
                 max_connections: default_db_max_connections(),
             },
             cache: CacheSettings {
-                url: "redis://localhost:6379".into(),
                 key_prefix: default_cache_prefix(),
             },
             auth: AuthSettings {
@@ -573,7 +584,7 @@ mod tests {
             .expect("tmpfile");
         writeln!(
             f,
-            "server:\n  host: 127.0.0.1\n  port: 7600\ndatabase:\n  url: sqlite:///tmp/h.db\ncache:\n  url: redis://localhost:6379\nauth:\n  username: owner\n  password: pw\naudit:\n  hmac_key: dev-only-change-me-32-bytes-min\nagent:\n  hotl:\n    suspend_on_escalate: false\n"
+            "server:\n  host: 127.0.0.1\n  port: 7600\ndatabase:\n  url: sqlite:///tmp/h.db\nauth:\n  username: owner\n  password: pw\naudit:\n  hmac_key: dev-only-change-me-32-bytes-min\nagent:\n  hotl:\n    suspend_on_escalate: false\n"
         )
         .expect("write tmp yaml");
         let s = Settings::load_from_file(f.path()).expect("yaml load");
