@@ -1,77 +1,51 @@
-//! Cache wrapper with two interchangeable backends.
+//! In-process cache.
 //!
-//! - **Redis/Valkey** (default): thin typed layer over
-//!   [`redis::aio::ConnectionManager`] (multiplexed, auto-reconnecting). Values
-//!   are JSON-encoded via `serde_json` and stored as Redis strings.
-//! - **In-process** (Tier-1b single-binary fallback): a `DashMap<String,
-//!   (String, Option<Instant>)>` living inside the process. Selected when the
-//!   configured URL is empty or does not start with `redis://`/`rediss://`.
-//!   This lets air-gapped single-tenant deploys boot **without** Valkey/Redis.
+//! A `DashMap<String, (value, Option<Instant>)>` living inside the process,
+//! with JSON-encoded values and optional per-key TTLs. This keeps the
+//! single-binary deploy dependency-free — no Valkey/Redis sidecar to run.
 //!
-//! ## Backend selection
+//! Values are JSON-encoded via `serde_json`; counters (`incr`) are stored as
+//! an integer string. Every [`Cache`] carries a static `prefix` (e.g.
+//! `"xiaoguai:"`) prepended to every key.
 //!
-//! [`Cache::connect`] picks the backend by inspecting `url`:
-//! - empty string, or any scheme other than `redis://` / `rediss://`
-//!   → in-process backend
-//! - `redis://…` / `rediss://…` → Redis/Valkey backend
-//!
-//! The boot log differentiates the two modes via a `tracing::info!` line so
-//! operators can confirm at startup which path is live.
-//!
-//! ## Compatibility
-//!
-//! Redis path targets Valkey 7.2 (BSD) and Redis 7.2 (pre-SSPL/RSAL). The
-//! `redis` crate version 1.x speaks RESP2/RESP3 and works against both. See
-//! ADR-0005 for the Valkey vs Redis 7.4+ licensing rationale.
-//!
-//! ## Key prefixing
-//!
-//! Every [`Cache`] carries a static `prefix` (e.g. `"xiaoguai:"`).
+//! The cache is process-local: it is not shared across restarts or across
+//! multiple instances. For the single-owner deployment that is exactly the
+//! intended scope (idempotency keys + short-lived caches).
+
+// The accessor methods are intentionally `async`: the cache is a stable
+// async API surface (callers `.await` it) even though the in-process
+// backend resolves synchronously.
+#![allow(clippy::unused_async)]
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
-use redis::{aio::ConnectionManager, AsyncCommands};
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
 /// Error type returned by all cache operations.
 #[derive(Debug, Error)]
 pub enum CacheError {
-    /// Underlying Redis protocol/IO error.
-    #[error("redis: {0}")]
-    Redis(#[from] redis::RedisError),
     /// JSON (de)serialization error.
     #[error("serde: {0}")]
     Serde(#[from] serde_json::Error),
-    /// Failed to establish or initialize the connection manager.
-    #[error("connection: {0}")]
-    Connection(String),
 }
 
 /// Convenience alias for `Result<T, CacheError>`.
 pub type CacheResult<T> = Result<T, CacheError>;
 
-/// Multiplexed Redis/Valkey client (or in-process fallback) with a static key prefix.
+/// Process-local cache with a static key prefix.
 ///
-/// Cheap to clone — the Redis variant holds a [`ConnectionManager`] (a
-/// reference-counted, auto-reconnecting handle); the in-process variant
-/// shares its `DashMap` via [`Arc`].
+/// Cheap to clone — the backing `DashMap` is shared via [`Arc`].
 #[derive(Clone)]
 pub struct Cache {
-    backend: Backend,
+    store: Arc<InProcessStore>,
     prefix: String,
 }
 
-#[derive(Clone)]
-enum Backend {
-    Redis(ConnectionManager),
-    InProcess(Arc<InProcessStore>),
-}
-
-/// In-process backend: a `DashMap` keyed by fully-prefixed key, holding the
-/// raw JSON payload (or integer string for counters) and an optional expiry.
+/// Backing store: a `DashMap` keyed by fully-prefixed key, holding the raw
+/// JSON payload (or integer string for counters) and an optional expiry.
 #[derive(Debug, Default)]
 struct InProcessStore {
     map: DashMap<String, Entry>,
@@ -84,12 +58,6 @@ struct Entry {
 }
 
 impl InProcessStore {
-    fn new() -> Self {
-        Self {
-            map: DashMap::new(),
-        }
-    }
-
     /// Lazily evict an expired entry, returning the live value if still valid.
     fn get_live(&self, key: &str) -> Option<String> {
         let entry = self.map.get(key)?;
@@ -111,7 +79,6 @@ impl InProcessStore {
     fn remove(&self, key: &str) -> bool {
         // honor TTL when reporting existence-on-delete
         if self.get_live(key).is_none() {
-            // entry was either absent or just evicted
             return false;
         }
         self.map.remove(key).is_some()
@@ -150,72 +117,23 @@ impl InProcessStore {
 
 impl std::fmt::Debug for Cache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mode = match self.backend {
-            Backend::Redis(_) => "redis",
-            Backend::InProcess(_) => "in-process",
-        };
         f.debug_struct("Cache")
             .field("prefix", &self.prefix)
-            .field("mode", &mode)
             .finish_non_exhaustive()
     }
 }
 
-/// Returns `true` when the URL targets a real Redis/Valkey server, `false`
-/// when the empty-URL / non-`redis://` in-process fallback should be used.
-fn is_redis_url(url: &str) -> bool {
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    let lower = trimmed.to_ascii_lowercase();
-    lower.starts_with("redis://") || lower.starts_with("rediss://")
-}
-
 impl Cache {
-    /// Connect to the cache, choosing the backend based on `url`.
-    ///
-    /// - `url` empty / not a `redis://` URL → boots the in-process fallback.
-    /// - `url` starts with `redis://` or `rediss://` → opens a Redis/Valkey
-    ///   `ConnectionManager`.
+    /// Create a cache with the given key `prefix`.
     ///
     /// The `prefix` is prepended verbatim to every key — callers that want a
     /// trailing separator should include it (e.g. `"xiaoguai:"`).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CacheError::Connection`] if a Redis URL is malformed or the
-    /// connection manager cannot be initialized. The in-process path is
-    /// infallible.
-    pub async fn connect(url: &str, prefix: impl Into<String>) -> CacheResult<Self> {
-        let prefix = prefix.into();
-        if is_redis_url(url) {
-            let client =
-                redis::Client::open(url).map_err(|e| CacheError::Connection(e.to_string()))?;
-            let conn = ConnectionManager::new(client)
-                .await
-                .map_err(|e| CacheError::Connection(e.to_string()))?;
-            tracing::info!(prefix = %prefix, "cache: connected to Redis/Valkey");
-            Ok(Self {
-                backend: Backend::Redis(conn),
-                prefix,
-            })
-        } else {
-            tracing::info!(
-                prefix = %prefix,
-                "cache: in-process backend (no Redis/Valkey URL configured)"
-            );
-            Ok(Self {
-                backend: Backend::InProcess(Arc::new(InProcessStore::new())),
-                prefix,
-            })
-        }
-    }
-
-    /// `true` when the active backend is the in-process fallback.
     #[must_use]
-    pub fn is_in_process(&self) -> bool {
-        matches!(self.backend, Backend::InProcess(_))
+    pub fn new(prefix: impl Into<String>) -> Self {
+        Self {
+            store: Arc::new(InProcessStore::default()),
+            prefix: prefix.into(),
+        }
     }
 
     fn full_key(&self, key: &str) -> String {
@@ -225,14 +143,7 @@ impl Cache {
     /// Fetch and JSON-decode a value. Returns `Ok(None)` if the key is absent.
     pub async fn get<T: DeserializeOwned>(&self, key: &str) -> CacheResult<Option<T>> {
         let full = self.full_key(key);
-        let raw: Option<String> = match &self.backend {
-            Backend::Redis(conn) => {
-                let mut conn = conn.clone();
-                conn.get(&full).await?
-            }
-            Backend::InProcess(store) => store.get_live(&full),
-        };
-        match raw {
+        match self.store.get_live(&full) {
             Some(s) => Ok(Some(serde_json::from_str(&s)?)),
             None => Ok(None),
         }
@@ -241,9 +152,7 @@ impl Cache {
     /// Serialize `value` to JSON and store, optionally with a TTL.
     ///
     /// Without a TTL the key persists until explicitly deleted or evicted.
-    /// TTLs shorter than one second are clamped to one second on the Redis
-    /// backend (Redis EX granularity); the in-process backend honors
-    /// sub-second TTLs verbatim.
+    /// Sub-second TTLs are honored verbatim.
     pub async fn set<T: Serialize>(
         &self,
         key: &str,
@@ -252,34 +161,13 @@ impl Cache {
     ) -> CacheResult<()> {
         let full = self.full_key(key);
         let payload = serde_json::to_string(value)?;
-        match &self.backend {
-            Backend::Redis(conn) => {
-                let mut conn = conn.clone();
-                if let Some(d) = ttl {
-                    let secs = d.as_secs().max(1);
-                    let _: () = conn.set_ex(&full, payload, secs).await?;
-                } else {
-                    let _: () = conn.set(&full, payload).await?;
-                }
-            }
-            Backend::InProcess(store) => {
-                store.put(full, payload, ttl);
-            }
-        }
+        self.store.put(full, payload, ttl);
         Ok(())
     }
 
     /// Delete a key. Returns `true` iff the key existed.
     pub async fn delete(&self, key: &str) -> CacheResult<bool> {
-        let full = self.full_key(key);
-        match &self.backend {
-            Backend::Redis(conn) => {
-                let mut conn = conn.clone();
-                let removed: i64 = conn.del(&full).await?;
-                Ok(removed > 0)
-            }
-            Backend::InProcess(store) => Ok(store.remove(&full)),
-        }
+        Ok(self.store.remove(&self.full_key(key)))
     }
 
     /// Atomically increment an integer-valued key by `delta`.
@@ -288,50 +176,22 @@ impl Cache {
     /// Note: the value is stored as an integer (not JSON), so it is
     /// incompatible with [`Self::get`] — use a dedicated counter key.
     pub async fn incr(&self, key: &str, delta: i64) -> CacheResult<i64> {
-        let full = self.full_key(key);
-        match &self.backend {
-            Backend::Redis(conn) => {
-                let mut conn = conn.clone();
-                let result: i64 = conn.incr(&full, delta).await?;
-                Ok(result)
-            }
-            Backend::InProcess(store) => Ok(store.incr(&full, delta)),
-        }
+        Ok(self.store.incr(&self.full_key(key), delta))
     }
 
     /// Check whether a key exists.
     pub async fn exists(&self, key: &str) -> CacheResult<bool> {
-        let full = self.full_key(key);
-        match &self.backend {
-            Backend::Redis(conn) => {
-                let mut conn = conn.clone();
-                let exists: bool = conn.exists(&full).await?;
-                Ok(exists)
-            }
-            Backend::InProcess(store) => Ok(store.exists(&full)),
-        }
+        Ok(self.store.exists(&self.full_key(key)))
     }
 
     /// Set or refresh a key's TTL. Returns `true` iff the key exists.
     pub async fn expire(&self, key: &str, ttl: Duration) -> CacheResult<bool> {
-        let full = self.full_key(key);
-        match &self.backend {
-            Backend::Redis(conn) => {
-                let mut conn = conn.clone();
-                let secs = i64::try_from(ttl.as_secs().max(1)).unwrap_or(i64::MAX);
-                let applied: bool = conn.expire(&full, secs).await?;
-                Ok(applied)
-            }
-            Backend::InProcess(store) => Ok(store.expire(&full, ttl)),
-        }
+        Ok(self.store.expire(&self.full_key(key), ttl))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for the in-process backend. The Redis path is covered by
-    //! the `tests/cache.rs` containerized integration tests (gated on Docker).
-
     use super::*;
     use serde::{Deserialize, Serialize};
 
@@ -342,136 +202,75 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_url_selects_in_process_backend() {
-        let cache = Cache::connect("", "test:").await.expect("connect");
-        assert!(cache.is_in_process(), "empty URL should select in-process");
-    }
-
-    #[tokio::test]
-    async fn non_redis_scheme_selects_in_process_backend() {
-        let cache = Cache::connect("memory://local", "test:")
-            .await
-            .expect("connect");
-        assert!(
-            cache.is_in_process(),
-            "non-redis:// scheme should select in-process"
-        );
-    }
-
-    #[tokio::test]
-    async fn redis_url_is_recognized_as_redis() {
-        // We don't actually connect (would hang on no broker); we only verify
-        // the scheme classifier picks redis:// correctly.
-        assert!(is_redis_url("redis://localhost:6379"));
-        assert!(is_redis_url("rediss://example.com:6380/0"));
-        assert!(is_redis_url("REDIS://example.com"));
-        assert!(!is_redis_url(""));
-        assert!(!is_redis_url("   "));
-        assert!(!is_redis_url("memory://x"));
-        assert!(!is_redis_url("http://example.com"));
-    }
-
-    #[tokio::test]
-    async fn in_process_set_get_roundtrip() {
-        let cache = Cache::connect("", "test:").await.expect("connect");
+    async fn set_get_roundtrip() {
+        let cache = Cache::new("test:");
         let v = Sample {
-            id: 7,
-            name: "alpha".into(),
+            id: 1,
+            name: "a".into(),
         };
-        cache.set("user/1", &v, None).await.expect("set");
-        let got: Option<Sample> = cache.get("user/1").await.expect("get");
+        cache.set("k", &v, None).await.expect("set");
+        let got: Option<Sample> = cache.get("k").await.expect("get");
         assert_eq!(got, Some(v));
     }
 
     #[tokio::test]
-    async fn in_process_get_missing_returns_none() {
-        let cache = Cache::connect("", "test:").await.expect("connect");
+    async fn get_missing_returns_none() {
+        let cache = Cache::new("test:");
         let got: Option<Sample> = cache.get("nope").await.expect("get");
-        assert!(got.is_none());
+        assert_eq!(got, None);
     }
 
     #[tokio::test]
-    async fn in_process_ttl_is_honored_sub_second() {
-        let cache = Cache::connect("", "test:").await.expect("connect");
-        let v = Sample {
-            id: 1,
-            name: "ttl".into(),
-        };
+    async fn delete_reports_existence() {
+        let cache = Cache::new("test:");
+        cache.set("k", &1u32, None).await.expect("set");
+        assert!(cache.delete("k").await.expect("del"));
+        assert!(!cache.delete("k").await.expect("del again"));
+    }
+
+    #[tokio::test]
+    async fn incr_counts() {
+        let cache = Cache::new("test:");
+        assert_eq!(cache.incr("c", 1).await.expect("incr"), 1);
+        assert_eq!(cache.incr("c", 4).await.expect("incr"), 5);
+    }
+
+    #[tokio::test]
+    async fn ttl_expires() {
+        let cache = Cache::new("test:");
         cache
-            .set("ephemeral", &v, Some(Duration::from_millis(100)))
+            .set("k", &1u32, Some(Duration::from_millis(20)))
             .await
             .expect("set");
-        assert!(cache.exists("ephemeral").await.expect("exists pre-ttl"));
-
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        let got: Option<Sample> = cache.get("ephemeral").await.expect("get post-ttl");
-        assert!(got.is_none(), "expected sub-second TTL eviction");
-        assert!(!cache.exists("ephemeral").await.expect("exists post-ttl"));
+        assert!(cache.exists("k").await.expect("exists"));
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert!(!cache.exists("k").await.expect("exists after ttl"));
     }
 
     #[tokio::test]
-    async fn in_process_prefix_isolates_distinct_caches() {
-        let a = Cache::connect("", "alpha:").await.expect("connect a");
-        let b = Cache::connect("", "beta:").await.expect("connect b");
-
-        let v = Sample {
-            id: 42,
-            name: "x".into(),
-        };
-        a.set("k", &v, None).await.expect("set a");
-
-        // Different *Cache* instance (different in-process store), so b sees nothing.
-        let got_b: Option<Sample> = b.get("k").await.expect("get b");
-        assert!(
-            got_b.is_none(),
-            "distinct Cache instances must not share state"
-        );
-
-        let got_a: Option<Sample> = a.get("k").await.expect("get a");
-        assert_eq!(got_a, Some(v));
-    }
-
-    #[tokio::test]
-    async fn in_process_delete_returns_true_for_existing_false_for_missing() {
-        let cache = Cache::connect("", "test:").await.expect("connect");
-        let v = Sample {
-            id: 1,
-            name: "x".into(),
-        };
-        cache.set("doomed", &v, None).await.expect("set");
-        assert!(cache.delete("doomed").await.expect("delete existing"));
-        assert!(!cache.delete("doomed").await.expect("delete missing"));
-        assert!(!cache.delete("never").await.expect("delete absent"));
-    }
-
-    #[tokio::test]
-    async fn in_process_incr_treats_missing_as_zero() {
-        let cache = Cache::connect("", "test:").await.expect("connect");
-        let n = cache.incr("counter", 7).await.expect("incr");
-        assert_eq!(n, 7);
-        let n2 = cache.incr("counter", 3).await.expect("incr 2");
-        assert_eq!(n2, 10);
-        let n3 = cache.incr("counter", -4).await.expect("incr 3");
-        assert_eq!(n3, 6);
-    }
-
-    #[tokio::test]
-    async fn in_process_expire_refreshes_ttl_on_existing_key() {
-        let cache = Cache::connect("", "test:").await.expect("connect");
-        let v = Sample {
-            id: 1,
-            name: "live".into(),
-        };
-        cache.set("persisted", &v, None).await.expect("set");
+    async fn expire_refreshes_ttl() {
+        let cache = Cache::new("test:");
+        cache.set("k", &1u32, None).await.expect("set");
         assert!(cache
-            .expire("persisted", Duration::from_secs(60))
+            .expire("k", Duration::from_millis(20))
             .await
-            .expect("expire existing"));
+            .expect("expire"));
+        assert!(!cache
+            .expire("missing", Duration::from_secs(1))
+            .await
+            .expect("expire missing"));
+    }
 
-        let applied_missing = cache
-            .expire("absent", Duration::from_secs(60))
-            .await
-            .expect("expire missing");
-        assert!(!applied_missing);
+    #[tokio::test]
+    async fn prefixes_are_independent() {
+        let a = Cache::new("alpha:");
+        let b = Cache::new("beta:");
+        a.set("k", &1u32, None).await.expect("set a");
+        b.set("k", &2u32, None).await.expect("set b");
+        let ga: Option<u32> = a.get("k").await.expect("get a");
+        let gb: Option<u32> = b.get("k").await.expect("get b");
+        // Distinct Cache instances have independent stores.
+        assert_eq!(ga, Some(1));
+        assert_eq!(gb, Some(2));
     }
 }

@@ -23,7 +23,7 @@
 //!
 //! # Deferred
 //! - Queue depth limit (currently unbounded; a bounded semaphore is v1.3).
-//! - Cross-process resource locking via a PG advisory lock or Redis SETNX.
+//! - Cross-process resource locking (single-process today; a future multi-node mode could add a DB-backed lock).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

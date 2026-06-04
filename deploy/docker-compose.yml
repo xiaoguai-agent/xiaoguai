@@ -26,8 +26,7 @@ services:
       XIAOGUAI_SERVER__STATIC_DIR: /app/static
       # Empty DB url -> embedded SQLite at $XDG_DATA_HOME/xiaoguai/data.db.
       XDG_DATA_HOME: /data
-      # Empty cache url -> in-process cache (no Redis/Valkey sidecar).
-      XIAOGUAI_CACHE__URL: ""
+      # The cache is process-local (in-process DashMap) — no Redis/Valkey sidecar.
       RUST_LOG: info,sqlx=warn
     volumes:
       - xiaoguai_data:/data

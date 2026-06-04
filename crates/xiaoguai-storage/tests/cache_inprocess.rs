@@ -16,12 +16,9 @@ struct Item {
 }
 
 #[tokio::test]
-async fn empty_url_boots_in_process_cache_end_to_end() {
+async fn boots_in_process_cache_end_to_end() {
     // This is the exact call shape that `xiaoguai_core::run_smoke` performs.
-    let cache = Cache::connect("", "xiaoguai:")
-        .await
-        .expect("connect with empty url");
-    assert!(cache.is_in_process());
+    let cache = Cache::new("xiaoguai:");
 
     // Mirror the smoke heartbeat write — must succeed without any broker.
     let ts = "2026-05-28T12:00:00Z".to_string();
@@ -35,7 +32,7 @@ async fn empty_url_boots_in_process_cache_end_to_end() {
 
 #[tokio::test]
 async fn in_process_cache_supports_full_typed_workflow() {
-    let cache = Cache::connect("", "xiaoguai:").await.expect("connect");
+    let cache = Cache::new("xiaoguai:");
 
     let v = Item {
         id: 1,

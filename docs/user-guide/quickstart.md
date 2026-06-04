@@ -103,8 +103,8 @@ pnpm -F @xiaoguai/chat-ui dev
     add more with `xiaoguai provider register ...`. If the providers table
     is empty, core falls back to `MockBackend` so a bare stack still boots.
 
-> An optional Valkey/Redis cache can be wired via `cache.url`; with none
-> configured Xiaoguai uses an in-process cache, so no sidecar is needed.
+> The cache is process-local (in-process) — there is no Valkey/Redis sidecar
+> to run.
 
 **Air-gapped**: with local Ollama for chat (and a local embedding model),
 the stack needs no outbound internet. Note: Ollama-backed embeddings for the
