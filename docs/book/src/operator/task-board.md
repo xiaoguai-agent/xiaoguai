@@ -241,7 +241,7 @@ Full reference: `xg tasks --help`.
 
 ## Cross-references
 
-- [ADR-0019](../../architecture/adr/0019-task-board.md) — design decision record for this feature.
-- [ADR-0006](../../architecture/adr/0006-mcp-tasks-primitive.md) — MCP async task semantics the board builds on.
+- [ADR-0019](https://github.com/xiaoguai-agent/xiaoguai/blob/main/docs/architecture/adr/0019-task-board.md) — design decision record for this feature.
+- [ADR-0006](https://github.com/xiaoguai-agent/xiaoguai/blob/main/docs/architecture/adr/0006-mcp-tasks-primitive.md) — MCP async task semantics the board builds on.
 - [Day-2 Operations](day2.md) — monitoring RUNNING queue depth in Grafana.
 - ROADMAP v1.4 — this feature is the primary v1.4 deliverable.

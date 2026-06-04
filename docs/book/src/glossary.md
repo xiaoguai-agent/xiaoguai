@@ -49,7 +49,7 @@ every privileged action: chat turns, tool calls, scheduler runs, IM messages, an
 Each row carries `prev_hash` and `hash` fields so that tampering is detectable offline (a compliance
 export re-verifies the chain and refuses on a break). Rotating the chain key is documented in the
 operator runbook.
-See: [ADR-0008](../../architecture/adr/0008-tool-result-provenance.md) · [Operator Security](operator/security.md) · `crates/xiaoguai-audit/`
+See: [ADR-0008](https://github.com/xiaoguai-agent/xiaoguai/blob/main/docs/architecture/adr/0008-tool-result-provenance.md) · [Operator Security](operator/security.md) · `crates/xiaoguai-audit/`
 
 ---
 
@@ -77,7 +77,7 @@ A test that asserts precision, recall, or correctness boundaries for a specific 
 distinct from a regression eval. Capability evals are allowed to have pass rates below 100%; they
 track improvement over time rather than guarding against regressions. Implemented in
 `crates/xiaoguai-eval/` under the `capability/` suite.
-See: [ADR-0013](../../architecture/adr/0013-zero-default-telemetry.md) · `crates/xiaoguai-eval/`
+See: [ADR-0013](https://github.com/xiaoguai-agent/xiaoguai/blob/main/docs/architecture/adr/0013-zero-default-telemetry.md) · `crates/xiaoguai-eval/`
 
 **Catalog**
 The `catalog/skill_packs.json` index of all available skill packs, keyed by slug with version,
@@ -161,7 +161,7 @@ its own content plus `prev_hash` from the preceding row. A break in the chain (d
 `xiaoguai admin audit verify`) proves that a row was inserted, deleted, or modified after the fact.
 The chain key is stored in a Kubernetes Secret and is rotatable without breaking historical
 verification.
-See: [ADR-0008](../../architecture/adr/0008-tool-result-provenance.md) · [Audit log](#audit-log) · `crates/xiaoguai-audit/`
+See: [ADR-0008](https://github.com/xiaoguai-agent/xiaoguai/blob/main/docs/architecture/adr/0008-tool-result-provenance.md) · [Audit log](#audit-log) · `crates/xiaoguai-audit/`
 
 **HotL**
 Human-on-the-Loop — a supervision model where the system allows an action to proceed immediately
@@ -323,7 +323,7 @@ A threat-modeling framework that categorizes threats as Spoofing, Tampering, Rep
 Information Disclosure, Denial of Service, and Elevation of Privilege. Xiaoguai's security design
 addresses each STRIDE category: HMAC chains counter Repudiation and Tampering; RLS + RBAC counter
 Spoofing and Elevation; per-tenant rate limiting counters DoS.
-See: [Audit log](#audit-log) · [Operator Security](operator/security.md) · [ADR-0002](../../architecture/adr/0002-bounded-memory-by-design.md)
+See: [Audit log](#audit-log) · [Operator Security](operator/security.md) · [ADR-0002](https://github.com/xiaoguai-agent/xiaoguai/blob/main/docs/architecture/adr/0002-bounded-memory-by-design.md)
 
 ---
 
