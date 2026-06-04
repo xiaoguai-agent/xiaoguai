@@ -5,9 +5,7 @@
 //! assertions stay fast and deterministic. The PG-backed e2e tests are
 //! their own ignored suite in `xiaoguai-storage`.
 //!
-//! v0.6.1 added a `tenant: Option<&str>` argument to every RLS-aware
-//! repo method. The in-memory impls below ignore it — RLS is a Postgres
-//! concern.
+//! Single-owner model (DEC-033): repo methods carry no tenant argument.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,7 +28,7 @@ impl InMemorySessionRepo {
 
 #[async_trait]
 impl SessionRepository for InMemorySessionRepo {
-    async fn create(&self, _tenant: Option<&str>, session: &Session) -> RepoResult<()> {
+    async fn create(&self, session: &Session) -> RepoResult<()> {
         let mut g = self.inner.lock();
         if g.contains_key(session.id.as_str()) {
             return Err(RepoError::DuplicateKey("duplicate session id".into()));
@@ -39,13 +37,12 @@ impl SessionRepository for InMemorySessionRepo {
         Ok(())
     }
 
-    async fn find_by_id(&self, _tenant: Option<&str>, id: &str) -> RepoResult<Option<Session>> {
+    async fn find_by_id(&self, id: &str) -> RepoResult<Option<Session>> {
         Ok(self.inner.lock().get(id).cloned())
     }
 
     async fn list_by_user(
         &self,
-        _tenant: Option<&str>,
         user_id: &str,
         limit: i64,
         offset: i64,
@@ -63,7 +60,7 @@ impl SessionRepository for InMemorySessionRepo {
         Ok(rows.into_iter().skip(offset).take(limit).collect())
     }
 
-    async fn touch(&self, _tenant: Option<&str>, id: &str) -> RepoResult<()> {
+    async fn touch(&self, id: &str) -> RepoResult<()> {
         let mut g = self.inner.lock();
         if let Some(s) = g.get_mut(id) {
             s.updated_at = chrono::Utc::now();
@@ -71,7 +68,7 @@ impl SessionRepository for InMemorySessionRepo {
         Ok(())
     }
 
-    async fn archive(&self, _tenant: Option<&str>, id: &str) -> RepoResult<()> {
+    async fn archive(&self, id: &str) -> RepoResult<()> {
         let mut g = self.inner.lock();
         if let Some(s) = g.get_mut(id) {
             s.status = xiaoguai_types::SessionStatus::Archived;
@@ -79,7 +76,7 @@ impl SessionRepository for InMemorySessionRepo {
         Ok(())
     }
 
-    async fn delete(&self, _tenant: Option<&str>, id: &str) -> RepoResult<()> {
+    async fn delete(&self, id: &str) -> RepoResult<()> {
         self.inner.lock().remove(id);
         Ok(())
     }
@@ -107,7 +104,7 @@ impl InMemoryMessageRepo {
 
 #[async_trait]
 impl MessageRepository for InMemoryMessageRepo {
-    async fn append(&self, _tenant: Option<&str>, message: &Message) -> RepoResult<()> {
+    async fn append(&self, message: &Message) -> RepoResult<()> {
         self.inner
             .lock()
             .entry(message.session_id.to_string())
@@ -118,7 +115,6 @@ impl MessageRepository for InMemoryMessageRepo {
 
     async fn list_by_session(
         &self,
-        _tenant: Option<&str>,
         session_id: &str,
         limit: i64,
         offset: i64,
@@ -134,7 +130,7 @@ impl MessageRepository for InMemoryMessageRepo {
         Ok(rows.into_iter().skip(offset).take(limit).collect())
     }
 
-    async fn count_by_session(&self, _tenant: Option<&str>, session_id: &str) -> RepoResult<i64> {
+    async fn count_by_session(&self, session_id: &str) -> RepoResult<i64> {
         Ok(self
             .inner
             .lock()
@@ -142,7 +138,7 @@ impl MessageRepository for InMemoryMessageRepo {
             .map_or(0, |v| i64::try_from(v.len()).unwrap_or(i64::MAX)))
     }
 
-    async fn delete_by_session(&self, _tenant: Option<&str>, session_id: &str) -> RepoResult<u64> {
+    async fn delete_by_session(&self, session_id: &str) -> RepoResult<u64> {
         let removed = self
             .inner
             .lock()

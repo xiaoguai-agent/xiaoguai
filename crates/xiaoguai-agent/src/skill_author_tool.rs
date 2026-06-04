@@ -50,12 +50,8 @@ pub trait ProposeSkillBackend: Send + Sync + std::fmt::Debug {
     /// Returns `Ok(proposal_id)` on success, `Err(human-readable_reason)`
     /// on validator/gate denial. The reason becomes the synthetic
     /// tool-result content the agent observes.
-    async fn invoke(
-        &self,
-        tenant_id: &str,
-        proposed_by: &str,
-        args: ProposeSkillArgs,
-    ) -> Result<String, String>;
+    async fn invoke(&self, proposed_by: &str, args: ProposeSkillArgs)
+        -> Result<String, String>;
 }
 
 /// Synthetic MCP client exposing `propose_skill`. Stateless beyond the
@@ -63,20 +59,14 @@ pub trait ProposeSkillBackend: Send + Sync + std::fmt::Debug {
 #[derive(Debug, Clone)]
 pub struct ProposeSkillClient {
     inner: Arc<dyn ProposeSkillBackend>,
-    tenant_id: String,
     proposed_by: String,
 }
 
 impl ProposeSkillClient {
     #[must_use]
-    pub fn new(
-        inner: Arc<dyn ProposeSkillBackend>,
-        tenant_id: impl Into<String>,
-        proposed_by: impl Into<String>,
-    ) -> Self {
+    pub fn new(inner: Arc<dyn ProposeSkillBackend>, proposed_by: impl Into<String>) -> Self {
         Self {
             inner,
-            tenant_id: tenant_id.into(),
             proposed_by: proposed_by.into(),
         }
     }
@@ -117,9 +107,9 @@ impl ProposeSkillClient {
         ToolDescriptor {
             name: PROPOSE_SKILL_TOOL_NAME.into(),
             description: Some(
-                "Propose a new skill pack for this tenant. The proposal is HotL-gated and \
+                "Propose a new skill pack. The proposal is HotL-gated and \
                  admin-approved before becoming loadable. Off by default (operator must \
-                 opt-in per tenant). tool_allowlist MUST be a subset of currently \
+                 opt-in). tool_allowlist MUST be a subset of currently \
                  registered tools and MUST NOT include propose_skill."
                     .into(),
             ),
@@ -149,11 +139,7 @@ impl McpClient for ProposeSkillClient {
         }
         let parsed: ProposeSkillArgs = serde_json::from_value(args)
             .map_err(|e| McpError::Protocol(format!("propose_skill args invalid: {e}")))?;
-        match self
-            .inner
-            .invoke(&self.tenant_id, &self.proposed_by, parsed)
-            .await
-        {
+        match self.inner.invoke(&self.proposed_by, parsed).await {
             Ok(proposal_id) => Ok(ToolResult {
                 text: format!("skill proposal {proposal_id} created (pending admin approval)"),
                 blocks: vec![ContentBlock::Text {
@@ -191,7 +177,7 @@ mod tests {
 
     #[derive(Debug)]
     struct StubBackend {
-        last: Mutex<Option<(String, String, ProposeSkillArgs)>>,
+        last: Mutex<Option<(String, ProposeSkillArgs)>>,
         reply: Mutex<Result<String, String>>,
     }
 
@@ -203,7 +189,7 @@ mod tests {
             })
         }
 
-        fn last(&self) -> Option<(String, String, ProposeSkillArgs)> {
+        fn last(&self) -> Option<(String, ProposeSkillArgs)> {
             self.last.lock().clone()
         }
     }
@@ -212,11 +198,10 @@ mod tests {
     impl ProposeSkillBackend for StubBackend {
         async fn invoke(
             &self,
-            tenant_id: &str,
             proposed_by: &str,
             args: ProposeSkillArgs,
         ) -> Result<String, String> {
-            *self.last.lock() = Some((tenant_id.into(), proposed_by.into(), args));
+            *self.last.lock() = Some((proposed_by.into(), args));
             self.reply.lock().clone()
         }
     }
@@ -252,7 +237,7 @@ mod tests {
     #[tokio::test]
     async fn call_tool_dispatches_to_backend() {
         let backend = StubBackend::new(Ok("prop-123".into()));
-        let client = ProposeSkillClient::new(backend.clone(), "tenant-a", "agent-1");
+        let client = ProposeSkillClient::new(backend.clone(), "agent-1");
         let args = serde_json::json!({
             "name": "ar-collector",
             "description": "collect AR",
@@ -262,8 +247,7 @@ mod tests {
         });
         let res = client.call_tool("propose_skill", args).await.unwrap();
         assert!(!res.is_error, "happy path is not an error");
-        let (t, p, args) = backend.last().expect("backend invoked");
-        assert_eq!(t, "tenant-a");
+        let (p, args) = backend.last().expect("backend invoked");
         assert_eq!(p, "agent-1");
         assert_eq!(args.name, "ar-collector");
         assert_eq!(args.tool_allowlist, vec!["search".to_string()]);
@@ -272,7 +256,7 @@ mod tests {
     #[tokio::test]
     async fn call_tool_propagates_denial_as_tool_error() {
         let backend = StubBackend::new(Err("budget exceeded".into()));
-        let client = ProposeSkillClient::new(backend, "tenant-a", "agent-1");
+        let client = ProposeSkillClient::new(backend, "agent-1");
         let args = serde_json::json!({
             "name": "ar-collector",
             "description": "collect AR",
@@ -288,7 +272,7 @@ mod tests {
     #[tokio::test]
     async fn call_tool_rejects_other_tool_names() {
         let backend = StubBackend::new(Ok("x".into()));
-        let client = ProposeSkillClient::new(backend, "tenant-a", "agent-1");
+        let client = ProposeSkillClient::new(backend, "agent-1");
         let err = client
             .call_tool("execute_python", serde_json::json!({}))
             .await
@@ -299,7 +283,7 @@ mod tests {
     #[tokio::test]
     async fn call_tool_rejects_malformed_args() {
         let backend = StubBackend::new(Ok("x".into()));
-        let client = ProposeSkillClient::new(backend, "tenant-a", "agent-1");
+        let client = ProposeSkillClient::new(backend, "agent-1");
         let err = client
             .call_tool("propose_skill", serde_json::json!({"bogus": true}))
             .await

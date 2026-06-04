@@ -1,29 +1,19 @@
 //! `TokenUsageRepository` — append-only ledger of per-call LLM token spend.
 //!
 //! All writes go through `record_batch` so the LLM router's background
-//! flusher can amortise round-trips. Reads are tenant-scoped and ordered by
-//! timestamp descending (most recent first) — typical "what did this tenant
-//! cost in the last hour?" queries.
-//!
-//! RLS policy `tenant_isolation_token_usage` (migration 0004) filters reads
-//! by `app.current_tenant_id`. `list_for_tenant` always sets the GUC;
-//! `record_batch` accepts an optional tenant for callers that already know
-//! they are batching for one tenant — the background flusher in the LLM
-//! router currently passes `None` since it batches across tenants, and
-//! Postgres' RLS USING clause does not gate INSERTs.
+//! flusher can amortise round-trips. Reads are ordered by timestamp
+//! descending (most recent first). Single-owner deployment (DEC-033): no
+//! tenant scoping — every read returns the whole ledger.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, QueryBuilder, Sqlite, SqlitePool};
 
 use crate::repositories::error::{RepoError, RepoResult};
-use crate::repositories::tenant_ctx::begin_tenant_tx;
-use crate::OWNER_TENANT_ID;
 
 #[derive(Debug, Clone)]
 pub struct TokenUsageEntry {
     pub ts: DateTime<Utc>,
-    pub tenant_id: String,
     pub user_id: Option<String>,
     pub session_id: Option<String>,
     pub provider_id: String,
@@ -60,7 +50,6 @@ impl From<TokenUsageRow> for StoredTokenUsage {
             id: row.id,
             entry: TokenUsageEntry {
                 ts: row.ts,
-                tenant_id: OWNER_TENANT_ID.to_string(),
                 user_id: row.user_id,
                 session_id: row.session_id,
                 provider_id: row.provider_id,
@@ -77,19 +66,10 @@ impl From<TokenUsageRow> for StoredTokenUsage {
 #[async_trait]
 pub trait TokenUsageRepository: Send + Sync {
     /// Insert a batch of records in a single query. Empty input is a no-op.
-    /// `tenant` is only used to set the RLS GUC; the per-row `tenant_id`
-    /// column still comes from each `TokenUsageEntry`.
-    async fn record_batch(
-        &self,
-        tenant: Option<&str>,
-        entries: &[TokenUsageEntry],
-    ) -> RepoResult<()>;
+    async fn record_batch(&self, entries: &[TokenUsageEntry]) -> RepoResult<()>;
 
-    async fn list_for_tenant(
-        &self,
-        tenant_id: &str,
-        limit: i64,
-    ) -> RepoResult<Vec<StoredTokenUsage>>;
+    /// Return the most recent `limit` ledger entries, newest first.
+    async fn list(&self, limit: i64) -> RepoResult<Vec<StoredTokenUsage>>;
 }
 
 #[derive(Debug, Clone)]
@@ -106,15 +86,11 @@ impl PgTokenUsageRepository {
 
 #[async_trait]
 impl TokenUsageRepository for PgTokenUsageRepository {
-    async fn record_batch(
-        &self,
-        tenant: Option<&str>,
-        entries: &[TokenUsageEntry],
-    ) -> RepoResult<()> {
+    async fn record_batch(&self, entries: &[TokenUsageEntry]) -> RepoResult<()> {
         if entries.is_empty() {
             return Ok(());
         }
-        let mut tx = begin_tenant_tx(&self.pool, tenant).await?;
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
             "INSERT INTO token_usage \
              (ts, user_id, session_id, provider_id, model, \
@@ -139,17 +115,13 @@ impl TokenUsageRepository for PgTokenUsageRepository {
         Ok(())
     }
 
-    async fn list_for_tenant(
-        &self,
-        tenant_id: &str,
-        limit: i64,
-    ) -> RepoResult<Vec<StoredTokenUsage>> {
+    async fn list(&self, limit: i64) -> RepoResult<Vec<StoredTokenUsage>> {
         if limit < 0 {
             return Err(RepoError::InvalidArgument(
                 "limit must be non-negative".into(),
             ));
         }
-        let mut tx = begin_tenant_tx(&self.pool, Some(tenant_id)).await?;
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         let rows = sqlx::query_as::<_, TokenUsageRow>(
             "SELECT id, ts, user_id, session_id, provider_id, model, \
              prompt_tokens, completion_tokens, total_tokens, request_id \

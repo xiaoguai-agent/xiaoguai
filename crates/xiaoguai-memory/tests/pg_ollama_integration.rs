@@ -15,9 +15,7 @@
 //!    compiles against the `SQLite` store; run it explicitly with
 //!    `cargo test -p xiaoguai-memory --features ollama -- --ignored`.
 //!
-//! The `tenant_id` column was dropped under the pivot. `Memory.tenant_id`
-//! still exists on the domain type but reads back as `Uuid::nil()`, so the
-//! `tenant_id` arguments to the store API are vestigial (`Uuid::nil()`).
+//! The `tenant_id` column / field was dropped under the single-user pivot.
 
 #![cfg(all(feature = "pg", feature = "ollama"))]
 
@@ -49,8 +47,6 @@ async fn setup() -> (SqlitePool, TempDir) {
 
 fn create_req(content: &str, tags: &[&str]) -> CreateMemoryRequest {
     CreateMemoryRequest {
-        // tenant_id dropped under the single-user pivot; nil is vestigial.
-        tenant_id: Uuid::nil(),
         kind: MemoryKind::Facts,
         content: content.to_owned(),
         tags: tags.iter().map(|s| (*s).to_owned()).collect(),
@@ -97,7 +93,6 @@ async fn sqlite_memory_crud_and_cosine_recall() {
     // is the nearest neighbour of itself: cosine recall must rank `cat` first.
     let recalled = store
         .recall_memories(RecallRequest {
-            tenant_id: Uuid::nil(),
             query: "My cat Mittens is a fluffy orange tabby who loves to nap in the sun."
                 .to_owned(),
             top_k: 3,
@@ -131,12 +126,9 @@ async fn sqlite_memory_crud_and_cosine_recall() {
         recalled[0].score
     );
 
-    // tenant_id is vestigial under the pivot: reads back as nil.
-    assert_eq!(recalled[0].memory.tenant_id, Uuid::nil());
-
     // Reading the memory back surfaces the persisted 384-dim embedding.
     let fetched = store
-        .get_memory(cat.id, Uuid::nil())
+        .get_memory(cat.id)
         .await
         .expect("get_memory");
     assert_eq!(
@@ -191,7 +183,6 @@ async fn pg_ollama_semantic_recall_ranks_closest_first() {
     // A query semantically close to the "cat" memory.
     let recalled = store
         .recall_memories(RecallRequest {
-            tenant_id: Uuid::nil(),
             query: "Tell me about my kitten.".to_owned(),
             top_k: 3,
             kind_filter: None,
@@ -225,7 +216,7 @@ async fn pg_ollama_semantic_recall_ranks_closest_first() {
     );
 
     let fetched = store
-        .get_memory(cat.id, Uuid::nil())
+        .get_memory(cat.id)
         .await
         .expect("get_memory");
     assert_eq!(

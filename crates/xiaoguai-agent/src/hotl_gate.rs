@@ -8,7 +8,7 @@
 //! `HotlEnforcer` from `xiaoguai-api` would create a dependency cycle.
 //!
 //! Instead, `xiaoguai-agent` defines a minimal [`HotlGate`] trait scoped
-//! to what the loop actually needs: take `(tenant_id, scope, amount)`,
+//! to what the loop actually needs: take `(scope, amount)`,
 //! return `Allow` or `Deny(reason)`. `xiaoguai-core` (which depends on
 //! both crates) ships the adapter that implements `HotlGate` on top of
 //! the full `HotlEnforcer` — see `xiaoguai-core::hotl_bridge::EnforcerGate`.
@@ -22,7 +22,7 @@
 //!
 //! We picked **(a)**: simpler (no per-client wrapping ceremony), keeps the
 //! enforcer signal centralised next to where the dispatch fans out, and
-//! the same loop already owns the `tenant_id` and the `ToolCallSpec.name`
+//! the same loop already owns the `ToolCallSpec.name`
 //! needed to compute the scope. The decorator pattern would have spread
 //! budget logic across every `Toolbox::register` site and lost the
 //! "per call is a budget event" guarantee for parallel dispatch.
@@ -33,9 +33,6 @@
 //!
 //! * `scope` = `format!("tool_call.{tool_name}")`
 //! * `amount` = `1.0` (count-only enforcement; token attribution comes later)
-//! * `tenant_id` = the parsed `Uuid` from `AgentConfig::tenant_id`. If the
-//!   `tenant_id` is absent or unparseable, the gate is skipped (no policy
-//!   scope to enforce against).
 //!
 //! Verdict handling:
 //!
@@ -85,11 +82,9 @@ pub enum HotlGateVerdict {
     /// (`HotlTicketError::Cancelled`).
     ///
     /// This variant is **only** emitted by `SuspendingHotlGate` in
-    /// `xiaoguai-core::hotl_bridge`, which is selected per-tenant via the
+    /// `xiaoguai-core::hotl_bridge`, which is selected via the
     /// `agent.hotl.suspend_on_escalate` config flag. The legacy
-    /// `EnforcerGate` continues to map upstream `Escalate` → `Allow` so
-    /// existing tenants observe no behaviour change until S12-12 flips
-    /// the default in v1.9.0.
+    /// `EnforcerGate` continues to map upstream `Escalate` → `Allow`.
     Suspend {
         escalation_id: uuid::Uuid,
         scope: String,
@@ -308,10 +303,10 @@ impl HotlSuspensionTicket {
 /// budget state must produce a deny, never silently allow.
 #[async_trait]
 pub trait HotlGate: Send + Sync + std::fmt::Debug {
-    async fn check(&self, tenant_id: uuid::Uuid, scope: &str, amount: f64) -> HotlGateVerdict;
+    async fn check(&self, scope: &str, amount: f64) -> HotlGateVerdict;
 
     /// Sprint-13 S13-6. Variant of [`HotlGate::check`] that exposes the
-    /// tool-call arguments to the gate so adapters can apply per-tenant
+    /// tool-call arguments to the gate so adapters can apply
     /// redaction policies before the loop emits `AgentEvent::HotlPending`.
     ///
     /// Default impl forwards to [`HotlGate::check`] and substitutes the
@@ -327,7 +322,6 @@ pub trait HotlGate: Send + Sync + std::fmt::Debug {
     /// covered by the default impl for free.
     async fn check_with_args(
         &self,
-        tenant_id: uuid::Uuid,
         scope: &str,
         amount: f64,
         args: &serde_json::Value,
@@ -336,7 +330,7 @@ pub trait HotlGate: Send + Sync + std::fmt::Debug {
         // the verdict is `Suspend` (which only `SuspendingHotlGate`
         // emits by default), backfill `args_redacted` with the verbatim
         // args so downstream code never sees a `null` blob.
-        match self.check(tenant_id, scope, amount).await {
+        match self.check(scope, amount).await {
             HotlGateVerdict::Allow => HotlGateVerdict::Allow,
             HotlGateVerdict::Deny(reason) => HotlGateVerdict::Deny(reason),
             HotlGateVerdict::Suspend {
@@ -366,7 +360,7 @@ pub struct AllowAllGate;
 
 #[async_trait]
 impl HotlGate for AllowAllGate {
-    async fn check(&self, _tenant: uuid::Uuid, _scope: &str, _amount: f64) -> HotlGateVerdict {
+    async fn check(&self, _scope: &str, _amount: f64) -> HotlGateVerdict {
         HotlGateVerdict::Allow
     }
 }
@@ -389,7 +383,7 @@ impl DenyAllGate {
 
 #[async_trait]
 impl HotlGate for DenyAllGate {
-    async fn check(&self, _tenant: uuid::Uuid, _scope: &str, _amount: f64) -> HotlGateVerdict {
+    async fn check(&self, _scope: &str, _amount: f64) -> HotlGateVerdict {
         HotlGateVerdict::Deny(self.reason.clone())
     }
 }
@@ -415,7 +409,7 @@ impl ScopeDenyGate {
 
 #[async_trait]
 impl HotlGate for ScopeDenyGate {
-    async fn check(&self, _tenant: uuid::Uuid, scope: &str, _amount: f64) -> HotlGateVerdict {
+    async fn check(&self, scope: &str, _amount: f64) -> HotlGateVerdict {
         if self.deny_scopes.iter().any(|s| s == scope) {
             HotlGateVerdict::Deny(self.reason.clone())
         } else {
@@ -435,25 +429,23 @@ mod tests {
     #[tokio::test]
     async fn allow_all_returns_allow() {
         let g = AllowAllGate;
-        let v = g.check(Uuid::new_v4(), "tool_call.search", 1.0).await;
+        let v = g.check("tool_call.search", 1.0).await;
         assert_eq!(v, HotlGateVerdict::Allow);
     }
 
     #[tokio::test]
     async fn deny_all_returns_deny_with_reason() {
         let g = DenyAllGate::new("budget exceeded");
-        let v = g.check(Uuid::new_v4(), "tool_call.search", 1.0).await;
+        let v = g.check("tool_call.search", 1.0).await;
         assert_eq!(v, HotlGateVerdict::Deny("budget exceeded".into()));
     }
 
     #[tokio::test]
     async fn scope_deny_is_selective() {
         let g = ScopeDenyGate::new(vec!["tool_call.execute_python".into()], "no python in prod");
-        let allowed = g.check(Uuid::new_v4(), "tool_call.search", 1.0).await;
+        let allowed = g.check("tool_call.search", 1.0).await;
         assert_eq!(allowed, HotlGateVerdict::Allow);
-        let denied = g
-            .check(Uuid::new_v4(), "tool_call.execute_python", 1.0)
-            .await;
+        let denied = g.check("tool_call.execute_python", 1.0).await;
         assert_eq!(denied, HotlGateVerdict::Deny("no python in prod".into()));
     }
 

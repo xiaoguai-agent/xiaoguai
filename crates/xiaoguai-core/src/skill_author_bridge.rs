@@ -22,7 +22,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use uuid::Uuid;
 use xiaoguai_api::hotl::enforcer::{HotlEnforcer, HotlVerdict};
 use xiaoguai_audit::chain::sink::PgAuditSink;
 use xiaoguai_audit::AuditEntry;
@@ -38,7 +37,7 @@ use xiaoguai_tasks::skill_author_pg::{PgSkillProposalRepository, PgTenantSetting
 
 /// Adapter mapping a `HotlEnforcer` onto the `SkillAuthorGate` interface.
 ///
-/// `check(tenant, scope)` calls `enforcer.check(tenant, scope, 1.0)`:
+/// `check(scope)` calls `enforcer.check(scope, 1.0)`:
 ///   * `Ok(Allow)` → `Ok(())`
 ///   * `Ok(Escalate(reason))` → `Err(reason)` (fail-closed for skill
 ///     authoring; admins explicitly approve, escalation is implicit)
@@ -46,7 +45,7 @@ use xiaoguai_tasks::skill_author_pg::{PgSkillProposalRepository, PgTenantSetting
 ///   * `Err(_)` → `Err(format!(…))` (fail-closed on infra failure)
 ///
 /// The `1.0` increment counts the proposal as a single unit of the daily
-/// budget (default 5 proposals/tenant/day per `skill_author` scope).
+/// budget (default 5 proposals/day per `skill_author` scope).
 pub struct EnforcerGateAdapter {
     enforcer: Arc<dyn HotlEnforcer>,
 }
@@ -65,8 +64,8 @@ impl EnforcerGateAdapter {
 
 #[async_trait]
 impl SkillAuthorGate for EnforcerGateAdapter {
-    async fn check(&self, tenant_id: Uuid, scope: &str) -> Result<(), String> {
-        match self.enforcer.check(tenant_id, scope, 1.0).await {
+    async fn check(&self, scope: &str) -> Result<(), String> {
+        match self.enforcer.check(scope, 1.0).await {
             Ok(HotlVerdict::Allow) => Ok(()),
             Ok(HotlVerdict::Escalate(reason)) => Err(reason),
             Ok(HotlVerdict::Deny(reason)) => Err(reason),
@@ -164,7 +163,7 @@ mod tests {
 
     #[async_trait]
     impl HotlEnforcer for CannedEnforcer {
-        async fn check(&self, _tenant_id: Uuid, _scope: &str, _amount: f64) -> HotlVerdictResult {
+        async fn check(&self, _scope: &str, _amount: f64) -> HotlVerdictResult {
             match &self.verdict {
                 Ok(v) => Ok(v.clone()),
                 Err(e) => Err(match e {
@@ -180,7 +179,7 @@ mod tests {
     async fn enforcer_gate_allow_passes_through() {
         let enforcer = Arc::new(CannedEnforcer::ok(HotlVerdict::Allow));
         let gate = EnforcerGateAdapter::new(enforcer);
-        assert!(gate.check(Uuid::new_v4(), "skill_author").await.is_ok());
+        assert!(gate.check("skill_author").await.is_ok());
     }
 
     #[tokio::test]
@@ -189,10 +188,7 @@ mod tests {
             "daily cap reached".into(),
         )));
         let gate = EnforcerGateAdapter::new(enforcer);
-        let err = gate
-            .check(Uuid::new_v4(), "skill_author")
-            .await
-            .unwrap_err();
+        let err = gate.check("skill_author").await.unwrap_err();
         assert_eq!(err, "daily cap reached");
     }
 
@@ -204,17 +200,14 @@ mod tests {
             "review by admin".into(),
         )));
         let gate = EnforcerGateAdapter::new(enforcer);
-        assert!(gate.check(Uuid::new_v4(), "skill_author").await.is_err());
+        assert!(gate.check("skill_author").await.is_err());
     }
 
     #[tokio::test]
     async fn enforcer_gate_fail_closed_on_infra_error() {
         let enforcer = Arc::new(CannedEnforcer::err());
         let gate = EnforcerGateAdapter::new(enforcer);
-        let err = gate
-            .check(Uuid::new_v4(), "skill_author")
-            .await
-            .unwrap_err();
+        let err = gate.check("skill_author").await.unwrap_err();
         assert!(err.contains("hotl infra"), "got: {err}");
     }
 

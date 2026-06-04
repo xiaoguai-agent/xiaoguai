@@ -7,7 +7,7 @@ pub enum PersonaError {
     #[error("persona not found")]
     NotFound,
 
-    #[error("duplicate persona name for tenant: {0}")]
+    #[error("duplicate persona name: {0}")]
     DuplicateName(String),
 
     #[error("persona is archived and cannot be attached to new sessions")]

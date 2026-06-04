@@ -5,8 +5,8 @@
 //! stays storage-agnostic.
 //!
 //! The aggregation is a single `GROUP BY` over `token_usage` LEFT-JOINed
-//! with `llm_providers` (migration 0003 / 0010) with optional tenant /
-//! since / until filters. The bucket column depends on `group_by`:
+//! with `llm_providers` (migration 0003 / 0010) with optional since /
+//! until filters. The bucket column depends on `group_by`:
 //!
 //!   * `Day`      → `to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD')`
 //!   * `Provider` → `provider_id`
@@ -22,12 +22,6 @@
 //! bucket lacks a matching provider with rates (NULL rates → operator
 //! hasn't configured pricing). This matches the partial-cost semantics
 //! in `StaticUsageReader`.
-//!
-//! RLS note: when `tenant_id` is provided we run inside a
-//! `begin_tenant_tx` so the `tenant_isolation_token_usage` policy
-//! filters to the right rows; when `tenant_id` is `None` we run as the
-//! superuser pool which bypasses RLS (admin cross-tenant view, same
-//! pattern as `PgTodayReader`).
 
 use std::sync::Arc;
 
@@ -36,11 +30,9 @@ use sqlx::Row;
 use xiaoguai_api::usage::{
     UsageError, UsageGroupBy, UsageQuery, UsageReader, UsageReport, UsageRow,
 };
-use xiaoguai_storage::{repositories::begin_tenant_tx, ReadWritePool};
+use xiaoguai_storage::ReadWritePool;
 
 pub struct PgUsageReader {
-    /// Read/write pool: cross-tenant admin reads routed to replica;
-    /// tenant-scoped reads run inside a transaction on the primary.
     pool: ReadWritePool,
 }
 
@@ -123,28 +115,12 @@ impl UsageReader for PgUsageReader {
              ORDER BY bucket ASC"
         );
 
-        let rows = if let Some(t) = &query.tenant_id {
-            // Tenant scoping is vestigial under DEC-033; `begin_tenant_tx`
-            // opens a plain SQLite transaction and ignores the tenant.
-            let mut tx = begin_tenant_tx(self.pool.writer(), Some(t))
-                .await
-                .map_err(|e| UsageError::Backend(format!("begin tx: {e}")))?;
-            let rows = sqlx::query(&sql)
-                .bind(query.since)
-                .bind(query.until)
-                .fetch_all(&mut *tx)
-                .await
-                .map_err(map_err)?;
-            tx.commit().await.map_err(map_err)?;
-            rows
-        } else {
-            sqlx::query(&sql)
-                .bind(query.since)
-                .bind(query.until)
-                .fetch_all(self.pool.reader())
-                .await
-                .map_err(map_err)?
-        };
+        let rows = sqlx::query(&sql)
+            .bind(query.since)
+            .bind(query.until)
+            .fetch_all(self.pool.reader())
+            .await
+            .map_err(map_err)?;
 
         Ok(build_report(rows))
     }
@@ -288,7 +264,6 @@ mod tests {
         let reader = PgUsageReader::new(pool.into());
         let report = reader
             .aggregate(UsageQuery {
-                tenant_id: None,
                 since: None,
                 until: None,
                 group_by: UsageGroupBy::Day,

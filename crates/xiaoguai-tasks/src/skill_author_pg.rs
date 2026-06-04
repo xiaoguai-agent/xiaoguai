@@ -3,7 +3,7 @@
 //! in [`crate::skill_author`].
 //!
 //! Tables come from migration `0021_skill_proposals.sql`:
-//!   * `skill_proposals(id TEXT PK, tenant_id, proposed_by, name, version,
+//!   * `skill_proposals(id TEXT PK, proposed_by, name, version,
 //!                      manifest_json JSONB, status, reason,
 //!                      created_at, decided_at, decided_by)`
 //!   * `tenant_settings(tenant_id TEXT PK, settings JSONB, updated_at)`
@@ -49,9 +49,6 @@ impl ProposalDbRow {
         })?;
         Ok(ProposalRow {
             id: self.id,
-            // tenant_id is vestigial under the single-user pivot (no column);
-            // synthesise the owner tenant so the public domain shape is preserved.
-            tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
             proposed_by: self.proposed_by,
             manifest,
             status,
@@ -151,10 +148,8 @@ impl SkillProposalRepository for PgSkillProposalRepository {
 
     async fn list(
         &self,
-        tenant_id: &str,
         status: Option<ProposalStatus>,
     ) -> Result<Vec<ProposalRow>, SkillAuthorError> {
-        let _ = tenant_id; // vestigial under single-user pivot
         let rows: Vec<ProposalDbRow> = if let Some(s) = status {
             sqlx::query_as(
                 "SELECT id, proposed_by, manifest_json, status, reason, \
@@ -238,13 +233,12 @@ impl PgTenantSettings {
 
 #[async_trait]
 impl TenantSettingsReader for PgTenantSettings {
-    async fn allow_skill_authoring(&self, tenant_id: &str) -> Result<bool, SkillAuthorError> {
+    async fn allow_skill_authoring(&self) -> Result<bool, SkillAuthorError> {
         // `settings->>'allow_skill_authoring'` returns the JSON value as
         // text, or NULL if either the row is missing or the key is absent.
         // `'true'` is the only enabling value (case-sensitive). Any other
         // text (including `'false'`, `'1'`, anything malformed) maps to
         // disabled — fail-closed.
-        let _ = tenant_id; // vestigial under single-user pivot
         let val: Option<String> = sqlx::query_scalar(
             "SELECT json_extract(settings, '$.allow_skill_authoring') \
              FROM tenant_settings \
@@ -257,14 +251,10 @@ impl TenantSettingsReader for PgTenantSettings {
         Ok(val.as_deref() == Some("true"))
     }
 
-    async fn sandbox_tier(
-        &self,
-        tenant_id: &str,
-    ) -> Result<crate::skill_author::SandboxTier, SkillAuthorError> {
+    async fn sandbox_tier(&self) -> Result<crate::skill_author::SandboxTier, SkillAuthorError> {
         // DEC-019: `settings->>'sandbox_tier'` is parsed lenient (case
         // insensitive, "L3" → L3, anything else → L1). Missing row /
         // missing key → L1 (safe default per PHILO §14).
-        let _ = tenant_id; // vestigial under single-user pivot
         let val: Option<String> = sqlx::query_scalar(
             "SELECT json_extract(settings, '$.sandbox_tier') \
              FROM tenant_settings \
@@ -315,10 +305,9 @@ mod tests {
         }
     }
 
-    fn row(tenant: &str, name: &str) -> ProposalRow {
+    fn row(name: &str) -> ProposalRow {
         ProposalRow {
             id: Uuid::new_v4().to_string(),
-            tenant_id: tenant.to_string(),
             proposed_by: "agent:test".into(),
             manifest: manifest(name),
             status: ProposalStatus::Pending,
@@ -333,18 +322,14 @@ mod tests {
     async fn skill_author_pg_insert_get_list_set_status() {
         let (pool, _dir) = sqlite_pool().await;
         let repo = PgSkillProposalRepository::new(pool);
-        let tid = Uuid::new_v4().to_string();
-        let inserted = repo.insert(row(&tid, "test-skill")).await.unwrap();
+        let inserted = repo.insert(row("test-skill")).await.unwrap();
         let got = repo.get(&inserted.id).await.unwrap().expect("present");
         assert_eq!(got.id, inserted.id);
         assert_eq!(got.status, ProposalStatus::Pending);
 
-        let listed = repo.list(&tid, None).await.unwrap();
+        let listed = repo.list(None).await.unwrap();
         assert_eq!(listed.len(), 1);
-        let pending = repo
-            .list(&tid, Some(ProposalStatus::Pending))
-            .await
-            .unwrap();
+        let pending = repo.list(Some(ProposalStatus::Pending)).await.unwrap();
         assert_eq!(pending.len(), 1);
 
         let approved = repo
@@ -359,8 +344,7 @@ mod tests {
     async fn skill_author_pg_duplicate_returns_duplicate() {
         let (pool, _dir) = sqlite_pool().await;
         let repo = PgSkillProposalRepository::new(pool);
-        let tid = Uuid::new_v4().to_string();
-        let r1 = row(&tid, "dup-skill");
+        let r1 = row("dup-skill");
         repo.insert(r1.clone()).await.unwrap();
         let r2 = ProposalRow {
             id: Uuid::new_v4().to_string(),
@@ -374,25 +358,23 @@ mod tests {
     async fn tenant_settings_reader_returns_false_when_unset() {
         let (pool, _dir) = sqlite_pool().await;
         let settings = PgTenantSettings::new(pool);
-        let unknown = Uuid::new_v4().to_string();
-        assert!(!settings.allow_skill_authoring(&unknown).await.unwrap());
+        assert!(!settings.allow_skill_authoring().await.unwrap());
     }
 
     #[tokio::test]
     async fn tenant_settings_reader_returns_true_after_upsert() {
         let (pool, _dir) = sqlite_pool().await;
         let settings = PgTenantSettings::new(pool.clone());
-        let tid = Uuid::new_v4().to_string();
         sqlx::query(
             "INSERT INTO tenant_settings (tenant_id, settings) \
              VALUES (?, ?) \
              ON CONFLICT (tenant_id) DO UPDATE SET settings = EXCLUDED.settings",
         )
-        .bind(&tid)
+        .bind(xiaoguai_audit::OWNER_TENANT_ID)
         .bind(r#"{"allow_skill_authoring":"true"}"#)
         .execute(&pool)
         .await
         .unwrap();
-        assert!(settings.allow_skill_authoring(&tid).await.unwrap());
+        assert!(settings.allow_skill_authoring().await.unwrap());
     }
 }

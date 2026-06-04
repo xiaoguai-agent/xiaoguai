@@ -89,7 +89,7 @@ impl PoolMetrics {
         Self::register(&r).expect("fresh registry cannot conflict")
     }
 
-    /// Increment `dispatched` for the given tenant (or `"system"`).
+    /// Increment `dispatched` for the given owner label.
     pub fn inc_dispatched(&self, tenant: &str) {
         self.dispatched.with_label_values(&[tenant]).inc();
     }

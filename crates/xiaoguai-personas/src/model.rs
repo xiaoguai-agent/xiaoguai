@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// A named role profile that shapes agent behaviour within a tenant.
+/// A named role profile that shapes agent behaviour.
 ///
 /// The persona is injected at chat-time: its `system_prompt` is prepended to
 /// the message history and its `tool_allowlist` gates which MCP/toolbox tools
@@ -13,8 +13,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Persona {
     pub id: Uuid,
-    pub tenant_id: Uuid,
-    /// Human-readable label. Unique per tenant (enforced at DB level).
+    /// Human-readable label. Unique by name (enforced at DB level).
     pub name: String,
     /// Injected as the leading system message in every chat turn.
     pub system_prompt: String,
@@ -46,7 +45,6 @@ impl Persona {
 /// Payload used when creating a new persona.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatePersonaRequest {
-    pub tenant_id: Uuid,
     pub name: String,
     #[serde(default)]
     pub system_prompt: String,

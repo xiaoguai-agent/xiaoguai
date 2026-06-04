@@ -3,8 +3,7 @@
 //!
 //! v0.10.x shipped `EchoExecutor` as the test stub; v0.12.0 lands the
 //! real one. It reads `job.payload.prompt` (string), builds a
-//! single-user-turn history, applies the job's `tenant_id` to the
-//! runtime context, and calls `run_to_completion`. The resulting
+//! single-user-turn history, and calls `run_to_completion`. The resulting
 //! `RuntimeOutcome::reply_text` becomes the `ExecutionOutcome::output_preview`
 //! (truncated to a reasonable length so the `JobRun` row + push payloads
 //! stay light).
@@ -90,9 +89,9 @@ impl JobExecutor for RuntimeJobExecutor {
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "scheduled job payload missing string field `prompt`".to_string())?;
 
-        let ctx = self.ctx.with_tenant(job.tenant_id.clone());
         let history = vec![LlmMessage::user(prompt)];
-        let outcome = run_to_completion(&ctx, history, tokio_util::sync::CancellationToken::new())
+        let outcome =
+            run_to_completion(&self.ctx, history, tokio_util::sync::CancellationToken::new())
             .await
             .map_err(|e| format!("runtime: {e}"))?;
 
@@ -154,7 +153,6 @@ mod tests {
     fn make_job(prompt: &serde_json::Value) -> ScheduledJob {
         ScheduledJob::new(
             "j1",
-            Some("tenant-x".into()),
             "j1",
             Trigger::interval(60).unwrap(),
             serde_json::json!({ "prompt": prompt }),

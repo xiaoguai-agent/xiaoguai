@@ -1,10 +1,6 @@
 //! End-to-end tests for `PgJobRepository` + `PgJobRunRepository` against a
 //! temp `SQLite` database (DEC-033 single-user pivot). The repos are now
 //! `SQLite`-backed; these run on every `cargo test` (no Docker, no `#[ignore]`).
-//!
-//! `tenant_id` was dropped under the pivot: the domain types still carry an
-//! `Option<String>` field but it is neither stored nor read back, so it always
-//! round-trips as `None`.
 
 use std::sync::Arc;
 
@@ -32,7 +28,6 @@ async fn setup() -> (SqlitePool, TempDir) {
 fn sample_job(id: &str) -> ScheduledJob {
     ScheduledJob::new(
         id,
-        None,
         format!("job-{id}"),
         Trigger::interval(60).unwrap(),
         serde_json::json!({"prompt": "scan"}),
@@ -43,7 +38,6 @@ fn sample_run(job: &ScheduledJob) -> JobRun {
     JobRun {
         id: 0,
         job_id: job.id.clone(),
-        tenant_id: None,
         status: JobRunStatus::Running,
         attempt: 1,
         started_at: Some(Utc::now()),
@@ -65,8 +59,6 @@ async fn upsert_then_get_round_trips_job() {
 
     let back = repo.get("j1").await.unwrap();
     assert_eq!(back.id, "j1");
-    // tenant_id dropped under single-user pivot: always reads back None.
-    assert_eq!(back.tenant_id, None);
     assert!(back.enabled);
     assert!(back.trigger.is_scheduled());
 }

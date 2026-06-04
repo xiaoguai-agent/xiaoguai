@@ -302,7 +302,7 @@ async fn archive_unknown_returns_404() {
 async fn seed_default_then_list_finds_it() {
     let repo = InMemoryWorkspaceRepository::new();
     let tenant = Uuid::new_v4();
-    repo.seed_default(tenant);
+    repo.seed_default();
 
     let app = router(build_state(Some(repo)));
     let resp = app
@@ -326,7 +326,7 @@ async fn seed_default_then_list_finds_it() {
 async fn cannot_archive_default_workspace_returns_400() {
     let repo = InMemoryWorkspaceRepository::new();
     let tenant = Uuid::new_v4();
-    repo.seed_default(tenant);
+    repo.seed_default();
 
     // Find the default workspace id via list.
     let app = router(build_state(Some(repo.clone())));

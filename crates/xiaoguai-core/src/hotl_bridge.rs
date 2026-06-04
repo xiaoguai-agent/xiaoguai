@@ -71,8 +71,6 @@ impl From<PolicyRow> for HotlPolicy {
     fn from(r: PolicyRow) -> Self {
         Self {
             id: r.id,
-            // DEC-033: single implicit owner; no per-tenant scoping.
-            tenant_id: Uuid::nil(),
             scope: r.scope,
             window_seconds: r.window_seconds,
             max_count: r.max_count,
@@ -86,12 +84,9 @@ impl From<PolicyRow> for HotlPolicy {
 impl HotlPolicyStore for PgHotlPolicyStore {
     async fn list(
         &self,
-        tenant_id: Uuid,
         scope: Option<&str>,
     ) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
         // Use a dynamic query to handle the optional `scope` filter cleanly.
-        // DEC-033: tenant_id column dropped; vestigial param ignored.
-        let _ = tenant_id;
         let rows: Vec<PolicyRow> = if let Some(s) = scope {
             sqlx::query_as(
                 "SELECT id, scope, window_seconds, \
@@ -168,7 +163,6 @@ impl HotlPolicyStore for PgHotlPolicyStore {
 
         Ok(HotlPolicy {
             id,
-            tenant_id: req.tenant_id,
             scope: req.scope,
             window_seconds: req.window_seconds,
             max_count: req.max_count,
@@ -191,10 +185,9 @@ impl HotlPolicyStore for PgHotlPolicyStore {
 
     async fn policies_for(
         &self,
-        tenant_id: Uuid,
         scope: &str,
     ) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
-        self.list(tenant_id, Some(scope)).await
+        self.list(Some(scope)).await
     }
 }
 
@@ -223,9 +216,9 @@ impl PgHotlEnforcer {
 
 #[async_trait]
 impl HotlEnforcer for PgHotlEnforcer {
-    async fn check(&self, tenant_id: Uuid, scope: &str, amount: f64) -> HotlVerdictResult {
+    async fn check(&self, scope: &str, amount: f64) -> HotlVerdictResult {
         // Fetch active policies; fail-closed on error.
-        let policies = match self.store.policies_for(tenant_id, scope).await {
+        let policies = match self.store.policies_for(scope).await {
             Ok(p) => p,
             Err(e) => {
                 tracing::error!(?e, "HOTL policy store error — fail-closed");
@@ -362,17 +355,11 @@ impl EnforcerGate {
 
 #[async_trait]
 impl xiaoguai_agent::HotlGate for EnforcerGate {
-    async fn check(
-        &self,
-        tenant_id: Uuid,
-        scope: &str,
-        amount: f64,
-    ) -> xiaoguai_agent::HotlGateVerdict {
-        match self.inner.check(tenant_id, scope, amount).await {
+    async fn check(&self, scope: &str, amount: f64) -> xiaoguai_agent::HotlGateVerdict {
+        match self.inner.check(scope, amount).await {
             Ok(HotlVerdict::Allow) => xiaoguai_agent::HotlGateVerdict::Allow,
             Ok(HotlVerdict::Escalate(reason)) => {
                 tracing::warn!(
-                    tenant_id = %tenant_id,
                     %scope,
                     %reason,
                     "HOTL gate escalation — proceeding with tool dispatch"
@@ -381,7 +368,6 @@ impl xiaoguai_agent::HotlGate for EnforcerGate {
             }
             Ok(HotlVerdict::Deny(reason)) => {
                 tracing::warn!(
-                    tenant_id = %tenant_id,
                     %scope,
                     %reason,
                     "HOTL gate denied tool dispatch"
@@ -393,7 +379,6 @@ impl xiaoguai_agent::HotlGate for EnforcerGate {
                 // "no enforcer wired" (Option<None>), which never reaches
                 // this adapter.
                 tracing::error!(
-                    tenant_id = %tenant_id,
                     %scope,
                     error = %e,
                     "HOTL gate enforcer error — fail-closed deny"
@@ -452,8 +437,8 @@ pub struct SuspendingHotlGate {
     /// Sprint-13 S13-7: scope-class → expiry override map. Empty by
     /// default; populated from `agent.hotl.expiry` in `run_serve`.
     expiry: std::collections::HashMap<String, std::time::Duration>,
-    /// Sprint-13 S13-6: per-tenant redaction rule store. The gate calls
-    /// `RedactionRules::from_storage(&*redaction_repo, tenant_id)` on
+    /// Sprint-13 S13-6: redaction rule store. The gate calls
+    /// `RedactionRules::from_storage(&*redaction_repo)` on
     /// every escalation so admin edits land on the next call (no cache).
     /// Wiring uses a `NoopHotlRedactionRepo` shim for the sprint-12
     /// constructors that don't supply one — preserves byte-for-byte the
@@ -506,9 +491,8 @@ struct NoopHotlRedactionRepo;
 
 #[async_trait]
 impl xiaoguai_storage::repositories::hotl_redaction::HotlRedactionRepo for NoopHotlRedactionRepo {
-    async fn load_for_tenant(
+    async fn load_all(
         &self,
-        _tenant_id: Uuid,
     ) -> xiaoguai_storage::repositories::error::RepoResult<
         Vec<xiaoguai_storage::repositories::hotl_redaction::RedactionPolicyRow>,
     > {
@@ -672,15 +656,9 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
     /// to [`Self::check_with_args`] with `Value::Null` so the redaction
     /// path is exercised consistently (an empty input yields an empty
     /// output regardless of policy).
-    async fn check(
-        &self,
-        tenant_id: Uuid,
-        scope: &str,
-        amount: f64,
-    ) -> xiaoguai_agent::HotlGateVerdict {
+    async fn check(&self, scope: &str, amount: f64) -> xiaoguai_agent::HotlGateVerdict {
         <Self as xiaoguai_agent::HotlGate>::check_with_args(
             self,
-            tenant_id,
             scope,
             amount,
             &serde_json::Value::Null,
@@ -690,16 +668,14 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
 
     async fn check_with_args(
         &self,
-        tenant_id: Uuid,
         scope: &str,
         amount: f64,
         args: &serde_json::Value,
     ) -> xiaoguai_agent::HotlGateVerdict {
-        match self.inner.check(tenant_id, scope, amount).await {
+        match self.inner.check(scope, amount).await {
             Ok(HotlVerdict::Allow) => xiaoguai_agent::HotlGateVerdict::Allow,
             Ok(HotlVerdict::Deny(reason)) => {
                 tracing::warn!(
-                    tenant_id = %tenant_id,
                     %scope,
                     %reason,
                     "HOTL gate denied tool dispatch"
@@ -715,14 +691,12 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                 // leaking unredacted args on SSE.
                 let rules = match xiaoguai_auth::RedactionRules::from_storage(
                     &*self.redaction_repo,
-                    tenant_id,
                 )
                 .await
                 {
                     Ok(r) => r,
                     Err(e) => {
                         tracing::error!(
-                            tenant_id = %tenant_id,
                             %scope,
                             error = %e,
                             "HOTL redaction policy load failed — fail-closed deny"
@@ -740,7 +714,6 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                 // as `matching_id.is_none()` here.
                 if self.redaction_required && matching_id.is_none() {
                     tracing::error!(
-                        tenant_id = %tenant_id,
                         %scope,
                         "HOTL escalate but redaction_required=true and no matching policy — fail-closed deny"
                     );
@@ -769,7 +742,6 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                 // (sprint-13 OOS: full session threading lands in S13-8).
                 let parent = xiaoguai_storage::repositories::hotl_escalations::HotlEscalationRow {
                     id: escalation_id,
-                    tenant_id,
                     session_id: escalation_id,
                     top_level_scope: scope.to_string(),
                     status: "pending".to_string(),
@@ -779,7 +751,6 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                 let child = xiaoguai_storage::repositories::hotl_escalations::HotlPendingRow {
                     id: Uuid::new_v4(),
                     escalation_id,
-                    tenant_id,
                     scope: scope.to_string(),
                     // Sprint-13 S13-8 will plumb the tool name through;
                     // the scope already encodes it (`tool_call.<name>`).
@@ -802,7 +773,6 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                 {
                     Ok(ticket) => {
                         tracing::info!(
-                            tenant_id = %tenant_id,
                             %scope,
                             %reason,
                             %escalation_id,
@@ -819,8 +789,8 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                         if let Some(sink) = &self.audit_sink {
                             let entry = xiaoguai_audit::AuditEntry {
                                 ts: now_utc,
-                                // Must match verify_chain's rebuilt value (audit
-                                // OWNER), not the vestigial tenant uuid.
+                                // HMAC-signed; must match verify_chain's rebuilt
+                                // value (audit OWNER).
                                 tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
                                 actor: "system".into(),
                                 action: "hotl.escalation".into(),
@@ -832,7 +802,6 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                             };
                             if let Err(e) = sink.append(entry).await {
                                 tracing::warn!(
-                                    tenant_id = %tenant_id,
                                     %scope,
                                     %escalation_id,
                                     error = %e,
@@ -857,7 +826,6 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
                         // waiter (the persisted-first ordering guarantees
                         // no waiter exists at this point).
                         tracing::error!(
-                            tenant_id = %tenant_id,
                             %scope,
                             error = %e,
                             %escalation_id,
@@ -871,7 +839,6 @@ impl xiaoguai_agent::HotlGate for SuspendingHotlGate {
             }
             Err(e) => {
                 tracing::error!(
-                    tenant_id = %tenant_id,
                     %scope,
                     error = %e,
                     "HOTL gate enforcer error — fail-closed deny"
@@ -980,9 +947,8 @@ fn build_reason(policy: &HotlPolicy, count: usize, sum: f64) -> String {
         parts.push(format!("cost ${sum:.4} > max_usd ${max:.4}"));
     }
     format!(
-        "HOTL breach on scope='{}' tenant='{}': {}",
+        "HOTL breach on scope='{}': {}",
         policy.scope,
-        policy.tenant_id,
         parts.join("; ")
     )
 }
@@ -1026,16 +992,12 @@ impl HotlDecisionStore for PgHotlDecisionStore {
     async fn record(
         &self,
         escalation_id: Uuid,
-        tenant_id: Uuid,
         verdict: HotlDecisionVerdict,
         decided_by: String,
         raised_policy_id: Option<Uuid>,
     ) -> Result<HotlDecisionRecord, HotlDecisionStoreError> {
-        // DEC-033: `hotl_decisions` has no tenant_id column and the
-        // idempotency column is `request_id` (UNIQUE). We bind the
-        // `escalation_id` value into `request_id`. The vestigial
-        // `tenant_id` param is ignored.
-        let _ = tenant_id;
+        // `hotl_decisions`'s idempotency column is `request_id` (UNIQUE);
+        // we bind the `escalation_id` value into `request_id`.
         let id = Uuid::new_v4();
 
         let row: (Uuid, Uuid, String, String, Option<Uuid>, DateTime<Utc>) = sqlx::query_as(
@@ -1075,8 +1037,6 @@ impl HotlDecisionStore for PgHotlDecisionStore {
         Ok(HotlDecisionRecord {
             id: row.0,
             request_id: row.1,
-            // DEC-033: single implicit owner.
-            tenant_id: Uuid::nil(),
             verdict: returned_verdict,
             decided_by: row.3,
             raised_policy_id: row.4,
@@ -1143,7 +1103,6 @@ mod tests {
     fn build_reason_formats_count_and_usd() {
         let policy = HotlPolicy {
             id: Uuid::new_v4(),
-            tenant_id: Uuid::new_v4(),
             scope: "llm_call".into(),
             window_seconds: 60,
             max_count: Some(5),
@@ -1210,7 +1169,6 @@ mod tests {
     fn build_reason_count_only() {
         let policy = HotlPolicy {
             id: Uuid::new_v4(),
-            tenant_id: Uuid::new_v4(),
             scope: "email_send".into(),
             window_seconds: 3600,
             max_count: Some(10),
@@ -1237,12 +1195,9 @@ mod tests {
     async fn hotl_store_create_list_delete() {
         let (_dir, pool) = sqlite_pool().await;
         let store = PgHotlPolicyStore::new(pool);
-        // tenant_id is vestigial under DEC-033 (single owner).
-        let tid = Uuid::nil();
 
         let created = store
             .create(xiaoguai_api::hotl::policy::CreateHotlPolicyRequest {
-                tenant_id: tid,
                 scope: "llm_call".into(),
                 window_seconds: 3600,
                 max_count: Some(100),
@@ -1252,17 +1207,17 @@ mod tests {
             .await
             .unwrap();
 
-        let list = store.list(tid, None).await.unwrap();
+        let list = store.list(None).await.unwrap();
         assert!(list.iter().any(|p| p.id == created.id));
 
         // Scoped filter still works (scope column survives DEC-033).
-        let scoped = store.list(tid, Some("llm_call")).await.unwrap();
+        let scoped = store.list(Some("llm_call")).await.unwrap();
         assert_eq!(scoped.len(), 1);
-        let empty = store.list(tid, Some("email_send")).await.unwrap();
+        let empty = store.list(Some("email_send")).await.unwrap();
         assert!(empty.is_empty());
 
         store.delete(created.id).await.unwrap();
-        let after = store.list(tid, None).await.unwrap();
+        let after = store.list(None).await.unwrap();
         assert!(after.iter().all(|p| p.id != created.id));
     }
 
@@ -1286,7 +1241,7 @@ mod tests {
         let (_dir, pool) = sqlite_pool().await;
         let store = Arc::new(PgHotlPolicyStore::new(pool.clone()));
         let enforcer = PgHotlEnforcer::new(pool, store);
-        let v = enforcer.check(Uuid::nil(), "llm_call", 1.0).await.unwrap();
+        let v = enforcer.check("llm_call", 1.0).await.unwrap();
         assert_eq!(v, HotlVerdict::Allow);
     }
 
@@ -1294,11 +1249,9 @@ mod tests {
     async fn hotl_enforcer_count_breach_denies() {
         let (_dir, pool) = sqlite_pool().await;
         let store = Arc::new(PgHotlPolicyStore::new(pool.clone()));
-        let tid = Uuid::nil();
 
         store
             .create(xiaoguai_api::hotl::policy::CreateHotlPolicyRequest {
-                tenant_id: tid,
                 scope: "llm_call".into(),
                 window_seconds: 3600,
                 max_count: Some(2),
@@ -1309,11 +1262,11 @@ mod tests {
             .unwrap();
 
         let enforcer = PgHotlEnforcer::new(pool, store);
-        let v1 = enforcer.check(tid, "llm_call", 1.0).await.unwrap();
-        let v2 = enforcer.check(tid, "llm_call", 1.0).await.unwrap();
+        let v1 = enforcer.check("llm_call", 1.0).await.unwrap();
+        let v2 = enforcer.check("llm_call", 1.0).await.unwrap();
         assert_eq!(v1, HotlVerdict::Allow);
         assert_eq!(v2, HotlVerdict::Allow);
-        let v3 = enforcer.check(tid, "llm_call", 1.0).await.unwrap();
+        let v3 = enforcer.check("llm_call", 1.0).await.unwrap();
         assert!(
             matches!(v3, HotlVerdict::Deny(_)),
             "3rd call must Deny: {v3:?}"
@@ -1372,7 +1325,6 @@ mod tests {
     impl xiaoguai_api::hotl::enforcer::HotlEnforcer for StubEnforcer {
         async fn check(
             &self,
-            _tenant_id: Uuid,
             _scope: &str,
             _amount: f64,
         ) -> xiaoguai_api::hotl::enforcer::HotlVerdictResult {
@@ -1409,7 +1361,7 @@ mod tests {
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
         let v =
-            xiaoguai_agent::HotlGate::check(&gate, Uuid::new_v4(), "tool_call.search", 1.0).await;
+            xiaoguai_agent::HotlGate::check(&gate, "tool_call.search", 1.0).await;
         assert!(matches!(v, xiaoguai_agent::HotlGateVerdict::Allow));
         assert!(reg.is_empty(), "Allow path must not register a ticket");
     }
@@ -1421,7 +1373,7 @@ mod tests {
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
         let v =
-            xiaoguai_agent::HotlGate::check(&gate, Uuid::new_v4(), "tool_call.search", 1.0).await;
+            xiaoguai_agent::HotlGate::check(&gate, "tool_call.search", 1.0).await;
         match v {
             xiaoguai_agent::HotlGateVerdict::Deny(reason) => {
                 assert_eq!(reason, "budget exceeded");
@@ -1438,7 +1390,7 @@ mod tests {
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
         let v =
-            xiaoguai_agent::HotlGate::check(&gate, Uuid::new_v4(), "tool_call.execute_python", 1.0)
+            xiaoguai_agent::HotlGate::check(&gate, "tool_call.execute_python", 1.0)
                 .await;
         let (escalation_id, scope, ticket) = match v {
             xiaoguai_agent::HotlGateVerdict::Suspend {
@@ -1491,7 +1443,7 @@ mod tests {
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
         let v =
-            xiaoguai_agent::HotlGate::check(&gate, Uuid::new_v4(), "tool_call.search", 1.0).await;
+            xiaoguai_agent::HotlGate::check(&gate, "tool_call.search", 1.0).await;
         match v {
             xiaoguai_agent::HotlGateVerdict::Deny(reason) => {
                 assert!(
@@ -1527,7 +1479,7 @@ mod tests {
         let gate = SuspendingHotlGate::new(enforcer, reg.clone(), default_expiry());
 
         let v =
-            xiaoguai_agent::HotlGate::check(&gate, Uuid::new_v4(), "tool_call.search", 1.0).await;
+            xiaoguai_agent::HotlGate::check(&gate, "tool_call.search", 1.0).await;
         let (new_escalation_id, _scope, _ticket) = match v {
             xiaoguai_agent::HotlGateVerdict::Suspend {
                 escalation_id,

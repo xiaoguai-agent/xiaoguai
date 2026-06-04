@@ -44,14 +44,11 @@ async fn create_then_find_round_trip() {
     let store = PgHotlDecisionStore::new(pool.clone());
 
     let request_id = Uuid::new_v4();
-    // tenant_id is vestigial under DEC-033 (synthesized to nil on read).
-    let tenant_id = Uuid::new_v4();
     let policy_id = Uuid::new_v4();
 
     let recorded = store
         .record(
             request_id,
-            tenant_id,
             HotlDecisionVerdict::Allow,
             "alice@example.com".into(),
             Some(policy_id),
@@ -60,8 +57,6 @@ async fn create_then_find_round_trip() {
         .expect("record should succeed");
 
     assert_eq!(recorded.request_id, request_id);
-    // DEC-033: single implicit owner → tenant_id synthesizes to nil.
-    assert_eq!(recorded.tenant_id, Uuid::nil());
     assert_eq!(recorded.verdict, HotlDecisionVerdict::Allow);
     assert_eq!(recorded.decided_by, "alice@example.com");
     assert_eq!(recorded.raised_policy_id, Some(policy_id));
@@ -89,12 +84,10 @@ async fn create_duplicate_request_id_returns_conflict() {
     let store = PgHotlDecisionStore::new(pool.clone());
 
     let request_id = Uuid::new_v4();
-    let tenant_id = Uuid::new_v4();
 
     store
         .record(
             request_id,
-            tenant_id,
             HotlDecisionVerdict::Allow,
             "alice".into(),
             None,
@@ -103,13 +96,7 @@ async fn create_duplicate_request_id_returns_conflict() {
         .expect("first record");
 
     let err = store
-        .record(
-            request_id,
-            tenant_id,
-            HotlDecisionVerdict::Deny,
-            "bob".into(),
-            None,
-        )
+        .record(request_id, HotlDecisionVerdict::Deny, "bob".into(), None)
         .await
         .expect_err("duplicate must error");
 
@@ -158,7 +145,7 @@ async fn audit_sink_writes_then_visible_to_downstream_reader() {
     assert_eq!(rows.len(), 1, "expected exactly one row in the fresh DB");
     let stored = &rows[0];
     // DEC-033: tenant_id column dropped; reader synthesizes the owner id.
-    assert_eq!(stored.entry.tenant_id, xiaoguai_storage::OWNER_TENANT_ID);
+    assert_eq!(stored.entry.tenant_id, xiaoguai_audit::OWNER_TENANT_ID);
     assert_eq!(stored.entry.action, "hotl.decision");
     assert_eq!(stored.entry.actor, "alice@example.com");
     assert_eq!(

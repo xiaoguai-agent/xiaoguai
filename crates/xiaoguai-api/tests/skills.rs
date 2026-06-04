@@ -260,47 +260,34 @@ async fn install_unknown_slug_returns_not_found() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
-// ── list scopes by tenant ────────────────────────────────────────────────────
+// ── list installed packs (single-owner, DEC-033) ─────────────────────────────
 
 #[tokio::test]
-async fn list_installed_scopes_by_tenant() {
+async fn list_installed_returns_all_installed_packs() {
     let repo = InMemorySkillPackRepository::new();
     let app = router(build_state(Some(
         repo.clone() as Arc<dyn SkillPackRepository>
     )));
 
-    for (tenant, slug) in &[("t1", "rag-legal"), ("t1", "rag-finance"), ("t2", "rag-hr")] {
+    for slug in &["rag-legal", "rag-finance", "rag-hr"] {
         app.clone()
             .oneshot(post_json(
                 "/v1/skills/install",
-                serde_json::json!({"tenant_id": tenant, "pack_slug": slug}),
+                serde_json::json!({ "pack_slug": slug }),
             ))
             .await
             .unwrap();
     }
 
-    let t1_resp = app
-        .clone()
+    let resp = app
         .oneshot(
             Request::builder()
-                .uri("/v1/skills/installed?tenant=t1")
+                .uri("/v1/skills/installed")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    let t1 = body_json(t1_resp.into_body()).await;
-    assert_eq!(t1.as_array().unwrap().len(), 2);
-
-    let t2_resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/v1/skills/installed?tenant=t2")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let t2 = body_json(t2_resp.into_body()).await;
-    assert_eq!(t2.as_array().unwrap().len(), 1);
+    let installed = body_json(resp.into_body()).await;
+    assert_eq!(installed.as_array().unwrap().len(), 3);
 }

@@ -30,11 +30,6 @@ use crate::types::{
     UpdateMemoryRequest,
 };
 
-/// Synthetic owner id used in single-user mode (DEC-033). `tenant_id` is dropped
-/// from the schema; the domain `Memory` type still carries a required `Uuid`,
-/// so reads synthesize a stable nil id.
-const OWNER_TENANT_ID: &str = "ten_local_owner";
-
 pub struct PgMemoryStore {
     pool: SqlitePool,
     embedder: Arc<dyn EmbeddingProvider>,
@@ -42,7 +37,6 @@ pub struct PgMemoryStore {
 
 impl PgMemoryStore {
     pub fn new(pool: SqlitePool, embedder: Arc<dyn EmbeddingProvider>) -> Self {
-        let _ = OWNER_TENANT_ID; // single-user owner marker; tenant_id is synthesized as nil
         Self { pool, embedder }
     }
 }
@@ -117,8 +111,6 @@ fn row_to_memory(row: &SqliteRow) -> Result<Memory, sqlx::Error> {
 
     Ok(Memory {
         id,
-        // tenant_id dropped from the schema; synthesize nil in single-user mode.
-        tenant_id: Uuid::nil(),
         kind,
         content: row.try_get("content")?,
         content_embedding,
@@ -134,13 +126,12 @@ fn row_to_memory(row: &SqliteRow) -> Result<Memory, sqlx::Error> {
 impl MemoryStore for PgMemoryStore {
     async fn list_memories(
         &self,
-        _tenant_id: Uuid,
         kind_filter: Option<MemoryKind>,
         tag_filter: &[String],
         limit: usize,
         offset: usize,
     ) -> MemoryResult<Vec<Memory>> {
-        // Single-user: tenant_id is gone. Apply kind + tag filters in SQL, then
+        // Apply kind + tag filters in SQL, then
         // enforce tag-superset semantics in Rust (one EXISTS per tag is awkward
         // with a variable tag count; filtering the small result set is simpler).
         let rows = sqlx::query(
@@ -177,7 +168,7 @@ impl MemoryStore for PgMemoryStore {
         Ok(filtered)
     }
 
-    async fn get_memory(&self, id: Uuid, _tenant_id: Uuid) -> MemoryResult<Memory> {
+    async fn get_memory(&self, id: Uuid) -> MemoryResult<Memory> {
         let row = sqlx::query(
             r"
             SELECT id, kind, content, content_embedding, tags, ttl_at,
@@ -219,7 +210,6 @@ impl MemoryStore for PgMemoryStore {
 
         Ok(Memory {
             id,
-            tenant_id: req.tenant_id,
             kind: req.kind,
             content: req.content,
             content_embedding: embedding,
@@ -234,7 +224,6 @@ impl MemoryStore for PgMemoryStore {
     async fn update_memory(
         &self,
         id: Uuid,
-        _tenant_id: Uuid,
         req: UpdateMemoryRequest,
     ) -> MemoryResult<Memory> {
         // Re-embed if content changes.
@@ -276,7 +265,7 @@ impl MemoryStore for PgMemoryStore {
         row_to_memory(&row).map_err(|e| MemoryError::Database(e.to_string()))
     }
 
-    async fn delete_memory(&self, id: Uuid, _tenant_id: Uuid) -> MemoryResult<()> {
+    async fn delete_memory(&self, id: Uuid) -> MemoryResult<()> {
         let result = sqlx::query("DELETE FROM memories WHERE id = ?1")
             .bind(id.to_string())
             .execute(&self.pool)
@@ -379,12 +368,11 @@ impl MemoryStore for PgMemoryStore {
     async fn find_similar(
         &self,
         memory_id: Uuid,
-        _tenant_id: Uuid,
         top_k: usize,
     ) -> MemoryResult<Vec<RecalledMemory>> {
         // Fetch the anchor's embedding first; missing anchor => NotFound.
         let anchor = self
-            .get_memory(memory_id, Uuid::nil())
+            .get_memory(memory_id)
             .await
             .map_err(|e| match e {
                 MemoryError::NotFound(_) => MemoryError::NotFound(memory_id),

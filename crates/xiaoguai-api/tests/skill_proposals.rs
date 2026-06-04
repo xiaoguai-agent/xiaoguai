@@ -52,7 +52,7 @@ fn build_fixture() -> Fixture {
     let repo = InMemorySkillProposalRepository::new();
     let repo_arc: Arc<dyn SkillProposalRepository> = repo.clone();
     let settings = InMemoryTenantSettings::new();
-    settings.allow(tenant_uuid());
+    settings.allow();
     let settings_arc: Arc<dyn TenantSettingsReader> = settings;
     let gate_arc: Arc<dyn SkillAuthorGate> = Arc::new(AllowAllSkillGate);
     let audit = InMemoryAuditSink::new();
@@ -121,7 +121,6 @@ async fn seed_pending(fx: &Fixture, name: &str) -> ProposalRow {
     m.name = name.into();
     let row = ProposalRow {
         id: format!("prop-{name}"),
-        tenant_id: tenant_uuid().to_string(),
         proposed_by: "agent-1".into(),
         manifest: m,
         status: ProposalStatus::Pending,

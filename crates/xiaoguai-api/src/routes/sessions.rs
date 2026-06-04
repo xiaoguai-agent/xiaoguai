@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use xiaoguai_agent::StopReason;
 use xiaoguai_llm::Message as LlmMessage;
 use xiaoguai_runtime::{run_streamed, RuntimeContext, RuntimeOutcome};
-use xiaoguai_types::{Session, SessionId, SessionStatus, TenantId, UserId};
+use xiaoguai_types::{Session, SessionId, SessionStatus, UserId};
 
 use crate::auth::Claims;
 use crate::convert::{domain_to_llm, llm_to_domain};
@@ -24,21 +24,12 @@ use crate::state::AppState;
 
 const DEFAULT_LIST_LIMIT: i64 = 100;
 
-/// Extract the request tenant from optional `Claims`. v0.6.1 threads this
-/// into every repo call so RLS policies bind to the caller's tenant; when
-/// `auth: None` (dev mode) `claims` is `None` and repos run without a GUC.
-fn tenant_from_claims(claims: Option<&Extension<Claims>>) -> Option<&str> {
-    claims.map(|Extension(c)| c.tenant_id.as_str())
-}
-
 #[derive(Debug, Deserialize, Default)]
 pub struct CreateSessionRequest {
-    /// In auth-required mode, claims `sub`/`tenant_id` win. In unauthed
-    /// mode (v0.5.5 default for dev/test) the body must supply them.
+    /// In auth-required mode, claims `sub` wins. In unauthed mode (v0.5.5
+    /// default for dev/test) the body must supply it.
     #[serde(default)]
     pub user_id: String,
-    #[serde(default)]
-    pub tenant_id: String,
     pub model: String,
     pub title: Option<String>,
 }
@@ -46,7 +37,6 @@ pub struct CreateSessionRequest {
 #[derive(Debug, Serialize)]
 pub struct SessionResponse {
     pub id: String,
-    pub tenant_id: String,
     pub user_id: String,
     pub title: Option<String>,
     pub model: String,
@@ -65,7 +55,6 @@ impl From<Session> for SessionResponse {
     fn from(s: Session) -> Self {
         Self {
             id: s.id.to_string(),
-            tenant_id: s.tenant_id.to_string(),
             user_id: s.user_id.to_string(),
             title: s.title,
             model: s.model,
@@ -84,16 +73,9 @@ pub async fn create_session(
     Json(req): Json<CreateSessionRequest>,
 ) -> ApiResult<(StatusCode, Json<SessionResponse>)> {
     // Claims override body identity when present (owner-auth mode).
-    let (user_id, tenant_id) = match claims.as_ref() {
-        Some(Extension(c)) => (c.sub.clone(), c.tenant_id.clone()),
-        None => (req.user_id.clone(), req.tenant_id.clone()),
-    };
-    // DEC-033 single-owner: `tenant_id` is vestigial — default it to the
-    // implicit owner so callers need only supply `user_id` + `model`.
-    let tenant_id = if tenant_id.is_empty() {
-        xiaoguai_storage::OWNER_TENANT_ID.to_string()
-    } else {
-        tenant_id
+    let user_id = match claims.as_ref() {
+        Some(Extension(c)) => c.sub.clone(),
+        None => req.user_id.clone(),
     };
     if user_id.is_empty() || req.model.is_empty() {
         return Err(ApiError::BadRequest(
@@ -103,7 +85,6 @@ pub async fn create_session(
     let now = Utc::now();
     let session = Session {
         id: SessionId::new(),
-        tenant_id: TenantId::from(tenant_id.clone()),
         user_id: UserId::from(user_id),
         title: req.title,
         created_at: now,
@@ -113,7 +94,7 @@ pub async fn create_session(
         parent_session_id: None,
         forked_from_message_id: None,
     };
-    state.sessions.create(Some(&tenant_id), &session).await?;
+    state.sessions.create(&session).await?;
     Ok((StatusCode::CREATED, Json(session.into())))
 }
 
@@ -141,12 +122,11 @@ pub async fn list_sessions(
         .user_id
         .or_else(|| claims.as_ref().map(|Extension(c)| c.sub.clone()))
         .ok_or_else(|| ApiError::BadRequest("user_id is required".into()))?;
-    let tenant = tenant_from_claims(claims.as_ref());
     let limit = q.limit.unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, 1000);
     let offset = q.offset.unwrap_or(0).max(0);
     let rows = state
         .sessions
-        .list_by_user(tenant, &user_id, limit, offset)
+        .list_by_user(&user_id, limit, offset)
         .await?;
     Ok(Json(rows.into_iter().map(Into::into).collect()))
 }
@@ -155,13 +135,11 @@ pub async fn list_sessions(
 /// Returns an error if the session is not found or the session store fails.
 pub async fn get_session(
     State(state): State<AppState>,
-    claims: Option<Extension<Claims>>,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<SessionResponse>> {
-    let tenant = tenant_from_claims(claims.as_ref());
     let session = state
         .sessions
-        .find_by_id(tenant, &session_id)
+        .find_by_id(&session_id)
         .await?
         .ok_or(ApiError::NotFound)?;
     Ok(Json(session.into()))
@@ -177,22 +155,20 @@ pub struct ListMessagesQuery {
 /// Returns an error if the session is not found or the message store fails.
 pub async fn list_messages(
     State(state): State<AppState>,
-    claims: Option<Extension<Claims>>,
     Path(session_id): Path<String>,
     Query(q): Query<ListMessagesQuery>,
 ) -> ApiResult<Json<Vec<xiaoguai_types::Message>>> {
-    let tenant = tenant_from_claims(claims.as_ref());
     // Existence check so we return 404 instead of an empty list.
     let _session = state
         .sessions
-        .find_by_id(tenant, &session_id)
+        .find_by_id(&session_id)
         .await?
         .ok_or(ApiError::NotFound)?;
     let limit = q.limit.unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, 1000);
     let offset = q.offset.unwrap_or(0).max(0);
     let msgs = state
         .messages
-        .list_by_session(tenant, &session_id, limit, offset)
+        .list_by_session(&session_id, limit, offset)
         .await?;
     Ok(Json(msgs))
 }
@@ -219,51 +195,40 @@ pub struct SendMessageRequest {
 /// Returns an error if the session is not found, the message is invalid, or the agent fails to start.
 pub async fn send_message(
     State(state): State<AppState>,
-    claims: Option<Extension<Claims>>,
     Path(session_id_str): Path<String>,
     Json(req): Json<SendMessageRequest>,
 ) -> ApiResult<Sse<impl Stream<Item = Result<axum::response::sse::Event, axum::Error>>>> {
     if req.content.trim().is_empty() {
         return Err(ApiError::BadRequest("content must be non-empty".into()));
     }
-    let claims_tenant = tenant_from_claims(claims.as_ref());
     let session = state
         .sessions
-        .find_by_id(claims_tenant, &session_id_str)
+        .find_by_id(&session_id_str)
         .await?
         .ok_or(ApiError::NotFound)?;
     if !matches!(session.status, SessionStatus::Active) {
         return Err(ApiError::Conflict("session is not active".into()));
     }
     let session_id = SessionId::from(session_id_str.clone());
-    // Once the session is loaded, prefer its own tenant_id over claims —
-    // it was authoritative at session creation, and find_by_id already
-    // verified the caller has access (RLS or claims match) when both are
-    // set.
-    let session_tenant = session.tenant_id.as_str().to_string();
 
     // 1. Persist user message.
-    let user_domain =
-        persist_user_message(&state, &session_tenant, &session_id, &req.content).await?;
+    let user_domain = persist_user_message(&state, &session_id, &req.content).await?;
 
     // 2. Load history (oldest-first) and append the just-written user msg.
-    let history = load_llm_history(&state, &session_tenant, &session_id_str).await?;
+    let history = load_llm_history(&state, &session_id_str).await?;
     let initial_count = history.len();
     let mut messages = history;
     messages.push(domain_to_llm(&user_domain));
 
-    // 3. Build the runtime context and register a cancel token. v0.6.4
-    //    threads the session's tenant down into the LlmRouter (when wired)
-    //    so per-tenant model defaults + fallback chains apply for this
-    //    request. v0.12.0: every call site builds via RuntimeContext.
+    // 3. Build the runtime context and register a cancel token.
+    //    v0.12.0: every call site builds via RuntimeContext.
     let model = req.model.unwrap_or(session.model);
     let ctx = RuntimeContext::new(
         state.backend.clone(),
         state.toolbox.clone(),
         state.agent_defaults.clone(),
     )
-    .with_model(model)
-    .with_tenant(Some(session_tenant.clone()));
+    .with_model(model);
     let cancel = state.cancels.register(&session_id_str);
 
     // 4. HOTL budget check — gated on the "llm_call" scope.
@@ -271,25 +236,23 @@ pub async fn send_message(
     //    agent loop. Escalate is logged and the call proceeds (async review).
     //    When `hotl_enforcer` is None (dev / tests without budget), skip.
     if let Some(enforcer) = &state.hotl_enforcer {
-        if let Ok(tid) = session_tenant.parse::<uuid::Uuid>() {
-            match enforcer.check(tid, "llm_call", 1.0).await {
-                Ok(crate::hotl::enforcer::HotlVerdict::Allow) => {}
-                Ok(crate::hotl::enforcer::HotlVerdict::Escalate(reason)) => {
-                    tracing::warn!(tenant_id = %tid, %reason, "HOTL escalation triggered");
-                }
-                Ok(crate::hotl::enforcer::HotlVerdict::Deny(reason)) => {
-                    tracing::warn!(tenant_id = %tid, %reason, "HOTL denied LLM call");
-                    return Err(ApiError::ServiceUnavailable(format!(
-                        "LLM call denied by HOTL policy: {reason}"
-                    )));
-                }
-                Err(e) => {
-                    // Enforcer itself errored — fail-closed.
-                    tracing::error!(?e, "HOTL enforcer error — denying LLM call (fail-closed)");
-                    return Err(ApiError::ServiceUnavailable(
-                        "LLM call denied: HOTL enforcer unavailable".into(),
-                    ));
-                }
+        match enforcer.check("llm_call", 1.0).await {
+            Ok(crate::hotl::enforcer::HotlVerdict::Allow) => {}
+            Ok(crate::hotl::enforcer::HotlVerdict::Escalate(reason)) => {
+                tracing::warn!(%reason, "HOTL escalation triggered");
+            }
+            Ok(crate::hotl::enforcer::HotlVerdict::Deny(reason)) => {
+                tracing::warn!(%reason, "HOTL denied LLM call");
+                return Err(ApiError::ServiceUnavailable(format!(
+                    "LLM call denied by HOTL policy: {reason}"
+                )));
+            }
+            Err(e) => {
+                // Enforcer itself errored — fail-closed.
+                tracing::error!(?e, "HOTL enforcer error — denying LLM call (fail-closed)");
+                return Err(ApiError::ServiceUnavailable(
+                    "LLM call denied: HOTL enforcer unavailable".into(),
+                ));
             }
         }
     }
@@ -303,7 +266,6 @@ pub async fn send_message(
     //    handle resolves.
     spawn_finalize_task(
         state.clone(),
-        session_tenant,
         session_id_str.clone(),
         session_id,
         join,
@@ -316,7 +278,6 @@ pub async fn send_message(
 
 fn spawn_finalize_task(
     state: AppState,
-    tenant_id: String,
     session_id_str: String,
     session_id: SessionId,
     join: tokio::task::JoinHandle<Result<RuntimeOutcome, xiaoguai_runtime::RuntimeError>>,
@@ -325,14 +286,8 @@ fn spawn_finalize_task(
     tokio::spawn(async move {
         match join.await {
             Ok(Ok(outcome)) => {
-                if let Err(err) = persist_loop_output(
-                    &state,
-                    &tenant_id,
-                    &session_id,
-                    &outcome.messages,
-                    initial_count,
-                )
-                .await
+                if let Err(err) =
+                    persist_loop_output(&state, &session_id, &outcome.messages, initial_count).await
                 {
                     tracing::error!(?err, "failed to persist agent output");
                 }
@@ -347,11 +302,7 @@ fn spawn_finalize_task(
             Err(err) => tracing::error!(?err, "agent task panicked"),
         }
         state.cancels.drop_entry(&session_id_str);
-        if let Err(err) = state
-            .sessions
-            .touch(Some(&tenant_id), &session_id_str)
-            .await
-        {
+        if let Err(err) = state.sessions.touch(&session_id_str).await {
             tracing::warn!(?err, "touch session failed");
         }
     });
@@ -376,34 +327,28 @@ pub async fn cancel_session(
 
 async fn persist_user_message(
     state: &AppState,
-    tenant_id: &str,
     session_id: &SessionId,
     text: &str,
 ) -> ApiResult<xiaoguai_types::Message> {
     let llm = LlmMessage::user(text);
     let domain = llm_to_domain(session_id, &llm);
-    state.messages.append(Some(tenant_id), &domain).await?;
+    state.messages.append(&domain).await?;
     Ok(domain)
 }
 
-async fn load_llm_history(
-    state: &AppState,
-    tenant_id: &str,
-    session_id: &str,
-) -> ApiResult<Vec<LlmMessage>> {
+async fn load_llm_history(state: &AppState, session_id: &str) -> ApiResult<Vec<LlmMessage>> {
     // We deliberately load *all* messages here; the agent loop applies its
     // own sliding window before each model call. Pagination at this layer
     // is a v0.5.5.1 concern.
     let domain = state
         .messages
-        .list_by_session(Some(tenant_id), session_id, i64::from(i32::MAX), 0)
+        .list_by_session(session_id, i64::from(i32::MAX), 0)
         .await?;
     Ok(domain.iter().map(domain_to_llm).collect())
 }
 
 async fn persist_loop_output(
     state: &AppState,
-    tenant_id: &str,
     session_id: &SessionId,
     messages: &[LlmMessage],
     initial_count: usize,
@@ -415,7 +360,7 @@ async fn persist_loop_output(
         .collect();
     let messages_repo = Arc::clone(&state.messages);
     for m in new_msgs {
-        messages_repo.append(Some(tenant_id), &m).await?;
+        messages_repo.append(&m).await?;
     }
     Ok(())
 }
@@ -434,15 +379,10 @@ pub struct ForkSessionRequest {
 /// caller can then `POST .../messages` against the new id to take
 /// the conversation in a different direction.
 ///
-/// Tenant resolution mirrors `send_message`: claims first (auth-on
-/// mode), parent session row second (auth-off dev mode). Both paths
-/// converge on a single `tenant` string passed to the forker.
-///
 /// # Errors
 /// Returns an error if the parent session is not found, the message ID is invalid, or the fork fails.
 pub async fn fork_session(
     State(state): State<AppState>,
-    claims: Option<Extension<Claims>>,
     Path(session_id_str): Path<String>,
     Json(req): Json<ForkSessionRequest>,
 ) -> ApiResult<(StatusCode, Json<SessionResponse>)> {
@@ -458,20 +398,16 @@ pub async fn fork_session(
         ));
     }
 
-    // Resolve tenant: prefer claims (authed mode), fall back to the
-    // parent session row (dev mode). find_by_id is also our auth check
-    // — if claims-tenant doesn't match the row's tenant, RLS returns
-    // None and we 404. Same behaviour as get_session.
-    let claims_tenant = tenant_from_claims(claims.as_ref());
-    let parent = state
+    // Verify the parent session exists before forking — a missing parent
+    // is a 404, not a freshly-minted child.
+    state
         .sessions
-        .find_by_id(claims_tenant, &session_id_str)
+        .find_by_id(&session_id_str)
         .await?
         .ok_or(ApiError::NotFound)?;
-    let tenant = parent.tenant_id.as_str().to_string();
 
     let new_session = forker
-        .fork(&tenant, &session_id_str, &req.from_message_id, req.title)
+        .fork(&session_id_str, &req.from_message_id, req.title)
         .await
         .map_err(fork_error_to_api)?;
     Ok((StatusCode::CREATED, Json(new_session.into())))

@@ -46,10 +46,10 @@ pub enum TaskError {
 pub trait TaskBoardRepository: Send + Sync {
     // ---- Boards --------------------------------------------------------
 
-    /// Return all boards for a tenant, ordered by `name`.
-    async fn list_boards(&self, tenant_id: Uuid) -> Result<Vec<Board>, TaskError>;
+    /// Return all boards, ordered by `name`.
+    async fn list_boards(&self) -> Result<Vec<Board>, TaskError>;
 
-    /// Create a new board.  Exactly one board per tenant may be the default
+    /// Create a new board.  Exactly one board may be the default
     /// (the repository enforces this via a unique partial index).
     async fn create_board(&self, req: CreateBoardRequest) -> Result<Board, TaskError>;
 
@@ -121,7 +121,6 @@ pub trait OutcomeAttribution: Send + Sync {
     async fn attribute_transition(
         &self,
         recorder: &dyn OutcomeRecorder,
-        tenant_id: &str,
         task_id: Uuid,
         board_id: Uuid,
         from_col: Option<Column>,
@@ -147,7 +146,6 @@ impl OutcomeAttribution for DefaultOutcomeAttribution {
     async fn attribute_transition(
         &self,
         recorder: &dyn OutcomeRecorder,
-        tenant_id: &str,
         task_id: Uuid,
         board_id: Uuid,
         from_col: Option<Column>,
@@ -163,7 +161,6 @@ impl OutcomeAttribution for DefaultOutcomeAttribution {
         });
         recorder
             .record(
-                tenant_id,
                 None,
                 actor,
                 "task_transition",
@@ -190,7 +187,6 @@ mod tests {
 
         attr.attribute_transition(
             &recorder,
-            "tenant-1",
             task_id,
             board_id,
             Some(Column::Ready),
@@ -217,7 +213,6 @@ mod tests {
 
         attr.attribute_transition(
             &recorder,
-            "t",
             Uuid::new_v4(),
             Uuid::new_v4(),
             None,

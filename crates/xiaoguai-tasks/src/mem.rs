@@ -54,14 +54,9 @@ impl InMemoryTaskBoardRepository {
 impl TaskBoardRepository for InMemoryTaskBoardRepository {
     // ---- Boards --------------------------------------------------------
 
-    async fn list_boards(&self, tenant_id: Uuid) -> Result<Vec<Board>, TaskError> {
+    async fn list_boards(&self) -> Result<Vec<Board>, TaskError> {
         let store = self.inner.lock().unwrap();
-        let mut boards: Vec<Board> = store
-            .boards
-            .iter()
-            .filter(|b| b.tenant_id == tenant_id)
-            .cloned()
-            .collect();
+        let mut boards: Vec<Board> = store.boards.clone();
         boards.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(boards)
     }
@@ -69,7 +64,6 @@ impl TaskBoardRepository for InMemoryTaskBoardRepository {
     async fn create_board(&self, req: CreateBoardRequest) -> Result<Board, TaskError> {
         let board = Board {
             id: Uuid::new_v4(),
-            tenant_id: req.tenant_id,
             name: req.name,
             default_board: req.default_board,
             dispatch_policy: req.dispatch_policy.unwrap_or_else(|| "fifo".into()),
@@ -275,9 +269,8 @@ mod tests {
     use super::*;
     use crate::types::CreateBoardRequest;
 
-    fn make_board_req(tenant_id: Uuid) -> CreateBoardRequest {
+    fn make_board_req() -> CreateBoardRequest {
         CreateBoardRequest {
-            tenant_id,
             name: "test-board".into(),
             default_board: false,
             dispatch_policy: None,
@@ -300,9 +293,8 @@ mod tests {
     #[tokio::test]
     async fn create_and_list_boards() {
         let repo = InMemoryTaskBoardRepository::new();
-        let tenant = Uuid::new_v4();
-        repo.create_board(make_board_req(tenant)).await.unwrap();
-        let boards = repo.list_boards(tenant).await.unwrap();
+        repo.create_board(make_board_req()).await.unwrap();
+        let boards = repo.list_boards().await.unwrap();
         assert_eq!(boards.len(), 1);
         assert_eq!(boards[0].name, "test-board");
         assert_eq!(boards[0].dispatch_policy, "fifo");
@@ -310,21 +302,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_boards_scoped_to_tenant() {
-        let repo = InMemoryTaskBoardRepository::new();
-        let t1 = Uuid::new_v4();
-        let t2 = Uuid::new_v4();
-        repo.create_board(make_board_req(t1)).await.unwrap();
-        repo.create_board(make_board_req(t2)).await.unwrap();
-        assert_eq!(repo.list_boards(t1).await.unwrap().len(), 1);
-        assert_eq!(repo.list_boards(t2).await.unwrap().len(), 1);
-    }
-
-    #[tokio::test]
     async fn create_task_lands_in_triage_by_default() {
         let repo = InMemoryTaskBoardRepository::new();
         let board = repo
-            .create_board(make_board_req(Uuid::new_v4()))
+            .create_board(make_board_req())
             .await
             .unwrap();
         let task = repo.create_task(make_task_req(board.id)).await.unwrap();
@@ -337,7 +318,7 @@ mod tests {
     async fn create_task_with_explicit_column_and_priority() {
         let repo = InMemoryTaskBoardRepository::new();
         let board = repo
-            .create_board(make_board_req(Uuid::new_v4()))
+            .create_board(make_board_req())
             .await
             .unwrap();
         let req = CreateTaskRequest {
@@ -358,7 +339,7 @@ mod tests {
     async fn create_task_rejects_out_of_range_priority() {
         let repo = InMemoryTaskBoardRepository::new();
         let board = repo
-            .create_board(make_board_req(Uuid::new_v4()))
+            .create_board(make_board_req())
             .await
             .unwrap();
         let req = CreateTaskRequest {
@@ -380,7 +361,7 @@ mod tests {
     async fn list_tasks_filtered_by_column() {
         let repo = InMemoryTaskBoardRepository::new();
         let board = repo
-            .create_board(make_board_req(Uuid::new_v4()))
+            .create_board(make_board_req())
             .await
             .unwrap();
 
@@ -417,7 +398,7 @@ mod tests {
     async fn update_task_column_records_history() {
         let repo = InMemoryTaskBoardRepository::new();
         let board = repo
-            .create_board(make_board_req(Uuid::new_v4()))
+            .create_board(make_board_req())
             .await
             .unwrap();
         let task = repo.create_task(make_task_req(board.id)).await.unwrap();
@@ -450,7 +431,7 @@ mod tests {
     async fn dispatch_next_ready_picks_highest_priority() {
         let repo = InMemoryTaskBoardRepository::new();
         let board = repo
-            .create_board(make_board_req(Uuid::new_v4()))
+            .create_board(make_board_req())
             .await
             .unwrap();
 
@@ -482,7 +463,7 @@ mod tests {
     async fn dispatch_next_ready_returns_none_when_queue_empty() {
         let repo = InMemoryTaskBoardRepository::new();
         let board = repo
-            .create_board(make_board_req(Uuid::new_v4()))
+            .create_board(make_board_req())
             .await
             .unwrap();
 
@@ -494,7 +475,7 @@ mod tests {
     async fn block_task_sets_blocked_reason() {
         let repo = InMemoryTaskBoardRepository::new();
         let board = repo
-            .create_board(make_board_req(Uuid::new_v4()))
+            .create_board(make_board_req())
             .await
             .unwrap();
         let task = repo.create_task(make_task_req(board.id)).await.unwrap();
@@ -515,7 +496,7 @@ mod tests {
     async fn blocked_reason_cleared_on_column_change() {
         let repo = InMemoryTaskBoardRepository::new();
         let board = repo
-            .create_board(make_board_req(Uuid::new_v4()))
+            .create_board(make_board_req())
             .await
             .unwrap();
         let task = repo.create_task(make_task_req(board.id)).await.unwrap();
@@ -544,7 +525,7 @@ mod tests {
     async fn full_lifecycle_history_ordered_by_occurred_at() {
         let repo = InMemoryTaskBoardRepository::new();
         let board = repo
-            .create_board(make_board_req(Uuid::new_v4()))
+            .create_board(make_board_req())
             .await
             .unwrap();
         let task = repo.create_task(make_task_req(board.id)).await.unwrap();

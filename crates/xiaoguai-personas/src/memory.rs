@@ -35,12 +35,12 @@ impl InMemoryPersonaRepository {
 
 #[async_trait]
 impl PersonaRepository for InMemoryPersonaRepository {
-    async fn list(&self, tenant_id: Uuid) -> PersonaResult<Vec<Persona>> {
+    async fn list(&self) -> PersonaResult<Vec<Persona>> {
         let g = self.state.lock();
         let mut out: Vec<Persona> = g
             .personas
             .values()
-            .filter(|p| p.tenant_id == tenant_id && !p.archived)
+            .filter(|p| !p.archived)
             .cloned()
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -54,17 +54,16 @@ impl PersonaRepository for InMemoryPersonaRepository {
 
     async fn create(&self, req: &CreatePersonaRequest) -> PersonaResult<Persona> {
         let mut g = self.state.lock();
-        // Enforce (tenant_id, name) uniqueness.
+        // Enforce name uniqueness.
         let duplicate = g
             .personas
             .values()
-            .any(|p| p.tenant_id == req.tenant_id && p.name == req.name && !p.archived);
+            .any(|p| p.name == req.name && !p.archived);
         if duplicate {
             return Err(PersonaError::DuplicateName(req.name.clone()));
         }
         let persona = Persona {
             id: Uuid::new_v4(),
-            tenant_id: req.tenant_id,
             name: req.name.clone(),
             system_prompt: req.system_prompt.clone(),
             default_model: req.default_model.clone(),

@@ -180,7 +180,6 @@ impl WorkerAgent {
                 history_window: 64,
                 temperature: Some(0.2),
                 model: self.model.clone(),
-                tenant_id: None,
                 hotl_gate: None,
                 compaction: None,
             };

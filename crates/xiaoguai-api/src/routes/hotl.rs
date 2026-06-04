@@ -4,7 +4,7 @@
 //!
 //! | Method | Path                         | Description                  |
 //! |--------|------------------------------|------------------------------|
-//! | GET    | `/v1/hotl/policies`          | List policies for a tenant   |
+//! | GET    | `/v1/hotl/policies`          | List policies                |
 //! | POST   | `/v1/hotl/policies`          | Create a new policy          |
 //! | DELETE | `/v1/hotl/policies/:id`      | Remove a policy by id        |
 
@@ -20,14 +20,13 @@ use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct ListPoliciesQuery {
-    pub tenant_id: Uuid,
     pub scope: Option<String>,
 }
 
-/// `GET /v1/hotl/policies?tenant_id=<uuid>[&scope=<str>]`
+/// `GET /v1/hotl/policies[?scope=<str>]`
 ///
-/// Returns all HOTL policies for the given tenant, optionally filtered by
-/// `scope`. Returns 503 when no store is wired into `AppState`.
+/// Returns all HOTL policies, optionally filtered by `scope`. Returns 503
+/// when no store is wired into `AppState`.
 ///
 /// # Errors
 /// Returns an error if the policy store is not wired or the query fails.
@@ -40,7 +39,7 @@ pub async fn list_policies(
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("HOTL policy store not wired".into()))?;
     let rows = store
-        .list(q.tenant_id, q.scope.as_deref())
+        .list(q.scope.as_deref())
         .await
         .map_err(map_store_err)?;
     Ok(Json(rows))

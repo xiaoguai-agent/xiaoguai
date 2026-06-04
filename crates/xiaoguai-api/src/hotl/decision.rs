@@ -43,7 +43,6 @@ impl HotlDecisionVerdict {
 pub struct HotlDecisionRecord {
     pub id: Uuid,
     pub request_id: Uuid,
-    pub tenant_id: Uuid,
     pub verdict: HotlDecisionVerdict,
     pub decided_by: String,
     pub raised_policy_id: Option<Uuid>,
@@ -79,7 +78,6 @@ pub trait HotlDecisionStore: Send + Sync + std::fmt::Debug {
     async fn record(
         &self,
         request_id: Uuid,
-        tenant_id: Uuid,
         verdict: HotlDecisionVerdict,
         decided_by: String,
         raised_policy_id: Option<Uuid>,
@@ -113,7 +111,6 @@ impl HotlDecisionStore for InMemoryHotlDecisionStore {
     async fn record(
         &self,
         request_id: Uuid,
-        tenant_id: Uuid,
         verdict: HotlDecisionVerdict,
         decided_by: String,
         raised_policy_id: Option<Uuid>,
@@ -125,7 +122,6 @@ impl HotlDecisionStore for InMemoryHotlDecisionStore {
         let record = HotlDecisionRecord {
             id: Uuid::new_v4(),
             request_id,
-            tenant_id,
             verdict,
             decided_by,
             raised_policy_id,
@@ -144,19 +140,11 @@ mod tests {
     async fn record_round_trip() {
         let store = InMemoryHotlDecisionStore::new();
         let request_id = Uuid::new_v4();
-        let tenant_id = Uuid::new_v4();
         let rec = store
-            .record(
-                request_id,
-                tenant_id,
-                HotlDecisionVerdict::Allow,
-                "alice".into(),
-                None,
-            )
+            .record(request_id, HotlDecisionVerdict::Allow, "alice".into(), None)
             .await
             .unwrap();
         assert_eq!(rec.request_id, request_id);
-        assert_eq!(rec.tenant_id, tenant_id);
         assert_eq!(rec.verdict, HotlDecisionVerdict::Allow);
         assert_eq!(rec.decided_by, "alice");
         assert!(rec.raised_policy_id.is_none());
@@ -167,23 +155,11 @@ mod tests {
         let store = InMemoryHotlDecisionStore::new();
         let request_id = Uuid::new_v4();
         store
-            .record(
-                request_id,
-                Uuid::new_v4(),
-                HotlDecisionVerdict::Allow,
-                "a".into(),
-                None,
-            )
+            .record(request_id, HotlDecisionVerdict::Allow, "a".into(), None)
             .await
             .unwrap();
         let err = store
-            .record(
-                request_id,
-                Uuid::new_v4(),
-                HotlDecisionVerdict::Deny,
-                "b".into(),
-                None,
-            )
+            .record(request_id, HotlDecisionVerdict::Deny, "b".into(), None)
             .await
             .unwrap_err();
         assert!(matches!(err, HotlDecisionStoreError::Duplicate(id) if id == request_id));
@@ -195,7 +171,6 @@ mod tests {
         let policy_id = Uuid::new_v4();
         let rec = store
             .record(
-                Uuid::new_v4(),
                 Uuid::new_v4(),
                 HotlDecisionVerdict::Allow,
                 "alice".into(),

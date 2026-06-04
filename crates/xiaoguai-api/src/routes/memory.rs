@@ -56,7 +56,6 @@ fn internal(msg: impl std::fmt::Display) -> impl IntoResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct ListMemoriesQuery {
-    pub tenant_id: Uuid,
     pub kind: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
@@ -72,7 +71,6 @@ fn default_limit() -> usize {
 
 #[derive(Debug, Deserialize)]
 pub struct SimilarQuery {
-    pub tenant_id: Uuid,
     #[serde(default = "default_top_k")]
     pub top_k: usize,
 }
@@ -85,7 +83,6 @@ fn default_top_k() -> usize {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateMemoryBody {
-    pub tenant_id: Uuid,
     pub kind: String,
     pub content: String,
     #[serde(default)]
@@ -103,7 +100,6 @@ pub struct UpdateMemoryBody {
 
 #[derive(Debug, Deserialize)]
 pub struct RecallBody {
-    pub tenant_id: Uuid,
     pub query: String,
     #[serde(default = "default_top_k")]
     pub top_k: usize,
@@ -122,7 +118,7 @@ pub struct MemoryResponse<T: Serialize> {
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
-/// `GET /v1/memories?tenant_id=&kind=&tags=&limit=&offset=`
+/// `GET /v1/memories?kind=&tags=&limit=&offset=`
 pub async fn list_memories(
     State(state): State<AppState>,
     Query(q): Query<ListMemoriesQuery>,
@@ -147,7 +143,7 @@ pub async fn list_memories(
     };
 
     match store
-        .list_memories(q.tenant_id, kind_filter, &q.tags, q.limit, q.offset)
+        .list_memories(kind_filter, &q.tags, q.limit, q.offset)
         .await
     {
         Ok(memories) => Json(MemoryResponse { data: memories }).into_response(),
@@ -155,24 +151,16 @@ pub async fn list_memories(
     }
 }
 
-/// `GET /v1/memories/:id?tenant_id=`
+/// `GET /v1/memories/:id`
 pub async fn get_memory(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let Some(store) = state.memory_store.as_ref() else {
         return memory_unavailable().into_response();
     };
 
-    // DEC-033 single-owner: tenant_id is vestigial (the store ignores it);
-    // default to the nil UUID when the caller omits it.
-    let tenant_id = params
-        .get("tenant_id")
-        .and_then(|s| s.parse::<Uuid>().ok())
-        .unwrap_or_else(Uuid::nil);
-
-    match store.get_memory(id, tenant_id).await {
+    match store.get_memory(id).await {
         Ok(m) => Json(MemoryResponse { data: m }).into_response(),
         Err(xiaoguai_memory::MemoryError::NotFound(_)) => not_found(id).into_response(),
         Err(e) => internal(e).into_response(),
@@ -200,7 +188,6 @@ pub async fn create_memory(
     };
 
     let req = CreateMemoryRequest {
-        tenant_id: body.tenant_id,
         kind,
         content: body.content,
         tags: body.tags,
@@ -213,23 +200,15 @@ pub async fn create_memory(
     }
 }
 
-/// `PUT /v1/memories/:id?tenant_id=`
+/// `PUT /v1/memories/:id`
 pub async fn update_memory(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
     Json(body): Json<UpdateMemoryBody>,
 ) -> impl IntoResponse {
     let Some(store) = state.memory_store.as_ref() else {
         return memory_unavailable().into_response();
     };
-
-    // DEC-033 single-owner: tenant_id is vestigial (the store ignores it);
-    // default to the nil UUID when the caller omits it.
-    let tenant_id = params
-        .get("tenant_id")
-        .and_then(|s| s.parse::<Uuid>().ok())
-        .unwrap_or_else(Uuid::nil);
 
     let req = UpdateMemoryRequest {
         content: body.content,
@@ -237,31 +216,23 @@ pub async fn update_memory(
         ttl_at: body.ttl_at,
     };
 
-    match store.update_memory(id, tenant_id, req).await {
+    match store.update_memory(id, req).await {
         Ok(m) => Json(MemoryResponse { data: m }).into_response(),
         Err(xiaoguai_memory::MemoryError::NotFound(_)) => not_found(id).into_response(),
         Err(e) => internal(e).into_response(),
     }
 }
 
-/// `DELETE /v1/memories/:id?tenant_id=`
+/// `DELETE /v1/memories/:id`
 pub async fn delete_memory(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let Some(store) = state.memory_store.as_ref() else {
         return memory_unavailable().into_response();
     };
 
-    // DEC-033 single-owner: tenant_id is vestigial (the store ignores it);
-    // default to the nil UUID when the caller omits it.
-    let tenant_id = params
-        .get("tenant_id")
-        .and_then(|s| s.parse::<Uuid>().ok())
-        .unwrap_or_else(Uuid::nil);
-
-    match store.delete_memory(id, tenant_id).await {
+    match store.delete_memory(id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(xiaoguai_memory::MemoryError::NotFound(_)) => not_found(id).into_response(),
         Err(e) => internal(e).into_response(),
@@ -293,7 +264,6 @@ pub async fn recall_memories(
     };
 
     let req = RecallRequest {
-        tenant_id: body.tenant_id,
         query: body.query,
         top_k: body.top_k,
         kind_filter,
@@ -307,7 +277,7 @@ pub async fn recall_memories(
     }
 }
 
-/// `GET /v1/memories/similar/:id?tenant_id=&top_k=`
+/// `GET /v1/memories/similar/:id?top_k=`
 pub async fn find_similar(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -317,7 +287,7 @@ pub async fn find_similar(
         return memory_unavailable().into_response();
     };
 
-    match store.find_similar(id, q.tenant_id, q.top_k).await {
+    match store.find_similar(id, q.top_k).await {
         Ok(similar) => Json(MemoryResponse { data: similar }).into_response(),
         Err(xiaoguai_memory::MemoryError::NotFound(_)) => not_found(id).into_response(),
         Err(e) => internal(e).into_response(),

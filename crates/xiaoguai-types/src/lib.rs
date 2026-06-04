@@ -13,15 +13,15 @@ pub mod mcp_server;
 pub mod provider;
 pub mod redact;
 pub mod session;
-pub mod tenant;
 pub mod tool_call;
+pub mod user;
 
 pub use ids::{
-    McpServerInstanceId, MessageId, ProviderId, SessionId, TenantId, ToolCallId, UserId,
+    McpServerInstanceId, MessageId, ProviderId, SessionId, ToolCallId, UserId,
 };
 pub use mcp_server::{McpServer, McpTransport};
 pub use provider::{LlmProvider, ProviderKind};
 pub use redact::redact_str;
 pub use session::{ContentBlock, Message, Role as MessageRole, Session, SessionStatus};
-pub use tenant::{Role as TenantRole, Tenant, TenantStatus, User};
 pub use tool_call::{ToolCall, ToolCallStatus};
+pub use user::{Role as TenantRole, User};

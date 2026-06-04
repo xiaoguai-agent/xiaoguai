@@ -7,7 +7,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{McpServerInstanceId, TenantId};
+use crate::ids::McpServerInstanceId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum McpTransport {
@@ -44,8 +44,6 @@ impl McpTransport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServer {
     pub id: McpServerInstanceId,
-    /// `None` = system-wide, visible to every tenant.
-    pub tenant_id: Option<TenantId>,
     pub name: String,
     pub version: String,
     pub transport: McpTransport,

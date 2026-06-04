@@ -24,7 +24,6 @@ async fn hotl_policy_create_posts_to_hotl_policies() {
 
     let result = hotl::policy_create(hotl::PolicyCreateArgs {
         api_base: server.url(),
-        tenant_id: "t1".into(),
         scope: "llm_call".into(),
         window_secs: 3600,
         max_count: Some(100),
@@ -43,7 +42,6 @@ async fn hotl_policy_create_requires_at_least_one_limit() {
     let server = Server::new_async().await;
     let err = hotl::policy_create(hotl::PolicyCreateArgs {
         api_base: server.url(),
-        tenant_id: "t1".into(),
         scope: "llm_call".into(),
         window_secs: 3600,
         max_count: None,
@@ -59,13 +57,10 @@ async fn hotl_policy_create_requires_at_least_one_limit() {
 }
 
 #[tokio::test]
-async fn hotl_policy_list_queries_tenant() {
+async fn hotl_policy_list_queries() {
     let mut server = Server::new_async().await;
     let _m = server
-        .mock(
-            "GET",
-            Matcher::Regex(r"/v1/hotl/policies\?tenant_id=".into()),
-        )
+        .mock("GET", Matcher::Regex(r"/v1/hotl/policies".into()))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"[{"id":"pol-1","scope":"llm_call","window_seconds":3600}]"#)
@@ -74,7 +69,6 @@ async fn hotl_policy_list_queries_tenant() {
 
     let rows = hotl::policy_list(hotl::PolicyListArgs {
         api_base: server.url(),
-        tenant_id: "t1".into(),
         scope: None,
     })
     .await
@@ -135,7 +129,6 @@ async fn hotl_check_returns_verdict() {
 
     let resp = hotl::check(hotl::CheckArgs {
         api_base: server.url(),
-        tenant_id: "t1".into(),
         scope: "llm_call".into(),
         amount: 1.0,
     })
@@ -156,7 +149,6 @@ async fn hotl_503_gives_pg_bridge_message() {
 
     let err = hotl::policy_list(hotl::PolicyListArgs {
         api_base: server.url(),
-        tenant_id: "t1".into(),
         scope: None,
     })
     .await
@@ -206,7 +198,6 @@ async fn outcomes_record_posts_to_outcomes() {
 
     let v = outcomes::record(outcomes::RecordArgs {
         api_base: server.url(),
-        tenant_id: "acme".into(),
         agent_name: "sales-assist".into(),
         kind: "revenue_usd".into(),
         value: 1200.0,
@@ -225,7 +216,6 @@ async fn outcomes_record_rejects_negative_value() {
     let server = Server::new_async().await;
     let err = outcomes::record(outcomes::RecordArgs {
         api_base: server.url(),
-        tenant_id: "acme".into(),
         agent_name: "bot".into(),
         kind: "revenue_usd".into(),
         value: -1.0,
@@ -243,7 +233,6 @@ async fn outcomes_record_rejects_unknown_kind() {
     let server = Server::new_async().await;
     let err = outcomes::record(outcomes::RecordArgs {
         api_base: server.url(),
-        tenant_id: "acme".into(),
         agent_name: "bot".into(),
         kind: "magic_metric".into(),
         value: 1.0,
@@ -269,7 +258,6 @@ async fn outcomes_list_queries_tenant() {
 
     let rows = outcomes::list(outcomes::ListArgs {
         api_base: server.url(),
-        tenant_id: "acme".into(),
         range: "7d".into(),
         kind: None,
         limit: 100,
@@ -293,7 +281,6 @@ async fn outcomes_summary_queries_summary_endpoint() {
 
     let rows = outcomes::summary(outcomes::SummaryArgs {
         api_base: server.url(),
-        tenant_id: "acme".into(),
         range: "30d".into(),
     })
     .await
@@ -316,7 +303,6 @@ async fn outcomes_timeseries_queries_timeseries_endpoint() {
 
     let v = outcomes::timeseries(outcomes::TimeseriesArgs {
         api_base: server.url(),
-        tenant_id: "acme".into(),
         range: "7d".into(),
         kind: Some("revenue_usd".into()),
     })
@@ -337,7 +323,6 @@ async fn outcomes_503_gives_pg_bridge_message() {
 
     let err = outcomes::record(outcomes::RecordArgs {
         api_base: server.url(),
-        tenant_id: "acme".into(),
         agent_name: "bot".into(),
         kind: "hours_saved".into(),
         value: 1.0,
@@ -398,7 +383,6 @@ async fn skills_list_catalog_hits_catalog_endpoint() {
 
     let rows = skills::list(skills::ListArgs {
         api_base: server.url(),
-        tenant_id: None,
         category: None,
         installed: false,
     })
@@ -413,7 +397,7 @@ async fn skills_list_catalog_hits_catalog_endpoint() {
 async fn skills_list_installed_hits_installed_endpoint() {
     let mut server = Server::new_async().await;
     let _m = server
-        .mock("GET", Matcher::Regex(r"/v1/skills/installed\?".into()))
+        .mock("GET", Matcher::Regex(r"/v1/skills/installed".into()))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"[{"id":"inst-1","pack_slug":"ar-collections","version":"1.0.0","installed_at":"2026-05-20T10:00:00Z"}]"#)
@@ -422,7 +406,6 @@ async fn skills_list_installed_hits_installed_endpoint() {
 
     let rows = skills::list(skills::ListArgs {
         api_base: server.url(),
-        tenant_id: Some("acme".into()),
         category: None,
         installed: true,
     })
@@ -431,20 +414,6 @@ async fn skills_list_installed_hits_installed_endpoint() {
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["id"], "inst-1");
-}
-
-#[tokio::test]
-async fn skills_list_installed_requires_tenant_id() {
-    let server = Server::new_async().await;
-    let err = skills::list(skills::ListArgs {
-        api_base: server.url(),
-        tenant_id: None,
-        category: None,
-        installed: true,
-    })
-    .await
-    .expect_err("should fail");
-    assert!(err.to_string().contains("tenant-id"), "got: {err}");
 }
 
 #[tokio::test]
@@ -460,7 +429,6 @@ async fn skills_install_posts_to_install_endpoint() {
 
     let v = skills::install(skills::InstallArgs {
         api_base: server.url(),
-        tenant_id: "acme".into(),
         pack: "ar-collections".into(),
         config: None,
     })
@@ -475,7 +443,6 @@ async fn skills_install_with_invalid_config_json_fails_early() {
     let server = Server::new_async().await;
     let err = skills::install(skills::InstallArgs {
         api_base: server.url(),
-        tenant_id: "acme".into(),
         pack: "ar-collections".into(),
         config: Some("{not valid json".into()),
     })
@@ -521,7 +488,6 @@ async fn skills_503_gives_pg_bridge_message() {
 
     let err = skills::list(skills::ListArgs {
         api_base: server.url(),
-        tenant_id: None,
         category: None,
         installed: false,
     })
@@ -578,7 +544,6 @@ async fn watch_list_hits_watch_endpoint() {
 
     let rows = watch::list(watch::ListArgs {
         api_base: server.url(),
-        tenant_id: None,
     })
     .await
     .expect("list ok");
@@ -636,7 +601,6 @@ async fn watch_503_gives_pg_bridge_message() {
 
     let err = watch::list(watch::ListArgs {
         api_base: server.url(),
-        tenant_id: None,
     })
     .await
     .expect_err("should fail");
@@ -817,7 +781,6 @@ fn hotl_policy_create_help_lists_required_flags() {
     cmd.args(["hotl", "policy", "create", "--help"]);
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("--tenant-id"))
         .stdout(predicate::str::contains("--scope"))
         .stdout(predicate::str::contains("--window-secs"));
 }
@@ -831,7 +794,6 @@ fn outcomes_record_help_lists_required_flags() {
     cmd.args(["outcomes", "record", "--help"]);
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("--tenant-id"))
         .stdout(predicate::str::contains("--kind"))
         .stdout(predicate::str::contains("--value"));
 }
@@ -845,7 +807,6 @@ fn skills_install_help_lists_required_flags() {
     cmd.args(["skills", "install", "--help"]);
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("--tenant-id"))
         .stdout(predicate::str::contains("--pack"));
 }
 

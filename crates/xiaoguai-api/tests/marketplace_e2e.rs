@@ -32,11 +32,11 @@ impl InMemoryMcpRepo {
 
 #[async_trait]
 impl McpServerRepository for InMemoryMcpRepo {
-    async fn create(&self, _tenant: Option<&str>, s: &McpServer) -> RepoResult<()> {
+    async fn create(&self, s: &McpServer) -> RepoResult<()> {
         self.rows.lock().push(s.clone());
         Ok(())
     }
-    async fn find_by_id(&self, _tenant: Option<&str>, id: &str) -> RepoResult<Option<McpServer>> {
+    async fn find_by_id(&self, id: &str) -> RepoResult<Option<McpServer>> {
         Ok(self
             .rows
             .lock()
@@ -44,29 +44,10 @@ impl McpServerRepository for InMemoryMcpRepo {
             .find(|s| s.id.as_str() == id)
             .cloned())
     }
-    async fn list_global(&self) -> RepoResult<Vec<McpServer>> {
-        Ok(self
-            .rows
-            .lock()
-            .iter()
-            .filter(|s| s.tenant_id.is_none())
-            .cloned()
-            .collect())
+    async fn list(&self) -> RepoResult<Vec<McpServer>> {
+        Ok(self.rows.lock().iter().cloned().collect())
     }
-    async fn list_for_tenant(&self, tenant_id: &str) -> RepoResult<Vec<McpServer>> {
-        Ok(self
-            .rows
-            .lock()
-            .iter()
-            .filter(|s| {
-                s.tenant_id
-                    .as_ref()
-                    .is_some_and(|t| t.as_str() == tenant_id)
-            })
-            .cloned()
-            .collect())
-    }
-    async fn delete(&self, _tenant: Option<&str>, id: &str) -> RepoResult<()> {
+    async fn delete(&self, id: &str) -> RepoResult<()> {
         self.rows.lock().retain(|s| s.id.as_str() != id);
         Ok(())
     }
@@ -183,7 +164,6 @@ async fn install_writes_row_to_repo() {
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].name, "filesystem");
     assert_eq!(stored[0].transport, xiaoguai_types::McpTransport::Stdio);
-    assert!(stored[0].tenant_id.is_none(), "default install is global");
 }
 
 #[tokio::test]
@@ -254,35 +234,4 @@ async fn install_invokes_supervisor_reload_when_wired() {
     // reload could spawn (likely 0 in CI without the upstream binaries
     // installed, but the call did happen — no panic, no error).
     let _ = supervisor.list_active();
-}
-
-#[tokio::test]
-async fn install_respects_tenant_id_when_supplied() {
-    let repo = InMemoryMcpRepo::arc();
-    let app = router(build_state(Some(
-        repo.clone() as Arc<dyn McpServerRepository>
-    )));
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/v1/mcp/marketplace/install")
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    json!({ "slug": "fetch", "tenant_id": "ten_a" }).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let stored = repo.rows.lock();
-    assert_eq!(stored.len(), 1);
-    assert_eq!(
-        stored[0]
-            .tenant_id
-            .as_ref()
-            .map(xiaoguai_types::TenantId::as_str),
-        Some("ten_a")
-    );
 }

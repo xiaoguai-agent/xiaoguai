@@ -37,10 +37,10 @@ use crate::sink::{PushPayload, PushSink};
 use crate::trigger::Trigger;
 use crate::trigger_source::{EventReceiver, TriggerEvent};
 
-/// Tenant id used for the "system" pseudo-tenant when a job has
-/// `tenant_id = None`. Mirrors the audit module's convention so the
-/// budget ledger and the audit log key on the same string.
-const SYSTEM_TENANT: &str = "system";
+/// Single-owner budget-ledger key. Under the single-user data model
+/// (DEC-033) every job belongs to the one owner, so the per-day push
+/// budget is tracked under a single constant key.
+const OWNER_BUDGET_KEY: &str = "owner";
 
 /// Outcome of the proactive checker + budget gate. Internal to the
 /// runner — callers see only the side effects (audit row written when
@@ -256,7 +256,6 @@ impl JobRunner {
             let run = JobRun {
                 id: 0,
                 job_id: job.id.clone(),
-                tenant_id: job.tenant_id.clone(),
                 status: JobRunStatus::Running,
                 attempt,
                 started_at: Some(Utc::now()),
@@ -402,13 +401,9 @@ impl JobRunner {
             tracing::warn!(job_id = %job.id, "proactive checker said fire but no budget ledger installed; skipping");
             return Ok(ProactiveDecision::Skip);
         };
-        let user_key = job
-            .tenant_id
-            .clone()
-            .unwrap_or_else(|| SYSTEM_TENANT.into());
         let today = Utc::now().date_naive();
         let claimed = budget
-            .check_and_debit(&user_key, today)
+            .check_and_debit(OWNER_BUDGET_KEY, today)
             .await
             .map_err(|e| RunnerError::Audit(e.to_string()))?;
         if !claimed {
@@ -437,7 +432,7 @@ impl JobRunner {
         let entry = AuditEntry {
             ts: Utc::now(),
             // Audit chain: must equal the value verify_chain rebuilds with
-            // (audit OWNER), not the job's tenant / SYSTEM_TENANT fallback.
+            // (audit OWNER).
             tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
             actor: format!("scheduler:{}", job.id),
             action: "scheduler.proactive_denied".into(),
@@ -481,7 +476,7 @@ impl JobRunner {
         let entry = AuditEntry {
             ts: Utc::now(),
             // Audit chain: must equal the value verify_chain rebuilds with
-            // (audit OWNER), not the job's tenant / SYSTEM_TENANT fallback.
+            // (audit OWNER).
             tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
             actor: format!("scheduler:{}", job.id),
             action: "scheduler.job_run".into(),
@@ -507,7 +502,6 @@ impl JobRunner {
         let payload = PushPayload {
             job_id: job.id.clone(),
             run_id: run.id,
-            tenant_id: job.tenant_id.clone(),
             status: status.as_str().to_string(),
             fired_at: run.created_at,
             output_preview: if outcome.output_preview.is_empty() {
@@ -600,7 +594,6 @@ mod tests {
     fn job(id: &str) -> ScheduledJob {
         ScheduledJob::new(
             id,
-            Some("tenant-x".into()),
             id,
             Trigger::interval(60).unwrap(),
             serde_json::json!({"prompt": "hello"}),
@@ -610,7 +603,6 @@ mod tests {
     fn webhook_job(id: &str, route: &str) -> ScheduledJob {
         ScheduledJob::new(
             id,
-            Some("tenant-x".into()),
             id,
             Trigger::webhook(route).unwrap(),
             serde_json::json!({"prompt": "hi"}),
@@ -903,7 +895,6 @@ mod tests {
     fn proactive_job(id: &str) -> ScheduledJob {
         let mut j = ScheduledJob::new(
             id,
-            Some("user-alice".into()),
             id,
             Trigger::proactive("Is there anything in the inbox?", 60).unwrap(),
             serde_json::json!({"prompt": "summarize inbox"}),

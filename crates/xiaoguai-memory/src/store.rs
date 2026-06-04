@@ -44,7 +44,6 @@ impl InMemoryMemoryStore {
 impl MemoryStore for InMemoryMemoryStore {
     async fn list_memories(
         &self,
-        tenant_id: Uuid,
         kind_filter: Option<MemoryKind>,
         tag_filter: &[String],
         limit: usize,
@@ -53,7 +52,6 @@ impl MemoryStore for InMemoryMemoryStore {
         let guard = self.memories.read();
         let results: Vec<Memory> = guard
             .iter()
-            .filter(|m| m.tenant_id == tenant_id)
             .filter(|m| kind_filter.is_none_or(|k| m.kind == k))
             .filter(|m| tag_filter.iter().all(|tag| m.tags.iter().any(|t| t == tag)))
             .skip(offset)
@@ -63,11 +61,11 @@ impl MemoryStore for InMemoryMemoryStore {
         Ok(results)
     }
 
-    async fn get_memory(&self, id: Uuid, tenant_id: Uuid) -> MemoryResult<Memory> {
+    async fn get_memory(&self, id: Uuid) -> MemoryResult<Memory> {
         let guard = self.memories.read();
         guard
             .iter()
-            .find(|m| m.id == id && m.tenant_id == tenant_id)
+            .find(|m| m.id == id)
             .cloned()
             .ok_or(MemoryError::NotFound(id))
     }
@@ -77,7 +75,6 @@ impl MemoryStore for InMemoryMemoryStore {
         let now = Utc::now();
         let memory = Memory {
             id: Uuid::new_v4(),
-            tenant_id: req.tenant_id,
             kind: req.kind,
             content: req.content,
             content_embedding: embedding,
@@ -94,7 +91,6 @@ impl MemoryStore for InMemoryMemoryStore {
     async fn update_memory(
         &self,
         id: Uuid,
-        tenant_id: Uuid,
         req: UpdateMemoryRequest,
     ) -> MemoryResult<Memory> {
         // Re-embed when content changes.
@@ -107,7 +103,7 @@ impl MemoryStore for InMemoryMemoryStore {
         let mut guard = self.memories.write();
         let memory = guard
             .iter_mut()
-            .find(|m| m.id == id && m.tenant_id == tenant_id)
+            .find(|m| m.id == id)
             .ok_or(MemoryError::NotFound(id))?;
 
         if let Some(text) = req.content {
@@ -125,10 +121,10 @@ impl MemoryStore for InMemoryMemoryStore {
         Ok(memory.clone())
     }
 
-    async fn delete_memory(&self, id: Uuid, tenant_id: Uuid) -> MemoryResult<()> {
+    async fn delete_memory(&self, id: Uuid) -> MemoryResult<()> {
         let mut guard = self.memories.write();
         let before = guard.len();
-        guard.retain(|m| !(m.id == id && m.tenant_id == tenant_id));
+        guard.retain(|m| m.id != id);
         if guard.len() == before {
             return Err(MemoryError::NotFound(id));
         }
@@ -142,7 +138,6 @@ impl MemoryStore for InMemoryMemoryStore {
             let guard = self.memories.read();
             guard
                 .iter()
-                .filter(|m| m.tenant_id == req.tenant_id)
                 .filter(|m| req.kind_filter.is_none_or(|k| m.kind == k))
                 .filter(|m| {
                     req.tag_filter
@@ -198,14 +193,13 @@ impl MemoryStore for InMemoryMemoryStore {
     async fn find_similar(
         &self,
         memory_id: Uuid,
-        tenant_id: Uuid,
         top_k: usize,
     ) -> MemoryResult<Vec<RecalledMemory>> {
         let anchor_embedding = {
             let guard = self.memories.read();
             guard
                 .iter()
-                .find(|m| m.id == memory_id && m.tenant_id == tenant_id)
+                .find(|m| m.id == memory_id)
                 .map(|m| m.content_embedding.clone())
                 .ok_or(MemoryError::NotFound(memory_id))?
         };
@@ -214,7 +208,7 @@ impl MemoryStore for InMemoryMemoryStore {
             let guard = self.memories.read();
             guard
                 .iter()
-                .filter(|m| m.tenant_id == tenant_id && m.id != memory_id)
+                .filter(|m| m.id != memory_id)
                 .map(|m| {
                     let score = cosine_similarity(&anchor_embedding, &m.content_embedding);
                     (score, m.clone())

@@ -91,15 +91,12 @@ impl RedactionRules {
         }
     }
 
-    /// Load all rules for `tenant_id` from storage.
+    /// Load all rules from storage.
     ///
     /// The repo already sorts exact-scope before `*`, so `self.rules` is
     /// in the order `apply()` wants to iterate.
-    pub async fn from_storage(
-        repo: &dyn HotlRedactionRepo,
-        tenant_id: Uuid,
-    ) -> Result<Self, AuthError> {
-        let rows = repo.load_for_tenant(tenant_id).await?;
+    pub async fn from_storage(repo: &dyn HotlRedactionRepo) -> Result<Self, AuthError> {
+        let rows = repo.load_all().await?;
         Ok(Self::new(rows))
     }
 
@@ -202,7 +199,6 @@ mod tests {
     fn rule(scope: &str, jsonpath: &str, applies_to: &[&str]) -> RedactionPolicyRow {
         RedactionPolicyRow {
             id: Uuid::new_v4(),
-            tenant_id: Uuid::new_v4(),
             scope: scope.into(),
             jsonpath: jsonpath.into(),
             applies_to: applies_to.iter().map(|s| (*s).into()).collect(),

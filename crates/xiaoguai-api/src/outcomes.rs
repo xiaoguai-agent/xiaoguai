@@ -51,7 +51,6 @@ impl From<OutcomeError> for OutcomesApiError {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordOutcomeRequest {
-    pub tenant_id: String,
     pub session_id: Option<String>,
     pub agent_name: String,
     /// One of the well-known kinds or `"custom"`.
@@ -74,7 +73,6 @@ pub struct RecordOutcomeResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutcomesSummaryResponse {
-    pub tenant_id: String,
     pub range: String,
     pub summary: OutcomeSummary,
 }
@@ -85,7 +83,6 @@ pub struct OutcomesSummaryResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutcomesTimeseriesResponse {
-    pub tenant_id: String,
     pub range: String,
     pub days: Vec<OutcomeDay>,
 }
@@ -103,22 +100,16 @@ pub trait OutcomeWriter: Send + Sync {
 /// Read side — admin-ui uses this for the ROI dashboard.
 #[async_trait]
 pub trait OutcomesReader: Send + Sync {
-    async fn summary(
-        &self,
-        tenant_id: &str,
-        range: OutcomeRange,
-    ) -> Result<OutcomeSummary, OutcomesApiError>;
+    async fn summary(&self, range: OutcomeRange) -> Result<OutcomeSummary, OutcomesApiError>;
 
     async fn timeseries(
         &self,
-        tenant_id: &str,
         kind: Option<&str>,
         range: OutcomeRange,
     ) -> Result<Vec<OutcomeDay>, OutcomesApiError>;
 
     async fn aggregate(
         &self,
-        tenant_id: &str,
         kind: Option<&str>,
         range: OutcomeRange,
     ) -> Result<Aggregate, OutcomesApiError>;
@@ -153,7 +144,6 @@ impl OutcomeWriter for InMemoryOutcomesBackend {
     async fn record(&self, req: RecordOutcomeRequest) -> Result<(), OutcomesApiError> {
         self.inner
             .record(
-                &req.tenant_id,
                 req.session_id.as_deref(),
                 &req.agent_name,
                 &req.kind,
@@ -169,16 +159,11 @@ impl OutcomeWriter for InMemoryOutcomesBackend {
 
 #[async_trait]
 impl OutcomesReader for InMemoryOutcomesBackend {
-    async fn summary(
-        &self,
-        tenant_id: &str,
-        range: OutcomeRange,
-    ) -> Result<OutcomeSummary, OutcomesApiError> {
+    async fn summary(&self, range: OutcomeRange) -> Result<OutcomeSummary, OutcomesApiError> {
         // Collect matching records and build summary locally.
         let all = self.inner.snapshot();
         let filtered: Vec<OutcomeRecord> = all
             .into_iter()
-            .filter(|r| r.tenant_id == tenant_id)
             .filter(|r| range.since.is_none_or(|s| r.attributed_at >= s))
             .filter(|r| range.until.is_none_or(|u| r.attributed_at <= u))
             .collect();
@@ -187,14 +172,12 @@ impl OutcomesReader for InMemoryOutcomesBackend {
 
     async fn timeseries(
         &self,
-        tenant_id: &str,
         kind: Option<&str>,
         range: OutcomeRange,
     ) -> Result<Vec<OutcomeDay>, OutcomesApiError> {
         let all = self.inner.snapshot();
         let filtered: Vec<OutcomeRecord> = all
             .into_iter()
-            .filter(|r| r.tenant_id == tenant_id)
             .filter(|r| kind.is_none_or(|k| r.kind == k))
             .filter(|r| range.since.is_none_or(|s| r.attributed_at >= s))
             .filter(|r| range.until.is_none_or(|u| r.attributed_at <= u))
@@ -204,12 +187,11 @@ impl OutcomesReader for InMemoryOutcomesBackend {
 
     async fn aggregate(
         &self,
-        tenant_id: &str,
         kind: Option<&str>,
         range: OutcomeRange,
     ) -> Result<Aggregate, OutcomesApiError> {
         self.inner
-            .aggregate(tenant_id, kind, range)
+            .aggregate(kind, range)
             .await
             .map_err(OutcomesApiError::from)
     }
@@ -226,7 +208,6 @@ mod tests {
 
     fn req(kind: &str, value: f64) -> RecordOutcomeRequest {
         RecordOutcomeRequest {
-            tenant_id: "tenant_a".into(),
             session_id: Some("sess_1".into()),
             agent_name: "sales-bot".into(),
             kind: kind.to_owned(),
@@ -243,7 +224,7 @@ mod tests {
         b.record(req("revenue_usd", 500.0)).await.unwrap();
         b.record(req("revenue_usd", 300.0)).await.unwrap();
         let agg = b
-            .aggregate("tenant_a", Some("revenue_usd"), OutcomeRange::default())
+            .aggregate(Some("revenue_usd"), OutcomeRange::default())
             .await
             .unwrap();
         assert!((agg.sum - 800.0).abs() < f64::EPSILON);
@@ -257,10 +238,7 @@ mod tests {
         b.record(req("revenue_usd", 100.0)).await.unwrap();
         b.record(req("cost_saved_usd", 50.0)).await.unwrap();
         b.record(req("hours_saved", 8.0)).await.unwrap();
-        let summary = b
-            .summary("tenant_a", OutcomeRange::default())
-            .await
-            .unwrap();
+        let summary = b.summary(OutcomeRange::default()).await.unwrap();
         assert!(summary.by_kind.contains_key("revenue_usd"));
         assert!(summary.by_kind.contains_key("cost_saved_usd"));
         assert!(summary.by_kind.contains_key("hours_saved"));
@@ -273,26 +251,12 @@ mod tests {
         b.record(req("deals_closed", 1.0)).await.unwrap();
         b.record(req("deals_closed", 2.0)).await.unwrap();
         let ts = b
-            .timeseries("tenant_a", Some("deals_closed"), OutcomeRange::default())
+            .timeseries(Some("deals_closed"), OutcomeRange::default())
             .await
             .unwrap();
         assert_eq!(ts.len(), 1); // both fall in today
         assert!((ts[0].sum - 3.0).abs() < f64::EPSILON);
         assert_eq!(ts[0].count, 2);
-    }
-
-    #[tokio::test]
-    async fn cross_tenant_isolation() {
-        let b = InMemoryOutcomesBackend::new();
-        b.record(req("revenue_usd", 1000.0)).await.unwrap();
-        let mut other = req("revenue_usd", 9999.0);
-        other.tenant_id = "tenant_b".into();
-        b.record(other).await.unwrap();
-        let agg = b
-            .aggregate("tenant_a", Some("revenue_usd"), OutcomeRange::default())
-            .await
-            .unwrap();
-        assert!((agg.sum - 1000.0).abs() < f64::EPSILON);
     }
 
     #[tokio::test]
@@ -302,7 +266,7 @@ mod tests {
         // "24h" should include just-recorded entries.
         let range = OutcomeRange::from_shorthand("24h").unwrap();
         let agg = b
-            .aggregate("tenant_a", Some("tickets_resolved"), range)
+            .aggregate(Some("tickets_resolved"), range)
             .await
             .unwrap();
         assert_eq!(agg.count, 1);

@@ -216,7 +216,6 @@ async fn summary_returns_by_kind_map() {
     // Write directly via the backend to avoid another HTTP round-trip.
     backend
         .record(RecordOutcomeRequest {
-            tenant_id: "ten".into(),
             session_id: None,
             agent_name: "bot".into(),
             kind: "revenue_usd".into(),
@@ -229,7 +228,6 @@ async fn summary_returns_by_kind_map() {
         .unwrap();
     backend
         .record(RecordOutcomeRequest {
-            tenant_id: "ten".into(),
             session_id: None,
             agent_name: "bot".into(),
             kind: "hours_saved".into(),
@@ -254,7 +252,6 @@ async fn summary_returns_by_kind_map() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
-    assert_eq!(body["tenant_id"], "ten");
     assert_eq!(body["range"], "30d");
     let rev = &body["summary"]["by_kind"]["revenue_usd"];
     assert!((rev["sum"].as_f64().unwrap() - 100.0).abs() < f64::EPSILON);
@@ -322,7 +319,6 @@ async fn timeseries_returns_day_buckets() {
     for _ in 0..3 {
         backend
             .record(RecordOutcomeRequest {
-                tenant_id: "ten".into(),
                 session_id: None,
                 agent_name: "bot".into(),
                 kind: "deals_closed".into(),
@@ -348,7 +344,6 @@ async fn timeseries_returns_day_buckets() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
-    assert_eq!(body["tenant_id"], "ten");
     let days = body["days"].as_array().unwrap();
     assert_eq!(days.len(), 1);
     assert!((days[0]["sum"].as_f64().unwrap() - 3.0).abs() < f64::EPSILON);

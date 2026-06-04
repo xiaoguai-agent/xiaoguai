@@ -11,9 +11,8 @@ use xiaoguai_personas::{
     InMemoryPersonaRepository, PersonaError, PersonaRepository,
 };
 
-fn make_create(tenant: Uuid, name: &str) -> CreatePersonaRequest {
+fn make_create(name: &str) -> CreatePersonaRequest {
     CreatePersonaRequest {
-        tenant_id: tenant,
         name: name.to_string(),
         system_prompt: format!("You are {name}."),
         default_model: None,
@@ -27,11 +26,9 @@ fn make_create(tenant: Uuid, name: &str) -> CreatePersonaRequest {
 #[tokio::test]
 async fn create_and_get_persona() {
     let repo = InMemoryPersonaRepository::new();
-    let tenant = Uuid::new_v4();
-    let req = make_create(tenant, "Support Bot");
+    let req = make_create("Support Bot");
     let created = repo.create(&req).await.unwrap();
     assert_eq!(created.name, "Support Bot");
-    assert_eq!(created.tenant_id, tenant);
     assert!(!created.archived);
 
     let fetched = repo.get(created.id).await.unwrap();
@@ -39,48 +36,24 @@ async fn create_and_get_persona() {
 }
 
 #[tokio::test]
-async fn list_returns_only_active_for_tenant() {
+async fn list_returns_only_active() {
     let repo = InMemoryPersonaRepository::new();
-    let t1 = Uuid::new_v4();
-    let t2 = Uuid::new_v4();
-    repo.create(&make_create(t1, "Bot A")).await.unwrap();
-    repo.create(&make_create(t1, "Bot B")).await.unwrap();
-    repo.create(&make_create(t2, "Bot C")).await.unwrap();
+    repo.create(&make_create("Bot A")).await.unwrap();
+    repo.create(&make_create("Bot B")).await.unwrap();
 
-    let t1_list = repo.list(t1).await.unwrap();
-    assert_eq!(t1_list.len(), 2);
-    assert!(t1_list.iter().all(|p| p.tenant_id == t1));
+    let list = repo.list().await.unwrap();
+    assert_eq!(list.len(), 2);
     // Ordered by name.
-    assert_eq!(t1_list[0].name, "Bot A");
-    assert_eq!(t1_list[1].name, "Bot B");
-
-    let t2_list = repo.list(t2).await.unwrap();
-    assert_eq!(t2_list.len(), 1);
+    assert_eq!(list[0].name, "Bot A");
+    assert_eq!(list[1].name, "Bot B");
 }
 
 #[tokio::test]
 async fn create_duplicate_name_returns_error() {
     let repo = InMemoryPersonaRepository::new();
-    let tenant = Uuid::new_v4();
-    repo.create(&make_create(tenant, "Unique")).await.unwrap();
-    let err = repo
-        .create(&make_create(tenant, "Unique"))
-        .await
-        .unwrap_err();
+    repo.create(&make_create("Unique")).await.unwrap();
+    let err = repo.create(&make_create("Unique")).await.unwrap_err();
     assert!(matches!(err, PersonaError::DuplicateName(_)));
-}
-
-#[tokio::test]
-async fn duplicate_name_allowed_across_tenants() {
-    let repo = InMemoryPersonaRepository::new();
-    let t1 = Uuid::new_v4();
-    let t2 = Uuid::new_v4();
-    repo.create(&make_create(t1, "Shared Name")).await.unwrap();
-    let second = repo.create(&make_create(t2, "Shared Name")).await;
-    assert!(
-        second.is_ok(),
-        "same name under different tenant must succeed"
-    );
 }
 
 #[tokio::test]
@@ -93,8 +66,7 @@ async fn get_missing_returns_not_found() {
 #[tokio::test]
 async fn update_persona_fields() {
     let repo = InMemoryPersonaRepository::new();
-    let tenant = Uuid::new_v4();
-    let created = repo.create(&make_create(tenant, "Draft")).await.unwrap();
+    let created = repo.create(&make_create("Draft")).await.unwrap();
     let req = UpdatePersonaRequest {
         name: Some("Published".to_string()),
         system_prompt: Some("Updated prompt.".to_string()),
@@ -123,10 +95,9 @@ async fn update_missing_returns_not_found() {
 #[tokio::test]
 async fn archive_hides_from_list() {
     let repo = InMemoryPersonaRepository::new();
-    let tenant = Uuid::new_v4();
-    let p = repo.create(&make_create(tenant, "Retiring")).await.unwrap();
+    let p = repo.create(&make_create("Retiring")).await.unwrap();
     repo.archive_persona(p.id).await.unwrap();
-    let list = repo.list(tenant).await.unwrap();
+    let list = repo.list().await.unwrap();
     assert!(list.is_empty(), "archived persona must not appear in list");
     // get() still returns it (for admin inspection).
     let fetched = repo.get(p.id).await.unwrap();
@@ -136,8 +107,7 @@ async fn archive_hides_from_list() {
 #[tokio::test]
 async fn archive_is_idempotent() {
     let repo = InMemoryPersonaRepository::new();
-    let tenant = Uuid::new_v4();
-    let p = repo.create(&make_create(tenant, "X")).await.unwrap();
+    let p = repo.create(&make_create("X")).await.unwrap();
     repo.archive_persona(p.id).await.unwrap();
     let second = repo.archive_persona(p.id).await;
     assert!(second.is_ok(), "archiving twice must not error");
@@ -148,8 +118,7 @@ async fn archive_is_idempotent() {
 #[tokio::test]
 async fn attach_and_get_session_persona() {
     let repo = InMemoryPersonaRepository::new();
-    let tenant = Uuid::new_v4();
-    let p = repo.create(&make_create(tenant, "Finance")).await.unwrap();
+    let p = repo.create(&make_create("Finance")).await.unwrap();
     let session = "sess_abc123";
     let sp = repo.attach_persona_to_session(session, p.id).await.unwrap();
     assert_eq!(sp.session_id, session);
@@ -162,9 +131,8 @@ async fn attach_and_get_session_persona() {
 #[tokio::test]
 async fn attach_replaces_existing_session_persona() {
     let repo = InMemoryPersonaRepository::new();
-    let tenant = Uuid::new_v4();
-    let p1 = repo.create(&make_create(tenant, "P1")).await.unwrap();
-    let p2 = repo.create(&make_create(tenant, "P2")).await.unwrap();
+    let p1 = repo.create(&make_create("P1")).await.unwrap();
+    let p2 = repo.create(&make_create("P2")).await.unwrap();
     let session = "sess_replace";
     repo.attach_persona_to_session(session, p1.id)
         .await
@@ -179,8 +147,7 @@ async fn attach_replaces_existing_session_persona() {
 #[tokio::test]
 async fn attach_archived_persona_returns_error() {
     let repo = InMemoryPersonaRepository::new();
-    let tenant = Uuid::new_v4();
-    let p = repo.create(&make_create(tenant, "Old")).await.unwrap();
+    let p = repo.create(&make_create("Old")).await.unwrap();
     repo.archive_persona(p.id).await.unwrap();
     let err = repo
         .attach_persona_to_session("sess_x", p.id)
@@ -192,8 +159,7 @@ async fn attach_archived_persona_returns_error() {
 #[tokio::test]
 async fn detach_removes_session_persona() {
     let repo = InMemoryPersonaRepository::new();
-    let tenant = Uuid::new_v4();
-    let p = repo.create(&make_create(tenant, "Temp")).await.unwrap();
+    let p = repo.create(&make_create("Temp")).await.unwrap();
     repo.attach_persona_to_session("sess_detach", p.id)
         .await
         .unwrap();
@@ -218,16 +184,14 @@ async fn get_session_persona_none_when_no_attachment() {
     assert!(result.is_none());
 }
 
-// ── Multi-tenant isolation ────────────────────────────────────────────────────
+// ── Multiple personas ─────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn multi_persona_per_tenant() {
+async fn multi_persona() {
     let repo = Arc::new(InMemoryPersonaRepository::new());
-    let tenant = Uuid::new_v4();
     let names = ["Alpha", "Beta", "Gamma", "Delta"];
     for name in &names {
         repo.create(&CreatePersonaRequest {
-            tenant_id: tenant,
             name: (*name).to_string(),
             system_prompt: format!("I am {name}."),
             default_model: None,
@@ -237,7 +201,7 @@ async fn multi_persona_per_tenant() {
         .await
         .unwrap();
     }
-    let list = repo.list(tenant).await.unwrap();
+    let list = repo.list().await.unwrap();
     assert_eq!(list.len(), 4, "all four personas must appear");
     // Alphabetical ordering preserved.
     let list_names: Vec<&str> = list.iter().map(|p| p.name.as_str()).collect();
@@ -249,9 +213,8 @@ async fn multi_persona_per_tenant() {
 #[tokio::test]
 async fn tool_allowlist_enforcement_unrestricted() {
     let repo = InMemoryPersonaRepository::new();
-    let tenant = Uuid::new_v4();
     let p = repo
-        .create(&make_create(tenant, "Unrestricted"))
+        .create(&make_create("Unrestricted"))
         .await
         .unwrap();
     assert!(tool_allowed(&p, "bash"));
@@ -264,9 +227,7 @@ async fn tool_allowlist_enforcement_unrestricted() {
 #[tokio::test]
 async fn tool_allowlist_enforcement_restricted() {
     let repo = InMemoryPersonaRepository::new();
-    let tenant = Uuid::new_v4();
     let req = CreatePersonaRequest {
-        tenant_id: tenant,
         name: "Restricted".to_string(),
         system_prompt: String::new(),
         default_model: None,
@@ -292,9 +253,7 @@ async fn tool_allowlist_enforcement_restricted() {
 #[tokio::test]
 async fn tool_allowlist_enforcement_empty_denies_all() {
     let repo = InMemoryPersonaRepository::new();
-    let tenant = Uuid::new_v4();
     let req = CreatePersonaRequest {
-        tenant_id: tenant,
         name: "NoTools".to_string(),
         system_prompt: String::new(),
         default_model: None,
@@ -314,8 +273,7 @@ async fn detach_on_session_cascade_simulated() {
     // In production the FK CASCADE handles this at the DB level. Here we
     // simulate the application-layer equivalent: detach and verify gone.
     let repo = InMemoryPersonaRepository::new();
-    let tenant = Uuid::new_v4();
-    let p = repo.create(&make_create(tenant, "Cascader")).await.unwrap();
+    let p = repo.create(&make_create("Cascader")).await.unwrap();
     let session = "sess_cascade";
     repo.attach_persona_to_session(session, p.id).await.unwrap();
     // Simulate session deletion → detach persona.

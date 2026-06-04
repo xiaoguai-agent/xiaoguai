@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use uuid::Uuid;
 use xiaoguai_api::hotl::decision_registry::DecisionRegistry;
 use xiaoguai_api::hotl::enforcer::{HotlEnforcer, HotlVerdict, HotlVerdictResult};
 use xiaoguai_core::hotl_bridge::build_hotl_gate;
@@ -21,7 +20,7 @@ struct AlwaysEscalate;
 
 #[async_trait]
 impl HotlEnforcer for AlwaysEscalate {
-    async fn check(&self, _tenant: Uuid, _scope: &str, _amount: f64) -> HotlVerdictResult {
+    async fn check(&self, _scope: &str, _amount: f64) -> HotlVerdictResult {
         Ok(HotlVerdict::Escalate("test escalate".into()))
     }
 }
@@ -39,7 +38,7 @@ async fn default_off_keeps_enforcer_gate_behaviour() {
         Duration::from_secs(24 * 3600),
     );
 
-    let verdict = gate.check(Uuid::new_v4(), "tool_call.search", 1.0).await;
+    let verdict = gate.check("tool_call.search", 1.0).await;
     assert!(
         matches!(verdict, xiaoguai_agent::HotlGateVerdict::Allow),
         "v1.8.x default (suspend_on_escalate=false) must keep Escalate→Allow; got {verdict:?}"
@@ -64,7 +63,7 @@ async fn opt_in_swaps_in_suspending_gate() {
         Duration::from_secs(24 * 3600),
     );
 
-    let verdict = gate.check(Uuid::new_v4(), "tool_call.search", 1.0).await;
+    let verdict = gate.check("tool_call.search", 1.0).await;
     assert!(
         matches!(verdict, xiaoguai_agent::HotlGateVerdict::Suspend { .. }),
         "opt-in (suspend_on_escalate=true) must swap in SuspendingHotlGate; got {verdict:?}"

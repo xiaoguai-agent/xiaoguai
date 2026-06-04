@@ -13,7 +13,7 @@
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use xiaoguai_storage::repositories::LlmProviderRepository;
-use xiaoguai_types::{ids::TenantId, LlmProvider, ProviderId, ProviderKind};
+use xiaoguai_types::{LlmProvider, ProviderId, ProviderKind};
 
 #[derive(Debug, Clone)]
 pub struct RegisterArgs {
@@ -24,7 +24,6 @@ pub struct RegisterArgs {
     pub default_for: Vec<String>,
     pub fallback_order: i32,
     pub api_key_env: Option<String>,
-    pub tenant: Option<String>,
 }
 
 /// Insert a new provider row and return the persisted record (with the
@@ -50,10 +49,8 @@ pub async fn register(repo: &dyn LlmProviderRepository, args: RegisterArgs) -> R
     }
 
     let now = Utc::now();
-    let tenant_guc = args.tenant.clone();
     let prov = LlmProvider {
         id: ProviderId::new(),
-        tenant_id: args.tenant.map(TenantId::from),
         name: args.name,
         kind,
         endpoint: args.endpoint,
@@ -71,27 +68,19 @@ pub async fn register(repo: &dyn LlmProviderRepository, args: RegisterArgs) -> R
         cost_per_1k_input_usd: None,
         cost_per_1k_output_usd: None,
     };
-    repo.create(tenant_guc.as_deref(), &prov).await?;
+    repo.create(&prov).await?;
     Ok(prov)
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct ListArgs {
-    /// `None` lists system-wide providers only. `Some(id)` lists globals +
-    /// rows scoped to that tenant.
-    pub tenant: Option<String>,
-}
+pub struct ListArgs {}
 
 /// List LLM providers from the repository.
 ///
 /// # Errors
 /// Returns an error if the repository query fails.
-pub async fn list(repo: &dyn LlmProviderRepository, args: ListArgs) -> Result<Vec<LlmProvider>> {
-    let rows = match args.tenant {
-        Some(t) => repo.list_for_tenant(&t).await?,
-        None => repo.list_global().await?,
-    };
-    Ok(rows)
+pub async fn list(repo: &dyn LlmProviderRepository, _args: ListArgs) -> Result<Vec<LlmProvider>> {
+    Ok(repo.list().await?)
 }
 
 #[derive(Debug, Clone)]
@@ -108,9 +97,7 @@ pub async fn remove(repo: &dyn LlmProviderRepository, args: RemoveArgs) -> Resul
     if args.id.trim().is_empty() {
         return Err(anyhow!("--id must not be empty"));
     }
-    // Admin CLI: caller may not know the tenant; rely on superuser/owner
-    // bypass for RLS. v0.6.2 should add a `--tenant` flag to scope deletes.
-    repo.delete(None, &args.id).await?;
+    repo.delete(&args.id).await?;
     Ok(())
 }
 
@@ -121,19 +108,14 @@ pub fn format_table(rows: &[LlmProvider]) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
     out.push_str(
-        "ID                                     SCOPE       KIND           NAME             ENDPOINT\n",
+        "ID                                     KIND           NAME             ENDPOINT\n",
     );
     for p in rows {
-        let scope = p
-            .tenant_id
-            .as_ref()
-            .map_or_else(|| "global".to_string(), |t| t.as_str().to_string());
         // `write!` to a String is infallible.
         let _ = writeln!(
             out,
-            "{:38} {:11} {:14} {:16} {}",
+            "{:38} {:14} {:16} {}",
             p.id.as_str(),
-            scope,
             p.kind.as_str(),
             p.name,
             p.endpoint

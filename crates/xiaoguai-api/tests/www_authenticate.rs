@@ -48,7 +48,6 @@ fn build_state_with_webhook_validator(token: &str, route_id: &str) -> AppState {
     let validator = Arc::new(StaticWebhookTokenValidator {
         token: token.to_string(),
         route_id: route_id.to_string(),
-        tenant_id: "ten_a".to_string(),
     });
     let pusher: Arc<dyn WebhookPusher> = Arc::new(AlwaysOnePusher);
     let backend: Arc<dyn LlmBackend> =
@@ -187,7 +186,6 @@ async fn webhook_correct_token_yields_202() {
 
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["delivered"], 1);
-    assert_eq!(body["tenant_id"], "ten_a");
 }
 
 // ── token bound to different route → 401 + invalid_token ─────────────────

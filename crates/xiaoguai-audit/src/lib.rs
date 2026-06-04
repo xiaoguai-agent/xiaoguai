@@ -20,7 +20,7 @@ pub mod pdf;
 pub mod redact;
 
 /// Single-user owner identity signed into every audit HMAC entry's `tenant_id`.
-/// The `tenant_id` column was dropped in the SQLite pivot (DEC-033); the chain
+/// The `tenant_id` column was dropped in the `SQLite` pivot (DEC-033); the chain
 /// still hashes a `tenant_id`, so **every append site and the read-side rebuild
 /// must use this exact value** or `verify_chain` reports a broken chain.
 pub const OWNER_TENANT_ID: &str = "ten_local_owner";

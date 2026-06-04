@@ -139,7 +139,6 @@ pub struct ToolInvocationRecord {
 #[derive(Debug, Clone)]
 pub struct SessionForCase {
     pub session_id: String,
-    pub tenant_id: Option<String>,
     pub input_messages: Vec<Message>,
     pub tool_invocations: Vec<ToolInvocationRecord>,
     pub final_assistant_text: Option<String>,
@@ -512,7 +511,6 @@ mod tests {
     fn sample_session() -> SessionForCase {
         SessionForCase {
             session_id: "sess_abc123".into(),
-            tenant_id: Some("ten".into()),
             input_messages: vec![Message::user("look up the weather in Berlin")],
             tool_invocations: vec![
                 ToolInvocationRecord {
@@ -560,7 +558,6 @@ mod tests {
     fn build_case_yaml_handles_session_with_no_tool_calls() {
         let session = SessionForCase {
             session_id: "sess_z".into(),
-            tenant_id: None,
             input_messages: vec![Message::user("hi")],
             tool_invocations: Vec::new(),
             final_assistant_text: Some("hello back".into()),

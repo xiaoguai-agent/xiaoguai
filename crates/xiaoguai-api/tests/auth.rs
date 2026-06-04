@@ -28,7 +28,6 @@ fn build_state_with_auth() -> AppState {
     let validator: Arc<dyn TokenValidator> = Arc::new(StubValidator {
         claims: Claims {
             sub: "alice".into(),
-            tenant_id: "ten_a".into(),
         },
     });
     AppState {
@@ -137,7 +136,6 @@ async fn valid_token_lets_request_through_and_claims_override_body() {
     assert_eq!(resp.status(), StatusCode::CREATED);
     let v = body_to_value(resp.into_body()).await;
     assert_eq!(v["user_id"], "alice");
-    assert_eq!(v["tenant_id"], "ten_a");
 }
 
 #[tokio::test]

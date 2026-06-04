@@ -29,7 +29,6 @@ async fn require_ok(resp: reqwest::Response) -> Result<reqwest::Response> {
 #[derive(Debug, Clone)]
 pub struct RecordArgs {
     pub api_base: String,
-    pub tenant_id: String,
     pub agent_name: String,
     pub kind: String,
     pub value: f64,
@@ -59,7 +58,6 @@ pub async fn record(args: RecordArgs) -> Result<JsonValue> {
     }
     let client = Client::new();
     let body = serde_json::json!({
-        "tenant_id": args.tenant_id,
         "agent_name": args.agent_name,
         "kind": args.kind,
         "value": args.value,
@@ -85,7 +83,6 @@ pub async fn record(args: RecordArgs) -> Result<JsonValue> {
 #[derive(Debug, Clone)]
 pub struct ListArgs {
     pub api_base: String,
-    pub tenant_id: String,
     pub range: String,
     pub kind: Option<String>,
     pub limit: u32,
@@ -94,8 +91,8 @@ pub struct ListArgs {
 pub async fn list(args: ListArgs) -> Result<Vec<JsonValue>> {
     let client = Client::new();
     let mut url = format!(
-        "{}/v1/outcomes?tenant_id={}&range={}&limit={}",
-        args.api_base, args.tenant_id, args.range, args.limit
+        "{}/v1/outcomes?range={}&limit={}",
+        args.api_base, args.range, args.limit
     );
     if let Some(k) = &args.kind {
         url.push_str(&format!("&kind={k}"));
@@ -113,15 +110,14 @@ pub async fn list(args: ListArgs) -> Result<Vec<JsonValue>> {
 #[derive(Debug, Clone)]
 pub struct SummaryArgs {
     pub api_base: String,
-    pub tenant_id: String,
     pub range: String,
 }
 
 pub async fn summary(args: SummaryArgs) -> Result<Vec<JsonValue>> {
     let client = Client::new();
     let url = format!(
-        "{}/v1/outcomes/summary?tenant_id={}&range={}",
-        args.api_base, args.tenant_id, args.range
+        "{}/v1/outcomes/summary?range={}",
+        args.api_base, args.range
     );
     let resp = client
         .get(&url)
@@ -140,7 +136,6 @@ pub async fn summary(args: SummaryArgs) -> Result<Vec<JsonValue>> {
 #[derive(Debug, Clone)]
 pub struct TimeseriesArgs {
     pub api_base: String,
-    pub tenant_id: String,
     pub range: String,
     pub kind: Option<String>,
 }
@@ -148,8 +143,8 @@ pub struct TimeseriesArgs {
 pub async fn timeseries(args: TimeseriesArgs) -> Result<JsonValue> {
     let client = Client::new();
     let mut url = format!(
-        "{}/v1/outcomes/timeseries?tenant_id={}&range={}",
-        args.api_base, args.tenant_id, args.range
+        "{}/v1/outcomes/timeseries?range={}",
+        args.api_base, args.range
     );
     if let Some(k) = &args.kind {
         url.push_str(&format!("&kind={k}"));

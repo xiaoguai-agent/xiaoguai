@@ -16,10 +16,7 @@
 //!    0027).
 //!
 //! 2. [`list_pending_unexpired`](HotlEscalationStore::list_pending_unexpired)
-//!    — the boot-replay query. Runs **without** tenant context because
-//!    the registry is rebuilt before any per-tenant request is served;
-//!    the returned rows carry `tenant_id` so callers can scope downstream
-//!    work. The supporting partial index
+//!    — the boot-replay query. The supporting partial index
 //!    `hotl_pending_status_expires_idx` (migration 0027) makes the scan
 //!    cheap even at high pending-row counts.
 //!
@@ -79,7 +76,6 @@ impl HotlDecisionVerdict {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HotlEscalationRow {
     pub id: Uuid,
-    pub tenant_id: Uuid,
     pub session_id: Uuid,
     pub top_level_scope: String,
     pub status: String,
@@ -97,7 +93,6 @@ pub struct HotlEscalationRow {
 pub struct HotlPendingRow {
     pub id: Uuid,
     pub escalation_id: Uuid,
-    pub tenant_id: Uuid,
     pub scope: String,
     pub tool: String,
     pub args_redacted: JsonValue,
@@ -131,9 +126,6 @@ impl From<HotlPendingDbRow> for HotlPendingRow {
         Self {
             id: row.id,
             escalation_id: row.escalation_id,
-            // tenant_id is vestigial under the single-user pivot (no column);
-            // synthesise the nil UUID so the public row shape is preserved.
-            tenant_id: Uuid::nil(),
             scope: row.scope,
             tool: row.tool,
             args_redacted: row.args_redacted.0,
@@ -162,10 +154,7 @@ pub trait HotlEscalationStore: Send + Sync {
     ) -> RepoResult<Uuid>;
 
     /// Boot-replay scan. Returns every `hotl_pending` row that is still
-    /// `status='pending'` and has `expires_at > now`. **Not** tenant
-    /// scoped — runs as the superuser at boot before any tenant GUC is
-    /// set; downstream callers use the per-row `tenant_id` to route the
-    /// reattached waiters.
+    /// `status='pending'` and has `expires_at > now`.
     async fn list_pending_unexpired(&self, now: DateTime<Utc>) -> RepoResult<Vec<HotlPendingRow>>;
 
     /// UPDATE-the-decision path: stamps `status`/`decided_at`/`decided_by`
@@ -181,13 +170,7 @@ pub trait HotlEscalationStore: Send + Sync {
     ) -> RepoResult<bool>;
 }
 
-/// Postgres implementation backed by sqlx.
-///
-/// Holds the `PgPool` directly rather than going through
-/// [`begin_tenant_tx`] because every operation here is either (a) a
-/// 2-row write the caller has already tenant-scoped at a higher layer
-/// (the parent row carries `tenant_id`), or (b) the boot-replay scan
-/// which is by design cross-tenant.
+/// `SQLite` implementation backed by sqlx.
 #[derive(Debug, Clone)]
 pub struct PgHotlEscalationRepository {
     pool: SqlitePool,

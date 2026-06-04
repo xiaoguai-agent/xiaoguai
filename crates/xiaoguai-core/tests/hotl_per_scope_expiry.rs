@@ -26,7 +26,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use uuid::Uuid;
 use xiaoguai_api::hotl::decision_registry::DecisionRegistry;
 use xiaoguai_api::hotl::enforcer::{HotlEnforcer, HotlVerdict, HotlVerdictResult};
 use xiaoguai_core::hotl_bridge::SuspendingHotlGate;
@@ -37,7 +36,7 @@ struct AlwaysEscalate;
 
 #[async_trait]
 impl HotlEnforcer for AlwaysEscalate {
-    async fn check(&self, _tenant: Uuid, _scope: &str, _amount: f64) -> HotlVerdictResult {
+    async fn check(&self, _scope: &str, _amount: f64) -> HotlVerdictResult {
         Ok(HotlVerdict::Escalate("test escalate".into()))
     }
 }
@@ -68,7 +67,7 @@ async fn drive_and_extract(
 ) -> (tokio::time::Instant, tokio::time::Instant) {
     let before = tokio::time::Instant::now();
     let verdict =
-        <SuspendingHotlGate as xiaoguai_agent::HotlGate>::check(gate, Uuid::new_v4(), scope, 1.0)
+        <SuspendingHotlGate as xiaoguai_agent::HotlGate>::check(gate, scope, 1.0)
             .await;
     let ticket = match verdict {
         xiaoguai_agent::HotlGateVerdict::Suspend { ticket, .. } => ticket,

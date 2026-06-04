@@ -130,8 +130,6 @@ impl CaseFromSessionSource for PgCaseFromSessionSource {
 
         Ok(Some(SessionForCase {
             session_id: session_id.to_string(),
-            // DEC-033: single implicit owner; no per-session tenant scoping.
-            tenant_id: None,
             input_messages,
             tool_invocations,
             final_assistant_text,

@@ -236,8 +236,7 @@ async fn approve_and_remember_creates_policy_atomically() {
     assert_eq!(policy["max_count"], 10);
 
     // The follow-up create must also be visible via the policy store.
-    let tenant_id = Uuid::nil(); // auth: None → handler uses nil UUID
-    let listed = policies.list(tenant_id, Some("llm_call")).await.unwrap();
+    let listed = policies.list(Some("llm_call")).await.unwrap();
     assert_eq!(listed.len(), 1, "policy must be persisted in the store");
 }
 
@@ -336,7 +335,6 @@ async fn unauthorized_when_bearer_missing() {
     let validator: Arc<dyn TokenValidator> = Arc::new(StubValidator {
         claims: Claims {
             sub: "u".into(),
-            tenant_id: "00000000-0000-0000-0000-000000000abc".into(),
         },
     });
     let decisions: Arc<dyn HotlDecisionStore> = Arc::new(InMemoryHotlDecisionStore::new());

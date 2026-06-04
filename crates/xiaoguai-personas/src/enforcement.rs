@@ -54,7 +54,6 @@ mod tests {
     fn make_persona(tool_allowlist: Option<Vec<String>>) -> Persona {
         Persona {
             id: Uuid::new_v4(),
-            tenant_id: Uuid::new_v4(),
             name: "test".to_string(),
             system_prompt: "You are helpful.".to_string(),
             default_model: None,

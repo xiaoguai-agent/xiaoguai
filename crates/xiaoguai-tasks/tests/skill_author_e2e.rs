@@ -25,10 +25,6 @@ use xiaoguai_tasks::skill_author::{
     SkillAuthorError, SkillManifest, SkillProposalRepository,
 };
 
-fn tenant() -> &'static str {
-    "00000000-0000-0000-0000-000000000010"
-}
-
 fn known_tools() -> HashSet<String> {
     ["search", "fetch_url", "summarise"]
         .into_iter()
@@ -65,7 +61,7 @@ async fn agent_proposes_then_admin_approves_full_lifecycle() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo = InMemorySkillProposalRepository::new();
     let settings = InMemoryTenantSettings::new();
-    settings.allow(tenant());
+    settings.allow();
     let audit = InMemoryAuditSink::new();
     let known = known_tools();
 
@@ -83,7 +79,7 @@ async fn agent_proposes_then_admin_approves_full_lifecycle() {
 
     // ── Step 1: Agent emits the over-broad draft ──────────────────────────
     // Validator rejects this BEFORE consulting the gate. No audit emission.
-    let err = propose(&ctx, tenant(), "agent-37", first_draft())
+    let err = propose(&ctx, "agent-37", first_draft())
         .await
         .expect_err("first draft should be rejected by the validator");
     assert!(
@@ -95,12 +91,12 @@ async fn agent_proposes_then_admin_approves_full_lifecycle() {
         "validator-rejected drafts must not pollute the audit log"
     );
     assert!(
-        repo.list(tenant(), None).await.unwrap().is_empty(),
+        repo.list(None).await.unwrap().is_empty(),
         "no DB row should land for a validator-rejected draft"
     );
 
     // ── Step 2: Agent re-issues a narrower draft; gate DENIES (budget) ────
-    let err = propose(&ctx, tenant(), "agent-37", revised_draft())
+    let err = propose(&ctx, "agent-37", revised_draft())
         .await
         .expect_err("first allowed-through-validator draft is denied at the gate");
     assert!(
@@ -111,12 +107,12 @@ async fn agent_proposes_then_admin_approves_full_lifecycle() {
     let actions: Vec<_> = audit.entries().iter().map(|e| e.action.clone()).collect();
     assert_eq!(actions, vec!["skill.propose", "skill.hotl_gate"]);
     assert!(
-        repo.list(tenant(), None).await.unwrap().is_empty(),
+        repo.list(None).await.unwrap().is_empty(),
         "gate-denied drafts must not be persisted"
     );
 
     // ── Step 3: Agent retries; gate ALLOWS ────────────────────────────────
-    let row = propose(&ctx, tenant(), "agent-37", revised_draft())
+    let row = propose(&ctx, "agent-37", revised_draft())
         .await
         .expect("second attempt should be allowed");
     assert_eq!(row.status, ProposalStatus::Pending);
@@ -136,7 +132,7 @@ async fn agent_proposes_then_admin_approves_full_lifecycle() {
     );
     // Pending visible in the list view.
     let pending = repo
-        .list(tenant(), Some(ProposalStatus::Pending))
+        .list(Some(ProposalStatus::Pending))
         .await
         .unwrap();
     assert_eq!(pending.len(), 1);
@@ -174,19 +170,19 @@ async fn agent_proposes_then_admin_approves_full_lifecycle() {
 
     // Pending list is now empty, installed list shows one row.
     assert!(repo
-        .list(tenant(), Some(ProposalStatus::Pending))
+        .list(Some(ProposalStatus::Pending))
         .await
         .unwrap()
         .is_empty());
     let installed_list = repo
-        .list(tenant(), Some(ProposalStatus::Installed))
+        .list(Some(ProposalStatus::Installed))
         .await
         .unwrap();
     assert_eq!(installed_list.len(), 1);
 }
 
 #[tokio::test]
-async fn disabled_tenant_silently_drops_the_proposal() {
+async fn disabled_owner_silently_drops_the_proposal() {
     let repo = InMemorySkillProposalRepository::new();
     let settings = InMemoryTenantSettings::new(); // not allowed
     let audit = InMemoryAuditSink::new();
@@ -200,13 +196,13 @@ async fn disabled_tenant_silently_drops_the_proposal() {
         known_tools: &known,
     };
 
-    let err = propose(&ctx, tenant(), "agent-37", revised_draft())
+    let err = propose(&ctx, "agent-37", revised_draft())
         .await
-        .expect_err("disabled tenant should bounce");
+        .expect_err("disabled owner should bounce");
     assert!(matches!(err, SkillAuthorError::Disabled));
     assert!(
         audit.entries().is_empty(),
         "disabled drops should not emit audit rows"
     );
-    assert!(repo.list(tenant(), None).await.unwrap().is_empty());
+    assert!(repo.list(None).await.unwrap().is_empty());
 }

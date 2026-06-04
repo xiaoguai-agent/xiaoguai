@@ -120,7 +120,6 @@ impl HotlEscalationStore for MockHotlEscalationStore {
 fn parent_row(id: Uuid) -> HotlEscalationRow {
     HotlEscalationRow {
         id,
-        tenant_id: Uuid::new_v4(),
         session_id: Uuid::new_v4(),
         top_level_scope: "tool_call.mcp.test".to_string(),
         status: "pending".to_string(),
@@ -133,7 +132,6 @@ fn child_row(escalation_id: Uuid, expires_at: DateTime<Utc>) -> HotlPendingRow {
     HotlPendingRow {
         id: Uuid::new_v4(),
         escalation_id,
-        tenant_id: Uuid::new_v4(),
         scope: "tool_call.mcp.test".to_string(),
         tool: "mcp.test".to_string(),
         args_redacted: json!({}),

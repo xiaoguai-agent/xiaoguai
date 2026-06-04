@@ -66,7 +66,6 @@ impl From<PackRow> for InstalledPackRow {
     fn from(r: PackRow) -> Self {
         Self {
             id: r.id,
-            tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
             pack_slug: r.pack_slug,
             version: r.version,
             config: r.config,
@@ -79,9 +78,7 @@ impl From<PackRow> for InstalledPackRow {
 
 #[async_trait]
 impl SkillPackRepository for PgSkillPackRepository {
-    async fn list(&self, tenant_id: &str) -> Result<Vec<InstalledPackRow>, SkillPackError> {
-        // DEC-033: tenant_id column dropped; vestigial param ignored.
-        let _ = tenant_id;
+    async fn list(&self) -> Result<Vec<InstalledPackRow>, SkillPackError> {
         let rows: Vec<PackRow> = sqlx::query_as(
             "SELECT id, pack_slug, version, config, installed_at \
              FROM installed_skill_packs \
@@ -163,7 +160,6 @@ mod tests {
         };
         let row: InstalledPackRow = pr.into();
         assert_eq!(row.id, "id-1");
-        assert_eq!(row.tenant_id, xiaoguai_storage::OWNER_TENANT_ID);
         assert_eq!(row.pack_slug, "rag-hr");
         assert_eq!(row.config["top_k"], 5);
         assert_eq!(row.installed_at, now);
@@ -183,8 +179,6 @@ mod tests {
     fn make_row(slug: &str) -> InstalledPackRow {
         InstalledPackRow {
             id: Uuid::new_v4().to_string(),
-            // tenant_id is vestigial under DEC-033 (synthesized on read).
-            tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
             pack_slug: slug.to_string(),
             version: "1.0.0".into(),
             config: serde_json::json!({"top_k": 10}),
@@ -201,12 +195,12 @@ mod tests {
         let saved = repo.install(row.clone()).await.unwrap();
         assert_eq!(saved.pack_slug, "rag-hr");
 
-        let listed = repo.list(xiaoguai_storage::OWNER_TENANT_ID).await.unwrap();
+        let listed = repo.list().await.unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, row.id);
 
         repo.uninstall(&saved.id).await.unwrap();
-        let after = repo.list(xiaoguai_storage::OWNER_TENANT_ID).await.unwrap();
+        let after = repo.list().await.unwrap();
         assert!(after.is_empty());
     }
 

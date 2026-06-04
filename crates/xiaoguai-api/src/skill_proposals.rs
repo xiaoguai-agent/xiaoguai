@@ -2,7 +2,7 @@
 //!
 //! Three endpoints under `/v1/skills/proposals`:
 //!
-//! * `GET    /v1/skills/proposals?tenant_id=&status=`     — list rows
+//! * `GET    /v1/skills/proposals?status=`                — list rows
 //! * `POST   /v1/skills/proposals/:id/approve`            — flip → installed
 //! * `POST   /v1/skills/proposals/:id/reject`             — flip → rejected
 //!
@@ -27,7 +27,6 @@ use xiaoguai_tasks::skill_author::{
 
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
-use xiaoguai_storage::OWNER_TENANT_ID;
 
 // ---------------------------------------------------------------------------
 // Wire types
@@ -36,7 +35,6 @@ use xiaoguai_storage::OWNER_TENANT_ID;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProposalRowResponse {
     pub id: String,
-    pub tenant_id: String,
     pub proposed_by: String,
     pub manifest: SkillManifest,
     pub status: String,
@@ -50,7 +48,6 @@ impl From<ProposalRow> for ProposalRowResponse {
     fn from(r: ProposalRow) -> Self {
         Self {
             id: r.id,
-            tenant_id: r.tenant_id,
             proposed_by: r.proposed_by,
             manifest: r.manifest,
             status: r.status.as_str().to_string(),
@@ -64,7 +61,6 @@ impl From<ProposalRow> for ProposalRowResponse {
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListProposalsQuery {
-    pub tenant_id: Option<String>,
     pub status: Option<String>,
 }
 
@@ -114,9 +110,9 @@ fn skill_audit(state: &AppState) -> ApiResult<Arc<dyn SkillAuditSink>> {
 
 fn err_to_api(e: SkillAuthorError) -> ApiError {
     match e {
-        SkillAuthorError::Disabled => ApiError::ServiceUnavailable(
-            "agent-authored skills are not enabled for this tenant".into(),
-        ),
+        SkillAuthorError::Disabled => {
+            ApiError::ServiceUnavailable("agent-authored skills are not enabled".into())
+        }
         SkillAuthorError::InvalidManifest(s) => {
             ApiError::InvalidRequest(format!("invalid manifest: {s}"))
         }
@@ -125,9 +121,6 @@ fn err_to_api(e: SkillAuthorError) -> ApiError {
         SkillAuthorError::NotFound => ApiError::NotFound,
         SkillAuthorError::SkillFileExists => {
             ApiError::Conflict("a skill with this name and version already exists on disk".into())
-        }
-        SkillAuthorError::InvalidTenant(s) => {
-            ApiError::InvalidRequest(format!("tenant id is not a uuid: {s}"))
         }
         SkillAuthorError::YamlRender(s) => ApiError::Internal(anyhow::anyhow!("yaml render: {s}")),
         SkillAuthorError::Backend(s) => ApiError::Internal(anyhow::anyhow!("skill author: {s}")),
@@ -138,18 +131,12 @@ fn err_to_api(e: SkillAuthorError) -> ApiError {
 // Route handlers
 // ---------------------------------------------------------------------------
 
-/// `GET /v1/skills/proposals?tenant_id=...&status=pending`
+/// `GET /v1/skills/proposals?status=pending`
 pub async fn list_proposals(
     State(state): State<AppState>,
     Query(q): Query<ListProposalsQuery>,
 ) -> ApiResult<Json<Vec<ProposalRowResponse>>> {
     let repo = proposals_repo(&state)?;
-    // DEC-033 single-owner: proposals are keyed by tenant_id (migration 0021
-    // keeps it as PK), but there is only one owner; default when omitted/empty.
-    let tenant = match q.tenant_id {
-        Some(t) if !t.is_empty() => t,
-        _ => OWNER_TENANT_ID.to_string(),
-    };
     let status = match q.status.as_deref() {
         None => None,
         Some(s) => Some(
@@ -157,7 +144,7 @@ pub async fn list_proposals(
                 .ok_or_else(|| ApiError::InvalidRequest(format!("unknown status {s:?}")))?,
         ),
     };
-    let rows = repo.list(&tenant, status).await.map_err(err_to_api)?;
+    let rows = repo.list(status).await.map_err(err_to_api)?;
     Ok(Json(
         rows.into_iter().map(ProposalRowResponse::from).collect(),
     ))
@@ -234,7 +221,6 @@ mod tests {
         };
         let row = ProposalRow {
             id: "id-1".into(),
-            tenant_id: "00000000-0000-0000-0000-000000000000".into(),
             proposed_by: "agent-1".into(),
             manifest: m.clone(),
             status: ProposalStatus::Pending,
@@ -259,7 +245,6 @@ mod tests {
             SkillAuthorError::Duplicate,
             SkillAuthorError::NotFound,
             SkillAuthorError::SkillFileExists,
-            SkillAuthorError::InvalidTenant("x".into()),
             SkillAuthorError::YamlRender("x".into()),
             SkillAuthorError::Backend("x".into()),
         ];

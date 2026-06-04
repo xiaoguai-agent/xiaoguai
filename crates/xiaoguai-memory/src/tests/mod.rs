@@ -7,7 +7,6 @@
 //!   produce meaningfully different vectors via the polynomial hash scheme.
 
 pub mod crud;
-pub mod multi_tenant;
 pub mod recall;
 pub mod tag_filter;
 pub mod ttl;

@@ -15,7 +15,6 @@ mod common;
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 use xiaoguai_agent::{AgentConfig, AgentEvent, AllowAllGate, ReactAgent, StopReason, Toolbox};
 use xiaoguai_llm::mock::ScriptStep;
 use xiaoguai_llm::{LlmBackend, Message, MockBackend, ToolCallSpec};
@@ -41,8 +40,7 @@ async fn legacy_allow_path_emits_no_hotl_events() {
         ScriptStep::tool_calls(vec![make_call("c1", "search", &serde_json::json!({}))]),
         ScriptStep::text("done"),
     ]));
-    let mut cfg = AgentConfig::new("mock").with_hotl_gate(Arc::new(AllowAllGate));
-    cfg.tenant_id = Some(Uuid::new_v4().to_string());
+    let cfg = AgentConfig::new("mock").with_hotl_gate(Arc::new(AllowAllGate));
 
     let agent = ReactAgent::new(backend, toolbox, cfg);
     let (outcome, events) = agent

@@ -17,9 +17,6 @@ use crate::usage::{UsageGroupBy, UsageQuery, UsageReport};
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListUsageQuery {
-    /// Restrict aggregation to a single tenant. `None` = cross-tenant
-    /// admin view.
-    pub tenant_id: Option<String>,
     /// RFC 3339 timestamp; inclusive lower bound on `token_usage.ts`.
     pub since: Option<DateTime<Utc>>,
     /// RFC 3339 timestamp; inclusive upper bound on `token_usage.ts`.
@@ -45,7 +42,6 @@ pub async fn list_usage(
     }
     let report = reader
         .aggregate(UsageQuery {
-            tenant_id: q.tenant_id,
             since: q.since,
             until: q.until,
             group_by: q.group_by.unwrap_or_default(),

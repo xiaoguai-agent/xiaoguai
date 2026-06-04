@@ -97,7 +97,6 @@ async fn list_503_when_store_not_wired() {
 async fn create_503_when_store_not_wired() {
     let app = router(build_state(None));
     let body = serde_json::to_vec(&CreateHotlPolicyRequest {
-        tenant_id: Uuid::new_v4(),
         scope: "llm_call".into(),
         window_seconds: 60,
         max_count: Some(5),
@@ -144,10 +143,7 @@ async fn list_empty_for_unknown_tenant() {
 async fn create_returns_201_with_policy() {
     let store: Arc<dyn HotlPolicyStore> = Arc::new(InMemoryHotlPolicyStore::new());
     let app = router(build_state(Some(store)));
-    let tid = Uuid::new_v4();
-
     let req_body = serde_json::to_vec(&CreateHotlPolicyRequest {
-        tenant_id: tid,
         scope: "llm_call".into(),
         window_seconds: 3600,
         max_count: Some(100),
@@ -182,7 +178,6 @@ async fn create_then_list_shows_policy() {
     let tid = Uuid::new_v4();
 
     let req_body = serde_json::to_vec(&CreateHotlPolicyRequest {
-        tenant_id: tid,
         scope: "email_send".into(),
         window_seconds: 60,
         max_count: Some(10),
@@ -231,7 +226,6 @@ async fn delete_existing_returns_204() {
 
     // Create first.
     let req_body = serde_json::to_vec(&CreateHotlPolicyRequest {
-        tenant_id: tid,
         scope: "llm_call".into(),
         window_seconds: 60,
         max_count: Some(5),
@@ -364,7 +358,6 @@ async fn list_scope_filter_works() {
     for scope in ["llm_call", "email_send"] {
         store
             .create(CreateHotlPolicyRequest {
-                tenant_id: tid,
                 scope: scope.into(),
                 window_seconds: 60,
                 max_count: Some(5),

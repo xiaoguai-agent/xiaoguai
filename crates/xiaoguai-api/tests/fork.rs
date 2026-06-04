@@ -23,11 +23,11 @@ use xiaoguai_api::{router, AppState, CancelRegistry};
 use xiaoguai_llm::mock::ScriptStep;
 use xiaoguai_llm::{LlmBackend, MockBackend};
 use xiaoguai_storage::repositories::SessionRepository;
-use xiaoguai_types::{Session, SessionId, SessionStatus, TenantId, UserId};
+use xiaoguai_types::{Session, SessionId, SessionStatus, UserId};
 
 use common::{InMemoryMessageRepo, InMemorySessionRepo};
 
-type ForkCall = (String, String, String, Option<String>);
+type ForkCall = (String, String, Option<String>);
 
 struct RecordingForker {
     calls: Mutex<Vec<ForkCall>>,
@@ -47,13 +47,11 @@ impl RecordingForker {
 impl SessionForker for RecordingForker {
     async fn fork(
         &self,
-        tenant: &str,
         parent_id: &str,
         from_message_id: &str,
         title: Option<String>,
     ) -> Result<Session, SessionForkError> {
         self.calls.lock().push((
-            tenant.to_string(),
             parent_id.to_string(),
             from_message_id.to_string(),
             title.clone(),
@@ -120,11 +118,10 @@ fn build_state(forker: Option<Arc<dyn SessionForker>>) -> (AppState, Arc<InMemor
     (state, sessions)
 }
 
-async fn seed_parent(sessions: &InMemorySessionRepo, id: &str, tenant: &str) {
+async fn seed_parent(sessions: &InMemorySessionRepo, id: &str) {
     let now = Utc::now();
     let s = Session {
         id: SessionId::from(id.to_string()),
-        tenant_id: TenantId::from(tenant.to_string()),
         user_id: UserId::from("u".to_string()),
         title: Some("p".into()),
         created_at: now,
@@ -134,14 +131,13 @@ async fn seed_parent(sessions: &InMemorySessionRepo, id: &str, tenant: &str) {
         parent_session_id: None,
         forked_from_message_id: None,
     };
-    sessions.create(None, &s).await.unwrap();
+    sessions.create(&s).await.unwrap();
 }
 
-fn forked_session(parent_id: &str, tenant: &str, from_message_id: &str) -> Session {
+fn forked_session(parent_id: &str, from_message_id: &str) -> Session {
     let now = Utc::now();
     Session {
         id: SessionId::new(),
-        tenant_id: TenantId::from(tenant.to_string()),
         user_id: UserId::from("u".to_string()),
         title: Some("Fork: p".into()),
         created_at: now,
@@ -184,7 +180,7 @@ async fn fork_returns_503_when_forker_not_wired() {
 
 #[tokio::test]
 async fn fork_returns_404_when_parent_missing() {
-    let forker = RecordingForker::with_result(Ok(forked_session("p", "t", "m1")));
+    let forker = RecordingForker::with_result(Ok(forked_session("p1", "m1")));
     let (state, _) = build_state(Some(forker as Arc<dyn SessionForker>));
     let app = router(state);
     let resp = app
@@ -199,9 +195,9 @@ async fn fork_returns_404_when_parent_missing() {
 
 #[tokio::test]
 async fn fork_returns_400_when_message_id_blank() {
-    let forker = RecordingForker::with_result(Ok(forked_session("p", "t", "m1")));
+    let forker = RecordingForker::with_result(Ok(forked_session("p1", "m1")));
     let (state, sessions) = build_state(Some(forker as Arc<dyn SessionForker>));
-    seed_parent(&sessions, "p1", "t").await;
+    seed_parent(&sessions, "p1").await;
     let app = router(state);
     let resp = app
         .oneshot(post(
@@ -215,12 +211,12 @@ async fn fork_returns_400_when_message_id_blank() {
 
 #[tokio::test]
 async fn fork_happy_path_returns_201_with_child_session() {
-    let child = forked_session("p1", "t", "m1");
+    let child = forked_session("p1", "m1");
     let child_id = child.id.as_str().to_string();
     let forker = RecordingForker::with_result(Ok(child));
     let forker_trait: Arc<dyn SessionForker> = forker.clone();
     let (state, sessions) = build_state(Some(forker_trait));
-    seed_parent(&sessions, "p1", "t").await;
+    seed_parent(&sessions, "p1").await;
     let app = router(state);
     let resp = app
         .oneshot(post(
@@ -235,12 +231,10 @@ async fn fork_happy_path_returns_201_with_child_session() {
     assert_eq!(v["parent_session_id"], "p1");
     assert_eq!(v["forked_from_message_id"], "m1");
 
-    // Recorded a single call with the expected args. Tenant was lifted
-    // from the parent session row (no auth header → no claims).
+    // Recorded a single call with the expected args.
     let calls = forker.calls.lock();
     assert_eq!(calls.len(), 1);
-    let (tenant, parent_id, msg_id, title) = &calls[0];
-    assert_eq!(tenant, "t");
+    let (parent_id, msg_id, title) = &calls[0];
     assert_eq!(parent_id, "p1");
     assert_eq!(msg_id, "m1");
     assert_eq!(title.as_deref(), Some("explore"));
@@ -250,7 +244,7 @@ async fn fork_happy_path_returns_201_with_child_session() {
 async fn fork_maps_message_not_found_to_404() {
     let forker = RecordingForker::with_result(Err(SessionForkError::MessageNotFound));
     let (state, sessions) = build_state(Some(forker as Arc<dyn SessionForker>));
-    seed_parent(&sessions, "p1", "t").await;
+    seed_parent(&sessions, "p1").await;
     let app = router(state);
     let resp = app
         .oneshot(post(
@@ -267,7 +261,7 @@ async fn fork_maps_parent_not_forkable_to_409() {
     let forker =
         RecordingForker::with_result(Err(SessionForkError::ParentNotForkable("Archived".into())));
     let (state, sessions) = build_state(Some(forker as Arc<dyn SessionForker>));
-    seed_parent(&sessions, "p1", "t").await;
+    seed_parent(&sessions, "p1").await;
     let app = router(state);
     let resp = app
         .oneshot(post(

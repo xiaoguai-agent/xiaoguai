@@ -33,21 +33,13 @@ pub struct Claims {
     /// Owner subject — the configured username (or a synthetic owner id in
     /// dev mode where no credential is set).
     pub sub: String,
-    /// Vestigial single-owner tenant id (always
-    /// [`xiaoguai_storage::OWNER_TENANT_ID`]). Kept so repository calls that
-    /// still thread an `Option<&str>` tenant argument compile unchanged; it
-    /// carries no isolation semantics and is slated for a later cleanup.
-    pub tenant_id: String,
 }
 
 impl Claims {
     /// Build the owner identity for `sub`.
     #[must_use]
     pub fn owner(sub: impl Into<String>) -> Self {
-        Self {
-            sub: sub.into(),
-            tenant_id: xiaoguai_storage::OWNER_TENANT_ID.to_string(),
-        }
+        Self { sub: sub.into() }
     }
 }
 
@@ -197,7 +189,6 @@ mod tests {
         };
         let c = v.validate("anything").await.expect("ok");
         assert_eq!(c.sub, "alice");
-        assert_eq!(c.tenant_id, xiaoguai_storage::OWNER_TENANT_ID);
     }
 
     #[tokio::test]
