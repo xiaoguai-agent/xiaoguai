@@ -1,16 +1,25 @@
 # Roadmap
 
+> **Superseded by DEC-033 (single-user SQLite pivot).** This roadmap is kept
+> as a record of intent, but the architecture direction changed: Xiaoguai now
+> ships as a single binary over **embedded SQLite** with a single owner. The
+> Postgres / OIDC-JWT / Casbin-RBAC / row-level-security / Helm / HA items
+> below were **removed**, not shipped — auth is an optional HTTP Basic
+> username/password and there is no multi-tenancy. See the
+> [Architecture Overview](architecture.md).
+
 ## v1.0 — shipped
 
 Everything needed for production single-node deployments:
 
-- Rust workspace (18 crates, 530 tests)
+- Rust workspace (now ~34 crates)
 - ReAct agent loop with MCP two-way (consume + publish)
 - Feishu IM adapter
-- OIDC RS256/ES256 JWT + Casbin RBAC + Postgres RLS
+- Single-owner access gate (optional HTTP Basic) — *(originally planned as
+  OIDC/Casbin/RLS; removed under DEC-033)*
 - HMAC-chained audit log
-- Four delivery paths: docker-compose, Helm, bare-metal tarball, pip wheel
-- Regression eval framework (5 graders)
+- Delivery paths: docker-compose, native `.deb`/`.rpm`, bare-metal tarball, pip wheel
+- Regression eval framework
 
 ## v1.1 — shipped
 

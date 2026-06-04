@@ -50,6 +50,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The workspace Cargo.toml stays at 0.1.0; the release version is the git
+      # tag (cargo-dist was dropped — see the Cargo.toml note). Inject the tag
+      # version so the built binary's `--version` matches the release.
+      - name: Set workspace version from tag
+        if: github.ref_type == 'tag'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = \"0.1.0\"/version = \"${VERSION}\"/" Cargo.toml
+          echo "Cargo.toml workspace version -> ${VERSION}"
+
       - uses: dtolnay/rust-toolchain@1.93.0
 
       - uses: Swatinem/rust-cache@v2
@@ -105,6 +115,15 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
+
+      # cargo-deb reads the package version from Cargo.toml — inject the tag
+      # version so the .deb is named for the release, not the static 0.1.0.
+      - name: Set workspace version from tag
+        if: github.ref_type == 'tag'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = \"0.1.0\"/version = \"${VERSION}\"/" Cargo.toml
+          echo "Cargo.toml workspace version -> ${VERSION}"
 
       # Restore binaries from the build job so cargo-deb can find them.
       - name: Download binaries
@@ -162,6 +181,15 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
+
+      # cargo-generate-rpm reads the package version from Cargo.toml — inject
+      # the tag version so the .rpm is named for the release, not 0.1.0.
+      - name: Set workspace version from tag
+        if: github.ref_type == 'tag'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = \"0.1.0\"/version = \"${VERSION}\"/" Cargo.toml
+          echo "Cargo.toml workspace version -> ${VERSION}"
 
       - name: Download binaries
         uses: actions/download-artifact@v8

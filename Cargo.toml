@@ -51,11 +51,17 @@ description = "Rust-implemented, audit-first, scheduler-native local agent platf
 readme = "README.md"
 
 # NOTE: cargo-dist (`[workspace.metadata.dist]` + .github/workflows/release.yml)
-# was removed. It requires the workspace version to equal the release tag, but
+# was removed. It required the workspace version to equal the release tag, but
 # this project keeps Cargo.toml at 0.1.0 and drives the version from the git
 # tag — so `dist host --tag vX.Y.Z` always failed with "nothing to Release".
 # The Linux install story is the native .deb/.rpm (release-packages.yml) +
 # bare-metal tarball (release-tarball.yml), both of which bundle the web UI.
+#
+# The git tag is the single source of truth for the release version: on a `v*`
+# tag push both release workflows `sed` this `0.1.0` to the tag version before
+# building/packaging, so the .deb/.rpm package version and the binary's
+# `--version` all match the release. This line MUST stay `0.1.0` (the sed
+# target) on the default branch.
 
 [workspace.dependencies]
 # async runtime
