@@ -1,0 +1,508 @@
+{
+  "consumer": {
+    "name": "python-sdk"
+  },
+  "provider": {
+    "name": "xiaoguai"
+  },
+  "interactions": [
+    {
+      "description": "a GET /v1/hotl/policies request for tenant 11111111",
+      "request": {
+        "method": "GET",
+        "path": "/v1/hotl/policies",
+        "headers": {
+          "Authorization": "Bearer test-token"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": [
+          {
+            "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "scope": "llm_call",
+            "window_seconds": 3600,
+            "max_count": 100,
+            "max_usd": 5.0,
+            "escalate_to": "ops@example.com"
+          }
+        ],
+        "matchingRules": {
+          "$.body": {
+            "min": 1
+          },
+          "$.body[*].*": {
+            "match": "type"
+          },
+          "$.body[*].id": {
+            "match": "regex",
+            "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+          },
+          "$.body[*].scope": {
+            "match": "type"
+          },
+          "$.body[*].window_seconds": {
+            "match": "type"
+          },
+          "$.body[*].max_count": {
+            "match": "type"
+          },
+          "$.body[*].max_usd": {
+            "match": "type"
+          },
+          "$.body[*].escalate_to": {
+            "match": "type"
+          }
+        }
+      }
+    },
+    {
+      "description": "a POST /v1/hotl/policies request",
+      "request": {
+        "method": "POST",
+        "path": "/v1/hotl/policies",
+        "headers": {
+          "Authorization": "Bearer test-token",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "scope": "llm_call",
+          "window_seconds": 3600,
+          "max_count": 100,
+          "max_usd": 5.0,
+          "escalate_to": "ops@example.com"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "scope": "llm_call",
+          "window_seconds": 3600,
+          "max_count": 100,
+          "max_usd": 5.0,
+          "escalate_to": "ops@example.com"
+        },
+        "matchingRules": {
+          "$.body.id": {
+            "match": "regex",
+            "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+          },
+          "$.body.scope": {
+            "match": "type"
+          },
+          "$.body.window_seconds": {
+            "match": "type"
+          },
+          "$.body.max_count": {
+            "match": "type"
+          },
+          "$.body.max_usd": {
+            "match": "type"
+          },
+          "$.body.escalate_to": {
+            "match": "type"
+          }
+        }
+      }
+    },
+    {
+      "description": "a GET /v1/hotl/policies/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa request",
+      "request": {
+        "method": "GET",
+        "path": "/v1/hotl/policies/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "headers": {
+          "Authorization": "Bearer test-token"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "scope": "llm_call",
+          "window_seconds": 3600,
+          "max_count": 100,
+          "max_usd": 5.0,
+          "escalate_to": "ops@example.com"
+        },
+        "matchingRules": {
+          "$.body.id": {
+            "match": "regex",
+            "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+          },
+          "$.body.scope": {
+            "match": "type"
+          },
+          "$.body.window_seconds": {
+            "match": "type"
+          },
+          "$.body.max_count": {
+            "match": "type"
+          },
+          "$.body.max_usd": {
+            "match": "type"
+          },
+          "$.body.escalate_to": {
+            "match": "type"
+          }
+        }
+      }
+    },
+    {
+      "description": "a PUT /v1/hotl/policies/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa request",
+      "request": {
+        "method": "PUT",
+        "path": "/v1/hotl/policies/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "headers": {
+          "Authorization": "Bearer test-token",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "scope": "llm_call",
+          "window_seconds": 7200,
+          "max_count": 200,
+          "max_usd": null,
+          "escalate_to": null
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "scope": "llm_call",
+          "window_seconds": 7200,
+          "max_count": 200,
+          "max_usd": 5.0,
+          "escalate_to": "ops@example.com"
+        },
+        "matchingRules": {
+          "$.body.id": {
+            "match": "regex",
+            "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+          },
+          "$.body.scope": {
+            "match": "type"
+          },
+          "$.body.window_seconds": {
+            "match": "type"
+          },
+          "$.body.max_count": {
+            "match": "type"
+          },
+          "$.body.max_usd": {
+            "match": "type"
+          },
+          "$.body.escalate_to": {
+            "match": "type"
+          }
+        }
+      }
+    },
+    {
+      "description": "a DELETE /v1/hotl/policies/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa request",
+      "request": {
+        "method": "DELETE",
+        "path": "/v1/hotl/policies/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "headers": {
+          "Authorization": "Bearer test-token"
+        }
+      },
+      "response": {
+        "status": 204,
+        "headers": {
+        }
+      }
+    },
+    {
+      "description": "a POST /v1/hotl/check request within budget",
+      "request": {
+        "method": "POST",
+        "path": "/v1/hotl/check",
+        "headers": {
+          "Authorization": "Bearer test-token",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "scope": "llm_call",
+          "amount": 0.0025
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "verdict": "allow",
+          "reason": null
+        },
+        "matchingRules": {
+          "$.body.verdict": {
+            "match": "type"
+          }
+        }
+      }
+    },
+    {
+      "description": "a POST /v1/outcomes request",
+      "request": {
+        "method": "POST",
+        "path": "/v1/outcomes",
+        "headers": {
+          "Authorization": "Bearer test-token",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "session_id": "sess_abc123",
+          "agent_name": "sales-bot",
+          "kind": "revenue_usd",
+          "value": 1250.0,
+          "unit": "usd",
+          "description": "Closed deal D-4471",
+          "metadata": {
+            "deal_id": "D-4471"
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "description": "a GET /v1/outcomes/summary request for 7d",
+      "request": {
+        "method": "GET",
+        "path": "/v1/outcomes/summary",
+        "query": "range=7d",
+        "headers": {
+          "Authorization": "Bearer test-token"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "range": "7d",
+          "summary": {
+            "by_kind": {
+              "revenue_usd": {
+                "sum": 42000.0,
+                "count": 18,
+                "avg": 2333.33
+              }
+            }
+          }
+        },
+        "matchingRules": {
+          "$.body.range": {
+            "match": "type"
+          },
+          "$.body.summary": {
+            "match": "type"
+          },
+          "$.body.summary.by_kind": {
+            "match": "type"
+          },
+          "$.body.summary.by_kind.revenue_usd.sum": {
+            "match": "type"
+          },
+          "$.body.summary.by_kind.revenue_usd.count": {
+            "match": "type"
+          },
+          "$.body.summary.by_kind.revenue_usd.avg": {
+            "match": "type"
+          }
+        }
+      }
+    },
+    {
+      "description": "a GET /v1/outcomes/timeseries request for 7d",
+      "request": {
+        "method": "GET",
+        "path": "/v1/outcomes/timeseries",
+        "query": "range=7d",
+        "headers": {
+          "Authorization": "Bearer test-token"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "range": "7d",
+          "days": [
+            {
+              "date": "2026-05-20",
+              "kind": "revenue_usd",
+              "sum": 5000.0,
+              "count": 2
+            }
+          ]
+        },
+        "matchingRules": {
+          "$.body.range": {
+            "match": "type"
+          },
+          "$.body.days": {
+            "min": 1
+          },
+          "$.body.days[*].*": {
+            "match": "type"
+          },
+          "$.body.days[*].date": {
+            "match": "type"
+          },
+          "$.body.days[*].kind": {
+            "match": "type"
+          },
+          "$.body.days[*].sum": {
+            "match": "type"
+          },
+          "$.body.days[*].count": {
+            "match": "type"
+          }
+        }
+      }
+    },
+    {
+      "description": "a GET /v1/skills/installed request",
+      "request": {
+        "method": "GET",
+        "path": "/v1/skills/installed",
+        "headers": {
+          "Authorization": "Bearer test-token"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": [
+          {
+            "id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+            "pack_slug": "pr-review",
+            "version": "1.0.0",
+            "config": {
+            },
+            "installed_at": "2026-05-25T12:34:56Z"
+          }
+        ],
+        "matchingRules": {
+          "$.body": {
+            "min": 1
+          },
+          "$.body[*].*": {
+            "match": "type"
+          },
+          "$.body[*].id": {
+            "match": "regex",
+            "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+          },
+          "$.body[*].pack_slug": {
+            "match": "type"
+          },
+          "$.body[*].version": {
+            "match": "type"
+          },
+          "$.body[*].config": {
+            "match": "type"
+          },
+          "$.body[*].installed_at": {
+            "match": "type"
+          }
+        }
+      }
+    },
+    {
+      "description": "a POST /v1/skills/install request",
+      "request": {
+        "method": "POST",
+        "path": "/v1/skills/install",
+        "headers": {
+          "Authorization": "Bearer test-token",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "pack_slug": "pr-review",
+          "config": {
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "pack_slug": "pr-review",
+          "version": "1.0.0",
+          "config": {
+          },
+          "installed_at": "2026-05-25T12:34:56Z"
+        },
+        "matchingRules": {
+          "$.body.id": {
+            "match": "regex",
+            "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+          },
+          "$.body.pack_slug": {
+            "match": "type"
+          },
+          "$.body.version": {
+            "match": "type"
+          },
+          "$.body.config": {
+            "match": "type"
+          },
+          "$.body.installed_at": {
+            "match": "type"
+          }
+        }
+      }
+    },
+    {
+      "description": "a DELETE /v1/skills/install/cccccccc-cccc-cccc-cccc-cccccccccccc request",
+      "request": {
+        "method": "DELETE",
+        "path": "/v1/skills/install/cccccccc-cccc-cccc-cccc-cccccccccccc",
+        "headers": {
+          "Authorization": "Bearer test-token"
+        }
+      },
+      "response": {
+        "status": 204,
+        "headers": {
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "pactSpecification": {
+      "version": "3.0.0"
+    }
+  }
+}
