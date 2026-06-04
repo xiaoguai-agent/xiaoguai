@@ -52,7 +52,7 @@
 //! |----------------|-------------------------------------------------------------|
 //! | [`model`]      | [`Persona`], [`CreatePersonaRequest`], [`UpdatePersonaRequest`], [`SessionPersona`] |
 //! | [`traits`]     | [`PersonaRepository`] trait                                 |
-//! | [`pg`]         | [`SqlitePersonaRepository`] — `SQLite` implementation           |
+//! | [`sqlite`]         | [`SqlitePersonaRepository`] — `SQLite` implementation           |
 //! | [`memory`]     | [`InMemoryPersonaRepository`] — test / dev backend          |
 //! | [`enforcement`]| [`tool_allowed`], [`filter_tools`], [`build_system_messages`] |
 //! | [`routes`]     | axum REST route fragments for `/v1/personas` + `/v1/sessions/:id/persona` |
@@ -70,8 +70,8 @@ pub mod enforcement;
 pub mod error;
 pub mod memory;
 pub mod model;
-pub mod pg;
 pub mod routes;
+pub mod sqlite;
 pub mod traits;
 
 // Public re-exports — the full API surface callers need.
@@ -79,5 +79,5 @@ pub use enforcement::{build_system_messages, filter_tools, tool_allowed};
 pub use error::{PersonaError, PersonaResult};
 pub use memory::InMemoryPersonaRepository;
 pub use model::{CreatePersonaRequest, Persona, SessionPersona, UpdatePersonaRequest};
-pub use pg::SqlitePersonaRepository;
+pub use sqlite::SqlitePersonaRepository;
 pub use traits::PersonaRepository;

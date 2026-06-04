@@ -2,7 +2,7 @@
 //!
 //! [`TaskBoardRepository`] is the primary storage abstraction.  Business
 //! logic depends on this trait; concrete implementations live in [`crate::mem`]
-//! (tests) and [`crate::pg`] (production `SQLite`).
+//! (tests) and [`crate::sqlite`] (production `SQLite`).
 //!
 //! [`OutcomeAttribution`] is a thin adapter that routes column-transition
 //! events into the existing [`xiaoguai_audit::OutcomeRecorder`] pipeline.

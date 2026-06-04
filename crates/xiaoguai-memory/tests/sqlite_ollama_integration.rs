@@ -17,7 +17,7 @@
 //!
 //! The `tenant_id` column / field was dropped under the single-user pivot.
 
-#![cfg(all(feature = "pg", feature = "ollama"))]
+#![cfg(all(feature = "sqlite", feature = "ollama"))]
 
 use std::sync::Arc;
 

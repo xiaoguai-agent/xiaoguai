@@ -48,7 +48,7 @@
 
 // Persistence layer.
 pub mod mem;
-pub mod pg;
+pub mod sqlite;
 pub mod traits;
 pub mod types;
 
@@ -62,11 +62,11 @@ pub mod store;
 // Tier-2 D.1 — agent-authored skill proposals (HotL-gated, admin-approved).
 pub mod skill_author;
 // Sprint-8 S8-7 (DEC-023.3) — Pg impls of the skill_author traits.
-pub mod skill_author_pg;
+pub mod skill_author_sqlite;
 
 // Public re-exports — persistence layer.
 pub use mem::InMemoryTaskBoardRepository;
-pub use pg::SqliteTaskBoardRepository;
+pub use sqlite::SqliteTaskBoardRepository;
 pub use traits::{OutcomeAttribution, TaskBoardRepository};
 pub use types::{Board, Column, CreateBoardRequest, CreateTaskRequest, Task, TaskStateLogEntry};
 

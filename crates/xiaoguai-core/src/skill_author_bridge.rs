@@ -5,8 +5,8 @@
 //!
 //! | Trait | Production impl |
 //! |---|---|
-//! | `SkillProposalRepository` | `xiaoguai_tasks::skill_author_pg::SqliteSkillProposalRepository` |
-//! | `TenantSettingsReader`    | `xiaoguai_tasks::skill_author_pg::SqliteTenantSettings` |
+//! | `SkillProposalRepository` | `xiaoguai_tasks::skill_author_sqlite::SqliteSkillProposalRepository` |
+//! | `TenantSettingsReader`    | `xiaoguai_tasks::skill_author_sqlite::SqliteTenantSettings` |
 //! | `SkillAuthorGate`         | [`EnforcerGateAdapter`] over `xiaoguai-api::HotlEnforcer` |
 //! | `SkillAuditSink`          | [`AuditSinkAdapter`] over `xiaoguai-audit::SqliteAuditSink` |
 //!
@@ -29,7 +29,7 @@ use xiaoguai_tasks::skill_author::{
     SkillAuditSink, SkillAuthorError, SkillAuthorGate, SkillProposalRepository,
     TenantSettingsReader,
 };
-use xiaoguai_tasks::skill_author_pg::{SqliteSkillProposalRepository, SqliteTenantSettings};
+use xiaoguai_tasks::skill_author_sqlite::{SqliteSkillProposalRepository, SqliteTenantSettings};
 
 // ---------------------------------------------------------------------------
 // Adapters

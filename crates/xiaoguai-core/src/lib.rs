@@ -121,14 +121,14 @@ pub async fn run_smoke(settings: &Settings) -> Result<()> {
     tracing::info!("smoke: opening the SQLite store");
     let pool = db::connect(&settings.database.url, settings.database.max_connections)
         .await
-        .context("pg connect")?;
-    db::migrate(&pool).await.context("pg migrate")?;
+        .context("db connect")?;
+    db::migrate(&pool).await.context("db migrate")?;
     let row: (i32,) = sqlx::query_as("SELECT 1")
         .fetch_one(&pool)
         .await
-        .context("pg select 1")?;
-    anyhow::ensure!(row.0 == 1, "pg select 1 returned {}", row.0);
-    tracing::info!("smoke: pg ok");
+        .context("db select 1")?;
+    anyhow::ensure!(row.0 == 1, "db select 1 returned {}", row.0);
+    tracing::info!("smoke: db ok");
 
     tracing::info!("smoke: connecting to cache");
     let cache = Cache::connect(&settings.cache.url, settings.cache.key_prefix.clone())
@@ -205,8 +205,8 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     tracing::info!("serve: opening the SQLite store");
     let pool = db::connect(&settings.database.url, settings.database.max_connections)
         .await
-        .context("pg connect")?;
-    db::migrate(&pool).await.context("pg migrate")?;
+        .context("db connect")?;
+    db::migrate(&pool).await.context("db migrate")?;
 
     // Sprint-8 S8-5: refuse-to-start when MCP OAuth tokens exist but the
     // encryption keyring is unavailable. Fresh-install path (empty table)
@@ -225,7 +225,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     let mut rows = provider_repo
         .list()
         .await
-        .context("pg list llm providers")?;
+        .context("db list llm providers")?;
     // Local-first: OLLAMA_HOST repoints the seeded `ollama-local` provider at a
     // different endpoint (e.g. a dedicated GPU box) without a SQL change. Uses
     // the standard Ollama env var so it matches operator expectations.
@@ -693,11 +693,11 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // /v1/skills/proposals/* routes return 503 and `propose_skill`
         // stays unregistered.
         skill_proposals: pg_audit_sink.as_ref().map(|_| {
-            xiaoguai_tasks::skill_author_pg::SqliteSkillProposalRepository::arc(pool.clone())
+            xiaoguai_tasks::skill_author_sqlite::SqliteSkillProposalRepository::arc(pool.clone())
         }),
         tenant_settings: pg_audit_sink
             .as_ref()
-            .map(|_| xiaoguai_tasks::skill_author_pg::SqliteTenantSettings::arc(pool.clone())),
+            .map(|_| xiaoguai_tasks::skill_author_sqlite::SqliteTenantSettings::arc(pool.clone())),
         skill_author_gate: pg_audit_sink.as_ref().map(|_| {
             crate::skill_author_bridge::EnforcerGateAdapter::arc(hotl_enforcer_arc.clone())
         }),
@@ -1208,7 +1208,7 @@ async fn check_mcp_oauth_keyring(pool: &sqlx::SqlitePool) -> Result<()> {
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcp_oauth_tokens")
         .fetch_one(pool)
         .await
-        .context("pg count mcp_oauth_tokens")?;
+        .context("db count mcp_oauth_tokens")?;
     if count == 0 {
         tracing::debug!(
             "mcp_oauth_tokens empty; skipping keyring requirement (fresh install path)"
