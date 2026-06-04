@@ -2,6 +2,13 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# This project has no importable package — it is just a pytest harness whose
+# only purpose is to pull in the [test] deps and run the pact consumer test.
+# Newer hatchling refuses to build a wheel when it cannot auto-detect any
+# files to ship; bypass that since we only ever install it editable for tests.
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
 [project]
 name = "xiaoguai-pact-consumer-python-sdk"
 version = "0.1.0"
@@ -11,7 +18,10 @@ dependencies = []
 
 [project.optional-dependencies]
 test = [
-    "pact-python>=2.2.2",
+    # The test uses the v2 `from pact import Consumer, Provider` API; pact-python
+    # 3.x removed it in favour of a new `pact.v3` surface. Pin to 2.x until the
+    # test is ported.
+    "pact-python>=2.2.2,<3",
     "pytest>=8.2.0",
     "requests>=2.32.0",
 ]

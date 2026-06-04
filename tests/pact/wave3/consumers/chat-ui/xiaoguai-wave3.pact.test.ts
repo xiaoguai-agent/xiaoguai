@@ -94,7 +94,7 @@ describe("chat-ui → xiaoguai wave-3", () => {
           { headers: { Authorization: BEARER } }
         );
         expect(res.status).toBe(200);
-        const body = await res.json();
+        const body = (await res.json()) as any;
         expect(body).toHaveProperty("summary");
         expect(body.summary).toHaveProperty("by_kind");
       });
@@ -151,7 +151,7 @@ describe("chat-ui → xiaoguai wave-3", () => {
           }),
         });
         expect(res.status).toBe(200);
-        const body = await res.json();
+        const body = (await res.json()) as any;
         // chat-ui blocks send if verdict is not "allow"
         expect(body.verdict).toBe("allow");
       });
@@ -181,7 +181,7 @@ describe("chat-ui → xiaoguai wave-3", () => {
         states: [
           {
             description: "tenant exists with ai_disclosure_banner configured",
-            params: { tenant_id: TENANT_UUID },
+            parameters: { tenant_id: TENANT_UUID },
           },
         ],
         uponReceiving: `a GET /v1/tenants/${TENANT_UUID}/config request for ai_disclosure_banner`,
@@ -215,7 +215,7 @@ describe("chat-ui → xiaoguai wave-3", () => {
         // The test is written for the EXPECTED contract so provider
         // verification surfaces the gap automatically.
         expect(res.status).toBe(200);
-        const body = await res.json();
+        const body = (await res.json()) as any;
         expect(body).toHaveProperty("ai_disclosure_banner");
         expect(typeof body.ai_disclosure_banner.enabled).toBe("boolean");
       });
