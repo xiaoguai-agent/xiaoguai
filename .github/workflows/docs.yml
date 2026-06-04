@@ -59,9 +59,13 @@ jobs:
         run: mdbook build docs/book
 
       - name: Verify output exists
+        # The mdbook-linkcheck backend is enabled (book.toml [output.linkcheck]).
+        # With two renderers, mdbook writes each renderer's output to a
+        # subdirectory of the build dir, so the HTML site lives at book/html/
+        # rather than book/.
         run: |
-          test -f docs/book/book/index.html || (echo "ERROR: book/index.html not found" && exit 1)
-          count=$(find docs/book/book -name '*.html' | wc -l)
+          test -f docs/book/book/html/index.html || (echo "ERROR: book/html/index.html not found" && exit 1)
+          count=$(find docs/book/book/html -name '*.html' | wc -l)
           echo "Generated $count HTML files"
           test "$count" -ge 5 || (echo "ERROR: expected at least 5 HTML files, got $count" && exit 1)
 
@@ -69,7 +73,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v5
         with:
-          path: docs/book/book
+          path: docs/book/book/html
 
   deploy:
     name: Deploy to GitHub Pages
