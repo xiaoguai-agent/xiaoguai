@@ -105,8 +105,12 @@ jobs:
           cache-dependency-path: tests/pact/wave3/consumers/go-sdk/go.sum
 
       - name: Install pact-go native library
+        # Pin the CLI to the same version as the go.mod dependency (v2.0.7).
+        # '@latest' floats to releases that require a newer Go toolchain than
+        # setup-go provides (e.g. v2.5.1 needs Go >= 1.25 vs. our 1.22), and a
+        # CLI/library version mismatch also breaks the downloaded native FFI lib.
         run: |
-          go install github.com/pact-foundation/pact-go/v2@latest
+          go install github.com/pact-foundation/pact-go/v2@v2.0.7
           pact-go install --libDir /tmp/pact_lib 2>/dev/null || true
         working-directory: tests/pact/wave3/consumers/go-sdk
         env:
