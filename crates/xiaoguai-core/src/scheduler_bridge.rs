@@ -151,7 +151,6 @@ The JSON MUST match this shape (extra keys are not allowed):
 
 {
   "id": "PLACEHOLDER",                 // string; will be replaced server-side
-  "tenant_id": null,                   // string or null
   "name": "short-kebab-name",          // string, required
   "description": null,                 // string or null
   "trigger": <Trigger>,                // see allowed shapes below
@@ -792,7 +791,6 @@ mod tests {
     async fn compile_succeeds_and_regenerates_id() {
         let good = r#"{
             "id": "model-chose-this",
-            "tenant_id": null,
             "name": "scan-hn",
             "description": null,
             "trigger": {"type": "cron", "expr": "0 0 8 * * *"},
@@ -817,7 +815,7 @@ mod tests {
 
     #[tokio::test]
     async fn compile_strips_code_fence() {
-        let response = "```json\n{\"id\":\"x\",\"tenant_id\":null,\"name\":\"n\",\"description\":null,\"trigger\":{\"type\":\"interval\",\"secs\":60},\"payload\":{\"prompt\":\"p\"},\"retry_policy\":{\"max_attempts\":3,\"initial_backoff_secs\":5,\"max_backoff_secs\":60,\"multiplier\":2.0},\"sinks\":[],\"enabled\":true,\"next_fire_at\":null,\"last_fire_at\":null,\"created_at\":\"2026-05-24T00:00:00Z\",\"updated_at\":\"2026-05-24T00:00:00Z\"}\n```";
+        let response = "```json\n{\"id\":\"x\",\"name\":\"n\",\"description\":null,\"trigger\":{\"type\":\"interval\",\"secs\":60},\"payload\":{\"prompt\":\"p\"},\"retry_policy\":{\"max_attempts\":3,\"initial_backoff_secs\":5,\"max_backoff_secs\":60,\"multiplier\":2.0},\"sinks\":[],\"enabled\":true,\"next_fire_at\":null,\"last_fire_at\":null,\"created_at\":\"2026-05-24T00:00:00Z\",\"updated_at\":\"2026-05-24T00:00:00Z\"}\n```";
         let c = make_compiler(response);
         let (json, _) = c.compile("anything").await.unwrap();
         assert_eq!(json["name"], "n");

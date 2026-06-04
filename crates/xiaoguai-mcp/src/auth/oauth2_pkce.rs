@@ -29,9 +29,9 @@
 //!   * TLS verification ON unless `XIAOGUAI_MCP_OAUTH_INSECURE=1`
 //!     (logged at `warn`).
 //!   * Refresh-token rotation handled atomically by [`TokenStore::put`].
-//!   * Refresh tokens stored as-is (cleartext at the DB level); RLS
-//!     enforces tenant isolation. App-level encryption-at-rest is
-//!     deferred to a separate hardening PR — see runbook.
+//!   * Refresh tokens stored as-is (cleartext at the DB level).
+//!     App-level encryption-at-rest is deferred to a separate
+//!     hardening PR — see runbook.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -293,15 +293,15 @@ pub fn should_refresh(bundle: &TokenBundle, now: DateTime<Utc>) -> bool {
 // TokenStore
 // ---------------------------------------------------------------------------
 
-/// Persistence interface for `(server_id, tenant_id) -> TokenBundle`.
+/// Persistence interface for `server_id -> TokenBundle`.
 ///
 /// `put` MUST be atomic with respect to refresh-token rotation: a
 /// concurrent reader either sees the old bundle or the new bundle,
 /// never a torn read of (new `access_token`, old `refresh_token`).
 #[async_trait]
 pub trait TokenStore: Send + Sync {
-    async fn get(&self, server_id: &str, tenant_id: &str) -> McpResult<Option<TokenBundle>>;
-    async fn put(&self, server_id: &str, tenant_id: &str, bundle: &TokenBundle) -> McpResult<()>;
+    async fn get(&self, server_id: &str) -> McpResult<Option<TokenBundle>>;
+    async fn put(&self, server_id: &str, bundle: &TokenBundle) -> McpResult<()>;
 }
 
 /// In-memory `TokenStore` — used by tests + the CLI's one-shot
@@ -309,7 +309,7 @@ pub trait TokenStore: Send + Sync {
 /// against `mcp_oauth_tokens` (deferred follow-up).
 #[derive(Debug, Default, Clone)]
 pub struct InMemoryTokenStore {
-    inner: Arc<DashMap<(String, String), TokenBundle>>,
+    inner: Arc<DashMap<String, TokenBundle>>,
 }
 
 impl InMemoryTokenStore {
@@ -320,7 +320,7 @@ impl InMemoryTokenStore {
 
     /// Snapshot for assertions in tests.
     #[must_use]
-    pub fn snapshot(&self) -> HashMap<(String, String), TokenBundle> {
+    pub fn snapshot(&self) -> HashMap<String, TokenBundle> {
         self.inner
             .iter()
             .map(|kv| (kv.key().clone(), kv.value().clone()))
@@ -330,18 +330,12 @@ impl InMemoryTokenStore {
 
 #[async_trait]
 impl TokenStore for InMemoryTokenStore {
-    async fn get(&self, server_id: &str, tenant_id: &str) -> McpResult<Option<TokenBundle>> {
-        Ok(self
-            .inner
-            .get(&(server_id.to_string(), tenant_id.to_string()))
-            .map(|kv| kv.clone()))
+    async fn get(&self, server_id: &str) -> McpResult<Option<TokenBundle>> {
+        Ok(self.inner.get(server_id).map(|kv| kv.clone()))
     }
 
-    async fn put(&self, server_id: &str, tenant_id: &str, bundle: &TokenBundle) -> McpResult<()> {
-        self.inner.insert(
-            (server_id.to_string(), tenant_id.to_string()),
-            bundle.clone(),
-        );
+    async fn put(&self, server_id: &str, bundle: &TokenBundle) -> McpResult<()> {
+        self.inner.insert(server_id.to_string(), bundle.clone());
         Ok(())
     }
 }
@@ -457,20 +451,20 @@ mod tests {
             refresh_token: Some("RT".into()),
             expires_at: Utc::now() + ChronoDuration::seconds(3600),
         };
-        assert!(store.get("srv-1", "t-1").await.unwrap().is_none());
-        store.put("srv-1", "t-1", &bundle).await.unwrap();
-        let got = store.get("srv-1", "t-1").await.unwrap().unwrap();
+        assert!(store.get("srv-1").await.unwrap().is_none());
+        store.put("srv-1", &bundle).await.unwrap();
+        let got = store.get("srv-1").await.unwrap().unwrap();
         assert_eq!(got, bundle);
-        // Tenant isolation: same server_id, different tenant → miss.
-        assert!(store.get("srv-1", "t-2").await.unwrap().is_none());
+        // Distinct server_id → miss.
+        assert!(store.get("srv-2").await.unwrap().is_none());
         // Overwrite (rotation simulation).
         let new_bundle = TokenBundle {
             access_token: "AT2".into(),
             refresh_token: Some("RT2".into()),
             expires_at: Utc::now() + ChronoDuration::seconds(7200),
         };
-        store.put("srv-1", "t-1", &new_bundle).await.unwrap();
-        let got = store.get("srv-1", "t-1").await.unwrap().unwrap();
+        store.put("srv-1", &new_bundle).await.unwrap();
+        let got = store.get("srv-1").await.unwrap().unwrap();
         assert_eq!(got.access_token, "AT2");
         assert_eq!(got.refresh_token.as_deref(), Some("RT2"));
     }

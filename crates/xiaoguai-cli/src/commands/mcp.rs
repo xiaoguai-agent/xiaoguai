@@ -327,10 +327,9 @@ pub async fn register_oauth_with_listener(
     repo.create(&server)
         .await
         .map_err(|e| anyhow!("create mcp_server row: {e}"))?;
-    // OAuth token isolation keeps a per-(server, owner) key; the single
-    // implicit owner is the audit OWNER value.
+    // OAuth token bundles are keyed by server id (single implicit owner).
     store
-        .put(server.id.as_str(), xiaoguai_audit::OWNER_TENANT_ID, &bundle)
+        .put(server.id.as_str(), &bundle)
         .await
         .map_err(|e| anyhow!("persist token bundle: {e}"))?;
     Ok((server, bundle, oauth_cfg))

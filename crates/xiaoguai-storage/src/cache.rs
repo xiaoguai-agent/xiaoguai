@@ -26,9 +26,7 @@
 //!
 //! ## Tenant scoping
 //!
-//! Every [`Cache`] carries a static `prefix` (e.g. `"xiaoguai:"`). A
-//! [`TenantScopedCache`] further prefixes keys with `tenants/{tid}/` so the
-//! same plain key in different tenants maps to distinct cache keys.
+//! Every [`Cache`] carries a static `prefix` (e.g. `"xiaoguai:"`).
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -220,15 +218,6 @@ impl Cache {
         matches!(self.backend, Backend::InProcess(_))
     }
 
-    /// Build a tenant-scoped view; keys are prefixed with `tenants/{tid}/`.
-    #[must_use]
-    pub fn tenant_scope(&self, tenant_id: &str) -> TenantScopedCache {
-        TenantScopedCache {
-            inner: self.clone(),
-            tenant_prefix: format!("tenants/{tenant_id}/"),
-        }
-    }
-
     fn full_key(&self, key: &str) -> String {
         format!("{}{}", self.prefix, key)
     }
@@ -338,64 +327,6 @@ impl Cache {
     }
 }
 
-/// Tenant-scoped view of a [`Cache`]. Keys are transparently prefixed with
-/// `tenants/{tid}/`; callers pass plain keys.
-#[derive(Clone)]
-pub struct TenantScopedCache {
-    inner: Cache,
-    tenant_prefix: String,
-}
-
-impl std::fmt::Debug for TenantScopedCache {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TenantScopedCache")
-            .field("tenant_prefix", &self.tenant_prefix)
-            .field("base_prefix", &self.inner.prefix)
-            .finish_non_exhaustive()
-    }
-}
-
-impl TenantScopedCache {
-    fn scoped(&self, key: &str) -> String {
-        format!("{}{}", self.tenant_prefix, key)
-    }
-
-    /// Fetch and JSON-decode a value scoped to this tenant.
-    pub async fn get<T: DeserializeOwned>(&self, key: &str) -> CacheResult<Option<T>> {
-        self.inner.get(&self.scoped(key)).await
-    }
-
-    /// Store a JSON-serialized value scoped to this tenant.
-    pub async fn set<T: Serialize>(
-        &self,
-        key: &str,
-        value: &T,
-        ttl: Option<Duration>,
-    ) -> CacheResult<()> {
-        self.inner.set(&self.scoped(key), value, ttl).await
-    }
-
-    /// Delete a tenant-scoped key.
-    pub async fn delete(&self, key: &str) -> CacheResult<bool> {
-        self.inner.delete(&self.scoped(key)).await
-    }
-
-    /// Increment a tenant-scoped counter.
-    pub async fn incr(&self, key: &str, delta: i64) -> CacheResult<i64> {
-        self.inner.incr(&self.scoped(key), delta).await
-    }
-
-    /// Test whether a tenant-scoped key exists.
-    pub async fn exists(&self, key: &str) -> CacheResult<bool> {
-        self.inner.exists(&self.scoped(key)).await
-    }
-
-    /// Set or refresh the TTL on a tenant-scoped key.
-    pub async fn expire(&self, key: &str, ttl: Duration) -> CacheResult<bool> {
-        self.inner.expire(&self.scoped(key), ttl).await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     //! Unit tests for the in-process backend. The Redis path is covered by
@@ -500,28 +431,6 @@ mod tests {
         assert_eq!(got_a, Some(v));
     }
 
-    #[tokio::test]
-    async fn in_process_tenant_scope_isolates_keys() {
-        let cache = Cache::connect("", "test:").await.expect("connect");
-        let t1 = cache.tenant_scope("tenant-a");
-        let t2 = cache.tenant_scope("tenant-b");
-
-        let va = Sample {
-            id: 1,
-            name: "a".into(),
-        };
-        let vb = Sample {
-            id: 2,
-            name: "b".into(),
-        };
-        t1.set("profile", &va, None).await.expect("set a");
-        t2.set("profile", &vb, None).await.expect("set b");
-
-        let got_a: Option<Sample> = t1.get("profile").await.expect("get a");
-        let got_b: Option<Sample> = t2.get("profile").await.expect("get b");
-        assert_eq!(got_a, Some(va));
-        assert_eq!(got_b, Some(vb));
-    }
 
     #[tokio::test]
     async fn in_process_delete_returns_true_for_existing_false_for_missing() {
