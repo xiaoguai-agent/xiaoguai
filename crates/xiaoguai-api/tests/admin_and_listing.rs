@@ -924,9 +924,7 @@ mod scheduler_nl_jobs {
                     .method("POST")
                     .uri("/v1/admin/scheduler/jobs/compile")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{"description":"每天 8 点扫 HN","tenant_id":"t1"}"#,
-                    ))
+                    .body(Body::from(r#"{"description":"每天 8 点扫 HN"}"#))
                     .unwrap(),
             )
             .await
@@ -1179,7 +1177,7 @@ mod scheduler_token_admin {
                     .method("POST")
                     .uri("/v1/admin/scheduler/tokens")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"tenant_id":"t","route_id":"deploy"}"#))
+                    .body(Body::from(r#"{"route_id":"deploy"}"#))
                     .unwrap(),
             )
             .await

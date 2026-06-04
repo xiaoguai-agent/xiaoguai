@@ -302,7 +302,6 @@ async fn create_with_zero_window_returns_400() {
     let app = router(build_state(Some(store)));
 
     let bad = serde_json::json!({
-        "tenant_id": Uuid::new_v4().to_string(),
         "scope": "llm_call",
         "window_seconds": 0,
         "max_count": 5
@@ -328,7 +327,6 @@ async fn create_with_no_limits_returns_400() {
 
     // max_count and max_usd are both omitted.
     let bad = serde_json::json!({
-        "tenant_id": Uuid::new_v4().to_string(),
         "scope": "llm_call",
         "window_seconds": 60
     });

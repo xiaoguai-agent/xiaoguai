@@ -160,7 +160,6 @@ async fn install_then_list_then_uninstall() {
         .oneshot(post_json(
             "/v1/skills/install",
             serde_json::json!({
-                "tenant_id": "t1",
                 "pack_slug": "rag-hr",
                 "config": { "top_k": 10 }
             }),
@@ -227,7 +226,7 @@ async fn duplicate_install_returns_conflict() {
         .clone()
         .oneshot(post_json(
             "/v1/skills/install",
-            serde_json::json!({"tenant_id": "t1", "pack_slug": "pr-review"}),
+            serde_json::json!({"pack_slug": "pr-review"}),
         ))
         .await
         .unwrap();
@@ -236,7 +235,7 @@ async fn duplicate_install_returns_conflict() {
     let r2 = app
         .oneshot(post_json(
             "/v1/skills/install",
-            serde_json::json!({"tenant_id": "t1", "pack_slug": "pr-review"}),
+            serde_json::json!({"pack_slug": "pr-review"}),
         ))
         .await
         .unwrap();
@@ -253,7 +252,7 @@ async fn install_unknown_slug_returns_not_found() {
     let resp = app
         .oneshot(post_json(
             "/v1/skills/install",
-            serde_json::json!({"tenant_id": "t1", "pack_slug": "no-such-pack"}),
+            serde_json::json!({"pack_slug": "no-such-pack"}),
         ))
         .await
         .unwrap();

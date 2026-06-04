@@ -18,7 +18,7 @@ async fn hotl_policy_create_posts_to_hotl_policies() {
         .mock("POST", "/v1/hotl/policies")
         .with_status(201)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"id":"pol-1","tenant_id":"t1","scope":"llm_call","window_seconds":3600,"max_count":100,"max_usd":null,"escalate_to":null}"#)
+        .with_body(r#"{"id":"pol-1","scope":"llm_call","window_seconds":3600,"max_count":100,"max_usd":null,"escalate_to":null}"#)
         .create_async()
         .await;
 
@@ -423,7 +423,7 @@ async fn skills_install_posts_to_install_endpoint() {
         .mock("POST", "/v1/skills/install")
         .with_status(201)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"id":"inst-2","tenant_id":"acme","pack_slug":"ar-collections","version":"1.0.0","installed_at":"2026-05-25T12:00:00Z"}"#)
+        .with_body(r#"{"id":"inst-2","pack_slug":"ar-collections","version":"1.0.0","installed_at":"2026-05-25T12:00:00Z"}"#)
         .create_async()
         .await;
 

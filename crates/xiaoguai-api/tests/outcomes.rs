@@ -107,7 +107,6 @@ async fn record_outcome_returns_201() {
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
-                        "tenant_id": "tenant_a",
                         "session_id": "sess_1",
                         "agent_name": "sales-bot",
                         "kind": "revenue_usd",
@@ -139,7 +138,6 @@ async fn record_outcome_rejects_negative_value() {
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
-                        "tenant_id": "t1",
                         "agent_name": "bot",
                         "kind": "revenue_usd",
                         "value": -10.0
@@ -164,7 +162,6 @@ async fn record_outcome_rejects_empty_kind() {
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
-                        "tenant_id": "t1",
                         "agent_name": "bot",
                         "kind": "",
                         "value": 10.0
@@ -189,7 +186,6 @@ async fn record_outcome_503_when_unwired() {
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
-                        "tenant_id": "t1",
                         "agent_name": "bot",
                         "kind": "revenue_usd",
                         "value": 100.0

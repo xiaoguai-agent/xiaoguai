@@ -112,7 +112,6 @@ async fn create_then_list_round_trip() {
     let tenant_id = Uuid::new_v4();
 
     let create_body = serde_json::json!({
-        "tenant_id": tenant_id,
         "kind": "facts",
         "content": "User prefers concise responses.",
         "tags": ["preference", "communication"],
