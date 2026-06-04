@@ -34,13 +34,11 @@ const provider = new PactV3({
 // Constants shared across interactions
 // ────────────────────────────────────────────────────────────────────────────
 
-const TENANT_UUID = "11111111-1111-1111-1111-111111111111";
 const POLICY_UUID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const BEARER = "Bearer test-token";
 
 const POLICY_BODY = {
   id: uuid(),
-  tenant_id: uuid(),
   scope: string("llm_call"),
   window_seconds: integer(3600),
   max_count: integer(100),
@@ -63,7 +61,6 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
           withRequest: {
             method: "GET",
             path: "/v1/hotl/policies",
-            query: { tenant_id: TENANT_UUID },
             headers: { Authorization: BEARER },
           },
           willRespondWith: {
@@ -74,7 +71,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
         })
         .executeTest(async (mockServer) => {
           const res = await fetch(
-            `${mockServer.url}/v1/hotl/policies?tenant_id=${TENANT_UUID}`,
+            `${mockServer.url}/v1/hotl/policies`,
             { headers: { Authorization: BEARER } }
           );
           expect(res.status).toBe(200);
@@ -101,7 +98,6 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
               "Content-Type": "application/json",
             },
             body: {
-              tenant_id: TENANT_UUID,
               scope: "llm_call",
               window_seconds: 3600,
               max_count: 100,
@@ -123,7 +119,6 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              tenant_id: TENANT_UUID,
               scope: "llm_call",
               window_seconds: 3600,
               max_count: 100,
@@ -196,7 +191,6 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
               "Content-Type": "application/json",
             },
             body: {
-              tenant_id: TENANT_UUID,
               scope: "llm_call",
               window_seconds: 7200,
               max_count: 200,
@@ -224,7 +218,6 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                tenant_id: TENANT_UUID,
                 scope: "llm_call",
                 window_seconds: 7200,
                 max_count: 200,
@@ -293,7 +286,6 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
               "Content-Type": "application/json",
             },
             body: {
-              tenant_id: TENANT_UUID,
               scope: "llm_call",
               amount: 0.0025,
             },
@@ -315,7 +307,6 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              tenant_id: TENANT_UUID,
               scope: "llm_call",
               amount: 0.0025,
             }),
@@ -349,7 +340,6 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
               "Content-Type": "application/json",
             },
             body: {
-              tenant_id: "tenant_acme",
               session_id: "sess_abc123",
               agent_name: "sales-bot",
               kind: "revenue_usd",
@@ -373,7 +363,6 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              tenant_id: "tenant_acme",
               session_id: "sess_abc123",
               agent_name: "sales-bot",
               kind: "revenue_usd",
@@ -401,14 +390,13 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
           withRequest: {
             method: "GET",
             path: "/v1/outcomes/summary",
-            query: { tenant_id: "tenant_acme", range: "7d" },
+            query: { range: "7d" },
             headers: { Authorization: BEARER },
           },
           willRespondWith: {
             status: 200,
             headers: { "Content-Type": "application/json" },
             body: {
-              tenant_id: string("tenant_acme"),
               range: string("7d"),
               summary: {
                 by_kind: like({
@@ -424,7 +412,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
         })
         .executeTest(async (mockServer) => {
           const res = await fetch(
-            `${mockServer.url}/v1/outcomes/summary?tenant_id=tenant_acme&range=7d`,
+            `${mockServer.url}/v1/outcomes/summary?range=7d`,
             { headers: { Authorization: BEARER } }
           );
           expect(res.status).toBe(200);
@@ -446,14 +434,13 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
           withRequest: {
             method: "GET",
             path: "/v1/outcomes/timeseries",
-            query: { tenant_id: "tenant_acme", range: "7d" },
+            query: { range: "7d" },
             headers: { Authorization: BEARER },
           },
           willRespondWith: {
             status: 200,
             headers: { "Content-Type": "application/json" },
             body: {
-              tenant_id: string("tenant_acme"),
               range: string("7d"),
               days: eachLike({
                 date: string("2026-05-20"),
@@ -466,7 +453,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
         })
         .executeTest(async (mockServer) => {
           const res = await fetch(
-            `${mockServer.url}/v1/outcomes/timeseries?tenant_id=tenant_acme&range=7d`,
+            `${mockServer.url}/v1/outcomes/timeseries?range=7d`,
             { headers: { Authorization: BEARER } }
           );
           expect(res.status).toBe(200);
@@ -485,7 +472,6 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
 
     const INSTALLED_PACK_BODY = {
       id: uuid(),
-      tenant_id: string("tenant_acme"),
       pack_slug: string("pr-review"),
       version: string("1.0.0"),
       config: like({}),
@@ -504,7 +490,6 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
           withRequest: {
             method: "GET",
             path: "/v1/skills/installed",
-            query: { tenant_id: "tenant_acme" },
             headers: { Authorization: BEARER },
           },
           willRespondWith: {
@@ -515,7 +500,7 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
         })
         .executeTest(async (mockServer) => {
           const res = await fetch(
-            `${mockServer.url}/v1/skills/installed?tenant_id=tenant_acme`,
+            `${mockServer.url}/v1/skills/installed`,
             { headers: { Authorization: BEARER } }
           );
           expect(res.status).toBe(200);
@@ -545,7 +530,6 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
               "Content-Type": "application/json",
             },
             body: {
-              tenant_id: "tenant_acme",
               pack_slug: "pr-review",
               config: {},
             },
@@ -564,7 +548,6 @@ describe("typescript-sdk → xiaoguai wave-3", () => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              tenant_id: "tenant_acme",
               pack_slug: "pr-review",
               config: {},
             }),

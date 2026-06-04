@@ -31,7 +31,6 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 
 const (
-	tenantUUID  = "11111111-1111-1111-1111-111111111111"
 	policyUUID  = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	installUUID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 	bearer      = "Bearer test-token"
@@ -132,7 +131,6 @@ func policyBody() map[string]any {
 	uuidPattern := `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`
 	return map[string]any{
 		"id":             matchers.Term(policyUUID, uuidPattern),
-		"tenant_id":      matchers.Term(tenantUUID, uuidPattern),
 		"scope":          matchers.Like("llm_call"),
 		"window_seconds": matchers.Like(3600),
 		"max_count":      matchers.Like(100),
@@ -154,8 +152,7 @@ func TestListHotlPolicies(t *testing.T) {
 		Given("tenant has one HotL policy").
 		UponReceiving("a GET /v1/hotl/policies request for tenant 11111111").
 		WithRequest("GET", "/v1/hotl/policies", func(b *consumer.V3RequestBuilder) {
-			b.Query("tenant_id", matchers.String(tenantUUID)).
-				Header("Authorization", matchers.String(bearer))
+			b.Header("Authorization", matchers.String(bearer))
 		}).
 		WillRespondWith(200, func(b *consumer.V3ResponseBuilder) {
 			b.Header("Content-Type", matchers.String("application/json")).
@@ -164,7 +161,7 @@ func TestListHotlPolicies(t *testing.T) {
 
 	if err := mock.ExecuteTest(t, func(cfg consumer.MockServerConfig) error {
 		base := fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
-		resp := get(t, fmt.Sprintf("%s/v1/hotl/policies?tenant_id=%s", base, tenantUUID))
+		resp := get(t, fmt.Sprintf("%s/v1/hotl/policies", base))
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("expected 200, got %d", resp.StatusCode)
 		}
@@ -187,7 +184,6 @@ func TestCreateHotlPolicy(t *testing.T) {
 			b.Header("Authorization", matchers.String(bearer)).
 				Header("Content-Type", matchers.String("application/json")).
 				JSONBody(map[string]any{
-					"tenant_id":      tenantUUID,
 					"scope":          "llm_call",
 					"window_seconds": 3600,
 					"max_count":      100,
@@ -203,7 +199,6 @@ func TestCreateHotlPolicy(t *testing.T) {
 	if err := mock.ExecuteTest(t, func(cfg consumer.MockServerConfig) error {
 		base := fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
 		resp := post(t, fmt.Sprintf("%s/v1/hotl/policies", base), map[string]any{
-			"tenant_id":      tenantUUID,
 			"scope":          "llm_call",
 			"window_seconds": 3600,
 			"max_count":      100,
@@ -270,7 +265,6 @@ func TestUpdateHotlPolicy(t *testing.T) {
 				b.Header("Authorization", matchers.String(bearer)).
 					Header("Content-Type", matchers.String("application/json")).
 					JSONBody(map[string]any{
-						"tenant_id":      tenantUUID,
 						"scope":          "llm_call",
 						"window_seconds": 7200,
 						"max_count":      200,
@@ -286,7 +280,6 @@ func TestUpdateHotlPolicy(t *testing.T) {
 	if err := mock.ExecuteTest(t, func(cfg consumer.MockServerConfig) error {
 		base := fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
 		resp := put(t, fmt.Sprintf("%s/v1/hotl/policies/%s", base, policyUUID), map[string]any{
-			"tenant_id":      tenantUUID,
 			"scope":          "llm_call",
 			"window_seconds": 7200,
 			"max_count":      200,
@@ -342,7 +335,6 @@ func TestHotlCheckAllow(t *testing.T) {
 			b.Header("Authorization", matchers.String(bearer)).
 				Header("Content-Type", matchers.String("application/json")).
 				JSONBody(map[string]any{
-					"tenant_id": tenantUUID,
 					"scope":     "llm_call",
 					"amount":    0.0025,
 				})
@@ -358,7 +350,6 @@ func TestHotlCheckAllow(t *testing.T) {
 	if err := mock.ExecuteTest(t, func(cfg consumer.MockServerConfig) error {
 		base := fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
 		resp := post(t, fmt.Sprintf("%s/v1/hotl/check", base), map[string]any{
-			"tenant_id": tenantUUID,
 			"scope":     "llm_call",
 			"amount":    0.0025,
 		})
@@ -391,7 +382,6 @@ func TestRecordOutcome(t *testing.T) {
 			b.Header("Authorization", matchers.String(bearer)).
 				Header("Content-Type", matchers.String("application/json")).
 				JSONBody(map[string]any{
-					"tenant_id":   "tenant_acme",
 					"session_id":  "sess_abc123",
 					"agent_name":  "sales-bot",
 					"kind":        "revenue_usd",
@@ -409,7 +399,6 @@ func TestRecordOutcome(t *testing.T) {
 	if err := mock.ExecuteTest(t, func(cfg consumer.MockServerConfig) error {
 		base := fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
 		resp := post(t, fmt.Sprintf("%s/v1/outcomes", base), map[string]any{
-			"tenant_id":   "tenant_acme",
 			"session_id":  "sess_abc123",
 			"agent_name":  "sales-bot",
 			"kind":        "revenue_usd",
@@ -440,14 +429,12 @@ func TestOutcomesSummary(t *testing.T) {
 		Given("tenant has recorded outcomes").
 		UponReceiving("a GET /v1/outcomes/summary request for 7d").
 		WithRequest("GET", "/v1/outcomes/summary", func(b *consumer.V3RequestBuilder) {
-			b.Query("tenant_id", matchers.String("tenant_acme")).
-				Query("range", matchers.String("7d")).
+			b.Query("range", matchers.String("7d")).
 				Header("Authorization", matchers.String(bearer))
 		}).
 		WillRespondWith(200, func(b *consumer.V3ResponseBuilder) {
 			b.Header("Content-Type", matchers.String("application/json")).
 				JSONBody(map[string]any{
-					"tenant_id": matchers.Like("tenant_acme"),
 					"range":     matchers.Like("7d"),
 					"summary": matchers.Like(map[string]any{
 						"by_kind": matchers.Like(map[string]any{
@@ -463,7 +450,7 @@ func TestOutcomesSummary(t *testing.T) {
 
 	if err := mock.ExecuteTest(t, func(cfg consumer.MockServerConfig) error {
 		base := fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
-		resp := get(t, fmt.Sprintf("%s/v1/outcomes/summary?tenant_id=tenant_acme&range=7d", base))
+		resp := get(t, fmt.Sprintf("%s/v1/outcomes/summary?range=7d", base))
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("expected 200, got %d", resp.StatusCode)
 		}
@@ -486,14 +473,12 @@ func TestOutcomesTimeseries(t *testing.T) {
 		Given("tenant has recorded outcomes").
 		UponReceiving("a GET /v1/outcomes/timeseries request for 7d").
 		WithRequest("GET", "/v1/outcomes/timeseries", func(b *consumer.V3RequestBuilder) {
-			b.Query("tenant_id", matchers.String("tenant_acme")).
-				Query("range", matchers.String("7d")).
+			b.Query("range", matchers.String("7d")).
 				Header("Authorization", matchers.String(bearer))
 		}).
 		WillRespondWith(200, func(b *consumer.V3ResponseBuilder) {
 			b.Header("Content-Type", matchers.String("application/json")).
 				JSONBody(map[string]any{
-					"tenant_id": matchers.Like("tenant_acme"),
 					"range":     matchers.Like("7d"),
 					"days": matchers.EachLike(map[string]any{
 						"date":  matchers.Like("2026-05-20"),
@@ -506,7 +491,7 @@ func TestOutcomesTimeseries(t *testing.T) {
 
 	if err := mock.ExecuteTest(t, func(cfg consumer.MockServerConfig) error {
 		base := fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
-		resp := get(t, fmt.Sprintf("%s/v1/outcomes/timeseries?tenant_id=tenant_acme&range=7d", base))
+		resp := get(t, fmt.Sprintf("%s/v1/outcomes/timeseries?range=7d", base))
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("expected 200, got %d", resp.StatusCode)
 		}
@@ -525,7 +510,6 @@ func installedPackBody() map[string]any {
 	uuidPattern := `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`
 	return map[string]any{
 		"id":           matchers.Term(installUUID, uuidPattern),
-		"tenant_id":    matchers.Like("tenant_acme"),
 		"pack_slug":    matchers.Like("pr-review"),
 		"version":      matchers.Like("1.0.0"),
 		"config":       matchers.Like(map[string]any{}),
@@ -542,8 +526,7 @@ func TestListInstalledSkills(t *testing.T) {
 		Given("tenant has installed skill packs").
 		UponReceiving("a GET /v1/skills/installed request").
 		WithRequest("GET", "/v1/skills/installed", func(b *consumer.V3RequestBuilder) {
-			b.Query("tenant_id", matchers.String("tenant_acme")).
-				Header("Authorization", matchers.String(bearer))
+			b.Header("Authorization", matchers.String(bearer))
 		}).
 		WillRespondWith(200, func(b *consumer.V3ResponseBuilder) {
 			b.Header("Content-Type", matchers.String("application/json")).
@@ -552,7 +535,7 @@ func TestListInstalledSkills(t *testing.T) {
 
 	if err := mock.ExecuteTest(t, func(cfg consumer.MockServerConfig) error {
 		base := fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
-		resp := get(t, fmt.Sprintf("%s/v1/skills/installed?tenant_id=tenant_acme", base))
+		resp := get(t, fmt.Sprintf("%s/v1/skills/installed", base))
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("expected 200, got %d", resp.StatusCode)
 		}
@@ -575,7 +558,6 @@ func TestInstallSkillPack(t *testing.T) {
 			b.Header("Authorization", matchers.String(bearer)).
 				Header("Content-Type", matchers.String("application/json")).
 				JSONBody(map[string]any{
-					"tenant_id": "tenant_acme",
 					"pack_slug": "pr-review",
 					"config":    map[string]any{},
 				})
@@ -588,7 +570,6 @@ func TestInstallSkillPack(t *testing.T) {
 	if err := mock.ExecuteTest(t, func(cfg consumer.MockServerConfig) error {
 		base := fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
 		resp := post(t, fmt.Sprintf("%s/v1/skills/install", base), map[string]any{
-			"tenant_id": "tenant_acme",
 			"pack_slug": "pr-review",
 			"config":    map[string]any{},
 		})
