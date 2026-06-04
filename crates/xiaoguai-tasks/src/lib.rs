@@ -12,7 +12,7 @@
 //! ```text
 //! TaskBoardRepository (trait)
 //!   ├── InMemoryTaskBoardRepository  (unit tests, no DB)
-//!   └── PgTaskBoardRepository        (Postgres, migration 0018)
+//!   └── SqliteTaskBoardRepository        (`SQLite`, migration 0018)
 //! OutcomeAttribution (trait)          — wires column transitions into telemetry
 //! ```
 //!
@@ -34,7 +34,7 @@
 //! The two layers use parallel type models — persistence (`Task`/`Column`/
 //! `TaskBoardRepository`) and dispatcher (`KanbanCard`/`CardColumn`/`CardStore`).
 //! They are independent and both compile; unifying them behind one type model
-//! (so the `WorkerPool` claims directly from `PgTaskBoardRepository`) is tracked
+//! (so the `WorkerPool` claims directly from `SqliteTaskBoardRepository`) is tracked
 //! as a follow-up. Until then a thin bridge maps between the two.
 
 #![forbid(unsafe_code)]
@@ -66,7 +66,7 @@ pub mod skill_author_pg;
 
 // Public re-exports — persistence layer.
 pub use mem::InMemoryTaskBoardRepository;
-pub use pg::PgTaskBoardRepository;
+pub use pg::SqliteTaskBoardRepository;
 pub use traits::{OutcomeAttribution, TaskBoardRepository};
 pub use types::{Board, Column, CreateBoardRequest, CreateTaskRequest, Task, TaskStateLogEntry};
 

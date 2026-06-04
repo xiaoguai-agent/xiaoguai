@@ -17,18 +17,18 @@ pub mod user;
 pub use error::{RepoError, RepoResult};
 pub use hotl_escalations::{
     HotlDecisionVerdict, HotlEscalationRow, HotlEscalationStore, HotlPendingRow,
-    PgHotlEscalationRepository,
+    SqliteHotlEscalationRepository,
 };
-pub use hotl_redaction::{HotlRedactionRepo, PgHotlRedactionRepo, RedactionPolicyRow};
+pub use hotl_redaction::{HotlRedactionRepo, RedactionPolicyRow, SqliteHotlRedactionRepo};
 pub use im::{
     ExternalConversation, ExternalIdentity, ImConversation, ImIdentity, ImIdentityRepository,
-    PgImIdentityRepository,
+    SqliteImIdentityRepository,
 };
-pub use llm_provider::{LlmProviderRepository, PgLlmProviderRepository};
-pub use mcp_server::{McpServerRepository, PgMcpServerRepository};
-pub use message::{MessageRepository, PgMessageRepository};
-pub use session::{PgSessionRepository, SessionRepository};
+pub use llm_provider::{LlmProviderRepository, SqliteLlmProviderRepository};
+pub use mcp_server::{McpServerRepository, SqliteMcpServerRepository};
+pub use message::{MessageRepository, SqliteMessageRepository};
+pub use session::{SessionRepository, SqliteSessionRepository};
 pub use token_usage::{
-    PgTokenUsageRepository, StoredTokenUsage, TokenUsageEntry, TokenUsageRepository,
+    SqliteTokenUsageRepository, StoredTokenUsage, TokenUsageEntry, TokenUsageRepository,
 };
-pub use user::{PgUserRepository, UserRepository};
+pub use user::{SqliteUserRepository, UserRepository};

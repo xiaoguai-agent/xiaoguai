@@ -52,7 +52,7 @@
 //! |----------------|-------------------------------------------------------------|
 //! | [`model`]      | [`Persona`], [`CreatePersonaRequest`], [`UpdatePersonaRequest`], [`SessionPersona`] |
 //! | [`traits`]     | [`PersonaRepository`] trait                                 |
-//! | [`pg`]         | [`PgPersonaRepository`] — Postgres implementation           |
+//! | [`pg`]         | [`SqlitePersonaRepository`] — `SQLite` implementation           |
 //! | [`memory`]     | [`InMemoryPersonaRepository`] — test / dev backend          |
 //! | [`enforcement`]| [`tool_allowed`], [`filter_tools`], [`build_system_messages`] |
 //! | [`routes`]     | axum REST route fragments for `/v1/personas` + `/v1/sessions/:id/persona` |
@@ -79,5 +79,5 @@ pub use enforcement::{build_system_messages, filter_tools, tool_allowed};
 pub use error::{PersonaError, PersonaResult};
 pub use memory::InMemoryPersonaRepository;
 pub use model::{CreatePersonaRequest, Persona, SessionPersona, UpdatePersonaRequest};
-pub use pg::PgPersonaRepository;
+pub use pg::SqlitePersonaRepository;
 pub use traits::PersonaRepository;

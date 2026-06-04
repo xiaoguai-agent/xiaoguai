@@ -5,7 +5,7 @@
 ///
 /// Persistence is abstracted behind the `AnomalyStore` trait so that the
 /// in-memory implementation can be used in tests while a future
-/// `PgAnomalyStore` implementation wires up PostgreSQL.
+/// `SqliteAnomalyStore` — `SQLite`-backed anomaly store.
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};

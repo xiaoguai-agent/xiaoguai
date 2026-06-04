@@ -1,4 +1,4 @@
-//! Integration tests for `PgMemoryStore` against a temp `SQLite` database
+//! Integration tests for `SqliteMemoryStore` against a temp `SQLite` database
 //! (DEC-033 single-user pivot). pgvector is gone: embeddings are stored as a
 //! BLOB of 384 little-endian f32 and cosine similarity is scanned in Rust.
 //!
@@ -26,7 +26,7 @@ use tempfile::TempDir;
 use uuid::Uuid;
 use xiaoguai_memory::{
     types::{CreateMemoryRequest, RecallRequest},
-    InMemoryEmbedder, MemoryKind, MemoryStore, OllamaEmbedder, PgMemoryStore,
+    InMemoryEmbedder, MemoryKind, MemoryStore, OllamaEmbedder, SqliteMemoryStore,
 };
 use xiaoguai_storage::db;
 
@@ -59,7 +59,7 @@ fn create_req(content: &str, tags: &[&str]) -> CreateMemoryRequest {
 async fn sqlite_memory_crud_and_cosine_recall() {
     let (pool, _dir) = setup().await;
     let embedder = Arc::new(InMemoryEmbedder::new(EXPECTED_DIM));
-    let store = PgMemoryStore::new(pool, embedder);
+    let store = SqliteMemoryStore::new(pool, embedder);
 
     let cat = store
         .create_memory(create_req(
@@ -146,7 +146,7 @@ async fn pg_ollama_semantic_recall_ranks_closest_first() {
 
     let (pool, _dir) = setup().await;
     let embedder = Arc::new(OllamaEmbedder::from_host(&ollama_host));
-    let store = PgMemoryStore::new(pool, embedder);
+    let store = SqliteMemoryStore::new(pool, embedder);
 
     let cat = store
         .create_memory(create_req(

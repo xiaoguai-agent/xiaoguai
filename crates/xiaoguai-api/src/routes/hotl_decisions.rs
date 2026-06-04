@@ -252,7 +252,7 @@ async fn create_decision_inner(
     //
     // Audit failure MUST NOT block the operation — the decision is already
     // persisted. `.ok()` discards the error; production wiring of
-    // `PgAuditSink` logs internally on append failure.
+    // `SqliteAuditSink` logs internally on append failure.
     if let Some(sink) = &state.hotl_audit {
         let entry = xiaoguai_audit::AuditEntry {
             ts: Utc::now(),

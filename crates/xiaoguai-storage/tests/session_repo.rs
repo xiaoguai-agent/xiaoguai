@@ -1,4 +1,4 @@
-//! Integration tests for [`PgSessionRepository`] (embedded `SQLite`, DEC-033).
+//! Integration tests for [`SqliteSessionRepository`] (embedded `SQLite`, DEC-033).
 //!
 //! No Docker — each test opens a temp `SQLite` database via `common::test_setup`
 //! and exercises CRUD + pagination + ordering.
@@ -8,7 +8,7 @@ mod common;
 use chrono::{Duration, Utc};
 use common::test_setup;
 use sqlx::SqlitePool;
-use xiaoguai_storage::repositories::{PgSessionRepository, RepoError, SessionRepository};
+use xiaoguai_storage::repositories::{RepoError, SessionRepository, SqliteSessionRepository};
 use xiaoguai_types::{Session, SessionId, SessionStatus, UserId};
 
 /// Seed a user via raw SQL so the session FK (`sessions.user_id`) is satisfied.
@@ -43,7 +43,7 @@ fn fixture_session(user: &UserId, model: &str) -> Session {
 async fn create_then_find_roundtrip() {
     let (pool, _guard) = test_setup().await;
     let user = seed_user(&pool).await;
-    let repo = PgSessionRepository::new(pool.clone());
+    let repo = SqliteSessionRepository::new(pool.clone());
 
     let session = fixture_session(&user, "gpt-4o-mini");
     repo.create(&session).await.expect("create");
@@ -66,7 +66,7 @@ async fn create_then_find_roundtrip() {
 async fn list_by_user_orders_by_updated_at_desc_with_pagination() {
     let (pool, _guard) = test_setup().await;
     let user = seed_user(&pool).await;
-    let repo = PgSessionRepository::new(pool.clone());
+    let repo = SqliteSessionRepository::new(pool.clone());
 
     // Create 5 sessions with staggered updated_at; oldest first so DESC order
     // means we expect the LAST inserted to appear first.
@@ -103,7 +103,7 @@ async fn list_by_user_orders_by_updated_at_desc_with_pagination() {
 async fn touch_bumps_updated_at_and_errors_on_missing() {
     let (pool, _guard) = test_setup().await;
     let user = seed_user(&pool).await;
-    let repo = PgSessionRepository::new(pool.clone());
+    let repo = SqliteSessionRepository::new(pool.clone());
 
     let mut session = fixture_session(&user, "gpt-4o-mini");
     session.updated_at = Utc::now() - Duration::hours(1);
@@ -127,7 +127,7 @@ async fn touch_bumps_updated_at_and_errors_on_missing() {
 async fn archive_sets_status_and_errors_on_missing() {
     let (pool, _guard) = test_setup().await;
     let user = seed_user(&pool).await;
-    let repo = PgSessionRepository::new(pool.clone());
+    let repo = SqliteSessionRepository::new(pool.clone());
 
     let session = fixture_session(&user, "gpt-4o-mini");
     repo.create(&session).await.expect("create");
@@ -148,7 +148,7 @@ async fn archive_sets_status_and_errors_on_missing() {
 async fn delete_is_idempotent_and_cascades_via_fk() {
     let (pool, _guard) = test_setup().await;
     let user = seed_user(&pool).await;
-    let repo = PgSessionRepository::new(pool.clone());
+    let repo = SqliteSessionRepository::new(pool.clone());
 
     let session = fixture_session(&user, "gpt-4o-mini");
     repo.create(&session).await.expect("create");
@@ -166,7 +166,7 @@ async fn delete_is_idempotent_and_cascades_via_fk() {
 async fn duplicate_create_returns_duplicate_key() {
     let (pool, _guard) = test_setup().await;
     let user = seed_user(&pool).await;
-    let repo = PgSessionRepository::new(pool.clone());
+    let repo = SqliteSessionRepository::new(pool.clone());
 
     let session = fixture_session(&user, "gpt-4o-mini");
     repo.create(&session).await.expect("first insert");

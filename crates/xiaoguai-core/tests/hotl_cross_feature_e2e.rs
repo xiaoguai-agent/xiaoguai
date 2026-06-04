@@ -21,7 +21,7 @@
 //! Cross-refs: lld-agent.md §4.6, CASE-HOTL-005..013 (test-spec.md).
 //!
 //! No PG required — the in-memory mock store mirrors the
-//! `PgHotlEscalationRepository` contract row-for-row. The matching
+//! `SqliteHotlEscalationRepository` contract row-for-row. The matching
 //! integration coverage against the live PG schema lives in
 //! `xiaoguai-storage/tests/hotl_escalations_repo.rs`
 //! (`#[ignore = "requires Docker"]`).

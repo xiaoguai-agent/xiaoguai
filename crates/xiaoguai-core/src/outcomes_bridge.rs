@@ -1,6 +1,6 @@
 //! v1.2.4 — PG-backed `OutcomeWriter` + `OutcomesReader`.
 //!
-//! `PgOutcomesBackend` implements both traits so both writer and reader
+//! `SqliteOutcomesBackend` implements both traits so both writer and reader
 //! share the same pool — one `Arc` suffices in `AppState`.
 //!
 //! Table: `agent_outcomes` (migration 0012).
@@ -23,11 +23,11 @@ use xiaoguai_audit::outcomes::{Aggregate, OutcomeDay, OutcomeRange, OutcomeSumma
 // ── backend struct ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
-pub struct PgOutcomesBackend {
+pub struct SqliteOutcomesBackend {
     pool: SqlitePool,
 }
 
-impl PgOutcomesBackend {
+impl SqliteOutcomesBackend {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -49,7 +49,7 @@ fn pg_err(e: sqlx::Error) -> OutcomesApiError {
 // ── OutcomeWriter ─────────────────────────────────────────────────────────────
 
 #[async_trait]
-impl OutcomeWriter for PgOutcomesBackend {
+impl OutcomeWriter for SqliteOutcomesBackend {
     async fn record(&self, req: RecordOutcomeRequest) -> Result<(), OutcomesApiError> {
         // Mirror the validation from `InMemoryOutcomeRecorder`.
         if req.value < 0.0 {
@@ -108,7 +108,7 @@ struct TimeseriesRow {
 }
 
 #[async_trait]
-impl OutcomesReader for PgOutcomesBackend {
+impl OutcomesReader for SqliteOutcomesBackend {
     async fn summary(&self, range: OutcomeRange) -> Result<OutcomeSummary, OutcomesApiError> {
         // since/until are each referenced twice → numbered binds required.
         let rows: Vec<SummaryRow> = sqlx::query_as(
@@ -275,13 +275,13 @@ mod tests {
 
     // ── SQLite integration tests (DEC-033) ────────────────────────────────────
 
-    async fn sqlite_backend() -> (tempfile::TempDir, PgOutcomesBackend) {
+    async fn sqlite_backend() -> (tempfile::TempDir, SqliteOutcomesBackend) {
         let dir = tempfile::tempdir().unwrap();
         let pool = xiaoguai_storage::db::connect(dir.path().join("t.db").to_str().unwrap(), 5)
             .await
             .unwrap();
         xiaoguai_storage::db::migrate(&pool).await.unwrap();
-        (dir, PgOutcomesBackend::new(pool))
+        (dir, SqliteOutcomesBackend::new(pool))
     }
 
     fn req(kind: &str, value: f64) -> RecordOutcomeRequest {

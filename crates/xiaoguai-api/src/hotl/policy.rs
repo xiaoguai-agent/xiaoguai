@@ -1,8 +1,8 @@
 //! HOTL policy CRUD — types + store trait + in-memory implementation.
 //!
-//! Production wiring: `xiaoguai-core` will provide a `PgHotlPolicyStore`
+//! Production wiring: `xiaoguai-core` will provide a `SqliteHotlPolicyStore`
 //! that reads/writes `hotl_policies` and appends to `hotl_usage_log` via
-//! a single Postgres connection pool.
+//! a single `SQLite` connection pool.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

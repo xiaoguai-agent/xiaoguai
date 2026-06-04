@@ -1,4 +1,4 @@
-//! `HotlEscalationStore` — Postgres-backed repo for the
+//! `HotlEscalationStore` — `SQLite`-backed repo for the
 //! `hotl_escalations` (parent) + `hotl_pending` (child) tables shipped by
 //! migration 0027 (sprint-13 S13-1).
 //!
@@ -55,7 +55,7 @@ pub enum HotlDecisionVerdict {
 }
 
 impl HotlDecisionVerdict {
-    /// Postgres-side `status` string. Both `Allowed` and `Denied` map to
+    /// stored `status` string. Both `Allowed` and `Denied` map to
     /// `resolved` (the row reached a terminal decided state); `Expired`
     /// keeps a distinct value so the boot-replay synthesis path is
     /// auditable in the DB.
@@ -141,7 +141,7 @@ impl From<HotlPendingDbRow> for HotlPendingRow {
 /// Trait surface used by `DecisionRegistry` (S13-5) and the boot-replay
 /// path. Object-safe (`Send + Sync` bounds + no generics on methods) so
 /// `AppState` can hold an `Arc<dyn HotlEscalationStore>` without
-/// committing to the concrete `PgHotlEscalationRepository`.
+/// committing to the concrete `SqliteHotlEscalationRepository`.
 #[async_trait]
 pub trait HotlEscalationStore: Send + Sync {
     /// Atomic 2-row write: parent first, then child with the parent's
@@ -172,11 +172,11 @@ pub trait HotlEscalationStore: Send + Sync {
 
 /// `SQLite` implementation backed by sqlx.
 #[derive(Debug, Clone)]
-pub struct PgHotlEscalationRepository {
+pub struct SqliteHotlEscalationRepository {
     pool: SqlitePool,
 }
 
-impl PgHotlEscalationRepository {
+impl SqliteHotlEscalationRepository {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -187,7 +187,7 @@ const PENDING_COLUMNS: &str = "id, escalation_id, scope, tool, args_redacted, \
                                status, expires_at, created_at, decided_at, decided_by";
 
 #[async_trait]
-impl HotlEscalationStore for PgHotlEscalationRepository {
+impl HotlEscalationStore for SqliteHotlEscalationRepository {
     async fn insert_pending(
         &self,
         parent: HotlEscalationRow,

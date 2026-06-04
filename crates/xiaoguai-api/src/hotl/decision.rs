@@ -5,7 +5,7 @@
 //! `Escalate` in this milestone — `HotlDecisionResponse.resumed` is
 //! therefore always `false`. Full suspend/resume is sprint-12+.
 //!
-//! Production wiring: `xiaoguai-core` provides a `PgHotlDecisionStore` that
+//! Production wiring: `xiaoguai-core` provides a `SqliteHotlDecisionStore` that
 //! writes `hotl_decisions` (migration `0026_hotl_decisions.sql`).
 
 use async_trait::async_trait;

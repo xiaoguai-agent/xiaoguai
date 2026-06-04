@@ -146,7 +146,7 @@ pub struct SessionForCase {
 
 /// Production wires a PG-backed impl in `xiaoguai-core`; the static
 /// impl exercises the route + projection in unit tests without standing
-/// up Postgres.
+/// a database.
 #[async_trait]
 pub trait CaseFromSessionSource: Send + Sync {
     async fn load_session(

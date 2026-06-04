@@ -89,7 +89,7 @@ pub use budget::{
 pub use composite_executor::CompositeExecutor;
 pub use executor::{EchoExecutor, ExecutionOutcome, JobExecutor};
 pub use job::{JobRun, JobRunStatus, ScheduledJob};
-pub use pg_repository::{PgJobRepository, PgJobRunRepository};
+pub use pg_repository::{SqliteJobRepository, SqliteJobRunRepository};
 pub use proactive::{
     AlwaysFireChecker, NeverFireChecker, ProactiveChecker, ProactiveCtx, ProactiveError,
     ScriptedChecker,

@@ -2,7 +2,7 @@
 //!
 //! [`TaskBoardRepository`] is the primary storage abstraction.  Business
 //! logic depends on this trait; concrete implementations live in [`crate::mem`]
-//! (tests) and [`crate::pg`] (production Postgres).
+//! (tests) and [`crate::pg`] (production `SQLite`).
 //!
 //! [`OutcomeAttribution`] is a thin adapter that routes column-transition
 //! events into the existing [`xiaoguai_audit::OutcomeRecorder`] pipeline.
@@ -116,7 +116,7 @@ pub trait OutcomeAttribution: Send + Sync {
     /// Record one column-transition as a `task_transition` outcome event.
     ///
     /// `recorder` is the shared [`OutcomeRecorder`] instance injected from
-    /// the application (e.g. `PgOutcomeRecorder` in production, or
+    /// the application (e.g. `SqliteOutcomeRecorder` in production, or
     /// `InMemoryOutcomeRecorder` in tests).
     async fn attribute_transition(
         &self,

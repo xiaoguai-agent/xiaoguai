@@ -44,15 +44,15 @@ impl From<WorkspaceRow> for Workspace {
 }
 
 // ---------------------------------------------------------------------------
-// PgWorkspaceRepository
+// SqliteWorkspaceRepository
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
-pub struct PgWorkspaceRepository {
+pub struct SqliteWorkspaceRepository {
     pool: SqlitePool,
 }
 
-impl PgWorkspaceRepository {
+impl SqliteWorkspaceRepository {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -65,7 +65,7 @@ impl PgWorkspaceRepository {
 }
 
 #[async_trait]
-impl WorkspaceRepository for PgWorkspaceRepository {
+impl WorkspaceRepository for SqliteWorkspaceRepository {
     async fn list(&self, include_archived: bool) -> Result<Vec<Workspace>, WorkspaceError> {
         let rows = if include_archived {
             sqlx::query_as::<_, WorkspaceRow>(

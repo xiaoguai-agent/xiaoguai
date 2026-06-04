@@ -10,7 +10,7 @@ mod common;
 use common::test_setup;
 use sqlx::SqlitePool;
 use uuid::Uuid;
-use xiaoguai_storage::repositories::hotl_redaction::{HotlRedactionRepo, PgHotlRedactionRepo};
+use xiaoguai_storage::repositories::hotl_redaction::{HotlRedactionRepo, SqliteHotlRedactionRepo};
 
 /// Insert a redaction policy via raw SQL (the repo is read-only). `applies_to`
 /// is a JSON-array TEXT column under `SQLite`.
@@ -41,7 +41,7 @@ async fn insert_policy(
 #[tokio::test]
 async fn load_all_empty() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgHotlRedactionRepo::new(pool.clone());
+    let repo = SqliteHotlRedactionRepo::new(pool.clone());
 
     let rows = repo.load_all().await.expect("load empty");
     assert!(
@@ -54,7 +54,7 @@ async fn load_all_empty() {
 #[tokio::test]
 async fn load_all_returns_inserted_rows() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgHotlRedactionRepo::new(pool.clone());
+    let repo = SqliteHotlRedactionRepo::new(pool.clone());
 
     insert_policy(&pool, "tool_call.execute_python", "$.password", &["sse"]).await;
     insert_policy(
@@ -72,7 +72,7 @@ async fn load_all_returns_inserted_rows() {
 #[tokio::test]
 async fn load_all_sorts_exact_scope_before_wildcard() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgHotlRedactionRepo::new(pool.clone());
+    let repo = SqliteHotlRedactionRepo::new(pool.clone());
 
     // Insert wildcard first to verify the ORDER BY isn't an insertion artefact.
     insert_policy(&pool, "*", "$.catch_all", &["sse"]).await;

@@ -2,9 +2,9 @@
 //!
 //! `GET /v1/admin/audit` lists tamper-evident audit rows for a tenant.
 //! To keep `xiaoguai-api` decoupled from the concrete persistence layer
-//! (`PgAuditSink` lives in `xiaoguai-audit`, which is *not* an api dep
+//! (`SqliteAuditSink` lives in `xiaoguai-audit`, which is *not* an api dep
 //! today), we define an `AuditReader` trait here and ship a thin bridge
-//! that wraps any `xiaoguai-audit::sink::PgAuditSink` once at boot time.
+//! that wraps any `xiaoguai-audit::sink::SqliteAuditSink` once at boot time.
 //!
 //! Wire shape (`AuditEntryView`) is the JSON-friendly projection — `prev_hmac`
 //! and `hmac` are hex-encoded, `details` passes through as-is.
@@ -53,7 +53,7 @@ pub trait AuditReader: Send + Sync {
 /// `GET /v1/admin/audit/verify`. Reports the row id at which the chain
 /// breaks (`Err(VerifyReport::Broken { row_id })`) or the count of
 /// verified rows on success. Production wires the
-/// `xiaoguai-audit::PgAuditSink` implementation.
+/// `xiaoguai-audit::SqliteAuditSink` implementation.
 #[async_trait]
 pub trait AuditVerifier: Send + Sync {
     async fn verify_tenant(&self, tenant_id: &str) -> Result<VerifyReport, AuditError>;
@@ -169,7 +169,7 @@ impl AuditReader for StaticAuditReader {
 
 /// In-memory `AuditVerifier` for tests. Holds a fixed verdict per tenant
 /// so route tests can exercise both the success and broken-chain branches
-/// without standing up Postgres.
+/// without a database.
 #[derive(Debug, Default, Clone)]
 pub struct StaticAuditVerifier {
     pub verdicts: std::collections::HashMap<String, VerifyReport>,

@@ -29,12 +29,12 @@ use chrono::{DateTime, Utc};
 use xiaoguai_api::today::{TodayError, TodayItem, TodayKind, TodayQuery, TodayReader};
 use xiaoguai_storage::ReadWritePool;
 
-pub struct PgTodayReader {
+pub struct SqliteTodayReader {
     /// All three fetch methods are pure reads — route to replica.
     pool: ReadWritePool,
 }
 
-impl PgTodayReader {
+impl SqliteTodayReader {
     #[must_use]
     pub fn new(pool: ReadWritePool) -> Self {
         Self { pool }
@@ -55,7 +55,7 @@ fn map_err(e: sqlx::Error) -> TodayError {
 }
 
 #[async_trait]
-impl TodayReader for PgTodayReader {
+impl TodayReader for SqliteTodayReader {
     async fn list(&self, query: TodayQuery) -> Result<Vec<TodayItem>, TodayError> {
         if query.limit < 0 {
             return Err(TodayError::InvalidArgument("limit must be >= 0".into()));
@@ -85,7 +85,7 @@ impl TodayReader for PgTodayReader {
     }
 }
 
-impl PgTodayReader {
+impl SqliteTodayReader {
     async fn fetch_chat(&self, q: &TodayQuery) -> Result<Vec<TodayItem>, TodayError> {
         // Chat sessions = sessions not present in im_conversations.
         // Preview/count/tool_count come from a single grouped scan of

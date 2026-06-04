@@ -1,4 +1,4 @@
-//! `UserRepository` — SQLite-backed user CRUD with role join.
+//! `UserRepository` — `SQLite`-backed user CRUD with role join.
 //!
 //! Single-user pivot (DEC-033): the `users` table dropped its `tenant_id`
 //! column and row-level security; `email` is globally unique.
@@ -36,11 +36,11 @@ pub trait UserRepository: Send + Sync {
 
 /// `SQLite` implementation of [`UserRepository`].
 #[derive(Debug, Clone)]
-pub struct PgUserRepository {
+pub struct SqliteUserRepository {
     pool: SqlitePool,
 }
 
-impl PgUserRepository {
+impl SqliteUserRepository {
     /// Wrap an existing `SqlitePool`. The pool is cheap to clone (Arc inside).
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
@@ -100,7 +100,7 @@ fn row_into_user(row: UserRow, roles: Vec<Role>) -> User {
 }
 
 #[async_trait]
-impl UserRepository for PgUserRepository {
+impl UserRepository for SqliteUserRepository {
     async fn create(&self, user: &User) -> RepoResult<()> {
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
 

@@ -16,7 +16,7 @@
 //!    `xiaoguai_hotl_registry_replayed_total{outcome}` counter.
 //!
 //! No PG in this test: a `MockHotlEscalationStore` (DashMap-backed)
-//! stands in for `PgHotlEscalationRepository`. Integration coverage
+//! stands in for `SqliteHotlEscalationRepository`. Integration coverage
 //! against the live PG schema lives in the testcontainers suite under
 //! `xiaoguai-storage/tests/`.
 

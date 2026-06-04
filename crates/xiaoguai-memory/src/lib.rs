@@ -5,9 +5,10 @@
 //!
 //! # Backends
 //!
-//! * [`PgMemoryStore`] — production backend backed by Postgres + pgvector
-//!   HNSW index. Requires the `pg` Cargo feature (on by default) and the
-//!   `vector` Postgres extension (`CREATE EXTENSION IF NOT EXISTS vector`).
+//! * [`SqliteMemoryStore`] — production backend backed by embedded `SQLite`.
+//!   Requires the `pg` Cargo feature (on by default). Embeddings are stored
+//!   as a `BLOB` of little-endian `f32`; recall applies the SQL filters then
+//!   computes cosine similarity in Rust (no pgvector). See [`pg`] for details.
 //! * [`InMemoryMemoryStore`] — deterministic in-memory backend for unit tests.
 //!   Uses cosine similarity on f32 vectors; embeddings are supplied by
 //!   [`InMemoryEmbedder`] which produces stable, reproducible vectors.
@@ -57,7 +58,7 @@ pub use embedder::OpenAIEmbedder;
 pub use embedder::OllamaEmbedder;
 
 #[cfg(feature = "pg")]
-pub use pg::PgMemoryStore;
+pub use pg::SqliteMemoryStore;
 
 #[cfg(test)]
 mod tests;

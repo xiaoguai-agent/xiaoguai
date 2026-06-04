@@ -1,6 +1,6 @@
 //! The redactor must run *before* HMAC signing, so a redacted entry's signature
 //! is computed over the redacted form and the chain still verifies. This guards
-//! the core safety claim of `PgAuditSink::with_redactor` without needing a
+//! the core safety claim of `SqliteAuditSink::with_redactor` without needing a
 //! database (the live append path is exercised by the PG integration tests).
 
 use chrono::Utc;

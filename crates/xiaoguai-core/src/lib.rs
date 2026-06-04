@@ -1,6 +1,6 @@
 //! Xiaoguai core — library + binary wiring.
 //!
-//! Loads configuration, connects to Postgres + Valkey, applies migrations,
+//! Loads configuration, opens the `SQLite` store (+ optional Valkey), applies migrations,
 //! initializes JWT + RBAC + audit chain, then either runs the API server
 //! (default) or executes a single subcommand (e.g. `smoke`).
 //!
@@ -12,7 +12,7 @@
 //! When `cache.url` is empty (or any non-`redis://` URL) the storage layer
 //! boots an in-process `DashMap` instead of opening a Redis/Valkey
 //! connection. This makes the single-binary, air-gapped path viable: a
-//! single-tenant deploy can run with just Postgres + xiaoguai, no Valkey
+//! single-tenant deploy can run with just the xiaoguai binary, no external services
 //! sidecar. The boot log emits a distinct `tracing::info!` line so operators
 //! can confirm at startup which backend is live. See
 //! `docs/runbooks/cache-fallback.md`.
@@ -118,7 +118,7 @@ pub fn load_settings(path: Option<&std::path::Path>) -> Result<Settings> {
 
 /// Boot every subsystem, do a round-trip on each, exit.
 pub async fn run_smoke(settings: &Settings) -> Result<()> {
-    tracing::info!("smoke: connecting to Postgres");
+    tracing::info!("smoke: opening the SQLite store");
     let pool = db::connect(&settings.database.url, settings.database.max_connections)
         .await
         .context("pg connect")?;
@@ -190,19 +190,19 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         audit::{AuditReader, AuditVerifier},
         AppState, CancelRegistry,
     };
-    use xiaoguai_audit::chain::sink::PgAuditSink;
+    use xiaoguai_audit::chain::sink::SqliteAuditSink;
     use xiaoguai_llm::{build_router, LlmBackend, MockBackend, OsEnvResolver};
     use xiaoguai_mcp::McpSupervisor;
     #[cfg(feature = "observability")]
     use xiaoguai_observability;
     use xiaoguai_storage::repositories::{
-        LlmProviderRepository, PgLlmProviderRepository, PgMcpServerRepository, PgMessageRepository,
-        PgSessionRepository,
+        LlmProviderRepository, SqliteLlmProviderRepository, SqliteMcpServerRepository,
+        SqliteMessageRepository, SqliteSessionRepository,
     };
 
-    use crate::audit_bridge::PgAuditAdapter;
+    use crate::audit_bridge::SqliteAuditAdapter;
 
-    tracing::info!("serve: connecting to Postgres");
+    tracing::info!("serve: opening the SQLite store");
     let pool = db::connect(&settings.database.url, settings.database.max_connections)
         .await
         .context("pg connect")?;
@@ -221,7 +221,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // wherever the old `MockBackend` used to live. If the registry is
     // empty we keep the `MockBackend` fallback so that fresh deployments
     // still boot and serve a deterministic response.
-    let provider_repo = PgLlmProviderRepository::new(pool.clone());
+    let provider_repo = SqliteLlmProviderRepository::new(pool.clone());
     let mut rows = provider_repo
         .list()
         .await
@@ -281,14 +281,15 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // — empty / missing means audit endpoints stay at 503 in production
     // rather than silently using `settings.audit.hmac_key` (which is the
     // dev-only fallback wired into `smoke`).
-    // Sprint-8 S8-7: hoist the PgAuditSink so the skill_author_bridge can
+    // Sprint-8 S8-7: hoist the SqliteAuditSink so the skill_author_bridge can
     // reuse the same signing chain. `None` here keeps skill-author audit
     // wiring off when the signing key env var is empty.
-    let pg_audit_sink: Option<Arc<PgAuditSink>> =
+    let pg_audit_sink: Option<Arc<SqliteAuditSink>> =
         match std::env::var(&settings.audit.signing_key_env) {
-            Ok(key) if !key.is_empty() => {
-                Some(Arc::new(PgAuditSink::new(pool.clone(), key.into_bytes())))
-            }
+            Ok(key) if !key.is_empty() => Some(Arc::new(SqliteAuditSink::new(
+                pool.clone(),
+                key.into_bytes(),
+            ))),
             _ => None,
         };
 
@@ -297,10 +298,10 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         Option<Arc<dyn AuditVerifier>>,
         Option<Arc<dyn xiaoguai_api::audit::AuditChainExporter>>,
     ) = if let Some(sink) = &pg_audit_sink {
-        let adapter = Arc::new(PgAuditAdapter::new(sink.clone()));
+        let adapter = Arc::new(SqliteAuditAdapter::new(sink.clone()));
         tracing::info!(
             env = %settings.audit.signing_key_env,
-            "serve: audit reader+verifier+exporter wired (PgAuditSink)"
+            "serve: audit reader+verifier+exporter wired (SqliteAuditSink)"
         );
         (
             Some(adapter.clone() as Arc<dyn AuditReader>),
@@ -316,7 +317,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     };
 
     let mcp_servers_repo: Arc<dyn xiaoguai_storage::repositories::McpServerRepository> =
-        Arc::new(PgMcpServerRepository::new(pool.clone()));
+        Arc::new(SqliteMcpServerRepository::new(pool.clone()));
 
     // v0.12.0: scheduler bootstrap. Off by default so existing
     // deployments don't change behaviour. When enabled we spawn a
@@ -325,10 +326,10 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // `WebhookSource` to `AppState` so `/v1/admin/scheduler/webhooks/...`
     // can fire reactive jobs.
     //
-    // v0.12.1: also wire the `PgScheduledSessionWriter` into the
+    // v0.12.1: also wire the `SqliteScheduledSessionWriter` into the
     // executor (so `scheduled_job_runs.session_id` populates and the
     // audit-first console can drill into transcripts) and the
-    // `PgScheduledJobUpserter` into AppState for `POST /v1/admin/scheduler/jobs`.
+    // `SqliteScheduledJobUpserter` into AppState for `POST /v1/admin/scheduler/jobs`.
     let toolbox = Arc::new(Toolbox::new());
 
     // Tier-2 prereq: build the HOTL enforcer once, share between
@@ -340,9 +341,10 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // Sharing one PG-backed enforcer means the budget counter is unified:
     // a tenant that's burned its `tool_call.*` budget can still call the
     // LLM (different scope), and vice versa.
-    let hotl_policy_store_pg = Arc::new(crate::hotl_bridge::PgHotlPolicyStore::new(pool.clone()));
+    let hotl_policy_store_pg =
+        Arc::new(crate::hotl_bridge::SqliteHotlPolicyStore::new(pool.clone()));
     let hotl_enforcer_arc: Arc<dyn xiaoguai_api::hotl::enforcer::HotlEnforcer> = Arc::new(
-        crate::hotl_bridge::PgHotlEnforcer::new(pool.clone(), hotl_policy_store_pg.clone()),
+        crate::hotl_bridge::SqliteHotlEnforcer::new(pool.clone(), hotl_policy_store_pg.clone()),
     );
     // Sprint-12 S12-4 / Sprint-13 S13-5: the `DecisionRegistry` is
     // constructed ONCE here and shared between the gate adapter (so
@@ -352,7 +354,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // resolves and hang the loop until the 24h default expiry.
     //
     // Sprint-13 S13-5: the registry is wired to
-    // `PgHotlEscalationRepository` and uses `replay_from_storage` so any
+    // `SqliteHotlEscalationRepository` and uses `replay_from_storage` so any
     // `hotl_pending` rows that survived a restart are reattached BEFORE
     // the HTTP server starts accepting requests. The replay log line
     // `hotl: replayed N pending decision waiters from PG` is the SRE
@@ -360,7 +362,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     let hotl_escalation_store: std::sync::Arc<
         dyn xiaoguai_storage::repositories::HotlEscalationStore,
     > = std::sync::Arc::new(
-        xiaoguai_storage::repositories::PgHotlEscalationRepository::new(pool.clone()),
+        xiaoguai_storage::repositories::SqliteHotlEscalationRepository::new(pool.clone()),
     );
     let decision_registry =
         xiaoguai_api::hotl::decision_registry::DecisionRegistry::replay_from_storage(
@@ -374,19 +376,19 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // `agent.hotl.expiry` (S13-0 surface) — empty map preserves the
     // single-knob v1.9.x behaviour byte-for-byte.
     let hotl_default_expiry = std::time::Duration::from_secs(24 * 3600);
-    // Sprint-13 S13-6: wire the `PgHotlRedactionRepo` + per-tenant
+    // Sprint-13 S13-6: wire the `SqliteHotlRedactionRepo` + per-tenant
     // policy required flag + audit sink into the suspend gate so
     // operator banners see masked tool args and the audit chain carries
     // the matched policy id.
     let hotl_redaction_repo: Arc<
         dyn xiaoguai_storage::repositories::hotl_redaction::HotlRedactionRepo,
     > = Arc::new(
-        xiaoguai_storage::repositories::hotl_redaction::PgHotlRedactionRepo::new(pool.clone()),
+        xiaoguai_storage::repositories::hotl_redaction::SqliteHotlRedactionRepo::new(pool.clone()),
     );
     let hotl_gate_audit_sink: Option<Arc<dyn xiaoguai_api::hotl::audit::HotlAuditSink>> =
         pg_audit_sink
             .as_ref()
-            .map(|sink| crate::hotl_bridge::PgHotlAuditSink::arc(sink.clone()));
+            .map(|sink| crate::hotl_bridge::SqliteHotlAuditSink::arc(sink.clone()));
     let hotl_gate: Arc<dyn xiaoguai_agent::HotlGate> =
         crate::hotl_bridge::build_hotl_gate_with_redaction(
             settings.agent.hotl.suspend_on_escalate,
@@ -409,10 +411,10 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // Build these once so both the executor session writer and the
     // upserter on AppState see the same PG handles.
     let pg_session_repo: Arc<dyn xiaoguai_storage::repositories::SessionRepository> =
-        Arc::new(PgSessionRepository::new(pool.clone()));
+        Arc::new(SqliteSessionRepository::new(pool.clone()));
     let pg_message_repo: Arc<dyn xiaoguai_storage::repositories::MessageRepository> =
-        Arc::new(PgMessageRepository::new(pool.clone()));
-    // v0.12.x.1: also wire `PgScheduledJobsReader` (admin-ui Scheduler
+        Arc::new(SqliteMessageRepository::new(pool.clone()));
+    // v0.12.x.1: also wire `SqliteScheduledJobsReader` (admin-ui Scheduler
     // pane backend) and the per-tenant webhook token validator + admin
     // (out-of-band webhook auth). All three are `None` when scheduler is
     // disabled — the matching routes return 503.
@@ -437,7 +439,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
             agent_defaults.clone(),
         );
         let session_writer: Arc<dyn xiaoguai_scheduler::ScheduledSessionWriter> =
-            Arc::new(crate::scheduler_bridge::PgScheduledSessionWriter::new(
+            Arc::new(crate::scheduler_bridge::SqliteScheduledSessionWriter::new(
                 pg_session_repo.clone(),
                 pg_message_repo.clone(),
             ));
@@ -459,11 +461,12 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
             xiaoguai_scheduler::CompositeExecutor::new(runtime_executor)
                 .register("rag_reindex", rag_executor),
         );
-        let pg_jobs = Arc::new(xiaoguai_scheduler::PgJobRepository::new(pool.clone()));
+        let pg_jobs = Arc::new(xiaoguai_scheduler::SqliteJobRepository::new(pool.clone()));
         let jobs: Arc<dyn xiaoguai_scheduler::JobRepository> = pg_jobs.clone();
-        let runs: Arc<dyn xiaoguai_scheduler::JobRunRepository> =
-            Arc::new(xiaoguai_scheduler::PgJobRunRepository::new(pool.clone()));
-        // Audit appender: route through the same PgAuditSink the audit
+        let runs: Arc<dyn xiaoguai_scheduler::JobRunRepository> = Arc::new(
+            xiaoguai_scheduler::SqliteJobRunRepository::new(pool.clone()),
+        );
+        // Audit appender: route through the same SqliteAuditSink the audit
         // bridge already constructed when the signing key was present.
         // When audit is unwired we fall back to NullAuditAppender so the
         // scheduler still runs (audit gap is logged at startup).
@@ -471,7 +474,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
             &settings.audit.signing_key_env,
         ) {
             Ok(key) if !key.is_empty() => {
-                let mut sink = PgAuditSink::new(pool.clone(), key.into_bytes());
+                let mut sink = SqliteAuditSink::new(pool.clone(), key.into_bytes());
                 if audit_redaction_enabled() {
                     sink = sink.with_redactor(xiaoguai_audit::Redactor::new());
                     tracing::info!(
@@ -483,7 +486,9 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                     );
                 }
                 let sink = Arc::new(sink);
-                Arc::new(crate::scheduler_bridge::PgSchedulerAuditAppender::new(sink))
+                Arc::new(crate::scheduler_bridge::SqliteSchedulerAuditAppender::new(
+                    sink,
+                ))
             }
             _ => {
                 tracing::warn!("serve: scheduler audit appender = NullAuditAppender (no signing key); scheduler runs will NOT enter the audit chain");
@@ -542,18 +547,18 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
             crate::scheduler_bridge::WebhookSourceAdapter::new(webhook_source.clone()),
         );
         let upserter: Arc<dyn xiaoguai_api::scheduler::ScheduledJobUpserter> = Arc::new(
-            crate::scheduler_bridge::PgScheduledJobUpserter::new(pg_jobs.clone()),
+            crate::scheduler_bridge::SqliteScheduledJobUpserter::new(pg_jobs.clone()),
         );
         // v0.12.x.1: admin-ui Scheduler pane reader + "Run now" handle.
         let jobs_reader: Arc<dyn xiaoguai_api::scheduler::ScheduledJobsReader> = Arc::new(
-            crate::scheduler_bridge::PgScheduledJobsReader::new(pg_jobs, runner.clone()),
+            crate::scheduler_bridge::SqliteScheduledJobsReader::new(pg_jobs, runner.clone()),
         );
         // v0.12.x.1: per-tenant webhook tokens — PG validator + admin.
         let token_validator: Arc<dyn xiaoguai_api::scheduler::WebhookTokenValidator> = Arc::new(
-            crate::scheduler_bridge::PgWebhookTokenValidator::new(pool.clone()),
+            crate::scheduler_bridge::SqliteWebhookTokenValidator::new(pool.clone()),
         );
         let token_admin: Arc<dyn xiaoguai_api::scheduler::WebhookTokenAdmin> = Arc::new(
-            crate::scheduler_bridge::PgWebhookTokenAdmin::new(pool.clone()),
+            crate::scheduler_bridge::SqliteWebhookTokenAdmin::new(pool.clone()),
         );
         (
             Some(handle),
@@ -607,7 +612,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // v0.11.1: audit-first console substrate. The PG adapter walks
         // sessions / im_conversations / scheduled_job_runs and merges
         // them client-side.
-        today: Some(crate::today_bridge::PgTodayReader::arc(rw_pool.clone())),
+        today: Some(crate::today_bridge::SqliteTodayReader::arc(rw_pool.clone())),
         // v0.11.2: eval pane. The PG case-from-session source feeds
         // operator "convert prod run to regression case" requests.
         eval: Some(build_eval_service(settings, pool.clone())),
@@ -621,21 +626,21 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // v1.1.2: conversation fork — always wired in production
         // since it only needs the SessionRepository the rest of the
         // binary already holds.
-        session_forker: Some(crate::sessions_bridge::PgSessionForker::arc(
+        session_forker: Some(crate::sessions_bridge::SqliteSessionForker::arc(
             pg_session_repo.clone(),
         )),
         // v1.1.1: token-usage aggregator backing /v1/usage and the
         // admin-ui Usage pane (plus the Today pane's 24h summary card).
         // Always wired in production — the underlying token_usage table
         // is unconditional (migration 0004).
-        usage_reader: Some(crate::usage_bridge::PgUsageReader::arc(rw_pool.clone())),
+        usage_reader: Some(crate::usage_bridge::SqliteUsageReader::arc(rw_pool.clone())),
         // v0.12.x.1: per-tenant webhook token validator + admin CRUD
         // + admin-ui Scheduler pane jobs reader. All `None` when the
         // scheduler is disabled — the matching routes return 503.
         webhook_token_validator,
         webhook_token_admin,
         scheduler_jobs_reader,
-        // v1.2.3: HOTL boundary policy — PgHotlPolicyStore + PgHotlEnforcer
+        // v1.2.3: HOTL boundary policy — SqliteHotlPolicyStore + SqliteHotlEnforcer
         // wired here (migration 0011 provides both tables). One store +
         // one enforcer is shared between the CRUD handle, the
         // `send_message` LLM-call gate (api crate), and the in-loop
@@ -651,44 +656,48 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // signing key env var is set (otherwise the route degrades to
         // "decision persisted, no audit trail" and logs a warning at the
         // route handler — matching the audit-disabled posture elsewhere).
-        hotl_decision_store: Some(crate::hotl_bridge::PgHotlDecisionStore::arc(pool.clone())),
+        hotl_decision_store: Some(crate::hotl_bridge::SqliteHotlDecisionStore::arc(
+            pool.clone(),
+        )),
         hotl_audit: pg_audit_sink
             .as_ref()
-            .map(|sink| crate::hotl_bridge::PgHotlAuditSink::arc(sink.clone())),
-        // v1.2.4: outcome telemetry — PgOutcomesBackend implements both
+            .map(|sink| crate::hotl_bridge::SqliteHotlAuditSink::arc(sink.clone())),
+        // v1.2.4: outcome telemetry — SqliteOutcomesBackend implements both
         // writer and reader; construct once and coerce to each trait object.
         outcome_writer: Some({
-            let backend: Arc<dyn xiaoguai_api::outcomes::OutcomeWriter> =
-                Arc::new(crate::outcomes_bridge::PgOutcomesBackend::new(pool.clone()));
+            let backend: Arc<dyn xiaoguai_api::outcomes::OutcomeWriter> = Arc::new(
+                crate::outcomes_bridge::SqliteOutcomesBackend::new(pool.clone()),
+            );
             backend
         }),
         outcomes_reader: Some({
-            let backend: Arc<dyn xiaoguai_api::outcomes::OutcomesReader> =
-                Arc::new(crate::outcomes_bridge::PgOutcomesBackend::new(pool.clone()));
+            let backend: Arc<dyn xiaoguai_api::outcomes::OutcomesReader> = Arc::new(
+                crate::outcomes_bridge::SqliteOutcomesBackend::new(pool.clone()),
+            );
             backend
         }),
-        // v1.2.28: skill pack install/uninstall — PgSkillPackRepository.
-        skill_packs: Some(crate::skills_bridge::PgSkillPackRepository::arc(
+        // v1.2.28: skill pack install/uninstall — SqliteSkillPackRepository.
+        skill_packs: Some(crate::skills_bridge::SqliteSkillPackRepository::arc(
             pool.clone(),
         )),
-        // v1.3.x: long-term memory — PgMemoryStore with the embedder selected by
+        // v1.3.x: long-term memory — SqliteMemoryStore with the embedder selected by
         // `OLLAMA_HOST` (air-gapped Ollama vs in-process). Makes /v1/memories live.
         memory_store: Some(crate::memory_bridge::build_memory_store(pool.clone())),
-        // v1.3.x: workspace CRUD — production wires PgWorkspaceRepository
+        // v1.3.x: workspace CRUD — production wires SqliteWorkspaceRepository
         // in workspace_bridge.rs; `None` makes /v1/workspaces return 503.
         workspace_repository: None,
         // Sprint-8 S8-7 (DEC-023.3): skill-author production wiring.
         // Requires both the audit signing key (for the SkillAuditSink
-        // adapter over PgAuditSink) and a running HotL enforcer. When
+        // adapter over SqliteAuditSink) and a running HotL enforcer. When
         // the audit key is unset we keep the four slots `None` — the
         // /v1/skills/proposals/* routes return 503 and `propose_skill`
         // stays unregistered.
-        skill_proposals: pg_audit_sink
-            .as_ref()
-            .map(|_| xiaoguai_tasks::skill_author_pg::PgSkillProposalRepository::arc(pool.clone())),
+        skill_proposals: pg_audit_sink.as_ref().map(|_| {
+            xiaoguai_tasks::skill_author_pg::SqliteSkillProposalRepository::arc(pool.clone())
+        }),
         tenant_settings: pg_audit_sink
             .as_ref()
-            .map(|_| xiaoguai_tasks::skill_author_pg::PgTenantSettings::arc(pool.clone())),
+            .map(|_| xiaoguai_tasks::skill_author_pg::SqliteTenantSettings::arc(pool.clone())),
         skill_author_gate: pg_audit_sink.as_ref().map(|_| {
             crate::skill_author_bridge::EnforcerGateAdapter::arc(hotl_enforcer_arc.clone())
         }),
@@ -705,8 +714,8 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         ),
         // v1.8.0 (sprint-10b S10b-1): persona CRUD wired via the PG-backed
         // repository when a pool is available. `None` here would surface as
-        // 503 from `/v1/personas/*`; production always has a Postgres pool.
-        personas: Some(Arc::new(xiaoguai_personas::PgPersonaRepository::new(
+        // 503 from `/v1/personas/*`; production always has a SQLite pool.
+        personas: Some(Arc::new(xiaoguai_personas::SqlitePersonaRepository::new(
             pool.clone(),
         ))),
         // v1.8.0 (sprint-10b S10b-5): watcher introspection — wire the
@@ -741,7 +750,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // v1 RBAC layer. New providers persist immediately but the LlmRouter
         // picks them up on next restart (built once at boot).
         Some(xiaoguai_api::routes::providers::build_router(Arc::new(
-            PgLlmProviderRepository::new(pool.clone()),
+            SqliteLlmProviderRepository::new(pool.clone()),
         ))),
     ]);
 
@@ -798,8 +807,8 @@ fn build_im_history(
     default_model: &str,
 ) -> std::sync::Arc<dyn xiaoguai_im_gateway::ImHistoryStore> {
     use std::sync::Arc;
-    use xiaoguai_im_gateway::{ConversationHistory, ImHistoryStore, PgImHistoryStore};
-    use xiaoguai_storage::repositories::PgImIdentityRepository;
+    use xiaoguai_im_gateway::{ConversationHistory, ImHistoryStore, SqliteImHistoryStore};
+    use xiaoguai_storage::repositories::SqliteImIdentityRepository;
 
     if settings.im.use_in_process_history {
         tracing::info!(
@@ -812,10 +821,10 @@ fn build_im_history(
     } else {
         tracing::info!(
             cap = settings.im.max_messages_per_conversation,
-            "serve: IM history using PgImHistoryStore"
+            "serve: IM history using SqliteImHistoryStore"
         );
-        let store: Arc<dyn ImHistoryStore> = Arc::new(PgImHistoryStore::new(
-            Arc::new(PgImIdentityRepository::new(pool.clone())),
+        let store: Arc<dyn ImHistoryStore> = Arc::new(SqliteImHistoryStore::new(
+            Arc::new(SqliteImIdentityRepository::new(pool.clone())),
             state.sessions.clone(),
             state.messages.clone(),
             default_model.to_string(),
@@ -1174,7 +1183,7 @@ fn build_eval_service(
     let runner = EvalRunner::new(Arc::new(DefaultEvalAgentBuilder::new(
         settings.eval.max_iterations,
     )));
-    let source = Arc::new(crate::eval_bridge::PgCaseFromSessionSource::new(pool));
+    let source = Arc::new(crate::eval_bridge::SqliteCaseFromSessionSource::new(pool));
     tracing::info!(
         suites_dir = %suites_dir.display(),
         max_iterations = settings.eval.max_iterations,

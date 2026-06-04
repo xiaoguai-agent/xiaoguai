@@ -50,7 +50,7 @@
 //!   `WorkerResult`'s artefact as part of the final summary, so
 //!   downstream consumers can see what was approved.
 //! - the actual `MemoryView::promote_facts` call is its own concern
-//!   (touches `xiaoguai-memory::PgMemoryStore` semantics; needs a
+//!   (touches `xiaoguai-memory::SqliteMemoryStore` semantics; needs a
 //!   trait method addition we don't want to ship in this pattern PR).
 //!
 //! ## `SessionId` placeholder

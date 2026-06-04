@@ -1,6 +1,6 @@
 //! MCP server registry domain type.
 //!
-//! Mirrors the `mcp_servers` Postgres table. The `env_keys` field intentionally
+//! Mirrors the `mcp_servers` table. The `env_keys` field intentionally
 //! stores env-variable **names**, not values; the runtime resolves them at
 //! spawn time (same secrets policy as `LlmProvider::api_key_env`).
 

@@ -1,6 +1,6 @@
 //! T5 — coverage for `POST /v1/audit/exports`.
 //!
-//! Uses `StaticAuditChainExporter` to avoid standing up Postgres. The
+//! Uses `StaticAuditChainExporter` to avoid standing a database. The
 //! happy-path / chain-broken / 503 / 501 status-code mapping is exercised
 //! here; the chain-verify-and-render logic itself is covered in
 //! `xiaoguai-audit` integration tests.

@@ -1,9 +1,9 @@
 //! `xiaoguai provider {register,list,remove}` — administer the LLM provider
-//! registry stored in Postgres.
+//! registry stored in `SQLite`.
 //!
 //! These functions take a `&dyn LlmProviderRepository` so unit tests can swap
 //! in an in-memory implementation. The binary entry point in `main.rs`
-//! constructs a `PgLlmProviderRepository` and calls them.
+//! constructs a `SqliteLlmProviderRepository` and calls them.
 //!
 //! Secrets policy: this command **never** accepts an API key directly. Callers
 //! pass `--api-key-env DEEPSEEK_API_KEY` and the runtime reads the key from

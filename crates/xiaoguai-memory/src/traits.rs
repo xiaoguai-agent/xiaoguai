@@ -10,7 +10,7 @@ use crate::types::{
 
 /// Unified interface for long-term memory storage and retrieval.
 ///
-/// Both [`PgMemoryStore`] and [`InMemoryMemoryStore`] implement this trait so
+/// Both [`SqliteMemoryStore`] and [`InMemoryMemoryStore`] implement this trait so
 /// production and test code share the same call-sites.
 #[async_trait]
 pub trait MemoryStore: Send + Sync + 'static {

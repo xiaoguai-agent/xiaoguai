@@ -11,7 +11,7 @@
 //! We deliberately don't go through `MessageRepository` — that trait
 //! takes a `tenant: Option<&str>` and runs inside an RLS-scoped
 //! transaction. The admin path bypasses RLS (same as
-//! `PgTodayReader`), so we read directly.
+//! `SqliteTodayReader`), so we read directly.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -22,11 +22,11 @@ use xiaoguai_api::eval::{
 use xiaoguai_llm::{Message as LlmMessage, Role as LlmRole};
 use xiaoguai_types::ContentBlock;
 
-pub struct PgCaseFromSessionSource {
+pub struct SqliteCaseFromSessionSource {
     pool: SqlitePool,
 }
 
-impl PgCaseFromSessionSource {
+impl SqliteCaseFromSessionSource {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -42,7 +42,7 @@ fn map_err(e: sqlx::Error) -> EvalServiceError {
 }
 
 #[async_trait]
-impl CaseFromSessionSource for PgCaseFromSessionSource {
+impl CaseFromSessionSource for SqliteCaseFromSessionSource {
     async fn load_session(
         &self,
         session_id: &str,

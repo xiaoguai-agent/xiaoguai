@@ -1,15 +1,15 @@
 //! v1.2.3 — PG-backed `HotlPolicyStore` + `HotlEnforcer`.
 //!
-//! `PgHotlPolicyStore` — CRUD on `hotl_policies` (migration 0011).
-//! `PgHotlEnforcer`   — inserts into `hotl_usage_log` then compares windowed
+//! `SqliteHotlPolicyStore` — CRUD on `hotl_policies` (migration 0011).
+//! `SqliteHotlEnforcer`   — inserts into `hotl_usage_log` then compares windowed
 //! SUMs against the active policies. Fail-closed: any PG error → Deny.
 //!
 //! Lives in `xiaoguai-core` (same layering pattern as `audit_bridge.rs`):
 //! the api crate stays sqlx-free; SQL lives here.
 //!
-//! Sprint-12 S12-7: adds `PgHotlDecisionStore` (table `hotl_decisions`,
-//! migration 0026) and `PgHotlAuditSink` (adapter over
-//! `xiaoguai_audit::PgAuditSink`). Together they replace the production
+//! Sprint-12 S12-7: adds `SqliteHotlDecisionStore` (table `hotl_decisions`,
+//! migration 0026) and `SqliteHotlAuditSink` (adapter over
+//! `xiaoguai_audit::SqliteAuditSink`). Together they replace the production
 //! `state.hotl_decision_store = None` / `state.hotl_audit = None` slots
 //! set by the v1.8.1 hotfix, flipping `POST /v1/hotl/decisions` from 503
 //! → 201 in production.
@@ -28,17 +28,17 @@ use xiaoguai_api::hotl::{
     enforcer::{HotlEnforcer, HotlVerdict, HotlVerdictResult},
     policy::{CreateHotlPolicyRequest, HotlPolicy, HotlPolicyStore, HotlPolicyStoreError},
 };
-use xiaoguai_audit::chain::sink::PgAuditSink;
+use xiaoguai_audit::chain::sink::SqliteAuditSink;
 use xiaoguai_audit::AuditEntry;
 
 // ── policy store ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
-pub struct PgHotlPolicyStore {
+pub struct SqliteHotlPolicyStore {
     pool: SqlitePool,
 }
 
-impl PgHotlPolicyStore {
+impl SqliteHotlPolicyStore {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -81,7 +81,7 @@ impl From<PolicyRow> for HotlPolicy {
 }
 
 #[async_trait]
-impl HotlPolicyStore for PgHotlPolicyStore {
+impl HotlPolicyStore for SqliteHotlPolicyStore {
     async fn list(&self, scope: Option<&str>) -> Result<Vec<HotlPolicy>, HotlPolicyStoreError> {
         // Use a dynamic query to handle the optional `scope` filter cleanly.
         let rows: Vec<PolicyRow> = if let Some(s) = scope {
@@ -196,20 +196,20 @@ impl HotlPolicyStore for PgHotlPolicyStore {
 /// 4. Compare against `max_count` / `max_usd`.
 /// 5. PG error → fail-closed (Deny).
 #[derive(Debug, Clone)]
-pub struct PgHotlEnforcer {
+pub struct SqliteHotlEnforcer {
     pool: SqlitePool,
-    store: Arc<PgHotlPolicyStore>,
+    store: Arc<SqliteHotlPolicyStore>,
 }
 
-impl PgHotlEnforcer {
+impl SqliteHotlEnforcer {
     #[must_use]
-    pub fn new(pool: SqlitePool, store: Arc<PgHotlPolicyStore>) -> Self {
+    pub fn new(pool: SqlitePool, store: Arc<SqliteHotlPolicyStore>) -> Self {
         Self { pool, store }
     }
 }
 
 #[async_trait]
-impl HotlEnforcer for PgHotlEnforcer {
+impl HotlEnforcer for SqliteHotlEnforcer {
     async fn check(&self, scope: &str, amount: f64) -> HotlVerdictResult {
         // Fetch active policies; fail-closed on error.
         let policies = match self.store.policies_for(scope).await {
@@ -902,7 +902,7 @@ pub fn build_hotl_gate_with_expiry(
 /// threads the redaction repo + `redaction_required` flag + audit sink
 /// into `SuspendingHotlGate`. Ignored when `suspend_on_escalate ==
 /// false` (legacy `EnforcerGate` does not have a redaction surface).
-/// `run_serve` calls this directly with `PgHotlRedactionRepo` and the
+/// `run_serve` calls this directly with `SqliteHotlRedactionRepo` and the
 /// `agent.hotl.redaction_policy_required` config field.
 #[must_use]
 pub fn build_hotl_gate_with_redaction(
@@ -958,11 +958,11 @@ fn build_reason(policy: &HotlPolicy, count: usize, sum: f64) -> String {
 // surfaces as a `Backend` error rather than silently coercing.
 
 #[derive(Debug, Clone)]
-pub struct PgHotlDecisionStore {
+pub struct SqliteHotlDecisionStore {
     pool: SqlitePool,
 }
 
-impl PgHotlDecisionStore {
+impl SqliteHotlDecisionStore {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -980,7 +980,7 @@ fn decision_pg_err(e: sqlx::Error) -> HotlDecisionStoreError {
 }
 
 #[async_trait]
-impl HotlDecisionStore for PgHotlDecisionStore {
+impl HotlDecisionStore for SqliteHotlDecisionStore {
     async fn record(
         &self,
         escalation_id: Uuid,
@@ -1039,7 +1039,7 @@ impl HotlDecisionStore for PgHotlDecisionStore {
 
 // ── audit sink adapter (sprint-12 S12-7) ─────────────────────────────────────
 //
-// Wraps `xiaoguai_audit::PgAuditSink` behind the api crate's `HotlAuditSink`
+// Wraps `xiaoguai_audit::SqliteAuditSink` behind the api crate's `HotlAuditSink`
 // trait so the `/v1/hotl/decisions` route can record `hotl.decision` audit
 // entries through the same HMAC-chained sink the rest of the audit surface
 // uses. We keep the trait surface (`Result<(), String>`) opaque per
@@ -1047,33 +1047,33 @@ impl HotlDecisionStore for PgHotlDecisionStore {
 // a string so the api crate doesn't pull a `xiaoguai-audit` dep.
 
 #[derive(Clone)]
-pub struct PgHotlAuditSink {
-    inner: Arc<PgAuditSink>,
+pub struct SqliteHotlAuditSink {
+    inner: Arc<SqliteAuditSink>,
 }
 
-impl PgHotlAuditSink {
+impl SqliteHotlAuditSink {
     #[must_use]
-    pub fn new(inner: Arc<PgAuditSink>) -> Self {
+    pub fn new(inner: Arc<SqliteAuditSink>) -> Self {
         Self { inner }
     }
 
     /// Box-and-Arc helper so callers in `run_serve` don't repeat the dyn coercion.
     #[must_use]
-    pub fn arc(inner: Arc<PgAuditSink>) -> Arc<dyn HotlAuditSink> {
+    pub fn arc(inner: Arc<SqliteAuditSink>) -> Arc<dyn HotlAuditSink> {
         Arc::new(Self::new(inner))
     }
 }
 
-impl std::fmt::Debug for PgHotlAuditSink {
+impl std::fmt::Debug for SqliteHotlAuditSink {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PgHotlAuditSink")
-            .field("inner", &"Arc<PgAuditSink>")
+        f.debug_struct("SqliteHotlAuditSink")
+            .field("inner", &"Arc<SqliteAuditSink>")
             .finish()
     }
 }
 
 #[async_trait]
-impl HotlAuditSink for PgHotlAuditSink {
+impl HotlAuditSink for SqliteHotlAuditSink {
     async fn append(&self, entry: AuditEntry) -> Result<(), String> {
         self.inner
             .append(entry)
@@ -1186,7 +1186,7 @@ mod tests {
     #[tokio::test]
     async fn hotl_store_create_list_delete() {
         let (_dir, pool) = sqlite_pool().await;
-        let store = PgHotlPolicyStore::new(pool);
+        let store = SqliteHotlPolicyStore::new(pool);
 
         let created = store
             .create(xiaoguai_api::hotl::policy::CreateHotlPolicyRequest {
@@ -1216,7 +1216,7 @@ mod tests {
     #[tokio::test]
     async fn hotl_store_delete_missing_is_not_found() {
         let (_dir, pool) = sqlite_pool().await;
-        let store = PgHotlPolicyStore::new(pool);
+        let store = SqliteHotlPolicyStore::new(pool);
         let err = store.delete(Uuid::new_v4()).await.unwrap_err();
         assert!(matches!(
             err,
@@ -1231,8 +1231,8 @@ mod tests {
     #[tokio::test]
     async fn hotl_enforcer_no_policy_allows() {
         let (_dir, pool) = sqlite_pool().await;
-        let store = Arc::new(PgHotlPolicyStore::new(pool.clone()));
-        let enforcer = PgHotlEnforcer::new(pool, store);
+        let store = Arc::new(SqliteHotlPolicyStore::new(pool.clone()));
+        let enforcer = SqliteHotlEnforcer::new(pool, store);
         let v = enforcer.check("llm_call", 1.0).await.unwrap();
         assert_eq!(v, HotlVerdict::Allow);
     }
@@ -1240,7 +1240,7 @@ mod tests {
     #[tokio::test]
     async fn hotl_enforcer_count_breach_denies() {
         let (_dir, pool) = sqlite_pool().await;
-        let store = Arc::new(PgHotlPolicyStore::new(pool.clone()));
+        let store = Arc::new(SqliteHotlPolicyStore::new(pool.clone()));
 
         store
             .create(xiaoguai_api::hotl::policy::CreateHotlPolicyRequest {
@@ -1253,7 +1253,7 @@ mod tests {
             .await
             .unwrap();
 
-        let enforcer = PgHotlEnforcer::new(pool, store);
+        let enforcer = SqliteHotlEnforcer::new(pool, store);
         let v1 = enforcer.check("llm_call", 1.0).await.unwrap();
         let v2 = enforcer.check("llm_call", 1.0).await.unwrap();
         assert_eq!(v1, HotlVerdict::Allow);

@@ -37,7 +37,7 @@ chrono       = { workspace = true }
 tokio        = { workspace = true }
 parking_lot  = { workspace = true }
 
-# pg feature: sqlx for Postgres + pgvector queries.
+# pg feature: enables the sqlx (embedded SQLite) memory store.
 sqlx = { workspace = true, optional = true }
 
 # openai feature: embedding via OpenAI API.

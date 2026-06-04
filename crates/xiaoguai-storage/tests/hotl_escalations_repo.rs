@@ -15,7 +15,7 @@ use chrono::{Duration, Utc};
 use common::test_setup;
 use uuid::Uuid;
 use xiaoguai_storage::repositories::hotl_escalations::{
-    HotlEscalationRow, HotlEscalationStore, HotlPendingRow, PgHotlEscalationRepository,
+    HotlEscalationRow, HotlEscalationStore, HotlPendingRow, SqliteHotlEscalationRepository,
 };
 use xiaoguai_storage::repositories::HotlDecisionVerdict;
 
@@ -51,7 +51,7 @@ fn make_child(scope: &str, expires_in: Duration) -> HotlPendingRow {
 #[tokio::test]
 async fn insert_pending_round_trip() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgHotlEscalationRepository::new(pool.clone());
+    let repo = SqliteHotlEscalationRepository::new(pool.clone());
     let parent = make_parent("tool_call.execute_python");
     let child = make_child("tool_call.execute_python", Duration::hours(24));
 
@@ -81,7 +81,7 @@ async fn insert_pending_round_trip() {
 #[tokio::test]
 async fn list_pending_unexpired_excludes_expired() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgHotlEscalationRepository::new(pool.clone());
+    let repo = SqliteHotlEscalationRepository::new(pool.clone());
     let parent = make_parent("tool_call.execute_python");
     // expires_at = now - 1m → already expired by the time list runs.
     let child = make_child("tool_call.execute_python", Duration::minutes(-1));
@@ -105,7 +105,7 @@ async fn list_pending_unexpired_excludes_expired() {
 #[tokio::test]
 async fn list_pending_unexpired_excludes_decided() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgHotlEscalationRepository::new(pool.clone());
+    let repo = SqliteHotlEscalationRepository::new(pool.clone());
     let parent = make_parent("tool_call.execute_python");
     let mut child = make_child("tool_call.execute_python", Duration::hours(24));
     // Pre-mark child as already-resolved; list must skip it even though
@@ -131,7 +131,7 @@ async fn list_pending_unexpired_excludes_decided() {
 #[tokio::test]
 async fn record_decision_resolves_pending_row() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgHotlEscalationRepository::new(pool.clone());
+    let repo = SqliteHotlEscalationRepository::new(pool.clone());
     let parent = make_parent("tool_call.execute_python");
     let child = make_child("tool_call.execute_python", Duration::hours(24));
 
@@ -174,7 +174,7 @@ async fn record_decision_resolves_pending_row() {
 #[tokio::test]
 async fn record_decision_unknown_id_returns_false() {
     let (pool, _guard) = test_setup().await;
-    let repo = PgHotlEscalationRepository::new(pool.clone());
+    let repo = SqliteHotlEscalationRepository::new(pool.clone());
 
     let unknown = Uuid::new_v4();
     let matched = repo
