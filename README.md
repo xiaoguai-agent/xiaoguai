@@ -4,7 +4,7 @@
 >
 > *Your Little Agent for Big Work · 小怪不小，能办大事*
 
-**Documentation:** <https://xiaoguai-agent.github.io/xiaoguai/>
+**Documentation:** the handbook source lives in [`docs/book/`](docs/book/) — build it locally with `mdbook build docs/book` (see [Documentation](#documentation) below).
 
 Xiaoguai is a self-hostable AI agent platform for technical individuals,
 small teams, and anyone with a compliance or traceability constraint.
@@ -36,10 +36,10 @@ git clone https://github.com/xiaoguai-agent/xiaoguai.git
 cd xiaoguai
 docker compose -f deploy/docker-compose.yml up --build
 # wait ~2 min on first build, then open:
-open http://localhost:8080/healthz   # → ok
+open http://localhost:7600/healthz   # → ok
 ```
 
-That's the whole thing — one `xiaoguai-core` service on `:8080` with an
+That's the whole thing — one `xiaoguai-core` service on `:7600` with an
 embedded SQLite store, running on `MockBackend` so it's self-contained out
 of the box. For the chat UI, real LLM providers, MCP server registration,
 and the admin console, see [`docs/user-guide/quickstart.md`](docs/user-guide/quickstart.md).
@@ -78,8 +78,8 @@ docker compose -f deploy/docker-compose.yml \
 
 ## Architecture
 
-Three layers, eighteen Rust crates, one workspace. Substrate at the
-bottom is pure data + policy; domain crates in the middle implement
+Three layers, ~34 Rust crates, one workspace. Substrate at the
+bottom is pure data + audit; domain crates in the middle implement
 the agent + MCP + RAG + scheduler + eval primitives; edges at the top
 are the protocols and binaries users actually touch.
 
@@ -105,7 +105,7 @@ domain     ┌──────┴──────────────┴
            │                   Adapter + reindex_path                   │
            │  xiaoguai-        Trigger × RetryPolicy × JobRun +         │
            │   scheduler       FileWatch + Webhook + ProactiveChecker + │
-           │                   BudgetLedger + 4 PushSinks + Pg repos    │
+           │                   BudgetLedger + 4 PushSinks + SQLite repos│
            │  xiaoguai-runtime run_to_completion / run_streamed /       │
            │                   run_to_sink — shared agent loop          │
            │  xiaoguai-eval    regression + capability suites +         │
@@ -187,8 +187,8 @@ Hard guarantees the platform enforces in code (not just docs):
 feedback, then prioritise."* The candidate backlog, per
 [`docs/HANDOFF-2026-05-24.md`](docs/HANDOFF-2026-05-24.md) §5:
 
-- Per-tenant API tokens for `/v1/admin/scheduler/webhooks/...`
-  (GitHub / Slack integrators today need the admin bearer).
+- Scoped API tokens for `/v1/admin/scheduler/webhooks/...` (today the
+  single-owner HTTP Basic credential gates the whole admin surface).
 - `CompositeExecutor` so the scheduler operator can dispatch by
   payload kind instead of the current hard-coded
   `RuntimeJobExecutor`.
@@ -222,9 +222,7 @@ BUSL-1.1 is not an OSI-approved Open Source license; it is
 
 ## Documentation
 
-The full handbook is hosted at **<https://xiaoguai-agent.github.io/xiaoguai/>**.
-
-Source lives in [`docs/book/`](docs/book/). To build locally:
+The full handbook source lives in [`docs/book/`](docs/book/). To build locally:
 
 ```bash
 # Install mdbook and mdbook-mermaid first
@@ -251,7 +249,6 @@ v1.3 lands — see the honest status section below.
 | **Skill packs** | Declarative install: `POST /v1/skills/install {"slug":"incident-triage"}` records the pack row; 7 packs ship in-repo (`ar-collections`, `incident-triage`, `pr-review`, `hr-onboarding`, `rag-legal`, `rag-finance`, `rag-hr`) with `catalog/skill_packs.json` as the authoritative manifest. |
 | **Active watchers (`xiaoguai-watch`)** | New crate; SQL-poll and HTTP-poll wakeups that feed the scheduler, enabling reactive "check every N seconds, fire when condition changes" loops without a dedicated worker process. |
 | **Anomaly detection (`xiaoguai-anomaly`)** | Z-score and EWMA detectors over any numeric time series; ships as a standalone crate consumable by scheduler jobs and HotL policy rules. |
-| **Rate-limit** | Per-tenant, per-route token-bucket enforced at the Axum middleware layer; config lives in `0014_tenant_rate_limit.sql`. |
 | **New IM adapters** | Discord (Ed25519 sig verification), Telegram (Bot API long-poll), Mattermost (WebSocket), Slack (HMAC sig verification) — four new `xiaoguai-im-*` crates alongside the existing Feishu / DingTalk / WeCom adapters. |
 | **Cloud LLM v2** | `ProviderKind` gains `Bedrock` (SigV4), `AzureOpenAi`, `Mistral`, and `Groq` — all behind the existing `LlmBackend` trait; circuit breakers and cost-quota defence carry over automatically. |
 | **Observability** | New `xiaoguai-observability` crate; opt-in Prometheus scrape endpoint (`/metrics`) and OTLP trace export; zero telemetry by default (ADR-0013 preserved). |
@@ -296,17 +293,16 @@ docker compose exec xiaoguai-core xiaoguai migrate run
 #   0012_outcomes.sql
 #   0015_skill_packs.sql
 
-# Seed the skill-pack catalog
-curl -s -X POST http://localhost:7600/v1/admin/skills/seed \
-     -H "Authorization: Bearer $ADMIN_TOKEN"
-
 # Grafana → http://localhost:3000  (admin / xiaoguai)
 # Prometheus → http://localhost:9090
 ```
 
-The binary is `xiaoguai` — not `xg`. CLI subcommands for wave-3 features
-(`skills`, `outcomes`, `hotl`) are planned but not yet wired; use the REST
-API or the admin-ui in the meantime.
+> If you configured the HTTP Basic gate (`auth.username` / `auth.password`),
+> add `-u "$USER:$PASS"` to admin curls. There is no bearer token.
+
+The binary is `xiaoguai` — not `xg`. The wave-3 CLI subcommands
+(`xiaoguai skills …`, `xiaoguai outcomes …`, `xiaoguai hotl …`) are wired;
+the admin-ui and REST API cover the same surface.
 
 ### Documentation index
 
@@ -332,9 +328,8 @@ bash docs/book/test-build.sh
 |---|---|
 | Observability (Prometheus + OTLP) | [`docs/runbooks/observability.md`](docs/runbooks/observability.md) |
 | Operator day-2 | [`docs/runbooks/operator.md`](docs/runbooks/operator.md) |
-| High availability | [`docs/runbooks/ha.md`](docs/runbooks/ha.md) |
-| Kubernetes / Helm | [`docs/runbooks/k8s-helm.md`](docs/runbooks/k8s-helm.md) |
-| AWS Terraform | [`docs/runbooks/aws-terraform.md`](docs/runbooks/aws-terraform.md) |
+| systemd hardening | [`docs/runbooks/systemd-hardening.md`](docs/runbooks/systemd-hardening.md) |
+| Disaster recovery | [`docs/runbooks/disaster-recovery-wave3.md`](docs/runbooks/disaster-recovery-wave3.md) |
 | Release signing | [`docs/runbooks/release-signing.md`](docs/runbooks/release-signing.md) |
 
 #### Architecture
@@ -393,26 +388,20 @@ are all typed in `crates/xiaoguai-api/src/routes/`.
 
 ### Honest status — what is NOT production-ready yet
 
-Three Postgres bridge implementations are stubbed and return `503` until
-v1.3 wires the real implementations:
+The HotL, outcomes, and skill-pack surfaces are now backed by real
+SQLite-backed stores (the single-user pivot wired them; they no longer return
+`503`). Remaining gaps:
 
-- **`/v1/hotl/*`** — HotL policy CRUD and approval-gate evaluation.
-  `HotlPolicyStore` trait is defined; `AppState.hotl_policy_store` field
-  exists; the Postgres bridge is pending.
-- **`/v1/outcomes/*`** — Outcome recording and chain-reader queries.
-  `OutcomeWriter` / `OutcomesReader` traits are defined; the Postgres bridge
-  is pending.
-- **`/v1/skills/*`** — Skill pack install, list, and uninstall.
-  `0015_skill_packs.sql` migration is ready; the HTTP routes exist but the
-  store bridge returns `503`.
+- The **pack runtime loader** is not yet wired: installing a pack via the API
+  records the row in the `skill_packs` table but does not yet activate the
+  pack's prompt overlays or tool registrations at runtime.
+- Audit endpoints (`/v1/admin/audit*`, `/v1/audit/exports`) return `503` until
+  an audit HMAC signing key is configured (`audit.hmac_key`).
+- Air-gapped memory/recall is pending an Ollama-backed embedder (today the
+  only real embedder is OpenAI-backed).
 
-The **pack runtime loader** is also not yet wired: installing a pack via
-the API records the row in the `skill_packs` table but does not yet
-activate the pack's prompt overlays or tool registrations at runtime.
-
-Everything else in wave 3 — rate-limit middleware, observability, IM
-adapters, cloud LLM providers, anomaly / watcher crates — is fully wired
-and tested.
+Everything else — observability, IM adapters, cloud LLM providers, anomaly /
+watcher crates — is fully wired and tested.
 
 ---
 

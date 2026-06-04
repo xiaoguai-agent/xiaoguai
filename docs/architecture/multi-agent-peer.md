@@ -66,9 +66,9 @@ The peer shape is good for:
   narrow Toolbox (read file, run lints, list git diff) + a tuned
   prompt outperforms a generalist with 80 tools. The front door asks
   the specialist by name.
-- **Tenancy / trust isolation.** Each peer is a separate process with
-  its own auth, its own audit chain, its own RLS scope. The front door
-  cannot ever see tools the specialist didn't choose to publish.
+- **Trust isolation.** Each peer is a separate process (its own owner, its
+  own auth gate, its own audit chain) and publishes only the tools it chooses
+  over MCP. The front door cannot ever see tools the specialist didn't publish.
 - **Independent scaling.** The summarize specialist can run on a box
   with one big GPU; the front door can run cheap CPU instances. They
   speak HTTP.

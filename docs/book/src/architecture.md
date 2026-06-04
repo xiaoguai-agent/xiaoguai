@@ -1,8 +1,13 @@
 # Architecture Overview
 
-Xiaoguai is built as a Rust workspace of eighteen crates across three layers:
-**substrate** (pure data + policy), **domain** (agent, MCP, RAG, scheduler, eval),
+Xiaoguai is built as a Rust workspace of ~34 crates across three layers:
+**substrate** (pure data + audit), **domain** (agent, MCP, RAG, scheduler, eval),
 and **edges** (REST API, IM gateway, CLI, production binary).
+
+> **Single-owner SQLite (DEC-033 / DEC-HLD-021).** Xiaoguai ships as a single
+> binary over **embedded SQLite** with one implicit owner. There is no
+> Postgres, no row-level security, no OIDC/JWT, no Casbin RBAC, and no
+> multi-tenancy; the access gate is an optional HTTP Basic username/password.
 
 ## Layer diagram
 
@@ -26,7 +31,7 @@ domain     ┌──────┴──────────────┴
            │                   Adapter + reindex_path                   │
            │  xiaoguai-scheduler  Trigger × RetryPolicy × JobRun +     │
            │                   FileWatch + Webhook + ProactiveChecker + │
-           │                   BudgetLedger + 4 PushSinks + Pg repos    │
+           │                   BudgetLedger + 4 PushSinks + SQLite repos│
            │  xiaoguai-runtime run_to_completion / run_streamed /       │
            │                   run_to_sink — shared agent loop          │
            │  xiaoguai-eval    regression + capability suites +         │
@@ -37,8 +42,9 @@ substrate  ┌──────┴───────────────
            │  xiaoguai-types   canonical types (ContentBlock, AgentEvent,│
            │                   Citation, ToolCall, …)                   │
            │  xiaoguai-audit   append-only HMAC-chained AuditLog trait  │
-           │  xiaoguai-policy  Casbin RBAC + OIDC JWT validation        │
-           │  xiaoguai-storage PG migrations (sqlx) + Valkey client     │
+           │  xiaoguai-auth    HotL argument redaction (JSONPath rules) │
+           │  xiaoguai-storage embedded SQLite migrations (sqlx) +      │
+           │                   optional Valkey / in-process cache       │
            └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -48,12 +54,12 @@ substrate  ┌──────┴───────────────
 
 Every operation — chat turn, tool call, scheduled job, IM message — writes
 an HMAC-chained audit row before the response is sent. The chain is
-verifiable offline: `xiaoguai admin audit verify --tenant <id>`.
+verifiable offline: `xiaoguai admin audit verify`.
 
 ### MCP two-way
 
 Xiaoguai is simultaneously an MCP **consumer** (connecting to external MCP servers
-per tenant via `McpSupervisor`) and an MCP **publisher** (exposing its own
+via `McpSupervisor`) and an MCP **publisher** (exposing its own
 `Toolbox` at `GET /v1/mcp/serve`). External agents and peer xiaoguai instances
 both connect over Streamable-HTTP.
 
@@ -75,16 +81,16 @@ one `xiaoguai provider register` command.
 
 | Component | Role |
 |-----------|------|
-| **Postgres 16** | Sessions, messages, MCP registry, LLM providers, scheduled jobs, audit log, tenant RBAC |
-| **Valkey 8** | Cache, idempotency keys, per-user rate-limiting counters |
+| **Embedded SQLite** | Sessions, messages, MCP registry, LLM providers, scheduled jobs, audit log — the single bundled store; no external DB server |
+| **Valkey / Redis** *(optional)* | Cache + idempotency keys; falls back to an in-process cache when `cache.url` is empty |
 
-## Delivery paths (v1.0 + v1.1)
+## Delivery paths
 
 | Path | Command |
 |------|---------|
 | docker-compose | `docker compose -f deploy/docker-compose.yml up` |
-| Helm chart | `helm install xiaoguai deploy/helm/xiaoguai/` |
-| Bare-metal tarball | `curl … | tar xz && ./install.sh` |
+| Native package | install the release `.deb` / `.rpm` (bundles the web UI) |
+| Bare-metal tarball | `curl … | tar xz` then run the binary / install the systemd unit |
 | pip wheel | `pip install xiaoguai && xiaoguai serve` |
 
 ## Further reading

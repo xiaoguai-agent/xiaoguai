@@ -10,17 +10,17 @@ small teams, and anyone with a compliance or traceability constraint.
 | Capability | Xiaoguai | n8n | Dify | OpenWebUI |
 |---|---|---|---|---|
 | **Audit-first console** — every chat, IM message, and scheduled run carries HMAC-chained audit metadata | First-class | Workflow runs only | Workflow runs only | Not surfaced |
-| **Scheduler-native** — cron + file watcher + webhook + LLM-initiated runs with per-user budget | First-class | Strong triggers, weak agents | Cron only | None |
+| **Scheduler-native** — cron + file watcher + webhook + LLM-initiated runs with budget gating | First-class | Strong triggers, weak agents | Cron only | None |
 | **MCP two-way** — consumes *and* publishes MCP servers via `/v1/mcp/serve` | First-class | Consumer only | Consumer only (v1.6+) | Limited |
 | **First-class citations** — `ContentBlock::Citation` is a typed variant with source URI + line span | First-class | None native | UI only | Bug-prone |
 
 ## Key properties
 
-- **Single Rust binary** — `xiaoguai-core` plus Postgres 16 and Valkey 8. No Python runtime, no JVM, no JS server on the hot path.
+- **Single Rust binary** — `xiaoguai-core` with **embedded SQLite**. No external database server, no Python runtime, no JVM, no JS server on the hot path. An optional Valkey/Redis can back the cache; with none configured it falls back to an in-process cache.
 - **Local-LLM default** — Ollama and any OpenAI-compatible endpoint work out of the box. Public-cloud LLM providers are optional.
-- **Multi-tenant with RLS** — Postgres row-level security on every tenant-scoped table; Casbin RBAC with OIDC JWT.
+- **Single-owner by design** — one implicit owner; an optional HTTP Basic username + password gates the API (leave it empty for an open localhost run). No OIDC, no JWT, no Casbin, no multi-tenancy.
 - **Chinese IM native** — Feishu (飞书), DingTalk (钉钉), and WeCom (企微) adapters ship in the box.
-- **四路交付** — docker-compose, Helm chart, bare-metal tarball, and pip wheel from the same release.
+- **多路交付** — docker-compose, native `.deb`/`.rpm`, bare-metal tarball, and pip wheel from the same release (all bundle the web UI).
 
 ## Getting started
 
@@ -32,5 +32,5 @@ For architecture details see [Architecture Overview](architecture.md).
 
 ---
 
-> **Documentation hosted at:** <https://xiaoguai-agent.github.io/xiaoguai/>  
-> Source: `docs/book/` in the [GitHub repository](https://github.com/xiaoguai-agent/xiaoguai)
+> **Documentation source:** `docs/book/` in the [GitHub repository](https://github.com/xiaoguai-agent/xiaoguai).
+> Build it locally with `mdbook build docs/book` (output under `docs/book/book/html`).

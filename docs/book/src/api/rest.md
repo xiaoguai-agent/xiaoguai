@@ -5,15 +5,20 @@
 ## Base URL
 
 ```
-http://localhost:8080/v1
+http://localhost:7600/v1
 ```
 
 All endpoints return `application/json`. Streaming endpoints return `text/event-stream` (SSE).
 
 ## Authentication
 
-Set `Authorization: Bearer <jwt>` when `XIAOGUAI_AUTH_REQUIRED=true`. In development, auth is
-disabled by default.
+Single-owner **HTTP Basic**. When `auth.username` and `auth.password` are
+configured (YAML, or the `XIAOGUAI_AUTH__USERNAME` / `XIAOGUAI_AUTH__PASSWORD`
+env vars), every `/v1/**` request must carry
+`Authorization: Basic base64(username:password)`; `/healthz` and
+`/v1/openapi.json` stay public. Leave both empty (the default) for an open
+localhost run. There is no OIDC, no JWT/bearer tokens, no scopes, and no
+multi-tenancy — every authenticated request is the owner.
 
 ## Endpoints
 
