@@ -1123,6 +1123,28 @@ async fn handle_init(config: Option<&str>) -> Result<()> {
         }
     };
 
+    // Region-relevant providers (M2): the seeded endpoint may be wrong for the
+    // user's account — MiniMax international (api.minimax.io) vs the CN platform,
+    // Azure's per-deployment URL, Bedrock's AWS region. A correct key against the
+    // wrong host still 401s, so offer an inline endpoint override (blank keeps
+    // the current value). `UpdateArgs.endpoint` already exists (#213).
+    let endpoint = if matches!(chosen.kind.as_str(), "minimax" | "azure_openai" | "bedrock") {
+        eprint!(
+            "\n{} endpoint (blank to keep {}): ",
+            chosen.name, chosen.endpoint
+        );
+        std::io::stderr().flush().ok();
+        let e = prompt_line()?;
+        let e = e.trim();
+        if e.is_empty() {
+            None
+        } else {
+            Some(e.to_string())
+        }
+    } else {
+        None
+    };
+
     eprint!(
         "\nMake {} the default model (so you can skip --model)? [Y/n]: ",
         chosen.name
@@ -1143,6 +1165,28 @@ async fn handle_init(config: Option<&str>) -> Result<()> {
     }
 
     let repo_ref: &dyn LlmProviderRepository = &repo;
+
+    // L1: before making this provider primary (fallback_order=0), demote any
+    // OTHER provider currently at 0 to 1. The router sorts by
+    // (fallback_order, created_at), so two providers at 0 would let the
+    // earlier-created one win — not the one the user just chose. Demoting keeps
+    // the chosen provider the unique lowest.
+    if make_default {
+        for p in &providers {
+            if p.id.as_str() != chosen.id.as_str() && p.fallback_order == 0 {
+                provider::update(
+                    repo_ref,
+                    provider::UpdateArgs {
+                        id: p.id.as_str().to_string(),
+                        fallback_order: Some(1),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            }
+        }
+    }
+
     let updated = provider::update(
         repo_ref,
         provider::UpdateArgs {
@@ -1151,6 +1195,7 @@ async fn handle_init(config: Option<&str>) -> Result<()> {
             // its first model as the deployment default (see #214).
             fallback_order: if make_default { Some(0) } else { None },
             api_key: key.clone(),
+            endpoint: endpoint.clone(),
             ..Default::default()
         },
     )
@@ -1159,6 +1204,9 @@ async fn handle_init(config: Option<&str>) -> Result<()> {
     eprintln!();
     if key.is_some() {
         eprintln!("✓ stored API key for {}", updated.name);
+    }
+    if endpoint.is_some() {
+        eprintln!("✓ endpoint set to {}", updated.endpoint);
     }
     if make_default {
         let model = updated.models.first().map_or("(its model)", String::as_str);
