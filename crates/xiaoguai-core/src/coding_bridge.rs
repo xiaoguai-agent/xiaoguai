@@ -5,15 +5,21 @@
 //! `CodingGate` traits, and these concrete impls live in `xiaoguai-core` where
 //! the sink and gate are already constructed.
 
+use std::path::Path;
 use std::sync::Arc;
 
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::json;
-use xiaoguai_agent::{HotlGate, HotlGateVerdict};
+use xiaoguai_agent::{AllowAllGate, HotlGate, HotlGateVerdict, Toolbox};
 use xiaoguai_audit::chain::sink::SqliteAuditSink;
 use xiaoguai_audit::{AuditEntry, OWNER_TENANT_ID};
-use xiaoguai_coding::{CodingGate, CodingStep, GateDecision, StepRecorder};
+use xiaoguai_coding::{
+    coding_tool_descriptors, CodingGate, CodingMcpClient, CodingStep, GateDecision, GovernedTools,
+    StepRecorder, Workspace,
+};
+use xiaoguai_mcp::McpClient;
 
 /// Each coding tool call gates as a single unit of work (matching the agent
 /// loop's per-tool-call locality); coding actions carry no spend, so the gate
@@ -106,6 +112,73 @@ impl CodingGate for HotlCodingGate {
             }
         }
     }
+}
+
+/// Build the governed coding tools over the workspace at `root` and register
+/// them into `toolbox` so the ReAct loop surfaces them to the model.
+///
+/// The coding gate is **allow-all**: the loop already enforces the real `HotL`
+/// decision on each `tool_call.<name>` scope before dispatch, so re-gating in
+/// `GovernedTools` would be double-gating. What this layer still provides is the
+/// pre-mutation checkpoint (for rollback) and the `code.*` / `git.*` audit rows
+/// carrying the checkpoint id — the half of the trust coin the generic loop
+/// audit doesn't.
+///
+/// `include_egress` exposes the network/past-undo tools (`git_push`,
+/// `open_pr`); keep it `false` unless the operator explicitly opts in.
+///
+/// # Errors
+/// Returns an error if the workspace cannot be opened/initialised, or if a tool
+/// name collides (cannot happen with a fresh toolbox — defensive).
+pub async fn build_coding_toolbox(
+    sink: Arc<SqliteAuditSink>,
+    root: &Path,
+    include_egress: bool,
+) -> Result<Toolbox> {
+    let workspace = Workspace::open_or_create(root)
+        .await
+        .with_context(|| format!("open coding workspace at {}", root.display()))?;
+    let tools = GovernedTools::new(
+        workspace,
+        HotlCodingGate::new(Arc::new(AllowAllGate)),
+        AuditStepRecorder::new(sink),
+    );
+    let client: Arc<dyn McpClient> = Arc::new(CodingMcpClient::new(tools, include_egress));
+    // All-or-nothing: build into a fresh toolbox so a mid-loop collision can
+    // never leave a half-exposed coding surface (security-review M1).
+    let mut toolbox = Toolbox::new();
+    for descriptor in coding_tool_descriptors(include_egress) {
+        let name = descriptor.name.clone();
+        toolbox
+            .insert(client.clone(), descriptor)
+            .with_context(|| format!("register coding tool {name}"))?;
+    }
+    Ok(toolbox)
+}
+
+/// The coding workspace root, or `None` when coding is **not enabled**.
+///
+/// There is deliberately **no default**: coding tools are opt-in. An operator
+/// enables governed in-loop coding by pointing `XIAOGUAI_CODING_WORKSPACE` at a
+/// directory; when unset the server registers no coding tools and never
+/// `git init`s its working directory (security-review H1).
+#[must_use]
+pub fn coding_workspace_root() -> Option<std::path::PathBuf> {
+    std::env::var_os("XIAOGUAI_CODING_WORKSPACE")
+        .map(std::path::PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+}
+
+/// Whether the **egress** coding tools (`git_push`, `open_pr`) are exposed —
+/// off unless `XIAOGUAI_CODING_ALLOW_EGRESS` is truthy (`1`/`true`/`yes`). They
+/// leave the local machine and cannot be rolled back, so they require a second,
+/// explicit opt-in on top of enabling coding (security-review C1).
+#[must_use]
+pub fn coding_allow_egress() -> bool {
+    std::env::var("XIAOGUAI_CODING_ALLOW_EGRESS").is_ok_and(|v| {
+        let v = v.trim().to_ascii_lowercase();
+        v == "1" || v == "true" || v == "yes"
+    })
 }
 
 #[cfg(test)]

@@ -16,6 +16,8 @@ mod checkpoint;
 mod error;
 mod git;
 mod governed;
+#[cfg(feature = "mcp")]
+mod mcp_client;
 mod tools;
 mod workspace;
 
@@ -24,6 +26,8 @@ pub use error::CodingError;
 pub use governed::{
     CodingGate, CodingStep, GateDecision, GovernedOutcome, GovernedTools, StepRecorder,
 };
+#[cfg(feature = "mcp")]
+pub use mcp_client::{coding_tool_descriptors, CodingMcpClient};
 pub use tools::{EditSummary, FileEdit};
 pub use workspace::{Workspace, WorkspaceId};
 
