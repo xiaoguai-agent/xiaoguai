@@ -226,12 +226,28 @@ pub fn router(state: AppState) -> Router {
     );
 
     // v0.9.1: optionally publish xiaoguai's Toolbox as an MCP server at
-    // `/v1/mcp/serve`. Sits outside the v1 layer stack on purpose —
-    // bearer/Casbin/rate-limit are wrong defaults for an MCP server
-    // (external agents authenticate via the MCP transport's own auth
-    // header). When publishing isn't enabled, we don't mount anything.
+    // `/v1/mcp/serve`. Off by default (`XIAOGUAI_MCP__PUBLISH`). When enabled it
+    // exposes tool execution, so it MUST honour the owner gate: apply the same
+    // `require_auth` layer used by `/v1/**`. With no owner auth configured the
+    // surface is unauthenticated — emit a loud warning so an operator who opens
+    // it knows (previously the comment claimed an MCP-transport auth check that
+    // does not exist).
     let mcp_serve = if state.mcp_publish_enabled {
-        Some(crate::mcp_serve::build_router(state.toolbox.clone()))
+        let m = crate::mcp_serve::build_router(state.toolbox.clone());
+        let m = if let Some(validator) = state.auth.clone() {
+            m.route_layer(axum::middleware::from_fn(move |req, next| {
+                let v = validator.clone();
+                async move { require_auth(v, req, next).await }
+            }))
+        } else {
+            tracing::warn!(
+                "MCP publishing is ENABLED (/v1/mcp/serve) but no owner auth is configured — \
+                 the tool-execution surface is UNAUTHENTICATED. Set auth.username/password \
+                 (XIAOGUAI_AUTH__*) before exposing this service."
+            );
+            m
+        };
+        Some(m)
     } else {
         None
     };

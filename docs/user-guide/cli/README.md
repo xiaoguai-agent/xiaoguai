@@ -23,7 +23,7 @@ This directory contains reference pages for the `xg` subcommands planned in the 
 |------|-------------|---------|-------------|
 | `--config <PATH>` | `XIAOGUAI_CONFIG` | `~/.xiaoguai/config.yaml` | Path to YAML config file |
 | `--token <TOKEN>` | `XIAOGUAI_API_TOKEN` | — | Bearer token for authenticated API calls |
-| `--api-base <URL>` | `XIAOGUAI_API_BASE` | `http://localhost:8080` | Base URL of the `xiaoguai-api` server |
+| `--api-base <URL>` | `XIAOGUAI_API_BASE` | `http://localhost:7600` | Base URL of the `xiaoguai-api` server |
 | `--output <FORMAT>` | — | `table` | Output format: `json`, `yaml`, or `table` |
 
 ## See Also

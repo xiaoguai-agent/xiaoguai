@@ -221,8 +221,13 @@ pub async fn send_message(
     //     profile as a leading System message so every session knows who it is
     //     working for. Loaded per-request (picks up edits without a restart);
     //     absent/blank file → no-op. Not persisted into the session history.
+    //     The prepend shifts `outcome.messages` by one, so the finalize skip
+    //     count must account for it (else the user message is re-persisted every
+    //     turn — see `prefix_len` below).
+    let mut prefix_len = initial_count + 1; // history + the user message
     if let Some(identity) = crate::identity::load_identity() {
         messages.insert(0, LlmMessage::system(identity));
+        prefix_len += 1;
     }
 
     // 3. Build the runtime context and register a cancel token.
@@ -274,7 +279,7 @@ pub async fn send_message(
         session_id_str.clone(),
         session_id,
         join,
-        initial_count + 1,
+        prefix_len,
     );
 
     let sse_stream = events.map(|ev| Ok::<_, axum::Error>(event_to_sse(&ev)));

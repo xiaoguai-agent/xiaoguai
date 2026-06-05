@@ -1,8 +1,12 @@
 //! `SQLite` persistence sink for the HMAC-chained audit log.
 //!
-//! `append()` is atomic via a transaction over the latest row — this serializes
-//! appends for the single-user owner chain. `SQLite`'s write transaction already
-//! provides the exclusive lock that Postgres' `SELECT ... FOR UPDATE` gave us.
+//! `append()` reads the latest row's hmac, signs the new row over it, and
+//! inserts — all under a **`BEGIN IMMEDIATE`** transaction so the write lock is
+//! taken *before* the read. A plain `BEGIN` (DEFERRED) would take the write lock
+//! only at INSERT, after the SELECT, letting two concurrent appends read the
+//! same `prev_hmac` and fork the chain. `IMMEDIATE` + the pool's `busy_timeout`
+//! serializes appends across tasks *and processes* (the CLI and the server both
+//! append to the same db), which a process-local mutex could not.
 //!
 //! Schema is provided by `xiaoguai-storage/migrations/0002_audit.sql`
 //! (single-user: `tenant_id` dropped, `id` INTEGER PK AUTOINCREMENT,
@@ -70,26 +74,56 @@ impl SqliteAuditSink {
 
     /// Atomically append an entry.
     ///
-    /// Reads the latest row's `hmac`, computes the new `hmac`, and inserts.
-    /// The whole sequence runs inside a single transaction so concurrent
-    /// appends serialize correctly (`SQLite`'s write lock provides the exclusion
-    /// that Postgres' `SELECT ... FOR UPDATE` used to).
+    /// Reads the latest row's `hmac`, computes the new `hmac`, and inserts, under
+    /// a `BEGIN IMMEDIATE` transaction so the read and the insert are serialized
+    /// against every other appender (see the module docs). Owner-normalisation:
+    /// the row is signed over the entry exactly as stored, so `verify_chain`
+    /// reconstructs the same HMAC.
     pub async fn append(&self, entry: AuditEntry) -> Result<StoredEntry, ChainError> {
         // Redact PII/secrets before signing so the stored row and its HMAC are
         // both over the redacted form (keeps `verify_chain` valid).
-        let entry = match &self.redactor {
+        let mut entry = match &self.redactor {
             Some(r) => r.redact(entry),
             None => entry,
         };
+        // Force the single-owner chain identity before signing. The `tenant_id`
+        // column is dropped and synthesized as `OWNER_TENANT_ID` on read, so the
+        // HMAC must be over that same value; making it unconditional here means a
+        // caller passing any other `tenant_id` can no longer silently produce
+        // rows that later fail `verify_chain`.
+        entry.tenant_id = OWNER_TENANT_ID.to_string();
 
-        let mut tx = self.pool.begin().await?;
+        // Take the write lock up front (IMMEDIATE) so the SELECT below sees a
+        // snapshot no other writer can extend before our INSERT commits.
+        let mut conn = self.pool.acquire().await?;
+        sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
 
+        let stored = self.append_locked(&mut conn, entry).await;
+
+        match &stored {
+            Ok(_) => {
+                sqlx::query("COMMIT").execute(&mut *conn).await?;
+            }
+            Err(_) => {
+                // Best-effort rollback; the connection drop would roll back too.
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            }
+        }
+        stored
+    }
+
+    /// The read→sign→insert body, run inside the caller's `IMMEDIATE` txn.
+    async fn append_locked(
+        &self,
+        conn: &mut sqlx::SqliteConnection,
+        entry: AuditEntry,
+    ) -> Result<StoredEntry, ChainError> {
         let prev: Option<Vec<u8>> = sqlx::query_scalar::<_, Vec<u8>>(
             "SELECT hmac FROM audit_log \
              ORDER BY id DESC \
              LIMIT 1",
         )
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut *conn)
         .await?;
 
         let prev_bytes: Vec<u8> = prev.unwrap_or_else(|| vec![0u8; HMAC_LEN]);
@@ -118,10 +152,8 @@ impl SqliteAuditSink {
         .bind(&details_text)
         .bind(&prev_bytes)
         .bind(&new_hmac)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut *conn)
         .await?;
-
-        tx.commit().await?;
 
         Ok(StoredEntry {
             id,

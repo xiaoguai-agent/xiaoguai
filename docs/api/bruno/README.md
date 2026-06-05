@@ -10,7 +10,7 @@ Covers the three new endpoint groups added in v1.2.3–v1.2.28:
 bruno/
   bruno.json           # Collection manifest
   environments/
-    local.bru          # http://localhost:8080 + dev-token
+    local.bru          # http://localhost:7600 + dev-token
     staging.bru        # https://staging-api.example.com
   hotl/
     list-policies.bru  # GET  /v1/hotl/policies
@@ -41,7 +41,7 @@ Select an environment from the top-right dropdown:
 
 | Environment | Base URL                          | Notes                          |
 |-------------|-----------------------------------|--------------------------------|
-| `local`     | `http://localhost:8080`           | Uses `dev-token` (no real auth)|
+| `local`     | `http://localhost:7600`           | Uses `dev-token` (no real auth)|
 | `staging`   | `https://staging-api.example.com` | Replace `token` with real JWT  |
 
 To customise, edit the relevant `.bru` file under `environments/` or override
@@ -63,7 +63,7 @@ and set it in the `staging` environment's `token` variable.
 
 | Variable         | Default (local)                          | Purpose                        |
 |------------------|------------------------------------------|--------------------------------|
-| `baseUrl`        | `http://localhost:8080`                  | API root                       |
+| `baseUrl`        | `http://localhost:7600`                  | API root                       |
 | `token`          | `dev-token`                              | Bearer token                   |
 | `tenantId`       | `11111111-1111-1111-1111-111111111111`   | UUID used in HotL requests     |
 | `policyId`       | `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`   | Pre-existing policy for GET/PUT/DELETE |

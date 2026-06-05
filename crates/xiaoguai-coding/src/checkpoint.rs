@@ -15,9 +15,6 @@
 //! directories left after a prune are not removed; checkpoints are not yet
 //! pruned by count/age.
 
-use std::collections::HashSet;
-use std::path::PathBuf;
-
 use uuid::Uuid;
 
 use crate::error::CodingError;
@@ -127,24 +124,38 @@ impl Workspace {
             // Point the temp index at the snapshot tree, then materialise every
             // snapshot file into the worktree (overwrites modified/deleted).
             git::run(root, &["read-tree", to.as_str()], Some(&tmp_index)).await?;
-            let snapshot: HashSet<PathBuf> =
-                git::run_z(root, &["ls-files", "-z"], Some(&tmp_index))
-                    .await?
-                    .into_iter()
-                    .collect();
             git::run(root, &["checkout-index", "-a", "-f"], Some(&tmp_index)).await?;
 
-            // Prune files present now but absent from the snapshot (i.e. added
-            // since the checkpoint). Tracked + untracked-non-ignored = the
-            // worktree's visible set.
-            let mut current = git::run_z(root, &["ls-files", "-z"], None).await?;
-            current.extend(
-                git::run_z(root, &["ls-files", "-z", "-o", "--exclude-standard"], None).await?,
-            );
-
-            for path in current {
-                if !snapshot.contains(&path) {
-                    let abs = root.join(&path);
+            // Prune ONLY files the agent ADDED after `to` — paths the checkpoint
+            // chain captured between `to` and its tip (each governed mutation
+            // snapshots first, so an agent-added file lands in a later
+            // checkpoint). Files the user created out-of-band are in NO
+            // checkpoint and are never deleted: a rollback must not destroy the
+            // owner's own data. (The one uncaptured case — a file the agent
+            // added *after* the last checkpoint — is left in place, the safe
+            // side of the trade.)
+            let tip = git::run(root, &["rev-parse", &cp_ref], None).await?;
+            let added = git::run_z(
+                root,
+                &[
+                    "diff",
+                    "--diff-filter=A",
+                    "--name-only",
+                    "-z",
+                    to.as_str(),
+                    tip.trim(),
+                ],
+                None,
+            )
+            .await?;
+            for path in added {
+                let abs = root.join(&path);
+                // Only remove regular files that still exist (skip dirs / gone).
+                if tokio::fs::metadata(&abs)
+                    .await
+                    .map(|m| m.is_file())
+                    .unwrap_or(false)
+                {
                     tokio::fs::remove_file(&abs)
                         .await
                         .map_err(|e| CodingError::io(&abs, e))?;

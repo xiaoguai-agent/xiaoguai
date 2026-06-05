@@ -19,7 +19,7 @@ xiaoguai mcp register \
 xiaoguai mcp register \
   --name specialist \
   --transport streamable_http \
-  --url http://specialist:8080/v1/mcp/serve
+  --url http://specialist:7600/v1/mcp/serve
 
 # Git tools
 xiaoguai mcp register \

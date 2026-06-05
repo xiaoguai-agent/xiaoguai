@@ -187,28 +187,28 @@ helm install pyroscope grafana/pyroscope \
   --values pyroscope-values.yaml
 ```
 
-### Per-pod env vars
+### Env vars on the xiaoguai binary
 
-Add to `deploy/helm/xiaoguai/values.yaml` under `extraEnv`:
+xiaoguai ships as a single binary (DEC-033) — there is no Helm chart. Point it
+at your Pyroscope server through its process environment. Under systemd, add to
+the unit (e.g. `/etc/systemd/system/xiaoguai.service`):
 
-```yaml
-# values.yaml excerpt — enable continuous profiling
-extraEnv:
-  - name: PYROSCOPE_SERVER_ADDRESS
-    value: "http://pyroscope.observability.svc.cluster.local:4040"
-  - name: PYROSCOPE_SAMPLE_RATE
-    value: "100"
-  - name: PYROSCOPE_UPLOAD_INTERVAL_SECS
-    value: "60"
+```ini
+[Service]
+Environment=PYROSCOPE_SERVER_ADDRESS=http://127.0.0.1:4040
+Environment=PYROSCOPE_SAMPLE_RATE=100
+Environment=PYROSCOPE_UPLOAD_INTERVAL_SECS=60
 ```
 
-Enable the feature flag in the image build:
+Use the Pyroscope service DNS instead of `127.0.0.1:4040` if Pyroscope runs in a
+cluster (e.g. `http://pyroscope.observability.svc.cluster.local:4040`). Then
+`systemctl daemon-reload && systemctl restart xiaoguai`. For a foreground run,
+`export` the same vars before `xiaoguai serve`.
 
-```yaml
-# values.yaml
-image:
-  buildArgs:
-    CARGO_FEATURES: "observability,profiling"
+Build the binary with the profiling feature enabled:
+
+```bash
+cargo build --release -p xiaoguai-cli --features "observability,profiling"
 ```
 
 ### Storage sizing

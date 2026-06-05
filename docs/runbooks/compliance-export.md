@@ -11,7 +11,7 @@ is intact.
 ```bash
 # CLI — produces a JSON bundle for this instance's owner.
 xiaoguai audit export \
-  --api-base http://localhost:8080 \
+  --api-base http://localhost:7600 \
   --framework soc2 \
   --from 2026-01-01T00:00:00Z \
   --to   2026-04-01T00:00:00Z \
@@ -28,7 +28,7 @@ xiaoguai audit export \
 ```bash
 # HTTP — same shape, returns the rendered bundle inline.
 # Pass owner credentials with -u if auth is configured; drop it on open localhost.
-curl -X POST http://localhost:8080/v1/audit/exports \
+curl -X POST http://localhost:7600/v1/audit/exports \
   -u "${XIAOGUAI_AUTH__USERNAME}:${XIAOGUAI_AUTH__PASSWORD}" \
   -H 'Content-Type: application/json' \
   -d '{
