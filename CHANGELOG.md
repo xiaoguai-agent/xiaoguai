@@ -15,6 +15,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v1.10.6] — 2026-06-05
+
+CLI ergonomics for headless / `pip install` users — configure providers, set a
+default model, and chat interactively without a web UI. Plus the ACP adapter and
+governed coding tools merged earlier in the cycle.
+
+### Added
+- **`xiaoguai repl`** — interactive, multi-turn chat REPL against a running
+  server. Unlike `chat` (one-shot, mock/Ollama only) it keeps the session's
+  history and uses your registered providers (MiniMax/OpenAI/…). `/exit`,
+  `/quit`, or Ctrl-D quits (#215).
+- **`xiaoguai provider update --id <id> [...]`** — change a provider's
+  endpoint / models / default-for / fallback-order / key without raw SQL (#213).
+- **`--api-key-stdin`** on `provider register`/`update` — pipe an API key from
+  stdin straight into the local DB (never argv/shell-history), so headless/pip
+  installs can set a key without the env-var + restart dance (#213).
+- **Default model** — omit `--model` and the router uses the primary (lowest
+  `fallback_order`) provider's first model. A single-provider deployment "just
+  works"; promote a provider to make its model the default. `POST /v1/sessions`
+  now accepts an empty model (#214).
+- **`xiaoguai acp`** — Agent Client Protocol stdio adapter for IDE integration
+  (DEC-038; #204); governed coding tools registered into the ReAct loop (#210).
+
+### Fixed
+- pip-installed binary `--version` now reports the release version (was `0.1.0`).
+- TestPyPI rehearsal no longer fires on `workflow_dispatch` (OIDC isn't set up
+  there) — pre-release tags only (#211).
+- Audit of merged PRs #180–#209 — 4 real bugs + security/cleanup (#212).
+
+### Changed
+- Docs/log: stale Postgres/tenant references in the MiniMax runbook + hotl
+  replay log rewritten for the single-binary SQLite model; documented the
+  `sk-cp-` (Token Plan) key format + intl/China endpoint split (#211).
+
 ## [v1.10.5] — 2026-06-05
 
 First PyPI release that actually publishes — `pip install xiaoguai` is live.
