@@ -5,6 +5,7 @@
 //! involving clap or `assert_cmd`.
 
 pub mod anomaly;
+pub mod audit_bundle;
 pub mod audit_export;
 pub mod backup;
 pub mod chat;
