@@ -101,7 +101,11 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          sed -i "s/^version = \"0.1.0\"/version = \"${VERSION}\"/" Cargo.toml
+          # `sed -i.bak` is portable: GNU sed (Linux runners) AND BSD sed (macOS
+          # runners) both accept the suffix attached to -i. A bare `sed -i` works
+          # only on GNU and broke every macOS wheel build (v1.10.6).
+          sed -i.bak "s/^version = \"0.1.0\"/version = \"${VERSION}\"/" Cargo.toml
+          rm -f Cargo.toml.bak
           echo "Cargo.toml workspace version -> ${VERSION}"
 
       - name: Build native binary
