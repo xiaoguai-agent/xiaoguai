@@ -352,7 +352,7 @@ impl DecisionRegistry {
             count = rows.len(),
             reattached,
             expired,
-            "hotl: replayed pending decision waiters from PG"
+            "hotl: replayed pending decision waiters from the SQLite store"
         );
 
         Ok(registry)

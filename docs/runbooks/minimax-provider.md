@@ -29,14 +29,16 @@
 
 ## Enabling the provider
 
-The migration leaves MiniMax **disabled** — the row exists with
-`default_for_models='[]'::jsonb`, so the router never auto-picks it. To
-enable for tenants:
+The migration leaves MiniMax **opt-in** — the row ships with
+`default_for_models = '[]'`, so the router never auto-picks it; you must pass
+`--model MiniMax-M2` explicitly. To make it a default instead, set
+`default_for_models` (SQLite stores it as plain JSON text — no `::jsonb` cast):
 
 ```sql
+-- sqlite3 ~/.xiaoguai/data.db
 UPDATE llm_providers
-SET default_for_models = '["MiniMax-M2","MiniMax-M2.5"]'::jsonb,
-    updated_at = NOW()
+SET default_for_models = '["MiniMax-M2","MiniMax-M2.5"]',
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
 WHERE id = 'minimax-system';
 ```
 
@@ -44,10 +46,25 @@ Restart `xiaoguai serve` so the router rebuilds.
 
 ## API key
 
-Set `MINIMAX_API_KEY` in the runtime environment. The provider row
-references this env var via `api_key_env='MINIMAX_API_KEY'`. Sources:
+Set `MINIMAX_API_KEY` in the runtime environment (the env the `xiaoguai serve`
+process sees). The provider row references it via
+`api_key_env='MINIMAX_API_KEY'`. The backend sends it as
+`Authorization: Bearer <key>` against `https://api.minimax.io/v1/chat/completions`
+(OpenAI-compatible).
 
-- MiniMax open platform: <https://platform.minimaxi.com/document>
+Key format & sources — **two separate platforms with non-interchangeable keys**:
+
+- **International** — <https://platform.minimax.io>. "Token Plan" keys are
+  prefixed **`sk-cp-`** and work against the seeded `https://api.minimax.io`
+  endpoint.
+- **China** — <https://platform.minimaxi.com>. Different keys; if yours is from
+  here, point the provider at the China host instead
+  (`UPDATE llm_providers SET endpoint='https://api.minimaxi.com' WHERE id='minimax-system';`).
+
+A `401 invalid api key (2049)` almost always means a region/endpoint mismatch or
+an unset/placeholder key — verify with a direct
+`curl -H "Authorization: Bearer $MINIMAX_API_KEY" https://api.minimax.io/v1/chat/completions ...`
+before debugging the router.
 
 ## Thinking-mode cost note
 
@@ -58,12 +75,12 @@ sum.
 If you observe cost regressions after enabling M1/M2:
 
 1. Compare `xiaoguai_llm_reasoning_tokens_total` vs
-   `xiaoguai_token_usage_total` (output) per tenant — a high ratio
-   means reasoning dominates.
+   `xiaoguai_token_usage_total` (output) — a high ratio means reasoning
+   dominates.
 2. Consider routing low-stakes prompts to `abab6.5-chat` (no reasoning)
    and reserving M2 for high-value calls.
-3. Cap per-tenant via the existing budget rails — the budget enforcer
-   counts both content and reasoning tokens.
+3. Cap usage via the existing budget rails — the budget enforcer counts
+   both content and reasoning tokens.
 
 ## Observability quickref
 
