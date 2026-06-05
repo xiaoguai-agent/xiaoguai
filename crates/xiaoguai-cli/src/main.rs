@@ -1018,27 +1018,64 @@ fn split_csv(s: &str) -> Vec<String> {
 /// Read one line of input from stdin (visible).
 fn prompt_line() -> Result<String> {
     let mut s = String::new();
-    std::io::stdin().read_line(&mut s).context("read stdin")?;
+    // `read_line` returns Ok(0) at EOF (closed pipe / Ctrl-D), NOT an error —
+    // without this check a `loop`-on-invalid prompt would spin forever.
+    if std::io::stdin().read_line(&mut s).context("read stdin")? == 0 {
+        return Err(anyhow::anyhow!("unexpected end of input"));
+    }
     Ok(s)
 }
 
-/// Read one line with terminal echo disabled (Unix, via `stty`). On a
-/// non-terminal stdin (piped) or where `stty` is unavailable, the input is
-/// simply read visibly.
-fn prompt_hidden() -> Result<String> {
-    let echo_off = std::process::Command::new("stty")
-        .arg("-echo")
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    let mut s = String::new();
-    let read = std::io::stdin().read_line(&mut s);
-    if echo_off {
-        let _ = std::process::Command::new("stty").arg("echo").status();
-        eprintln!(); // the user's Enter wasn't echoed — emit the newline.
+/// Restores terminal echo on drop — covers the normal return, the `?` error
+/// path, AND a panic (Drop runs during unwind). Ctrl-C is handled separately in
+/// [`prompt_hidden`] (a signal terminates without unwinding, so Drop alone
+/// wouldn't run).
+struct EchoGuard(bool);
+impl Drop for EchoGuard {
+    fn drop(&mut self) {
+        if self.0 {
+            let _ = std::process::Command::new("stty").arg("echo").status();
+        }
     }
-    read.context("read stdin")?;
-    Ok(s)
+}
+
+/// Read one line with terminal echo disabled (Unix, via `stty`). On a
+/// non-terminal stdin (piped) or where `stty` is unavailable the input is read
+/// visibly. Echo is restored on every exit path including Ctrl-C: the blocking
+/// read runs on a worker thread raced against `ctrl_c`, and an `EchoGuard`
+/// covers error/panic.
+async fn prompt_hidden() -> Result<String> {
+    use std::io::IsTerminal as _;
+    // Only toggle echo for a real TTY; on a pipe we read the key as-is (and
+    // `stty` would just error to stderr).
+    let echo_off = std::io::stdin().is_terminal()
+        && std::process::Command::new("stty")
+            .arg("-echo")
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+    let _guard = EchoGuard(echo_off);
+
+    let read = tokio::task::spawn_blocking(|| {
+        let mut s = String::new();
+        std::io::stdin().read_line(&mut s).map(|n| (n, s))
+    });
+    tokio::select! {
+        joined = read => {
+            let (n, s) = joined.context("join stdin read")?.context("read stdin")?;
+            if echo_off {
+                eprintln!(); // the user's Enter wasn't echoed — emit the newline.
+            }
+            if n == 0 {
+                return Err(anyhow::anyhow!("unexpected end of input"));
+            }
+            Ok(s)
+        }
+        _ = tokio::signal::ctrl_c() => {
+            // `_guard` restores echo as it drops on the way out.
+            Err(anyhow::anyhow!("cancelled"))
+        }
+    }
 }
 
 /// `xiaoguai init` — interactive setup wizard. Picks a provider from the local
@@ -1072,7 +1109,7 @@ async fn handle_init(config: Option<&str>) -> Result<()> {
         chosen.name
     );
     std::io::stderr().flush().ok();
-    let key_raw = prompt_hidden()?;
+    let key_raw = prompt_hidden().await?;
     let key = {
         let k = key_raw.trim();
         if k.is_empty() {
@@ -1088,6 +1125,18 @@ async fn handle_init(config: Option<&str>) -> Result<()> {
     );
     std::io::stderr().flush().ok();
     let make_default = init::parse_yes_no(&prompt_line()?, true);
+
+    // Warn if promoting a keyless cloud provider to default — it'll 401 on the
+    // first request. Ollama needs no key, so don't nag there.
+    let has_key = key.is_some() || chosen.api_key.is_some() || chosen.api_key_env.is_some();
+    if make_default && !has_key && chosen.kind.as_str() != "ollama" {
+        eprintln!(
+            "  ! {} has no API key — as the default it will fail to authenticate. \
+             Re-run init with a key, or: xiaoguai provider update --id {} --api-key-stdin",
+            chosen.name,
+            chosen.id.as_str()
+        );
+    }
 
     let repo_ref: &dyn LlmProviderRepository = &repo;
     let updated = provider::update(
