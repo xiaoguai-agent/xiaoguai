@@ -4,6 +4,10 @@
 [`xiaoguai`](https://github.com/xiaoguai-agent/xiaoguai) CLI binary
 inside a platform-specific wheel.
 
+> On Debian 12 / Ubuntu 24 and other PEP 668 "externally-managed" systems,
+> `pip install` into the system Python is blocked. Use **pipx** instead:
+> `sudo apt install -y pipx && pipx ensurepath && pipx install xiaoguai`.
+
 After install:
 
 ```bash

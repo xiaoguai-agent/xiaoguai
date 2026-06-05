@@ -21,6 +21,10 @@ xiaoguai serve   # :7600, auto-creates the SQLite file, no config needed
 Installs a platform wheel bundling the native binary (macOS arm64/x86_64,
 Linux x86_64/aarch64). API + CLI; for the bundled web UI use a package or Docker.
 
+> On Debian 12 / Ubuntu 24 (PEP 668 "externally-managed"), `pip install` into
+> the system Python is blocked. Use **pipx** instead:
+> `sudo apt install -y pipx && pipx ensurepath && pipx install xiaoguai`.
+
 **From source** (needs a Rust toolchain — `cargo` is enough):
 
 ```bash
