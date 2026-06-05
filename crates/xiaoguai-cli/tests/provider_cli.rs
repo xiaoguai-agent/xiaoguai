@@ -10,7 +10,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use xiaoguai_cli::commands::provider::{
-    format_table, list, register, remove, ListArgs, RegisterArgs, RemoveArgs,
+    format_table, list, register, remove, update, ListArgs, RegisterArgs, RemoveArgs, UpdateArgs,
 };
 use xiaoguai_storage::repositories::{LlmProviderRepository, RepoError, RepoResult};
 use xiaoguai_types::{LlmProvider, ProviderKind};
@@ -46,6 +46,15 @@ impl LlmProviderRepository for MemoryRepo {
         self.rows.lock().remove(id);
         Ok(())
     }
+
+    async fn update(&self, prov: &LlmProvider) -> RepoResult<()> {
+        let mut rows = self.rows.lock();
+        if !rows.contains_key(prov.id.as_str()) {
+            return Err(RepoError::NotFound);
+        }
+        rows.insert(prov.id.as_str().to_string(), prov.clone());
+        Ok(())
+    }
 }
 
 fn args_ok(name: &str) -> RegisterArgs {
@@ -57,6 +66,7 @@ fn args_ok(name: &str) -> RegisterArgs {
         default_for: vec![],
         fallback_order: 100,
         api_key_env: Some("EXAMPLE_KEY".into()),
+        api_key: None,
     }
 }
 
@@ -157,4 +167,86 @@ async fn format_table_renders_headers_and_rows() {
     assert!(table.contains("ID"));
     assert!(table.contains("openai_compat"));
     assert!(table.contains("deepseek"));
+}
+
+#[tokio::test]
+async fn register_with_api_key_stores_it_directly() {
+    let repo = MemoryRepo::default();
+    let mut args = args_ok("stored");
+    args.api_key_env = None;
+    args.api_key = Some("sk-cp-secret".into());
+    let p = register(&repo, args).await.expect("ok");
+    let got = repo
+        .find_by_id(p.id.as_str())
+        .await
+        .expect("find")
+        .expect("present");
+    assert_eq!(got.api_key.as_deref(), Some("sk-cp-secret"));
+    assert!(got.api_key_env.is_none());
+}
+
+fn update_for(id: &str) -> UpdateArgs {
+    UpdateArgs {
+        id: id.to_string(),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn update_changes_endpoint_and_default_for_but_keeps_id() {
+    let repo = MemoryRepo::default();
+    let p = register(&repo, args_ok("upd")).await.expect("ok");
+    let updated = update(
+        &repo,
+        UpdateArgs {
+            endpoint: Some("https://api.minimaxi.com".into()),
+            default_for: Some(vec!["MiniMax-M2".into()]),
+            ..update_for(p.id.as_str())
+        },
+    )
+    .await
+    .expect("update");
+    assert_eq!(updated.id.as_str(), p.id.as_str());
+    assert_eq!(updated.endpoint, "https://api.minimaxi.com");
+    assert_eq!(updated.default_for_models, vec!["MiniMax-M2".to_string()]);
+    // models untouched (only the fields we passed change).
+    assert_eq!(updated.models, p.models);
+}
+
+#[tokio::test]
+async fn update_can_set_api_key_and_clear_default_for() {
+    let repo = MemoryRepo::default();
+    let mut args = args_ok("key");
+    args.default_for = vec!["m1".into()];
+    let p = register(&repo, args).await.expect("ok");
+    let updated = update(
+        &repo,
+        UpdateArgs {
+            api_key: Some("sk-cp-new".into()),
+            default_for: Some(vec![]), // explicit empty clears it
+            ..update_for(p.id.as_str())
+        },
+    )
+    .await
+    .expect("update");
+    assert_eq!(updated.api_key.as_deref(), Some("sk-cp-new"));
+    assert!(updated.default_for_models.is_empty());
+}
+
+#[tokio::test]
+async fn update_unknown_id_errors() {
+    let repo = MemoryRepo::default();
+    let err = update(&repo, update_for("prov_does_not_exist"))
+        .await
+        .expect_err("should fail");
+    assert!(err.to_string().contains("no provider with id"));
+}
+
+#[tokio::test]
+async fn update_rejects_empty_id() {
+    let repo = MemoryRepo::default();
+    let err = update(&repo, update_for("  "))
+        .await
+        .expect_err("should fail");
+    assert!(err.to_string().contains("--id"));
 }

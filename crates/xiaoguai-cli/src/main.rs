@@ -709,8 +709,9 @@ enum McpCmd {
 
 #[derive(Subcommand)]
 enum ProviderCmd {
-    /// Register a new provider. `--api-key-env` names an env var; the key
-    /// itself is never written to the database.
+    /// Register a new provider. Give the key with `--api-key-env` (names an env
+    /// var; key stays out of the DB) or `--api-key-stdin` (key read from stdin
+    /// and stored in the local DB — for headless/pip installs with no web UI).
     Register {
         #[arg(long)]
         name: String,
@@ -730,8 +731,34 @@ enum ProviderCmd {
         #[arg(long, default_value_t = 100)]
         fallback_order: i32,
         /// Name of the env var holding the API key.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "api_key_stdin")]
         api_key_env: Option<String>,
+        /// Read the API key from stdin and store it in the local DB (never
+        /// argv/shell-history). Use for headless / pip installs.
+        #[arg(long, conflicts_with = "api_key_env")]
+        api_key_stdin: bool,
+    },
+    /// Update mutable fields of an existing provider, matched by `--id`. Only
+    /// the flags you pass are changed. Use `--api-key-stdin` to (re)set the key.
+    Update {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// Comma-separated; replaces the model list when given.
+        #[arg(long)]
+        models: Option<String>,
+        /// Comma-separated; replaces the default-for list (empty string clears
+        /// it, making the provider opt-in / non-default).
+        #[arg(long)]
+        default_for: Option<String>,
+        #[arg(long)]
+        fallback_order: Option<i32>,
+        #[arg(long, conflicts_with = "api_key_stdin")]
+        api_key_env: Option<String>,
+        /// Read a new API key from stdin and store it in the local DB.
+        #[arg(long, conflicts_with = "api_key_env")]
+        api_key_stdin: bool,
     },
     /// List providers.
     List,
@@ -938,6 +965,34 @@ async fn handle_chat(
     Ok(())
 }
 
+/// Read an API key from stdin (consumes to EOF, trims). Backs `--api-key-stdin`
+/// so the key never lands in argv or shell history. Intended for piping, e.g.
+/// `printf %s "$KEY" | xiaoguai provider register --api-key-stdin ...`.
+fn read_api_key_from_stdin() -> Result<String> {
+    use std::io::Read as _;
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .map_err(|e| anyhow::anyhow!("failed to read API key from stdin: {e}"))?;
+    let key = buf.trim().to_string();
+    if key.is_empty() {
+        return Err(anyhow::anyhow!(
+            "--api-key-stdin was set but stdin was empty; pipe the key, e.g. \
+             `printf %s \"$KEY\" | xiaoguai provider register --api-key-stdin ...`"
+        ));
+    }
+    Ok(key)
+}
+
+/// Split a comma-separated CLI value into a clean list (drops empty segments).
+fn split_csv(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 async fn handle_provider(config: Option<&str>, action: ProviderCmd) -> Result<()> {
     let repo = build_provider_repo(config).await?;
     let repo: &dyn LlmProviderRepository = &repo;
@@ -950,7 +1005,13 @@ async fn handle_provider(config: Option<&str>, action: ProviderCmd) -> Result<()
             default_for,
             fallback_order,
             api_key_env,
+            api_key_stdin,
         } => {
+            let api_key = if api_key_stdin {
+                Some(read_api_key_from_stdin()?)
+            } else {
+                None
+            };
             let p = provider::register(
                 repo,
                 provider::RegisterArgs {
@@ -961,10 +1022,40 @@ async fn handle_provider(config: Option<&str>, action: ProviderCmd) -> Result<()
                     default_for: default_for.into_iter().filter(|s| !s.is_empty()).collect(),
                     fallback_order,
                     api_key_env,
+                    api_key,
                 },
             )
             .await?;
             println!("registered {} ({})", p.id, p.name);
+        }
+        ProviderCmd::Update {
+            id,
+            endpoint,
+            models,
+            default_for,
+            fallback_order,
+            api_key_env,
+            api_key_stdin,
+        } => {
+            let api_key = if api_key_stdin {
+                Some(read_api_key_from_stdin()?)
+            } else {
+                None
+            };
+            let p = provider::update(
+                repo,
+                provider::UpdateArgs {
+                    id,
+                    endpoint,
+                    models: models.as_deref().map(split_csv),
+                    default_for: default_for.as_deref().map(split_csv),
+                    fallback_order,
+                    api_key_env,
+                    api_key,
+                },
+            )
+            .await?;
+            println!("updated {} ({})", p.id, p.name);
         }
         ProviderCmd::List => {
             let rows = provider::list(repo, provider::ListArgs {}).await?;
