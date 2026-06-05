@@ -27,6 +27,7 @@
 //! macOS and Windows developer builds compile and run without change.
 
 mod audit_bridge;
+pub mod coding_bridge;
 mod eval_bridge;
 pub mod hotl_bridge;
 mod memory_bridge;
