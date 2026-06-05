@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import type { AuditEntryView, XiaoguaiClient } from '@xiaoguai/shared';
 import { client as defaultClient } from '../client';
 import { ChainBadge } from '../components/ChainBadge';
+import { AuditReplay } from '../components/AuditReplay';
 import { RequireScope } from '../components/RequireScope';
 
 /**
@@ -33,6 +34,7 @@ export function AuditPane({ client }: AuditPaneProps = {}): JSX.Element {
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [view, setView] = useState<'table' | 'replay'>('table');
 
   async function load(tid: string): Promise<void> {
     setLoading(true);
@@ -100,6 +102,12 @@ export function AuditPane({ client }: AuditPaneProps = {}): JSX.Element {
         <button onClick={() => void load(tenantId)} disabled={loading || !tenantId}>
           {loading ? t('common.loading') : t('common.refresh')}
         </button>
+        <button
+          onClick={() => setView((v) => (v === 'table' ? 'replay' : 'table'))}
+          data-testid="audit-view-toggle"
+        >
+          {view === 'table' ? t('pane.audit.view_replay') : t('pane.audit.view_table')}
+        </button>
         <RequireScope name="audit.export">
           <button
             onClick={() => void onExport()}
@@ -122,7 +130,9 @@ export function AuditPane({ client }: AuditPaneProps = {}): JSX.Element {
         <div className="empty">{t('pane.audit.empty_for_tenant', { tenant: tenantId })}</div>
       )}
 
-      {rows && rows.length > 0 && (
+      {rows && rows.length > 0 && view === 'replay' && <AuditReplay rows={rows} />}
+
+      {rows && rows.length > 0 && view === 'table' && (
         <table className="audit-table">
           <thead>
             <tr>
