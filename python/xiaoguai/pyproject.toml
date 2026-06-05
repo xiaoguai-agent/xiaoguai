@@ -87,8 +87,9 @@ build-frontend = "build"
 test-command = "xiaoguai --help"
 
 [tool.cibuildwheel.linux]
-# manylinux_2_28 — broad compatibility floor matching the Rust binary
-# we link statically with -C target-cpu=x86-64-v2 / aarch64 baseline.
+# The native binary is built with cargo-zigbuild pinned to glibc 2.28 (see
+# pip-wheel.yml), so it's manylinux_2_28-compliant: auditwheel repairs/tags it
+# inside the matching image and the wheel installs on any glibc >= 2.28.
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
 

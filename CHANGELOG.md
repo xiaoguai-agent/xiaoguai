@@ -15,6 +15,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v1.10.4] — 2026-06-05
+
+First PyPI release — `pip install xiaoguai` now works. Patch release; no
+runtime code changes.
+
+### Fixed
+- **The pip wheel build had failed on every tag since v1.9.0** (#201), so
+  `xiaoguai` was never published to PyPI (404). The package bundles a prebuilt
+  native binary as package-data but lacked a `setup.py` to mark the wheel
+  impure, so cibuildwheel rejected the resulting `py3-none-any` wheel. Added a
+  `bdist_wheel` override (`root_is_pure = False`, `get_tag → py3-none-<plat>`)
+  so each platform now produces an installable wheel bundling its binary.
+
+### Added
+- **PyPI install channel**: `pip install xiaoguai` places the `xiaoguai` binary
+  on PATH (macOS arm64/x86_64, Linux x86_64/aarch64), alongside the existing
+  `.deb`/`.rpm`/tarball/Docker paths.
+
 ## [v1.10.3] — 2026-06-02
 
 Web-UI provider management + dependency refresh. The install artifacts
