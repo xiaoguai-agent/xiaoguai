@@ -1,17 +1,11 @@
 //! Xiaoguai core — library + binary wiring.
 //!
-//! Loads configuration, opens the `SQLite` store (+ optional Valkey), applies migrations,
+//! Loads configuration, opens the `SQLite` store, applies migrations,
 //! initializes JWT + RBAC + audit chain, then either runs the API server
 //! (default) or executes a single subcommand (e.g. `smoke`).
 //!
 //! The boot flow lives in [`run_with_cli`] so both the legacy `xiaoguai-core`
 //! binary and the unified `xiaoguai serve` subcommand can drive it.
-//!
-//! ## In-process cache
-//!
-//! The cache is a process-local `DashMap` — there is no Valkey/Redis sidecar.
-//! This keeps the single-binary, air-gapped path viable: a single-owner deploy
-//! runs with just the xiaoguai binary, no external services.
 
 #![forbid(unsafe_code)]
 //!
@@ -50,7 +44,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use xiaoguai_audit::{AuditEntry, ChainedAudit};
 use xiaoguai_config::Settings;
-use xiaoguai_storage::{cache::Cache, db, ReadWritePool};
+use xiaoguai_storage::{db, ReadWritePool};
 
 #[derive(Parser, Debug)]
 #[command(name = "xiaoguai-core", version, about = "Xiaoguai core binary")]
@@ -126,11 +120,6 @@ pub async fn run_smoke(settings: &Settings) -> Result<()> {
         .context("db select 1")?;
     anyhow::ensure!(row.0 == 1, "db select 1 returned {}", row.0);
     tracing::info!("smoke: db ok");
-
-    // The cache is a process-local DashMap; constructing it is infallible and
-    // a round-trip would only prove that DashMap works, so just build it.
-    let _cache = Cache::new(settings.cache.key_prefix.clone());
-    tracing::info!("smoke: cache: in-process");
 
     tracing::info!(
         auth_enabled = settings.auth.is_enabled(),

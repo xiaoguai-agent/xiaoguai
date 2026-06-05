@@ -22,10 +22,6 @@ use serde::{Deserialize, Serialize};
 pub struct Settings {
     pub server: ServerSettings,
     pub database: DatabaseSettings,
-    /// In-process cache (process-local `DashMap`). Optional — omit the whole
-    /// `cache:` section to take the default key prefix.
-    #[serde(default)]
-    pub cache: CacheSettings,
     pub auth: AuthSettings,
     pub audit: AuditSettings,
     /// Scheduler-side configuration. Optional so existing
@@ -89,14 +85,6 @@ const fn default_db_max_connections() -> u32 {
     16
 }
 
-/// In-process cache settings. The cache is process-local (`DashMap`); there is
-/// no external Valkey/Redis to configure — only the key prefix.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CacheSettings {
-    #[serde(default = "default_cache_prefix")]
-    pub key_prefix: String,
-}
-
 /// DEC-036 (P1): long-term memory configuration. Promotes the embedder choice
 /// from the `OLLAMA_HOST` env to a documented config block. The env still
 /// overrides at boot (back-compat), so existing air-gapped installs are
@@ -121,18 +109,6 @@ pub enum EmbedderSettings {
     /// Deterministic in-process embedder (no external service).
     #[default]
     InMemory,
-}
-
-impl Default for CacheSettings {
-    fn default() -> Self {
-        Self {
-            key_prefix: default_cache_prefix(),
-        }
-    }
-}
-
-fn default_cache_prefix() -> String {
-    "xiaoguai:".into()
 }
 
 /// Single-owner access gate (DEC-033). The API has no OIDC, RBAC, scopes,
@@ -485,9 +461,6 @@ impl Default for Settings {
             database: DatabaseSettings {
                 url: default_db_url(),
                 max_connections: default_db_max_connections(),
-            },
-            cache: CacheSettings {
-                key_prefix: default_cache_prefix(),
             },
             auth: AuthSettings {
                 username: String::new(),

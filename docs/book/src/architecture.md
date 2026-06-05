@@ -43,8 +43,7 @@ substrate  ┌──────┴───────────────
            │                   Citation, ToolCall, …)                   │
            │  xiaoguai-audit   append-only HMAC-chained AuditLog trait  │
            │  xiaoguai-auth    HotL argument redaction (JSONPath rules) │
-           │  xiaoguai-storage embedded SQLite migrations (sqlx) +      │
-           │                   in-process cache (DashMap)       │
+           │  xiaoguai-storage embedded SQLite migrations (sqlx)        │
            └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -82,7 +81,6 @@ one `xiaoguai provider register` command.
 | Component | Role |
 |-----------|------|
 | **Embedded SQLite** | Sessions, messages, MCP registry, LLM providers, scheduled jobs, audit log — the single bundled store; no external DB server |
-| **In-process cache** | Idempotency keys + short-lived caches in a process-local `DashMap` — no Valkey/Redis sidecar |
 
 ## Delivery paths
 

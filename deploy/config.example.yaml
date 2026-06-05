@@ -31,12 +31,6 @@ database:
   url: ""
   max_connections: 16
 
-cache:
-  # The cache (idempotency keys + short-lived caches) is process-local —
-  # there is no external Valkey/Redis to configure. The whole `cache:` section
-  # is optional; only the key prefix is tunable.
-  key_prefix: "xiaoguai:"
-
 memory:
   # Long-term semantic memory embedder (DEC-036). Optional; defaults to the
   # deterministic in-process embedder. For true air-gapped semantic recall,
