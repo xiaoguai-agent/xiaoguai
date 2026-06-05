@@ -305,7 +305,60 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // executor (so `scheduled_job_runs.session_id` populates and the
     // audit-first console can drill into transcripts) and the
     // `SqliteScheduledJobUpserter` into AppState for `POST /v1/admin/scheduler/jobs`.
-    let toolbox = Arc::new(Toolbox::new());
+    // Register the governed coding tools (DEC-034) into the agent toolbox so the
+    // ReAct loop can edit/commit/rollback in-loop — HotL-gated on `tool_call.*`
+    // by the loop, checkpointed + `code.*`-audited by the coding bridge.
+    //
+    // Opt-in by design (security review): coding tools register ONLY when the
+    // operator points `XIAOGUAI_CODING_WORKSPACE` at a directory AND an audit
+    // signing key is configured. Unset workspace ⇒ no tools and no `git init` of
+    // the server's CWD (H1); unset signing key ⇒ no ungoverned coding. The
+    // egress tools (`git_push`/`open_pr`) need a further `XIAOGUAI_CODING_ALLOW_
+    // EGRESS` opt-in (C1).
+    let toolbox = {
+        match (
+            &pg_audit_sink,
+            crate::coding_bridge::coding_workspace_root(),
+        ) {
+            (Some(sink), Some(root)) => {
+                let allow_egress = crate::coding_bridge::coding_allow_egress();
+                match crate::coding_bridge::build_coding_toolbox(sink.clone(), &root, allow_egress)
+                    .await
+                {
+                    Ok(tb) => {
+                        tracing::info!(
+                            workspace = %root.display(),
+                            tools = tb.len(),
+                            egress = allow_egress,
+                            "serve: governed coding tools registered into the agent toolbox"
+                        );
+                        Arc::new(tb)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "serve: failed to build coding toolbox — agent runs without coding tools"
+                        );
+                        Arc::new(Toolbox::new())
+                    }
+                }
+            }
+            (None, Some(_)) => {
+                tracing::info!(
+                    "serve: coding workspace set but audit signing key unset — coding tools \
+                     NOT registered (no ungoverned coding)"
+                );
+                Arc::new(Toolbox::new())
+            }
+            _ => {
+                tracing::info!(
+                    "serve: coding tools disabled (set XIAOGUAI_CODING_WORKSPACE to a directory \
+                     to enable governed in-loop coding)"
+                );
+                Arc::new(Toolbox::new())
+            }
+        }
+    };
 
     // Tier-2 prereq: build the HOTL enforcer once, share between
     // `AppState.hotl_enforcer` (gating LLM calls upstream in

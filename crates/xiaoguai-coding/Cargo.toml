@@ -14,10 +14,20 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs", "process", "rt", "macros"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
+# `mcp` feature: expose the governed coding tools to the ReAct loop as an
+# in-process MCP client (registered into the agent Toolbox by xiaoguai-core).
+xiaoguai-mcp = { path = "../xiaoguai-mcp", optional = true }
+serde_json = { workspace = true, optional = true }
+
+[features]
+# Off by default so the base crate (workspace/checkpoint primitive) stays free
+# of the MCP dep; xiaoguai-core turns it on to wire coding tools into the agent.
+mcp = ["dep:xiaoguai-mcp", "dep:serde_json"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true
