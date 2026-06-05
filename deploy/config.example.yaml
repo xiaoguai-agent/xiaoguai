@@ -50,6 +50,16 @@ memory:
   # `~/.xiaoguai/USER.md` (or set XIAOGUAI_IDENTITY_PATH) and it is injected as a
   # leading system message into every chat session. Plaintext, owner-authored,
   # size-capped — NOT secret storage (secrets stay in .env).
+  #
+  # Governed in-loop coding (DEC-034) — OPT-IN, off by default:
+  #   XIAOGUAI_CODING_WORKSPACE=/path/to/repo   # enables coding tools, scoped
+  #       to this git work tree. UNSET ⇒ no coding tools and the server never
+  #       `git init`s its working directory. Requires an audit signing key set
+  #       (XIAOGUAI_AUDIT_SIGNING_KEY) — no ungoverned coding.
+  #   XIAOGUAI_CODING_ALLOW_EGRESS=true         # additionally expose git_push +
+  #       open_pr (they leave the machine and can't be rolled back). Off unless
+  #       set. Read/edit/commit/rollback stay contained to the workspace and are
+  #       checkpoint-reversible + HotL-gated + audited.
 
 auth:
   # Single-owner access gate (DEC-033). There is no OIDC/RBAC/multi-tenancy —

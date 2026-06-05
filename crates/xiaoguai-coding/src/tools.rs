@@ -38,13 +38,42 @@ pub struct EditSummary {
 }
 
 impl Workspace {
-    fn abs(&self, rel: &Path) -> PathBuf {
-        self.root().join(rel)
+    /// Resolve a caller-supplied path against the workspace root, **rejecting
+    /// anything that would escape it** — absolute paths, `..`, and rooted/
+    /// prefixed components. This is the containment boundary for every coding
+    /// tool that takes a path: an autonomous model cannot reach outside the
+    /// owner-scoped workspace.
+    fn abs(&self, rel: &Path) -> Result<PathBuf, CodingError> {
+        use std::path::Component;
+        if rel.is_absolute() {
+            return Err(CodingError::UnsafePath {
+                path: rel.to_path_buf(),
+                reason: "absolute paths are not allowed".to_string(),
+            });
+        }
+        for component in rel.components() {
+            match component {
+                Component::ParentDir => {
+                    return Err(CodingError::UnsafePath {
+                        path: rel.to_path_buf(),
+                        reason: "`..` may not escape the workspace root".to_string(),
+                    });
+                }
+                Component::Prefix(_) | Component::RootDir => {
+                    return Err(CodingError::UnsafePath {
+                        path: rel.to_path_buf(),
+                        reason: "rooted or drive-prefixed paths are not allowed".to_string(),
+                    });
+                }
+                Component::CurDir | Component::Normal(_) => {}
+            }
+        }
+        Ok(self.root().join(rel))
     }
 
     /// Read a UTF-8 file relative to the workspace root. `[READ]`
     pub async fn read_file(&self, rel: &Path) -> Result<String, CodingError> {
-        let abs = self.abs(rel);
+        let abs = self.abs(rel)?;
         tokio::fs::read_to_string(&abs)
             .await
             .map_err(|e| CodingError::io(&abs, e))
@@ -53,7 +82,7 @@ impl Workspace {
     /// List entries (one name per line, dirs suffixed `/`) of a directory
     /// relative to the workspace root, sorted. `[READ]`
     pub async fn list_dir(&self, rel: &Path) -> Result<Vec<String>, CodingError> {
-        let abs = self.abs(rel);
+        let abs = self.abs(rel)?;
         let mut rd = tokio::fs::read_dir(&abs)
             .await
             .map_err(|e| CodingError::io(&abs, e))?;
@@ -93,7 +122,7 @@ impl Workspace {
     /// Apply a [`FileEdit`] to `rel`. Writes atomically (temp + rename).
     /// `[WRITE]` — the caller gates `tool_call.edit_file` and checkpoints first.
     pub async fn edit_file(&self, rel: &Path, edit: &FileEdit) -> Result<EditSummary, CodingError> {
-        let abs = self.abs(rel);
+        let abs = self.abs(rel)?;
         let (contents, replacements) = match edit {
             FileEdit::Write(body) => (body.clone(), 0),
             FileEdit::Replace { find, replace, all } => {

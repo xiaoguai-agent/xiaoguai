@@ -28,20 +28,33 @@ use crate::{CheckpointId, CodingGate, FileEdit, GovernedTools, StepRecorder};
 /// An [`McpClient`] over a [`GovernedTools`] instance bound to one workspace.
 pub struct CodingMcpClient<G, R> {
     tools: GovernedTools<G, R>,
+    /// Whether the egress tools (`git_push`/`open_pr`) are advertised by
+    /// `list_tools`. Dispatch still handles them if called, but the loop only
+    /// surfaces what is registered in the toolbox.
+    include_egress: bool,
 }
 
 impl<G, R> CodingMcpClient<G, R> {
-    /// Wrap an already-built governed-tools facade.
-    pub fn new(tools: GovernedTools<G, R>) -> Self {
-        Self { tools }
+    /// Wrap an already-built governed-tools facade. `include_egress` controls
+    /// whether `list_tools` advertises the network/past-undo tools.
+    pub fn new(tools: GovernedTools<G, R>, include_egress: bool) -> Self {
+        Self {
+            tools,
+            include_egress,
+        }
     }
 }
 
-/// The static tool catalogue this client exposes. Free-standing so callers can
+/// The tool catalogue this client exposes. Free-standing so callers can
 /// introspect names/schemas without constructing a workspace.
+///
+/// `include_egress` gates the two **network/past-undo** tools (`git_push`,
+/// `open_pr`): they leave the local machine and cannot be rolled back, so they
+/// are opt-in — a default deployment exposes only the workspace-contained,
+/// checkpoint-reversible tools.
 #[must_use]
-pub fn coding_tool_descriptors() -> Vec<ToolDescriptor> {
-    vec![
+pub fn coding_tool_descriptors(include_egress: bool) -> Vec<ToolDescriptor> {
+    let mut tools = vec![
         descriptor(
             "read_file",
             "[READ] Read a UTF-8 text file relative to the workspace root. \
@@ -121,7 +134,9 @@ pub fn coding_tool_descriptors() -> Vec<ToolDescriptor> {
                 "required": ["checkpoint"]
             }),
         ),
-        descriptor(
+    ];
+    if include_egress {
+        tools.push(descriptor(
             "git_push",
             "[WRITE] Push a branch to a remote (egress; signs `git.push`). Args: \
              branch (string, required); remote (string, optional, default \
@@ -134,8 +149,8 @@ pub fn coding_tool_descriptors() -> Vec<ToolDescriptor> {
                 },
                 "required": ["branch"]
             }),
-        ),
-        descriptor(
+        ));
+        tools.push(descriptor(
             "open_pr",
             "[WRITE] Open a pull request via `gh` (egress; signs `pr.open`). Args: \
              title (required); body (optional); base (optional, default 'main'). \
@@ -149,8 +164,9 @@ pub fn coding_tool_descriptors() -> Vec<ToolDescriptor> {
                 },
                 "required": ["title"]
             }),
-        ),
-    ]
+        ));
+    }
+    tools
 }
 
 fn descriptor(name: &str, description: &str, input_schema: Value) -> ToolDescriptor {
@@ -175,7 +191,7 @@ where
     }
 
     async fn list_tools(&self) -> McpResult<Vec<ToolDescriptor>> {
-        Ok(coding_tool_descriptors())
+        Ok(coding_tool_descriptors(self.include_egress))
     }
 
     async fn call_tool(&self, name: &str, args: Value) -> McpResult<ToolResult> {
@@ -318,28 +334,36 @@ fn str_arg(args: &Value, key: &str) -> Result<String, String> {
 }
 
 /// Build a `FileEdit` from `edit_file` args: `content` ⇒ whole-file write;
-/// otherwise `find`(+`replace`,`all`) ⇒ search-replace.
+/// `find`(+`replace`,`all`) ⇒ search-replace. The two modes are mutually
+/// exclusive (passing both is an error, not a silent preference), and an empty
+/// `find` is rejected (it would otherwise splice `replace` between every char).
 fn parse_edit(args: &Value) -> Result<FileEdit, String> {
-    if let Some(content) = args.get("content").and_then(Value::as_str) {
-        return Ok(FileEdit::Write(content.to_string()));
+    let content = args.get("content").and_then(Value::as_str);
+    let find = args.get("find").and_then(Value::as_str);
+    match (content, find) {
+        (Some(_), Some(_)) => Err("pass either `content` or `find`, not both".to_string()),
+        (Some(content), None) => Ok(FileEdit::Write(content.to_string())),
+        (None, Some(find)) => {
+            if find.is_empty() {
+                return Err("`find` must be non-empty".to_string());
+            }
+            let replace = args
+                .get("replace")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let all = args.get("all").and_then(Value::as_bool).unwrap_or(false);
+            Ok(FileEdit::Replace {
+                find: find.to_string(),
+                replace,
+                all,
+            })
+        }
+        (None, None) => Err(
+            "edit_file needs either `content` (whole-file write) or `find` (search-replace)"
+                .to_string(),
+        ),
     }
-    if let Some(find) = args.get("find").and_then(Value::as_str) {
-        let replace = args
-            .get("replace")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let all = args.get("all").and_then(Value::as_bool).unwrap_or(false);
-        return Ok(FileEdit::Replace {
-            find: find.to_string(),
-            replace,
-            all,
-        });
-    }
-    Err(
-        "edit_file needs either `content` (whole-file write) or `find` (search-replace)"
-            .to_string(),
-    )
 }
 
 fn join_or(lines: Vec<String>, empty: &str) -> String {
@@ -382,7 +406,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ws = Workspace::open_or_create(dir.path()).await.unwrap();
         let tools = GovernedTools::new(ws, AllowGate, NoopRecorder);
-        (CodingMcpClient::new(tools), dir)
+        (CodingMcpClient::new(tools, true), dir)
     }
 
     #[tokio::test]
@@ -446,9 +470,50 @@ mod tests {
         assert!(res.text.contains("unknown coding tool"));
     }
 
+    #[tokio::test]
+    async fn edit_with_both_content_and_find_is_rejected() {
+        let (c, _dir) = client().await;
+        let res = c
+            .call_tool(
+                "edit_file",
+                json!({ "path": "a.txt", "content": "x", "find": "y" }),
+            )
+            .await
+            .unwrap();
+        assert!(res.is_error);
+        assert!(res.text.contains("not both"), "got: {}", res.text);
+    }
+
+    #[tokio::test]
+    async fn edit_with_empty_find_is_rejected() {
+        let (c, _dir) = client().await;
+        c.call_tool("edit_file", json!({ "path": "a.txt", "content": "abc" }))
+            .await
+            .unwrap();
+        let res = c
+            .call_tool("edit_file", json!({ "path": "a.txt", "find": "" }))
+            .await
+            .unwrap();
+        assert!(res.is_error);
+        assert!(res.text.contains("non-empty"), "got: {}", res.text);
+    }
+
+    #[tokio::test]
+    async fn path_traversal_is_rejected() {
+        let (c, _dir) = client().await;
+        for bad in ["../escape.txt", "/etc/passwd", "a/../../b.txt"] {
+            let res = c
+                .call_tool("edit_file", json!({ "path": bad, "content": "x" }))
+                .await
+                .unwrap();
+            assert!(res.is_error, "{bad} should be rejected");
+            assert!(res.text.contains("unsafe path"), "got: {}", res.text);
+        }
+    }
+
     #[test]
-    fn descriptors_cover_the_governed_surface() {
-        let names: Vec<_> = coding_tool_descriptors()
+    fn descriptors_gate_egress() {
+        let no_egress: Vec<_> = coding_tool_descriptors(false)
             .into_iter()
             .map(|d| d.name)
             .collect();
@@ -460,14 +525,29 @@ mod tests {
             "edit_file",
             "git_commit",
             "rollback",
-            "git_push",
-            "open_pr",
         ] {
-            assert!(names.contains(&expected.to_string()), "missing {expected}");
+            assert!(
+                no_egress.contains(&expected.to_string()),
+                "missing {expected}"
+            );
         }
+        // Egress + ungoverned tools must be absent by default.
+        for absent in ["git_push", "open_pr", "git_branch"] {
+            assert!(
+                !no_egress.contains(&absent.to_string()),
+                "{absent} must not be exposed without opt-in"
+            );
+        }
+        // With egress opted in, the two network tools appear.
+        let with_egress: Vec<_> = coding_tool_descriptors(true)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert!(with_egress.contains(&"git_push".to_string()));
+        assert!(with_egress.contains(&"open_pr".to_string()));
         assert!(
-            !names.contains(&"git_branch".to_string()),
-            "git_branch is ungoverned and must not be exposed"
+            !with_egress.contains(&"git_branch".to_string()),
+            "git_branch is ungoverned and must never be exposed"
         );
     }
 }

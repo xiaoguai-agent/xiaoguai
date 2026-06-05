@@ -124,14 +124,17 @@ impl CodingGate for HotlCodingGate {
 /// carrying the checkpoint id — the half of the trust coin the generic loop
 /// audit doesn't.
 ///
+/// `include_egress` exposes the network/past-undo tools (`git_push`,
+/// `open_pr`); keep it `false` unless the operator explicitly opts in.
+///
 /// # Errors
 /// Returns an error if the workspace cannot be opened/initialised, or if a tool
-/// name collides with one already in the toolbox.
-pub async fn register_coding_tools(
-    toolbox: &mut Toolbox,
+/// name collides (cannot happen with a fresh toolbox — defensive).
+pub async fn build_coding_toolbox(
     sink: Arc<SqliteAuditSink>,
     root: &Path,
-) -> Result<()> {
+    include_egress: bool,
+) -> Result<Toolbox> {
     let workspace = Workspace::open_or_create(root)
         .await
         .with_context(|| format!("open coding workspace at {}", root.display()))?;
@@ -140,23 +143,42 @@ pub async fn register_coding_tools(
         HotlCodingGate::new(Arc::new(AllowAllGate)),
         AuditStepRecorder::new(sink),
     );
-    let client: Arc<dyn McpClient> = Arc::new(CodingMcpClient::new(tools));
-    for descriptor in coding_tool_descriptors() {
+    let client: Arc<dyn McpClient> = Arc::new(CodingMcpClient::new(tools, include_egress));
+    // All-or-nothing: build into a fresh toolbox so a mid-loop collision can
+    // never leave a half-exposed coding surface (security-review M1).
+    let mut toolbox = Toolbox::new();
+    for descriptor in coding_tool_descriptors(include_egress) {
         let name = descriptor.name.clone();
         toolbox
             .insert(client.clone(), descriptor)
             .with_context(|| format!("register coding tool {name}"))?;
     }
-    Ok(())
+    Ok(toolbox)
 }
 
-/// Resolve the coding workspace root: `XIAOGUAI_CODING_WORKSPACE` if set,
-/// otherwise the process's current directory (matching the `xiaoguai code`
-/// CLI's `--workspace .` default).
+/// The coding workspace root, or `None` when coding is **not enabled**.
+///
+/// There is deliberately **no default**: coding tools are opt-in. An operator
+/// enables governed in-loop coding by pointing `XIAOGUAI_CODING_WORKSPACE` at a
+/// directory; when unset the server registers no coding tools and never
+/// `git init`s its working directory (security-review H1).
 #[must_use]
-pub fn coding_workspace_root() -> std::path::PathBuf {
+pub fn coding_workspace_root() -> Option<std::path::PathBuf> {
     std::env::var_os("XIAOGUAI_CODING_WORKSPACE")
-        .map_or_else(|| std::path::PathBuf::from("."), std::path::PathBuf::from)
+        .map(std::path::PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+}
+
+/// Whether the **egress** coding tools (`git_push`, `open_pr`) are exposed —
+/// off unless `XIAOGUAI_CODING_ALLOW_EGRESS` is truthy (`1`/`true`/`yes`). They
+/// leave the local machine and cannot be rolled back, so they require a second,
+/// explicit opt-in on top of enabling coding (security-review C1).
+#[must_use]
+pub fn coding_allow_egress() -> bool {
+    std::env::var("XIAOGUAI_CODING_ALLOW_EGRESS").is_ok_and(|v| {
+        let v = v.trim().to_ascii_lowercase();
+        v == "1" || v == "true" || v == "yes"
+    })
 }
 
 #[cfg(test)]

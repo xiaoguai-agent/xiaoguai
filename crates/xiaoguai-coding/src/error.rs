@@ -49,6 +49,12 @@ pub enum CodingError {
     /// reason so the agent understands why and what to request.
     #[error("denied by policy: {scope} ({reason})")]
     Denied { scope: String, reason: String },
+
+    /// A tool path argument was rejected because it would escape the workspace
+    /// root (absolute path, `..`, or a rooted/prefixed component). Keeps the
+    /// coding tools contained to the owner-scoped workspace.
+    #[error("unsafe path {path}: {reason}")]
+    UnsafePath { path: PathBuf, reason: String },
 }
 
 impl CodingError {
