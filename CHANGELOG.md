@@ -15,10 +15,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v1.10.5] — 2026-06-05
+
+First PyPI release that actually publishes — `pip install xiaoguai` is live.
+Patch release; no runtime code changes.
+
+### Fixed
+- **The prod-PyPI publish job was skipped on every stable tag** (incl. v1.10.4),
+  so the wheels built but never reached PyPI. The job gated on
+  `contains(github.ref, 'a')` to detect pre-releases, but `github.ref` is the
+  full `refs/tags/v1.10.x` — which always contains an `a` (from "t**a**gs") —
+  so every tag was misread as a pre-release. Match on `github.ref_name`
+  (`v1.10.x`) instead. Also stops the spurious TestPyPI rehearsal from firing
+  on stable tags.
+
 ## [v1.10.4] — 2026-06-05
 
-First PyPI release — `pip install xiaoguai` now works. Patch release; no
-runtime code changes.
+Patch release; no runtime code changes. (PyPI publish was still blocked by a
+gating bug — fixed in v1.10.5; the other channels shipped normally.)
 
 ### Fixed
 - **The pip wheel build had failed on every tag since v1.9.0** (#201), so
