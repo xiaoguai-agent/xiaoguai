@@ -26,6 +26,7 @@ use axum::{Json, Router};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use xiaoguai_storage::repositories::error::RepoError;
 use xiaoguai_storage::repositories::LlmProviderRepository;
 use xiaoguai_types::{LlmProvider, ProviderId, ProviderKind};
 
@@ -123,6 +124,15 @@ async fn create(State(repo): State<Repo>, Json(req): Json<CreateProviderRequest>
     if trimmed_endpoint.is_empty() && kind != ProviderKind::Bedrock {
         return bad_request("endpoint is required (a local URL or a hosted API base URL)");
     }
+    // The backend POSTs the stored API key to this endpoint, so reject anything
+    // that isn't an http(s) URL (blocks `file://`/`gopher://`-style schemes).
+    // Bedrock's "endpoint" is an AWS region, not a URL — skip the scheme check.
+    if !trimmed_endpoint.is_empty()
+        && kind != ProviderKind::Bedrock
+        && !(trimmed_endpoint.starts_with("http://") || trimmed_endpoint.starts_with("https://"))
+    {
+        return bad_request("endpoint must be an http(s) URL");
+    }
     if req.name.trim().is_empty() {
         return bad_request("name is required");
     }
@@ -146,6 +156,13 @@ async fn create(State(repo): State<Repo>, Json(req): Json<CreateProviderRequest>
 
     match repo.create(&prov).await {
         Ok(()) => (StatusCode::CREATED, Json(ProviderView::from(prov))).into_response(),
+        // A duplicate name is a client error, not a 500 — and don't echo the raw
+        // DB message back to the caller.
+        Err(RepoError::DuplicateKey(_)) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("a provider named '{}' already exists", prov.name) })),
+        )
+            .into_response(),
         Err(e) => server_error(&e),
     }
 }
