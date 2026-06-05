@@ -87,10 +87,12 @@ build-frontend = "build"
 test-command = "xiaoguai --help"
 
 [tool.cibuildwheel.linux]
-# manylinux_2_28 — broad compatibility floor matching the Rust binary
-# we link statically with -C target-cpu=x86-64-v2 / aarch64 baseline.
-manylinux-x86_64-image = "manylinux_2_28"
-manylinux-aarch64-image = "manylinux_2_28"
+# The native binary is cross-built (~glibc 2.31, see pip-wheel.yml), so the
+# repair/test container must be at least that new. manylinux_2_34 hosts the
+# build; auditwheel relabels the wheel to the binary's actual glibc floor
+# (manylinux_2_31), which keeps compatibility broad.
+manylinux-x86_64-image = "manylinux_2_34"
+manylinux-aarch64-image = "manylinux_2_34"
 
 [tool.cibuildwheel.macos]
 # The bundled binary is signed for the matching arch only. We

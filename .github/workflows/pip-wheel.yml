@@ -84,11 +84,23 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Install cross (Linux targets)
+        if: matrix.cibw_platform == 'linux'
+        run: cargo install cross --locked --version 0.2.5
+
       - name: Build native binary
         shell: bash
         run: |
           set -euxo pipefail
-          cargo build --release --locked --target ${{ matrix.target }} -p xiaoguai-cli
+          if [ "${{ matrix.cibw_platform }}" = "linux" ]; then
+            # `cross` builds against an older glibc (~2.31) so the binary fits a
+            # manylinux tag — same toolchain release-tarball.yml uses. A plain
+            # host build on ubuntu-latest (glibc 2.39) requires symbols newer
+            # than any available manylinux_* image, so auditwheel can't repair it.
+            cross build --release --locked --target "${{ matrix.target }}" -p xiaoguai-cli
+          else
+            cargo build --release --locked --target "${{ matrix.target }}" -p xiaoguai-cli
+          fi
 
       - name: Stage binary for package data
         shell: bash
