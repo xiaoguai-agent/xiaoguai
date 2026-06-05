@@ -39,36 +39,67 @@ pub struct EditSummary {
 
 impl Workspace {
     /// Resolve a caller-supplied path against the workspace root, **rejecting
-    /// anything that would escape it** — absolute paths, `..`, and rooted/
-    /// prefixed components. This is the containment boundary for every coding
-    /// tool that takes a path: an autonomous model cannot reach outside the
-    /// owner-scoped workspace.
+    /// anything that would escape it** — absolute paths, `..`, rooted/prefixed
+    /// components, AND symlinks that point outside the root. This is the
+    /// containment boundary for every coding tool that takes a path: an
+    /// autonomous model cannot reach outside the owner-scoped workspace.
     fn abs(&self, rel: &Path) -> Result<PathBuf, CodingError> {
         use std::path::Component;
+        let unsafe_path = |reason: &str| CodingError::UnsafePath {
+            path: rel.to_path_buf(),
+            reason: reason.to_string(),
+        };
         if rel.is_absolute() {
-            return Err(CodingError::UnsafePath {
-                path: rel.to_path_buf(),
-                reason: "absolute paths are not allowed".to_string(),
-            });
+            return Err(unsafe_path("absolute paths are not allowed"));
         }
         for component in rel.components() {
             match component {
                 Component::ParentDir => {
-                    return Err(CodingError::UnsafePath {
-                        path: rel.to_path_buf(),
-                        reason: "`..` may not escape the workspace root".to_string(),
-                    });
+                    return Err(unsafe_path("`..` may not escape the workspace root"));
                 }
                 Component::Prefix(_) | Component::RootDir => {
-                    return Err(CodingError::UnsafePath {
-                        path: rel.to_path_buf(),
-                        reason: "rooted or drive-prefixed paths are not allowed".to_string(),
-                    });
+                    return Err(unsafe_path(
+                        "rooted or drive-prefixed paths are not allowed",
+                    ));
                 }
                 Component::CurDir | Component::Normal(_) => {}
             }
         }
-        Ok(self.root().join(rel))
+        let joined = self.root().join(rel);
+
+        // Lexical checks above stop `..`/absolute paths, but a *symlink* inside
+        // the tree can still point out (and `edit_file` could even create one),
+        // so verify the real location stays under the root. Canonicalize the
+        // deepest existing ancestor of the target (resolves symlinked dirs +,
+        // for an existing file, the file itself) and require it under the
+        // canonical root. New (not-yet-created) leaf components are fine —
+        // they'll be created under an already-verified parent.
+        let root_canon = self
+            .root()
+            .canonicalize()
+            .map_err(|e| CodingError::io(self.root(), e))?;
+        let mut probe: &Path = &joined;
+        let existing = loop {
+            if probe.exists() {
+                break Some(
+                    probe
+                        .canonicalize()
+                        .map_err(|e| CodingError::io(probe, e))?,
+                );
+            }
+            match probe.parent() {
+                Some(parent) => probe = parent,
+                None => break None,
+            }
+        };
+        if let Some(existing) = existing {
+            if !existing.starts_with(&root_canon) {
+                return Err(unsafe_path(
+                    "resolves (via a symlink) outside the workspace root",
+                ));
+            }
+        }
+        Ok(joined)
     }
 
     /// Read a UTF-8 file relative to the workspace root. `[READ]`
