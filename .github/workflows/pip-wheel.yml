@@ -181,7 +181,7 @@ jobs:
   # Condition: push to refs/tags/v* AND ref does NOT contain 'a', 'b',
   # 'rc', or '.dev'.  This mirrors PEP 440 stable-release semantics.
   #
-  # No API token needed.  OIDC trusted-publisher only.
+  # Auth: PyPI API token in the `PYPI_API_TOKEN` repo secret.
   # ---------------------------------------------------------------------
   publish:
     name: Publish → PyPI
@@ -195,7 +195,6 @@ jobs:
       !contains(github.ref, 'rc') &&
       !contains(github.ref, '.dev')
     permissions:
-      id-token: write   # OIDC token for PyPI trusted publisher
       contents: read
     steps:
       - uses: actions/download-artifact@v8
@@ -212,5 +211,5 @@ jobs:
         with:
           packages-dir: dist/
           verbose: true
-          # No `password:` — OIDC auto-detected when id-token: write is present.
+          password: ${{ secrets.PYPI_API_TOKEN }}
           # No `repository-url:` — defaults to https://upload.pypi.org/legacy/.
