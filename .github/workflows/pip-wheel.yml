@@ -172,12 +172,16 @@ jobs:
     needs: build-wheel
     runs-on: ubuntu-latest
     # Fire on manual dispatch OR on pre-release tags (contain 'a', 'b', 'rc', or '.dev')
+    # NB: match on github.ref_name ("v1.10.5"), NOT github.ref
+    # ("refs/tags/v1.10.5") — the latter always contains an 'a' (from "tags"),
+    # which misclassified every stable tag as a pre-release.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' &&
-       startsWith(github.ref, 'refs/tags/v') &&
-       (contains(github.ref, 'a') || contains(github.ref, 'b') ||
-        contains(github.ref, 'rc') || contains(github.ref, '.dev')))
+       github.ref_type == 'tag' &&
+       startsWith(github.ref_name, 'v') &&
+       (contains(github.ref_name, 'a') || contains(github.ref_name, 'b') ||
+        contains(github.ref_name, 'rc') || contains(github.ref_name, '.dev')))
     permissions:
       id-token: write   # OIDC token for TestPyPI trusted publisher
       contents: read
@@ -212,13 +216,15 @@ jobs:
     name: Publish → PyPI
     needs: build-wheel
     runs-on: ubuntu-latest
+    # NB: github.ref_name, not github.ref — see the TestPyPI job above.
     if: >-
       github.event_name == 'push' &&
-      startsWith(github.ref, 'refs/tags/v') &&
-      !contains(github.ref, 'a') &&
-      !contains(github.ref, 'b') &&
-      !contains(github.ref, 'rc') &&
-      !contains(github.ref, '.dev')
+      github.ref_type == 'tag' &&
+      startsWith(github.ref_name, 'v') &&
+      !contains(github.ref_name, 'a') &&
+      !contains(github.ref_name, 'b') &&
+      !contains(github.ref_name, 'rc') &&
+      !contains(github.ref_name, '.dev')
     permissions:
       contents: read
     steps:
