@@ -16,7 +16,7 @@ responsibility.
 | `xiaoguai-config` | Layered configuration (YAML + `XIAOGUAI_*` env overrides) |
 | `xiaoguai-audit` | Append-only `AuditLog` trait + HMAC-chain build/verify + redact + export |
 | `xiaoguai-auth` | HotL argument redaction (`RedactionRules`, JSONPath) — DEC-HLD-014 |
-| `xiaoguai-storage` | `sqlx` embedded-SQLite migrations runner + repositories + in-process cache |
+| `xiaoguai-storage` | `sqlx` embedded-SQLite migrations runner + repositories |
 
 ## Domain layer (business logic)
 
