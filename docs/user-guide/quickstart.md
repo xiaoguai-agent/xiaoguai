@@ -6,10 +6,20 @@ over an embedded SQLite file** — no Postgres, no Redis, no Docker required.
 
 ## 1. Bring up the server
 
-Pick whichever matches what you have. All three end at the same place — a
+Pick whichever matches what you have. All of them end at the same place — a
 `xiaoguai` process on `http://localhost:7600` with state in an embedded SQLite
 file (default `~/.xiaoguai/data.db`); there is no separate database or cache
 server to run.
+
+**pip** (no toolchain, no sudo, works in a venv) — the quickest path:
+
+```bash
+pip install xiaoguai
+xiaoguai serve   # :7600, auto-creates the SQLite file, no config needed
+```
+
+Installs a platform wheel bundling the native binary (macOS arm64/x86_64,
+Linux x86_64/aarch64). API + CLI; for the bundled web UI use a package or Docker.
 
 **From source** (needs a Rust toolchain — `cargo` is enough):
 
