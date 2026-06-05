@@ -102,15 +102,15 @@ impl TokenValidator for StaticCredentialValidator {
     }
 }
 
-/// Length-independent byte comparison to avoid a trivial timing oracle on
-/// the configured password.
+/// Constant-work byte comparison that avoids a timing/length oracle on the
+/// configured password: the length difference is folded into the accumulator
+/// (no early return) and the loop always runs over the longer input.
 fn ct_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
+    let mut diff = (a.len() ^ b.len()) as u64;
+    for i in 0..a.len().max(b.len()) {
+        let x = a.get(i).copied().unwrap_or(0);
+        let y = b.get(i).copied().unwrap_or(0);
+        diff |= u64::from(x ^ y);
     }
     diff == 0
 }

@@ -82,10 +82,16 @@ impl SqliteAuditSink {
     pub async fn append(&self, entry: AuditEntry) -> Result<StoredEntry, ChainError> {
         // Redact PII/secrets before signing so the stored row and its HMAC are
         // both over the redacted form (keeps `verify_chain` valid).
-        let entry = match &self.redactor {
+        let mut entry = match &self.redactor {
             Some(r) => r.redact(entry),
             None => entry,
         };
+        // Force the single-owner chain identity before signing. The `tenant_id`
+        // column is dropped and synthesized as `OWNER_TENANT_ID` on read, so the
+        // HMAC must be over that same value; making it unconditional here means a
+        // caller passing any other `tenant_id` can no longer silently produce
+        // rows that later fail `verify_chain`.
+        entry.tenant_id = OWNER_TENANT_ID.to_string();
 
         // Take the write lock up front (IMMEDIATE) so the SELECT below sees a
         // snapshot no other writer can extend before our INSERT commits.
