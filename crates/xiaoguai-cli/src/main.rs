@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
-    anomaly, audit_export, backup, chat, completions, eval, hotl, manpages, mcp, outcomes,
+    anomaly, audit_export, backup, chat, code, completions, eval, hotl, manpages, mcp, outcomes,
     provider, remote, self_update, skills, stats, tasks, watch,
 };
 use xiaoguai_config::Settings;
@@ -165,6 +165,22 @@ enum Cmd {
         /// Emit JSON instead of a text table.
         #[arg(long)]
         json: bool,
+    },
+
+    /// Governed coding workflow — workspace edits with checkpoint + audit.
+    ///
+    /// Every mutation is checkpointed and signed into the HMAC audit chain
+    /// (`code.edit` / `git.commit` / `code.rollback`) carrying the workspace +
+    /// checkpoint id, so a local change is as auditable + reversible as an
+    /// agent-driven one (DEC-034/035). Runs under the owner's implicit
+    /// authority (allow-all gate); the interactive `HotL` approve flow is the
+    /// chat/server path.
+    Code {
+        /// Coding workspace (a git work tree; created + `git init`ed if absent).
+        #[arg(long, default_value = ".")]
+        workspace: String,
+        #[command(subcommand)]
+        action: CodeCmd,
     },
 
     // ------------------------------------------------------------------
@@ -767,6 +783,49 @@ enum TasksCmd {
     Show {
         /// Task identifier.
         task_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CodeCmd {
+    /// Show the workspace's porcelain status.
+    Status,
+    /// Governed whole-file write (checkpoint → write → audit `code.edit`).
+    Write {
+        /// File path relative to the workspace root.
+        path: String,
+        /// New file contents.
+        #[arg(long)]
+        content: String,
+    },
+    /// Governed commit of all changes (checkpoint → commit → audit `git.commit`).
+    Commit {
+        /// Commit message.
+        message: String,
+    },
+    /// Roll the workspace back to a checkpoint (audit `code.rollback`).
+    Rollback {
+        /// Checkpoint id (a commit SHA printed by `write`/`commit`).
+        checkpoint: String,
+    },
+    /// Push a branch to a remote (egress; audit `git.push`).
+    Push {
+        /// Branch to push.
+        branch: String,
+        /// Remote name.
+        #[arg(long, default_value = "origin")]
+        remote: String,
+    },
+    /// Open a pull request via the `gh` CLI (egress; audit `pr.open`).
+    OpenPr {
+        /// PR title.
+        title: String,
+        /// PR body.
+        #[arg(long, default_value = "")]
+        body: String,
+        /// Base branch.
+        #[arg(long, default_value = "main")]
+        base: String,
     },
 }
 
@@ -1549,6 +1608,22 @@ async fn main() -> Result<()> {
             until,
             json,
         } => handle_stats(cfg, by, since, until, json).await,
+        Cmd::Code { workspace, action } => {
+            let settings = load_settings(cfg)?;
+            let ws = std::path::Path::new(&workspace);
+            match action {
+                CodeCmd::Status => code::status(&settings, ws).await,
+                CodeCmd::Write { path, content } => {
+                    code::write(&settings, ws, std::path::Path::new(&path), content).await
+                }
+                CodeCmd::Commit { message } => code::commit(&settings, ws, message).await,
+                CodeCmd::Rollback { checkpoint } => code::rollback(&settings, ws, checkpoint).await,
+                CodeCmd::Push { branch, remote } => code::push(&settings, ws, remote, branch).await,
+                CodeCmd::OpenPr { title, body, base } => {
+                    code::open_pr(&settings, ws, title, body, base).await
+                }
+            }
+        }
         // Wave-3
         Cmd::Hotl {
             api_base,

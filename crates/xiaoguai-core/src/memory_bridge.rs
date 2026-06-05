@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
+use xiaoguai_config::EmbedderSettings;
 use xiaoguai_memory::{
     EmbeddingProvider, InMemoryEmbedder, MemoryStore, OllamaEmbedder, SqliteMemoryStore,
 };
@@ -37,6 +38,17 @@ impl EmbedderChoice {
         }
     }
 
+    /// Decide the backend from the `memory.embedder` config block (DEC-036).
+    #[must_use]
+    pub fn from_settings(embedder: &EmbedderSettings) -> Self {
+        match embedder {
+            EmbedderSettings::Ollama { host } if !host.trim().is_empty() => {
+                Self::Ollama(host.trim().to_string())
+            }
+            _ => Self::InMemory,
+        }
+    }
+
     /// Construct the corresponding embedding provider.
     fn into_provider(self) -> Arc<dyn EmbeddingProvider> {
         match self {
@@ -46,14 +58,21 @@ impl EmbedderChoice {
     }
 }
 
-/// Build the long-term memory store, selecting the embedder via `OLLAMA_HOST`.
+/// Build the long-term memory store, selecting the embedder from the
+/// `memory.embedder` config block (DEC-036), with the `OLLAMA_HOST` env as a
+/// back-compat **override** (a non-blank value wins, so existing air-gapped
+/// installs keep working without touching their config).
 ///
 /// Returned as a trait object so `AppState.memory_store` stays backend-agnostic;
 /// flipping `/v1/memories` from 503 to live.
 #[must_use]
-pub fn build_memory_store(pool: SqlitePool) -> Arc<dyn MemoryStore> {
-    let host = std::env::var("OLLAMA_HOST").ok();
-    let choice = EmbedderChoice::from_ollama_host(host.as_deref());
+pub fn build_memory_store(pool: SqlitePool, embedder: &EmbedderSettings) -> Arc<dyn MemoryStore> {
+    // `OLLAMA_HOST` env wins when it names a backend; otherwise use the config.
+    let choice =
+        match EmbedderChoice::from_ollama_host(std::env::var("OLLAMA_HOST").ok().as_deref()) {
+            env_ollama @ EmbedderChoice::Ollama(_) => env_ollama,
+            EmbedderChoice::InMemory => EmbedderChoice::from_settings(embedder),
+        };
     tracing::info!(?choice, "memory: selected embedding backend");
     Arc::new(SqliteMemoryStore::new(pool, choice.into_provider()))
 }
@@ -83,6 +102,30 @@ mod tests {
         assert_eq!(
             EmbedderChoice::from_ollama_host(Some("  http://localhost:11434  ")),
             EmbedderChoice::Ollama("http://localhost:11434".to_string())
+        );
+    }
+
+    #[test]
+    fn config_ollama_selects_ollama() {
+        assert_eq!(
+            EmbedderChoice::from_settings(&EmbedderSettings::Ollama {
+                host: "  http://localhost:11434  ".to_string(),
+            }),
+            EmbedderChoice::Ollama("http://localhost:11434".to_string())
+        );
+    }
+
+    #[test]
+    fn config_in_memory_and_blank_ollama_fall_back() {
+        assert_eq!(
+            EmbedderChoice::from_settings(&EmbedderSettings::InMemory),
+            EmbedderChoice::InMemory
+        );
+        assert_eq!(
+            EmbedderChoice::from_settings(&EmbedderSettings::Ollama {
+                host: "   ".to_string()
+            }),
+            EmbedderChoice::InMemory
         );
     }
 }

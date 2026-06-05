@@ -46,6 +46,10 @@ pub struct Settings {
     /// v1.8.x config.yaml files deserialize unchanged.
     #[serde(default)]
     pub agent: AgentSettings,
+    /// DEC-036 (P1): long-term memory embedder selection. Optional so existing
+    /// config files deserialize unchanged; the `OLLAMA_HOST` env still overrides.
+    #[serde(default)]
+    pub memory: MemorySettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +95,32 @@ const fn default_db_max_connections() -> u32 {
 pub struct CacheSettings {
     #[serde(default = "default_cache_prefix")]
     pub key_prefix: String,
+}
+
+/// DEC-036 (P1): long-term memory configuration. Promotes the embedder choice
+/// from the `OLLAMA_HOST` env to a documented config block. The env still
+/// overrides at boot (back-compat), so existing air-gapped installs are
+/// unaffected.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MemorySettings {
+    #[serde(default)]
+    pub embedder: EmbedderSettings,
+}
+
+/// Which embedding backend long-term memory should use. `in_memory` (default)
+/// is the deterministic, dependency-free embedder; `ollama` is the local,
+/// air-gapped backend at `host`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EmbedderSettings {
+    /// Local Ollama server (air-gapped semantic recall).
+    Ollama {
+        /// Base URL, e.g. `http://localhost:11434`.
+        host: String,
+    },
+    /// Deterministic in-process embedder (no external service).
+    #[default]
+    InMemory,
 }
 
 impl Default for CacheSettings {
@@ -471,6 +501,7 @@ impl Default for Settings {
             im: ImSettings::default(),
             eval: EvalSettings::default(),
             agent: AgentSettings::default(),
+            memory: MemorySettings::default(),
         }
     }
 }
