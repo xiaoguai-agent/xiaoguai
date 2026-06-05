@@ -29,6 +29,7 @@ import type {
 } from '@xiaoguai/shared';
 import { ApiError } from '@xiaoguai/shared';
 import { client } from '../client';
+import { TrustTiers } from '../components/TrustTiers';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -770,6 +771,9 @@ export function HotlPoliciesPane(): JSX.Element {
           </button>
         </div>
       )}
+
+      {/* Graduated-trust overview (P3, DEC roadmap) */}
+      {loadState.kind === 'ok' && policies.length > 0 && <TrustTiers policies={policies} />}
 
       {/* Policies table */}
       {loadState.kind === 'ok' && policies.length > 0 && (
