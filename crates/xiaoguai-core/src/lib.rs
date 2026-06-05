@@ -26,6 +26,7 @@
 //! All sd-notify calls are gated on `#[cfg(target_os = "linux")]` so
 //! macOS and Windows developer builds compile and run without change.
 
+pub mod acp_bridge;
 mod audit_bridge;
 pub mod coding_bridge;
 mod eval_bridge;

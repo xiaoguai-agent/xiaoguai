@@ -44,6 +44,15 @@ enum Cmd {
     /// a systemd `ExecStartPre=` or container healthcheck.
     Smoke,
 
+    /// Serve the Agent Client Protocol (ACP) over stdio for IDE integration.
+    ///
+    /// Speaks newline-delimited JSON-RPC on stdin/stdout (logs go to stderr);
+    /// point an ACP-capable editor at `xiaoguai acp` as the agent command. It
+    /// drives the same governed agent loop as the server (DEC-038), reading the
+    /// same config + `OLLAMA_HOST` environment, under the owner's implicit
+    /// authority.
+    Acp,
+
     /// Send a one-shot prompt to the agent and print the response.
     Chat {
         /// User prompt.
@@ -1549,8 +1558,16 @@ fn print_value(v: &serde_json::Value, format: &str) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
     let cli = Cli::parse();
+    // ACP owns stdout for its JSON-RPC stream, so its logs MUST go to stderr;
+    // every other subcommand keeps the default stdout logger.
+    if matches!(cli.command, Cmd::Acp) {
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .init();
+    } else {
+        tracing_subscriber::fmt::init();
+    }
     let cfg = cli.config.as_deref();
     match cli.command {
         Cmd::Serve => {
@@ -1562,6 +1579,11 @@ async fn main() -> Result<()> {
             let settings = xiaoguai_core::load_settings(cfg.map(std::path::Path::new))
                 .context("load settings for smoke")?;
             xiaoguai_core::run_smoke(&settings).await
+        }
+        Cmd::Acp => {
+            let settings = xiaoguai_core::load_settings(cfg.map(std::path::Path::new))
+                .context("load settings for acp")?;
+            xiaoguai_core::acp_bridge::run_acp(&settings).await
         }
         Cmd::Chat {
             prompt,
