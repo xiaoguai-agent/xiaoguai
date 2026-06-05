@@ -8024,12 +8024,10 @@ name = "xiaoguai-acp"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol-schema",
- "anyhow",
  "async-trait",
  "futures",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
