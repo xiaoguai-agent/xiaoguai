@@ -4,8 +4,8 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
-    anomaly, audit_export, backup, chat, code, completions, eval, hotl, manpages, mcp, outcomes,
-    provider, remote, self_update, skills, stats, tasks, watch,
+    anomaly, audit_bundle, audit_export, backup, chat, code, completions, eval, hotl, manpages,
+    mcp, outcomes, provider, remote, self_update, skills, stats, tasks, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -331,6 +331,27 @@ enum AuditCmd {
         /// `pdf` is reserved (returns 501 — tracked as a follow-up).
         #[arg(long, default_value = "json")]
         format: String,
+    },
+
+    /// Build an evidence bundle: the chain-verified JSON export plus a
+    /// human-readable Markdown transcript, in one folder (DEC-037).
+    ///
+    /// Same non-bypassable chain verification as `export`; a broken chain
+    /// refuses the bundle.
+    Bundle {
+        /// Framework short name — `soc2` | `gdpr` | `hipaa`.
+        #[arg(long)]
+        framework: String,
+        /// RFC3339 inclusive lower bound.
+        #[arg(long)]
+        from: String,
+        /// RFC3339 inclusive upper bound.
+        #[arg(long)]
+        to: String,
+        /// Output directory (created if absent) for `audit-bundle.json` +
+        /// `transcript.md`.
+        #[arg(long, default_value = "./audit-bundle")]
+        out: String,
     },
 }
 
@@ -1673,6 +1694,21 @@ async fn handle_audit(api_base: String, action: AuditCmd) -> Result<()> {
                 to,
                 output: std::path::PathBuf::from(output),
                 format,
+            })
+            .await
+        }
+        AuditCmd::Bundle {
+            framework,
+            from,
+            to,
+            out,
+        } => {
+            audit_bundle::run(audit_bundle::BundleArgs {
+                api_base,
+                framework,
+                from,
+                to,
+                out_dir: std::path::PathBuf::from(out),
             })
             .await
         }
