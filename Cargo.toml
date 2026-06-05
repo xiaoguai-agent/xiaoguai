@@ -15,6 +15,7 @@ members = [
     "crates/xiaoguai-scheduler",
     "crates/xiaoguai-runtime",
     "crates/xiaoguai-eval",
+    "crates/xiaoguai-coding",
     "crates/xiaoguai-agent",
     "crates/xiaoguai-api",
     "crates/xiaoguai-core",

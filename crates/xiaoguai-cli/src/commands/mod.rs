@@ -8,6 +8,7 @@ pub mod anomaly;
 pub mod audit_export;
 pub mod backup;
 pub mod chat;
+pub mod code;
 pub mod completions;
 pub mod eval;
 pub mod hotl;

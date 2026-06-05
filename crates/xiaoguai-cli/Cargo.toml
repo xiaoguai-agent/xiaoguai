@@ -22,6 +22,7 @@ xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-agent = { path = "../xiaoguai-agent" }
 xiaoguai-llm = { path = "../xiaoguai-llm" }
 xiaoguai-eval = { path = "../xiaoguai-eval" }
+xiaoguai-coding = { path = "../xiaoguai-coding" }
 xiaoguai-storage = { path = "../xiaoguai-storage" }
 xiaoguai-config = { path = "../xiaoguai-config" }
 xiaoguai-audit = { path = "../xiaoguai-audit" }

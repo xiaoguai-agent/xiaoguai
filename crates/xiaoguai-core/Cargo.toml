@@ -39,6 +39,7 @@ xiaoguai-storage = { path = "../xiaoguai-storage" }
 xiaoguai-auth = { path = "../xiaoguai-auth" }
 xiaoguai-audit = { path = "../xiaoguai-audit" }
 xiaoguai-agent = { path = "../xiaoguai-agent" }
+xiaoguai-coding = { path = "../xiaoguai-coding" }
 # v1.3.x: long-term memory — PgMemoryStore (pg) + air-gapped OllamaEmbedder
 # (ollama) wired into AppState via memory_bridge.rs. `openai` stays off so we
 # don't pull async-openai into the local-first default build.
