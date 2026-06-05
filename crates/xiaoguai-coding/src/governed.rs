@@ -178,6 +178,40 @@ impl<G: CodingGate, R: StepRecorder> GovernedTools<G, R> {
             result: sha,
         })
     }
+
+    /// Governed `rollback`: gate `tool_call.rollback` → restore the worktree to
+    /// `to` → audit `code.rollback`. Unlike a forward mutation it takes no fresh
+    /// checkpoint; the audit row's checkpoint is the rollback *target*.
+    pub async fn rollback(&self, to: &CheckpointId) -> Result<(), CodingError> {
+        match self.gate.decide("tool_call.rollback").await {
+            GateDecision::Allow => {
+                self.workspace.rollback(to).await?;
+                self.finish(
+                    "code.rollback",
+                    "tool_call.rollback",
+                    to,
+                    format!("rolled back to {to}"),
+                )
+                .await;
+                Ok(())
+            }
+            GateDecision::Deny(reason) => {
+                self.recorder
+                    .record(CodingStep {
+                        action: "code.rollback_denied".to_string(),
+                        workspace_id: self.workspace.id().to_string(),
+                        scope: "tool_call.rollback".to_string(),
+                        checkpoint: Some(to.to_string()),
+                        summary: reason.clone(),
+                    })
+                    .await;
+                Err(CodingError::Denied {
+                    scope: "tool_call.rollback".to_string(),
+                    reason,
+                })
+            }
+        }
+    }
 }
 
 fn short(sha: &str) -> &str {
@@ -290,6 +324,33 @@ mod tests {
         // a single denied audit row, no checkpoint
         assert_eq!(tools.recorder.actions(), vec!["code.edit_denied"]);
         assert_eq!(tools.recorder.last_checkpoint(), None);
+    }
+
+    #[tokio::test]
+    async fn governed_rollback_restores_and_audits() {
+        let (_dir, ws) = workspace().await;
+        let tools = GovernedTools::new(ws, FixedGate(GateDecision::Allow), SpyRecorder::default());
+        let first = tools
+            .edit_file(Path::new("a.txt"), &FileEdit::Write("one".into()))
+            .await
+            .unwrap();
+        tools
+            .edit_file(Path::new("a.txt"), &FileEdit::Write("two".into()))
+            .await
+            .unwrap();
+
+        tools.rollback(&first.checkpoint).await.unwrap();
+
+        // restored to the pre-"one" state (a.txt did not exist there)
+        assert!(tools
+            .workspace()
+            .read_file(Path::new("a.txt"))
+            .await
+            .is_err());
+        assert_eq!(
+            tools.recorder.actions(),
+            vec!["code.edit", "code.edit", "code.rollback"]
+        );
     }
 
     #[tokio::test]

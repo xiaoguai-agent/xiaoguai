@@ -97,6 +97,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workspace_id_is_stable_across_reopen_so_rollback_survives() {
+        // Regression: a fresh WorkspaceId per open orphaned the checkpoint ref,
+        // so rollback across separate opens (e.g. separate CLI invocations)
+        // failed with UnknownCheckpoint. The id must persist per on-disk tree.
+        let dir = tempfile::tempdir().unwrap();
+
+        let ws1 = Workspace::open_or_create(dir.path()).await.unwrap();
+        write(&ws1, "a.txt", "original").await;
+        let cp = ws1.checkpoint("v1").await.unwrap();
+        let id1 = ws1.id().as_str().to_string();
+
+        // Re-open the SAME path in a separate Workspace value.
+        let ws2 = Workspace::open_or_create(dir.path()).await.unwrap();
+        assert_eq!(ws2.id().as_str(), id1, "id must persist per tree");
+
+        write(&ws2, "a.txt", "changed").await;
+        ws2.rollback(&cp).await.unwrap(); // must find cp made by ws1
+        assert_eq!(read(&ws2, "a.txt").await.as_deref(), Some("original"));
+    }
+
+    #[tokio::test]
     async fn rollback_rejects_an_unknown_checkpoint() {
         let dir = tempfile::tempdir().unwrap();
         let ws = Workspace::open_or_create(dir.path()).await.unwrap();

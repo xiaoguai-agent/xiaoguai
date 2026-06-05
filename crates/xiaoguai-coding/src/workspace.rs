@@ -26,6 +26,10 @@ impl WorkspaceId {
         Self(Uuid::now_v7().to_string())
     }
 
+    pub(crate) fn from_existing(s: String) -> Self {
+        Self(s)
+    }
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -78,10 +82,29 @@ impl Workspace {
             git::run(&root, &["config", "user.email", "xiaoguai@localhost"], None).await?;
         }
 
-        Ok(Self {
-            id: WorkspaceId::new(),
-            root,
-        })
+        // The WorkspaceId must be STABLE per on-disk tree, not per process —
+        // the checkpoint ref is `refs/xiaoguai/checkpoints/<id>`, so a fresh id
+        // each `open` would orphan earlier checkpoints (rollback across CLI
+        // invocations would fail). Persist it next to the repo.
+        let id = Self::load_or_init_id(&root).await?;
+
+        Ok(Self { id, root })
+    }
+
+    /// Read the persisted workspace id from `.git/xiaoguai-workspace-id`, or
+    /// mint + persist a new one. Keeps the checkpoint ref stable across opens.
+    async fn load_or_init_id(root: &Path) -> Result<WorkspaceId, CodingError> {
+        let id_path = root.join(".git").join("xiaoguai-workspace-id");
+        match tokio::fs::read_to_string(&id_path).await {
+            Ok(s) if !s.trim().is_empty() => Ok(WorkspaceId::from_existing(s.trim().to_string())),
+            _ => {
+                let id = WorkspaceId::new();
+                tokio::fs::write(&id_path, id.as_str())
+                    .await
+                    .map_err(|e| CodingError::io(&id_path, e))?;
+                Ok(id)
+            }
+        }
     }
 
     #[must_use]
