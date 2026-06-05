@@ -26,4 +26,4 @@ State is one embedded SQLite file (created on first boot); the cache falls
 back in-process. The only thing to front a public deployment with is:
 
 - **TLS termination** — nginx, Caddy, or a cloud load balancer in front of
-  `:8080`, plus a configured `auth.username`/`auth.password` (HTTP Basic).
+  `:7600`, plus a configured `auth.username`/`auth.password` (HTTP Basic).

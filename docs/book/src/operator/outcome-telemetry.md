@@ -69,7 +69,7 @@ Content-Type: application/json
 ```
 
 ```
-curl -u user:pass -X POST http://localhost:8080/v1/outcomes \
+curl -u user:pass -X POST http://localhost:7600/v1/outcomes \
   -H 'Content-Type: application/json' -d @outcome.json
 ```
 
