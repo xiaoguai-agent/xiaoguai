@@ -8069,6 +8069,7 @@ dependencies = [
  "xiaoguai-agent",
  "xiaoguai-api",
  "xiaoguai-audit",
+ "xiaoguai-coding",
  "xiaoguai-config",
  "xiaoguai-core",
  "xiaoguai-eval",
@@ -8076,6 +8077,18 @@ dependencies = [
  "xiaoguai-mcp",
  "xiaoguai-storage",
  "xiaoguai-types",
+]
+
+[[package]]
+name = "xiaoguai-coding"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -8126,6 +8139,7 @@ dependencies = [
  "xiaoguai-api",
  "xiaoguai-audit",
  "xiaoguai-auth",
+ "xiaoguai-coding",
  "xiaoguai-config",
  "xiaoguai-eval",
  "xiaoguai-im-dingtalk",
