@@ -19,7 +19,8 @@ The simplest path needs no Docker and no toolchain — `pip install` drops the
 native binary on PATH (macOS arm64/x86_64, Linux x86_64/aarch64):
 
 ```bash
-pip install xiaoguai
+pip install xiaoguai                 # PEP 668 systems (Debian 12 / Ubuntu 24):
+                                     #   sudo apt install -y pipx && pipx install xiaoguai
 xiaoguai serve                       # :7600, auto-creates ~/.xiaoguai/data.db
 
 # in another terminal — first chat:

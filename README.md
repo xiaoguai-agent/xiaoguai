@@ -45,6 +45,15 @@ pip install xiaoguai
 xiaoguai serve   # :7600, auto-creates ~/.xiaoguai/data.db, no config needed
 ```
 
+On Debian 12 / Ubuntu 24 and other PEP 668 "externally-managed" systems, `pip
+install` into the system Python is blocked — use **pipx** (it isolates the app
+and still puts `xiaoguai` on PATH):
+
+```bash
+sudo apt install -y pipx && pipx ensurepath
+pipx install xiaoguai      # then reopen the shell, or: exec $SHELL
+```
+
 Installs a platform wheel that bundles the native `xiaoguai` binary on PATH
 (macOS arm64/x86_64, Linux x86_64/aarch64) — works inside a venv without root.
 Gives you the API + CLI; for the bundled web UI use the native packages
