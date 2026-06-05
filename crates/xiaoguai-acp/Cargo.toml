@@ -1,0 +1,34 @@
+[package]
+name = "xiaoguai-acp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Agent Client Protocol (ACP) stdio adapter — exposes the agent loop to IDEs (DEC-038)."
+
+[lib]
+name = "xiaoguai_acp"
+path = "src/lib.rs"
+
+[dependencies]
+# Wire contracts — canonical schema, not re-implemented (LLD-ACP-001 §2.1).
+agent-client-protocol-schema = "0.13"
+# Downstream-of-runtime, mirroring the IM-gateway adapter position.
+xiaoguai-agent = { path = "../xiaoguai-agent" }
+xiaoguai-runtime = { path = "../xiaoguai-runtime" }
+xiaoguai-llm = { path = "../xiaoguai-llm" }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-util"] }
+
+[lints]
+workspace = true

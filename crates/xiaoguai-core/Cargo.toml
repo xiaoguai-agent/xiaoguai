@@ -40,6 +40,8 @@ xiaoguai-auth = { path = "../xiaoguai-auth" }
 xiaoguai-audit = { path = "../xiaoguai-audit" }
 xiaoguai-agent = { path = "../xiaoguai-agent" }
 xiaoguai-coding = { path = "../xiaoguai-coding" }
+# ACP stdio adapter (DEC-038) — `run_acp` wires it to the shared runtime.
+xiaoguai-acp = { path = "../xiaoguai-acp" }
 # v1.3.x: long-term memory — PgMemoryStore (pg) + air-gapped OllamaEmbedder
 # (ollama) wired into AppState via memory_bridge.rs. `openai` stays off so we
 # don't pull async-openai into the local-first default build.
