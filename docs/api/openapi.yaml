@@ -20,7 +20,7 @@ info:
 servers:
   - url: https://api.example.com
     description: Production
-  - url: http://localhost:8080
+  - url: http://localhost:7600
     description: Local development
 
 security:

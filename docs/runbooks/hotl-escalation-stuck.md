@@ -43,7 +43,7 @@ examples below show the Basic form; remove it for an open deployment.
 
 ```bash
 curl -s -u "$USER:$PASS" \
-  "http://localhost:8080/v1/hotl/policies" \
+  "http://localhost:7600/v1/hotl/policies" \
   | jq .
 ```
 
@@ -106,7 +106,7 @@ policy's `escalate_to` to a different recipient:
 ```bash
 # Delete the offending policy (returns 204):
 curl -s -X DELETE -u "$USER:$PASS" \
-  "http://localhost:8080/v1/hotl/policies/$POLICY_ID"
+  "http://localhost:7600/v1/hotl/policies/$POLICY_ID"
 
 # Re-create with a working escalation target:
 curl -s -X POST -u "$USER:$PASS" \
@@ -117,7 +117,7 @@ curl -s -X POST -u "$USER:$PASS" \
     "max_count": 100,
     "escalate_to": "oncall@example.com"
   }' \
-  "http://localhost:8080/v1/hotl/policies"
+  "http://localhost:7600/v1/hotl/policies"
 ```
 
 ### Option B — Broaden the approver pool (loosen the policy)
@@ -127,7 +127,7 @@ If the window or count threshold is too tight:
 ```bash
 # Delete tight policy, replace with a relaxed one:
 curl -X DELETE -u "$USER:$PASS" \
-  "http://localhost:8080/v1/hotl/policies/$POLICY_ID"
+  "http://localhost:7600/v1/hotl/policies/$POLICY_ID"
 
 curl -X POST -u "$USER:$PASS" \
   -H "Content-Type: application/json" \
@@ -138,7 +138,7 @@ curl -X POST -u "$USER:$PASS" \
     "max_usd": 50.0,
     "escalate_to": "oncall@example.com"
   }' \
-  "http://localhost:8080/v1/hotl/policies"
+  "http://localhost:7600/v1/hotl/policies"
 ```
 
 You can do the same from the CLI (the `--tenant-id` flag still exists in
@@ -161,14 +161,14 @@ If you need to unblock a session immediately and will review later:
 ```bash
 # 1. Cancel the blocked session so the agent can be re-run without HotL:
 curl -X POST -u "$USER:$PASS" \
-  "http://localhost:8080/v1/sessions/$SESSION_ID/cancel"
+  "http://localhost:7600/v1/sessions/$SESSION_ID/cancel"
 
 # 2. Temporarily delete all policies for the scope to unblock:
 for id in $(curl -s -u "$USER:$PASS" \
-  "http://localhost:8080/v1/hotl/policies?scope=llm_call" \
+  "http://localhost:7600/v1/hotl/policies?scope=llm_call" \
   | jq -r '.[].id'); do
   curl -s -X DELETE -u "$USER:$PASS" \
-    "http://localhost:8080/v1/hotl/policies/$id"
+    "http://localhost:7600/v1/hotl/policies/$id"
 done
 ```
 
@@ -199,7 +199,7 @@ sqlite3 ~/.xiaoguai/data.db "
 
 # Confirm policy list looks correct:
 curl -s -u "$USER:$PASS" \
-  "http://localhost:8080/v1/hotl/policies" | jq .
+  "http://localhost:7600/v1/hotl/policies" | jq .
 ```
 
 ---

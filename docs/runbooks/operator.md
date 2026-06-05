@@ -174,7 +174,7 @@ those references do not apply.
 ## Killing a runaway session
 
 ```bash
-curl -X POST http://localhost:8080/v1/sessions/<sess-id>/cancel \
+curl -X POST http://localhost:7600/v1/sessions/<sess-id>/cancel \
   -u "$XIAOGUAI_USER:$XIAOGUAI_PASS"
 ```
 
@@ -349,7 +349,7 @@ credential is set). External integrators (GitHub push events, Slack
 event subscriptions) hit it with the owner credential:
 
 ```bash
-curl -X POST http://localhost:8080/v1/admin/scheduler/webhooks/github-push-main \
+curl -X POST http://localhost:7600/v1/admin/scheduler/webhooks/github-push-main \
   -u "$XIAOGUAI_USER:$XIAOGUAI_PASS" \
   -H 'content-type: application/json' -d '{"ref":"refs/heads/main"}'
 ```
@@ -551,7 +551,7 @@ sqlite3 ~/.xiaoguai/data.db \
    WHERE status = 'running' AND started_at < datetime('now','-30 minutes');"
 
 # Cancel via the session it pinned (every scheduled run pins a session):
-curl -X POST "http://localhost:8080/v1/sessions/$SESS_ID/cancel" \
+curl -X POST "http://localhost:7600/v1/sessions/$SESS_ID/cancel" \
   -u "$XIAOGUAI_USER:$XIAOGUAI_PASS"
 ```
 

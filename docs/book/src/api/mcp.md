@@ -30,7 +30,7 @@ XIAOGUAI_MCP__PUBLISH=true xiaoguai-core
 xiaoguai mcp register \
   --name specialist \
   --transport streamable_http \
-  --url http://specialist-host:8080/v1/mcp/serve
+  --url http://specialist-host:7600/v1/mcp/serve
 ```
 
 See [Multi-Agent Peer Topology](../architecture/multi-agent.md) for the full architecture.

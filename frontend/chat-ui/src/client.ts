@@ -2,7 +2,7 @@ import { XiaoguaiClient, type BasicCredentials } from '@xiaoguai/shared';
 
 const baseUrl =
   (import.meta.env.VITE_API_URL as string | undefined) ??
-  (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080');
+  (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:7600');
 
 // DEC-033 single-owner auth: the backend is gated (if at all) by one
 // username + password via HTTP Basic. When the owner hasn't configured a

@@ -45,7 +45,7 @@ API gate is **open** — drop the `-u` flag.
 **1. Confirm the catalog is reachable (never needs the repo):**
 
 ```bash
-curl -s "http://localhost:8080/v1/skills/catalog" \
+curl -s "http://localhost:7600/v1/skills/catalog" \
   | jq '.packs[].slug'
 # Expected slugs: ar-collections, incident-triage, pr-review,
 #                 hr-onboarding, rag-legal, rag-finance, rag-hr
@@ -57,7 +57,7 @@ with `GET /healthz`.
 **2. Check whether the skill-pack repository is wired:**
 
 ```bash
-curl -s "http://localhost:8080/v1/skills/installed"
+curl -s "http://localhost:7600/v1/skills/installed"
 # 503 → installed_skill_packs not wired in AppState (likely a missing
 #       migration or config knob)
 # 200 → wired; proceed to step 3
@@ -90,10 +90,10 @@ v1.2 state — see the caveat above.
 ```bash
 # Uninstall first, then reinstall:
 curl -s -X DELETE -u "$USER:$PASS" \
-  "http://localhost:8080/v1/skills/$INSTALL_ID"
+  "http://localhost:7600/v1/skills/$INSTALL_ID"
 
 # Confirm it's gone:
-curl -s "http://localhost:8080/v1/skills/installed" \
+curl -s "http://localhost:7600/v1/skills/installed" \
   | jq '.[] | select(.pack_slug == "'"$PACK_SLUG"'")'
 # Expect empty
 ```
@@ -172,14 +172,14 @@ Communicate to the end user:
 
 ```bash
 # Confirm the pack is in the installed list:
-curl -s "http://localhost:8080/v1/skills/installed" \
+curl -s "http://localhost:7600/v1/skills/installed" \
   | jq '.[] | {id, pack_slug, version}'
 
 # Start a test session and call a tool from the pack:
 curl -s -X POST -u "$USER:$PASS" \
   -H "Content-Type: application/json" \
   -d '{"model":"default","message":"list the tools available to you"}' \
-  "http://localhost:8080/v1/sessions"
+  "http://localhost:7600/v1/sessions"
 ```
 
 ---

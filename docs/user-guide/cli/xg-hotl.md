@@ -31,7 +31,7 @@ a new policy.
 |------|-----|---------|-------------|
 | `--config <PATH>` | `XIAOGUAI_CONFIG` | `~/.xiaoguai/config.yaml` | YAML config file |
 | `--token <TOKEN>` | `XIAOGUAI_API_TOKEN` | — | Bearer token |
-| `--api-base <URL>` | `XIAOGUAI_API_BASE` | `http://localhost:8080` | API server base URL |
+| `--api-base <URL>` | `XIAOGUAI_API_BASE` | `http://localhost:7600` | API server base URL |
 | `--output <FORMAT>` | — | `table` | `json` \| `yaml` \| `table` |
 
 ## SUBCOMMANDS

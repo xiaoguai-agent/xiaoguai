@@ -94,12 +94,12 @@ sqlite3 ~/.xiaoguai/data.db "
 
 ```bash
 curl -s -u "$USER:$PASS" \
-  "http://localhost:8080/v1/outcomes/summary?range=7d" \
+  "http://localhost:7600/v1/outcomes/summary?range=7d" \
   | jq .
 
 # For the timeseries view:
 curl -s -u "$USER:$PASS" \
-  "http://localhost:8080/v1/outcomes/timeseries?range=30d" \
+  "http://localhost:7600/v1/outcomes/timeseries?range=30d" \
   | jq .
 ```
 
@@ -211,7 +211,7 @@ sqlite3 ~/.xiaoguai/data.db "
 
 # Confirm summary picks up the corrected values:
 curl -s -u "$USER:$PASS" \
-  "http://localhost:8080/v1/outcomes/summary?range=24h" \
+  "http://localhost:7600/v1/outcomes/summary?range=24h" \
   | jq '.by_kind'
 ```
 

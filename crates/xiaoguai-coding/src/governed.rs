@@ -142,7 +142,13 @@ impl<G: CodingGate, R: StepRecorder> GovernedTools<G, R> {
             .await;
     }
 
-    /// Record a successful mutation against its checkpoint.
+    /// Record a successful mutation against its checkpoint, then snapshot the
+    /// **post**-mutation tree so the checkpoint chain's tip reflects what the
+    /// agent just changed. This is what lets `rollback` prune the agent's
+    /// additions (they sit between the pre-edit checkpoint and the tip) while
+    /// leaving files the user created out-of-band — captured by no checkpoint —
+    /// untouched. Best-effort: a failed post-snapshot only narrows what a later
+    /// rollback can prune, it never fails the mutation that already succeeded.
     async fn finish(&self, action: &str, scope: &str, checkpoint: &CheckpointId, summary: String) {
         self.recorder
             .record(CodingStep {
@@ -153,6 +159,12 @@ impl<G: CodingGate, R: StepRecorder> GovernedTools<G, R> {
                 summary,
             })
             .await;
+        if let Err(err) = self.workspace.checkpoint(&format!("post:{action}")).await {
+            tracing::warn!(
+                %action, %err,
+                "post-mutation checkpoint failed; rollback may not prune this edit's additions"
+            );
+        }
     }
 
     /// Governed `edit_file`: gate `tool_call.edit_file` → checkpoint → apply →

@@ -150,7 +150,7 @@ xiaoguai smoke
 ```bash
 # Discord PING (type=1) round-trip:
 curl -s -X POST \
-  "http://localhost:8080/v1/im/discord/webhook" \
+  "http://localhost:7600/v1/im/discord/webhook" \
   -H "Content-Type: application/json" \
   -H "X-Signature-Ed25519: <computed-sig>" \
   -H "X-Signature-Timestamp: $(date +%s)" \

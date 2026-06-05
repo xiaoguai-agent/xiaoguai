@@ -67,19 +67,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rollback_removes_a_file_added_since_the_checkpoint() {
+    async fn rollback_removes_agent_files_captured_in_a_later_checkpoint() {
+        // Files the agent adds are captured by the NEXT governed checkpoint, so
+        // they live in the chain between `cp` and the tip → rollback removes them.
         let dir = tempfile::tempdir().unwrap();
         let ws = Workspace::open_or_create(dir.path()).await.unwrap();
         write(&ws, "keep.txt", "keep").await;
-
         let cp = ws.checkpoint("only keep").await.unwrap();
+
         write(&ws, "added.txt", "added").await;
         write(&ws, "nested/deep.txt", "deep").await;
+        ws.checkpoint("after agent add").await.unwrap(); // captures the additions
 
         ws.rollback(&cp).await.unwrap();
         assert_eq!(read(&ws, "keep.txt").await.as_deref(), Some("keep"));
         assert_eq!(read(&ws, "added.txt").await, None);
         assert_eq!(read(&ws, "nested/deep.txt").await, None);
+    }
+
+    #[tokio::test]
+    async fn rollback_preserves_user_files_not_in_any_checkpoint() {
+        // Regression: rollback must NOT delete files the user created
+        // out-of-band (never captured by a checkpoint) — that would be data loss
+        // on the owner's own repo.
+        let dir = tempfile::tempdir().unwrap();
+        let ws = Workspace::open_or_create(dir.path()).await.unwrap();
+        write(&ws, "keep.txt", "keep").await;
+        let cp = ws.checkpoint("only keep").await.unwrap();
+
+        // User adds a file after the checkpoint; no further checkpoint is taken.
+        write(&ws, "user-notes.txt", "my notes").await;
+
+        ws.rollback(&cp).await.unwrap();
+        assert_eq!(read(&ws, "keep.txt").await.as_deref(), Some("keep"));
+        assert_eq!(
+            read(&ws, "user-notes.txt").await.as_deref(),
+            Some("my notes"),
+            "rollback must not delete user-created files outside the checkpoint chain"
+        );
     }
 
     #[tokio::test]
