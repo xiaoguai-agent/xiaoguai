@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import type { HotlPolicy } from '@xiaoguai/shared';
+import { fmtWindow } from '../utils/window';
 
 /**
  * P3 (DEC roadmap) — graduated-trust panel. The control surface for the whole
@@ -28,12 +29,6 @@ export function classifyTier(p: HotlPolicy): TrustTier {
   return 'strict';
 }
 
-function fmtWindow(seconds: number): string {
-  if (seconds % 86400 === 0) return `${seconds / 86400}d`;
-  if (seconds % 3600 === 0) return `${seconds / 3600}h`;
-  if (seconds % 60 === 0) return `${seconds / 60}m`;
-  return `${seconds}s`;
-}
 
 function budgetSummary(p: HotlPolicy): string {
   const parts: string[] = [];

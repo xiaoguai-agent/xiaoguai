@@ -30,6 +30,7 @@ import type {
 import { ApiError } from '@xiaoguai/shared';
 import { client } from '../client';
 import { TrustTiers } from '../components/TrustTiers';
+import { fmtWindow } from '../utils/window';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -144,11 +145,6 @@ const EMPTY_FORM: FormState = {
   escalate_to: '',
 };
 
-function fmtWindow(seconds: number): string {
-  if (seconds % 3600 === 0) return `${seconds / 3600}h`;
-  if (seconds % 60 === 0) return `${seconds / 60}m`;
-  return `${seconds}s`;
-}
 
 function is503(err: unknown): boolean {
   return err instanceof ApiError && err.status === 503;
