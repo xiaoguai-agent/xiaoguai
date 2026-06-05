@@ -13,6 +13,7 @@ pub mod convert;
 pub mod error;
 pub mod eval;
 pub mod hotl;
+pub mod identity;
 pub mod incidents;
 pub mod marketplace;
 pub mod mcp_serve;
