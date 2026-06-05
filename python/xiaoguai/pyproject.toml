@@ -87,12 +87,11 @@ build-frontend = "build"
 test-command = "xiaoguai --help"
 
 [tool.cibuildwheel.linux]
-# The native binary is cross-built (~glibc 2.31, see pip-wheel.yml), so the
-# repair/test container must be at least that new. manylinux_2_34 hosts the
-# build; auditwheel relabels the wheel to the binary's actual glibc floor
-# (manylinux_2_31), which keeps compatibility broad.
-manylinux-x86_64-image = "manylinux_2_34"
-manylinux-aarch64-image = "manylinux_2_34"
+# The native binary is built with cargo-zigbuild pinned to glibc 2.28 (see
+# pip-wheel.yml), so it's manylinux_2_28-compliant: auditwheel repairs/tags it
+# inside the matching image and the wheel installs on any glibc >= 2.28.
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
 
 [tool.cibuildwheel.macos]
 # The bundled binary is signed for the matching arch only. We
