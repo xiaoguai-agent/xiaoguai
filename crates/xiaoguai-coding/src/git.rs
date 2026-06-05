@@ -18,7 +18,26 @@ pub(crate) async fn run(
     args: &[&str],
     index_file: Option<&Path>,
 ) -> Result<String, CodingError> {
-    let mut cmd = Command::new("git");
+    exec("git", cwd, args, index_file).await
+}
+
+/// Run an arbitrary program (e.g. `gh` for `open_pr`) in `cwd`, capturing
+/// stdout. Same teaching-error mapping as [`run`].
+pub(crate) async fn run_program(
+    program: &str,
+    cwd: &Path,
+    args: &[&str],
+) -> Result<String, CodingError> {
+    exec(program, cwd, args, None).await
+}
+
+async fn exec(
+    program: &str,
+    cwd: &Path,
+    args: &[&str],
+    index_file: Option<&Path>,
+) -> Result<String, CodingError> {
+    let mut cmd = Command::new(program);
     cmd.current_dir(cwd).args(args);
     // Deterministic, non-interactive: never prompt, never read a pager.
     cmd.env("GIT_TERMINAL_PROMPT", "0");
@@ -26,16 +45,17 @@ pub(crate) async fn run(
         cmd.env("GIT_INDEX_FILE", idx);
     }
 
-    let output = cmd
-        .output()
-        .await
-        .map_err(|source| CodingError::GitLaunch { source })?;
+    let output = cmd.output().await.map_err(|source| CodingError::Launch {
+        program: program.to_string(),
+        source,
+    })?;
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(stdout.trim_end().to_string())
     } else {
         Err(CodingError::Git {
+            program: program.to_string(),
             args: args.iter().map(|s| (*s).to_string()).collect(),
             code: output.status.code().unwrap_or(-1),
             cwd: cwd.to_path_buf(),

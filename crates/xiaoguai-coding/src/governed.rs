@@ -93,17 +93,11 @@ impl<G: CodingGate, R: StepRecorder> GovernedTools<G, R> {
         &self.workspace
     }
 
-    /// Gate + checkpoint. On allow, returns the checkpoint id taken immediately
-    /// before the mutation. On deny, records `<action>_denied` and returns
-    /// [`CodingError::Denied`] — the caller never mutates.
-    async fn begin(
-        &self,
-        scope: &str,
-        action: &str,
-        label: &str,
-    ) -> Result<CheckpointId, CodingError> {
+    /// Gate one action. On deny, records `<action>_denied` and returns
+    /// [`CodingError::Denied`] so the caller never proceeds.
+    async fn authorize(&self, scope: &str, action: &str) -> Result<(), CodingError> {
         match self.gate.decide(scope).await {
-            GateDecision::Allow => self.workspace.checkpoint(label).await,
+            GateDecision::Allow => Ok(()),
             GateDecision::Deny(reason) => {
                 self.recorder
                     .record(CodingStep {
@@ -120,6 +114,32 @@ impl<G: CodingGate, R: StepRecorder> GovernedTools<G, R> {
                 })
             }
         }
+    }
+
+    /// Gate + checkpoint. On allow, returns the checkpoint id taken immediately
+    /// before the mutation; on deny, behaves like [`Self::authorize`].
+    async fn begin(
+        &self,
+        scope: &str,
+        action: &str,
+        label: &str,
+    ) -> Result<CheckpointId, CodingError> {
+        self.authorize(scope, action).await?;
+        self.workspace.checkpoint(label).await
+    }
+
+    /// Record an egress action (`git.push` / `pr.open`) that does not mutate the
+    /// worktree, so carries no checkpoint — it is the "past local undo" boundary.
+    async fn record_egress(&self, action: &str, scope: &str, summary: String) {
+        self.recorder
+            .record(CodingStep {
+                action: action.to_string(),
+                workspace_id: self.workspace.id().to_string(),
+                scope: scope.to_string(),
+                checkpoint: None,
+                summary,
+            })
+            .await;
     }
 
     /// Record a successful mutation against its checkpoint.
@@ -211,6 +231,36 @@ impl<G: CodingGate, R: StepRecorder> GovernedTools<G, R> {
                 })
             }
         }
+    }
+
+    /// Governed `git_push`: gate `tool_call.git_push` → push → audit `git.push`.
+    /// No checkpoint — push does not change the worktree and is the egress
+    /// (past-local-undo) boundary.
+    pub async fn git_push(&self, remote: &str, branch: &str) -> Result<String, CodingError> {
+        self.authorize("tool_call.git_push", "git.push").await?;
+        let out = self.workspace.git_push(remote, branch).await?;
+        self.record_egress(
+            "git.push",
+            "tool_call.git_push",
+            format!("{remote} {branch}"),
+        )
+        .await;
+        Ok(out)
+    }
+
+    /// Governed `open_pr`: gate `tool_call.open_pr` → `gh pr create` → audit
+    /// `pr.open`. Egress; no checkpoint. Returns the PR URL.
+    pub async fn open_pr(
+        &self,
+        title: &str,
+        body: &str,
+        base: &str,
+    ) -> Result<String, CodingError> {
+        self.authorize("tool_call.open_pr", "pr.open").await?;
+        let url = self.workspace.open_pr(title, body, base).await?;
+        self.record_egress("pr.open", "tool_call.open_pr", format!("{title} → {url}"))
+            .await;
+        Ok(url)
     }
 }
 
@@ -351,6 +401,60 @@ mod tests {
             tools.recorder.actions(),
             vec!["code.edit", "code.edit", "code.rollback"]
         );
+    }
+
+    #[tokio::test]
+    async fn governed_push_to_local_bare_remote_audits_git_push() {
+        // Egress is verifiable without GitHub: push to a local bare repo.
+        let bare = tempfile::tempdir().unwrap();
+        crate::git::run(bare.path(), &["init", "--bare", "-q"], None)
+            .await
+            .unwrap();
+
+        let (_dir, ws) = workspace().await;
+        crate::git::run(
+            ws.root(),
+            &["remote", "add", "origin", &bare.path().to_string_lossy()],
+            None,
+        )
+        .await
+        .unwrap();
+        let tools = GovernedTools::new(ws, FixedGate(GateDecision::Allow), SpyRecorder::default());
+        tools
+            .edit_file(Path::new("f.txt"), &FileEdit::Write("x".into()))
+            .await
+            .unwrap();
+        tools.git_commit("init").await.unwrap();
+
+        // determine the current branch name (init.defaultBranch varies)
+        let branch = crate::git::run(
+            tools.workspace().root(),
+            &["branch", "--show-current"],
+            None,
+        )
+        .await
+        .unwrap();
+        tools.git_push("origin", &branch).await.unwrap();
+
+        // the bare remote now has the branch, and a git.push row was audited (no checkpoint)
+        let remote_branches = crate::git::run(bare.path(), &["branch", "--list"], None)
+            .await
+            .unwrap();
+        assert!(remote_branches.contains(branch.trim()));
+        assert!(tools.recorder.actions().contains(&"git.push".to_string()));
+    }
+
+    #[tokio::test]
+    async fn denied_push_does_not_push_and_audits_denied() {
+        let (_dir, ws) = workspace().await;
+        let tools = GovernedTools::new(
+            ws,
+            FixedGate(GateDecision::Deny("no egress".into())),
+            SpyRecorder::default(),
+        );
+        let err = tools.git_push("origin", "main").await.unwrap_err();
+        assert!(matches!(err, CodingError::Denied { .. }));
+        assert_eq!(tools.recorder.actions(), vec!["git.push_denied"]);
     }
 
     #[tokio::test]

@@ -99,3 +99,39 @@ pub async fn rollback(settings: &Settings, workspace: &Path, checkpoint: String)
     println!("rolled back to {checkpoint}");
     Ok(())
 }
+
+/// `xiaoguai code push <branch>` — governed push (egress; audited `git.push`).
+pub async fn push(
+    settings: &Settings,
+    workspace: &Path,
+    remote: String,
+    branch: String,
+) -> Result<()> {
+    let tools = build(settings, workspace).await?;
+    let out = tools
+        .git_push(&remote, &branch)
+        .await
+        .context("governed git_push")?;
+    println!("pushed {remote} {branch}");
+    if !out.trim().is_empty() {
+        println!("{out}");
+    }
+    Ok(())
+}
+
+/// `xiaoguai code open-pr <title>` — governed PR via `gh` (egress; `pr.open`).
+pub async fn open_pr(
+    settings: &Settings,
+    workspace: &Path,
+    title: String,
+    body: String,
+    base: String,
+) -> Result<()> {
+    let tools = build(settings, workspace).await?;
+    let url = tools
+        .open_pr(&title, &body, &base)
+        .await
+        .context("governed open_pr")?;
+    println!("opened PR: {url}");
+    Ok(())
+}

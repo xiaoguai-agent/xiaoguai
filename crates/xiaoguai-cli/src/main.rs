@@ -808,6 +808,25 @@ enum CodeCmd {
         /// Checkpoint id (a commit SHA printed by `write`/`commit`).
         checkpoint: String,
     },
+    /// Push a branch to a remote (egress; audit `git.push`).
+    Push {
+        /// Branch to push.
+        branch: String,
+        /// Remote name.
+        #[arg(long, default_value = "origin")]
+        remote: String,
+    },
+    /// Open a pull request via the `gh` CLI (egress; audit `pr.open`).
+    OpenPr {
+        /// PR title.
+        title: String,
+        /// PR body.
+        #[arg(long, default_value = "")]
+        body: String,
+        /// Base branch.
+        #[arg(long, default_value = "main")]
+        base: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -1599,6 +1618,10 @@ async fn main() -> Result<()> {
                 }
                 CodeCmd::Commit { message } => code::commit(&settings, ws, message).await,
                 CodeCmd::Rollback { checkpoint } => code::rollback(&settings, ws, checkpoint).await,
+                CodeCmd::Push { branch, remote } => code::push(&settings, ws, remote, branch).await,
+                CodeCmd::OpenPr { title, body, base } => {
+                    code::open_pr(&settings, ws, title, body, base).await
+                }
             }
         }
         // Wave-3

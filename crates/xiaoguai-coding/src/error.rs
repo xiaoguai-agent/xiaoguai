@@ -16,19 +16,21 @@ pub enum CodingError {
         source: std::io::Error,
     },
 
-    /// `git` could not be launched at all (not on `PATH`, or not executable).
-    /// The persistent-workspace mode shells out to the system `git` (DEC-034
-    /// trade-off: relies on `git` being installed), so this is the first thing
-    /// to check when a workspace fails to initialise.
-    #[error("could not run `git` (is it installed and on PATH?): {source}")]
-    GitLaunch {
+    /// A required CLI (`git`, or `gh` for `open_pr`) could not be launched at
+    /// all (not on `PATH`, or not executable). The persistent-workspace mode
+    /// shells out to these (DEC-034 trade-off), so this is the first thing to
+    /// check when a workspace operation fails to start.
+    #[error("could not run `{program}` (is it installed and on PATH?): {source}")]
+    Launch {
+        program: String,
         #[source]
         source: std::io::Error,
     },
 
-    /// `git` ran but exited non-zero. Carries the full context to act on.
-    #[error("git {args:?} failed (exit {code}) in {cwd}:\n{stderr}")]
+    /// A CLI ran but exited non-zero. Carries the full context to act on.
+    #[error("{program} {args:?} failed (exit {code}) in {cwd}:\n{stderr}")]
     Git {
+        program: String,
         args: Vec<String>,
         code: i32,
         cwd: PathBuf,

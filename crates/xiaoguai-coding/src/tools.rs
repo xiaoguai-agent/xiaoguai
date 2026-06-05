@@ -143,6 +143,32 @@ impl Workspace {
         git::run(self.root(), &["checkout", "-q", "-b", name], None).await?;
         Ok(())
     }
+
+    /// Push `branch` to `remote`. `[WRITE]` — **egress**, the "past local undo"
+    /// boundary (a rollback cannot unwind a completed push). Returns git's
+    /// (stderr-trimmed) summary.
+    pub async fn git_push(&self, remote: &str, branch: &str) -> Result<String, CodingError> {
+        git::run(self.root(), &["push", remote, branch], None).await
+    }
+
+    /// Open a pull request via the `gh` CLI. `[WRITE]` — **egress**. Returns the
+    /// PR URL `gh` prints. Requires `gh` on `PATH` + a configured GitHub remote;
+    /// a missing `gh` surfaces as a teaching `Launch` error.
+    pub async fn open_pr(
+        &self,
+        title: &str,
+        body: &str,
+        base: &str,
+    ) -> Result<String, CodingError> {
+        git::run_program(
+            "gh",
+            self.root(),
+            &[
+                "pr", "create", "--title", title, "--body", body, "--base", base,
+            ],
+        )
+        .await
+    }
 }
 
 /// Write `bytes` to `path` atomically: write a sibling temp file, fsync, rename.
