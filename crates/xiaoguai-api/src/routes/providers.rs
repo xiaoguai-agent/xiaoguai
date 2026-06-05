@@ -210,6 +210,14 @@ mod tests {
             }
             Ok(())
         }
+        async fn update(&self, prov: &LlmProvider) -> RepoResult<()> {
+            let mut g = self.rows.lock().unwrap();
+            let Some(slot) = g.iter_mut().find(|p| p.id == prov.id) else {
+                return Err(RepoError::NotFound);
+            };
+            *slot = prov.clone();
+            Ok(())
+        }
     }
 
     async fn body_json(resp: Response) -> serde_json::Value {

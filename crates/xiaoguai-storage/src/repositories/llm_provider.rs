@@ -17,6 +17,10 @@ pub trait LlmProviderRepository: Send + Sync {
     /// All registered providers, ordered by `fallback_order` ascending.
     async fn list(&self) -> RepoResult<Vec<LlmProvider>>;
     async fn delete(&self, id: &str) -> RepoResult<()>;
+    /// Overwrite the mutable columns of an existing provider, matched by
+    /// `prov.id`. `id`, `name`, and `created_at` are left unchanged. Returns
+    /// [`RepoError::NotFound`] when no row matches the id.
+    async fn update(&self, prov: &LlmProvider) -> RepoResult<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -148,6 +152,38 @@ impl LlmProviderRepository for SqliteLlmProviderRepository {
             .execute(&mut *tx)
             .await
             .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
+        Ok(())
+    }
+
+    async fn update(&self, prov: &LlmProvider) -> RepoResult<()> {
+        let models = serde_json::to_value(&prov.models)?;
+        let defaults = serde_json::to_value(&prov.default_for_models)?;
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
+        let res = sqlx::query(
+            "UPDATE llm_providers SET \
+             kind = ?, endpoint = ?, models = ?, default_for_models = ?, \
+             fallback_order = ?, api_key_env = ?, api_key = ?, updated_at = ?, \
+             cost_per_1k_input_usd = ?, cost_per_1k_output_usd = ? \
+             WHERE id = ?",
+        )
+        .bind(prov.kind.as_str())
+        .bind(&prov.endpoint)
+        .bind(models)
+        .bind(defaults)
+        .bind(prov.fallback_order)
+        .bind(prov.api_key_env.as_deref())
+        .bind(prov.api_key.as_deref())
+        .bind(prov.updated_at)
+        .bind(prov.cost_per_1k_input_usd)
+        .bind(prov.cost_per_1k_output_usd)
+        .bind(prov.id.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+        if res.rows_affected() == 0 {
+            return Err(RepoError::NotFound);
+        }
         tx.commit().await.map_err(RepoError::from_sqlx)?;
         Ok(())
     }
