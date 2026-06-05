@@ -162,19 +162,32 @@ pub async fn run_python(
         drop(stdin);
     }
 
+    // Capture the pid before `wait_with_output` consumes the child — on timeout
+    // we use it (as the process-group id, since the child is its own group
+    // leader) to reap forked grandchildren, not just the top pid.
+    let child_pid = child.id();
     let wait_fut = child.wait_with_output();
     let (exit_code, stdout_raw, stderr_raw, timed_out) = match timeout(deadline, wait_fut).await {
         Ok(Ok(output)) => (output.status.code(), output.stdout, output.stderr, false),
         Ok(Err(e)) => return Err(ExecError::ChildIo(e)),
         Err(_elapsed) => {
-            // tokio::process::Child::wait_with_output consumed the child;
-            // when wait_with_output is cancelled the child is dropped, and
-            // tokio's Drop sends SIGKILL (via kill_on_drop default false…
-            // we explicitly set it below via build_command). The process
-            // is on its way out; we report what we have, which is nothing
-            // since wait_with_output buffers until completion. The "no
-            // output captured on timeout" is a known limitation noted in
-            // the runbook.
+            // Dropping the cancelled `wait_with_output` future SIGKILLs the top
+            // pid (kill_on_drop), but forked grandchildren survive. The child is
+            // its own group leader (process_group(0)), so SIGKILL the whole
+            // group `-pgid` to reap them. Best-effort, no-unsafe (the workspace
+            // forbids unsafe, ruling out a direct libc::kill), via /bin/kill.
+            // No output is captured on timeout (wait_with_output buffers until
+            // completion) — a known limitation noted in the runbook.
+            #[cfg(unix)]
+            if let Some(pid) = child_pid {
+                let _ = tokio::process::Command::new("kill")
+                    .arg("-KILL")
+                    .arg(format!("-{pid}"))
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .await;
+            }
             (None, Vec::new(), Vec::new(), true)
         }
     };
@@ -229,6 +242,12 @@ fn build_command(cfg: &ExecConfig, working_dir: &Path, main_py: &Path) -> Comman
     }
     // Kill the child if the future is dropped (e.g. on timeout cancellation).
     command.kill_on_drop(true);
+    // Put the child in its own process group (it becomes group leader, so
+    // pgid == child pid) so a timeout can SIGKILL the WHOLE group — otherwise
+    // kill_on_drop only reaps the top `sh`/python pid and any forked
+    // grandchildren (subprocess/multiprocessing) survive as orphans.
+    #[cfg(unix)]
+    command.process_group(0);
     command
 }
 
