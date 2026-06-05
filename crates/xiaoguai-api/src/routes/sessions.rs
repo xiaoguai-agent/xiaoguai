@@ -217,6 +217,14 @@ pub async fn send_message(
     let mut messages = history;
     messages.push(domain_to_llm(&user_domain));
 
+    // 2b. Identity memory (DEC-036, P1): prepend the owner's persistent `USER.md`
+    //     profile as a leading System message so every session knows who it is
+    //     working for. Loaded per-request (picks up edits without a restart);
+    //     absent/blank file → no-op. Not persisted into the session history.
+    if let Some(identity) = crate::identity::load_identity() {
+        messages.insert(0, LlmMessage::system(identity));
+    }
+
     // 3. Build the runtime context and register a cancel token.
     //    v0.12.0: every call site builds via RuntimeContext.
     let model = req.model.unwrap_or(session.model);

@@ -46,6 +46,10 @@ memory:
     kind: in_memory        # or: ollama
     # kind: ollama
     # host: "http://localhost:11434"
+  # Identity memory (DEC-036): write a persistent owner profile to
+  # `~/.xiaoguai/USER.md` (or set XIAOGUAI_IDENTITY_PATH) and it is injected as a
+  # leading system message into every chat session. Plaintext, owner-authored,
+  # size-capped — NOT secret storage (secrets stay in .env).
 
 auth:
   # Single-owner access gate (DEC-033). There is no OIDC/RBAC/multi-tenancy —
