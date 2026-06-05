@@ -15,6 +15,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v1.10.7] — 2026-06-05
+
+Guided setup wizard — the last piece of the headless/`pip install` config story.
+
+### Added
+- **`xiaoguai init`** — interactive setup wizard (#218). Lists the registered
+  providers, prompts you to pick one, reads its API key with **terminal echo
+  off** (via `stty`; no new dependency), optionally makes it the default model,
+  and persists to the local DB. A fresh install is now: `xiaoguai init` →
+  answer 3 prompts → `xiaoguai serve` — no env vars, no `sqlite3`, no web UI.
+
+### Fixed
+- init wizard terminal-safety (#219): echo is restored on every exit path
+  including Ctrl-C (blocking read raced against `tokio::signal::ctrl_c` + an
+  `EchoGuard`); EOF at a prompt no longer spins forever; only touches `stty` for
+  a real TTY; warns when promoting a keyless provider to the default.
+
 ## [v1.10.6] — 2026-06-05
 
 CLI ergonomics for headless / `pip install` users — configure providers, set a
