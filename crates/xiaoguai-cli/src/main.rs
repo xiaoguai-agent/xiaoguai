@@ -53,6 +53,21 @@ enum Cmd {
     /// authority.
     Acp,
 
+    /// Interactive chat REPL against a running server. Multi-turn (keeps the
+    /// session's history) and uses your registered providers (`MiniMax`, etc.).
+    /// Reads prompts from stdin; `/exit` or Ctrl-D quits.
+    Repl {
+        /// Base URL of the API server.
+        #[arg(long, default_value = "http://localhost:7600")]
+        server: String,
+        /// User id for the session.
+        #[arg(long, default_value = "usr_dev")]
+        user_id: String,
+        /// Model to use. Empty (the default) uses the server's default model.
+        #[arg(long, default_value = "")]
+        model: String,
+    },
+
     /// Send a one-shot prompt to the agent and print the response.
     Chat {
         /// User prompt.
@@ -1169,8 +1184,109 @@ async fn handle_mcp(config: Option<&str>, action: McpCmd) -> Result<()> {
     Ok(())
 }
 
+/// Render one streamed `RemoteEvent` to the terminal: assistant text to stdout
+/// (so it pipes cleanly), tool/done/error markers to stderr. Shared by
+/// `remote chat` and `repl`.
+fn render_remote_event(ev: &remote::RemoteEvent) {
+    use std::io::Write as _;
+    match ev.name.as_str() {
+        "text_delta" => {
+            if let Some(delta) = ev.payload.get("delta").and_then(serde_json::Value::as_str) {
+                print!("{delta}");
+                std::io::stdout().flush().ok();
+            }
+        }
+        "tool_call_started" => {
+            let name = ev
+                .payload
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("?");
+            eprintln!("\n[tool start] {name}");
+        }
+        "tool_call_finished" => {
+            let ok = ev
+                .payload
+                .get("ok")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            eprintln!("[tool finish] ok={ok}");
+        }
+        "done" => {
+            println!();
+            let reason = ev
+                .payload
+                .get("stop_reason")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("?");
+            eprintln!("[done] {reason}");
+        }
+        "error" => {
+            let msg = ev
+                .payload
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("?");
+            eprintln!("[error] {msg}");
+        }
+        _ => {}
+    }
+}
+
+/// Interactive multi-turn REPL against a running server. Creates one session
+/// and loops: read a line from stdin → stream the reply. `/exit`, `/quit`, or
+/// EOF (Ctrl-D) quits. The prompt marker goes to stderr so the assistant's
+/// stdout text stays pipe-clean.
+async fn handle_repl(server: String, user_id: String, model: String) -> Result<()> {
+    use std::io::Write as _;
+    let client = remote::RemoteClient::new(server.clone());
+    client.healthz().await.with_context(|| {
+        format!("could not reach the server at {server} — start it with `xiaoguai serve`")
+    })?;
+    let session = client
+        .create_session(&remote::CreateSessionRequest {
+            user_id,
+            model,
+            title: None,
+        })
+        .await?;
+    eprintln!(
+        "xiaoguai repl — session {} (type /exit or Ctrl-D to quit)",
+        session.id
+    );
+
+    let stdin = std::io::stdin();
+    loop {
+        eprint!("\n> ");
+        std::io::stderr().flush().ok();
+        let mut line = String::new();
+        if stdin.read_line(&mut line).context("read stdin")? == 0 {
+            eprintln!();
+            break; // EOF / Ctrl-D
+        }
+        let prompt = line.trim();
+        if prompt.is_empty() {
+            continue;
+        }
+        if matches!(prompt, "/exit" | "/quit") {
+            break;
+        }
+        if let Err(e) = client
+            .send_message(&session.id, prompt, |ev| {
+                render_remote_event(&ev);
+                Ok(())
+            })
+            .await
+        {
+            // Keep the REPL alive on a per-turn error (network blip, etc.).
+            eprintln!("[error] {e:#}");
+        }
+    }
+    eprintln!("bye");
+    Ok(())
+}
+
 async fn handle_remote(server: String, action: RemoteCmd) -> Result<()> {
-    use std::io::Write;
     let client = remote::RemoteClient::new(server);
     match action {
         RemoteCmd::Healthz => {
@@ -1193,50 +1309,7 @@ async fn handle_remote(server: String, action: RemoteCmd) -> Result<()> {
             eprintln!("session: {}", session.id);
             client
                 .send_message(&session.id, &prompt, |ev| {
-                    match ev.name.as_str() {
-                        "text_delta" => {
-                            if let Some(delta) =
-                                ev.payload.get("delta").and_then(serde_json::Value::as_str)
-                            {
-                                print!("{delta}");
-                                std::io::stdout().flush().ok();
-                            }
-                        }
-                        "tool_call_started" => {
-                            let name = ev
-                                .payload
-                                .get("name")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("?");
-                            eprintln!("\n[tool start] {name}");
-                        }
-                        "tool_call_finished" => {
-                            let ok = ev
-                                .payload
-                                .get("ok")
-                                .and_then(serde_json::Value::as_bool)
-                                .unwrap_or(false);
-                            eprintln!("[tool finish] ok={ok}");
-                        }
-                        "done" => {
-                            println!();
-                            let reason = ev
-                                .payload
-                                .get("stop_reason")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("?");
-                            eprintln!("[done] {reason}");
-                        }
-                        "error" => {
-                            let msg = ev
-                                .payload
-                                .get("message")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("?");
-                            eprintln!("[error] {msg}");
-                        }
-                        _ => {}
-                    }
+                    render_remote_event(&ev);
                     Ok(())
                 })
                 .await?;
@@ -1687,6 +1760,11 @@ async fn main() -> Result<()> {
         Cmd::Provider { action } => handle_provider(cfg, action).await,
         Cmd::Mcp { action } => handle_mcp(cfg, action).await,
         Cmd::Remote { server, action } => handle_remote(server, action).await,
+        Cmd::Repl {
+            server,
+            user_id,
+            model,
+        } => handle_repl(server, user_id, model).await,
         Cmd::Eval { action } => handle_eval(action).await,
         Cmd::Completions { shell } => {
             let mut cmd = Cli::command();
