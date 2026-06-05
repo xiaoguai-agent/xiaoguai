@@ -1,26 +1,38 @@
 # Quickstart
 
 This walks through bringing Xiaoguai up locally and sending your first
-streaming chat message. Total time: ~5 minutes assuming Docker is
-installed.
+streaming chat message. Total time: ~5 minutes. Xiaoguai is a **single binary
+over an embedded SQLite file** — no Postgres, no Redis, no Docker required.
 
-## 1. Bring up the stack
+## 1. Bring up the server
+
+Pick whichever matches what you have. All three end at the same place — a
+`xiaoguai` process on `http://localhost:7600` with state in an embedded SQLite
+file (default `~/.xiaoguai/data.db`); there is no separate database or cache
+server to run.
+
+**From source** (needs a Rust toolchain — `cargo` is enough):
 
 ```bash
 git clone https://github.com/xiaoguai-agent/xiaoguai.git
 cd xiaoguai
-docker compose -f deploy/docker-compose.yml up --build
+cargo run -p xiaoguai-cli -- serve   # :7600, auto-creates the SQLite file, no config needed
 ```
 
-Compose brings up a single `xiaoguai-core` container on
-`http://localhost:7600`. State lives in **embedded SQLite** inside the
-`xiaoguai_data` volume — there is no separate database or cache server to
-run. The first build takes ~2 min; subsequent runs are cached.
+**Pre-built package** (no toolchain, bundles the web UI) — install a release
+`.deb`/`.rpm`/tarball (see the [Operator Guide](operator/overview.md)); the
+systemd unit starts `xiaoguai serve` for you.
 
-> Prefer no Docker? Install a release `.deb`/`.rpm`/tarball (see the
-> [Operator Guide](operator/overview.md)) or run from source with
-> `cargo run -p xiaoguai-core` — it creates `./data.db` and serves on
-> `:7600` with no other dependencies.
+**Docker** (one command, full stack + web UI bundled):
+
+```bash
+docker compose -f deploy/docker-compose.yml up --build   # first build ~2 min
+```
+
+> Requires the Docker Compose **v2 plugin** — check with
+> `docker compose version`. If it errors with
+> `unknown shorthand flag: 'f'`, the plugin is missing: install
+> `docker-compose-plugin`, or just use one of the paths above.
 
 ## 2. Confirm it's alive
 
@@ -62,6 +74,10 @@ curl -N -X POST http://localhost:7600/v1/sessions/$SID/messages \
   -d '{"content":"hello"}'
 ```
 
+> No server at all? `cargo run -p xiaoguai-cli -- chat --mock --prompt 'hello'`
+> runs a single deterministic turn in-process — handy for a no-network smoke
+> test of the build.
+
 > If you set `auth.username` / `auth.password` (or the matching
 > `XIAOGUAI_AUTH__USERNAME` / `XIAOGUAI_AUTH__PASSWORD` env vars), add
 > `-u "$USER:$PASS"` to every curl and `--basic-user` / `--basic-pass` to the
@@ -75,8 +91,10 @@ curl http://localhost:7600/v1/sessions/$SID/messages | jq
 
 ## 5. Use the web UI
 
-The release binary already serves the web UI: open `http://localhost:7600/`
-for the chat UI and `http://localhost:7600/admin/` for the admin console.
+The pre-built packages and the Docker image already serve the web UI: open
+`http://localhost:7600/` for the chat UI and `http://localhost:7600/admin/`
+for the admin console. (A from-source `cargo run … serve` is API + CLI only —
+the bundled static assets ship with the packages and the image.)
 
 To run the chat UI from source against the same backend:
 
@@ -87,10 +105,10 @@ pnpm -F @xiaoguai/chat-ui dev
 # → http://localhost:5173 (proxies /v1 to the backend)
 ```
 
-## What ships in the compose stack
+## What you get
 
-- **xiaoguai-core** — REST + SSE API on :7600, backed by embedded SQLite,
-  serving the bundled chat UI (`/`) and admin UI (`/admin/`).
+- **xiaoguai serve** — REST + SSE API on :7600, backed by embedded SQLite,
+  and (from a package/image) the bundled chat UI (`/`) and admin UI (`/admin/`).
   - **Local-first by default**: the seeded `ollama-local` provider serves
     `qwen2.5-coder`, so the agent talks to a **local** model on boot — no
     cloud API key required. Start Ollama and pull the model:
@@ -130,7 +148,8 @@ is pending that work.
 
 | Symptom                               | Likely cause                                   |
 |---------------------------------------|------------------------------------------------|
-| `healthz` returns nothing             | Core not up — check `docker compose logs xiaoguai-core`. |
-| `POST /v1/sessions` returns 500       | Migrations haven't run — `docker compose restart xiaoguai-core` reruns them against the SQLite file. |
+| `healthz` returns nothing             | Server not up — check the `xiaoguai serve` stdout, `journalctl -u xiaoguai-core` (package install), or `docker compose logs xiaoguai-core` (Docker). |
+| `POST /v1/sessions` returns 500       | Migrations haven't run — restart the server; it reruns them against the SQLite file on boot. |
+| `unknown shorthand flag: 'f'` on `docker compose` | The Docker Compose v2 plugin is missing — install `docker-compose-plugin`, or skip Docker and run `cargo run -p xiaoguai-cli -- serve`. |
 | SSE stream stays empty                | MockBackend is configured to respond with a fixed string; for richer output configure a real provider. |
 | 401 on `/v1/**`                       | An `auth.username`/`auth.password` is configured — pass HTTP Basic credentials (`curl -u user:pass`), or clear them for an open localhost run. |
