@@ -15,6 +15,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v1.10.8] — 2026-06-05
+
+### Fixed
+- **`xiaoguai init` (and the `provider` commands) now work on a brand-new DB**
+  (#221). They previously errored with `no such table: llm_providers` until
+  `xiaoguai serve` had been run once (which applied the migrations + seed) — a
+  poor first-run for a setup wizard. The local-DB CLI commands now run the
+  idempotent migrations on connect, so a fresh `pip install` is truly
+  `xiaoguai init` → `xiaoguai serve`.
+
 ## [v1.10.7] — 2026-06-05
 
 Guided setup wizard — the last piece of the headless/`pip install` config story.
