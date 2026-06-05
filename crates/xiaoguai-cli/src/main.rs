@@ -9,7 +9,7 @@ use xiaoguai_cli::commands::{
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
-    connect,
+    connect, migrate,
     repositories::{
         LlmProviderRepository, McpServerRepository, SqliteLlmProviderRepository,
         SqliteMcpServerRepository,
@@ -926,6 +926,10 @@ async fn build_provider_repo(config: Option<&str>) -> Result<SqliteLlmProviderRe
     let pool = connect(&settings.database.url, settings.database.max_connections)
         .await
         .context("open SQLite store")?;
+    // Apply migrations (schema + seeded providers) so `xiaoguai init` and the
+    // `provider` commands work on a brand-new DB without needing `xiaoguai
+    // serve` first. Idempotent — a no-op once the store is current.
+    migrate(&pool).await.context("apply migrations")?;
     Ok(SqliteLlmProviderRepository::new(pool))
 }
 
