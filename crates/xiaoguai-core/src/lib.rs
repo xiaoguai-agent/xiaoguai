@@ -655,8 +655,11 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
             pool.clone(),
         )),
         // v1.3.x: long-term memory — SqliteMemoryStore with the embedder selected by
-        // `OLLAMA_HOST` (air-gapped Ollama vs in-process). Makes /v1/memories live.
-        memory_store: Some(crate::memory_bridge::build_memory_store(pool.clone())),
+        // the `memory.embedder` config block (DEC-036), `OLLAMA_HOST` env overriding.
+        memory_store: Some(crate::memory_bridge::build_memory_store(
+            pool.clone(),
+            &settings.memory.embedder,
+        )),
         // v1.3.x: workspace CRUD — production wires SqliteWorkspaceRepository
         // in workspace_bridge.rs; `None` makes /v1/workspaces return 503.
         workspace_repository: None,
