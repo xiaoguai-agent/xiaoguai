@@ -15,11 +15,12 @@ cargo feature, off by default).
 
 ## Quick bring-up
 
-The simplest path needs no Docker — a single binary on embedded SQLite:
+The simplest path needs no Docker and no toolchain — `pip install` drops the
+native binary on PATH (macOS arm64/x86_64, Linux x86_64/aarch64):
 
 ```bash
-# from the repo root (needs a Rust toolchain)
-cargo run -p xiaoguai-cli -- serve   # :7600, auto-creates ~/.xiaoguai/data.db
+pip install xiaoguai
+xiaoguai serve                       # :7600, auto-creates ~/.xiaoguai/data.db
 
 # in another terminal — first chat:
 curl http://localhost:7600/healthz       # → ok
@@ -28,12 +29,12 @@ curl -X POST http://localhost:7600/v1/sessions \
   -d '{"user_id":"usr_dev","model":"mock"}'
 ```
 
-Pre-built `.deb`/`.rpm`/tarball installs give you the same `xiaoguai serve`
-entrypoint with the web UI already bundled — see the repo-root README's
-Quickstart (Option A). A no-network one-shot, no server needed:
+From a checkout with a Rust toolchain, `cargo run -p xiaoguai-cli -- serve`
+does the same. Pre-built `.deb`/`.rpm`/tarball installs add the bundled web UI —
+see the repo-root README's Quickstart. A no-network one-shot, no server needed:
 
 ```bash
-cargo run -p xiaoguai-cli -- chat --mock --prompt 'hello'
+xiaoguai chat --mock --prompt 'hello'
 ```
 
 ### Containerised (one command, full stack + web UI bundled)
