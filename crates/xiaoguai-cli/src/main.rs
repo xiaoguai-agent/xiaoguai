@@ -4,8 +4,8 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
-    anomaly, audit_bundle, audit_export, backup, chat, code, completions, eval, hotl, manpages,
-    mcp, outcomes, provider, remote, self_update, skills, stats, tasks, watch,
+    anomaly, audit_bundle, audit_export, backup, chat, code, completions, eval, hotl, init,
+    manpages, mcp, outcomes, provider, remote, self_update, skills, stats, tasks, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -67,6 +67,11 @@ enum Cmd {
         #[arg(long, default_value = "")]
         model: String,
     },
+
+    /// Interactive setup wizard: pick a provider, enter its API key (hidden),
+    /// and optionally make it the default model. Writes to the local DB; no web
+    /// UI needed. Restart `xiaoguai serve` afterwards.
+    Init,
 
     /// Send a one-shot prompt to the agent and print the response.
     Chat {
@@ -1010,6 +1015,109 @@ fn split_csv(s: &str) -> Vec<String> {
         .collect()
 }
 
+/// Read one line of input from stdin (visible).
+fn prompt_line() -> Result<String> {
+    let mut s = String::new();
+    std::io::stdin().read_line(&mut s).context("read stdin")?;
+    Ok(s)
+}
+
+/// Read one line with terminal echo disabled (Unix, via `stty`). On a
+/// non-terminal stdin (piped) or where `stty` is unavailable, the input is
+/// simply read visibly.
+fn prompt_hidden() -> Result<String> {
+    let echo_off = std::process::Command::new("stty")
+        .arg("-echo")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let mut s = String::new();
+    let read = std::io::stdin().read_line(&mut s);
+    if echo_off {
+        let _ = std::process::Command::new("stty").arg("echo").status();
+        eprintln!(); // the user's Enter wasn't echoed — emit the newline.
+    }
+    read.context("read stdin")?;
+    Ok(s)
+}
+
+/// `xiaoguai init` — interactive setup wizard. Picks a provider from the local
+/// registry, takes its API key (hidden), optionally makes it the default model,
+/// and persists via the (already-tested) `provider::update`.
+async fn handle_init(config: Option<&str>) -> Result<()> {
+    use std::io::Write as _;
+    let repo = build_provider_repo(config).await?;
+    let providers = repo.list().await?;
+    if providers.is_empty() {
+        return Err(anyhow::anyhow!(
+            "no providers found — run `xiaoguai serve` once so the migrations seed the defaults"
+        ));
+    }
+
+    println!("xiaoguai setup — configure a model provider\n");
+    print!("{}", init::format_provider_menu(&providers));
+
+    let idx = loop {
+        eprint!("\nPick a provider to configure [1-{}]: ", providers.len());
+        std::io::stderr().flush().ok();
+        if let Some(i) = init::parse_selection(&prompt_line()?, providers.len()) {
+            break i;
+        }
+        eprintln!("  please enter a number between 1 and {}", providers.len());
+    };
+    let chosen = &providers[idx];
+
+    eprint!(
+        "\n{} API key (hidden — leave blank to keep the current one): ",
+        chosen.name
+    );
+    std::io::stderr().flush().ok();
+    let key_raw = prompt_hidden()?;
+    let key = {
+        let k = key_raw.trim();
+        if k.is_empty() {
+            None
+        } else {
+            Some(k.to_string())
+        }
+    };
+
+    eprint!(
+        "\nMake {} the default model (so you can skip --model)? [Y/n]: ",
+        chosen.name
+    );
+    std::io::stderr().flush().ok();
+    let make_default = init::parse_yes_no(&prompt_line()?, true);
+
+    let repo_ref: &dyn LlmProviderRepository = &repo;
+    let updated = provider::update(
+        repo_ref,
+        provider::UpdateArgs {
+            id: chosen.id.as_str().to_string(),
+            // fallback_order=0 makes this provider primary, so the router uses
+            // its first model as the deployment default (see #214).
+            fallback_order: if make_default { Some(0) } else { None },
+            api_key: key.clone(),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    eprintln!();
+    if key.is_some() {
+        eprintln!("✓ stored API key for {}", updated.name);
+    }
+    if make_default {
+        let model = updated.models.first().map_or("(its model)", String::as_str);
+        eprintln!(
+            "✓ {} is now the default provider (default model: {model})",
+            updated.name
+        );
+    }
+    eprintln!("\nRestart the server for changes to take effect:  xiaoguai serve");
+    Ok(())
+}
+
 async fn handle_provider(config: Option<&str>, action: ProviderCmd) -> Result<()> {
     let repo = build_provider_repo(config).await?;
     let repo: &dyn LlmProviderRepository = &repo;
@@ -1758,6 +1866,7 @@ async fn main() -> Result<()> {
             model,
         } => handle_chat(prompt, mock, ollama_url, model).await,
         Cmd::Provider { action } => handle_provider(cfg, action).await,
+        Cmd::Init => handle_init(cfg).await,
         Cmd::Mcp { action } => handle_mcp(cfg, action).await,
         Cmd::Remote { server, action } => handle_remote(server, action).await,
         Cmd::Repl {
