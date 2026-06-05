@@ -30,6 +30,40 @@ fn router_with(backends: Vec<(ProviderId, Arc<dyn LlmBackend>)>, cfg: RouterConf
 }
 
 #[tokio::test]
+async fn empty_model_uses_default_model() {
+    let p = ProviderId::new();
+    let backends: Vec<(ProviderId, Arc<dyn LlmBackend>)> =
+        vec![(p.clone(), Arc::new(MockBackend::with_response("defaulted")))];
+    let mut cfg = RouterConfig::default();
+    cfg.fallback_order.push(p);
+    cfg.default_model = Some("MiniMax-M2".into());
+    let router = router_with(backends, cfg);
+
+    // Empty model -> router substitutes default_model, then routes via fallback.
+    let stream = router
+        .chat_stream(ResolveCtx::default(), make_req(""))
+        .await
+        .expect("ok");
+    assert_eq!(collect(stream).await, "defaulted");
+}
+
+#[tokio::test]
+async fn empty_model_without_default_errors() {
+    let p = ProviderId::new();
+    let backends: Vec<(ProviderId, Arc<dyn LlmBackend>)> =
+        vec![(p.clone(), Arc::new(MockBackend::with_response("x")))];
+    let mut cfg = RouterConfig::default();
+    cfg.fallback_order.push(p); // no default_model configured
+    let router = router_with(backends, cfg);
+
+    // `ChatStream` isn't `Debug`, so match rather than `.expect_err()`.
+    let res = router
+        .chat_stream(ResolveCtx::default(), make_req("  "))
+        .await;
+    assert!(matches!(res, Err(LlmError::NoProvider(_))));
+}
+
+#[tokio::test]
 async fn explicit_provider_wins() {
     let p_a = ProviderId::new();
     let p_b = ProviderId::new();

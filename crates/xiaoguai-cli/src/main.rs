@@ -630,7 +630,9 @@ enum RemoteCmd {
     Chat {
         #[arg(long)]
         user_id: String,
-        #[arg(long, default_value = "qwen2.5-coder")]
+        /// Model to use. Empty (the default) lets the server pick its default
+        /// model — the primary (lowest `fallback_order`) provider's first model.
+        #[arg(long, default_value = "")]
         model: String,
         #[arg(long)]
         prompt: String,

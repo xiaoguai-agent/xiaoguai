@@ -248,6 +248,15 @@ pub fn build_router(rows: &[LlmProvider], env: &dyn EnvResolver) -> (LlmRouter, 
         }
     }
 
+    // Default model for requests that omit one: the first model of the primary
+    // (lowest fallback_order) provider that actually built a backend. A
+    // single-provider deployment then needs no `--model`; promoting a provider
+    // (lower fallback_order) makes its model the default.
+    config.default_model = globals
+        .iter()
+        .find(|row| backends.contains_key(&row.id) && !row.models.is_empty())
+        .and_then(|row| row.models.first().cloned());
+
     (LlmRouter::new(backends, config), report)
 }
 
@@ -303,6 +312,39 @@ mod tests {
             max_tokens: None,
         };
         assert!(router.resolve(ctx, &req).is_empty());
+    }
+
+    #[test]
+    fn default_model_is_primary_providers_first_model() {
+        let env = no_env;
+        let primary = provider(
+            "p1",
+            ProviderKind::Ollama,
+            "http://a",
+            vec!["model-a"],
+            1,
+            None,
+        );
+        let secondary = provider(
+            "p2",
+            ProviderKind::Ollama,
+            "http://b",
+            vec!["model-b"],
+            50,
+            None,
+        );
+        // Pass out of order to prove it's fallback_order, not arg order.
+        let (router, _) = build_router(&[secondary, primary], &env);
+        assert_eq!(router.default_model(), Some("model-a"));
+    }
+
+    #[test]
+    fn default_model_is_none_when_provider_has_no_models() {
+        let env = no_env;
+        // A provider that lists no models can't supply a default.
+        let p = provider("p", ProviderKind::Ollama, "http://a", vec![], 1, None);
+        let (router, _) = build_router(&[p], &env);
+        assert_eq!(router.default_model(), None);
     }
 
     #[test]
