@@ -39,6 +39,11 @@ cargo install --path crates/xiaoguai-cli
 `pip install 'xiaoguai[client]'` — adds `xiaoguai.client.XiaoguaiClient`, a
 synchronous HTTP client for the `xiaoguai-api` REST server (requires `httpx>=0.25`).
 
+> **Note:** the client snippets below predate the single-user pivot (DEC-033).
+> The live API now serves on `:7600` with optional HTTP Basic auth and no
+> tenant scoping. The bundled binary launcher above is the supported path;
+> treat these examples as illustrative pending a client refresh.
+
 ### Covered endpoints (v1.2.x)
 
 | Domain | Methods |
@@ -52,7 +57,7 @@ synchronous HTTP client for the `xiaoguai-api` REST server (requires `httpx>=0.2
 ```python
 from xiaoguai.client import XiaoguaiClient
 
-with XiaoguaiClient("http://localhost:8080", token="my-bearer-token") as c:
+with XiaoguaiClient("http://localhost:7600", token="my-bearer-token") as c:
     # HotL — boundary policy admin
     policy = c.create_hotl_policy(
         tenant_id="my-tenant-uuid",
