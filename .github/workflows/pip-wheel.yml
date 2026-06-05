@@ -90,6 +90,20 @@ jobs:
           python3 -m pip install --break-system-packages ziglang
           cargo install --locked cargo-zigbuild
 
+      # The workspace Cargo.toml stays at 0.1.0; the release version is the git
+      # tag. Inject it so the BUNDLED BINARY's `--version` (env!CARGO_PKG_VERSION)
+      # matches the release — otherwise `pip install`-ed users see 0.1.0 and
+      # `self-update` thinks every release is an upgrade. Mirrors the deb/rpm/
+      # tarball workflows. (Drops --locked below: the sed makes Cargo.lock's
+      # 0.1.0 stale, exactly as release-packages.yml does.)
+      - name: Set workspace version from tag
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = \"0.1.0\"/version = \"${VERSION}\"/" Cargo.toml
+          echo "Cargo.toml workspace version -> ${VERSION}"
+
       - name: Build native binary
         shell: bash
         run: |
@@ -100,7 +114,7 @@ jobs:
             # no emulation. A plain host build on ubuntu-latest (glibc 2.39) needs
             # symbols newer than any manylinux_* image, so auditwheel can't repair
             # it; pinning 2.28 makes the wheel manylinux_2_28-compliant.
-            cargo zigbuild --release --locked --target "${{ matrix.target }}.2.28" -p xiaoguai-cli
+            cargo zigbuild --release --target "${{ matrix.target }}.2.28" -p xiaoguai-cli
           else
             # macOS: cross-compile x86_64 on the arm runner too (target added by
             # rust-toolchain); cibuildwheel tests it under Rosetta. Pin the
@@ -108,7 +122,7 @@ jobs:
             # tag — otherwise delocate rejects a newer binary against the default
             # macosx_10_9 tag.
             MACOSX_DEPLOYMENT_TARGET=11.0 \
-              cargo build --release --locked --target "${{ matrix.target }}" -p xiaoguai-cli
+              cargo build --release --target "${{ matrix.target }}" -p xiaoguai-cli
           fi
 
       - name: Stage binary for package data
