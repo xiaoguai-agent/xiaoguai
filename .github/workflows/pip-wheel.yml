@@ -160,28 +160,26 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------------
-  # Publish to TestPyPI — runs on workflow_dispatch OR on any pre-release
-  # tag (e.g. v1.1.7.1rc1, v1.2.0a0, anything whose ref contains '-' or
-  # whose version segment contains 'a'/'b'/'rc').
+  # Publish to TestPyPI — pre-release tags ONLY (e.g. v1.2.0a0, v1.2.0rc1).
+  # NOT on workflow_dispatch: TestPyPI uses OIDC trusted-publishing which isn't
+  # set up, so firing it on every manual build-validation dispatch just produced
+  # a red job. Dispatch still runs the build-wheel matrix (the actual validation).
   #
-  # No API token needed.  PyPI trusted-publisher OIDC is used throughout.
-  # Maintainer setup: see docs/runbooks/pypi-trusted-publisher.md.
+  # Maintainer setup (if TestPyPI rehearsal is wanted): docs/runbooks/pypi-trusted-publisher.md.
   # ---------------------------------------------------------------------
   publish-testpypi:
     name: Rehearsal → TestPyPI
     needs: build-wheel
     runs-on: ubuntu-latest
-    # Fire on manual dispatch OR on pre-release tags (contain 'a', 'b', 'rc', or '.dev')
-    # NB: match on github.ref_name ("v1.10.5"), NOT github.ref
-    # ("refs/tags/v1.10.5") — the latter always contains an 'a' (from "tags"),
-    # which misclassified every stable tag as a pre-release.
+    # Pre-release tags only. NB: match on github.ref_name ("v1.2.0rc1"), NOT
+    # github.ref ("refs/tags/...") — the latter always contains an 'a' (from
+    # "tags"), which misclassified every stable tag as a pre-release.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' &&
-       github.ref_type == 'tag' &&
-       startsWith(github.ref_name, 'v') &&
-       (contains(github.ref_name, 'a') || contains(github.ref_name, 'b') ||
-        contains(github.ref_name, 'rc') || contains(github.ref_name, '.dev')))
+      github.event_name == 'push' &&
+      github.ref_type == 'tag' &&
+      startsWith(github.ref_name, 'v') &&
+      (contains(github.ref_name, 'a') || contains(github.ref_name, 'b') ||
+       contains(github.ref_name, 'rc') || contains(github.ref_name, '.dev'))
     permissions:
       id-token: write   # OIDC token for TestPyPI trusted publisher
       contents: read
