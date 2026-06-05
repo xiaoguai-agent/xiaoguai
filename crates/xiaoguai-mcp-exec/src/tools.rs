@@ -53,7 +53,7 @@ pub fn execute_python_tool() -> Tool {
         .open_world(false);
     Tool::new(
         EXECUTE_PYTHON,
-        "[WRITE] Execute a self-contained Python 3 snippet in a fresh sandbox (no network, no persistent FS, hard memory + time caps). Returns stdout, stderr, exit code. Each call is a fresh process; nothing persists between calls. Sensitive in scope `tool_call.execute_python` — gate at the agent loop with a `HotL` policy before dispatch.",
+        "[WRITE] Execute a self-contained Python 3 snippet in a fresh sandbox (no persistent FS, hard memory + time caps; the process env is scrubbed but the network is NOT isolated — deploy under container/netns egress isolation if outbound must be denied). Returns stdout, stderr, exit code. Each call is a fresh process; nothing persists between calls. Sensitive in scope `tool_call.execute_python` — gate at the agent loop with a `HotL` policy before dispatch.",
         schema_obj,
     )
     .annotate(annotations)

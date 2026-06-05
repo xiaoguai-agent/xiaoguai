@@ -257,14 +257,22 @@ impl HotlEscalationStore for SqliteHotlEscalationRepository {
         verdict: HotlDecisionVerdict,
         decided_by: Option<String>,
     ) -> RepoResult<bool> {
+        // The `expires_at > ?` guard (bound as a `DateTime`, mirroring
+        // `list_pending_unexpired` so the encoding matches the stored value)
+        // means a TIMED-OUT escalation can no longer be stamped 'resolved': once
+        // its deadline passed, a late operator decision matches no row and
+        // returns Ok(false). Without it, because the timeout path leaves the row
+        // `status='pending'`, a late decision would falsely flip an
+        // already-abandoned escalation to resolved in the audit/DB.
         let result = sqlx::query(
             "UPDATE hotl_pending \
              SET status = ?, decided_by = ?, decided_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') \
-             WHERE escalation_id = ? AND status = 'pending'",
+             WHERE escalation_id = ? AND status = 'pending' AND expires_at > ?",
         )
         .bind(verdict.status_str())
         .bind(decided_by.as_deref())
         .bind(escalation_id)
+        .bind(Utc::now())
         .execute(&self.pool)
         .await
         .map_err(RepoError::from_sqlx)?;

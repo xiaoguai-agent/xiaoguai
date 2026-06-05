@@ -9,6 +9,25 @@ use tokio::process::Command;
 
 use crate::error::CodingError;
 
+/// Env vars passed through to `git`/`gh` subprocesses (everything else is
+/// scrubbed so host app secrets don't leak). Just enough to find the binaries,
+/// their config/credential dirs, and authenticate a push/PR.
+const ENV_ALLOWLIST: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "APPDATA", // binaries + config/credential dirs
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE", // locale (git decodes paths/messages with it)
+    "SSH_AUTH_SOCK",
+    "SSH_AGENT_PID", // ssh-based push
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_HOST",
+    "GH_ENTERPRISE_TOKEN", // gh auth (push/PR)
+];
+
 /// Run `git <args>` in `cwd`, optionally with a dedicated `GIT_INDEX_FILE`
 /// (used to snapshot the working tree without disturbing the user's real
 /// index). Returns trimmed stdout on success; maps a non-zero exit or a
@@ -39,6 +58,25 @@ async fn exec(
 ) -> Result<String, CodingError> {
     let mut cmd = Command::new(program);
     cmd.current_dir(cwd).args(args);
+
+    // Scrub the environment to a git/gh-only allowlist so the host's app
+    // secrets (audit signing key, provider API keys, OLLAMA_HOST, …) are NOT
+    // handed to these subprocesses — a malicious in-tree `.git/config`/hook
+    // could otherwise read them. Keep only what git/gh genuinely need to find
+    // their binaries + config + credentials.
+    cmd.env_clear();
+    for key in ENV_ALLOWLIST {
+        if let Ok(val) = std::env::var(key) {
+            cmd.env(key, val);
+        }
+    }
+    // git's own GIT_* knobs (GIT_SSH_COMMAND, GIT_CONFIG_*, …) are git-specific
+    // and safe to pass through; our explicit GIT_* below still win (set last).
+    for (key, val) in std::env::vars() {
+        if key.starts_with("GIT_") {
+            cmd.env(key, val);
+        }
+    }
     // Deterministic, non-interactive: never prompt, never read a pager.
     cmd.env("GIT_TERMINAL_PROMPT", "0");
     if let Some(idx) = index_file {

@@ -172,6 +172,32 @@ async fn record_decision_resolves_pending_row() {
 }
 
 #[tokio::test]
+async fn record_decision_rejects_expired_row() {
+    // Security regression: a timed-out escalation stays `status='pending'` (the
+    // in-memory timeout path doesn't terminalise the DB row), so without the
+    // `expires_at > now` guard a late operator decision would falsely flip an
+    // already-abandoned escalation to 'resolved'. The guard must reject it.
+    let (pool, _guard) = test_setup().await;
+    let repo = SqliteHotlEscalationRepository::new(pool.clone());
+    let parent = make_parent("tool_call.execute_python");
+    let child = make_child("tool_call.execute_python", Duration::minutes(-1)); // already expired
+
+    let escalation_id = repo
+        .insert_pending(parent, child)
+        .await
+        .expect("insert_pending should succeed");
+
+    let matched = repo
+        .record_decision(escalation_id, HotlDecisionVerdict::Allowed, None)
+        .await
+        .expect("record_decision should succeed");
+    assert!(
+        !matched,
+        "record_decision on an expired (timed-out) row must return false, not stamp it resolved"
+    );
+}
+
+#[tokio::test]
 async fn record_decision_unknown_id_returns_false() {
     let (pool, _guard) = test_setup().await;
     let repo = SqliteHotlEscalationRepository::new(pool.clone());
