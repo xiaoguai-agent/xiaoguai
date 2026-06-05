@@ -15,10 +15,16 @@
 mod checkpoint;
 mod error;
 mod git;
+mod governed;
+mod tools;
 mod workspace;
 
 pub use checkpoint::CheckpointId;
 pub use error::CodingError;
+pub use governed::{
+    CodingGate, CodingStep, GateDecision, GovernedOutcome, GovernedTools, StepRecorder,
+};
+pub use tools::{EditSummary, FileEdit};
 pub use workspace::{Workspace, WorkspaceId};
 
 #[cfg(test)]

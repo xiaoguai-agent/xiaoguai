@@ -9,6 +9,7 @@ repository.workspace = true
 description = "Governed coding workflow — persistent git workspace + checkpoint/rollback primitive (DEC-034/035, LLD-CODING-001)."
 
 [dependencies]
+async-trait = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs", "process", "rt", "macros"] }
 tracing = { workspace = true }

@@ -38,6 +38,15 @@ pub enum CodingError {
     /// A checkpoint id was supplied that this workspace has never recorded.
     #[error("unknown checkpoint {id:?} for this workspace — list checkpoints before rolling back")]
     UnknownCheckpoint { id: String },
+
+    /// An `edit_file` could not be applied (e.g. search text not found).
+    #[error("cannot edit {path}: {reason}")]
+    Edit { path: PathBuf, reason: String },
+
+    /// A governed mutation was denied by the `HotL` gate; carries the scope and
+    /// reason so the agent understands why and what to request.
+    #[error("denied by policy: {scope} ({reason})")]
+    Denied { scope: String, reason: String },
 }
 
 impl CodingError {
