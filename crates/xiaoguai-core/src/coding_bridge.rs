@@ -5,15 +5,21 @@
 //! `CodingGate` traits, and these concrete impls live in `xiaoguai-core` where
 //! the sink and gate are already constructed.
 
+use std::path::Path;
 use std::sync::Arc;
 
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::json;
-use xiaoguai_agent::{HotlGate, HotlGateVerdict};
+use xiaoguai_agent::{AllowAllGate, HotlGate, HotlGateVerdict, Toolbox};
 use xiaoguai_audit::chain::sink::SqliteAuditSink;
 use xiaoguai_audit::{AuditEntry, OWNER_TENANT_ID};
-use xiaoguai_coding::{CodingGate, CodingStep, GateDecision, StepRecorder};
+use xiaoguai_coding::{
+    coding_tool_descriptors, CodingGate, CodingMcpClient, CodingStep, GateDecision, GovernedTools,
+    StepRecorder, Workspace,
+};
+use xiaoguai_mcp::McpClient;
 
 /// Each coding tool call gates as a single unit of work (matching the agent
 /// loop's per-tool-call locality); coding actions carry no spend, so the gate
@@ -106,6 +112,51 @@ impl CodingGate for HotlCodingGate {
             }
         }
     }
+}
+
+/// Build the governed coding tools over the workspace at `root` and register
+/// them into `toolbox` so the ReAct loop surfaces them to the model.
+///
+/// The coding gate is **allow-all**: the loop already enforces the real `HotL`
+/// decision on each `tool_call.<name>` scope before dispatch, so re-gating in
+/// `GovernedTools` would be double-gating. What this layer still provides is the
+/// pre-mutation checkpoint (for rollback) and the `code.*` / `git.*` audit rows
+/// carrying the checkpoint id — the half of the trust coin the generic loop
+/// audit doesn't.
+///
+/// # Errors
+/// Returns an error if the workspace cannot be opened/initialised, or if a tool
+/// name collides with one already in the toolbox.
+pub async fn register_coding_tools(
+    toolbox: &mut Toolbox,
+    sink: Arc<SqliteAuditSink>,
+    root: &Path,
+) -> Result<()> {
+    let workspace = Workspace::open_or_create(root)
+        .await
+        .with_context(|| format!("open coding workspace at {}", root.display()))?;
+    let tools = GovernedTools::new(
+        workspace,
+        HotlCodingGate::new(Arc::new(AllowAllGate)),
+        AuditStepRecorder::new(sink),
+    );
+    let client: Arc<dyn McpClient> = Arc::new(CodingMcpClient::new(tools));
+    for descriptor in coding_tool_descriptors() {
+        let name = descriptor.name.clone();
+        toolbox
+            .insert(client.clone(), descriptor)
+            .with_context(|| format!("register coding tool {name}"))?;
+    }
+    Ok(())
+}
+
+/// Resolve the coding workspace root: `XIAOGUAI_CODING_WORKSPACE` if set,
+/// otherwise the process's current directory (matching the `xiaoguai code`
+/// CLI's `--workspace .` default).
+#[must_use]
+pub fn coding_workspace_root() -> std::path::PathBuf {
+    std::env::var_os("XIAOGUAI_CODING_WORKSPACE")
+        .map_or_else(|| std::path::PathBuf::from("."), std::path::PathBuf::from)
 }
 
 #[cfg(test)]
