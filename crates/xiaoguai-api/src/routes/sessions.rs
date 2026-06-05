@@ -30,6 +30,9 @@ pub struct CreateSessionRequest {
     /// default for dev/test) the body must supply it.
     #[serde(default)]
     pub user_id: String,
+    /// Empty (or omitted) lets the LLM router pick its default model — the
+    /// primary (lowest `fallback_order`) provider's first model.
+    #[serde(default)]
     pub model: String,
     pub title: Option<String>,
 }
@@ -77,10 +80,10 @@ pub async fn create_session(
         Some(Extension(c)) => c.sub.clone(),
         None => req.user_id.clone(),
     };
-    if user_id.is_empty() || req.model.is_empty() {
-        return Err(ApiError::BadRequest(
-            "user_id and model are required".into(),
-        ));
+    // `model` may be empty — the router substitutes its default model at chat
+    // time (the primary provider's first model). Only `user_id` is required.
+    if user_id.is_empty() {
+        return Err(ApiError::BadRequest("user_id is required".into()));
     }
     let now = Utc::now();
     let session = Session {

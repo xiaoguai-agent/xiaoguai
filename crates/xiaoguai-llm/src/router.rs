@@ -35,6 +35,11 @@ pub struct RouterConfig {
     /// Providers walked in order when nothing more specific resolves and when
     /// an earlier candidate fails its initial call.
     pub fallback_order: Vec<ProviderId>,
+    /// Model used when a request omits one (empty `ChatRequest::model`). Set by
+    /// `build_router` to the primary (lowest `fallback_order`) provider's first
+    /// model — so a single-provider deployment "just works" without `--model`,
+    /// and lowering a provider's `fallback_order` makes its model the default.
+    pub default_model: Option<String>,
 }
 
 /// Per-request context controlling routing resolution and usage attribution.
@@ -75,6 +80,13 @@ impl LlmRouter {
         }
     }
 
+    /// The model substituted when a request omits one. `None` when no provider
+    /// with at least one model registered a backend.
+    #[must_use]
+    pub fn default_model(&self) -> Option<&str> {
+        self.config.default_model.as_deref()
+    }
+
     /// Attach a usage sink. The router will emit one record per successful
     /// stream (on `done: true`). Returns `self` for builder-style chaining.
     #[must_use]
@@ -97,8 +109,24 @@ impl LlmRouter {
     pub async fn chat_stream(
         &self,
         ctx: ResolveCtx<'_>,
-        req: ChatRequest,
+        mut req: ChatRequest,
     ) -> Result<ChatStream, LlmError> {
+        // An empty model means "use the deployment default" — the primary
+        // (lowest `fallback_order`) provider's first model. Lets CLI/API callers
+        // omit the model when there's an obvious default (single provider, or a
+        // provider promoted via `fallback_order`).
+        if req.model.trim().is_empty() {
+            match &self.config.default_model {
+                Some(m) => req.model = m.clone(),
+                None => {
+                    return Err(LlmError::NoProvider(
+                        "no model specified and no default model is configured; \
+                         pass an explicit model (e.g. --model MiniMax-M2)"
+                            .into(),
+                    ))
+                }
+            }
+        }
         let candidates = self.resolve(ctx, &req);
         if candidates.is_empty() {
             return Err(LlmError::NoProvider(
