@@ -336,7 +336,10 @@ fn parse_edit(args: &Value) -> Result<FileEdit, String> {
             all,
         });
     }
-    Err("edit_file needs either `content` (whole-file write) or `find` (search-replace)".to_string())
+    Err(
+        "edit_file needs either `content` (whole-file write) or `find` (search-replace)"
+            .to_string(),
+    )
 }
 
 fn join_or(lines: Vec<String>, empty: &str) -> String {
@@ -386,10 +389,7 @@ mod tests {
     async fn edit_then_read_round_trips_and_checkpoints() {
         let (c, _dir) = client().await;
         let edit = c
-            .call_tool(
-                "edit_file",
-                json!({ "path": "a.txt", "content": "hello" }),
-            )
+            .call_tool("edit_file", json!({ "path": "a.txt", "content": "hello" }))
             .await
             .unwrap();
         assert!(!edit.is_error, "edit should succeed: {}", edit.text);
@@ -406,9 +406,12 @@ mod tests {
     #[tokio::test]
     async fn search_replace_edit() {
         let (c, _dir) = client().await;
-        c.call_tool("edit_file", json!({ "path": "a.txt", "content": "foo bar foo" }))
-            .await
-            .unwrap();
+        c.call_tool(
+            "edit_file",
+            json!({ "path": "a.txt", "content": "foo bar foo" }),
+        )
+        .await
+        .unwrap();
         let edit = c
             .call_tool(
                 "edit_file",
@@ -427,7 +430,10 @@ mod tests {
     #[tokio::test]
     async fn missing_arg_is_a_tool_error_not_a_panic() {
         let (c, _dir) = client().await;
-        let res = c.call_tool("edit_file", json!({ "content": "x" })).await.unwrap();
+        let res = c
+            .call_tool("edit_file", json!({ "content": "x" }))
+            .await
+            .unwrap();
         assert!(res.is_error);
         assert!(res.text.contains("path"), "got: {}", res.text);
     }
