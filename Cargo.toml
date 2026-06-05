@@ -145,7 +145,7 @@ chrono = { version = "0.4", features = ["serde"] }
 url = { version = "2.5", features = ["serde"] }
 
 # llm clients
-async-openai = "0.40"
+async-openai = "0.41"
 eventsource-stream = "0.2"
 
 # mcp
