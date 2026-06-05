@@ -15,9 +15,11 @@ cargo feature, off by default).
 
 ## Quick bring-up
 
+The simplest path needs no Docker — a single binary on embedded SQLite:
+
 ```bash
-# from the repo root
-docker compose -f deploy/docker-compose.yml up --build
+# from the repo root (needs a Rust toolchain)
+cargo run -p xiaoguai-cli -- serve   # :7600, auto-creates ~/.xiaoguai/data.db
 
 # in another terminal — first chat:
 curl http://localhost:7600/healthz       # → ok
@@ -26,17 +28,25 @@ curl -X POST http://localhost:7600/v1/sessions \
   -d '{"user_id":"usr_dev","model":"mock"}'
 ```
 
-The compose image bundles the web UI: open **http://localhost:7600/** for
-chat-ui and **http://localhost:7600/admin/** for the admin console (the
-server serves them from `/app/static` via `XIAOGUAI_SERVER__STATIC_DIR`).
-
-Or with the bundled CLI (assumes a local Rust toolchain):
+Pre-built `.deb`/`.rpm`/tarball installs give you the same `xiaoguai serve`
+entrypoint with the web UI already bundled — see the repo-root README's
+Quickstart (Option A). A no-network one-shot, no server needed:
 
 ```bash
-cargo run -p xiaoguai-cli -- remote \
-  --server http://localhost:7600 \
-  chat --user-id usr_dev --prompt 'hello'
+cargo run -p xiaoguai-cli -- chat --mock --prompt 'hello'
 ```
+
+### Containerised (one command, full stack + web UI bundled)
+
+```bash
+docker compose -f deploy/docker-compose.yml up --build
+```
+
+Requires the Docker Compose **v2 plugin** (`docker compose version`); if that
+errors with `unknown shorthand flag: 'f'`, install `docker-compose-plugin`.
+The image bundles the web UI: open **http://localhost:7600/** for chat-ui and
+**http://localhost:7600/admin/** for the admin console (served from
+`/app/static` via `XIAOGUAI_SERVER__STATIC_DIR`).
 
 ## Layers
 

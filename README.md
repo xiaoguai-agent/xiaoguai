@@ -29,24 +29,18 @@ reliable.*
 | **MCP two-way.** Consumes stdio / SSE / streamable-HTTP MCP servers *and* publishes its own toolbox at `/v1/mcp/serve`. External agents see what internal agents see. | First-class | Consumer only | Consumer only (v1.6+) | Limited / via plugins |
 | **RAG with first-class citations.** `ContentBlock::Citation` is a typed variant — source URI, line span, preview, score. Adapters that can't cite must not silently emit unsourced text. | First-class | None native | Cited in UI, schema opaque | Cited; long-standing bugs (#12655, #20829) |
 
-## 5-minute quickstart
+## Quickstart
 
-```bash
-git clone https://github.com/xiaoguai-agent/xiaoguai.git
-cd xiaoguai
-docker compose -f deploy/docker-compose.yml up --build
-# wait ~2 min on first build, then open:
-open http://localhost:7600/healthz   # → ok
-```
+Xiaoguai is a **single binary over an embedded SQLite file** — no Postgres,
+no Redis, no Docker required. Every path below ends the same way: a `xiaoguai`
+process serving `:7600`, self-contained on `MockBackend` out of the box. Pick
+the one that matches what you have.
 
-That's the whole thing — one `xiaoguai-core` service on `:7600` with an
-embedded SQLite store, running on `MockBackend` so it's self-contained out
-of the box. For the chat UI, real LLM providers, MCP server registration,
-and the admin console, see [`docs/user-guide/quickstart.md`](docs/user-guide/quickstart.md).
+Verify any of them with `curl http://localhost:7600/healthz` → `ok`.
 
-### Install pre-built binaries
+### Option A — pre-built package (no toolchain, bundles the web UI) — recommended
 
-All Linux packages bundle the web UI — after install, open `http://<host>:7600/`
+After install the systemd unit starts automatically; open `http://<host>:7600/`
 (chat) and `/admin/` (console).
 
 | Platform | Command |
@@ -54,16 +48,42 @@ All Linux packages bundle the web UI — after install, open `http://<host>:7600
 | Debian / Ubuntu (amd64) | Download `xiaoguai-cli_*_amd64.deb` from the [latest release](https://github.com/xiaoguai-agent/xiaoguai/releases/latest) and `sudo apt install ./xiaoguai-cli_*_amd64.deb` |
 | RHEL / Fedora / Rocky (amd64) | Download `xiaoguai-cli-*.x86_64.rpm` from the same release and `sudo rpm -i xiaoguai-cli-*.x86_64.rpm` |
 | Bare-metal tarball (amd64 / arm64, glibc 2.35+) | Download `xiaoguai-vX.Y.Z-<arch>-unknown-linux-gnu.tar.gz`, extract, and `sudo bash scripts/install.sh` (systemd) |
-| Container / full stack | `docker compose -f deploy/docker-compose.yml up --build` |
-| Build from source | `cargo install --path crates/xiaoguai-cli --locked` |
 
-The sandboxed code-execution MCP server (`xiaoguai-mcp-exec`) builds from
-this workspace: `cargo install --path crates/xiaoguai-mcp-exec --locked`.
+### Option B — from source (needs a Rust toolchain)
 
-After install, the canonical entrypoint is `xiaoguai serve`. The
-`xiaoguai-core` shim from earlier versions still works (the .deb wires
-it in for systemd backward-compat) but new operators should use the
-unified CLI.
+```bash
+git clone https://github.com/xiaoguai-agent/xiaoguai.git
+cd xiaoguai
+cargo install --path crates/xiaoguai-cli --locked
+xiaoguai serve   # boots on embedded SQLite (~/.xiaoguai/data.db), :7600, no config needed
+```
+
+This path gives you the API + CLI; the bundled chat/admin web UI ships only
+with the packages (Option A) and the Docker image (Option C). For a no-network
+sanity check without even starting the server:
+
+```bash
+xiaoguai chat --mock --prompt 'hello'
+```
+
+The sandboxed code-execution MCP server (`xiaoguai-mcp-exec`) builds from the
+same workspace: `cargo install --path crates/xiaoguai-mcp-exec --locked`.
+
+### Option C — Docker (one command, full stack + web UI bundled)
+
+```bash
+docker compose -f deploy/docker-compose.yml up --build
+# first build ~2 min, then open http://localhost:7600/
+```
+
+Requires the Docker Compose **v2 plugin** — check with `docker compose version`.
+If that errors (`unknown shorthand flag: 'f'`), the plugin is missing: install
+`docker-compose-plugin`, or just use Option A / B instead.
+
+`xiaoguai serve` is the canonical entrypoint everywhere. The legacy
+`xiaoguai-core` shim still works (the .deb wires it in for systemd
+backward-compat). For real LLM providers, MCP registration, the admin console,
+and config details, see [`docs/user-guide/quickstart.md`](docs/user-guide/quickstart.md).
 
 ## Observability (optional)
 
