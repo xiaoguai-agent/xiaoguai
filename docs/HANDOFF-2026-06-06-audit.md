@@ -27,11 +27,19 @@ Single binary, embedded SQLite, single owner + optional HTTP Basic, `:7600`, no 
 
 ## 3. REMAINING audit findings — the follow-up backlog (this is the actionable part)
 
-From the round-2 audit (#226 body). Each is **verified against real code**; severities reassessed for the single-owner model. Fix in priority order.
+From the round-2 audit (#226 body). Each is **verified against real code**; severities reassessed for the single-owner model.
 
-### F1 (recommended first) — HotL: a timed-out / cancelled escalation stays "resolvable"
+> **Status (updated after the fix pass):** F1 ✅, F3 ✅, F4 ✅ fixed in the
+> `audit-round2-followups` PR. F2 ✅ verified a non-issue (raw tool args are
+> owner-only — SSE + message history — and NOT in the audit chain/export: the
+> HotL audit row stores only the scope, `hotl_bridge.rs:748`). **F5 (LOW)
+> remains** — its main item (SSE de-dup) needs a server-side event-id protocol,
+> a real design task, not a quick fix.
+
+### F1 ✅ DONE — HotL: a timed-out / cancelled escalation stays "resolvable"
 - **Files:** `crates/xiaoguai-api/src/hotl/decision_registry.rs` (`fire_timeout` ~line 500 — only fires the in-mem oneshot, never terminalises the DB row); `crates/xiaoguai-agent/src/react.rs` cancel arm (~540 — unwinds without removing the waiter / terminalising); the decision-store `record_decision` UPDATE (storage `HotlEscalationStore` impl) lacks an expiry guard; `crates/xiaoguai-api/src/routes/hotl_decisions.rs` (~302) returns 201 "resolved" even when the agent already abandoned the call as a timeout.
 - **Fix:** (a) `record_decision`'s `UPDATE ... WHERE status='pending'` → add `AND expires_at > <now>`; (b) on timeout (`fire_timeout`) and on loop cancel, terminalise the DB row (`status='expired'`/`'cancelled'`) and remove the in-mem waiter; (c) the route maps a non-matching/expired row to 409/404, not a silent 201. Governance-integrity; moderate, mostly SQL + a couple of call-sites.
+- **DONE:** part (a) shipped (the expiry guard — closes the false-`resolved` integrity hole; expired row → `record_decision` returns false → route returns the documented 201+`resumed:false` late-decision contract, NOT a false 'resolved' DB write) + regression test. Parts (b)/(c) are hygiene only (a timed-out row stays `pending` forever but is harmless: boot-replay already skips it via `list_pending_unexpired`, and (a) blocks the false resolve) — left as optional follow-up.
 
 ### F2 — HotL: confirm whether raw tool args reach the EXPORTED audit bundle (then redact)
 - **Files:** `crates/xiaoguai-agent/src/react.rs:404-413` emits `AgentEvent::ToolCallStarted { arguments: <raw> }`; `crates/xiaoguai-api/src/sse.rs:17` forwards it verbatim. The SSE stream is owner-only (low risk in single-owner), BUT check the generic tool-call **audit** path: do raw args land in `audit_log` and therefore in `xiaoguai audit export`/`bundle` (which an owner may hand to an external auditor)?
