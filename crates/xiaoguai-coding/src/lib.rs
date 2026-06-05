@@ -125,6 +125,43 @@ mod tests {
         assert_eq!(read(&ws, "doomed.txt").await.as_deref(), Some("alive"));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn path_guard_rejects_symlink_escape_read_and_write() {
+        // Security regression: the lexical `..`/absolute guard is not enough —
+        // a symlink inside the tree (which the agent could even create) must not
+        // let read_file/edit_file reach outside the workspace root.
+        use std::path::Path;
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.txt"), "TOPSECRET")
+            .await
+            .unwrap();
+        let ws = Workspace::open_or_create(dir.path()).await.unwrap();
+        std::os::unix::fs::symlink(outside.path(), ws.root().join("escape")).unwrap();
+
+        let r = ws.read_file(Path::new("escape/secret.txt")).await;
+        assert!(
+            matches!(r, Err(CodingError::UnsafePath { .. })),
+            "read via in-tree symlink must be denied, got {r:?}"
+        );
+        let w = ws
+            .edit_file(Path::new("escape/pwn.txt"), &FileEdit::Write("x".into()))
+            .await;
+        assert!(
+            matches!(w, Err(CodingError::UnsafePath { .. })),
+            "write via in-tree symlink must be denied, got {w:?}"
+        );
+        // The outside file is untouched.
+        assert_eq!(
+            fs::read_to_string(outside.path().join("secret.txt"))
+                .await
+                .unwrap(),
+            "TOPSECRET"
+        );
+        assert!(!outside.path().join("pwn.txt").exists());
+    }
+
     #[tokio::test]
     async fn workspace_id_is_stable_across_reopen_so_rollback_survives() {
         // Regression: a fresh WorkspaceId per open orphaned the checkpoint ref,
