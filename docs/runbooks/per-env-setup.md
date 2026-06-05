@@ -8,7 +8,6 @@ instance reachable over their own URL. Rust source is not touched here; for
 source-level build steps see `deploy/README.md`.
 
 Adjacent runbooks referenced throughout:
-- `docs/runbooks/cache-fallback.md` — the in-process cache (no external cache)
 - `docs/runbooks/slo.md` — latency / error objectives
 - `docs/runbooks/disaster-recovery-wave3.md` — backup / restore of `data.db`
 - `docs/runbooks/hotl-escalation-stuck.md` — HotL troubleshooting
@@ -35,9 +34,9 @@ Adjacent runbooks referenced throughout:
 | rustup / Rust toolchain | 1.91+ (`rust-toolchain.toml` pins the exact version) |
 | pnpm | ≥ 9 (only if building the web UI) |
 
-No database server, cache server, or container runtime is required — the
-binary embeds SQLite and the cache runs in-process. Docker Compose is
-optional and only bundles the single binary for convenience.
+No database server or container runtime is required — the binary embeds
+SQLite. Docker Compose is optional and only bundles the single binary for
+convenience.
 
 ### Bring up the stack
 
