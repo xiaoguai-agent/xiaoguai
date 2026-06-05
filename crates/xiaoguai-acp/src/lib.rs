@@ -2,10 +2,17 @@
 //!
 //! Exposes the existing `xiaoguai-agent` ReAct loop to code editors that speak
 //! the [Agent Client Protocol](https://agentclientprotocol.com). The IDE is a
-//! *transport/surface*: a prompt arriving over ACP runs the same loop, gates
-//! through the same `HotL` gate, and signs into the same audit chain as a prompt
-//! from chat-ui, the CLI, or an IM adapter. This crate mirrors the IM-gateway
-//! adapter pattern — a thin protocol shell over `xiaoguai-runtime`.
+//! *transport/surface*: a prompt arriving over ACP runs the same loop as one
+//! from chat-ui, the CLI, or an IM adapter — so any **tool call** it makes is
+//! gated by the same `HotL` gate and signed into the same audit chain. This
+//! crate mirrors the IM-gateway adapter pattern — a thin protocol shell over
+//! `xiaoguai-runtime`.
+//!
+//! Note: in P2 the ACP `RuntimeContext` is built with an **empty toolbox**
+//! (coding-tool registration into the ACP path is the deferred follow-up,
+//! `LLD-ACP-001` §6), so today an ACP turn is chat-only — there are no tool
+//! calls yet to gate or audit. The governance machinery is inherited from the
+//! loop and activates as soon as a toolbox is wired in.
 //!
 //! ## What lives here
 //!

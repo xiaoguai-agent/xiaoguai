@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 use xiaoguai_acp::acp::{ContentBlock, ContentChunk, SessionUpdate, StopReason};
-use xiaoguai_acp::transport::{LineReader, LineWriter};
+use xiaoguai_acp::transport::LineReader;
 use xiaoguai_acp::{serve, AcpDelegate, UpdateSink};
 
 /// A delegate that streams two assistant chunks then ends — unless cancelled,
@@ -42,8 +42,9 @@ fn chunk(text: &str) -> SessionUpdate {
 
 /// A connected client: writes requests into the server's reader, reads the
 /// server's replies. Two independent duplex channels model real stdin/stdout.
+/// The write side is raw so tests can also inject malformed lines.
 struct Client {
-    to_server: LineWriter<tokio::io::DuplexStream>,
+    to_server: tokio::io::DuplexStream,
     from_server: LineReader<tokio::io::DuplexStream>,
 }
 
@@ -56,13 +57,22 @@ impl Client {
             let _ = serve(delegate, c2s_server, s2c_server).await;
         });
         Self {
-            to_server: LineWriter::new(c2s_client),
+            to_server: c2s_client,
             from_server: LineReader::new(s2c_client),
         }
     }
 
-    async fn send(&self, value: Value) {
-        self.to_server.write_message(&value).await.unwrap();
+    async fn send(&mut self, value: Value) {
+        self.send_raw(&serde_json::to_string(&value).unwrap()).await;
+    }
+
+    /// Write one raw line (plus the framing newline) — used to inject malformed
+    /// or non-Request JSON.
+    async fn send_raw(&mut self, line: &str) {
+        use tokio::io::AsyncWriteExt;
+        self.to_server.write_all(line.as_bytes()).await.unwrap();
+        self.to_server.write_all(b"\n").await.unwrap();
+        self.to_server.flush().await.unwrap();
     }
 
     async fn recv(&mut self) -> Value {
@@ -187,14 +197,71 @@ async fn prompt_for_unknown_session_is_invalid_params() {
 }
 
 #[tokio::test]
-async fn malformed_line_yields_parse_error() {
+async fn invalid_json_yields_parse_error() {
     let mut client = Client::spawn(false);
-    // Write a raw non-JSON line directly through the transport.
-    client
-        .to_server
-        .write_message(&json!("this is valid json but not an object with method"))
-        .await
-        .unwrap();
+    // Genuinely malformed JSON → -32700 (PARSE_ERROR).
+    client.send_raw("{ this is not json").await;
     let resp = client.recv().await;
     assert_eq!(resp["error"]["code"], -32700);
+}
+
+#[tokio::test]
+async fn valid_json_non_request_yields_invalid_request() {
+    let mut client = Client::spawn(false);
+    // Valid JSON, but not a Request object (no `method`) → -32600, and the id
+    // is recovered so the error targets the right request.
+    client
+        .send_raw(r#"{"jsonrpc":"2.0","id":42,"params":{}}"#)
+        .await;
+    let resp = client.recv().await;
+    assert_eq!(resp["id"], 42);
+    assert_eq!(resp["error"]["code"], -32600);
+}
+
+#[tokio::test]
+async fn initialize_caps_protocol_version_to_ours() {
+    // A forward-version client must get our latest (1), not its requested 99.
+    let mut client = Client::spawn(false);
+    client
+        .send(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "protocolVersion": 99, "clientCapabilities": {} }
+        }))
+        .await;
+    let resp = client.recv().await;
+    assert_eq!(resp["result"]["protocolVersion"], 1);
+}
+
+#[tokio::test]
+async fn overlapping_prompt_on_same_session_is_rejected() {
+    // The stub (honor_cancel) blocks until cancelled, so the first turn stays in
+    // flight; a second prompt for the same session must be refused, not clobber it.
+    let mut client = Client::spawn(true);
+    client
+        .send(json!({ "jsonrpc": "2.0", "id": 1, "method": "session/new",
+                      "params": { "cwd": "/tmp", "mcpServers": [] } }))
+        .await;
+    let session_id = client.recv().await["result"]["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    client
+        .send(json!({
+            "jsonrpc": "2.0", "id": 2, "method": "session/prompt",
+            "params": { "sessionId": session_id, "prompt": [{ "type": "text", "text": "first" }] }
+        }))
+        .await;
+    client
+        .send(json!({
+            "jsonrpc": "2.0", "id": 3, "method": "session/prompt",
+            "params": { "sessionId": session_id, "prompt": [{ "type": "text", "text": "second" }] }
+        }))
+        .await;
+
+    // The in-flight first turn emits nothing (it blocks), so the next reply is
+    // the rejection of the second prompt.
+    let resp = client.recv().await;
+    assert_eq!(resp["id"], 3);
+    assert_eq!(resp["error"]["code"], -32600);
 }

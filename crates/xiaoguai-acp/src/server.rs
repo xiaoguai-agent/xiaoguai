@@ -25,8 +25,8 @@ use crate::acp::{
 };
 use crate::delegate::{AcpDelegate, UpdateSink};
 use crate::jsonrpc::{self, codes, Incoming};
+use crate::methods;
 use crate::transport::{LineReader, LineWriter};
-use crate::{methods, PROTOCOL_VERSION};
 
 /// `session/update` is the method the agent emits turn progress under.
 const SESSION_UPDATE: &str = "session/update";
@@ -60,15 +60,30 @@ where
     let mut turns: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
 
     while let Some(line) = reader.next_message().await? {
-        let incoming: Incoming = match serde_json::from_str(&line) {
-            Ok(i) => i,
+        // Distinguish a JSON syntax error (-32700) from valid JSON that is not a
+        // well-formed Request object (-32600), per JSON-RPC 2.0.
+        let value: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
             Err(e) => {
-                let id = recover_id(&line);
                 writer
                     .write_message(&jsonrpc::error(
-                        id,
+                        Value::Null,
                         codes::PARSE_ERROR,
-                        format!("invalid JSON-RPC message: {e}"),
+                        format!("invalid JSON: {e}"),
+                    ))
+                    .await?;
+                continue;
+            }
+        };
+        let recovered_id = value.get("id").cloned().unwrap_or(Value::Null);
+        let incoming: Incoming = match serde_json::from_value(value) {
+            Ok(i) => i,
+            Err(e) => {
+                writer
+                    .write_message(&jsonrpc::error(
+                        recovered_id,
+                        codes::INVALID_REQUEST,
+                        format!("not a valid JSON-RPC request: {e}"),
                     ))
                     .await?;
                 continue;
@@ -78,6 +93,7 @@ where
         match incoming.method.as_str() {
             methods::INITIALIZE => {
                 let Some(id) = incoming.id.clone() else {
+                    log_dropped_notification(&incoming.method);
                     continue;
                 };
                 writer
@@ -86,6 +102,7 @@ where
             }
             methods::SESSION_NEW => {
                 let Some(id) = incoming.id.clone() else {
+                    log_dropped_notification(&incoming.method);
                     continue;
                 };
                 let session_id = format!("acp-{}", session_counter.fetch_add(1, Ordering::Relaxed));
@@ -96,6 +113,7 @@ where
             }
             methods::SESSION_PROMPT => {
                 let Some(id) = incoming.id.clone() else {
+                    log_dropped_notification(&incoming.method);
                     continue;
                 };
                 spawn_prompt_turn(
@@ -140,18 +158,26 @@ where
     Ok(())
 }
 
-/// Build the `initialize` response, echoing the client's protocol version
-/// (capped at ours) and advertising our identity + default capabilities.
+/// Build the `initialize` response: negotiate the protocol version as the
+/// minimum of the client's request and ours (so we never claim to speak a
+/// version we don't), and advertise our identity + default capabilities.
 fn handle_initialize(incoming: &Incoming, id: Value) -> Value {
-    let version = serde_json::from_value::<InitializeRequest>(incoming.params.clone())
+    let requested = serde_json::from_value::<InitializeRequest>(incoming.params.clone())
         .map(|req| req.protocol_version)
         .unwrap_or(ProtocolVersion::V1);
-    let _ = PROTOCOL_VERSION; // documented as our latest; v1 today
-    let response = InitializeResponse::new(version)
+    let negotiated = std::cmp::min(requested, ProtocolVersion::V1);
+    let response = InitializeResponse::new(negotiated)
         .agent_capabilities(AgentCapabilities::new())
         .agent_info(Implementation::new("xiaoguai", env!("CARGO_PKG_VERSION")));
     let result = serde_json::to_value(response).unwrap_or(Value::Null);
     jsonrpc::success(id, result)
+}
+
+/// One-line trace when a request-only method arrives without an `id` (i.e. as a
+/// notification) and is therefore dropped — diagnosability parity with the
+/// unknown-method branch.
+fn log_dropped_notification(method: &str) {
+    tracing::debug!(%method, "ignoring request-only method sent as a notification");
 }
 
 /// Validate a `session/prompt`, then run the turn on a spawned task so the read
@@ -192,11 +218,24 @@ where
     }
     let text = extract_text(&req.prompt);
 
+    // Enforce one active turn per session: a second concurrent prompt would
+    // clobber the first's cancel token (making it uncancellable) and race its
+    // history. ACP sessions are single-turn-at-a-time; reject the overlap.
     let cancel = CancellationToken::new();
-    cancels
-        .lock()
-        .await
-        .insert(session_id.clone(), cancel.clone());
+    {
+        let mut guard = cancels.lock().await;
+        if guard.contains_key(&session_id) {
+            drop(guard);
+            return writer
+                .write_message(&jsonrpc::error(
+                    id,
+                    codes::INVALID_REQUEST,
+                    format!("a turn is already in flight for session `{session_id}`"),
+                ))
+                .await;
+        }
+        guard.insert(session_id.clone(), cancel.clone());
+    }
 
     let delegate = Arc::clone(delegate);
     let writer = writer.clone();
@@ -286,13 +325,4 @@ fn extract_text(blocks: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// Best-effort recovery of a request `id` from a line that failed to parse as
-/// `Incoming`, so an error response can still target it.
-fn recover_id(line: &str) -> Value {
-    serde_json::from_str::<Value>(line)
-        .ok()
-        .and_then(|v| v.get("id").cloned())
-        .unwrap_or(Value::Null)
 }
