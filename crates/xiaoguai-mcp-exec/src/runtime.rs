@@ -98,8 +98,12 @@ impl ExecBackend for ProcessL1Python {
     fn capability_summary(&self) -> CapabilitySummary {
         CapabilitySummary {
             tier: "L1",
+            // L1 is env-scrubbed + ulimit'd + tempdir-CWD, but does NOT isolate
+            // the network (no netns/seccomp) — be honest so the model / any
+            // policy keying on this isn't misled. Deploy under container/netns
+            // egress isolation if outbound must be denied.
+            network: true,
             language: "python",
-            network: false,
             // L1 sees a scoped tempdir CWD.
             filesystem: true,
             // The python interpreter itself is the process; `os.system`
@@ -151,7 +155,10 @@ mod tests {
         let cap = backend.capability_summary();
         assert_eq!(cap.tier, "L1");
         assert_eq!(cap.language, "python");
-        assert!(!cap.network);
+        assert!(
+            cap.network,
+            "L1 does not isolate the network — must report true"
+        );
         assert!(cap.filesystem);
         assert!(cap.subprocess);
     }
