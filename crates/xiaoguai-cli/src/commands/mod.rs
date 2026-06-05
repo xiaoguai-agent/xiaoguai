@@ -13,6 +13,7 @@ pub mod code;
 pub mod completions;
 pub mod eval;
 pub mod hotl;
+pub mod init;
 pub mod manpages;
 pub mod mcp;
 pub mod outcomes;
