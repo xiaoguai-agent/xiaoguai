@@ -15,6 +15,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v1.11.0] — 2026-06-06
+
+Security + reliability release: two completed audit rounds (2 & 3) over the whole
+codebase, the F1–F5 audit follow-ups, the F5 chat-streaming hardening, ACP coding
+tools, and a repaired CI verification gate.
+
+### Security
+- **Audit round 3 (#229)** — 11 fixes across the foundational subsystems
+  (#1–100). Two CRITICAL: PII/secret redaction was never wired to the *primary*
+  audit sink, so it leaked into `audit_log` and every compliance export; and the
+  `xiaoguai restore` tar extraction was vulnerable to Zip-Slip (absolute / `..`
+  member paths → arbitrary file write). Five HIGH: CSV formula injection in the
+  compliance export, the JS sandbox leaking forked grandchildren on timeout, the
+  OAuth token endpoint accepting cleartext `http`, a `build_summary` UTF-8 panic,
+  and a skill-author path traversal via the SemVer pre-release segment. Plus a
+  skill-author approve/reject status guard and assorted hardening.
+- **Audit round 2 (#226)** — provider-CRUD auth bypass + endpoint validation
+  (duplicate → 409), workspace symlink escape, sandbox process-group kill on
+  timeout.
+- **Audit follow-ups F1/F3/F4 (#227)** — HotL timed-out escalations can no longer
+  be falsely resolved; the L1 sandbox reports `network:true` honestly; and git/gh
+  subprocesses `env_clear()` so app secrets don't leak to them.
+
+### Added
+- **ACP coding tools (#223)** — the coding tools are exposed over the ACP adapter,
+  plus `init` endpoint / default-model fixes.
+- **Chat SSE reconnect de-dup (F5, #228)** — the streaming client tracks a
+  monotonic server event id, echoes `Last-Event-ID` on retry, and rolls the
+  in-flight turn back on reconnect, so a dropped stream can no longer duplicate
+  assistant text. Welcome-screen chips and the HotL / reconnect banners are now
+  localized (en / zh-CN / ja).
+
+### Changed
+- **Agent context-budget guards (#230)** — tool calls per turn are capped (32;
+  excess rejected with a re-issue hint), each tool result fed back to the model is
+  truncated at 96 KB (char-boundary-safe), and the compaction summary is bounded
+  at 256 KB — so a misbehaving model can't exhaust memory or the context window.
+- The chat client no longer retries non-retryable 4xx responses through the full
+  backoff (F5, #228).
+- Removed the unused in-process `Cache` module (#224, Redis-era dead code).
+
+### Fixed
+- **CI verification gate (#230)** — the `Build and test` job had been dying mid
+  test-run because the workspace's debug artifacts overflowed the runner disk; it
+  now strips debuginfo + disables incremental, drops a redundant full build, and
+  adds `timeout-minutes` + `--locked`, so the gate runs the suite to completion.
+  (Repairing it immediately surfaced and fixed a latent test the broken gate had
+  been masking.)
+
 ## [v1.10.8] — 2026-06-05
 
 ### Fixed
