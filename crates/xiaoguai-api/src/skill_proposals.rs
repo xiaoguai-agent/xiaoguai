@@ -122,6 +122,9 @@ fn err_to_api(e: SkillAuthorError) -> ApiError {
         SkillAuthorError::SkillFileExists => {
             ApiError::Conflict("a skill with this name and version already exists on disk".into())
         }
+        SkillAuthorError::NotPending => {
+            ApiError::Conflict("proposal is not pending (already decided)".into())
+        }
         SkillAuthorError::YamlRender(s) => ApiError::Internal(anyhow::anyhow!("yaml render: {s}")),
         SkillAuthorError::Backend(s) => ApiError::Internal(anyhow::anyhow!("skill author: {s}")),
     }

@@ -176,6 +176,45 @@ pub fn build_http_client() -> McpResult<reqwest::Client> {
         .map_err(|e| McpError::Transport(format!("build http client: {e}")))
 }
 
+/// Reject a token endpoint that would send credentials in cleartext.
+///
+/// `exchange_code`/`refresh_pkce` POST the authorization `code` +
+/// `code_verifier` and the long-lived `refresh_token` — the exact secrets PKCE
+/// and the at-rest layer exist to protect. `https` is always allowed; `http` is
+/// allowed ONLY for loopback (local dev/test) or when the operator explicitly
+/// opts out via `XIAOGUAI_MCP_OAUTH_INSECURE`. Any other `http` host (a real
+/// remote endpoint) is refused so the secrets never cross the wire in the clear.
+fn enforce_token_url_scheme(token_url: &str) -> McpResult<()> {
+    let url = reqwest::Url::parse(token_url)
+        .map_err(|e| McpError::Transport(format!("invalid token_url {token_url:?}: {e}")))?;
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" => {
+            let insecure = std::env::var(ENV_INSECURE)
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+            let host = url.host_str().unwrap_or("");
+            let is_loopback = host == "localhost"
+                || host
+                    .trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback());
+            if insecure || is_loopback {
+                Ok(())
+            } else {
+                Err(McpError::Transport(format!(
+                    "refusing to POST OAuth credentials to a cleartext http token endpoint \
+                     ({token_url:?}); use https, a loopback address, or set \
+                     XIAOGUAI_MCP_OAUTH_INSECURE=1 for a local test server"
+                )))
+            }
+        }
+        other => Err(McpError::Transport(format!(
+            "unsupported token_url scheme {other:?} in {token_url:?}"
+        ))),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
     access_token: String,
@@ -196,6 +235,7 @@ async fn post_token_form(
     token_url: &str,
     form: &[(&str, &str)],
 ) -> McpResult<TokenBundle> {
+    enforce_token_url_scheme(token_url)?;
     let resp = http
         .post(token_url)
         .form(form)
@@ -467,6 +507,22 @@ mod tests {
         let got = store.get("srv-1").await.unwrap().unwrap();
         assert_eq!(got.access_token, "AT2");
         assert_eq!(got.refresh_token.as_deref(), Some("RT2"));
+    }
+
+    #[test]
+    fn token_url_scheme_enforcement() {
+        // https always allowed.
+        assert!(enforce_token_url_scheme("https://idp.example.com/token").is_ok());
+        // Loopback http allowed (local dev/test servers like mockito).
+        assert!(enforce_token_url_scheme("http://127.0.0.1:8080/token").is_ok());
+        assert!(enforce_token_url_scheme("http://localhost:9000/token").is_ok());
+        assert!(enforce_token_url_scheme("http://[::1]:9000/token").is_ok());
+        // Remote http refused — credentials would cross the wire in cleartext.
+        assert!(enforce_token_url_scheme("http://idp.example.com/token").is_err());
+        assert!(enforce_token_url_scheme("http://10.0.0.5/token").is_err());
+        // Garbage / unsupported scheme refused.
+        assert!(enforce_token_url_scheme("ftp://x/token").is_err());
+        assert!(enforce_token_url_scheme("not a url").is_err());
     }
 
     #[test]

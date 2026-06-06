@@ -250,10 +250,19 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // wiring off when the signing key env var is empty.
     let pg_audit_sink: Option<Arc<SqliteAuditSink>> =
         match std::env::var(&settings.audit.signing_key_env) {
-            Ok(key) if !key.is_empty() => Some(Arc::new(SqliteAuditSink::new(
-                pool.clone(),
-                key.into_bytes(),
-            ))),
+            Ok(key) if !key.is_empty() => {
+                // Redaction MUST be wired here too: this is the PRIMARY sink
+                // feeding the audit reader/verifier/exporter, HotL, coding, and
+                // skill-author paths. Without it, PII/secrets land un-redacted in
+                // `audit_log` and in every compliance export — even though
+                // redaction defaults ON. (The scheduler sink below mirrors this;
+                // redaction is idempotent so the two sinks stay consistent.)
+                let mut sink = SqliteAuditSink::new(pool.clone(), key.into_bytes());
+                if audit_redaction_enabled() {
+                    sink = sink.with_redactor(xiaoguai_audit::Redactor::new());
+                }
+                Some(Arc::new(sink))
+            }
             _ => None,
         };
 

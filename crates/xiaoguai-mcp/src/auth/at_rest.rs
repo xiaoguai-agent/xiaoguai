@@ -5,9 +5,14 @@
 //! `mcp_oauth_tokens.refresh_token` is the long-lived credential for an
 //! outbound MCP server. Up to and including PR #73 / DEC-015 it was stored
 //! cleartext at rest — a database backup leak or file-system compromise meant the refresh tokens were
-//! exfiltrable. This module closes that gap: refresh tokens are
-//! authenticated-encrypted with a key the operator supplies out-of-band
-//! and which the DB has never seen.
+//! exfiltrable. This module provides the primitive to close that gap: refresh
+//! tokens are authenticated-encrypted with a key the operator supplies
+//! out-of-band and which the DB has never seen.
+//!
+//! NOTE (status): this primitive is implemented and tested but not yet wired to
+//! a persistence path — the only `TokenStore` today is `InMemoryTokenStore`, so
+//! no row is written to `mcp_oauth_tokens` and these `encrypt`/`decrypt` calls
+//! have no production caller yet. A `SqliteTokenStore` is the follow-up.
 //!
 //! # Key management
 //!
