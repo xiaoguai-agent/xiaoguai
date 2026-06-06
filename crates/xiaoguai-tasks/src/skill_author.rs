@@ -133,6 +133,11 @@ pub enum SkillAuthorError {
     /// Manifest file already exists on disk at approval time.
     #[error("skill file already exists on disk")]
     SkillFileExists,
+    /// Approve/reject was called on a proposal that is not `Pending` (already
+    /// installed or rejected). "Rejected" is a durable security decision, so we
+    /// refuse to silently flip it rather than reverse the operator's verdict.
+    #[error("proposal is not pending (already decided)")]
+    NotPending,
     /// Repository / storage / IO failure.
     #[error("backend error: {0}")]
     Backend(String),
@@ -330,14 +335,29 @@ pub fn validate_manifest(
 /// optionally followed by `-<alphanumeric/-/.>`. We don't pull in the
 /// `semver` crate for this one call.
 fn version_is_semver_ish(v: &str) -> bool {
-    let (core, _pre) = v.split_once('-').map_or((v, ""), |(a, b)| (a, b));
+    let (core, pre) = v.split_once('-').map_or((v, ""), |(a, b)| (a, b));
     let parts: Vec<&str> = core.split('.').collect();
     if parts.len() != 3 {
         return false;
     }
-    parts
+    let core_ok = parts
         .iter()
-        .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+        .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    // The pre-release segment is interpolated into the on-disk YAML filename at
+    // approval time (`skill_yaml_path` → `<name>-<version>.yaml`), so it MUST be
+    // validated server-side: an unchecked `1.0.0-/../../tmp/evil` would escape
+    // `skills_dir` on write. The JSON-schema pattern only constrains the model;
+    // enforce the same `[A-Za-z0-9.-]` set here. Empty pre-release (a trailing
+    // `-` with nothing after) is rejected.
+    let pre_ok = if v.contains('-') {
+        !pre.is_empty()
+            && pre
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    } else {
+        true
+    };
+    core_ok && pre_ok
 }
 
 /// Canonical name of the tool that triggers `propose`. Used both by the
@@ -463,6 +483,14 @@ pub async fn approve_proposal(
         .await?
         .ok_or(SkillAuthorError::NotFound)?;
 
+    // Only a pending proposal may be approved — without this a previously
+    // *rejected* proposal (which has no YAML on disk, so `SkillFileExists`
+    // doesn't catch it) could be flipped to `installed`, silently reversing
+    // the operator's rejection.
+    if row.status != ProposalStatus::Pending {
+        return Err(SkillAuthorError::NotPending);
+    }
+
     // Materialise the YAML BEFORE flipping the status, so a write
     // failure leaves the DB in the original `pending` state.
     let yaml_path = skill_yaml_path(skills_dir, &row.manifest);
@@ -506,6 +534,11 @@ pub async fn reject_proposal(
         .await?
         .ok_or(SkillAuthorError::NotFound)?;
 
+    // Symmetric guard: don't re-decide an already-installed/rejected proposal.
+    if row.status != ProposalStatus::Pending {
+        return Err(SkillAuthorError::NotPending);
+    }
+
     let updated = ctx
         .repo
         .set_status(
@@ -539,6 +572,16 @@ fn skill_yaml_path(dir: &Path, m: &SkillManifest) -> PathBuf {
 }
 
 fn write_skill_yaml(path: &Path, m: &SkillManifest) -> Result<(), SkillAuthorError> {
+    // Defense-in-depth Zip-Slip guard: `name` and `version` are validated to
+    // safe charsets upstream, but re-verify the derived filename carries no path
+    // separator or `..` before we `create_dir_all` + write — a single check
+    // here means a future validation regression can't silently escape `dir`.
+    let fname = format!("{}-{}.yaml", m.name, m.version);
+    if fname.contains('/') || fname.contains('\\') || fname.contains("..") {
+        return Err(SkillAuthorError::Backend(format!(
+            "refusing unsafe skill filename: {fname:?}"
+        )));
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| SkillAuthorError::Backend(format!("mkdir {}: {e}", parent.display())))?;
@@ -1000,6 +1043,48 @@ mod tests {
         // DB row remains pending (no orphaned `installed` row).
         let still = repo.get(&row.id).await.unwrap().unwrap();
         assert_eq!(still.status, ProposalStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn approve_on_rejected_proposal_returns_not_pending() {
+        // A rejected proposal has no YAML on disk, so the `SkillFileExists`
+        // guard does NOT catch it — only the status guard prevents a silent
+        // reversal of the operator's rejection.
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = InMemorySkillProposalRepository::new();
+        let settings = InMemoryTenantSettings::new();
+        settings.allow();
+        let gate = AllowAllSkillGate;
+        let audit = InMemoryAuditSink::new();
+        let known = known_tools();
+        let ctx = ctx(&*repo, &*settings, &gate, &*audit, &known);
+
+        let row = propose(&ctx, "agent-1", good_manifest()).await.unwrap();
+        reject_proposal(&ctx, &row.id, "admin-1", "too broad")
+            .await
+            .unwrap();
+
+        let err = approve_proposal(&ctx, &row.id, "admin-1", tmp.path())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SkillAuthorError::NotPending));
+        // The rejection stands; no YAML was written.
+        let still = repo.get(&row.id).await.unwrap().unwrap();
+        assert_eq!(still.status, ProposalStatus::Rejected);
+        assert!(!tmp.path().join("ar-collector-0.1.0.yaml").exists());
+    }
+
+    #[test]
+    fn version_pre_release_with_path_chars_is_rejected() {
+        // Plain + valid pre-release accepted.
+        assert!(version_is_semver_ish("1.0.0"));
+        assert!(version_is_semver_ish("0.1.0-alpha.1"));
+        // Path-traversal payloads in the pre-release must be rejected — the
+        // version is interpolated into the on-disk YAML filename at approval.
+        assert!(!version_is_semver_ish("1.0.0-/../../tmp/evil"));
+        assert!(!version_is_semver_ish("1.0.0-a/b"));
+        assert!(!version_is_semver_ish("1.0.0-")); // empty pre-release
+        assert!(!version_is_semver_ish("1.0")); // wrong core arity
     }
 
     #[tokio::test]

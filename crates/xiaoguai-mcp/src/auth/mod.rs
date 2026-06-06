@@ -5,9 +5,13 @@
 //! trait. The bearer-string path through
 //! [`HttpClientConfig::auth_header`] remains the simple case.
 //!
-//! Sprint-8 S8-5 (2026-05-29) closes the encryption-at-rest gap via
-//! [`at_rest`]: AES-256-GCM with a dual-key rotation window. Refresh
-//! tokens are encrypted before they hit the `mcp_oauth_tokens` table.
+//! Sprint-8 S8-5 (2026-05-29) provides the encryption-at-rest primitive via
+//! [`at_rest`]: AES-256-GCM with a dual-key rotation window. NOTE: this layer is
+//! implemented and tested but NOT yet wired to a persistence path — the only
+//! [`TokenStore`] implementation today is `InMemoryTokenStore`, so OAuth tokens
+//! are currently session-scoped and never written to the `mcp_oauth_tokens`
+//! table. A `SqliteTokenStore` that encrypts via [`at_rest`] on write is the
+//! follow-up that makes encrypted-at-rest persistence live.
 //!
 //! Out of scope (documented in `docs/runbooks/outbound-mcp-oauth.md`):
 //!   * RFC 7591 dynamic client registration
