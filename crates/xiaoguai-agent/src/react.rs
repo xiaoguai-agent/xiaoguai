@@ -422,7 +422,8 @@ async fn dispatch_tools(
     // one for the batch). On `Deny`, we short-circuit to a failed
     // `ToolDispatchOutcome` carrying the reason — the LLM observes the
     // denial via the `Role::Tool` message and can adapt.
-    let futs = calls.iter().map(|call| {
+    let total_calls = calls.len();
+    let futs = calls.iter().enumerate().map(|(idx, call)| {
         let entry = toolbox.get(&call.name);
         let id = call.id.clone();
         let name = call.name.clone();
@@ -430,7 +431,26 @@ async fn dispatch_tools(
         let gate = hotl_gate.cloned();
         let tx_inner = tx.clone();
         let cancel_inner = cancel.clone();
+        // Bound the per-turn tool-call fan-out: a misbehaving model can emit
+        // hundreds of calls, and `join_all` would spawn one concurrent future
+        // (each holding a HotL ticket + MCP round-trip) per call. Execute the
+        // first MAX and reject the rest with an aligned outcome that tells the
+        // model to re-issue them — preserving 1:1 order so the caller's zip
+        // stays correct.
+        let over_limit = idx >= MAX_TOOL_CALLS_PER_TURN;
         async move {
+            if over_limit {
+                let outcome = ToolDispatchOutcome {
+                    ok: false,
+                    output_text: String::new(),
+                    error: Some(format!(
+                        "rejected: this turn requested {total_calls} tool calls; only the \
+                         first {MAX_TOOL_CALLS_PER_TURN} run per turn. Re-issue the remaining \
+                         calls in a follow-up turn."
+                    )),
+                };
+                return (id, name, outcome);
+            }
             // 1. HOTL pre-check. No gate → bypass.
             if let Some(gate) = gate.as_ref() {
                 let scope = format!("tool_call.{name}");
@@ -658,18 +678,57 @@ fn parse_args(raw: &str) -> serde_json::Value {
     serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
 }
 
+/// Max tool calls executed in a single agent turn. Excess calls are rejected
+/// with a message telling the model to re-issue them (see `dispatch_tools`).
+const MAX_TOOL_CALLS_PER_TURN: usize = 32;
+
+/// Max bytes of a single tool result fed back into the model context. A tool
+/// that returns a whole large file / a broad `grep` / a huge `git status`
+/// would otherwise blow the context budget in one shot. Generous (~24k tokens)
+/// so normal reads pass untouched; oversized results are truncated with a
+/// marker that tells the model to narrow its query.
+const MAX_TOOL_RESULT_BYTES: usize = 96_000;
+
+/// Truncate `s` to at most `max` bytes on a UTF-8 char boundary. Returns the
+/// (possibly borrowed) text and whether truncation happened. Never panics on
+/// multibyte input (cf. the round-3 `build_summary` byte-slice bug).
+fn truncate_on_char_boundary(s: &str, max: usize) -> (&str, bool) {
+    if s.len() <= max {
+        return (s, false);
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&s[..end], true)
+}
+
+/// Cap a tool result for context feedback, appending a marker when truncated.
+fn cap_tool_result(text: &str) -> String {
+    let (head, truncated) = truncate_on_char_boundary(text, MAX_TOOL_RESULT_BYTES);
+    if truncated {
+        format!(
+            "{head}\n… (tool result truncated to {MAX_TOOL_RESULT_BYTES} bytes of \
+             {} — narrow the query or read a specific range)",
+            text.len()
+        )
+    } else {
+        head.to_string()
+    }
+}
+
 fn tool_message_for(call: &ToolCallSpec, outcome: &ToolDispatchOutcome) -> Message {
     let content = if outcome.ok {
         if outcome.output_text.is_empty() {
             "(no output)".to_string()
         } else {
-            outcome.output_text.clone()
+            cap_tool_result(&outcome.output_text)
         }
     } else {
         // Render errors as a structured payload so the model can recover.
         serde_json::json!({
             "error": outcome.error.clone().unwrap_or_else(|| "tool failed".into()),
-            "text": outcome.output_text,
+            "text": cap_tool_result(&outcome.output_text),
         })
         .to_string()
     };
@@ -680,5 +739,55 @@ async fn emit(tx: &mpsc::Sender<AgentEvent>, ev: AgentEvent) {
     if let Err(err) = tx.send(ev).await {
         // The caller dropped the receiver; we keep running but stop sending.
         debug!(?err, "agent event receiver dropped");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_on_char_boundary_never_splits_a_codepoint() {
+        // Short input passes through untouched.
+        let (s, t) = truncate_on_char_boundary("hello", 96_000);
+        assert_eq!(s, "hello");
+        assert!(!t);
+        // A multibyte string whose cap lands mid-codepoint must back off to a
+        // boundary, never panic (cf. the round-3 build_summary byte-slice bug).
+        let multi = "你好世界".repeat(10); // 3 bytes/char
+        let (head, truncated) = truncate_on_char_boundary(&multi, 7);
+        assert!(truncated);
+        assert!(head.len() <= 7);
+        assert!(multi.starts_with(head)); // valid prefix, valid UTF-8
+    }
+
+    #[test]
+    fn cap_tool_result_truncates_oversized_with_marker() {
+        let small = "ok";
+        assert_eq!(cap_tool_result(small), "ok");
+
+        let big = "x".repeat(MAX_TOOL_RESULT_BYTES + 5_000);
+        let capped = cap_tool_result(&big);
+        assert!(capped.len() < big.len());
+        assert!(capped.contains("truncated"));
+        assert!(capped.starts_with("xxxx"));
+    }
+
+    #[test]
+    fn tool_message_for_caps_a_huge_successful_result() {
+        let call = ToolCallSpec {
+            id: "call_1".into(),
+            name: "read_file".into(),
+            arguments_json: "{}".into(),
+        };
+        let outcome = ToolDispatchOutcome {
+            ok: true,
+            output_text: "A".repeat(MAX_TOOL_RESULT_BYTES * 2),
+            error: None,
+        };
+        let msg = tool_message_for(&call, &outcome);
+        // The fed-back content is bounded well under the raw output size.
+        assert!(msg.content.len() < MAX_TOOL_RESULT_BYTES + 500);
+        assert!(msg.content.contains("truncated"));
     }
 }
