@@ -24,6 +24,11 @@ impl PptxLoader {
     }
 }
 
+/// Per-slide extracted-text cap (bytes). A maliciously crafted slide with
+/// megabytes of `<a:t>` runs would otherwise allocate unbounded memory during
+/// ingest. Generous for real decks — the longest legitimate slides are a few KB.
+const MAX_SLIDE_TEXT_BYTES: usize = 256 * 1024;
+
 /// Extract all `<a:t>` text runs from a single slide XML blob.
 fn extract_slide_text(xml: &[u8]) -> Result<String, LoadError> {
     let mut reader = Reader::from_reader(xml);
@@ -56,11 +61,24 @@ fn extract_slide_text(xml: &[u8]) -> Result<String, LoadError> {
                     Ok(t) => t.into_owned(),
                     Err(_) => raw.into_owned(),
                 };
-                if !chunk.trim().is_empty() {
+                let trimmed = chunk.trim();
+                if !trimmed.is_empty() {
                     if !slide_text.is_empty() {
                         slide_text.push(' ');
                     }
-                    slide_text.push_str(chunk.trim());
+                    let remaining = MAX_SLIDE_TEXT_BYTES.saturating_sub(slide_text.len());
+                    if trimmed.len() <= remaining {
+                        slide_text.push_str(trimmed);
+                    } else {
+                        // Cap reached (guards against one giant run too). Append a
+                        // char-boundary-safe prefix and stop collecting this slide.
+                        let mut end = remaining;
+                        while end > 0 && !trimmed.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        slide_text.push_str(&trimmed[..end]);
+                        break;
+                    }
                 }
             }
             Ok(Event::Eof) => break,
@@ -223,5 +241,25 @@ mod tests {
             .load(b"not a pptx")
             .expect_err("must error on junk");
         assert!(matches!(err, LoadError::Malformed { .. }));
+    }
+
+    #[test]
+    fn slide_text_is_capped() {
+        // One oversized `<a:t>` run — must not allocate past the cap.
+        let big = "x".repeat(MAX_SLIDE_TEXT_BYTES * 2);
+        let xml = format!("<a:t>{big}</a:t>");
+        let out = extract_slide_text(xml.as_bytes()).expect("parse ok");
+        assert!(
+            out.len() <= MAX_SLIDE_TEXT_BYTES,
+            "extracted {} bytes, cap is {MAX_SLIDE_TEXT_BYTES}",
+            out.len()
+        );
+    }
+
+    #[test]
+    fn slide_text_under_cap_is_intact() {
+        let xml = "<a:t>hello</a:t><a:t>world</a:t>";
+        let out = extract_slide_text(xml.as_bytes()).expect("parse ok");
+        assert_eq!(out, "hello world");
     }
 }

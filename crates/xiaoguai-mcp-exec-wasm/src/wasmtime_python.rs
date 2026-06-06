@@ -41,6 +41,10 @@ use crate::engine::{shared_engine, ticks_for_secs};
 
 /// Hard cap on captured output per stream (matches L1).
 const OUTPUT_BYTE_CAP: usize = 64 * 1024;
+/// Capacity of each in-memory WASI output pipe. Writing past it makes the
+/// guest's WASI write fail (surfacing as a trap); the contents up to here are
+/// still harvested and truncated to `OUTPUT_BYTE_CAP`.
+const OUTPUT_PIPE_CAP: usize = OUTPUT_BYTE_CAP * 2;
 /// Hard cap on the snippet (matches L1).
 const CODE_BYTE_CAP: usize = 64 * 1024;
 
@@ -208,8 +212,8 @@ async fn run_wasi_snippet(
 ) -> Result<(Option<i32>, String, String, bool), WasiRunError> {
     let engine = shared_engine();
 
-    let stdout_pipe = MemoryOutputPipe::new(OUTPUT_BYTE_CAP * 2);
-    let stderr_pipe = MemoryOutputPipe::new(OUTPUT_BYTE_CAP * 2);
+    let stdout_pipe = MemoryOutputPipe::new(OUTPUT_PIPE_CAP);
+    let stderr_pipe = MemoryOutputPipe::new(OUTPUT_PIPE_CAP);
 
     // WASI context with NO env, NO preopens. The snippet is delivered
     // via stdin (a memory pipe) — pyodide's WASI build reads its
@@ -287,6 +291,15 @@ async fn run_wasi_snippet(
             // exit=None.
             if let Some(exit) = extract_proc_exit_code(&msg) {
                 return Ok((Some(exit), stdout, stderr, truncated));
+            }
+            // Output overflow: a pipe at capacity means the snippet wrote past
+            // the WASI pipe limit, which surfaces as a write failure / trap.
+            // The contents were already harvested + truncated above, so return
+            // a truncated run rather than an opaque supervisor error. Keyed on
+            // the pipe being full (precise) — not a fragile trap-string match.
+            if stdout_bytes.len() >= OUTPUT_PIPE_CAP || stderr_bytes.len() >= OUTPUT_PIPE_CAP {
+                debug!("snippet output exceeded pipe capacity; returning truncated output");
+                return Ok((None, stdout, stderr, true));
             }
             // OOM (memory grow refused by limiter) surfaces as a trap.
             // Surface to caller as a runtime error so HotL can

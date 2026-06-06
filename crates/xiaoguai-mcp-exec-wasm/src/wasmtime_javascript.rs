@@ -39,6 +39,8 @@ use crate::config::WasmExecConfig;
 use crate::engine::{shared_engine, ticks_for_secs};
 
 const OUTPUT_BYTE_CAP: usize = 64 * 1024;
+/// Capacity of each in-memory WASI output pipe; see the python backend.
+const OUTPUT_PIPE_CAP: usize = OUTPUT_BYTE_CAP * 2;
 const CODE_BYTE_CAP: usize = 64 * 1024;
 
 #[derive(Debug, Error)]
@@ -177,8 +179,8 @@ async fn run_wasi_snippet(
 ) -> Result<(Option<i32>, String, String, bool), WasiRunError> {
     let engine = shared_engine();
 
-    let stdout_pipe = MemoryOutputPipe::new(OUTPUT_BYTE_CAP * 2);
-    let stderr_pipe = MemoryOutputPipe::new(OUTPUT_BYTE_CAP * 2);
+    let stdout_pipe = MemoryOutputPipe::new(OUTPUT_PIPE_CAP);
+    let stderr_pipe = MemoryOutputPipe::new(OUTPUT_PIPE_CAP);
 
     let mut wasi_builder = WasiCtxBuilder::new();
     wasi_builder
@@ -237,6 +239,12 @@ async fn run_wasi_snippet(
             }
             if let Some(exit) = extract_proc_exit_code(&msg) {
                 return Ok((Some(exit), stdout, stderr, truncated));
+            }
+            // Output overflow (pipe at capacity) → return truncated output
+            // rather than an opaque supervisor error. See the python backend.
+            if stdout_bytes.len() >= OUTPUT_PIPE_CAP || stderr_bytes.len() >= OUTPUT_PIPE_CAP {
+                debug!("JS snippet output exceeded pipe capacity; returning truncated output");
+                return Ok((None, stdout, stderr, true));
             }
             Err(WasiRunError::Wasmtime(msg))
         }
