@@ -32,9 +32,14 @@ From the round-2 audit (#226 body). Each is **verified against real code**; seve
 > **Status (updated after the fix pass):** F1 ✅, F3 ✅, F4 ✅ fixed in the
 > `audit-round2-followups` PR. F2 ✅ verified a non-issue (raw tool args are
 > owner-only — SSE + message history — and NOT in the audit chain/export: the
-> HotL audit row stores only the scope, `hotl_bridge.rs:748`). **F5 (LOW)
-> remains** — its main item (SSE de-dup) needs a server-side event-id protocol,
-> a real design task, not a quick fix.
+> HotL audit row stores only the scope, `hotl_bridge.rs:748`). **F5 ✅ DONE**
+> (branch `f5-sse-dedup-i18n`) — "protocol + client-guard" option chosen over
+> full server resume: server stamps each SSE event with a monotonic `id:`;
+> client echoes `Last-Event-ID` on retry, drops non-retryable 4xx from the
+> backoff, and rolls the in-flight turn back on a resumed stream so text can't
+> duplicate; welcome chips + both banners now use i18n. Residual (accepted,
+> LOW): the backend still double-runs the turn on the rare reconnect — full
+> server-side resume deferred. **All five follow-ups (F1–F5) are now closed.**
 
 ### F1 ✅ DONE — HotL: a timed-out / cancelled escalation stays "resolvable"
 - **Files:** `crates/xiaoguai-api/src/hotl/decision_registry.rs` (`fire_timeout` ~line 500 — only fires the in-mem oneshot, never terminalises the DB row); `crates/xiaoguai-agent/src/react.rs` cancel arm (~540 — unwinds without removing the waiter / terminalising); the decision-store `record_decision` UPDATE (storage `HotlEscalationStore` impl) lacks an expiry guard; `crates/xiaoguai-api/src/routes/hotl_decisions.rs` (~302) returns 201 "resolved" even when the agent already abandoned the call as a timeout.
@@ -53,10 +58,14 @@ From the round-2 audit (#226 body). Each is **verified against real code**; seve
 - **File:** `crates/xiaoguai-coding/src/git.rs:34-46` (`exec`) — sets only `GIT_TERMINAL_PROMPT`/`GIT_INDEX_FILE`, never `env_clear()`. Contrast L1 (`exec.rs` scrubs to a 4-key allowlist). So `git grep/status/commit` see `GH_TOKEN`/signing keys/etc. unnecessarily.
 - **Fix:** `env_clear()` then re-add only `PATH`/`HOME`/locale; add `GH_TOKEN`/`GITHUB_TOKEN` only for the push/PR egress verbs.
 
-### F5 (LOW) — frontend
-- SSE reconnect can duplicate assistant text (`frontend/shared/src/index.ts` `sendMessage` ~2122 + `frontend/chat-ui/src/ChatPage.tsx` `applyEvent` text_delta ~187): the idempotency key dedupes message *creation* but not SSE *event replay*; no event cursor. Fix: server sends a monotonic event id; client drops already-seen ids / sends `Last-Event-ID`.
-- Welcome suggestion chips (`ChatPage.tsx:48-53`) + `HotlBanner.tsx:142` / `SseReconnectBanner.tsx:31` bypass i18n (hardcoded / module-level `getTranslations()` instead of `useI18n().t`). Fix: move chips into locale bundles; have banners consume the context.
-- Non-retryable 4xx retried with full backoff (`index.ts:2129`). Fix: don't retry on 4xx.
+### F5 ✅ DONE (LOW) — frontend (branch `f5-sse-dedup-i18n`)
+Chosen approach: **protocol + client-guard** (not full server resume — the residual server double-run on a reconnect is accepted as LOW; a local single-user tool reconnects rarely).
+
+- **SSE reconnect dup** — server now stamps each SSE event with a per-stream monotonic `id:` (`xiaoguai-api/src/sse.rs::event_to_sse_seq` + `routes/sessions.rs` `events.enumerate()`). Client (`frontend/shared/src/index.ts::sendMessage`) parses the `id:` line, tracks the highest seen id, and echoes it as `Last-Event-ID` on retry (foundation for a future resume-capable backend). Because today's backend re-runs the turn from scratch, `ChatPage.applyEvent` rolls the in-flight turn back to the user's last message on the **first event of a resumed stream** so the re-generated text replaces (not appends to) the partial bubble. **Amends DEC-LLD-CHAT-UI-003** (lld-chat-ui §4.7.1) — partial is preserved only when the run does NOT recover, so no work is lost on an unrecovered blip. Tests: `sse.rs` seq test, `sendMessage.test.ts` Last-Event-ID + 4xx + 429 cases.
+- **i18n** — welcome chips moved into locale bundles (`ui.suggestions.*` in en/zh-CN/ja); `HotlBanner` + `SseReconnectBanner` switched from module-level `getTranslations()` to `useI18n().t` (banner tests wrapped in `<I18nProvider>`). (`AiDisclosureBanner` left as-is — out of F5 scope.)
+- **4xx no-retry** — `sendMessage` fails fast on a 4xx (except 408/429) instead of burning the full backoff; 5xx / network errors still retry.
+
+Verified: xiaoguai-api clippy -D warnings clean + all tests; shared vitest 11, chat-ui vitest 56, admin-ui vitest 251; all tsc clean.
 
 ## 4. Verified CLEAN (do not re-investigate)
 config env-override (#173 correct, reproduced incl. nested map), frontend major bumps (react-router 6→7 / ts 5.9→6 / happy-dom / RSH — tsc + vitest green both UIs), MSRV 1.93, deploy files (no stale PG/pgvector/helm), static-UI path traversal (tower-http `ServeDir` safe), provider `api_key` never serialized/logged, wasmtime 45 (advisories cleared), HotL boot-replay (no double-fire), the prior HotlBanner double-`onCleared` bug (fixed + regression-tested), audit-bundle chain-verify (non-bypassable, 409 on broken chain).

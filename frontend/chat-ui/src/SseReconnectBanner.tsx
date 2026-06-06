@@ -12,7 +12,8 @@
  * announce reconnect attempts without yanking focus.
  */
 
-import { getTranslations, interpolate } from './i18n';
+import { interpolate } from './i18n';
+import { useI18n } from './i18n/I18nProvider';
 
 interface SseReconnectBannerProps {
   /** 1-based attempt number (1 = first retry after the initial failure). */
@@ -28,7 +29,7 @@ export function SseReconnectBanner({
   nextDelayMs,
   onCancel,
 }: SseReconnectBannerProps) {
-  const t = getTranslations();
+  const { t } = useI18n();
   const secs = Math.max(1, Math.round(nextDelayMs / 1000));
   return (
     <div

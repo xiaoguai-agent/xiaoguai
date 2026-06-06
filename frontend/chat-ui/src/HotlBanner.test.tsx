@@ -12,11 +12,25 @@
  *    annotation, sibling-tab conflict, fallback timer cancellation.
  */
 
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { render as rtlRender, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HotlBanner } from './HotlBanner';
 import type { HotlPendingState } from './HotlBanner';
 import type { HotlResolvedEvent } from '@xiaoguai/shared';
+import { I18nProvider } from './i18n/I18nProvider';
+
+/**
+ * HotlBanner reads translations via `useI18n()`, so it must render inside the
+ * provider. `rerender` is wrapped too so re-renders keep the provider.
+ */
+function render(ui: ReactElement) {
+  const result = rtlRender(<I18nProvider>{ui}</I18nProvider>);
+  return {
+    ...result,
+    rerender: (next: ReactElement) => result.rerender(<I18nProvider>{next}</I18nProvider>),
+  };
+}
 
 const base: HotlPendingState = {
   escalation_id: 'req-abc-123',

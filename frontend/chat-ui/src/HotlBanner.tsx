@@ -41,7 +41,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { HotlDecisionRaisePolicy, HotlResolvedEvent } from '@xiaoguai/shared';
-import { getTranslations, interpolate } from './i18n';
+import { interpolate } from './i18n';
+import { useI18n } from './i18n/I18nProvider';
 
 export interface HotlPendingState {
   /**
@@ -139,7 +140,7 @@ export function HotlBanner({
   decidedBy,
   adminBaseUrl = '',
 }: Props) {
-  const t = getTranslations();
+  const { t } = useI18n();
   const queueUrl = `${adminBaseUrl}${ADMIN_HOTL_PATH}?escalation_id=${encodeURIComponent(pending.escalation_id)}`;
 
   const [state, setState] = useState<ButtonState>('idle');

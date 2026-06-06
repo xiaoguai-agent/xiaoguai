@@ -28,6 +28,16 @@ pub fn event_to_sse(ev: &AgentEvent) -> Event {
     Event::default().event(name).data(json.to_string())
 }
 
+/// Like [`event_to_sse`] but stamps the SSE `id:` field with a per-stream
+/// monotonic sequence number. The browser echoes the last seen id back as
+/// `Last-Event-ID` on reconnect; the chat client uses it to drop a
+/// superseded turn so a resumed stream cannot duplicate assistant text
+/// (F5 — frontend SSE reconnect de-dup). `seq` MUST be monotonic within a
+/// single response stream; it restarts per request (no cross-stream resume).
+pub fn event_to_sse_seq(ev: &AgentEvent, seq: u64) -> Event {
+    event_to_sse(ev).id(seq.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -43,6 +53,23 @@ mod tests {
         // emits `event: <name>\ndata: <body>\n\n`.
         let rendered = format!("{sse:?}");
         assert!(rendered.contains("text_delta"));
+    }
+
+    #[test]
+    fn event_to_sse_seq_stamps_the_id_field() {
+        let ev = AgentEvent::TextDelta { delta: "hi".into() };
+        let sse = event_to_sse_seq(&ev, 42);
+        let rendered = format!("{sse:?}");
+        // The SSE `id:` field must carry the sequence number so the client
+        // can echo it back via Last-Event-ID on reconnect.
+        assert!(
+            rendered.contains("42"),
+            "expected event id `42` in SSE: {rendered}"
+        );
+        assert!(
+            rendered.contains("text_delta"),
+            "expected event name preserved: {rendered}"
+        );
     }
 
     #[test]

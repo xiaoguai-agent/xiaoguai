@@ -64,6 +64,12 @@
     "thinking": "thinking",
     "branch": "Branch",
     "branch_title": "Branch a new conversation from this point",
-    "branch_label": "Branch from here"
+    "branch_label": "Branch from here",
+    "suggestions": {
+      "summarize_doc": "Summarize a document for me",
+      "write_shell": "Write a shell script",
+      "analyze_cve": "Analyze the latest CVE feed",
+      "explain_codebase": "Explain how a codebase works"
+    }
   }
 }
