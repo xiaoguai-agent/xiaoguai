@@ -153,6 +153,52 @@ async fn parallel_tool_dispatch_is_actually_parallel() {
 }
 
 #[tokio::test]
+async fn tool_calls_beyond_per_turn_cap_are_rejected_in_order() {
+    // A turn that emits more than MAX_TOOL_CALLS_PER_TURN (32) calls: the first
+    // 32 execute, the rest are rejected with an aligned "re-issue" outcome, and
+    // 1:1 order with the assistant tool_calls is preserved.
+    const N: usize = 35;
+    let mock = MockMcpClient::new(vec![("noop", ToolResponse::Ok("OK".into()))]);
+    let toolbox = Toolbox::from_server(mock.clone(), mock.descriptors.clone()).expect("toolbox");
+    let calls: Vec<_> = (0..N)
+        .map(|i| make_call(&format!("c{i}"), "noop", &serde_json::json!({})))
+        .collect();
+    let agent = make_agent(
+        vec![ScriptStep::tool_calls(calls), ScriptStep::text("done")],
+        toolbox,
+    );
+
+    let (outcome, events) = agent
+        .run_to_completion(vec![Message::user("go")], CancellationToken::new())
+        .await
+        .expect("ok");
+    assert_eq!(outcome.stop_reason, StopReason::Completed);
+
+    // Every call produces a finished event, in 1:1 input order. (We assert on
+    // events, not outcome.messages: the long history is slid by the default
+    // window, which would trim the tool replies — unrelated to the cap.)
+    let finished: Vec<(bool, String)> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::ToolCallFinished { ok, error, .. } => {
+                Some((*ok, error.clone().unwrap_or_default()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(finished.len(), N);
+    // First 32 dispatched successfully; the tail rejected with the re-issue marker.
+    for (i, (ok, err)) in finished.iter().enumerate() {
+        if i < 32 {
+            assert!(*ok, "call {i} should have run, got err={err:?}");
+        } else {
+            assert!(!*ok, "call {i} should be rejected");
+            assert!(err.contains("Re-issue"), "call {i} marker: {err:?}");
+        }
+    }
+}
+
+#[tokio::test]
 async fn tool_error_surfaces_as_error_event_and_keeps_loop_alive() {
     let mock = MockMcpClient::new(vec![("broken", ToolResponse::Err("disk full".into()))]);
     let toolbox = Toolbox::from_server(mock.clone(), mock.descriptors.clone()).expect("toolbox");

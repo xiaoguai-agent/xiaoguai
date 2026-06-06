@@ -768,10 +768,11 @@ mod tests {
 
     #[test]
     fn build_summary_does_not_panic_on_multibyte_artefact() {
-        // `art` is arbitrary LLM/tool output. A 201-byte string whose 200th
-        // byte lands mid-codepoint used to panic `&trimmed[..200]`; the
-        // char-boundary truncation must handle it.
-        let artefact = "你".repeat(67); // 3 bytes each → 201 bytes, 67 chars
+        // `art` is arbitrary LLM/tool output. Use >200 multibyte chars so the
+        // truncation path actually runs: `chars().take(200)` must land on a
+        // codepoint boundary (the old `&trimmed[..200]` byte-slice panicked
+        // mid-codepoint). 250 × 3-byte chars = 750 bytes / 250 chars.
+        let artefact = "你".repeat(250);
         let approved = vec![ApprovedArtefact {
             task_id: crate::triangle::plan::TaskId::new(),
             artefact: Some(artefact),
@@ -780,6 +781,9 @@ mod tests {
         let summary = build_summary(1, &approved, &[]);
         assert!(summary.contains("artefact:"));
         assert!(summary.contains('…'), "long artefact should be truncated");
+        // The preview must be exactly 200 chars + the ellipsis (char-boundary
+        // truncation, never a panic / mid-codepoint split).
+        assert_eq!(summary.matches('你').count(), 200);
     }
 
     /// Smallest valid backend bundle — used by the budget-too-small

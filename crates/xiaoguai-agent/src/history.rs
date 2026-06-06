@@ -16,6 +16,11 @@ use futures::StreamExt;
 use tracing::warn;
 use xiaoguai_llm::{estimate_message_tokens, ChatRequest, LlmBackend, Message, Role, ToolChoice};
 
+/// Defensive upper bound on the bytes a compaction summary may accumulate from
+/// the backend stream. `max_tokens` is only a request; this guards against a
+/// backend that ignores it and streams unboundedly (OOM protection).
+const MAX_SUMMARY_BYTES: usize = 256_000;
+
 /// Trim `messages` so the non-system tail has at most `window` entries.
 /// When `window == 0` the function is a no-op (sentinel for "unbounded").
 #[must_use]
@@ -264,6 +269,14 @@ async fn summarise(
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
         out.push_str(&chunk.delta);
+        // Defensive cap: `max_tokens` is only a request — a misbehaving backend
+        // can stream unboundedly. Stop accumulating once over the cap so a
+        // runaway summary can't OOM the process. We break on a whole-chunk
+        // boundary (no mid-`char` `truncate`, which would panic); the result is
+        // at most one delta over the cap, which is fine for a defensive guard.
+        if out.len() >= MAX_SUMMARY_BYTES {
+            break;
+        }
     }
     Ok(out)
 }
