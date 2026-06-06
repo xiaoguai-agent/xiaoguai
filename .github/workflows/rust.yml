@@ -17,13 +17,21 @@ env:
   CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_PROFILE_TEST_DEBUG: "0"
   CARGO_INCREMENTAL: "0"
+  # Reliability harness round 2: the debuginfo strip fixed the warm-cache path,
+  # but a COLD cache (new branch / Cargo.lock change) still died with "runner
+  # lost communication" ~52 min into the full-workspace compile — a runner OOM
+  # during peak parallel codegen/linking (wasmtime, qdrant, opentelemetry are
+  # heavy). Cap concurrent rustc jobs to halve peak RAM; combined with an 8 GB
+  # swapfile (below) this keeps the cold build inside the runner envelope. The
+  # warm-cache path stays ~20 min — these only bite the rare full rebuild.
+  CARGO_BUILD_JOBS: "2"
 
 jobs:
   build-test:
     name: Build and test
-    # A hung/over-disk run must fail fast and visibly, not sit until the 6 h
-    # default and read like an infra mystery.
-    timeout-minutes: 60
+    # Cold rebuild with jobs=2 is slower-but-survives; give it headroom over the
+    # old 60 (a hung run still fails visibly, not at the 6 h default).
+    timeout-minutes: 90
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -39,6 +47,16 @@ jobs:
             "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}" || true
           sudo docker image prune --all --force 2>/dev/null || true
           df -h /
+      # Add 8 GB swap so a peak-RAM spike during linking is paged out instead of
+      # OOM-killing the runner agent ("lost communication"). GitHub runners ship
+      # with little/no swap by default.
+      - name: Add swap
+        run: |
+          sudo fallocate -l 8G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
       - uses: dtolnay/rust-toolchain@1.93.0
         with:
           components: rustfmt, clippy
