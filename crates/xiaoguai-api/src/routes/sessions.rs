@@ -521,7 +521,9 @@ mod audit_tests {
         RuntimeOutcome {
             stop_reason: stop,
             iterations,
-            messages: (0..messages).map(|i| LlmMessage::user(i.to_string())).collect(),
+            messages: (0..messages)
+                .map(|i| LlmMessage::user(i.to_string()))
+                .collect(),
             new_messages: Vec::new(),
             reply_text: String::new(),
         }
