@@ -5,6 +5,10 @@ on:
   # has not produced a successful run. Demoted to workflow_dispatch-only until
   # someone restores the wave-3 examine_globs targeting + the cargo-mutants
   # baseline. Tracking: T10 of the 2026-05-29 next-sprint plan.
+  #
+  # 2026-06-06 DECISION (ADR-0022): STAYS workflow_dispatch-only. Promoting a
+  # flaky gate to required erodes CI trust more than the coverage gain; revisit
+  # only once the cargo-mutants baseline is stabilized.
   workflow_dispatch:
     inputs:
       full_run:

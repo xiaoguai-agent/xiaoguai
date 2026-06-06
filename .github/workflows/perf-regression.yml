@@ -20,6 +20,10 @@ on:
   # someone fixes the perf-budget regression detection. Re-add the PR + cron
   # triggers once the workflow is healthy again. Tracking: T10 of the
   # 2026-05-29 next-sprint plan.
+  #
+  # 2026-06-06 DECISION (ADR-0022): STAYS workflow_dispatch-only. A flaky p95
+  # gate on every PR erodes CI trust more than it catches drift; revisit once
+  # the k6 baseline / perf-compare is stabilized.
   workflow_dispatch:
 
 env:
