@@ -9,10 +9,21 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # Reliability harness: the Test step kept dying on the ~14 GB runner because
+  # the workspace's debug artifacts (30 crates × full debuginfo) overflowed the
+  # disk mid-`cargo test`. Strip debuginfo and disable incremental in CI —
+  # neither helps a CI gate and together they cut the target/ footprint by well
+  # over half, which is what makes the Test step fit and finish.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   build-test:
     name: Build and test
+    # A hung/over-disk run must fail fast and visibly, not sit until the 6 h
+    # default and read like an infra mystery.
+    timeout-minutes: 60
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -20,9 +31,7 @@ jobs:
         os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v6
-      # The full-workspace --all-targets debug build (30 crates, opt-level=3
-      # deps, debuginfo) plus the clippy artifacts overflow the ~14 GB runner
-      # disk on a cold cache. Reclaim ~25 GB of preinstalled toolchains first.
+      # Reclaim ~25 GB of preinstalled toolchains so the build artifacts fit.
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
@@ -36,15 +45,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Format check
         run: cargo fmt --check
+      # `clippy --all-targets` already check-compiles every target (lib, bins,
+      # tests, examples, benches), so the previous standalone
+      # `cargo build --all-targets` was a redundant THIRD full compile that
+      # doubled the disk peak. Gate on clippy, then let `cargo test` produce the
+      # test binaries. `--locked` keeps CI reproducible against Cargo.lock.
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Build
-        run: cargo build --workspace --all-targets
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
   migrations-smoke:
     name: Migrations smoke (embedded SQLite)
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     needs: [build-test]
     steps:
@@ -52,4 +65,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.93.0
       - uses: Swatinem/rust-cache@v2
       - name: Apply all migrations to a fresh SQLite DB
-        run: cargo test -p xiaoguai-storage migrations_apply_clean -- --include-ignored
+        run: cargo test -p xiaoguai-storage migrations_apply_clean --locked -- --include-ignored
