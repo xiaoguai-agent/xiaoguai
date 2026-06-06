@@ -29,6 +29,10 @@ use crate::types::{
 /// without limit; far above any real turn.
 const MAX_TOOL_CALLS_PER_TURN: usize = 128;
 
+/// Upper bound on one tool call's accumulated `arguments` JSON (bytes). The
+/// entry cap above bounds cardinality; this bounds per-entry growth.
+const MAX_TOOL_ARGS_BYTES: usize = 256 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct OpenAiCompatBackend {
     base_url: String,
@@ -221,7 +225,21 @@ impl PartialToolCall {
                 }
             }
             if let Some(args) = f.arguments {
-                self.arguments.push_str(&args);
+                // Bound the accumulated arguments: the per-turn entry cap
+                // bounds map cardinality, but a hostile upstream could still
+                // stream unbounded bytes into one entry. Past the cap the
+                // remainder is dropped (the truncated JSON will fail dispatch
+                // downstream — acceptable for an out-of-contract stream).
+                let remaining = MAX_TOOL_ARGS_BYTES.saturating_sub(self.arguments.len());
+                if remaining >= args.len() {
+                    self.arguments.push_str(&args);
+                } else {
+                    let mut end = remaining;
+                    while end > 0 && !args.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    self.arguments.push_str(&args[..end]);
+                }
             }
         }
     }
@@ -291,10 +309,14 @@ impl LlmBackend for OpenAiCompatBackend {
         let partials: Arc<Mutex<BTreeMap<u32, PartialToolCall>>> =
             Arc::new(Mutex::new(BTreeMap::new()));
         let final_emitted = Arc::new(Mutex::new(false));
+        // Warn at most once per stream when the tool-call cap drops indices —
+        // a hostile stream would otherwise turn the guard into log-volume DoS.
+        let cap_warned = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         let mapped = {
             let partials = partials.clone();
             let final_emitted = final_emitted.clone();
+            let cap_warned = cap_warned.clone();
             sse.map(move |ev| {
                 let ev = ev.map_err(|e| LlmError::Network(e.to_string()))?;
                 if ev.data == "[DONE]" {
@@ -317,11 +339,14 @@ impl LlmBackend for OpenAiCompatBackend {
                             // grow this map without limit. 128 is already far beyond
                             // any real turn.
                             if !map.contains_key(&index) && map.len() >= MAX_TOOL_CALLS_PER_TURN {
-                                tracing::warn!(
-                                    index,
-                                    cap = MAX_TOOL_CALLS_PER_TURN,
-                                    "openai_compat: tool-call count exceeded cap; dropping"
-                                );
+                                if !cap_warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                                    tracing::warn!(
+                                        index,
+                                        cap = MAX_TOOL_CALLS_PER_TURN,
+                                        "openai_compat: tool-call count exceeded cap; \
+                                         dropping further indices (warned once per stream)"
+                                    );
+                                }
                                 continue;
                             }
                             map.entry(index).or_default().merge(tc);

@@ -36,14 +36,18 @@
 macro_rules! instrument_llm_call {
     ($provider:expr, $model:expr, $fut:expr) => {{
         use ::tracing::Instrument as _;
-        let __span = ::tracing::info_span!("llm.call", provider = $provider, model = $model);
+        // Bind once: `$provider`/`$model` may be arbitrary expressions; they
+        // must not be evaluated twice (span + labels).
+        let __provider: &str = $provider;
+        let __model: &str = $model;
+        let __span = ::tracing::info_span!("llm.call", provider = __provider, model = __model);
         let __t0 = std::time::Instant::now();
         let __result = $fut.instrument(__span).await;
         let __elapsed = __t0.elapsed().as_secs_f64();
         if let Some(__handles) = $crate::prometheus::global_handles() {
             __handles
                 .llm_call_duration
-                .with_label_values(&[$provider, $model])
+                .with_label_values(&[__provider, __model])
                 .observe(__elapsed);
         }
         __result
@@ -52,13 +56,16 @@ macro_rules! instrument_llm_call {
 
 /// Record a scheduler tick with `tracing` + Prometheus.
 ///
-/// Parameter: async block producing the tick result.
+/// Parameter: async block producing the tick result. Same `Instrument`-based
+/// shape as [`instrument_llm_call!`] — an `EnteredSpan` guard held across the
+/// await would make the future `!Send`.
 #[macro_export]
 macro_rules! instrument_scheduler_tick {
     ($fut:expr) => {{
-        let _span = tracing::info_span!("scheduler.tick").entered();
+        use ::tracing::Instrument as _;
+        let __span = ::tracing::info_span!("scheduler.tick");
         let __t0 = std::time::Instant::now();
-        let __result = $fut.await;
+        let __result = $fut.instrument(__span).await;
         let __elapsed = __t0.elapsed().as_secs_f64();
         if let Some(__handles) = $crate::prometheus::global_handles() {
             __handles.scheduler_tick_duration.observe(__elapsed);
@@ -89,5 +96,24 @@ mod tests {
             .with_label_values(&["test_prov", "test_model"])
             .get_sample_count();
         assert_eq!(after, before + 1, "one histogram observation recorded");
+    }
+
+    #[tokio::test]
+    async fn instrument_llm_call_observes_error_path_too() {
+        let _ = init_prometheus();
+        let handles = global_handles().expect("handles set after init");
+        let before = handles
+            .llm_call_duration
+            .with_label_values(&["err_prov", "err_model"])
+            .get_sample_count();
+
+        let out = instrument_llm_call!("err_prov", "err_model", async { Err::<u32, &str>("boom") });
+
+        assert!(out.is_err());
+        let after = handles
+            .llm_call_duration
+            .with_label_values(&["err_prov", "err_model"])
+            .get_sample_count();
+        assert_eq!(after, before + 1, "error path must still observe");
     }
 }

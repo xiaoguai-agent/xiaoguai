@@ -4,7 +4,7 @@
 //!
 //! | Name | Type | Labels | Description |
 //! |---|---|---|---|
-//! | `xiaoguai_llm_call_duration_seconds` | Histogram | `provider`, `model` | LLM call latency |
+//! | `xiaoguai_llm_call_duration_seconds` | Histogram | `provider`, `model` | LLM stream-establishment latency (request → response headers) |
 //! | `xiaoguai_scheduler_tick_duration_seconds` | Histogram | — | Scheduler tick latency |
 //! | `xiaoguai_hotl_usage_total` | Counter | `scope`, `verdict` | HOTL enforcer decisions |
 //! | `xiaoguai_hotl_check_duration_seconds` | Histogram | — | HOTL enforcer check latency |
@@ -56,7 +56,9 @@ static HANDLES: OnceCell<MetricHandles> = OnceCell::new();
 /// All metric handles in one struct so they can be cloned cheaply.
 #[derive(Clone)]
 pub struct MetricHandles {
-    /// LLM provider call latency histogram, labelled by `(provider, model)`.
+    /// LLM stream-establishment latency histogram (request → response
+    /// headers / first byte; token generation streams afterwards and is NOT
+    /// included), labelled by `(provider, model)`.
     pub llm_call_duration: HistogramVec,
     /// Scheduler tick latency histogram (unlabelled).
     pub scheduler_tick_duration: Histogram,
@@ -156,7 +158,7 @@ pub fn init_prometheus() -> Result<(Registry, MetricHandles)> {
 
     let llm_call_duration = register_histogram_vec_with_registry!(
         "llm_call_duration_seconds",
-        "LLM provider call latency in seconds",
+        "LLM stream-establishment latency in seconds (request to response headers; excludes token generation)",
         &["provider", "model"],
         latency_buckets.clone(),
         registry

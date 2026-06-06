@@ -13,6 +13,10 @@ use quick_xml::Reader;
 
 use super::{LoadError, LoadResult, LoadedDoc, Loader, PageMeta};
 
+/// Cap on the DECOMPRESSED `word/document.xml` (ZIP-bomb guard). Real
+/// documents run well under this; 16 MiB is far beyond any legitimate file.
+const MAX_DOCUMENT_XML_BYTES: usize = 16 * 1024 * 1024;
+
 /// Stateless DOCX loader.
 #[derive(Debug, Default, Clone)]
 pub struct DocxLoader;
@@ -147,15 +151,26 @@ impl Loader for DocxLoader {
 
         // Find word/document.xml (case-sensitive per OOXML spec).
         let xml_bytes = {
-            let mut entry =
+            let entry =
                 archive
                     .by_name("word/document.xml")
                     .map_err(|_| LoadError::Malformed {
                         format: "docx",
                         reason: "word/document.xml not found in archive".into(),
                     })?;
+            // ZIP-bomb guard: cap the DECOMPRESSED document XML (see the
+            // pptx loader's MAX_SLIDE_XML_BYTES for rationale).
             let mut buf = Vec::new();
-            entry.read_to_end(&mut buf)?;
+            let mut limited = entry.take(MAX_DOCUMENT_XML_BYTES as u64 + 1);
+            limited.read_to_end(&mut buf)?;
+            if buf.len() > MAX_DOCUMENT_XML_BYTES {
+                return Err(LoadError::Malformed {
+                    format: "docx",
+                    reason: format!(
+                        "document.xml decompresses past the {MAX_DOCUMENT_XML_BYTES}-byte cap"
+                    ),
+                });
+            }
             buf
         };
 
