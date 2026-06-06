@@ -241,7 +241,7 @@ pub async fn send_message(
         state.toolbox.clone(),
         state.agent_defaults.clone(),
     )
-    .with_model(model);
+    .with_model(model.clone());
     let cancel = state.cancels.register(&session_id_str);
 
     // 4. HOTL budget check — gated on the "llm_call" scope.
@@ -277,13 +277,15 @@ pub async fn send_message(
     // 6. Spawn the finalisation task — it runs concurrently with the SSE
     //    stream and persists anything the loop produced once the join
     //    handle resolves.
-    spawn_finalize_task(
-        state.clone(),
-        session_id_str.clone(),
+    spawn_finalize_task(FinalizeCtx {
+        state: state.clone(),
+        session_id_str: session_id_str.clone(),
         session_id,
+        actor: session.user_id.to_string(),
+        model,
         join,
         prefix_len,
-    );
+    });
 
     // Stamp each event with a per-stream monotonic id (`id:` field). The
     // client echoes the last seen id as `Last-Event-ID` on reconnect and
@@ -296,20 +298,57 @@ pub async fn send_message(
     Ok(Sse::new(sse_stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
-fn spawn_finalize_task(
+/// Inputs to the detached finalisation task. Bundled into one struct so the
+/// spawn site stays readable as the audit/identity wiring grows.
+struct FinalizeCtx {
     state: AppState,
     session_id_str: String,
     session_id: SessionId,
+    /// Audit actor — the session owner (`session.user_id`).
+    actor: String,
+    /// Resolved model for this turn (request override or session default).
+    model: String,
     join: tokio::task::JoinHandle<Result<RuntimeOutcome, xiaoguai_runtime::RuntimeError>>,
-    initial_count: usize,
-) {
+    /// Count of leading messages that predate this turn (history + the user
+    /// message + optional identity prefix); see `prefix_len` at the call site.
+    prefix_len: usize,
+}
+
+fn spawn_finalize_task(ctx: FinalizeCtx) {
+    let FinalizeCtx {
+        state,
+        session_id_str,
+        session_id,
+        actor,
+        model,
+        join,
+        prefix_len,
+    } = ctx;
     tokio::spawn(async move {
         match join.await {
             Ok(Ok(outcome)) => {
                 if let Err(err) =
-                    persist_loop_output(&state, &session_id, &outcome.messages, initial_count).await
+                    persist_loop_output(&state, &session_id, &outcome.messages, prefix_len).await
                 {
                     tracing::error!(?err, "failed to persist agent output");
+                }
+                // Audit-completeness: the SSE chat path runs the agent via
+                // `run_streamed` + this detached finaliser, so it never went
+                // through the runtime's audit sink. Emit one HMAC-chained
+                // `agent.run` entry per completed run (same route-level
+                // pattern as `hotl.decision`). Best-effort: an audit failure
+                // here must NOT affect the already-finished run.
+                if let Some(sink) = &state.hotl_audit {
+                    let entry = build_agent_run_audit(
+                        &actor,
+                        &session_id_str,
+                        &model,
+                        &outcome,
+                        prefix_len,
+                    );
+                    if let Err(err) = sink.append(entry).await {
+                        tracing::warn!(%err, "agent.run audit append failed");
+                    }
                 }
                 tracing::info!(
                     stop_reason = ?outcome.stop_reason,
@@ -326,6 +365,34 @@ fn spawn_finalize_task(
             tracing::warn!(?err, "touch session failed");
         }
     });
+}
+
+/// Build the `agent.run` audit entry for a completed chat run. Pure +
+/// deterministic (caller supplies the timestamp-free inputs) so it is unit
+/// testable without spawning the agent loop. `prefix_len` is the number of
+/// pre-existing messages, so `messages.len() - prefix_len` is the count this
+/// turn produced.
+fn build_agent_run_audit(
+    actor: &str,
+    session_id: &str,
+    model: &str,
+    outcome: &RuntimeOutcome,
+    prefix_len: usize,
+) -> xiaoguai_audit::AuditEntry {
+    let produced = outcome.messages.len().saturating_sub(prefix_len);
+    xiaoguai_audit::AuditEntry {
+        ts: Utc::now(),
+        tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
+        actor: actor.to_string(),
+        action: "agent.run".into(),
+        resource: Some(format!("session:{session_id}")),
+        details: serde_json::json!({
+            "model": model,
+            "stop_reason": format!("{:?}", outcome.stop_reason),
+            "iterations": outcome.iterations,
+            "messages_produced": produced,
+        }),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -442,5 +509,46 @@ fn fork_error_to_api(err: SessionForkError) -> ApiError {
             tracing::error!(err = %s, "session fork repository error");
             ApiError::Internal(anyhow::anyhow!("session fork: {s}"))
         }
+    }
+}
+
+#[cfg(test)]
+mod audit_tests {
+    use super::*;
+    use xiaoguai_agent::StopReason;
+
+    fn outcome_with(messages: usize, stop: StopReason, iterations: u32) -> RuntimeOutcome {
+        RuntimeOutcome {
+            stop_reason: stop,
+            iterations,
+            messages: (0..messages).map(|i| LlmMessage::user(i.to_string())).collect(),
+            new_messages: Vec::new(),
+            reply_text: String::new(),
+        }
+    }
+
+    #[test]
+    fn agent_run_audit_carries_run_metadata() {
+        let outcome = outcome_with(5, StopReason::Completed, 3);
+        // 2 pre-existing messages → 3 produced this turn.
+        let entry = build_agent_run_audit("owner", "sess-1", "gpt-x", &outcome, 2);
+
+        assert_eq!(entry.action, "agent.run");
+        assert_eq!(entry.actor, "owner");
+        assert_eq!(entry.resource.as_deref(), Some("session:sess-1"));
+        assert_eq!(entry.tenant_id, xiaoguai_audit::OWNER_TENANT_ID);
+        assert_eq!(entry.details["model"], "gpt-x");
+        assert_eq!(entry.details["iterations"], 3);
+        assert_eq!(entry.details["messages_produced"], 3);
+        assert_eq!(entry.details["stop_reason"], "Completed");
+    }
+
+    #[test]
+    fn agent_run_audit_messages_produced_saturates() {
+        // prefix_len larger than total messages must not underflow.
+        let outcome = outcome_with(1, StopReason::MaxIterations, 10);
+        let entry = build_agent_run_audit("owner", "s", "m", &outcome, 4);
+        assert_eq!(entry.details["messages_produced"], 0);
+        assert_eq!(entry.details["stop_reason"], "MaxIterations");
     }
 }
