@@ -1,7 +1,32 @@
 # HANDOFF — Audit rounds + follow-ups (2026-06-06)
 
 Durable, repo-committed checkpoint so this session can be cleared and resumed.
-`main` tip at write: **`6115f11`**. **0 of my PRs open.**
+
+---
+
+## ⭐ SESSION FINAL STATE (2026-06-06, end of session) — READ THIS FIRST
+
+**Everything below is SHIPPED and RELEASED. `main` tip `17ec6dc`. Tag `v1.11.0` pushed and LIVE on PyPI + deb/rpm + tarball. 0 of my PRs open** (only unrelated Dependabot #225).
+
+What this session delivered, in order:
+1. **F5** (#228) — chat SSE reconnect de-dup (monotonic event id + `Last-Event-ID` + turn rollback, amends DEC-LLD-CHAT-UI-003) + welcome-chip/banner i18n + 4xx-no-retry. Design DEC amend = design PR #18.
+2. **Audit round 3 (#1–100)** (#229) — 8-reviewer deep audit, 11 fixes (2 CRITICAL: audit redaction never wired to the PRIMARY sink → PII in every compliance export; backup-restore Zip-Slip → RCE. 5 HIGH + 2 MED + 2 LOW). Detail in §3.6.
+3. **Harness reliability** (#230) — fixed the pre-existing-RED CI `Build and test` gate (it was dying on runner disk → strip debuginfo + `CARGO_INCREMENTAL=0` + drop redundant build + `timeout-minutes` + `--locked`) AND added agent context-budget guards (32 tool-calls/turn cap, 96 KB tool-result truncation char-safe, 256 KB summary cap). **Repairing the gate exposed + fixed a latent masked test** (round-3's multibyte `build_summary` test). The gate is now GREEN on main — see [[ci-build-test-gate-red]] (RESOLVED).
+4. **Released v1.11.0** — CHANGELOG on main (`17ec6dc`), tag `v1.11.0`, GitHub release with notes, pip/tarball/deb-rpm all `success`, PyPI `xiaoguai==1.11.0` live.
+
+**Deferred (real, NOT done — from the harness review; pick up next session):**
+- Audit-completeness: token-usage / message-append / session+message DELETE writes bypass the HMAC audit chain (compliance gap). Verify + thread the AuditAppender through those storage repos.
+- LLM-router latency metric (`xiaoguai-llm/src/router.rs` hot path is untraced; `instrument_llm_call!` macro defined but unused).
+- Eval-suite CI wiring: `xiaoguai-eval` substrate exists but has ~0 production regression evals + isn't run in CI. Write regression evals from the audit findings + add a CI job.
+- mutation-testing / perf-regression are `workflow_dispatch`-only (decorative) — decide gating.
+- **Governance call for the OWNER:** `xiaoguai-runtime/src/lib.rs` `sink.on_finish(&outcome).await?` fails the whole agent run if the audit write fails (fail-closed-on-audit). CLAUDE.md philosophy says audit-write failure should NOT block the main op. Flagged, NOT changed unilaterally — needs an owner decision.
+- Lower-priority guards: WASM >128KB output-trap, WASM asset integrity pin, HotL phantom-decision-row→404 (S13-8), HotL cancelled-waiter leak (=F1 b/c), openai_compat tool-index bound, rag reranker total timeout, pptx slide-text cap.
+
+**Resume/verify:** `git -C /Users/zw/testany/myskills/xiaoguai checkout main && git pull`; `cargo clippy --workspace --all-targets --locked -- -D warnings` + `cargo test --workspace --locked` (now both pass — the gate is fixed). Memory index [[feature-backlog]] + [[ci-build-test-gate-red]] are current.
+
+---
+
+(Original handoff written earlier this session at `main` `6115f11`, pre-F5/round-3/harness:)
 
 ---
 
