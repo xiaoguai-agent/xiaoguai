@@ -2069,12 +2069,21 @@ export class XiaoguaiClient {
     const url = `${this.baseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/messages`;
     const serialized = JSON.stringify(body);
 
+    // Highest SSE `id:` seen so far across all attempts. Echoed back as
+    // `Last-Event-ID` on reconnect so a resume-capable backend can pick up
+    // from the cursor; today's backend restarts the run, so the chat client
+    // also drops the superseded turn to avoid duplicate text (F5).
+    let lastEventId: string | null = null;
+
     const buildHeaders = (attempt: number): Record<string, string> => {
       const h = this.headers();
       // Only send the idempotency header on retries so the happy path stays
       // byte-identical to the previous behaviour. (See sendMessage.test.ts
       // "Idempotency-Key header" case.)
       if (attempt > 0) h['idempotency-key'] = idempotencyKey;
+      // Standard SSE resume cursor — only present once an event with an id
+      // has been observed (i.e. on a reconnect after partial progress).
+      if (lastEventId !== null) h['last-event-id'] = lastEventId;
       return h;
     };
 
@@ -2128,6 +2137,19 @@ export class XiaoguaiClient {
           });
           if (!resp.ok || !resp.body) {
             lastErr = new ApiError(resp.status, 'http_error', `HTTP ${resp.status}`);
+            // A 4xx is a client error — the same request will be rejected
+            // identically on every retry, so burning the full backoff is
+            // pointless. 408 (Request Timeout) and 429 (Too Many Requests)
+            // are the standard retryable exceptions; everything else 4xx
+            // fails fast via onError. 5xx / missing-body still retry.
+            if (
+              resp.status >= 400 &&
+              resp.status < 500 &&
+              resp.status !== 408 &&
+              resp.status !== 429
+            ) {
+              break;
+            }
             continue;
           }
           const reader = resp.body.getReader();
@@ -2146,7 +2168,9 @@ export class XiaoguaiClient {
               const chunk = buf.slice(0, idx);
               buf = buf.slice(idx + 2);
               const parsed = parseSseChunk(chunk);
-              if (parsed) onEvent(parsed);
+              // Track the resume cursor even for keep-alive / data-less frames.
+              if (parsed.id !== null) lastEventId = parsed.id;
+              if (parsed.ev) onEvent(parsed.ev);
             }
           }
         } catch (err) {
@@ -2196,24 +2220,34 @@ function defaultExportFilename(tenantId: string, format: string): string {
   return `audit-${tenantId}-${ts}.${ext}`;
 }
 
-function parseSseChunk(chunk: string): AgentEvent | null {
+/** One parsed SSE frame: the decoded event plus its `id:` field (if any). */
+interface ParsedSseChunk {
+  ev: AgentEvent | null;
+  /** The SSE `id:` field — a per-stream monotonic sequence, or null. */
+  id: string | null;
+}
+
+function parseSseChunk(chunk: string): ParsedSseChunk {
   let event = '';
   let data = '';
+  let id: string | null = null;
   for (const line of chunk.split('\n')) {
     if (line.startsWith('event:')) {
       event = line.slice(6).trim();
     } else if (line.startsWith('data:')) {
       data += line.slice(5).trim();
+    } else if (line.startsWith('id:')) {
+      id = line.slice(3).trim();
     }
   }
-  if (!data) return null;
+  if (!data) return { ev: null, id };
   try {
     const parsed = JSON.parse(data) as AgentEvent;
     if (event && (parsed as { type: string }).type !== event) {
-      return { ...(parsed as object), type: event } as unknown as AgentEvent;
+      return { ev: { ...(parsed as object), type: event } as unknown as AgentEvent, id };
     }
-    return parsed;
+    return { ev: parsed, id };
   } catch {
-    return null;
+    return { ev: null, id };
   }
 }

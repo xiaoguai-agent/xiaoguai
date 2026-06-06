@@ -48,6 +48,13 @@ interface TranslationShape {
     branch: string;
     branch_title: string;
     branch_label: string;
+    /** Opening prompts on the welcome screen (Gemini-style chips). */
+    suggestions: {
+      summarize_doc: string;
+      write_shell: string;
+      analyze_cve: string;
+      explain_codebase: string;
+    };
   };
   chat: {
     sse: {

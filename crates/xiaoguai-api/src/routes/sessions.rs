@@ -19,7 +19,7 @@ use crate::auth::Claims;
 use crate::convert::{domain_to_llm, llm_to_domain};
 use crate::error::{ApiError, ApiResult};
 use crate::sessions_ext::SessionForkError;
-use crate::sse::event_to_sse;
+use crate::sse::event_to_sse_seq;
 use crate::state::AppState;
 
 const DEFAULT_LIST_LIMIT: i64 = 100;
@@ -285,7 +285,14 @@ pub async fn send_message(
         prefix_len,
     );
 
-    let sse_stream = events.map(|ev| Ok::<_, axum::Error>(event_to_sse(&ev)));
+    // Stamp each event with a per-stream monotonic id (`id:` field). The
+    // client echoes the last seen id as `Last-Event-ID` on reconnect and
+    // uses it to drop a superseded turn (F5 SSE reconnect de-dup). The
+    // sequence restarts per response — this stream carries no cross-request
+    // resume state.
+    let sse_stream = events
+        .enumerate()
+        .map(|(i, ev)| Ok::<_, axum::Error>(event_to_sse_seq(&ev, i as u64 + 1)));
     Ok(Sse::new(sse_stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
