@@ -727,8 +727,13 @@ fn build_summary(last_round: u32, approved: &[ApprovedArtefact], rejections: &[S
         if let Some(art) = &a.artefact {
             // Truncate to keep the summary bounded.
             let trimmed = art.trim();
-            let preview = if trimmed.len() > 200 {
-                format!("{}…", &trimmed[..200])
+            // Truncate by char count, NOT byte index: `&trimmed[..200]` panics
+            // when byte 200 lands mid-codepoint, and `art` is arbitrary
+            // (possibly non-ASCII) LLM/tool output — a hostile or merely
+            // multibyte artefact would crash the orchestration run.
+            let preview = if trimmed.chars().count() > 200 {
+                let truncated: String = trimmed.chars().take(200).collect();
+                format!("{truncated}…")
             } else {
                 trimmed.to_string()
             };
@@ -760,6 +765,22 @@ mod tests {
     use std::sync::Arc;
     use tokio_stream::StreamExt;
     use xiaoguai_llm::mock::MockBackend;
+
+    #[test]
+    fn build_summary_does_not_panic_on_multibyte_artefact() {
+        // `art` is arbitrary LLM/tool output. A 201-byte string whose 200th
+        // byte lands mid-codepoint used to panic `&trimmed[..200]`; the
+        // char-boundary truncation must handle it.
+        let artefact = "你".repeat(67); // 3 bytes each → 201 bytes, 67 chars
+        let approved = vec![ApprovedArtefact {
+            task_id: crate::triangle::plan::TaskId::new(),
+            artefact: Some(artefact),
+            approve_reason: "ok".into(),
+        }];
+        let summary = build_summary(1, &approved, &[]);
+        assert!(summary.contains("artefact:"));
+        assert!(summary.contains('…'), "long artefact should be truncated");
+    }
 
     /// Smallest valid backend bundle — used by the budget-too-small
     /// test below. We never actually drive these because the runner

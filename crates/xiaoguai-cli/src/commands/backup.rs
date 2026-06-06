@@ -513,6 +513,17 @@ pub struct RestoreArgs {
     pub restore_db_to: Option<PathBuf>,
 }
 
+/// True when an archive member path is safe to join under the restore dir:
+/// it must be relative and contain only `Normal` (and benign `CurDir`)
+/// components — no root/prefix (absolute) and no `..` (`ParentDir`). This is
+/// the Zip-Slip guard for `run_restore`'s hand-rolled extraction loop.
+fn archive_path_is_safe(path_str: &str) -> bool {
+    use std::path::Component;
+    let p = Path::new(path_str);
+    p.components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+}
+
 /// Run `xiaoguai restore`.
 ///
 /// # Errors
@@ -557,6 +568,19 @@ pub fn run_restore(args: RestoreArgs) -> Result<()> {
             .context("tar entry path")?
             .to_string_lossy()
             .into_owned();
+        // Zip-Slip guard: reject any member path that is absolute or escapes
+        // the output dir via `..`. We re-implement extraction with
+        // `outdir.join(path_str)` + `fs::write` (not `Archive::unpack`), so
+        // without this an entry like `/etc/cron.d/x` or `../../.bashrc` would
+        // write outside `outdir` → arbitrary file write / code execution. The
+        // SHA-256 manifest is no defense: it is computed over these same
+        // attacker-controlled paths, so a hostile archive ships a matching one.
+        if !archive_path_is_safe(&path_str) {
+            bail!(
+                "refusing to extract unsafe archive member path: {path_str:?} \
+                 (absolute paths and `..` traversal are not allowed)"
+            );
+        }
         let mut data = Vec::new();
         entry
             .read_to_end(&mut data)
@@ -611,6 +635,16 @@ pub fn run_restore(args: RestoreArgs) -> Result<()> {
         }
         std::fs::write(&dest, data)
             .with_context(|| format!("write extracted file {}", dest.display()))?;
+        // Restored state is private single-user data — the SQLite store, the
+        // config tree (provider API keys), the audit DB. Don't leave it
+        // world-readable under the default umask (0o644).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if path_str == "data.db" || path_str == "audit.db" || path_str.starts_with("config/") {
+                let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o600));
+            }
+        }
     }
 
     // 7. Optionally restore the SQLite store to its live path.
@@ -687,4 +721,28 @@ fn restore_sqlite_file(data: &[u8], target: &Path, force: bool) -> Result<()> {
         let _ = std::fs::remove_file(PathBuf::from(side));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::archive_path_is_safe;
+
+    #[test]
+    fn archive_path_safety_accepts_normal_relative_members() {
+        assert!(archive_path_is_safe("data.db"));
+        assert!(archive_path_is_safe("config/config.yaml"));
+        assert!(archive_path_is_safe("sha256sum.txt"));
+        assert!(archive_path_is_safe("./config/x"));
+    }
+
+    #[test]
+    fn archive_path_safety_rejects_traversal_and_absolute() {
+        // Absolute path — would discard outdir entirely on `join`.
+        assert!(!archive_path_is_safe("/etc/cron.d/evil"));
+        // `..` traversal — escapes outdir at write time.
+        assert!(!archive_path_is_safe("../../../etc/cron.d/evil"));
+        assert!(!archive_path_is_safe("config/../../escape"));
+        #[cfg(windows)]
+        assert!(!archive_path_is_safe("C:\\Windows\\evil"));
+    }
 }

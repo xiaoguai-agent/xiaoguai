@@ -73,7 +73,11 @@ impl ExecBackend for ProcessL1JavaScript {
         CapabilitySummary {
             tier: "L1",
             language: "javascript",
-            network: false,
+            // Honesty: Deno `--allow-none` denies network, but the Node runtime
+            // has no permission model — `fetch`/`http`/`net` all work and there
+            // is no netns/seccomp in this crate. Report `false` ONLY for Deno so
+            // a policy/model keying on `network` isn't misled under Node.
+            network: matches!(self.cfg.runtime, crate::exec::Runtime::Node),
             // Deno `--allow-none` blocks FS; Node has full ABI access
             // but operator is expected to mount FS read-only. We report
             // `true` because L1 in general can touch the tempdir CWD —

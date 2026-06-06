@@ -67,6 +67,32 @@ Chosen approach: **protocol + client-guard** (not full server resume — the res
 
 Verified: xiaoguai-api clippy -D warnings clean + all tests; shared vitest 11, chat-ui vitest 56, admin-ui vitest 251; all tsc clean.
 
+## 3.6 Audit ROUND 3 (#1–100, the foundational subsystems) — branch `audit-round3`
+
+Deep review of the surviving code built by the substantive PRs in #17–100 (the rest of #1–100 are Dependabot bumps). 8 parallel `code-reviewer` agents over: audit-chain/redact/export, Python-L1+JS sandbox, L3 WASM sandbox, HotL gate, OAuth-PKCE+token-store, backup crypto, triangle orchestrator, skill-author+LLM. Every finding adversarially re-verified against current code before fixing.
+
+**FIXED (11):**
+- **CRITICAL — audit redaction not on the primary sink** (`xiaoguai-core/src/lib.rs` ~251). Redaction was wired only to the scheduler sink; the primary `pg_audit_sink` (feeds reader/verifier/**exporter**, HotL, coding, skill-author) had none, so PII/secrets landed un-redacted in `audit_log` and every compliance export despite redaction defaulting ON. Now `.with_redactor()` gated on `audit_redaction_enabled()`.
+- **CRITICAL — backup restore Zip-Slip** (`xiaoguai-cli/src/commands/backup.rs` ~555). The hand-rolled extraction (`outdir.join(member)` + `fs::write`) accepted absolute/`..` tar member paths → arbitrary file write/RCE; the SHA-256 manifest is no defense (computed over the same hostile paths). Added `archive_path_is_safe` (Normal/CurDir components only) reject + tests.
+- **HIGH — CSV formula injection in compliance export** (`xiaoguai-audit/src/export.rs` `csv_escape`). Cells leading with `= + - @ \t \r` now prefixed with `'`.
+- **HIGH — JS sandbox timeout leaks grandchildren** (`xiaoguai-mcp-exec-js/src/exec.rs`). The round-1/2 Python process-group fix was never ported; Node `child_process` orphans survived timeout. Ported `process_group(0)` + group SIGKILL.
+- **HIGH — OAuth token endpoint cleartext** (`xiaoguai-mcp/src/auth/oauth2_pkce.rs`). `post_token_form` now calls `enforce_token_url_scheme`: https always, http only for loopback or `XIAOGUAI_MCP_OAUTH_INSECURE` — else the `code`/`refresh_token` would go in cleartext.
+- **HIGH — triangle `build_summary` UTF-8 panic** (`xiaoguai-orchestrator/src/patterns/triangle.rs` ~731). `&trimmed[..200]` byte-slice panicked on multibyte LLM output → DoS. Now char-boundary truncation.
+- **HIGH — skill-author path traversal via SemVer pre-release** (`xiaoguai-tasks/src/skill_author.rs`). `version_is_semver_ish` discarded the `-<pre>` segment, so `1.0.0-/../../tmp/evil` escaped `skills_dir` on approval. Now validates pre-release charset + a filename-component guard in `write_skill_yaml`.
+- **MEDIUM — skill-author approve/reject lacked a status guard** (same file). A *rejected* proposal could be re-approved (no YAML on disk so `SkillFileExists` missed it). Added `NotPending` guard (→ 409).
+- **MEDIUM — OAuth at-rest encryption is unwired dead code** (`xiaoguai-mcp/src/auth/{at_rest,mod}.rs`). Only `InMemoryTokenStore` exists; nothing writes `mcp_oauth_tokens`. Crypto is sound but guards nothing — corrected the overstated docstrings (a `SqliteTokenStore` is the follow-up).
+- **LOW — JS `network:false` dishonest for Node** (`xiaoguai-mcp-exec-js/src/runtime.rs`). Now `network: matches!(runtime, Node)` (mirrors the round-2 Python honesty fix).
+- **LOW — backup restore world-readable perms** (`backup.rs`). `data.db`/`audit.db`/`config/*` now `0o600` on unix.
+
+**DEFERRED (noted, not fixed):**
+- WASM >128 KB output traps as an opaque "supervisor error" instead of truncating (MEDIUM correctness; fix is a fragile wasmtime trap-string match) — `mcp-exec-wasm/src/wasmtime_{python,javascript}.rs`.
+- WASM runtime `.wasm` asset has no integrity pin (LOW hardening; needs a published digest) — `mcp-exec-wasm/src/assets.rs`.
+- HotL forged/unknown `escalation_id` → 201 + phantom decision row instead of 404 (LOW; documented S13-8 future work) — `routes/hotl_decisions.rs`.
+- HotL cancelled suspension leaks a registry waiter until expiry (LOW; = F1 part b/c, the prior optional-hygiene decision) — `react.rs` cancel arm.
+- HotL `resumed:true` cosmetic inaccuracy when the receiver was already dropped (LOW).
+
+**Verified CLEAN by the reviewers (no defect):** HMAC chain tamper-evidence (MAC over all fields, verify catches reorder/delete), export re-verifies the chain (409 on break), PDF export injection-safe, Python-L1 env scrubbing (4-key allowlist) + arg-injection-safe + tempdir isolation, WASM isolation (no fs/env/net/socket — `p1`-only, no preopens), WASM epoch-timeout + memory limiter enforced, HotL fails-closed everywhere + request_id UNIQUE replay guard, PKCE S256 + CSPRNG verifier + state CSRF, at-rest AES-256-GCM nonce/key handling, backup `age` AEAD + integrity-on-decrypt + temp-file perms, triangle loop/budget bounds + plan-JSON parse + role trust boundary (worker can't forge a Verdict), Ollama tool-call parse robustness, `build.rs` default-model tie deterministic, `token_count` no-overflow.
+
 ## 4. Verified CLEAN (do not re-investigate)
 config env-override (#173 correct, reproduced incl. nested map), frontend major bumps (react-router 6→7 / ts 5.9→6 / happy-dom / RSH — tsc + vitest green both UIs), MSRV 1.93, deploy files (no stale PG/pgvector/helm), static-UI path traversal (tower-http `ServeDir` safe), provider `api_key` never serialized/logged, wasmtime 45 (advisories cleared), HotL boot-replay (no double-fire), the prior HotlBanner double-`onCleared` bug (fixed + regression-tested), audit-bundle chain-verify (non-bypassable, 409 on broken chain).
 

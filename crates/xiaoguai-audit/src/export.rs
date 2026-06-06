@@ -490,10 +490,26 @@ pub fn render(bundle: &ComplianceBundle, format: Format) -> Result<Vec<u8>, Expo
 
 /// RFC 4180 minimal escaping — quote any field containing `,`, `"`, `\r`, or
 /// `\n`; double internal `"`.
+///
+/// Also neutralises spreadsheet formula injection: a compliance CSV carries
+/// event-/tool-controlled text (`actor`, `resource`, `details_summary`), and a
+/// cell beginning with `=`, `+`, `-`, `@` (or a tab/CR) is executed as a
+/// formula by Excel/Sheets/LibreOffice when the auditor opens the export. We
+/// prefix such cells with a single quote (the standard defense) before
+/// applying RFC 4180 quoting.
 fn csv_escape(s: &str) -> String {
+    let formula_lead = s.starts_with(['=', '+', '-', '@', '\t', '\r']);
+    let s = if formula_lead {
+        let mut prefixed = String::with_capacity(s.len() + 1);
+        prefixed.push('\'');
+        prefixed.push_str(s);
+        prefixed
+    } else {
+        s.to_string()
+    };
     let needs_quote = s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r');
     if !needs_quote {
-        return s.to_string();
+        return s;
     }
     let escaped = s.replace('"', "\"\"");
     format!("\"{escaped}\"")
@@ -767,6 +783,23 @@ mod tests {
         assert_eq!(csv_escape("has,comma"), "\"has,comma\"");
         assert_eq!(csv_escape("has\"quote"), "\"has\"\"quote\"");
         assert_eq!(csv_escape("has\nnewline"), "\"has\nnewline\"");
+    }
+
+    #[test]
+    fn csv_escape_neutralises_formula_injection() {
+        // Cells beginning with a formula trigger are prefixed with `'` so a
+        // spreadsheet opening the compliance export does not execute them.
+        assert_eq!(csv_escape("=1+1"), "'=1+1");
+        assert_eq!(csv_escape("+SUM(A1)"), "'+SUM(A1)");
+        assert_eq!(csv_escape("-2+3"), "'-2+3");
+        assert_eq!(csv_escape("@cmd"), "'@cmd");
+        // A formula that also needs RFC 4180 quoting gets both treatments.
+        assert_eq!(
+            csv_escape("=HYPERLINK(\"http://evil\",\"x\")"),
+            "\"'=HYPERLINK(\"\"http://evil\"\",\"\"x\"\")\""
+        );
+        // Benign leading char untouched.
+        assert_eq!(csv_escape("normal value"), "normal value");
     }
 
     #[test]
