@@ -24,6 +24,11 @@ use crate::types::{
     ChatChunk, ChatRequest, FinishReason, Message, Role, ToolCallSpec, ToolChoice, ToolSpec,
 };
 
+/// Upper bound on distinct streamed tool-call partials per assistant turn.
+/// Caps the SSE-accumulation map so a buggy/hostile upstream can't grow it
+/// without limit; far above any real turn.
+const MAX_TOOL_CALLS_PER_TURN: usize = 128;
+
 #[derive(Debug, Clone)]
 pub struct OpenAiCompatBackend {
     base_url: String,
@@ -307,6 +312,18 @@ impl LlmBackend for OpenAiCompatBackend {
                         let mut map = partials.lock().expect("partials poisoned");
                         for tc in choice.delta.tool_calls {
                             let index = tc.index;
+                            // Bound the distinct tool-call count: a buggy/hostile
+                            // upstream could otherwise stream unbounded indices and
+                            // grow this map without limit. 128 is already far beyond
+                            // any real turn.
+                            if !map.contains_key(&index) && map.len() >= MAX_TOOL_CALLS_PER_TURN {
+                                tracing::warn!(
+                                    index,
+                                    cap = MAX_TOOL_CALLS_PER_TURN,
+                                    "openai_compat: tool-call count exceeded cap; dropping"
+                                );
+                                continue;
+                            }
                             map.entry(index).or_default().merge(tc);
                         }
                     }

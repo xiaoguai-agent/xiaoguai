@@ -655,9 +655,15 @@ impl Reranker for LlmReranker {
         let prompt = Self::build_prompt(query, &previews);
         let req = ChatRequest::new(&self.model, vec![Message::user(prompt)]);
 
+        // `timeout_ms` is the budget for the WHOLE rerank call (stream setup +
+        // every chunk), matching the single-request HTTP rerankers. A single
+        // overall deadline prevents a slow drip-feed from multiplying the
+        // budget by the chunk count (each `stream.next()` previously got a
+        // fresh `timeout_ms`).
+        let overall_deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+
         let stream_fut = self.llm.chat_stream(req);
-        let stream_result =
-            tokio::time::timeout(Duration::from_millis(timeout_ms), stream_fut).await;
+        let stream_result = tokio::time::timeout_at(overall_deadline, stream_fut).await;
 
         let mut stream = match stream_result {
             Ok(Ok(s)) => s,
@@ -677,7 +683,7 @@ impl Reranker for LlmReranker {
 
         let mut full_text = String::new();
         loop {
-            match tokio::time::timeout(Duration::from_millis(timeout_ms), stream.next()).await {
+            match tokio::time::timeout_at(overall_deadline, stream.next()).await {
                 Ok(Some(Ok(chunk))) => {
                     full_text.push_str(&chunk.delta);
                     if chunk.done {

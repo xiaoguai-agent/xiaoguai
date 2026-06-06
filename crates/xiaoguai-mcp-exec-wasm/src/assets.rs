@@ -54,6 +54,15 @@ pub const PYODIDE_VERSION: &str = "0.27.0";
 /// Pinned QuickJS-WASM upstream version (quickjs-emscripten fork).
 pub const QUICKJS_VERSION: &str = "2025.5.0";
 
+/// Optional integrity pin for the pyodide blob: a lowercase hex SHA-256.
+/// When set, the loaded bytes must match or loading fails. Unset = no check
+/// (the default — the canonical digest depends on the operator's fetch).
+pub const PYODIDE_SHA256_ENV: &str = "XIAOGUAI_PYODIDE_SHA256";
+
+/// Optional integrity pin for the QuickJS blob. Mirror of
+/// [`PYODIDE_SHA256_ENV`].
+pub const QUICKJS_SHA256_ENV: &str = "XIAOGUAI_QUICKJS_SHA256";
+
 /// Failure paths for asset loading. The `AssetMissing` variant carries
 /// the env-var hint so the caller can surface it to the operator.
 #[derive(Debug, Error)]
@@ -72,6 +81,19 @@ pub enum AssetError {
     /// The path exists but reading or compiling the WASM failed.
     #[error("read/compile {0}: {1}")]
     LoadFailed(PathBuf, String),
+    /// An integrity pin (`*_SHA256` env var) was set but the asset's digest
+    /// did not match.
+    #[error(
+        "{language} WASM asset at {path} failed integrity check: expected sha256 {expected}, \
+         got {actual}. Update ${env_var} or re-fetch the pinned asset."
+    )]
+    IntegrityMismatch {
+        language: &'static str,
+        path: PathBuf,
+        env_var: &'static str,
+        expected: String,
+        actual: String,
+    },
 }
 
 /// Resolve the pyodide WASM module path: prefer the explicit
@@ -107,16 +129,60 @@ pub fn resolve_quickjs_path(override_path: Option<&Path>) -> Result<PathBuf, Ass
         })
 }
 
+/// Read a WASM blob, optionally verify its SHA-256 against the pin in
+/// `sha_env` (when set), then compile it against `engine`.
+fn load_module_pinned(
+    engine: &Engine,
+    path: PathBuf,
+    language: &'static str,
+    sha_env: &'static str,
+) -> Result<Module, AssetError> {
+    let bytes =
+        std::fs::read(&path).map_err(|e| AssetError::LoadFailed(path.clone(), e.to_string()))?;
+
+    if let Some(raw) = std::env::var_os(sha_env) {
+        if let Err((expected, actual)) = check_pin(&bytes, &raw.to_string_lossy()) {
+            return Err(AssetError::IntegrityMismatch {
+                language,
+                path,
+                env_var: sha_env,
+                expected,
+                actual,
+            });
+        }
+    }
+
+    Module::new(engine, &bytes).map_err(|e| AssetError::LoadFailed(path, e.to_string()))
+}
+
+/// Verify `bytes` against an expected lowercase-hex SHA-256 pin. An empty /
+/// whitespace pin means "no check" (`Ok`). On mismatch returns
+/// `(normalised_expected, actual)`.
+fn check_pin(bytes: &[u8], expected_raw: &str) -> Result<(), (String, String)> {
+    use sha2::{Digest, Sha256};
+    let expected = expected_raw.trim().to_ascii_lowercase();
+    if expected.is_empty() {
+        return Ok(());
+    }
+    let actual = hex::encode(Sha256::digest(bytes));
+    if actual == expected {
+        Ok(())
+    } else {
+        Err((expected, actual))
+    }
+}
+
 /// Read the pyodide WASM blob and compile it against `engine`.
 /// Module compilation is cached by wasmtime internally; callers
 /// should `OnceLock` the returned `Module` anyway to avoid the
-/// fs read on every call.
+/// fs read on every call. When `PYODIDE_SHA256_ENV` is set, the blob's
+/// digest is verified before compilation.
 pub fn load_pyodide_module(
     engine: &Engine,
     override_path: Option<&Path>,
 ) -> Result<Module, AssetError> {
     let path = resolve_pyodide_path(override_path)?;
-    Module::from_file(engine, &path).map_err(|e| AssetError::LoadFailed(path, e.to_string()))
+    load_module_pinned(engine, path, "python", PYODIDE_SHA256_ENV)
 }
 
 /// Read the QuickJS WASM blob and compile it. Mirror of
@@ -126,7 +192,7 @@ pub fn load_quickjs_module(
     override_path: Option<&Path>,
 ) -> Result<Module, AssetError> {
     let path = resolve_quickjs_path(override_path)?;
-    Module::from_file(engine, &path).map_err(|e| AssetError::LoadFailed(path, e.to_string()))
+    load_module_pinned(engine, path, "javascript", QUICKJS_SHA256_ENV)
 }
 
 #[cfg(test)]
@@ -153,6 +219,31 @@ mod tests {
                 None => std::env::remove_var(self.key),
             }
         }
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(bytes))
+    }
+
+    #[test]
+    fn check_pin_empty_skips() {
+        assert!(check_pin(b"anything", "").is_ok());
+        assert!(check_pin(b"anything", "   ").is_ok());
+    }
+
+    #[test]
+    fn check_pin_accepts_matching_digest_case_insensitive() {
+        let digest = sha256_hex(b"hello world").to_uppercase();
+        assert!(check_pin(b"hello world", &format!("  {digest}  ")).is_ok());
+    }
+
+    #[test]
+    fn check_pin_rejects_mismatch() {
+        let wrong = "0".repeat(64);
+        let err = check_pin(b"hello world", &wrong).expect_err("must mismatch");
+        assert_eq!(err.0, wrong);
+        assert_eq!(err.1, sha256_hex(b"hello world"));
     }
 
     #[test]
