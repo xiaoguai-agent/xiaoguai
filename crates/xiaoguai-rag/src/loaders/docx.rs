@@ -151,13 +151,12 @@ impl Loader for DocxLoader {
 
         // Find word/document.xml (case-sensitive per OOXML spec).
         let xml_bytes = {
-            let entry =
-                archive
-                    .by_name("word/document.xml")
-                    .map_err(|_| LoadError::Malformed {
-                        format: "docx",
-                        reason: "word/document.xml not found in archive".into(),
-                    })?;
+            let entry = archive
+                .by_name("word/document.xml")
+                .map_err(|_| LoadError::Malformed {
+                    format: "docx",
+                    reason: "word/document.xml not found in archive".into(),
+                })?;
             // ZIP-bomb guard: cap the DECOMPRESSED document XML (see the
             // pptx loader's MAX_SLIDE_XML_BYTES for rationale).
             let mut buf = Vec::new();
