@@ -27,13 +27,18 @@
 ///
 /// The macro is a no-op (passes the block through unchanged) when
 /// `init_prometheus` was never called.
+///
+/// The future is instrumented via [`tracing::Instrument`] (enter/exit per
+/// poll) rather than an [`EnteredSpan`](tracing::span::EnteredSpan) guard, so
+/// the awaited future stays `Send` — required when the call site returns a
+/// `Send` boxed future (e.g. the LLM router's `chat_stream`).
 #[macro_export]
 macro_rules! instrument_llm_call {
     ($provider:expr, $model:expr, $fut:expr) => {{
-        let _span =
-            tracing::info_span!("llm.call", provider = $provider, model = $model,).entered();
+        use ::tracing::Instrument as _;
+        let __span = ::tracing::info_span!("llm.call", provider = $provider, model = $model);
         let __t0 = std::time::Instant::now();
-        let __result = $fut.await;
+        let __result = $fut.instrument(__span).await;
         let __elapsed = __t0.elapsed().as_secs_f64();
         if let Some(__handles) = $crate::prometheus::global_handles() {
             __handles
@@ -60,4 +65,29 @@ macro_rules! instrument_scheduler_tick {
         }
         __result
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::prometheus::{global_handles, init_prometheus};
+
+    #[tokio::test]
+    async fn instrument_llm_call_observes_histogram_and_returns_value() {
+        // Idempotent across the test binary — init only sets the global once.
+        let _ = init_prometheus();
+        let handles = global_handles().expect("handles set after init");
+        let before = handles
+            .llm_call_duration
+            .with_label_values(&["test_prov", "test_model"])
+            .get_sample_count();
+
+        let out = instrument_llm_call!("test_prov", "test_model", async { 7_u32 });
+
+        assert_eq!(out, 7, "macro must pass the future's value through");
+        let after = handles
+            .llm_call_duration
+            .with_label_values(&["test_prov", "test_model"])
+            .get_sample_count();
+        assert_eq!(after, before + 1, "one histogram observation recorded");
+    }
 }

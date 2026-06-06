@@ -146,7 +146,14 @@ impl LlmRouter {
                 warn!(provider = %provider_id, "candidate in config but no backend instance registered");
                 continue;
             };
-            match backend.chat_stream(req.clone()).await {
+            // Time the provider dispatch on the hot path: emits the
+            // `xiaoguai_llm_call_duration_seconds{provider,model}` histogram +
+            // an `llm.call` span. No-op until `init_prometheus` ran.
+            match xiaoguai_observability::instrument_llm_call!(
+                provider_id.as_str(),
+                req.model.as_str(),
+                backend.chat_stream(req.clone())
+            ) {
                 Ok(stream) => {
                     if let Some(b) = &self.breakers {
                         b.record_success(&provider_id);
