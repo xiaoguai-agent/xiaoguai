@@ -21,6 +21,10 @@ pub trait MessageRepository: Send + Sync {
         offset: i64,
     ) -> RepoResult<Vec<Message>>;
     async fn count_by_session(&self, session_id: &str) -> RepoResult<i64>;
+    /// Bulk-delete a session's messages. NOTE: currently unreachable — no
+    /// route or internal caller exposes it, so it is not wired into the HMAC
+    /// audit chain. If you ever expose it, emit a `message.delete` audit entry
+    /// at the call site (see the `agent.run` entry in `routes/sessions.rs`).
     async fn delete_by_session(&self, session_id: &str) -> RepoResult<u64>;
 }
 

@@ -22,6 +22,12 @@ pub trait SessionRepository: Send + Sync {
     ) -> RepoResult<Vec<Session>>;
     async fn touch(&self, id: &str) -> RepoResult<()>;
     async fn archive(&self, id: &str) -> RepoResult<()>;
+    /// Hard-delete a session (cascades to its messages). NOTE: currently
+    /// unreachable — no route or internal caller exposes it, so it is not
+    /// wired into the HMAC audit chain. If you ever expose it, emit an
+    /// `session.delete` audit entry at the call site (route level, like the
+    /// `agent.run` entry in `routes/sessions.rs`); a silent destructive op is
+    /// a compliance gap.
     async fn delete(&self, id: &str) -> RepoResult<()>;
 
     /// v1.1.2 — clone a session and copy every message with
