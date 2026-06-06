@@ -7,10 +7,12 @@
  *   - AbortError (caller cancelled) short-circuits the loop.
  *   - maxRetries exhausted -> onError with the last error.
  *   - Idempotency-Key header reused across all retries.
+ *   - Last-Event-ID echoed on reconnect (F5 SSE resume cursor).
+ *   - Non-retryable 4xx fails fast without burning the backoff (F5).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { XiaoguaiClient } from './index';
+import { ApiError, XiaoguaiClient } from './index';
 import type { AgentEvent } from './index';
 
 /**
@@ -51,6 +53,36 @@ function sseAbortingResponse(): Response {
 
 function delta(text: string): string {
   return `event: text_delta\ndata: ${JSON.stringify({ type: 'text_delta', delta: text })}\n\n`;
+}
+
+/** Like `delta` but stamps the SSE `id:` field (the resume cursor). */
+function deltaWithId(text: string, id: number): string {
+  return `id: ${id}\nevent: text_delta\ndata: ${JSON.stringify({ type: 'text_delta', delta: text })}\n\n`;
+}
+
+/**
+ * A Response that delivers one SSE chunk, then tears the body down on the
+ * next read — emulates a stream that made partial progress before dropping.
+ */
+function sseChunkThenError(chunk: string): Response {
+  // Deliver the chunk on the first read(), then reject on the second.
+  // (Erroring a stream in start() discards any already-queued chunk, so
+  // drive it from pull() to guarantee the consumer sees the chunk first.)
+  let sent = false;
+  const stream = new ReadableStream({
+    pull(controller) {
+      if (!sent) {
+        sent = true;
+        controller.enqueue(new TextEncoder().encode(chunk));
+      } else {
+        controller.error(new TypeError('network error'));
+      }
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  });
 }
 
 /** Run a microtask drain so queued promise continuations get to execute. */
@@ -211,6 +243,100 @@ describe('XiaoguaiClient.sendMessage retry loop', () => {
     expect(firstHeaders['idempotency-key']).toBeUndefined();
     // Retry has the header set.
     expect(secondHeaders['idempotency-key']).toBeTruthy();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('echoes Last-Event-ID on retry with the highest SSE id seen before the drop', async () => {
+    const onError = vi.fn();
+    const onReconnect = vi.fn();
+
+    const fetchImpl = vi
+      .fn<(...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      // Attempt 1 delivers one delta carrying `id: 7`, then drops.
+      .mockResolvedValueOnce(sseChunkThenError(deltaWithId('partial', 7)))
+      .mockResolvedValueOnce(sseResponse([deltaWithId('resumed', 8)]));
+
+    const client = new XiaoguaiClient({
+      baseUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    client.sendMessage('sess1', { content: 'hi' }, () => undefined, onError, {
+      onReconnect,
+    });
+
+    await flush();
+    await flush();
+    expect(onReconnect).toHaveBeenCalledWith(1, 1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    await flush();
+    await flush();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const firstHeaders = (fetchImpl.mock.calls[0]![1] as RequestInit).headers as Record<
+      string,
+      string
+    >;
+    const secondHeaders = (fetchImpl.mock.calls[1]![1] as RequestInit).headers as Record<
+      string,
+      string
+    >;
+    // Initial POST has no resume cursor; the retry carries the last id.
+    expect(firstHeaders['last-event-id']).toBeUndefined();
+    expect(secondHeaders['last-event-id']).toBe('7');
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a non-retryable 4xx and surfaces it immediately', async () => {
+    const onError = vi.fn();
+    const onReconnect = vi.fn();
+
+    const fetchImpl = vi
+      .fn<(...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockResolvedValue(new Response('bad request', { status: 400 }));
+
+    const client = new XiaoguaiClient({
+      baseUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    client.sendMessage('sess1', { content: 'hi' }, () => undefined, onError, {
+      onReconnect,
+    });
+
+    // Let the single attempt resolve. No backoff sleep should be scheduled.
+    await flush();
+    await flush();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(onReconnect).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((onError.mock.calls[0]![0] as ApiError).status).toBe(400);
+  });
+
+  it('still retries a 429 (rate limited) through the backoff', async () => {
+    const onError = vi.fn();
+    const onReconnect = vi.fn();
+
+    const fetchImpl = vi
+      .fn<(...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockResolvedValueOnce(new Response('slow down', { status: 429 }))
+      .mockResolvedValueOnce(sseResponse([delta('ok')]));
+
+    const client = new XiaoguaiClient({
+      baseUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    client.sendMessage('sess1', { content: 'hi' }, () => undefined, onError, {
+      onReconnect,
+    });
+
+    await flush();
+    await flush();
+    expect(onReconnect).toHaveBeenCalledWith(1, 1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    await flush();
+    await flush();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(onError).not.toHaveBeenCalled();
   });
 

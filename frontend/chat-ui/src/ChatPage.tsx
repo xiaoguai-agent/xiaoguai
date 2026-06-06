@@ -44,14 +44,6 @@ const DEV_USER_ID = 'usr_dev';
 const DEV_TENANT_ID = 'ten_dev';
 const DEFAULT_MODEL = 'qwen2.5-coder';
 
-/** Opening prompts shown on the empty/welcome screen (Gemini-style chips). */
-const SUGGESTIONS = [
-  'Summarize a document for me',
-  'Write a shell script',
-  'Analyze the latest CVE feed',
-  'Explain how a codebase works',
-];
-
 /** Grow a textarea to fit its content, up to a cap, then scroll. */
 function autoGrow(ta: HTMLTextAreaElement | null) {
   if (!ta) return;
@@ -89,6 +81,15 @@ export function ChatPage({ onSessionCreated }: Props) {
   const abortRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /**
+   * F5 — set while sendMessage is between a drop and the first event of the
+   * resumed stream. The backend has no SSE resume (it re-runs the turn from
+   * scratch), so on that first resumed event we roll the in-flight turn back
+   * to the user's message; otherwise the re-generated text would append to
+   * the partial bubble and duplicate. Amends DEC-LLD-CHAT-UI-003 (which
+   * previously left the partial bubble untouched on reconnect).
+   */
+  const reconnectingRef = useRef(false);
 
   // When the route changes (user clicks a different session), reload history.
   useEffect(() => {
@@ -145,6 +146,7 @@ export function ChatPage({ onSessionCreated }: Props) {
     setDraft('');
     setStreaming(true);
     setStatus(null);
+    reconnectingRef.current = false;
 
     abortRef.current = client.sendMessage(
       sid,
@@ -164,7 +166,10 @@ export function ChatPage({ onSessionCreated }: Props) {
         setReconnect(null);
       },
       {
-        onReconnect: (attempt, delayMs) => setReconnect({ attempt, delayMs }),
+        onReconnect: (attempt, delayMs) => {
+          reconnectingRef.current = true;
+          setReconnect({ attempt, delayMs });
+        },
       },
     );
 
@@ -181,8 +186,27 @@ export function ChatPage({ onSessionCreated }: Props) {
     reconnectSetter: typeof setReconnect,
   ) {
     // Any incoming event = the stream has resumed; tear down the banner.
-    // Per DEC-LLD-CHAT-UI-003 the partial bubble itself is never touched.
     reconnectSetter(null);
+    // F5 — first event after a reconnect: the backend has no SSE resume, so
+    // it re-runs the whole turn from scratch. Roll the in-flight turn back to
+    // the user's last message (dropping any partial assistant text and any
+    // tool bubbles from the interrupted attempt) and start a fresh streaming
+    // bubble, so the re-generated content replaces rather than duplicates.
+    // (Amends DEC-LLD-CHAT-UI-003.)
+    if (reconnectingRef.current) {
+      reconnectingRef.current = false;
+      update((bs) => {
+        let lastUser = -1;
+        for (let i = bs.length - 1; i >= 0; i -= 1) {
+          if (bs[i]!.kind === 'user') {
+            lastUser = i;
+            break;
+          }
+        }
+        const kept = lastUser >= 0 ? bs.slice(0, lastUser + 1) : bs.slice();
+        return [...kept, { kind: 'assistant', text: '', streaming: true }];
+      });
+    }
     switch (ev.type) {
       case 'text_delta':
         update((bs) => {
@@ -345,7 +369,12 @@ export function ChatPage({ onSessionCreated }: Props) {
             <h1 className="welcome-title">{t.ui.welcome_title}</h1>
             <p className="welcome-subtitle">{t.ui.welcome_subtitle}</p>
             <div className="welcome-chips">
-              {SUGGESTIONS.map((prompt) => (
+              {[
+                t.ui.suggestions.summarize_doc,
+                t.ui.suggestions.write_shell,
+                t.ui.suggestions.analyze_cve,
+                t.ui.suggestions.explain_codebase,
+              ].map((prompt) => (
                 <button
                   key={prompt}
                   type="button"

@@ -9,10 +9,17 @@
  *  4. Rounds nextDelayMs to the nearest second, never displaying "0s".
  */
 
+import type { ReactElement } from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent } from '@testing-library/react';
 
 import { SseReconnectBanner } from './SseReconnectBanner';
+import { I18nProvider } from './i18n/I18nProvider';
+
+/** The banner reads translations via `useI18n()`, so it must render inside the provider. */
+function render(ui: ReactElement) {
+  return rtlRender(<I18nProvider>{ui}</I18nProvider>);
+}
 
 describe('SseReconnectBanner', () => {
   it('renders with the e2e contract data-testid + polite ARIA live region', () => {

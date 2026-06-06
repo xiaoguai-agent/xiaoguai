@@ -64,6 +64,12 @@
     "thinking": "思考中",
     "branch": "分支",
     "branch_title": "从此处分支出新对话",
-    "branch_label": "从此处分支"
+    "branch_label": "从此处分支",
+    "suggestions": {
+      "summarize_doc": "帮我总结一份文档",
+      "write_shell": "写一个 shell 脚本",
+      "analyze_cve": "分析最新的 CVE 漏洞情报",
+      "explain_codebase": "讲讲一个代码库是怎么运作的"
+    }
   }
 }
