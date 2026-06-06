@@ -1,0 +1,27 @@
+id: tool_call_then_answer
+# Regression for the core ReAct flow: assistant requests a tool, the loop
+# dispatches it, feeds the result back, and the next turn produces the final
+# answer. Tool-call handling is a recurring audit surface (openai_compat
+# tool-index bound; ReAct tool-registration PRs #210/#223), so lock the
+# request->result->answer sequence in CI.
+tags: [regression, tool-call]
+input_messages:
+  - role: user
+    content: "Look up the answer and tell me."
+mock_script:
+  turns:
+    - tool_calls:
+        - id: "call_1"
+          name: "search"
+          arguments_json: '{"query":"the answer"}'
+    - text: "Found it: the answer is 42."
+assertions:
+  - kind: tool_invocation_count
+    tool_name: search
+    expected: 1
+  - kind: tool_call_sequence
+    expected:
+      - tool_name: search
+        arguments_json_substring: "the answer"
+  - kind: final_message_contains
+    text: "42"

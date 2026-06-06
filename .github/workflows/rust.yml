@@ -72,6 +72,16 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
         run: cargo test --workspace --locked
+      # Eval-driven development gate (CLAUDE.md): run the regression eval suite
+      # through the real CLI path (arg parsing -> suite load -> grade -> exit
+      # code), not just the lib tests. `xiaoguai eval run` exits non-zero when
+      # any case fails. Deps are already compiled by the Test step, so this is
+      # mostly linking the one bin.
+      - name: Eval suite (regression)
+        run: >
+          cargo run -p xiaoguai-cli --locked --
+          eval run --suite regression
+          --cases-dir crates/xiaoguai-eval/examples/eval/regression
 
   migrations-smoke:
     name: Migrations smoke (embedded SQLite)
