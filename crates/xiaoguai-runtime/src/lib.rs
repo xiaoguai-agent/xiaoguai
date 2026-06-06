@@ -202,6 +202,13 @@ pub async fn run_to_sink<S: RuntimeSink>(
         .await
         .map_err(|e| RuntimeError::Join(e.to_string()))??;
     let outcome = RuntimeOutcome::from_agent(agent_outcome, &inbound);
+    // Fail-closed by design (ADR-0022): this is a GENERIC sink hook, not an
+    // audit-specific path. A real adopter's `on_finish` also persists the job
+    // outcome / push notifications, and a genuine failure there should surface
+    // to the caller. The "audit-write failure must not block the op" rule is
+    // honoured in the dedicated audit-append paths (HotL decision, REST
+    // `agent.run`), which are all best-effort. An adopter that audits inside
+    // `on_finish` must keep that portion best-effort so it doesn't propagate.
     sink.on_finish(&outcome).await?;
     if let Some(e) = sink_err {
         return Err(e);
