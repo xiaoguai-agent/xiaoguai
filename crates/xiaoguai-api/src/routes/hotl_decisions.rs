@@ -5,6 +5,17 @@
 //! request and optionally creates a follow-up `HotlPolicy` in the same
 //! request ("Approve & remember" UX).
 //!
+//! ## Pre-flight existence check (audit F1b)
+//!
+//! Before any row is written, the handler looks the `escalation_id` up
+//! through the registry's `HotlEscalationStore`: unknown ids return
+//! `404`, already-terminal rows (resolved / expired / timed-out) return
+//! `409` — so a typo'd id can no longer mint an orphan decision row.
+//! Stores without lookup support (`NoopHotlEscalationStore`) skip the
+//! check; for real-store deployments this supersedes the S12-6 "late
+//! decision → 201 `resumed:false`" contract (that 201 now survives only
+//! the narrow pre-flight→resolve expiry race).
+//!
 //! ## `resumed` flag (sprint-12 S12-6)
 //!
 //! The handler also wakes any parked agent loop registered against the
@@ -14,8 +25,10 @@
 //!
 //! * `true`  — a `SuspendingHotlGate` (S12-4) had parked a loop on this
 //!   `escalation_id`; it is now released with the operator's verdict.
-//! * `false` — no live waiter existed (legacy `EnforcerGate` path that
-//!   never suspends, OR the ticket already timed out / was cancelled).
+//! * `false` — no live waiter received the verdict (legacy
+//!   `EnforcerGate` path that never suspends, the ticket already timed
+//!   out / was cancelled, or a post-restart replay slot whose original
+//!   loop died with the old process).
 //!
 //! Ordering: the decision row is persisted **before** the registry
 //! resolve, so a registry-side crash never loses the operator's audit
@@ -54,7 +67,7 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 use crate::hotl::decision::{HotlDecisionRecord, HotlDecisionStoreError, HotlDecisionVerdict};
-use crate::hotl::decision_registry::{HotlResolution, RegistryError};
+use crate::hotl::decision_registry::{EscalationLookup, HotlResolution, RegistryError};
 use crate::hotl::policy::{CreateHotlPolicyRequest, HotlPolicy};
 use crate::routes::hotl::map_store_err as map_policy_err;
 use crate::state::AppState;
@@ -104,10 +117,11 @@ pub struct HotlDecisionResponse {
     pub escalation_id: Uuid,
     pub verdict: HotlDecisionVerdict,
     pub recorded_at: DateTime<Utc>,
-    /// `true` when a live waiter on `DecisionRegistry` was woken by this
-    /// decision (sprint-12 S12-6); `false` when no waiter existed — either
-    /// the legacy non-suspending `EnforcerGate` path, or a ticket that
-    /// already timed out / was cancelled before the operator decided.
+    /// `true` when a live waiter on `DecisionRegistry` actually received
+    /// this decision (sprint-12 S12-6); `false` when no loop resumed —
+    /// the legacy non-suspending `EnforcerGate` path, a ticket that
+    /// already timed out / was cancelled before the operator decided, or
+    /// a post-restart replay slot whose original loop is gone.
     pub resumed: bool,
     /// `Some(policy)` when `raise_policy` was present and the follow-up
     /// `HotlPolicy::create` succeeded.
@@ -142,11 +156,14 @@ impl HotlDecisionResponse {
 /// - `503 ServiceUnavailable` — decision store not wired.
 /// - `400 InvalidRequest` — malformed `raise_policy` (e.g. both
 ///   `max_count` and `max_usd` null).
-/// - `404 NotFound` — reserved for when the parent `hotl_escalations`
-///   table lands in 3a.2. 3a.1 has no parent table; this status is
-///   currently unreachable from a well-formed request (kept on the wire
-///   so 3a.2 can return it without a client breaking change).
-/// - `409 Conflict` — `escalation_id` already has a recorded decision.
+/// - `404 NotFound` — no `hotl_pending` row exists for `escalation_id`
+///   (pre-flight lookup, audit F1b). Only on deployments whose
+///   escalation store supports `lookup` (the sqlite production wiring);
+///   legacy/Noop stores skip the check and keep the historical
+///   always-201 behaviour.
+/// - `409 Conflict` — `escalation_id` already has a recorded decision,
+///   OR the escalation row is already terminal (`resolved` / `expired`,
+///   including timed-out rows the sweep hasn't stamped yet).
 /// - `401 Unauthorized` — handled by the owner-auth middleware.
 pub async fn create_decision(State(state): State<AppState>, body: axum::body::Bytes) -> Response {
     // Sprint-13 S13-8 / DEC-HLD-016: pre-flight check for the legacy
@@ -211,6 +228,38 @@ async fn create_decision_inner(
                 "raise_policy: window_seconds must be > 0".into(),
             ));
         }
+    }
+
+    // ── 2.5 Pre-flight escalation existence check (audit F1b) ───────────────
+    //
+    // Runs BEFORE step 3 so a typo'd / expired escalation_id can no
+    // longer leave an orphan ("phantom") decision row behind. Stores
+    // without lookup support (NoopHotlEscalationStore — tests and
+    // pre-sprint-13 in-memory deployments) return `Unsupported` and the
+    // check is skipped, preserving the legacy always-201 contract. For
+    // real-store deployments this deliberately supersedes the S12-6
+    // "late decision → 201 resumed:false" contract with 404/409 (the
+    // round-3 review recommendation).
+    match state
+        .decision_registry
+        .lookup_escalation(req.escalation_id)
+        .await?
+    {
+        EscalationLookup::NotFound => {
+            return Err(ApiError::NotFoundMsg(format!(
+                "escalation {} not found — it may have expired and been pruned, or the id was \
+                 mistyped; check the escalation_id on the hotl_pending SSE event (the pending \
+                 banner) and retry",
+                req.escalation_id
+            )));
+        }
+        EscalationLookup::Terminal { status, at } => {
+            return Err(ApiError::Conflict(format!(
+                "escalation {} was already {status} at {at}; no further decision can be recorded",
+                req.escalation_id
+            )));
+        }
+        EscalationLookup::Pending | EscalationLookup::Unsupported => {}
     }
 
     // ── 3. Record the decision (no raised_policy_id yet) ────────────────────
@@ -297,8 +346,9 @@ async fn create_decision_inner(
     // `NoopHotlEscalationStore` (tests + 1.8.x deployments before
     // sprint-13 PG migration), `resolve_persisted` still rebroadcasts
     // through the oneshot path because the no-op store returns
-    // `Ok(true)` for every `record_decision`. Real PG returns
-    // `Ok(false)` for unknown ids → `Err(UnknownEscalation)` → 404.
+    // `Ok(true)` for every `record_decision`. Real-store deployments
+    // reject unknown / terminal ids at the step-2.5 pre-flight (404 /
+    // 409) before any decision row is written.
     let resumed = match state
         .decision_registry
         .resolve_persisted(req.escalation_id, resolution, Some(req.decided_by.clone()))
@@ -307,14 +357,13 @@ async fn create_decision_inner(
         Ok(true) => true,
         Ok(false) => false,
         Err(RegistryError::UnknownEscalation) => {
-            // Sprint-12 S12-6 contract: late decision after timeout
-            // returns `resumed=false`. Sprint-13 carries forward that
-            // behaviour by treating `UnknownEscalation` as a
-            // non-failure in the in-memory + Noop-store path.  When the
-            // store IS PG-backed, the route currently still completes
-            // with `resumed=false` rather than 404 — the 404 will be
-            // wired in S13-8 once the wire rename lands and parent
-            // table presence is asserted unconditionally.
+            // Narrow race only: the step-2.5 pre-flight saw the row as
+            // `pending`, but it expired (or was terminalised by the
+            // timeout sweep) before this resolve ran — or the store is
+            // the Noop one, whose lookup is `Unsupported`. The decision
+            // row was already recorded at step 3, so a 404/409 here
+            // would be a lie; keep the S12-6 late-decision contract:
+            // `201 Created` + `resumed:false`.
             false
         }
         Err(RegistryError::Storage(e)) => {
