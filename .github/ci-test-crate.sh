@@ -76,16 +76,28 @@ echo $$ | sudo tee /sys/fs/cgroup/testcap/cgroup.procs >/dev/null
 
 # nextest run from the prebuilt archive: ZERO compilation here. The old
 # `cargo test -p` form re-resolved features per-crate and silently
-# RECOMPILED — and that rustc invocation is what intermittently spun
-# forever until the box died (issue #243 beacon forensics). nextest's
-# profile.ci terminate (.config/nextest.toml) additionally kills and NAMES
-# any individual hung test. timeout-900 stays as the outermost belt.
+# RECOMPILED — and that rustc invocation intermittently spun forever
+# (issue #243 beacon forensics). nextest's profile.ci terminate
+# (.config/nextest.toml) additionally kills and NAMES a hung test.
+#
+# Exit-path hardening — the step must end even if a child becomes
+# UNKILLABLE (uninterruptible state; observed: -k 30 SIGKILL did not end
+# the step — `timeout` itself then hangs in wait()):
+#  * ALL output goes to a FILE, never a pipe and never the runner's own
+#    stdout — an orphan can then only hold a file fd, which blocks nothing
+#    (a pipe-holding orphan stalls tee AND the runner's stream-EOF wait).
+#  * Two timeout layers: the inner one (900s) kills the WORK; the outer
+#    one (960s) kills the inner timeout — the WAITER — which is never in
+#    an unkillable state, so bash always regains control by 16 min.
 # choom: prefer the test tree as OOM victim over the runner agent.
 rc=0
-timeout -k 30 900 choom -n 800 -- \
+timeout -k 10 960 bash -c "exec timeout -k 30 900 choom -n 800 -- \
   cargo nextest run --archive-file target/nextest-tests.tar.zst \
-  --workspace-remap . -E "package($1)" --profile ci --no-tests=pass \
-  2>&1 | tee "$LOG" || rc=$?
+  --workspace-remap . -E 'package($1)' --profile ci --no-tests=pass" \
+  > "$LOG" 2>&1 || rc=$?
+
+echo "exit=$rc — last 100KB of test output:"
+tail -c 100000 "$LOG" 2>/dev/null || echo "(no output captured)"
 
 [ -n "$BEACON_PID" ] && kill "$BEACON_PID" 2>/dev/null || true
 exit "$rc"
