@@ -660,7 +660,11 @@ impl Reranker for LlmReranker {
         // overall deadline prevents a slow drip-feed from multiplying the
         // budget by the chunk count (each `stream.next()` previously got a
         // fresh `timeout_ms`).
-        let overall_deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+        let overall_deadline = tokio::time::Instant::now()
+            .checked_add(Duration::from_millis(timeout_ms))
+            // Absurd operator-configured timeout overflowing the clock: treat
+            // as "no deadline pressure" (far future) instead of panicking.
+            .unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(86_400));
 
         let stream_fut = self.llm.chat_stream(req);
         let stream_result = tokio::time::timeout_at(overall_deadline, stream_fut).await;
