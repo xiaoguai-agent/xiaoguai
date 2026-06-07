@@ -138,7 +138,10 @@ impl Default for ExecConfig {
 /// to see this verbatim, modulo the `redact_stderr` flag on `ExecConfig`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExecResult {
-    /// Process exit code. `None` if the call was killed by deadline.
+    /// Process exit code. `None` if the call was killed by deadline, or (L3
+    /// WASM backends) when an output overflow trap was converted into a
+    /// truncated-but-successful capture (`truncated: true`, `timed_out:
+    /// false`).
     pub exit_code: Option<i32>,
     /// Captured stdout (UTF-8 lossy; bytes beyond `OUTPUT_BYTE_CAP` dropped).
     pub stdout: String,

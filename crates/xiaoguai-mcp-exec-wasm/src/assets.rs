@@ -141,6 +141,14 @@ fn load_module_pinned(
         std::fs::read(&path).map_err(|e| AssetError::LoadFailed(path.clone(), e.to_string()))?;
 
     if let Some(raw) = std::env::var_os(sha_env) {
+        if raw.to_string_lossy().trim().is_empty() {
+            // Set-but-empty pin (e.g. CI templating left it blank): the check
+            // is OFF. Say so — the operator likely believes it is active.
+            tracing::warn!(
+                env_var = sha_env,
+                "integrity pin set but empty — check disabled"
+            );
+        }
         if let Err((expected, actual)) = check_pin(&bytes, &raw.to_string_lossy()) {
             return Err(AssetError::IntegrityMismatch {
                 language,

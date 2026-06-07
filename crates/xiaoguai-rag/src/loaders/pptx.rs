@@ -29,6 +29,10 @@ impl PptxLoader {
 /// ingest. Generous for real decks — the longest legitimate slides are a few KB.
 const MAX_SLIDE_TEXT_BYTES: usize = 256 * 1024;
 
+/// Cap on one slide's DECOMPRESSED XML (ZIP-bomb guard). Real slide XML runs
+/// a few KB; 8 MiB is far beyond any legitimate deck.
+const MAX_SLIDE_XML_BYTES: usize = 8 * 1024 * 1024;
+
 /// Extract all `<a:t>` text runs from a single slide XML blob.
 fn extract_slide_text(xml: &[u8]) -> Result<String, LoadError> {
     let mut reader = Reader::from_reader(xml);
@@ -141,12 +145,24 @@ impl Loader for PptxLoader {
 
         for (idx, name) in slide_names.iter().enumerate() {
             let xml_bytes = {
-                let mut entry = archive.by_name(name).map_err(|_| LoadError::Malformed {
+                let entry = archive.by_name(name).map_err(|_| LoadError::Malformed {
                     format: "pptx",
                     reason: format!("slide entry '{name}' disappeared"),
                 })?;
+                // ZIP-bomb guard: cap the DECOMPRESSED slide XML before it is
+                // buffered — `MAX_SLIDE_TEXT_BYTES` only caps the extracted
+                // text, after the whole XML already sat in memory.
                 let mut buf = Vec::new();
-                entry.read_to_end(&mut buf)?;
+                let mut limited = entry.take(MAX_SLIDE_XML_BYTES as u64 + 1);
+                limited.read_to_end(&mut buf)?;
+                if buf.len() > MAX_SLIDE_XML_BYTES {
+                    return Err(LoadError::Malformed {
+                        format: "pptx",
+                        reason: format!(
+                            "slide '{name}' decompresses past the {MAX_SLIDE_XML_BYTES}-byte cap"
+                        ),
+                    });
+                }
                 buf
             };
 
