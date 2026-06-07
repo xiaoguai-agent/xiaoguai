@@ -50,7 +50,13 @@ jobs:
         run: |
           deadline=$(( $(date +%s) + 120 ))
           until curl -fsS http://localhost:7600/healthz | grep -q ok; do
-            [ $(date +%s) -ge $deadline ] && { echo "healthz timeout"; exit 1; }
+            if [ $(date +%s) -ge $deadline ]; then
+              echo "::error::healthz timeout — dumping xiaoguai-core container logs"
+              docker compose -f deploy/docker-compose.yml ps -a || true
+              docker compose -f deploy/docker-compose.yml logs --no-color xiaoguai-core \
+                || docker logs deploy-xiaoguai-core-1 || true
+              exit 1
+            fi
             sleep 3
           done
           echo "Stack healthy"
@@ -104,4 +110,9 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Tear down stack
         if: always()
-        run: docker compose -f deploy/docker-compose.yml down -v --remove-orphans
+        run: |
+          # Capture server logs before destroying the stack — the distroless
+          # image has no shell, so this is the only forensic window.
+          docker compose -f deploy/docker-compose.yml logs --no-color xiaoguai-core \
+            || docker logs deploy-xiaoguai-core-1 || true
+          docker compose -f deploy/docker-compose.yml down -v --remove-orphans
