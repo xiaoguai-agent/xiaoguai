@@ -107,8 +107,21 @@ jobs:
       # lost, retries cold-loop forever).
       - name: Build tests
         run: choom -n 800 -- mold -run cargo test --workspace --locked --jobs 1 --no-run
+      # mold fixed the build/link phase (58 min dying → 14 min green); the
+      # remaining death is ~45 min into the test-RUN phase, with no kernel OOM
+      # (choom never fired) — a ballooning test swaps the box into thrash and
+      # the runner agent misses heartbeats. Fix: jail the test tree in a
+      # cgroup with hard memory+swap caps. A ballooning test now OOMs the
+      # CGROUP (one binary dies, step fails gracefully, logs + cache survive,
+      # the culprit is visible in the log tail) instead of taking the runner
+      # down ("lost communication", nothing survives, retries can't converge).
       - name: Test
-        run: choom -n 800 -- mold -run cargo test --workspace --locked --jobs 1
+        run: |
+          sudo mkdir -p /sys/fs/cgroup/testcap
+          echo 12G | sudo tee /sys/fs/cgroup/testcap/memory.max
+          echo 4G | sudo tee /sys/fs/cgroup/testcap/memory.swap.max || true
+          echo $$ | sudo tee /sys/fs/cgroup/testcap/cgroup.procs
+          choom -n 800 -- mold -run cargo test --workspace --locked --jobs 1
       # Resource forensics for the recurring runner-death: capture the disk /
       # memory state even when the Test step failed.
       - name: Resource diagnostics
