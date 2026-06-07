@@ -16,6 +16,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # For the ci-test-crate.sh forensics beacon (gh api → issue #243).
+  GH_TOKEN: ${{ github.token }}
   # Reliability harness: the Test step kept dying on the ~14 GB runner because
   # the workspace's debug artifacts (30 crates × full debuginfo) overflowed the
   # disk mid-`cargo test`. Strip debuginfo and disable incremental in CI —
@@ -36,6 +38,12 @@ env:
 jobs:
   build-test:
     name: Build and test
+    # issues:write is for the ci-test-crate.sh forensics beacon (issue #243):
+    # it PATCHes one issue comment with the box's state while the suspect
+    # crate's tests run, so a runner death can't destroy the evidence.
+    permissions:
+      contents: read
+      issues: write
     # Cold rebuild with jobs=2 is slower-but-survives; give it headroom over the
     # old 60 (a hung run still fails visibly, not at the 6 h default).
     timeout-minutes: 120
