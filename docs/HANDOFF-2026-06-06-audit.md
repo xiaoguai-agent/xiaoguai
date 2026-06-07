@@ -1,5 +1,8 @@
 # HANDOFF — Audit rounds + follow-ups (2026-06-06)
 
+> **SUPERSEDED 2026-06-07**: the "Deferred" list below is fully burned down —
+> see `HANDOFF-2026-06-07-backlog-burndown.md` (PRs #231–#237).
+
 Durable, repo-committed checkpoint so this session can be cleared and resumed.
 
 ---
