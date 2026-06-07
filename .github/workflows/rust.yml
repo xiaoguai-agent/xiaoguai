@@ -107,21 +107,84 @@ jobs:
       # lost, retries cold-loop forever).
       - name: Build tests
         run: choom -n 800 -- mold -run cargo test --workspace --locked --jobs 1 --no-run
-      # mold fixed the build/link phase (58 min dying → 14 min green); the
-      # remaining death is ~45 min into the test-RUN phase, with no kernel OOM
-      # (choom never fired) — a ballooning test swaps the box into thrash and
-      # the runner agent misses heartbeats. Fix: jail the test tree in a
-      # cgroup with hard memory+swap caps. A ballooning test now OOMs the
-      # CGROUP (one binary dies, step fails gracefully, logs + cache survive,
-      # the culprit is visible in the log tail) instead of taking the runner
-      # down ("lost communication", nothing survives, retries can't converge).
-      - name: Test
-        run: |
-          sudo mkdir -p /sys/fs/cgroup/testcap
-          echo 12G | sudo tee /sys/fs/cgroup/testcap/memory.max
-          echo 4G | sudo tee /sys/fs/cgroup/testcap/memory.swap.max || true
-          echo $$ | sudo tee /sys/fs/cgroup/testcap/cgroup.procs
-          choom -n 800 -- mold -run cargo test --workspace --locked --jobs 1
+      # Test phase, one step per crate (.github/ci-test-crate.sh = cgroup
+      # memory jail + choom + mold). The recurring runner death ~45 min into a
+      # monolithic Test step destroys the in-progress step's log — but
+      # COMPLETED steps' logs and step metadata survive, so per-crate steps
+      # make the dying step itself name the culprit crate. Binaries are
+      # already built by Build tests; each step is fingerprint-check + run.
+      - name: Test xiaoguai-types
+        run: .github/ci-test-crate.sh xiaoguai-types
+      - name: Test xiaoguai-config
+        run: .github/ci-test-crate.sh xiaoguai-config
+      - name: Test xiaoguai-storage
+        run: .github/ci-test-crate.sh xiaoguai-storage
+      - name: Test xiaoguai-audit
+        run: .github/ci-test-crate.sh xiaoguai-audit
+      - name: Test xiaoguai-observability
+        run: .github/ci-test-crate.sh xiaoguai-observability
+      - name: Test xiaoguai-auth
+        run: .github/ci-test-crate.sh xiaoguai-auth
+      - name: Test xiaoguai-llm
+        run: .github/ci-test-crate.sh xiaoguai-llm
+      - name: Test xiaoguai-mcp
+        run: .github/ci-test-crate.sh xiaoguai-mcp
+      - name: Test xiaoguai-mcp-exec
+        run: .github/ci-test-crate.sh xiaoguai-mcp-exec
+      - name: Test xiaoguai-mcp-exec-js
+        run: .github/ci-test-crate.sh xiaoguai-mcp-exec-js
+      - name: Test xiaoguai-mcp-exec-wasm
+        run: .github/ci-test-crate.sh xiaoguai-mcp-exec-wasm
+      - name: Test xiaoguai-rag
+        run: .github/ci-test-crate.sh xiaoguai-rag
+      - name: Test xiaoguai-scheduler
+        run: .github/ci-test-crate.sh xiaoguai-scheduler
+      - name: Test xiaoguai-agent
+        run: .github/ci-test-crate.sh xiaoguai-agent
+      - name: Test xiaoguai-im-feishu
+        run: .github/ci-test-crate.sh xiaoguai-im-feishu
+      - name: Test xiaoguai-im-gateway
+        run: .github/ci-test-crate.sh xiaoguai-im-gateway
+      - name: Test xiaoguai-api
+        run: .github/ci-test-crate.sh xiaoguai-api
+      - name: Test xiaoguai-eval
+        run: .github/ci-test-crate.sh xiaoguai-eval
+      - name: Test xiaoguai-memory
+        run: .github/ci-test-crate.sh xiaoguai-memory
+      - name: Test xiaoguai-personas
+        run: .github/ci-test-crate.sh xiaoguai-personas
+      - name: Test xiaoguai-runtime
+        run: .github/ci-test-crate.sh xiaoguai-runtime
+      - name: Test xiaoguai-tasks
+        run: .github/ci-test-crate.sh xiaoguai-tasks
+      - name: Test xiaoguai-im-dingtalk
+        run: .github/ci-test-crate.sh xiaoguai-im-dingtalk
+      - name: Test xiaoguai-im-wecom
+        run: .github/ci-test-crate.sh xiaoguai-im-wecom
+      - name: Test xiaoguai-coding
+        run: .github/ci-test-crate.sh xiaoguai-coding
+      - name: Test xiaoguai-core
+        run: .github/ci-test-crate.sh xiaoguai-core
+      - name: Test xiaoguai-acp
+        run: .github/ci-test-crate.sh xiaoguai-acp
+      - name: Test xiaoguai-im-discord
+        run: .github/ci-test-crate.sh xiaoguai-im-discord
+      - name: Test xiaoguai-im-telegram
+        run: .github/ci-test-crate.sh xiaoguai-im-telegram
+      - name: Test xiaoguai-im-mattermost
+        run: .github/ci-test-crate.sh xiaoguai-im-mattermost
+      - name: Test xiaoguai-im-slack
+        run: .github/ci-test-crate.sh xiaoguai-im-slack
+      - name: Test xiaoguai-cli
+        run: .github/ci-test-crate.sh xiaoguai-cli
+      - name: Test xiaoguai-orchestrator
+        run: .github/ci-test-crate.sh xiaoguai-orchestrator
+      - name: Test xiaoguai-watch
+        run: .github/ci-test-crate.sh xiaoguai-watch
+      - name: Test xiaoguai-anomaly
+        run: .github/ci-test-crate.sh xiaoguai-anomaly
+      - name: Test xiaoguai-migrate-smoke
+        run: .github/ci-test-crate.sh xiaoguai-migrate-smoke
       # Resource forensics for the recurring runner-death: capture the disk /
       # memory state even when the Test step failed.
       - name: Resource diagnostics
