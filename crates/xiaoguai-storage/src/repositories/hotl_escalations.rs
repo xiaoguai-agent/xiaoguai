@@ -6,7 +6,7 @@
 //! DEC-LLD-AGENT-005 so that `xiaoguai-core::run_serve` can depend on it
 //! for boot replay without pulling in `xiaoguai-auth`'s policy graph.
 //!
-//! Three operations make up the full surface:
+//! Five operations make up the full surface:
 //!
 //! 1. [`insert_pending`](HotlEscalationStore::insert_pending) — atomic
 //!    2-row write. The parent escalation row is `INSERT`-ed first; its `id`
@@ -25,6 +25,13 @@
 //!    actually matched (via `rows_affected() > 0`) so the caller can
 //!    distinguish "decision applied" from "row already resolved or
 //!    expired by another worker / boot replay" and degrade gracefully.
+//!
+//! 4. [`lookup`](HotlEscalationStore::lookup) — point lookup powering
+//!    the decision route's pre-flight existence check (audit F1b);
+//!    default-`Unsupported` so legacy/test stores opt out.
+//!
+//! 5. [`terminalise`](HotlEscalationStore::terminalise) — the timeout
+//!    sweep's `UPDATE` (no `expires_at` guard); default no-op.
 //!
 //! No `tracing` logs live here — the registry layer logs at decision
 //! time. Keeping the repo silent makes it trivial to embed in tests
@@ -66,6 +73,30 @@ impl HotlDecisionVerdict {
             Self::Expired => "expired",
         }
     }
+}
+
+/// Result of a point lookup of a single escalation row — powers the
+/// `POST /v1/hotl/decisions` pre-flight existence check (audit F1b):
+/// unknown escalation ids return 404 instead of silently recording a
+/// phantom decision row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EscalationLookup {
+    /// The store has no lookup capability (trait default — Noop/test
+    /// stores). Callers MUST skip the pre-flight check and keep the
+    /// legacy behaviour.
+    Unsupported,
+    /// No `hotl_pending` row exists for this escalation id.
+    NotFound,
+    /// The row exists, is `status='pending'` and unexpired — a decision
+    /// can still be recorded against it.
+    Pending,
+    /// The row exists but can no longer accept a decision. `status` is
+    /// the stored terminal status (`resolved` / `expired`); a still-
+    /// `pending` row whose `expires_at` already passed is reported as
+    /// `expired` (mirrors [`HotlEscalationStore::record_decision`]'s
+    /// `expires_at > now` guard, which would reject it anyway). `at` is
+    /// `decided_at` when stamped, else `expires_at`.
+    Terminal { status: String, at: DateTime<Utc> },
 }
 
 /// Domain-shaped row for `hotl_escalations` (parent table).
@@ -168,6 +199,30 @@ pub trait HotlEscalationStore: Send + Sync {
         verdict: HotlDecisionVerdict,
         decided_by: Option<String>,
     ) -> RepoResult<bool>;
+
+    /// Point lookup powering the decision route's pre-flight existence
+    /// check (audit F1b). The default returns
+    /// [`EscalationLookup::Unsupported`] so legacy/test stores
+    /// (`NoopHotlEscalationStore`, pre-existing mocks) keep the
+    /// always-201 route behaviour without code changes.
+    async fn lookup(&self, _escalation_id: Uuid) -> RepoResult<EscalationLookup> {
+        Ok(EscalationLookup::Unsupported)
+    }
+
+    /// Terminalisation path used by the registry's timeout companion
+    /// tasks (audit F1b/c): stamps a terminal `status` onto a row that is
+    /// still `pending`, REGARDLESS of `expires_at` — unlike
+    /// [`HotlEscalationStore::record_decision`], whose `expires_at > now`
+    /// guard would make it a no-op on exactly the timed-out rows this
+    /// method exists to sweep. Returns `Ok(true)` when a row was updated.
+    /// The default is a no-op so legacy/test stores keep compiling.
+    async fn terminalise(
+        &self,
+        _escalation_id: Uuid,
+        _verdict: HotlDecisionVerdict,
+    ) -> RepoResult<bool> {
+        Ok(false)
+    }
 }
 
 /// `SQLite` implementation backed by sqlx.
@@ -273,6 +328,58 @@ impl HotlEscalationStore for SqliteHotlEscalationRepository {
         .bind(decided_by.as_deref())
         .bind(escalation_id)
         .bind(Utc::now())
+        .execute(&self.pool)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn lookup(&self, escalation_id: Uuid) -> RepoResult<EscalationLookup> {
+        let row: Option<(String, DateTime<Utc>, Option<DateTime<Utc>>)> = sqlx::query_as(
+            "SELECT status, expires_at, decided_at FROM hotl_pending WHERE escalation_id = ?",
+        )
+        .bind(escalation_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+        let Some((status, expires_at, decided_at)) = row else {
+            return Ok(EscalationLookup::NotFound);
+        };
+        if status == "pending" {
+            if expires_at > Utc::now() {
+                return Ok(EscalationLookup::Pending);
+            }
+            // Pending-but-expired: the timeout sweep hasn't stamped it yet,
+            // but `record_decision`'s `expires_at > now` guard would reject
+            // a decision anyway — report it terminal so the route can
+            // render 409 instead of recording an orphan decision row.
+            return Ok(EscalationLookup::Terminal {
+                status: "expired".to_string(),
+                at: expires_at,
+            });
+        }
+        Ok(EscalationLookup::Terminal {
+            at: decided_at.unwrap_or(expires_at),
+            status,
+        })
+    }
+
+    async fn terminalise(
+        &self,
+        escalation_id: Uuid,
+        verdict: HotlDecisionVerdict,
+    ) -> RepoResult<bool> {
+        // Deliberately NO `expires_at > ?` guard (contrast
+        // `record_decision`): the timeout companion calls this AFTER the
+        // deadline passed, so the guard would make the sweep a no-op and
+        // the row would stay `pending` forever.
+        let result = sqlx::query(
+            "UPDATE hotl_pending \
+             SET status = ?, decided_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') \
+             WHERE escalation_id = ? AND status = 'pending'",
+        )
+        .bind(verdict.status_str())
+        .bind(escalation_id)
         .execute(&self.pool)
         .await
         .map_err(RepoError::from_sqlx)?;

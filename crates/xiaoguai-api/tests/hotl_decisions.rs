@@ -594,3 +594,149 @@ async fn late_decision_after_timeout_returns_resumed_false() {
     // these tests never exercise — silence the unused-import lint cleanly.
     let _ = std::any::type_name::<HotlTicketError>();
 }
+
+// ── 14-16. Pre-flight escalation existence check (audit F1b) ─────────────────
+//
+// When the registry's store supports `lookup` (sqlite-backed production
+// deployments), `POST /v1/hotl/decisions` validates the escalation row
+// BEFORE recording the decision: unknown id → 404 with NO phantom
+// decision row; terminal row → 409. Stores without lookup support
+// (`NoopHotlEscalationStore` — tests 2/12/13 above) return `Unsupported`
+// and keep the legacy always-201 contract.
+
+mod preflight {
+    use super::*;
+    use async_trait::async_trait;
+    use chrono::{DateTime, Utc};
+    use xiaoguai_api::hotl::decision::InMemoryHotlDecisionStore as ConcreteDecisionStore;
+    use xiaoguai_api::hotl::decision_registry::EscalationLookup;
+    use xiaoguai_storage::repositories::error::RepoResult;
+    use xiaoguai_storage::repositories::hotl_escalations::{
+        HotlDecisionVerdict as StoreVerdict, HotlEscalationRow, HotlEscalationStore, HotlPendingRow,
+    };
+
+    /// Store stub whose `lookup` always returns the configured answer.
+    /// `record_decision` reports a match so the resolve path stays on the
+    /// happy branch when the pre-flight allows the request through.
+    #[derive(Debug)]
+    struct FixedLookupStore(EscalationLookup);
+
+    #[async_trait]
+    impl HotlEscalationStore for FixedLookupStore {
+        async fn insert_pending(
+            &self,
+            parent: HotlEscalationRow,
+            _child: HotlPendingRow,
+        ) -> RepoResult<Uuid> {
+            Ok(parent.id)
+        }
+
+        async fn list_pending_unexpired(
+            &self,
+            _now: DateTime<Utc>,
+        ) -> RepoResult<Vec<HotlPendingRow>> {
+            Ok(Vec::new())
+        }
+
+        async fn record_decision(
+            &self,
+            _escalation_id: Uuid,
+            _verdict: StoreVerdict,
+            _decided_by: Option<String>,
+        ) -> RepoResult<bool> {
+            Ok(true)
+        }
+
+        async fn lookup(&self, _escalation_id: Uuid) -> RepoResult<EscalationLookup> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn app_with_lookup(lookup: EscalationLookup) -> (axum::Router, Arc<ConcreteDecisionStore>) {
+        let decisions = Arc::new(ConcreteDecisionStore::new());
+        let registry = Arc::new(DecisionRegistry::with_store(Arc::new(FixedLookupStore(
+            lookup,
+        ))));
+        let app = router(build_state(StateOptions {
+            decision_store: Some(decisions.clone() as Arc<dyn HotlDecisionStore>),
+            decision_registry: Some(registry),
+            ..Default::default()
+        }));
+        (app, decisions)
+    }
+
+    async fn post_decision(app: axum::Router, escalation_id: Uuid) -> axum::response::Response {
+        let body = serde_json::json!({
+            "escalation_id": escalation_id.to_string(),
+            "verdict": "allow",
+            "decided_by": "alice"
+        });
+        app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/hotl/decisions")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn unknown_escalation_returns_404_with_no_phantom_decision_row() {
+        let (app, decisions) = app_with_lookup(EscalationLookup::NotFound);
+        let escalation_id = Uuid::new_v4();
+        let resp = post_decision(app, escalation_id).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["code"], "not_found");
+        assert!(
+            json["message"]
+                .as_str()
+                .unwrap()
+                .contains(&escalation_id.to_string()),
+            "404 must name the offending escalation_id: {json}"
+        );
+        assert!(
+            decisions.snapshot().is_empty(),
+            "the pre-flight 404 must NOT leave a phantom decision row behind"
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_escalation_returns_409_with_no_decision_row() {
+        let (app, decisions) = app_with_lookup(EscalationLookup::Terminal {
+            status: "expired".to_string(),
+            at: Utc::now(),
+        });
+        let escalation_id = Uuid::new_v4();
+        let resp = post_decision(app, escalation_id).await;
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["code"], "conflict");
+        assert!(
+            json["message"].as_str().unwrap().contains("expired"),
+            "409 must name the terminal status: {json}"
+        );
+        assert!(
+            decisions.snapshot().is_empty(),
+            "a terminal escalation must NOT acquire a new decision row"
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_escalation_proceeds_to_201() {
+        let (app, decisions) = app_with_lookup(EscalationLookup::Pending);
+        let resp = post_decision(app, Uuid::new_v4()).await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let json = body_json(resp.into_body()).await;
+        // No live in-memory waiter was registered — resumed stays false.
+        assert_eq!(json["resumed"], false);
+        assert_eq!(
+            decisions.snapshot().len(),
+            1,
+            "decision row must be recorded"
+        );
+    }
+}
