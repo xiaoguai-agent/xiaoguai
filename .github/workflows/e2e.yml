@@ -6,6 +6,9 @@ on:
     paths:
       - "frontend/**"
       - "crates/xiaoguai-api/**"
+      # The suite boots deploy/docker-compose.yml — image/compose changes must
+      # re-run it (the /data-volume boot regression slipped through unseen).
+      - "deploy/**"
       - ".github/workflows/e2e.yml"
   # Allow manual trigger for debugging.
   workflow_dispatch:

@@ -11,6 +11,10 @@ on:
     paths:
       - "crates/xiaoguai-api/**"
       - "crates/xiaoguai-core/**"
+      # The gate boots deploy/docker-compose.yml — image/compose changes must
+      # re-run it (the /data-volume boot regression slipped through unseen).
+      - "deploy/**"
+      - ".github/workflows/loadtest-smoke.yml"
   workflow_dispatch:
     inputs:
       scenario:
