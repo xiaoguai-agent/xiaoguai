@@ -196,7 +196,13 @@ jobs:
       # memory state even when the Test step failed.
       - name: Resource diagnostics
         if: always()
-        run: df -h / /mnt 2>/dev/null; free -h; du -sh target 2>/dev/null || true
+        run: |
+          df -h / /mnt 2>/dev/null; free -h; du -sh target 2>/dev/null || true
+          # cgroup-OOM forensics: when a per-crate step's test was OOM-killed
+          # by the testcap jail, dmesg names the victim process and prints the
+          # cgroup memory report.
+          sudo dmesg 2>/dev/null | grep -iE "oom|killed process" | tail -20 || true
+          cat /sys/fs/cgroup/testcap/memory.peak 2>/dev/null || true
       # Eval-driven development gate (CLAUDE.md): run the regression eval suite
       # through the real CLI path (arg parsing -> suite load -> grade -> exit
       # code), not just the lib tests. `xiaoguai eval run` exits non-zero when
