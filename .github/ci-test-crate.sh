@@ -11,6 +11,55 @@
 # step fails gracefully, logs + cache save) instead of taking the box down.
 set -euo pipefail
 
+LOG=/tmp/crate-test-$1.log
+
+# ── Forensics beacon (hunt for the mcp-exec runner-death, issue #243) ──────
+# The runner death destroys the in-progress step's log, every cgroup cap has
+# failed to contain it, and the 15-min timeout below never fired — so the
+# only way to see the box's final state is to exfiltrate it continuously.
+# PATCH one issue comment every 30 s with the test-output tail + top
+# processes + memory + D-state list. The last successful PATCH survives the
+# runner's death.
+#
+# Armed BEFORE joining the cgroup so the beacon lives OUTSIDE the jail (an
+# in-jail catastrophe can't take it down with the tests). `set +e` inside —
+# the first beacon iteration of the previous revision died instantly because
+# an inherited `set -e` aborted the subshell on the first failing collector.
+BEACON_PID=""
+if [ "${1:-}" = "xiaoguai-mcp-exec" ] && [ -n "${GH_TOKEN:-}" ]; then
+  cid=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/243/comments" \
+    -f body="beacon armed: run ${GITHUB_RUN_ID:-?} $(date -u +%FT%TZ)" \
+    --jq .id 2>/dev/null || true)
+  if [ -n "$cid" ]; then
+    (
+      set +e +o pipefail
+      n=0
+      while true; do
+        sleep 30
+        n=$((n + 1))
+        body="run ${GITHUB_RUN_ID:-?} beat #${n} $(date -u +%FT%TZ)
+\`\`\`
+—— test output tail ——
+$(tail -c 3000 "$LOG" 2>/dev/null || echo none)
+—— top rss ——
+$(ps aux --sort=-rss 2>/dev/null | head -12 || true)
+—— free ——
+$(free -m 2>/dev/null || true)
+—— testcap ——
+mem.current=$(cat /sys/fs/cgroup/testcap/memory.current 2>/dev/null || echo '?') procs=$(wc -l </sys/fs/cgroup/testcap/cgroup.procs 2>/dev/null || echo '?')
+—— D-state ——
+$(ps -eo pid,stat,wchan:32,comm 2>/dev/null | awk '$2 ~ /D/' | head -8 || true)
+—— dmesg tail ——
+$(sudo dmesg 2>/dev/null | tail -5 || true)
+\`\`\`"
+        gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${cid}" \
+          -f body="$body" >/dev/null 2>&1
+      done
+    ) &
+    BEACON_PID=$!
+  fi
+fi
+
 if [ ! -f /sys/fs/cgroup/testcap/cgroup.procs ]; then
   sudo mkdir -p /sys/fs/cgroup/testcap
   echo 12G | sudo tee /sys/fs/cgroup/testcap/memory.max >/dev/null
@@ -24,45 +73,6 @@ if [ ! -f /sys/fs/cgroup/testcap/cgroup.procs ]; then
   echo 0 | sudo tee /sys/fs/cgroup/testcap/memory.swap.max >/dev/null
 fi
 echo $$ | sudo tee /sys/fs/cgroup/testcap/cgroup.procs >/dev/null
-
-LOG=/tmp/crate-test-$1.log
-
-# ── Forensics beacon (hunt for the mcp-exec runner-death, issue #243) ──────
-# The runner death destroys the in-progress step's log, every cgroup cap has
-# failed to contain it, and the 15-min timeout below did not fire — so the
-# only way to see the box's final state is to exfiltrate it continuously.
-# While the suspect crate's tests run, PATCH one issue comment every 60 s
-# with the test-output tail + top processes + memory. The last successful
-# PATCH survives the runner's death.
-BEACON_PID=""
-if [ "${1:-}" = "xiaoguai-mcp-exec" ] && [ -n "${GH_TOKEN:-}" ]; then
-  cid=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/243/comments" \
-    -f body="beacon armed: run ${GITHUB_RUN_ID:-?} $(date -u +%FT%TZ)" \
-    --jq .id 2>/dev/null || true)
-  if [ -n "$cid" ]; then
-    (
-      while true; do
-        sleep 60
-        body="run ${GITHUB_RUN_ID:-?} beat $(date -u +%FT%TZ)
-\`\`\`
-—— test output tail ——
-$(tail -c 3000 "$LOG" 2>/dev/null || echo none)
-—— top rss ——
-$(ps aux --sort=-rss 2>/dev/null | head -12)
-—— free ——
-$(free -m 2>/dev/null)
-—— testcap ——
-mem.current=$(cat /sys/fs/cgroup/testcap/memory.current 2>/dev/null) peak=$(cat /sys/fs/cgroup/testcap/memory.peak 2>/dev/null)
-—— D-state ——
-$(ps -eo pid,stat,wchan:32,comm 2>/dev/null | awk '$2 ~ /D/' | head -8)
-\`\`\`"
-        gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${cid}" \
-          -f body="$body" >/dev/null 2>&1 || true
-      done
-    ) &
-    BEACON_PID=$!
-  fi
-fi
 
 # timeout: every per-crate suite finishes in single-digit minutes when
 # healthy; kill a hung suite at 15 min so the step fails GRACEFULLY.
