@@ -27,17 +27,16 @@ LOG=/tmp/crate-test-$1.log
 # an inherited `set -e` aborted the subshell on the first failing collector.
 BEACON_PID=""
 if [ "${1:-}" = "xiaoguai-mcp-exec" ] && [ -n "${GH_TOKEN:-}" ]; then
-  cid=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/243/comments" \
-    -f body="beacon armed: run ${GITHUB_RUN_ID:-?} $(date -u +%FT%TZ)" \
-    --jq .id 2>/dev/null || true)
-  if [ -n "$cid" ]; then
-    (
-      set +e +o pipefail
-      n=0
-      while true; do
-        sleep 30
-        n=$((n + 1))
-        body="run ${GITHUB_RUN_ID:-?} beat #${n} $(date -u +%FT%TZ)
+  # POST-per-beat: the PATCH variant never landed a single update in two
+  # rounds while the arming POST always worked — stop debugging the
+  # difference, use the proven channel. Beat 0 at +10 s validates the
+  # collectors; then every 120 s (≤ ~23 comments per 45-min hang).
+  (
+    set +e +o pipefail
+    n=0
+    sleep 10
+    while true; do
+      body="run ${GITHUB_RUN_ID:-?} beat #${n} $(date -u +%FT%TZ)
 \`\`\`
 —— test output tail ——
 $(tail -c 3000 "$LOG" 2>/dev/null || echo none)
@@ -52,12 +51,13 @@ $(ps -eo pid,stat,wchan:32,comm 2>/dev/null | awk '$2 ~ /D/' | head -8 || true)
 —— dmesg tail ——
 $(sudo dmesg 2>/dev/null | tail -5 || true)
 \`\`\`"
-        gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${cid}" \
-          -f body="$body" >/dev/null 2>&1
-      done
-    ) &
-    BEACON_PID=$!
-  fi
+      gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/243/comments" \
+        -f body="$body" >/dev/null 2>&1
+      n=$((n + 1))
+      sleep 120
+    done
+  ) &
+  BEACON_PID=$!
 fi
 
 if [ ! -f /sys/fs/cgroup/testcap/cgroup.procs ]; then
