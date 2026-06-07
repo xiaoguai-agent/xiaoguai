@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
     anomaly, audit_bundle, audit_export, backup, chat, code, completions, eval, hotl, init,
-    manpages, mcp, outcomes, provider, remote, self_update, skills, stats, tasks, watch,
+    manpages, mcp, outcomes, provider, remote, schedule, self_update, skills, stats, tasks, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -99,6 +99,16 @@ enum Cmd {
     Mcp {
         #[command(subcommand)]
         action: McpCmd,
+    },
+
+    /// Manage scheduled jobs (cron-triggered agent prompts, `SQLite`-backed).
+    ///
+    /// Jobs are executed by the scheduler inside `xiaoguai serve`; the CLI
+    /// writes the same tables the runner polls, so changes apply without a
+    /// restart. `run-now` talks to the running server over HTTP.
+    Schedule {
+        #[command(subcommand)]
+        action: ScheduleCmd,
     },
 
     /// Talk to a running `xiaoguai-api` over HTTP/SSE.
@@ -792,6 +802,61 @@ enum ProviderCmd {
 }
 
 #[derive(Subcommand)]
+enum ScheduleCmd {
+    /// Create a cron-scheduled job that runs an agent prompt.
+    Create {
+        /// Human-readable job name.
+        #[arg(long)]
+        name: String,
+        /// 6-field cron expression (sec min hour day-of-month month
+        /// day-of-week), evaluated in UTC — e.g. '0 0 8 * * *' = daily 08:00.
+        #[arg(long)]
+        cron: String,
+        /// Agent prompt the job runs on each fire.
+        #[arg(long)]
+        prompt: String,
+        /// Optional free-form description.
+        #[arg(long)]
+        description: Option<String>,
+        /// Push sink for results, e.g. `feishu:chat-x`, `inbox:owner`.
+        /// Repeatable. Omit to keep results in the run history only.
+        #[arg(long = "sink")]
+        sinks: Vec<String>,
+    },
+    /// List scheduled jobs (active and paused).
+    List {
+        /// Maximum rows to show.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Show one job in full, including recent run history. Accepts the
+    /// short id from `list` (any unique prefix) or the full id.
+    Show { id: String },
+    /// Pause a job (it stays in the table; the runner skips it).
+    Pause { id: String },
+    /// Resume a paused job; the next fire is recomputed from now.
+    Resume { id: String },
+    /// Delete a job and its run history (asks for confirmation).
+    Delete {
+        id: String,
+        /// Skip the confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Fire a job immediately via the running server.
+    RunNow {
+        id: String,
+        /// Base URL of the `xiaoguai-api` server.
+        #[arg(
+            long,
+            env = "XIAOGUAI_API_BASE",
+            default_value = "http://localhost:7600"
+        )]
+        server: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum TasksCmd {
     /// List tasks on a board, optionally filtered by column.
     List {
@@ -1290,6 +1355,113 @@ async fn handle_provider(config: Option<&str>, action: ProviderCmd) -> Result<()
         ProviderCmd::Remove { id } => {
             provider::remove(repo, provider::RemoveArgs { id: id.clone() }).await?;
             println!("removed {id}");
+        }
+    }
+    Ok(())
+}
+
+async fn handle_schedule(config: Option<&str>, action: ScheduleCmd) -> Result<()> {
+    use std::sync::Arc;
+    use xiaoguai_audit::chain::sink::SqliteAuditSink;
+    use xiaoguai_scheduler::{SqliteJobRepository, SqliteJobRunRepository};
+
+    let settings = load_settings(config)?;
+    let pool = connect(&settings.database.url, settings.database.max_connections)
+        .await
+        .context("open SQLite store")?;
+    // Idempotent migrate-on-connect (same pattern as `build_provider_repo`,
+    // #221) so `schedule` works on a brand-new DB before the first `serve`.
+    migrate(&pool).await.context("apply migrations")?;
+    let jobs = SqliteJobRepository::new(pool.clone());
+    let runs = SqliteJobRunRepository::new(pool.clone());
+    // Sign schedule.* rows with the same key the server uses so CLI-written
+    // rows verify in the same chain (same key resolution as `xiaoguai code`).
+    let key = std::env::var(&settings.audit.signing_key_env)
+        .ok()
+        .filter(|k| !k.is_empty())
+        .unwrap_or_else(|| settings.audit.hmac_key.clone());
+    let audit = schedule::SinkAuditAppender::new(Arc::new(SqliteAuditSink::new(pool, key)));
+
+    match action {
+        ScheduleCmd::Create {
+            name,
+            cron,
+            prompt,
+            description,
+            sinks,
+        } => {
+            let job = schedule::create(
+                &jobs,
+                &audit,
+                schedule::CreateArgs {
+                    name,
+                    cron,
+                    prompt,
+                    description,
+                    sinks,
+                },
+            )
+            .await?;
+            println!(
+                "created {} ({}) — next fire {}",
+                job.id,
+                job.name,
+                job.next_fire_at
+                    .map_or_else(|| "-".to_string(), |t| t.to_rfc3339())
+            );
+        }
+        ScheduleCmd::List { limit } => {
+            let rows = schedule::list(&jobs, &runs, limit).await?;
+            if rows.is_empty() {
+                println!("no scheduled jobs — create one with `xiaoguai schedule create`");
+            } else {
+                print!("{}", schedule::format_table(&rows));
+            }
+        }
+        ScheduleCmd::Show { id } => {
+            let (job, history) = schedule::show(&jobs, &runs, &id).await?;
+            print!("{}", schedule::format_detail(&job, &history));
+        }
+        ScheduleCmd::Pause { id } => {
+            let job = schedule::set_enabled(&jobs, &audit, &id, false).await?;
+            println!("paused {} ({})", job.id, job.name);
+        }
+        ScheduleCmd::Resume { id } => {
+            let job = schedule::set_enabled(&jobs, &audit, &id, true).await?;
+            println!(
+                "resumed {} ({}) — next fire {}",
+                job.id,
+                job.name,
+                job.next_fire_at
+                    .map_or_else(|| "-".to_string(), |t| t.to_rfc3339())
+            );
+        }
+        ScheduleCmd::Delete { id, yes } => {
+            let job = schedule::resolve(&jobs, &id).await?;
+            if !yes {
+                eprint!(
+                    "Delete scheduled job '{}' ({}) and its run history? [y/N] ",
+                    job.name, job.id
+                );
+                if !init::parse_yes_no(&prompt_line()?, false) {
+                    println!("aborted — nothing deleted");
+                    return Ok(());
+                }
+            }
+            let gone = schedule::delete(&jobs, &audit, &job.id).await?;
+            println!("deleted {} ({})", gone.id, gone.name);
+        }
+        ScheduleCmd::RunNow { id, server } => {
+            // Resolve short ids against the local store; the REST route
+            // needs the exact id.
+            let job = schedule::resolve(&jobs, &id).await?;
+            schedule::run_now(&server, &job.id).await?;
+            println!(
+                "fired {} ({}) — `xiaoguai schedule show {}` shows the run result",
+                job.id,
+                job.name,
+                schedule::short_id(&job.id)
+            );
         }
     }
     Ok(())
@@ -1969,6 +2141,7 @@ async fn main() -> Result<()> {
         Cmd::Provider { action } => handle_provider(cfg, action).await,
         Cmd::Init => handle_init(cfg).await,
         Cmd::Mcp { action } => handle_mcp(cfg, action).await,
+        Cmd::Schedule { action } => handle_schedule(cfg, action).await,
         Cmd::Remote { server, action } => handle_remote(server, action).await,
         Cmd::Repl {
             server,
