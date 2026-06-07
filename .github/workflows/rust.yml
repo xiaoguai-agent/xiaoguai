@@ -93,6 +93,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.93.0
         with:
           components: rustfmt, clippy
+      # nextest: the test phase runs prebuilt binaries from an archive —
+      # ZERO compilation in the per-crate steps. This kills the root cause
+      # of the runner deaths: `cargo test -p <crate>` resolves features
+      # differently from `--workspace`, so the per-crate steps were silently
+      # RECOMPILING the crate, and that rustc invocation (xiaoguai-mcp-exec
+      # lib, beacon-forensics issue #243) intermittently spins forever at
+      # 100% CPU until the box dies. nextest also enforces a per-test
+      # terminate (.config/nextest.toml) that kills AND NAMES a hung test.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - uses: Swatinem/rust-cache@v2
         with:
           # The runner sometimes dies mid-`cargo test` (resource marginality).
@@ -121,7 +132,12 @@ jobs:
       # converges) instead of the runner agent ("lost communication", cache
       # lost, retries cold-loop forever).
       - name: Build tests
-        run: choom -n 800 -- mold -run cargo test --workspace --locked --jobs 1 --no-run
+        # nextest archive = build every test binary with WORKSPACE feature
+        # unification and pack them; the per-crate steps then only RUN.
+        run: >
+          choom -n 800 -- mold -run
+          cargo nextest archive --workspace --locked --build-jobs 1
+          --archive-file target/nextest-tests.tar.zst
       # Test phase, one step per crate (.github/ci-test-crate.sh = cgroup
       # memory jail + choom + mold). The recurring runner death ~45 min into a
       # monolithic Test step destroys the in-progress step's log — but
@@ -200,6 +216,12 @@ jobs:
         run: .github/ci-test-crate.sh xiaoguai-anomaly
       - name: Test xiaoguai-migrate-smoke
         run: .github/ci-test-crate.sh xiaoguai-migrate-smoke
+      # nextest does not run doctests — cover them in one workspace pass
+      # (workspace feature unification, no per-crate recompiles).
+      - name: Doctests
+        run: >
+          timeout -k 30 900 choom -n 800 -- mold -run
+          cargo test --workspace --doc --locked --jobs 1
       # Resource forensics for the recurring runner-death: capture the disk /
       # memory state even when the Test step failed.
       - name: Resource diagnostics

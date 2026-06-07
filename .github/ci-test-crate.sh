@@ -74,13 +74,18 @@ if [ ! -f /sys/fs/cgroup/testcap/cgroup.procs ]; then
 fi
 echo $$ | sudo tee /sys/fs/cgroup/testcap/cgroup.procs >/dev/null
 
-# timeout: every per-crate suite finishes in single-digit minutes when
-# healthy; kill a hung suite at 15 min so the step fails GRACEFULLY.
-# choom: prefer cargo as OOM victim over the runner agent.
-# mold -run: memory-frugal linker without touching RUSTFLAGS (cache stays warm).
+# nextest run from the prebuilt archive: ZERO compilation here. The old
+# `cargo test -p` form re-resolved features per-crate and silently
+# RECOMPILED — and that rustc invocation is what intermittently spun
+# forever until the box died (issue #243 beacon forensics). nextest's
+# profile.ci terminate (.config/nextest.toml) additionally kills and NAMES
+# any individual hung test. timeout-900 stays as the outermost belt.
+# choom: prefer the test tree as OOM victim over the runner agent.
 rc=0
-timeout -k 30 900 choom -n 800 -- mold -run \
-  cargo test -p "$1" --locked --jobs 1 2>&1 | tee "$LOG" || rc=$?
+timeout -k 30 900 choom -n 800 -- \
+  cargo nextest run --archive-file target/nextest-tests.tar.zst \
+  --workspace-remap . -E "package($1)" --profile ci --no-tests=pass \
+  2>&1 | tee "$LOG" || rc=$?
 
 [ -n "$BEACON_PID" ] && kill "$BEACON_PID" 2>/dev/null || true
 exit "$rc"
