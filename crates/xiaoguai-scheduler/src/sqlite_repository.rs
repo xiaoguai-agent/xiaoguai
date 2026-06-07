@@ -127,6 +127,31 @@ impl JobRepository for SqliteJobRepository {
         Ok(())
     }
 
+    async fn list_all(&self, limit: usize) -> RepoResult<Vec<ScheduledJob>> {
+        let rows = sqlx::query(
+            "SELECT * FROM scheduled_jobs
+             ORDER BY created_at, id
+             LIMIT ?1",
+        )
+        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sqlx_err)?;
+        rows.iter().map(row_to_job).collect()
+    }
+
+    async fn delete(&self, id: &str) -> RepoResult<()> {
+        let deleted = sqlx::query("DELETE FROM scheduled_jobs WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(sqlx_err)?;
+        if deleted.rows_affected() == 0 {
+            return Err(RepoError::NotFound(id.into()));
+        }
+        Ok(())
+    }
+
     async fn list_reactive(&self) -> RepoResult<Vec<ScheduledJob>> {
         // Push the type filter into SQL so we don't pull every enabled job
         // through the application layer. `json_extract(trigger, '$.type')` reads

@@ -33,7 +33,10 @@ xiaoguai-mcp = { path = "../xiaoguai-mcp" }
 # over the same function, for backward compatibility with existing systemd
 # units and packaging).
 xiaoguai-core = { path = "../xiaoguai-core" }
+# `xiaoguai schedule` — job model + repositories + cron validation.
+xiaoguai-scheduler = { path = "../xiaoguai-scheduler" }
 sqlx = { workspace = true }
+uuid = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }

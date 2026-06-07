@@ -19,6 +19,7 @@ pub mod mcp;
 pub mod outcomes;
 pub mod provider;
 pub mod remote;
+pub mod schedule;
 pub mod self_update;
 pub mod skills;
 pub mod stats;
