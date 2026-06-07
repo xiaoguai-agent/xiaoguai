@@ -15,11 +15,15 @@ set -euo pipefail
 if [ ! -f /sys/fs/cgroup/testcap/cgroup.procs ]; then
   sudo mkdir -p /sys/fs/cgroup/testcap
   echo 12G | sudo tee /sys/fs/cgroup/testcap/memory.max >/dev/null
-  # The swap cap is NOT optional: without it a leaking test stays under
-  # memory.max while filling ALL of the box's 16G swap (~45 min at
-  # writeback speed — the exact runner-death signature). Fail loudly if
-  # the controller is missing rather than silently running unjailed.
-  echo 4G | sudo tee /sys/fs/cgroup/testcap/memory.swap.max >/dev/null
+  # swap.max=0 is the load-bearing line: with ANY swap allowance a leaking
+  # test thrashes between RAM and swap *within* its limits — processes hang
+  # in D-state (even SIGKILL pends; the 15-min timeout below proved unable
+  # to fire), the thrash saturates disk I/O, and the runner agent outside
+  # the cgroup starves ("lost communication"). With zero swap the leak hits
+  # memory.max and the kernel cgroup-OOM-kills the test binary immediately:
+  # graceful step failure, logs survive, dmesg names the victim. The box's
+  # 16G swap remains available to the (un-jailed) build/link phase.
+  echo 0 | sudo tee /sys/fs/cgroup/testcap/memory.swap.max >/dev/null
 fi
 echo $$ | sudo tee /sys/fs/cgroup/testcap/cgroup.procs >/dev/null
 
