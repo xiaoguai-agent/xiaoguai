@@ -56,13 +56,15 @@ jobs:
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
           sudo swapon /mnt/swapfile
-          # Second swapfile on the root disk (16 GB total): the Test step's
-          # peak is a deterministic OOM (6 consecutive runner deaths at
-          # 54m04s ±2s) that 8 GB did not absorb.
-          sudo fallocate -l 8G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          # Second swapfile on the root disk: the Test step's peak is a
+          # deterministic OOM (6 consecutive runner deaths at 54m04s ±2s)
+          # that the first 8 GB did not absorb. NB the runner image already
+          # has an ACTIVE /swapfile (fallocate on it → "Text file busy"),
+          # hence /swapfile2.
+          sudo fallocate -l 8G /swapfile2
+          sudo chmod 600 /swapfile2
+          sudo mkswap /swapfile2
+          sudo swapon /swapfile2
           free -h
       - uses: dtolnay/rust-toolchain@1.93.0
         with:
