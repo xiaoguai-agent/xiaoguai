@@ -9,6 +9,7 @@
 //! | [`prometheus`] | Registry init, metric handles, `/metrics` route |
 //! | [`otlp`] | OTLP/gRPC trace pipeline via `tracing-opentelemetry` |
 //! | [`instrument`] | Macros: `instrument_llm_call!`, `instrument_scheduler_tick!` |
+//! | [`cardinality`] | Bounded-cardinality guard for free-form metric labels |
 //!
 //! ## Quick start (xiaoguai-core)
 //!
@@ -29,12 +30,14 @@
 //! router with `/metrics` attached. The OTLP tracer provider is stored
 //! globally; call `xiaoguai_observability::shutdown()` on graceful exit.
 
+pub mod cardinality;
 pub mod instrument;
 pub mod otlp;
 pub mod prometheus;
 pub mod redact;
 pub mod signal;
 
+pub use cardinality::{bounded_model_label, bounded_provider_label};
 pub use otlp::{init_otlp, shutdown_tracer};
 pub use prometheus::{
     anomaly_detections_total, compaction_fallback_total, compaction_token_savings,
