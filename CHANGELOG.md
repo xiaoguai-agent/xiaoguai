@@ -15,6 +15,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v1.13.0] — 2026-06-08
+
+The "do everything" batch: the scheduler finally gets a user surface, the HotL
+escalation lifecycle is closed end-to-end, metrics cardinality is bounded, and
+two CI checks that had been red since the single-user pivot are green again.
+
+### Added
+- **`xiaoguai schedule` (#241)** — the fully-built scheduler backend is now
+  operable: `create` (6-field cron with eager validation + teaching errors),
+  `list` / `show` (with recent run history), `pause` / `resume` (resume
+  recomputes the next fire so a paused job doesn't fire a stale catch-up),
+  `delete` (confirmed), and `run-now` (via the server REST API). Local-DB
+  commands work before first `serve` (idempotent migrate-on-connect). All
+  write operations append HMAC-chained `schedule.*` audit rows.
+- **Model-label cardinality guard (#239)** — free-form model/provider strings
+  used as Prometheus labels are bounded (first 50 distinct values pass,
+  overflow maps to `_other`, warn-once), so a typo'd `--model` can no longer
+  mint unbounded time series.
+
+### Fixed
+- **HotL escalation lifecycle closed (#242)** — a decision posted for an
+  unknown escalation id no longer records a phantom decision row and returns
+  `404` (teaching message); a decision for an already-terminal escalation
+  returns `409` with its status and timestamp; timed-out escalations are now
+  terminalised in storage by the timeout/replay companions (no more
+  forever-`pending` rows); the `resumed` response flag is honest when the
+  waiter was already gone. Legacy in-memory/Noop-store deployments keep the
+  old 201 contract.
+- **k6 smoke green for the first time since the SQLite pivot (#240)** — the
+  Docker image never created `/data`, so the named volume mountpoint came up
+  root-owned and the `nonroot` runtime exited before binding :7600. The image
+  now seeds `/data` with the right ownership. Compose logs are dumped on boot
+  failure in both e2e workflows (the distroless image was a forensics blind
+  spot), and `deploy/**` changes now trigger the gates that exercise them.
+- Playwright firefox/webkit shards no longer fail on a non-existent
+  `scheduler-flow` project (#240) — the spec has only ever had a chromium
+  project; the workflow now requests it on the chromium shard only.
+
+### CI
+- **Test phase rebuilt around `cargo nextest` archives** — test binaries are
+  built once with workspace feature unification and the per-crate steps only
+  RUN them (the old `cargo test -p` steps silently recompiled crates with
+  per-crate feature resolution, and one such rustc invocation could spin
+  forever, taking the runner with it). Per-test 3×60 s terminate names any
+  hung test. `xiaoguai-mcp-exec`'s suite is quarantined into a
+  `continue-on-error` job with poll-don't-wait execution and a git-push
+  forensics beacon while the remaining runner-death mechanism is hunted
+  (issue #243).
+
 ## [v1.12.0] — 2026-06-07
 
 Backlog-burndown release: every item deferred from the v1.11.0 audit cycle is
