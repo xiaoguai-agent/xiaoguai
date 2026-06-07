@@ -66,6 +66,15 @@ jobs:
           sudo mkswap /swapfile2
           sudo swapon /swapfile2
           free -h
+      # mold: the runner deaths trace to the default bfd linker — each big test
+      # binary (wasmtime/qdrant/otel deps) spikes several GB at link, and with
+      # ~30 test binaries even serial links keep the box at the edge until the
+      # runner agent is OOM-killed or starved ("lost communication", last death
+      # 58 min into Test with 16 GB swap). mold links in a fraction of the
+      # memory and time. Invoked as `mold -run cargo …` so RUSTFLAGS stay
+      # unchanged — compile fingerprints (and the warm cache) remain valid.
+      - name: Install mold linker
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq mold
       - uses: dtolnay/rust-toolchain@1.93.0
         with:
           components: rustfmt, clippy
@@ -75,6 +84,9 @@ jobs:
           # Saving the cache even on failure means the next run resumes from
           # the partial compile instead of restarting cold — runs CONVERGE
           # instead of looping on cold-start death.
+          # NB this only fires when a STEP fails; a runner death skips post-run
+          # entirely. The choom shield below exists to turn runner deaths into
+          # plain step failures so this save actually happens.
           cache-on-failure: true
       - name: Format check
         run: cargo fmt --check
@@ -85,12 +97,18 @@ jobs:
       # test binaries. `--locked` keeps CI reproducible against Cargo.lock.
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # Split build/run so forensics can tell a compile/link death from a test
+      # death, and so an OOM in either phase fails ONE step (cache still saves).
+      # --jobs 1 (overrides CARGO_BUILD_JOBS=2): serial codegen/link keeps the
+      # peak to a single binary at a time. `choom -n 800` marks the cargo
+      # process tree as the kernel's preferred OOM victim — if memory still
+      # spikes, rustc/ld dies (visible step failure, cache saved, retry
+      # converges) instead of the runner agent ("lost communication", cache
+      # lost, retries cold-loop forever).
+      - name: Build tests
+        run: choom -n 800 -- mold -run cargo test --workspace --locked --jobs 1 --no-run
       - name: Test
-        # --jobs 1 (overrides CARGO_BUILD_JOBS=2): the runner died
-        # deterministically at the same offset in this step — two big test
-        # binaries linking concurrently. Serial codegen/link halves the peak
-        # again; slower but it finishes (timeout raised to match).
-        run: cargo test --workspace --locked --jobs 1
+        run: choom -n 800 -- mold -run cargo test --workspace --locked --jobs 1
       # Resource forensics for the recurring runner-death: capture the disk /
       # memory state even when the Test step failed.
       - name: Resource diagnostics
@@ -103,6 +121,7 @@ jobs:
       # mostly linking the one bin.
       - name: Eval suite (regression)
         run: >
+          choom -n 800 -- mold -run
           cargo run -p xiaoguai-cli --locked --
           eval run --suite regression
           --cases-dir crates/xiaoguai-eval/examples/eval/regression
