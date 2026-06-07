@@ -61,6 +61,12 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          # The runner sometimes dies mid-`cargo test` (resource marginality).
+          # Saving the cache even on failure means the next run resumes from
+          # the partial compile instead of restarting cold — runs CONVERGE
+          # instead of looping on cold-start death.
+          cache-on-failure: true
       - name: Format check
         run: cargo fmt --check
       # `clippy --all-targets` already check-compiles every target (lib, bins,
@@ -72,6 +78,11 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
         run: cargo test --workspace --locked
+      # Resource forensics for the recurring runner-death: capture the disk /
+      # memory state even when the Test step failed.
+      - name: Resource diagnostics
+        if: always()
+        run: df -h / /mnt 2>/dev/null; free -h; du -sh target 2>/dev/null || true
       # Eval-driven development gate (CLAUDE.md): run the regression eval suite
       # through the real CLI path (arg parsing -> suite load -> grade -> exit
       # code), not just the lib tests. `xiaoguai eval run` exits non-zero when
@@ -93,5 +104,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.93.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Apply all migrations to a fresh SQLite DB
         run: cargo test -p xiaoguai-storage migrations_apply_clean --locked -- --include-ignored
