@@ -15,6 +15,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v1.12.0] — 2026-06-07
+
+Backlog-burndown release: every item deferred from the v1.11.0 audit cycle is
+now shipped or explicitly decided (PRs #231–#237), plus a post-merge three-way
+code review whose findings are all fixed. Narrative in
+`docs/HANDOFF-2026-06-07-backlog-burndown.md`.
+
+### Added
+- **Eval CI gate (#234)** — the regression eval suite now runs in the Rust CI
+  workflow through the real CLI path (`xiaoguai eval run --suite regression`),
+  plus a new tool-call regression eval.
+- **LLM-router latency metric (#232)** — `instrument_llm_call!` is wired into
+  the router hot path (records time-to-first-byte; a latent `!Send` macro bug
+  was fixed on the way).
+- **`agent.run` HMAC audit on the REST chat path (#231)** — the one live
+  audit-completeness gap; agent runs over REST chat now append to the tamper-
+  evident chain. Error/panic runs are audited too (content-free), and replies
+  that fail to persist are flagged `persist_failed` (#237).
+- **WASM asset integrity pin (#233)** — optional SHA-256 pin for fetched WASM
+  assets; an empty pin now warns (#237).
+
+### Fixed
+- **Assistant replies were silently dropped in long sessions (#237)** — once a
+  session's history exceeded the agent context window (32 messages),
+  `persist_loop_output` skipped the new reply entirely: streamed to the user,
+  never written to the DB. Replies are now persisted from
+  `outcome.new_messages` with a `reply_text` fallback (+ a regression test at
+  the window boundary). Pre-existing bug, found by the post-merge review.
+- Scheduler NL-prompt macro: `Send`-safety + single-evaluation of its argument,
+  with an error-path test (#237).
+- RAG reranker score accumulation uses `checked_add` (#233/#237).
+
+### Security
+- **Decompression-bomb caps (#237)** — pptx (8 MiB) and docx (16 MiB)
+  decompressed-XML ceilings replace unbounded `read_to_end`.
+- **Guards batch (#233)** — pptx slide-text extraction cap, RAG-reranker
+  overall timeout, `openai_compat` tool-call index bound, WASM >128 KB output
+  trap→truncate.
+- Tool arguments persisted to the audit trail are capped at 256 KiB with a
+  warn-once (#237).
+
+### Changed
+- **ADR-0022 (#235)** — `run_to_sink` stays **fail-closed** on audit-write
+  failure (owner decision; it is a generic, currently-unwired hook — live
+  audit appends remain best-effort per CLAUDE.md). Mutation/perf workflows
+  stay `workflow_dispatch`.
+- **CI verification gate rebuilt for reliability (#236, #237)** — the
+  `Build and test` job no longer dies with "runner lost communication":
+  mold linker (build phase 58 min → 14 min), per-crate test steps with a
+  cgroup memory jail, swap + serialized codegen. Forensics rule learned:
+  completed steps' logs survive runner death; the in-progress step's log
+  does not.
+
 ## [v1.11.0] — 2026-06-06
 
 Security + reliability release: two completed audit rounds (2 & 3) over the whole
