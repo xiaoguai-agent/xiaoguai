@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel superseded PR runs (an update-branch push otherwise leaves the old
+# run going — it occupies a runner for up to ~75 min and its failure confuses
+# forensics). Main pushes never cancel: a gate run on main must finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
