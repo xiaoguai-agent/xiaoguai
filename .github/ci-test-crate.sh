@@ -15,11 +15,19 @@ set -euo pipefail
 if [ ! -f /sys/fs/cgroup/testcap/cgroup.procs ]; then
   sudo mkdir -p /sys/fs/cgroup/testcap
   echo 12G | sudo tee /sys/fs/cgroup/testcap/memory.max >/dev/null
-  # swap controller may be absent — cap is best-effort
-  echo 4G | sudo tee /sys/fs/cgroup/testcap/memory.swap.max >/dev/null || true
+  # The swap cap is NOT optional: without it a leaking test stays under
+  # memory.max while filling ALL of the box's 16G swap (~45 min at
+  # writeback speed — the exact runner-death signature). Fail loudly if
+  # the controller is missing rather than silently running unjailed.
+  echo 4G | sudo tee /sys/fs/cgroup/testcap/memory.swap.max >/dev/null
 fi
 echo $$ | sudo tee /sys/fs/cgroup/testcap/cgroup.procs >/dev/null
 
+# timeout: every per-crate suite finishes in single-digit minutes when
+# healthy. A HUNG test otherwise leaks until the box dies (the
+# xiaoguai-mcp-exec ~45 min runner-death signature, 2026-06-07): kill the
+# whole suite at 15 min so the step fails GRACEFULLY — logs survive and
+# cargo's output names the hung test.
 # choom: prefer cargo as OOM victim over the runner agent.
 # mold -run: memory-frugal linker without touching RUSTFLAGS (cache stays warm).
-exec choom -n 800 -- mold -run cargo test -p "$1" --locked --jobs 1
+exec timeout -k 30 900 choom -n 800 -- mold -run cargo test -p "$1" --locked --jobs 1
