@@ -1,0 +1,8 @@
+# CI test-runner config (cargo-nextest).
+#
+# The per-test terminate is the load-bearing setting: a single hung test used
+# to take the whole runner down ("lost communication", 45 min later). nextest
+# kills the hung test at 3×60 s and NAMES it in the output.
+[profile.ci]
+slow-timeout = { period = "60s", terminate-after = 3 }
+fail-fast = false
