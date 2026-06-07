@@ -113,6 +113,20 @@ impl HotlEscalationStore for MockHotlEscalationStore {
         entry.decided_at = Some(Utc::now());
         Ok(true)
     }
+
+    async fn terminalise(&self, escalation_id: Uuid, verdict: StoreVerdict) -> RepoResult<bool> {
+        // Mirrors the sqlite impl: stamps any still-`pending` row,
+        // REGARDLESS of `expires_at` (that's the timeout-sweep contract).
+        let Some(mut entry) = self.pending.get_mut(&escalation_id) else {
+            return Ok(false);
+        };
+        if entry.status != "pending" {
+            return Ok(false);
+        }
+        entry.status = verdict.status_str().to_string();
+        entry.decided_at = Some(Utc::now());
+        Ok(true)
+    }
 }
 
 // ── fixture helpers ───────────────────────────────────────────────────────────
@@ -224,7 +238,10 @@ async fn resolve_after_replay_fires_oneshot() {
     .await
     .expect("replay must succeed");
 
-    // Resolve should persist + return Ok(true) when a waiter exists.
+    // Resolve persists the verdict, but reports `resumed=false`: replay
+    // drops the ticket at mint time (the original loop died with the old
+    // process), so the oneshot send fails and nothing actually resumed.
+    // (Round-3 "resumed cosmetic" fix — previously this lied `true`.)
     let resolved = registry
         .resolve_persisted(
             escalation_id,
@@ -234,8 +251,18 @@ async fn resolve_after_replay_fires_oneshot() {
         .await
         .expect("resolve must succeed");
     assert!(
-        resolved,
-        "live waiter installed by replay must receive the verdict"
+        !resolved,
+        "post-replay resolve has no live receiver — resumed must be false"
+    );
+    let snap = store
+        .pending
+        .get(&escalation_id)
+        .expect("row still present in mock")
+        .value()
+        .clone();
+    assert_eq!(
+        snap.status, "resolved",
+        "the verdict must still be persisted even though no loop resumed"
     );
 }
 
@@ -324,4 +351,124 @@ async fn resolve_persists_before_firing_oneshot() {
         .expect("ticket must not error");
     assert_eq!(settled.verdict, HotlResolution::Allow);
     assert_eq!(settled.decided_by.as_deref(), Some("alice"));
+}
+
+// ── 7. timeout companion terminalises the store row (audit F1b) ──────────────
+#[tokio::test]
+async fn register_timeout_companion_terminalises_store_row() {
+    let store = Arc::new(MockHotlEscalationStore::new());
+    let registry = Arc::new(DecisionRegistry::with_store(
+        store.clone() as Arc<dyn HotlEscalationStore>
+    ));
+
+    let escalation_id = Uuid::new_v4();
+    let parent = parent_row(escalation_id);
+    let child = child_row(
+        escalation_id,
+        Utc::now() + chrono::Duration::milliseconds(50),
+    );
+    let _ticket = registry
+        .register_persisted(
+            escalation_id,
+            parent,
+            child,
+            Instant::now() + Duration::from_millis(50),
+        )
+        .await
+        .expect("register must succeed");
+
+    // Give the companion task time to fire + terminalise.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let snap = store
+        .pending
+        .get(&escalation_id)
+        .expect("row must still exist in store")
+        .value()
+        .clone();
+    assert_eq!(
+        snap.status, "expired",
+        "the timeout companion must terminalise the DB row, not leave it 'pending' forever"
+    );
+    assert!(
+        registry.is_empty(),
+        "timeout must also clear the in-memory waiter"
+    );
+}
+
+// ── 8. boot-replay timeout companion also terminalises ───────────────────────
+#[tokio::test]
+async fn replay_timeout_companion_terminalises_store_row() {
+    let store = Arc::new(MockHotlEscalationStore::new());
+    let escalation_id = Uuid::new_v4();
+    store.insert_row(child_row(
+        escalation_id,
+        Utc::now() + chrono::Duration::milliseconds(100),
+    ));
+
+    let registry = DecisionRegistry::replay_from_storage(
+        store.clone() as Arc<dyn HotlEscalationStore>,
+        Utc::now(),
+    )
+    .await
+    .expect("replay must succeed");
+    assert_eq!(registry.len(), 1, "row must be reattached by replay");
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let snap = store
+        .pending
+        .get(&escalation_id)
+        .expect("row must still exist in store")
+        .value()
+        .clone();
+    assert_eq!(
+        snap.status, "expired",
+        "the replay companion must terminalise the DB row on expiry"
+    );
+    assert!(registry.is_empty());
+}
+
+// ── 9. resumed cosmetic: dropped receiver ⇒ resumed=false ────────────────────
+#[tokio::test]
+async fn resolve_persisted_reports_false_when_receiver_dropped() {
+    let store = Arc::new(MockHotlEscalationStore::new());
+    let registry = Arc::new(DecisionRegistry::with_store(
+        store.clone() as Arc<dyn HotlEscalationStore>
+    ));
+
+    let escalation_id = Uuid::new_v4();
+    let parent = parent_row(escalation_id);
+    let child = child_row(escalation_id, Utc::now() + chrono::Duration::minutes(5));
+    let ticket = registry
+        .register_persisted(
+            escalation_id,
+            parent,
+            child,
+            Instant::now() + Duration::from_secs(60),
+        )
+        .await
+        .expect("register must succeed");
+
+    // The agent loop was cancelled — the ticket (receiver half) is gone.
+    drop(ticket);
+
+    let resumed = registry
+        .resolve_persisted(escalation_id, HotlResolution::Allow, Some("alice".into()))
+        .await
+        .expect("resolve must succeed");
+    assert!(
+        !resumed,
+        "receiver dropped (cancelled loop) ⇒ resumed must be false, not a cosmetic true"
+    );
+
+    // The operator's verdict is still the persisted source of truth.
+    let snap = store
+        .pending
+        .get(&escalation_id)
+        .expect("row still present in mock")
+        .value()
+        .clone();
+    assert_eq!(snap.status, "resolved");
+    assert_eq!(snap.decided_by.as_deref(), Some("alice"));
 }

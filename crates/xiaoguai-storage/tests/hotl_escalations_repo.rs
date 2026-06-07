@@ -15,7 +15,8 @@ use chrono::{Duration, Utc};
 use common::test_setup;
 use uuid::Uuid;
 use xiaoguai_storage::repositories::hotl_escalations::{
-    HotlEscalationRow, HotlEscalationStore, HotlPendingRow, SqliteHotlEscalationRepository,
+    EscalationLookup, HotlEscalationRow, HotlEscalationStore, HotlPendingRow,
+    SqliteHotlEscalationRepository,
 };
 use xiaoguai_storage::repositories::HotlDecisionVerdict;
 
@@ -212,4 +213,121 @@ async fn record_decision_unknown_id_returns_false() {
         !matched,
         "record_decision on unknown escalation_id must return false"
     );
+}
+
+#[tokio::test]
+async fn lookup_classifies_missing_pending_and_terminal_rows() {
+    // Audit F1(b): the decision route's pre-flight existence check —
+    // unknown id → NotFound (404), live row → Pending, decided row →
+    // Terminal('resolved'), timed-out-but-unswept row → Terminal('expired').
+    let (pool, _guard) = test_setup().await;
+    let repo = SqliteHotlEscalationRepository::new(pool.clone());
+
+    // Unknown id → NotFound.
+    let missing = repo
+        .lookup(Uuid::new_v4())
+        .await
+        .expect("lookup should succeed on unknown id");
+    assert_eq!(missing, EscalationLookup::NotFound);
+
+    // Live pending row → Pending.
+    let parent = make_parent("tool_call.execute_python");
+    let child = make_child("tool_call.execute_python", Duration::hours(24));
+    let live_id = repo
+        .insert_pending(parent, child)
+        .await
+        .expect("insert_pending should succeed");
+    assert_eq!(
+        repo.lookup(live_id).await.expect("lookup should succeed"),
+        EscalationLookup::Pending
+    );
+
+    // Decided row → Terminal { status: "resolved" }.
+    repo.record_decision(live_id, HotlDecisionVerdict::Allowed, Some("alice".into()))
+        .await
+        .expect("record_decision should succeed");
+    match repo.lookup(live_id).await.expect("lookup should succeed") {
+        EscalationLookup::Terminal { status, .. } => assert_eq!(status, "resolved"),
+        other => panic!("decided row must be Terminal('resolved'), got {other:?}"),
+    }
+
+    // Pending-but-expired row (timeout sweep hasn't stamped it yet) must
+    // report Terminal('expired') — mirrors `record_decision`'s
+    // `expires_at > now` guard, so the route can render 409 instead of
+    // recording a decision the store would then reject.
+    let parent = make_parent("tool_call.execute_python");
+    let child = make_child("tool_call.execute_python", Duration::minutes(-1));
+    let stale_id = repo
+        .insert_pending(parent, child)
+        .await
+        .expect("insert_pending should succeed");
+    match repo.lookup(stale_id).await.expect("lookup should succeed") {
+        EscalationLookup::Terminal { status, .. } => assert_eq!(status, "expired"),
+        other => panic!("pending-but-expired row must be Terminal('expired'), got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn terminalise_stamps_pending_row_regardless_of_expiry() {
+    // Audit F1(b)/(c): the timeout companion task uses `terminalise` to
+    // flip a timed-out row to 'expired'. Unlike `record_decision` it must
+    // NOT carry the `expires_at > now` guard — the whole point is to stamp
+    // rows whose deadline has already passed.
+    let (pool, _guard) = test_setup().await;
+    let repo = SqliteHotlEscalationRepository::new(pool.clone());
+
+    // Already-expired pending row: terminalise must still match it.
+    let parent = make_parent("tool_call.execute_python");
+    let child = make_child("tool_call.execute_python", Duration::minutes(-1));
+    let stale_id = repo
+        .insert_pending(parent, child)
+        .await
+        .expect("insert_pending should succeed");
+    let matched = repo
+        .terminalise(stale_id, HotlDecisionVerdict::Expired)
+        .await
+        .expect("terminalise should succeed");
+    assert!(matched, "terminalise must stamp an expired pending row");
+    match repo.lookup(stale_id).await.expect("lookup should succeed") {
+        EscalationLookup::Terminal { status, .. } => assert_eq!(status, "expired"),
+        other => panic!("terminalised row must be Terminal('expired'), got {other:?}"),
+    }
+
+    // Second call is a no-op — the row is no longer pending.
+    let matched_again = repo
+        .terminalise(stale_id, HotlDecisionVerdict::Expired)
+        .await
+        .expect("terminalise (idempotent) should succeed");
+    assert!(
+        !matched_again,
+        "terminalise on an already-terminal row must return false"
+    );
+
+    // A future-expiry pending row also terminalises, and drops out of the
+    // boot-replay scan via the status flip (not the expiry filter).
+    let parent = make_parent("tool_call.execute_python");
+    let child = make_child("tool_call.execute_python", Duration::hours(24));
+    let live_id = repo
+        .insert_pending(parent, child)
+        .await
+        .expect("insert_pending should succeed");
+    assert!(repo
+        .terminalise(live_id, HotlDecisionVerdict::Expired)
+        .await
+        .expect("terminalise should succeed"));
+    let rows = repo
+        .list_pending_unexpired(Utc::now())
+        .await
+        .expect("list_pending_unexpired should succeed");
+    assert!(
+        rows.is_empty(),
+        "terminalised rows must not appear in boot replay (got {} rows)",
+        rows.len()
+    );
+
+    // Unknown id → false, no error.
+    assert!(!repo
+        .terminalise(Uuid::new_v4(), HotlDecisionVerdict::Expired)
+        .await
+        .expect("terminalise on unknown id should succeed"));
 }

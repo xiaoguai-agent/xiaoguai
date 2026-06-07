@@ -16,7 +16,7 @@ pub mod user;
 
 pub use error::{RepoError, RepoResult};
 pub use hotl_escalations::{
-    HotlDecisionVerdict, HotlEscalationRow, HotlEscalationStore, HotlPendingRow,
+    EscalationLookup, HotlDecisionVerdict, HotlEscalationRow, HotlEscalationStore, HotlPendingRow,
     SqliteHotlEscalationRepository,
 };
 pub use hotl_redaction::{HotlRedactionRepo, RedactionPolicyRow, SqliteHotlRedactionRepo};
