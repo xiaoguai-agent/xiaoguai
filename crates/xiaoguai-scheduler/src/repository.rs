@@ -42,6 +42,17 @@ pub trait JobRepository: Send + Sync {
         next_fire_at: Option<DateTime<Utc>>,
     ) -> RepoResult<()>;
 
+    /// List every job — enabled and disabled — ordered by creation
+    /// time (oldest first). `limit` caps the result. Backs the CLI
+    /// `xiaoguai schedule list` surface, which needs paused rows too
+    /// (unlike `list_due`).
+    async fn list_all(&self, limit: usize) -> RepoResult<Vec<ScheduledJob>>;
+
+    /// Delete a job by id. Run-history rows cascade at the SQL layer
+    /// (`scheduled_job_runs.job_id` is `ON DELETE CASCADE`). Returns
+    /// [`RepoError::NotFound`] when no row matched.
+    async fn delete(&self, id: &str) -> RepoResult<()>;
+
     /// v0.12.2 — list every enabled job whose trigger is reactive
     /// (`file_watch` / webhook / `git_push` / `db_poll`). Used at boot by
     /// operator wiring that needs to register routes against
@@ -135,6 +146,21 @@ impl JobRepository for InMemoryJobRepository {
         j.next_fire_at = next_fire_at;
         j.updated_at = Utc::now();
         Ok(())
+    }
+
+    async fn list_all(&self, limit: usize) -> RepoResult<Vec<ScheduledJob>> {
+        let g = self.jobs.lock();
+        let mut out: Vec<ScheduledJob> = g.values().cloned().collect();
+        out.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+        out.truncate(limit);
+        Ok(out)
+    }
+
+    async fn delete(&self, id: &str) -> RepoResult<()> {
+        let mut g = self.jobs.lock();
+        g.remove(id)
+            .map(|_| ())
+            .ok_or_else(|| RepoError::NotFound(id.into()))
     }
 
     async fn list_reactive(&self) -> RepoResult<Vec<ScheduledJob>> {
@@ -285,6 +311,35 @@ mod tests {
         let got = repo.list_reactive().await.unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].id, "watch-1");
+    }
+
+    #[tokio::test]
+    async fn list_all_returns_disabled_jobs_too_and_respects_limit() {
+        let repo = InMemoryJobRepository::new();
+        repo.upsert(&sample_job("a")).await.unwrap();
+        let mut paused = sample_job("b");
+        paused.enabled = false;
+        repo.upsert(&paused).await.unwrap();
+        repo.upsert(&sample_job("c")).await.unwrap();
+
+        let all = repo.list_all(10).await.unwrap();
+        assert_eq!(all.len(), 3);
+        assert!(all.iter().any(|j| !j.enabled));
+
+        let some = repo.list_all(2).await.unwrap();
+        assert_eq!(some.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_job_and_missing_id_is_not_found() {
+        let repo = InMemoryJobRepository::new();
+        repo.upsert(&sample_job("j1")).await.unwrap();
+        repo.delete("j1").await.unwrap();
+        assert!(repo.get("j1").await.is_err());
+        assert!(matches!(
+            repo.delete("j1").await.unwrap_err(),
+            RepoError::NotFound(_)
+        ));
     }
 
     #[tokio::test]
