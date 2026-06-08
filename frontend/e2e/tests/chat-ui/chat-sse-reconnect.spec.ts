@@ -8,25 +8,25 @@
  *   - Auto-reconnect (or expose a manual button) and clear the banner once
  *     the stream resumes.
  *
- * Current state (base `feat/sprint10b-s10b-9-auth-ui`):
- *   - `XiaoguaiClient.sendMessage()` (`frontend/shared/src/index.ts`)
- *     invokes `onError` on a network failure but does NOT attempt to
- *     reconnect; ChatPage flips `streaming = false` and surfaces the error
- *     in the status line.
- *   - There is no reconnect banner component, no automatic retry loop.
+ * Current state (sprint-11 S11-2 landed — both behaviours are wired):
+ *   - `XiaoguaiClient.sendMessage()` (`frontend/shared/src/index.ts`) retries
+ *     on a network failure with backoff and fires the `onReconnect` callback
+ *     before each retry sleep (echoing `Last-Event-ID` for resume-capable
+ *     backends).
+ *   - ChatPage mounts `<SseReconnectBanner>` (which carries the stable
+ *     `data-testid="sse-reconnect-banner"` contract) while a retry is pending
+ *     and tears it down on the first event of the resumed stream.
  *
  * Strategy:
- *   - The partial-preservation behaviour CAN be exercised today: deliver a
- *     short SSE response that ends abruptly (no `done` event). The bubble
- *     content stays on screen and `streaming` eventually flips off via the
- *     reader EOF. This is what the first test asserts.
- *   - The reconnect-banner case is `test.fixme()` until the feature lands.
+ *   - Test 1 exercises partial-preservation: deliver a short SSE response that
+ *     ends abruptly (no `done` event). The partial bubble text stays on screen.
+ *   - Test 2 aborts the first POST, then serves a complete stream on the
+ *     retry, asserting the reconnect banner appears and then clears.
  *
- * Gap to close before the fixme'd cases pass:
- *   1. ChatPage exposes a "reconnecting…" banner UI hook (e.g. a div with
- *      `data-testid="sse-reconnect-banner"`).
- *   2. sendMessage() retries on network error (or ChatPage subscribes to
- *      a server-sent reconnect signal).
+ * Note: these tests mock the backend via `page.route()`, so they are hermetic
+ * — single-owner has no tenants; the `ten_dev` echoed in the mocked session
+ * response is the chat-ui's `DEV_USER_ID`/`DEV_TENANT_ID` dev identity and is
+ * never validated by the UI.
  */
 
 import { test, expect, type Page, type Route } from '@playwright/test';

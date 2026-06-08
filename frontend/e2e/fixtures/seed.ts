@@ -1,17 +1,21 @@
 /**
- * Seed-data helpers — create tenants, providers, and sessions via the
- * Xiaoguai REST API so tests start from a known state.
+ * Seed-data helpers — create providers and sessions via the Xiaoguai REST API
+ * so tests start from a known state.
+ *
+ * Single-owner (DEC-033): there are NO tenants. The pre-pivot `seedTenant`
+ * helper (POST /v1/admin/tenants) was removed — that endpoint no longer
+ * exists. Sessions are owned by a single static owner and created with a
+ * `user_id` only; providers are global (POST /v1/admin/providers).
  *
  * Usage:
- *   import { seedTenant, seedSession, seedProvider, cleanupSeeded } from '../fixtures/seed';
+ *   import { seedSession, seedProvider, cleanupSeeded } from '../fixtures/seed';
  *
  *   test.beforeAll(async ({ request }) => {
- *     tenant = await seedTenant(request, apiBase);
- *     session = await seedSession(request, apiBase, tenant.id);
+ *     session = await seedSession(request);
  *   });
  *
  *   test.afterAll(async ({ request }) => {
- *     await cleanupSeeded(request, apiBase, seeded);
+ *     await cleanupSeeded(request, seeded);
  *   });
  */
 
@@ -19,14 +23,11 @@ import type { APIRequestContext } from '@playwright/test';
 
 const BASE_URL = process.env['BASE_URL'] ?? 'http://localhost:7600';
 
-export interface SeededTenant {
-  id: string;
-  name: string;
-}
+/** Default dev owner identity used by chat-ui (ChatPage `DEV_USER_ID`). */
+const DEV_USER_ID = 'usr_dev';
 
 export interface SeededSession {
   id: string;
-  tenant_id: string;
 }
 
 export interface SeededProvider {
@@ -35,44 +36,24 @@ export interface SeededProvider {
 }
 
 export interface SeededResources {
-  tenants: SeededTenant[];
   sessions: SeededSession[];
   providers: SeededProvider[];
 }
 
 /**
- * Creates a test tenant via POST /v1/admin/tenants.
- * Uses a unique name to avoid collisions with parallel test workers.
- */
-export async function seedTenant(
-  request: APIRequestContext,
-  baseUrl: string = BASE_URL,
-): Promise<SeededTenant> {
-  const name = `e2e-tenant-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  const resp = await request.post(`${baseUrl}/v1/admin/tenants`, {
-    data: { name, plan: 'free' },
-  });
-  if (!resp.ok()) {
-    const body = await resp.text();
-    throw new Error(`seedTenant failed (${resp.status()}): ${body}`);
-  }
-  const body = (await resp.json()) as { id: string; name: string };
-  return { id: body.id, name: body.name };
-}
-
-/**
- * Creates a session via POST /v1/sessions.
+ * Creates a session via POST /v1/sessions. Single-owner: only `user_id` is
+ * required — there is no tenant_id. `model` may be left empty so the LLM
+ * router substitutes its default at chat time.
  */
 export async function seedSession(
   request: APIRequestContext,
   baseUrl: string = BASE_URL,
-  tenantId: string = 'ten_dev',
-  userId: string = 'usr_dev',
+  userId: string = DEV_USER_ID,
 ): Promise<SeededSession> {
   const resp = await request.post(`${baseUrl}/v1/sessions`, {
     data: {
       user_id: userId,
-      tenant_id: tenantId,
+      model: '',
       title: `e2e-session-${Date.now()}`,
     },
   });
@@ -80,24 +61,25 @@ export async function seedSession(
     const body = await resp.text();
     throw new Error(`seedSession failed (${resp.status()}): ${body}`);
   }
-  const body = (await resp.json()) as { id: string; tenant_id: string };
-  return { id: body.id, tenant_id: body.tenant_id };
+  const body = (await resp.json()) as { id: string };
+  return { id: body.id };
 }
 
 /**
- * Registers a mock LLM provider so tests can reference a provider by name.
+ * Registers a local (Ollama) LLM provider so tests can reference it by name.
+ * Hits POST /v1/admin/providers (global — not tenant-scoped).
  */
 export async function seedProvider(
   request: APIRequestContext,
   baseUrl: string = BASE_URL,
 ): Promise<SeededProvider> {
   const name = `e2e-provider-${Date.now()}`;
-  const resp = await request.post(`${baseUrl}/v1/admin/llm-providers`, {
+  const resp = await request.post(`${baseUrl}/v1/admin/providers`, {
     data: {
       name,
       kind: 'ollama',
-      base_url: 'http://localhost:11434',
-      default_model: 'qwen2.5-coder',
+      endpoint: 'http://localhost:11434',
+      models: ['qwen2.5-coder'],
     },
   });
   if (!resp.ok()) {
@@ -127,16 +109,9 @@ export async function cleanupSeeded(
   }
   for (const p of seeded.providers) {
     await request
-      .delete(`${baseUrl}/v1/admin/llm-providers/${p.id}`)
+      .delete(`${baseUrl}/v1/admin/providers/${p.id}`)
       .catch((e: unknown) =>
         console.warn(`cleanup provider ${p.id}:`, (e as Error).message),
-      );
-  }
-  for (const t of seeded.tenants) {
-    await request
-      .delete(`${baseUrl}/v1/admin/tenants/${t.id}`)
-      .catch((e: unknown) =>
-        console.warn(`cleanup tenant ${t.id}:`, (e as Error).message),
       );
   }
 }
