@@ -85,7 +85,7 @@ interface Props {
   onDecision?: (
     verdict: HotlVerdict,
     raisePolicy?: HotlDecisionRaisePolicy,
-  ) => Promise<void>;
+  ) => Promise<{ resumed: boolean }>;
   /**
    * Actor identifier passed to the backend as `decided_by` and compared
    * against incoming `hotl_resolved.decided_by` for conflict detection
@@ -251,11 +251,18 @@ export function HotlBanner({
     setErrorMsg(null);
     setConflictMsg(null);
     try {
-      await onDecision(verdict, raisePolicy);
-      // Sprint-12: do NOT unmount the banner here. The 30 s fallback armed
-      // by `localSubmitted` clears the banner if SSE is silent; otherwise
-      // the matching `hotl_resolved` event clears it sooner.
-      setLocalSubmitted(true);
+      const { resumed } = await onDecision(verdict, raisePolicy);
+      if (resumed) {
+        // A loop was suspended — a matching `hotl_resolved` SSE will arrive
+        // (primary clear); the `localSubmitted` 30 s fallback covers an
+        // SSE-interrupted case.
+        setLocalSubmitted(true);
+      } else {
+        // No loop suspended (the v1.8.x norm): no `hotl_resolved` is coming,
+        // so clear immediately instead of making the operator wait the 30 s
+        // fallback.
+        onClearedRef.current?.();
+      }
     } catch (err) {
       setState('error');
       setErrorMsg((err as Error).message);
