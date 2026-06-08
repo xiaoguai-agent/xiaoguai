@@ -45,6 +45,27 @@
       "review_link": "在审批队列中查看 →",
       "timeout_annotation": "决定超时 — 工具调用被拒绝",
       "conflict_toast": "另一位审核者已先做出决定 — 您的操作未被应用"
+    },
+    "loop": {
+      "help_title": "循环 /loop 命令：",
+      "help_create": "/loop <提示词> — 在当前会话上启动一个循环任务",
+      "help_status": "/loop status — 列出当前会话的循环",
+      "help_cancel": "/loop cancel [id] — 取消活动循环（或指定 id）",
+      "help_help": "/loop help — 显示此帮助",
+      "need_session": "请先开始一段对话再启动循环。",
+      "confirm_title": "启动一个循环任务？",
+      "confirm_prompt": "提示词：{{prompt}}",
+      "confirm_pacing": "节奏：每 {{interval}} 秒 · 最多 {{ticks}} 次 · {{ttl}} 小时后过期",
+      "btn_arm": "启动",
+      "btn_cancel": "取消",
+      "not_armed": "循环未启动。",
+      "armed": "循环 {{id}} 已启动 — 将每 {{secs}} 秒执行一次。",
+      "status_header": "当前会话的循环：",
+      "status_empty": "当前会话没有循环。",
+      "status_line": "{{id}} · {{status}} · {{ran}}/{{max}} 次 · 下次 {{next}}",
+      "cancel_none": "当前会话没有可取消的活动循环。",
+      "cancelled": "循环 {{id}} 已取消（状态：{{status}}）。",
+      "error": "循环命令失败：{{message}}"
     }
   },
   "ui": {

@@ -4,6 +4,7 @@ import type {
   AgentEvent,
   ContentBlock,
   HotlResolvedEvent,
+  LoopResponse,
   Message,
 } from '@xiaoguai/shared';
 import { client } from './client';
@@ -16,6 +17,9 @@ import { AiDisclosureBanner } from './AiDisclosureBanner';
 import { SseReconnectBanner } from './SseReconnectBanner';
 import { WatchIndicator } from './WatchIndicator';
 import { useI18n } from './i18n/I18nProvider';
+import { interpolate } from './i18n';
+import { isLoopLive, parseLoopCommand, shortLoopId } from './loopCommands';
+import type { LoopCommand } from './loopCommands';
 
 type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
 
@@ -24,7 +28,11 @@ interface Props {
 }
 
 interface DisplayBubble {
-  kind: 'user' | 'assistant' | 'tool';
+  /**
+   * L2b — `system` bubbles are locally-generated /loop confirmations,
+   * status listings and errors. They are never sent to the agent.
+   */
+  kind: 'user' | 'assistant' | 'tool' | 'system';
   text: string;
   toolName?: string;
   toolError?: boolean;
@@ -38,11 +46,26 @@ interface DisplayBubble {
    * produced live by streaming have no id yet and don't get the button.
    */
   messageId?: string;
+  /**
+   * L2b — when set, this system bubble is an un-armed `/loop` confirmation
+   * showing Arm / Cancel actions. Cleared once the operator decides.
+   */
+  loopConfirm?: { prompt: string };
 }
 
 const DEV_USER_ID = 'usr_dev';
 const DEV_TENANT_ID = 'ten_dev';
 const DEFAULT_MODEL = 'qwen2.5-coder';
+
+/**
+ * L2b — defaults the chat-ui surfaces in the /loop confirmation bubble. They
+ * mirror the backend's `CreateLoopParams` fallbacks; the create call itself
+ * omits these fields and lets the server apply them, so a single source of
+ * truth stays on the server.
+ */
+const LOOP_DEFAULT_INTERVAL_SECS = 300;
+const LOOP_DEFAULT_MAX_TICKS = 50;
+const LOOP_DEFAULT_TTL_HOURS = 24;
 
 /** Grow a textarea to fit its content, up to a cap, then scroll. */
 function autoGrow(ta: HTMLTextAreaElement | null) {
@@ -123,6 +146,16 @@ export function ChatPage({ onSessionCreated }: Props) {
     const text = (textOverride ?? draft).trim();
     if (!text || streaming) return;
 
+    // L2b — intercept `/loop …` before it reaches the agent. These commands
+    // manage session-scoped recurring loops locally; they are never sent as a
+    // chat message. Non-/loop drafts fall through to the normal send path.
+    const loopCommand = parseLoopCommand(text);
+    if (loopCommand.kind !== 'none') {
+      setDraft('');
+      await handleLoopCommand(loopCommand, text);
+      return;
+    }
+
     let sid = sessionId;
     if (!sid) {
       try {
@@ -175,6 +208,130 @@ export function ChatPage({ onSessionCreated }: Props) {
 
     // Server emits a final `done` event; we flip streaming off there too.
     // Defensive timer keeps the UI unstuck if the connection just drops.
+  }
+
+  /** Append a locally-generated system bubble (help / status / error). */
+  function pushSystemBubble(textValue: string, extra?: Partial<DisplayBubble>) {
+    setBubbles((bs) => [...bs, { kind: 'system', text: textValue, ...extra }]);
+  }
+
+  /** Render a loop API failure as the localized, message-bearing error line. */
+  function loopErrorText(err: unknown): string {
+    return interpolate(t.chat.loop.error, { message: (err as Error).message });
+  }
+
+  /**
+   * L2b — handle an intercepted `/loop` command. Echoes the operator's input
+   * as a user bubble, then drives the matching client call and renders the
+   * outcome as a system bubble. Never calls `sendMessage`.
+   */
+  async function handleLoopCommand(cmd: LoopCommand, raw: string) {
+    setStatus(null);
+    setBubbles((bs) => [...bs, { kind: 'user', text: raw }]);
+
+    if (cmd.kind === 'help') {
+      pushSystemBubble(
+        [
+          t.chat.loop.help_title,
+          t.chat.loop.help_create,
+          t.chat.loop.help_status,
+          t.chat.loop.help_cancel,
+          t.chat.loop.help_help,
+        ].join('\n'),
+      );
+      return;
+    }
+
+    const sid = sessionId;
+    if (!sid) {
+      pushSystemBubble(t.chat.loop.need_session);
+      return;
+    }
+
+    if (cmd.kind === 'create') {
+      pushSystemBubble(
+        [
+          t.chat.loop.confirm_title,
+          interpolate(t.chat.loop.confirm_prompt, { prompt: cmd.prompt }),
+          interpolate(t.chat.loop.confirm_pacing, {
+            interval: LOOP_DEFAULT_INTERVAL_SECS,
+            ticks: LOOP_DEFAULT_MAX_TICKS,
+            ttl: LOOP_DEFAULT_TTL_HOURS,
+          }),
+        ].join('\n'),
+        { loopConfirm: { prompt: cmd.prompt } },
+      );
+      return;
+    }
+
+    if (cmd.kind === 'status') {
+      try {
+        const loops = await client.listLoops();
+        const mine = loops.filter((l) => l.session_id === sid);
+        if (mine.length === 0) {
+          pushSystemBubble(t.chat.loop.status_empty);
+        } else {
+          pushSystemBubble(formatLoopStatus(mine, t.chat.loop));
+        }
+      } catch (err) {
+        pushSystemBubble(loopErrorText(err));
+      }
+      return;
+    }
+
+    if (cmd.kind !== 'cancel') return; // 'none' is filtered in send(); narrows the union.
+    try {
+      let id = cmd.id;
+      if (!id) {
+        const loops = await client.listLoops();
+        const live = loops.find((l) => l.session_id === sid && isLoopLive(l));
+        if (!live) {
+          pushSystemBubble(t.chat.loop.cancel_none);
+          return;
+        }
+        id = live.id;
+      }
+      const row = await client.cancelLoop(id);
+      pushSystemBubble(
+        interpolate(t.chat.loop.cancelled, {
+          id: shortLoopId(row.id),
+          status: row.status,
+        }),
+      );
+    } catch (err) {
+      pushSystemBubble(loopErrorText(err));
+    }
+  }
+
+  /** Arm the loop confirmed at `index`; clears the bubble's Arm/Cancel actions. */
+  async function armLoop(index: number, prompt: string) {
+    setBubbles((bs) =>
+      bs.map((b, j) => (j === index ? { ...b, loopConfirm: undefined } : b)),
+    );
+    const sid = sessionId;
+    if (!sid) {
+      pushSystemBubble(t.chat.loop.need_session);
+      return;
+    }
+    try {
+      const loop = await client.createLoop({ session_id: sid, prompt });
+      pushSystemBubble(
+        interpolate(t.chat.loop.armed, {
+          id: shortLoopId(loop.id),
+          secs: loop.interval_secs,
+        }),
+      );
+    } catch (err) {
+      pushSystemBubble(loopErrorText(err));
+    }
+  }
+
+  /** Dismiss the loop confirmation at `index` without arming. */
+  function dismissLoopConfirm(index: number) {
+    setBubbles((bs) =>
+      bs.map((b, j) => (j === index ? { ...b, loopConfirm: undefined } : b)),
+    );
+    pushSystemBubble(t.chat.loop.not_armed);
   }
 
   function applyEvent(
@@ -387,7 +544,16 @@ export function ChatPage({ onSessionCreated }: Props) {
             </div>
           </div>
         ) : (
-          bubbles.map((b, i) => <Bubble key={i} bubble={b} onFork={fork} />)
+          bubbles.map((b, i) => (
+            <Bubble
+              key={i}
+              index={i}
+              bubble={b}
+              onFork={fork}
+              onLoopArm={armLoop}
+              onLoopCancel={dismissLoopConfirm}
+            />
+          ))
         )}
       </div>
       {status && <div className="status">{status}</div>}
@@ -463,10 +629,16 @@ function StopIcon() {
 
 function Bubble({
   bubble,
+  index,
   onFork,
+  onLoopArm,
+  onLoopCancel,
 }: {
   bubble: DisplayBubble;
+  index: number;
   onFork: (messageId: string) => void;
+  onLoopArm: (index: number, prompt: string) => void;
+  onLoopCancel: (index: number) => void;
 }) {
   const { t } = useI18n();
   const className =
@@ -508,11 +680,50 @@ function Bubble({
           <span />
         </span>
       )}
+      {/* L2b — Arm / Cancel actions on an un-armed /loop confirmation. */}
+      {bubble.loopConfirm && (
+        <div className="loop-confirm-actions">
+          <button
+            type="button"
+            className="loop-confirm-btn arm"
+            onClick={() => onLoopArm(index, bubble.loopConfirm!.prompt)}
+          >
+            {t.chat.loop.btn_arm}
+          </button>
+          <button
+            type="button"
+            className="loop-confirm-btn cancel"
+            onClick={() => onLoopCancel(index)}
+          >
+            {t.chat.loop.btn_cancel}
+          </button>
+        </div>
+      )}
       {bubble.citations && bubble.citations.length > 0 && (
         <CitationStrip citations={bubble.citations} />
       )}
     </div>
   );
+}
+
+/**
+ * L2b — render a session's loops as a multi-line status block. Pure so it can
+ * be unit-tested; takes just the translation slice it needs.
+ */
+function formatLoopStatus(
+  loops: LoopResponse[],
+  loopT: { status_header: string; status_line: string },
+): string {
+  const lines = loops.map((l) =>
+    interpolate(loopT.status_line, {
+      id: shortLoopId(l.id),
+      status: l.status,
+      ran: l.ticks_run,
+      max: l.max_ticks,
+      next: new Date(l.next_tick_at).toLocaleTimeString(),
+    }),
+  );
+  return [loopT.status_header, ...lines].join('\n');
 }
 
 function messageToBubbles(m: Message): DisplayBubble[] {

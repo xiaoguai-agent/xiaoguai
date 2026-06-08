@@ -261,6 +261,42 @@ html,
   color: var(--tool-error-fg);
 }
 
+/* L2b — system bubbles: locally-generated /loop confirmations, status
+   listings and errors. Centred, muted, distinct from chat turns. */
+.bubble.system {
+  align-self: center;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 13px;
+  border-radius: var(--radius-md);
+  max-width: 88%;
+}
+
+.loop-confirm-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.loop-confirm-btn {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.loop-confirm-btn.arm {
+  background: var(--accent);
+  color: #fff;
+}
+
+.loop-confirm-btn.cancel {
+  background: transparent;
+  color: var(--accent);
+}
+
 .tool-call-header {
   font-weight: 600;
   margin-bottom: var(--space-1);

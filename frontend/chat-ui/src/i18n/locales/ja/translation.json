@@ -45,6 +45,27 @@
       "review_link": "承認キューでレビュー →",
       "timeout_annotation": "判定がタイムアウトしました — ツール呼び出しは拒否されました",
       "conflict_toast": "他のレビュー担当者が先に判定しました — あなたの操作は反映されませんでした"
+    },
+    "loop": {
+      "help_title": "繰り返し /loop コマンド：",
+      "help_create": "/loop <プロンプト> — このセッションで繰り返しタスクを開始",
+      "help_status": "/loop status — このセッションのループ一覧を表示",
+      "help_cancel": "/loop cancel [id] — 実行中のループ（または指定 id）を取消",
+      "help_help": "/loop help — このヘルプを表示",
+      "need_session": "ループを開始する前に会話を始めてください。",
+      "confirm_title": "繰り返しループを開始しますか？",
+      "confirm_prompt": "プロンプト：{{prompt}}",
+      "confirm_pacing": "ペース：{{interval}} 秒ごと · 最大 {{ticks}} 回 · {{ttl}} 時間で失効",
+      "btn_arm": "開始",
+      "btn_cancel": "キャンセル",
+      "not_armed": "ループは開始されませんでした。",
+      "armed": "ループ {{id}} を開始しました — {{secs}} 秒ごとに実行します。",
+      "status_header": "このセッションのループ：",
+      "status_empty": "このセッションにループはありません。",
+      "status_line": "{{id}} · {{status}} · {{ran}}/{{max}} 回 · 次回 {{next}}",
+      "cancel_none": "このセッションに取消できる実行中のループはありません。",
+      "cancelled": "ループ {{id}} を取消しました（状態：{{status}}）。",
+      "error": "ループコマンドが失敗しました：{{message}}"
     }
   },
   "ui": {
