@@ -45,6 +45,27 @@
       "review_link": "Review in approval queue →",
       "timeout_annotation": "Decision timed out — tool call denied",
       "conflict_toast": "Another reviewer decided first — your action was not applied"
+    },
+    "loop": {
+      "help_title": "Recurring /loop commands:",
+      "help_create": "/loop <prompt> — arm a recurring task on this session",
+      "help_status": "/loop status — list loops on this session",
+      "help_cancel": "/loop cancel [id] — cancel the live loop (or a specific id)",
+      "help_help": "/loop help — show this help",
+      "need_session": "Start a conversation before arming a loop.",
+      "confirm_title": "Arm a recurring loop?",
+      "confirm_prompt": "Prompt: {{prompt}}",
+      "confirm_pacing": "Pacing: every {{interval}}s · up to {{ticks}} ticks · expires in {{ttl}}h",
+      "btn_arm": "Arm",
+      "btn_cancel": "Cancel",
+      "not_armed": "Loop not armed.",
+      "armed": "Loop {{id}} armed — will tick every {{secs}}s.",
+      "status_header": "Loops on this session:",
+      "status_empty": "No loops on this session.",
+      "status_line": "{{id}} · {{status}} · {{ran}}/{{max}} ticks · next {{next}}",
+      "cancel_none": "No live loop on this session to cancel.",
+      "cancelled": "Loop {{id}} cancelled (status: {{status}}).",
+      "error": "Loop command failed: {{message}}"
     }
   },
   "ui": {

@@ -80,6 +80,28 @@ interface TranslationShape {
       timeout_annotation: string;
       conflict_toast: string;
     };
+    /** /loop slash-command help / confirmation / status / error strings. */
+    loop: {
+      help_title: string;
+      help_create: string;
+      help_status: string;
+      help_cancel: string;
+      help_help: string;
+      need_session: string;
+      confirm_title: string;
+      confirm_prompt: string;
+      confirm_pacing: string;
+      btn_arm: string;
+      btn_cancel: string;
+      not_armed: string;
+      armed: string;
+      status_header: string;
+      status_empty: string;
+      status_line: string;
+      cancel_none: string;
+      cancelled: string;
+      error: string;
+    };
   };
 }
 
