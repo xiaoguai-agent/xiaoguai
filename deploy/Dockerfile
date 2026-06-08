@@ -112,6 +112,11 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
  && cp target/release/xiaoguai-core /xiaoguai-core \
  && cp target/release/xiaoguai      /xiaoguai
 
+# State dir skeleton for the runtime stage (distroless has no shell, so it
+# cannot mkdir). COPY'd below with --chown so a named volume mounted at /data
+# inherits nonroot ownership on first use.
+RUN mkdir -p /data/xiaoguai
+
 # ── stage 5: minimal runtime image ───────────────────────────────────────────
 FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
@@ -128,6 +133,15 @@ COPY --from=builder /xiaoguai      /usr/local/bin/xiaoguai
 # admin-ui at /admin/.
 COPY --from=frontend /app/chat-ui/dist  ./static/chat-ui
 COPY --from=frontend /app/admin-ui/dist ./static/admin-ui
+
+# Writable state dir, owned by the distroless `nonroot` user (uid/gid 65532).
+# deploy/docker-compose.yml mounts a named volume at /data and points
+# XDG_DATA_HOME there; Docker initialises a fresh named volume from the image
+# content at the mountpoint INCLUDING ownership. Without this layer the
+# engine creates /data root-owned, `create_dir_all("/data/xiaoguai")` in
+# xiaoguai-storage fails with EACCES, and the server exits before binding
+# :7600 (the long-red e2e/k6 "connection refused on healthz" failure).
+COPY --from=builder --chown=65532:65532 /data /data
 
 # Defaults overridden via env (XIAOGUAI_*) or a mounted config.yaml.
 ENV RUST_LOG=info,sqlx=warn

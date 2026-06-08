@@ -309,8 +309,14 @@ fn record_reasoning_tokens(model: &str, reasoning: &str) {
         return;
     }
     if let Some(counter) = xiaoguai_observability::prometheus::llm_reasoning_tokens_total() {
+        // `model` is the free-form request string — bound it so unbounded
+        // model names cannot explode series cardinality ("minimax" itself
+        // is a literal, no guard needed).
         counter
-            .with_label_values(&["minimax", model])
+            .with_label_values(&[
+                "minimax",
+                xiaoguai_observability::cardinality::bounded_model_label(model),
+            ])
             .inc_by(tokens as u64);
     }
 }

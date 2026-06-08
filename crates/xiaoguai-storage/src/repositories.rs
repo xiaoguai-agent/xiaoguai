@@ -8,6 +8,7 @@ pub mod hotl_escalations;
 pub mod hotl_redaction;
 pub mod im;
 pub mod llm_provider;
+pub mod loops;
 pub mod mcp_server;
 pub mod message;
 pub mod session;
@@ -16,7 +17,7 @@ pub mod user;
 
 pub use error::{RepoError, RepoResult};
 pub use hotl_escalations::{
-    HotlDecisionVerdict, HotlEscalationRow, HotlEscalationStore, HotlPendingRow,
+    EscalationLookup, HotlDecisionVerdict, HotlEscalationRow, HotlEscalationStore, HotlPendingRow,
     SqliteHotlEscalationRepository,
 };
 pub use hotl_redaction::{HotlRedactionRepo, RedactionPolicyRow, SqliteHotlRedactionRepo};
@@ -25,6 +26,7 @@ pub use im::{
     SqliteImIdentityRepository,
 };
 pub use llm_provider::{LlmProviderRepository, SqliteLlmProviderRepository};
+pub use loops::{LoopRow, LoopStatus, LoopStore, SqliteLoopRepository};
 pub use mcp_server::{McpServerRepository, SqliteMcpServerRepository};
 pub use message::{MessageRepository, SqliteMessageRepository};
 pub use session::{SessionRepository, SqliteSessionRepository};

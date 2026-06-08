@@ -8184,6 +8184,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
  "xiaoguai-agent",
  "xiaoguai-api",
  "xiaoguai-audit",
@@ -8193,6 +8194,7 @@ dependencies = [
  "xiaoguai-eval",
  "xiaoguai-llm",
  "xiaoguai-mcp",
+ "xiaoguai-scheduler",
  "xiaoguai-storage",
  "xiaoguai-types",
 ]

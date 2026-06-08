@@ -103,6 +103,68 @@ impl RemoteClient {
             .unwrap_or(false))
     }
 
+    /// `POST /v1/loops` — create + arm a session-scoped recurring loop.
+    ///
+    /// # Errors
+    /// Returns a teaching error when the server is unreachable or returns a
+    /// non-2xx status (the body carries the reason — 404 unknown session,
+    /// 409 archived / already-has-a-loop, 503 loops unwired).
+    pub async fn create_loop(&self, req: &CreateLoopRequest) -> Result<LoopResponse> {
+        let resp = self
+            .http
+            .post(format!("{}/v1/loops", self.base_url))
+            .json(req)
+            .send()
+            .await
+            .context("POST /v1/loops")?;
+        require_2xx_with_body(resp).await
+    }
+
+    /// `GET /v1/loops` — list all loops, newest first.
+    ///
+    /// # Errors
+    /// Returns an error if the request fails or the body cannot be decoded.
+    pub async fn list_loops(&self) -> Result<Vec<LoopResponse>> {
+        let resp = self
+            .http
+            .get(format!("{}/v1/loops", self.base_url))
+            .send()
+            .await
+            .context("GET /v1/loops")?;
+        require_2xx(&resp)?;
+        resp.json().await.context("decode loops body")
+    }
+
+    /// `GET /v1/loops/:id`.
+    ///
+    /// # Errors
+    /// Returns an error if the request fails, the loop is unknown, or the
+    /// body cannot be decoded.
+    pub async fn get_loop(&self, id: &str) -> Result<LoopResponse> {
+        let resp = self
+            .http
+            .get(format!("{}/v1/loops/{id}", self.base_url))
+            .send()
+            .await
+            .context("GET /v1/loops/:id")?;
+        require_2xx_with_body(resp).await
+    }
+
+    /// `DELETE /v1/loops/:id` — cancel a live loop.
+    ///
+    /// # Errors
+    /// Returns a teaching error carrying the server's reason (404 unknown,
+    /// 409 already terminal).
+    pub async fn cancel_loop(&self, id: &str) -> Result<LoopResponse> {
+        let resp = self
+            .http
+            .delete(format!("{}/v1/loops/{id}", self.base_url))
+            .send()
+            .await
+            .context("DELETE /v1/loops/:id")?;
+        require_2xx_with_body(resp).await
+    }
+
     /// `POST /v1/sessions/:id/messages` — drain the SSE stream into the
     /// provided sink. The sink receives one `RemoteEvent` per line and may
     /// stop the stream by returning `Err`.
@@ -158,6 +220,58 @@ fn require_2xx(resp: &reqwest::Response) -> Result<()> {
     } else {
         Err(anyhow!("remote returned status {status}"))
     }
+}
+
+/// Decode a 2xx JSON body, or surface the server's error envelope on a
+/// non-2xx so the operator sees the teaching message (the loop routes
+/// return `{code, message}` with actionable detail).
+async fn require_2xx_with_body<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+) -> Result<T> {
+    let status = resp.status();
+    if status.is_success() {
+        return resp.json().await.context("decode response body");
+    }
+    let body = resp.text().await.unwrap_or_default();
+    let detail = serde_json::from_str::<JsonValue>(&body)
+        .ok()
+        .and_then(|v| {
+            v.get("message")
+                .or_else(|| v.get("error"))
+                .and_then(JsonValue::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or(body);
+    Err(anyhow!("remote returned {status}: {detail}"))
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateLoopRequest {
+    pub session_id: String,
+    pub prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval_secs: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_ticks: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LoopResponse {
+    pub id: String,
+    pub session_id: String,
+    pub prompt: String,
+    pub interval_secs: u32,
+    pub max_ticks: u32,
+    pub ttl_secs: u32,
+    pub status: String,
+    pub next_tick_at: String,
+    pub ticks_run: u32,
+    #[serde(default)]
+    pub consecutive_failures: u32,
+    #[serde(default)]
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

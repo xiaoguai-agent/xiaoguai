@@ -60,6 +60,10 @@ impl UnauthorizedReason {
 pub enum ApiError {
     #[error("not found")]
     NotFound,
+    /// 404 carrying a teaching message (the bare [`Self::NotFound`]
+    /// renders a fixed "not found"). Same `not_found` wire code.
+    #[error("{0}")]
+    NotFoundMsg(String),
     /// 401 Unauthorized with optional RFC 6750 challenge parameters.
     ///
     /// `realm` — advertised protection space (e.g. `"api"`, `"webhook"`).
@@ -195,7 +199,9 @@ impl IntoResponse for ApiError {
             }
             other => {
                 let (status, code, message) = match &other {
-                    Self::NotFound => (StatusCode::NOT_FOUND, "not_found", other.to_string()),
+                    Self::NotFound | Self::NotFoundMsg(_) => {
+                        (StatusCode::NOT_FOUND, "not_found", other.to_string())
+                    }
                     Self::BadRequest(_) => {
                         (StatusCode::BAD_REQUEST, "bad_request", other.to_string())
                     }

@@ -37,10 +37,14 @@
 //!    * Operator decides → route handler calls
 //!      [`DecisionRegistry::resolve(escalation_id, resolution, decided_by)`]
 //!      → ticket resolves to the verdict.
-//!    * Expiry fires → background sleeper resolves the ticket
-//!      with `HotlResolution::Timeout`.
+//!    * Expiry fires → background sleeper terminalises the DB row
+//!      (`status='expired'`) and resolves the ticket with
+//!      `HotlResolution::Timeout`.
 //!    * Cancel token fires → ticket resolves to
-//!      `HotlTicketError::Cancelled`.
+//!      `HotlTicketError::Cancelled`. The cancel is agent-side only —
+//!      no notification reaches the registry (the ticket is just a
+//!      oneshot receiver), so the waiter slot + DB row are swept by the
+//!      timeout companion when `expires_at` passes.
 //! 3. Loop calls `metrics.on_resolve(elapsed, verdict)`
 //!    → gauge--, counter++, histogram observe.
 //!
@@ -67,6 +71,10 @@ use xiaoguai_storage::repositories::error::{RepoError, RepoResult};
 use xiaoguai_storage::repositories::hotl_escalations::{
     HotlDecisionVerdict as StoreVerdict, HotlEscalationRow, HotlEscalationStore, HotlPendingRow,
 };
+
+// Re-exported so the decision route can consume the pre-flight lookup
+// result without importing `xiaoguai_storage` paths directly.
+pub use xiaoguai_storage::repositories::hotl_escalations::EscalationLookup;
 
 // Sprint-12 S12-4: the canonical ticket / verdict / resolution types live
 // in `xiaoguai_agent::hotl_gate`. The registry re-exports them so callers
@@ -282,11 +290,13 @@ impl DecisionRegistry {
     /// decision request could land before the matching waiter is in the
     /// map.
     ///
-    /// The `sleep_until` companion does NOT re-call `store.record_decision`
-    /// — that's the route handler's job. It only fires the oneshot, so
-    /// the in-memory waiter (which exists across the registry's lifetime)
-    /// observes the timeout. The DB row stays `status='pending'` until
-    /// the next replay or a real operator decision.
+    /// The `sleep_until` companion terminalises the row to
+    /// `status='expired'` via [`HotlEscalationStore::terminalise`]
+    /// (audit F1b) and then fires the oneshot, so the in-memory waiter
+    /// (which exists across the registry's lifetime) observes the
+    /// timeout. It deliberately does NOT use `record_decision`, whose
+    /// `expires_at > now` guard would reject the very rows the sweep
+    /// targets.
     ///
     /// # Errors
     ///
@@ -338,13 +348,15 @@ impl DecisionRegistry {
             registry.metrics.on_replay(ReplayOutcome::Reattached);
             reattached += 1;
 
-            // sleep_until companion: drop the slot + decrement the gauge
-            // on expiry. Does NOT touch the store.
+            // sleep_until companion: terminalise the DB row
+            // (`status='expired'`), then drop the slot + decrement the
+            // gauge on expiry (audit F1b — previously the row stayed
+            // `pending` forever after a timeout).
             let this = Arc::clone(&registry);
             let escalation_id = row.escalation_id;
             tokio::spawn(async move {
                 tokio::time::sleep_until(expires_at).await;
-                this.fire_timeout(escalation_id);
+                this.fire_timeout_terminalising(escalation_id).await;
             });
         }
 
@@ -387,14 +399,14 @@ impl DecisionRegistry {
         self.metrics.on_register();
 
         // Background sleeper: fire on expiry. Mirrors the sprint-12
-        // `register` belt-and-braces. Does NOT touch the store — the
-        // DB stays `pending` and the next boot replay will sweep it
-        // (or an operator decision lands first).
+        // `register` belt-and-braces, plus (audit F1b) terminalises the
+        // DB row to `status='expired'` so a timed-out escalation does
+        // not stay `pending` in the store forever.
         let this = Arc::clone(self);
         let expires_at_for_task = expires_at;
         tokio::spawn(async move {
             tokio::time::sleep_until(expires_at_for_task).await;
-            this.fire_timeout(escalation_id);
+            this.fire_timeout_terminalising(escalation_id).await;
         });
 
         Ok(ticket)
@@ -405,9 +417,12 @@ impl DecisionRegistry {
     /// (no row matched) returns [`RegistryError::UnknownEscalation`].
     ///
     /// Returns `Ok(bool)` where the bool is whether a live in-memory
-    /// waiter received the verdict. `false` means the DB row was
-    /// updated but no operator was parked on the oneshot (e.g. the
-    /// agent loop had already dropped the ticket via cancel).
+    /// waiter **actually received** the verdict. `false` means the DB
+    /// row was updated but no loop resumed: either no slot was in the
+    /// map, or the slot's receiver had already been dropped (the agent
+    /// loop was cancelled, or this is a post-restart replay slot whose
+    /// ticket was discarded at mint time). The send-success check closes
+    /// the round-3 "`resumed:true` cosmetic inaccuracy" note.
     ///
     /// # Errors
     ///
@@ -445,9 +460,25 @@ impl DecisionRegistry {
             decided_by,
             recorded_at: Utc::now(),
         };
-        let _ = slot.sender.send(verdict);
+        // `send` fails iff the receiver was already dropped — report
+        // `false` so the route's `resumed` flag only says `true` when a
+        // live loop actually got the verdict. The metrics still settle
+        // (the gauge was incremented when the slot was registered).
+        let delivered = slot.sender.send(verdict).is_ok();
         self.metrics.on_resolve(held, &resolution);
-        Ok(true)
+        Ok(delivered)
+    }
+
+    /// Pre-flight existence check for `POST /v1/hotl/decisions` (audit
+    /// F1b) — delegates to [`HotlEscalationStore::lookup`]. Stores
+    /// without lookup support return [`EscalationLookup::Unsupported`]
+    /// and the route skips the check (legacy always-201 behaviour).
+    ///
+    /// # Errors
+    ///
+    /// Propagates the underlying storage failure.
+    pub async fn lookup_escalation(&self, escalation_id: Uuid) -> RepoResult<EscalationLookup> {
+        self.store.lookup(escalation_id).await
     }
 
     /// Sprint-12 (S12-3 back-compat). In-memory register: no persistence,
@@ -494,9 +525,32 @@ impl DecisionRegistry {
         true
     }
 
+    /// Internal: the persisted companion-task expiry path (audit F1b).
+    /// Terminalises the DB row (`status='expired'`) and then fires the
+    /// in-memory `Timeout` verdict. The store write is best-effort: a
+    /// failure is logged and never blocks the in-memory resolution — the
+    /// row then stays `pending` until the next boot replay's companion
+    /// retries the sweep. (With the Noop/test stores `terminalise` is a
+    /// default no-op, preserving the sprint-12 in-memory semantics.)
+    async fn fire_timeout_terminalising(&self, escalation_id: Uuid) {
+        if let Err(e) = self
+            .store
+            .terminalise(escalation_id, StoreVerdict::Expired)
+            .await
+        {
+            tracing::warn!(
+                %escalation_id,
+                error = %e,
+                "hotl: failed to terminalise expired escalation row — leaving it pending for the next boot-replay sweep"
+            );
+        }
+        self.fire_timeout(escalation_id);
+    }
+
     /// Internal: fire a `Timeout` verdict on the in-memory channel only.
-    /// Used by both `register` and `replay_from_storage` companion
-    /// tasks. Does NOT touch the store.
+    /// Used by the sprint-12 `register` companion task (no persistence);
+    /// the persisted paths go through
+    /// [`Self::fire_timeout_terminalising`]. Does NOT touch the store.
     fn fire_timeout(&self, escalation_id: Uuid) {
         let Some((_, slot)) = self.waiters.remove(&escalation_id) else {
             return;

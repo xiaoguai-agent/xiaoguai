@@ -32,6 +32,11 @@
 /// poll) rather than an [`EnteredSpan`](tracing::span::EnteredSpan) guard, so
 /// the awaited future stays `Send` — required when the call site returns a
 /// `Send` boxed future (e.g. the LLM router's `chat_stream`).
+///
+/// The Prometheus labels (NOT the span fields) pass through the
+/// [`cardinality`](crate::cardinality) guard: past the first 50 distinct
+/// provider/model values, new ones fold into the `_other` series so
+/// free-form model strings cannot explode series cardinality.
 #[macro_export]
 macro_rules! instrument_llm_call {
     ($provider:expr, $model:expr, $fut:expr) => {{
@@ -47,7 +52,10 @@ macro_rules! instrument_llm_call {
         if let Some(__handles) = $crate::prometheus::global_handles() {
             __handles
                 .llm_call_duration
-                .with_label_values(&[__provider, __model])
+                .with_label_values(&[
+                    $crate::cardinality::bounded_provider_label(__provider),
+                    $crate::cardinality::bounded_model_label(__model),
+                ])
                 .observe(__elapsed);
         }
         __result

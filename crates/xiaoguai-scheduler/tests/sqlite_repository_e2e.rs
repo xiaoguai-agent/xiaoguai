@@ -177,3 +177,61 @@ async fn record_fire_on_missing_job_errors() {
         .unwrap_err();
     assert!(format!("{err}").contains("nope"));
 }
+
+// ---------------------------------------------------------------------------
+// list_all + delete (CLI `xiaoguai schedule` surface)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_all_returns_enabled_and_disabled_jobs() {
+    let (pool, _dir) = setup().await;
+    let repo = SqliteJobRepository::new(pool.clone());
+
+    repo.upsert(&sample_job("a")).await.unwrap();
+    let mut paused = sample_job("b");
+    paused.enabled = false;
+    repo.upsert(&paused).await.unwrap();
+
+    let all = repo.list_all(50).await.unwrap();
+    assert_eq!(all.len(), 2);
+    let ids: Vec<_> = all.iter().map(|j| j.id.as_str()).collect();
+    assert!(ids.contains(&"a"));
+    assert!(ids.contains(&"b"));
+}
+
+#[tokio::test]
+async fn list_all_respects_limit() {
+    let (pool, _dir) = setup().await;
+    let repo = SqliteJobRepository::new(pool.clone());
+    for i in 0..5 {
+        repo.upsert(&sample_job(&format!("j{i}"))).await.unwrap();
+    }
+    let some = repo.list_all(3).await.unwrap();
+    assert_eq!(some.len(), 3);
+}
+
+#[tokio::test]
+async fn delete_removes_job_and_cascades_runs() {
+    let (pool, _dir) = setup().await;
+    let jobs = SqliteJobRepository::new(pool.clone());
+    let runs = SqliteJobRunRepository::new(pool.clone());
+
+    let job = sample_job("j1");
+    jobs.upsert(&job).await.unwrap();
+    runs.insert(sample_run(&job)).await.unwrap();
+
+    jobs.delete("j1").await.unwrap();
+
+    assert!(jobs.get("j1").await.is_err(), "job row should be gone");
+    // FK is ON DELETE CASCADE and foreign_keys=ON, so runs vanish too.
+    let left = runs.list_for_job("j1", 10).await.unwrap();
+    assert!(left.is_empty(), "run rows should cascade-delete");
+}
+
+#[tokio::test]
+async fn delete_missing_job_is_not_found() {
+    let (pool, _dir) = setup().await;
+    let repo = SqliteJobRepository::new(pool.clone());
+    let err = repo.delete("nope").await.unwrap_err();
+    assert!(format!("{err}").contains("nope"));
+}

@@ -219,6 +219,7 @@ fn build_state(
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
+        loops: None,
         decision_registry: registry,
     }
 }
@@ -238,8 +239,11 @@ async fn body_json(body: Body) -> Value {
 /// 2. `DecisionRegistry::replay_from_storage` rebuilds the in-memory
 ///    waiter map (S13-5) — both rows must surface as reattached.
 /// 3. `POST /v1/hotl/decisions` for one id → 201, body uses
-///    `escalation_id` (S13-8), `resumed=true` (S13-5 waiter resolved),
-///    audit sink captured the decision row (sprint-11 contract).
+///    `escalation_id` (S13-8), `resumed=false` — the replay slot's
+///    receiver was dropped at mint time (the original loop died with
+///    the old process), and the round-3 "resumed cosmetic" fix makes
+///    the flag report actual delivery, not slot presence. The audit
+///    sink captured the decision row (sprint-11 contract).
 /// 4. The pending row's status in the store is now `resolved` — the
 ///    DB write happened BEFORE the in-memory oneshot fired (S13-5
 ///    persist-first ordering).
@@ -279,7 +283,8 @@ async fn restart_replay_then_resolve_via_route() {
     let audit_sink_obj = Arc::new(InMemoryHotlAuditSink::new());
     let audit: Arc<dyn HotlAuditSink> = audit_sink_obj.clone();
 
-    // ── 3. resolve the escalation via the route → 201, resumed=true. ───
+    // ── 3. resolve the escalation via the route → 201, resumed=false
+    //      (replay slot has no live receiver). ──────────────────────────
     let validator: Arc<dyn TokenValidator> = Arc::new(StubValidator {
         claims: owner_claims(),
     });
@@ -317,8 +322,9 @@ async fn restart_replay_then_resolve_via_route() {
         "S13-8: response body must NOT include legacy request_id"
     );
     assert_eq!(
-        json["resumed"], true,
-        "S13-5: live waiter from replay must be resolved by the route handler"
+        json["resumed"], false,
+        "post-replay resolve has no live receiver (original loop died with the \
+         old process) — resumed must report actual delivery, not slot presence"
     );
 
     // ── 5. persist-first ordering: store row is `resolved` BEFORE the

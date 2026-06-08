@@ -1,5 +1,7 @@
 # HANDOFF — Deferred-backlog burndown + review fixes + CI harness (2026-06-07)
 
+> **SUPERSEDED 2026-06-08**: all follow-ups closed — see `HANDOFF-2026-06-08.md` (v1.13.0, /loop design, CI quarantine).
+
 Durable, repo-committed checkpoint. Supersedes the "SESSION FINAL STATE" in
 `HANDOFF-2026-06-06-audit.md` — every item on that doc's deferred list is now
 either shipped or explicitly decided.
