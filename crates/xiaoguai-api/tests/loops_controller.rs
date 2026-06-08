@@ -31,7 +31,12 @@ use serde_json::{json, Value};
 /// Build an `AppState` over a fresh temp `SQLite` db, plus the loop store
 /// (shared pool). Returns `(state, loop_store)`; the controller is built
 /// by the caller from `state.clone()`.
-async fn build_state() -> (AppState, Arc<dyn LoopStore>, tempfile::TempDir) {
+async fn build_state() -> (
+    AppState,
+    Arc<dyn LoopStore>,
+    sqlx::SqlitePool,
+    tempfile::TempDir,
+) {
     let backend: Arc<dyn LlmBackend> = Arc::new(MockBackend::with_script(vec![ScriptStep::text(
         "tick reply",
     )]));
@@ -40,7 +45,12 @@ async fn build_state() -> (AppState, Arc<dyn LoopStore>, tempfile::TempDir) {
 
 async fn build_state_with_backend(
     backend: Arc<dyn LlmBackend>,
-) -> (AppState, Arc<dyn LoopStore>, tempfile::TempDir) {
+) -> (
+    AppState,
+    Arc<dyn LoopStore>,
+    sqlx::SqlitePool,
+    tempfile::TempDir,
+) {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("test.db");
     let pool = xiaoguai_storage::db::connect(path.to_str().unwrap(), 5)
@@ -95,7 +105,7 @@ async fn build_state_with_backend(
         loops: None,
         decision_registry: Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
     };
-    (state, loop_store, dir)
+    (state, loop_store, pool, dir)
 }
 
 async fn create_session(state: &AppState, id: &str) {
@@ -134,9 +144,9 @@ where
 
 #[tokio::test]
 async fn create_arms_loop_and_ticks_persist() {
-    let (state, store, _dir) = build_state().await;
+    let (state, store, _pool, _dir) = build_state().await;
     create_session(&state, "sess_loop").await;
-    let ctrl = LoopController::new(store.clone(), state.clone());
+    let ctrl = LoopController::new(store.clone(), state.clone(), None);
 
     let row = ctrl
         .create(CreateLoopParams {
@@ -145,6 +155,10 @@ async fn create_arms_loop_and_ticks_persist() {
             interval_secs: Some(1),
             max_ticks: Some(50),
             ttl_secs: Some(3600),
+            dynamic_pacing: false,
+            min_interval_secs: None,
+            max_interval_secs: None,
+            max_total_tokens: None,
             created_by: Some("usr_a".to_string()),
         })
         .await
@@ -204,9 +218,9 @@ fn call_tool_then_stop(tool: &str, args: &str) -> Arc<dyn LlmBackend> {
 #[tokio::test]
 async fn loop_done_tool_terminalises_as_done() {
     let backend = call_tool_then_stop("loop_done", r#"{"reason":"CI went green"}"#);
-    let (state, store, _dir) = build_state_with_backend(backend).await;
+    let (state, store, _pool, _dir) = build_state_with_backend(backend).await;
     create_session(&state, "sess_done").await;
-    let ctrl = LoopController::new(store.clone(), state.clone());
+    let ctrl = LoopController::new(store.clone(), state.clone(), None);
 
     let row = ctrl
         .create(CreateLoopParams {
@@ -215,6 +229,10 @@ async fn loop_done_tool_terminalises_as_done() {
             interval_secs: Some(1),
             max_ticks: Some(50),
             ttl_secs: Some(3600),
+            dynamic_pacing: false,
+            min_interval_secs: None,
+            max_interval_secs: None,
+            max_total_tokens: None,
             created_by: None,
         })
         .await
@@ -243,6 +261,10 @@ async fn loop_done_tool_terminalises_as_done() {
         interval_secs: Some(3600),
         max_ticks: Some(1),
         ttl_secs: Some(3600),
+        dynamic_pacing: false,
+        min_interval_secs: None,
+        max_interval_secs: None,
+        max_total_tokens: None,
         created_by: None,
     })
     .await
@@ -252,9 +274,9 @@ async fn loop_done_tool_terminalises_as_done() {
 #[tokio::test]
 async fn loop_pause_tool_moves_to_paused_and_keeps_slot() {
     let backend = call_tool_then_stop("loop_pause", r#"{"reason":"waiting on a human"}"#);
-    let (state, store, _dir) = build_state_with_backend(backend).await;
+    let (state, store, _pool, _dir) = build_state_with_backend(backend).await;
     create_session(&state, "sess_pause").await;
-    let ctrl = LoopController::new(store.clone(), state.clone());
+    let ctrl = LoopController::new(store.clone(), state.clone(), None);
 
     let row = ctrl
         .create(CreateLoopParams {
@@ -263,6 +285,10 @@ async fn loop_pause_tool_moves_to_paused_and_keeps_slot() {
             interval_secs: Some(1),
             max_ticks: Some(50),
             ttl_secs: Some(3600),
+            dynamic_pacing: false,
+            min_interval_secs: None,
+            max_interval_secs: None,
+            max_total_tokens: None,
             created_by: None,
         })
         .await
@@ -289,6 +315,10 @@ async fn loop_pause_tool_moves_to_paused_and_keeps_slot() {
             interval_secs: Some(3600),
             max_ticks: Some(1),
             ttl_secs: Some(3600),
+            dynamic_pacing: false,
+            min_interval_secs: None,
+            max_interval_secs: None,
+            max_total_tokens: None,
             created_by: None,
         })
         .await
@@ -314,9 +344,9 @@ async fn failing_tick_increments_consecutive_failures() {
     let backend: Arc<dyn LlmBackend> = Arc::new(MockBackend::failing(
         xiaoguai_llm::LlmError::Provider("boom".into()),
     ));
-    let (state, store, _dir) = build_state_with_backend(backend).await;
+    let (state, store, _pool, _dir) = build_state_with_backend(backend).await;
     create_session(&state, "sess_fail").await;
-    let ctrl = LoopController::new(store.clone(), state.clone());
+    let ctrl = LoopController::new(store.clone(), state.clone(), None);
 
     let row = ctrl
         .create(CreateLoopParams {
@@ -325,6 +355,10 @@ async fn failing_tick_increments_consecutive_failures() {
             interval_secs: Some(1),
             max_ticks: Some(50),
             ttl_secs: Some(3600),
+            dynamic_pacing: false,
+            min_interval_secs: None,
+            max_interval_secs: None,
+            max_total_tokens: None,
             created_by: None,
         })
         .await
@@ -389,9 +423,9 @@ async fn cancel_mid_tick_does_not_count_as_failure() {
 
     let gate = Arc::new(Semaphore::new(0));
     let backend: Arc<dyn LlmBackend> = Arc::new(Blocking { gate: gate.clone() });
-    let (state, store, _dir) = build_state_with_backend(backend).await;
+    let (state, store, _pool, _dir) = build_state_with_backend(backend).await;
     create_session(&state, "sess_cancel").await;
-    let ctrl = LoopController::new(store.clone(), state.clone());
+    let ctrl = LoopController::new(store.clone(), state.clone(), None);
 
     let row = ctrl
         .create(CreateLoopParams {
@@ -400,6 +434,10 @@ async fn cancel_mid_tick_does_not_count_as_failure() {
             interval_secs: Some(1),
             max_ticks: Some(50),
             ttl_secs: Some(3600),
+            dynamic_pacing: false,
+            min_interval_secs: None,
+            max_interval_secs: None,
+            max_total_tokens: None,
             created_by: None,
         })
         .await
@@ -432,9 +470,9 @@ async fn cancel_mid_tick_does_not_count_as_failure() {
 
 #[tokio::test]
 async fn one_live_loop_per_session() {
-    let (state, store, _dir) = build_state().await;
+    let (state, store, _pool, _dir) = build_state().await;
     create_session(&state, "sess_dup").await;
-    let ctrl = LoopController::new(store, state.clone());
+    let ctrl = LoopController::new(store, state.clone(), None);
 
     let first = ctrl
         .create(CreateLoopParams {
@@ -443,6 +481,10 @@ async fn one_live_loop_per_session() {
             interval_secs: Some(3600),
             max_ticks: Some(50),
             ttl_secs: Some(86_400),
+            dynamic_pacing: false,
+            min_interval_secs: None,
+            max_interval_secs: None,
+            max_total_tokens: None,
             created_by: None,
         })
         .await
@@ -455,6 +497,10 @@ async fn one_live_loop_per_session() {
             interval_secs: Some(3600),
             max_ticks: Some(50),
             ttl_secs: Some(86_400),
+            dynamic_pacing: false,
+            min_interval_secs: None,
+            max_interval_secs: None,
+            max_total_tokens: None,
             created_by: None,
         })
         .await
@@ -472,6 +518,10 @@ async fn one_live_loop_per_session() {
         interval_secs: Some(3600),
         max_ticks: Some(50),
         ttl_secs: Some(86_400),
+        dynamic_pacing: false,
+        min_interval_secs: None,
+        max_interval_secs: None,
+        max_total_tokens: None,
         created_by: None,
     })
     .await
@@ -480,8 +530,8 @@ async fn one_live_loop_per_session() {
 
 #[tokio::test]
 async fn create_on_unknown_session_is_not_found() {
-    let (state, store, _dir) = build_state().await;
-    let ctrl = LoopController::new(store, state.clone());
+    let (state, store, _pool, _dir) = build_state().await;
+    let ctrl = LoopController::new(store, state.clone(), None);
     let err = ctrl
         .create(CreateLoopParams {
             session_id: "sess_missing".to_string(),
@@ -489,6 +539,10 @@ async fn create_on_unknown_session_is_not_found() {
             interval_secs: Some(60),
             max_ticks: Some(1),
             ttl_secs: Some(60),
+            dynamic_pacing: false,
+            min_interval_secs: None,
+            max_interval_secs: None,
+            max_total_tokens: None,
             created_by: None,
         })
         .await
@@ -498,7 +552,7 @@ async fn create_on_unknown_session_is_not_found() {
 
 #[tokio::test]
 async fn boot_replay_rearms_active_and_expires_stale() {
-    let (state, store, _dir) = build_state().await;
+    let (state, store, _pool, _dir) = build_state().await;
     create_session(&state, "sess_armed").await;
     create_session(&state, "sess_stale").await;
     let now = Utc::now();
@@ -508,9 +562,13 @@ async fn boot_replay_rearms_active_and_expires_stale() {
         id: Uuid::new_v4(),
         session_id: "sess_armed".to_string(),
         prompt: "rearm me".to_string(),
+        pacing_kind: xiaoguai_storage::repositories::PacingKind::Fixed,
         interval_secs: 1,
+        min_interval_secs: 10,
+        max_interval_secs: 3600,
         max_ticks: 50,
         ttl_secs: 3600,
+        max_total_tokens: 500_000,
         status: LoopStatus::Active,
         created_by: "usr_a".to_string(),
         created_at: now - ChronoDuration::seconds(10),
@@ -530,7 +588,7 @@ async fn boot_replay_rearms_active_and_expires_stale() {
     store.insert(&armed).await.expect("insert armed");
     store.insert(&lapsed).await.expect("insert lapsed");
 
-    let ctrl = LoopController::new(store.clone(), state.clone());
+    let ctrl = LoopController::new(store.clone(), state.clone(), None);
     let (rearmed, expired) = ctrl.replay_from_storage().await.expect("replay");
     assert_eq!(rearmed, 1, "one active unexpired loop re-armed");
     assert_eq!(expired, 1, "one ttl-lapsed loop expired at boot");
@@ -556,6 +614,124 @@ async fn boot_replay_rearms_active_and_expires_stale() {
     ctrl.cancel(armed_id, "usr_a").await.expect("cancel");
 }
 
+// ── L3: dynamic pacing + token budget ───────────────────────────────────────
+
+#[tokio::test]
+async fn dynamic_pacing_uses_clamped_loop_next_tick_delay() {
+    // The agent calls loop_next_tick(900); the loop's max bound is 60, so the
+    // next tick is scheduled ~60s out (not 900). We assert the persisted
+    // next_tick_at lands in the clamped window, proving the agent's request
+    // was honoured-but-clamped rather than the fixed interval being used.
+    let backend = call_tool_then_stop("loop_next_tick", r#"{"delay_seconds": 900}"#);
+    let (state, store, _pool, _dir) = build_state_with_backend(backend).await;
+    create_session(&state, "sess_dyn").await;
+    let ctrl = LoopController::new(store.clone(), state.clone(), None);
+
+    let row = ctrl
+        .create(CreateLoopParams {
+            session_id: "sess_dyn".to_string(),
+            prompt: "poll the deploy".to_string(),
+            interval_secs: Some(1),
+            max_ticks: Some(50),
+            ttl_secs: Some(3600),
+            dynamic_pacing: true,
+            min_interval_secs: Some(5),
+            max_interval_secs: Some(60),
+            max_total_tokens: None,
+            created_by: None,
+        })
+        .await
+        .expect("create loop");
+    let id = row.id;
+
+    // Wait for the first tick to run and re-schedule.
+    wait_until("first dynamic tick recorded", || {
+        let store = store.clone();
+        async move {
+            store
+                .get(id)
+                .await
+                .unwrap()
+                .is_some_and(|r| r.ticks_run >= 1)
+        }
+    })
+    .await;
+
+    let got = store.get(id).await.unwrap().expect("row");
+    let secs_out = (got.next_tick_at - Utc::now()).num_seconds();
+    // Clamped to max=60 (requested 900). Allow a small scheduling margin.
+    assert!(
+        (50..=61).contains(&secs_out),
+        "next tick should be ~60s out (clamped from 900), got {secs_out}s"
+    );
+    ctrl.cancel(id, "usr_a").await.expect("cancel");
+}
+
+#[tokio::test]
+async fn token_budget_exhaustion_stops_the_loop() {
+    use xiaoguai_storage::repositories::{
+        SqliteTokenUsageRepository, TokenUsageEntry, TokenUsageRepository,
+    };
+    let (state, store, pool, _dir) = build_state().await;
+    create_session(&state, "sess_budget").await;
+
+    // Pre-seed token_usage so the session is already over its 100-token
+    // budget before the first tick — the gate must trip immediately.
+    let token_repo = SqliteTokenUsageRepository::new(pool.clone());
+    token_repo
+        .record_batch(&[TokenUsageEntry {
+            ts: Utc::now() + ChronoDuration::seconds(1),
+            user_id: Some("usr_a".into()),
+            session_id: Some("sess_budget".into()),
+            provider_id: "p".into(),
+            model: "m".into(),
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: Some(500),
+            request_id: None,
+        }])
+        .await
+        .expect("seed usage");
+
+    let token_usage: Arc<dyn TokenUsageRepository> = Arc::new(token_repo);
+    let ctrl = LoopController::new(store.clone(), state.clone(), Some(token_usage));
+
+    let row = ctrl
+        .create(CreateLoopParams {
+            session_id: "sess_budget".to_string(),
+            prompt: "burn tokens".to_string(),
+            interval_secs: Some(1),
+            max_ticks: Some(50),
+            ttl_secs: Some(3600),
+            dynamic_pacing: false,
+            min_interval_secs: None,
+            max_interval_secs: None,
+            max_total_tokens: Some(100),
+            created_by: None,
+        })
+        .await
+        .expect("create loop");
+    let id = row.id;
+
+    // The budget gate runs before the first sleep, so the loop terminalises
+    // as budget_exhausted almost immediately.
+    wait_until("loop budget-exhausts", || {
+        let store = store.clone();
+        async move {
+            store
+                .get(id)
+                .await
+                .unwrap()
+                .is_some_and(|r| r.status == LoopStatus::BudgetExhausted)
+        }
+    })
+    .await;
+    assert_eq!(
+        store.get(id).await.unwrap().unwrap().status,
+        LoopStatus::BudgetExhausted
+    );
+}
+
 // ── REST surface ────────────────────────────────────────────────────────────
 
 async fn body_json(body: Body) -> Value {
@@ -565,7 +741,7 @@ async fn body_json(body: Body) -> Value {
 
 #[tokio::test]
 async fn rest_returns_503_when_unwired() {
-    let (state, _store, _dir) = build_state().await;
+    let (state, _store, _pool, _dir) = build_state().await;
     // state.loops stays None → routes return 503.
     let app = router(state);
     let resp = app
@@ -583,9 +759,9 @@ async fn rest_returns_503_when_unwired() {
 
 #[tokio::test]
 async fn rest_create_list_get_cancel_round_trip() {
-    let (mut state, store, _dir) = build_state().await;
+    let (mut state, store, _pool, _dir) = build_state().await;
     create_session(&state, "sess_rest").await;
-    let ctrl = LoopController::new(store, state.clone());
+    let ctrl = LoopController::new(store, state.clone(), None);
     state.loops = Some(ctrl);
     let app = router(state);
 
@@ -681,8 +857,8 @@ async fn rest_create_list_get_cancel_round_trip() {
 
 #[tokio::test]
 async fn rest_create_on_unknown_session_is_404() {
-    let (mut state, store, _dir) = build_state().await;
-    let ctrl = LoopController::new(store, state.clone());
+    let (mut state, store, _pool, _dir) = build_state().await;
+    let ctrl = LoopController::new(store, state.clone(), None);
     state.loops = Some(ctrl);
     let app = router(state);
     let resp = app

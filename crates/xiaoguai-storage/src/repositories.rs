@@ -26,7 +26,7 @@ pub use im::{
     SqliteImIdentityRepository,
 };
 pub use llm_provider::{LlmProviderRepository, SqliteLlmProviderRepository};
-pub use loops::{LoopRow, LoopStatus, LoopStore, SqliteLoopRepository};
+pub use loops::{LoopRow, LoopStatus, LoopStore, PacingKind, SqliteLoopRepository};
 pub use mcp_server::{McpServerRepository, SqliteMcpServerRepository};
 pub use message::{MessageRepository, SqliteMessageRepository};
 pub use session::{SessionRepository, SqliteSessionRepository};

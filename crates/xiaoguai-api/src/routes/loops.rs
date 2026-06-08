@@ -27,6 +27,16 @@ pub struct CreateLoopRequest {
     pub max_ticks: Option<u32>,
     #[serde(default)]
     pub ttl_secs: Option<u32>,
+    /// L3 Part B — let the agent pace the loop via `loop_next_tick`.
+    #[serde(default)]
+    pub dynamic_pacing: bool,
+    #[serde(default)]
+    pub min_interval_secs: Option<u32>,
+    #[serde(default)]
+    pub max_interval_secs: Option<u32>,
+    /// L3 Part C — token budget; `0` = unlimited, omitted = 500k default.
+    #[serde(default)]
+    pub max_total_tokens: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -34,9 +44,13 @@ pub struct LoopResponse {
     pub id: Uuid,
     pub session_id: String,
     pub prompt: String,
+    pub pacing_kind: &'static str,
     pub interval_secs: u32,
+    pub min_interval_secs: u32,
+    pub max_interval_secs: u32,
     pub max_ticks: u32,
     pub ttl_secs: u32,
+    pub max_total_tokens: u64,
     pub status: &'static str,
     pub created_by: String,
     pub created_at: DateTime<Utc>,
@@ -54,9 +68,13 @@ impl From<LoopRow> for LoopResponse {
             id: r.id,
             session_id: r.session_id,
             prompt: r.prompt,
+            pacing_kind: r.pacing_kind.as_str(),
             interval_secs: r.interval_secs,
+            min_interval_secs: r.min_interval_secs,
+            max_interval_secs: r.max_interval_secs,
             max_ticks: r.max_ticks,
             ttl_secs: r.ttl_secs,
+            max_total_tokens: r.max_total_tokens,
             status: r.status.as_str(),
             created_by: r.created_by,
             created_at: r.created_at,
@@ -94,6 +112,10 @@ pub async fn create_loop(
             interval_secs: req.interval_secs,
             max_ticks: req.max_ticks,
             ttl_secs: req.ttl_secs,
+            dynamic_pacing: req.dynamic_pacing,
+            min_interval_secs: req.min_interval_secs,
+            max_interval_secs: req.max_interval_secs,
+            max_total_tokens: req.max_total_tokens,
             created_by: claims.as_ref().map(|Extension(c)| c.sub.clone()),
         })
         .await

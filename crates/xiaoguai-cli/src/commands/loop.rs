@@ -48,9 +48,13 @@ pub fn format_detail(r: &LoopResponse) -> String {
     let _ = writeln!(out, "session:       {}", r.session_id);
     let _ = writeln!(out, "status:        {}", r.status);
     let _ = writeln!(out, "prompt:        {}", r.prompt);
+    let _ = writeln!(out, "pacing:        {}", r.pacing_kind);
     let _ = writeln!(out, "interval:      {}s", r.interval_secs);
     let _ = writeln!(out, "ticks:         {}/{}", r.ticks_run, r.max_ticks);
     let _ = writeln!(out, "ttl:           {}s", r.ttl_secs);
+    if r.max_total_tokens > 0 {
+        let _ = writeln!(out, "token budget:  {}", r.max_total_tokens);
+    }
     let _ = writeln!(out, "next tick:     {}", r.next_tick_at);
     if r.consecutive_failures > 0 {
         let _ = writeln!(out, "failures:      {} consecutive", r.consecutive_failures);
@@ -86,7 +90,9 @@ mod tests {
             id: "loop_0123456789abcdef".to_string(),
             session_id: "sess_a".to_string(),
             prompt: "check the CI run".to_string(),
+            pacing_kind: "fixed".to_string(),
             interval_secs: 300,
+            max_total_tokens: 500_000,
             max_ticks: 50,
             ttl_secs: 86_400,
             status: "active".to_string(),

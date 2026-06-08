@@ -83,3 +83,44 @@ async fn list_respects_limit() {
     let listed = repo.list(3).await.expect("list");
     assert_eq!(listed.len(), 3);
 }
+
+#[tokio::test]
+async fn session_total_since_sums_only_the_session_after_the_cutoff() {
+    use chrono::Duration;
+    let (pool, _guard) = test_setup().await;
+    let repo = SqliteTokenUsageRepository::new(pool);
+
+    let now = Utc::now().trunc_subsecs(6);
+    let mk = |session: &str, ts, total: Option<i32>| TokenUsageEntry {
+        ts,
+        user_id: Some("u".into()),
+        session_id: Some(session.into()),
+        provider_id: "p".into(),
+        model: "m".into(),
+        prompt_tokens: None,
+        completion_tokens: None,
+        total_tokens: total,
+        request_id: None,
+    };
+    repo.record_batch(&[
+        mk("loop_sess", now + Duration::seconds(1), Some(100)),
+        mk("loop_sess", now + Duration::seconds(2), Some(250)),
+        // A NULL total contributes 0.
+        mk("loop_sess", now + Duration::seconds(3), None),
+        // Before the cutoff — excluded.
+        mk("loop_sess", now - Duration::seconds(60), Some(9999)),
+        // A different session — excluded.
+        mk("other_sess", now + Duration::seconds(1), Some(5000)),
+    ])
+    .await
+    .expect("insert");
+
+    let total = repo
+        .session_total_since("loop_sess", now)
+        .await
+        .expect("sum");
+    assert_eq!(total, 350, "only this session's rows at/after the cutoff");
+
+    // Unknown session → 0.
+    assert_eq!(repo.session_total_since("nope", now).await.expect("sum"), 0);
+}

@@ -774,7 +774,12 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     let loop_store: Arc<dyn xiaoguai_storage::repositories::LoopStore> = Arc::new(
         xiaoguai_storage::repositories::SqliteLoopRepository::new(pool.clone()),
     );
-    let loop_controller = xiaoguai_api::LoopController::new(loop_store, state.clone());
+    // L3 Part C: wire the token-usage ledger so the loop's max_total_tokens
+    // budget can sum the session's spend since loop-start.
+    let loop_token_usage: Arc<dyn xiaoguai_storage::repositories::TokenUsageRepository> =
+        Arc::new(xiaoguai_storage::repositories::SqliteTokenUsageRepository::new(pool.clone()));
+    let loop_controller =
+        xiaoguai_api::LoopController::new(loop_store, state.clone(), Some(loop_token_usage));
     match loop_controller.replay_from_storage().await {
         Ok((armed, expired)) => {
             tracing::info!(armed, expired, "loop: replayed loops from storage");
