@@ -264,10 +264,13 @@ pub async fn run_agent_and_reply(
     Ok(out)
 }
 
-/// Stable per-conversation attribution label for `token_usage`. An IM
-/// conversation has no chat session, so usage is attributed to this
-/// `im:<provider>:<conversation_id>` label. The `im:` prefix is a contract for
-/// per-conversation usage reports — keep it stable.
+/// Per-conversation attribution label for `token_usage`. An IM conversation has
+/// no chat session, so usage is attributed to this
+/// `im:<provider>:<conversation_id>` label. `tenant_external_id` is intentionally
+/// dropped: under DEC-033 (single owner, no multi-tenancy) provider+conversation
+/// is unique. The label is an OPAQUE key — `conversation_id` may itself contain
+/// ':', so consumers must match the whole string, never split on ':'. Keep the
+/// `im:` prefix stable.
 fn conversation_attribution_id(provider: &str, conversation_id: &str) -> String {
     format!("im:{provider}:{conversation_id}")
 }
@@ -296,6 +299,17 @@ mod tests {
         assert_eq!(
             conversation_attribution_id("feishu", "oc_abc"),
             "im:feishu:oc_abc"
+        );
+    }
+
+    #[test]
+    fn attribution_id_treats_conversation_as_opaque() {
+        // Empty and colon-bearing conversation ids must not panic or be
+        // re-parsed — the label is an opaque key matched whole.
+        assert_eq!(conversation_attribution_id("slack", ""), "im:slack:");
+        assert_eq!(
+            conversation_attribution_id("slack", "C1:thread"),
+            "im:slack:C1:thread"
         );
     }
 }

@@ -13,7 +13,7 @@ The *agent-loop* side of browser automation is **already a solved pattern** — 
 mirrors `xiaoguai-coding`: a new governed crate + an in-process `McpClient`
 registered into the agent `Toolbox`, so the loop auto HotL-gates `tool_call.*`,
 audits, and checkpoints. The registration seam exists today
-(`coding_bridge::build_coding_toolbox`, wired at `xiaoguai-core/src/lib.rs:323`).
+(`coding_bridge::build_coding_toolbox`, wired at `xiaoguai-core/src/lib.rs:337`).
 
 What is **not** decided is everything below the tool layer: a real browser engine
 (Chromium) is ~150–400 MB, cannot be compiled into the Rust binary, and cannot be

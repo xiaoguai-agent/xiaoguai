@@ -128,11 +128,15 @@ impl JobExecutor for RuntimeJobExecutor {
     }
 }
 
-/// Stable per-job attribution label for `token_usage`. A scheduled run has no
-/// chat session at run time, so usage is attributed to this `scheduler:<job_id>`
-/// label (used as both session and user id). The `scheduler:` prefix is a
-/// contract: per-job usage reports and the loop's session-scoped budget sum
-/// filter on it — keep it stable.
+/// Per-job attribution label for `token_usage`. A scheduled run has no chat
+/// session at run time, so usage is attributed to this `scheduler:<job_id>`
+/// label (used as both session and user id), which aggregates a job's cost
+/// across all its runs. NB when a [`ScheduledSessionWriter`] is configured it
+/// persists a separate synthetic `sess_*` session AFTER the run; `token_usage`
+/// is deliberately keyed by job, not that per-run session, so a per-session cost
+/// view would NOT join to these rows (per-job aggregation was chosen over
+/// per-run linkage). The label is an opaque key; keep the `scheduler:` prefix
+/// stable.
 fn scheduled_attribution_id(job_id: &str) -> String {
     format!("scheduler:{job_id}")
 }
@@ -232,6 +236,14 @@ mod tests {
     #[test]
     fn scheduled_attribution_id_is_job_scoped() {
         assert_eq!(scheduled_attribution_id("job-42"), "scheduler:job-42");
+    }
+
+    #[test]
+    fn scheduled_attribution_id_treats_input_as_opaque() {
+        // Empty and colon-bearing ids must not panic or be re-parsed — the
+        // label is an opaque key matched whole.
+        assert_eq!(scheduled_attribution_id(""), "scheduler:");
+        assert_eq!(scheduled_attribution_id("a:b"), "scheduler:a:b");
     }
 
     #[tokio::test]
