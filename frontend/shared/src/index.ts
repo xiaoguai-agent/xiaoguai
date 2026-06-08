@@ -1068,6 +1068,69 @@ export interface RejectSkillProposalRequest {
   reason: string;
 }
 
+// ---- /loop — session-scoped recurring agent turns (DEC-039 / LLD-LOOP-001) -
+//
+// Mirrors `crates/xiaoguai-api/src/routes/loops.rs`. A loop re-runs a prompt
+// on a session at a cadence until a budget (ticks / ttl / tokens) is hit or an
+// operator cancels it.
+
+/** Lifecycle status of a loop. Mirrors `LoopStatus::as_str` (storage crate). */
+export type LoopStatus =
+  | 'active'
+  | 'paused'
+  | 'budget_exhausted'
+  | 'done'
+  | 'cancelled'
+  | 'failed';
+
+/** How a loop chooses its next-tick delay. Mirrors `PacingKind::as_str`. */
+export type LoopPacingKind = 'fixed' | 'dynamic';
+
+/**
+ * Body for `POST /v1/loops`. Only `session_id` + `prompt` are required; the
+ * backend fills the defaults the chat-ui surfaces in its confirmation bubble
+ * (interval 300s, max 50 ticks, ttl 24h).
+ */
+export interface CreateLoopRequest {
+  session_id: string;
+  prompt: string;
+  interval_secs?: number;
+  max_ticks?: number;
+  ttl_secs?: number;
+  /** L3 Part B — let the agent pace the loop via `loop_next_tick`. */
+  dynamic_pacing?: boolean;
+  min_interval_secs?: number;
+  max_interval_secs?: number;
+  /** L3 Part C — token budget; `0` = unlimited, omitted = backend default. */
+  max_total_tokens?: number;
+}
+
+/**
+ * A loop row as returned by `POST` / `GET` / `DELETE /v1/loops`. Mirrors the
+ * Rust `LoopResponse` (crates/xiaoguai-api/src/routes/loops.rs) 1:1.
+ */
+export interface LoopResponse {
+  id: string;
+  session_id: string;
+  prompt: string;
+  pacing_kind: LoopPacingKind;
+  interval_secs: number;
+  min_interval_secs: number;
+  max_interval_secs: number;
+  max_ticks: number;
+  ttl_secs: number;
+  max_total_tokens: number;
+  status: LoopStatus;
+  created_by: string;
+  created_at: string;
+  expires_at: string;
+  next_tick_at: string;
+  ticks_run: number;
+  consecutive_failures: number;
+  /** Present only when the loop has recorded a tick error. */
+  last_error?: string;
+}
+
 // ---- Agent event stream --------------------------------------------------
 
 export type AgentEvent =
@@ -2046,6 +2109,35 @@ export class XiaoguaiClient {
       `/v1/skills/proposals/${encodeURIComponent(id)}/reject`,
       req,
     );
+  }
+
+  // ---- /loop — recurring agent turns (DEC-039 / LLD-LOOP-001) -------------
+
+  /**
+   * Create + arm a loop on a session. `POST /v1/loops` → 201 with the row.
+   * Throws `ApiError(409)` when the session already has a live loop or is
+   * archived, `404` for an unknown session, `503` when loops are unwired.
+   */
+  createLoop(req: CreateLoopRequest): Promise<LoopResponse> {
+    return this.request<LoopResponse>('POST', '/v1/loops', req);
+  }
+
+  /** List every loop, newest first (terminal rows included). `GET /v1/loops` */
+  listLoops(): Promise<LoopResponse[]> {
+    return this.request<LoopResponse[]>('GET', '/v1/loops');
+  }
+
+  /** Fetch a single loop by id. `GET /v1/loops/:id` */
+  getLoop(id: string): Promise<LoopResponse> {
+    return this.request<LoopResponse>('GET', `/v1/loops/${encodeURIComponent(id)}`);
+  }
+
+  /**
+   * Cancel a live loop. `DELETE /v1/loops/:id` → 200 with the terminalised
+   * row. Throws `ApiError(409)` when already terminal, `404` when unknown.
+   */
+  cancelLoop(id: string): Promise<LoopResponse> {
+    return this.request<LoopResponse>('DELETE', `/v1/loops/${encodeURIComponent(id)}`);
   }
 
   /**
