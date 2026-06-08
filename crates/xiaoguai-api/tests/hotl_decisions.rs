@@ -84,6 +84,7 @@ fn build_state(opts: StateOptions) -> AppState {
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
+        loops: None,
         decision_registry: opts
             .decision_registry
             .unwrap_or_else(|| std::sync::Arc::new(DecisionRegistry::new())),
