@@ -31,6 +31,37 @@ pub struct TurnInput {
     pub session_id: String,
     pub content: String,
     pub model_override: Option<String>,
+    /// Set for loop ticks: stamps `initiator: "loop"` + `loop_id` into the
+    /// turn's `agent.run` audit details (LLD-LOOP-001 §7, review M3 — an
+    /// auditor must be able to tell loop-initiated turns from operator
+    /// turns). `None` for operator turns; the details are unchanged.
+    pub loop_id: Option<uuid::Uuid>,
+}
+
+/// How a launched turn ended — reported by the finalize task over
+/// [`TurnHandle::completion`]. Coarse by design: the /loop controller's
+/// failure backoff (LLD-LOOP-001 §3) only needs success-or-not; details
+/// live in the `agent.run` audit entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnCompletion {
+    /// Run finished (any stop reason, including cancelled) and its output
+    /// was persisted.
+    Completed,
+    /// The runtime returned an error (provider down, agent error).
+    Errored,
+    /// The agent task panicked.
+    Panicked,
+}
+
+/// A successfully launched turn.
+///
+/// `events` is the live event stream (the SSE route consumes it; loop
+/// ticks drop it — the agent's event channel sends fail fast on a dropped
+/// receiver and the run keeps going). `completion` resolves when the
+/// finalize task is done; dropping it is fine (the send is best-effort).
+pub struct TurnHandle {
+    pub events: ReceiverStream<AgentEvent>,
+    pub completion: tokio::sync::oneshot::Receiver<TurnCompletion>,
 }
 
 /// Why a turn refused to start. The route maps these onto HTTP statuses
@@ -71,12 +102,10 @@ pub enum TurnError {
 /// going to completion.
 ///
 /// # Errors
-/// Returns a [`TurnError`] when the turn cannot start; once the stream is
-/// returned, run failures surface as events / audit entries, not errors.
-pub async fn run_turn(
-    state: &AppState,
-    input: TurnInput,
-) -> Result<ReceiverStream<AgentEvent>, TurnError> {
+/// Returns a [`TurnError`] when the turn cannot start; once the handle is
+/// returned, run failures surface as [`TurnCompletion`] / events / audit
+/// entries, not errors.
+pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, TurnError> {
     if input.content.trim().is_empty() {
         return Err(TurnError::EmptyContent);
     }
@@ -157,6 +186,7 @@ pub async fn run_turn(
     //    stream and persists anything the loop produced once the join
     //    handle resolves. It owns the turn guard: the lock releases only
     //    after the output is persisted (or the run errored/panicked).
+    let (completion_tx, completion) = tokio::sync::oneshot::channel();
     spawn_finalize_task(FinalizeCtx {
         state: state.clone(),
         session_id,
@@ -164,9 +194,11 @@ pub async fn run_turn(
         model,
         join,
         guard,
+        loop_id: input.loop_id,
+        completion: completion_tx,
     });
 
-    Ok(events)
+    Ok(TurnHandle { events, completion })
 }
 
 /// Inputs to the detached finalisation task. Bundled into one struct so the
@@ -181,6 +213,11 @@ struct FinalizeCtx {
     join: tokio::task::JoinHandle<Result<RuntimeOutcome, RuntimeError>>,
     /// Per-session turn lock + cancel entry; released when this task ends.
     guard: TurnGuard,
+    /// Loop attribution for the `agent.run` audit entry (`None` = operator).
+    loop_id: Option<uuid::Uuid>,
+    /// Resolves the caller's [`TurnHandle::completion`]. Best-effort: a
+    /// dropped receiver (the SSE route drops it) is fine.
+    completion: tokio::sync::oneshot::Sender<TurnCompletion>,
 }
 
 fn spawn_finalize_task(ctx: FinalizeCtx) {
@@ -191,6 +228,8 @@ fn spawn_finalize_task(ctx: FinalizeCtx) {
         model,
         join,
         guard,
+        loop_id,
+        completion,
     } = ctx;
     tokio::spawn(async move {
         let session_id_str = guard.session_id().to_string();
@@ -202,7 +241,7 @@ fn spawn_finalize_task(ctx: FinalizeCtx) {
         // must NOT affect the already-finished run. Details are content-free
         // by design: counts and enum tags only, never message text or error
         // strings (provider errors can embed response fragments).
-        match join.await {
+        let result = match join.await {
             Ok(Ok(outcome)) => {
                 let persist_failed = match persist_loop_output(&state, &session_id, &outcome).await
                 {
@@ -216,7 +255,10 @@ fn spawn_finalize_task(ctx: FinalizeCtx) {
                     &state,
                     &actor,
                     &session_id_str,
-                    agent_run_details(&model, &outcome, persist_failed),
+                    with_loop_attribution(
+                        agent_run_details(&model, &outcome, persist_failed),
+                        loop_id,
+                    ),
                 )
                 .await;
                 tracing::info!(
@@ -225,6 +267,7 @@ fn spawn_finalize_task(ctx: FinalizeCtx) {
                     "agent run finished"
                 );
                 let _: StopReason = outcome.stop_reason;
+                TurnCompletion::Completed
             }
             Ok(Err(err)) => {
                 tracing::error!(?err, "agent run errored");
@@ -232,9 +275,13 @@ fn spawn_finalize_task(ctx: FinalizeCtx) {
                     &state,
                     &actor,
                     &session_id_str,
-                    serde_json::json!({ "model": model, "outcome": "error" }),
+                    with_loop_attribution(
+                        serde_json::json!({ "model": model, "outcome": "error" }),
+                        loop_id,
+                    ),
                 )
                 .await;
+                TurnCompletion::Errored
             }
             Err(err) => {
                 tracing::error!(?err, "agent task panicked");
@@ -242,17 +289,36 @@ fn spawn_finalize_task(ctx: FinalizeCtx) {
                     &state,
                     &actor,
                     &session_id_str,
-                    serde_json::json!({ "model": model, "outcome": "panic" }),
+                    with_loop_attribution(
+                        serde_json::json!({ "model": model, "outcome": "panic" }),
+                        loop_id,
+                    ),
                 )
                 .await;
+                TurnCompletion::Panicked
             }
-        }
+        };
         if let Err(err) = state.sessions.touch(&session_id_str).await {
             tracing::warn!(?err, "touch session failed");
         }
-        // Turn complete — release the per-session lock + cancel entry.
+        // Turn complete — release the per-session lock + cancel entry,
+        // then tell the caller how it ended (best-effort).
         drop(guard);
+        let _ = completion.send(result);
     });
+}
+
+/// Stamp loop attribution into an `agent.run` details payload (LLD-LOOP-001
+/// §7, review M3). Operator turns (`loop_id: None`) are unchanged.
+fn with_loop_attribution(
+    mut details: serde_json::Value,
+    loop_id: Option<uuid::Uuid>,
+) -> serde_json::Value {
+    if let (Some(id), Some(obj)) = (loop_id, details.as_object_mut()) {
+        obj.insert("initiator".into(), serde_json::json!("loop"));
+        obj.insert("loop_id".into(), serde_json::json!(id.to_string()));
+    }
+    details
 }
 
 /// Best-effort append of an `agent.run` entry to the HMAC chain. A missing
@@ -495,5 +561,25 @@ mod audit_tests {
     fn messages_to_persist_empty_when_nothing_produced() {
         let o = outcome(Vec::new(), Vec::new(), "", StopReason::Cancelled, 0);
         assert!(messages_to_persist(&o).is_empty());
+    }
+
+    #[test]
+    fn loop_attribution_stamps_initiator_and_loop_id() {
+        let id = uuid::Uuid::new_v4();
+        let details = with_loop_attribution(
+            serde_json::json!({ "model": "m", "iterations": 1 }),
+            Some(id),
+        );
+        assert_eq!(details["initiator"], "loop");
+        assert_eq!(details["loop_id"], id.to_string());
+        // Pre-existing keys survive.
+        assert_eq!(details["model"], "m");
+    }
+
+    #[test]
+    fn operator_turns_carry_no_loop_attribution() {
+        let details = with_loop_attribution(serde_json::json!({ "model": "m" }), None);
+        assert!(details.get("initiator").is_none());
+        assert!(details.get("loop_id").is_none());
     }
 }

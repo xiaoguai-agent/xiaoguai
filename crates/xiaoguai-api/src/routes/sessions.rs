@@ -192,16 +192,20 @@ pub async fn send_message(
     Path(session_id_str): Path<String>,
     Json(req): Json<SendMessageRequest>,
 ) -> ApiResult<Sse<impl Stream<Item = Result<axum::response::sse::Event, axum::Error>>>> {
-    let events = run_turn(
+    // `completion` is dropped — the SSE client learns the outcome from the
+    // event stream itself; the finalize task's send is best-effort.
+    let handle = run_turn(
         &state,
         TurnInput {
             session_id: session_id_str,
             content: req.content,
             model_override: req.model,
+            loop_id: None,
         },
     )
     .await
     .map_err(turn_error_to_api)?;
+    let events = handle.events;
 
     // Stamp each event with a per-stream monotonic id (`id:` field). The
     // client echoes the last seen id as `Last-Event-ID` on reconnect and

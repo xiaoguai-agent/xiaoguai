@@ -65,6 +65,7 @@ fn build_state(steps: Vec<ScriptStep>) -> (AppState, Arc<InMemoryMessageRepo>) {
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
+        loops: None,
         decision_registry: std::sync::Arc::new(
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),

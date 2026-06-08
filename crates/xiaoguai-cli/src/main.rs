@@ -5,7 +5,8 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
     anomaly, audit_bundle, audit_export, backup, chat, code, completions, eval, hotl, init,
-    manpages, mcp, outcomes, provider, remote, schedule, self_update, skills, stats, tasks, watch,
+    manpages, mcp, outcomes, provider, r#loop, remote, schedule, self_update, skills, stats, tasks,
+    watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -118,6 +119,21 @@ enum Cmd {
         server: String,
         #[command(subcommand)]
         action: RemoteCmd,
+    },
+
+    /// Manage session-scoped recurring agent loops (DEC-039 /loop).
+    ///
+    /// A loop re-issues a prompt to a session on a fixed interval, each
+    /// tick building on what previous ticks learned, until a budget trips
+    /// or you cancel it. Use this for "keep watching what we were just
+    /// talking about"; use `schedule` for fixed-calendar cron jobs. The
+    /// loop runs inside `xiaoguai serve`, so these commands go over HTTP.
+    Loop {
+        /// Base URL of the API server, e.g. `http://localhost:7600`.
+        #[arg(long, default_value = "http://localhost:7600")]
+        server: String,
+        #[command(subcommand)]
+        action: LoopCmd,
     },
 
     /// Run an eval suite (`*.eval.yaml` cases) against the deterministic
@@ -679,6 +695,40 @@ enum RemoteCmd {
     Cancel {
         #[arg(long)]
         session: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum LoopCmd {
+    /// Create + arm a loop on a session.
+    Create {
+        /// Session the loop's ticks run in.
+        #[arg(long)]
+        session: String,
+        /// Prompt re-issued to the session each tick.
+        #[arg(long)]
+        prompt: String,
+        /// Seconds between ticks (default 300).
+        #[arg(long)]
+        interval_secs: Option<u32>,
+        /// Stop after this many ticks (default 50).
+        #[arg(long)]
+        max_ticks: Option<u32>,
+        /// Stop after this many seconds of wall-clock life (default 86400).
+        #[arg(long)]
+        ttl_secs: Option<u32>,
+    },
+    /// List all loops (active and terminal), newest first.
+    List,
+    /// Show one loop by id (or unique id prefix).
+    Show {
+        #[arg(long)]
+        id: String,
+    },
+    /// Cancel a live loop by id (or unique id prefix).
+    Cancel {
+        #[arg(long)]
+        id: String,
     },
 }
 
@@ -1707,6 +1757,69 @@ async fn handle_remote(server: String, action: RemoteCmd) -> Result<()> {
     Ok(())
 }
 
+async fn handle_loop(server: String, action: LoopCmd) -> Result<()> {
+    let client = remote::RemoteClient::new(server);
+    match action {
+        LoopCmd::Create {
+            session,
+            prompt,
+            interval_secs,
+            max_ticks,
+            ttl_secs,
+        } => {
+            let row = client
+                .create_loop(&remote::CreateLoopRequest {
+                    session_id: session,
+                    prompt,
+                    interval_secs,
+                    max_ticks,
+                    ttl_secs,
+                })
+                .await?;
+            println!("{}", r#loop::format_detail(&row));
+        }
+        LoopCmd::List => {
+            let rows = client.list_loops().await?;
+            print!("{}", r#loop::format_table(&rows));
+        }
+        LoopCmd::Show { id } => {
+            let id = resolve_loop_id(&client, &id).await?;
+            let row = client.get_loop(&id).await?;
+            println!("{}", r#loop::format_detail(&row));
+        }
+        LoopCmd::Cancel { id } => {
+            let id = resolve_loop_id(&client, &id).await?;
+            let row = client.cancel_loop(&id).await?;
+            println!("loop {} cancelled (status: {})", row.id, row.status);
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a loop id or unique id prefix against the server's loop list —
+/// the `list` table shows short ids, so accept any unambiguous prefix.
+async fn resolve_loop_id(client: &remote::RemoteClient, id_or_prefix: &str) -> Result<String> {
+    let needle = id_or_prefix.trim();
+    if needle.is_empty() {
+        anyhow::bail!("loop id must not be empty — run `xiaoguai loop list` to see ids");
+    }
+    let rows = client.list_loops().await?;
+    let matches: Vec<&remote::LoopResponse> =
+        rows.iter().filter(|r| r.id.starts_with(needle)).collect();
+    match matches.as_slice() {
+        [] => anyhow::bail!("no loop matches '{needle}' — run `xiaoguai loop list` to see ids"),
+        [one] => Ok(one.id.clone()),
+        many => {
+            let ids: Vec<&str> = many.iter().map(|r| r.id.as_str()).collect();
+            anyhow::bail!(
+                "'{needle}' is ambiguous — matches {} loops:\n  {}\nUse a longer prefix.",
+                many.len(),
+                ids.join("\n  ")
+            )
+        }
+    }
+}
+
 async fn handle_eval(action: EvalCmd) -> Result<()> {
     match action {
         EvalCmd::Run {
@@ -2143,6 +2256,7 @@ async fn main() -> Result<()> {
         Cmd::Mcp { action } => handle_mcp(cfg, action).await,
         Cmd::Schedule { action } => handle_schedule(cfg, action).await,
         Cmd::Remote { server, action } => handle_remote(server, action).await,
+        Cmd::Loop { server, action } => handle_loop(server, action).await,
         Cmd::Repl {
             server,
             user_id,

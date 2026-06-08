@@ -752,12 +752,42 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // a 200 + empty array instead of falling to its 404 fallback. A
         // session-aware WatchRunner adapter lands in a future sprint.
         watchers: Some(xiaoguai_api::StaticWatcherIntrospector::arc()),
+        // /loop wiring lands just below — the controller needs an AppState
+        // clone with `loops = None` so a tick's `run_turn` never re-enters
+        // the controller. Set to `None` here, then overwritten after the
+        // controller is built from this state's clone.
+        loops: None,
         // Sprint-12 S12-4: shared with the gate adapter constructed
         // above. The registry is built once around line 378; both halves
         // see the same DashMap so resolves from the route handler reach
         // the gate's waiters.
         decision_registry: decision_registry.clone(),
     };
+
+    // /loop L1 (DEC-039): wire the LoopController over the `loops` table.
+    // It captures the AppState exactly as built above (`loops = None`), so
+    // a tick's `run_turn` runs through the same pipeline as a chat turn
+    // without ever calling back into the controller. Boot-replay re-arms
+    // every unexpired `active` loop BEFORE the HTTP server accepts
+    // requests — same "survives restart" semantics as the HotL decision
+    // registry replay above. The log line is the SRE signal it ran.
+    let loop_store: Arc<dyn xiaoguai_storage::repositories::LoopStore> = Arc::new(
+        xiaoguai_storage::repositories::SqliteLoopRepository::new(pool.clone()),
+    );
+    let loop_controller = xiaoguai_api::LoopController::new(loop_store, state.clone());
+    match loop_controller.replay_from_storage().await {
+        Ok((armed, expired)) => {
+            tracing::info!(armed, expired, "loop: replayed loops from storage");
+        }
+        Err(e) => {
+            tracing::error!(
+                ?e,
+                "loop: boot replay failed — serving without re-armed loops"
+            );
+        }
+    }
+    let mut state = state;
+    state.loops = Some(loop_controller);
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by
     // default (multi-replica safe). Operators can fall back to the

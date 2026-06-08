@@ -78,6 +78,7 @@ fn build_state(watchers: Option<Arc<dyn WatcherIntrospector>>) -> AppState {
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers,
+        loops: None,
         decision_registry: std::sync::Arc::new(
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),

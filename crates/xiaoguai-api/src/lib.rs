@@ -15,6 +15,7 @@ pub mod eval;
 pub mod hotl;
 pub mod identity;
 pub mod incidents;
+pub mod loops;
 pub mod marketplace;
 pub mod mcp_serve;
 pub mod outcomes;
@@ -52,6 +53,7 @@ pub use incidents::{
     ActionItem, DatadogSource, ImNotification, Incident, IncidentSource, NormalizeError, PrDraft,
     RcaDraft, SentrySource, Severity, TimelineEntry,
 };
+pub use loops::{CancelLoopError, CreateLoopError, CreateLoopParams, LoopController};
 pub use marketplace::{MarketplaceEntry, MarketplaceResponse};
 pub use mcp_serve::XiaoguaiMcpServer;
 pub use outcomes::{
@@ -76,7 +78,7 @@ pub use skills::{
 };
 pub use state::{AppState, CancelRegistry, TurnGuard};
 pub use today::{StaticTodayReader, TodayError, TodayItem, TodayKind, TodayQuery, TodayReader};
-pub use turn::{run_turn, TurnError, TurnInput};
+pub use turn::{run_turn, TurnCompletion, TurnError, TurnHandle, TurnInput};
 pub use usage::{
     StaticUsageEntry, StaticUsageReader, UsageError, UsageGroupBy, UsageQuery, UsageReader,
     UsageReport, UsageRow,

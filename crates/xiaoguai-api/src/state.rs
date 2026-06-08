@@ -306,6 +306,13 @@ pub struct AppState {
     /// state) until a session-aware `xiaoguai-watch::WatchRunner`
     /// introspection adapter ships.
     pub watchers: Option<Arc<dyn crate::watchers::WatcherIntrospector>>,
+    /// /loop L1 (DEC-039): session-scoped recurring agent turns — backs
+    /// `/v1/loops/*`. `None` makes those endpoints return 503; production
+    /// wires a `LoopController` over `SqliteLoopRepository` in
+    /// `xiaoguai-core::run_serve` (the controller holds an `AppState`
+    /// clone captured BEFORE this field is set, so it never re-enters
+    /// itself).
+    pub loops: Option<Arc<crate::loops::LoopController>>,
 }
 
 impl std::fmt::Debug for AppState {
