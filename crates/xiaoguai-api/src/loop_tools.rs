@@ -81,7 +81,9 @@ impl LoopToolClient {
         }
         match kind {
             LoopToolKind::Done => "Loop marked done — this is the final tick.",
-            LoopToolKind::Pause => "Loop paused — ticking stops; an operator can cancel it.",
+            LoopToolKind::Pause => {
+                "Loop paused — ticking stops until an operator resumes or cancels it."
+            }
         }
     }
 

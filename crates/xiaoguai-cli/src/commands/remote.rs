@@ -165,6 +165,21 @@ impl RemoteClient {
         require_2xx_with_body(resp).await
     }
 
+    /// `POST /v1/loops/:id/resume` — resume a paused loop.
+    ///
+    /// # Errors
+    /// Returns a teaching error carrying the server's reason (404 unknown,
+    /// 409 not paused).
+    pub async fn resume_loop(&self, id: &str) -> Result<LoopResponse> {
+        let resp = self
+            .http
+            .post(format!("{}/v1/loops/{id}/resume", self.base_url))
+            .send()
+            .await
+            .context("POST /v1/loops/:id/resume")?;
+        require_2xx_with_body(resp).await
+    }
+
     /// `POST /v1/sessions/:id/messages` — drain the SSE stream into the
     /// provided sink. The sink receives one `RemoteEvent` per line and may
     /// stop the stream by returning `Err`.

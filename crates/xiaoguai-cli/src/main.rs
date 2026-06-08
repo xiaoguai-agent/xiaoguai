@@ -746,6 +746,11 @@ enum LoopCmd {
         #[arg(long)]
         id: String,
     },
+    /// Resume a paused loop by id (or unique id prefix).
+    Resume {
+        #[arg(long)]
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1815,6 +1820,11 @@ async fn handle_loop(server: String, action: LoopCmd) -> Result<()> {
             let id = resolve_loop_id(&client, &id).await?;
             let row = client.cancel_loop(&id).await?;
             println!("loop {} cancelled (status: {})", row.id, row.status);
+        }
+        LoopCmd::Resume { id } => {
+            let id = resolve_loop_id(&client, &id).await?;
+            let row = client.resume_loop(&id).await?;
+            println!("loop {} resumed (status: {})", row.id, row.status);
         }
     }
     Ok(())

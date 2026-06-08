@@ -325,8 +325,19 @@ async fn loop_pause_tool_moves_to_paused_and_keeps_slot() {
         .expect_err("paused loop still holds the slot");
     assert!(matches!(err, CreateLoopError::AlreadyExists { existing } if existing == id));
 
-    // …but it can be cancelled.
-    ctrl.cancel(id, "usr_a").await.expect("cancel paused");
+    // …and an operator can resume it: paused → active, driver re-armed.
+    let resumed = ctrl.resume(id, "usr_a").await.expect("resume paused");
+    assert_eq!(resumed.status, LoopStatus::Active);
+    assert_eq!(
+        store.get(id).await.unwrap().unwrap().status,
+        LoopStatus::Active
+    );
+    // Resuming an already-active loop is rejected.
+    let err = ctrl.resume(id, "usr_a").await.expect_err("not paused");
+    assert!(matches!(err, xiaoguai_api::ResumeLoopError::NotPaused(_)));
+
+    // Now it can be cancelled.
+    ctrl.cancel(id, "usr_a").await.expect("cancel");
     assert_eq!(
         store.get(id).await.unwrap().unwrap().status,
         LoopStatus::Cancelled
