@@ -69,13 +69,21 @@ jobs:
       #    (chat-ui → dist served at http://localhost:5173 via `vite preview`)
       #    (admin-ui → dist served at http://localhost:5174 via `vite preview`)
       # ----------------------------------------------------------------
+      # The UIs default their API base to window.location.origin; served via
+      # `vite preview` on :5173/:5174 that points at the wrong port. Bake the
+      # API origin (the docker stack on :7600) in at build time so the
+      # real-backend specs (golden path, scheduler-flow) reach it.
       - name: Build chat-ui
         working-directory: frontend/chat-ui
         run: pnpm build
+        env:
+          VITE_API_URL: "http://localhost:7600"
 
       - name: Build admin-ui
         working-directory: frontend/admin-ui
         run: pnpm build
+        env:
+          VITE_API_URL: "http://localhost:7600"
 
       - name: Serve chat-ui (background)
         working-directory: frontend/chat-ui

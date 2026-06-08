@@ -1291,7 +1291,13 @@ export class XiaoguaiClient {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
     this.basicAuth = opts.basicAuth;
     this.onUnauthorized = opts.onUnauthorized;
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    // Native `fetch` must be invoked with `this === window`. Storing the bare
+    // reference and later calling `this.fetchImpl(...)` binds `this` to this
+    // client instance → "Failed to execute 'fetch' on 'Window': Illegal
+    // invocation" in real browsers (jsdom doesn't enforce this, so vitest
+    // never caught it — but every web-UI API call broke in Chromium). Bind to
+    // the global so the method-call receiver can't detach it.
+    this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
   /** Set (or clear, with `undefined`) the HTTP Basic credentials at runtime —
