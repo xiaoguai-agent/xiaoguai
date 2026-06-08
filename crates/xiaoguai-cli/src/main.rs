@@ -430,6 +430,9 @@ enum HotlCmd {
         #[arg(long)]
         amount: f64,
     },
+    /// List pending decisions awaiting an operator — including /loop ticks
+    /// parked on a gated tool. Resolve one with `POST /v1/hotl/decisions`.
+    Pending,
 }
 
 #[derive(Subcommand)]
@@ -1915,6 +1918,14 @@ async fn handle_hotl(api_base: String, output: String, action: HotlCmd) -> Resul
             println!("verdict: {}", resp.verdict);
             if let Some(reason) = resp.reason {
                 println!("reason: {reason:?}");
+            }
+        }
+        HotlCmd::Pending => {
+            let rows = hotl::pending_list(&api_base).await?;
+            if output == "table" {
+                print!("{}", hotl::format_pending_table(&rows));
+            } else {
+                print_value(&serde_json::to_value(&rows)?, &output)?;
             }
         }
     }

@@ -123,6 +123,9 @@ pub fn router(state: AppState) -> Router {
             "/v1/hotl/decisions",
             post(hotl_decisions::create_decision),
         )
+        // Parked-tick visibility (LLD-LOOP-001 §7): operator queue of
+        // pending escalations, incl. /loop ticks with no SSE consumer.
+        .route("/v1/hotl/pending", get(hotl_decisions::list_pending))
         // v1.2.4 — outcome telemetry (revenue-not-time ROI tracking).
         .route("/v1/outcomes", post(outcomes::record_outcome))
         .route("/v1/outcomes/summary", get(outcomes::outcomes_summary))

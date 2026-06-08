@@ -169,6 +169,47 @@ impl From<HotlPendingDbRow> for HotlPendingRow {
     }
 }
 
+/// Operator-facing view of one pending escalation — the child `hotl_pending`
+/// row joined to its parent's `session_id` so the operator can correlate a
+/// parked decision (including one from a /loop tick) to the conversation it
+/// belongs to. Backs `GET /v1/hotl/pending` (the parked-tick visibility
+/// surface, LLD-LOOP-001 §7). `args_redacted` is already masked upstream.
+#[derive(Debug, Clone)]
+pub struct PendingEscalationView {
+    pub escalation_id: Uuid,
+    pub session_id: Uuid,
+    pub scope: String,
+    pub tool: String,
+    pub args_redacted: JsonValue,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, FromRow)]
+struct PendingViewDbRow {
+    escalation_id: Uuid,
+    session_id: Uuid,
+    scope: String,
+    tool: String,
+    args_redacted: Json<JsonValue>,
+    expires_at: DateTime<Utc>,
+    created_at: DateTime<Utc>,
+}
+
+impl From<PendingViewDbRow> for PendingEscalationView {
+    fn from(r: PendingViewDbRow) -> Self {
+        Self {
+            escalation_id: r.escalation_id,
+            session_id: r.session_id,
+            scope: r.scope,
+            tool: r.tool,
+            args_redacted: r.args_redacted.0,
+            expires_at: r.expires_at,
+            created_at: r.created_at,
+        }
+    }
+}
+
 /// Trait surface used by `DecisionRegistry` (S13-5) and the boot-replay
 /// path. Object-safe (`Send + Sync` bounds + no generics on methods) so
 /// `AppState` can hold an `Arc<dyn HotlEscalationStore>` without
@@ -187,6 +228,17 @@ pub trait HotlEscalationStore: Send + Sync {
     /// Boot-replay scan. Returns every `hotl_pending` row that is still
     /// `status='pending'` and has `expires_at > now`.
     async fn list_pending_unexpired(&self, now: DateTime<Utc>) -> RepoResult<Vec<HotlPendingRow>>;
+
+    /// Operator-facing pending list (parked-tick visibility): every
+    /// unexpired pending escalation joined to its `session_id`. The default
+    /// returns empty so legacy/test stores keep compiling — the real query
+    /// lives on [`SqliteHotlEscalationRepository`].
+    async fn list_pending_view(
+        &self,
+        _now: DateTime<Utc>,
+    ) -> RepoResult<Vec<PendingEscalationView>> {
+        Ok(Vec::new())
+    }
 
     /// UPDATE-the-decision path: stamps `status`/`decided_at`/`decided_by`
     /// onto the matching `hotl_pending` row IF AND ONLY IF it is still in
@@ -304,6 +356,26 @@ impl HotlEscalationStore for SqliteHotlEscalationRepository {
         .await
         .map_err(RepoError::from_sqlx)?;
         Ok(rows.into_iter().map(HotlPendingRow::from).collect())
+    }
+
+    async fn list_pending_view(
+        &self,
+        now: DateTime<Utc>,
+    ) -> RepoResult<Vec<PendingEscalationView>> {
+        let rows: Vec<PendingViewDbRow> = sqlx::query_as(
+            "SELECT p.escalation_id AS escalation_id, e.session_id AS session_id, \
+                    p.scope AS scope, p.tool AS tool, p.args_redacted AS args_redacted, \
+                    p.expires_at AS expires_at, p.created_at AS created_at \
+             FROM hotl_pending p \
+             JOIN hotl_escalations e ON e.id = p.escalation_id \
+             WHERE p.status = 'pending' AND p.expires_at > ? \
+             ORDER BY p.created_at ASC",
+        )
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+        Ok(rows.into_iter().map(PendingEscalationView::from).collect())
     }
 
     async fn record_decision(
