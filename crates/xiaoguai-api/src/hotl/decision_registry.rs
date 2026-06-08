@@ -481,6 +481,21 @@ impl DecisionRegistry {
         self.store.lookup(escalation_id).await
     }
 
+    /// Operator-facing pending list (parked-tick visibility, LLD-LOOP-001
+    /// §7): every unexpired pending escalation joined to its `session_id`,
+    /// so a parked turn — including a /loop tick with no SSE consumer — is
+    /// visible to the operator and actionable via `POST /v1/hotl/decisions`.
+    /// Delegates to the store; the in-memory/noop store returns empty.
+    ///
+    /// # Errors
+    /// Propagates the underlying storage failure.
+    pub async fn list_pending(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> RepoResult<Vec<xiaoguai_storage::repositories::PendingEscalationView>> {
+        self.store.list_pending_view(now).await
+    }
+
     /// Sprint-12 (S12-3 back-compat). In-memory register: no persistence,
     /// just install a oneshot sender keyed on `escalation_id`. Used by the
     /// 20+ pre-sprint-13 integration tests that don't care about the

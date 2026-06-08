@@ -741,3 +741,88 @@ mod preflight {
         );
     }
 }
+
+// ── GET /v1/hotl/pending — parked-tick visibility (LLD-LOOP-001 §7) ──────────
+
+async fn get_pending(app: axum::Router) -> (StatusCode, Value) {
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/hotl/pending")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+#[tokio::test]
+async fn pending_empty_when_store_has_none() {
+    // Default registry uses the no-op escalation store → empty list, 200.
+    let app = router(build_state(StateOptions::default()));
+    let (status, body) = get_pending(app).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn pending_lists_parked_escalations_with_session() {
+    use xiaoguai_storage::repositories::hotl_escalations::{
+        HotlEscalationRow, HotlPendingRow, SqliteHotlEscalationRepository,
+    };
+
+    // Real sqlite escalation store with one live pending row.
+    let dir = tempfile::tempdir().unwrap();
+    let pool = xiaoguai_storage::db::connect(dir.path().join("t.db").to_str().unwrap(), 5)
+        .await
+        .unwrap();
+    xiaoguai_storage::db::migrate(&pool).await.unwrap();
+    let store = SqliteHotlEscalationRepository::new(pool);
+
+    let session_id = Uuid::new_v4();
+    let parent = HotlEscalationRow {
+        id: Uuid::new_v4(),
+        session_id,
+        top_level_scope: "tool_call.execute_python".into(),
+        status: "pending".into(),
+        created_at: chrono::Utc::now(),
+        parent_id: None,
+    };
+    let child = HotlPendingRow {
+        id: Uuid::new_v4(),
+        escalation_id: Uuid::nil(),
+        scope: "tool_call.execute_python".into(),
+        tool: "execute_python".into(),
+        args_redacted: serde_json::json!({"code": "<redacted>"}),
+        status: "pending".into(),
+        expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
+        created_at: chrono::Utc::now(),
+        decided_at: None,
+        decided_by: None,
+    };
+    let escalation_id =
+        xiaoguai_storage::repositories::HotlEscalationStore::insert_pending(&store, parent, child)
+            .await
+            .unwrap();
+
+    let registry = Arc::new(DecisionRegistry::with_store(Arc::new(store)));
+    let app = router(build_state(StateOptions {
+        decision_registry: Some(registry),
+        ..Default::default()
+    }));
+
+    let (status, body) = get_pending(app).await;
+    assert_eq!(status, StatusCode::OK);
+    let arr = body.as_array().expect("array");
+    assert_eq!(arr.len(), 1, "the parked escalation must be visible");
+    assert_eq!(arr[0]["escalation_id"], escalation_id.to_string());
+    assert_eq!(
+        arr[0]["session_id"],
+        session_id.to_string(),
+        "operator must see which session/loop is parked"
+    );
+    assert_eq!(arr[0]["tool"], "execute_python");
+}

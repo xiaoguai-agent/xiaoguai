@@ -393,6 +393,53 @@ fn map_decision_err(e: HotlDecisionStoreError) -> ApiError {
     }
 }
 
+/// One pending escalation in the operator's queue (`GET /v1/hotl/pending`).
+#[derive(Debug, Serialize)]
+pub struct PendingEscalationResponse {
+    pub escalation_id: Uuid,
+    /// The conversation the parked turn belongs to. For a /loop tick this
+    /// is the loop's session — cross-reference `GET /v1/loops` to see which
+    /// loop. (`hotl_escalations` carries no `loop_id`; session is the join
+    /// key, LLD-LOOP-001 §7.)
+    pub session_id: Uuid,
+    pub scope: String,
+    pub tool: String,
+    /// Already redacted upstream (`RedactionRules`, S13-4).
+    pub args_redacted: serde_json::Value,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// `GET /v1/hotl/pending` — list every unexpired pending HOTL escalation,
+/// oldest first. This is the parked-tick visibility surface (LLD-LOOP-001
+/// §7): a /loop tick that hits a gated tool parks with no SSE consumer, so
+/// the operator discovers it here (and resolves it via
+/// `POST /v1/hotl/decisions`). Returns `[]` when nothing is pending or the
+/// escalation store doesn't support the query (legacy/in-memory).
+///
+/// # Errors
+/// `500` if the underlying store query fails.
+pub async fn list_pending(State(state): State<AppState>) -> Result<Response, ApiError> {
+    let rows = state
+        .decision_registry
+        .list_pending(Utc::now())
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("HOTL pending list: {e}")))?;
+    let body: Vec<PendingEscalationResponse> = rows
+        .into_iter()
+        .map(|r| PendingEscalationResponse {
+            escalation_id: r.escalation_id,
+            session_id: r.session_id,
+            scope: r.scope,
+            tool: r.tool,
+            args_redacted: r.args_redacted,
+            expires_at: r.expires_at,
+            created_at: r.created_at,
+        })
+        .collect();
+    Ok(Json(body).into_response())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
