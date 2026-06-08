@@ -84,6 +84,10 @@ pub enum CancelLoopError {
 enum TickOutcome {
     /// Turn ran and its finalize completed.
     Success,
+    /// The agent called `loop_done` — goal met, terminalise as `done`.
+    Done(String),
+    /// The agent called `loop_pause` — stop ticking, keep the loop paused.
+    Paused(String),
     /// Turn failed to start (HOTL deny, repo error) or errored/panicked
     /// at runtime.
     Failure(String),
@@ -382,6 +386,38 @@ async fn drive(inner: Arc<Inner>, mut row: LoopRow, cancel: CancellationToken) {
                 row.consecutive_failures = 0;
                 row.last_error = None;
             }
+            TickOutcome::Done(reason) => {
+                // The agent called `loop_done` — goal met (LLD §3). The tick
+                // itself ran (and posted its own final summary as part of the
+                // turn), so persist the tick count first, then terminalise.
+                row.ticks_run += 1;
+                row.consecutive_failures = 0;
+                persist_tick_count(&inner, &row).await;
+                let detail = if reason.is_empty() {
+                    "loop_done".to_string()
+                } else {
+                    format!("loop_done: {reason}")
+                };
+                terminalise_with_audit(
+                    &inner,
+                    &row,
+                    LoopStatus::Done,
+                    &detail,
+                    serde_json::json!({ "reason": reason, "ticks_run": row.ticks_run }),
+                )
+                .await;
+                break;
+            }
+            TickOutcome::Paused(reason) => {
+                // The agent called `loop_pause` — stop ticking, keep the row
+                // (an operator resumes or cancels it). `pause` is the only
+                // active→paused (non-terminal) transition.
+                row.ticks_run += 1;
+                row.consecutive_failures = 0;
+                persist_tick_count(&inner, &row).await;
+                pause_with_audit(&inner, &row, &reason).await;
+                break;
+            }
             TickOutcome::Failure(err) => {
                 row.ticks_run += 1;
                 row.consecutive_failures += 1;
@@ -461,14 +497,38 @@ async fn fire_tick(inner: &Inner, row: &LoopRow, cancel: &CancellationToken) -> 
     // Ticks have no SSE consumer — drop the receiver; the agent's event
     // channel sends fail fast and the run continues (LLD §3).
     drop(handle.events);
-    tokio::select! {
-        () = cancel.cancelled() => TickOutcome::LoopCancelled,
-        completion = handle.completion => match completion {
-            Ok(TurnCompletion::Completed) => TickOutcome::Success,
-            Ok(TurnCompletion::Errored) => TickOutcome::Failure("agent run errored".into()),
-            Ok(TurnCompletion::Panicked) => TickOutcome::Failure("agent task panicked".into()),
-            Err(_) => TickOutcome::Failure("turn finalize never reported".into()),
-        },
+    let loop_intent = handle.loop_intent.clone();
+    let completed = tokio::select! {
+        () = cancel.cancelled() => return TickOutcome::LoopCancelled,
+        completion = handle.completion => completion,
+    };
+    match completed {
+        Ok(TurnCompletion::Completed) => {
+            // The turn finished — did the agent end the loop via a tool?
+            // (`loop_done` / `loop_pause`, L2). The intent is recorded
+            // during the run, so it is set by the time completion fires.
+            match loop_intent.and_then(|sink| sink.lock().clone()) {
+                Some(intent) => match intent.kind {
+                    crate::loop_tools::LoopToolKind::Done => TickOutcome::Done(intent.reason),
+                    crate::loop_tools::LoopToolKind::Pause => TickOutcome::Paused(intent.reason),
+                },
+                None => TickOutcome::Success,
+            }
+        }
+        Ok(TurnCompletion::Errored | TurnCompletion::Panicked) | Err(_) => {
+            // A failed/panicked run is in an inconsistent state — ignore any
+            // tool intent it recorded (the next tick re-converges). Log it so
+            // a `loop_done` lost to a post-call error is diagnosable.
+            if loop_intent.is_some_and(|sink| sink.lock().is_some()) {
+                tracing::debug!(loop_id = %row.id, "loop tool intent dropped: tick did not complete cleanly");
+            }
+            let why = match completed {
+                Ok(TurnCompletion::Errored) => "agent run errored",
+                Ok(TurnCompletion::Panicked) => "agent task panicked",
+                _ => "turn finalize never reported",
+            };
+            TickOutcome::Failure(why.into())
+        }
     }
 }
 
@@ -566,6 +626,7 @@ async fn terminalise_with_audit(
         let action = match status {
             LoopStatus::BudgetExhausted => "loop.budget_exhausted",
             LoopStatus::Failed => "loop.failed",
+            LoopStatus::Done => "loop.done",
             _ => "loop.cancel",
         };
         let mut details = details;
@@ -578,6 +639,80 @@ async fn terminalise_with_audit(
         append_loop_audit(&inner.state, &row.created_by, action, row.id, details).await;
     }
     moved
+}
+
+/// Persist the in-memory tick count to the row before a Done/Pause
+/// transition (those transitions only update `status`, so without this the
+/// `ticks_run` increment for the final tick would be lost). Best-effort:
+/// the row is still `active` here, so `record_tick`'s guard matches; a
+/// failure just leaves the persisted count one behind and is logged.
+///
+/// Non-atomicity note: this is a separate write from the following
+/// terminalise/pause. A crash in the (sub-millisecond) window between them
+/// leaves the row `active` with the bumped count and a past `next_tick_at`,
+/// so boot replay re-arms it and the agent fires one extra tick — which
+/// self-heals (it re-evaluates and calls `loop_done` again) and is bounded
+/// by `max_ticks`/`ttl`. Not worth a transaction for L2a.
+async fn persist_tick_count(inner: &Inner, row: &LoopRow) {
+    if let Err(err) = inner
+        .store
+        .record_tick(
+            row.id,
+            row.next_tick_at,
+            row.ticks_run,
+            row.consecutive_failures,
+            row.last_error.as_deref(),
+        )
+        .await
+    {
+        tracing::warn!(loop_id = %row.id, ?err, "failed to persist final tick count");
+    }
+}
+
+/// The agent called `loop_pause`: move the row active→paused, audit, and
+/// post an operator-facing note. `pause` returns `false` if a cancel raced
+/// in first (then we don't audit — that path already did).
+async fn pause_with_audit(inner: &Inner, row: &LoopRow, reason: &str) {
+    let moved = match inner.store.pause(row.id, Some(reason)).await {
+        Ok(moved) => moved,
+        Err(err) => {
+            tracing::error!(loop_id = %row.id, ?err, "loop pause failed");
+            return;
+        }
+    };
+    if !moved {
+        return;
+    }
+    append_loop_audit(
+        &inner.state,
+        &row.created_by,
+        "loop.pause",
+        row.id,
+        serde_json::json!({
+            "session_id": row.session_id.clone(),
+            "reason": reason,
+            "ticks_run": row.ticks_run,
+        }),
+    )
+    .await;
+    // NB: there is no operator "resume" surface yet (L2a) — a paused loop
+    // can only be cancelled. Don't promise a resume the UI can't deliver.
+    let note = if reason.is_empty() {
+        format!(
+            "[loop {}] paused by the agent; it will not tick again. Cancel it with \
+             `xiaoguai loop cancel {}`.",
+            short_id(row.id),
+            short_id(row.id)
+        )
+    } else {
+        format!(
+            "[loop {}] paused: {reason}. It will not tick again; cancel it with \
+             `xiaoguai loop cancel {}`.",
+            short_id(row.id),
+            short_id(row.id)
+        )
+    };
+    post_final_message(inner, row, &note).await;
 }
 
 /// Best-effort final message into the loop's session so the operator is

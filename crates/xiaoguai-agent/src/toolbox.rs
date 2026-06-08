@@ -84,6 +84,19 @@ impl Toolbox {
         Ok(())
     }
 
+    /// Insert, overwriting any existing entry with the same name. Unlike
+    /// [`Toolbox::insert`] this never errors on a duplicate — used for
+    /// built-in control tools (e.g. /loop's `loop_done`) that must take
+    /// precedence over any same-named server tool rather than be shadowed.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Arc passed by value is intentional API"
+    )]
+    pub fn insert_or_replace(&mut self, client: Arc<dyn McpClient>, descriptor: ToolDescriptor) {
+        self.by_name
+            .insert(descriptor.name.clone(), ToolEntry { client, descriptor });
+    }
+
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&ToolEntry> {
         self.by_name.get(name)

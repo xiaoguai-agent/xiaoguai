@@ -17,7 +17,7 @@ use xiaoguai_agent::{AgentConfig, Toolbox};
 use xiaoguai_api::loops::{CreateLoopError, CreateLoopParams, LoopController};
 use xiaoguai_api::{router, AppState, CancelRegistry};
 use xiaoguai_llm::mock::ScriptStep;
-use xiaoguai_llm::{LlmBackend, MockBackend};
+use xiaoguai_llm::{LlmBackend, MockBackend, ToolCallSpec};
 use xiaoguai_storage::repositories::{
     LoopRow, LoopStatus, LoopStore, MessageRepository, SessionRepository, SqliteLoopRepository,
     SqliteMessageRepository, SqliteSessionRepository,
@@ -185,6 +185,122 @@ async fn create_arms_loop_and_ticks_persist() {
     ctrl.cancel(id, "usr_a").await.expect("cancel");
     let got = store.get(id).await.unwrap().expect("row");
     assert_eq!(got.status, LoopStatus::Cancelled);
+}
+
+/// A backend that calls one tool on the first model turn, then stops with
+/// a text reply — drives a loop tick's agent to invoke `loop_done` /
+/// `loop_pause`.
+fn call_tool_then_stop(tool: &str, args: &str) -> Arc<dyn LlmBackend> {
+    Arc::new(MockBackend::with_script(vec![
+        ScriptStep::tool_calls(vec![ToolCallSpec {
+            id: "call-1".to_string(),
+            name: tool.to_string(),
+            arguments_json: args.to_string(),
+        }]),
+        ScriptStep::text("loop wrap-up summary"),
+    ]))
+}
+
+#[tokio::test]
+async fn loop_done_tool_terminalises_as_done() {
+    let backend = call_tool_then_stop("loop_done", r#"{"reason":"CI went green"}"#);
+    let (state, store, _dir) = build_state_with_backend(backend).await;
+    create_session(&state, "sess_done").await;
+    let ctrl = LoopController::new(store.clone(), state.clone());
+
+    let row = ctrl
+        .create(CreateLoopParams {
+            session_id: "sess_done".to_string(),
+            prompt: "watch CI".to_string(),
+            interval_secs: Some(1),
+            max_ticks: Some(50),
+            ttl_secs: Some(3600),
+            created_by: None,
+        })
+        .await
+        .expect("create loop");
+    let id = row.id;
+
+    wait_until("loop terminalises as done", || {
+        let store = store.clone();
+        async move {
+            store
+                .get(id)
+                .await
+                .unwrap()
+                .is_some_and(|r| r.status == LoopStatus::Done)
+        }
+    })
+    .await;
+
+    let got = store.get(id).await.unwrap().expect("row");
+    assert_eq!(got.status, LoopStatus::Done);
+    assert_eq!(got.ticks_run, 1, "the done tick still counts");
+    // The done loop frees the session slot (no longer live).
+    ctrl.create(CreateLoopParams {
+        session_id: "sess_done".to_string(),
+        prompt: "new one".to_string(),
+        interval_secs: Some(3600),
+        max_ticks: Some(1),
+        ttl_secs: Some(3600),
+        created_by: None,
+    })
+    .await
+    .expect("done loop freed the slot");
+}
+
+#[tokio::test]
+async fn loop_pause_tool_moves_to_paused_and_keeps_slot() {
+    let backend = call_tool_then_stop("loop_pause", r#"{"reason":"waiting on a human"}"#);
+    let (state, store, _dir) = build_state_with_backend(backend).await;
+    create_session(&state, "sess_pause").await;
+    let ctrl = LoopController::new(store.clone(), state.clone());
+
+    let row = ctrl
+        .create(CreateLoopParams {
+            session_id: "sess_pause".to_string(),
+            prompt: "poll until ready".to_string(),
+            interval_secs: Some(1),
+            max_ticks: Some(50),
+            ttl_secs: Some(3600),
+            created_by: None,
+        })
+        .await
+        .expect("create loop");
+    let id = row.id;
+
+    wait_until("loop moves to paused", || {
+        let store = store.clone();
+        async move {
+            store
+                .get(id)
+                .await
+                .unwrap()
+                .is_some_and(|r| r.status == LoopStatus::Paused)
+        }
+    })
+    .await;
+
+    // Paused holds the slot — a new loop on the same session is refused…
+    let err = ctrl
+        .create(CreateLoopParams {
+            session_id: "sess_pause".to_string(),
+            prompt: "second".to_string(),
+            interval_secs: Some(3600),
+            max_ticks: Some(1),
+            ttl_secs: Some(3600),
+            created_by: None,
+        })
+        .await
+        .expect_err("paused loop still holds the slot");
+    assert!(matches!(err, CreateLoopError::AlreadyExists { existing } if existing == id));
+
+    // …but it can be cancelled.
+    ctrl.cancel(id, "usr_a").await.expect("cancel paused");
+    assert_eq!(
+        store.get(id).await.unwrap().unwrap().status,
+        LoopStatus::Cancelled
+    );
 }
 
 #[tokio::test]
