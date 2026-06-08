@@ -255,6 +255,14 @@ pub struct CreateLoopRequest {
     pub max_ticks: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl_secs: Option<u32>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub dynamic_pacing: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_interval_secs: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_interval_secs: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_total_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -262,7 +270,11 @@ pub struct LoopResponse {
     pub id: String,
     pub session_id: String,
     pub prompt: String,
+    #[serde(default = "default_pacing")]
+    pub pacing_kind: String,
     pub interval_secs: u32,
+    #[serde(default)]
+    pub max_total_tokens: u64,
     pub max_ticks: u32,
     pub ttl_secs: u32,
     pub status: String,
@@ -272,6 +284,10 @@ pub struct LoopResponse {
     pub consecutive_failures: u32,
     #[serde(default)]
     pub last_error: Option<String>,
+}
+
+fn default_pacing() -> String {
+    "fixed".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize)]

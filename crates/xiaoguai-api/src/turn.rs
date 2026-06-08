@@ -36,6 +36,10 @@ pub struct TurnInput {
     /// auditor must be able to tell loop-initiated turns from operator
     /// turns). `None` for operator turns; the details are unchanged.
     pub loop_id: Option<uuid::Uuid>,
+    /// L3 Part B: when this is a dynamic-pacing loop tick, register the
+    /// `loop_next_tick` tool so the agent can choose its own cadence.
+    /// Ignored when `loop_id` is `None`.
+    pub loop_dynamic_pacing: bool,
 }
 
 /// How a launched turn ended — reported by the finalize task over
@@ -147,7 +151,8 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
     //     is inserted here (before identity) so identity ends up the
     //     outermost System frame: [identity, loop_note, ...history].
     let (toolbox, loop_intent) = if input.loop_id.is_some() {
-        let (tb, sink) = crate::loop_tools::with_loop_tools(&state.toolbox);
+        let (tb, sink) =
+            crate::loop_tools::with_loop_tools(&state.toolbox, input.loop_dynamic_pacing);
         messages.insert(0, LlmMessage::system(LOOP_TICK_SYSTEM_NOTE));
         (Arc::new(tb), Some(sink))
     } else {

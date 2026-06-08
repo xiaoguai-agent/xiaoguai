@@ -201,6 +201,7 @@ pub async fn send_message(
             content: req.content,
             model_override: req.model,
             loop_id: None,
+            loop_dynamic_pacing: false,
         },
     )
     .await

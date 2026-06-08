@@ -720,6 +720,19 @@ enum LoopCmd {
         /// Stop after this many seconds of wall-clock life (default 86400).
         #[arg(long)]
         ttl_secs: Option<u32>,
+        /// Let the agent pace the loop via `loop_next_tick` (dynamic pacing).
+        #[arg(long)]
+        dynamic_pacing: bool,
+        /// Dynamic-pacing lower bound, seconds (default 10).
+        #[arg(long)]
+        min_interval_secs: Option<u32>,
+        /// Dynamic-pacing upper bound, seconds (default 3600).
+        #[arg(long)]
+        max_interval_secs: Option<u32>,
+        /// Stop once the session burns this many tokens (default 500000;
+        /// 0 = unlimited).
+        #[arg(long)]
+        max_total_tokens: Option<u64>,
     },
     /// List all loops (active and terminal), newest first.
     List,
@@ -1769,6 +1782,10 @@ async fn handle_loop(server: String, action: LoopCmd) -> Result<()> {
             interval_secs,
             max_ticks,
             ttl_secs,
+            dynamic_pacing,
+            min_interval_secs,
+            max_interval_secs,
+            max_total_tokens,
         } => {
             let row = client
                 .create_loop(&remote::CreateLoopRequest {
@@ -1777,6 +1794,10 @@ async fn handle_loop(server: String, action: LoopCmd) -> Result<()> {
                     interval_secs,
                     max_ticks,
                     ttl_secs,
+                    dynamic_pacing,
+                    min_interval_secs,
+                    max_interval_secs,
+                    max_total_tokens,
                 })
                 .await?;
             println!("{}", r#loop::format_detail(&row));
