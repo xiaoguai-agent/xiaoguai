@@ -204,10 +204,21 @@ pub async fn run_agent_and_reply(
     );
     // v0.12.0: route through the shared runtime so REST / IM / scheduler
     // build their agent the same way.
+    // L3 attribution: an IM conversation has no chat session, so attribute
+    // `token_usage` to a stable per-conversation label (provider + chat id);
+    // the inbound user external id is the owner-side user. `token_usage`'s
+    // `session_id` is an un-keyed TEXT column, so a synthetic id is fine.
     let ctx = RuntimeContext::new(
         state.app.backend.clone(),
         state.app.toolbox.clone(),
         state.app.agent_defaults.clone(),
+    )
+    .with_attribution(
+        Some(conversation_attribution_id(
+            msg.provider.as_str(),
+            &msg.conversation_id,
+        )),
+        Some(msg.user_external_id.clone()),
     );
 
     let prior = state
@@ -253,6 +264,17 @@ pub async fn run_agent_and_reply(
     Ok(out)
 }
 
+/// Per-conversation attribution label for `token_usage`. An IM conversation has
+/// no chat session, so usage is attributed to this
+/// `im:<provider>:<conversation_id>` label. `tenant_external_id` is intentionally
+/// dropped: under DEC-033 (single owner, no multi-tenancy) provider+conversation
+/// is unique. The label is an OPAQUE key — `conversation_id` may itself contain
+/// ':', so consumers must match the whole string, never split on ':'. Keep the
+/// `im:` prefix stable.
+fn conversation_attribution_id(provider: &str, conversation_id: &str) -> String {
+    format!("im:{provider}:{conversation_id}")
+}
+
 fn spawn_agent_reply(state: GatewayState, msg: IncomingMessage) {
     let provider_name = state.provider.name();
     tokio::spawn(async move {
@@ -266,4 +288,28 @@ fn spawn_agent_reply(state: GatewayState, msg: IncomingMessage) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::conversation_attribution_id;
+
+    #[test]
+    fn attribution_id_is_provider_and_conversation_scoped() {
+        assert_eq!(
+            conversation_attribution_id("feishu", "oc_abc"),
+            "im:feishu:oc_abc"
+        );
+    }
+
+    #[test]
+    fn attribution_id_treats_conversation_as_opaque() {
+        // Empty and colon-bearing conversation ids must not panic or be
+        // re-parsed — the label is an opaque key matched whole.
+        assert_eq!(conversation_attribution_id("slack", ""), "im:slack:");
+        assert_eq!(
+            conversation_attribution_id("slack", "C1:thread"),
+            "im:slack:C1:thread"
+        );
+    }
 }

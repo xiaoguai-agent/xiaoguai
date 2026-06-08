@@ -9,7 +9,18 @@ a long-lived API token.
 PyPI's [trusted-publisher](https://docs.pypi.org/trusted-publishers/) mechanism
 issues a short-lived OIDC token to the GitHub Actions runner at publish time.
 The workflow requests this token automatically when the job's permissions include
-`id-token: write`; no `PYPI_API_TOKEN` secret is stored in the repository.
+`id-token: write`.
+
+> **⚠️ Current state (read this first).** Only the **TestPyPI rehearsal** path is
+> wired to OIDC today: the `publish-testpypi` job in `pip-wheel.yml` has
+> `id-token: write` and no `password:`. The **production** `publish` job still
+> authenticates with the `PYPI_API_TOKEN` repo secret (`password:
+> ${{ secrets.PYPI_API_TOKEN }}`) — it is **not** OIDC yet. So:
+> - **Section 3 (TestPyPI)** is the live, actionable path — do it to enable rehearsals.
+> - **Sections 1, 2 and 6 (production OIDC)** describe an *optional future migration*
+>   that has **not** been applied. Do **not** revoke `PYPI_API_TOKEN` (§6) until the
+>   production `publish` job has actually been switched to OIDC, or production
+>   releases will break.
 
 ---
 
@@ -26,6 +37,11 @@ If the `xiaoguai` project does **not** yet exist on PyPI:
 ---
 
 ## 2. Add a Pending Publisher on PyPI (production)
+
+> **Future migration only.** The production `publish` job currently uses the
+> `PYPI_API_TOKEN` secret, not OIDC. These steps prepare a trusted publisher but
+> have **no effect** until the `publish` job in `pip-wheel.yml` is changed to drop
+> `password:` and add `permissions: id-token: write` (as `publish-testpypi` does).
 
 1. Log in at <https://pypi.org>.
 2. Navigate to the **`xiaoguai`** project page.
@@ -111,6 +127,11 @@ Then confirm the package appears at:
 ---
 
 ## 6. Rotating or removing legacy API tokens
+
+> **Production caveat.** This section applies only **after** the production
+> `publish` job has been migrated to OIDC (see §2). As long as that job still
+> carries `password: ${{ secrets.PYPI_API_TOKEN }}`, removing the token will
+> break production releases. TestPyPI rehearsals (§3) do not use a token at all.
 
 Once OIDC publishing is confirmed working:
 
