@@ -168,8 +168,40 @@ pub async fn cancel_loop(
     Ok(Json(row.into()))
 }
 
+/// `POST /v1/loops/:id/resume` — resume a paused loop (undo `loop_pause`).
+///
+/// # Errors
+/// 400 malformed id; 404 unknown; 409 not paused; 503 unwired.
+pub async fn resume_loop(
+    State(state): State<AppState>,
+    claims: Option<Extension<Claims>>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<LoopResponse>> {
+    let ctrl = controller(&state)?;
+    let id = parse_loop_id(&id)?;
+    let resumed_by = claims
+        .as_ref()
+        .map_or_else(|| "owner".to_string(), |Extension(c)| c.sub.clone());
+    let row = ctrl
+        .resume(id, &resumed_by)
+        .await
+        .map_err(resume_error_to_api)?;
+    Ok(Json(row.into()))
+}
+
 fn parse_loop_id(raw: &str) -> ApiResult<Uuid> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("malformed loop id: {raw}")))
+}
+
+fn resume_error_to_api(err: crate::loops::ResumeLoopError) -> ApiError {
+    use crate::loops::ResumeLoopError;
+    match err {
+        ResumeLoopError::NotFound => ApiError::NotFound,
+        ResumeLoopError::NotPaused(status) => {
+            ApiError::Conflict(format!("loop is not paused (status: {status})"))
+        }
+        ResumeLoopError::Repo(e) => ApiError::Storage(e),
+    }
 }
 
 fn create_error_to_api(err: CreateLoopError) -> ApiError {

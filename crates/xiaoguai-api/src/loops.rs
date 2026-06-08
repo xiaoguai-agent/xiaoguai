@@ -96,6 +96,18 @@ pub enum CancelLoopError {
     Repo(#[from] RepoError),
 }
 
+#[derive(Debug, Error)]
+pub enum ResumeLoopError {
+    #[error("loop not found")]
+    NotFound,
+    /// Only a `paused` loop can resume (active loops are already running;
+    /// terminal loops are immutable).
+    #[error("loop is not paused (status: {0})")]
+    NotPaused(String),
+    #[error(transparent)]
+    Repo(#[from] RepoError),
+}
+
 /// One tick's disposition — drives the bookkeeping in the driver loop.
 #[derive(Debug)]
 enum TickOutcome {
@@ -378,6 +390,69 @@ impl LoopController {
             .get(id)
             .await?
             .ok_or(CancelLoopError::NotFound)
+    }
+
+    /// Resume a `paused` loop: move it back to `active`, re-arm its driver
+    /// with a fresh next-tick one interval out, and audit. The agent's
+    /// `loop_pause` is undone by an operator here (LLD-LOOP-001 §3 — the
+    /// missing half of the pause/resume pair).
+    ///
+    /// # Errors
+    /// See [`ResumeLoopError`].
+    pub async fn resume(&self, id: Uuid, resumed_by: &str) -> Result<LoopRow, ResumeLoopError> {
+        let row = self
+            .inner
+            .store
+            .get(id)
+            .await
+            .map_err(ResumeLoopError::Repo)?
+            .ok_or(ResumeLoopError::NotFound)?;
+        if row.status != LoopStatus::Paused {
+            return Err(ResumeLoopError::NotPaused(row.status.as_str().to_string()));
+        }
+        let next_tick_at = Utc::now() + Duration::seconds(i64::from(row.interval_secs));
+        let moved = self
+            .inner
+            .store
+            .resume(id, next_tick_at)
+            .await
+            .map_err(ResumeLoopError::Repo)?;
+        if !moved {
+            // Raced (cancelled between our get and resume). Report the
+            // actual current status.
+            let current = self
+                .inner
+                .store
+                .get(id)
+                .await
+                .map_err(ResumeLoopError::Repo)?
+                .map_or_else(
+                    || "cancelled".to_string(),
+                    |r| r.status.as_str().to_string(),
+                );
+            return Err(ResumeLoopError::NotPaused(current));
+        }
+        append_loop_audit(
+            &self.inner.state,
+            resumed_by,
+            "loop.resume",
+            id,
+            serde_json::json!({ "session_id": row.session_id, "ticks_run": row.ticks_run }),
+        )
+        .await;
+        // Re-arm the driver against the freshened row.
+        let mut resumed = row;
+        resumed.status = LoopStatus::Active;
+        resumed.next_tick_at = next_tick_at;
+        resumed.consecutive_failures = 0;
+        resumed.last_error = None;
+        let armed_id = resumed.id;
+        self.arm(resumed);
+        self.inner
+            .store
+            .get(armed_id)
+            .await?
+            .ok_or(ResumeLoopError::NotFound)
     }
 
     /// Spawn the per-loop driver task (no-op when one is already running).
@@ -862,21 +937,18 @@ async fn pause_with_audit(inner: &Inner, row: &LoopRow, reason: &str) {
         }),
     )
     .await;
-    // NB: there is no operator "resume" surface yet (L2a) — a paused loop
-    // can only be cancelled. Don't promise a resume the UI can't deliver.
+    let sid = short_id(row.id);
     let note = if reason.is_empty() {
         format!(
-            "[loop {}] paused by the agent; it will not tick again. Cancel it with \
-             `xiaoguai loop cancel {}`.",
-            short_id(row.id),
-            short_id(row.id)
+            "[loop {sid}] paused by the agent; it will not tick until resumed. \
+             Resume with `xiaoguai loop resume {sid}` or cancel with \
+             `xiaoguai loop cancel {sid}`."
         )
     } else {
         format!(
-            "[loop {}] paused: {reason}. It will not tick again; cancel it with \
-             `xiaoguai loop cancel {}`.",
-            short_id(row.id),
-            short_id(row.id)
+            "[loop {sid}] paused: {reason}. It will not tick until resumed. \
+             Resume with `xiaoguai loop resume {sid}` or cancel with \
+             `xiaoguai loop cancel {sid}`."
         )
     };
     post_final_message(inner, row, &note).await;

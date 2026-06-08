@@ -175,6 +175,12 @@ pub trait LoopStore: Send + Sync {
     /// or missing). `paused` keeps the one-per-session slot — an operator
     /// resumes or cancels it.
     async fn pause(&self, id: Uuid, reason: Option<&str>) -> RepoResult<bool>;
+
+    /// Move a `paused` loop back to `active` and re-arm its next tick at
+    /// `next_tick_at` (the controller recomputes it from now so a stale past
+    /// timestamp doesn't fire an immediate catch-up). Returns `false` when
+    /// the row is not `paused` (active/terminal or missing).
+    async fn resume(&self, id: Uuid, next_tick_at: DateTime<Utc>) -> RepoResult<bool>;
 }
 
 /// `SQLite` implementation backed by sqlx.
@@ -395,6 +401,23 @@ impl LoopStore for SqliteLoopRepository {
              WHERE id = ? AND status = 'active'",
         )
         .bind(reason)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn resume(&self, id: Uuid, next_tick_at: DateTime<Utc>) -> RepoResult<bool> {
+        // `status = 'paused'` guard: only a paused loop resumes. Reset the
+        // failure counter so a resumed loop starts from a clean slate.
+        let result = sqlx::query(
+            "UPDATE loops \
+             SET status = 'active', next_tick_at = ?, consecutive_failures = 0, \
+                 last_error = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') \
+             WHERE id = ? AND status = 'paused'",
+        )
+        .bind(next_tick_at)
         .bind(id)
         .execute(&self.pool)
         .await

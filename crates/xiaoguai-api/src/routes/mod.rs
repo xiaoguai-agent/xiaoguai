@@ -107,6 +107,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/loops/{id}",
             get(loops::get_loop).delete(loops::cancel_loop),
         )
+        .route("/v1/loops/{id}/resume", post(loops::resume_loop))
         // v1.2.3 — HOTL boundary policy admin.
         .route(
             "/v1/hotl/policies",
