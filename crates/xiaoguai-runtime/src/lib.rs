@@ -102,6 +102,22 @@ impl RuntimeContext {
         }
     }
 
+    /// Return a clone carrying session/owner attribution (L3): the agent
+    /// stamps it onto every `ChatRequest` so the router records
+    /// session-scoped `token_usage`. Providers never see it.
+    #[must_use]
+    pub fn with_attribution(&self, session_id: Option<String>, user_id: Option<String>) -> Self {
+        let cfg = self
+            .agent_config
+            .clone()
+            .with_attribution(session_id, user_id);
+        Self {
+            backend: self.backend.clone(),
+            toolbox: self.toolbox.clone(),
+            agent_config: cfg,
+        }
+    }
+
     fn build_agent(&self) -> ReactAgent {
         ReactAgent::new(
             self.backend.clone(),

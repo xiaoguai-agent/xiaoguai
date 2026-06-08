@@ -166,9 +166,14 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
 
     // 3. Build the runtime context.
     //    v0.12.0: every call site builds via RuntimeContext.
+    //    L3: thread session + owner attribution so the router records
+    //    session-scoped token_usage (also fixes ordinary chat attribution,
+    //    not just loop ticks).
+    let actor = session.user_id.to_string();
     let model = input.model_override.unwrap_or(session.model);
     let ctx = RuntimeContext::new(state.backend.clone(), toolbox, state.agent_defaults.clone())
-        .with_model(model.clone());
+        .with_model(model.clone())
+        .with_attribution(Some(input.session_id.clone()), Some(actor.clone()));
 
     // 4. HOTL budget check — gated on the "llm_call" scope.
     //    Fail-closed: if the enforcer returns Deny, abort before spawning the
@@ -206,7 +211,7 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
     spawn_finalize_task(FinalizeCtx {
         state: state.clone(),
         session_id,
-        actor: session.user_id.to_string(),
+        actor,
         model,
         join,
         guard,
