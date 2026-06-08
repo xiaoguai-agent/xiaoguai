@@ -60,7 +60,15 @@ impl AcpDelegate for RuntimeDelegate {
         };
         messages.push(Message::user(prompt_text));
 
-        let (join, mut events) = run_streamed(&self.ctx, messages, cancel);
+        // L3 attribution: stamp the ACP session id for this turn so the
+        // `token_usage` rows it produces are attributed (the router reads it off
+        // each `ChatRequest`). NB the ACP id is `acp-<n>` from an in-process
+        // counter that resets on restart, so it is process-scoped, not globally
+        // stable — fine as an opaque usage key. Single-owner ⇒ no distinct user id.
+        let ctx = self
+            .ctx
+            .with_attribution(Some(session_id.to_string()), None);
+        let (join, mut events) = run_streamed(&ctx, messages, cancel);
 
         while let Some(ev) = events.next().await {
             if let Some(update) = mapping::map_event(&ev) {
