@@ -75,6 +75,13 @@ pub struct AgentConfig {
     /// `slide` path still runs to enforce the `history_window` cap. When
     /// `None`, behaviour is identical to pre-compaction (legacy).
     pub compaction: Option<CompactionConfig>,
+    /// Internal attribution stamped onto every `ChatRequest` this turn
+    /// makes, so the router records session-scoped `token_usage` (L3).
+    /// `None` for callers that don't track a session (most tests, CLI
+    /// one-shot chat). Never sent to a provider — the request fields are
+    /// `#[serde(skip)]`.
+    pub session_id: Option<String>,
+    pub user_id: Option<String>,
 }
 
 impl AgentConfig {
@@ -87,7 +94,18 @@ impl AgentConfig {
             model: model.into(),
             hotl_gate: None,
             compaction: None,
+            session_id: None,
+            user_id: None,
         }
+    }
+
+    /// Builder-style attach for session/user attribution (L3 usage
+    /// accounting). Chains with `AgentConfig::new(model)`.
+    #[must_use]
+    pub fn with_attribution(mut self, session_id: Option<String>, user_id: Option<String>) -> Self {
+        self.session_id = session_id;
+        self.user_id = user_id;
+        self
     }
 
     /// Builder-style attach for the HOTL gate. Chains nicely with
@@ -261,6 +279,10 @@ fn build_request(
         req.tools = tool_specs.to_vec();
         req.tool_choice = ToolChoice::Auto;
     }
+    // Internal attribution (L3): never sent on the wire, read by the router
+    // to record session-scoped token_usage.
+    req.session_id.clone_from(&config.session_id);
+    req.user_id.clone_from(&config.user_id);
     req
 }
 

@@ -64,6 +64,68 @@ async fn one_record_per_successful_call() {
 }
 
 #[tokio::test]
+async fn trait_path_recovers_attribution_from_request_metadata() {
+    // L3 regression: the `LlmBackend::chat_stream` trait impl used to call
+    // `ResolveCtx::default()`, leaving session_id NULL on every agent turn.
+    // It must now build the ctx from the request's internal metadata so the
+    // recorded usage is session-scoped. This is the path the agent uses.
+    let prov = ProviderId::new();
+    let sink = Arc::new(MemoryUsageSink::new());
+    let mut backends: HashMap<ProviderId, Arc<dyn LlmBackend>> = HashMap::new();
+    backends.insert(prov.clone(), Arc::new(MockBackend::with_response("done")));
+    let router = LlmRouter::new(
+        backends,
+        RouterConfig {
+            fallback_order: vec![prov.clone()],
+            ..Default::default()
+        },
+    )
+    .with_usage_sink(sink.clone());
+
+    let req = make_req("any")
+        .with_attribution(Some("sess_loop".to_string()), Some("usr_owner".to_string()));
+    // Drive the OBJECT-SAFE trait method (no explicit ResolveCtx).
+    let stream = LlmBackend::chat_stream(&router, req).await.expect("ok");
+    let _ = drain(stream).await;
+
+    let records = sink.records();
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].session_id.as_ref().map(AsRef::as_ref),
+        Some("sess_loop"),
+        "trait path must record the request's session_id, not NULL"
+    );
+    assert_eq!(
+        records[0].user_id.as_ref().map(AsRef::as_ref),
+        Some("usr_owner")
+    );
+}
+
+#[tokio::test]
+async fn trait_path_without_attribution_records_null_session() {
+    // A direct call with no attribution (CLI one-shot, tests) keeps the
+    // historical NULL — the change is additive, not a regression.
+    let prov = ProviderId::new();
+    let sink = Arc::new(MemoryUsageSink::new());
+    let mut backends: HashMap<ProviderId, Arc<dyn LlmBackend>> = HashMap::new();
+    backends.insert(prov.clone(), Arc::new(MockBackend::with_response("done")));
+    let router = LlmRouter::new(
+        backends,
+        RouterConfig {
+            fallback_order: vec![prov],
+            ..Default::default()
+        },
+    )
+    .with_usage_sink(sink.clone());
+
+    let stream = LlmBackend::chat_stream(&router, make_req("any"))
+        .await
+        .expect("ok");
+    let _ = drain(stream).await;
+    assert!(sink.records()[0].session_id.is_none());
+}
+
+#[tokio::test]
 async fn no_record_when_resolution_fails() {
     let sink = Arc::new(MemoryUsageSink::new());
     let router =
