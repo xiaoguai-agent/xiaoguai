@@ -28,6 +28,7 @@ pub mod sse;
 pub mod state;
 pub mod static_ui;
 pub mod today;
+pub mod turn;
 pub mod usage;
 pub mod watchers;
 pub mod workspaces;
@@ -73,8 +74,9 @@ pub use skills::{
     CatalogFile, InMemorySkillPackRepository, InstalledPackRow, KnobSchema, PackRequires,
     SkillPackEntry, SkillPackError, SkillPackRepository,
 };
-pub use state::{AppState, CancelRegistry};
+pub use state::{AppState, CancelRegistry, TurnGuard};
 pub use today::{StaticTodayReader, TodayError, TodayItem, TodayKind, TodayQuery, TodayReader};
+pub use turn::{run_turn, TurnError, TurnInput};
 pub use usage::{
     StaticUsageEntry, StaticUsageReader, UsageError, UsageGroupBy, UsageQuery, UsageReader,
     UsageReport, UsageRow,

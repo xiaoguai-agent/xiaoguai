@@ -40,9 +40,16 @@ use crate::workspaces::WorkspaceRepository;
 use xiaoguai_memory::MemoryStore;
 use xiaoguai_personas::PersonaRepository;
 
-/// Registry of cancellation tokens keyed by `session_id`. A single token per
-/// session is enough — the API contract serialises message turns within a
-/// session (the client should wait for SSE close before sending the next one).
+/// Registry of cancellation tokens keyed by `session_id` — one token per
+/// in-flight turn, and (since the /loop L1 prerequisite work) the
+/// server-side per-session turn lock: an occupied entry means a turn is
+/// running, and [`CancelRegistry::try_begin_turn`] refuses to start another.
+///
+/// Historical note: turn serialisation used to be a CLIENT convention only
+/// ("wait for SSE close before sending the next message") and `register`
+/// silently evicted the prior token — two concurrent turns on one session
+/// raced each other's finalize/persist. The lock-or-refuse semantics fix
+/// that race at its root: the token lifetime IS the lock lifetime.
 #[derive(Default)]
 pub struct CancelRegistry {
     inner: Mutex<HashMap<String, CancellationToken>>,
@@ -54,13 +61,27 @@ impl CancelRegistry {
         Self::default()
     }
 
-    /// Insert a token, evicting any prior one. Returns the freshly inserted
-    /// clone so the caller can use it as their cancellation source of truth.
-    pub fn register(&self, session_id: impl Into<String>) -> CancellationToken {
+    /// Begin a turn: mint a fresh token if (and only if) no turn is in
+    /// flight for `session_id`. Returns `None` when the session is busy —
+    /// the route maps this to 409, the loop controller skips the tick.
+    ///
+    /// The returned [`TurnGuard`] releases the entry on drop, so the lock
+    /// survives panics in the finalize task.
+    pub fn try_begin_turn(self: &Arc<Self>, session_id: impl Into<String>) -> Option<TurnGuard> {
+        use std::collections::hash_map::Entry;
+        let session_id = session_id.into();
         let token = CancellationToken::new();
-        let mut g = self.inner.lock();
-        g.insert(session_id.into(), token.clone());
-        token
+        match self.inner.lock().entry(session_id.clone()) {
+            Entry::Occupied(_) => return None,
+            Entry::Vacant(v) => {
+                v.insert(token.clone());
+            }
+        }
+        Some(TurnGuard {
+            registry: Arc::clone(self),
+            session_id,
+            token,
+        })
     }
 
     /// Cancel a session in-flight. Returns `true` if a token was found.
@@ -73,15 +94,44 @@ impl CancelRegistry {
         }
     }
 
-    /// Drop the registry entry for `session_id`. Should be called once the
-    /// loop finishes (success or error) to avoid leaking tokens.
-    pub fn drop_entry(&self, session_id: &str) {
-        self.inner.lock().remove(session_id);
-    }
-
     #[must_use]
     pub fn is_active(&self, session_id: &str) -> bool {
         self.inner.lock().contains_key(session_id)
+    }
+}
+
+/// RAII handle for one in-flight turn. Holds the session's cancellation
+/// token and the per-session turn lock; dropping it releases both.
+pub struct TurnGuard {
+    registry: Arc<CancelRegistry>,
+    session_id: String,
+    token: CancellationToken,
+}
+
+impl TurnGuard {
+    /// Clone of this turn's cancellation token — pass it to the runtime.
+    #[must_use]
+    pub fn token(&self) -> CancellationToken {
+        self.token.clone()
+    }
+
+    #[must_use]
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+}
+
+impl Drop for TurnGuard {
+    fn drop(&mut self) {
+        self.registry.inner.lock().remove(&self.session_id);
+    }
+}
+
+impl std::fmt::Debug for TurnGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TurnGuard")
+            .field("session_id", &self.session_id)
+            .finish_non_exhaustive()
     }
 }
 
@@ -273,15 +323,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cancel_registry_round_trip() {
-        let reg = CancelRegistry::new();
-        let tok = reg.register("sess_1");
+    fn turn_guard_round_trip() {
+        let reg = Arc::new(CancelRegistry::new());
+        let guard = reg.try_begin_turn("sess_1").expect("first turn starts");
+        let tok = guard.token();
         assert!(!tok.is_cancelled());
         assert!(reg.is_active("sess_1"));
         assert!(reg.cancel("sess_1"));
         assert!(tok.is_cancelled());
-        reg.drop_entry("sess_1");
+        drop(guard);
         assert!(!reg.is_active("sess_1"));
+    }
+
+    #[test]
+    fn second_turn_refused_while_first_in_flight() {
+        let reg = Arc::new(CancelRegistry::new());
+        let guard = reg.try_begin_turn("sess_1").expect("first turn starts");
+        assert!(
+            reg.try_begin_turn("sess_1").is_none(),
+            "concurrent turn on the same session must be refused"
+        );
+        // A different session is unaffected.
+        assert!(reg.try_begin_turn("sess_2").is_some());
+        drop(guard);
+        assert!(
+            reg.try_begin_turn("sess_1").is_some(),
+            "lock releases when the guard drops"
+        );
     }
 
     #[test]
