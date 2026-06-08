@@ -80,6 +80,59 @@ async fn insert_pending_round_trip() {
 }
 
 #[tokio::test]
+async fn list_pending_view_joins_session_and_filters() {
+    // Parked-tick visibility (LLD-LOOP-001 §7): the operator queue joins the
+    // pending child to its parent's session_id, and excludes expired/decided
+    // rows just like the boot-replay scan.
+    let (pool, _guard) = test_setup().await;
+    let repo = SqliteHotlEscalationRepository::new(pool.clone());
+
+    // A live pending escalation with a known session.
+    let mut parent = make_parent("tool_call.execute_python");
+    let known_session = Uuid::new_v4();
+    parent.session_id = known_session;
+    let child = make_child("tool_call.execute_python", Duration::hours(24));
+    let live_id = repo
+        .insert_pending(parent, child)
+        .await
+        .expect("insert live");
+
+    // An expired one — must be filtered out.
+    let expired_parent = make_parent("tool_call.execute_python");
+    let expired_child = make_child("tool_call.execute_python", Duration::minutes(-1));
+    repo.insert_pending(expired_parent, expired_child)
+        .await
+        .expect("insert expired");
+
+    let view = repo
+        .list_pending_view(Utc::now())
+        .await
+        .expect("list_pending_view should succeed");
+
+    assert_eq!(view.len(), 1, "only the live row is visible");
+    assert_eq!(view[0].escalation_id, live_id);
+    assert_eq!(
+        view[0].session_id, known_session,
+        "the view must carry the parent's session_id for loop correlation"
+    );
+    assert_eq!(view[0].tool, "execute_python");
+    assert_eq!(
+        view[0].args_redacted,
+        serde_json::json!({"code": "print(1)"})
+    );
+
+    // After a decision, it drops out of the queue.
+    repo.record_decision(live_id, HotlDecisionVerdict::Allowed, Some("op".into()))
+        .await
+        .expect("record_decision");
+    assert!(repo
+        .list_pending_view(Utc::now())
+        .await
+        .expect("list_pending_view")
+        .is_empty());
+}
+
+#[tokio::test]
 async fn list_pending_unexpired_excludes_expired() {
     let (pool, _guard) = test_setup().await;
     let repo = SqliteHotlEscalationRepository::new(pool.clone());

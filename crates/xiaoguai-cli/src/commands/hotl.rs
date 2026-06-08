@@ -185,7 +185,55 @@ pub async fn check(args: CheckArgs) -> Result<CheckResponse> {
 // Table formatting
 // ---------------------------------------------------------------------------
 
+/// `GET /v1/hotl/pending` — the operator queue of parked decisions
+/// (incl. /loop ticks). Returns the raw JSON rows.
+///
+/// # Errors
+/// Returns an error if the server is unreachable or returns a non-2xx.
+pub async fn pending_list(api_base: &str) -> Result<Vec<JsonValue>> {
+    let client = Client::new();
+    let resp = client
+        .get(format!("{api_base}/v1/hotl/pending"))
+        .send()
+        .await
+        .context("GET /v1/hotl/pending")?;
+    let resp = require_ok(resp).await?;
+    resp.json().await.context("decode pending list body")
+}
+
+/// Render the `hotl pending` table.
 #[must_use]
+pub fn format_pending_table(rows: &[JsonValue]) -> String {
+    use std::fmt::Write as _;
+    if rows.is_empty() {
+        return "no pending decisions\n".to_string();
+    }
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "{:<38} {:<38} {:<20} {:<24} TOOL",
+        "ESCALATION_ID", "SESSION_ID", "SCOPE", "EXPIRES_AT"
+    );
+    for r in rows {
+        let esc = r
+            .get("escalation_id")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("-");
+        let sess = r
+            .get("session_id")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("-");
+        let scope = r.get("scope").and_then(JsonValue::as_str).unwrap_or("-");
+        let expires = r
+            .get("expires_at")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("-");
+        let tool = r.get("tool").and_then(JsonValue::as_str).unwrap_or("-");
+        let _ = writeln!(out, "{esc:<38} {sess:<38} {scope:<20} {expires:<24} {tool}");
+    }
+    out
+}
+
 pub fn format_policy_table(rows: &[JsonValue]) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
