@@ -491,16 +491,18 @@ export function ChatPage({ onSessionCreated }: Props) {
             setHotlResolved(null);
           }}
           onDecision={async (verdict, raisePolicy) => {
-            await client.submitHotlDecision({
+            const res = await client.submitHotlDecision({
               escalation_id: hotlPending.escalation_id,
               verdict,
               decided_by: 'chat-ui',
               raise_policy: raisePolicy,
             });
-            // Sprint-12: do NOT unmount the banner here. HotlBanner waits
-            // for the matching `hotl_resolved` SSE event (primary signal)
-            // or its internal 30 s defensive fallback (SSE-interrupted
-            // case) and then invokes `onCleared` above.
+            // HotlBanner uses `resumed` to decide its clear path: when
+            // `resumed:false` no `hotl_resolved` SSE will arrive (no loop
+            // was suspended — the v1.8.x norm), so it clears optimistically
+            // rather than waiting the 30 s fallback. `resumed:true` keeps
+            // the SSE-primary + fallback path.
+            return { resumed: res.resumed };
           }}
         />
       )}

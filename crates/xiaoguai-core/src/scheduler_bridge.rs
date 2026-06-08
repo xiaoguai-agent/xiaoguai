@@ -73,7 +73,7 @@ use xiaoguai_runtime::RuntimeContext;
 use xiaoguai_scheduler::{
     AuditAppender, EventSender, ExecutionOutcome, FileWatchRoute, FileWatchSource, JobExecutor,
     JobRepository, JobRunner, ScheduledJob, ScheduledSessionWriter, SqliteJobRepository, Trigger,
-    TriggerSource, WebhookSource,
+    TriggerSource, WebhookRoute, WebhookSource,
 };
 use xiaoguai_storage::repositories::{MessageRepository, SessionRepository};
 use xiaoguai_types::{
@@ -292,12 +292,21 @@ fn build_rationale(job: &ScheduledJob) -> String {
 
 pub struct SqliteScheduledJobUpserter {
     repo: Arc<SqliteJobRepository>,
+    /// The live webhook source. When a webhook-triggered job is upserted at
+    /// runtime, its `route_id` is registered here so the route is fire-able
+    /// immediately — without it, only jobs present at boot (when the source's
+    /// route table is built) could be triggered, so a freshly-created webhook
+    /// job 404'd until a restart.
+    webhook_source: Option<Arc<WebhookSource>>,
 }
 
 impl SqliteScheduledJobUpserter {
     #[must_use]
-    pub fn new(repo: Arc<SqliteJobRepository>) -> Self {
-        Self { repo }
+    pub fn new(repo: Arc<SqliteJobRepository>, webhook_source: Option<Arc<WebhookSource>>) -> Self {
+        Self {
+            repo,
+            webhook_source,
+        }
     }
 }
 
@@ -310,6 +319,15 @@ impl ScheduledJobUpserter for SqliteScheduledJobUpserter {
             .upsert(&job)
             .await
             .map_err(|e| ScheduledJobUpsertError::Repository(e.to_string()))?;
+        // Runtime route registration (see field doc): an enabled webhook job
+        // must be fire-able the moment it's created, not only after a restart.
+        if job.enabled {
+            if let Trigger::Webhook { route_id } = &job.trigger {
+                if let Some(src) = &self.webhook_source {
+                    src.add_route(WebhookRoute::new(route_id.clone(), job.id.clone()));
+                }
+            }
+        }
         Ok(())
     }
 }

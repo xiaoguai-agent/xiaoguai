@@ -205,11 +205,25 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
             }
         }
     }
-    let (backend, default_model): (Arc<dyn LlmBackend>, String) = if rows.is_empty() {
-        tracing::warn!(
-            "serve: llm_providers table is empty — falling back to MockBackend. \
-             Use `xiaoguai provider register` to populate it."
-        );
+    // Test/e2e affordance: force the deterministic MockBackend regardless of
+    // the seeded provider rows. The default-seeded providers (ollama-local,
+    // minimax) need a running Ollama / an API key, so a hermetic e2e or smoke
+    // stack can't produce a real reply — set XIAOGUAI_LLM__MOCK=true to get a
+    // deterministic one. NEVER set in production.
+    let force_mock = std::env::var("XIAOGUAI_LLM__MOCK")
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(false);
+    let (backend, default_model): (Arc<dyn LlmBackend>, String) = if rows.is_empty() || force_mock {
+        if force_mock {
+            tracing::warn!(
+                "serve: XIAOGUAI_LLM__MOCK set — using deterministic MockBackend (test/e2e only)"
+            );
+        } else {
+            tracing::warn!(
+                "serve: llm_providers table is empty — falling back to MockBackend. \
+                 Use `xiaoguai provider register` to populate it."
+            );
+        }
         (
             Arc::new(MockBackend::with_response(
                 "No LLM providers configured. Register one via `xiaoguai provider register`.",
@@ -572,9 +586,11 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         let pusher: Arc<dyn xiaoguai_api::scheduler::WebhookPusher> = Arc::new(
             crate::scheduler_bridge::WebhookSourceAdapter::new(webhook_source.clone()),
         );
-        let upserter: Arc<dyn xiaoguai_api::scheduler::ScheduledJobUpserter> = Arc::new(
-            crate::scheduler_bridge::SqliteScheduledJobUpserter::new(pg_jobs.clone()),
-        );
+        let upserter: Arc<dyn xiaoguai_api::scheduler::ScheduledJobUpserter> =
+            Arc::new(crate::scheduler_bridge::SqliteScheduledJobUpserter::new(
+                pg_jobs.clone(),
+                Some(webhook_source.clone()),
+            ));
         // v0.12.x.1: admin-ui Scheduler pane reader + "Run now" handle.
         let jobs_reader: Arc<dyn xiaoguai_api::scheduler::ScheduledJobsReader> = Arc::new(
             crate::scheduler_bridge::SqliteScheduledJobsReader::new(pg_jobs, runner.clone()),

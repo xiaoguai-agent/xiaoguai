@@ -159,6 +159,8 @@ test.describe('admin-ui Audit pane — compliance export', () => {
     const downloadPromise = page.waitForEvent('download');
     await page.locator('[data-testid="audit-export-btn"]').click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toBe('audit.zip');
+    // Filename is `audit-<tenant>-<timestamp>.<ext>` — assert the structural
+    // shape, not a fixed `audit.zip`, so format/timestamp changes don't break.
+    expect(download.suggestedFilename()).toMatch(/^audit-.*\.(json|zip|csv)$/);
   });
 });

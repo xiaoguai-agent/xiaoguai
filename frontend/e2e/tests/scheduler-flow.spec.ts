@@ -57,13 +57,38 @@ test.describe('Scheduler webhook-route flow', () => {
         await expect(tokenRow).toBeVisible({ timeout: 10_000 });
         webhookToken = await tokenRow.textContent();
       } else {
-        // Fallback: mint a webhook token directly via the admin API. The
-        // real endpoint is POST /v1/admin/scheduler/tokens keyed on route_id
+        // Fallback (admin-ui has no inline create-token button yet): set up
+        // the route via the admin API. A webhook route is only fire-able once
+        // a webhook-triggered job is bound to it, so create that job first,
+        // then mint a token for the same route_id.
+        const routeId = `e2e-route-${Date.now()}`;
+        const nowIso = new Date().toISOString();
+        await request.post(`${BASE_URL}/v1/admin/scheduler/jobs`, {
+          data: {
+            id: `job_e2e_${Date.now()}`,
+            name: 'e2e-webhook',
+            description: null,
+            trigger: { type: 'webhook', route_id: routeId },
+            payload: { prompt: 'e2e ping' },
+            retry_policy: {
+              max_attempts: 1,
+              initial_backoff_secs: 1,
+              multiplier: 2.0,
+              max_backoff_secs: 60,
+            },
+            sinks: [],
+            enabled: true,
+            next_fire_at: null,
+            last_fire_at: null,
+            created_at: nowIso,
+            updated_at: nowIso,
+          },
+        });
+        // Mint endpoint is POST /v1/admin/scheduler/tokens keyed on route_id
         // (tenant_id is a vestigial echoed column, see header note).
-        const resp = await request.post(
-          `${BASE_URL}/v1/admin/scheduler/tokens`,
-          { data: { tenant_id: 'ten_dev', route_id: `e2e-route-${Date.now()}` } },
-        );
+        const resp = await request.post(`${BASE_URL}/v1/admin/scheduler/tokens`, {
+          data: { tenant_id: 'ten_dev', route_id: routeId },
+        });
         if (resp.ok()) {
           const body = (await resp.json()) as { token: string; route_id: string };
           webhookToken = body.token;
@@ -88,7 +113,9 @@ test.describe('Scheduler webhook-route flow', () => {
         : `${BASE_URL}${WEBHOOK_ROUTE_PATH}/default`;
 
       const fireResp = await request.post(routePath, {
-        headers: webhookToken ? { Authorization: `Bearer ${webhookToken}` } : {},
+        // The public webhook route authenticates via X-Xiaoguai-Token (NOT a
+        // Bearer header) — see routes/mod.rs scheduler_public mount.
+        headers: webhookToken ? { 'X-Xiaoguai-Token': webhookToken } : {},
         data: { trigger: 'e2e-test', ts: new Date().toISOString() },
       });
 

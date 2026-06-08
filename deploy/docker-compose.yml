@@ -28,6 +28,16 @@ services:
       XDG_DATA_HOME: /data
       # The cache is process-local (in-process DashMap) — no Redis/Valkey sidecar.
       RUST_LOG: info,sqlx=warn
+      # E2E/dev: wire the optional subsystems the e2e suite exercises so they
+      # don't return 503. These are NOT production secrets — a real deploy
+      # overrides them. Without the audit signing key, /v1/admin/audit*,
+      # /v1/audit/exports return 503; without the scheduler enabled,
+      # /v1/admin/scheduler/* return 503.
+      XIAOGUAI_AUDIT_SIGNING_KEY: e2e-dev-audit-hmac-key-not-for-production
+      XIAOGUAI_SCHEDULER__ENABLED: "true"
+      # Deterministic agent replies for e2e/smoke — the seeded providers
+      # (ollama-local, minimax) need a running Ollama / an API key. NEVER in prod.
+      XIAOGUAI_LLM__MOCK: "true"
     volumes:
       - xiaoguai_data:/data
     ports:

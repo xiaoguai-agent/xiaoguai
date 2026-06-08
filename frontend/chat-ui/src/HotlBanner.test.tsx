@@ -93,7 +93,7 @@ describe('HotlBanner', () => {
   // ── sprint-11 S11-3b — inline decision flow ─────────────────────────────
 
   it('Approve click invokes onDecision("allow", undefined) when adjust panel is closed', async () => {
-    const onDecision = vi.fn().mockResolvedValue(undefined);
+    const onDecision = vi.fn().mockResolvedValue({ resumed: false });
     render(<HotlBanner pending={base} onDecision={onDecision} />);
 
     fireEvent.click(screen.getByTestId('hotl-banner-approve'));
@@ -102,7 +102,7 @@ describe('HotlBanner', () => {
   });
 
   it('Reject click invokes onDecision("deny", undefined) when adjust panel is closed', async () => {
-    const onDecision = vi.fn().mockResolvedValue(undefined);
+    const onDecision = vi.fn().mockResolvedValue({ resumed: false });
     render(<HotlBanner pending={base} onDecision={onDecision} />);
 
     fireEvent.click(screen.getByTestId('hotl-banner-reject'));
@@ -111,7 +111,7 @@ describe('HotlBanner', () => {
   });
 
   it('Adjust panel: clicking Approve without rationale shows validation error and does not call onDecision', async () => {
-    const onDecision = vi.fn().mockResolvedValue(undefined);
+    const onDecision = vi.fn().mockResolvedValue({ resumed: false });
     render(<HotlBanner pending={base} onDecision={onDecision} />);
 
     fireEvent.click(screen.getByTestId('hotl-banner-adjust'));
@@ -127,10 +127,10 @@ describe('HotlBanner', () => {
   });
 
   it('disables all action buttons and shows "Submitting…" while onDecision is in flight', async () => {
-    let resolveFn: (() => void) | undefined;
+    let resolveFn: ((v: { resumed: boolean }) => void) | undefined;
     const onDecision = vi.fn(
       () =>
-        new Promise<void>((res) => {
+        new Promise<{ resumed: boolean }>((res) => {
           resolveFn = res;
         }),
     );
@@ -146,7 +146,7 @@ describe('HotlBanner', () => {
     expect(screen.getByTestId('hotl-banner-reject')).toBeDisabled();
     expect(screen.getByTestId('hotl-banner-adjust')).toBeDisabled();
 
-    resolveFn?.();
+    resolveFn?.({ resumed: false });
     await waitFor(() => expect(onDecision).toHaveBeenCalledTimes(1));
   });
 
@@ -235,7 +235,7 @@ describe('HotlBanner', () => {
 
     it('defensive_fallback_fires_at_30s_when_sse_silent: 30s timer clears after local submit when SSE never arrives', async () => {
       const onCleared = vi.fn();
-      const onDecision = vi.fn().mockResolvedValue(undefined);
+      const onDecision = vi.fn().mockResolvedValue({ resumed: true });
       render(
         <HotlBanner
           pending={base}
@@ -295,7 +295,7 @@ describe('HotlBanner', () => {
 
     it('sibling_tab_conflict_reverts_local_state when decided_by differs from local actor', async () => {
       const onCleared = vi.fn();
-      const onDecision = vi.fn().mockResolvedValue(undefined);
+      const onDecision = vi.fn().mockResolvedValue({ resumed: true });
       const { rerender } = render(
         <HotlBanner
           pending={base}
@@ -333,7 +333,7 @@ describe('HotlBanner', () => {
 
     it('sse_resolved_cancels_pending_fallback_timer: only one onCleared call', async () => {
       const onCleared = vi.fn();
-      const onDecision = vi.fn().mockResolvedValue(undefined);
+      const onDecision = vi.fn().mockResolvedValue({ resumed: true });
       const { rerender } = render(
         <HotlBanner
           pending={base}
