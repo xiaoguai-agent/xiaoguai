@@ -111,6 +111,7 @@ fn build_state(forker: Option<Arc<dyn SessionForker>>) -> (AppState, Arc<InMemor
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
+        loops: None,
         decision_registry: std::sync::Arc::new(
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),

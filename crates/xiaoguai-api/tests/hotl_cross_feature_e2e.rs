@@ -219,6 +219,7 @@ fn build_state(
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
+        loops: None,
         decision_registry: registry,
     }
 }

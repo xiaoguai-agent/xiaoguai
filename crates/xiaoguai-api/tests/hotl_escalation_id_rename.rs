@@ -74,6 +74,7 @@ fn build_state(decision_store: Arc<dyn HotlDecisionStore>) -> AppState {
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         watchers: None,
+        loops: None,
         decision_registry: Arc::new(DecisionRegistry::new()),
     }
 }

@@ -4,6 +4,7 @@ pub mod admin;
 pub mod audit_exports;
 pub mod hotl;
 pub mod hotl_decisions;
+pub mod loops;
 pub mod mcp;
 pub mod memory;
 pub mod outcomes;
@@ -97,6 +98,15 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}/fork", post(sessions::fork_session))
         // v1.1.1 — token-usage aggregation.
         .route("/v1/usage", get(usage::list_usage))
+        // /loop L1 (DEC-039) — session-scoped recurring agent turns.
+        .route(
+            "/v1/loops",
+            get(loops::list_loops).post(loops::create_loop),
+        )
+        .route(
+            "/v1/loops/{id}",
+            get(loops::get_loop).delete(loops::cancel_loop),
+        )
         // v1.2.3 — HOTL boundary policy admin.
         .route(
             "/v1/hotl/policies",
