@@ -131,6 +131,12 @@ pub trait LoopStore: Send + Sync {
         status: LoopStatus,
         reason: Option<&str>,
     ) -> RepoResult<bool>;
+
+    /// Move an `active` loop to `paused` (the agent called `loop_pause`).
+    /// Returns `false` when the row is not `active` (already paused/terminal
+    /// or missing). `paused` keeps the one-per-session slot — an operator
+    /// resumes or cancels it.
+    async fn pause(&self, id: Uuid, reason: Option<&str>) -> RepoResult<bool>;
 }
 
 /// `SQLite` implementation backed by sqlx.
@@ -318,6 +324,21 @@ impl LoopStore for SqliteLoopRepository {
              WHERE id = ? AND status IN ('active', 'paused')",
         )
         .bind(status.as_str())
+        .bind(reason)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn pause(&self, id: Uuid, reason: Option<&str>) -> RepoResult<bool> {
+        let result = sqlx::query(
+            "UPDATE loops \
+             SET status = 'paused', last_error = COALESCE(?, last_error), \
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') \
+             WHERE id = ? AND status = 'active'",
+        )
         .bind(reason)
         .bind(id)
         .execute(&self.pool)
