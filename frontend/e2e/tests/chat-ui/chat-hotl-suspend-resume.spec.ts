@@ -91,7 +91,6 @@ test.describe('chat-ui HotL banner', () => {
                   type: 'hotl_pending',
                   escalation_id: ESCALATION_ID,
                   scope: 'fs.write',
-                  reason: 'attempted to write outside the workspace',
                 },
               },
             ]),
@@ -106,14 +105,15 @@ test.describe('chat-ui HotL banner', () => {
     await page.locator('textarea[placeholder]').fill('Please run a risky tool');
     await page.locator('button[aria-label="Send message"]').click();
 
-    // Banner renders with the correct scope text.
+    // Banner renders with the title + the paused scope text. NOTE: HotlBanner
+    // renders only the `scope` (interpolated into `scope_label`); it does NOT
+    // render a free-form `reason`, and `HotlPendingState` carries no `reason`
+    // field — so we assert on title + scope, not on a reason string (the
+    // pre-pivot suite's reason assertion was stale and always failed).
     const banner = page.locator('.hotl-banner');
     await expect(banner).toBeVisible({ timeout: 10_000 });
     await expect(banner).toContainText('Human approval required');
     await expect(banner).toContainText('fs.write');
-    await expect(banner).toContainText(
-      'attempted to write outside the workspace',
-    );
     // The escalation ID is encoded into the approval-queue link href.
     await expect(banner.locator('a')).toHaveAttribute(
       'href',
@@ -142,7 +142,6 @@ test.describe('chat-ui HotL banner', () => {
                   type: 'hotl_pending',
                   escalation_id: ESCALATION_ID,
                   scope: 'fs.write',
-                  reason: 'sandbox boundary',
                 },
               },
             ]),
@@ -187,7 +186,6 @@ test.describe('chat-ui HotL inline approve/reject (sprint-11 S11-3b — LLD §4.
                   type: 'hotl_pending',
                   escalation_id: ESCALATION_ID,
                   scope: 'fs.write',
-                  reason: 'sandbox boundary',
                 },
               },
             ]),

@@ -8,14 +8,26 @@ End-to-end test suite for `chat-ui` and `admin-ui` using [Playwright](https://pl
 frontend/e2e/
 ├── playwright.config.ts          # Multi-browser config (chromium / firefox / webkit)
 ├── fixtures/
-│   └── seed.ts                   # API helpers — create tenants, sessions, providers
+│   └── seed.ts                   # API helpers — create sessions + providers (single-owner)
 └── tests/
     ├── chat-ui/
-    │   └── golden-path.spec.ts   # Chat input, send message, assert reply, Branch fork
+    │   ├── golden-path.spec.ts            # Chat input → send → structural bubble + session assertions, Branch fork
+    │   ├── chat-ai-disclosure.spec.ts     # AI disclosure banner: default render / dismiss / persist
+    │   ├── chat-hotl-suspend-resume.spec.ts  # HotL banner mount/clear + approve/deny/sibling (mocked SSE)
+    │   ├── chat-hotl-escalation-id.spec.ts   # escalation_id wire-shape regression (mocked SSE)
+    │   └── chat-sse-reconnect.spec.ts        # partial preserved on drop + reconnect banner (mocked SSE)
     ├── admin-ui/
-    │   └── golden-path.spec.ts   # Navigate every pane; language-switcher test (.skip)
-    └── scheduler-flow.spec.ts    # Create webhook route, fire it, assert in Jobs table
+    │   ├── golden-path.spec.ts        # Navigate every pane + language switcher (zh-CN)
+    │   ├── admin-personas.spec.ts     # Personas CRUD against mocked /v1/personas
+    │   └── admin-audit-export.spec.ts # Audit rows + ChainBadge + compliance export (mocked)
+    └── scheduler-flow.spec.ts         # Mint webhook token, fire route, assert in Jobs table
 ```
+
+> **Single-owner (DEC-033).** This product has no tenants and no MockBackend.
+> The chat-ui/admin-ui golden paths run against a real stack and assert
+> **structural** outcomes (bubbles/routes/headings render), never specific LLM
+> output — a real model reply is not guaranteed in CI. The HotL / SSE / audit /
+> personas specs are hermetic: they mock the backend via `page.route()`.
 
 ## Prerequisites
 
@@ -114,8 +126,10 @@ pnpm exec playwright test --update-snapshots
 
 | Test | Reason | Unblock condition |
 |------|--------|-------------------|
-| `admin-ui language switcher changes UI language to zh-CN` | C19 i18n not yet merged | Remove `.skip` after language-switcher component lands |
-| `Branch button` (conditional skip) | MockBackend may not persist `messageId` | Passes once real PG backend is wired end-to-end |
+| `chat-ui Branch from here …` (conditional skip) | No deterministic LLM in CI — a persisted assistant reply (and thus the Branch button) is not guaranteed | Runs fully when the stack is configured with a model that produces a persisted reply |
+
+The pre-pivot `admin-ui language switcher` skip was removed: i18n (C19) has
+landed, so that test now runs and asserts the nav title flips to Chinese.
 
 ## CI gate
 
