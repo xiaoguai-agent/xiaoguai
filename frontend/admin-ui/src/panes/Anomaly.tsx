@@ -348,10 +348,8 @@ function SparklineTile({ detectorId, buckets }: SparklineTileProps): JSX.Element
             <XAxis dataKey="date" hide />
             <YAxis allowDecimals={false} tick={{ fontSize: 9 }} />
             <Tooltip
-              formatter={(v: number) =>
-                [`${v} fires`, '']
-              }
-              labelFormatter={(label: string) => label}
+              formatter={(v) => [`${v} fires`, '']}
+              labelFormatter={(label) => label}
             />
             <Line
               type="monotone"
