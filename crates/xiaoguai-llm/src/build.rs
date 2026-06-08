@@ -310,6 +310,9 @@ mod tests {
             tool_choice: crate::ToolChoice::Auto,
             temperature: None,
             max_tokens: None,
+            session_id: None,
+            user_id: None,
+            request_id: None,
         };
         assert!(router.resolve(ctx, &req).is_empty());
     }
@@ -366,6 +369,9 @@ mod tests {
             tool_choice: crate::ToolChoice::Auto,
             temperature: None,
             max_tokens: None,
+            session_id: None,
+            user_id: None,
+            request_id: None,
         };
         let resolved = router.resolve(ctx, &req);
         assert_eq!(resolved, vec![b.id.clone(), c.id.clone(), a.id.clone()]);
@@ -399,6 +405,9 @@ mod tests {
             tool_choice: crate::ToolChoice::Auto,
             temperature: None,
             max_tokens: None,
+            session_id: None,
+            user_id: None,
+            request_id: None,
         };
         let resolved = router.resolve(ctx, &req);
         assert_eq!(

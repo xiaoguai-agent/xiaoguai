@@ -182,6 +182,8 @@ impl WorkerAgent {
                 model: self.model.clone(),
                 hotl_gate: None,
                 compaction: None,
+                session_id: None,
+                user_id: None,
             };
             let react = ReactAgent::new(self.backend.clone(), Toolbox::new(), inner_cfg);
             let cancel = CancellationToken::new();

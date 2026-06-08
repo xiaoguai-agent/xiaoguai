@@ -133,6 +133,20 @@ pub struct ChatRequest {
     pub tools: Vec<ToolSpec>,
     #[serde(default, skip_serializing_if = "is_default_tool_choice")]
     pub tool_choice: ToolChoice,
+    /// Internal routing/attribution metadata — NEVER sent on the wire to a
+    /// provider (`#[serde(skip)]`). The `LlmRouter` reads these in its
+    /// `LlmBackend::chat_stream` impl to build a `ResolveCtx`, so the
+    /// `token_usage` row it records carries the right session/user. Set by
+    /// the agent from `AgentConfig`; `None` on direct/provider-only calls.
+    #[serde(skip)]
+    pub session_id: Option<String>,
+    #[serde(skip)]
+    pub user_id: Option<String>,
+    /// Intentionally unwired on the agent path for now — `build_request`
+    /// stamps only session/user. The router still reads it (so an explicit
+    /// caller can set it), but `AgentConfig` has no `request_id` yet.
+    #[serde(skip)]
+    pub request_id: Option<String>,
 }
 
 fn is_default_tool_choice(c: &ToolChoice) -> bool {
@@ -150,7 +164,19 @@ impl ChatRequest {
             max_tokens: None,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
+            session_id: None,
+            user_id: None,
+            request_id: None,
         }
+    }
+
+    /// Attach internal session/user attribution. The router uses it to
+    /// record session-scoped `token_usage`; providers never see it.
+    #[must_use]
+    pub fn with_attribution(mut self, session_id: Option<String>, user_id: Option<String>) -> Self {
+        self.session_id = session_id;
+        self.user_id = user_id;
+        self
     }
 }
 

@@ -228,7 +228,21 @@ impl LlmRouter {
 #[async_trait]
 impl LlmBackend for LlmRouter {
     async fn chat_stream(&self, req: ChatRequest) -> Result<ChatStream, LlmError> {
-        self.chat_stream(ResolveCtx::default(), req).await
+        // Recover session/user attribution from the request's internal
+        // metadata (set by the agent from `AgentConfig`) so the recorded
+        // `token_usage` row is session-scoped — the previous
+        // `ResolveCtx::default()` left `session_id` NULL on every agent
+        // turn. Owned locals outlive the borrow `ResolveCtx` takes.
+        let session = req.session_id.clone().map(SessionId::from);
+        let user = req.user_id.clone().map(UserId::from);
+        let request_id = req.request_id.clone();
+        let ctx = ResolveCtx {
+            explicit_provider: None,
+            user_id: user.as_ref(),
+            session_id: session.as_ref(),
+            request_id: request_id.as_deref(),
+        };
+        self.chat_stream(ctx, req).await
     }
 
     fn name(&self) -> &'static str {
