@@ -9,12 +9,18 @@
  * Preconditions:
  *   - xiaoguai-core is running on BASE_URL (default http://localhost:7600).
  *   - admin-ui is running on ADMIN_UI_URL (default http://localhost:5174).
- *   - A webhook route token can be created via POST
- *     /v1/admin/scheduler/webhook-tokens.
+ *   - A webhook route token can be minted via POST
+ *     /v1/admin/scheduler/tokens (admin-bearer guarded). The public route
+ *     that fires the webhook is POST /v1/scheduler/webhooks/:route_id.
  *
  * The "Recent Runs" pane is the Jobs table after a Run-now action, since
  * the UI does not have a dedicated "recent runs" list yet. The test checks
  * that `last_fire_at` is populated for the job after the webhook fires.
+ *
+ * Single-owner notes (DEC-033): this spec is chromium-only (PR #240). The
+ * mint endpoint is `/v1/admin/scheduler/tokens` and is keyed on `route_id`;
+ * `tenant_id` is a vestigial column the backend still echoes but no longer
+ * scopes on. When the mint endpoint is unwired the test skips gracefully.
  */
 
 import { test, expect } from '@playwright/test';
@@ -51,10 +57,12 @@ test.describe('Scheduler webhook-route flow', () => {
         await expect(tokenRow).toBeVisible({ timeout: 10_000 });
         webhookToken = await tokenRow.textContent();
       } else {
-        // Fallback: create a webhook token directly via the API.
+        // Fallback: mint a webhook token directly via the admin API. The
+        // real endpoint is POST /v1/admin/scheduler/tokens keyed on route_id
+        // (tenant_id is a vestigial echoed column, see header note).
         const resp = await request.post(
-          `${BASE_URL}/v1/admin/scheduler/webhook-tokens`,
-          { data: { tenant_id: 'ten_dev', label: 'e2e-test-token' } },
+          `${BASE_URL}/v1/admin/scheduler/tokens`,
+          { data: { tenant_id: 'ten_dev', route_id: `e2e-route-${Date.now()}` } },
         );
         if (resp.ok()) {
           const body = (await resp.json()) as { token: string; route_id: string };

@@ -1,20 +1,25 @@
 /**
- * admin-ui golden-path e2e suite.
+ * admin-ui golden-path e2e suite (single-owner — DEC-033).
  *
  * Flow:
  *   1. Open admin-ui (baseURL = http://localhost:5174).
- *   2. Navigate to each sidebar pane: Today, Usage, Sessions (Scheduler
- *      Jobs tab), Jobs, Scheduler, Eval, Audit, Providers, MCP Servers,
- *      MCP Marketplace.
+ *   2. Navigate to each sidebar pane: Today, Usage, Scheduler, Eval, Audit,
+ *      Providers, MCP Servers, MCP Marketplace.
  *   3. Assert each pane renders non-empty content (heading present, no
  *      uncaught error banner with "undefined" text).
  *   4. Scheduler — assert tabs render; optionally assert the Jobs table
  *      header is visible.
- *   5. Language switcher — .skip until C19 i18n lands.
+ *   5. Language switcher — i18n has landed (C19); assert switching to zh-CN
+ *      re-renders the nav title in Chinese.
  *
- * The admin-ui has no mandatory login gate in dev mode.
- * All API calls use DEV_USER_ID/DEV_TENANT_ID so MockBackend returns
- * empty-but-valid lists (not 401s).
+ * Single-owner notes (vs. the pre-pivot suite):
+ *   - There is NO MockBackend and no tenants. The admin-ui runs open by
+ *     default (the AuthGate 401 modal appears only when the owner sets a
+ *     password). Panes that need data degrade to empty states against an
+ *     empty embedded SQLite store, so the structural heading assertions hold
+ *     regardless of seeded content.
+ *   - There is no `/tenants` route — multi-tenancy was removed, so the
+ *     pre-pivot "Tenants pane" test was dropped.
  */
 
 import { test, expect } from '@playwright/test';
@@ -84,10 +89,6 @@ test.describe('admin-ui navigation — all panes', () => {
     await navigateAndExpectHeading(page, '/marketplace', /marketplace/i);
   });
 
-  test('Tenants pane renders heading', async ({ page }) => {
-    await navigateAndExpectHeading(page, '/tenants', /tenant/i);
-  });
-
   test('root / redirects to /today', async ({ page }) => {
     await page.goto('/');
     await expect(page).toHaveURL(/\/today/, { timeout: 5_000 });
@@ -103,7 +104,6 @@ test.describe('admin-ui navigation — all panes', () => {
       '/providers',
       '/mcp-servers',
       '/marketplace',
-      '/tenants',
     ];
 
     for (const route of routes) {
@@ -156,18 +156,27 @@ test.describe('admin-ui Scheduler pane — Jobs tab detail', () => {
   });
 });
 
-test.describe('admin-ui language switcher (C19 i18n — pending)', () => {
-  test.skip(
-    true,
-    'i18n (C19) has not landed yet — enable once language switcher component is merged',
-  );
+test.describe('admin-ui language switcher (C19 i18n — landed)', () => {
+  test('switching to zh-CN re-renders the nav title in Chinese', async ({ page }) => {
+    await page.goto('/today');
+    // The `<LanguageSwitcher>` renders a `<select class="lang-select">` in the
+    // sidebar nav (admin-ui/src/components/LanguageSwitcher.tsx) populated from
+    // SUPPORTED_LANGUAGES (en / zh-CN / ja).
+    const switcher = page.locator('select.lang-select');
+    await expect(switcher).toBeVisible({ timeout: 10_000 });
 
-  test('language switcher changes UI language to zh-CN', async ({ page }) => {
-    await page.goto('/');
-    // Expected selector once i18n lands: a select or button for locale.
-    const switcher = page.locator('[data-testid="lang-switcher"], select#lang');
+    // English nav title is "Xiaoguai · Admin"; zh-CN is "小怪 · 管理后台".
+    const navTitle = page.locator('nav h2').first();
+    await expect(navTitle).toContainText('Admin');
+
     await switcher.selectOption('zh-CN');
-    // Heading in Chinese — adjust text once translations are final.
-    await expect(page.locator('h1, h2').first()).toContainText(/今天|审计/);
+
+    // i18n switches synchronously — the nav title (and the Today link) flip to
+    // Chinese. Assert structurally on the localized strings, not exact copy of
+    // any pane body.
+    await expect(navTitle).toContainText('管理后台', { timeout: 5_000 });
+    await expect(
+      page.locator('nav a').filter({ hasText: '今日' }).first(),
+    ).toBeVisible({ timeout: 5_000 });
   });
 });
