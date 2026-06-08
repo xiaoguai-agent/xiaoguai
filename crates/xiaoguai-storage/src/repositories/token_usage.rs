@@ -70,6 +70,20 @@ pub trait TokenUsageRepository: Send + Sync {
 
     /// Return the most recent `limit` ledger entries, newest first.
     async fn list(&self, limit: i64) -> RepoResult<Vec<StoredTokenUsage>>;
+
+    /// Sum `total_tokens` for one session since `since` (inclusive) — the
+    /// /loop token budget (L3 Part C) calls this each tick to decide whether
+    /// the loop has burned its `max_total_tokens`. Rows with a NULL
+    /// `total_tokens` (usage the provider didn't report) contribute 0.
+    /// Returns 0 when the session has no rows. The default lets test/legacy
+    /// stores compile.
+    async fn session_total_since(
+        &self,
+        _session_id: &str,
+        _since: DateTime<Utc>,
+    ) -> RepoResult<i64> {
+        Ok(0)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -134,5 +148,20 @@ impl TokenUsageRepository for SqliteTokenUsageRepository {
         .map_err(RepoError::from_sqlx)?;
         tx.commit().await.map_err(RepoError::from_sqlx)?;
         Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn session_total_since(&self, session_id: &str, since: DateTime<Utc>) -> RepoResult<i64> {
+        // COALESCE → 0 for no rows / all-NULL totals. Uses the partial index
+        // ix_token_usage_session_ts (migration 0030).
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(total_tokens), 0) FROM token_usage \
+             WHERE session_id = ? AND ts >= ?",
+        )
+        .bind(session_id)
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+        Ok(total)
     }
 }

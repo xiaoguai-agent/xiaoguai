@@ -70,16 +70,54 @@ impl LoopStatus {
     }
 }
 
-/// One persisted loop (LLD-LOOP-001 §3). L1 is fixed pacing only —
-/// `interval_secs` is the tick interval; dynamic pacing lands in L3.
+/// How a loop chooses its next-tick delay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PacingKind {
+    /// Fixed `interval_secs` between ticks (L1 default).
+    Fixed,
+    /// The agent picks each next-tick delay via `loop_next_tick`, clamped to
+    /// `[min_interval_secs, max_interval_secs]` (L3 Part B).
+    Dynamic,
+}
+
+impl PacingKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::Dynamic => "dynamic",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "fixed" => Some(Self::Fixed),
+            "dynamic" => Some(Self::Dynamic),
+            _ => None,
+        }
+    }
+}
+
+/// One persisted loop (LLD-LOOP-001 §3).
 #[derive(Debug, Clone)]
 pub struct LoopRow {
     pub id: Uuid,
     pub session_id: String,
     pub prompt: String,
+    pub pacing_kind: PacingKind,
+    /// Fixed-pacing interval; also the dynamic-pacing fallback when the
+    /// agent doesn't call `loop_next_tick`.
     pub interval_secs: u32,
+    /// Dynamic-pacing clamp bounds (unused for `Fixed`).
+    pub min_interval_secs: u32,
+    pub max_interval_secs: u32,
     pub max_ticks: u32,
     pub ttl_secs: u32,
+    /// Token budget (L3 Part C): stop once the session burns this many
+    /// tokens since loop-start. `0` = unlimited.
+    pub max_total_tokens: u64,
     pub status: LoopStatus,
     pub created_by: String,
     pub created_at: DateTime<Utc>,
@@ -152,9 +190,10 @@ impl SqliteLoopRepository {
     }
 }
 
-const LOOP_COLUMNS: &str = "id, session_id, prompt, interval_secs, max_ticks, ttl_secs, \
-                            status, created_by, created_at, expires_at, next_tick_at, \
-                            ticks_run, consecutive_failures, last_error";
+const LOOP_COLUMNS: &str = "id, session_id, prompt, pacing_kind, interval_secs, \
+                            min_interval_secs, max_interval_secs, max_ticks, ttl_secs, \
+                            max_total_tokens, status, created_by, created_at, expires_at, \
+                            next_tick_at, ticks_run, consecutive_failures, last_error";
 
 /// sqlx row shape; converted into the public [`LoopRow`].
 #[derive(sqlx::FromRow)]
@@ -162,9 +201,13 @@ struct LoopDbRow {
     id: Uuid,
     session_id: String,
     prompt: String,
+    pacing_kind: String,
     interval_secs: i64,
+    min_interval_secs: i64,
+    max_interval_secs: i64,
     max_ticks: i64,
     ttl_secs: i64,
+    max_total_tokens: i64,
     status: String,
     created_by: String,
     created_at: DateTime<Utc>,
@@ -182,13 +225,20 @@ impl TryFrom<LoopDbRow> for LoopRow {
         let status = LoopStatus::parse(&r.status).ok_or_else(|| {
             RepoError::InvalidArgument(format!("unknown loop status in DB: {}", r.status))
         })?;
+        let pacing_kind = PacingKind::parse(&r.pacing_kind).ok_or_else(|| {
+            RepoError::InvalidArgument(format!("unknown pacing_kind in DB: {}", r.pacing_kind))
+        })?;
         Ok(Self {
             id: r.id,
             session_id: r.session_id,
             prompt: r.prompt,
+            pacing_kind,
             interval_secs: clamp_u32(r.interval_secs),
+            min_interval_secs: clamp_u32(r.min_interval_secs),
+            max_interval_secs: clamp_u32(r.max_interval_secs),
             max_ticks: clamp_u32(r.max_ticks),
             ttl_secs: clamp_u32(r.ttl_secs),
+            max_total_tokens: u64::try_from(r.max_total_tokens.max(0)).unwrap_or(u64::MAX),
             status,
             created_by: r.created_by,
             created_at: r.created_at,
@@ -210,17 +260,22 @@ impl LoopStore for SqliteLoopRepository {
     async fn insert(&self, row: &LoopRow) -> RepoResult<()> {
         sqlx::query(
             "INSERT INTO loops \
-             (id, session_id, prompt, interval_secs, max_ticks, ttl_secs, status, \
+             (id, session_id, prompt, pacing_kind, interval_secs, min_interval_secs, \
+              max_interval_secs, max_ticks, ttl_secs, max_total_tokens, status, \
               created_by, created_at, expires_at, next_tick_at, ticks_run, \
               consecutive_failures, last_error) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(row.id)
         .bind(&row.session_id)
         .bind(&row.prompt)
+        .bind(row.pacing_kind.as_str())
         .bind(i64::from(row.interval_secs))
+        .bind(i64::from(row.min_interval_secs))
+        .bind(i64::from(row.max_interval_secs))
         .bind(i64::from(row.max_ticks))
         .bind(i64::from(row.ttl_secs))
+        .bind(i64::try_from(row.max_total_tokens).unwrap_or(i64::MAX))
         .bind(row.status.as_str())
         .bind(&row.created_by)
         .bind(row.created_at)

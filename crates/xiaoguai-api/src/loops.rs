@@ -25,7 +25,9 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use xiaoguai_llm::Message as LlmMessage;
-use xiaoguai_storage::repositories::{LoopRow, LoopStatus, LoopStore, RepoError};
+use xiaoguai_storage::repositories::{
+    LoopRow, LoopStatus, LoopStore, PacingKind, RepoError, TokenUsageRepository,
+};
 use xiaoguai_types::{SessionId, SessionStatus};
 
 use crate::convert::llm_to_domain;
@@ -40,6 +42,11 @@ pub const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 pub const DEFAULT_INTERVAL_SECS: u32 = 300;
 pub const DEFAULT_MAX_TICKS: u32 = 50;
 pub const DEFAULT_TTL_SECS: u32 = 86_400;
+/// Dynamic-pacing clamp window defaults (L3 Part B).
+pub const DEFAULT_MIN_INTERVAL_SECS: u32 = 10;
+pub const DEFAULT_MAX_INTERVAL_SECS: u32 = 3600;
+/// Token budget default (L3 Part C, LLD §3): 500k tokens / loop.
+pub const DEFAULT_MAX_TOTAL_TOKENS: u64 = 500_000;
 
 /// Inputs for [`LoopController::create`]. Budget fields fall back to the
 /// defaults above.
@@ -50,6 +57,16 @@ pub struct CreateLoopParams {
     pub interval_secs: Option<u32>,
     pub max_ticks: Option<u32>,
     pub ttl_secs: Option<u32>,
+    /// L3 Part B: when `true`, the agent paces the loop via `loop_next_tick`
+    /// (clamped to `[min_interval_secs, max_interval_secs]`); otherwise the
+    /// fixed `interval_secs` is used. Default `false`.
+    pub dynamic_pacing: bool,
+    pub min_interval_secs: Option<u32>,
+    pub max_interval_secs: Option<u32>,
+    /// L3 Part C: stop once the session burns this many tokens since
+    /// loop-start. `Some(0)` / `None` → the 500k default; explicit `0`
+    /// after clamping means unlimited.
+    pub max_total_tokens: Option<u64>,
     /// Audit actor; falls back to the session owner.
     pub created_by: Option<String>,
 }
@@ -106,8 +123,30 @@ struct Inner {
     /// its own `loops` field is `None` — the controller never re-enters
     /// itself.
     state: AppState,
+    /// Token-usage source for the L3 `max_total_tokens` budget. `None`
+    /// disables the token gate (the budget is simply not enforced) — used
+    /// by tests that don't wire a usage ledger.
+    token_usage: Option<Arc<dyn TokenUsageRepository>>,
     /// Live driver cancel tokens, keyed by loop id.
     drivers: Mutex<HashMap<Uuid, CancellationToken>>,
+}
+
+impl Inner {
+    /// Sum the session's tokens since `since`. Returns 0 (no enforcement)
+    /// when no usage ledger is wired.
+    async fn store_tokens_since(
+        &self,
+        session_id: &str,
+        since: DateTime<Utc>,
+    ) -> Result<u64, RepoError> {
+        match &self.token_usage {
+            Some(repo) => {
+                let total = repo.session_total_since(session_id, since).await?;
+                Ok(u64::try_from(total.max(0)).unwrap_or(u64::MAX))
+            }
+            None => Ok(0),
+        }
+    }
 }
 
 /// See module docs. Construct with [`LoopController::new`], then
@@ -117,12 +156,19 @@ pub struct LoopController {
 }
 
 impl LoopController {
+    /// Construct with an optional token-usage ledger for the L3 budget
+    /// (`None` disables the `max_total_tokens` gate).
     #[must_use]
-    pub fn new(store: Arc<dyn LoopStore>, state: AppState) -> Arc<Self> {
+    pub fn new(
+        store: Arc<dyn LoopStore>,
+        state: AppState,
+        token_usage: Option<Arc<dyn TokenUsageRepository>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             inner: Arc::new(Inner {
                 store,
                 state,
+                token_usage,
                 drivers: Mutex::new(HashMap::new()),
             }),
         })
@@ -176,6 +222,25 @@ impl LoopController {
                 "interval_secs, max_ticks and ttl_secs must be >= 1".into(),
             ));
         }
+        // Dynamic-pacing bounds (L3 Part B). Default the window around the
+        // tick interval; validate min ≤ interval ≤ max so the clamp is sane.
+        let min_interval_secs = params
+            .min_interval_secs
+            .unwrap_or(DEFAULT_MIN_INTERVAL_SECS);
+        let max_interval_secs = params
+            .max_interval_secs
+            .unwrap_or(DEFAULT_MAX_INTERVAL_SECS);
+        if min_interval_secs == 0 || min_interval_secs > max_interval_secs {
+            return Err(CreateLoopError::InvalidArgument(
+                "min_interval_secs must be >= 1 and <= max_interval_secs".into(),
+            ));
+        }
+        let pacing_kind = if params.dynamic_pacing {
+            PacingKind::Dynamic
+        } else {
+            PacingKind::Fixed
+        };
+        let max_total_tokens = params.max_total_tokens.unwrap_or(DEFAULT_MAX_TOTAL_TOKENS);
 
         let session = self
             .inner
@@ -194,9 +259,13 @@ impl LoopController {
             id: Uuid::new_v4(),
             session_id: params.session_id,
             prompt,
+            pacing_kind,
             interval_secs,
+            min_interval_secs,
+            max_interval_secs,
             max_ticks,
             ttl_secs,
+            max_total_tokens,
             status: LoopStatus::Active,
             created_by: params
                 .created_by
@@ -369,6 +438,25 @@ async fn drive(inner: Arc<Inner>, mut row: LoopRow, cancel: CancellationToken) {
             exhaust(&inner, &row, "ttl").await;
             break;
         }
+        // Token budget (L3 Part C): stop once the session has burned
+        // max_total_tokens since loop-start. `0` = unlimited. A query error
+        // is logged and the tick proceeds (better to slightly overshoot than
+        // to wedge the loop on a transient DB blip).
+        if row.max_total_tokens > 0 {
+            match inner
+                .store_tokens_since(&row.session_id, row.created_at)
+                .await
+            {
+                Ok(spent) if spent >= row.max_total_tokens => {
+                    exhaust_tokens(&inner, &row, spent).await;
+                    break;
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::warn!(loop_id = %row.id, ?err, "token budget check failed — proceeding");
+                }
+            }
+        }
 
         let wait = sleep_duration(row.next_tick_at, Utc::now());
         tokio::select! {
@@ -380,7 +468,8 @@ async fn drive(inner: Arc<Inner>, mut row: LoopRow, cancel: CancellationToken) {
             break;
         }
 
-        match fire_tick(&inner, &row, &cancel).await {
+        let (outcome, requested_delay) = fire_tick(&inner, &row, &cancel).await;
+        match outcome {
             TickOutcome::Success => {
                 row.ticks_run += 1;
                 row.consecutive_failures = 0;
@@ -448,7 +537,10 @@ async fn drive(inner: Arc<Inner>, mut row: LoopRow, cancel: CancellationToken) {
             break;
         }
 
-        row.next_tick_at = Utc::now() + backoff_delay(row.interval_secs, row.consecutive_failures);
+        // Next-tick delay: a failing tick always uses exponential backoff.
+        // A successful dynamic-pacing tick uses the agent's requested delay
+        // (clamped to the loop's window); otherwise the fixed interval.
+        row.next_tick_at = Utc::now() + next_tick_delay(&row, requested_delay);
         match inner
             .store
             .record_tick(
@@ -474,8 +566,14 @@ async fn drive(inner: Arc<Inner>, mut row: LoopRow, cancel: CancellationToken) {
     // `_slot` drops here (or on any panic above), freeing the map entry.
 }
 
-/// Run one tick as a normal agent turn and wait for its finalize.
-async fn fire_tick(inner: &Inner, row: &LoopRow, cancel: &CancellationToken) -> TickOutcome {
+/// Run one tick as a normal agent turn and wait for its finalize. Returns
+/// the tick disposition and, for a successful dynamic-pacing tick, the
+/// agent's requested next-tick delay (seconds) from `loop_next_tick`.
+async fn fire_tick(
+    inner: &Inner,
+    row: &LoopRow,
+    cancel: &CancellationToken,
+) -> (TickOutcome, Option<f64>) {
     let handle = match run_turn(
         &inner.state,
         TurnInput {
@@ -483,43 +581,51 @@ async fn fire_tick(inner: &Inner, row: &LoopRow, cancel: &CancellationToken) -> 
             content: row.prompt.clone(),
             model_override: None,
             loop_id: Some(row.id),
+            loop_dynamic_pacing: row.pacing_kind == PacingKind::Dynamic,
         },
     )
     .await
     {
         Ok(handle) => handle,
-        Err(TurnError::TurnInFlight) => return TickOutcome::Skipped,
+        Err(TurnError::TurnInFlight) => return (TickOutcome::Skipped, None),
         Err(TurnError::SessionNotFound | TurnError::SessionNotActive) => {
-            return TickOutcome::SessionGone
+            return (TickOutcome::SessionGone, None)
         }
-        Err(e) => return TickOutcome::Failure(e.to_string()),
+        Err(e) => return (TickOutcome::Failure(e.to_string()), None),
     };
     // Ticks have no SSE consumer — drop the receiver; the agent's event
     // channel sends fail fast and the run continues (LLD §3).
     drop(handle.events);
     let loop_intent = handle.loop_intent.clone();
     let completed = tokio::select! {
-        () = cancel.cancelled() => return TickOutcome::LoopCancelled,
+        () = cancel.cancelled() => return (TickOutcome::LoopCancelled, None),
         completion = handle.completion => completion,
     };
     match completed {
         Ok(TurnCompletion::Completed) => {
-            // The turn finished — did the agent end the loop via a tool?
-            // (`loop_done` / `loop_pause`, L2). The intent is recorded
-            // during the run, so it is set by the time completion fires.
-            match loop_intent.and_then(|sink| sink.lock().clone()) {
+            // The turn finished — did the agent end the loop or request a
+            // cadence via a tool? The intent is recorded during the run, so
+            // it is set by the time completion fires.
+            let state = loop_intent
+                .map(|sink| sink.lock().clone())
+                .unwrap_or_default();
+            match state.terminal {
                 Some(intent) => match intent.kind {
-                    crate::loop_tools::LoopToolKind::Done => TickOutcome::Done(intent.reason),
-                    crate::loop_tools::LoopToolKind::Pause => TickOutcome::Paused(intent.reason),
+                    crate::loop_tools::LoopToolKind::Done => {
+                        (TickOutcome::Done(intent.reason), None)
+                    }
+                    crate::loop_tools::LoopToolKind::Pause => {
+                        (TickOutcome::Paused(intent.reason), None)
+                    }
                 },
-                None => TickOutcome::Success,
+                None => (TickOutcome::Success, state.next_delay_secs),
             }
         }
         Ok(TurnCompletion::Errored | TurnCompletion::Panicked) | Err(_) => {
             // A failed/panicked run is in an inconsistent state — ignore any
             // tool intent it recorded (the next tick re-converges). Log it so
             // a `loop_done` lost to a post-call error is diagnosable.
-            if loop_intent.is_some_and(|sink| sink.lock().is_some()) {
+            if loop_intent.is_some_and(|sink| sink.lock().terminal.is_some()) {
                 tracing::debug!(loop_id = %row.id, "loop tool intent dropped: tick did not complete cleanly");
             }
             let why = match completed {
@@ -527,7 +633,7 @@ async fn fire_tick(inner: &Inner, row: &LoopRow, cancel: &CancellationToken) -> 
                 Ok(TurnCompletion::Panicked) => "agent task panicked",
                 _ => "turn finalize never reported",
             };
-            TickOutcome::Failure(why.into())
+            (TickOutcome::Failure(why.into()), None)
         }
     }
 }
@@ -538,6 +644,34 @@ async fn fire_tick(inner: &Inner, row: &LoopRow, cancel: &CancellationToken) -> 
 fn backoff_delay(interval_secs: u32, consecutive_failures: u32) -> Duration {
     let factor = 2u32.saturating_pow(consecutive_failures.min(MAX_CONSECUTIVE_FAILURES));
     Duration::seconds(i64::from(interval_secs.saturating_mul(factor)))
+}
+
+/// Decide the wait before the loop's next tick.
+///
+/// - A failing tick (`consecutive_failures > 0`) always uses exponential
+///   backoff — `requested_delay` is ignored (the agent's cadence request is
+///   moot when the tick didn't succeed).
+/// - A successful DYNAMIC-pacing tick uses the agent's `requested_delay`
+///   clamped to `[min_interval_secs, max_interval_secs]`; absent a request,
+///   it falls back to the fixed `interval_secs`.
+/// - A FIXED-pacing tick always uses `interval_secs`.
+fn next_tick_delay(row: &LoopRow, requested_delay: Option<f64>) -> Duration {
+    if row.consecutive_failures > 0 {
+        return backoff_delay(row.interval_secs, row.consecutive_failures);
+    }
+    match (row.pacing_kind, requested_delay) {
+        (PacingKind::Dynamic, Some(secs)) => {
+            // Clamp to the window; non-finite / negative → the min bound.
+            let secs = if secs.is_finite() && secs >= 0.0 {
+                secs as u32
+            } else {
+                row.min_interval_secs
+            };
+            let clamped = secs.clamp(row.min_interval_secs, row.max_interval_secs);
+            Duration::seconds(i64::from(clamped))
+        }
+        _ => Duration::seconds(i64::from(row.interval_secs)),
+    }
 }
 
 fn sleep_duration(next_tick_at: DateTime<Utc>, now: DateTime<Utc>) -> StdDuration {
@@ -568,6 +702,39 @@ async fn exhaust(inner: &Inner, row: &LoopRow, which: &str) {
             row,
             &format!(
                 "[loop {}] stopped: {detail}. Create a new loop with a higher budget to continue.",
+                short_id(row.id)
+            ),
+        )
+        .await;
+    }
+}
+
+/// Token-budget trip (L3 Part C) → terminal `budget_exhausted` + audit +
+/// teaching message. `spent` is the summed session tokens since loop-start.
+async fn exhaust_tokens(inner: &Inner, row: &LoopRow, spent: u64) {
+    let detail = format!(
+        "max_total_tokens budget ({}) exhausted — {spent} tokens used in {} ticks",
+        row.max_total_tokens, row.ticks_run
+    );
+    let moved = terminalise_with_audit(
+        inner,
+        row,
+        LoopStatus::BudgetExhausted,
+        &detail,
+        serde_json::json!({
+            "budget": "max_total_tokens",
+            "tokens_spent": spent,
+            "ticks_run": row.ticks_run,
+        }),
+    )
+    .await;
+    if moved {
+        post_final_message(
+            inner,
+            row,
+            &format!(
+                "[loop {}] stopped: {detail}. Create a new loop with a higher \
+                 max_total_tokens to continue.",
                 short_id(row.id)
             ),
         )
@@ -789,5 +956,65 @@ mod tests {
     #[test]
     fn short_id_is_eight_chars() {
         assert_eq!(short_id(Uuid::nil()), "00000000");
+    }
+
+    fn row_with_pacing(kind: PacingKind, failures: u32) -> LoopRow {
+        let now = Utc::now();
+        LoopRow {
+            id: Uuid::nil(),
+            session_id: "s".into(),
+            prompt: "p".into(),
+            pacing_kind: kind,
+            interval_secs: 300,
+            min_interval_secs: 10,
+            max_interval_secs: 600,
+            max_ticks: 50,
+            ttl_secs: 86_400,
+            max_total_tokens: 500_000,
+            status: LoopStatus::Active,
+            created_by: "u".into(),
+            created_at: now,
+            expires_at: now,
+            next_tick_at: now,
+            ticks_run: 0,
+            consecutive_failures: failures,
+            last_error: None,
+        }
+    }
+
+    #[test]
+    fn next_tick_delay_fixed_ignores_requested() {
+        let row = row_with_pacing(PacingKind::Fixed, 0);
+        // Fixed pacing always uses interval_secs, even if a delay slips in.
+        assert_eq!(next_tick_delay(&row, Some(42.0)), Duration::seconds(300));
+        assert_eq!(next_tick_delay(&row, None), Duration::seconds(300));
+    }
+
+    #[test]
+    fn next_tick_delay_dynamic_clamps_to_window() {
+        let row = row_with_pacing(PacingKind::Dynamic, 0);
+        // Within bounds → honoured.
+        assert_eq!(next_tick_delay(&row, Some(120.0)), Duration::seconds(120));
+        // Below min → min; above max → max.
+        assert_eq!(next_tick_delay(&row, Some(1.0)), Duration::seconds(10));
+        assert_eq!(
+            next_tick_delay(&row, Some(99_999.0)),
+            Duration::seconds(600)
+        );
+        // Non-finite / negative → min bound.
+        assert_eq!(next_tick_delay(&row, Some(-5.0)), Duration::seconds(10));
+        assert_eq!(next_tick_delay(&row, Some(f64::NAN)), Duration::seconds(10));
+        // No request → fixed interval fallback.
+        assert_eq!(next_tick_delay(&row, None), Duration::seconds(300));
+    }
+
+    #[test]
+    fn next_tick_delay_failing_tick_always_backs_off() {
+        // A failing dynamic tick ignores any requested delay and uses backoff.
+        let row = row_with_pacing(PacingKind::Dynamic, 2);
+        assert_eq!(
+            next_tick_delay(&row, Some(15.0)),
+            backoff_delay(300, 2) // interval × 2^2
+        );
     }
 }
