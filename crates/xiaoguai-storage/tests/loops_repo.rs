@@ -144,6 +144,37 @@ async fn terminalise_rejects_non_terminal_target() {
 }
 
 #[tokio::test]
+async fn pause_moves_active_to_paused_and_keeps_the_slot() {
+    let (pool, _guard) = test_setup().await;
+    let repo = SqliteLoopRepository::new(pool);
+    let row = make_loop("sess_1");
+    repo.insert(&row).await.expect("insert");
+
+    assert!(repo
+        .pause(row.id, Some("waiting on human"))
+        .await
+        .expect("pause"));
+    let got = repo.get(row.id).await.expect("get").expect("row");
+    assert_eq!(got.status, LoopStatus::Paused);
+    assert_eq!(got.last_error.as_deref(), Some("waiting on human"));
+
+    // Paused still holds the one-per-session slot.
+    let err = repo
+        .insert(&make_loop("sess_1"))
+        .await
+        .expect_err("blocked");
+    assert!(matches!(err, RepoError::DuplicateKey(_)));
+
+    // Pausing again is a no-op (not active any more).
+    assert!(!repo.pause(row.id, None).await.expect("re-pause"));
+    // A paused loop can still be cancelled.
+    assert!(repo
+        .terminalise(row.id, LoopStatus::Cancelled, None)
+        .await
+        .expect("cancel paused"));
+}
+
+#[tokio::test]
 async fn record_tick_updates_bookkeeping_for_active_rows_only() {
     let (pool, _guard) = test_setup().await;
     let repo = SqliteLoopRepository::new(pool);

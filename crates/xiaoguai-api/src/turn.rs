@@ -62,6 +62,11 @@ pub enum TurnCompletion {
 pub struct TurnHandle {
     pub events: ReceiverStream<AgentEvent>,
     pub completion: tokio::sync::oneshot::Receiver<TurnCompletion>,
+    /// Set on loop turns (`TurnInput.loop_id == Some`): the cell the
+    /// `loop_done` / `loop_pause` tools write. The controller reads it
+    /// *after* `completion` resolves to decide the loop's next transition.
+    /// `None` on operator turns.
+    pub loop_intent: Option<crate::loop_tools::LoopToolSink>,
 }
 
 /// Why a turn refused to start. The route maps these onto HTTP statuses
@@ -134,7 +139,22 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
     let mut messages = load_llm_history(state, &input.session_id).await?;
     messages.push(domain_to_llm(&user_domain));
 
-    // 2b. Identity memory (DEC-036, P1): prepend the owner's persistent `USER.md`
+    // 2b. Loop turns (L2): register the `loop_done` / `loop_pause` tools and
+    //     nudge the agent to use them. The toolbox is built per-turn (the
+    //     base toolbox plus the two built-ins sharing one intent sink) so
+    //     these tools are invisible to ordinary operator turns. `None` on
+    //     operator turns → the base toolbox, no extra cost. The system note
+    //     is inserted here (before identity) so identity ends up the
+    //     outermost System frame: [identity, loop_note, ...history].
+    let (toolbox, loop_intent) = if input.loop_id.is_some() {
+        let (tb, sink) = crate::loop_tools::with_loop_tools(&state.toolbox);
+        messages.insert(0, LlmMessage::system(LOOP_TICK_SYSTEM_NOTE));
+        (Arc::new(tb), Some(sink))
+    } else {
+        (state.toolbox.clone(), None)
+    };
+
+    // 2c. Identity memory (DEC-036, P1): prepend the owner's persistent `USER.md`
     //     profile as a leading System message so every session knows who it is
     //     working for. Loaded per-request (picks up edits without a restart);
     //     absent/blank file → no-op. Not persisted into the session history.
@@ -147,12 +167,8 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
     // 3. Build the runtime context.
     //    v0.12.0: every call site builds via RuntimeContext.
     let model = input.model_override.unwrap_or(session.model);
-    let ctx = RuntimeContext::new(
-        state.backend.clone(),
-        state.toolbox.clone(),
-        state.agent_defaults.clone(),
-    )
-    .with_model(model.clone());
+    let ctx = RuntimeContext::new(state.backend.clone(), toolbox, state.agent_defaults.clone())
+        .with_model(model.clone());
 
     // 4. HOTL budget check — gated on the "llm_call" scope.
     //    Fail-closed: if the enforcer returns Deny, abort before spawning the
@@ -198,8 +214,23 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
         completion: completion_tx,
     });
 
-    Ok(TurnHandle { events, completion })
+    Ok(TurnHandle {
+        events,
+        completion,
+        loop_intent,
+    })
 }
+
+/// System note prepended to every loop tick so the agent knows it is one
+/// tick of a recurring loop and that the `loop_done` / `loop_pause` tools
+/// exist (LLD-LOOP-001 §3 "End condition").
+const LOOP_TICK_SYSTEM_NOTE: &str =
+    "You are running as one tick of a recurring loop set up by the \
+operator. Re-evaluate the task below against the latest state. When the loop's goal has been \
+achieved, call the `loop_done` tool with a short reason and write a final summary — no further \
+ticks will run. If you are blocked and cannot make progress (e.g. waiting on a human), call \
+`loop_pause` with a reason instead. Otherwise, do the work for this tick and stop; the loop will \
+run again later.";
 
 /// Inputs to the detached finalisation task. Bundled into one struct so the
 /// spawn site stays readable as the audit/identity wiring grows.

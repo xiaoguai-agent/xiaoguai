@@ -15,6 +15,7 @@ pub mod eval;
 pub mod hotl;
 pub mod identity;
 pub mod incidents;
+pub mod loop_tools;
 pub mod loops;
 pub mod marketplace;
 pub mod mcp_serve;
