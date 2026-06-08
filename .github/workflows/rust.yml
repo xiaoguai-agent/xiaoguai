@@ -141,7 +141,7 @@ jobs:
       # Hand the archive to the quarantined mcp-exec job (own runner — its
       # runner-death can't take this job's results with it).
       - name: Upload test archive for quarantine job
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nextest-archive
           path: target/nextest-tests.tar.zst
@@ -277,7 +277,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: nextest-archive
           path: target
