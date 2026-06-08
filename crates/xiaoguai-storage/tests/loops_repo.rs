@@ -179,6 +179,35 @@ async fn pause_moves_active_to_paused_and_keeps_the_slot() {
 }
 
 #[tokio::test]
+async fn resume_moves_paused_back_to_active() {
+    let (pool, _guard) = test_setup().await;
+    let repo = SqliteLoopRepository::new(pool);
+    let mut row = make_loop("sess_1");
+    row.consecutive_failures = 3;
+    row.last_error = Some("boom".into());
+    repo.insert(&row).await.expect("insert");
+    repo.pause(row.id, Some("waiting")).await.expect("pause");
+
+    let next = Utc::now() + Duration::seconds(300);
+    assert!(repo.resume(row.id, next).await.expect("resume"));
+    let got = repo.get(row.id).await.expect("get").expect("row");
+    assert_eq!(got.status, LoopStatus::Active);
+    assert_eq!(
+        got.consecutive_failures, 0,
+        "resume resets the failure counter"
+    );
+    assert!(got.last_error.is_none(), "resume clears last_error");
+
+    // Resuming an active loop is a no-op (only paused resumes).
+    assert!(!repo.resume(row.id, next).await.expect("re-resume"));
+    // Resuming a terminal loop is a no-op.
+    repo.terminalise(row.id, LoopStatus::Cancelled, None)
+        .await
+        .expect("cancel");
+    assert!(!repo.resume(row.id, next).await.expect("resume terminal"));
+}
+
+#[tokio::test]
 async fn record_tick_updates_bookkeeping_for_active_rows_only() {
     let (pool, _guard) = test_setup().await;
     let repo = SqliteLoopRepository::new(pool);

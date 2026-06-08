@@ -54,7 +54,9 @@ pub use incidents::{
     ActionItem, DatadogSource, ImNotification, Incident, IncidentSource, NormalizeError, PrDraft,
     RcaDraft, SentrySource, Severity, TimelineEntry,
 };
-pub use loops::{CancelLoopError, CreateLoopError, CreateLoopParams, LoopController};
+pub use loops::{
+    CancelLoopError, CreateLoopError, CreateLoopParams, LoopController, ResumeLoopError,
+};
 pub use marketplace::{MarketplaceEntry, MarketplaceResponse};
 pub use mcp_serve::XiaoguaiMcpServer;
 pub use outcomes::{
