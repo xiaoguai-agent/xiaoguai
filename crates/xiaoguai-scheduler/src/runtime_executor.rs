@@ -90,13 +90,18 @@ impl JobExecutor for RuntimeJobExecutor {
             .ok_or_else(|| "scheduled job payload missing string field `prompt`".to_string())?;
 
         let history = vec![LlmMessage::user(prompt)];
-        let outcome = run_to_completion(
-            &self.ctx,
-            history,
-            tokio_util::sync::CancellationToken::new(),
-        )
-        .await
-        .map_err(|e| format!("runtime: {e}"))?;
+        // L3 attribution: a scheduled run has no chat session at run time (the
+        // synthetic session, if any, is written AFTER the run by the writer
+        // below), so attribute `token_usage` to a stable per-job label. This
+        // also aggregates a job's cost across all its runs. `token_usage`'s
+        // `session_id` is an un-keyed TEXT column, so a synthetic id is fine.
+        let attribution = scheduled_attribution_id(&job.id);
+        let ctx = self
+            .ctx
+            .with_attribution(Some(attribution.clone()), Some(attribution));
+        let outcome = run_to_completion(&ctx, history, tokio_util::sync::CancellationToken::new())
+            .await
+            .map_err(|e| format!("runtime: {e}"))?;
 
         // v0.12.1: optionally persist a synthetic session so the
         // audit-first console can drill into the transcript. We do this
@@ -121,6 +126,15 @@ impl JobExecutor for RuntimeJobExecutor {
             session_id,
         })
     }
+}
+
+/// Stable per-job attribution label for `token_usage`. A scheduled run has no
+/// chat session at run time, so usage is attributed to this `scheduler:<job_id>`
+/// label (used as both session and user id). The `scheduler:` prefix is a
+/// contract: per-job usage reports and the loop's session-scoped budget sum
+/// filter on it — keep it stable.
+fn scheduled_attribution_id(job_id: &str) -> String {
+    format!("scheduler:{job_id}")
 }
 
 fn truncate_preview(s: &str) -> String {
@@ -213,6 +227,11 @@ mod tests {
             out.len()
         );
         assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn scheduled_attribution_id_is_job_scoped() {
+        assert_eq!(scheduled_attribution_id("job-42"), "scheduler:job-42");
     }
 
     #[tokio::test]
