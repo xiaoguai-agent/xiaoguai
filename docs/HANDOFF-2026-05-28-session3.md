@@ -24,8 +24,7 @@ first local `cargo build/test` will be a COLD rebuild.
 
   Two non-bump changes rode along:
   - **`deny.toml` allows `BSL-1.0`** — redis 1.x relicensed to the **Boost**
-    Software License 1.0 (OSI-approved, permissive, MIT-like). NOT the BUSL-1.1
-    source-available license despite the abbreviation.
+    Software License 1.0 (OSI-approved, permissive, MIT-like). NOT a copyleft or source-available license despite the abbreviation.
   - **tokio-tungstenite 0.29 API change** — `Message::Text` now carries
     `Utf8Bytes` and `Ping`/`Pong`/`Binary` carry `Bytes` (was `String`/`Vec<u8>`).
     Added `.into()` at send sites and `.as_str()` where a matched payload feeds

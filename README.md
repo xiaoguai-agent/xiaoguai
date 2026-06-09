@@ -248,19 +248,14 @@ feedback, then prioritise."* The candidate backlog, per
 
 ## License
 
-Licensed under the [Business Source License 1.1](LICENSE).
+Licensed under the [Apache License 2.0](LICENSE).
 
-- **Self-hosted production use:** free.
-- **Embedding in your own products:** free, when agent capabilities
-  aren't your primary feature.
-- **Competing managed / SaaS offering:** requires a commercial
-  license.
-- **Change Date:** four years after each version's release date, the
-  source converts to **Apache License 2.0**.
+Xiaoguai is open source: free to use, self-host, modify, embed, and
+redistribute — including for commercial and production use — under the
+permissive terms of the Apache License 2.0, which adds an explicit patent
+grant on top of the usual attribution requirements.
 
-BUSL-1.1 is not an OSI-approved Open Source license; it is
-*source available + eventually open*. The full text and the
-"Additional Use Grant" carve-outs are in [`LICENSE`](LICENSE).
+The full text is in [`LICENSE`](LICENSE); attribution is in [`NOTICE`](NOTICE).
 
 ## Documentation
 

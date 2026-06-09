@@ -17,7 +17,7 @@ description: >
   human approval).
 
 author: "Xiaoguai Maintainers"
-license: "BUSL-1.1"
+license: "Apache-2.0"
 
 # --------------------------------------------------------------------------
 # Required xiaoguai platform features

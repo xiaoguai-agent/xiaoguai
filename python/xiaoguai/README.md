@@ -129,4 +129,4 @@ the upstream repository — see the
 
 ## License
 
-[BUSL-1.1](./LICENSE). Same license as the upstream Rust project.
+[Apache-2.0](./LICENSE). Same license as the upstream Rust project.

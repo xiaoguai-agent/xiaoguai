@@ -57,7 +57,7 @@ See [Day-2 Operations](day2.md) for the full procedure. The summary:
 Cargo dependency vetting is documented in [Supply Chain Security](../developer/supply-chain.md).
 
 The CI `deny.yml` workflow enforces:
-- No licenses incompatible with BUSL-1.1 (no AGPL/SSPL/GPL-2.0)
+- No licenses incompatible with Apache-2.0 (no AGPL/SSPL/GPL-2.0)
 - No unmaintained crates flagged in RustSec
 - No duplicate dependency versions (advisory)
 
