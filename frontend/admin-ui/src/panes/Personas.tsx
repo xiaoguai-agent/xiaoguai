@@ -2,7 +2,7 @@
  * v1.8.0 (sprint-10b S10b-2) — Personas pane.
  *
  * CRUD against `/v1/personas` (mounted by S10b-1 Phase A). The pane:
- *   - Shows a filterable table of personas for the selected tenant.
+ *   - Shows a filterable table of personas (single owner — no tenant scope).
  *   - Colour-codes the role tag (sprint-9 DEC-021 triangle): planner /
  *     worker / critic. The persona's role is inferred from a
  *     `role/<name>` token in the system prompt (the DTO has no
@@ -11,10 +11,6 @@
  *   - Gates mutating buttons behind `<RequireScope name="personas.write">`.
  *   - Renders Loading / Error / Empty / Unavailable (503) / Ready
  *     states per LLD-ADMIN-UI-001 §4.1.
- *
- * Tenant scoping: `GET /v1/personas` requires `tenant_id`. The pane
- * remembers the operator's last choice in `localStorage`; an inline
- * input lets them switch tenants without a separate Tenants pane.
  *
  * Memory view scope / role tags: the underlying DTO does not yet carry a
  * `tags` field (see crates/xiaoguai-personas/src/model.rs). Until that
@@ -134,9 +130,8 @@ export function personaToForm(p: Persona): FormState {
   };
 }
 
-export function formToCreateReq(f: FormState, tenantId: string): CreatePersonaRequest {
+export function formToCreateReq(f: FormState): CreatePersonaRequest {
   return {
-    tenant_id: tenantId,
     name: f.name.trim(),
     system_prompt: f.system_prompt,
     default_model: f.default_model.trim() === '' ? null : f.default_model.trim(),
@@ -170,8 +165,6 @@ function parseAllowlist(csv: string): string[] | null {
 // Component
 // ---------------------------------------------------------------------------
 
-const TENANT_STORAGE_KEY = 'xiaoguai_admin_personas_tenant';
-
 export interface PersonasPaneProps {
   /** Override the shared client (used by tests). */
   client?: Pick<
@@ -184,10 +177,6 @@ export function PersonasPane({ client }: PersonasPaneProps = {}): JSX.Element {
   const c = client ?? defaultClient;
   const { t } = useTranslation();
 
-  const [tenantId, setTenantId] = useState<string>(() => {
-    if (typeof localStorage === 'undefined') return '';
-    return localStorage.getItem(TENANT_STORAGE_KEY) ?? '';
-  });
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
   const [nameFilter, setNameFilter] = useState('');
   const [roleFilter, setRoleFilter] = useState<RoleTag | 'all'>('all');
@@ -197,22 +186,10 @@ export function PersonasPane({ client }: PersonasPaneProps = {}): JSX.Element {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Persist tenant choice across reloads.
-  useEffect(() => {
-    if (typeof localStorage === 'undefined') return;
-    if (tenantId) {
-      localStorage.setItem(TENANT_STORAGE_KEY, tenantId);
-    }
-  }, [tenantId]);
-
   const refresh = useCallback(async () => {
-    if (!tenantId.trim()) {
-      setLoad({ kind: 'ok', personas: [] });
-      return;
-    }
     setLoad({ kind: 'loading' });
     try {
-      const personas = await c.listPersonas(tenantId.trim());
+      const personas = await c.listPersonas();
       setLoad({ kind: 'ok', personas });
     } catch (err) {
       if (err instanceof ApiError && err.status === 503) {
@@ -224,7 +201,7 @@ export function PersonasPane({ client }: PersonasPaneProps = {}): JSX.Element {
         message: err instanceof Error ? err.message : String(err),
       });
     }
-  }, [c, tenantId]);
+  }, [c]);
 
   useEffect(() => {
     void refresh();
@@ -258,7 +235,7 @@ export function PersonasPane({ client }: PersonasPaneProps = {}): JSX.Element {
     setSaveError(null);
     try {
       if (drawer.kind === 'create') {
-        await c.createPersona(formToCreateReq(form, tenantId.trim()));
+        await c.createPersona(formToCreateReq(form));
       } else {
         await c.updatePersona(drawer.persona.id, formToUpdateReq(form));
       }
@@ -298,16 +275,6 @@ export function PersonasPane({ client }: PersonasPaneProps = {}): JSX.Element {
       </header>
 
       <div className="toolbar" role="search" aria-label="personas filters">
-        <label>
-          <span>{t('pane.personas.tenant_id_label')}</span>
-          <input
-            type="text"
-            value={tenantId}
-            placeholder={t('pane.personas.tenant_id_placeholder')}
-            onChange={(e) => setTenantId(e.target.value)}
-            aria-label={t('pane.personas.tenant_id_label')}
-          />
-        </label>
         <input
           type="search"
           value={nameFilter}

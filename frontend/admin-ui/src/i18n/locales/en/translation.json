@@ -489,9 +489,7 @@
       "delete_confirm_body": "Archiving prevents this persona from being attached to new sessions. Existing sessions keep their persona attachment.",
       "empty": "No personas defined yet.",
       "loading": "Loading personas…",
-      "unavailable": "Personas repository not configured (HTTP 503). Wire `xiaoguai-personas::pg::PgPersonaRepository` in the API host.",
-      "tenant_id_label": "Tenant",
-      "tenant_id_placeholder": "ten_demo"
+      "unavailable": "Personas repository not configured (HTTP 503). Wire `xiaoguai-personas::pg::PgPersonaRepository` in the API host."
     },
     "skill_proposals": {
       "title": "Skill Proposals",

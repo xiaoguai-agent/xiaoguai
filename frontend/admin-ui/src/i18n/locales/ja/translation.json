@@ -489,9 +489,7 @@
       "delete_confirm_body": "アーカイブ後は新しいセッションに付加できなくなります。既存セッションはそのまま使用されます。",
       "empty": "ペルソナがまだ定義されていません。",
       "loading": "読み込み中…",
-      "unavailable": "Personas リポジトリが未構成です（HTTP 503）。`xiaoguai-personas::pg::PgPersonaRepository` を API ホストに接続してください。",
-      "tenant_id_label": "テナント",
-      "tenant_id_placeholder": "ten_demo"
+      "unavailable": "Personas リポジトリが未構成です（HTTP 503）。`xiaoguai-personas::pg::PgPersonaRepository` を API ホストに接続してください。"
     },
     "skill_proposals": {
       "title": "スキル提案",

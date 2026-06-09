@@ -489,9 +489,7 @@
       "delete_confirm_body": "归档后将不能附着到新会话；已使用此档案的会话继续保留。",
       "empty": "尚未定义任何角色档案。",
       "loading": "加载中…",
-      "unavailable": "Personas 仓储未配置（HTTP 503）。请在 API 主机中接入 `xiaoguai-personas::pg::PgPersonaRepository`。",
-      "tenant_id_label": "租户",
-      "tenant_id_placeholder": "ten_demo"
+      "unavailable": "Personas 仓储未配置（HTTP 503）。请在 API 主机中接入 `xiaoguai-personas::pg::PgPersonaRepository`。"
     },
     "skill_proposals": {
       "title": "技能提案",
