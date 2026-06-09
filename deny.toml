@@ -30,7 +30,7 @@ ignore = [
 
 # v1.1.8: gating allow-list. Anything not in this list is denied,
 # including copyleft licenses (GPL-*, AGPL-*, LGPL-*). The project
-# itself ships under BUSL-1.1; pulling in GPL-3.0 would force the
+# itself ships under Apache-2.0; pulling in GPL-3.0 would force the
 # whole binary to GPL.
 [licenses]
 allow = [
@@ -46,11 +46,9 @@ allow = [
     "MPL-2.0",
     "CDLA-Permissive-2.0",
     "OpenSSL",
-    "BUSL-1.1",
     "CC0-1.0",
     # Boost Software License 1.0 — OSI-approved, permissive (MIT-like, no
-    # copyleft). Pulled in by redis 1.x. NOT the BUSL-1.1 source-available
-    # license despite the similar abbreviation.
+    # copyleft). Pulled in by redis 1.x.
     "BSL-1.0",
 ]
 confidence-threshold = 0.8

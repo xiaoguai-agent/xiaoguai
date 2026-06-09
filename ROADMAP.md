@@ -207,7 +207,7 @@ implementation commitment. Inclusion here is not a promise.
 - **Built-in vector database** — use pgvector (already supported),
   Qdrant, or Weaviate via the `xiaoguai-rag` adapter layer; we do not
   maintain an embedded vector store
-- **SaaS hosted offering** — xiaoguai is and remains BUSL-licensed
+- **SaaS hosted offering** — xiaoguai is and remains Apache-2.0
   open source; no managed cloud is planned
 
 ---
