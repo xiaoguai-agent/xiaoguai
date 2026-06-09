@@ -72,6 +72,7 @@ pub mod memory;
 pub mod model;
 pub mod routes;
 pub mod sqlite;
+pub mod teams;
 pub mod traits;
 
 // Public re-exports — the full API surface callers need.
@@ -80,4 +81,8 @@ pub use error::{PersonaError, PersonaResult};
 pub use memory::InMemoryPersonaRepository;
 pub use model::{CreatePersonaRequest, Persona, SessionPersona, UpdatePersonaRequest};
 pub use sqlite::SqlitePersonaRepository;
+pub use teams::{
+    CreateTeamRequest, InMemoryTeamRepository, SessionTeam, SqliteTeamRepository, Team,
+    TeamRepository, UpdateTeamRequest,
+};
 pub use traits::PersonaRepository;
