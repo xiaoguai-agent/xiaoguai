@@ -149,6 +149,25 @@ async fn create_rejects_duplicate_members() {
 }
 
 #[tokio::test]
+async fn update_rejects_duplicate_name() {
+    let repo = InMemoryTeamRepository::new();
+    repo.create(&make_valid("Taken")).await.unwrap();
+    let other = repo.create(&make_valid("Renaming")).await.unwrap();
+
+    let err = repo
+        .update(
+            other.id,
+            &UpdateTeamRequest {
+                name: Some("Taken".to_string()),
+                ..UpdateTeamRequest::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, PersonaError::DuplicateName(_)));
+}
+
+#[tokio::test]
 async fn update_validates_merged_composition() {
     let repo = InMemoryTeamRepository::new();
     let created = repo.create(&make_valid("Merge")).await.unwrap();

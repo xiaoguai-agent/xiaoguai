@@ -72,6 +72,17 @@ impl TeamRepository for InMemoryTeamRepository {
 
     async fn update(&self, id: Uuid, req: &UpdateTeamRequest) -> PersonaResult<Team> {
         let mut g = self.state.lock();
+        // Match the SQLite UNIQUE(name) constraint: renaming onto another
+        // active team's name must fail here too.
+        if let Some(new_name) = &req.name {
+            let taken = g
+                .teams
+                .values()
+                .any(|t| t.id != id && t.name == *new_name && !t.archived);
+            if taken {
+                return Err(PersonaError::DuplicateName(new_name.clone()));
+            }
+        }
         let current = g.teams.get(&id).ok_or(PersonaError::NotFound)?;
 
         // Build the merged result first; only commit if it validates.

@@ -77,27 +77,23 @@ fn map_err(e: PersonaError) -> Response {
 
 /// Verify every member persona exists and is active. The structural rules
 /// (≥1 member, no dupes, lead ∈ members) live in the repository; this is the
-/// half that needs persona data, so it runs here at the boundary.
+/// half that needs persona data, so it runs here at the boundary. One
+/// `list()` call covers all members (the repo lists active personas only,
+/// so archived and non-existent members fail the same check).
 async fn validate_members_active(
     personas: &Arc<dyn PersonaRepository>,
     member_ids: &[Uuid],
 ) -> Result<(), Response> {
+    let active: std::collections::HashSet<Uuid> = match personas.list().await {
+        Ok(ps) => ps.into_iter().map(|p| p.id).collect(),
+        Err(e) => return Err(map_err(e)),
+    };
     for id in member_ids {
-        match personas.get(*id).await {
-            Ok(p) if p.archived => {
-                return Err(err_response(
-                    StatusCode::BAD_REQUEST,
-                    format!("member persona {id} is archived"),
-                ));
-            }
-            Ok(_) => {}
-            Err(PersonaError::NotFound) => {
-                return Err(err_response(
-                    StatusCode::BAD_REQUEST,
-                    format!("member persona {id} does not exist"),
-                ));
-            }
-            Err(e) => return Err(map_err(e)),
+        if !active.contains(id) {
+            return Err(err_response(
+                StatusCode::BAD_REQUEST,
+                format!("member persona {id} does not exist or is archived"),
+            ));
         }
     }
     Ok(())

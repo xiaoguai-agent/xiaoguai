@@ -13,8 +13,8 @@
  *     with `page.route()` so the test is hermetic and does not depend on a
  *     running xiaoguai-core. The scope endpoint returns the full set so
  *     RequireScope reveals write buttons.
- *   - The pane reads `tenant_id` from localStorage; we seed it via the
- *     toolbar input so the first /v1/personas request fires.
+ *   - Single owner (DEC-033): no tenant scoping — the pane lists personas
+ *     immediately on mount.
  *
  * If you're updating this spec because the Personas pane DTO shape changed,
  * keep the mock factory below in sync with `frontend/shared/src/index.ts`
@@ -25,7 +25,6 @@ import { test, expect, type Page, type Route } from '@playwright/test';
 
 interface MockPersona {
   id: string;
-  tenant_id: string;
   name: string;
   system_prompt: string;
   default_model: string | null;
@@ -35,12 +34,9 @@ interface MockPersona {
   archived: boolean;
 }
 
-const TENANT_ID = 'ten_e2e';
-
 function makePersona(overrides: Partial<MockPersona> = {}): MockPersona {
   return {
     id: overrides.id ?? `prs_${Math.random().toString(36).slice(2, 10)}`,
-    tenant_id: TENANT_ID,
     name: overrides.name ?? 'Default Persona',
     system_prompt: overrides.system_prompt ?? 'You are a helpful assistant.',
     default_model: overrides.default_model ?? 'qwen2.5-coder',
@@ -126,10 +122,9 @@ async function installPersonaMocks(
       return;
     }
 
-    // GET /v1/personas?tenant_id=...
+    // GET /v1/personas (single owner — no tenant query param)
     if (method === 'GET') {
-      const tenant = url.searchParams.get('tenant_id');
-      const filtered = store.filter((p) => p.tenant_id === tenant && !p.archived);
+      const filtered = store.filter((p) => !p.archived);
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -145,15 +140,13 @@ async function installPersonaMocks(
 }
 
 test.describe('admin-ui Personas pane — CRUD against mocked /v1/personas', () => {
-  test('list renders mocked personas after tenant id entered', async ({ page }) => {
+  test('list renders mocked personas on load', async ({ page }) => {
     await installPersonaMocks(page, [
       makePersona({ id: 'prs_alpha', name: 'Alpha Planner' }),
       makePersona({ id: 'prs_beta', name: 'Beta Worker' }),
     ]);
 
     await page.goto('/personas');
-    // Seed the tenant id input so the first list call fires.
-    await page.locator('input[type="text"]').first().fill(TENANT_ID);
 
     // The table should render with both rows.
     await expect(page.locator('table[aria-label="personas"]')).toBeVisible({
@@ -170,7 +163,6 @@ test.describe('admin-ui Personas pane — CRUD against mocked /v1/personas', () 
     ]);
 
     await page.goto('/personas');
-    await page.locator('input[type="text"]').first().fill(TENANT_ID);
     await expect(page.locator('td', { hasText: 'Alpha Planner' })).toBeVisible();
 
     // Type "alpha" into the search input.
@@ -183,7 +175,6 @@ test.describe('admin-ui Personas pane — CRUD against mocked /v1/personas', () 
   test('"New persona" drawer opens, submits, list refreshes', async ({ page }) => {
     await installPersonaMocks(page, []);
     await page.goto('/personas');
-    await page.locator('input[type="text"]').first().fill(TENANT_ID);
 
     // Wait for empty state then click the new-persona button.
     const newBtn = page.locator('button', { hasText: /new/i }).first();
@@ -217,7 +208,6 @@ test.describe('admin-ui Personas pane — CRUD against mocked /v1/personas', () 
     ]);
 
     await page.goto('/personas');
-    await page.locator('input[type="text"]').first().fill(TENANT_ID);
 
     const editBtn = page.locator('button[aria-label="edit Editable Persona"]');
     await expect(editBtn).toBeVisible({ timeout: 10_000 });
@@ -239,7 +229,6 @@ test.describe('admin-ui Personas pane — CRUD against mocked /v1/personas', () 
     ]);
 
     await page.goto('/personas');
-    await page.locator('input[type="text"]').first().fill(TENANT_ID);
 
     const deleteBtn = page.locator('button[aria-label="delete Doomed Persona"]');
     await expect(deleteBtn).toBeVisible({ timeout: 10_000 });
