@@ -16,6 +16,7 @@ import type { HotlPendingState } from './HotlBanner';
 import { AiDisclosureBanner } from './AiDisclosureBanner';
 import { SseReconnectBanner } from './SseReconnectBanner';
 import { WatchIndicator } from './WatchIndicator';
+import { ExpertPicker } from './ExpertPicker';
 import { useI18n } from './i18n/I18nProvider';
 import { interpolate } from './i18n';
 import { isLoopLive, parseLoopCommand, shortLoopId } from './loopCommands';
@@ -520,6 +521,8 @@ export function ChatPage({ onSessionCreated }: Props) {
       <div className="chat-header">
         {/* AiDisclosureBanner placeholder — wired by feat/chat-ui-ai-disclosure branch */}
         {/* HotlBanner placeholder — wired by feat/chat-ui-hotl-banner branch */}
+        {/* T3.5 — expert picker chip for the active session */}
+        <ExpertPicker sessionId={sessionId} />
         <WatchIndicator sessionId={sessionId} />
       </div>
       <div className={`messages${bubbles.length === 0 ? ' messages-empty' : ''}`} ref={scrollRef}>

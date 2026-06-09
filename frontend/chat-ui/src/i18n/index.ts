@@ -55,6 +55,28 @@ interface TranslationShape {
       analyze_cve: string;
       explain_codebase: string;
     };
+    /** T3.5 — expert picker (header chip + popover). */
+    expert: {
+      pick_label: string;
+      chip_title: string;
+      panel_title: string;
+      remove: string;
+      filter_placeholder: string;
+      group_personas: string;
+      group_teams: string;
+      empty_group: string;
+      kind_persona: string;
+      kind_team: string;
+      suggest_label: string;
+      suggest_placeholder: string;
+      suggest_button: string;
+      suggest_searching: string;
+      suggest_empty: string;
+      error_load: string;
+      error_attach: string;
+      error_detach: string;
+      error_suggest: string;
+    };
   };
   chat: {
     sse: {

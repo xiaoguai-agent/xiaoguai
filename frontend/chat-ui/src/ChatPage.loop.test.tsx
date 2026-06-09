@@ -21,6 +21,9 @@ vi.mock('./client', () => ({
     cancel: vi.fn(),
     forkSession: vi.fn(),
     listSessionWatchers: vi.fn(),
+    // T3.5 — ExpertPicker mounts in the chat header.
+    getSessionTeam: vi.fn(),
+    getSessionPersona: vi.fn(),
     createLoop: vi.fn(),
     listLoops: vi.fn(),
     cancelLoop: vi.fn(),
@@ -34,6 +37,8 @@ type Mock = ReturnType<typeof vi.fn>;
 const mockedClient = client as unknown as {
   listMessages: Mock;
   listSessionWatchers: Mock;
+  getSessionTeam: Mock;
+  getSessionPersona: Mock;
   sendMessage: Mock;
   createLoop: Mock;
   listLoops: Mock;
@@ -93,6 +98,8 @@ describe('ChatPage /loop interception', () => {
     Element.prototype.scrollTo = vi.fn() as unknown as typeof Element.prototype.scrollTo;
     mockedClient.listMessages.mockResolvedValue([]);
     mockedClient.listSessionWatchers.mockResolvedValue([]);
+    mockedClient.getSessionTeam.mockResolvedValue(null);
+    mockedClient.getSessionPersona.mockResolvedValue(null);
     mockedClient.sendMessage.mockReturnValue(() => {});
     mockedClient.createLoop.mockResolvedValue(LOOP);
     mockedClient.listLoops.mockResolvedValue([]);

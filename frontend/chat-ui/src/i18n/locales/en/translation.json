@@ -91,6 +91,27 @@
       "write_shell": "Write a shell script",
       "analyze_cve": "Analyze the latest CVE feed",
       "explain_codebase": "Explain how a codebase works"
+    },
+    "expert": {
+      "pick_label": "Expert",
+      "chip_title": "Expert for this session",
+      "panel_title": "Choose an expert",
+      "remove": "Remove",
+      "filter_placeholder": "Filter experts…",
+      "group_personas": "Personas",
+      "group_teams": "Teams",
+      "empty_group": "None available",
+      "kind_persona": "persona",
+      "kind_team": "team",
+      "suggest_label": "Find an expert in one sentence",
+      "suggest_placeholder": "Describe your goal…",
+      "suggest_button": "Suggest",
+      "suggest_searching": "Searching…",
+      "suggest_empty": "No matching expert — pick one from the list below.",
+      "error_load": "Failed to load experts: {{message}}",
+      "error_attach": "Failed to attach expert: {{message}}",
+      "error_detach": "Failed to remove expert: {{message}}",
+      "error_suggest": "Suggestion failed: {{message}}"
     }
   }
 }

@@ -91,6 +91,27 @@
       "write_shell": "写一个 shell 脚本",
       "analyze_cve": "分析最新的 CVE 漏洞情报",
       "explain_codebase": "讲讲一个代码库是怎么运作的"
+    },
+    "expert": {
+      "pick_label": "选择专家",
+      "chip_title": "本会话的专家",
+      "panel_title": "选择专家",
+      "remove": "移除",
+      "filter_placeholder": "筛选专家…",
+      "group_personas": "角色",
+      "group_teams": "团队",
+      "empty_group": "暂无可选项",
+      "kind_persona": "角色",
+      "kind_team": "团队",
+      "suggest_label": "一句话找专家",
+      "suggest_placeholder": "描述你的目标…",
+      "suggest_button": "推荐",
+      "suggest_searching": "匹配中…",
+      "suggest_empty": "没有匹配的专家，请从下方列表中选择。",
+      "error_load": "加载专家失败：{{message}}",
+      "error_attach": "绑定专家失败：{{message}}",
+      "error_detach": "移除专家失败：{{message}}",
+      "error_suggest": "推荐失败：{{message}}"
     }
   }
 }
