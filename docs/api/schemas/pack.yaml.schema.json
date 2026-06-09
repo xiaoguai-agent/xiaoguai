@@ -29,7 +29,7 @@
     },
     "license": {
       "type": "string",
-      "description": "SPDX license identifier (e.g. 'BUSL-1.1', 'MIT')."
+      "description": "SPDX license identifier (e.g. 'Apache-2.0', 'MIT')."
     },
     "kind": {
       "type": "string",

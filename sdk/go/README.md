@@ -104,4 +104,4 @@ XIAOGUAI_BASE_URL=http://localhost:8080 XIAOGUAI_TOKEN=tok go run ./cmd/example
 
 ## License
 
-Business Source License 1.1 — see [LICENSE](LICENSE).
+Apache License 2.0 — see [LICENSE](LICENSE).

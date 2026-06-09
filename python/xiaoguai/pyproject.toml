@@ -11,7 +11,7 @@ dynamic = ["version"]
 description = "Python convenience wrapper around the Rust xiaoguai CLI."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "BUSL-1.1" }
+license = { text = "Apache-2.0" }
 authors = [
     { name = "Xiaoguai contributors" },
 ]
