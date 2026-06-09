@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Date | 2026-06-10 |
-| Status | **Draft — awaiting owner review** (workflow: doc → plan → review → execute) |
+| Status | **APPROVED 2026-06-10** — owner resolved §5: ① tenant_id cleanup IN scope · ② suggest = deterministic A · ③ packs = display-only tags A |
 | Parent | `docs/plans/2026-06-09-capability-upgrade.md` §2-C / §3-T3 |
 | Hard constraints | DEC-033 unchanged: 单二进制 · 内嵌 SQLite · 单 owner · `:7600` |
 
@@ -122,7 +122,7 @@ Clean-box boot (`serve` on fresh SQLite, `:7600`, `/healthz`) stays green.
 - Suggest endpoint is read-only and offline (no LLM call in MVP — capability
   matching is deterministic; an LLM-ranked upgrade can come with T4).
 
-## 5. Open questions for the owner
+## 5. Open questions — RESOLVED by owner 2026-06-10 (① yes ② A ③ A)
 
 1. **tenant_id cleanup in scope?** (§2.4 — recommended yes, it's dead pre-pivot
    plumbing on exactly the files T3 touches.)
