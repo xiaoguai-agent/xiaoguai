@@ -8,12 +8,17 @@
  *   - chat-ui shared types + HotlBanner + ChatPage consume `escalation_id`
  *     (S13-9) — this spec.
  *
- * Strategy: inject a window-side hook that captures the raw SSE event
- * payload before the chat-ui's typed AgentEvent parser sees it. The
- * straight `JSON.parse` SSE pipeline (frontend/shared/src/index.ts
- * `parseSseChunk`) means the wire keys are preserved on the typed event
- * object, so a `data-testid` assertion on banner DOM is insufficient — we
- * need to verify the raw key is `escalation_id`, not `request_id`.
+ * Strategy: drive a mocked `hotl_pending` SSE event and assert that the app
+ * *consumes* `escalation_id` (not the legacy `request_id`) by inspecting the
+ * banner's operator-queue deep-link — its href carries `escalation_id=<uuid>`
+ * only if `parseSseChunk` (frontend/shared/src/index.ts) read that wire key.
+ * That is an end-to-end proof of the wire contract and is browser-agnostic.
+ *
+ * (Earlier this spec monkey-patched `window.JSON.parse` to capture the raw SSE
+ * object. That shim was redundant — it only re-checked the body THIS test
+ * mocks — and was unreliable under webkit, where the app bundle caches its
+ * JSON.parse reference before the init script runs. The href assertion proves
+ * the same contract without it.)
  *
  * Mirrors the fixture pattern in chat-hotl-suspend-resume.spec.ts.
  */
@@ -72,31 +77,6 @@ test.describe('chat-ui HotL escalation_id rename (sprint-13 S13-9)', () => {
     await mockSessionCreate(page);
     await mockSessionMetadata(page);
 
-    // Install a window-side hook BEFORE app boot — wraps native JSON.parse
-    // and captures the most recent object whose `type` starts with `hotl_`.
-    // This is the cleanest way to inspect the raw SSE payload independently
-    // of the typed AgentEvent surface (the typed property name is also
-    // `escalation_id` post-S13-9, so a typed read alone wouldn't prove the
-    // wire key — wrapping JSON.parse intercepts the literal wire shape).
-    await page.addInitScript(() => {
-      (window as unknown as { __lastSseHotlEvent: unknown }).__lastSseHotlEvent = null;
-      const originalParse = JSON.parse.bind(JSON);
-      JSON.parse = ((text: string, reviver?: (key: string, value: unknown) => unknown) => {
-        const parsed = originalParse(text, reviver);
-        if (
-          parsed &&
-          typeof parsed === 'object' &&
-          typeof (parsed as { type?: unknown }).type === 'string' &&
-          ((parsed as { type: string }).type === 'hotl_pending' ||
-            (parsed as { type: string }).type === 'hotl_resolved')
-        ) {
-          (window as unknown as { __lastSseHotlEvent: unknown }).__lastSseHotlEvent =
-            parsed;
-        }
-        return parsed;
-      }) as typeof JSON.parse;
-    });
-
     // SSE response carrying a hotl_pending event with the new wire shape.
     await page.route(
       new RegExp(`/v1/sessions/${SESSION_ID}/messages$`),
@@ -133,20 +113,9 @@ test.describe('chat-ui HotL escalation_id rename (sprint-13 S13-9)', () => {
     // ChatPage's applyEvent reducer.
     await expect(page.locator('.hotl-banner')).toBeVisible({ timeout: 10_000 });
 
-    // Inspect the raw SSE event captured via the JSON.parse shim.
-    const captured = await page.evaluate(
-      () => (window as unknown as { __lastSseHotlEvent: unknown }).__lastSseHotlEvent,
-    );
-
-    expect(captured).toBeTruthy();
-    expect(captured).toMatchObject({
-      type: 'hotl_pending',
-      escalation_id: ESCALATION_ID,
-    });
-    // Wire-contract regression: the legacy field MUST NOT appear.
-    expect((captured as Record<string, unknown>).request_id).toBeUndefined();
-
-    // Banner deep-links the operator queue with the new query key.
+    // Banner deep-links the operator queue with the new query key. This href
+    // carries the escalation_id value only if the app read `escalation_id` off
+    // the SSE event — an end-to-end proof of the S13-9 wire contract.
     await expect(page.locator('.hotl-banner a')).toHaveAttribute(
       'href',
       new RegExp(`escalation_id=${ESCALATION_ID}`),
