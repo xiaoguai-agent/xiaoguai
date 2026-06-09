@@ -28,6 +28,21 @@ shape of 办公小浣熊.
   admin-ui) is sufficient**; we will not open a new desktop-shell frontend track.
 - ❌ Nothing that breaks DEC-033 (no microservices, no cloud, no external queue).
 
+## 0.1 Implementation philosophy — integrate-first (owner-confirmed)
+
+**能用现成 skill/MCP 就集成,不自研.** xiaoguai's value is the **governance
+(HotL + HMAC audit) + orchestration layer**, NOT re-building tools. Every
+capability below is implemented by **integrating an existing MCP server / skill
+and wrapping it in xiaoguai's governance**, not by writing a Rust tool crate —
+because every tool call already passes `HotlGate::check(scope=tool_call.{name})`
++ audit in `react.rs`, so an integrated tool gets approval + audit-chain for free.
+
+Self-build ONLY when (a) it IS the governance/orchestration itself, or (b) no
+existing skill/MCP exists. An external MCP server is a **runtime optional
+dependency** (like git/gh/chromium) — it does NOT break the single binary
+(DEC-033); offline deployments just pre-install/bundle the recommended server.
+This is the standing rule, not a one-off — saves build effort + tokens + upkeep.
+
 ## 1. Competitive read (why this upgrade, scoped)
 
 The "虾 → 马 → 熊" evolution line: **execution → +memory → +everything/low-friction**.
@@ -89,7 +104,7 @@ and what the cloud-coupled competitors can't offer them.
 
 | # | Task | Reuse | Size | Depends | Notes |
 |---|---|---|---|---|---|
-| **T1** | Office skills (xlsx/docx/pptx read+write; report/PPT gen; Excel write-back) | coding tools + new `xiaoguai-office` crate | M–L | — | pure-local libs; HotL+audit via coding gate |
+| **T1** | Office skills — **integrate** an existing office MCP server (xlsx/docx/pptx/pdf read+write, report/PPT gen) + skill/pack wrap | MCP consume + packs | **S–M** | pick the server | NO self-built crate; pptx problem disappears (external tool supports it); HotL+audit auto |
 | **T2** | Browser control (governed, offline) | browser decision draft + McpClient pattern | L | owner decides chromium distribution first | mirrors `xiaoguai-coding` |
 | **T3** | Expert center productization (expert + team + UI) | personas + packs + admin/chat-ui | M | — | route by intent |
 | **T4** | Executive routing + parallel orchestration + synthesis | xiaoguai-orchestrator | M | — | triangle → intent-route+parallel |
@@ -123,8 +138,9 @@ DEC-033; clean-box boot (`serve` on fresh SQLite, `:7600`, `/healthz`) stays gre
 1. **Browser distribution (T2)** — answer the 4 decision points in
    `docs/plans/2026-06-08-browser-automation-distribution.md` (chromium posture,
    provisioning, CDP crate, MVP tool surface).
-2. **Office library choices (T1)** — confirm pure-Rust libs (calamine/docx-rs/typst)
-   vs a sandboxed converter; the former keeps it single-binary.
+2. **Office MCP server (T1)** — pick which existing office MCP server to integrate
+   (e.g. markitdown / pandoc-based / office-mcp) + an offline-bundle plan for it.
+   No self-built office crate (per §0.1 integrate-first).
 3. **Design-repo DECs** — T4/T5/T6 (orchestration paradigm) are architecture-level;
    confirm whether they go through `xiaoguai-agent-design` DECs first (per the
    doc-first workflow) before code.
