@@ -103,6 +103,8 @@ async fn build_state_with_backend(
         personas: None,
         watchers: None,
         loops: None,
+        teams: None,
+        team_audit: None,
         decision_registry: Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
     };
     (state, loop_store, pool, dir)

@@ -79,6 +79,8 @@ fn build_state(watchers: Option<Arc<dyn WatcherIntrospector>>) -> AppState {
         personas: None,
         watchers,
         loops: None,
+        teams: None,
+        team_audit: None,
         decision_registry: std::sync::Arc::new(
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),

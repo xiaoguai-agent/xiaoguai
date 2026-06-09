@@ -38,7 +38,7 @@ use crate::today::TodayReader;
 use crate::usage::UsageReader;
 use crate::workspaces::WorkspaceRepository;
 use xiaoguai_memory::MemoryStore;
-use xiaoguai_personas::PersonaRepository;
+use xiaoguai_personas::{PersonaRepository, TeamRepository};
 
 /// Registry of cancellation tokens keyed by `session_id` — one token per
 /// in-flight turn, and (since the /loop L1 prerequisite work) the
@@ -300,6 +300,17 @@ pub struct AppState {
     /// those endpoints return 503; production wires `SqlitePersonaRepository`
     /// from `xiaoguai-personas`.
     pub personas: Option<Arc<dyn PersonaRepository>>,
+    /// T3 expert center: team CRUD + session-attachment store — backs
+    /// `/v1/teams/*` and `/v1/sessions/:id/team`. `None` makes those
+    /// endpoints return 503; production wires `SqliteTeamRepository`
+    /// from `xiaoguai-personas::teams`.
+    pub teams: Option<Arc<dyn TeamRepository>>,
+    /// T3 expert center: best-effort append-only audit sink for `team.create`
+    /// / `team.update` / `team.archive` / `team.attach` entries. Reuses the
+    /// generic [`HotlAuditSink`] append trait; production wires the same
+    /// `SqliteHotlAuditSink` adapter as `hotl_audit`. `None` skips audit
+    /// logging (audit failures must NOT block the operation).
+    pub team_audit: Option<Arc<dyn HotlAuditSink>>,
     /// v1.8.0 (sprint-10b S10b-5): session-scoped watcher introspection —
     /// backs `/v1/watchers/*`. `None` makes those endpoints return 503;
     /// production wires `StaticWatcherIntrospector` (zero-watcher steady
