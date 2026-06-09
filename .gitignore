@@ -65,3 +65,6 @@ models/
 
 # Local-only dev tuning (incremental=false to avoid 211G target blowout, see ci-gotchas)
 .cargo/config.toml
+
+# Local presentation assets (not part of the repo)
+ppt/
