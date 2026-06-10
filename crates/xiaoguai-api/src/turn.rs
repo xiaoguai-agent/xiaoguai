@@ -209,6 +209,30 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
         state.agent_defaults.clone()
     };
 
+    // 2c'. Team glossary (T7.1): when the session has a team attached and
+    //      that team carries a glossary, inject it as a System message
+    //      AFTER the identity message (inserted at 0 below, so identity
+    //      stays the outermost frame) and BEFORE the history:
+    //      [identity, glossary, loop_note?, ...history]. Applies to Execute
+    //      AND Consult turns (read-only context either way) and to loop
+    //      ticks — a loop tick belongs to a session like any other turn.
+    //      Best-effort: a repo failure is logged and the turn proceeds
+    //      without the glossary (context enrichment must not block chat).
+    //      Like identity, never persisted into the session history.
+    if let Some(teams) = &state.teams {
+        match teams.get_session_team(&input.session_id).await {
+            Ok(Some(team)) => {
+                if let Some(text) = crate::glossary::glossary_system_text(&team) {
+                    messages.insert(0, LlmMessage::system(text));
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "glossary: session-team lookup failed (skipping)");
+            }
+        }
+    }
+
     // 2c. Identity memory (DEC-036, P1): prepend the owner's persistent `USER.md`
     //     profile as a leading System message so every session knows who it is
     //     working for. Loaded per-request (picks up edits without a restart);

@@ -25,7 +25,9 @@ mod audit_bridge;
 pub mod coding_bridge;
 mod eval_bridge;
 pub mod hotl_bridge;
-mod memory_bridge;
+// T7.2: pub so the CLI (`xiaoguai memory import/export`) reuses
+// `build_memory_store` — one embedder-selection source of truth.
+pub mod memory_bridge;
 pub mod outcomes_bridge;
 #[cfg(feature = "packs")]
 pub mod packs;

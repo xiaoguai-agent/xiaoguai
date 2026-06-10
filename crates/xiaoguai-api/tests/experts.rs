@@ -171,6 +171,7 @@ async fn suggest_includes_matching_team() {
             lead_persona_id: lead,
             member_persona_ids: vec![lead],
             recommended_pack_slugs: vec![],
+            glossary_md: None,
         })
         .await
         .unwrap();

@@ -35,6 +35,8 @@ xiaoguai-mcp = { path = "../xiaoguai-mcp" }
 xiaoguai-core = { path = "../xiaoguai-core" }
 # `xiaoguai schedule` — job model + repositories + cron validation.
 xiaoguai-scheduler = { path = "../xiaoguai-scheduler" }
+# T7.2: `xiaoguai memory import/export` — JSONL codec + MemoryStore.
+xiaoguai-memory = { path = "../xiaoguai-memory" }
 sqlx = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }
