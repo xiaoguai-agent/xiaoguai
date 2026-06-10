@@ -10,8 +10,12 @@
 # Env overrides win over file values. CLI flags win over env.
 
 server:
-  # 0.0.0.0 binds to all interfaces. Restrict to 127.0.0.1 if you front
-  # the service with a reverse proxy on the same host.
+  # SEC-01: the default bind is 127.0.0.1 (loopback). Binding 0.0.0.0 (all
+  # interfaces) is allowed ONLY when the owner auth gate is enabled (set
+  # auth.username + auth.password below) — otherwise the server refuses to
+  # start to avoid exposing the unauthenticated /v1 API. To run on 0.0.0.0
+  # without auth behind a trusted reverse proxy, set the env opt-out
+  # XIAOGUAI_ALLOW_UNAUTHENTICATED_NONLOOPBACK=1.
   host: 0.0.0.0
   port: 7600
   # Optional: directory holding the built web UIs. When set (and present),

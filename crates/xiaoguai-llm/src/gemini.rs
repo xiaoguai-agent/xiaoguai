@@ -1,7 +1,8 @@
 //! Google Gemini `generateContent` backend.
 //!
 //! Speaks the REST `generateContent` (non-stream) and `streamGenerateContent`
-//! (SSE) APIs. Auth via `key=<API_KEY>` query parameter.
+//! (SSE) APIs. Auth via the `x-goog-api-key` HTTP header (SEC-04: never the
+//! `key=` query parameter — URLs leak into reqwest error strings and logs).
 //!
 //! **Supported model IDs** (pass verbatim as `ChatRequest::model`):
 //!   - `gemini-2.0-flash`
@@ -325,12 +326,14 @@ fn extract_candidate(
 #[async_trait]
 impl LlmBackend for GeminiBackend {
     async fn chat_stream(&self, req: ChatRequest) -> Result<ChatStream, LlmError> {
-        // Gemini streaming: POST `streamGenerateContent?alt=sse&key=<KEY>`
+        // Gemini streaming: POST `streamGenerateContent?alt=sse`.
+        // SEC-04: the API key travels in the `x-goog-api-key` header, NOT the
+        // URL — reqwest error Display includes the full URL, which would leak
+        // the key into SSE error events and logs.
         let url = format!(
-            "{}/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
+            "{}/v1beta/models/{}:streamGenerateContent?alt=sse",
             self.base_url.trim_end_matches('/'),
             req.model,
-            self.api_key
         );
 
         let (contents, system_text) = build_contents(&req.messages);
@@ -361,10 +364,14 @@ impl LlmBackend for GeminiBackend {
             .http
             .post(&url)
             .header("content-type", "application/json")
+            // SEC-04: header-based auth (supported by the Gemini REST API).
+            .header("x-goog-api-key", &self.api_key)
             .json(&body)
             .send()
             .await
-            .map_err(|e| LlmError::Network(e.to_string()))?;
+            // SEC-04 defence-in-depth: strip the URL from the error before
+            // stringifying — reqwest's Display would otherwise embed it.
+            .map_err(|e| LlmError::Network(e.without_url().to_string()))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -377,7 +384,14 @@ impl LlmBackend for GeminiBackend {
         let sse = resp.bytes_stream().eventsource();
 
         let mapped = sse.map(|ev_res| {
-            let ev = ev_res.map_err(|e| LlmError::Network(e.to_string()))?;
+            // SEC-04 defence-in-depth: transport errors wrap a reqwest error
+            // whose Display includes the request URL — strip it first.
+            let ev = ev_res.map_err(|e| match e {
+                eventsource_stream::EventStreamError::Transport(e) => {
+                    LlmError::Network(e.without_url().to_string())
+                }
+                other => LlmError::Network(other.to_string()),
+            })?;
 
             let parsed: GeminiStreamResponse = serde_json::from_str(&ev.data)
                 .map_err(|e| LlmError::Provider(format!("decode SSE: {e} — raw: {}", ev.data)))?;

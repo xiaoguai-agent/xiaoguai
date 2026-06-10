@@ -19,6 +19,7 @@ pub mod teams;
 pub mod usage;
 pub mod watchers;
 
+use axum::http::{HeaderValue, Method};
 use axum::routing::{delete, get, post, put};
 use axum::Router;
 use tower_http::cors::CorsLayer;
@@ -33,7 +34,8 @@ use crate::state::AppState;
 
 /// Build the v0.5.5+ router. Layers (outermost → innermost):
 ///   - tracing (request/response spans)
-///   - permissive CORS (origin tightening lands with production auth)
+///   - CORS restricted to loopback origins (or `XIAOGUAI_CORS_ALLOWED_ORIGINS`)
+///     — SEC-06, replacing the old `permissive()` layer
 ///   - optional username/password (HTTP Basic) auth on `/v1/**` when
 ///     `state.auth = Some(...)`. `/healthz` and `/v1/openapi.json` are always
 ///     public. Under DEC-033 there is no RBAC layer — every authenticated
@@ -282,6 +284,17 @@ pub fn router(state: AppState) -> Router {
             async move { require_auth(v, req, next).await }
         }))
     } else {
+        // SEC-11: with no owner auth, the whole `/v1` surface — including the
+        // human-approval endpoints `POST /v1/incidents/{{id}}/approve-repair`
+        // and `POST /v1/hotl/decisions` — is reachable unauthenticated. Warn
+        // loudly (mirrors the /v1/mcp/serve warning). SEC-01 already refuses to
+        // start on a non-loopback bind without auth, so this path is loopback.
+        tracing::warn!(
+            "owner auth is DISABLED — ALL /v1 endpoints, incl. self-healing \
+             approval (POST /v1/incidents/{{id}}/approve-repair) and HotL \
+             decisions (POST /v1/hotl/decisions), are UNAUTHENTICATED. Set \
+             auth.username/password (XIAOGUAI_AUTH__*) before exposing this host."
+        );
         v1
     };
 
@@ -335,7 +348,7 @@ pub fn router(state: AppState) -> Router {
         .merge(v1)
         .merge(public_v1)
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
+        .layer(build_cors())
         .with_state(state);
 
     match mcp_serve {
@@ -346,4 +359,92 @@ pub fn router(state: AppState) -> Router {
 
 async fn healthz() -> &'static str {
     "ok"
+}
+
+/// SEC-06: build the CORS layer. The bundled web UI is served same-origin, so
+/// cross-origin access is opt-in. Origins listed in
+/// `XIAOGUAI_CORS_ALLOWED_ORIGINS` (comma-separated) are allowed verbatim;
+/// otherwise only loopback origins (`localhost` / `127.0.0.1` / `[::1]` on any port)
+/// are reflected — enough for the same-origin UI and local dev (vite), while
+/// remote sites get no CORS headers and the browser blocks them. Replaces the
+/// previous `CorsLayer::permissive()` which echoed any Origin.
+fn build_cors() -> CorsLayer {
+    use tower_http::cors::{AllowOrigin, Any};
+    let base = CorsLayer::new()
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers(Any);
+    match std::env::var("XIAOGUAI_CORS_ALLOWED_ORIGINS") {
+        Ok(v) if !v.trim().is_empty() => {
+            let origins: Vec<HeaderValue> = v
+                .split(',')
+                .filter_map(|s| HeaderValue::from_str(s.trim()).ok())
+                .collect();
+            base.allow_origin(origins)
+        }
+        _ => base.allow_origin(AllowOrigin::predicate(|origin, _parts| {
+            origin.to_str().map(is_loopback_origin).unwrap_or(false)
+        })),
+    }
+}
+
+/// True if an `Origin` header value names a loopback host (any scheme/port).
+fn is_loopback_origin(origin: &str) -> bool {
+    let authority = origin.split_once("://").map_or(origin, |(_, rest)| rest);
+    let authority = authority.split('/').next().unwrap_or("");
+    // IPv6 origins look like `[::1]:port`; IPv4/hostnames like `host:port`.
+    let host = authority.strip_prefix('[').map_or_else(
+        || authority.split(':').next().unwrap_or(""),
+        |rest| rest.split(']').next().unwrap_or(""),
+    );
+    // SEC-06 (review fix): parse the host as an IP and use `is_loopback()` —
+    // covers all of 127.0.0.0/8 and ::1, and crucially REJECTS suffix-confusion
+    // hostnames like `127.evil.com` / `127.0.0.1.attacker.com` (which the old
+    // `starts_with("127.")` string check let through). `localhost` is the only
+    // non-IP loopback name we honour.
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod cors_tests {
+    use super::is_loopback_origin;
+
+    #[test]
+    fn loopback_origins_allowed() {
+        for o in [
+            "http://localhost",
+            "http://localhost:5173",
+            "http://127.0.0.1:7600",
+            "https://127.255.255.254",
+            "http://[::1]:8080",
+        ] {
+            assert!(is_loopback_origin(o), "{o} should be loopback");
+        }
+    }
+
+    #[test]
+    fn suffix_confusion_and_remote_rejected() {
+        // SEC-06 regression guard: these must NOT be treated as loopback.
+        for o in [
+            "http://127.evil.com",
+            "http://127.0.0.1.attacker.com",
+            "http://localhost.attacker.com",
+            "https://evil.com",
+            "http://10.0.0.1",
+            "http://0.0.0.0",
+        ] {
+            assert!(!is_loopback_origin(o), "{o} must be rejected");
+        }
+    }
 }

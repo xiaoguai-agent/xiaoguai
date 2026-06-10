@@ -40,3 +40,47 @@ async fn list_tools_and_call_round_trip() {
 
     client.shutdown().await.expect("shutdown");
 }
+
+/// SEC-03: the host environment must NOT leak into MCP server children.
+///
+/// Probes via the fixture's `env_probe` tool, which reports whether a var is
+/// visible inside the child. Uses `CARGO_MANIFEST_DIR` as the leak canary —
+/// cargo/nextest always set it in the parent test process, it is not on the
+/// spawn allowlist, and probing it avoids the process-global (and
+/// thread-unsafe) `std::env::set_var`.
+#[tokio::test]
+async fn spawn_scrubs_host_env_from_child() {
+    if std::env::var("CARGO_MANIFEST_DIR").is_err() {
+        // Running the test binary outside cargo: no canary var to probe.
+        return;
+    }
+
+    let envs = [("XG_EXPLICIT", "visible")];
+    let client = StdioMcpClient::spawn(fixture_bin(), &[], &envs)
+        .await
+        .expect("spawn");
+
+    // Parent-only var is scrubbed by env_clear.
+    let leaked = client
+        .call_tool("env_probe", json!({"key": "CARGO_MANIFEST_DIR"}))
+        .await
+        .expect("probe leak");
+    assert_eq!(leaked.text, "unset", "host env leaked into MCP child");
+
+    // Caller-supplied env survives the scrub.
+    let explicit = client
+        .call_tool("env_probe", json!({"key": "XG_EXPLICIT"}))
+        .await
+        .expect("probe explicit");
+    assert_eq!(explicit.text, "set: visible");
+
+    // Allowlisted PATH is passed through (or defaulted) — child runtimes
+    // must still resolve binaries after the scrub.
+    let path = client
+        .call_tool("env_probe", json!({"key": "PATH"}))
+        .await
+        .expect("probe path");
+    assert!(path.text.starts_with("set:"), "PATH missing in child");
+
+    client.shutdown().await.expect("shutdown");
+}

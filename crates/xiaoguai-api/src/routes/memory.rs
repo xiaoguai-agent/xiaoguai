@@ -63,9 +63,12 @@ fn not_found(id: Uuid) -> impl IntoResponse {
 }
 
 fn internal(msg: impl std::fmt::Display) -> impl IntoResponse {
+    // SEC-07: log detail server-side, return a generic 5xx so backend internals
+    // don't leak to the client (mirrors the centralised `ApiError` mapping).
+    tracing::error!(error = %msg, "memory endpoint internal error");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({"error": msg.to_string()})),
+        Json(serde_json::json!({"error": "internal error"})),
     )
 }
 

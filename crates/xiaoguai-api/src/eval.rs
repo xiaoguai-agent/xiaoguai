@@ -233,6 +233,18 @@ impl EvalService {
                 "suite_name must not be empty".into(),
             ));
         }
+        // SEC-23: `suite_name` indexes into `suites_dir`. Reject path traversal
+        // so a crafted name (`../../etc`) can't escape the suites directory.
+        // `cases_dir` remains a documented admin-only absolute-path override.
+        if req.suite_name.contains('/')
+            || req.suite_name.contains('\\')
+            || req.suite_name.contains("..")
+            || std::path::Path::new(&req.suite_name).is_absolute()
+        {
+            return Err(EvalServiceError::InvalidArgument(
+                "suite_name must be a single path segment (no '/', '\\\\', or '..')".into(),
+            ));
+        }
         let dir = req
             .cases_dir
             .as_ref()

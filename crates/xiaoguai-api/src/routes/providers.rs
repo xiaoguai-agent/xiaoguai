@@ -179,9 +179,13 @@ fn bad_request(msg: &str) -> Response {
 }
 
 fn server_error(e: &impl std::fmt::Display) -> Response {
+    // SEC-07: log the real error server-side but return a generic message so
+    // DB/backend internals (table names, SQL fragments, paths) never reach the
+    // client. Mirrors the centralised `ApiError` 5xx mapping.
+    tracing::error!(error = %e, "provider endpoint internal error");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": e.to_string() })),
+        Json(json!({ "error": "internal error" })),
     )
         .into_response()
 }

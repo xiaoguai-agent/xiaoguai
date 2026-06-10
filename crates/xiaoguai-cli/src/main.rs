@@ -1559,10 +1559,8 @@ async fn handle_schedule(config: Option<&str>, action: ScheduleCmd) -> Result<()
     let runs = SqliteJobRunRepository::new(pool.clone());
     // Sign schedule.* rows with the same key the server uses so CLI-written
     // rows verify in the same chain (same key resolution as `xiaoguai code`).
-    let key = std::env::var(&settings.audit.signing_key_env)
-        .ok()
-        .filter(|k| !k.is_empty())
-        .unwrap_or_else(|| settings.audit.hmac_key.clone());
+    // SEC-15: fail-closed — never fall back to the published dev key.
+    let key = xiaoguai_cli::commands::resolve_audit_signing_key(&settings)?;
     let audit = schedule::SinkAuditAppender::new(Arc::new(SqliteAuditSink::new(pool, key)));
 
     match action {

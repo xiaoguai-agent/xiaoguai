@@ -28,6 +28,16 @@ const ENV_ALLOWLIST: &[&str] = &[
     "GH_ENTERPRISE_TOKEN", // gh auth (push/PR)
 ];
 
+/// SEC-20: global `-c` overrides prepended to **every** `git` invocation
+/// (git requires `-c` before the subcommand name). The workspace tree is
+/// model-writable — including `.git/hooks/` — so a `pre-commit`/`post-commit`
+/// hook written via `edit_file` would hand the model arbitrary code execution
+/// on the host the moment `git_commit` runs. Pointing `core.hooksPath` at
+/// `/dev/null` makes every hook lookup (`/dev/null/<hook-name>`) resolve to a
+/// path that cannot exist, disabling workspace hook execution entirely; on
+/// Windows the path simply never exists, with the same effect.
+const GIT_HARDEN_ARGS: &[&str] = &["-c", "core.hooksPath=/dev/null"];
+
 /// Run `git <args>` in `cwd`, optionally with a dedicated `GIT_INDEX_FILE`
 /// (used to snapshot the working tree without disturbing the user's real
 /// index). Returns trimmed stdout on success; maps a non-zero exit or a
@@ -37,7 +47,12 @@ pub(crate) async fn run(
     args: &[&str],
     index_file: Option<&Path>,
 ) -> Result<String, CodingError> {
-    exec("git", cwd, args, index_file).await
+    // SEC-20: every git call in this crate flows through here (`run_z` and
+    // `is_repo` included), so this is the single choke point where
+    // workspace-controlled hooks are disabled. `run_program` (gh) is a
+    // different binary and takes no git `-c` options.
+    let hardened: Vec<&str> = GIT_HARDEN_ARGS.iter().chain(args).copied().collect();
+    exec("git", cwd, &hardened, index_file).await
 }
 
 /// Run an arbitrary program (e.g. `gh` for `open_pr`) in `cwd`, capturing

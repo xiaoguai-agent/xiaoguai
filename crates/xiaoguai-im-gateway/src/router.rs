@@ -25,6 +25,8 @@
 //!
 //! HTTP semantics:
 //!   - 200 on accepted message (reply runs async)
+//!   - 200 on duplicate delivery (`{"status":"duplicate"}`; SEC-13 — the
+//!     event is dropped, no agent run is spawned)
 //!   - 200 on challenge (echoes `{"challenge":"..."}`)
 //!   - 401 on signature failure
 //!   - 400 on malformed body
@@ -42,6 +44,7 @@ use xiaoguai_api::AppState;
 use xiaoguai_llm::Message as LlmMessage;
 use xiaoguai_runtime::{run_to_completion, RuntimeContext};
 
+use crate::dedup::EventDeduper;
 use crate::history::{ConversationHistory, ConversationIdent, ImHistoryStore};
 use crate::provider::{
     ImEvent, ImProvider, IncomingMessage, OutgoingReply, ProviderError, Webhook,
@@ -63,6 +66,10 @@ pub struct GatewayState {
     /// [`ConversationHistory`]; production wires the PG-backed
     /// `SqliteImHistoryStore`.
     pub history: Arc<dyn ImHistoryStore>,
+    /// SEC-13: per-process replay/re-delivery guard keyed by
+    /// `(provider, event_id)`. See [`EventDeduper`] for the TTL and the
+    /// single-process trade-off notes.
+    pub dedup: Arc<EventDeduper>,
 }
 
 /// Helper that wires the canonical Feishu route. Accepts any provider
@@ -138,6 +145,7 @@ fn mount_with_history(
         app,
         provider,
         history,
+        dedup: Arc::new(EventDeduper::default()),
     };
     Router::new()
         .route(path, post(handle_webhook))
@@ -163,6 +171,19 @@ async fn handle_webhook(
             Json(json!({ "challenge": challenge })).into_response()
         }
         Ok(ImEvent::Message(msg)) => {
+            // SEC-13: platforms re-deliver webhooks on timeout/retry, and a
+            // signed request replayed inside the adapters' timestamp window
+            // would otherwise spawn a duplicate agent run. Acknowledge with
+            // 200 (so the platform stops retrying) and drop the event.
+            // Messages without an event_id are processed unconditionally.
+            if state.dedup.check_and_record(&adapter, &msg.event_id) {
+                tracing::info!(
+                    provider = %adapter,
+                    event_id = %msg.event_id,
+                    "duplicate im event dropped"
+                );
+                return (StatusCode::OK, Json(json!({"status":"duplicate"}))).into_response();
+            }
             if let Some(ctr) = xiaoguai_observability::im_messages_total() {
                 ctr.with_label_values(&[adapter.as_str(), "inbound"]).inc();
             }

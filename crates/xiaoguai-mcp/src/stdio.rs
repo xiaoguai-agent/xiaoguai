@@ -18,6 +18,22 @@ use crate::client::McpClient;
 use crate::error::{McpError, McpResult};
 use crate::types::{ContentBlock, ServerInfo, ToolDescriptor, ToolResult};
 
+/// Env vars passed through from the parent to MCP child processes.
+/// Everything else is scrubbed (SEC-03) so host secrets — audit signing
+/// key, AWS creds, IM tokens, provider API keys — are never handed to
+/// third-party MCP servers. Just enough for the child runtime to find
+/// binaries, its home/temp dirs, and decode paths/messages. Mirrors the
+/// allowlists in `xiaoguai-coding/src/git.rs` and `xiaoguai-mcp-exec`.
+const ALLOWED_PASSTHROUGH: &[&str] = &[
+    "PATH", "HOME",   // many runtimes resolve config/cache under $HOME
+    "TMPDIR", // writable temp dir (node/python/uv need one)
+    "LANG", "LC_ALL", "LC_CTYPE", // locale
+];
+
+/// Fallback `PATH` when the parent has none, so `npx`/`uvx`-style
+/// launchers stay resolvable after the SEC-03 scrub.
+const DEFAULT_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
+
 pub struct StdioMcpClient {
     service: RunningService<RoleClient, ClientInfo>,
 }
@@ -36,9 +52,10 @@ impl std::fmt::Debug for StdioMcpClient {
 impl StdioMcpClient {
     /// Spawn the given binary and complete the MCP `initialize` handshake.
     ///
-    /// `args` are passed positional after the binary path. `envs` are extra
-    /// environment variables for the child process (inherits the parent's
-    /// `PATH` etc. by default).
+    /// `args` are passed positional after the binary path. The child's
+    /// environment is scrubbed (SEC-03): only [`ALLOWED_PASSTHROUGH`] vars
+    /// are inherited from the parent, then the caller's explicit `envs` are
+    /// applied on top (they win over the passthrough set).
     ///
     /// # Errors
     /// Returns `McpError::Transport` if the child process cannot be spawned,
@@ -51,6 +68,19 @@ impl StdioMcpClient {
     {
         let mut cmd = Command::new(program.as_ref());
         cmd.args(args);
+        // SEC-03: never let third-party MCP servers inherit the host's full
+        // environment (audit signing key, AWS creds, IM tokens, …). Clear
+        // everything, re-add the minimal allowlist, then the caller's
+        // explicit `envs` last so they override the passthrough set.
+        cmd.env_clear();
+        for key in ALLOWED_PASSTHROUGH {
+            if let Ok(val) = std::env::var(key) {
+                cmd.env(key, val);
+            }
+        }
+        if std::env::var("PATH").is_err() {
+            cmd.env("PATH", DEFAULT_PATH);
+        }
         for (k, v) in envs {
             cmd.env(k.as_ref(), v.as_ref());
         }

@@ -99,9 +99,15 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
 }
 
 fn signed_request(body: &str) -> Request<Body> {
-    let ts = "1716355200";
+    // SEC-05: the adapter enforces a timestamp freshness window — sign
+    // with the current time (seconds since the Unix epoch).
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before Unix epoch")
+        .as_secs()
+        .to_string();
     let nonce = "nonce_x";
-    let sig = sign(ts, nonce, body);
+    let sig = sign(&ts, nonce, body);
     Request::builder()
         .method(Method::POST)
         .uri("/v1/im/wecom/webhook")

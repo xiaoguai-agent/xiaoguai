@@ -208,6 +208,15 @@ impl Workspace {
     /// boundary (a rollback cannot unwind a completed push). Returns git's
     /// (stderr-trimmed) summary.
     pub async fn git_push(&self, remote: &str, branch: &str) -> Result<String, CodingError> {
+        // SEC-22: both values are model-supplied and land in git *positional*
+        // slots. `git push` has no reliable `--` separator for its
+        // <repository>/<refspec> positions, so a `-`-prefixed value would be
+        // parsed as an option (e.g. `--receive-pack=<cmd>` runs an arbitrary
+        // command on the remote end, `--exec` likewise). Legitimate remote and
+        // branch names never start with `-` (git-check-ref-format forbids it),
+        // so fail fast instead of trying to escape.
+        reject_option_like("remote", remote)?;
+        reject_option_like("branch", branch)?;
         git::run(self.root(), &["push", remote, branch], None).await
     }
 
@@ -231,6 +240,22 @@ impl Workspace {
     }
 }
 
+/// SEC-22: reject a model-supplied git positional argument that git would
+/// parse as an option (`-` prefix). Used where git offers no safe `--`
+/// separator (e.g. `git push <repository> <refspec>`). Boundary validation:
+/// fail fast with a teaching error rather than handing git an injectable
+/// value.
+fn reject_option_like(what: &str, value: &str) -> Result<(), CodingError> {
+    if value.starts_with('-') {
+        return Err(CodingError::InvalidArgument {
+            what: what.to_string(),
+            value: value.to_string(),
+            reason: "must not start with `-` (git would parse it as an option)".to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Write `bytes` to `path` atomically: write a sibling temp file, fsync, rename.
 async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), CodingError> {
     if let Some(parent) = path.parent() {
@@ -246,4 +271,45 @@ async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), CodingError> {
         .await
         .map_err(|e| CodingError::io(path, e))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspace::Workspace;
+
+    /// SEC-22: `-`-prefixed remote/branch values must bounce at the boundary,
+    /// before any git subprocess is spawned (option injection,
+    /// e.g. `--receive-pack=<cmd>`).
+    #[tokio::test]
+    async fn git_push_rejects_option_like_remote_and_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = Workspace::open_or_create(dir.path()).await.unwrap();
+
+        let err = ws
+            .git_push("--receive-pack=evil", "main")
+            .await
+            .expect_err("option-like remote must be rejected");
+        assert!(
+            matches!(err, CodingError::InvalidArgument { .. }),
+            "expected InvalidArgument, got {err:?}"
+        );
+
+        let err = ws
+            .git_push("origin", "--force")
+            .await
+            .expect_err("option-like branch must be rejected");
+        assert!(
+            matches!(err, CodingError::InvalidArgument { .. }),
+            "expected InvalidArgument, got {err:?}"
+        );
+    }
+
+    /// SEC-22 helper: ordinary names pass through.
+    #[test]
+    fn reject_option_like_accepts_normal_names() {
+        assert!(reject_option_like("remote", "origin").is_ok());
+        assert!(reject_option_like("branch", "feat/x-1").is_ok());
+        assert!(reject_option_like("branch", "-x").is_err());
+    }
 }

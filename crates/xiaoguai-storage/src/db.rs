@@ -81,7 +81,48 @@ pub async fn connect(url: &str, max_connections: u32) -> anyhow::Result<SqlitePo
         .max_connections(max_connections.max(1))
         .connect_with(opts)
         .await?;
+
+    // SEC-08: the store holds plaintext provider API keys, conversation
+    // content, and webhook tokens. SQLite creates it under the default umask
+    // (usually 0o644, world-readable) — tighten to owner-only, mirroring the
+    // backup-restore path in `xiaoguai-cli` (`commands/backup.rs`).
+    #[cfg(unix)]
+    restrict_store_permissions(&path);
+
     Ok(pool)
+}
+
+/// Chmod the store file (and any existing `-wal` / `-shm` sidecars) to `0o600`.
+///
+/// `SQLite` copies the main database file's permissions onto sidecar files it
+/// creates later, so fixing `data.db` here also covers WAL/SHM files born after
+/// this call; the explicit sidecar chmod handles files left over from earlier
+/// runs. Failure is logged but never blocks startup — a store we cannot chmod
+/// is still a store we can serve from. (SEC-08)
+#[cfg(unix)]
+fn restrict_store_permissions(db_path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sidecar = |suffix: &str| {
+        let mut name = db_path.as_os_str().to_os_string();
+        name.push(suffix);
+        PathBuf::from(name)
+    };
+
+    for target in [db_path.to_path_buf(), sidecar("-wal"), sidecar("-shm")] {
+        match std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)) {
+            Ok(()) => {}
+            // `-wal` / `-shm` may not exist yet — nothing to tighten.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                tracing::warn!(
+                    path = %target.display(),
+                    error = %err,
+                    "failed to restrict SQLite store permissions to 0o600 (SEC-08)"
+                );
+            }
+        }
+    }
 }
 
 /// Run all embedded migrations against `pool`.
@@ -92,4 +133,44 @@ pub async fn connect(url: &str, max_connections: u32) -> anyhow::Result<SqlitePo
 pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::migrate!("./migrations").run(pool).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::connect;
+
+    /// SEC-08: the store must not be world-readable — it carries plaintext
+    /// provider API keys, conversation content, and webhook tokens.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn connect_restricts_store_to_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("perm-test.db");
+        let pool = connect(path.to_str().expect("utf8 path"), 1)
+            .await
+            .expect("connect");
+
+        let mode = std::fs::metadata(&path)
+            .expect("store metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "data.db must be owner-only (SEC-08)");
+
+        // WAL sidecars are created lazily; when present they must match.
+        for suffix in ["-wal", "-shm"] {
+            let mut sidecar = path.as_os_str().to_os_string();
+            sidecar.push(suffix);
+            if let Ok(meta) = std::fs::metadata(&sidecar) {
+                assert_eq!(
+                    meta.permissions().mode() & 0o777,
+                    0o600,
+                    "{suffix} sidecar must be owner-only (SEC-08)"
+                );
+            }
+        }
+
+        pool.close().await;
+    }
 }

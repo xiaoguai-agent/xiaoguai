@@ -89,9 +89,15 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
 }
 
 fn signed_request(body: &str) -> Request<Body> {
-    let ts = "1716355200";
+    // SEC-05: the adapter enforces a timestamp freshness window — sign
+    // with the current time (seconds since the Unix epoch).
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before Unix epoch")
+        .as_secs()
+        .to_string();
     let nonce = "abc123";
-    let sig = sign(body, ts, nonce);
+    let sig = sign(body, &ts, nonce);
     Request::builder()
         .method(Method::POST)
         .uri("/v1/im/feishu/webhook")
@@ -185,8 +191,8 @@ async fn malformed_signed_body_yields_400() {
 async fn conversation_history_accumulates_per_chat() {
     use xiaoguai_im_feishu::FeishuProvider;
     use xiaoguai_im_gateway::{
-        run_agent_and_reply, ConversationHistory, GatewayState, ImHistoryStore, ImProvider,
-        IncomingMessage,
+        run_agent_and_reply, ConversationHistory, EventDeduper, GatewayState, ImHistoryStore,
+        ImProvider, IncomingMessage,
     };
 
     // Script three distinct assistant outputs so each turn is
@@ -254,6 +260,7 @@ async fn conversation_history_accumulates_per_chat() {
         app: app_state,
         provider,
         history,
+        dedup: Arc::new(EventDeduper::default()),
     };
 
     let mk_msg = |chat: &str, text: &str| IncomingMessage {
