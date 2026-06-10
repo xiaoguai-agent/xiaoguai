@@ -112,6 +112,8 @@ fn build_state(forker: Option<Arc<dyn SessionForker>>) -> (AppState, Arc<InMemor
         personas: None,
         watchers: None,
         loops: None,
+        teams: None,
+        team_audit: None,
         decision_registry: std::sync::Arc::new(
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),

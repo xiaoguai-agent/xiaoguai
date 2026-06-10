@@ -1959,3 +1959,279 @@ html,
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+/* ---------------------------------------------------------- expert picker (T3.5) */
+
+.expert-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Header chip — neutral when no expert, accented when one is attached. */
+.expert-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 10px;
+  border-radius: 99px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--fg-soft);
+  border: 1px solid var(--border);
+  transition: opacity 120ms ease, box-shadow 120ms ease;
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.expert-chip--active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.expert-chip:hover {
+  opacity: 0.85;
+}
+
+.expert-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* Popover panel — appears below the chip. */
+.expert-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 320px;
+  max-width: 400px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding-bottom: var(--space-2);
+}
+
+.expert-popover__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.expert-popover__remove {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 1px 10px;
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--fg-soft);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.expert-popover__remove:hover:not(:disabled) {
+  background: var(--tool-error-bg);
+  border-color: var(--tool-error-border);
+  color: var(--tool-error-fg);
+}
+
+.expert-popover__remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.expert-popover__error {
+  margin: var(--space-2) var(--space-3) 0;
+  color: var(--tool-error-fg);
+  background: var(--tool-error-bg);
+  border: 1px solid var(--tool-error-border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+/* "一句话找专家" suggest section. */
+.expert-popover__suggest {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.expert-popover__suggest-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-soft);
+}
+
+.expert-popover__suggest-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.expert-popover__input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.expert-popover__input:focus {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.expert-popover__suggest-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 1px 10px;
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--fg-soft);
+  flex-shrink: 0;
+}
+
+.expert-popover__suggest-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.expert-popover__suggestions {
+  display: flex;
+  flex-direction: column;
+}
+
+.expert-popover__filter {
+  display: block;
+  width: calc(100% - 2 * var(--space-3));
+  margin: var(--space-2) var(--space-3) 0;
+}
+
+.expert-popover__group-title {
+  padding: var(--space-2) var(--space-3) 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.expert-popover__list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* One selectable persona / team / suggestion row. */
+.expert-popover__row {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--fg);
+}
+
+.expert-popover__row:last-child {
+  border-bottom: none;
+}
+
+.expert-popover__row:hover:not(:disabled) {
+  background: var(--surface);
+}
+
+.expert-popover__row:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.expert-popover__name {
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.expert-popover__desc {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 45%;
+}
+
+.expert-popover__kind {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 99px;
+  flex-shrink: 0;
+}
+
+.expert-popover__kind--persona {
+  background: var(--status-bg);
+  color: var(--status-fg);
+}
+
+.expert-popover__kind--team {
+  background: #dcfce7;
+  color: #166534;
+}
+
+[data-theme='dark'] .expert-popover__kind--team {
+  background: #052e16;
+  color: #4ade80;
+}
+
+.expert-popover__score {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.expert-popover__hint {
+  padding: var(--space-2) var(--space-3);
+  font-size: 12px;
+  color: var(--muted);
+}

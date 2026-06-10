@@ -68,6 +68,8 @@ fn build_state(exporter: Option<Arc<dyn AuditChainExporter>>) -> AppState {
         personas: None,
         watchers: None,
         loops: None,
+        teams: None,
+        team_audit: None,
         decision_registry: std::sync::Arc::new(
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),

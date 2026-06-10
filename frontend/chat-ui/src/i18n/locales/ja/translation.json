@@ -91,6 +91,27 @@
       "write_shell": "シェルスクリプトを書いて",
       "analyze_cve": "最新の CVE 情報を分析して",
       "explain_codebase": "コードベースの仕組みを説明して"
+    },
+    "expert": {
+      "pick_label": "エキスパート",
+      "chip_title": "このセッションのエキスパート",
+      "panel_title": "エキスパートを選択",
+      "remove": "解除",
+      "filter_placeholder": "エキスパートを絞り込む…",
+      "group_personas": "ペルソナ",
+      "group_teams": "チーム",
+      "empty_group": "利用可能な項目がありません",
+      "kind_persona": "ペルソナ",
+      "kind_team": "チーム",
+      "suggest_label": "ひとことでエキスパートを探す",
+      "suggest_placeholder": "目的を入力…",
+      "suggest_button": "提案",
+      "suggest_searching": "検索中…",
+      "suggest_empty": "一致するエキスパートがいません。下のリストから選択してください。",
+      "error_load": "エキスパートの読み込みに失敗しました：{{message}}",
+      "error_attach": "エキスパートの設定に失敗しました：{{message}}",
+      "error_detach": "エキスパートの解除に失敗しました：{{message}}",
+      "error_suggest": "提案に失敗しました：{{message}}"
     }
   }
 }

@@ -73,10 +73,12 @@ session_teams(session_id TEXT PK, team_id TEXT FK, attached_at TIMESTAMP)
 
 - `GET/POST /v1/teams`, `GET/PATCH/DELETE /v1/teams/{id}` — CRUD (archive on delete).
 - `GET/PUT/DELETE /v1/sessions/{id}/team` — attach/detach (PUT also sets lead persona).
-- `POST /v1/experts/suggest` — body `{goal}`; maps active personas to registry
-  `AgentSpec`s (capabilities parsed from the existing `role/...` token +
-  name/description keywords), runs `CapabilityRouter::route`, returns ranked
-  persona/team suggestions. **Suggestion only — user confirms; no auto-attach.**
+- `POST /v1/experts/suggest` — body `{goal}`; deterministic keyword-overlap
+  scorer over active personas + teams (ASCII words + CJK bigrams; name matches
+  weigh 2×), returns ranked suggestions. **Suggestion only — user confirms; no
+  auto-attach.** *(Implementation note: deliberately does NOT go through
+  `CapabilityRouter` — its exact AND-coverage semantics fit explicit-capability
+  intents (T4), not fuzzy free text. See `routes/experts.rs` header.)*
 - Audit: `team.create|update|archive`, `team.attach`, `expert.suggest` entries
   via the existing audit sink pattern.
 

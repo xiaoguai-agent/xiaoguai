@@ -83,6 +83,8 @@ fn build_state(opts: StateOptions) -> AppState {
         skill_audit: None,
         skills_dir: std::path::PathBuf::new(),
         personas: None,
+        teams: None,
+        team_audit: None,
         watchers: None,
         loops: None,
         decision_registry: opts

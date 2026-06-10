@@ -75,6 +75,8 @@ fn build_state(decision_store: Arc<dyn HotlDecisionStore>) -> AppState {
         personas: None,
         watchers: None,
         loops: None,
+        teams: None,
+        team_audit: None,
         decision_registry: Arc::new(DecisionRegistry::new()),
     }
 }
