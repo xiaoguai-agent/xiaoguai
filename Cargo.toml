@@ -195,7 +195,7 @@ dashmap = "6"
 indexmap = { version = "2.7", features = ["serde"] }
 bytes = "1.8"
 mime = "0.3"
-regex = "1.11"
+regex = "1.12"
 
 # websocket (DingTalk Stream API)
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
