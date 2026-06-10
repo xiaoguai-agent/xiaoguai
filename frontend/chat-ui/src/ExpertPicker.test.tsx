@@ -81,6 +81,7 @@ function makeTeam(overrides: Partial<Team> = {}): Team {
     lead_persona_id: 'per-1',
     member_persona_ids: ['per-1'],
     recommended_pack_slugs: [],
+    glossary_md: null,
     created_at: '2026-06-10T00:00:00Z',
     archived: false,
     ...overrides,
