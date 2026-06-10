@@ -22,6 +22,7 @@
 
 pub mod acp_bridge;
 mod audit_bridge;
+pub mod banners;
 pub mod coding_bridge;
 mod eval_bridge;
 pub mod hotl_bridge;
@@ -225,6 +226,10 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                 "serve: llm_providers table is empty — falling back to MockBackend. \
                  Use `xiaoguai provider register` to populate it."
             );
+            // T8.4: loud operator banner for the implicit fallback. The
+            // fallback behaviour itself is unchanged (tests/e2e rely on it);
+            // explicit XIAOGUAI_LLM__MOCK=true opt-in stays quiet (other arm).
+            eprintln!("{}", banners::empty_providers_banner());
         }
         (
             Arc::new(MockBackend::with_response(
@@ -877,11 +882,30 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                 settings.server.host, settings.server.port
             )
         })?;
-    let (local, fut) =
-        serve_with_state_and_extras(addr, state, im_router, settings.server.static_dir.clone())
-            .await
-            .context("bind api")?;
+    let (local, fut) = match serve_with_state_and_extras(
+        addr,
+        state,
+        im_router,
+        settings.server.static_dir.clone(),
+    )
+    .await
+    {
+        Ok(bound) => bound,
+        // T8.1: an occupied port is the most common fresh-install failure —
+        // print the three remedies instead of a bare anyhow chain.
+        Err(e) if banners::is_addr_in_use(&e) => {
+            eprintln!(
+                "{}",
+                banners::addr_in_use_message(&settings.server.host, settings.server.port)
+            );
+            return Err(e.context("bind api: address already in use"));
+        }
+        Err(e) => return Err(e.context("bind api")),
+    };
     tracing::info!(%local, "serve: api listening");
+    // T8.1: post-bind operator banner on stdout (the tracing line above is
+    // telemetry; this is the human-facing "it worked, do this next").
+    println!("{}", banners::serve_banner(&local));
 
     // v1.1.6.2: notify systemd that all subsystems are up (Type=notify).
     // This also spawns the watchdog ping task when WATCHDOG_USEC is set;

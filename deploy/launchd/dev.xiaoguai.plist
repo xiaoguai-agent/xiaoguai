@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd user agent for `xiaoguai serve` (T8.3).
+
+  Rendered + installed by `xiaoguai service install` (macOS path): the
+  BINARY / LOG_DIR placeholders (double-brace syntax) are substituted at
+  install time with the resolved current executable and
+  ~/Library/Logs/xiaoguai. Installed to
+  ~/Library/LaunchAgents/dev.xiaoguai.plist — per-user, no root needed.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.xiaoguai</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{BINARY}}</string>
+    <string>serve</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>{{LOG_DIR}}/xiaoguai.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>{{LOG_DIR}}/xiaoguai.err.log</string>
+</dict>
+</plist>

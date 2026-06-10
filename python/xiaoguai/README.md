@@ -13,7 +13,12 @@ After install:
 ```bash
 xiaoguai --help
 xiaoguai chat --mock --prompt "hello"
+xiaoguai doctor    # self-check: database / providers / Ollama / port
 ```
+
+To keep `xiaoguai serve` running in the background across reboots:
+`xiaoguai service install` (systemd on Linux — needs sudo; a per-user
+launchd agent on macOS — no root).
 
 The console script forwards every argument to the bundled native
 binary. There is no Python agent logic in this package — it exists

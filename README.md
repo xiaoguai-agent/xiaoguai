@@ -36,7 +36,10 @@ no Redis, no Docker required. Every path below ends the same way: a `xiaoguai`
 process serving `:7600`, self-contained on `MockBackend` out of the box. Pick
 the one that matches what you have.
 
-Verify any of them with `curl http://localhost:7600/healthz` → `ok`.
+Verify any of them with `curl http://localhost:7600/healthz` → `ok`, or run
+the built-in self-check `xiaoguai doctor`; keep it running across reboots with
+`xiaoguai service install`. Per-method expected outputs and smoke tests:
+[docs/user-guide/install-and-verify.md](docs/user-guide/install-and-verify.md).
 
 ### Option A — pip (no toolchain, no sudo, all platforms) — recommended
 

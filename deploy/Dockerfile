@@ -102,6 +102,12 @@ COPY crates ./crates
 # fails at `cargo build --release` with a file-not-found include_str error
 # (regression first seen on the v1.8.1 release run).
 COPY catalog ./catalog
+# T8: `crates/xiaoguai-cli/src/commands/service.rs` embeds the service
+# templates via include_str!("../../../../deploy/systemd/...service" /
+# ".../launchd/...plist") — same compile-time requirement as the skill
+# catalog above.
+COPY deploy/systemd ./deploy/systemd
+COPY deploy/launchd ./deploy/launchd
 
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
