@@ -16,6 +16,7 @@ Start here to deploy, run, and maintain xiaoguai in production.
 | What you need | Where to find it |
 |---|---|
 | Day-zero install | [user-guide/quickstart.md](user-guide/quickstart.md) `[main]` |
+| Install & verify (per-method smoke tests, `xiaoguai doctor` / `service install`) | [user-guide/install-and-verify.md](user-guide/install-and-verify.md) `[main]` |
 | Local experiment setup | [user-guide/local-experiment.md](user-guide/local-experiment.md) `[main]` |
 | Expert center (pick expert / teams / suggest) | [user-guide/expert-center.md](user-guide/expert-center.md) `[main]` |
 | Self-healing incidents (alert → RCA → approved fix) | [user-guide/self-healing.md](user-guide/self-healing.md) `[main]` |

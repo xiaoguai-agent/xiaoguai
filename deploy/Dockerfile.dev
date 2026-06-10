@@ -43,6 +43,9 @@ RUN apt-get update \
 # Manifests first — stable layer.
 COPY Cargo.toml Cargo.lock rust-toolchain.toml clippy.toml rustfmt.toml deny.toml ./
 COPY crates ./crates
+COPY catalog ./catalog
+COPY deploy/systemd ./deploy/systemd
+COPY deploy/launchd ./deploy/launchd
 
 # Build with dev profile for speed; cache mounts avoid re-downloading crates.
 RUN --mount=type=cache,target=/root/.cargo/registry \

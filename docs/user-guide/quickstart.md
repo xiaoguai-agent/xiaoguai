@@ -54,6 +54,20 @@ docker compose -f deploy/docker-compose.yml up --build   # first build ~2 min
 curl http://localhost:7600/healthz       # → ok
 ```
 
+On a successful start `xiaoguai serve` also prints its own confirmation:
+
+```text
+✓ xiaoguai running at http://localhost:7600
+  Open the chat UI at http://localhost:7600/ — or send a first message: xiaoguai repl
+```
+
+For a fuller self-check (database, providers, Ollama, port — with per-method
+expected outputs, see `docs/user-guide/install-and-verify.md` in the repo):
+
+```bash
+xiaoguai doctor
+```
+
 ## 3. Send your first chat
 
 Using the bundled CLI (requires a local Rust toolchain — `cargo` is
@@ -144,6 +158,23 @@ memory subsystem are a tracked follow-up — today the memory crate's only real
 embedder is OpenAI-backed, so memory/recall in a fully air-gapped deployment
 is pending that work.
 
+## Running as a daemon
+
+`xiaoguai serve` in a terminal dies with the terminal. To keep the server
+(and with it `/loop` ticks and scheduled jobs) running across logouts and
+reboots, install the background service:
+
+```bash
+sudo xiaoguai service install   # Linux — systemd unit (creates the xiaoguai user + /var/lib/xiaoguai)
+xiaoguai service install        # macOS — per-user launchd agent, no root needed
+xiaoguai service status         # check it
+xiaoguai service uninstall      # stop + remove (your data stays)
+```
+
+Add `--print-only` to `install` to preview the generated unit/plist without
+touching the system. The `.deb`/`.rpm` packages already install the same
+systemd unit for you. Windows is not supported — use Docker or WSL.
+
 ## Next steps
 
 - Wire your own MCP server: `xiaoguai mcp register --name fs
@@ -152,8 +183,8 @@ is pending that work.
 - Register a real LLM provider: `xiaoguai provider register --name
   deepseek --kind openai_compat --endpoint https://api.deepseek.com/v1
   --api-key-env DEEPSEEK_API_KEY --models deepseek-chat`.
-- Run it as a service: install the `.deb`/`.rpm` (or the tarball + the unit in
-  `deploy/systemd/`) and manage it with `systemctl`.
+- Run it as a service: `xiaoguai service install` (see "Running as a daemon"
+  above), or install the `.deb`/`.rpm` which sets up the same systemd unit.
 - For Feishu integration, configure the webhook URL to
   `https://your-host/v1/im/feishu/webhook` and the encrypt key into
   `XIAOGUAI_IM_FEISHU__ENCRYPT_KEY`.

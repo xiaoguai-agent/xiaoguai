@@ -38,6 +38,11 @@ see the repo-root README's Quickstart. A no-network one-shot, no server needed:
 xiaoguai chat --mock --prompt 'hello'
 ```
 
+Self-check an install with `xiaoguai doctor` (database / providers / Ollama /
+port), and keep the server running across reboots with
+`xiaoguai service install` (systemd on Linux, launchd on macOS) — see
+`docs/user-guide/install-and-verify.md`.
+
 ### Containerised (one command, full stack + web UI bundled)
 
 ```bash
