@@ -162,6 +162,35 @@ mod tests {
         assert!(!outside.path().join("pwn.txt").exists());
     }
 
+    /// SEC-20: the worktree (including `.git/hooks/`) is model-writable, so a
+    /// hook would be arbitrary code execution on the host. Every git call must
+    /// run with `-c core.hooksPath=/dev/null` — the commit must succeed (the
+    /// hook exits 1, which would abort it) and the hook's side effect must be
+    /// absent.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn git_commit_does_not_execute_workspace_hooks() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let ws = Workspace::open_or_create(dir.path()).await.unwrap();
+
+        let hooks_dir = ws.root().join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).await.unwrap();
+        let hook = hooks_dir.join("pre-commit");
+        fs::write(&hook, "#!/bin/sh\ntouch hook-ran.txt\nexit 1\n")
+            .await
+            .unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        write(&ws, "a.txt", "A").await;
+        let sha = ws.git_commit("hooks must not run").await.unwrap();
+        assert_eq!(sha.len(), 40, "commit must succeed despite the exit-1 hook");
+        assert!(
+            read(&ws, "hook-ran.txt").await.is_none(),
+            "pre-commit hook executed — core.hooksPath override is broken"
+        );
+    }
+
     #[tokio::test]
     async fn workspace_id_is_stable_across_reopen_so_rollback_survives() {
         // Regression: a fresh WorkspaceId per open orphaned the checkpoint ref,

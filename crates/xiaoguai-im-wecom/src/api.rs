@@ -107,6 +107,12 @@ impl WeComClient for HttpWeComClient {
             #[serde(default)]
             expires_in: Option<i64>,
         }
+        // SEC-14: WeCom's gettoken is a GET-only endpoint, so `corpsecret` must
+        // ride in the query string. reqwest's error Display appends the failing
+        // URL (query included) and does NOT redact query params, which would
+        // leak the corp secret into `ProviderError::Transport` and any log that
+        // records it. Strip the URL from transport errors with `without_url()`
+        // before stringifying (same defence as the Gemini backend, SEC-04).
         let url = format!(
             "{}/cgi-bin/gettoken?corpid={}&corpsecret={}",
             self.base_url, corp_id, corp_secret
@@ -116,10 +122,10 @@ impl WeComClient for HttpWeComClient {
             .get(&url)
             .send()
             .await
-            .map_err(|e| ProviderError::Transport(format!("auth send: {e}")))?
+            .map_err(|e| ProviderError::Transport(format!("auth send: {}", e.without_url())))?
             .json()
             .await
-            .map_err(|e| ProviderError::Transport(format!("auth decode: {e}")))?;
+            .map_err(|e| ProviderError::Transport(format!("auth decode: {}", e.without_url())))?;
         if resp.errcode != 0 {
             return Err(ProviderError::Transport(format!(
                 "wecom auth error errcode={} errmsg={:?}",

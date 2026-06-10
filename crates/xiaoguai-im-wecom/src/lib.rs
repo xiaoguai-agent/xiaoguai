@@ -61,6 +61,31 @@ use xiaoguai_im_gateway::{
 pub use api::{HttpWeComClient, TokenCache, TokenResponse, WeComClient, DEFAULT_BASE_URL};
 pub use crypto::{WecomCrypto, WecomCryptoError};
 
+/// SEC-05/SEC-12: maximum clock skew (seconds) allowed between WeCom's
+/// `timestamp` parameter and the current wall clock — the replay window.
+/// Mirrors the Slack adapter's 5-minute tolerance.
+pub const TIMESTAMP_TOLERANCE_SECS: i64 = 300;
+
+/// Current Unix time in seconds. Falls back to 0 when the system clock
+/// reports a pre-epoch time, which pushes every inbound timestamp outside
+/// the replay window (fail-closed).
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+/// SEC-05/SEC-12 replay protection shared by the plain-text and encrypted
+/// verification paths. WeCom timestamps are **seconds** since the Unix
+/// epoch; unparsable or stale values are rejected (fail-closed).
+fn check_timestamp_freshness(timestamp: &str, now_unix: i64) -> Result<(), ProviderError> {
+    let ts: i64 = timestamp.parse().map_err(|_| ProviderError::BadSignature)?;
+    if (ts - now_unix).abs() > TIMESTAMP_TOLERANCE_SECS {
+        return Err(ProviderError::BadSignature);
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct WeComProvider {
     /// Inbound signing token (`Token` in WeCom callback config).
@@ -177,9 +202,20 @@ impl WeComProvider {
 /// requests it's the `Encrypt` element's contents, for plain-text mode
 /// (URL verification) it's the `echostr` value. The caller passes
 /// whichever applies.
-fn verify(webhook: &Webhook, token: &str, body_text: &str) -> Result<(), ProviderError> {
+///
+/// `now_unix` is the current Unix timestamp in seconds; pass
+/// [`now_unix()`] in production and a fixed value in tests.
+fn verify(
+    webhook: &Webhook,
+    token: &str,
+    body_text: &str,
+    now_unix: i64,
+) -> Result<(), ProviderError> {
     let (timestamp, nonce, signature) =
         read_sig_triple(webhook).ok_or(ProviderError::BadSignature)?;
+
+    // SEC-05/SEC-12: reject stale/future timestamps before any hashing.
+    check_timestamp_freshness(&timestamp, now_unix)?;
 
     let mut parts = [token, &timestamp, &nonce, body_text];
     parts.sort_unstable();
@@ -367,13 +403,14 @@ fn parse_event(body: &[u8]) -> Result<ImEvent, ProviderError> {
 /// us the `echostr` and we return it verbatim after signature checks.
 ///
 /// # Errors
-/// Returns `ProviderError` if the WeCom signature verification fails.
+/// Returns `ProviderError` if the WeCom signature verification fails or
+/// the timestamp is outside the SEC-05 replay window.
 pub fn echo_challenge(
     webhook: &Webhook,
     token: &str,
     echostr: &str,
 ) -> Result<String, ProviderError> {
-    verify(webhook, token, echostr)?;
+    verify(webhook, token, echostr, now_unix())?;
     Ok(echostr.to_string())
 }
 
@@ -412,6 +449,9 @@ impl ImProvider for WeComProvider {
             // Verify signature (signed over the Encrypt blob value).
             let (timestamp, nonce, signature) =
                 read_sig_triple(webhook).ok_or(ProviderError::BadSignature)?;
+            // SEC-05/SEC-12: the encrypted path needs the same replay
+            // window as the plain-text path.
+            check_timestamp_freshness(&timestamp, now_unix())?;
             if !crypto.verify_signature(&signature, &timestamp, &nonce, &encrypt_blob) {
                 return Err(ProviderError::BadSignature);
             }
@@ -424,7 +464,9 @@ impl ImProvider for WeComProvider {
         } else {
             // ── Plain-text path (backward-compatible) ──────────────────────
             // For plain-text, the signature is over the full body string.
-            verify(webhook, &self.token, body_text)?;
+            // SEC-05: read the system clock at the call-site only; `verify`
+            // stays clock-injectable for tests.
+            verify(webhook, &self.token, body_text, now_unix())?;
             parse_event(&webhook.body)
         }
     }
@@ -475,13 +517,15 @@ mod tests {
         hex_lower(&hasher.finalize())
     }
 
-    fn signed_webhook(body: &str, token: &str) -> Webhook {
-        let ts = "1716355200";
+    /// Build a webhook signed for an explicit Unix-second timestamp so
+    /// freshness tests can place it precisely relative to `now`.
+    fn signed_webhook_at(body: &str, token: &str, ts_secs: i64) -> Webhook {
+        let ts = ts_secs.to_string();
         let nonce = "nonce_x";
-        let sig = sig_for(token, ts, nonce, body);
+        let sig = sig_for(token, &ts, nonce, body);
         Webhook {
             headers: vec![
-                ("X-WeCom-Timestamp".into(), ts.into()),
+                ("X-WeCom-Timestamp".into(), ts),
                 ("X-WeCom-Nonce".into(), nonce.into()),
                 ("X-WeCom-Msg-Signature".into(), sig),
             ],
@@ -489,11 +533,17 @@ mod tests {
         }
     }
 
+    /// Webhook signed "now" — survives the SEC-05 freshness window when
+    /// the full `provider.parse` path reads the real clock.
+    fn signed_webhook(body: &str, token: &str) -> Webhook {
+        signed_webhook_at(body, token, now_unix())
+    }
+
     #[tokio::test]
     async fn verify_passes_with_matching_signature() {
         let body = "<xml></xml>";
         let webhook = signed_webhook(body, "tok");
-        verify(&webhook, "tok", body).expect("verify");
+        verify(&webhook, "tok", body, now_unix()).expect("verify");
     }
 
     #[tokio::test]
@@ -501,7 +551,7 @@ mod tests {
         let body = "<xml></xml>";
         let webhook = signed_webhook(body, "tok");
         assert!(matches!(
-            verify(&webhook, "other-tok", body),
+            verify(&webhook, "other-tok", body, now_unix()),
             Err(ProviderError::BadSignature)
         ));
     }
@@ -511,23 +561,46 @@ mod tests {
         let body = "<xml></xml>";
         let webhook = signed_webhook(body, "tok");
         assert!(matches!(
-            verify(&webhook, "tok", "<xml>tampered</xml>"),
+            verify(&webhook, "tok", "<xml>tampered</xml>", now_unix()),
             Err(ProviderError::BadSignature)
         ));
     }
 
+    /// SEC-05: a correctly signed request whose timestamp is older than
+    /// the tolerance window must be rejected (replay).
+    #[tokio::test]
+    async fn verify_rejects_expired_timestamp() {
+        const NOW: i64 = 1_716_355_200;
+        let body = "<xml></xml>";
+        let webhook = signed_webhook_at(body, "tok", NOW - TIMESTAMP_TOLERANCE_SECS - 1);
+        assert!(matches!(
+            verify(&webhook, "tok", body, NOW),
+            Err(ProviderError::BadSignature)
+        ));
+    }
+
+    /// SEC-05: a timestamp exactly at the tolerance boundary still passes.
+    #[tokio::test]
+    async fn verify_accepts_timestamp_within_window() {
+        const NOW: i64 = 1_716_355_200;
+        let body = "<xml></xml>";
+        let webhook = signed_webhook_at(body, "tok", NOW - TIMESTAMP_TOLERANCE_SECS);
+        verify(&webhook, "tok", body, NOW).expect("within window");
+    }
+
     #[tokio::test]
     async fn verify_accepts_query_string_form() {
-        let ts = "1716355200";
+        let now = now_unix();
+        let ts = now.to_string();
         let nonce = "nonce_x";
         let body = "<xml></xml>";
-        let sig = sig_for("tok", ts, nonce, body);
+        let sig = sig_for("tok", &ts, nonce, body);
         let query = format!("timestamp={ts}&nonce={nonce}&msg_signature={sig}");
         let webhook = Webhook {
             headers: vec![("x-wecom-query".into(), query)],
             body: body.as_bytes().to_vec(),
         };
-        verify(&webhook, "tok", body).expect("verify");
+        verify(&webhook, "tok", body, now).expect("verify");
     }
 
     #[tokio::test]
@@ -609,13 +682,14 @@ mod tests {
     /// signed body, and return it verbatim (plain-text mode).
     #[tokio::test]
     async fn echo_challenge_round_trips() {
-        let ts = "1716355200";
+        // SEC-05: `echo_challenge` reads the real clock — sign "now".
+        let ts = now_unix().to_string();
         let nonce = "nonce_x";
         let echostr = "verify-me";
-        let sig = sig_for("tok", ts, nonce, echostr);
+        let sig = sig_for("tok", &ts, nonce, echostr);
         let webhook = Webhook {
             headers: vec![
-                ("X-WeCom-Timestamp".into(), ts.into()),
+                ("X-WeCom-Timestamp".into(), ts),
                 ("X-WeCom-Nonce".into(), nonce.into()),
                 ("X-WeCom-Msg-Signature".into(), sig),
             ],

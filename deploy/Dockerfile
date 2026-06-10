@@ -154,6 +154,15 @@ ENV RUST_LOG=info,sqlx=warn
 # Serve the bundled web UI out of the box. Set XIAOGUAI_SERVER__STATIC_DIR=""
 # to run API-only.
 ENV XIAOGUAI_SERVER__STATIC_DIR=/app/static
+# SEC-01: the binary now defaults to a loopback bind and refuses to start on a
+# non-loopback interface with auth disabled. A container MUST bind 0.0.0.0 to
+# be reachable across the published port, so the image restores that bind and
+# opts out of the refuse-to-start guard (the operator is expected to publish
+# the port deliberately, behind their own auth/proxy). Set
+# XIAOGUAI_AUTH__USERNAME / __PASSWORD to enable the owner gate and you can drop
+# the opt-out below.
+ENV XIAOGUAI_SERVER__HOST=0.0.0.0
+ENV XIAOGUAI_ALLOW_UNAUTHENTICATED_NONLOOPBACK=1
 
 USER nonroot:nonroot
 # The server binds the config port (default 7600; see server.port /

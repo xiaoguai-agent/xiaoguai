@@ -92,8 +92,14 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
 }
 
 fn signed_request(body: &str) -> Request<Body> {
-    let ts = "1716355200000";
-    let sig = sign(ts);
+    // SEC-05: the adapter enforces a timestamp freshness window — sign
+    // with the current time. DingTalk timestamps are MILLISECONDS.
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before Unix epoch")
+        .as_millis()
+        .to_string();
+    let sig = sign(&ts);
     Request::builder()
         .method(Method::POST)
         .uri("/v1/im/dingtalk/webhook")

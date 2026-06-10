@@ -125,6 +125,38 @@ async fn gemini_backend_emits_function_calls() {
     );
 }
 
+// ── SEC-04: API key in header, never in the URL ───────────────────────────
+
+#[tokio::test]
+async fn gemini_backend_sends_api_key_in_header_not_url() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock(
+            "POST",
+            mockito::Matcher::Regex(
+                r"/v1beta/models/gemini-2\.0-flash:streamGenerateContent".to_string(),
+            ),
+        )
+        // SEC-04: the key must arrive via the `x-goog-api-key` header…
+        .match_header("x-goog-api-key", "secret-key")
+        // …and the query string must be exactly `alt=sse` — no `key=` leak.
+        .match_query(mockito::Matcher::Regex(r"^alt=sse$".to_string()))
+        .with_status(200)
+        .with_header("content-type", "text/event-stream")
+        .with_body(simple_text_sse())
+        .create_async()
+        .await;
+
+    let backend = GeminiBackend::with_base_url(server.url(), "secret-key");
+    let req = ChatRequest::new("gemini-2.0-flash", vec![Message::user("hi")]);
+
+    let mut stream = backend.chat_stream(req).await.expect("stream");
+    while let Some(chunk) = stream.next().await {
+        let _ = chunk.expect("chunk");
+    }
+    mock.assert_async().await;
+}
+
 // ── Error path: non-2xx HTTP ───────────────────────────────────────────────
 
 #[tokio::test]

@@ -152,12 +152,53 @@ pub async fn require_auth(
     // validator. The static validator treats it as base64(user:pass); the
     // test stub treats any non-empty string as valid.
     let credential = header_val.split_once(' ').map_or(header_val, |(_, c)| c);
-    match validator.validate(credential).await {
-        Ok(claims) => {
-            req.extensions_mut().insert(claims);
-            next.run(req).await
+    if let Ok(claims) = validator.validate(credential).await {
+        req.extensions_mut().insert(claims);
+        next.run(req).await
+    } else {
+        throttle_after_failure().await;
+        unauthorized_response()
+    }
+}
+
+// SEC-18: lightweight global throttle on authentication failures. The server
+// binds without `ConnectInfo` (no per-IP context) and DEC-033 has a single
+// owner, so a process-global rolling window is the proportionate defence: it
+// slows sustained brute force without ever delaying a *successful* owner login
+// and without *rejecting* (which would let an attacker lock the owner out by
+// spamming failures). The first few failures in each window are not delayed,
+// so honest typos — and the test suite — are unaffected.
+const AUTH_FAIL_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+const AUTH_FAIL_FREE: u32 = 5;
+const AUTH_FAIL_STEP: std::time::Duration = std::time::Duration::from_millis(200);
+const AUTH_FAIL_MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(3);
+
+static AUTH_FAILURES: std::sync::LazyLock<std::sync::Mutex<(std::time::Instant, u32)>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new((std::time::Instant::now(), 0)));
+
+/// Record an auth failure and, once the per-window free allowance is spent,
+/// sleep for an escalating (capped) delay before the caller returns 401.
+async fn throttle_after_failure() {
+    let delay = {
+        let mut guard = AUTH_FAILURES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (start, count) = &mut *guard;
+        if start.elapsed() > AUTH_FAIL_WINDOW {
+            *start = std::time::Instant::now();
+            *count = 0;
         }
-        Err(_) => unauthorized_response(),
+        *count = count.saturating_add(1);
+        if *count <= AUTH_FAIL_FREE {
+            std::time::Duration::ZERO
+        } else {
+            AUTH_FAIL_STEP
+                .saturating_mul(*count - AUTH_FAIL_FREE)
+                .min(AUTH_FAIL_MAX_DELAY)
+        }
+    };
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
     }
 }
 

@@ -7,16 +7,23 @@
  * `401 Unauthorized` — i.e. the backend has a credential set and we don't have
  * it (or it's wrong) — a login modal appears. When the backend runs open (no
  * credential), nothing ever 401s and this is invisible.
+ *
+ * SEC-16: credentials are memory-only (never Web Storage), so every page
+ * refresh starts signed out and the first 401 re-opens this modal. Only the
+ * username (not a secret) is kept in sessionStorage for prefill.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '@xiaoguai/shared';
-import { client, setCredentials, clearCredentials } from '../client';
+import { client, setCredentials, clearCredentials, lastUsername } from '../client';
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
-  const [username, setUsername] = useState('');
+  // SEC-16: prefill the username from the last sign-in in this tab.
+  const [username, setUsername] = useState(lastUsername);
   const [password, setPassword] = useState('');
+  // Bumped on successful login to remount (and thus refetch) the app subtree.
+  const [epoch, setEpoch] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // Avoid re-opening churn while the modal is already up.
@@ -42,8 +49,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         // `/v1/mcp/servers` sits behind the owner-auth layer: wrong creds →
         // 401, right creds → 200/503 (both resolve without throwing 401).
         await client.listMcpServers();
-        // Success — reload so any data that failed while unauthenticated refetches.
-        window.location.reload();
+        // Success. SEC-16: credentials are memory-only — a full reload would
+        // drop them and loop back to this modal. Remount the app subtree
+        // instead so everything that failed while unauthenticated refetches.
+        setPassword('');
+        setOpen(false);
+        setEpoch((n) => n + 1);
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
           clearCredentials();
@@ -61,7 +72,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      {children}
+      {/* Keyed so a successful login remounts the subtree (refetch-all). */}
+      <Fragment key={epoch}>{children}</Fragment>
       {open && (
         <div className="auth-overlay" role="dialog" aria-modal="true" aria-label="Sign in">
           <form className="auth-modal" onSubmit={onSubmit}>

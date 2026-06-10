@@ -67,7 +67,9 @@ enum ReplySink {
 pub struct TelegramProvider {
     /// Bot token (`123456:ABC-DEF…`).
     pub bot_token: String,
-    /// Optional webhook secret for request verification.
+    /// Webhook secret for request verification. SEC-21: `None` (or empty)
+    /// causes `parse` to reject every webhook delivery — configure the same
+    /// `secret_token` registered with Telegram's `setWebhook`.
     pub secret_token: Option<String>,
     reply_sink: ReplySink,
 }
@@ -195,11 +197,16 @@ mod tests {
         assert!(provider.parse(&wh).await.is_ok());
     }
 
+    /// SEC-21: a provider without a configured secret rejects every
+    /// delivery (fail-closed) — unauthenticated webhooks are spoofable.
     #[tokio::test]
-    async fn parse_skips_verify_when_no_secret() {
+    async fn parse_rejects_when_no_secret_configured() {
         let provider = TelegramProvider::new("tok", None::<String>);
         let wh = make_webhook(&text_update(1, "hi"), None);
-        assert!(provider.parse(&wh).await.is_ok());
+        assert!(matches!(
+            provider.parse(&wh).await,
+            Err(ProviderError::BadSignature)
+        ));
     }
 
     // ------------------------------------------------------------------

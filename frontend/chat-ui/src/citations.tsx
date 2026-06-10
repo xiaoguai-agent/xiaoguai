@@ -18,6 +18,7 @@
  */
 
 import { useState } from 'react';
+import { safeHref } from '@xiaoguai/shared';
 import type { ContentBlock } from '@xiaoguai/shared';
 
 type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
@@ -55,15 +56,23 @@ function CitationChip({ citation, index }: { citation: CitationBlock; index: num
       onFocus={() => setOpen(true)}
       onBlur={() => setOpen(false)}
     >
-      <a
-        href={href}
-        target="_blank"
-        rel="noreferrer noopener"
-        className="citation-chip__link"
-        title={`Open ${shortLabel(citation)}`}
-      >
-        [{index}]
-      </a>
+      {href !== undefined ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="citation-chip__link"
+          title={`Open ${shortLabel(citation)}`}
+        >
+          [{index}]
+        </a>
+      ) : (
+        // SEC-24: source_uri failed the protocol whitelist (javascript:/
+        // data:/unknown scheme) — keep the chip + tooltip, drop the link.
+        <span className="citation-chip__link" title={shortLabel(citation)}>
+          [{index}]
+        </span>
+      )}
       {open && (
         <span className="citation-card" role="tooltip">
           <span className="citation-card__source">{shortLabel(citation)}</span>
@@ -75,13 +84,18 @@ function CitationChip({ citation, index }: { citation: CitationBlock; index: num
   );
 }
 
-function anchoredHref(c: CitationBlock): string {
+function anchoredHref(c: CitationBlock): string | undefined {
+  // SEC-24: source_uri is backend/LLM-influenced. Only whitelist-approved
+  // schemes (http/https/file/mailto + the citation-lock obsidian/r2r) may
+  // become a link; anything else renders as plain text.
+  const base = safeHref(c.source_uri);
+  if (base === undefined) return undefined;
   // `(0, 0)` = no anchor; link to whole document.
-  if (c.span[0] === 0 && c.span[1] === 0) return c.source_uri;
+  if (c.span[0] === 0 && c.span[1] === 0) return base;
   // GitHub and most viewers support `#L<n>-L<m>`; for `file://` it's
   // ignored but harmless. We deliberately don't browser-special-case
   // each scheme — one consistent shape, predictable for tests.
-  return `${c.source_uri}#L${c.span[0]}-L${c.span[1]}`;
+  return `${base}#L${c.span[0]}-L${c.span[1]}`;
 }
 
 function shortLabel(c: CitationBlock): string {

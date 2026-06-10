@@ -24,7 +24,11 @@
 //! by the integration tests).
 //!
 //! Requests are rejected as `ProviderError::BadSignature` if anything
-//! mismatches.
+//! mismatches, or if `timestamp` is outside the replay window
+//! ([`TIMESTAMP_TOLERANCE_SECS`]). The DingTalk signature does **not**
+//! cover the request body, so timestamp freshness is the only replay
+//! mitigation available — a captured request stays valid for the whole
+//! window, but no longer (SEC-05).
 //!
 //! Payload shape (single + group):
 //! ```json
@@ -64,6 +68,21 @@ use xiaoguai_im_gateway::{
 pub use api::{DingTalkClient, HttpDingTalkClient, TokenCache, TokenResponse, DEFAULT_BASE_URL};
 
 type HmacSha256 = Hmac<Sha256>;
+
+/// SEC-05/SEC-12: maximum clock skew (seconds) allowed between DingTalk's
+/// `timestamp` parameter and the current wall clock. Because the DingTalk
+/// signature does not cover the body, this freshness window is the only
+/// replay defence — mirrors Slack's 5-minute guidance.
+pub const TIMESTAMP_TOLERANCE_SECS: i64 = 300;
+
+/// Current Unix time in seconds. Falls back to 0 when the system clock
+/// reports a pre-epoch time, which pushes every inbound timestamp outside
+/// the replay window (fail-closed).
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
 
 #[derive(Clone)]
 pub struct DingTalkProvider {
@@ -158,8 +177,21 @@ impl DingTalkProvider {
 ///     (preferred — what the gateway should be wiring),
 ///   - or the `x-dingtalk-query` header (URL-encoded query string)
 ///     to support transports that don't expose individual query keys.
-fn verify(webhook: &Webhook, app_secret: &str) -> Result<(), ProviderError> {
+///
+/// `now_unix` is the current Unix timestamp in **seconds**; pass
+/// [`now_unix()`] in production and a fixed value in tests.
+fn verify(webhook: &Webhook, app_secret: &str, now_unix: i64) -> Result<(), ProviderError> {
     let (timestamp, signature) = read_sig_pair(webhook).ok_or(ProviderError::BadSignature)?;
+
+    // SEC-05/SEC-12 replay protection: DingTalk's `timestamp` is
+    // MILLISECONDS since the Unix epoch — convert to seconds before
+    // windowing. Anything unparsable or outside ±TIMESTAMP_TOLERANCE_SECS
+    // is rejected (fail-closed).
+    let ts_millis: i64 = timestamp.parse().map_err(|_| ProviderError::BadSignature)?;
+    let ts_secs = ts_millis / 1000;
+    if (ts_secs - now_unix).abs() > TIMESTAMP_TOLERANCE_SECS {
+        return Err(ProviderError::BadSignature);
+    }
 
     let string_to_sign = format!("{timestamp}\n{app_secret}");
     let mut mac = HmacSha256::new_from_slice(app_secret.as_bytes())
@@ -314,7 +346,9 @@ pub enum ConversationKind {
 #[async_trait]
 impl ImProvider for DingTalkProvider {
     async fn parse(&self, webhook: &Webhook) -> Result<ImEvent, ProviderError> {
-        verify(webhook, &self.app_secret)?;
+        // SEC-05: the only call-site that reads the system clock — the
+        // lower-level `verify` stays clock-injectable for tests.
+        verify(webhook, &self.app_secret, now_unix())?;
         parse_event(&webhook.body)
     }
 
@@ -376,29 +410,37 @@ mod tests {
         B64_STANDARD.encode(mac.finalize().into_bytes())
     }
 
-    fn signed_webhook(body: &str, secret: &str) -> Webhook {
-        let ts = "1716355200000";
-        let sig = sig_for(ts, secret);
+    /// Build a webhook signed for an explicit millisecond timestamp so
+    /// freshness tests can place it precisely relative to `now`.
+    fn signed_webhook_at(body: &str, secret: &str, ts_millis: i64) -> Webhook {
+        let ts = ts_millis.to_string();
+        let sig = sig_for(&ts, secret);
         Webhook {
             headers: vec![
-                ("X-Dingtalk-Timestamp".into(), ts.into()),
+                ("X-Dingtalk-Timestamp".into(), ts),
                 ("X-Dingtalk-Sign".into(), sig),
             ],
             body: body.as_bytes().to_vec(),
         }
     }
 
+    /// Webhook signed "now" — survives the SEC-05 freshness window when
+    /// the full `provider.parse` path reads the real clock.
+    fn signed_webhook(body: &str, secret: &str) -> Webhook {
+        signed_webhook_at(body, secret, now_unix() * 1000)
+    }
+
     #[tokio::test]
     async fn verify_passes_with_matching_signature() {
         let webhook = signed_webhook(r#"{"msgtype":"text"}"#, "secret");
-        verify(&webhook, "secret").expect("verify");
+        verify(&webhook, "secret", now_unix()).expect("verify");
     }
 
     #[tokio::test]
     async fn verify_fails_with_wrong_secret() {
         let webhook = signed_webhook(r#"{"msgtype":"text"}"#, "secret");
         assert!(matches!(
-            verify(&webhook, "different-secret"),
+            verify(&webhook, "different-secret", now_unix()),
             Err(ProviderError::BadSignature)
         ));
     }
@@ -410,9 +452,31 @@ mod tests {
             body: b"{}".to_vec(),
         };
         assert!(matches!(
-            verify(&webhook, "k"),
+            verify(&webhook, "k", now_unix()),
             Err(ProviderError::BadSignature)
         ));
+    }
+
+    /// SEC-05: a correctly signed request whose timestamp is older than
+    /// the tolerance window must be rejected (replay).
+    #[tokio::test]
+    async fn verify_rejects_expired_timestamp() {
+        const NOW: i64 = 1_716_355_200;
+        let ts_millis = (NOW - TIMESTAMP_TOLERANCE_SECS - 1) * 1000;
+        let webhook = signed_webhook_at(r#"{"msgtype":"text"}"#, "secret", ts_millis);
+        assert!(matches!(
+            verify(&webhook, "secret", NOW),
+            Err(ProviderError::BadSignature)
+        ));
+    }
+
+    /// SEC-05: a timestamp exactly at the tolerance boundary still passes.
+    #[tokio::test]
+    async fn verify_accepts_timestamp_within_window() {
+        const NOW: i64 = 1_716_355_200;
+        let ts_millis = (NOW - TIMESTAMP_TOLERANCE_SECS) * 1000;
+        let webhook = signed_webhook_at(r#"{"msgtype":"text"}"#, "secret", ts_millis);
+        verify(&webhook, "secret", NOW).expect("within window");
     }
 
     /// Validates the fallback query-string code path: when the gateway
@@ -420,15 +484,16 @@ mod tests {
     /// `sign` parameter before comparing.
     #[tokio::test]
     async fn verify_accepts_url_encoded_query_form() {
-        let ts = "1716355200000";
-        let sig = sig_for(ts, "secret");
+        let now = now_unix();
+        let ts = (now * 1000).to_string();
+        let sig = sig_for(&ts, "secret");
         let encoded_sig = urlencoding::encode(&sig);
         let query = format!("timestamp={ts}&sign={encoded_sig}");
         let webhook = Webhook {
             headers: vec![("x-dingtalk-query".into(), query)],
             body: b"{\"msgtype\":\"text\"}".to_vec(),
         };
-        verify(&webhook, "secret").expect("verify");
+        verify(&webhook, "secret", now).expect("verify");
     }
 
     #[tokio::test]

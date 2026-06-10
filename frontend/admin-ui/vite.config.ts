@@ -8,6 +8,12 @@ export default defineConfig({
   // and standalone hosting. The container build sets `VITE_BASE=/admin/`.
   base: process.env.VITE_BASE ?? '/',
   plugins: [react()],
+  // SEC-26: disable Vite's inline module-preload polyfill so the production
+  // bundle ships NO inline <script>, letting the backend serve a strict
+  // `script-src 'self'` CSP without breaking the app. Native modulepreload is
+  // supported by all current evergreen browsers; the polyfill only helped
+  // legacy Safari, which this self-hosted tool does not target.
+  build: { modulePreload: { polyfill: false } },
   server: {
     port: 5174,
     proxy: {

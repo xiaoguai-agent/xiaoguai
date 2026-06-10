@@ -261,6 +261,27 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
 
     let auth = build_auth(settings);
 
+    // SEC-01: refuse to start when binding a non-loopback interface with the
+    // owner auth gate disabled. The old behaviour (warn + continue) shipped an
+    // unauthenticated `/v1/**` on 0.0.0.0 by default. Operators who genuinely
+    // front the service with a trusted reverse proxy (and accept the risk) can
+    // opt back in with `XIAOGUAI_ALLOW_UNAUTHENTICATED_NONLOOPBACK=1`; the
+    // container image sets it so the bundled quickstart keeps working.
+    if auth.is_none()
+        && !host_is_loopback(&settings.server.host)
+        && !allow_unauthenticated_nonloopback()
+    {
+        anyhow::bail!(
+            "refusing to start: binding non-loopback host `{host}` with owner auth DISABLED \
+             would expose the entire /v1 API to the network unauthenticated. Fix one of:\n  \
+             1) set auth.username + auth.password (XIAOGUAI_AUTH__USERNAME / __PASSWORD), or\n  \
+             2) bind loopback (XIAOGUAI_SERVER__HOST=127.0.0.1), or\n  \
+             3) (NOT recommended — only behind a trusted proxy) set \
+             XIAOGUAI_ALLOW_UNAUTHENTICATED_NONLOOPBACK=1",
+            host = settings.server.host,
+        );
+    }
+
     // v0.6.5: try to assemble the production audit bridge. The signing
     // key lives in the env var named by `settings.audit.signing_key_env`
     // — empty / missing means audit endpoints stay at 503 in production
@@ -1254,12 +1275,44 @@ async fn serve_with_state_and_extras(
         tracing::info!("serve: observability mounted (Prometheus + OTLP)");
     }
 
+    // SEC-26: security response headers on every response (API + bundled web
+    // UI). The SPAs render untrusted LLM output, so CSP is the last-line
+    // defence; the Vite bundles ship no inline scripts (modulepreload polyfill
+    // disabled) so `script-src 'self'` does not break them.
+    app = app.layer(axum::middleware::from_fn(add_security_headers));
+
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("bind {addr}"))?;
     let local = listener.local_addr().context("read local addr")?;
     let fut = async move { axum::serve(listener, app.into_make_service()).await };
     Ok((local, fut))
+}
+
+/// SEC-01: is `host` a loopback bind (safe to run unauthenticated)?
+/// `localhost`, `127.0.0.0/8`, and `::1` are loopback; `0.0.0.0` / `::`
+/// (unspecified = all interfaces) and any routable address are not. An
+/// unparseable hostname is treated as non-loopback (fail-safe).
+fn host_is_loopback(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
+/// SEC-01: explicit opt-out allowing an unauthenticated non-loopback bind.
+/// Off unless `XIAOGUAI_ALLOW_UNAUTHENTICATED_NONLOOPBACK` is a truthy value.
+fn allow_unauthenticated_nonloopback() -> bool {
+    matches!(
+        std::env::var("XIAOGUAI_ALLOW_UNAUTHENTICATED_NONLOOPBACK")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 /// Wire the single-owner auth gate (DEC-033). Returns `None` to keep the
@@ -1288,6 +1341,37 @@ fn build_auth(
         "serve: owner auth gate enabled (HTTP Basic)"
     );
     Some(wrapper)
+}
+
+/// SEC-26: security headers on every response. CSP is the headline defence
+/// against XSS in the SPAs that render untrusted LLM output; the rest are
+/// cheap, broadly-safe hardening. `script-src 'self'` is safe because the Vite
+/// bundles carry no inline scripts (modulepreload polyfill disabled);
+/// `style-src` keeps `'unsafe-inline'` for React's inline styles.
+async fn add_security_headers(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{header, HeaderValue};
+    const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+                       img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; \
+                       object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+    let mut resp = next.run(req).await;
+    let h = resp.headers_mut();
+    h.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CSP),
+    );
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    h.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    resp
 }
 
 /// Whether to scrub PII/secrets from audit entries before signing.

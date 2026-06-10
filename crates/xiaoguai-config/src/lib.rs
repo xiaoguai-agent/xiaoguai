@@ -139,6 +139,12 @@ impl AuthSettings {
     }
 }
 
+/// The well-known dev/test audit HMAC key. It is intentionally public so
+/// callers can detect "no real key configured" and refuse to sign a
+/// production audit chain with it (SEC-15) — a chain signed with this key is
+/// forgeable by anyone who reads the source.
+pub const DEV_AUDIT_HMAC_KEY: &str = "dev-only-change-me-32-bytes-min";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditSettings {
     /// HMAC-SHA256 signing key for the audit chain. **NEVER** check in a real key.
@@ -454,7 +460,14 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             server: ServerSettings {
-                host: "0.0.0.0".into(),
+                // SEC-01: bind to loopback by default. Binding all interfaces
+                // (0.0.0.0) with the auth gate disabled exposed the whole
+                // `/v1/**` surface to the LAN/internet on a fresh `serve`. A
+                // safe default + an explicit refuse-to-start guard (see
+                // `xiaoguai-core::run_serve`) replaces the old warn-and-continue.
+                // Container images opt back into 0.0.0.0 via
+                // `XIAOGUAI_SERVER__HOST` (set in the Dockerfile/compose).
+                host: "127.0.0.1".into(),
                 port: 7600,
                 static_dir: None,
             },
@@ -467,7 +480,7 @@ impl Default for Settings {
                 password: String::new(),
             },
             audit: AuditSettings {
-                hmac_key: "dev-only-change-me-32-bytes-min".into(),
+                hmac_key: DEV_AUDIT_HMAC_KEY.into(),
                 signing_key_env: default_signing_key_env(),
             },
             scheduler: SchedulerSettings::default(),

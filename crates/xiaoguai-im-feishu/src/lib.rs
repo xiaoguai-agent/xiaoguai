@@ -15,7 +15,8 @@
 //!   - `X-Lark-Signature`
 //!
 //! Requests are rejected as `ProviderError::BadSignature` if anything
-//! mismatches.
+//! mismatches, or if `X-Lark-Request-Timestamp` falls outside the replay
+//! window ([`TIMESTAMP_TOLERANCE_SECS`], SEC-05).
 
 #![forbid(unsafe_code)]
 
@@ -32,6 +33,20 @@ use xiaoguai_im_gateway::{
 };
 
 pub use api::{FeishuClient, HttpFeishuClient, TokenCache, TokenResponse, DEFAULT_BASE_URL};
+
+/// SEC-05/SEC-12: maximum clock skew (seconds) allowed between
+/// `X-Lark-Request-Timestamp` and the current wall clock — the replay
+/// window. Mirrors the Slack adapter's 5-minute tolerance.
+pub const TIMESTAMP_TOLERANCE_SECS: i64 = 300;
+
+/// Current Unix time in seconds. Falls back to 0 when the system clock
+/// reports a pre-epoch time, which pushes every inbound timestamp outside
+/// the replay window (fail-closed).
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
 
 #[derive(Clone)]
 pub struct FeishuProvider {
@@ -113,8 +128,12 @@ impl FeishuProvider {
 /// Verify a Feishu signature per the events v2 spec.
 ///
 /// Returns Ok when all three pieces (`timestamp`, `nonce`, `signature`)
-/// are present and reconstructing the digest matches.
-fn verify(webhook: &Webhook, encrypt_key: &str) -> Result<(), ProviderError> {
+/// are present, the timestamp is within ±[`TIMESTAMP_TOLERANCE_SECS`] of
+/// `now_unix`, and reconstructing the digest matches.
+///
+/// `now_unix` is the current Unix timestamp in seconds; pass
+/// [`now_unix()`] in production and a fixed value in tests.
+fn verify(webhook: &Webhook, encrypt_key: &str, now_unix: i64) -> Result<(), ProviderError> {
     let timestamp = webhook
         .header("X-Lark-Request-Timestamp")
         .ok_or(ProviderError::BadSignature)?;
@@ -124,6 +143,14 @@ fn verify(webhook: &Webhook, encrypt_key: &str) -> Result<(), ProviderError> {
     let signature = webhook
         .header("X-Lark-Signature")
         .ok_or(ProviderError::BadSignature)?;
+
+    // SEC-05/SEC-12 replay protection: the Feishu timestamp is seconds
+    // since the Unix epoch. Unparsable or stale timestamps are rejected
+    // (fail-closed).
+    let ts: i64 = timestamp.parse().map_err(|_| ProviderError::BadSignature)?;
+    if (ts - now_unix).abs() > TIMESTAMP_TOLERANCE_SECS {
+        return Err(ProviderError::BadSignature);
+    }
 
     let mut hasher = Sha256::new();
     hasher.update(timestamp.as_bytes());
@@ -255,8 +282,9 @@ impl ImProvider for FeishuProvider {
     async fn parse(&self, webhook: &Webhook) -> Result<ImEvent, ProviderError> {
         // Challenge requests still need signing per Feishu's spec — verify
         // *before* peeking at the body so unauthenticated peers can't
-        // probe the challenge path.
-        verify(webhook, &self.encrypt_key)?;
+        // probe the challenge path. SEC-05: this is the only call-site
+        // that reads the system clock; `verify` stays clock-injectable.
+        verify(webhook, &self.encrypt_key, now_unix())?;
         parse_event(&webhook.body)
     }
 
@@ -291,8 +319,10 @@ impl ImProvider for FeishuProvider {
 mod tests {
     use super::*;
 
-    fn signed_webhook(body: &str, encrypt_key: &str) -> Webhook {
-        let ts = "1716355200";
+    /// Build a webhook signed for an explicit Unix-second timestamp so
+    /// freshness tests can place it precisely relative to `now`.
+    fn signed_webhook_at(body: &str, encrypt_key: &str, ts_secs: i64) -> Webhook {
+        let ts = ts_secs.to_string();
         let nonce = "abc123";
         let mut hasher = Sha256::new();
         hasher.update(ts.as_bytes());
@@ -302,7 +332,7 @@ mod tests {
         let sig = hex::encode(hasher.finalize());
         Webhook {
             headers: vec![
-                ("X-Lark-Request-Timestamp".into(), ts.into()),
+                ("X-Lark-Request-Timestamp".into(), ts),
                 ("X-Lark-Request-Nonce".into(), nonce.into()),
                 ("X-Lark-Signature".into(), sig),
             ],
@@ -310,17 +340,23 @@ mod tests {
         }
     }
 
+    /// Webhook signed "now" — survives the SEC-05 freshness window when
+    /// the full `provider.parse` path reads the real clock.
+    fn signed_webhook(body: &str, encrypt_key: &str) -> Webhook {
+        signed_webhook_at(body, encrypt_key, now_unix())
+    }
+
     #[tokio::test]
     async fn verify_passes_with_matching_signature() {
         let webhook = signed_webhook(r#"{"challenge":"x"}"#, "secret");
-        verify(&webhook, "secret").expect("verify");
+        verify(&webhook, "secret", now_unix()).expect("verify");
     }
 
     #[tokio::test]
     async fn verify_fails_with_wrong_secret() {
         let webhook = signed_webhook(r#"{"challenge":"x"}"#, "secret");
         assert!(matches!(
-            verify(&webhook, "different-secret"),
+            verify(&webhook, "different-secret", now_unix()),
             Err(ProviderError::BadSignature)
         ));
     }
@@ -332,9 +368,37 @@ mod tests {
             body: b"{}".to_vec(),
         };
         assert!(matches!(
-            verify(&webhook, "k"),
+            verify(&webhook, "k", now_unix()),
             Err(ProviderError::BadSignature)
         ));
+    }
+
+    /// SEC-05: a correctly signed request whose timestamp is older than
+    /// the tolerance window must be rejected (replay).
+    #[tokio::test]
+    async fn verify_rejects_expired_timestamp() {
+        const NOW: i64 = 1_716_355_200;
+        let webhook = signed_webhook_at(
+            r#"{"challenge":"x"}"#,
+            "secret",
+            NOW - TIMESTAMP_TOLERANCE_SECS - 1,
+        );
+        assert!(matches!(
+            verify(&webhook, "secret", NOW),
+            Err(ProviderError::BadSignature)
+        ));
+    }
+
+    /// SEC-05: a timestamp exactly at the tolerance boundary still passes.
+    #[tokio::test]
+    async fn verify_accepts_timestamp_within_window() {
+        const NOW: i64 = 1_716_355_200;
+        let webhook = signed_webhook_at(
+            r#"{"challenge":"x"}"#,
+            "secret",
+            NOW - TIMESTAMP_TOLERANCE_SECS,
+        );
+        verify(&webhook, "secret", NOW).expect("within window");
     }
 
     #[tokio::test]

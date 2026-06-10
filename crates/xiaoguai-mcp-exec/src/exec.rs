@@ -1,10 +1,12 @@
 //! Subprocess wrapper for sandboxed Python execution.
 //!
 //! Each call spawns a fresh `python3 -I` in a fresh tempdir with a scrubbed
-//! environment and an `ulimit -v` memory cap (or `prlimit --as` on Linux when
-//! available). The process is killed by tokio when the wall-clock deadline
-//! elapses. Stdout and stderr are captured to a hard cap; oversize output is
-//! truncated with a marker.
+//! environment and an `ulimit` preamble (SEC-10): a best-effort `-v` memory
+//! cap (the hard Linux equivalent is the `prlimit --as` direction) plus
+//! **enforced** `-u` process-count and `-f` file-size caps — if those two
+//! cannot be applied, python is never exec'd. The process is killed by tokio
+//! when the wall-clock deadline elapses. Stdout and stderr are captured to a
+//! hard cap; oversize output is truncated with a marker.
 //!
 //! This module is intentionally MCP-agnostic — the only contract it exposes
 //! to callers is [`run_python`] returning an [`ExecResult`]. The MCP tool
@@ -35,6 +37,21 @@ const CODE_BYTE_CAP: usize = 64 * 1024;
 /// stripped — critically, `OLLAMA_HOST`, `DATABASE_URL`, audit signing
 /// keys, and any custom `XIAOGUAI_*` knobs MUST NOT propagate.
 const ENV_ALLOWLIST: &[&str] = &["PATH", "LANG", "LC_ALL", "LC_CTYPE"];
+
+/// SEC-10: cap on the number of processes the snippet's user may run
+/// (`ulimit -u`, `RLIMIT_NPROC`) — the fork-bomb guard. Enforced: a failure
+/// to apply it aborts the run. Note `RLIMIT_NPROC` counts ALL processes of
+/// the daemon's UID, not just the sandbox's children, so the value must
+/// comfortably exceed a desktop user's baseline (often 400–600 on macOS) or
+/// legitimate single `subprocess` use inside snippets starts failing — a
+/// fork bomb tries to spawn thousands, so 1024 stops it just as well.
+const MAX_SUBPROCS: u64 = 1024;
+
+/// SEC-10: cap on the size of any single file the snippet may write
+/// (`ulimit -f`, `RLIMIT_FSIZE`) — the disk-fill guard. Enforced: a failure
+/// to apply it aborts the run. POSIX `ulimit -f` counts **512-byte blocks**:
+/// 2 GiB / 512 B = `4_194_304` blocks.
+const MAX_FILE_BLOCKS: u64 = (2 * 1024 * 1024 * 1024) / 512;
 
 /// Configuration for a single execution call. Typically constructed once
 /// per server instance and reused per request.
@@ -213,9 +230,10 @@ pub async fn run_python(
 }
 
 /// Assemble the `python3 -I main.py` command with a scrubbed env, fresh CWD,
-/// and a memory cap. On Unix we wrap through `sh -c "ulimit -v $N && exec
-/// python3 -I main.py"` because tokio's `Command::pre_exec` requires unsafe
-/// and the project forbids unsafe code at workspace level.
+/// and resource caps. On Unix we wrap through `sh -c "ulimit …; exec python3
+/// -I main.py"` because tokio's `Command::pre_exec` requires unsafe and the
+/// project forbids unsafe code at workspace level. See the SEC-10 notes on
+/// the preamble below.
 fn build_command(cfg: &ExecConfig, working_dir: &Path, main_py: &Path) -> Command {
     // Address-space limit in kilobytes (what `ulimit -v` actually takes).
     let mem_kb = cfg.memory_mb.saturating_mul(1024);
@@ -227,8 +245,23 @@ fn build_command(cfg: &ExecConfig, working_dir: &Path, main_py: &Path) -> Comman
         .filter_map(|key| std::env::var(key).ok().map(|v| (*key, v)))
         .collect();
 
+    // SEC-10: resource-limit preamble. The shell operators (`||`/`;`/`&&`)
+    // are deliberate:
+    //  * `ulimit -v` (address space) is BEST-EFFORT — `RLIMIT_AS` cannot be
+    //    set by several shells (notably macOS `/bin/sh`), and `&&`-chaining
+    //    it would refuse to run python on those hosts entirely. `|| true`
+    //    keeps it advisory; the real hard memory cap on Linux is the
+    //    `prlimit --as` direction noted in the module docs.
+    //  * `ulimit -u` ([`MAX_SUBPROCS`], fork-bomb guard) and `ulimit -f`
+    //    ([`MAX_FILE_BLOCKS`], disk-fill guard, 512-byte blocks) are
+    //    POSIX-portable, so they are ENFORCED: `&&` short-circuits on
+    //    failure and the shell exits non-zero WITHOUT exec-ing python — no
+    //    silent fallback to an uncapped run (previously `ulimit -v … ;`
+    //    discarded the failure and ran python anyway).
     let shell_inner = format!(
-        "ulimit -v {mem_kb} 2>/dev/null; exec {python} -I {main}",
+        "ulimit -v {mem_kb} 2>/dev/null || true; \
+         ulimit -u {MAX_SUBPROCS} && ulimit -f {MAX_FILE_BLOCKS} && \
+         exec {python} -I {main}",
         python = shell_quote(&cfg.python.display().to_string()),
         main = shell_quote(&main_py.display().to_string()),
     );
@@ -431,6 +464,30 @@ print("contact me at alice@example.com", file=sys.stderr)
             "secret leaked into sandbox env: {}",
             r.stdout
         );
+    }
+
+    /// SEC-10: the enforced `ulimit -u` cap is a fork-bomb guard, not a
+    /// subprocess ban — a single legitimate child must keep working (the
+    /// capability summary advertises `subprocess: true`). This also proves
+    /// the `&&`-chained preamble applied cleanly (a failed `ulimit -u`/`-f`
+    /// would abort before exec-ing python).
+    ///
+    /// A true fork-bomb test (spawn until `EAGAIN`) is deliberately omitted:
+    /// it would be slow and flaky on shared runners because `RLIMIT_NPROC`
+    /// counts every process of the runner's UID.
+    #[tokio::test]
+    async fn subprocess_single_child_still_works_under_nproc_cap() {
+        let cfg = test_cfg();
+        let snippet = r#"
+import subprocess, sys
+r = subprocess.run([sys.executable, "-I", "-c", "print('child-ok')"], capture_output=True, text=True)
+print(r.stdout.strip())
+"#;
+        let r = run_python(&cfg, snippet, Duration::from_secs(10))
+            .await
+            .expect("python3 must be available");
+        assert_eq!(r.exit_code, Some(0), "stderr: {}", r.stderr);
+        assert_eq!(r.stdout.trim(), "child-ok");
     }
 
     #[tokio::test]

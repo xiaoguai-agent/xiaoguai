@@ -19,7 +19,7 @@
 
 import { useEffect, useState } from 'react';
 import type { AiDisclosureConfig } from '@xiaoguai/shared';
-import { getAiDisclosureConfig } from '@xiaoguai/shared';
+import { getAiDisclosureConfig, safeHref } from '@xiaoguai/shared';
 import { getTranslations } from './i18n';
 
 /** Per-session dismiss key stored in sessionStorage (resets on new tab/window). */
@@ -71,6 +71,10 @@ export function AiDisclosureBanner({ tenantId, baseUrl, config: propConfig }: Pr
 
   const t = getTranslations();
   const bodyText = config.text_override ?? t.ai_disclosure.banner_text;
+  // SEC-25: link_to_disclosure is operator/backend-provided config — only
+  // whitelisted schemes become a link; otherwise the link is omitted (the
+  // banner text itself still renders).
+  const disclosureHref = safeHref(config.link_to_disclosure);
 
   return (
     <div
@@ -80,11 +84,11 @@ export function AiDisclosureBanner({ tenantId, baseUrl, config: propConfig }: Pr
     >
       <span className="ai-disclosure-banner__text">
         {bodyText}
-        {config.link_to_disclosure && (
+        {disclosureHref && (
           <>
             {' '}
             <a
-              href={config.link_to_disclosure}
+              href={disclosureHref}
               target="_blank"
               rel="noopener noreferrer"
               className="ai-disclosure-banner__link"

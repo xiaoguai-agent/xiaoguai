@@ -29,11 +29,9 @@ async fn build(settings: &Settings, workspace: &Path) -> Result<Tools> {
         .await
         .context("open SQLite store")?;
     // Sign with the same key the server uses so CLI-written rows verify in the
-    // same chain: prefer the configured env var, fall back to the static key.
-    let key = std::env::var(&settings.audit.signing_key_env)
-        .ok()
-        .filter(|k| !k.is_empty())
-        .unwrap_or_else(|| settings.audit.hmac_key.clone());
+    // same chain. SEC-15: fail-closed — never fall back to the published dev
+    // key (see `crate::commands::resolve_audit_signing_key`).
+    let key = crate::commands::resolve_audit_signing_key(settings)?;
     let sink = Arc::new(SqliteAuditSink::new(pool, key));
     let ws = Workspace::open_or_create(workspace)
         .await

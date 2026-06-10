@@ -3,7 +3,9 @@
 //! Telegram delivers `Update` objects via HTTPS POST to a URL registered with
 //! `setWebhook`. When a `secret_token` is configured on the webhook, Telegram
 //! includes it verbatim in the `X-Telegram-Bot-Api-Secret-Token` header so
-//! the receiving server can reject spoofed deliveries.
+//! the receiving server can reject spoofed deliveries. SEC-21: a webhook
+//! with **no** configured `secret_token` is rejected outright — see
+//! [`verify_secret`].
 //!
 //! Security note: we use a constant-time comparison so timing side-channels
 //! cannot leak a partial prefix of the configured secret.
@@ -34,16 +36,23 @@ pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// Verify the `X-Telegram-Bot-Api-Secret-Token` header against the configured
 /// `secret_token`. Returns `Ok(())` when the token matches.
 ///
-/// If `secret_token` is `None`, the check is skipped entirely — useful for
-/// development without a registered webhook.
+/// SEC-21 (fail-closed): a Telegram webhook **without a configured secret is
+/// always rejected**. Telegram requests carry no signature, so the secret
+/// token is the only authentication — accepting unauthenticated deliveries
+/// would let any internet peer spoof updates. Operators must set
+/// `secret_token` on `setWebhook` and mirror it in the provider config
+/// before exposing the endpoint.
 ///
 /// # Errors
 ///
-/// Returns [`ProviderError::BadSignature`] if the token header is absent or
-/// does not match `secret_token`.
+/// Returns [`ProviderError::BadSignature`] if `secret_token` is `None` or
+/// empty, the token header is absent, or it does not match `secret_token`.
 pub fn verify_secret(webhook: &Webhook, secret_token: Option<&str>) -> Result<(), ProviderError> {
-    let Some(expected) = secret_token else {
-        return Ok(());
+    // SEC-21: previously `None` skipped verification entirely (allow-all).
+    // Reject instead — no secret means no way to authenticate the caller.
+    let expected = match secret_token {
+        Some(s) if !s.is_empty() => s,
+        _ => return Err(ProviderError::BadSignature),
     };
     let received = webhook
         .header("X-Telegram-Bot-Api-Secret-Token")
@@ -206,13 +215,33 @@ mod tests {
         ));
     }
 
+    /// SEC-21: no configured secret must reject everything (fail-closed),
+    /// even requests that carry a token header.
     #[test]
-    fn verify_skipped_when_no_secret_configured() {
+    fn verify_rejects_when_no_secret_configured() {
         let wh = Webhook {
             headers: vec![],
             body: b"{}".to_vec(),
         };
-        assert!(verify_secret(&wh, None).is_ok());
+        assert!(matches!(
+            verify_secret(&wh, None),
+            Err(ProviderError::BadSignature)
+        ));
+        let wh_with_header = webhook_with_token("anything");
+        assert!(matches!(
+            verify_secret(&wh_with_header, None),
+            Err(ProviderError::BadSignature)
+        ));
+    }
+
+    /// SEC-21: an empty-string secret is as good as none — reject.
+    #[test]
+    fn verify_rejects_empty_secret() {
+        let wh = webhook_with_token("");
+        assert!(matches!(
+            verify_secret(&wh, Some("")),
+            Err(ProviderError::BadSignature)
+        ));
     }
 
     // ------------------------------------------------------------------

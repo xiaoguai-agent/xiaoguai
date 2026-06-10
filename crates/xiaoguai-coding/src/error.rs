@@ -55,6 +55,16 @@ pub enum CodingError {
     /// coding tools contained to the owner-scoped workspace.
     #[error("unsafe path {path}: {reason}")]
     UnsafePath { path: PathBuf, reason: String },
+
+    /// SEC-22: a model-supplied value destined for a *positional* git argument
+    /// was rejected at the boundary because git would parse it as an option
+    /// (`-` prefix — option injection, e.g. `--receive-pack=<cmd>` on push).
+    #[error("invalid {what} {value:?}: {reason}")]
+    InvalidArgument {
+        what: String,
+        value: String,
+        reason: String,
+    },
 }
 
 impl CodingError {
