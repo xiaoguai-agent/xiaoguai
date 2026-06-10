@@ -175,6 +175,9 @@ See the [Runbooks table](#runbooks).
 | [ha.md](runbooks/ha.md) | High availability | `[main]` |
 | [k8s-helm.md](runbooks/k8s-helm.md) | Kubernetes / Helm | `[main]` |
 | [observability.md](runbooks/observability.md) | Metrics / alerting | `[main]` |
+| [office-mcp-integration.md](runbooks/office-mcp-integration.md) | Office read via markitdown MCP (T1) | `[main]` |
+| [excel-mcp-integration.md](runbooks/excel-mcp-integration.md) | Excel read/write-back via excel-mcp-server | `[branch: docs/handoff-2026-06-09]` |
+| [office-documents-mcp-integration.md](runbooks/office-documents-mcp-integration.md) | docx/pptx creation via Word/PPT MCP servers | `[branch: docs/handoff-2026-06-09]` |
 | [operator.md](runbooks/operator.md) | Day-2 operations | `[main]` |
 | [pypi-trusted-publisher.md](runbooks/pypi-trusted-publisher.md) | PyPI release | `[main]` |
 | [rag-reranker.md](runbooks/rag-reranker.md) | RAG / reranker tuning | `[main]` |

@@ -36,8 +36,12 @@ xiaoguai mcp list
 ```bash
 # with `xiaoguai serve` running, ask the agent to read a real file:
 xiaoguai chat --prompt 'Use convert_to_markdown to read ./report.xlsx and summarise it'
-# then confirm an audit row was written for the tool call:
-xiaoguai audit list | grep tool_call.convert_to_markdown
+# then confirm an audit row was written for the tool call
+# (there is no `xiaoguai audit list` subcommand — query the chain directly):
+sqlite3 ~/.xiaoguai/data.db "
+  SELECT id, action, resource, ts FROM audit_log
+  WHERE action = 'tool.invoke' AND resource = 'mcp:convert_to_markdown'
+  ORDER BY id DESC LIMIT 5;"
 ```
 
 If a HotL policy gates `tool_call.convert_to_markdown`, the call suspends for
