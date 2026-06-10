@@ -311,6 +311,12 @@ pub struct AppState {
     /// `SqliteHotlAuditSink` adapter as `hotl_audit`. `None` skips audit
     /// logging (audit failures must NOT block the operation).
     pub team_audit: Option<Arc<dyn HotlAuditSink>>,
+    /// T6 self-healing (GLUE-1): incident persistence — backs
+    /// `/v1/incidents/*`. `None` makes those endpoints return 503;
+    /// production wires `SqliteIncidentStore` over the shared pool in
+    /// `xiaoguai-core`. Ingest audit reuses `team_audit` (the sink is
+    /// feature-generic; entries differ only by action namespace).
+    pub incidents: Option<Arc<dyn crate::incident_store::IncidentStore>>,
     /// v1.8.0 (sprint-10b S10b-5): session-scoped watcher introspection —
     /// backs `/v1/watchers/*`. `None` makes those endpoints return 503;
     /// production wires `StaticWatcherIntrospector` (zero-watcher steady

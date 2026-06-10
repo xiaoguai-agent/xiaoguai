@@ -221,6 +221,7 @@ fn build_state(
         watchers: None,
         loops: None,
         teams: None,
+        incidents: None,
         team_audit: None,
         decision_registry: registry,
     }

@@ -782,6 +782,12 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         team_audit: pg_audit_sink
             .as_ref()
             .map(|sink| crate::hotl_bridge::SqliteHotlAuditSink::arc(sink.clone())),
+        // T6 self-healing (GLUE-1): incident persistence over the shared
+        // pool. Ingest audit reuses the team_audit chain adapter above
+        // (the sink is feature-generic; entries are `incident.*`).
+        incidents: Some(Arc::new(
+            xiaoguai_api::incident_store::SqliteIncidentStore::new(pool.clone()),
+        )),
         // Sprint-12 S12-4: shared with the gate adapter constructed
         // above. The registry is built once around line 378; both halves
         // see the same DashMap so resolves from the route handler reach

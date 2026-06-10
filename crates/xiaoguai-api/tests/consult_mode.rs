@@ -149,6 +149,7 @@ fn build_fixture(backend: Arc<dyn LlmBackend>) -> Fixture {
         watchers: None,
         loops: None,
         teams: None,
+        incidents: None,
         team_audit: None,
         decision_registry: Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
     };

@@ -95,6 +95,7 @@ fn build_state_with_webhook_validator(token: &str, route_id: &str) -> AppState {
         watchers: None,
         loops: None,
         teams: None,
+        incidents: None,
         team_audit: None,
         decision_registry: std::sync::Arc::new(
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),

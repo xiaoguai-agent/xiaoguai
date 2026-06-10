@@ -810,7 +810,13 @@ fn truncate_str(s: &str, max: usize) -> &str {
 }
 
 /// Render the 5-section RCA markdown body for the GitHub PR description.
-fn render_rca_markdown(incident: &Incident, rca: &RcaDraft, pack_version: &str) -> String {
+/// Also composed by `incident_pipeline::render_incident_report` (T6.4) —
+/// the report endpoint reuses this renderer instead of reinventing it.
+pub(crate) fn render_rca_markdown(
+    incident: &Incident,
+    rca: &RcaDraft,
+    pack_version: &str,
+) -> String {
     let severity = format!("{:?}", incident.severity).to_uppercase();
     let mut md = format!(
         "# Incident RCA: {title}\n\n\

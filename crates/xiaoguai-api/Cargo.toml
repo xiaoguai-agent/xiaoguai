@@ -54,6 +54,10 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 xiaoguai-observability = { workspace = true }
+# T6 self-healing: SqliteIncidentStore lives here (not xiaoguai-storage)
+# because its ingest contract is the api-level `Incident` normalizer
+# output; sqlx is already a transitive dep via xiaoguai-storage.
+sqlx = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
