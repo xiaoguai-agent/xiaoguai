@@ -114,9 +114,27 @@ export function ChatPage({ onSessionCreated }: Props) {
    * previously left the partial bubble untouched on reconnect).
    */
   const reconnectingRef = useRef(false);
+  /**
+   * Session id whose `/sessions/:id` navigation was issued by send() itself
+   * (create-session-then-navigate). The route-change effect below must NOT
+   * wipe live turn state for that navigation: the SSE stream is already
+   * running, and under a delayed effect tick (observed on webkit) the reset
+   * raced the first SSE events and erased an applied `hotl_pending` — the
+   * HotlBanner then never mounted. A real user-driven session switch always
+   * carries a routeId different from this marker and still resets below.
+   */
+  const selfNavigatedSessionRef = useRef<string | null>(null);
 
   // When the route changes (user clicks a different session), reload history.
   useEffect(() => {
+    if (routeId && routeId === selfNavigatedSessionRef.current) {
+      // send() created this session and navigated here itself; the live
+      // turn (bubbles, HotL state, SSE stream) must survive the URL sync.
+      selfNavigatedSessionRef.current = null;
+      setSessionId(routeId);
+      return;
+    }
+    selfNavigatedSessionRef.current = null;
     setBubbles([]);
     setHotlPending(null);
     setHotlResolved(null);
@@ -168,6 +186,9 @@ export function ChatPage({ onSessionCreated }: Props) {
         sid = session.id;
         setSessionId(sid);
         onSessionCreated({ id: sid, title: session.title ?? text.slice(0, 40) });
+        // Mark this navigation as self-initiated so the route-change effect
+        // does not wipe the in-flight turn state (see selfNavigatedSessionRef).
+        selfNavigatedSessionRef.current = sid;
         navigate(`/sessions/${sid}`, { replace: true });
       } catch (err) {
         setStatus(`create session failed: ${(err as Error).message}`);

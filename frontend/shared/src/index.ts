@@ -2172,7 +2172,14 @@ export class XiaoguaiClient {
       }
       throw new ApiError(resp.status, code, message);
     }
-    return (await resp.json()) as T;
+    try {
+      return (await resp.json()) as T;
+    } catch {
+      // A 2xx that is not JSON (e.g. an SPA-fallback HTML page when the
+      // API origin is misrouted) must surface as a typed ApiError, not a
+      // raw SyntaxError leaking parser internals to the UI.
+      throw new ApiError(resp.status, 'invalid_json', 'response body was not valid JSON');
+    }
   }
 
   /** List active teams. */
