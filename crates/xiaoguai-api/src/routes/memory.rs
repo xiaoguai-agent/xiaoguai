@@ -77,12 +77,26 @@ fn internal(msg: impl std::fmt::Display) -> impl IntoResponse {
 #[derive(Debug, Deserialize)]
 pub struct ListMemoriesQuery {
     pub kind: Option<String>,
-    #[serde(default)]
-    pub tags: Vec<String>,
+    /// Comma-separated tag list (`tags=a,b`); a memory must carry every tag.
+    /// One param instead of repeated `tags=` because plain
+    /// `axum::extract::Query` cannot deserialize repeated keys into a `Vec`.
+    pub tags: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: usize,
     #[serde(default)]
     pub offset: usize,
+}
+
+/// Split a comma-separated `tags=` param into trimmed, non-empty tags.
+fn parse_tags_param(raw: Option<&str>) -> Vec<String> {
+    raw.map(|s| {
+        s.split(',')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(String::from)
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 fn default_limit() -> usize {
@@ -162,8 +176,9 @@ pub async fn list_memories(
         None
     };
 
+    let tags = parse_tags_param(q.tags.as_deref());
     match store
-        .list_memories(kind_filter, &q.tags, q.limit, q.offset)
+        .list_memories(kind_filter, &tags, q.limit, q.offset)
         .await
     {
         Ok(memories) => Json(MemoryResponse { data: memories }).into_response(),

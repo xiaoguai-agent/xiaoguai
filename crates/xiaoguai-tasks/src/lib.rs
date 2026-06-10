@@ -1,41 +1,20 @@
-//! `xiaoguai-tasks` — durable Kanban task board + auto-dispatcher (ADR-0019).
+//! `xiaoguai-tasks` — agent-authored skill proposals (HotL-gated).
 //!
-//! This crate currently ships **two layers** that landed on separate branches
-//! (`feat/kanban-backend-tasks` + `feat/kanban-auto-dispatcher`) and were
-//! integrated together in the v1.4 merge wave:
+//! * [`skill_author`] — proposal types + the `SkillProposalRepository` /
+//!   `TenantSettingsReader` / `SkillAuthorGate` / `SkillAuditSink` trait seams
+//!   (Tier-2 D.1, DEC-023.3): an agent drafts a skill, `HotL` review approves.
+//! * [`skill_author_sqlite`] — `SQLite` implementations of those traits.
 //!
-//! ## 1. Persistence layer (`types` / `traits` / `mem` / `pg`)
+//! ## Historical note (node-scope cleanup, 2026-06-10)
 //!
-//! A first-class board where agents pick up and finish tasks, with every
-//! column transition recorded as an outcome event for the telemetry pipeline.
-//!
-//! ```text
-//! TaskBoardRepository (trait)
-//!   ├── InMemoryTaskBoardRepository  (unit tests, no DB)
-//!   └── SqliteTaskBoardRepository        (`SQLite`, migration 0018)
-//! OutcomeAttribution (trait)          — wires column transitions into telemetry
-//! ```
-//!
-//! ## 2. Dispatcher layer (`card` / `dispatcher` / `executor` / `metrics` / `store`)
-//!
-//! A worker pool that drives cards through their lifecycle:
-//!
-//! ```text
-//! READY  →  (claim via SKIP LOCKED)  →  RUNNING  →  DONE / BLOCKED (retries N times)
-//! ```
-//!
-//! * [`KanbanCard`] / [`CardStore`] — the dispatcher's unit of work + its store seam.
-//! * [`WorkerPool`] — configurable pool size, poll interval, retry, timeout, graceful shutdown.
-//! * [`TaskExecutor`] — injectable async trait producing an [`Outcome`].
-//! * [`PoolMetrics`] — Prometheus counters emitted by the pool.
-//!
-//! ## Reconciliation status (follow-up)
-//!
-//! The two layers use parallel type models — persistence (`Task`/`Column`/
-//! `TaskBoardRepository`) and dispatcher (`KanbanCard`/`CardColumn`/`CardStore`).
-//! They are independent and both compile; unifying them behind one type model
-//! (so the `WorkerPool` claims directly from `SqliteTaskBoardRepository`) is tracked
-//! as a follow-up. Until then a thin bridge maps between the two.
+//! This crate originally also shipped the ADR-0019 Kanban task board +
+//! auto-dispatcher (`types`/`traits`/`mem`/`sqlite` persistence and
+//! `card`/`dispatcher`/`executor`/`metrics`/`store` worker pool). That was a
+//! fleet-workforce surface — a board dispatching work to a pool of agents —
+//! which contradicts DEC-033: xiaoguai is one self-contained governed agent
+//! node, not a control plane over an agent fleet. The modules were never wired
+//! into the runtime (the admin-ui pane ran on a mock fallback) and were
+//! removed; `git log` has them if a *node-local* work queue is ever wanted.
 
 #![forbid(unsafe_code)]
 #![warn(clippy::pedantic)]
@@ -46,33 +25,7 @@
     clippy::needless_pass_by_value
 )]
 
-// Persistence layer.
-pub mod mem;
-pub mod sqlite;
-pub mod traits;
-pub mod types;
-
-// Dispatcher layer.
-pub mod card;
-pub mod dispatcher;
-pub mod executor;
-pub mod metrics;
-pub mod store;
-
 // Tier-2 D.1 — agent-authored skill proposals (HotL-gated, admin-approved).
 pub mod skill_author;
-// Sprint-8 S8-7 (DEC-023.3) — Pg impls of the skill_author traits.
+// Sprint-8 S8-7 (DEC-023.3) — SQLite impls of the skill_author traits.
 pub mod skill_author_sqlite;
-
-// Public re-exports — persistence layer.
-pub use mem::InMemoryTaskBoardRepository;
-pub use sqlite::SqliteTaskBoardRepository;
-pub use traits::{OutcomeAttribution, TaskBoardRepository};
-pub use types::{Board, Column, CreateBoardRequest, CreateTaskRequest, Task, TaskStateLogEntry};
-
-// Public re-exports — dispatcher layer.
-pub use card::{Attribution, CardColumn, CardId, KanbanCard, Outcome};
-pub use dispatcher::{PoolConfig, WorkerPool};
-pub use executor::{ExecutorError, MockExecutor, TaskExecutor};
-pub use metrics::PoolMetrics;
-pub use store::{CardStore, InMemoryCardStore, StoreError};
