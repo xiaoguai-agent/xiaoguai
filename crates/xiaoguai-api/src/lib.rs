@@ -15,6 +15,7 @@ pub mod error;
 pub mod eval;
 pub mod hotl;
 pub mod identity;
+pub mod incident_pipeline;
 pub mod incident_store;
 pub mod incidents;
 pub mod loop_tools;

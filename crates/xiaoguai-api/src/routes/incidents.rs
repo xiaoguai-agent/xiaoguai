@@ -2,11 +2,21 @@
 //!
 //! ## Routes (mounted in [`crate::routes::router`])
 //!
-//! | Method | Path                            | Auth                | Description                         |
-//! |--------|---------------------------------|---------------------|-------------------------------------|
-//! | POST   | `/v1/incidents/ingest/{source}` | `X-Xiaoguai-Token`  | Ingest a sentry/datadog/manual alert |
-//! | GET    | `/v1/incidents?status=`         | owner               | List incidents, newest first        |
-//! | GET    | `/v1/incidents/{id}`            | owner               | Incident + RCA + repair history     |
+//! | Method | Path                                | Auth                | Description                         |
+//! |--------|-------------------------------------|---------------------|-------------------------------------|
+//! | POST   | `/v1/incidents/ingest/{source}`     | `X-Xiaoguai-Token`  | Ingest a sentry/datadog/manual alert |
+//! | GET    | `/v1/incidents?status=`             | owner               | List incidents, newest first        |
+//! | GET    | `/v1/incidents/{id}`                | owner               | Incident + RCA + repair history     |
+//! | POST   | `/v1/incidents/{id}/analyze`        | owner               | Analyst consult turn → RCA (T6.3)   |
+//! | POST   | `/v1/incidents/{id}/approve-repair` | owner               | Executor execute turn (T6.4)        |
+//! | GET    | `/v1/incidents/{id}/report`         | owner               | Markdown report (T6.4 GLUE-4)       |
+//!
+//! The analyze/approve handlers `await` the pipeline turn in the request
+//! (single in-process agent turns — the orchestrate precedent keeps the
+//! request open for the whole run too; no detached task, no 202). The
+//! [`IncidentPipeline`] is constructed per request from existing `AppState`
+//! fields (all `Arc` clones) — deliberately not another `AppState` field,
+//! which would touch every fixture for zero gain.
 //!
 //! Ingest sits OUTSIDE the owner-auth layer (observability platforms can't
 //! do HTTP Basic) and mirrors the scheduler public webhook's token gate
@@ -34,6 +44,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::error::ApiError;
+use crate::incident_pipeline::{render_incident_report, IncidentPipeline, PipelineError};
 use crate::incident_store::{IncidentStatus, IncidentStoreError};
 use crate::incidents::{DatadogSource, Incident, IncidentSource, NormalizeError, SentrySource};
 use crate::state::AppState;
@@ -255,6 +266,103 @@ pub async fn get_incident(State(state): State<AppState>, Path(id): Path<Uuid>) -
     };
     match store.get_with_details(id).await {
         Ok(details) => (StatusCode::OK, Json(details)).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+// ─── Pipeline (T6.3/T6.4) ─────────────────────────────────────────────────────
+
+/// Build the pipeline from existing `AppState` fields. `None` only when the
+/// incident store itself is unwired (→ the same 503 as the read routes).
+/// Everything else is mandatory state, so no second 503 axis exists.
+fn pipeline_from_state(state: &AppState) -> Option<IncidentPipeline> {
+    let store = state.incidents.clone()?;
+    Some(IncidentPipeline::new(
+        store,
+        state.backend.clone(),
+        state.toolbox.clone(),
+        state.agent_defaults.clone(),
+        state.team_audit.clone(),
+    ))
+}
+
+fn map_pipeline_err(e: PipelineError) -> Response {
+    match e {
+        // Same table as the T6.2 handlers: NotFound → 404,
+        // InvalidTransition → 409 (e.g. analyze while analyzing/resolved,
+        // approve while open), Backend → 500.
+        PipelineError::Store(e) => map_err(e),
+        // `awaiting_approval` without an RCA — state conflict.
+        PipelineError::NoRca => err_response(StatusCode::CONFLICT, e.to_string()),
+        // The agent (upstream of this API) errored or broke the RCA
+        // contract; the incident was reverted to `open` and is retryable.
+        e @ (PipelineError::AnalysisRun(_) | PipelineError::RcaParse(_)) => {
+            err_response(StatusCode::BAD_GATEWAY, e.to_string())
+        }
+    }
+}
+
+/// `POST /v1/incidents/{id}/analyze` — run the Analyst consult turn
+/// (T6.3). 409 unless the incident is `open`; 502 when the agent fails or
+/// breaks the RCA contract (the incident reverts to `open`, retryable).
+pub async fn analyze_incident(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response {
+    let Some(pipeline) = pipeline_from_state(&state) else {
+        return incidents_unavailable();
+    };
+    match pipeline.analyze(id).await {
+        Ok(rca) => (
+            StatusCode::OK,
+            Json(json!({
+                "rca": rca,
+                "status": IncidentStatus::AwaitingApproval,
+            })),
+        )
+            .into_response(),
+        Err(e) => map_pipeline_err(e),
+    }
+}
+
+/// `POST /v1/incidents/{id}/approve-repair` — the explicit human approval
+/// point (T6.4). 409 unless `awaiting_approval`. A repair that ran but did
+/// not succeed is still 200: the attempt is recorded (`ok: false`) and the
+/// incident lands on `failed`.
+pub async fn approve_repair(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response {
+    let Some(pipeline) = pipeline_from_state(&state) else {
+        return incidents_unavailable();
+    };
+    match pipeline.approve_repair(id).await {
+        Ok(repair) => {
+            let status = if repair.ok {
+                IncidentStatus::Resolved
+            } else {
+                IncidentStatus::Failed
+            };
+            (
+                StatusCode::OK,
+                Json(json!({"repair": repair, "status": status})),
+            )
+                .into_response()
+        }
+        Err(e) => map_pipeline_err(e),
+    }
+}
+
+/// `GET /v1/incidents/{id}/report` — the composed markdown report (T6.4
+/// GLUE-4): status header + the existing 5-section RCA renderer + repairs.
+pub async fn incident_report(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response {
+    let Some(store) = state.incidents.clone() else {
+        return incidents_unavailable();
+    };
+    match store.get_with_details(id).await {
+        Ok(details) => (
+            StatusCode::OK,
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "text/markdown; charset=utf-8",
+            )],
+            render_incident_report(&details),
+        )
+            .into_response(),
         Err(e) => map_err(e),
     }
 }

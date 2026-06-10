@@ -224,6 +224,20 @@ pub fn router(state: AppState) -> Router {
         // owner-auth layer.
         .route("/v1/incidents", get(incidents::list_incidents))
         .route("/v1/incidents/{id}", get(incidents::get_incident))
+        // T6.3/T6.4 — Analyst (consult) / approval-gated Executor (execute)
+        // turns + composed markdown report. Owner-auth like the GETs above.
+        .route(
+            "/v1/incidents/{id}/analyze",
+            post(incidents::analyze_incident),
+        )
+        .route(
+            "/v1/incidents/{id}/approve-repair",
+            post(incidents::approve_repair),
+        )
+        .route(
+            "/v1/incidents/{id}/report",
+            get(incidents::incident_report),
+        )
         // T3 expert center — deterministic "一句话找专家" suggestion
         // (read-only; user confirms before any attach).
         .route("/v1/experts/suggest", post(experts::suggest_experts))
