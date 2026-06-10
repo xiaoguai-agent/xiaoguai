@@ -145,6 +145,63 @@ async fn create_then_list_round_trip() {
 }
 
 #[tokio::test]
+async fn list_memories_filters_by_comma_separated_tags_param() {
+    let app = router(build_state(Some(make_store())));
+
+    for (content, tags) in [
+        ("Frankfurt is the primary region.", vec!["infra", "compliance"]),
+        ("Tier-1 SLA is 15 minutes.", vec!["sla"]),
+    ] {
+        let body = serde_json::json!({"kind": "facts", "content": content, "tags": tags});
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/memories")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    // Single tag → only the matching memory. Must be 200: plain
+    // `axum::extract::Query` cannot deserialize repeated `tags=` params
+    // into a Vec, so the route takes ONE comma-separated param.
+    let req = Request::builder()
+        .uri("/v1/memories?tags=infra")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "tags= param must deserialize");
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let data = body.get("data").and_then(|v| v.as_array()).expect("data");
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0]["content"], "Frankfurt is the primary region.");
+
+    // Comma-separated multi-tag uses AND semantics (superset match).
+    let req = Request::builder()
+        .uri("/v1/memories?tags=infra,compliance")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"].as_array().unwrap().len(), 1);
+
+    // No memory carries both tags → empty under AND semantics.
+    let req = Request::builder()
+        .uri("/v1/memories?tags=infra,sla")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
 async fn list_memories_returns_503_when_store_is_none() {
     let app = router(build_state(None));
     let req = Request::builder()

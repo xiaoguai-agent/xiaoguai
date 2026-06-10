@@ -8,21 +8,20 @@
 
 export const PACKAGE_VERSION = '0.4.0';
 
-// ---- v1.4 Memory subsystem (ADR-0019) — shipped when xiaoguai-memory lands -
+// ---- Memory subsystem — mirrors the shipped /v1/memories routes ------------
 export type {
-  MemoryType,
+  MemoryKind,
   MemoryRecord,
   ListMemoriesQuery,
-  ListMemoriesResponse,
   CreateMemoryRequest,
   UpdateMemoryRequest,
-  RecallEntry,
-  RecallTraceResponse,
-  SimilarMemory,
-  FindSimilarMemoriesResponse,
+  RecallMemoriesRequest,
+  RecalledMemory,
+  MemoryEnvelope,
   MemoryImportSkippedLine,
   MemoryImportReport,
 } from './memory';
+export { MEMORY_KINDS } from './memory';
 
 // ---- Wire types ----------------------------------------------------------
 
@@ -1205,12 +1204,12 @@ export type AgentEvent =
 
 import type {
   ListMemoriesQuery,
-  ListMemoriesResponse,
   CreateMemoryRequest,
   UpdateMemoryRequest,
   MemoryRecord,
-  RecallTraceResponse,
-  FindSimilarMemoriesResponse,
+  MemoryEnvelope,
+  RecallMemoriesRequest,
+  RecalledMemory,
   MemoryImportReport,
 } from './memory';
 
@@ -1686,45 +1685,52 @@ export class XiaoguaiClient {
     );
   }
 
-  // ---- v1.4 Memory (ADR-0019) — 404 until xiaoguai-memory ships -----------
+  // ---- Memory — shipped /v1/memories routes (503 when store unconfigured) --
 
-  /**
-   * List memories with optional filters. Returns 404 if the memory
-   * subsystem (`xiaoguai-memory` crate, task #155) is not yet deployed.
-   */
-  listMemories(q?: ListMemoriesQuery): Promise<ListMemoriesResponse> {
+  /** List memories with optional kind / tags filters. `GET /v1/memories` */
+  async listMemories(q?: ListMemoriesQuery): Promise<MemoryRecord[]> {
     const params = new URLSearchParams();
-    if (q?.type) params.set('type', q.type);
-    if (q?.tenant_id) params.set('tenant_id', q.tenant_id);
-    if (q?.agent_id) params.set('agent_id', q.agent_id);
-    if (q?.tag) params.set('tag', q.tag);
-    if (q?.since) params.set('since', q.since);
-    if (q?.until) params.set('until', q.until);
+    if (q?.kind) params.set('kind', q.kind);
+    if (q?.tags?.length) params.set('tags', q.tags.join(','));
     if (q?.limit !== undefined) params.set('limit', String(q.limit));
     if (q?.offset !== undefined) params.set('offset', String(q.offset));
     const qs = params.toString();
-    return this.request<ListMemoriesResponse>('GET', `/v1/memory${qs ? `?${qs}` : ''}`);
+    const resp = await this.request<MemoryEnvelope<MemoryRecord[]>>(
+      'GET',
+      `/v1/memories${qs ? `?${qs}` : ''}`,
+    );
+    return resp.data;
   }
 
-  /** Create a new memory record. */
-  createMemory(req: CreateMemoryRequest): Promise<MemoryRecord> {
-    return this.request<MemoryRecord>('POST', '/v1/memory', req);
+  /** Create a new memory record. `POST /v1/memories` */
+  async createMemory(req: CreateMemoryRequest): Promise<MemoryRecord> {
+    const resp = await this.request<MemoryEnvelope<MemoryRecord>>('POST', '/v1/memories', req);
+    return resp.data;
   }
 
-  /** Fetch a single memory by id. */
-  getMemory(id: string): Promise<MemoryRecord> {
-    return this.request<MemoryRecord>('GET', `/v1/memory/${encodeURIComponent(id)}`);
+  /** Fetch a single memory by id. `GET /v1/memories/:id` */
+  async getMemory(id: string): Promise<MemoryRecord> {
+    const resp = await this.request<MemoryEnvelope<MemoryRecord>>(
+      'GET',
+      `/v1/memories/${encodeURIComponent(id)}`,
+    );
+    return resp.data;
   }
 
-  /** Update mutable fields (content, tags, ttl) of an existing memory. */
-  updateMemory(id: string, req: UpdateMemoryRequest): Promise<MemoryRecord> {
-    return this.request<MemoryRecord>('PATCH', `/v1/memory/${encodeURIComponent(id)}`, req);
+  /** Update mutable fields (content, tags, ttl_at). `PUT /v1/memories/:id` */
+  async updateMemory(id: string, req: UpdateMemoryRequest): Promise<MemoryRecord> {
+    const resp = await this.request<MemoryEnvelope<MemoryRecord>>(
+      'PUT',
+      `/v1/memories/${encodeURIComponent(id)}`,
+      req,
+    );
+    return resp.data;
   }
 
   /** Delete a memory record by id. Returns 204; no body. */
   async deleteMemory(id: string): Promise<void> {
     const resp = await this.fetchImpl(
-      `${this.baseUrl}/v1/memory/${encodeURIComponent(id)}`,
+      `${this.baseUrl}/v1/memories/${encodeURIComponent(id)}`,
       { method: 'DELETE', headers: this.headers() },
     );
     if (!resp.ok) {
@@ -1733,33 +1739,35 @@ export class XiaoguaiClient {
   }
 
   /**
-   * Fetch the recall trace for a session or free-form query.
-   * Useful for debugging "why did the agent forget X?".
+   * Semantic recall by natural-language query. `POST /v1/memories/recall`
+   * Returns ranked `{memory, score}` hits — useful for testing what the
+   * agent would remember for a given prompt.
    */
-  recallMemoriesForSession(opts: {
-    session_id?: string;
-    query?: string;
-    limit?: number;
-  }): Promise<RecallTraceResponse> {
-    const params = new URLSearchParams();
-    if (opts.session_id) params.set('session_id', opts.session_id);
-    if (opts.query) params.set('query', opts.query);
-    if (opts.limit !== undefined) params.set('limit', String(opts.limit));
-    return this.request<RecallTraceResponse>('GET', `/v1/memory/recall?${params.toString()}`);
+  async recallMemories(req: RecallMemoriesRequest): Promise<RecalledMemory[]> {
+    const resp = await this.request<MemoryEnvelope<RecalledMemory[]>>(
+      'POST',
+      '/v1/memories/recall',
+      req,
+    );
+    return resp.data;
   }
 
   /**
    * Find N nearest neighbors by vector similarity for a given memory.
-   * Useful for surfacing duplicate or conflicting memories.
+   * `GET /v1/memories/similar/:id` — useful for surfacing duplicates.
    */
-  findSimilarMemories(memoryId: string, opts?: { top_k?: number }): Promise<FindSimilarMemoriesResponse> {
+  async findSimilarMemories(
+    memoryId: string,
+    opts?: { top_k?: number },
+  ): Promise<RecalledMemory[]> {
     const params = new URLSearchParams();
     if (opts?.top_k !== undefined) params.set('top_k', String(opts.top_k));
     const qs = params.toString();
-    return this.request<FindSimilarMemoriesResponse>(
+    const resp = await this.request<MemoryEnvelope<RecalledMemory[]>>(
       'GET',
-      `/v1/memory/${encodeURIComponent(memoryId)}/similar${qs ? `?${qs}` : ''}`,
+      `/v1/memories/similar/${encodeURIComponent(memoryId)}${qs ? `?${qs}` : ''}`,
     );
+    return resp.data;
   }
 
   // ---- T7.2 memory import / export (shipped routes, /v1/memories) ---------

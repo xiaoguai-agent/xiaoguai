@@ -1,123 +1,105 @@
 /**
- * v1.4-ready — Memory subsystem wire types + client methods.
+ * Memory subsystem wire types — mirror the SHIPPED Rust routes in
+ * `crates/xiaoguai-api/src/routes/memory.rs` (`/v1/memories`) and the
+ * DTOs in `xiaoguai_memory::types`. When the Rust crate adds a field,
+ * mirror it here.
  *
- * The `xiaoguai-memory` Rust crate (task #155) is not yet shipped.
- * These types mirror the planned API contract described in ADR-0019.
- * When the crate ships, validate wire shapes here and remove the 404
- * fallback in the Memory pane.
+ * Every `/v1/memories` JSON response wraps its payload in `{ data }`
+ * ([`MemoryEnvelope`]); the client methods unwrap it.
  */
 
 // ---- Enums -----------------------------------------------------------------
 
-export type MemoryType = 'fact' | 'episode' | 'preference';
+/** Mirrors `MemoryKind` (serde snake_case): facts / episodes / preferences. */
+export type MemoryKind = 'facts' | 'episodes' | 'preferences';
+
+export const MEMORY_KINDS: readonly MemoryKind[] = ['facts', 'episodes', 'preferences'];
 
 // ---- Core record -----------------------------------------------------------
 
+/** Mirrors `xiaoguai_memory::types::Memory`. */
 export interface MemoryRecord {
   /** UUID assigned by the server. */
   id: string;
-  type: MemoryType;
-  /** Markdown-formatted content. */
+  kind: MemoryKind;
+  /** Natural-language content of the memory. */
   content: string;
-  /** Operator-assigned labels. */
+  /** Embedding vector; the server omits it when empty. */
+  content_embedding?: number[];
+  /** Topic tags (includes `source:` convention tags, T7.2). */
   tags: string[];
-  tenant_id: string;
-  /** ID of the agent that created this memory. */
-  agent_id: string | null;
+  /** RFC 3339 expiry. null = never expires. */
+  ttl_at: string | null;
   /** RFC 3339. Immutable after creation. */
   created_at: string;
   /** RFC 3339 or null if never recalled. */
   last_recalled_at: string | null;
   recall_count: number;
-  /** ISO 8601 duration string, e.g. "P30D". null = never expires. */
-  ttl: string | null;
 }
 
 // ---- List ------------------------------------------------------------------
 
+/** Query for `GET /v1/memories?kind=&tags=&limit=&offset=`. */
 export interface ListMemoriesQuery {
-  type?: MemoryType;
-  tenant_id?: string;
-  agent_id?: string;
-  tag?: string;
-  /** RFC 3339 inclusive lower bound on created_at. */
-  since?: string;
-  /** RFC 3339 inclusive upper bound on created_at. */
-  until?: string;
+  kind?: MemoryKind;
+  /** Sent as one comma-separated `tags=` param; a memory must carry every given tag. */
+  tags?: string[];
+  /** Server default: 50. */
   limit?: number;
   offset?: number;
 }
 
-export interface ListMemoriesResponse {
-  records: MemoryRecord[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
 // ---- Create / Update -------------------------------------------------------
 
+/** Body for `POST /v1/memories`. */
 export interface CreateMemoryRequest {
-  type: MemoryType;
+  kind: MemoryKind;
   content: string;
   tags?: string[];
-  tenant_id: string;
-  agent_id?: string | null;
-  ttl?: string | null;
+  /** RFC 3339 expiry; omit or null = never expires. */
+  ttl_at?: string | null;
 }
 
+/** Body for `PUT /v1/memories/:id`. Only content, tags, ttl are mutable. */
 export interface UpdateMemoryRequest {
-  /** Only content, tags, and ttl are mutable. */
   content?: string;
   tags?: string[];
-  ttl?: string | null;
+  /** `null` clears the TTL; omitting the field leaves it unchanged. */
+  ttl_at?: string | null;
 }
 
-// ---- Recall trace ----------------------------------------------------------
+// ---- Semantic recall ---------------------------------------------------------
 
-export interface RecallEntry {
-  memory_id: string;
-  /** Cosine similarity in [0, 1]. */
-  relevance_score: number;
-  /** Which agent triggered the recall. */
-  agent_id: string;
-  /** RFC 3339. */
-  recalled_at: string;
-  /** Snapshot of the memory content at recall time (first 200 chars). */
-  content_preview: string;
-  type: MemoryType;
-  tags: string[];
+/** Body for `POST /v1/memories/recall`. */
+export interface RecallMemoriesRequest {
+  query: string;
+  /** Server default: 5. */
+  top_k?: number;
+  kind_filter?: MemoryKind;
+  tag_filter?: string[];
+  /** Optional session UUID recorded on the recall trace. */
+  session_id?: string;
 }
 
-export interface RecallTraceResponse {
-  session_id: string | null;
-  query: string | null;
-  entries: RecallEntry[];
-  total: number;
+/**
+ * One recall / similarity hit. Returned by `POST /v1/memories/recall`
+ * and `GET /v1/memories/similar/:id`.
+ */
+export interface RecalledMemory {
+  memory: MemoryRecord;
+  /** Cosine similarity in [0, 1]. Higher is more similar. */
+  score: number;
 }
 
-// ---- Vector neighbors ------------------------------------------------------
+// ---- Response envelope -------------------------------------------------------
 
-export interface SimilarMemory {
-  memory_id: string;
-  /** Cosine similarity in [0, 1]. */
-  similarity: number;
-  content_preview: string;
-  type: MemoryType;
-  tags: string[];
-  created_at: string;
-}
-
-export interface FindSimilarMemoriesResponse {
-  anchor_id: string;
-  neighbors: SimilarMemory[];
+/** `{ data }` wrapper used by every `/v1/memories` JSON response. */
+export interface MemoryEnvelope<T> {
+  data: T;
 }
 
 // ---- Import / export (T7.2) -------------------------------------------------
 //
-// Unlike the types above (planned ADR-0019 contract, still pending wire
-// validation), these mirror the SHIPPED Rust routes in
-// `crates/xiaoguai-api/src/routes/memory.rs`:
 //   GET  /v1/memories/export?kind=   → text/plain JSONL document
 //   POST /v1/memories/import         → text/plain JSONL body
 // Response shape mirrors `xiaoguai_memory::jsonl::ImportReport`.
