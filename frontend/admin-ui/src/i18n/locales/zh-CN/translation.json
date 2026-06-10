@@ -456,7 +456,16 @@
       "neighbors_anchor_label": "锚点：",
       "neighbors_results_aria": "向量邻居结果",
       "neighbors_empty": "未找到邻居记忆。",
-      "neighbors_col_similarity": "相似度"
+      "neighbors_col_similarity": "相似度",
+      "import_export_aria": "记忆导入与导出",
+      "btn_export": "导出 JSONL",
+      "btn_import": "导入 JSONL…",
+      "import_file_aria": "导入记忆文件",
+      "import_preview": "{{filename}}：共 {{count}} 行 — 确认导入？",
+      "btn_import_confirm": "导入",
+      "btn_import_cancel": "取消",
+      "import_result": "已导入 {{imported}} 条，跳过 {{skipped}} 条。",
+      "import_skipped_line": "第 {{line}} 行：{{reason}}"
     },
     "personas": {
       "title": "角色档案",
@@ -524,7 +533,11 @@
       "delete_confirm_body": "归档后将不能附着到新会话；已使用此团队的会话继续保留。",
       "empty": "尚未定义任何团队。",
       "loading": "加载中…",
-      "unavailable": "Teams 仓储未配置（HTTP 503）。请在 API 主机中接入 teams 仓储。"
+      "unavailable": "Teams 仓储未配置（HTTP 503）。请在 API 主机中接入 teams 仓储。",
+      "field_glossary": "团队术语表（Markdown，注入到该团队会话的每一轮对话）",
+      "placeholder_glossary": "# 术语、约束、流程……",
+      "glossary_cap_hint": "最多 16 KiB Markdown 文本。",
+      "glossary_over_cap": "术语表为 {{bytes}} 字节，超过 16 KiB 上限（{{max}} 字节）。服务器将拒绝保存。"
     },
     "skill_proposals": {
       "title": "技能提案",

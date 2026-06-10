@@ -38,6 +38,7 @@
 
 pub mod embedder;
 pub mod error;
+pub mod jsonl;
 pub mod store;
 pub mod traits;
 pub mod types;
@@ -47,6 +48,7 @@ pub mod sqlite;
 
 pub use embedder::{EmbeddingProvider, InMemoryEmbedder};
 pub use error::{MemoryError, MemoryResult};
+pub use jsonl::{ImportReport, SkippedLine, SOURCE_IMPORTED_TAG, SOURCE_TAG_PREFIX};
 pub use store::InMemoryMemoryStore;
 pub use traits::MemoryStore;
 pub use types::{Memory, MemoryKind, RecallTrace};

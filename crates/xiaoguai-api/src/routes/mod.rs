@@ -165,6 +165,16 @@ pub fn router(state: AppState) -> Router {
             "/v1/memories/recall",
             post(memory::recall_memories),
         )
+        // T7.2 — bulk import/export (JSONL; static segments, so no clash
+        // with the `{id}` route below).
+        .route(
+            "/v1/memories/export",
+            get(memory::export_memories),
+        )
+        .route(
+            "/v1/memories/import",
+            post(memory::import_memories),
+        )
         .route(
             "/v1/memories/similar/{id}",
             get(memory::find_similar),

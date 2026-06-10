@@ -21,6 +21,7 @@ const TEAM: Team = {
   lead_persona_id: 'a1b2c3d4-0000-0000-0000-000000000002',
   member_persona_ids: ['a1b2c3d4-0000-0000-0000-000000000002'],
   recommended_pack_slugs: ['office-tools'],
+  glossary_md: null,
   created_at: '2026-06-10T00:00:00Z',
   archived: false,
 };
@@ -64,6 +65,23 @@ describe('XiaoguaiClient team methods', () => {
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toBe('http://x/v1/teams');
     expect(init?.method).toBe('POST');
+    expect(JSON.parse(init?.body as string)).toEqual(req);
+  });
+
+  it('createTeam round-trips glossary_md in the body (T7.1)', async () => {
+    const withGlossary = { ...TEAM, glossary_md: '# Terms\n- SLA: 4h' };
+    const fetchImpl: FetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(withGlossary, 201));
+    const req = {
+      name: 'Finance Squad',
+      lead_persona_id: TEAM.lead_persona_id,
+      member_persona_ids: TEAM.member_persona_ids,
+      glossary_md: '# Terms\n- SLA: 4h',
+    };
+    const row = await clientWith(fetchImpl).createTeam(req);
+    expect(row.glossary_md).toBe('# Terms\n- SLA: 4h');
+    const [, init] = fetchImpl.mock.calls[0]!;
     expect(JSON.parse(init?.body as string)).toEqual(req);
   });
 

@@ -55,6 +55,7 @@ async fn sqlite_team_full_roundtrip() {
             lead_persona_id: lead,
             member_persona_ids: vec![lead, worker],
             recommended_pack_slugs: vec!["office-tools".to_string()],
+            glossary_md: None,
         })
         .await
         .unwrap();
@@ -73,6 +74,7 @@ async fn sqlite_team_full_roundtrip() {
             lead_persona_id: lead,
             member_persona_ids: vec![lead],
             recommended_pack_slugs: vec![],
+            glossary_md: None,
         })
         .await
         .unwrap_err();
@@ -135,6 +137,7 @@ async fn sqlite_lead_fk_is_enforced() {
             lead_persona_id: ghost,
             member_persona_ids: vec![ghost],
             recommended_pack_slugs: vec![],
+            glossary_md: None,
         })
         .await
         .unwrap_err();
@@ -144,4 +147,78 @@ async fn sqlite_lead_fk_is_enforced() {
         err,
         PersonaError::ForeignKey(_) | PersonaError::Database(_)
     ));
+}
+
+// ── T7.1 glossary column round-trip (set / clear / cap) ───────────────────────
+
+#[tokio::test]
+async fn sqlite_glossary_set_clear_and_cap() {
+    let (pool, _guard) = test_setup().await;
+    let repo = SqliteTeamRepository::new(pool.clone());
+    let lead = make_persona(&pool, "Glossarist").await;
+
+    // Set on create + SELECT round-trip (including the session-team JOIN).
+    let created = repo
+        .create(&CreateTeamRequest {
+            name: "Glossary Squad".to_string(),
+            description: String::new(),
+            lead_persona_id: lead,
+            member_persona_ids: vec![lead],
+            recommended_pack_slugs: vec![],
+            glossary_md: Some("MRR = monthly recurring revenue".to_string()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        created.glossary_md.as_deref(),
+        Some("MRR = monthly recurring revenue")
+    );
+    assert_eq!(
+        repo.get(created.id).await.unwrap().glossary_md,
+        created.glossary_md
+    );
+    repo.attach_team_to_session("sess_g", created.id)
+        .await
+        .unwrap();
+    let attached = repo.get_session_team("sess_g").await.unwrap().unwrap();
+    assert_eq!(attached.glossary_md, created.glossary_md);
+
+    // Partial update of another field keeps the glossary; blank clears it.
+    let updated = repo
+        .update(
+            created.id,
+            &UpdateTeamRequest {
+                description: Some("desc".to_string()),
+                ..UpdateTeamRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.glossary_md, created.glossary_md);
+    let cleared = repo
+        .update(
+            created.id,
+            &UpdateTeamRequest {
+                glossary_md: Some(String::new()),
+                ..UpdateTeamRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(cleared.glossary_md, None);
+
+    // Over-cap rejected with InvalidArgument before any write.
+    let oversized = "x".repeat(xiaoguai_personas::teams::model::MAX_GLOSSARY_BYTES + 1);
+    let err = repo
+        .update(
+            created.id,
+            &UpdateTeamRequest {
+                glossary_md: Some(oversized),
+                ..UpdateTeamRequest::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, PersonaError::InvalidArgument(_)));
+    assert_eq!(repo.get(created.id).await.unwrap().glossary_md, None);
 }

@@ -129,6 +129,7 @@ impl Fixture {
                 lead_persona_id: lead,
                 member_persona_ids: vec![lead],
                 recommended_pack_slugs: vec![],
+                glossary_md: None,
             })
             .await
             .expect("create team")

@@ -11,7 +11,8 @@ use uuid::Uuid;
 
 use crate::error::{PersonaError, PersonaResult};
 use crate::teams::model::{
-    validate_composition, CreateTeamRequest, SessionTeam, Team, UpdateTeamRequest,
+    normalize_glossary, validate_composition, validate_glossary, CreateTeamRequest, SessionTeam,
+    Team, UpdateTeamRequest,
 };
 use crate::teams::traits::TeamRepository;
 
@@ -51,6 +52,7 @@ impl TeamRepository for InMemoryTeamRepository {
 
     async fn create(&self, req: &CreateTeamRequest) -> PersonaResult<Team> {
         validate_composition(req.lead_persona_id, &req.member_persona_ids)?;
+        validate_glossary(req.glossary_md.as_deref())?;
         let mut g = self.state.lock();
         let duplicate = g.teams.values().any(|t| t.name == req.name && !t.archived);
         if duplicate {
@@ -63,6 +65,7 @@ impl TeamRepository for InMemoryTeamRepository {
             lead_persona_id: req.lead_persona_id,
             member_persona_ids: req.member_persona_ids.clone(),
             recommended_pack_slugs: req.recommended_pack_slugs.clone(),
+            glossary_md: normalize_glossary(req.glossary_md.clone()),
             created_at: Utc::now(),
             archived: false,
         };
@@ -83,6 +86,7 @@ impl TeamRepository for InMemoryTeamRepository {
                 return Err(PersonaError::DuplicateName(new_name.clone()));
             }
         }
+        validate_glossary(req.glossary_md.as_deref())?;
         let current = g.teams.get(&id).ok_or(PersonaError::NotFound)?;
 
         // Build the merged result first; only commit if it validates.
@@ -102,6 +106,11 @@ impl TeamRepository for InMemoryTeamRepository {
                 .recommended_pack_slugs
                 .clone()
                 .unwrap_or_else(|| current.recommended_pack_slugs.clone()),
+            // None = unchanged; a blank value clears (normalises to None).
+            glossary_md: match &req.glossary_md {
+                None => current.glossary_md.clone(),
+                Some(g) => normalize_glossary(Some(g.clone())),
+            },
             created_at: current.created_at,
             archived: current.archived,
         };

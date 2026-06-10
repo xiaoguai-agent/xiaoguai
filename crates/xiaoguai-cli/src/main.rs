@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
     anomaly, audit_bundle, audit_export, backup, chat, code, completions, eval, hotl, init,
-    manpages, mcp, outcomes, provider, r#loop, remote, schedule, self_update, skills, stats, tasks,
-    watch,
+    manpages, mcp, memory, outcomes, provider, r#loop, remote, schedule, self_update, skills,
+    stats, tasks, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -194,6 +194,15 @@ enum Cmd {
         /// the default `~/.xiaoguai/data.db`.
         #[arg(long, num_args = 0..=1, default_missing_value = "")]
         restore_db: Option<String>,
+    },
+
+    /// Bulk-transfer long-term memories as JSONL against the local store
+    /// (T7.2). Runs directly over `SQLite` — no server needed; imports
+    /// re-embed with the configured embedder (`memory.embedder` config,
+    /// `OLLAMA_HOST` override), same as `xiaoguai serve`.
+    Memory {
+        #[command(subcommand)]
+        action: MemoryCmd,
     },
 
     /// Check for and apply binary updates from GitHub Releases.
@@ -1048,6 +1057,28 @@ enum CodeCmd {
 // Handlers — existing
 // ---------------------------------------------------------------------------
 
+#[derive(Subcommand)]
+enum MemoryCmd {
+    /// Export memories as JSONL (one `{kind, content, tags, ttl_at,
+    /// created_at}` object per line; embeddings are not exported).
+    Export {
+        /// Only export this kind: 'facts', 'episodes' or 'preferences'.
+        #[arg(long)]
+        kind: Option<String>,
+        /// Write to this file instead of stdout.
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Import a JSONL file. Fail-soft: blank lines are skipped silently,
+    /// malformed lines are reported with their line number; valid lines are
+    /// re-embedded and tagged `source:imported` unless they already carry a
+    /// `source:` tag.
+    Import {
+        /// Path to the JSONL file.
+        file: String,
+    },
+}
+
 fn load_settings(config: Option<&str>) -> Result<Settings> {
     match config {
         Some(path) => {
@@ -1067,6 +1098,48 @@ async fn build_provider_repo(config: Option<&str>) -> Result<SqliteLlmProviderRe
     // serve` first. Idempotent — a no-op once the store is current.
     migrate(&pool).await.context("apply migrations")?;
     Ok(SqliteLlmProviderRepository::new(pool))
+}
+
+/// Build the local memory store the way `serve` does: same pool, same
+/// migrate-on-connect, same embedder selection (`memory.embedder` config
+/// block with the `OLLAMA_HOST` env override) via
+/// `xiaoguai_core::memory_bridge::build_memory_store`.
+async fn build_memory_store(
+    config: Option<&str>,
+) -> Result<std::sync::Arc<dyn xiaoguai_memory::MemoryStore>> {
+    let settings = load_settings(config)?;
+    let pool = connect(&settings.database.url, settings.database.max_connections)
+        .await
+        .context("open SQLite store")?;
+    migrate(&pool).await.context("apply migrations")?;
+    Ok(xiaoguai_core::memory_bridge::build_memory_store(
+        pool,
+        &settings.memory.embedder,
+    ))
+}
+
+async fn handle_memory(config: Option<&str>, action: MemoryCmd) -> Result<()> {
+    let store = build_memory_store(config).await?;
+    match action {
+        MemoryCmd::Export { kind, out } => {
+            let jsonl = memory::export(store.as_ref(), kind.as_deref()).await?;
+            match out {
+                Some(path) => {
+                    std::fs::write(&path, &jsonl)
+                        .with_context(|| format!("write export to {path}"))?;
+                    println!("exported {} memorie(s) to {path}", jsonl.lines().count());
+                }
+                None => print!("{jsonl}"),
+            }
+            Ok(())
+        }
+        MemoryCmd::Import { file } => {
+            let content = std::fs::read_to_string(&file).with_context(|| format!("read {file}"))?;
+            let report = memory::import(store.as_ref(), &content).await?;
+            print!("{}", memory::format_import_report(&report));
+            Ok(())
+        }
+    }
 }
 
 async fn build_mcp_repo(config: Option<&str>) -> Result<SqliteMcpServerRepository> {
@@ -2348,6 +2421,7 @@ async fn main() -> Result<()> {
             println!("restore complete");
             Ok(())
         }
+        Cmd::Memory { action } => handle_memory(cli.config.as_deref(), action).await,
         Cmd::SelfUpdate { check } => {
             self_update::run_self_update(self_update::SelfUpdateArgs {
                 check,

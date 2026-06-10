@@ -112,3 +112,27 @@ export interface FindSimilarMemoriesResponse {
   anchor_id: string;
   neighbors: SimilarMemory[];
 }
+
+// ---- Import / export (T7.2) -------------------------------------------------
+//
+// Unlike the types above (planned ADR-0019 contract, still pending wire
+// validation), these mirror the SHIPPED Rust routes in
+// `crates/xiaoguai-api/src/routes/memory.rs`:
+//   GET  /v1/memories/export?kind=   → text/plain JSONL document
+//   POST /v1/memories/import         → text/plain JSONL body
+// Response shape mirrors `xiaoguai_memory::jsonl::ImportReport`.
+
+/** One skipped line from a JSONL import (1-based line number + reason). */
+export interface MemoryImportSkippedLine {
+  line: number;
+  reason: string;
+}
+
+/**
+ * Outcome of `POST /v1/memories/import`. Fail-soft: malformed lines are
+ * reported in `skipped`, never abort the run.
+ */
+export interface MemoryImportReport {
+  imported: number;
+  skipped: MemoryImportSkippedLine[];
+}

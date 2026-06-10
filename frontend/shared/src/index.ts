@@ -20,6 +20,8 @@ export type {
   RecallTraceResponse,
   SimilarMemory,
   FindSimilarMemoriesResponse,
+  MemoryImportSkippedLine,
+  MemoryImportReport,
 } from './memory';
 
 // ---- Wire types ----------------------------------------------------------
@@ -1014,6 +1016,13 @@ export interface Team {
   member_persona_ids: string[];
   /** Display-only pack suggestions shown at selection time. */
   recommended_pack_slugs: string[];
+  /**
+   * T7.1 — optional team-shared markdown glossary, injected as a system
+   * message into every turn of a session this team is attached to.
+   * Always present on the wire (the Rust DTO serialises it
+   * unconditionally); `null` = no glossary. Capped at 16 KiB server-side.
+   */
+  glossary_md: string | null;
   created_at: string;
   archived: boolean;
 }
@@ -1024,6 +1033,11 @@ export interface CreateTeamRequest {
   lead_persona_id: string;
   member_persona_ids: string[];
   recommended_pack_slugs?: string[];
+  /**
+   * T7.1 — optional glossary markdown. Blank / whitespace-only values
+   * normalise to `null` server-side; > 16 KiB is rejected with 400.
+   */
+  glossary_md?: string | null;
 }
 
 /** Optional updates. Omitted fields retain their value. */
@@ -1033,6 +1047,12 @@ export interface UpdateTeamRequest {
   lead_persona_id?: string;
   member_persona_ids?: string[];
   recommended_pack_slugs?: string[];
+  /**
+   * T7.1 — partial-update semantics mirror the Rust `Option<String>`:
+   * omitted (or `null`) leaves the glossary UNCHANGED; a blank string
+   * (`''` / whitespace) CLEARS it; > 16 KiB is rejected with 400.
+   */
+  glossary_md?: string | null;
 }
 
 /** Records which team is attached to a session. */
@@ -1258,6 +1278,7 @@ import type {
   MemoryRecord,
   RecallTraceResponse,
   FindSimilarMemoriesResponse,
+  MemoryImportReport,
 } from './memory';
 
 // ---- Client --------------------------------------------------------------
@@ -1867,6 +1888,69 @@ export class XiaoguaiClient {
       'GET',
       `/v1/memory/${encodeURIComponent(memoryId)}/similar${qs ? `?${qs}` : ''}`,
     );
+  }
+
+  // ---- T7.2 memory import / export (shipped routes, /v1/memories) ---------
+
+  /**
+   * T7.2 — `GET /v1/memories/export?kind=` as a raw `text/plain` JSONL
+   * document (one memory per line; embeddings are not exported). Pass
+   * `kind` to export a single memory kind only.
+   */
+  async exportMemories(kind?: string): Promise<string> {
+    const qs = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+    const resp = await this.fetchImpl(`${this.baseUrl}/v1/memories/export${qs}`, {
+      method: 'GET',
+      headers: this.headers(),
+    });
+    if (!resp.ok) {
+      if (resp.status === 401) this.onUnauthorized?.();
+      throw await this.parseErrorResponse(resp);
+    }
+    return await resp.text();
+  }
+
+  /**
+   * T7.2 — `POST /v1/memories/import` with a raw `text/plain` JSONL body
+   * (the backend reads the body as plain text, NOT JSON). Fail-soft:
+   * malformed lines are reported in `skipped`, never abort the run.
+   */
+  async importMemories(jsonl: string): Promise<MemoryImportReport> {
+    const headers = this.headers();
+    headers['content-type'] = 'text/plain; charset=utf-8';
+    const resp = await this.fetchImpl(`${this.baseUrl}/v1/memories/import`, {
+      method: 'POST',
+      headers,
+      body: jsonl,
+    });
+    if (!resp.ok) {
+      if (resp.status === 401) this.onUnauthorized?.();
+      throw await this.parseErrorResponse(resp);
+    }
+    return (await resp.json()) as MemoryImportReport;
+  }
+
+  /**
+   * Build an {@link ApiError} from a non-2xx response. Tolerates both error
+   * envelopes in use: `{code, message}` (most routes) and `{error}` (the
+   * memory routes).
+   */
+  private async parseErrorResponse(resp: Response): Promise<ApiError> {
+    let code = 'http_error';
+    let message = `HTTP ${resp.status}`;
+    try {
+      const parsed = (await resp.json()) as {
+        code?: string;
+        message?: string;
+        error?: string;
+      };
+      if (parsed.code) code = parsed.code;
+      if (parsed.message) message = parsed.message;
+      else if (parsed.error) message = parsed.error;
+    } catch {
+      // body wasn't JSON; keep defaults.
+    }
+    return new ApiError(resp.status, code, message);
   }
 
   /**
