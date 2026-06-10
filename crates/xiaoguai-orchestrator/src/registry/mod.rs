@@ -19,9 +19,14 @@
 //! agents, their declared capabilities, and their cost / scoping metadata.
 //!
 //! ## Deferred
-//! - Capability discovery via MCP-style agent introspection (v1.3).
-//! - Agent marketplace / remote registry pull (v1.3).
 //! - Capability versioning (e.g. `("billing", "draft_email", "v2")`).
+//!
+//! ## Explicitly out of scope (DEC-033 — single governed node, not a fleet)
+//! xiaoguai is a single self-contained governed agent node, not a control plane
+//! over a fleet of independently-deployed agents. The registry is therefore an
+//! **in-process catalogue only**. A remote/networked registry pull or an
+//! "agent marketplace" would turn this into fleet-management infrastructure and
+//! is deliberately NOT a roadmap item.
 
 pub mod conflict;
 pub mod router;
