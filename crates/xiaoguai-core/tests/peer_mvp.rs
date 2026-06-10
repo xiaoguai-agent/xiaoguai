@@ -225,6 +225,7 @@ fn specialist_toolbox() -> Toolbox {
             "properties": { "url": { "type": "string" } },
             "required": ["url"]
         }),
+        mutation_hint: xiaoguai_mcp::MutationHint::default(),
     }];
     Toolbox::from_server(client, descriptors).expect("specialist toolbox")
 }

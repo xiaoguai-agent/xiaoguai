@@ -21,7 +21,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use xiaoguai_mcp::{McpClient, McpResult, ServerInfo, ToolDescriptor, ToolResult};
+use xiaoguai_mcp::{McpClient, McpResult, MutationHint, ServerInfo, ToolDescriptor, ToolResult};
 
 use crate::{CheckpointId, CodingGate, FileEdit, GovernedTools, StepRecorder};
 
@@ -65,6 +65,7 @@ pub fn coding_tool_descriptors(include_egress: bool) -> Vec<ToolDescriptor> {
                 "properties": { "path": { "type": "string", "description": "Path relative to the workspace root." } },
                 "required": ["path"]
             }),
+            MutationHint::Read,
         ),
         descriptor(
             "list_dir",
@@ -74,6 +75,7 @@ pub fn coding_tool_descriptors(include_egress: bool) -> Vec<ToolDescriptor> {
                 "type": "object",
                 "properties": { "path": { "type": "string", "description": "Directory path relative to the workspace root; defaults to '.'." } }
             }),
+            MutationHint::Read,
         ),
         descriptor(
             "grep",
@@ -85,12 +87,14 @@ pub fn coding_tool_descriptors(include_egress: bool) -> Vec<ToolDescriptor> {
                 "properties": { "pattern": { "type": "string", "description": "Text/pattern to search for." } },
                 "required": ["pattern"]
             }),
+            MutationHint::Read,
         ),
         descriptor(
             "git_status",
             "[READ] Porcelain git status of the workspace (empty ⇒ clean). \
              No args. Use to see what you've changed before committing.",
             json!({ "type": "object", "properties": {} }),
+            MutationHint::Read,
         ),
         descriptor(
             "edit_file",
@@ -111,6 +115,7 @@ pub fn coding_tool_descriptors(include_egress: bool) -> Vec<ToolDescriptor> {
                 },
                 "required": ["path"]
             }),
+            MutationHint::Write,
         ),
         descriptor(
             "git_commit",
@@ -122,6 +127,7 @@ pub fn coding_tool_descriptors(include_egress: bool) -> Vec<ToolDescriptor> {
                 "properties": { "message": { "type": "string", "description": "Commit message." } },
                 "required": ["message"]
             }),
+            MutationHint::Write,
         ),
         descriptor(
             "rollback",
@@ -133,6 +139,7 @@ pub fn coding_tool_descriptors(include_egress: bool) -> Vec<ToolDescriptor> {
                 "properties": { "checkpoint": { "type": "string", "description": "Checkpoint id (a commit SHA from a prior edit/commit)." } },
                 "required": ["checkpoint"]
             }),
+            MutationHint::Write,
         ),
     ];
     if include_egress {
@@ -149,6 +156,7 @@ pub fn coding_tool_descriptors(include_egress: bool) -> Vec<ToolDescriptor> {
                 },
                 "required": ["branch"]
             }),
+            MutationHint::Write,
         ));
         tools.push(descriptor(
             "open_pr",
@@ -164,16 +172,26 @@ pub fn coding_tool_descriptors(include_egress: bool) -> Vec<ToolDescriptor> {
                 },
                 "required": ["title"]
             }),
+            MutationHint::Write,
         ));
     }
     tools
 }
 
-fn descriptor(name: &str, description: &str, input_schema: Value) -> ToolDescriptor {
+/// Build one coding-tool descriptor. `mutation_hint` is set explicitly from
+/// the tool's `[READ]`/`[WRITE]` description tag (plan §5.2); the textual
+/// tags are kept for the model's benefit.
+fn descriptor(
+    name: &str,
+    description: &str,
+    input_schema: Value,
+    mutation_hint: MutationHint,
+) -> ToolDescriptor {
     ToolDescriptor {
         name: name.to_string(),
         description: Some(description.to_string()),
         input_schema,
+        mutation_hint,
     }
 }
 
@@ -509,6 +527,37 @@ mod tests {
             assert!(res.is_error, "{bad} should be rejected");
             assert!(res.text.contains("unsafe path"), "got: {}", res.text);
         }
+    }
+
+    #[test]
+    fn mutation_hints_match_read_write_description_tags() {
+        // T5 plan §5.2: the structured hint must agree with the textual
+        // [READ]/[WRITE] tag every descriptor already carries.
+        for d in coding_tool_descriptors(true) {
+            let desc = d.description.expect("coding tools are documented");
+            let expected = if desc.starts_with("[READ]") {
+                MutationHint::Read
+            } else {
+                assert!(
+                    desc.starts_with("[WRITE]"),
+                    "{} has no [READ]/[WRITE] tag",
+                    d.name
+                );
+                MutationHint::Write
+            };
+            assert_eq!(d.mutation_hint, expected, "hint/tag mismatch on {}", d.name);
+        }
+    }
+
+    #[test]
+    fn read_tools_are_exactly_the_observation_set() {
+        let mut reads: Vec<String> = coding_tool_descriptors(true)
+            .into_iter()
+            .filter(|d| d.mutation_hint == MutationHint::Read)
+            .map(|d| d.name)
+            .collect();
+        reads.sort();
+        assert_eq!(reads, ["git_status", "grep", "list_dir", "read_file"]);
     }
 
     #[test]

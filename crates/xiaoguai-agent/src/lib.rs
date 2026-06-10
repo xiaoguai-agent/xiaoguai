@@ -7,6 +7,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod consult_gate;
 pub mod event;
 pub mod history;
 pub mod hotl_gate;
@@ -15,6 +16,7 @@ pub mod react;
 pub mod skill_author_tool;
 pub mod toolbox;
 
+pub use consult_gate::{ConsultGate, CONSULT_DENY_REASON};
 pub use event::{AgentEvent, HotlResolution, StopReason};
 pub use hotl_gate::{
     AllowAllGate, DenyAllGate, HotlGate, HotlGateVerdict, ScopeDenyGate, SharedHotlGate,
