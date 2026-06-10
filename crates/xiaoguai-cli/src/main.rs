@@ -4,9 +4,9 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
-    anomaly, audit_bundle, audit_export, backup, chat, code, completions, eval, hotl, init,
-    manpages, mcp, memory, outcomes, provider, r#loop, remote, schedule, self_update, skills,
-    stats, tasks, watch,
+    anomaly, audit_bundle, audit_export, backup, chat, code, completions, doctor, eval, hotl, init,
+    manpages, mcp, memory, outcomes, provider, r#loop, remote, schedule, self_update, service,
+    skills, stats, tasks, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -73,6 +73,23 @@ enum Cmd {
     /// and optionally make it the default model. Writes to the local DB; no web
     /// UI needed. Restart `xiaoguai serve` afterwards.
     Init,
+
+    /// Self-check the local install: database writable, providers + default
+    /// key, Ollama reachability/model (when an Ollama provider is default),
+    /// and whether the serve port is free or already serving.
+    ///
+    /// Prints a ✓/!/✗ table. Exits 1 only on hard ✗ failures — warnings
+    /// (e.g. the default Ollama model not pulled yet) keep exit code 0.
+    Doctor,
+
+    /// Install, remove, or inspect the background service that keeps
+    /// `xiaoguai serve` running (systemd on Linux — needs sudo; a per-user
+    /// launchd agent on macOS — no root). Windows is not supported (use
+    /// Docker or WSL).
+    Service {
+        #[command(subcommand)]
+        action: ServiceCmd,
+    },
 
     /// Send a one-shot prompt to the agent and print the response.
     Chat {
@@ -1079,6 +1096,24 @@ enum MemoryCmd {
     },
 }
 
+#[derive(Subcommand)]
+enum ServiceCmd {
+    /// Install and start the background service (systemd unit on Linux —
+    /// requires sudo; per-user launchd agent on macOS — no root needed).
+    /// Idempotent: re-running refreshes the unit/plist and restarts it.
+    Install {
+        /// Render the unit/plist and print the target paths without
+        /// touching the system (no writes, no systemctl/launchctl).
+        #[arg(long)]
+        print_only: bool,
+    },
+    /// Stop and remove the background service. Data (the `SQLite` store, the
+    /// service user on Linux) is left in place.
+    Uninstall,
+    /// Show the service status (systemctl status / launchctl list).
+    Status,
+}
+
 fn load_settings(config: Option<&str>) -> Result<Settings> {
     match config {
         Some(path) => {
@@ -1424,7 +1459,11 @@ async fn handle_init(config: Option<&str>) -> Result<()> {
             updated.name
         );
     }
-    eprintln!("\nRestart the server for changes to take effect:  xiaoguai serve");
+    // T8.1: end the wizard with concrete next steps. An already-running
+    // server still needs the restart hint; a fresh install needs "start it".
+    let port = load_settings(config).map_or(7600, |s| s.server.port);
+    eprintln!("\n(If the server is already running, restart it to pick up the change.)\n");
+    eprintln!("{}", init::format_next_steps(port));
     Ok(())
 }
 
@@ -2368,6 +2407,24 @@ async fn main() -> Result<()> {
         } => handle_chat(prompt, mock, ollama_url, model).await,
         Cmd::Provider { action } => handle_provider(cfg, action).await,
         Cmd::Init => handle_init(cfg).await,
+        Cmd::Doctor => {
+            let settings = load_settings(cfg)?;
+            let results = doctor::run(&settings).await;
+            print!("{}", doctor::format_report(&results));
+            if doctor::has_failure(&results) {
+                // Hard ✗ only — warns (e.g. model not pulled) stay exit 0.
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Cmd::Service { action } => {
+            let action = match action {
+                ServiceCmd::Install { print_only } => service::Action::Install { print_only },
+                ServiceCmd::Uninstall => service::Action::Uninstall,
+                ServiceCmd::Status => service::Action::Status,
+            };
+            service::run(action)
+        }
         Cmd::Mcp { action } => handle_mcp(cfg, action).await,
         Cmd::Schedule { action } => handle_schedule(cfg, action).await,
         Cmd::Remote { server, action } => handle_remote(server, action).await,

@@ -47,6 +47,18 @@ pub fn parse_selection(input: &str, count: usize) -> Option<usize> {
     (1..=count).contains(&n).then(|| n - 1)
 }
 
+/// Render the wizard epilogue's next steps (T8.1,
+/// `docs/plans/2026-06-10-install-polish.md` §1): start the server, then
+/// send a first message / open the UI. `port` is the configured serve port.
+#[must_use]
+pub fn format_next_steps(port: u16) -> String {
+    format!(
+        "Next steps:\n\
+         \x20 1. start the server:    xiaoguai serve\n\
+         \x20 2. say hello:           open http://localhost:{port}/ — or run: xiaoguai repl"
+    )
+}
+
 /// Parse a yes/no answer. Empty input returns `default_yes`; `y`/`yes` → true,
 /// `n`/`no` → false; anything else falls back to `default_yes`.
 #[must_use]
@@ -63,6 +75,15 @@ pub fn parse_yes_no(input: &str, default_yes: bool) -> bool {
 mod tests {
     use super::*;
     use chrono::Utc;
+
+    #[test]
+    fn next_steps_carry_serve_then_first_message_on_the_configured_port() {
+        let s = format_next_steps(7601);
+        assert!(s.contains("xiaoguai serve"));
+        assert!(s.contains("http://localhost:7601/"));
+        assert!(s.contains("xiaoguai repl"));
+        assert_eq!(s.lines().count(), 3);
+    }
     use xiaoguai_types::{LlmProvider, ProviderId, ProviderKind};
 
     fn prov(name: &str, models: Vec<&str>, api_key: Option<&str>) -> LlmProvider {
