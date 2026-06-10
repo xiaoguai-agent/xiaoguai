@@ -187,6 +187,29 @@ impl HotlPolicyStore for SqliteHotlPolicyStore {
 
 // ── enforcer ──────────────────────────────────────────────────────────────────
 
+/// SEC-02: tool-call scopes that must NOT silently allow when no HotL policy
+/// is declared. Covers code execution, file mutation, version-control push,
+/// and shell/egress — the scopes a prompt-injection would abuse to exfiltrate
+/// or persist. Matched by exact name OR by the `tool_call.execute_*` /
+/// `tool_call.git_*` prefixes so new exec/vcs tools inherit the safe default.
+/// Read-only tools (read_file, grep, list, llm_call, …) are intentionally
+/// absent so the agent stays usable with no policy configured.
+fn is_high_risk_scope(scope: &str) -> bool {
+    const HIGH_RISK: &[&str] = &[
+        "tool_call.edit_file",
+        "tool_call.write_file",
+        "tool_call.create_file",
+        "tool_call.delete_file",
+        "tool_call.apply_patch",
+        "tool_call.shell",
+        "tool_call.run_command",
+        "tool_call.bash",
+    ];
+    HIGH_RISK.contains(&scope)
+        || scope.starts_with("tool_call.execute_")
+        || scope.starts_with("tool_call.git_")
+}
+
 /// PG-backed enforcer.
 ///
 /// Algorithm (mirrors the in-memory enforcer doc):
@@ -222,8 +245,25 @@ impl HotlEnforcer for SqliteHotlEnforcer {
             }
         };
 
-        // No policy declared → unconditional allow.
+        // SEC-02: no policy declared. Previously this was an unconditional
+        // allow — which meant a fresh install (empty `hotl_policies` table)
+        // executed code, edited files, and pushed git with ZERO human
+        // checkpoint, contradicting the governable-agent posture. High-risk
+        // scopes now default to `Escalate` (the default `SuspendingHotlGate`
+        // turns that into an owner-approval suspend; `EnforcerGate` logs +
+        // proceeds for the owner-authority CLI path). Read-only / low-risk
+        // scopes (e.g. `llm_call`, `read_file`) keep the open default so the
+        // agent stays usable out of the box. Owners override either way by
+        // declaring an explicit policy (an `max_count = 0` + `escalate_to`
+        // policy gives per-call approval; a high allow-budget policy opts a
+        // scope back into silent execution).
         if policies.is_empty() {
+            if is_high_risk_scope(scope) {
+                return Ok(HotlVerdict::Escalate(format!(
+                    "no HotL policy for high-risk scope `{scope}` — escalating for owner \
+                     approval (fail-closed default; declare a policy to change this)"
+                )));
+            }
             return Ok(HotlVerdict::Allow);
         }
 
@@ -1235,6 +1275,32 @@ mod tests {
         let enforcer = SqliteHotlEnforcer::new(pool, store);
         let v = enforcer.check("llm_call", 1.0).await.unwrap();
         assert_eq!(v, HotlVerdict::Allow);
+    }
+
+    #[tokio::test]
+    async fn hotl_enforcer_no_policy_escalates_high_risk() {
+        // SEC-02: with no policy declared, code-exec / file-mutation / git-push
+        // scopes escalate for owner approval instead of silently allowing.
+        let (_dir, pool) = sqlite_pool().await;
+        let store = Arc::new(SqliteHotlPolicyStore::new(pool.clone()));
+        let enforcer = SqliteHotlEnforcer::new(pool, store);
+        for scope in [
+            "tool_call.execute_python",
+            "tool_call.execute_javascript",
+            "tool_call.edit_file",
+            "tool_call.git_push",
+        ] {
+            let v = enforcer.check(scope, 1.0).await.unwrap();
+            assert!(
+                matches!(v, HotlVerdict::Escalate(_)),
+                "{scope} should escalate when no policy is declared, got {v:?}"
+            );
+        }
+        // Read-only / low-risk scopes still allow with no policy.
+        assert_eq!(
+            enforcer.check("tool_call.read_file", 1.0).await.unwrap(),
+            HotlVerdict::Allow
+        );
     }
 
     #[tokio::test]

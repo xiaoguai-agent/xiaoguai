@@ -7,11 +7,46 @@
 //! and the §6 plan adjustment in
 //! `docs/plans/2026-05-30-sprint8-track-a-l3-sandbox.md`.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 
 use crate::exec::{run_python, ExecConfig, ExecError, ExecResult};
+
+/// SEC-09: env var an operator sets (any value other than empty/`0`/`false`)
+/// to acknowledge that the L1 backend is **not** filesystem/network-isolated
+/// and silence the one-time startup warning.
+pub const ACK_UNISOLATED_ENV: &str = "XIAOGUAI_MCP_EXEC_ACK_UNISOLATED";
+
+/// SEC-09: makes the un-isolation warning fire at most once per process —
+/// L1 backends can be constructed per call site (server, tests, adapters)
+/// and the warning would otherwise flood the log.
+static UNISOLATED_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// SEC-09: emit a single, prominent warning that L1 provides *process-level*
+/// containment only (scrubbed env, ulimits, tempdir CWD) — **no** filesystem
+/// or network isolation. Behaviour is unchanged (L1 still runs); this is
+/// operator awareness, not a gate. Silenced via [`ACK_UNISOLATED_ENV`].
+fn warn_unisolated_once() {
+    let acked = std::env::var(ACK_UNISOLATED_ENV)
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            !v.is_empty() && v != "0" && v != "false"
+        })
+        .unwrap_or(false);
+    if acked || UNISOLATED_WARNED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    tracing::warn!(
+        backend = "process-l1-python",
+        "SEC-09: the L1 exec backend does NOT isolate the filesystem or network — \
+         LLM-generated code can read any file the daemon user can and open outbound \
+         connections (exfiltration risk). For production, prefer the L3 wasm backend \
+         or deploy under container/netns isolation. Set {ACK_UNISOLATED_ENV}=1 to \
+         acknowledge the risk and silence this warning."
+    );
+}
 
 /// Compact, agent-facing summary of what a backend can and cannot do.
 ///
@@ -73,6 +108,9 @@ impl ProcessL1Python {
     /// (no `Arc` — see crate-level docs).
     #[must_use]
     pub fn new(cfg: ExecConfig) -> Self {
+        // SEC-09: surface the isolation gap once per process at the point an
+        // un-isolated (L1) backend is chosen.
+        warn_unisolated_once();
         Self { cfg }
     }
 

@@ -1204,17 +1204,29 @@ mod scheduler_token_admin {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        // SEC-19: the list must NOT re-expose the full secret — it returns only
+        // a non-secret prefix of the created token, and must set no-store.
+        assert_eq!(
+            resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
         let rows: Vec<serde_json::Value> =
             serde_json::from_slice(&to_bytes(resp.into_body(), 4096).await.unwrap()).unwrap();
         assert_eq!(rows.len(), 1);
+        let listed = rows[0]["token"].as_str().unwrap().to_string();
+        assert!(
+            token.starts_with(&listed),
+            "listed token must be a prefix of the full token (full={token}, listed={listed})"
+        );
 
-        // Revoke.
+        // Revoke by the (masked) prefix returned in the list — the real client
+        // flow, and proof the prefix resolves back to the full token.
         let resp = app
             .clone()
             .oneshot(
                 Request::builder()
                     .method("DELETE")
-                    .uri(format!("/v1/admin/scheduler/tokens/{token}"))
+                    .uri(format!("/v1/admin/scheduler/tokens/{listed}"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1227,7 +1239,7 @@ mod scheduler_token_admin {
             .oneshot(
                 Request::builder()
                     .method("DELETE")
-                    .uri(format!("/v1/admin/scheduler/tokens/{token}"))
+                    .uri(format!("/v1/admin/scheduler/tokens/{listed}"))
                     .body(Body::empty())
                     .unwrap(),
             )

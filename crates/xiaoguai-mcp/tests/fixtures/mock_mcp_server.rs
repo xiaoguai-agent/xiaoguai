@@ -48,16 +48,36 @@ fn main() {
                 }
             }),
             "tools/call" => {
-                let args = req
-                    .get("params")
+                let params = req.get("params");
+                let tool = params
+                    .and_then(|p| p.get("name"))
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("");
+                let args = params
                     .and_then(|p| p.get("arguments"))
                     .cloned()
                     .unwrap_or(serde_json::Value::Null);
-                let msg = args.get("msg").and_then(|m| m.as_str()).unwrap_or("");
+                let text = match tool {
+                    // SEC-03 probe: reports whether an env var is visible in
+                    // THIS child process, so tests can assert the client
+                    // scrubbed the host environment. Deliberately absent
+                    // from `tools/list` — it's a test back door, not a tool.
+                    "env_probe" => {
+                        let key = args.get("key").and_then(|k| k.as_str()).unwrap_or("");
+                        match std::env::var(key) {
+                            Ok(v) => format!("set: {v}"),
+                            Err(_) => "unset".to_string(),
+                        }
+                    }
+                    _ => {
+                        let msg = args.get("msg").and_then(|m| m.as_str()).unwrap_or("");
+                        format!("echo: {msg}")
+                    }
+                };
                 serde_json::json!({
                     "jsonrpc": "2.0", "id": id,
                     "result": {
-                        "content": [{ "type": "text", "text": format!("echo: {msg}") }],
+                        "content": [{ "type": "text", "text": text }],
                         "isError": false
                     }
                 })

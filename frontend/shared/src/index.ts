@@ -1283,16 +1283,21 @@ import type {
 
 // ---- Client --------------------------------------------------------------
 
-/**
- * Single-owner HTTP Basic credentials (DEC-033). The backend has no OIDC /
- * bearer tokens / tenants — access is gated by one configured
- * username + password. When the backend runs open (no credential set) this
- * is omitted and no `Authorization` header is sent.
- */
-export interface BasicCredentials {
-  username: string;
-  password: string;
-}
+// SEC-16: the single-owner credentials (DEC-033) and their in-memory store
+// live in ./credentials.ts — the password is held in a module variable only,
+// never in sessionStorage/localStorage. Re-exported here for both UIs.
+import type { BasicCredentials } from './credentials';
+
+export type { BasicCredentials } from './credentials';
+export {
+  setBasicCredentials,
+  clearBasicCredentials,
+  getBasicCredentials,
+  hasBasicCredentials,
+} from './credentials';
+
+// SEC-24/SEC-25: protocol whitelist for externally-controlled `<a href>`s.
+export { safeHref, SAFE_HREF_PROTOCOLS } from './safe-href';
 
 export interface ApiClientOptions {
   baseUrl: string;

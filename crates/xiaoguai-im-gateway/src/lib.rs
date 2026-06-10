@@ -17,11 +17,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod dedup;
 pub mod history;
 pub mod provider;
 pub mod router;
 pub mod sqlite_history;
 
+pub use dedup::{EventDeduper, DEFAULT_DEDUP_TTL};
 pub use history::{ConversationHistory, ConversationIdent, HistoryError, ImHistoryStore};
 pub use provider::{ImEvent, ImProvider, IncomingMessage, OutgoingReply, ProviderError, Webhook};
 pub use router::{

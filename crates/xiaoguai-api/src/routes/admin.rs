@@ -346,6 +346,24 @@ impl From<WebhookTokenRecord> for TokenResponse {
     }
 }
 
+/// SEC-19: webhook tokens are secrets. The full value is returned exactly once
+/// (at creation); the list endpoint returns only this non-secret prefix, and
+/// revoke resolves a prefix back to the full token server-side.
+const TOKEN_PREFIX_LEN: usize = 12;
+
+fn mask_token(token: &str) -> String {
+    token.chars().take(TOKEN_PREFIX_LEN).collect()
+}
+
+/// SEC-19: `Cache-Control: no-store` so token responses are never cached by a
+/// browser or intermediary proxy.
+fn no_store() -> [(axum::http::HeaderName, axum::http::HeaderValue); 1] {
+    [(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    )]
+}
+
 /// `POST /v1/admin/scheduler/tokens` — mint a new webhook token bound to
 /// `route_id`. The token is returned exactly once in the response body;
 /// the operator must capture it immediately.
@@ -355,7 +373,11 @@ impl From<WebhookTokenRecord> for TokenResponse {
 pub async fn scheduler_create_token(
     State(state): State<AppState>,
     Json(req): Json<CreateTokenRequest>,
-) -> ApiResult<(axum::http::StatusCode, Json<TokenResponse>)> {
+) -> ApiResult<(
+    axum::http::StatusCode,
+    [(axum::http::HeaderName, axum::http::HeaderValue); 1],
+    Json<TokenResponse>,
+)> {
     let admin = state
         .webhook_token_admin
         .as_ref()
@@ -369,7 +391,8 @@ pub async fn scheduler_create_token(
         .create(req.route_id.trim())
         .await
         .map_err(token_admin_err_to_api)?;
-    Ok((axum::http::StatusCode::CREATED, Json(row.into())))
+    // SEC-19: full token returned exactly once (`no_store` so it isn't cached).
+    Ok((axum::http::StatusCode::CREATED, no_store(), Json(row.into())))
 }
 
 /// `GET /v1/admin/scheduler/tokens?limit=...` — list tokens.
@@ -379,14 +402,27 @@ pub async fn scheduler_create_token(
 pub async fn scheduler_list_tokens(
     State(state): State<AppState>,
     Query(q): Query<ListTokensQuery>,
-) -> ApiResult<Json<Vec<TokenResponse>>> {
+) -> ApiResult<(
+    [(axum::http::HeaderName, axum::http::HeaderValue); 1],
+    Json<Vec<TokenResponse>>,
+)> {
     let admin = state
         .webhook_token_admin
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("webhook token admin not wired".into()))?;
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let rows = admin.list(limit).await.map_err(token_admin_err_to_api)?;
-    Ok(Json(rows.into_iter().map(Into::into).collect()))
+    // SEC-19: never re-expose the full secret — list returns only the prefix.
+    let items: Vec<TokenResponse> = rows
+        .into_iter()
+        .map(|r| TokenResponse {
+            token: mask_token(&r.token),
+            route_id: r.route_id,
+            created_at: r.created_at,
+            last_used_at: r.last_used_at,
+        })
+        .collect();
+    Ok((no_store(), Json(items)))
 }
 
 /// `DELETE /v1/admin/scheduler/tokens/:token` — revoke a webhook token.
@@ -399,13 +435,31 @@ pub async fn scheduler_list_tokens(
 )]
 pub async fn scheduler_revoke_token(
     State(state): State<AppState>,
-    Path(token): Path<String>,
+    Path(selector): Path<String>,
 ) -> ApiResult<axum::http::StatusCode> {
     let admin = state
         .webhook_token_admin
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("webhook token admin not wired".into()))?;
-    admin.revoke(&token).await.map_err(token_admin_err_to_api)?;
+    // SEC-19: the path carries a non-secret token prefix (the list endpoint no
+    // longer returns full tokens), so the secret stops landing in proxy/access
+    // logs. Resolve the prefix back to the full token, then revoke. A full
+    // token also matches (it is its own prefix). The exactly-one-match rule
+    // below is the real safeguard: a selector that matches more than one token
+    // is rejected rather than revoking an arbitrary one.
+    if selector.is_empty() {
+        return Err(ApiError::BadRequest("token selector required".into()));
+    }
+    let rows = admin.list(MAX_LIMIT).await.map_err(token_admin_err_to_api)?;
+    let mut matching = rows.into_iter().filter(|r| r.token.starts_with(&selector));
+    let target = matching.next().ok_or(ApiError::NotFound)?;
+    if matching.next().is_some() {
+        return Err(ApiError::Conflict("token selector is ambiguous".into()));
+    }
+    admin
+        .revoke(&target.token)
+        .await
+        .map_err(token_admin_err_to_api)?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 

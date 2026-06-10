@@ -13,6 +13,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { safeHref } from '@xiaoguai/shared';
 import type { MarketplaceEntry } from '@xiaoguai/shared';
 import { client } from '../client';
 
@@ -86,7 +87,11 @@ export function MarketplacePane() {
           <section key={category} className="marketplace-section">
             <h2>{category}</h2>
             <div className="marketplace-grid">
-              {items.map((entry) => (
+              {items.map((entry) => {
+                // SEC-25: source_url comes from the backend-served catalog —
+                // only whitelisted schemes become a link; otherwise omit it.
+                const sourceHref = safeHref(entry.source_url);
+                return (
                 <article key={entry.slug} className="marketplace-card">
                   <header>
                     <h3>{entry.name}</h3>
@@ -102,9 +107,9 @@ export function MarketplacePane() {
                     </div>
                   )}
                   <footer>
-                    {entry.source_url && (
+                    {sourceHref && (
                       <a
-                        href={entry.source_url}
+                        href={sourceHref}
                         target="_blank"
                         rel="noreferrer noopener"
                       >
@@ -118,7 +123,8 @@ export function MarketplacePane() {
                     />
                   </footer>
                 </article>
-              ))}
+                );
+              })}
             </div>
           </section>
         ))

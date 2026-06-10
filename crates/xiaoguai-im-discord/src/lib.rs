@@ -168,7 +168,15 @@ impl ImProvider for DiscordProvider {
             .header("x-signature-timestamp")
             .ok_or(ProviderError::BadSignature)?;
 
-        signature::verify(&self.public_key, timestamp, &webhook.body, sig_hex)?;
+        // SEC-05/SEC-12: `verify` also enforces the timestamp replay window;
+        // this is the only call-site that reads the system clock.
+        signature::verify(
+            &self.public_key,
+            timestamp,
+            &webhook.body,
+            sig_hex,
+            signature::now_unix(),
+        )?;
 
         match interactions::parse_interaction(&webhook.body)? {
             // PING — map to the gateway's Challenge variant so the router
@@ -245,7 +253,9 @@ mod tests {
     }
 
     fn make_webhook(sk: &SigningKey, body: &[u8]) -> Webhook {
-        let ts = "1716355200";
+        // SEC-05: `provider.parse` reads the real clock — sign "now" so
+        // the request lands inside the freshness window.
+        let ts = crate::signature::now_unix().to_string();
         let mut msg = Vec::new();
         msg.extend_from_slice(ts.as_bytes());
         msg.extend_from_slice(body);
@@ -253,7 +263,7 @@ mod tests {
         Webhook {
             headers: vec![
                 ("x-signature-ed25519".into(), hex::encode(sig.to_bytes())),
-                ("x-signature-timestamp".into(), ts.into()),
+                ("x-signature-timestamp".into(), ts),
             ],
             body: body.to_vec(),
         }
