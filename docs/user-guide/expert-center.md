@@ -6,11 +6,11 @@ pick an expert in chat, compose teams in the admin UI, or describe your goal
 in one sentence and let xiaoguai suggest who should handle it — fully offline,
 deterministic, no LLM call involved in the suggestion.
 
-> **Team execution model (until T4 lands):** a team session runs with the
-> team's **lead persona**. Attaching a team also attaches its lead via the
-> normal session-persona path, so HotL gating, tool allowlists, and audit all
-> behave exactly as for a single persona. Parallel multi-persona orchestration
-> is T4.
+> **Team execution model:** a team session runs with the team's **lead
+> persona**. Attaching a team also attaches its lead via the normal
+> session-persona path, so HotL gating, tool allowlists, and audit all
+> behave exactly as for a single persona. For parallel multi-persona
+> execution of a single goal, use the orchestrate endpoint (§6, T4).
 
 ---
 
@@ -75,3 +75,55 @@ audit chain: `team.create`, `team.update`, `team.archive`, `team.attach`
 read-only and not audited. Tool calls in a team session pass the same
 `HotlGate::check` + persona `tool_allowlist` enforcement as ever — the team
 layer adds no new execution surface.
+
+## 6. API: orchestrated team runs (T4)
+
+T4 of the capability-upgrade plan
+(`docs/plans/2026-06-10-executive-orchestration.md`) gives teams a real
+execution model: **goal in → members run in parallel → lead synthesizes one
+answer out**, all inside a single session turn.
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/v1/sessions/{id}/orchestrate` | `{"goal": "...", "team_id"?: "...", "max_members"?: 8}` → SSE stream of run events |
+
+Omit `team_id` to auto-route the goal to the top team from the suggest
+scorer (§1) — 422 when nothing matches. `max_members` caps the team size
+per request (engine default 8). The session must exist and be active (404 /
+409 otherwise); 503 when personas or teams aren't wired.
+
+**SSE events** (frame `event:` name = the `type` field; `data:` = the JSON
+body; `id:` = a per-stream sequence number):
+
+| Event | Payload | Meaning |
+|---|---|---|
+| `run_started` | `{members}` | run accepted; member fan-out begins |
+| `member_started` | `{id}` | one member persona's agent turn started |
+| `member_completed` | `{id, ok}` | a member finished (failures don't abort the run) |
+| `synthesis_started` | `{ok_members}` | lead synthesis begins over the survivors |
+| `final` | `{ok, text, failed_members}` | terminal event; `text` is the synthesized answer when `ok` |
+
+Only the synthesized text is persisted — the goal as the user message, the
+synthesis as the assistant reply. Member transcripts surface through the
+SSE stream, attribution, and audit, not `messages`.
+
+**Governance** — an orchestrated run is governed end-to-end:
+
+- **HotL**: a turn-level `llm_call` check for `members + 1` calls up front
+  (fail-closed, like a normal chat turn); per-tool gates apply inside each
+  member run automatically.
+- **Audit**: `orchestration.start` (team, member count, run id) and
+  `orchestration.complete` (ok, failed members, run id) on the HMAC chain.
+- **Attribution**: each member/lead turn stamps token usage as
+  `orch:<run_id>:<persona_id>` — disjoint from `sess_*`, same synthetic-label
+  convention as `scheduler:<job_id>` / `im:<provider>:<conv>`.
+- **Turn lock**: the run holds the session's turn lock for its whole
+  duration — a concurrent message or second orchestrate gets 409
+  (`a turn is already in flight`).
+- **Client-disconnect-safe**: the run is driven by a detached server task;
+  it completes, persists, and audits even if the SSE client drops. The
+  shared client (`orchestrateSession`) deliberately has no auto-reconnect —
+  after a dropped stream, re-fetch the session messages to read the result.
+
+Chat-ui surfacing (a team-run mode control) arrives with T5's
+consult/execute split; T4 ships engine + API + shared client.
