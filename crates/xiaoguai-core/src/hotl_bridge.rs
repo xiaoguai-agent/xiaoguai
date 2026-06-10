@@ -204,6 +204,10 @@ fn is_high_risk_scope(scope: &str) -> bool {
         "tool_call.shell",
         "tool_call.run_command",
         "tool_call.bash",
+        // SEC-02 (review fix): `open_pr` is an egress tool (`gh pr create` pushes
+        // workspace code to a remote). `git_push` is already covered by the
+        // `tool_call.git_` prefix, but `open_pr` matches no prefix, so name it.
+        "tool_call.open_pr",
     ];
     HIGH_RISK.contains(&scope)
         || scope.starts_with("tool_call.execute_")
@@ -1289,6 +1293,7 @@ mod tests {
             "tool_call.execute_javascript",
             "tool_call.edit_file",
             "tool_call.git_push",
+            "tool_call.open_pr",
         ] {
             let v = enforcer.check(scope, 1.0).await.unwrap();
             assert!(

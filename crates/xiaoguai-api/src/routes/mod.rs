@@ -403,5 +403,48 @@ fn is_loopback_origin(origin: &str) -> bool {
         || authority.split(':').next().unwrap_or(""),
         |rest| rest.split(']').next().unwrap_or(""),
     );
-    host.eq_ignore_ascii_case("localhost") || host == "::1" || host.starts_with("127.")
+    // SEC-06 (review fix): parse the host as an IP and use `is_loopback()` —
+    // covers all of 127.0.0.0/8 and ::1, and crucially REJECTS suffix-confusion
+    // hostnames like `127.evil.com` / `127.0.0.1.attacker.com` (which the old
+    // `starts_with("127.")` string check let through). `localhost` is the only
+    // non-IP loopback name we honour.
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod cors_tests {
+    use super::is_loopback_origin;
+
+    #[test]
+    fn loopback_origins_allowed() {
+        for o in [
+            "http://localhost",
+            "http://localhost:5173",
+            "http://127.0.0.1:7600",
+            "https://127.255.255.254",
+            "http://[::1]:8080",
+        ] {
+            assert!(is_loopback_origin(o), "{o} should be loopback");
+        }
+    }
+
+    #[test]
+    fn suffix_confusion_and_remote_rejected() {
+        // SEC-06 regression guard: these must NOT be treated as loopback.
+        for o in [
+            "http://127.evil.com",
+            "http://127.0.0.1.attacker.com",
+            "http://localhost.attacker.com",
+            "https://evil.com",
+            "http://10.0.0.1",
+            "http://0.0.0.0",
+        ] {
+            assert!(!is_loopback_origin(o), "{o} must be rejected");
+        }
+    }
 }
