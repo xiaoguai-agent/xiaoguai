@@ -773,6 +773,15 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // the controller. Set to `None` here, then overwritten after the
         // controller is built from this state's clone.
         loops: None,
+        // T3 expert center: team CRUD + session attachment, sharing the
+        // personas pool. Audit reuses the same chain adapter as hotl_audit
+        // (entries differ only by action namespace `team.*`).
+        teams: Some(Arc::new(xiaoguai_personas::SqliteTeamRepository::new(
+            pool.clone(),
+        ))),
+        team_audit: pg_audit_sink
+            .as_ref()
+            .map(|sink| crate::hotl_bridge::SqliteHotlAuditSink::arc(sink.clone())),
         // Sprint-12 S12-4: shared with the gate adapter constructed
         // above. The registry is built once around line 378; both halves
         // see the same DashMap so resolves from the route handler reach

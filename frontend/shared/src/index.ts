@@ -942,14 +942,13 @@ export interface WatcherInfo {
 // ---- v1.8.0 (sprint-10b S10b-2) — Persona CRUD ---------------------------
 
 /**
- * A named role profile that shapes agent behaviour within a tenant.
+ * A named role profile that shapes agent behaviour.
  *
  * Mirrors `xiaoguai_personas::Persona` (crates/xiaoguai-personas/src/model.rs).
- * Field names match the Rust DTO 1:1.
+ * Field names match the Rust DTO 1:1 (single owner — no tenant scope).
  */
 export interface Persona {
   id: string;
-  tenant_id: string;
   name: string;
   /** Injected as the leading system message in every chat turn. */
   system_prompt: string;
@@ -965,7 +964,6 @@ export interface Persona {
 }
 
 export interface CreatePersonaRequest {
-  tenant_id: string;
   name: string;
   system_prompt?: string;
   default_model?: string | null;
@@ -986,6 +984,67 @@ export interface UpdatePersonaRequest {
   default_model?: string | null;
   tool_allowlist?: string[] | null;
   escalation_tier?: string | null;
+}
+
+// ---- T3 expert center — Teams + expert suggestion ------------------------
+
+/**
+ * A named composition of personas with a designated lead. Mirrors
+ * `xiaoguai_personas::teams::model::Team` 1:1. Until T4 parallel
+ * orchestration lands, attaching a team to a session runs the session
+ * with the team's LEAD persona.
+ */
+export interface Team {
+  id: string;
+  name: string;
+  description: string;
+  /** Must be one of `member_persona_ids`. */
+  lead_persona_id: string;
+  /** Ordered, deduplicated, non-empty; includes the lead. */
+  member_persona_ids: string[];
+  /** Display-only pack suggestions shown at selection time. */
+  recommended_pack_slugs: string[];
+  created_at: string;
+  archived: boolean;
+}
+
+export interface CreateTeamRequest {
+  name: string;
+  description?: string;
+  lead_persona_id: string;
+  member_persona_ids: string[];
+  recommended_pack_slugs?: string[];
+}
+
+/** Optional updates. Omitted fields retain their value. */
+export interface UpdateTeamRequest {
+  name?: string;
+  description?: string;
+  lead_persona_id?: string;
+  member_persona_ids?: string[];
+  recommended_pack_slugs?: string[];
+}
+
+/** Records which team is attached to a session. */
+export interface SessionTeam {
+  session_id: string;
+  team_id: string;
+  attached_at: string;
+}
+
+/** One ranked entry from `POST /v1/experts/suggest`. */
+export interface ExpertSuggestion {
+  kind: 'persona' | 'team';
+  id: string;
+  name: string;
+  description: string;
+  score: number;
+  /** For teams: the lead persona. For personas: same as `id`. */
+  lead_persona_id: string;
+}
+
+export interface SuggestExpertsResponse {
+  suggestions: ExpertSuggestion[];
 }
 
 // ---- v1.8.0 (sprint-10b S10b-3) — Skill Proposals ------------------------
@@ -2013,15 +2072,11 @@ export class XiaoguaiClient {
   // ---- v1.8.0 (sprint-10b S10b-2) — Persona CRUD -----------------------
 
   /**
-   * List active personas for the tenant. The backend requires
-   * `tenant_id` as a query parameter; this client method takes the
-   * tenant from the caller so the admin-ui can switch tenants.
+   * List active personas. Single owner — the pre-pivot `tenant_id`
+   * query parameter is gone (the backend never read it).
    */
-  listPersonas(tenantId: string): Promise<Persona[]> {
-    return this.request<Persona[]>(
-      'GET',
-      `/v1/personas?tenant_id=${encodeURIComponent(tenantId)}`,
-    );
+  listPersonas(): Promise<Persona[]> {
+    return this.request<Persona[]>('GET', '/v1/personas');
   }
 
   /** Fetch a single persona by UUID. */
@@ -2068,6 +2123,156 @@ export class XiaoguaiClient {
       }
       throw new ApiError(resp.status, code, message);
     }
+  }
+
+  // ---- T3 expert center — Teams + session attachment + suggest ---------
+
+  /**
+   * Shared no-body request: throws ApiError on failure, resolves void on
+   * 2xx (used for DELETE routes that answer 204 No Content).
+   */
+  private async requestNoContent(method: string, path: string): Promise<void> {
+    const resp = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      method,
+      headers: this.headers(),
+    });
+    if (!resp.ok) {
+      let code = 'http_error';
+      let message = `HTTP ${resp.status}`;
+      try {
+        const parsed = (await resp.json()) as { code?: string; message?: string };
+        if (parsed.code) code = parsed.code;
+        if (parsed.message) message = parsed.message;
+      } catch {
+        // body was not JSON
+      }
+      throw new ApiError(resp.status, code, message);
+    }
+  }
+
+  /**
+   * Like `request`, but resolves `null` on 204 No Content (the backend's
+   * "nothing attached" answer for session persona/team lookups).
+   */
+  private async requestOrNull<T>(method: string, path: string): Promise<T | null> {
+    const resp = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      method,
+      headers: this.headers(),
+    });
+    if (resp.status === 204) return null;
+    if (!resp.ok) {
+      let code = 'http_error';
+      let message = `HTTP ${resp.status}`;
+      try {
+        const parsed = (await resp.json()) as { code?: string; message?: string };
+        if (parsed.code) code = parsed.code;
+        if (parsed.message) message = parsed.message;
+      } catch {
+        // body was not JSON
+      }
+      throw new ApiError(resp.status, code, message);
+    }
+    try {
+      return (await resp.json()) as T;
+    } catch {
+      // A 2xx that is not JSON (e.g. an SPA-fallback HTML page when the
+      // API origin is misrouted) must surface as a typed ApiError, not a
+      // raw SyntaxError leaking parser internals to the UI.
+      throw new ApiError(resp.status, 'invalid_json', 'response body was not valid JSON');
+    }
+  }
+
+  /** List active teams. */
+  listTeams(): Promise<Team[]> {
+    return this.request<Team[]>('GET', '/v1/teams');
+  }
+
+  /** Fetch a single team by UUID. */
+  getTeam(id: string): Promise<Team> {
+    return this.request<Team>('GET', `/v1/teams/${encodeURIComponent(id)}`);
+  }
+
+  /** Create a new team (lead must be one of the members). */
+  createTeam(req: CreateTeamRequest): Promise<Team> {
+    return this.request<Team>('POST', '/v1/teams', req);
+  }
+
+  /** Partial-update a team (PATCH semantics, like updatePersona). */
+  updateTeam(id: string, req: UpdateTeamRequest): Promise<Team> {
+    return this.request<Team>('PATCH', `/v1/teams/${encodeURIComponent(id)}`, req);
+  }
+
+  /** Archive (soft-delete) a team. Backend answers 204 No Content. */
+  deleteTeam(id: string): Promise<void> {
+    return this.requestNoContent('DELETE', `/v1/teams/${encodeURIComponent(id)}`);
+  }
+
+  /** Persona currently attached to a session, or `null` when none. */
+  getSessionPersona(sessionId: string): Promise<Persona | null> {
+    return this.requestOrNull<Persona>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sessionId)}/persona`,
+    );
+  }
+
+  /** Attach / replace the persona for a session. */
+  attachSessionPersona(sessionId: string, personaId: string): Promise<void> {
+    return this.request<unknown>(
+      'PUT',
+      `/v1/sessions/${encodeURIComponent(sessionId)}/persona`,
+      { persona_id: personaId },
+    ).then(() => undefined);
+  }
+
+  /** Detach the persona from a session (idempotent). */
+  detachSessionPersona(sessionId: string): Promise<void> {
+    return this.requestNoContent(
+      'DELETE',
+      `/v1/sessions/${encodeURIComponent(sessionId)}/persona`,
+    );
+  }
+
+  /** Team currently attached to a session, or `null` when none. */
+  getSessionTeam(sessionId: string): Promise<Team | null> {
+    return this.requestOrNull<Team>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sessionId)}/team`,
+    );
+  }
+
+  /**
+   * Attach / replace the team for a session. The backend also attaches
+   * the team's LEAD persona, so the session immediately runs as that
+   * expert — no separate persona call needed.
+   */
+  attachSessionTeam(sessionId: string, teamId: string): Promise<SessionTeam> {
+    return this.request<SessionTeam>(
+      'PUT',
+      `/v1/sessions/${encodeURIComponent(sessionId)}/team`,
+      { team_id: teamId },
+    );
+  }
+
+  /**
+   * Detach the team from a session. The lead persona stays attached —
+   * call `detachSessionPersona` to remove the expert entirely.
+   */
+  detachSessionTeam(sessionId: string): Promise<void> {
+    return this.requestNoContent(
+      'DELETE',
+      `/v1/sessions/${encodeURIComponent(sessionId)}/team`,
+    );
+  }
+
+  /**
+   * "一句话找专家" — deterministic, offline ranking of personas and teams
+   * against a free-text goal. Read-only: the caller confirms before any
+   * attach. Empty `suggestions` = nothing matched.
+   */
+  suggestExperts(goal: string): Promise<SuggestExpertsResponse> {
+    return this.request<SuggestExpertsResponse>('POST', '/v1/experts/suggest', {
+      goal,
+    });
   }
 
   // ---- v1.8.0 (sprint-10b S10b-3) — Skill Proposals -------------------

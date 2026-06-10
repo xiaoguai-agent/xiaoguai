@@ -2,6 +2,7 @@
 
 pub mod admin;
 pub mod audit_exports;
+pub mod experts;
 pub mod hotl;
 pub mod hotl_decisions;
 pub mod loops;
@@ -12,6 +13,7 @@ pub mod personas;
 pub mod providers;
 pub mod scheduler_public;
 pub mod sessions;
+pub mod teams;
 pub mod usage;
 pub mod watchers;
 
@@ -200,6 +202,24 @@ pub fn router(state: AppState) -> Router {
                 .put(personas::attach_persona)
                 .delete(personas::detach_persona),
         )
+        // T3 expert center — team CRUD + session attachment (attach also
+        // pins the team's lead persona; see routes::teams docs).
+        .route("/v1/teams", get(teams::list_teams).post(teams::create_team))
+        .route(
+            "/v1/teams/{id}",
+            get(teams::get_team)
+                .patch(teams::update_team)
+                .delete(teams::archive_team),
+        )
+        .route(
+            "/v1/sessions/{id}/team",
+            get(teams::get_session_team)
+                .put(teams::attach_team)
+                .delete(teams::detach_team),
+        )
+        // T3 expert center — deterministic "一句话找专家" suggestion
+        // (read-only; user confirms before any attach).
+        .route("/v1/experts/suggest", post(experts::suggest_experts))
         // v1.8.0 (sprint-10b S10b-5) — session-scoped watcher introspection.
         // Matches the URL shape XiaoguaiClient.listSessionWatchers /
         // pauseWatcher / resumeWatcher already calls in frontend/shared.

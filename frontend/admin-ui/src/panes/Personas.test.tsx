@@ -36,7 +36,6 @@ import {
 function makePersona(overrides: Partial<Persona> = {}): Persona {
   return {
     id: '00000000-0000-0000-0000-000000000001',
-    tenant_id: 'ten_demo',
     name: 'planner-default',
     system_prompt: 'You are a planner. role/planner. Decompose tasks.',
     default_model: 'sonnet',
@@ -56,7 +55,7 @@ const SCOPES_OPEN = {
 
 function makeClient(
   override: Partial<{
-    list: (tid: string) => Promise<Persona[]>;
+    list: () => Promise<Persona[]>;
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
     del: ReturnType<typeof vi.fn>;
@@ -75,7 +74,6 @@ beforeEach(() => {
   __resetFailOpenWarned();
   if (typeof localStorage !== 'undefined') {
     localStorage.clear();
-    localStorage.setItem('xiaoguai_admin_personas_tenant', 'ten_demo');
   }
 });
 
@@ -190,10 +188,8 @@ describe('persona ↔ form converters', () => {
         escalation_tier: '',
         tool_allowlist_csv: '',
       },
-      'ten_demo',
     );
     expect(req).toEqual({
-      tenant_id: 'ten_demo',
       name: 'x',
       system_prompt: '',
       default_model: null,
