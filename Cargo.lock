@@ -8107,6 +8107,7 @@ dependencies = [
  "xiaoguai-mcp",
  "xiaoguai-memory",
  "xiaoguai-observability",
+ "xiaoguai-orchestrator",
  "xiaoguai-personas",
  "xiaoguai-runtime",
  "xiaoguai-storage",

@@ -419,7 +419,10 @@ fn agent_run_details(
 
 // -- helpers ------------------------------------------------------------
 
-async fn persist_user_message(
+/// Persist one inbound user message. `pub(crate)` since T4.2: the
+/// orchestrate route stores the goal as the session's user message through
+/// the exact same path as an ordinary turn.
+pub(crate) async fn persist_user_message(
     state: &AppState,
     session_id: &SessionId,
     text: &str,

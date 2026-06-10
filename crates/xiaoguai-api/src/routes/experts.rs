@@ -40,7 +40,9 @@ fn is_cjk(c: char) -> bool {
 }
 
 /// Lowercased ASCII-ish words + CJK bigrams. Pure and deterministic.
-fn tokenize(text: &str) -> HashSet<String> {
+/// `pub(crate)` since T4.2: the orchestrate route's auto-routing reuses
+/// this tokenizer + [`score_team`] so suggest and dispatch never diverge.
+pub(crate) fn tokenize(text: &str) -> HashSet<String> {
     let mut tokens = HashSet::new();
     let mut word = String::new();
     let mut prev_cjk: Option<char> = None;
@@ -81,7 +83,8 @@ fn score_persona(goal: &HashSet<String>, p: &Persona) -> u64 {
     NAME_WEIGHT * overlap(goal, &tokenize(&p.name)) + overlap(goal, &tokenize(&p.system_prompt))
 }
 
-fn score_team(goal: &HashSet<String>, t: &Team, members: &[&Persona]) -> u64 {
+/// `pub(crate)` since T4.2 — see [`tokenize`].
+pub(crate) fn score_team(goal: &HashSet<String>, t: &Team, members: &[&Persona]) -> u64 {
     let member_names: HashSet<String> = members.iter().flat_map(|p| tokenize(&p.name)).collect();
     NAME_WEIGHT * overlap(goal, &tokenize(&t.name))
         + overlap(goal, &tokenize(&t.description))

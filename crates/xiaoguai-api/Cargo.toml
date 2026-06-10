@@ -22,6 +22,9 @@ xiaoguai-memory = { path = "../xiaoguai-memory", default-features = false }
 xiaoguai-personas = { path = "../xiaoguai-personas" }
 # v0.12.0: shared agent-loop runtime used by REST + IM + scheduler.
 xiaoguai-runtime = { path = "../xiaoguai-runtime" }
+# T4.2: executive orchestration (parallel member fan-out + lead synthesis)
+# behind POST /v1/sessions/:id/orchestrate.
+xiaoguai-orchestrator = { path = "../xiaoguai-orchestrator" }
 # v0.11.2: eval pane endpoints reuse the EvalRunner / EvalSuite types
 # straight from xiaoguai-eval so the wire shape stays one source of truth.
 xiaoguai-eval = { path = "../xiaoguai-eval" }

@@ -8,6 +8,7 @@ pub mod hotl_decisions;
 pub mod loops;
 pub mod mcp;
 pub mod memory;
+pub mod orchestrate;
 pub mod outcomes;
 pub mod personas;
 pub mod providers;
@@ -220,6 +221,12 @@ pub fn router(state: AppState) -> Router {
         // T3 expert center — deterministic "一句话找专家" suggestion
         // (read-only; user confirms before any attach).
         .route("/v1/experts/suggest", post(experts::suggest_experts))
+        // T4 executive orchestration — goal in → members run in parallel →
+        // lead synthesizes one answer out, streamed as SSE ExecEvent frames.
+        .route(
+            "/v1/sessions/{id}/orchestrate",
+            post(orchestrate::orchestrate_session),
+        )
         // v1.8.0 (sprint-10b S10b-5) — session-scoped watcher introspection.
         // Matches the URL shape XiaoguaiClient.listSessionWatchers /
         // pauseWatcher / resumeWatcher already calls in frontend/shared.
