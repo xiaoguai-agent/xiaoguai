@@ -80,6 +80,7 @@ impl Fixture {
             skills_dir: std::path::PathBuf::new(),
             personas: Some(self.personas.clone()),
             teams: Some(self.teams.clone()),
+            incidents: None,
             team_audit: None,
             watchers: None,
             loops: None,

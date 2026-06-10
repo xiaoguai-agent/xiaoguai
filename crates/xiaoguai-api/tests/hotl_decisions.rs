@@ -84,6 +84,7 @@ fn build_state(opts: StateOptions) -> AppState {
         skills_dir: std::path::PathBuf::new(),
         personas: None,
         teams: None,
+        incidents: None,
         team_audit: None,
         watchers: None,
         loops: None,
