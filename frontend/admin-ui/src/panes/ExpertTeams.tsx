@@ -63,6 +63,8 @@ export interface TeamFormState {
   member_persona_ids: string[];
   lead_persona_id: string;
   pack_slugs_csv: string;
+  /** T7.1 — glossary markdown. `''` in the form maps to "no glossary". */
+  glossary_md: string;
 }
 
 export const EMPTY_TEAM_FORM: TeamFormState = {
@@ -71,7 +73,21 @@ export const EMPTY_TEAM_FORM: TeamFormState = {
   member_persona_ids: [],
   lead_persona_id: '',
   pack_slugs_csv: '',
+  glossary_md: '',
 };
+
+/**
+ * T7.1 — server-side byte cap on the glossary (mirrors
+ * `xiaoguai_personas::teams::model::MAX_GLOSSARY_BYTES`). The drawer shows
+ * a soft warning when over; the server rejects with 400 and the existing
+ * save-error path surfaces it.
+ */
+export const MAX_GLOSSARY_BYTES = 16_384;
+
+/** UTF-8 byte length of the glossary text (the cap is in bytes, not chars). */
+export function glossaryByteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
 
 /** Validation problems the drawer can surface (i18n keys derive from these). */
 export type TeamFormProblem = 'no_members' | 'lead_not_member' | null;
@@ -87,6 +103,7 @@ export function teamToForm(team: Team): TeamFormState {
     member_persona_ids: [...team.member_persona_ids],
     lead_persona_id: team.lead_persona_id,
     pack_slugs_csv: team.recommended_pack_slugs.join(', '),
+    glossary_md: team.glossary_md ?? '',
   };
 }
 
@@ -104,6 +121,8 @@ export function formToCreateTeamReq(f: TeamFormState): CreateTeamRequest {
     lead_persona_id: f.lead_persona_id,
     member_persona_ids: [...f.member_persona_ids],
     recommended_pack_slugs: parsePackSlugs(f.pack_slugs_csv),
+    // Verbatim: the server normalises blank/whitespace-only to "no glossary".
+    glossary_md: f.glossary_md,
   };
 }
 
@@ -114,6 +133,10 @@ export function formToUpdateTeamReq(f: TeamFormState): UpdateTeamRequest {
     lead_persona_id: f.lead_persona_id,
     member_persona_ids: [...f.member_persona_ids],
     recommended_pack_slugs: parsePackSlugs(f.pack_slugs_csv),
+    // Verbatim — NOT null: on update, `null`/omitted means "leave unchanged"
+    // while a blank string CLEARS the glossary. The form is seeded from the
+    // team, so an untouched value round-trips unchanged.
+    glossary_md: f.glossary_md,
   };
 }
 
@@ -469,6 +492,30 @@ export function ExpertTeamsPane({
                   }
                 />
               </label>
+              <label>
+                <span>{t('pane.expert_teams.field_glossary')}</span>
+                <textarea
+                  rows={8}
+                  value={form.glossary_md}
+                  placeholder={t('pane.expert_teams.placeholder_glossary')}
+                  aria-label={t('pane.expert_teams.field_glossary')}
+                  onChange={(e) =>
+                    setForm({ ...form, glossary_md: e.target.value })
+                  }
+                />
+              </label>
+              {glossaryByteLength(form.glossary_md) > MAX_GLOSSARY_BYTES ? (
+                <p role="status" className="alert">
+                  {t('pane.expert_teams.glossary_over_cap', {
+                    bytes: glossaryByteLength(form.glossary_md),
+                    max: MAX_GLOSSARY_BYTES,
+                  })}
+                </p>
+              ) : (
+                <p className="muted">
+                  {t('pane.expert_teams.glossary_cap_hint')}
+                </p>
+              )}
               {problem === 'no_members' && (
                 <p role="status" className="muted">
                   {t('pane.expert_teams.hint_no_members')}

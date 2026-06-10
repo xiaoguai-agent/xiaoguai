@@ -8196,6 +8196,7 @@ dependencies = [
  "xiaoguai-eval",
  "xiaoguai-llm",
  "xiaoguai-mcp",
+ "xiaoguai-memory",
  "xiaoguai-scheduler",
  "xiaoguai-storage",
  "xiaoguai-types",

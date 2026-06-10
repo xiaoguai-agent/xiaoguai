@@ -80,6 +80,14 @@ pub struct OrchestrateMemberRunner {
     /// Clone of the session turn's cancellation token, so
     /// `POST /v1/sessions/:id/cancel` stops every member run.
     cancel: CancellationToken,
+    /// T7.1: pre-formatted team-glossary System message
+    /// ([`crate::glossary::glossary_system_text`]); `None` when the team has
+    /// no glossary. Injected right after the persona system messages — the
+    /// persona prompt stays the leading message here (it defines the role),
+    /// the glossary follows as shared team context, then the user prompt.
+    /// Applied to member runs AND the lead's synthesis turn (both go
+    /// through `run_persona_turn`).
+    glossary_message: Option<String>,
 }
 
 impl OrchestrateMemberRunner {
@@ -93,6 +101,7 @@ impl OrchestrateMemberRunner {
         actor: String,
         run_id: Uuid,
         cancel: CancellationToken,
+        glossary_message: Option<String>,
     ) -> Self {
         Self {
             backend,
@@ -103,6 +112,7 @@ impl OrchestrateMemberRunner {
             actor,
             run_id,
             cancel,
+            glossary_message,
         }
     }
 
@@ -124,6 +134,11 @@ impl OrchestrateMemberRunner {
             .into_iter()
             .map(LlmMessage::system)
             .collect();
+        // T7.1: team glossary right after the persona system messages —
+        // every member (and the synthesis turn) shares the team vocabulary.
+        if let Some(glossary) = &self.glossary_message {
+            messages.push(LlmMessage::system(glossary));
+        }
         messages.push(LlmMessage::user(prompt));
 
         let model = persona

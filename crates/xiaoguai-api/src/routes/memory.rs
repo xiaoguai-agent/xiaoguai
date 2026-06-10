@@ -15,14 +15,31 @@
 //! | DELETE | `/v1/memories/:id` | Delete a memory |
 //! | POST   | `/v1/memories/recall` | Semantic recall by natural-language query |
 //! | GET    | `/v1/memories/similar/:id` | Find memories similar to `id` |
+//! | GET    | `/v1/memories/export?kind=` | Export memories as JSONL (T7.2) |
+//! | POST   | `/v1/memories/import` | Import a JSONL body, fail-soft (T7.2) |
+//!
+//! ## Source-tag convention (T7.2, plan §1.2)
+//!
+//! Tags prefixed `source:` record where a memory came from — pure
+//! convention over the existing `tags` column, no schema: `source:imported`
+//! (added automatically by the import path unless the line already carries
+//! a `source:` tag), `source:im`, `source:rag`. Recall/list tag filtering
+//! works on them like any other tag. Codec + tagging live in
+//! [`xiaoguai_memory::jsonl`] so the CLI shares them.
+//!
+//! Import/export audit via the generic `team_audit` sink (same pattern as
+//! incidents): best-effort `memory.export` / `memory.import` entries with
+//! counts only — never memory content.
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use xiaoguai_memory::{
+    jsonl,
     types::{CreateMemoryRequest, RecallRequest, UpdateMemoryRequest},
     MemoryKind,
 };
@@ -270,6 +287,99 @@ pub async fn recall_memories(
 
     match store.recall_memories(req).await {
         Ok(recalled) => Json(MemoryResponse { data: recalled }).into_response(),
+        Err(e) => internal(e).into_response(),
+    }
+}
+
+// ─── Import / export (T7.2) ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ExportQuery {
+    pub kind: Option<String>,
+}
+
+/// Best-effort `memory.*` audit entry through the generic `team_audit` sink
+/// (the same one incidents use). Failure is logged, never blocks.
+async fn audit_memory(state: &AppState, action: &str, details: serde_json::Value) {
+    if let Some(sink) = &state.team_audit {
+        let entry = xiaoguai_audit::AuditEntry {
+            ts: Utc::now(),
+            tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
+            actor: "owner".to_string(),
+            action: action.to_string(),
+            resource: Some("memories".to_string()),
+            details,
+        };
+        if let Err(e) = sink.append(entry).await {
+            tracing::warn!(error = %e, action, "memory: audit append failed (non-blocking)");
+        }
+    }
+}
+
+/// `GET /v1/memories/export?kind=` — the whole store (or one kind) as a
+/// `text/plain` JSONL document. Collected, not streamed: memory counts are
+/// small by design. Embeddings are not exported (re-computed on import).
+pub async fn export_memories(
+    State(state): State<AppState>,
+    Query(q): Query<ExportQuery>,
+) -> impl IntoResponse {
+    let Some(store) = state.memory_store.as_ref() else {
+        return memory_unavailable().into_response();
+    };
+
+    let kind_filter = if let Some(k) = q.kind {
+        match k.parse::<MemoryKind>() {
+            Ok(kind) => Some(kind),
+            Err(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": format!("unknown kind: {k}")})),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        None
+    };
+
+    match jsonl::export_jsonl_from_store(store.as_ref(), kind_filter).await {
+        Ok(body) => {
+            let count = body.lines().count();
+            audit_memory(&state, "memory.export", serde_json::json!({"count": count})).await;
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                body,
+            )
+                .into_response()
+        }
+        Err(e) => internal(e).into_response(),
+    }
+}
+
+/// `POST /v1/memories/import` — body is a `text/plain` JSONL document.
+/// Fail-soft per line (blank lines skipped silently, malformed lines
+/// reported); each valid line re-embeds through the store's embedder; a
+/// `source:imported` tag is added unless the line carries a `source:` tag.
+/// Response: `{imported: N, skipped: [{line, reason}]}`.
+pub async fn import_memories(State(state): State<AppState>, body: String) -> impl IntoResponse {
+    let Some(store) = state.memory_store.as_ref() else {
+        return memory_unavailable().into_response();
+    };
+
+    match jsonl::import_jsonl(store.as_ref(), &body).await {
+        Ok(report) => {
+            audit_memory(
+                &state,
+                "memory.import",
+                serde_json::json!({
+                    "imported": report.imported,
+                    "skipped": report.skipped.len(),
+                }),
+            )
+            .await;
+            (StatusCode::OK, Json(report)).into_response()
+        }
         Err(e) => internal(e).into_response(),
     }
 }

@@ -17,6 +17,7 @@ fn make_create(name: &str, lead: Uuid, members: Vec<Uuid>) -> CreateTeamRequest 
         lead_persona_id: lead,
         member_persona_ids: members,
         recommended_pack_slugs: vec![],
+        glossary_md: None,
     }
 }
 
@@ -86,6 +87,7 @@ async fn update_team_fields() {
         lead_persona_id: Some(new_lead),
         member_persona_ids: Some(vec![new_lead]),
         recommended_pack_slugs: Some(vec!["office-tools".to_string()]),
+        glossary_md: None,
     };
     let updated = repo.update(created.id, &req).await.unwrap();
     assert_eq!(updated.name, "Final");
@@ -240,4 +242,97 @@ async fn attach_missing_team_returns_not_found() {
         .await
         .unwrap_err();
     assert!(matches!(err, PersonaError::NotFound));
+}
+
+// ── T7.1 glossary (set / clear / cap) ─────────────────────────────────────────
+
+#[tokio::test]
+async fn glossary_set_update_and_clear() {
+    let repo = InMemoryTeamRepository::new();
+
+    // Create with a glossary.
+    let lead = Uuid::new_v4();
+    let mut req = make_create("Glossary Team", lead, vec![lead]);
+    req.glossary_md = Some("# Terms\nMRR = monthly recurring revenue".to_string());
+    let created = repo.create(&req).await.unwrap();
+    assert_eq!(
+        created.glossary_md.as_deref(),
+        Some("# Terms\nMRR = monthly recurring revenue")
+    );
+
+    // Unrelated partial update leaves the glossary untouched (None = unchanged).
+    let updated = repo
+        .update(
+            created.id,
+            &UpdateTeamRequest {
+                description: Some("New description.".to_string()),
+                ..UpdateTeamRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.glossary_md, created.glossary_md);
+
+    // Set a new value.
+    let updated = repo
+        .update(
+            created.id,
+            &UpdateTeamRequest {
+                glossary_md: Some("ARR only".to_string()),
+                ..UpdateTeamRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.glossary_md.as_deref(), Some("ARR only"));
+
+    // A blank value clears (normalises to None).
+    let cleared = repo
+        .update(
+            created.id,
+            &UpdateTeamRequest {
+                glossary_md: Some("   \n".to_string()),
+                ..UpdateTeamRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(cleared.glossary_md, None);
+}
+
+#[tokio::test]
+async fn glossary_blank_on_create_normalises_to_none() {
+    let repo = InMemoryTeamRepository::new();
+    let lead = Uuid::new_v4();
+    let mut req = make_create("Blank Glossary", lead, vec![lead]);
+    req.glossary_md = Some("  \t ".to_string());
+    let created = repo.create(&req).await.unwrap();
+    assert_eq!(created.glossary_md, None);
+}
+
+#[tokio::test]
+async fn glossary_over_cap_is_rejected_on_create_and_update() {
+    let repo = InMemoryTeamRepository::new();
+    let oversized = "x".repeat(xiaoguai_personas::teams::model::MAX_GLOSSARY_BYTES + 1);
+
+    let lead = Uuid::new_v4();
+    let mut req = make_create("Capped", lead, vec![lead]);
+    req.glossary_md = Some(oversized.clone());
+    let err = repo.create(&req).await.unwrap_err();
+    assert!(matches!(err, PersonaError::InvalidArgument(_)));
+
+    let created = repo.create(&make_valid("Capped OK")).await.unwrap();
+    let err = repo
+        .update(
+            created.id,
+            &UpdateTeamRequest {
+                glossary_md: Some(oversized),
+                ..UpdateTeamRequest::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, PersonaError::InvalidArgument(_)));
+    // Original state untouched after the failed update.
+    assert_eq!(repo.get(created.id).await.unwrap().glossary_md, None);
 }

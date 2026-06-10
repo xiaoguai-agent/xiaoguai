@@ -22,6 +22,8 @@ import { ScopeProvider, __resetFailOpenWarned } from '../hooks/useScopes';
 import {
   ExpertTeamsPane,
   EMPTY_TEAM_FORM,
+  MAX_GLOSSARY_BYTES,
+  glossaryByteLength,
   teamToForm,
   formToCreateTeamReq,
   formToUpdateTeamReq,
@@ -62,6 +64,7 @@ function makeTeam(overrides: Partial<Team> = {}): Team {
     lead_persona_id: P1,
     member_persona_ids: [P1, P2],
     recommended_pack_slugs: ['rust-review'],
+    glossary_md: null,
     created_at: '2026-06-01T08:00:00Z',
     archived: false,
     ...overrides,
@@ -123,7 +126,15 @@ describe('teamToForm', () => {
       member_persona_ids: [P1, P2],
       lead_persona_id: P1,
       pack_slugs_csv: 'a, b',
+      glossary_md: '',
     });
+  });
+
+  it('seeds the glossary from the team DTO (null → empty string)', () => {
+    expect(teamToForm(makeTeam({ glossary_md: '# Terms' })).glossary_md).toBe(
+      '# Terms',
+    );
+    expect(teamToForm(makeTeam({ glossary_md: null })).glossary_md).toBe('');
   });
 
   it('copies (not aliases) the member id list', () => {
@@ -154,6 +165,7 @@ describe('form → DTO converters', () => {
     member_persona_ids: [P1, P2],
     lead_persona_id: P1,
     pack_slugs_csv: 'a, b',
+    glossary_md: '# Glossary\n- SLA: 4h',
   };
 
   it('builds a CreateTeamRequest with trimmed fields and parsed slugs', () => {
@@ -163,6 +175,7 @@ describe('form → DTO converters', () => {
       lead_persona_id: P1,
       member_persona_ids: [P1, P2],
       recommended_pack_slugs: ['a', 'b'],
+      glossary_md: '# Glossary\n- SLA: 4h',
     });
   });
 
@@ -173,7 +186,37 @@ describe('form → DTO converters', () => {
       lead_persona_id: P1,
       member_persona_ids: [P1, P2],
       recommended_pack_slugs: ['a', 'b'],
+      glossary_md: '# Glossary\n- SLA: 4h',
     });
+  });
+
+  it('sends a blank glossary verbatim on update (blank CLEARS server-side)', () => {
+    const cleared = { ...form, glossary_md: '' };
+    expect(formToUpdateTeamReq(cleared).glossary_md).toBe('');
+    expect(formToCreateTeamReq(cleared).glossary_md).toBe('');
+  });
+
+  it('keeps the seeded glossary on a partial edit (no-touch round-trip)', () => {
+    const team = makeTeam({ glossary_md: '# Terms' });
+    const edited = { ...teamToForm(team), name: 'renamed' };
+    expect(formToUpdateTeamReq(edited).glossary_md).toBe('# Terms');
+  });
+});
+
+describe('glossaryByteLength', () => {
+  it('counts UTF-8 bytes, not characters', () => {
+    expect(glossaryByteLength('abc')).toBe(3);
+    expect(glossaryByteLength('术语')).toBe(6); // 2 CJK chars × 3 bytes
+  });
+
+  it('flags over-cap content against MAX_GLOSSARY_BYTES', () => {
+    expect(glossaryByteLength('x'.repeat(MAX_GLOSSARY_BYTES))).toBe(
+      MAX_GLOSSARY_BYTES,
+    );
+    expect(
+      glossaryByteLength('x'.repeat(MAX_GLOSSARY_BYTES + 1)) >
+        MAX_GLOSSARY_BYTES,
+    ).toBe(true);
   });
 });
 
@@ -320,6 +363,10 @@ describe('<ExpertTeamsPane>', () => {
       within(dialog).getByPlaceholderText(/security-audit/i),
       'rust-review, security-audit',
     );
+    await user.type(
+      within(dialog).getByLabelText(/team glossary/i),
+      '# Terms',
+    );
     await user.click(within(dialog).getByRole('button', { name: /save/i }));
 
     await waitFor(() => expect(create).toHaveBeenCalled());
@@ -329,6 +376,7 @@ describe('<ExpertTeamsPane>', () => {
       lead_persona_id: P2,
       member_persona_ids: [P1, P2],
       recommended_pack_slugs: ['rust-review', 'security-audit'],
+      glossary_md: '# Terms',
     });
   });
 
@@ -356,7 +404,53 @@ describe('<ExpertTeamsPane>', () => {
       lead_persona_id: P1,
       member_persona_ids: [P1, P2],
       recommended_pack_slugs: ['rust-review'],
+      glossary_md: '',
     });
+  });
+
+  it('edit flow pre-populates the glossary and a clear lands in the DTO', async () => {
+    const team = makeTeam({
+      id: 't1',
+      name: 'review-squad',
+      glossary_md: '# Old terms',
+    });
+    const update = vi.fn(async (id, req) => makeTeam({ id, ...req }));
+    const client = makeClient({ listTeams: async () => [team], update });
+    const user = userEvent.setup();
+    renderPane(client);
+    await waitFor(() => expect(screen.getByText('review-squad')).toBeTruthy());
+    await user.click(screen.getByLabelText('edit review-squad'));
+    const dialog = await screen.findByRole('dialog');
+
+    const glossary = within(dialog).getByLabelText(/team glossary/i);
+    expect((glossary as HTMLTextAreaElement).value).toBe('# Old terms');
+    await user.clear(glossary);
+    await user.click(within(dialog).getByRole('button', { name: /save/i }));
+
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    const [, req] = update.mock.calls[0]!;
+    // Blank string (not null) — blank clears, null would mean "unchanged".
+    expect(req.glossary_md).toBe('');
+  });
+
+  it('shows the over-cap warning when the glossary exceeds 16 KiB', async () => {
+    const team = makeTeam({
+      id: 't1',
+      name: 'review-squad',
+      glossary_md: 'x'.repeat(MAX_GLOSSARY_BYTES + 1),
+    });
+    const client = makeClient({ listTeams: async () => [team] });
+    const user = userEvent.setup();
+    renderPane(client);
+    await waitFor(() => expect(screen.getByText('review-squad')).toBeTruthy());
+    await user.click(screen.getByLabelText('edit review-squad'));
+    const dialog = await screen.findByRole('dialog');
+    expect(
+      within(dialog).getByText(/over the 16 KiB limit/i),
+    ).toBeTruthy();
+    // Soft warning only — save stays enabled (the server rejects with 400).
+    const save = within(dialog).getByRole('button', { name: /save/i });
+    expect((save as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('disables save with a hint when the lead is no longer a member', async () => {

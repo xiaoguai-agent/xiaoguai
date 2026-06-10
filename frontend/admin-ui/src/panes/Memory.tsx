@@ -22,6 +22,7 @@ import type {
 } from '@xiaoguai/shared';
 import { ApiError } from '@xiaoguai/shared';
 import { client } from '../client';
+import { MemoryImportExport } from './MemoryImportExport';
 
 // ---------------------------------------------------------------------------
 // Mock data (shown when /v1/memory/* returns 404)
@@ -1062,6 +1063,11 @@ export function MemoryPane(): JSX.Element {
       </header>
 
       {is404 && <NotReadyBanner />}
+
+      {/* T7.3 — import/export against the SHIPPED /v1/memories routes
+          (works even while the tabs above still target the stale
+          404-fallback-era /v1/memory contract). */}
+      <MemoryImportExport />
 
       {/* Tab nav */}
       <div

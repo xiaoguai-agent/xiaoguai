@@ -456,7 +456,16 @@
       "neighbors_anchor_label": "アンカー：",
       "neighbors_results_aria": "ベクトル近傍結果",
       "neighbors_empty": "近傍が見つかりませんでした。",
-      "neighbors_col_similarity": "類似度"
+      "neighbors_col_similarity": "類似度",
+      "import_export_aria": "メモリのインポートとエクスポート",
+      "btn_export": "JSONL をエクスポート",
+      "btn_import": "JSONL をインポート…",
+      "import_file_aria": "メモリファイルをインポート",
+      "import_preview": "{{filename}}: {{count}} 行 — インポートしますか？",
+      "btn_import_confirm": "インポート",
+      "btn_import_cancel": "キャンセル",
+      "import_result": "{{imported}} 件をインポート、{{skipped}} 件をスキップしました。",
+      "import_skipped_line": "{{line}} 行目: {{reason}}"
     },
     "personas": {
       "title": "ペルソナ",
@@ -524,7 +533,11 @@
       "delete_confirm_body": "アーカイブ後は新しいセッションに付加できなくなります。既存セッションはそのまま使用されます。",
       "empty": "チームがまだ定義されていません。",
       "loading": "読み込み中…",
-      "unavailable": "Teams リポジトリが未構成です（HTTP 503）。teams リポジトリを API ホストに接続してください。"
+      "unavailable": "Teams リポジトリが未構成です（HTTP 503）。teams リポジトリを API ホストに接続してください。",
+      "field_glossary": "チーム用語集（Markdown — チームセッションの各ターンに注入されます）",
+      "placeholder_glossary": "# 用語・制約・手順…",
+      "glossary_cap_hint": "Markdown は最大 16 KiB まで。",
+      "glossary_over_cap": "用語集は {{bytes}} バイトで、16 KiB の上限（{{max}} バイト）を超えています。サーバーは保存を拒否します。"
     },
     "skill_proposals": {
       "title": "スキル提案",

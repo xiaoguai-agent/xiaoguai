@@ -321,3 +321,102 @@ async fn attach_unknown_team_returns_404() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+// ── T7.1 glossary through the routes (set / clear / cap → 400) ────────────────
+
+#[tokio::test]
+async fn team_glossary_set_clear_and_cap_through_routes() {
+    let fx = Fixture::new();
+    let lead = fx.make_persona("Glossarist").await;
+    let app = router(fx.state());
+
+    // Create with a glossary.
+    let (status, created) = send(
+        app.clone(),
+        "POST",
+        "/v1/teams",
+        Some(serde_json::json!({
+            "name": "Glossary Squad",
+            "lead_persona_id": lead,
+            "member_persona_ids": [lead],
+            "glossary_md": "MRR = monthly recurring revenue",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {created}");
+    assert_eq!(created["glossary_md"], "MRR = monthly recurring revenue");
+    let id = created["id"].as_str().unwrap();
+
+    // PATCH a new value.
+    let (status, updated) = send(
+        app.clone(),
+        "PATCH",
+        &format!("/v1/teams/{id}"),
+        Some(serde_json::json!({"glossary_md": "ARR only"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["glossary_md"], "ARR only");
+
+    // PATCH of an unrelated field keeps the glossary.
+    let (status, updated) = send(
+        app.clone(),
+        "PATCH",
+        &format!("/v1/teams/{id}"),
+        Some(serde_json::json!({"description": "desc"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["glossary_md"], "ARR only");
+
+    // A blank value clears (normalises to null).
+    let (status, cleared) = send(
+        app.clone(),
+        "PATCH",
+        &format!("/v1/teams/{id}"),
+        Some(serde_json::json!({"glossary_md": "  "})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(cleared["glossary_md"].is_null());
+
+    // Over the 16 KiB cap → 400 with a clear message (no truncation).
+    let oversized = "x".repeat(16_385);
+    let (status, err) = send(
+        app.clone(),
+        "PATCH",
+        &format!("/v1/teams/{id}"),
+        Some(serde_json::json!({"glossary_md": oversized})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        err["error"].as_str().unwrap().contains("16384"),
+        "error names the cap: {err}"
+    );
+    // Value untouched after the rejected update.
+    let (_, fetched) = send(app.clone(), "GET", &format!("/v1/teams/{id}"), None).await;
+    assert!(fetched["glossary_md"].is_null());
+}
+
+#[tokio::test]
+async fn create_team_over_glossary_cap_returns_400() {
+    let fx = Fixture::new();
+    let lead = fx.make_persona("Capped").await;
+    let app = router(fx.state());
+
+    let (status, err) = send(
+        app,
+        "POST",
+        "/v1/teams",
+        Some(serde_json::json!({
+            "name": "Too Big",
+            "lead_persona_id": lead,
+            "member_persona_ids": [lead],
+            "glossary_md": "x".repeat(16_385),
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "got: {err}");
+    assert!(err["error"].as_str().unwrap().contains("glossary_md"));
+}

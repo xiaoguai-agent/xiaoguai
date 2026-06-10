@@ -14,7 +14,8 @@ use uuid::Uuid;
 
 use crate::error::{PersonaError, PersonaResult};
 use crate::teams::model::{
-    validate_composition, CreateTeamRequest, SessionTeam, Team, UpdateTeamRequest,
+    normalize_glossary, validate_composition, validate_glossary, CreateTeamRequest, SessionTeam,
+    Team, UpdateTeamRequest,
 };
 use crate::teams::traits::TeamRepository;
 
@@ -59,7 +60,8 @@ fn text_to_slugs(text: Option<String>) -> Vec<String> {
 // ── Row types (sqlx deserialization) ─────────────────────────────────────────
 
 const TEAM_COLS: &str = "id, name, description, lead_persona_id, \
-                         member_persona_ids, recommended_pack_slugs, created_at, archived";
+                         member_persona_ids, recommended_pack_slugs, glossary_md, \
+                         created_at, archived";
 
 #[derive(Debug, FromRow)]
 struct TeamRow {
@@ -69,6 +71,7 @@ struct TeamRow {
     lead_persona_id: String,
     member_persona_ids: String,
     recommended_pack_slugs: Option<String>,
+    glossary_md: Option<String>,
     created_at: DateTime<Utc>,
     archived: bool,
 }
@@ -82,6 +85,7 @@ impl From<TeamRow> for Team {
             lead_persona_id: Uuid::parse_str(&r.lead_persona_id).unwrap_or_else(|_| Uuid::nil()),
             member_persona_ids: text_to_uuids(&r.member_persona_ids),
             recommended_pack_slugs: text_to_slugs(r.recommended_pack_slugs),
+            glossary_md: r.glossary_md,
             created_at: r.created_at,
             archived: r.archived,
         }
@@ -132,13 +136,15 @@ impl TeamRepository for SqliteTeamRepository {
 
     async fn create(&self, req: &CreateTeamRequest) -> PersonaResult<Team> {
         validate_composition(req.lead_persona_id, &req.member_persona_ids)?;
+        validate_glossary(req.glossary_md.as_deref())?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let row: TeamRow = sqlx::query_as(&format!(
             "INSERT INTO expert_teams \
                (id, name, description, lead_persona_id, \
-                member_persona_ids, recommended_pack_slugs, created_at, archived) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, false) \
+                member_persona_ids, recommended_pack_slugs, glossary_md, \
+                created_at, archived) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, false) \
              RETURNING {TEAM_COLS}"
         ))
         .bind(id.to_string())
@@ -147,6 +153,7 @@ impl TeamRepository for SqliteTeamRepository {
         .bind(req.lead_persona_id.to_string())
         .bind(uuids_to_text(&req.member_persona_ids))
         .bind(slugs_to_text(&req.recommended_pack_slugs))
+        .bind(normalize_glossary(req.glossary_md.clone()))
         .bind(now)
         .fetch_one(&self.pool)
         .await
@@ -157,6 +164,7 @@ impl TeamRepository for SqliteTeamRepository {
     async fn update(&self, id: Uuid, req: &UpdateTeamRequest) -> PersonaResult<Team> {
         // Fetch current state, merge, validate, then write — same shape as
         // the persona update path.
+        validate_glossary(req.glossary_md.as_deref())?;
         let current = self.get(id).await?;
 
         let new_name = req.name.as_deref().unwrap_or(&current.name);
@@ -170,12 +178,17 @@ impl TeamRepository for SqliteTeamRepository {
             .recommended_pack_slugs
             .as_ref()
             .unwrap_or(&current.recommended_pack_slugs);
+        // None = unchanged; a blank value clears (normalises to None).
+        let new_glossary = match &req.glossary_md {
+            None => current.glossary_md.clone(),
+            Some(g) => normalize_glossary(Some(g.clone())),
+        };
         validate_composition(new_lead, new_members)?;
 
         let row: TeamRow = sqlx::query_as(&format!(
             "UPDATE expert_teams \
              SET name = ?, description = ?, lead_persona_id = ?, \
-                 member_persona_ids = ?, recommended_pack_slugs = ? \
+                 member_persona_ids = ?, recommended_pack_slugs = ?, glossary_md = ? \
              WHERE id = ? \
              RETURNING {TEAM_COLS}"
         ))
@@ -184,6 +197,7 @@ impl TeamRepository for SqliteTeamRepository {
         .bind(new_lead.to_string())
         .bind(uuids_to_text(new_members))
         .bind(slugs_to_text(new_slugs))
+        .bind(new_glossary)
         .bind(id.to_string())
         .fetch_one(&self.pool)
         .await
@@ -242,7 +256,8 @@ impl TeamRepository for SqliteTeamRepository {
     async fn get_session_team(&self, session_id: &str) -> PersonaResult<Option<Team>> {
         let row: Option<TeamRow> = sqlx::query_as(
             "SELECT t.id, t.name, t.description, t.lead_persona_id, \
-                    t.member_persona_ids, t.recommended_pack_slugs, t.created_at, t.archived \
+                    t.member_persona_ids, t.recommended_pack_slugs, t.glossary_md, \
+                    t.created_at, t.archived \
              FROM session_teams st \
              JOIN expert_teams t ON t.id = st.team_id \
              WHERE st.session_id = ?",

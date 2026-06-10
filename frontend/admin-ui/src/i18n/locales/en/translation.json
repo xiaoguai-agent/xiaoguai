@@ -456,7 +456,16 @@
       "neighbors_anchor_label": "Anchor:",
       "neighbors_results_aria": "Vector neighbor results",
       "neighbors_empty": "No neighbors found.",
-      "neighbors_col_similarity": "Similarity"
+      "neighbors_col_similarity": "Similarity",
+      "import_export_aria": "memory import and export",
+      "btn_export": "Export JSONL",
+      "btn_import": "Import JSONL…",
+      "import_file_aria": "import memories file",
+      "import_preview": "{{filename}}: {{count}} lines — import?",
+      "btn_import_confirm": "Import",
+      "btn_import_cancel": "Cancel",
+      "import_result": "Imported {{imported}}, skipped {{skipped}}.",
+      "import_skipped_line": "line {{line}}: {{reason}}"
     },
     "personas": {
       "title": "Personas",
@@ -524,7 +533,11 @@
       "delete_confirm_body": "Archiving prevents this team from being attached to new sessions. Existing sessions keep their team attachment.",
       "empty": "No teams defined yet.",
       "loading": "Loading teams…",
-      "unavailable": "Teams repository not configured (HTTP 503). Wire the teams repository in the API host."
+      "unavailable": "Teams repository not configured (HTTP 503). Wire the teams repository in the API host.",
+      "field_glossary": "Team glossary (markdown — injected into every team session turn)",
+      "placeholder_glossary": "# Terminology, constraints, procedures…",
+      "glossary_cap_hint": "Up to 16 KiB of markdown.",
+      "glossary_over_cap": "Glossary is {{bytes}} bytes — over the 16 KiB limit ({{max}} bytes). The server will reject the save."
     },
     "skill_proposals": {
       "title": "Skill Proposals",

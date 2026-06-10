@@ -293,6 +293,8 @@ pub async fn orchestrate_session(
         actor,
         run_id,
         guard.token(),
+        // T7.1: team glossary rides into every member + synthesis run.
+        crate::glossary::glossary_system_text(&team),
     ));
     let members: Vec<MemberSpec> = member_personas
         .iter()
@@ -447,6 +449,7 @@ mod tests {
             lead_persona_id: members[0].id,
             member_persona_ids: members.iter().map(|p| p.id).collect(),
             recommended_pack_slugs: vec![],
+            glossary_md: None,
             created_at: Utc::now(),
             archived: false,
         }

@@ -17,6 +17,7 @@ pub mod init;
 pub mod r#loop;
 pub mod manpages;
 pub mod mcp;
+pub mod memory;
 pub mod outcomes;
 pub mod provider;
 pub mod remote;

@@ -13,6 +13,7 @@ pub mod consult;
 pub mod convert;
 pub mod error;
 pub mod eval;
+pub mod glossary;
 pub mod hotl;
 pub mod identity;
 pub mod incident_pipeline;
