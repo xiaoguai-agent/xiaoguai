@@ -6,6 +6,8 @@ import type {
   HotlResolvedEvent,
   LoopResponse,
   Message,
+  OrchestrateEvent,
+  TurnMode,
 } from '@xiaoguai/shared';
 import { client } from './client';
 import { CitationStrip } from './citations';
@@ -17,6 +19,7 @@ import { AiDisclosureBanner } from './AiDisclosureBanner';
 import { SseReconnectBanner } from './SseReconnectBanner';
 import { WatchIndicator } from './WatchIndicator';
 import { ExpertPicker } from './ExpertPicker';
+import { ModeToggle, getStoredChatMode, setStoredChatMode } from './ModeToggle';
 import { useI18n } from './i18n/I18nProvider';
 import { interpolate } from './i18n';
 import { isLoopLive, parseLoopCommand, shortLoopId } from './loopCommands';
@@ -83,6 +86,20 @@ export function ChatPage({ onSessionCreated }: Props) {
   const [bubbles, setBubbles] = useState<DisplayBubble[]>([]);
   const [draft, setDraft] = useState('');
   const [streaming, setStreaming] = useState(false);
+  /**
+   * T5.2 — consult/execute turn mode. Sticky per session via localStorage
+   * (re-loaded on session switch); a sessionless draft starts in execute.
+   */
+  const [mode, setMode] = useState<TurnMode>(() =>
+    routeId ? getStoredChatMode(routeId) : 'execute',
+  );
+  /**
+   * T5.2 — id of the team attached to this session (via ExpertPicker's
+   * onActiveChange), or null. Gates the "team parallel run" entry.
+   */
+  const [teamId, setTeamId] = useState<string | null>(null);
+  /** T5.2 — true while an orchestrate run streams; blocks normal sends. */
+  const [orchestrating, setOrchestrating] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   /** v1.3.x — non-null while an HotL escalation is pending for this session. */
   const [hotlPending, setHotlPending] = useState<HotlPendingState | null>(null);
@@ -140,6 +157,8 @@ export function ChatPage({ onSessionCreated }: Props) {
     setHotlResolved(null);
     setReconnect(null);
     setSessionId(routeId);
+    // T5.2 — restore the session's sticky mode (execute for a fresh draft).
+    setMode(routeId ? getStoredChatMode(routeId) : 'execute');
     if (!routeId) return;
     void (async () => {
       try {
@@ -163,7 +182,7 @@ export function ChatPage({ onSessionCreated }: Props) {
 
   async function send(textOverride?: string) {
     const text = (textOverride ?? draft).trim();
-    if (!text || streaming) return;
+    if (!text || streaming || orchestrating) return;
 
     // L2b — intercept `/loop …` before it reaches the agent. These commands
     // manage session-scoped recurring loops locally; they are never sent as a
@@ -185,6 +204,8 @@ export function ChatPage({ onSessionCreated }: Props) {
         });
         sid = session.id;
         setSessionId(sid);
+        // T5.2 — carry the pre-session mode choice onto the new session key.
+        setStoredChatMode(sid, mode);
         onSessionCreated({ id: sid, title: session.title ?? text.slice(0, 40) });
         // Mark this navigation as self-initiated so the route-change effect
         // does not wipe the in-flight turn state (see selfNavigatedSessionRef).
@@ -205,7 +226,8 @@ export function ChatPage({ onSessionCreated }: Props) {
 
     abortRef.current = client.sendMessage(
       sid,
-      { content: text },
+      // T5.2 — execute is the backend default; only consult goes on the wire.
+      mode === 'consult' ? { content: text, mode: 'consult' } : { content: text },
       (ev) =>
         applyEvent(
           ev,
@@ -354,6 +376,92 @@ export function ChatPage({ onSessionCreated }: Props) {
       bs.map((b, j) => (j === index ? { ...b, loopConfirm: undefined } : b)),
     );
     pushSystemBubble(t.chat.loop.not_armed);
+  }
+
+  /** T5.2 — switch consult/execute; persists per session (localStorage). */
+  function changeMode(next: TurnMode) {
+    setMode(next);
+    if (sessionId) setStoredChatMode(sessionId, next);
+  }
+
+  /**
+   * T5.2 — "团队并行执行": run the current draft as a goal through the
+   * attached team via `orchestrateSession`. Member progress renders as a
+   * live-updating system bubble; the synthesized text is appended as the
+   * assistant bubble on `final{ok:true}`.
+   *
+   * Double-render avoidance: the backend persists the synthesized reply,
+   * so the live assistant bubble carries no `messageId` and the next
+   * history reload REPLACES the whole bubble list (route effect) — the
+   * exact semantics normal streamed turns already rely on.
+   *
+   * Always execute mode (plan §2.4) — the entry is disabled in consult.
+   */
+  async function runTeam() {
+    const goal = draft.trim();
+    const sid = sessionId;
+    const tid = teamId;
+    if (!goal || !sid || !tid || streaming || orchestrating || mode === 'consult') {
+      return;
+    }
+    setDraft('');
+    setStatus(null);
+    setOrchestrating(true);
+    setBubbles((bs) => [...bs, { kind: 'user', text: goal }]);
+    // Capture the progress bubble's index so events can update it in place.
+    let progressIdx = -1;
+    setBubbles((bs) => {
+      progressIdx = bs.length;
+      return [...bs, { kind: 'system', text: interpolate(t.ui.teamrun.started, { total: '…' }) }];
+    });
+    const setProgress = (text: string) => {
+      setBubbles((bs) => bs.map((b, i) => (i === progressIdx ? { ...b, text } : b)));
+    };
+
+    let total = 0;
+    let completed = 0;
+    try {
+      const final = await client.orchestrateSession(sid, { goal, team_id: tid }, (ev: OrchestrateEvent) => {
+        switch (ev.type) {
+          case 'run_started':
+            total = ev.members;
+            setProgress(interpolate(t.ui.teamrun.progress, { done: 0, total }));
+            break;
+          case 'member_started':
+            // Counted implicitly — the progress line tracks completions.
+            break;
+          case 'member_completed':
+            completed += 1;
+            setProgress(interpolate(t.ui.teamrun.progress, { done: completed, total }));
+            break;
+          case 'synthesis_started':
+            setProgress(interpolate(t.ui.teamrun.synthesizing, { ok: ev.ok_members }));
+            break;
+          case 'final':
+            if (ev.ok) {
+              setProgress(t.ui.teamrun.done);
+              setBubbles((bs) => [...bs, { kind: 'assistant', text: ev.text }]);
+            } else {
+              setProgress(
+                interpolate(t.ui.teamrun.failed, {
+                  failed: ev.failed_members.join(', ') || '—',
+                }),
+              );
+            }
+            break;
+        }
+      });
+      if (final === null) {
+        // Stream ended without a terminal frame; the detached server task
+        // still completes — a history reload will show the persisted reply.
+        setProgress(interpolate(t.ui.teamrun.error, { message: 'stream ended early' }));
+      }
+    } catch (err) {
+      // 409 turn-in-flight / 422 / 503 etc. — inline, like other chat errors.
+      setProgress(interpolate(t.ui.teamrun.error, { message: (err as Error).message }));
+    } finally {
+      setOrchestrating(false);
+    }
   }
 
   function applyEvent(
@@ -543,7 +651,11 @@ export function ChatPage({ onSessionCreated }: Props) {
         {/* AiDisclosureBanner placeholder — wired by feat/chat-ui-ai-disclosure branch */}
         {/* HotlBanner placeholder — wired by feat/chat-ui-hotl-banner branch */}
         {/* T3.5 — expert picker chip for the active session */}
-        <ExpertPicker sessionId={sessionId} />
+        <ExpertPicker
+          sessionId={sessionId}
+          // T5.2 — track whether a team is attached (gates the team-run entry).
+          onActiveChange={(a) => setTeamId(a?.kind === 'team' ? a.id : null)}
+        />
         <WatchIndicator sessionId={sessionId} />
       </div>
       <div className={`messages${bubbles.length === 0 ? ' messages-empty' : ''}`} ref={scrollRef}>
@@ -584,7 +696,7 @@ export function ChatPage({ onSessionCreated }: Props) {
       </div>
       {status && <div className="status">{status}</div>}
       <div className="composer">
-        <div className="composer-box">
+        <div className={`composer-box${mode === 'consult' ? ' composer-box--consult' : ''}`}>
           <textarea
             ref={textareaRef}
             className="composer-input"
@@ -599,6 +711,24 @@ export function ChatPage({ onSessionCreated }: Props) {
             }}
             placeholder={t.ui.composer_placeholder}
           />
+          {/* T5.2 — team parallel run: only when a team is attached. Always
+              execute mode, so consult disables it (tooltip explains). */}
+          {teamId && !streaming && (
+            <button
+              type="button"
+              className="teamrun-btn"
+              onClick={() => void runTeam()}
+              disabled={mode === 'consult' || orchestrating || !draft.trim()}
+              title={
+                mode === 'consult'
+                  ? t.ui.teamrun.disabled_consult
+                  : t.ui.teamrun.button_title
+              }
+              data-testid="teamrun-btn"
+            >
+              {t.ui.teamrun.button}
+            </button>
+          )}
           {streaming ? (
             <button
               type="button"
@@ -614,7 +744,7 @@ export function ChatPage({ onSessionCreated }: Props) {
               type="button"
               className="composer-btn send"
               onClick={() => void send()}
-              disabled={!draft.trim()}
+              disabled={!draft.trim() || orchestrating}
               aria-label={t.ui.send_message}
               title={t.ui.send}
             >
@@ -622,7 +752,16 @@ export function ChatPage({ onSessionCreated }: Props) {
             </button>
           )}
         </div>
-        <div className="composer-hint">{t.ui.composer_hint}</div>
+        <div className="composer-meta">
+          {/* T5.2 — consult/execute toggle + read-only cue in consult mode. */}
+          <ModeToggle mode={mode} onChange={changeMode} />
+          {mode === 'consult' && (
+            <span className="consult-cue" data-testid="consult-cue">
+              {t.ui.mode.readonly_cue}
+            </span>
+          )}
+          <div className="composer-hint">{t.ui.composer_hint}</div>
+        </div>
       </div>
     </>
   );
