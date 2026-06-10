@@ -25,12 +25,9 @@ use crate::types::{ContentBlock, ServerInfo, ToolDescriptor, ToolResult};
 /// binaries, its home/temp dirs, and decode paths/messages. Mirrors the
 /// allowlists in `xiaoguai-coding/src/git.rs` and `xiaoguai-mcp-exec`.
 const ALLOWED_PASSTHROUGH: &[&str] = &[
-    "PATH",
-    "HOME",   // many runtimes resolve config/cache under $HOME
+    "PATH", "HOME",   // many runtimes resolve config/cache under $HOME
     "TMPDIR", // writable temp dir (node/python/uv need one)
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE", // locale
+    "LANG", "LC_ALL", "LC_CTYPE", // locale
 ];
 
 /// Fallback `PATH` when the parent has none, so `npx`/`uvx`-style

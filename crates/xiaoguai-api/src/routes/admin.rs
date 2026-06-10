@@ -392,7 +392,11 @@ pub async fn scheduler_create_token(
         .await
         .map_err(token_admin_err_to_api)?;
     // SEC-19: full token returned exactly once (`no_store` so it isn't cached).
-    Ok((axum::http::StatusCode::CREATED, no_store(), Json(row.into())))
+    Ok((
+        axum::http::StatusCode::CREATED,
+        no_store(),
+        Json(row.into()),
+    ))
 }
 
 /// `GET /v1/admin/scheduler/tokens?limit=...` — list tokens.
@@ -450,7 +454,10 @@ pub async fn scheduler_revoke_token(
     if selector.is_empty() {
         return Err(ApiError::BadRequest("token selector required".into()));
     }
-    let rows = admin.list(MAX_LIMIT).await.map_err(token_admin_err_to_api)?;
+    let rows = admin
+        .list(MAX_LIMIT)
+        .await
+        .map_err(token_admin_err_to_api)?;
     let mut matching = rows.into_iter().filter(|r| r.token.starts_with(&selector));
     let target = matching.next().ok_or(ApiError::NotFound)?;
     if matching.next().is_some() {
