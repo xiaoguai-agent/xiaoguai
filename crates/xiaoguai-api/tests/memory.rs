@@ -149,7 +149,10 @@ async fn list_memories_filters_by_comma_separated_tags_param() {
     let app = router(build_state(Some(make_store())));
 
     for (content, tags) in [
-        ("Frankfurt is the primary region.", vec!["infra", "compliance"]),
+        (
+            "Frankfurt is the primary region.",
+            vec!["infra", "compliance"],
+        ),
         ("Tier-1 SLA is 15 minutes.", vec!["sla"]),
     ] {
         let body = serde_json::json!({"kind": "facts", "content": content, "tags": tags});
@@ -171,7 +174,11 @@ async fn list_memories_filters_by_comma_separated_tags_param() {
         .body(Body::empty())
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "tags= param must deserialize");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "tags= param must deserialize"
+    );
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let data = body.get("data").and_then(|v| v.as_array()).expect("data");
