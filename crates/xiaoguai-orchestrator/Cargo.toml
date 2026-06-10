@@ -31,7 +31,7 @@ regex = { workspace = true }
 once_cell = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 
 # HR Onboarding pack integration tests.
 # The test file lives in packs/hr-onboarding/tests/ alongside the YAML

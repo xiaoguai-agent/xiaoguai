@@ -12,6 +12,11 @@
 //! their v1.4 incarnations inside `supervisor.rs` and `challenger.rs`
 //! and will be ported into this module in a later sprint.
 
+pub mod executive;
 pub mod triangle;
 
+pub use executive::{
+    ExecEvent, ExecutiveConfigError, ExecutiveRunner, MemberOutcome, MemberRunner, MemberSpec,
+    DEFAULT_MAX_MEMBERS,
+};
 pub use triangle::{OrchEvent, SessionId, TriangleRequest, TriangleRunner, TriangleStopReason};

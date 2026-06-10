@@ -19,6 +19,7 @@ pub mod loop_tools;
 pub mod loops;
 pub mod marketplace;
 pub mod mcp_serve;
+pub mod orchestrate;
 pub mod outcomes;
 pub mod routes;
 pub mod scheduler;

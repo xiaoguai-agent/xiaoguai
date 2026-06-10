@@ -1047,6 +1047,34 @@ export interface SuggestExpertsResponse {
   suggestions: ExpertSuggestion[];
 }
 
+// ---- T4 executive orchestration — governed team runs ----------------------
+//
+// Mirrors `xiaoguai_orchestrator::patterns::executive::ExecEvent` (serde
+// `tag = "type", rename_all = "snake_case"`) and the request body of
+// `POST /v1/sessions/{id}/orchestrate`
+// (crates/xiaoguai-api/src/routes/orchestrate.rs).
+
+/** Body for `POST /v1/sessions/{id}/orchestrate`. */
+export interface OrchestrateRequest {
+  goal: string;
+  /** Explicit team. Omit to auto-route the goal via the suggest scorer. */
+  team_id?: string;
+  /** Per-request member cap; defaults to the engine cap (8). */
+  max_members?: number;
+}
+
+/**
+ * One frame of the orchestrate SSE stream. `final` is the terminal event:
+ * `ok: false` means synthesis could not produce an answer (e.g. every
+ * member failed); `failed_members` lists the persona ids that errored.
+ */
+export type OrchestrateEvent =
+  | { type: 'run_started'; members: number }
+  | { type: 'member_started'; id: string }
+  | { type: 'member_completed'; id: string; ok: boolean }
+  | { type: 'synthesis_started'; ok_members: number }
+  | { type: 'final'; ok: boolean; text: string; failed_members: string[] };
+
 // ---- v1.8.0 (sprint-10b S10b-3) — Skill Proposals ------------------------
 
 /**
@@ -2275,6 +2303,73 @@ export class XiaoguaiClient {
     });
   }
 
+  /**
+   * T4 — `POST /v1/sessions/{id}/orchestrate`: run a goal through a team
+   * (members in parallel, lead synthesizes) and stream `OrchestrateEvent`
+   * SSE frames. `onEvent` fires once per frame, in stream order; the
+   * promise resolves with the terminal `final` event, or `null` if the
+   * stream ended without one. Non-2xx responses throw {@link ApiError}
+   * (409 = a turn is already in flight, 422 = no team matches / bad
+   * request, 503 = subsystem unwired or HotL denied).
+   *
+   * No auto-reconnect (v1, unlike `sendMessage`): the run is driven by a
+   * detached server task, so it completes — and persists the synthesized
+   * reply — even if this stream drops. After a dropped stream, re-fetch
+   * the session messages to read the result.
+   */
+  async orchestrateSession(
+    sessionId: string,
+    req: OrchestrateRequest,
+    onEvent: (e: OrchestrateEvent) => void,
+  ): Promise<OrchestrateEvent | null> {
+    const url = `${this.baseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/orchestrate`;
+    const resp = await this.fetchImpl(url, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify(req),
+    });
+    if (!resp.ok) {
+      // Same error contract as `request<T>` (401 → login prompt).
+      if (resp.status === 401) {
+        this.onUnauthorized?.();
+      }
+      let code = 'http_error';
+      let message = `HTTP ${resp.status}`;
+      try {
+        const parsed = (await resp.json()) as { code?: string; message?: string };
+        if (parsed.code) code = parsed.code;
+        if (parsed.message) message = parsed.message;
+      } catch {
+        // body wasn't JSON; keep defaults.
+      }
+      throw new ApiError(resp.status, code, message);
+    }
+    if (!resp.body) {
+      throw new ApiError(resp.status, 'no_body', 'orchestrate response had no body');
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buf = '';
+    let final: OrchestrateEvent | null = null;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const chunk = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const { ev } = parseSseChunk<OrchestrateEvent>(chunk);
+        if (ev) {
+          onEvent(ev);
+          if (ev.type === 'final') final = ev;
+        }
+      }
+    }
+    return final;
+  }
+
   // ---- v1.8.0 (sprint-10b S10b-3) — Skill Proposals -------------------
 
   /**
@@ -2524,13 +2619,21 @@ function defaultExportFilename(tenantId: string, format: string): string {
 }
 
 /** One parsed SSE frame: the decoded event plus its `id:` field (if any). */
-interface ParsedSseChunk {
-  ev: AgentEvent | null;
+interface ParsedSseChunk<E = AgentEvent> {
+  ev: E | null;
   /** The SSE `id:` field — a per-stream monotonic sequence, or null. */
   id: string | null;
 }
 
-function parseSseChunk(chunk: string): ParsedSseChunk {
+/**
+ * Parse one SSE frame (the text between two `\n\n` separators). Generic
+ * over the event union — `sendMessage` reads `AgentEvent`s,
+ * `orchestrateSession` reads `OrchestrateEvent`s; both backends put the
+ * serde tag in `event:` and the full JSON (including `type`) in `data:`.
+ */
+function parseSseChunk<E extends { type: string } = AgentEvent>(
+  chunk: string,
+): ParsedSseChunk<E> {
   let event = '';
   let data = '';
   let id: string | null = null;
@@ -2545,9 +2648,9 @@ function parseSseChunk(chunk: string): ParsedSseChunk {
   }
   if (!data) return { ev: null, id };
   try {
-    const parsed = JSON.parse(data) as AgentEvent;
+    const parsed = JSON.parse(data) as E;
     if (event && (parsed as { type: string }).type !== event) {
-      return { ev: { ...(parsed as object), type: event } as unknown as AgentEvent, id };
+      return { ev: { ...(parsed as object), type: event } as unknown as E, id };
     }
     return { ev: parsed, id };
   } catch {
