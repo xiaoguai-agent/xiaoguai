@@ -98,11 +98,7 @@ impl McpClient for StdioMcpClient {
         Ok(resp
             .tools
             .into_iter()
-            .map(|t| ToolDescriptor {
-                name: t.name.into_owned(),
-                description: t.description.map(std::borrow::Cow::into_owned),
-                input_schema: serde_json::to_value(&*t.input_schema).unwrap_or(JsonValue::Null),
-            })
+            .map(crate::rmcp_convert::descriptor_from_rmcp_tool)
             .collect())
     }
 

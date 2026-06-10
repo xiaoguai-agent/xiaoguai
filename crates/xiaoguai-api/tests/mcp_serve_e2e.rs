@@ -116,6 +116,7 @@ fn fixture_toolbox() -> Toolbox {
                 "properties": { "msg": { "type": "string" } },
                 "required": ["msg"]
             }),
+            mutation_hint: xiaoguai_mcp::MutationHint::default(),
         },
         ToolDescriptor {
             name: "ping".into(),
@@ -124,6 +125,7 @@ fn fixture_toolbox() -> Toolbox {
                 "type": "object",
                 "properties": { "msg": { "type": "string" } }
             }),
+            mutation_hint: xiaoguai_mcp::MutationHint::default(),
         },
     ];
     Toolbox::from_server(client, descriptors).expect("toolbox")

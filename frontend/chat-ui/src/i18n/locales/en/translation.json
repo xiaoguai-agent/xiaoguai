@@ -112,6 +112,23 @@
       "error_attach": "Failed to attach expert: {{message}}",
       "error_detach": "Failed to remove expert: {{message}}",
       "error_suggest": "Suggestion failed: {{message}}"
+    },
+    "mode": {
+      "toggle_label": "Turn mode",
+      "execute": "Execute",
+      "consult": "Consult",
+      "readonly_cue": "Consult mode (read-only) — the agent will not change anything"
+    },
+    "teamrun": {
+      "button": "Team run",
+      "button_title": "Run this message through the attached team in parallel",
+      "disabled_consult": "Team runs always execute — switch to execute mode first",
+      "started": "Team run started — {{total}} members…",
+      "progress": "Team run: {{done}}/{{total}} members completed",
+      "synthesizing": "Synthesizing {{ok}} member results…",
+      "done": "Team run completed.",
+      "failed": "Team run produced no answer (failed members: {{failed}})",
+      "error": "Team run failed: {{message}}"
     }
   }
 }

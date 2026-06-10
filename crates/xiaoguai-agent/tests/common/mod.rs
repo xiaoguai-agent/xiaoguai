@@ -55,6 +55,7 @@ impl MockMcpClient {
                 name: name.to_string(),
                 description: Some(format!("mock tool {name}")),
                 input_schema: json!({"type":"object"}),
+                mutation_hint: xiaoguai_mcp::MutationHint::default(),
             });
         }
         // De-dup descriptors by name (keep first).

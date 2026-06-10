@@ -50,9 +50,19 @@ export interface CreateSessionRequest {
   title?: string;
 }
 
+/**
+ * T5 — per-turn governance mode. `consult` = read-only (the backend
+ * subsets the toolbox to read tools and the ConsultGate denies writes);
+ * `execute` = normal HotL-gated operation. Mirrors
+ * `xiaoguai_api::turn::TurnMode` (serde snake_case).
+ */
+export type TurnMode = 'consult' | 'execute';
+
 export interface SendMessageRequest {
   content: string;
   model?: string;
+  /** T5 — omitted means `execute` (the backend default). */
+  mode?: TurnMode;
 }
 
 /**

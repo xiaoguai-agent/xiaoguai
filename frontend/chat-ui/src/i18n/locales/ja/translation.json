@@ -112,6 +112,23 @@
       "error_attach": "エキスパートの設定に失敗しました：{{message}}",
       "error_detach": "エキスパートの解除に失敗しました：{{message}}",
       "error_suggest": "提案に失敗しました：{{message}}"
+    },
+    "mode": {
+      "toggle_label": "ターンモード",
+      "execute": "実行",
+      "consult": "相談",
+      "readonly_cue": "相談モード（読み取り専用）— アシスタントは変更を行いません"
+    },
+    "teamrun": {
+      "button": "チーム並列実行",
+      "button_title": "このメッセージを設定済みチームで並列実行します",
+      "disabled_consult": "チーム実行は常に実行モードです — 先に実行モードへ切り替えてください",
+      "started": "チーム実行を開始しました — メンバー {{total}} 名…",
+      "progress": "チーム実行：{{done}}/{{total}} 名のメンバーが完了",
+      "synthesizing": "{{ok}} 名のメンバー結果を統合中…",
+      "done": "チーム実行が完了しました。",
+      "failed": "チーム実行は結果を生成できませんでした（失敗メンバー：{{failed}}）",
+      "error": "チーム実行に失敗しました：{{message}}"
     }
   }
 }

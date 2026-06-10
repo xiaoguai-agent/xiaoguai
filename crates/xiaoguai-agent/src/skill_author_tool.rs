@@ -113,6 +113,8 @@ impl ProposeSkillClient {
                     .into(),
             ),
             input_schema: Self::input_schema(),
+            // Creates a skill proposal row — mutates state.
+            mutation_hint: xiaoguai_mcp::MutationHint::Write,
         }
     }
 }

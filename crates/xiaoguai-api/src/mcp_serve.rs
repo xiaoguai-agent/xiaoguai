@@ -224,6 +224,7 @@ mod tests {
                     "type": "object",
                     "properties": { "msg": { "type": "string" } }
                 }),
+                mutation_hint: xiaoguai_mcp::MutationHint::default(),
             },
             ToolDescriptor {
                 name: "echo2".into(),
@@ -232,6 +233,7 @@ mod tests {
                     "type": "object",
                     "properties": { "msg": { "type": "string" } }
                 }),
+                mutation_hint: xiaoguai_mcp::MutationHint::default(),
             },
         ];
         Arc::new(Toolbox::from_server(client, descriptors).expect("toolbox"))

@@ -21,7 +21,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value as JsonValue};
 use xiaoguai_mcp::{
-    ContentBlock, McpClient, McpError, McpResult, ServerInfo, ToolDescriptor, ToolResult,
+    ContentBlock, McpClient, McpError, McpResult, MutationHint, ServerInfo, ToolDescriptor,
+    ToolResult,
 };
 
 use crate::client::{RagClient, RagError};
@@ -92,6 +93,7 @@ impl McpClient for RagMcpAdapter {
                     },
                     "required": ["collection_id", "query"]
                 }),
+                mutation_hint: MutationHint::Read,
             },
             ToolDescriptor {
                 name: "rag_ingest".into(),
@@ -108,11 +110,13 @@ impl McpClient for RagMcpAdapter {
                     },
                     "required": ["collection_id", "source_uri", "content"]
                 }),
+                mutation_hint: MutationHint::Write,
             },
             ToolDescriptor {
                 name: "rag_list_collections".into(),
                 description: Some("List every collection visible to the caller.".into()),
                 input_schema: json!({ "type": "object", "properties": {} }),
+                mutation_hint: MutationHint::Read,
             },
             ToolDescriptor {
                 name: "rag_delete_document".into(),
@@ -125,6 +129,7 @@ impl McpClient for RagMcpAdapter {
                     },
                     "required": ["collection_id", "document_id"]
                 }),
+                mutation_hint: MutationHint::Write,
             },
         ])
     }

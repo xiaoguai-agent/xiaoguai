@@ -77,6 +77,25 @@ interface TranslationShape {
       error_detach: string;
       error_suggest: string;
     };
+    /** T5.2 — consult/execute mode toggle by the send box. */
+    mode: {
+      toggle_label: string;
+      execute: string;
+      consult: string;
+      readonly_cue: string;
+    };
+    /** T5.2 — team parallel run entry (T4 orchestrate, deferred UI). */
+    teamrun: {
+      button: string;
+      button_title: string;
+      disabled_consult: string;
+      started: string;
+      progress: string;
+      synthesizing: string;
+      done: string;
+      failed: string;
+      error: string;
+    };
   };
   chat: {
     sse: {

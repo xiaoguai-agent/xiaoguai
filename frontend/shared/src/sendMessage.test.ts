@@ -482,3 +482,49 @@ describe('XiaoguaiClient.sendMessage retry loop', () => {
     expect(ev.decided_by).toBeNull();
   });
 });
+
+describe('XiaoguaiClient.sendMessage turn mode (T5)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** Extract the JSON body of the first fetch call. */
+  function firstBody(fetchImpl: ReturnType<typeof vi.fn>): Record<string, unknown> {
+    const init = fetchImpl.mock.calls[0]![1] as RequestInit;
+    return JSON.parse(init.body as string) as Record<string, unknown>;
+  }
+
+  it('includes mode in the POST body when set', async () => {
+    const fetchImpl = vi
+      .fn<(...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockResolvedValueOnce(sseResponse([delta('ok')]));
+    const client = new XiaoguaiClient({
+      baseUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    client.sendMessage('sess1', { content: 'hi', mode: 'consult' }, () => {});
+    await flush();
+
+    expect(firstBody(fetchImpl)).toEqual({ content: 'hi', mode: 'consult' });
+  });
+
+  it('omits mode from the POST body when not set', async () => {
+    const fetchImpl = vi
+      .fn<(...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockResolvedValueOnce(sseResponse([delta('ok')]));
+    const client = new XiaoguaiClient({
+      baseUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    client.sendMessage('sess1', { content: 'hi' }, () => {});
+    await flush();
+
+    const body = firstBody(fetchImpl);
+    expect(body).toEqual({ content: 'hi' });
+    expect('mode' in body).toBe(false);
+  });
+});

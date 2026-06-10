@@ -655,6 +655,8 @@ async fn fire_tick(
             session_id: row.session_id.clone(),
             content: row.prompt.clone(),
             model_override: None,
+            // Loops always run execute (plan §2.4); run_turn guards this too.
+            mode: crate::turn::TurnMode::Execute,
             loop_id: Some(row.id),
             loop_dynamic_pacing: row.pacing_kind == PacingKind::Dynamic,
         },
