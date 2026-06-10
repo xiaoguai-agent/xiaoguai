@@ -165,6 +165,7 @@ mod tests {
             name: name.into(),
             description: Some(format!("tool {name}")),
             input_schema: json!({"type":"object"}),
+            mutation_hint: xiaoguai_mcp::MutationHint::default(),
         }
     }
 

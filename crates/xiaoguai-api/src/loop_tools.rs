@@ -182,6 +182,8 @@ fn loop_tool_descriptors(dynamic: bool) -> Vec<ToolDescriptor> {
                 },
                 "required": ["reason"]
             }),
+            // Loop control tools mutate loop state — Write (plan §2.1).
+            mutation_hint: xiaoguai_mcp::MutationHint::Write,
         },
         ToolDescriptor {
             name: LOOP_PAUSE_TOOL.into(),
@@ -199,6 +201,7 @@ fn loop_tool_descriptors(dynamic: bool) -> Vec<ToolDescriptor> {
                 },
                 "required": ["reason"]
             }),
+            mutation_hint: xiaoguai_mcp::MutationHint::Write,
         },
     ];
     if dynamic {
@@ -220,6 +223,7 @@ fn loop_tool_descriptors(dynamic: bool) -> Vec<ToolDescriptor> {
                 },
                 "required": ["delay_seconds"]
             }),
+            mutation_hint: xiaoguai_mcp::MutationHint::Write,
         });
     }
     tools

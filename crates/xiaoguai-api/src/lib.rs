@@ -9,6 +9,7 @@
 
 pub mod audit;
 pub mod auth;
+pub mod consult;
 pub mod convert;
 pub mod error;
 pub mod eval;
@@ -82,7 +83,7 @@ pub use skills::{
 };
 pub use state::{AppState, CancelRegistry, TurnGuard};
 pub use today::{StaticTodayReader, TodayError, TodayItem, TodayKind, TodayQuery, TodayReader};
-pub use turn::{run_turn, TurnCompletion, TurnError, TurnHandle, TurnInput};
+pub use turn::{run_turn, TurnCompletion, TurnError, TurnHandle, TurnInput, TurnMode};
 pub use usage::{
     StaticUsageEntry, StaticUsageReader, UsageError, UsageGroupBy, UsageQuery, UsageReader,
     UsageReport, UsageRow,

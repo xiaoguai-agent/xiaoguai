@@ -25,12 +25,38 @@ use xiaoguai_types::{SessionId, SessionStatus};
 use crate::convert::{domain_to_llm, llm_to_domain};
 use crate::state::{AppState, TurnGuard};
 
+/// Consult/execute split (T5, plan §2). `Execute` is today's behaviour;
+/// `Consult` makes the turn read-only: the toolbox is narrowed to
+/// `MutationHint::Read` tools (layer 1) and the `HotL` gate is wrapped in
+/// `ConsultGate` (layer 2) so write tools cannot run even if named.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TurnMode {
+    #[default]
+    Execute,
+    Consult,
+}
+
+impl TurnMode {
+    /// Wire/audit label — matches the serde rename (`consult` / `execute`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Execute => "execute",
+            Self::Consult => "consult",
+        }
+    }
+}
+
 /// One turn's inputs. `model_override` falls back to the session's model.
 #[derive(Debug)]
 pub struct TurnInput {
     pub session_id: String,
     pub content: String,
     pub model_override: Option<String>,
+    /// Consult (read-only) vs execute. Ignored on loop turns
+    /// (`loop_id.is_some()`) — loops always run execute (plan §2.4).
+    pub mode: TurnMode,
     /// Set for loop ticks: stamps `initiator: "loop"` + `loop_id` into the
     /// turn's `agent.run` audit details (LLD-LOOP-001 §7, review M3 — an
     /// auditor must be able to tell loop-initiated turns from operator
@@ -150,13 +176,37 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
     //     operator turns → the base toolbox, no extra cost. The system note
     //     is inserted here (before identity) so identity ends up the
     //     outermost System frame: [identity, loop_note, ...history].
+    //     T5: loop turns ignore `mode` — they never set it, but guard anyway
+    //     so a future caller cannot put a loop tick into consult mode by
+    //     accident (plan §2.4: loops/scheduler stay execute).
+    let mode = if input.loop_id.is_some() {
+        TurnMode::Execute
+    } else {
+        input.mode
+    };
     let (toolbox, loop_intent) = if input.loop_id.is_some() {
         let (tb, sink) =
             crate::loop_tools::with_loop_tools(&state.toolbox, input.loop_dynamic_pacing);
         messages.insert(0, LlmMessage::system(LOOP_TICK_SYSTEM_NOTE));
         (Arc::new(tb), Some(sink))
+    } else if mode == TurnMode::Consult {
+        // Layer 1 (plan §2.2): the model only sees read tools.
+        (
+            Arc::new(crate::consult::read_only_toolbox(&state.toolbox)),
+            None,
+        )
     } else {
         (state.toolbox.clone(), None)
+    };
+
+    // Layer 2 (plan §2.3): in consult mode, wrap the configured HotL gate in
+    // `ConsultGate` keyed on the FULL base toolbox's read-only set — a
+    // hallucinated write-tool name is denied at the gate even though the
+    // subset toolbox already hides it.
+    let agent_defaults = if mode == TurnMode::Consult {
+        crate::consult::consult_agent_config(&state.agent_defaults, &state.toolbox)
+    } else {
+        state.agent_defaults.clone()
     };
 
     // 2c. Identity memory (DEC-036, P1): prepend the owner's persistent `USER.md`
@@ -176,7 +226,7 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
     //    not just loop ticks).
     let actor = session.user_id.to_string();
     let model = input.model_override.unwrap_or(session.model);
-    let ctx = RuntimeContext::new(state.backend.clone(), toolbox, state.agent_defaults.clone())
+    let ctx = RuntimeContext::new(state.backend.clone(), toolbox, agent_defaults)
         .with_model(model.clone())
         .with_attribution(Some(input.session_id.clone()), Some(actor.clone()));
 
@@ -221,6 +271,7 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
         join,
         guard,
         loop_id: input.loop_id,
+        mode,
         completion: completion_tx,
     });
 
@@ -256,6 +307,9 @@ struct FinalizeCtx {
     guard: TurnGuard,
     /// Loop attribution for the `agent.run` audit entry (`None` = operator).
     loop_id: Option<uuid::Uuid>,
+    /// Effective turn mode, stamped as `"mode"` into the `agent.run` audit
+    /// details so consult turns are distinguishable in the chain (plan §2.4).
+    mode: TurnMode,
     /// Resolves the caller's [`TurnHandle::completion`]. Best-effort: a
     /// dropped receiver (the SSE route drops it) is fine.
     completion: tokio::sync::oneshot::Sender<TurnCompletion>,
@@ -270,6 +324,7 @@ fn spawn_finalize_task(ctx: FinalizeCtx) {
         join,
         guard,
         loop_id,
+        mode,
         completion,
     } = ctx;
     tokio::spawn(async move {
@@ -296,9 +351,12 @@ fn spawn_finalize_task(ctx: FinalizeCtx) {
                     &state,
                     &actor,
                     &session_id_str,
-                    with_loop_attribution(
-                        agent_run_details(&model, &outcome, persist_failed),
-                        loop_id,
+                    with_turn_mode(
+                        with_loop_attribution(
+                            agent_run_details(&model, &outcome, persist_failed),
+                            loop_id,
+                        ),
+                        mode,
                     ),
                 )
                 .await;
@@ -316,9 +374,12 @@ fn spawn_finalize_task(ctx: FinalizeCtx) {
                     &state,
                     &actor,
                     &session_id_str,
-                    with_loop_attribution(
-                        serde_json::json!({ "model": model, "outcome": "error" }),
-                        loop_id,
+                    with_turn_mode(
+                        with_loop_attribution(
+                            serde_json::json!({ "model": model, "outcome": "error" }),
+                            loop_id,
+                        ),
+                        mode,
                     ),
                 )
                 .await;
@@ -330,9 +391,12 @@ fn spawn_finalize_task(ctx: FinalizeCtx) {
                     &state,
                     &actor,
                     &session_id_str,
-                    with_loop_attribution(
-                        serde_json::json!({ "model": model, "outcome": "panic" }),
-                        loop_id,
+                    with_turn_mode(
+                        with_loop_attribution(
+                            serde_json::json!({ "model": model, "outcome": "panic" }),
+                            loop_id,
+                        ),
+                        mode,
                     ),
                 )
                 .await;
@@ -358,6 +422,16 @@ fn with_loop_attribution(
     if let (Some(id), Some(obj)) = (loop_id, details.as_object_mut()) {
         obj.insert("initiator".into(), serde_json::json!("loop"));
         obj.insert("loop_id".into(), serde_json::json!(id.to_string()));
+    }
+    details
+}
+
+/// Stamp the turn's consult/execute mode into the `agent.run` details
+/// (T5 plan §2.4). Always present — `"execute"` for ordinary turns keeps the
+/// audit chain self-describing.
+fn with_turn_mode(mut details: serde_json::Value, mode: TurnMode) -> serde_json::Value {
+    if let Some(obj) = details.as_object_mut() {
+        obj.insert("mode".into(), serde_json::json!(mode.as_str()));
     }
     details
 }
@@ -625,5 +699,25 @@ mod audit_tests {
         let details = with_loop_attribution(serde_json::json!({ "model": "m" }), None);
         assert!(details.get("initiator").is_none());
         assert!(details.get("loop_id").is_none());
+    }
+
+    #[test]
+    fn turn_mode_is_stamped_into_audit_details() {
+        let consult = with_turn_mode(serde_json::json!({ "model": "m" }), TurnMode::Consult);
+        assert_eq!(consult["mode"], "consult");
+        assert_eq!(consult["model"], "m");
+
+        let execute = with_turn_mode(serde_json::json!({}), TurnMode::Execute);
+        assert_eq!(execute["mode"], "execute");
+    }
+
+    #[test]
+    fn turn_mode_serde_is_lowercase_and_defaults_to_execute() {
+        let m: TurnMode = serde_json::from_str("\"consult\"").expect("consult parses");
+        assert_eq!(m, TurnMode::Consult);
+        let m: TurnMode = serde_json::from_str("\"execute\"").expect("execute parses");
+        assert_eq!(m, TurnMode::Execute);
+        assert_eq!(TurnMode::default(), TurnMode::Execute);
+        assert_eq!(serde_json::json!(TurnMode::Consult), "consult");
     }
 }

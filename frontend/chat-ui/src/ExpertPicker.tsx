@@ -35,11 +35,23 @@ import type { ActiveExpert } from './expertPickerHelpers';
 
 interface ExpertPickerProps {
   sessionId: string | undefined;
+  /**
+   * T5.2 — fired whenever the active expert changes (load / attach /
+   * remove / session switch). Lets ChatPage know whether a team is
+   * attached without re-fetching `getSessionTeam` itself.
+   */
+  onActiveChange?: (active: ActiveExpert | null) => void;
 }
 
-export function ExpertPicker({ sessionId }: ExpertPickerProps) {
+export function ExpertPicker({ sessionId, onActiveChange }: ExpertPickerProps) {
   const { t } = useI18n();
-  const [active, setActive] = useState<ActiveExpert | null>(null);
+  const [active, setActiveState] = useState<ActiveExpert | null>(null);
+
+  /** Single setter so the parent notification can never be forgotten. */
+  function setActive(next: ActiveExpert | null) {
+    setActiveState(next);
+    onActiveChange?.(next);
+  }
   const [unavailable, setUnavailable] = useState(false);
   const [open, setOpen] = useState(false);
   /** `null` = catalog not loaded yet (lazy-loaded on first open). */

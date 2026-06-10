@@ -16,7 +16,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::sessions_ext::SessionForkError;
 use crate::sse::event_to_sse_seq;
 use crate::state::AppState;
-use crate::turn::{run_turn, TurnError, TurnInput};
+use crate::turn::{run_turn, TurnError, TurnInput, TurnMode};
 
 const DEFAULT_LIST_LIMIT: i64 = 100;
 
@@ -174,6 +174,9 @@ pub struct SendMessageRequest {
     pub content: String,
     /// Optional model override; falls back to the session's model.
     pub model: Option<String>,
+    /// T5: `"consult"` makes the turn read-only; omitted/`"execute"` is the
+    /// normal HotL-gated mode. Per-turn flag — no session state.
+    pub mode: Option<TurnMode>,
 }
 
 /// `POST /v1/sessions/:id/messages` — streams `AgentEvent`s as SSE.
@@ -200,6 +203,7 @@ pub async fn send_message(
             session_id: session_id_str,
             content: req.content,
             model_override: req.model,
+            mode: req.mode.unwrap_or_default(),
             loop_id: None,
             loop_dynamic_pacing: false,
         },
