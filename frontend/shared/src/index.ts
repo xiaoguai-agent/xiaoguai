@@ -8,21 +8,20 @@
 
 export const PACKAGE_VERSION = '0.4.0';
 
-// ---- v1.4 Memory subsystem (ADR-0019) — shipped when xiaoguai-memory lands -
+// ---- Memory subsystem — mirrors the shipped /v1/memories routes ------------
 export type {
-  MemoryType,
+  MemoryKind,
   MemoryRecord,
   ListMemoriesQuery,
-  ListMemoriesResponse,
   CreateMemoryRequest,
   UpdateMemoryRequest,
-  RecallEntry,
-  RecallTraceResponse,
-  SimilarMemory,
-  FindSimilarMemoriesResponse,
+  RecallMemoriesRequest,
+  RecalledMemory,
+  MemoryEnvelope,
   MemoryImportSkippedLine,
   MemoryImportReport,
 } from './memory';
+export { MEMORY_KINDS } from './memory';
 
 // ---- Wire types ----------------------------------------------------------
 
@@ -720,73 +719,6 @@ export interface AnomalyFireRateBucket {
   count: number;
 }
 
-// ---- v1.4.0 — Kanban board (task queue) ---------------------------------
-
-/**
- * Six-column Kanban board matching the Hermes Desktop layout.
- * Ships in v1.4; graceful 404 fallback in the admin-ui.
- */
-export type TaskColumn = 'triage' | 'todo' | 'ready' | 'running' | 'blocked' | 'done';
-
-export type TaskPriority = 'low' | 'medium' | 'high' | 'critical';
-
-/** Wire shape returned by `GET /v1/tasks` and `GET /v1/tasks/:id`. */
-export interface TaskCard {
-  id: string;
-  board_id: string;
-  title: string;
-  description: string | null;
-  column: TaskColumn;
-  priority: TaskPriority;
-  assignee: string | null;
-  created_at: string;
-  updated_at: string;
-  deps: string[];
-}
-
-/** Board record returned by `GET /v1/tasks/boards`. */
-export interface Board {
-  id: string;
-  name: string;
-  description: string | null;
-  created_at: string;
-}
-
-/** One state-transition entry returned by `GET /v1/tasks/:id/history`. */
-export interface TaskHistoryEntry {
-  ts: string;
-  from_column: TaskColumn | null;
-  to_column: TaskColumn;
-  actor: string | null;
-  note: string | null;
-}
-
-/** Body for `POST /v1/tasks`. */
-export interface CreateTaskRequest {
-  board_id: string;
-  title: string;
-  description?: string | null;
-  column?: TaskColumn;
-  priority?: TaskPriority;
-  assignee?: string | null;
-}
-
-/** Body for `PATCH /v1/tasks/:id/column`. */
-export interface UpdateTaskColumnRequest {
-  column: TaskColumn;
-}
-
-/** Body for `POST /v1/tasks/:id/block`. */
-export interface BlockTaskRequest {
-  reason: string;
-}
-
-/** Body for `POST /v1/tasks/boards`. */
-export interface CreateBoardRequest {
-  name: string;
-  description?: string | null;
-}
-
 // ---- v1.3.x — HotL (Human-on-the-Loop) policy --------------------------
 
 /**
@@ -1272,12 +1204,12 @@ export type AgentEvent =
 
 import type {
   ListMemoriesQuery,
-  ListMemoriesResponse,
   CreateMemoryRequest,
   UpdateMemoryRequest,
   MemoryRecord,
-  RecallTraceResponse,
-  FindSimilarMemoriesResponse,
+  MemoryEnvelope,
+  RecallMemoriesRequest,
+  RecalledMemory,
   MemoryImportReport,
 } from './memory';
 
@@ -1735,67 +1667,6 @@ export class XiaoguaiClient {
     return this.request<InstallSkillPackResponse>('POST', '/v1/skills/install', req);
   }
 
-  // ---- v1.4.0 Kanban board (task queue) ----------------------------------
-
-  /** List all boards. `GET /v1/tasks/boards` */
-  listBoards(): Promise<Board[]> {
-    return this.request<Board[]>('GET', '/v1/tasks/boards');
-  }
-
-  /** Create a new board. `POST /v1/tasks/boards` */
-  createBoard(req: CreateBoardRequest): Promise<Board> {
-    return this.request<Board>('POST', '/v1/tasks/boards', req);
-  }
-
-  /** List tasks on a board, optionally filtered by column. `GET /v1/tasks?board=X` */
-  listTasks(opts: { board_id: string; column?: TaskColumn }): Promise<TaskCard[]> {
-    const params = new URLSearchParams({ board: opts.board_id });
-    if (opts.column) params.set('column', opts.column);
-    return this.request<TaskCard[]>('GET', `/v1/tasks?${params.toString()}`);
-  }
-
-  /** Create a new task. `POST /v1/tasks` */
-  createTask(req: CreateTaskRequest): Promise<TaskCard> {
-    return this.request<TaskCard>('POST', '/v1/tasks', req);
-  }
-
-  /** Move a task to a different column. `PATCH /v1/tasks/:id/column` */
-  updateTaskColumn(taskId: string, req: UpdateTaskColumnRequest): Promise<TaskCard> {
-    return this.request<TaskCard>(
-      'PATCH',
-      `/v1/tasks/${encodeURIComponent(taskId)}/column`,
-      req,
-    );
-  }
-
-  /**
-   * Dispatch — moves the next READY task to RUNNING.
-   * `POST /v1/tasks/dispatch?board=X`
-   */
-  dispatchTask(boardId: string): Promise<TaskCard | null> {
-    return this.request<TaskCard | null>(
-      'POST',
-      `/v1/tasks/dispatch?board=${encodeURIComponent(boardId)}`,
-    );
-  }
-
-  /** Block a task with a reason. `POST /v1/tasks/:id/block` */
-  blockTask(taskId: string, req: BlockTaskRequest): Promise<TaskCard> {
-    return this.request<TaskCard>(
-      'POST',
-      `/v1/tasks/${encodeURIComponent(taskId)}/block`,
-      req,
-    );
-  }
-
-  /** Fetch state-transition history for a task. `GET /v1/tasks/:id/history` */
-  getTaskHistory(taskId: string): Promise<TaskHistoryEntry[]> {
-    return this.request<TaskHistoryEntry[]>(
-      'GET',
-      `/v1/tasks/${encodeURIComponent(taskId)}/history`,
-    );
-  }
-
   // ---- v1.2.4 Outcomes --------------------------------------------------
 
   /** Record a business outcome attribution. */
@@ -1819,45 +1690,52 @@ export class XiaoguaiClient {
     );
   }
 
-  // ---- v1.4 Memory (ADR-0019) — 404 until xiaoguai-memory ships -----------
+  // ---- Memory — shipped /v1/memories routes (503 when store unconfigured) --
 
-  /**
-   * List memories with optional filters. Returns 404 if the memory
-   * subsystem (`xiaoguai-memory` crate, task #155) is not yet deployed.
-   */
-  listMemories(q?: ListMemoriesQuery): Promise<ListMemoriesResponse> {
+  /** List memories with optional kind / tags filters. `GET /v1/memories` */
+  async listMemories(q?: ListMemoriesQuery): Promise<MemoryRecord[]> {
     const params = new URLSearchParams();
-    if (q?.type) params.set('type', q.type);
-    if (q?.tenant_id) params.set('tenant_id', q.tenant_id);
-    if (q?.agent_id) params.set('agent_id', q.agent_id);
-    if (q?.tag) params.set('tag', q.tag);
-    if (q?.since) params.set('since', q.since);
-    if (q?.until) params.set('until', q.until);
+    if (q?.kind) params.set('kind', q.kind);
+    if (q?.tags?.length) params.set('tags', q.tags.join(','));
     if (q?.limit !== undefined) params.set('limit', String(q.limit));
     if (q?.offset !== undefined) params.set('offset', String(q.offset));
     const qs = params.toString();
-    return this.request<ListMemoriesResponse>('GET', `/v1/memory${qs ? `?${qs}` : ''}`);
+    const resp = await this.request<MemoryEnvelope<MemoryRecord[]>>(
+      'GET',
+      `/v1/memories${qs ? `?${qs}` : ''}`,
+    );
+    return resp.data;
   }
 
-  /** Create a new memory record. */
-  createMemory(req: CreateMemoryRequest): Promise<MemoryRecord> {
-    return this.request<MemoryRecord>('POST', '/v1/memory', req);
+  /** Create a new memory record. `POST /v1/memories` */
+  async createMemory(req: CreateMemoryRequest): Promise<MemoryRecord> {
+    const resp = await this.request<MemoryEnvelope<MemoryRecord>>('POST', '/v1/memories', req);
+    return resp.data;
   }
 
-  /** Fetch a single memory by id. */
-  getMemory(id: string): Promise<MemoryRecord> {
-    return this.request<MemoryRecord>('GET', `/v1/memory/${encodeURIComponent(id)}`);
+  /** Fetch a single memory by id. `GET /v1/memories/:id` */
+  async getMemory(id: string): Promise<MemoryRecord> {
+    const resp = await this.request<MemoryEnvelope<MemoryRecord>>(
+      'GET',
+      `/v1/memories/${encodeURIComponent(id)}`,
+    );
+    return resp.data;
   }
 
-  /** Update mutable fields (content, tags, ttl) of an existing memory. */
-  updateMemory(id: string, req: UpdateMemoryRequest): Promise<MemoryRecord> {
-    return this.request<MemoryRecord>('PATCH', `/v1/memory/${encodeURIComponent(id)}`, req);
+  /** Update mutable fields (content, tags, ttl_at). `PUT /v1/memories/:id` */
+  async updateMemory(id: string, req: UpdateMemoryRequest): Promise<MemoryRecord> {
+    const resp = await this.request<MemoryEnvelope<MemoryRecord>>(
+      'PUT',
+      `/v1/memories/${encodeURIComponent(id)}`,
+      req,
+    );
+    return resp.data;
   }
 
   /** Delete a memory record by id. Returns 204; no body. */
   async deleteMemory(id: string): Promise<void> {
     const resp = await this.fetchImpl(
-      `${this.baseUrl}/v1/memory/${encodeURIComponent(id)}`,
+      `${this.baseUrl}/v1/memories/${encodeURIComponent(id)}`,
       { method: 'DELETE', headers: this.headers() },
     );
     if (!resp.ok) {
@@ -1866,33 +1744,35 @@ export class XiaoguaiClient {
   }
 
   /**
-   * Fetch the recall trace for a session or free-form query.
-   * Useful for debugging "why did the agent forget X?".
+   * Semantic recall by natural-language query. `POST /v1/memories/recall`
+   * Returns ranked `{memory, score}` hits — useful for testing what the
+   * agent would remember for a given prompt.
    */
-  recallMemoriesForSession(opts: {
-    session_id?: string;
-    query?: string;
-    limit?: number;
-  }): Promise<RecallTraceResponse> {
-    const params = new URLSearchParams();
-    if (opts.session_id) params.set('session_id', opts.session_id);
-    if (opts.query) params.set('query', opts.query);
-    if (opts.limit !== undefined) params.set('limit', String(opts.limit));
-    return this.request<RecallTraceResponse>('GET', `/v1/memory/recall?${params.toString()}`);
+  async recallMemories(req: RecallMemoriesRequest): Promise<RecalledMemory[]> {
+    const resp = await this.request<MemoryEnvelope<RecalledMemory[]>>(
+      'POST',
+      '/v1/memories/recall',
+      req,
+    );
+    return resp.data;
   }
 
   /**
    * Find N nearest neighbors by vector similarity for a given memory.
-   * Useful for surfacing duplicate or conflicting memories.
+   * `GET /v1/memories/similar/:id` — useful for surfacing duplicates.
    */
-  findSimilarMemories(memoryId: string, opts?: { top_k?: number }): Promise<FindSimilarMemoriesResponse> {
+  async findSimilarMemories(
+    memoryId: string,
+    opts?: { top_k?: number },
+  ): Promise<RecalledMemory[]> {
     const params = new URLSearchParams();
     if (opts?.top_k !== undefined) params.set('top_k', String(opts.top_k));
     const qs = params.toString();
-    return this.request<FindSimilarMemoriesResponse>(
+    const resp = await this.request<MemoryEnvelope<RecalledMemory[]>>(
       'GET',
-      `/v1/memory/${encodeURIComponent(memoryId)}/similar${qs ? `?${qs}` : ''}`,
+      `/v1/memories/similar/${encodeURIComponent(memoryId)}${qs ? `?${qs}` : ''}`,
     );
+    return resp.data;
   }
 
   // ---- T7.2 memory import / export (shipped routes, /v1/memories) ---------

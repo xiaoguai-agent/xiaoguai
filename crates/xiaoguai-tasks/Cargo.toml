@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Durable Kanban task board (ADR-0019): persistence layer (boards, tasks, column transitions, outcome attribution) plus an auto-dispatcher worker pool (READY→RUNNING→DONE/BLOCKED with claim/execute/retry/timeout)."
+description = "Agent-authored skill proposals (Tier-2 D.1): proposal repository, HotL gate and audit-sink trait seams plus their SQLite implementations."
 
 [dependencies]
 xiaoguai-audit = { path = "../xiaoguai-audit" }
@@ -17,20 +17,15 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 sqlx = { workspace = true }
-tokio = { workspace = true, features = ["time", "sync", "macros", "rt-multi-thread", "signal"] }
-tokio-util = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "sync", "macros", "rt-multi-thread"] }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
-tracing = { workspace = true }
-once_cell = { workspace = true }
-prometheus = { workspace = true }
 
 [dev-dependencies]
 serde_yaml = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }
-tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

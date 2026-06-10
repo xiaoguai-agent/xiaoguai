@@ -1,181 +1,33 @@
 /**
- * v1.4-ready — Memory browser / editor (ADR-0019).
- *
- * The `xiaoguai-memory` Rust crate (task #155) is not yet shipped.
- * When /v1/memory/* returns 404 this pane renders a banner and falls
- * back to mock data so operators can validate the UI design in advance.
+ * Memory browser / editor — wired to the SHIPPED `/v1/memories` routes
+ * (see `crates/xiaoguai-api/src/routes/memory.rs`). The backend returns
+ * 503 while `memory_store` is unconfigured; that surfaces as a plain
+ * error banner here.
  *
  * Three tabs:
- *   1. List      — filterable table by type / tenant / agent / tag / time
- *   2. Recall    — trace which memories were recalled for a session/query
+ *   1. List      — filterable table by kind / tag
+ *   2. Recall    — semantic recall test: query → ranked {memory, score}
  *   3. Neighbors — vector-similarity neighborhood for a given memory
  */
 
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
+  MemoryKind,
   MemoryRecord,
-  MemoryType,
-  RecallEntry,
-  RecallTraceResponse,
-  SimilarMemory,
+  RecalledMemory,
 } from '@xiaoguai/shared';
-import { ApiError } from '@xiaoguai/shared';
+import { MEMORY_KINDS } from '@xiaoguai/shared';
 import { client } from '../client';
 import { MemoryImportExport } from './MemoryImportExport';
-
-// ---------------------------------------------------------------------------
-// Mock data (shown when /v1/memory/* returns 404)
-// ---------------------------------------------------------------------------
-
-const MOCK_MEMORIES: MemoryRecord[] = [
-  {
-    id: 'mem_mock_001',
-    type: 'fact',
-    content:
-      'The primary data center is located in Frankfurt (eu-central-1). All PII must stay within the EU.',
-    tags: ['infra', 'compliance'],
-    tenant_id: 'ten_demo',
-    agent_id: 'agent_ops',
-    created_at: '2026-05-01T09:00:00Z',
-    last_recalled_at: '2026-05-24T14:30:00Z',
-    recall_count: 12,
-    ttl: null,
-  },
-  {
-    id: 'mem_mock_002',
-    type: 'fact',
-    content:
-      'SLA for Tier-1 incidents is 15 minutes acknowledgment, 4 hours resolution. Escalate to on-call VP after 2 hours.',
-    tags: ['sla', 'incident'],
-    tenant_id: 'ten_demo',
-    agent_id: 'agent_ops',
-    created_at: '2026-05-03T10:15:00Z',
-    last_recalled_at: '2026-05-22T08:10:00Z',
-    recall_count: 7,
-    ttl: null,
-  },
-  {
-    id: 'mem_mock_003',
-    type: 'fact',
-    content:
-      'PostgreSQL version in production is 16.3. The read replica lag threshold is 30 seconds before alert fires.',
-    tags: ['database', 'alerts'],
-    tenant_id: 'ten_demo',
-    agent_id: 'agent_dba',
-    created_at: '2026-05-10T11:00:00Z',
-    last_recalled_at: null,
-    recall_count: 0,
-    ttl: 'P90D',
-  },
-  {
-    id: 'mem_mock_004',
-    type: 'episode',
-    content:
-      'Incident 2026-05-18: disk full on kafka-03 caused 6-minute message lag. Root cause: log rotation misconfigured after the May maintenance window.',
-    tags: ['incident', 'kafka', 'postmortem'],
-    tenant_id: 'ten_demo',
-    agent_id: 'agent_ops',
-    created_at: '2026-05-18T23:45:00Z',
-    last_recalled_at: '2026-05-19T09:00:00Z',
-    recall_count: 3,
-    ttl: 'P365D',
-  },
-  {
-    id: 'mem_mock_005',
-    type: 'episode',
-    content:
-      'On-boarding session with customer Acme Corp (2026-05-20). They need SSO via SAML and a dedicated EU tenant. Follow-up call scheduled for 2026-06-03.',
-    tags: ['customer', 'onboarding', 'acme'],
-    tenant_id: 'ten_demo',
-    agent_id: 'agent_sales',
-    created_at: '2026-05-20T15:00:00Z',
-    last_recalled_at: '2026-05-21T08:30:00Z',
-    recall_count: 2,
-    ttl: 'P180D',
-  },
-  {
-    id: 'mem_mock_006',
-    type: 'preference',
-    content:
-      'User boyi.liang@example.com prefers concise bullet-point summaries. Always include TL;DR at the top. Avoid jargon.',
-    tags: ['user-pref', 'formatting'],
-    tenant_id: 'ten_demo',
-    agent_id: null,
-    created_at: '2026-05-05T08:00:00Z',
-    last_recalled_at: '2026-05-25T10:00:00Z',
-    recall_count: 28,
-    ttl: null,
-  },
-];
-
-const MOCK_RECALL_TRACE: RecallTraceResponse = {
-  session_id: 'sess_mock_abc123',
-  query: null,
-  entries: [
-    {
-      memory_id: 'mem_mock_006',
-      relevance_score: 0.97,
-      agent_id: 'agent_ops',
-      recalled_at: '2026-05-25T10:00:00Z',
-      content_preview: 'User boyi.liang@example.com prefers concise bullet-point summaries…',
-      type: 'preference',
-      tags: ['user-pref', 'formatting'],
-    },
-    {
-      memory_id: 'mem_mock_001',
-      relevance_score: 0.82,
-      agent_id: 'agent_ops',
-      recalled_at: '2026-05-25T10:00:01Z',
-      content_preview: 'The primary data center is located in Frankfurt (eu-central-1)…',
-      type: 'fact',
-      tags: ['infra', 'compliance'],
-    },
-    {
-      memory_id: 'mem_mock_004',
-      relevance_score: 0.71,
-      agent_id: 'agent_ops',
-      recalled_at: '2026-05-25T10:00:01Z',
-      content_preview: 'Incident 2026-05-18: disk full on kafka-03 caused 6-minute message lag…',
-      type: 'episode',
-      tags: ['incident', 'kafka'],
-    },
-  ],
-  total: 3,
-};
-
-const MOCK_SIMILAR: SimilarMemory[] = [
-  {
-    memory_id: 'mem_mock_002',
-    similarity: 0.88,
-    content_preview: 'SLA for Tier-1 incidents is 15 minutes acknowledgment…',
-    type: 'fact',
-    tags: ['sla', 'incident'],
-    created_at: '2026-05-03T10:15:00Z',
-  },
-  {
-    memory_id: 'mem_mock_004',
-    similarity: 0.74,
-    content_preview: 'Incident 2026-05-18: disk full on kafka-03…',
-    type: 'episode',
-    tags: ['incident', 'kafka'],
-    created_at: '2026-05-18T23:45:00Z',
-  },
-];
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const MEMORY_TYPES: MemoryType[] = ['fact', 'episode', 'preference'];
 
 type TabId = 'list' | 'recall' | 'neighbors';
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers (exported for unit tests)
 // ---------------------------------------------------------------------------
 
-function fmtDate(iso: string | null): string {
+export function fmtDate(iso: string | null): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleString(undefined, {
     month: 'short',
@@ -186,39 +38,49 @@ function fmtDate(iso: string | null): string {
   });
 }
 
-function preview(content: string): string {
+export function preview(content: string): string {
   const lines = content.split('\n').slice(0, 2).join(' ');
   return lines.length > 120 ? `${lines.slice(0, 120)}…` : lines;
 }
 
-function typeBadgeClass(type: MemoryType): string {
-  if (type === 'fact') return 'kind-tag kind-tag-chat';
-  if (type === 'episode') return 'kind-tag kind-tag-scheduled';
+export function kindBadgeClass(kind: MemoryKind): string {
+  if (kind === 'facts') return 'kind-tag kind-tag-chat';
+  if (kind === 'episodes') return 'kind-tag kind-tag-scheduled';
   return 'kind-tag kind-tag-im';
 }
 
-// ---------------------------------------------------------------------------
-// 404 banner
-// ---------------------------------------------------------------------------
+/** i18n key for a kind label (reuses the existing type_* keys). */
+export function kindLabelKey(kind: MemoryKind): string {
+  if (kind === 'facts') return 'pane.memory.type_fact';
+  if (kind === 'episodes') return 'pane.memory.type_episode';
+  return 'pane.memory.type_preference';
+}
 
-function NotReadyBanner(): JSX.Element {
-  const { t } = useTranslation();
-  return (
-    <div
-      className="error"
-      role="status"
-      style={{
-        background: '#fffbeb',
-        border: '1px solid #f59e0b',
-        borderRadius: '6px',
-        padding: '0.75rem 1rem',
-        marginBottom: '1rem',
-        color: '#92400e',
-      }}
-    >
-      {t('pane.memory.not_ready_banner')}
-    </div>
-  );
+/** Comma-separated input → trimmed, non-empty tag list. */
+export function tagsFromRaw(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** `datetime-local` input value → RFC 3339 (UTC), or null when blank. */
+export function localInputToIso(value: string): string | null {
+  const v = value.trim();
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/** RFC 3339 → `datetime-local` input value (local time), '' when null. */
+export function isoToLocalInput(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -226,59 +88,34 @@ function NotReadyBanner(): JSX.Element {
 // ---------------------------------------------------------------------------
 
 interface MemoryFormProps {
-  tenantId: string;
   existing: MemoryRecord | null;
   onClose: () => void;
   onSaved: (record: MemoryRecord) => void;
-  is404: boolean;
 }
 
-function MemoryModal({ tenantId, existing, onClose, onSaved, is404 }: MemoryFormProps): JSX.Element {
+function MemoryModal({ existing, onClose, onSaved }: MemoryFormProps): JSX.Element {
   const { t } = useTranslation();
   const isNew = existing === null;
 
-  const [type, setType] = useState<MemoryType>(existing?.type ?? 'fact');
+  const [kind, setKind] = useState<MemoryKind>(existing?.kind ?? 'facts');
   const [content, setContent] = useState(existing?.content ?? '');
   const [tagsRaw, setTagsRaw] = useState((existing?.tags ?? []).join(', '));
-  const [ttl, setTtl] = useState(existing?.ttl ?? '');
+  const [ttlLocal, setTtlLocal] = useState(isoToLocalInput(existing?.ttl_at ?? null));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSave(): Promise<void> {
     setSaving(true);
     setError(null);
-    const tags = tagsRaw
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const ttlVal = ttl.trim() || null;
+    const tags = tagsFromRaw(tagsRaw);
+    const ttlAt = localInputToIso(ttlLocal);
 
     try {
       let saved: MemoryRecord;
-      if (is404) {
-        // Mock: synthesize a fake response so the UI flows correctly.
-        saved = {
-          id: existing?.id ?? `mem_preview_${Date.now()}`,
-          type,
-          content,
-          tags,
-          tenant_id: tenantId || 'ten_demo',
-          agent_id: existing?.agent_id ?? null,
-          created_at: existing?.created_at ?? new Date().toISOString(),
-          last_recalled_at: existing?.last_recalled_at ?? null,
-          recall_count: existing?.recall_count ?? 0,
-          ttl: ttlVal,
-        };
-      } else if (isNew) {
-        saved = await client.createMemory({
-          type,
-          content,
-          tags,
-          tenant_id: tenantId,
-          ttl: ttlVal,
-        });
+      if (isNew) {
+        saved = await client.createMemory({ kind, content, tags, ttl_at: ttlAt });
       } else {
-        saved = await client.updateMemory(existing!.id, { content, tags, ttl: ttlVal });
+        saved = await client.updateMemory(existing!.id, { content, tags, ttl_at: ttlAt });
       }
       onSaved(saved);
     } catch (e) {
@@ -324,14 +161,14 @@ function MemoryModal({ tenantId, existing, onClose, onSaved, is404 }: MemoryForm
           <label>
             {t('pane.memory.field_type')}
             <select
-              value={type}
-              onChange={(e) => setType(e.target.value as MemoryType)}
+              value={kind}
+              onChange={(e) => setKind(e.target.value as MemoryKind)}
               disabled={!isNew}
               style={{ marginLeft: '0.5rem' }}
             >
-              {MEMORY_TYPES.map((mt) => (
-                <option key={mt} value={mt}>
-                  {t(`pane.memory.type_${mt}`)}
+              {MEMORY_KINDS.map((mk) => (
+                <option key={mk} value={mk}>
+                  {t(kindLabelKey(mk))}
                 </option>
               ))}
             </select>
@@ -361,10 +198,10 @@ function MemoryModal({ tenantId, existing, onClose, onSaved, is404 }: MemoryForm
           <label>
             {t('pane.memory.field_ttl')}
             <input
-              value={ttl}
-              onChange={(e) => setTtl(e.target.value)}
-              placeholder={t('pane.memory.placeholder_ttl')}
-              style={{ marginLeft: '0.5rem', width: '60%' }}
+              type="datetime-local"
+              value={ttlLocal}
+              onChange={(e) => setTtlLocal(e.target.value)}
+              style={{ marginLeft: '0.5rem' }}
             />
           </label>
         </div>
@@ -388,10 +225,9 @@ interface DeleteConfirmProps {
   record: MemoryRecord;
   onCancel: () => void;
   onConfirmed: () => void;
-  is404: boolean;
 }
 
-function DeleteConfirmModal({ record, onCancel, onConfirmed, is404 }: DeleteConfirmProps): JSX.Element {
+function DeleteConfirmModal({ record, onCancel, onConfirmed }: DeleteConfirmProps): JSX.Element {
   const { t } = useTranslation();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -400,9 +236,7 @@ function DeleteConfirmModal({ record, onCancel, onConfirmed, is404 }: DeleteConf
     setDeleting(true);
     setError(null);
     try {
-      if (!is404) {
-        await client.deleteMemory(record.id);
-      }
+      await client.deleteMemory(record.id);
       onConfirmed();
     } catch (e) {
       setError((e as Error).message);
@@ -473,62 +307,38 @@ function DeleteConfirmModal({ record, onCancel, onConfirmed, is404 }: DeleteConf
 // Tab 1: List view
 // ---------------------------------------------------------------------------
 
-interface ListViewProps {
-  is404: boolean;
-}
-
-function ListView({ is404 }: ListViewProps): JSX.Element {
+function ListView(): JSX.Element {
   const { t } = useTranslation();
 
   const [records, setRecords] = useState<MemoryRecord[]>([]);
-  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Filters
-  const [filterType, setFilterType] = useState<MemoryType | ''>('');
-  const [filterTenant, setFilterTenant] = useState('');
-  const [filterAgent, setFilterAgent] = useState('');
+  const [filterKind, setFilterKind] = useState<MemoryKind | ''>('');
   const [filterTag, setFilterTag] = useState('');
-  const [filterSince, setFilterSince] = useState('');
-  const [filterUntil, setFilterUntil] = useState('');
 
-  // Modals
+  // Modals: undefined = closed, null = new, MemoryRecord = edit existing
   const [editingRecord, setEditingRecord] = useState<MemoryRecord | null | undefined>(undefined);
-  // undefined = closed, null = new, MemoryRecord = edit existing
   const [deletingRecord, setDeletingRecord] = useState<MemoryRecord | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      if (is404) {
-        let filtered = MOCK_MEMORIES;
-        if (filterType) filtered = filtered.filter((r) => r.type === filterType);
-        if (filterTenant) filtered = filtered.filter((r) => r.tenant_id.includes(filterTenant));
-        if (filterAgent) filtered = filtered.filter((r) => r.agent_id?.includes(filterAgent));
-        if (filterTag) filtered = filtered.filter((r) => r.tags.some((tg) => tg.includes(filterTag)));
-        setRecords(filtered);
-        setTotal(filtered.length);
-      } else {
-        const resp = await client.listMemories({
-          type: filterType || undefined,
-          tenant_id: filterTenant || undefined,
-          agent_id: filterAgent || undefined,
-          tag: filterTag || undefined,
-          since: filterSince || undefined,
-          until: filterUntil || undefined,
-          limit: 50,
-        });
-        setRecords(resp.records);
-        setTotal(resp.total);
-      }
+      const tag = filterTag.trim();
+      const resp = await client.listMemories({
+        kind: filterKind || undefined,
+        tags: tag ? [tag] : undefined,
+        limit: 50,
+      });
+      setRecords(resp);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [is404, filterType, filterTenant, filterAgent, filterTag, filterSince, filterUntil]);
+  }, [filterKind, filterTag]);
 
   useEffect(() => {
     void load();
@@ -545,11 +355,8 @@ function ListView({ is404 }: ListViewProps): JSX.Element {
 
   function handleDeleted(id: string): void {
     setRecords((prev) => prev.filter((r) => r.id !== id));
-    setTotal((t) => Math.max(0, t - 1));
     setDeletingRecord(null);
   }
-
-  const tenantForNew = filterTenant || 'ten_dev';
 
   return (
     <>
@@ -558,37 +365,17 @@ function ListView({ is404 }: ListViewProps): JSX.Element {
         <label>
           {t('pane.memory.filter_type')}
           <select
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value as MemoryType | '')}
+            value={filterKind}
+            onChange={(e) => setFilterKind(e.target.value as MemoryKind | '')}
             style={{ marginLeft: '0.4rem' }}
           >
             <option value="">{t('pane.memory.type_all')}</option>
-            {MEMORY_TYPES.map((mt) => (
-              <option key={mt} value={mt}>
-                {t(`pane.memory.type_${mt}`)}
+            {MEMORY_KINDS.map((mk) => (
+              <option key={mk} value={mk}>
+                {t(kindLabelKey(mk))}
               </option>
             ))}
           </select>
-        </label>
-        <label>
-          {t('pane.memory.filter_tenant')}
-          <input
-            value={filterTenant}
-            onChange={(e) => setFilterTenant(e.target.value)}
-            className="search"
-            placeholder="ten_dev"
-            style={{ marginLeft: '0.4rem', width: '9rem' }}
-          />
-        </label>
-        <label>
-          {t('pane.memory.filter_agent')}
-          <input
-            value={filterAgent}
-            onChange={(e) => setFilterAgent(e.target.value)}
-            className="search"
-            placeholder="agent_id"
-            style={{ marginLeft: '0.4rem', width: '9rem' }}
-          />
         </label>
         <label>
           {t('pane.memory.filter_tag')}
@@ -597,25 +384,7 @@ function ListView({ is404 }: ListViewProps): JSX.Element {
             onChange={(e) => setFilterTag(e.target.value)}
             className="search"
             placeholder="tag"
-            style={{ marginLeft: '0.4rem', width: '7rem' }}
-          />
-        </label>
-        <label>
-          {t('pane.memory.filter_since')}
-          <input
-            type="date"
-            value={filterSince}
-            onChange={(e) => setFilterSince(e.target.value)}
-            style={{ marginLeft: '0.4rem' }}
-          />
-        </label>
-        <label>
-          {t('pane.memory.filter_until')}
-          <input
-            type="date"
-            value={filterUntil}
-            onChange={(e) => setFilterUntil(e.target.value)}
-            style={{ marginLeft: '0.4rem' }}
+            style={{ marginLeft: '0.4rem', width: '9rem' }}
           />
         </label>
         <button onClick={() => void load()} disabled={loading}>
@@ -632,7 +401,7 @@ function ListView({ is404 }: ListViewProps): JSX.Element {
       {error && <div className="error">{t('common.failed', { message: error })}</div>}
 
       <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0.5rem 0 0.75rem' }}>
-        {t('pane.memory.list_count', { count: records.length, total })}
+        {t('pane.memory.list_count', { count: records.length, total: records.length })}
       </p>
 
       {records.length === 0 && !loading && (
@@ -656,9 +425,7 @@ function ListView({ is404 }: ListViewProps): JSX.Element {
             {records.map((rec) => (
               <tr key={rec.id}>
                 <td>
-                  <span className={typeBadgeClass(rec.type)}>
-                    {t(`pane.memory.type_${rec.type}`)}
-                  </span>
+                  <span className={kindBadgeClass(rec.kind)}>{t(kindLabelKey(rec.kind))}</span>
                 </td>
                 <td style={{ maxWidth: '28rem', fontSize: '0.8rem', color: '#374151' }}>
                   {preview(rec.content)}
@@ -705,11 +472,9 @@ function ListView({ is404 }: ListViewProps): JSX.Element {
 
       {editingRecord !== undefined && (
         <MemoryModal
-          tenantId={tenantForNew}
           existing={editingRecord}
           onClose={() => setEditingRecord(undefined)}
           onSaved={handleSaved}
-          is404={is404}
         />
       )}
 
@@ -718,7 +483,6 @@ function ListView({ is404 }: ListViewProps): JSX.Element {
           record={deletingRecord}
           onCancel={() => setDeletingRecord(null)}
           onConfirmed={() => handleDeleted(deletingRecord.id)}
-          is404={is404}
         />
       )}
     </>
@@ -726,36 +490,29 @@ function ListView({ is404 }: ListViewProps): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 2: Recall trace view
+// Tab 2: Semantic recall view
 // ---------------------------------------------------------------------------
 
-interface RecallViewProps {
-  is404: boolean;
-}
-
-function RecallView({ is404 }: RecallViewProps): JSX.Element {
+function RecallView(): JSX.Element {
   const { t } = useTranslation();
-  const [sessionId, setSessionId] = useState('');
   const [query, setQuery] = useState('');
-  const [trace, setTrace] = useState<RecallTraceResponse | null>(null);
+  const [topK, setTopK] = useState(5);
+  const [kindFilter, setKindFilter] = useState<MemoryKind | ''>('');
+  const [hits, setHits] = useState<RecalledMemory[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSearch(): Promise<void> {
-    if (!sessionId.trim() && !query.trim()) return;
+    if (!query.trim()) return;
     setLoading(true);
     setError(null);
     try {
-      if (is404) {
-        setTrace(MOCK_RECALL_TRACE);
-      } else {
-        const resp = await client.recallMemoriesForSession({
-          session_id: sessionId.trim() || undefined,
-          query: query.trim() || undefined,
-          limit: 20,
-        });
-        setTrace(resp);
-      }
+      const resp = await client.recallMemories({
+        query: query.trim(),
+        top_k: topK,
+        kind_filter: kindFilter || undefined,
+      });
+      setHits(resp);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -771,16 +528,6 @@ function RecallView({ is404 }: RecallViewProps): JSX.Element {
 
       <div className="today-filters" role="group" aria-label={t('pane.memory.recall_filters_aria')}>
         <label>
-          {t('pane.memory.recall_session_id')}
-          <input
-            value={sessionId}
-            onChange={(e) => setSessionId(e.target.value)}
-            className="search"
-            placeholder="sess_abc123"
-            style={{ marginLeft: '0.4rem', width: '14rem' }}
-          />
-        </label>
-        <label>
           {t('pane.memory.recall_query')}
           <input
             value={query}
@@ -790,61 +537,79 @@ function RecallView({ is404 }: RecallViewProps): JSX.Element {
             style={{ marginLeft: '0.4rem', width: '18rem' }}
           />
         </label>
-        <button
-          onClick={() => void handleSearch()}
-          disabled={loading || (!sessionId.trim() && !query.trim())}
-        >
+        <label>
+          {t('pane.memory.filter_type')}
+          <select
+            value={kindFilter}
+            onChange={(e) => setKindFilter(e.target.value as MemoryKind | '')}
+            style={{ marginLeft: '0.4rem' }}
+          >
+            <option value="">{t('pane.memory.type_all')}</option>
+            {MEMORY_KINDS.map((mk) => (
+              <option key={mk} value={mk}>
+                {t(kindLabelKey(mk))}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          {t('pane.memory.neighbors_top_k')}
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={topK}
+            onChange={(e) => setTopK(Number(e.target.value))}
+            style={{ marginLeft: '0.4rem', width: '4rem' }}
+          />
+        </label>
+        <button onClick={() => void handleSearch()} disabled={loading || !query.trim()}>
           {loading ? t('common.loading') : t('pane.memory.recall_btn_search')}
         </button>
       </div>
 
       {error && <div className="error">{t('common.failed', { message: error })}</div>}
 
-      {trace && (
+      {hits && (
         <section aria-label={t('pane.memory.recall_results_aria')}>
           <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0.75rem 0 0.5rem' }}>
-            {t('pane.memory.recall_result_count', { count: trace.entries.length, total: trace.total })}
-            {trace.session_id ? ` · session: ${trace.session_id}` : ''}
+            {t('pane.memory.recall_result_count', { count: hits.length, total: hits.length })}
           </p>
-          {trace.entries.length === 0 && (
-            <div className="empty">{t('pane.memory.recall_empty')}</div>
-          )}
-          {trace.entries.length > 0 && (
+          {hits.length === 0 && <div className="empty">{t('pane.memory.recall_empty')}</div>}
+          {hits.length > 0 && (
             <table className="usage-table">
               <thead>
                 <tr>
                   <th scope="col">{t('pane.memory.col_type')}</th>
                   <th scope="col">{t('pane.memory.col_preview')}</th>
                   <th scope="col">{t('pane.memory.col_tags')}</th>
-                  <th scope="col">{t('pane.memory.recall_col_agent')}</th>
                   <th scope="col">{t('pane.memory.recall_col_score')}</th>
-                  <th scope="col">{t('pane.memory.recall_col_recalled_at')}</th>
+                  <th scope="col">{t('pane.memory.col_created')}</th>
                 </tr>
               </thead>
               <tbody>
-                {trace.entries.map((entry: RecallEntry) => (
-                  <tr key={`${entry.memory_id}-${entry.recalled_at}`}>
+                {hits.map((hit) => (
+                  <tr key={hit.memory.id}>
                     <td>
-                      <span className={typeBadgeClass(entry.type)}>
-                        {t(`pane.memory.type_${entry.type}`)}
+                      <span className={kindBadgeClass(hit.memory.kind)}>
+                        {t(kindLabelKey(hit.memory.kind))}
                       </span>
                     </td>
                     <td style={{ maxWidth: '26rem', fontSize: '0.8rem', color: '#374151' }}>
-                      {entry.content_preview}
+                      {preview(hit.memory.content)}
                     </td>
                     <td style={{ fontSize: '0.78rem' }}>
-                      {entry.tags.map((tag) => (
+                      {hit.memory.tags.map((tag) => (
                         <span key={tag} className="kind-tag" style={{ marginRight: '0.25rem', opacity: 0.75 }}>
                           {tag}
                         </span>
                       ))}
                     </td>
-                    <td style={{ fontSize: '0.8rem' }}>{entry.agent_id}</td>
                     <td style={{ fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums' }}>
-                      {(entry.relevance_score * 100).toFixed(1)}%
+                      {(hit.score * 100).toFixed(1)}%
                     </td>
                     <td style={{ whiteSpace: 'nowrap', fontSize: '0.8rem' }}>
-                      {fmtDate(entry.recalled_at)}
+                      {fmtDate(hit.memory.created_at)}
                     </td>
                   </tr>
                 ))}
@@ -861,16 +626,12 @@ function RecallView({ is404 }: RecallViewProps): JSX.Element {
 // Tab 3: Vector neighbors view
 // ---------------------------------------------------------------------------
 
-interface NeighborsViewProps {
-  is404: boolean;
-}
-
-function NeighborsView({ is404 }: NeighborsViewProps): JSX.Element {
+function NeighborsView(): JSX.Element {
   const { t } = useTranslation();
   const [memoryId, setMemoryId] = useState('');
   const [topK, setTopK] = useState(5);
   const [anchor, setAnchor] = useState<MemoryRecord | null>(null);
-  const [neighbors, setNeighbors] = useState<SimilarMemory[] | null>(null);
+  const [neighbors, setNeighbors] = useState<RecalledMemory[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -879,18 +640,12 @@ function NeighborsView({ is404 }: NeighborsViewProps): JSX.Element {
     setLoading(true);
     setError(null);
     try {
-      if (is404) {
-        const mockAnchor = MOCK_MEMORIES.find((m) => m.id === memoryId.trim()) ?? MOCK_MEMORIES[0]!;
-        setAnchor(mockAnchor);
-        setNeighbors(MOCK_SIMILAR);
-      } else {
-        const [anchorRec, simResp] = await Promise.all([
-          client.getMemory(memoryId.trim()),
-          client.findSimilarMemories(memoryId.trim(), { top_k: topK }),
-        ]);
-        setAnchor(anchorRec);
-        setNeighbors(simResp.neighbors);
-      }
+      const [anchorRec, similar] = await Promise.all([
+        client.getMemory(memoryId.trim()),
+        client.findSimilarMemories(memoryId.trim(), { top_k: topK }),
+      ]);
+      setAnchor(anchorRec);
+      setNeighbors(similar);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -946,7 +701,7 @@ function NeighborsView({ is404 }: NeighborsViewProps): JSX.Element {
           aria-label={t('pane.memory.neighbors_anchor_aria')}
         >
           <strong>{t('pane.memory.neighbors_anchor_label')}</strong>{' '}
-          <span className={typeBadgeClass(anchor.type)}>{t(`pane.memory.type_${anchor.type}`)}</span>{' '}
+          <span className={kindBadgeClass(anchor.kind)}>{t(kindLabelKey(anchor.kind))}</span>{' '}
           <code style={{ fontSize: '0.78rem' }}>{anchor.id}</code>
           <p style={{ marginTop: '0.4rem', color: '#374151' }}>{preview(anchor.content)}</p>
         </div>
@@ -969,18 +724,18 @@ function NeighborsView({ is404 }: NeighborsViewProps): JSX.Element {
                 </tr>
               </thead>
               <tbody>
-                {neighbors.map((nb: SimilarMemory) => (
-                  <tr key={nb.memory_id}>
+                {neighbors.map((nb) => (
+                  <tr key={nb.memory.id}>
                     <td>
-                      <span className={typeBadgeClass(nb.type)}>
-                        {t(`pane.memory.type_${nb.type}`)}
+                      <span className={kindBadgeClass(nb.memory.kind)}>
+                        {t(kindLabelKey(nb.memory.kind))}
                       </span>
                     </td>
                     <td style={{ maxWidth: '26rem', fontSize: '0.8rem', color: '#374151' }}>
-                      {nb.content_preview}
+                      {preview(nb.memory.content)}
                     </td>
                     <td style={{ fontSize: '0.78rem' }}>
-                      {nb.tags.map((tag) => (
+                      {nb.memory.tags.map((tag) => (
                         <span key={tag} className="kind-tag" style={{ marginRight: '0.25rem', opacity: 0.75 }}>
                           {tag}
                         </span>
@@ -990,14 +745,14 @@ function NeighborsView({ is404 }: NeighborsViewProps): JSX.Element {
                       style={{
                         fontSize: '0.8rem',
                         fontVariantNumeric: 'tabular-nums',
-                        color: nb.similarity > 0.85 ? '#dc2626' : nb.similarity > 0.7 ? '#d97706' : '#374151',
-                        fontWeight: nb.similarity > 0.85 ? 600 : undefined,
+                        color: nb.score > 0.85 ? '#dc2626' : nb.score > 0.7 ? '#d97706' : '#374151',
+                        fontWeight: nb.score > 0.85 ? 600 : undefined,
                       }}
                     >
-                      {(nb.similarity * 100).toFixed(1)}%
+                      {(nb.score * 100).toFixed(1)}%
                     </td>
                     <td style={{ whiteSpace: 'nowrap', fontSize: '0.8rem' }}>
-                      {fmtDate(nb.created_at)}
+                      {fmtDate(nb.memory.created_at)}
                     </td>
                   </tr>
                 ))}
@@ -1017,56 +772,14 @@ function NeighborsView({ is404 }: NeighborsViewProps): JSX.Element {
 export function MemoryPane(): JSX.Element {
   const { t } = useTranslation();
   const [tab, setTab] = useState<TabId>('list');
-  const [is404, setIs404] = useState(false);
-  const [checked, setChecked] = useState(false);
-
-  // Probe the memory endpoint once on mount to decide whether to use
-  // the real API or fall back to mock data.
-  useEffect(() => {
-    let cancelled = false;
-    client
-      .listMemories({ limit: 1 })
-      .then(() => {
-        if (!cancelled) setIs404(false);
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) {
-          setIs404(e instanceof ApiError && e.status === 404);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setChecked(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (!checked) {
-    return (
-      <>
-        <header className="today-header">
-          <h1>{t('pane.memory.title')}</h1>
-        </header>
-        <div className="empty">{t('common.loading')}</div>
-      </>
-    );
-  }
 
   return (
     <>
       <header className="today-header">
         <h1>{t('pane.memory.title')}</h1>
-        <div className="today-meta" style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-          {t('pane.memory.adr_label')}
-        </div>
       </header>
 
-      {is404 && <NotReadyBanner />}
-
-      {/* T7.3 — import/export against the SHIPPED /v1/memories routes
-          (works even while the tabs above still target the stale
-          404-fallback-era /v1/memory contract). */}
+      {/* T7.3 — JSONL import/export toolbar (shared /v1/memories routes). */}
       <MemoryImportExport />
 
       {/* Tab nav */}
@@ -1103,9 +816,9 @@ export function MemoryPane(): JSX.Element {
       </div>
 
       {/* Tab panels */}
-      {tab === 'list' && <ListView is404={is404} />}
-      {tab === 'recall' && <RecallView is404={is404} />}
-      {tab === 'neighbors' && <NeighborsView is404={is404} />}
+      {tab === 'list' && <ListView />}
+      {tab === 'recall' && <RecallView />}
+      {tab === 'neighbors' && <NeighborsView />}
     </>
   );
 }

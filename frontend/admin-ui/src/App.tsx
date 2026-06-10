@@ -13,7 +13,6 @@ import { OutcomesPane } from './panes/Outcomes';
 import { SkillPacksPane } from './panes/SkillPacks';
 import { HotlPoliciesPane } from './panes/HotlPolicies';
 import { AnomalyPane } from './panes/Anomaly';
-import { KanbanPane } from './panes/Kanban';
 import { MemoryPane } from './panes/Memory';
 import { PersonasPane } from './panes/Personas';
 import { ExpertTeamsPane } from './panes/ExpertTeams';
@@ -51,10 +50,6 @@ export function App() {
         {/* v1.4: Anomaly detector dashboard (planned endpoint; degrades gracefully). */}
         <NavLink to="/anomaly" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.anomaly')}
-        </NavLink>
-        {/* v1.4.0: Kanban — task queue board (mock fallback until backend ships). */}
-        <NavLink to="/kanban" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Kanban
         </NavLink>
         <div className="nav-section">Manage</div>
         <NavLink to="/providers" className={({ isActive }) => (isActive ? 'active' : '')}>
@@ -106,7 +101,6 @@ export function App() {
           <Route path="/usage" element={<UsagePane />} />
           <Route path="/outcomes" element={<OutcomesPane />} />
           <Route path="/anomaly" element={<AnomalyPane />} />
-          <Route path="/kanban" element={<KanbanPane />} />
           <Route path="/marketplace" element={<MarketplacePane />} />
           <Route path="/skills" element={<SkillPacksPane />} />
           <Route path="/mcp-servers" element={<McpServersPane />} />
