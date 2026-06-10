@@ -18,6 +18,7 @@ Start here to deploy, run, and maintain xiaoguai in production.
 | Day-zero install | [user-guide/quickstart.md](user-guide/quickstart.md) `[main]` |
 | Local experiment setup | [user-guide/local-experiment.md](user-guide/local-experiment.md) `[main]` |
 | Expert center (pick expert / teams / suggest) | [user-guide/expert-center.md](user-guide/expert-center.md) `[main]` |
+| Self-healing incidents (alert → RCA → approved fix) | [user-guide/self-healing.md](user-guide/self-healing.md) `[main]` |
 | Backup and restore | [user-guide/backup-wave3.md](user-guide/backup-wave3.md) `[branch: docs/backup-wave3]` |
 | CLI reference | [user-guide/cli/README.md](user-guide/cli/README.md) + sub-pages `[branch: docs/cli-wave3]` |
 | All runbooks | See [Runbooks table](#runbooks) below |
