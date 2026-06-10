@@ -187,12 +187,12 @@ impl HotlPolicyStore for SqliteHotlPolicyStore {
 
 // ── enforcer ──────────────────────────────────────────────────────────────────
 
-/// SEC-02: tool-call scopes that must NOT silently allow when no HotL policy
+/// SEC-02: tool-call scopes that must NOT silently allow when no `HotL` policy
 /// is declared. Covers code execution, file mutation, version-control push,
 /// and shell/egress — the scopes a prompt-injection would abuse to exfiltrate
 /// or persist. Matched by exact name OR by the `tool_call.execute_*` /
 /// `tool_call.git_*` prefixes so new exec/vcs tools inherit the safe default.
-/// Read-only tools (read_file, grep, list, llm_call, …) are intentionally
+/// Read-only tools (`read_file`, grep, list, `llm_call`, …) are intentionally
 /// absent so the agent stays usable with no policy configured.
 fn is_high_risk_scope(scope: &str) -> bool {
     const HIGH_RISK: &[&str] = &[

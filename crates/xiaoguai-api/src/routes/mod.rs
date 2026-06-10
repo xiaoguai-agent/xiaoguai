@@ -364,7 +364,7 @@ async fn healthz() -> &'static str {
 /// SEC-06: build the CORS layer. The bundled web UI is served same-origin, so
 /// cross-origin access is opt-in. Origins listed in
 /// `XIAOGUAI_CORS_ALLOWED_ORIGINS` (comma-separated) are allowed verbatim;
-/// otherwise only loopback origins (localhost / 127.0.0.1 / [::1] on any port)
+/// otherwise only loopback origins (`localhost` / `127.0.0.1` / `[::1]` on any port)
 /// are reflected — enough for the same-origin UI and local dev (vite), while
 /// remote sites get no CORS headers and the browser blocks them. Replaces the
 /// previous `CorsLayer::permissive()` which echoed any Origin.

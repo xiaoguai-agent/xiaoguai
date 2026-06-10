@@ -50,7 +50,7 @@ const MAX_SUBPROCS: u64 = 1024;
 /// SEC-10: cap on the size of any single file the snippet may write
 /// (`ulimit -f`, `RLIMIT_FSIZE`) — the disk-fill guard. Enforced: a failure
 /// to apply it aborts the run. POSIX `ulimit -f` counts **512-byte blocks**:
-/// 2 GiB / 512 B = 4_194_304 blocks.
+/// 2 GiB / 512 B = `4_194_304` blocks.
 const MAX_FILE_BLOCKS: u64 = (2 * 1024 * 1024 * 1024) / 512;
 
 /// Configuration for a single execution call. Typically constructed once

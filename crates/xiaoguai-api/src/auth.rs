@@ -152,15 +152,12 @@ pub async fn require_auth(
     // validator. The static validator treats it as base64(user:pass); the
     // test stub treats any non-empty string as valid.
     let credential = header_val.split_once(' ').map_or(header_val, |(_, c)| c);
-    match validator.validate(credential).await {
-        Ok(claims) => {
-            req.extensions_mut().insert(claims);
-            next.run(req).await
-        }
-        Err(_) => {
-            throttle_after_failure().await;
-            unauthorized_response()
-        }
+    if let Ok(claims) = validator.validate(credential).await {
+        req.extensions_mut().insert(claims);
+        next.run(req).await
+    } else {
+        throttle_after_failure().await;
+        unauthorized_response()
     }
 }
 
@@ -183,7 +180,9 @@ static AUTH_FAILURES: std::sync::LazyLock<std::sync::Mutex<(std::time::Instant, 
 /// sleep for an escalating (capped) delay before the caller returns 401.
 async fn throttle_after_failure() {
     let delay = {
-        let mut guard = AUTH_FAILURES.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = AUTH_FAILURES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (start, count) = &mut *guard;
         if start.elapsed() > AUTH_FAIL_WINDOW {
             *start = std::time::Instant::now();
