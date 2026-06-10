@@ -104,6 +104,7 @@ async fn build_state_with_backend(
         watchers: None,
         loops: None,
         teams: None,
+        incidents: None,
         team_audit: None,
         decision_registry: Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
     };

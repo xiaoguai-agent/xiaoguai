@@ -15,6 +15,7 @@ pub mod error;
 pub mod eval;
 pub mod hotl;
 pub mod identity;
+pub mod incident_store;
 pub mod incidents;
 pub mod loop_tools;
 pub mod loops;
@@ -51,6 +52,11 @@ pub use eval::{
 pub use hotl::{
     CreateHotlPolicyRequest, HotlEnforcer, HotlPolicy, HotlPolicyStore, HotlPolicyStoreError,
     HotlVerdictResult, InMemoryHotlPolicyStore, StaticHotlEnforcer,
+};
+pub use incident_store::{
+    InMemoryIncidentStore, IncidentDetails, IncidentRecord, IncidentStatus, IncidentStore,
+    IncidentStoreError, IncidentStoreResult, IngestOutcome, RcaRecord, RepairRecord,
+    SqliteIncidentStore,
 };
 pub use incidents::{
     ActionItem, DatadogSource, ImNotification, Incident, IncidentSource, NormalizeError, PrDraft,

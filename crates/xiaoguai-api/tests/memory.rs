@@ -72,6 +72,7 @@ fn build_state(memory_store: Option<Arc<dyn MemoryStore>>) -> AppState {
         watchers: None,
         loops: None,
         teams: None,
+        incidents: None,
         team_audit: None,
         decision_registry: std::sync::Arc::new(
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),

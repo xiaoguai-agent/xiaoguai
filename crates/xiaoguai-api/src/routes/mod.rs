@@ -5,6 +5,7 @@ pub mod audit_exports;
 pub mod experts;
 pub mod hotl;
 pub mod hotl_decisions;
+pub mod incidents;
 pub mod loops;
 pub mod mcp;
 pub mod memory;
@@ -218,6 +219,11 @@ pub fn router(state: AppState) -> Router {
                 .put(teams::attach_team)
                 .delete(teams::detach_team),
         )
+        // T6 self-healing (GLUE-1) — incident visibility for UI/CLI. The
+        // token-gated ingest POST lives in `public_v1` below, outside the
+        // owner-auth layer.
+        .route("/v1/incidents", get(incidents::list_incidents))
+        .route("/v1/incidents/{id}", get(incidents::get_incident))
         // T3 expert center — deterministic "一句话找专家" suggestion
         // (read-only; user confirms before any attach).
         .route("/v1/experts/suggest", post(experts::suggest_experts))
@@ -261,10 +267,18 @@ pub fn router(state: AppState) -> Router {
     // webhook token table. The admin route at
     // `/v1/admin/scheduler/webhooks/{route_id}` stays inside the v1 layer for
     // internal callers.
-    let public_v1 = Router::new().route(
-        "/v1/scheduler/webhooks/{route_id}",
-        post(scheduler_public::scheduler_webhook_public),
-    );
+    let public_v1 = Router::new()
+        .route(
+            "/v1/scheduler/webhooks/{route_id}",
+            post(scheduler_public::scheduler_webhook_public),
+        )
+        // T6 self-healing: alert intake from Sentry/Datadog/manual callers.
+        // Same out-of-band auth as the scheduler webhook (X-Xiaoguai-Token
+        // against the webhook token table, route id "incidents").
+        .route(
+            "/v1/incidents/ingest/{source}",
+            post(incidents::ingest_incident),
+        );
 
     // v0.9.1: optionally publish xiaoguai's Toolbox as an MCP server at
     // `/v1/mcp/serve`. Off by default (`XIAOGUAI_MCP__PUBLISH`). When enabled it
