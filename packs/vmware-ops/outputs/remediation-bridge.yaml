@@ -1,0 +1,50 @@
+---
+# Remediation Bridge — the "advice → action" gate (Agent Bridge).
+#
+# Turns an approved change_plan / recommendation into a vmware-pilot workflow,
+# behind a HOTL approval gate. This is the ONLY path that mutates VMware
+# infrastructure in this pack:
+#   design → (HOTL approval BEFORE confirm) → confirm → run → (rollback on fail)
+# Rejected plans stay as un-runnable drafts. Every step is audited.
+
+output: remediation-bridge
+
+# Execution server: vmware-pilot owns NL→workflow, the approval-gated state
+# machine, audit, and automatic rollback. The bridge never calls write tools
+# on the read-only skills directly.
+mcp_server: vmware_pilot
+
+pilot:
+  # 1) Draft a workflow from the change_plan intent (no side effects).
+  design:
+    tool: vmware_pilot.design_workflow
+    params:
+      intent: "{{ rca.change_plan.intent | default(recommendation.intent) }}"
+      target: "{{ rca.change_plan.target | default(recommendation.target) }}"
+
+  # 2) HOTL approval gate — REQUIRED before confirm. A human (or policy)
+  #    must approve; until then the workflow stays DRAFT and un-runnable.
+  #    Risk is taken as max(plan-asserted, pilot-catalog-derived).
+  approval:
+    required: true
+    gate: hotl                       # xiaoguai HOTL enforcer (consult/execute)
+    risk: "{{ rca.change_plan.risk | default('high') }}"
+    # High-risk changes additionally require explicit confirmed_by, never
+    # injected by the agent — supplied by the approving human.
+    require_confirmed_by: true
+
+  # 3) Run only after approval; pilot streams state and self-rolls-back on
+  #    a failed step. The bridge fails closed on any error envelope.
+  run:
+    tool: vmware_pilot.run_workflow
+    on_failure: rollback
+
+# Audit: every bridge transition (design / approval / confirm / run / rollback)
+# writes an HMAC-chained audit row via xiaoguai's audit log.
+audit:
+  attribution: "vmware-ops:bridge:{{ incident.id | default('adhoc') }}"
+
+# Deferred:
+#   - cancel_workflow for rejected drafts (upstream vmware-pilot gap,
+#     VMware-Pilot#7). Until then rejected drafts are left PENDING with
+#     workflow_id in the REJECTED audit row for manual cleanup.

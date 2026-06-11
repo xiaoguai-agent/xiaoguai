@@ -1,0 +1,32 @@
+# RCA Draft · {{ incident.title }}
+
+> 自动生成的根因分析草稿 · 置信度 **{{ rca.confidence }}** · 来源 {{ incident.source }} · {{ incident.occurred_at }}
+> ⚠️ 仅诊断；任何变更须经 Agent Bridge → vmware-pilot 审批执行，本草稿未执行任何操作。
+
+## 摘要
+{{ rca.summary }}
+
+## 影响
+{{ rca.impact }}
+
+## 根因
+{{ rca.root_cause }}
+
+## 时间线
+{% for t in rca.timeline %}- `{{ t.time }}` — {{ t.event }}
+{% endfor %}
+
+## 建议变更（草稿，待审批）
+{% if rca.change_plan %}
+- 意图：{{ rca.change_plan.intent }}
+- 对象：{{ rca.change_plan.target }}
+- 风险：**{{ rca.change_plan.risk }}** · 需审批：{{ rca.change_plan.requires_approval }}
+
+> 经 vmware-pilot `design_workflow` 生成工作流草稿 → HOTL 审批 → 执行 → 失败自动回滚。
+{% else %}
+（无需变更 / 证据不足，建议人工复核。）
+{% endif %}
+
+## 证据
+{% for ref in rca.evidence_refs %}- `{{ ref }}`
+{% endfor %}

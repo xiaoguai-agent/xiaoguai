@@ -1,0 +1,78 @@
+---
+# VMware Ops Skill Pack — pack manifest
+# ---------------------------------------------------------------------------
+# Vertical ops pack for VMware infrastructure. Consumes the vmware-skill
+# family (9 read-only/diagnostic MCP servers) + vmware-pilot (execution +
+# approval + rollback) over MCP. The pack itself reimplements NOTHING — every
+# tool call goes to a vmware-skill MCP server, whose own @vmware_tool layer
+# carries audit / sanitize / dry-run / rollback.
+#
+# Install:  xiaoguai pack install packs/vmware-ops/
+# ---------------------------------------------------------------------------
+
+name: vmware-ops
+version: "0.1.0"
+description: >
+  VMware infrastructure ops agent-team: an expert advice team (9
+  conversation-only domain personas over vSphere / vSAN / VKS / NSX /
+  NSX-security / Aria / AVI / hardening) plus an incident-triage agent that
+  drafts a root-cause analysis and a remediation change-plan. Every change is
+  routed through the Agent Bridge → vmware-pilot workflow with a HOTL approval
+  gate and rollback — the team never mutates infrastructure autonomously.
+
+author: "Xiaoguai Maintainers"
+license: "Apache-2.0"
+
+requires:
+  xiaoguai_version: ">=1.14.0"
+  features:
+    - llm        # advice + RCA drafting need an LLM backend
+    - scheduler  # inbound vCenter alarm webhook + optional poll
+  # vCenter / NSX / Aria connection config consumed by the vmware-skill MCP
+  # servers (the pack passes these through; it never reads creds itself).
+  env_optional:
+    - VSPHERE_HOST
+    - VSPHERE_USER
+    - VSPHERE_PASSWORD
+    - NSX_HOST
+    - ARIA_HOST
+    - VMWARE_OPS_IM_CHANNEL
+
+# External MCP servers this pack's agents call. Each maps to a vmware-skill
+# family server, launched per the family standard (`uvx --from <pkg> <pkg>-mcp`).
+# Read-only servers back the advice personas; vmware-pilot backs execution.
+depends:
+  vmware_aiops: { real_integration: "vmware-aiops-mcp", note: "vSphere/vCenter/ESXi/VM (read)" }
+  vmware_monitor: { real_integration: "vmware-monitor-mcp", note: "health/alarms/events (read)" }
+  vmware_storage: { real_integration: "vmware-storage-mcp", note: "vSAN/datastore (read)" }
+  vmware_vks: { real_integration: "vmware-vks-mcp", note: "VKS/Supervisor/TKC (read)" }
+  vmware_nsx: { real_integration: "vmware-nsx-mcp", note: "segments/gateways/routing (read)" }
+  vmware_nsx_security: { real_integration: "vmware-nsx-security-mcp", note: "DFW/IDPS/microseg (read)" }
+  vmware_aria: { real_integration: "vmware-aria-mcp", note: "Aria Operations metrics/RCA (read)" }
+  vmware_avi: { real_integration: "vmware-avi-mcp", note: "AVI/NSX-ALB LB (read)" }
+  vmware_harden: { real_integration: "vmware-harden-mcp", note: "baseline/compliance (read)" }
+  vmware_pilot:
+    real_integration: "vmware-pilot-mcp"
+    note: "execution core — NL→workflow, approval gate, audit, rollback"
+
+# Webhook / poll sources normalized to the incident schema.
+sources:
+  - inbound/vcenter-alarm-webhook.yaml
+
+# Agents: the advice team (conversation-only) + incident triage (RCA draft).
+agents:
+  - agents/advice-team.yaml
+  - agents/ops-triage.yaml
+
+# Output connectors: Agent Bridge (→ pilot, HOTL) + IM notification.
+outputs:
+  - outputs/remediation-bridge.yaml
+  - outputs/im-notify.yaml
+
+# Feature flag gating this pack's routes. Set XIAOGUAI_VMWARE_OPS_ENABLED=true.
+feature_flag: XIAOGUAI_VMWARE_OPS_ENABLED
+
+# Deferred / not-yet-wired:
+#   - vmware-monitor scheduled poll source (periodic scan → incident)
+#   - per-persona evidence-citation enforcement in the advice team
+#   - auto-escalation when RCA confidence=high + alarm severity=critical
