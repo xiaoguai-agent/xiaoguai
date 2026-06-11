@@ -186,6 +186,9 @@ impl MemoryStore for SqliteMemoryStore {
     }
 
     async fn create_memory(&self, req: CreateMemoryRequest) -> MemoryResult<Memory> {
+        // #288: enforce the content byte cap at the write boundary (before
+        // the embedder call, so oversized content never costs an embedding).
+        crate::types::validate_content(&req.content)?;
         let embedding = self.embedder.embed(&req.content).await?;
         let embedding_blob = embedding_to_blob(&embedding);
         let now = Utc::now();
@@ -224,6 +227,8 @@ impl MemoryStore for SqliteMemoryStore {
     async fn update_memory(&self, id: Uuid, req: UpdateMemoryRequest) -> MemoryResult<Memory> {
         // Re-embed if content changes.
         let new_embedding = if let Some(ref text) = req.content {
+            // #288: the content cap applies to updates too — same boundary.
+            crate::types::validate_content(text)?;
             Some(self.embedder.embed(text).await?)
         } else {
             None

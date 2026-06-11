@@ -1,12 +1,17 @@
 //! Subprocess wrapper for sandboxed Python execution.
 //!
 //! Each call spawns a fresh `python3 -I` in a fresh tempdir with a scrubbed
-//! environment and an `ulimit` preamble (SEC-10): a best-effort `-v` memory
-//! cap (the hard Linux equivalent is the `prlimit --as` direction) plus
-//! **enforced** `-u` process-count and `-f` file-size caps — if those two
-//! cannot be applied, python is never exec'd. The process is killed by tokio
-//! when the wall-clock deadline elapses. Stdout and stderr are captured to a
-//! hard cap; oversize output is truncated with a marker.
+//! environment and in-process rlimits (SEC-10, reworked in #289): a
+//! `pre_exec` hook calls `setrlimit(2)` in the forked child — a best-effort
+//! `RLIMIT_AS` memory cap (not settable on every platform, notably macOS)
+//! plus **enforced** `RLIMIT_NPROC` process-count and `RLIMIT_FSIZE`
+//! file-size caps — if those two cannot be applied, python is never exec'd.
+//! Previously the caps rode a `/bin/sh -c "ulimit …"` preamble, but `ulimit`
+//! semantics diverge under dash (Ubuntu's `/bin/sh`), so the limits could
+//! silently not apply; `setrlimit` removes the shell dependency entirely.
+//! The process is killed by tokio when the wall-clock deadline elapses.
+//! Stdout and stderr are captured to a hard cap; oversize output is
+//! truncated with a marker.
 //!
 //! This module is intentionally MCP-agnostic — the only contract it exposes
 //! to callers is [`run_python`] returning an [`ExecResult`]. The MCP tool
@@ -39,19 +44,21 @@ const CODE_BYTE_CAP: usize = 64 * 1024;
 const ENV_ALLOWLIST: &[&str] = &["PATH", "LANG", "LC_ALL", "LC_CTYPE"];
 
 /// SEC-10: cap on the number of processes the snippet's user may run
-/// (`ulimit -u`, `RLIMIT_NPROC`) — the fork-bomb guard. Enforced: a failure
-/// to apply it aborts the run. Note `RLIMIT_NPROC` counts ALL processes of
-/// the daemon's UID, not just the sandbox's children, so the value must
+/// (`RLIMIT_NPROC`) — the fork-bomb guard. Enforced: a failure to apply it
+/// aborts the run (#289: the `pre_exec` hook returns `Err`, so `spawn`
+/// fails and python never execs). Note `RLIMIT_NPROC` counts ALL processes
+/// of the daemon's UID, not just the sandbox's children, so the value must
 /// comfortably exceed a desktop user's baseline (often 400–600 on macOS) or
 /// legitimate single `subprocess` use inside snippets starts failing — a
 /// fork bomb tries to spawn thousands, so 1024 stops it just as well.
 const MAX_SUBPROCS: u64 = 1024;
 
 /// SEC-10: cap on the size of any single file the snippet may write
-/// (`ulimit -f`, `RLIMIT_FSIZE`) — the disk-fill guard. Enforced: a failure
-/// to apply it aborts the run. POSIX `ulimit -f` counts **512-byte blocks**:
-/// 2 GiB / 512 B = `4_194_304` blocks.
-const MAX_FILE_BLOCKS: u64 = (2 * 1024 * 1024 * 1024) / 512;
+/// (`RLIMIT_FSIZE`) — the disk-fill guard. Enforced: a failure to apply it
+/// aborts the run, same as [`MAX_SUBPROCS`]. In **bytes** (2 GiB) — #289:
+/// `setrlimit` takes bytes directly, unlike the retired `ulimit -f`
+/// preamble which counted 512-byte blocks.
+const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 /// Configuration for a single execution call. Typically constructed once
 /// per server instance and reused per request.
@@ -59,9 +66,10 @@ const MAX_FILE_BLOCKS: u64 = (2 * 1024 * 1024 * 1024) / 512;
 pub struct ExecConfig {
     /// Hard wall-clock cap. Per-call timeouts are clamped to this.
     pub max_timeout: Duration,
-    /// Address-space limit (RSS+VM) in megabytes; passed to `ulimit -v`
-    /// (which actually limits virtual memory in kilobytes — we multiply
-    /// by 1024).
+    /// Address-space limit (virtual memory) in megabytes; applied as
+    /// `RLIMIT_AS` via `setrlimit` in the child (#289). Best-effort: not
+    /// every platform lets us set it (notably macOS), and a failure to
+    /// apply it is ignored rather than aborting the run.
     pub memory_mb: u64,
     /// Parent directory under which each call gets a fresh `mktemp -d`.
     /// Defaults to the OS temp dir.
@@ -128,7 +136,10 @@ pub enum ExecError {
     #[error("write main.py: {0}")]
     WriteCode(std::io::Error),
     /// Failed to spawn the child process at all (python missing, fork
-    /// failed, etc.).
+    /// failed, etc.). #289: an enforced rlimit (`RLIMIT_NPROC`/`RLIMIT_FSIZE`)
+    /// that cannot be applied also surfaces here — the `pre_exec` hook's
+    /// `Err` aborts the child before exec, and std reports it as a spawn
+    /// failure. No silent fallback to an uncapped run.
     #[error("spawn {0}: {1}")]
     Spawn(PathBuf, std::io::Error),
     /// I/O error while reading stdout/stderr or waiting on the child.
@@ -191,8 +202,9 @@ pub async fn run_python(
             // Dropping the cancelled `wait_with_output` future SIGKILLs the top
             // pid (kill_on_drop), but forked grandchildren survive. The child is
             // its own group leader (process_group(0)), so SIGKILL the whole
-            // group `-pgid` to reap them. Best-effort, no-unsafe (the workspace
-            // forbids unsafe, ruling out a direct libc::kill), via /bin/kill.
+            // group `-pgid` to reap them. Best-effort via /bin/kill — #289
+            // scoped unsafe to the two setrlimit sites only, so a direct
+            // `libc::kill` stays out; the external binary is fine here.
             // No output is captured on timeout (wait_with_output buffers until
             // completion) — a known limitation noted in the runbook.
             #[cfg(unix)]
@@ -230,14 +242,24 @@ pub async fn run_python(
 }
 
 /// Assemble the `python3 -I main.py` command with a scrubbed env, fresh CWD,
-/// and resource caps. On Unix we wrap through `sh -c "ulimit …; exec python3
-/// -I main.py"` because tokio's `Command::pre_exec` requires unsafe and the
-/// project forbids unsafe code at workspace level. See the SEC-10 notes on
-/// the preamble below.
+/// and resource caps.
+///
+/// #289: python is invoked DIRECTLY — the former `sh -c "ulimit …; exec
+/// python3 -I main.py"` wrapper is gone. `ulimit` is a shell builtin whose
+/// `-u`/`-f` semantics diverge under dash (Ubuntu's `/bin/sh`), which made
+/// the SEC-10 caps unreliable; the shell carried no other responsibility
+/// (quoting, env, and CWD were always handled on the Rust side). The caps
+/// are now applied in-process via a `pre_exec` hook calling `setrlimit(2)`
+/// in the forked child, before exec:
+///  * `RLIMIT_AS` ([`ExecConfig::memory_mb`]) is BEST-EFFORT — several
+///    platforms (notably macOS) refuse it, and failing the whole run there
+///    would break every host. Failure is ignored.
+///  * `RLIMIT_NPROC` ([`MAX_SUBPROCS`], fork-bomb guard) and `RLIMIT_FSIZE`
+///    ([`MAX_FILE_BYTES`], disk-fill guard) are ENFORCED: if either cannot
+///    be set, the hook returns `Err`, the child aborts before exec, and the
+///    caller sees [`ExecError::Spawn`] — no silent fallback to an uncapped
+///    run.
 fn build_command(cfg: &ExecConfig, working_dir: &Path, main_py: &Path) -> Command {
-    // Address-space limit in kilobytes (what `ulimit -v` actually takes).
-    let mem_kb = cfg.memory_mb.saturating_mul(1024);
-
     // Build the env from the allowlist only. Inherit values from the
     // parent process for keys the operator expects to work (PATH, locale).
     let env: HashMap<&str, String> = ENV_ALLOWLIST
@@ -245,51 +267,77 @@ fn build_command(cfg: &ExecConfig, working_dir: &Path, main_py: &Path) -> Comman
         .filter_map(|key| std::env::var(key).ok().map(|v| (*key, v)))
         .collect();
 
-    // SEC-10: resource-limit preamble. The shell operators (`||`/`;`/`&&`)
-    // are deliberate:
-    //  * `ulimit -v` (address space) is BEST-EFFORT — `RLIMIT_AS` cannot be
-    //    set by several shells (notably macOS `/bin/sh`), and `&&`-chaining
-    //    it would refuse to run python on those hosts entirely. `|| true`
-    //    keeps it advisory; the real hard memory cap on Linux is the
-    //    `prlimit --as` direction noted in the module docs.
-    //  * `ulimit -u` ([`MAX_SUBPROCS`], fork-bomb guard) and `ulimit -f`
-    //    ([`MAX_FILE_BLOCKS`], disk-fill guard, 512-byte blocks) are
-    //    POSIX-portable, so they are ENFORCED: `&&` short-circuits on
-    //    failure and the shell exits non-zero WITHOUT exec-ing python — no
-    //    silent fallback to an uncapped run (previously `ulimit -v … ;`
-    //    discarded the failure and ran python anyway).
-    let shell_inner = format!(
-        "ulimit -v {mem_kb} 2>/dev/null || true; \
-         ulimit -u {MAX_SUBPROCS} && ulimit -f {MAX_FILE_BLOCKS} && \
-         exec {python} -I {main}",
-        python = shell_quote(&cfg.python.display().to_string()),
-        main = shell_quote(&main_py.display().to_string()),
-    );
-
-    let mut command = Command::new("/bin/sh");
-    command.arg("-c").arg(shell_inner);
+    let mut command = Command::new(&cfg.python);
+    command.arg("-I").arg(main_py);
     command.current_dir(working_dir);
     command.env_clear();
     for (k, v) in env {
         command.env(k, v);
     }
+
+    // #289 (SEC-10): apply the rlimits between fork and exec.
+    #[cfg(unix)]
+    {
+        let mem_bytes = cfg.memory_mb.saturating_mul(1024 * 1024);
+        // SAFETY: `pre_exec` runs in the forked child before exec, where
+        // only async-signal-safe operations are permitted. The closure
+        // calls nothing but `setrlimit(2)` (async-signal-safe per POSIX)
+        // and constructs `io::Error` values from raw OS errors — no
+        // allocation, no locks, no other process state touched.
+        #[allow(unsafe_code)]
+        unsafe {
+            command.pre_exec(move || {
+                // Best-effort address-space cap; see build_command docs.
+                let _ = set_rlimit(libc::RLIMIT_AS, mem_bytes);
+                // Enforced caps: bubble the error so spawn fails loudly.
+                set_rlimit(libc::RLIMIT_NPROC, MAX_SUBPROCS)?;
+                set_rlimit(libc::RLIMIT_FSIZE, MAX_FILE_BYTES)?;
+                Ok(())
+            });
+        }
+    }
+
     // Kill the child if the future is dropped (e.g. on timeout cancellation).
     command.kill_on_drop(true);
     // Put the child in its own process group (it becomes group leader, so
     // pgid == child pid) so a timeout can SIGKILL the WHOLE group — otherwise
-    // kill_on_drop only reaps the top `sh`/python pid and any forked
+    // kill_on_drop only reaps the top python pid and any forked
     // grandchildren (subprocess/multiprocessing) survive as orphans.
     #[cfg(unix)]
     command.process_group(0);
     command
 }
 
-/// Minimal single-quote escaping for `/bin/sh -c`. Used only for the python
-/// path and the main.py path — both are under our control (workdir is a
-/// tempdir with a known prefix), so the surface area is tiny.
-fn shell_quote(s: &str) -> String {
-    let escaped = s.replace('\'', r"'\''");
-    format!("'{escaped}'")
+/// Numeric type of the `RLIMIT_*` constants: glibc declares them as
+/// `__rlimit_resource_t` (a `c_uint`) while macOS, musl, and the BSDs use
+/// `c_int` (#289).
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+type RlimitResource = libc::__rlimit_resource_t;
+#[cfg(all(unix, not(all(target_os = "linux", target_env = "gnu"))))]
+type RlimitResource = libc::c_int;
+
+/// Set both the soft and hard bound of `resource` to `limit` (#289,
+/// SEC-10). Hard too, deliberately: the snippet runs as the same UID and
+/// could otherwise raise its soft limit right back up via
+/// `resource.setrlimit`.
+///
+/// Called from the `pre_exec` hook between fork and exec — keep this
+/// async-signal-safe (no allocation, no locks).
+#[cfg(unix)]
+fn set_rlimit(resource: RlimitResource, limit: u64) -> std::io::Result<()> {
+    let rlim = libc::rlimit {
+        rlim_cur: limit as libc::rlim_t,
+        rlim_max: limit as libc::rlim_t,
+    };
+    // SAFETY: `rlim` is a valid, fully-initialized struct that outlives the
+    // call; `setrlimit` only reads through the pointer.
+    #[allow(unsafe_code)]
+    let rc = unsafe { libc::setrlimit(resource, std::ptr::addr_of!(rlim)) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 /// Decode bytes lossily, capped at [`OUTPUT_BYTE_CAP`]. Returns the decoded
@@ -466,11 +514,11 @@ print("contact me at alice@example.com", file=sys.stderr)
         );
     }
 
-    /// SEC-10: the enforced `ulimit -u` cap is a fork-bomb guard, not a
+    /// SEC-10: the enforced `RLIMIT_NPROC` cap is a fork-bomb guard, not a
     /// subprocess ban — a single legitimate child must keep working (the
     /// capability summary advertises `subprocess: true`). This also proves
-    /// the `&&`-chained preamble applied cleanly (a failed `ulimit -u`/`-f`
-    /// would abort before exec-ing python).
+    /// the `pre_exec` rlimit hook applied cleanly (#289: a failed
+    /// `RLIMIT_NPROC`/`RLIMIT_FSIZE` set aborts before exec-ing python).
     ///
     /// A true fork-bomb test (spawn until `EAGAIN`) is deliberately omitted:
     /// it would be slow and flaky on shared runners because `RLIMIT_NPROC`
@@ -488,6 +536,77 @@ print(r.stdout.strip())
             .expect("python3 must be available");
         assert_eq!(r.exit_code, Some(0), "stderr: {}", r.stderr);
         assert_eq!(r.stdout.trim(), "child-ok");
+    }
+
+    /// #289: the in-process `setrlimit` hook must actually take effect
+    /// inside the child — observe the limits from python's `resource`
+    /// module rather than triggering them (a real fork bomb or a 2 GiB
+    /// write would be slow and flaky on shared runners). Both soft and
+    /// hard bounds are asserted: the hard bound is what stops a snippet
+    /// from raising its own soft limit back up.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rlimits_are_applied_inside_the_child() {
+        let cfg = test_cfg();
+        let snippet = r"
+import resource
+for lim in (resource.RLIMIT_NPROC, resource.RLIMIT_FSIZE):
+    soft, hard = resource.getrlimit(lim)
+    print(soft)
+    print(hard)
+";
+        let r = run_python(&cfg, snippet, Duration::from_secs(5))
+            .await
+            .expect("python3 must be available");
+        assert_eq!(r.exit_code, Some(0), "stderr: {}", r.stderr);
+        let got: Vec<&str> = r.stdout.split_whitespace().collect();
+        let nproc = MAX_SUBPROCS.to_string();
+        let fsize = MAX_FILE_BYTES.to_string();
+        assert_eq!(
+            got,
+            vec![
+                nproc.as_str(),
+                nproc.as_str(),
+                fsize.as_str(),
+                fsize.as_str()
+            ],
+            "child rlimits do not match the SEC-10 caps; stdout: {}",
+            r.stdout
+        );
+    }
+
+    /// #289: `RLIMIT_FSIZE` must hold even though `RLIMIT_AS` is
+    /// best-effort — the snippet lowers its own soft FSIZE bound (always
+    /// permitted, no privileges needed) and proves an over-limit write
+    /// fails. This exercises the same enforcement path the 2 GiB hard cap
+    /// relies on, without writing 2 GiB on a shared runner. python turns
+    /// the kernel's `SIGXFSZ`/`EFBIG` into `OSError`, which the snippet expects.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fsize_limit_blocks_oversize_writes() {
+        let cfg = test_cfg();
+        let snippet = r#"
+import resource, signal
+# Don't die on SIGXFSZ; make the over-limit write fail with EFBIG instead.
+signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+resource.setrlimit(resource.RLIMIT_FSIZE, (4096, resource.getrlimit(resource.RLIMIT_FSIZE)[1]))
+try:
+    with open("big.bin", "wb") as f:
+        f.write(b"x" * 8192)
+        f.flush()
+    print("write-succeeded")
+except OSError:
+    print("write-blocked")
+"#;
+        let r = run_python(&cfg, snippet, Duration::from_secs(5))
+            .await
+            .expect("python3 must be available");
+        assert_eq!(r.exit_code, Some(0), "stderr: {}", r.stderr);
+        assert_eq!(
+            r.stdout.trim(),
+            "write-blocked",
+            "RLIMIT_FSIZE did not stop an over-limit write"
+        );
     }
 
     #[tokio::test]

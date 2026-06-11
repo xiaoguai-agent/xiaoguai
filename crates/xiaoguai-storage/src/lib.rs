@@ -13,5 +13,5 @@ pub mod migrations;
 pub mod read_write_pool;
 pub mod repositories;
 
-pub use db::{connect, migrate};
+pub use db::{connect, connect_read_only, migrate, pending_migration_count};
 pub use read_write_pool::ReadWritePool;

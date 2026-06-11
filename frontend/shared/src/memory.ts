@@ -112,9 +112,12 @@ export interface MemoryImportSkippedLine {
 
 /**
  * Outcome of `POST /v1/memories/import`. Fail-soft: malformed lines are
- * reported in `skipped`, never abort the run.
+ * reported in `skipped`. `aborted` (#288) carries a reason when the run
+ * stopped early after too many consecutive store failures (e.g. the
+ * embedder is down) — lines after the abort point were never attempted.
  */
 export interface MemoryImportReport {
   imported: number;
   skipped: MemoryImportSkippedLine[];
+  aborted?: string;
 }

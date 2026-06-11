@@ -307,7 +307,15 @@ function DeleteConfirmModal({ record, onCancel, onConfirmed }: DeleteConfirmProp
 // Tab 1: List view
 // ---------------------------------------------------------------------------
 
-function ListView(): JSX.Element {
+interface ListViewProps {
+  /**
+   * #288: bumped by the pane after a successful JSONL import so the list
+   * reloads (the import toolbar lives outside this tab's state).
+   */
+  refreshToken?: number;
+}
+
+function ListView({ refreshToken = 0 }: ListViewProps): JSX.Element {
   const { t } = useTranslation();
 
   const [records, setRecords] = useState<MemoryRecord[]>([]);
@@ -342,7 +350,8 @@ function ListView(): JSX.Element {
 
   useEffect(() => {
     void load();
-  }, [load]);
+    // #288: re-run when refreshToken bumps (post-import refresh).
+  }, [load, refreshToken]);
 
   function handleSaved(saved: MemoryRecord): void {
     setRecords((prev) => {
@@ -772,6 +781,8 @@ function NeighborsView(): JSX.Element {
 export function MemoryPane(): JSX.Element {
   const { t } = useTranslation();
   const [tab, setTab] = useState<TabId>('list');
+  // #288: bump after a successful import so the List tab reloads.
+  const [refreshToken, setRefreshToken] = useState(0);
 
   return (
     <>
@@ -779,8 +790,9 @@ export function MemoryPane(): JSX.Element {
         <h1>{t('pane.memory.title')}</h1>
       </header>
 
-      {/* T7.3 — JSONL import/export toolbar (shared /v1/memories routes). */}
-      <MemoryImportExport />
+      {/* T7.3 — JSONL import/export toolbar (shared /v1/memories routes).
+          #288: onImported wires the post-import list refresh. */}
+      <MemoryImportExport onImported={() => setRefreshToken((n) => n + 1)} />
 
       {/* Tab nav */}
       <div
@@ -816,7 +828,7 @@ export function MemoryPane(): JSX.Element {
       </div>
 
       {/* Tab panels */}
-      {tab === 'list' && <ListView />}
+      {tab === 'list' && <ListView refreshToken={refreshToken} />}
       {tab === 'recall' && <RecallView />}
       {tab === 'neighbors' && <NeighborsView />}
     </>

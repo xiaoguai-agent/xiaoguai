@@ -12,6 +12,13 @@ pub enum MemoryError {
     #[error("unknown memory kind: {0:?}")]
     UnknownKind(String),
 
+    /// Validation failure at a write boundary (#288) — e.g. oversized
+    /// `content`. Surfaced as a 400 by the API layer (same contract as the
+    /// glossary cap in `xiaoguai-personas`), so the message must stay
+    /// user-facing and never leak internals.
+    #[error("{0}")]
+    InvalidArgument(String),
+
     #[error("embedding error: {0}")]
     Embedding(String),
 

@@ -297,6 +297,117 @@ async fn import_auto_tags_source_imported_unless_source_tag_present() {
     assert_eq!(tags_of("from im"), vec!["source:im"]);
 }
 
+// ─── #288 guardrails ─────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn import_rejects_documents_over_the_line_cap_with_400() {
+    let fx = Fixture::new();
+    let app = router(fx.state());
+
+    // One line over the cap — pre-flight rejects before any embedding work.
+    let text = "x\n".repeat(xiaoguai_memory::jsonl::MAX_IMPORT_LINES + 1);
+    let (status, body) = send(
+        app.clone(),
+        "POST",
+        "/v1/memories/import",
+        Some(("text/plain", text)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    let err: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        err["error"].as_str().unwrap().contains("maximum per call"),
+        "body: {body}"
+    );
+
+    // Nothing landed.
+    let (_, listed) = send(app, "GET", "/v1/memories", None).await;
+    let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    assert!(listed["data"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn import_body_over_the_explicit_limit_returns_413() {
+    let fx = Fixture::new();
+    let app = router(fx.state());
+
+    // One byte over IMPORT_BODY_LIMIT_BYTES (8 MiB, #288) — rejected by the
+    // DefaultBodyLimit layer before the handler runs.
+    let oversized = "x".repeat(xiaoguai_api::routes::memory::IMPORT_BODY_LIMIT_BYTES + 1);
+    let (status, _) = send(
+        app,
+        "POST",
+        "/v1/memories/import",
+        Some(("text/plain", oversized)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn create_memory_rejects_oversized_content_with_400() {
+    let fx = Fixture::new();
+    let app = router(fx.state());
+
+    let big = "x".repeat(xiaoguai_memory::MAX_CONTENT_BYTES + 1);
+    let body = serde_json::json!({"kind": "facts", "content": big}).to_string();
+    let (status, text) = send(
+        app.clone(),
+        "POST",
+        "/v1/memories",
+        Some(("application/json", body)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {text}");
+    let err: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(err["error"].as_str().unwrap().contains("bytes"));
+
+    let (_, listed) = send(app, "GET", "/v1/memories", None).await;
+    let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    assert!(listed["data"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn import_skips_oversized_content_and_expired_ttl_lines() {
+    let fx = Fixture::new();
+    let app = router(fx.state());
+
+    let big = "x".repeat(xiaoguai_memory::MAX_CONTENT_BYTES + 1);
+    let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+    let text = format!(
+        "{}\n{}\n{}\n",
+        serde_json::json!({"kind": "facts", "content": big}),
+        serde_json::json!({"kind": "facts", "content": "ghost", "ttl_at": past}),
+        serde_json::json!({"kind": "facts", "content": "keeper"}),
+    );
+    let (status, body) = send(
+        app.clone(),
+        "POST",
+        "/v1/memories/import",
+        Some(("text/plain", text)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let report: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(report["imported"], 1);
+    let skipped = report["skipped"].as_array().unwrap();
+    assert_eq!(skipped.len(), 2);
+    assert!(skipped[0]["reason"].as_str().unwrap().contains("bytes"));
+    assert!(skipped[1]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("expired ttl_at"));
+    // `aborted` is omitted from the JSON when the run completed.
+    assert!(report.get("aborted").is_none());
+
+    // Only the keeper landed — no ghost memory in list/export.
+    let (_, listed) = send(app, "GET", "/v1/memories", None).await;
+    let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    let rows = listed["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["content"], "keeper");
+}
+
 #[tokio::test]
 async fn import_and_export_return_503_when_store_absent() {
     let fx = Fixture::without_store();
