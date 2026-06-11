@@ -285,6 +285,80 @@ async fn manual_ingest_round_trip() {
 }
 
 #[tokio::test]
+async fn manual_ingest_cannot_spoof_another_source() {
+    // #284: the path `{source}` is authoritative. A manual body claiming
+    // `"source": "sentry"` must NOT land in the sentry dedup slot — that
+    // would let a manual poster suppress a later real sentry alert.
+    let fx = Fixture::new();
+    let app = router(fx.state());
+
+    let mut spoofed = manual_payload();
+    spoofed["source"] = json!("sentry");
+    spoofed["id"] = json!("sentry:123");
+    let (status, body) = send(
+        app.clone(),
+        "POST",
+        "/v1/incidents/ingest/manual",
+        Some(TOKEN),
+        Some(spoofed),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {body}");
+    // Stored under the path source, not the body's claim.
+    assert_eq!(body["incident"]["source"], "manual");
+
+    // A real sentry alert with the same external id still opens its own
+    // incident — the dedup slot was not poisoned.
+    let (status, body) = send(
+        app.clone(),
+        "POST",
+        "/v1/incidents/ingest/sentry",
+        Some(TOKEN),
+        Some(sentry_payload()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {body}");
+    assert_eq!(body["was_duplicate"], false);
+    assert_eq!(body["incident"]["source"], "sentry");
+    assert_eq!(fx.incidents.list(None).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn duplicate_reingest_refreshes_severity_and_payload() {
+    // #284: a re-fired alert that escalated must update the live row.
+    let fx = Fixture::new();
+    let app = router(fx.state());
+
+    let (status, first) = send(
+        app.clone(),
+        "POST",
+        "/v1/incidents/ingest/manual",
+        Some(TOKEN),
+        Some(manual_payload()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(first["incident"]["severity"], "high");
+
+    let mut escalated = manual_payload();
+    escalated["severity"] = json!("critical");
+    let (status, second) = send(
+        app.clone(),
+        "POST",
+        "/v1/incidents/ingest/manual",
+        Some(TOKEN),
+        Some(escalated.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {second}");
+    assert_eq!(second["was_duplicate"], true);
+    assert_eq!(second["incident"]["id"], first["incident"]["id"]);
+    assert_eq!(second["incident"]["severity"], "critical");
+    // The stored raw payload is the re-fired body, not the original.
+    assert_eq!(second["incident"]["raw_payload"], escalated);
+}
+
+#[tokio::test]
 async fn sentry_resolved_action_is_ignored_with_200() {
     let fx = Fixture::new();
     let app = router(fx.state());

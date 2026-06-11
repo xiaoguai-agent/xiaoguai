@@ -4,7 +4,8 @@
 //! exercises: CRUD round-trip, the 503 fallback when `teams` is `None`,
 //! member-existence validation at the boundary, the attach path (which must
 //! ALSO attach the team's lead persona via `session_personas`), and the
-//! best-effort `team.*` audit entries.
+//! best-effort `team.*` audit entries. The duplicate-name 409 contract is
+//! additionally proven against a real SQLite-backed repository (#283).
 
 mod common;
 
@@ -21,7 +22,7 @@ use xiaoguai_llm::mock::ScriptStep;
 use xiaoguai_llm::{LlmBackend, MockBackend};
 use xiaoguai_personas::{
     CreatePersonaRequest, InMemoryPersonaRepository, InMemoryTeamRepository, PersonaRepository,
-    TeamRepository,
+    SqlitePersonaRepository, SqliteTeamRepository, TeamRepository,
 };
 
 use common::{InMemoryMessageRepo, InMemorySessionRepo};
@@ -198,9 +199,30 @@ async fn team_crud_round_trip_with_audit() {
     let (_, list) = send(app.clone(), "GET", "/v1/teams", None).await;
     assert_eq!(list.as_array().unwrap().len(), 0);
 
+    // #283: archiving again is idempotent (204) but is NOT a state change —
+    // it must not append a second `team.archive` entry.
+    let (status, _) = send(app.clone(), "DELETE", &format!("/v1/teams/{team_id}"), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
     // Audit entries were emitted best-effort.
     let actions: Vec<String> = fx.audit.snapshot().into_iter().map(|e| e.action).collect();
     assert_eq!(actions, vec!["team.create", "team.update", "team.archive"]);
+}
+
+// ── #283: archive of an unknown team is 404, never audited ────────────────────
+
+#[tokio::test]
+async fn archive_unknown_team_returns_404_without_audit() {
+    let fx = Fixture::new();
+    let app = router(fx.state());
+
+    let ghost = uuid::Uuid::new_v4();
+    let (status, _) = send(app, "DELETE", &format!("/v1/teams/{ghost}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(
+        fx.audit.snapshot().is_empty(),
+        "no team.archive entry may be written for a team that never existed (#283)"
+    );
 }
 
 // ── Boundary validation: members must exist and be active ────────────────────
@@ -306,6 +328,16 @@ async fn attach_team_attaches_lead_persona_and_audits() {
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (status, _) = send(app.clone(), "GET", "/v1/sessions/sess_1/team", None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // #283: detach is audited (it was the only unaudited team mutation)…
+    let actions: Vec<String> = fx.audit.snapshot().into_iter().map(|e| e.action).collect();
+    assert_eq!(actions, vec!["team.create", "team.attach", "team.detach"]);
+
+    // …but detaching a session with no team attached is a silent no-op:
+    // still 204, no extra audit entry.
+    let (status, _) = send(app.clone(), "DELETE", "/v1/sessions/sess_1/team", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(fx.audit.snapshot().len(), 3);
 }
 
 #[tokio::test]
@@ -397,6 +429,55 @@ async fn team_glossary_set_clear_and_cap_through_routes() {
     // Value untouched after the rejected update.
     let (_, fetched) = send(app.clone(), "GET", &format!("/v1/teams/{id}"), None).await;
     assert!(fetched["glossary_md"].is_null());
+}
+
+// ── #283: duplicate-name 409 proven against the REAL SQLite backend ──────────
+//
+// The in-memory repository hand-rolls its duplicate check, so the tests above
+// never exercised `PersonaError::from_sqlx` — which used to match Postgres
+// SQLSTATE codes and turned SQLite UNIQUE violations into 500s.
+
+/// Build a `Fixture` whose persona + team repositories share a real temp
+/// `SQLite` database with the crate migrations applied.
+async fn sqlite_fixture() -> (Fixture, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("teams-api.db");
+    let pool = xiaoguai_storage::db::connect(path.to_str().expect("utf8 path"), 5)
+        .await
+        .expect("connect");
+    xiaoguai_storage::db::migrate(&pool).await.expect("migrate");
+    let fx = Fixture {
+        personas: Arc::new(SqlitePersonaRepository::new(pool.clone())),
+        teams: Arc::new(SqliteTeamRepository::new(pool)),
+        audit: Arc::new(InMemoryHotlAuditSink::new()),
+    };
+    (fx, dir)
+}
+
+#[tokio::test]
+async fn duplicate_team_name_returns_409_on_sqlite_backend() {
+    let (fx, _guard) = sqlite_fixture().await;
+    let lead = fx.make_persona("Analyst").await;
+    let app = router(fx.state());
+
+    let body = serde_json::json!({
+        "name": "Finance Squad",
+        "lead_persona_id": lead,
+        "member_persona_ids": [lead],
+    });
+    let (status, created) = send(app.clone(), "POST", "/v1/teams", Some(body.clone())).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {created}");
+
+    // Same name again: the DB-level UNIQUE index must surface as 409, not 500.
+    let (status, err) = send(app, "POST", "/v1/teams", Some(body)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "expected 409, got: {err}");
+    assert!(
+        err["error"]
+            .as_str()
+            .unwrap()
+            .contains("duplicate team name"),
+        "error body names the conflict: {err}"
+    );
 }
 
 #[tokio::test]

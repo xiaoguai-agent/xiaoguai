@@ -299,6 +299,21 @@ fn rca_reply() -> String {
     .to_string()
 }
 
+/// Run analyze and return the persisted RCA id (#284: approve-repair now
+/// requires the `rca_id` being approved).
+async fn analyze_ok(app: &axum::Router, id: Uuid) -> Uuid {
+    let (status, body) = send_json(
+        app.clone(),
+        "POST",
+        &format!("/v1/incidents/{id}/analyze"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "analyze failed: {body}");
+    body["rca"]["id"].as_str().unwrap().parse().unwrap()
+}
+
 /// Ingest the fixture sentry alert and return the incident id.
 async fn ingest(app: &axum::Router) -> Uuid {
     let (status, body) = send_json(
@@ -392,23 +407,14 @@ async fn approve_repair_records_repair_and_resolves() {
     ]);
     let app = router(fx.state());
     let id = ingest(&app).await;
-
-    let (status, _) = send_json(
-        app.clone(),
-        "POST",
-        &format!("/v1/incidents/{id}/analyze"),
-        None,
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
+    let rca_id = analyze_ok(&app, id).await;
 
     let (status, body) = send_json(
         app.clone(),
         "POST",
         &format!("/v1/incidents/{id}/approve-repair"),
         None,
-        None,
+        Some(json!({"rca_id": rca_id})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "body: {body}");
@@ -524,7 +530,7 @@ async fn approve_repair_on_open_incident_returns_409() {
         "POST",
         &format!("/v1/incidents/{id}/approve-repair"),
         None,
-        None,
+        Some(json!({"rca_id": Uuid::new_v4()})),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "body: {body}");
@@ -532,6 +538,75 @@ async fn approve_repair_on_open_incident_returns_409() {
     let details = fx.incidents.get_with_details(id).await.unwrap();
     assert_eq!(details.incident.status, IncidentStatus::Open);
     assert!(details.repairs.is_empty());
+}
+
+// ── #284: approval binds to the RCA, not the incident ────────────────────────
+
+#[tokio::test]
+async fn approve_repair_with_stale_rca_id_returns_409_and_changes_nothing() {
+    // Step 1 feeds the Analyst; step 2 is only reached by the FINAL
+    // (correct rca_id) approval below — the stale approval in between
+    // must never start an Executor turn.
+    let fx = Fixture::scripted(vec![
+        ScriptStep::text(rca_reply()),
+        ScriptStep::text("Executor ran after the correct rca_id approval."),
+    ]);
+    let app = router(fx.state());
+    let id = ingest(&app).await;
+    let _latest = analyze_ok(&app, id).await;
+
+    let (status, body) = send_json(
+        app.clone(),
+        "POST",
+        &format!("/v1/incidents/{id}/approve-repair"),
+        None,
+        Some(json!({"rca_id": Uuid::new_v4()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "body: {body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("latest RCA"),
+        "body: {body}"
+    );
+
+    // Nothing transitioned, no repair recorded, no Executor turn ran.
+    let details = fx.incidents.get_with_details(id).await.unwrap();
+    assert_eq!(details.incident.status, IncidentStatus::AwaitingApproval);
+    assert!(details.repairs.is_empty());
+
+    // The CORRECT (latest) rca_id still goes through afterwards.
+    let (status, body) = send_json(
+        app.clone(),
+        "POST",
+        &format!("/v1/incidents/{id}/approve-repair"),
+        None,
+        Some(json!({"rca_id": details.rcas[0].id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    assert_eq!(body["status"], "resolved");
+}
+
+#[tokio::test]
+async fn approve_repair_without_rca_id_returns_400() {
+    let fx = Fixture::scripted(vec![ScriptStep::text(rca_reply())]);
+    let app = router(fx.state());
+    let id = ingest(&app).await;
+    analyze_ok(&app, id).await;
+
+    let (status, body) = send_json(
+        app.clone(),
+        "POST",
+        &format!("/v1/incidents/{id}/approve-repair"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(body["error"].as_str().unwrap().contains("rca_id"));
+    // Still awaiting approval — nothing moved.
+    let details = fx.incidents.get_with_details(id).await.unwrap();
+    assert_eq!(details.incident.status, IncidentStatus::AwaitingApproval);
 }
 
 #[tokio::test]
@@ -588,20 +663,13 @@ async fn report_renders_markdown_with_title_rca_and_repairs() {
     assert!(md.contains("ZeroDivisionError: division by zero"));
     assert!(md.contains("No RCA recorded yet"));
 
-    send_json(
-        app.clone(),
-        "POST",
-        &format!("/v1/incidents/{id}/analyze"),
-        None,
-        None,
-    )
-    .await;
+    let rca_id = analyze_ok(&app, id).await;
     send_json(
         app.clone(),
         "POST",
         &format!("/v1/incidents/{id}/approve-repair"),
         None,
-        None,
+        Some(json!({"rca_id": rca_id})),
     )
     .await;
 
@@ -710,20 +778,13 @@ async fn executor_turn_runs_in_execute_mode_write_tools_allowed() {
     let app = router(fx.state());
     let id = ingest(&app).await;
 
-    send_json(
-        app.clone(),
-        "POST",
-        &format!("/v1/incidents/{id}/analyze"),
-        None,
-        None,
-    )
-    .await;
+    let rca_id = analyze_ok(&app, id).await;
     let (status, body) = send_json(
         app.clone(),
         "POST",
         &format!("/v1/incidents/{id}/approve-repair"),
         None,
-        None,
+        Some(json!({"rca_id": rca_id})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "body: {body}");

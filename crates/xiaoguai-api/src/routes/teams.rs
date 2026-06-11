@@ -218,13 +218,25 @@ pub async fn archive_team(State(state): State<AppState>, Path(id): Path<Uuid>) -
     let Some(repo) = state.teams.clone() else {
         return teams_unavailable();
     };
+    // #283: the repository's `archive_team` is an idempotent no-op for
+    // unknown ids, so this handler used to answer 204 and log a
+    // `team.archive` audit entry for teams that never existed. Confirm the
+    // team exists first: unknown id → 404, no audit.
+    let team = match repo.get(id).await {
+        Ok(t) => t,
+        Err(e) => return map_err(e),
+    };
+    if team.archived {
+        // Already archived — idempotent success, but no state change to audit.
+        return StatusCode::NO_CONTENT.into_response();
+    }
     match repo.archive_team(id).await {
         Ok(()) => {
             audit(
                 &state,
                 "team.archive",
                 format!("team:{id}"),
-                serde_json::json!({}),
+                serde_json::json!({"name": team.name}),
             )
             .await;
             StatusCode::NO_CONTENT.into_response()
@@ -308,8 +320,26 @@ pub async fn detach_team(
     let Some(repo) = state.teams.clone() else {
         return teams_unavailable();
     };
+    // #283: detach was the only team mutation with no audit trail. Look up
+    // the attachment first so the entry names the team — and so detaching a
+    // session with no team stays a silent (unaudited) no-op.
+    let attached = match repo.get_session_team(&session_id).await {
+        Ok(t) => t,
+        Err(e) => return map_err(e),
+    };
     match repo.detach_team_from_session(&session_id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            if let Some(team) = attached {
+                audit(
+                    &state,
+                    "team.detach",
+                    format!("team:{}", team.id),
+                    serde_json::json!({"session_id": session_id}),
+                )
+                .await;
+            }
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(e) => map_err(e),
     }
 }

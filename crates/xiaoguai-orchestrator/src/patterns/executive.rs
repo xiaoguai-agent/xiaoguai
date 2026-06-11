@@ -42,6 +42,7 @@
 //! `MemberRunner` lives in the API layer (T4.2).
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::future::join_all;
@@ -59,6 +60,16 @@ use crate::error::OrchestratorError;
 
 /// Default cap on team size, enforced at construction. Plan §2.1.
 pub const DEFAULT_MAX_MEMBERS: usize = 8;
+
+/// #285: hard deadline applied to each member run AND to the lead's
+/// synthesis turn. Without it a hung member holds the caller's resources
+/// (in the API layer: the session turn lock) forever — only a cancel
+/// could free it. A timed-out member becomes a failed outcome and the
+/// run continues with the survivors; a timed-out synthesis ends the run
+/// with `Final { ok: false }`. Members run concurrently, so the run's
+/// worst-case wall clock is bounded by 2 × this value (member fan-out +
+/// synthesis), guaranteeing the event stream always terminates.
+pub const EXECUTIVE_RUN_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Channel capacity for the event stream. A capped-size team emits at
 /// most `2 × members + 3` events, comfortably under 64; if the consumer
@@ -275,18 +286,35 @@ async fn run_executive<R: MemberRunner>(
         let goal = goal.as_str();
         async move {
             emit(&tx, ExecEvent::MemberStarted { id: member.id }).await;
-            let outcome = match runner.run_member(member, goal).await {
-                Ok(outcome) => outcome,
-                // Hard failure → synthesized soft-failure outcome so the
-                // run continues; the error message is preserved as text
-                // for audit/debugging downstream.
-                Err(e) => MemberOutcome {
-                    id: member.id,
-                    ok: false,
-                    text: e.to_string(),
-                    iterations: 0,
-                },
-            };
+            // #285: per-member deadline — a hung member must never stall
+            // the whole run (and, in the API layer, the session turn lock).
+            let outcome =
+                match tokio::time::timeout(EXECUTIVE_RUN_TIMEOUT, runner.run_member(member, goal))
+                    .await
+                {
+                    Ok(Ok(outcome)) => outcome,
+                    // Hard failure → synthesized soft-failure outcome so the
+                    // run continues; the error message is preserved as text
+                    // for audit/debugging downstream.
+                    Ok(Err(e)) => MemberOutcome {
+                        id: member.id,
+                        ok: false,
+                        text: e.to_string(),
+                        iterations: 0,
+                    },
+                    // #285: deadline exceeded — dropping the timed-out future
+                    // cancels the member turn; the run continues with the
+                    // survivors.
+                    Err(_) => MemberOutcome {
+                        id: member.id,
+                        ok: false,
+                        text: format!(
+                            "member run timed out after {}s",
+                            EXECUTIVE_RUN_TIMEOUT.as_secs()
+                        ),
+                        iterations: 0,
+                    },
+                };
             emit(
                 &tx,
                 ExecEvent::MemberCompleted {
@@ -327,18 +355,34 @@ async fn run_executive<R: MemberRunner>(
     .await;
 
     // Synthesis over survivors only, original member order (join_all
-    // + stable partition preserve it).
-    let final_event = match runner.run_synthesis(&lead, &goal, &survivors).await {
-        Ok(text) => ExecEvent::Final {
+    // + stable partition preserve it). #285: synthesis gets the same
+    // deadline as member runs so the stream is guaranteed to terminate.
+    let final_event = match tokio::time::timeout(
+        EXECUTIVE_RUN_TIMEOUT,
+        runner.run_synthesis(&lead, &goal, &survivors),
+    )
+    .await
+    {
+        Ok(Ok(text)) => ExecEvent::Final {
             ok: true,
             text,
             failed_members,
         },
         // Synthesis error: ok:false with the error message as text;
         // failed_members stays member-failures-only (module docs).
-        Err(e) => ExecEvent::Final {
+        Ok(Err(e)) => ExecEvent::Final {
             ok: false,
             text: e.to_string(),
+            failed_members,
+        },
+        // #285: synthesis deadline exceeded — fail the run so the stream
+        // ends with a terminal Final and the caller can release its locks.
+        Err(_) => ExecEvent::Final {
+            ok: false,
+            text: format!(
+                "synthesis timed out after {}s",
+                EXECUTIVE_RUN_TIMEOUT.as_secs()
+            ),
             failed_members,
         },
     };
@@ -380,6 +424,9 @@ mod tests {
         Fail { delay_ms: u64, text: &'static str },
         /// `Err(OrchestratorError::WorkerFailed)` after `delay_ms`.
         Error { delay_ms: u64, msg: &'static str },
+        /// #285: never returns — simulates a hung member turn so the
+        /// per-run timeout path can be exercised deterministically.
+        Hang,
     }
 
     /// Mock `MemberRunner` — scripted per-member results + delays, and
@@ -387,6 +434,9 @@ mod tests {
     struct MockRunner {
         behaviors: HashMap<Uuid, Behavior>,
         synthesis: Result<&'static str, &'static str>,
+        /// #285: when true, `run_synthesis` records its input then hangs
+        /// forever (the scripted `synthesis` result is never produced).
+        synthesis_hangs: bool,
         synthesis_inputs: Mutex<Vec<Vec<MemberOutcome>>>,
     }
 
@@ -398,7 +448,16 @@ mod tests {
             Self {
                 behaviors,
                 synthesis,
+                synthesis_hangs: false,
                 synthesis_inputs: Mutex::new(Vec::new()),
+            }
+        }
+
+        /// #285: builder — make `run_synthesis` hang forever.
+        fn with_hanging_synthesis(self) -> Self {
+            Self {
+                synthesis_hangs: true,
+                ..self
             }
         }
     }
@@ -438,6 +497,12 @@ mod tests {
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     Err(OrchestratorError::WorkerFailed(msg.to_string()))
                 }
+                // #285: hang forever — only the executive's timeout can
+                // unblock the run.
+                Behavior::Hang => {
+                    std::future::pending::<()>().await;
+                    unreachable!("pending future never resolves")
+                }
             }
         }
 
@@ -448,6 +513,11 @@ mod tests {
             outcomes: &[MemberOutcome],
         ) -> Result<String, OrchestratorError> {
             self.synthesis_inputs.lock().push(outcomes.to_vec());
+            if self.synthesis_hangs {
+                // #285: simulate a hung synthesis turn.
+                std::future::pending::<()>().await;
+                unreachable!("pending future never resolves")
+            }
             match self.synthesis {
                 Ok(text) => Ok(text.to_string()),
                 Err(msg) => Err(OrchestratorError::Internal(msg.to_string())),
@@ -802,6 +872,87 @@ mod tests {
                 assert!(
                     failed_members.is_empty(),
                     "failed_members is member failures only"
+                );
+            }
+            other => panic!("expected Final {{ ok: false }}, got {other:?}"),
+        }
+    }
+
+    // (8) #285: a hung member hits EXECUTIVE_RUN_TIMEOUT (paused clock
+    //     auto-advances — the test is instant), is reported as failed,
+    //     and the run still completes through synthesis with survivors.
+    #[tokio::test(start_paused = true)]
+    async fn hung_member_times_out_and_run_completes_with_survivors() {
+        let (a, b) = (member("a"), member("b"));
+        let behaviors = HashMap::from([
+            (
+                a.id,
+                Behavior::Succeed {
+                    delay_ms: 0,
+                    text: "ra",
+                },
+            ),
+            (b.id, Behavior::Hang),
+        ]);
+        let mock = Arc::new(MockRunner::new(behaviors, Ok("synth")));
+        let runner = ExecutiveRunner::new(mock.clone(), a.clone(), vec![a.clone(), b.clone()])
+            .expect("valid config");
+
+        let events = collect(runner, "goal").await;
+
+        // The hung member completed as failed (timeout → soft failure).
+        position_of(
+            &events,
+            |e| matches!(e, ExecEvent::MemberCompleted { id, ok: false } if *id == b.id),
+        );
+        position_of(&events, |e| {
+            matches!(e, ExecEvent::SynthesisStarted { ok_members: 1 })
+        });
+        assert_eq!(
+            events.last().unwrap(),
+            &ExecEvent::Final {
+                ok: true,
+                text: "synth".to_string(),
+                failed_members: vec![b.id],
+            }
+        );
+        // Synthesis saw only the survivor.
+        let inputs = mock.synthesis_inputs.lock();
+        let ids: Vec<Uuid> = inputs[0].iter().map(|o| o.id).collect();
+        assert_eq!(ids, vec![a.id], "timed-out member excluded from synthesis");
+    }
+
+    // (9) #285: a hung synthesis turn hits EXECUTIVE_RUN_TIMEOUT and the
+    //     run terminates with Final { ok: false } (stream always ends, so
+    //     the API layer's turn lock is always released).
+    #[tokio::test(start_paused = true)]
+    async fn hung_synthesis_times_out_with_final_not_ok() {
+        let a = member("a");
+        let behaviors = HashMap::from([(
+            a.id,
+            Behavior::Succeed {
+                delay_ms: 0,
+                text: "ra",
+            },
+        )]);
+        let mock = Arc::new(MockRunner::new(behaviors, Ok("never")).with_hanging_synthesis());
+        let runner = ExecutiveRunner::new(mock, a.clone(), vec![a.clone()]).expect("valid config");
+
+        let events = collect(runner, "goal").await;
+
+        match events.last().unwrap() {
+            ExecEvent::Final {
+                ok: false,
+                text,
+                failed_members,
+            } => {
+                assert!(
+                    text.contains("timed out"),
+                    "Final text must mention the timeout, got: {text}"
+                );
+                assert!(
+                    failed_members.is_empty(),
+                    "failed_members stays member-failures-only"
                 );
             }
             other => panic!("expected Final {{ ok: false }}, got {other:?}"),

@@ -657,6 +657,13 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         "serve: NlJobCompiler wired"
     );
 
+    // T6 self-healing (GLUE-1): incident persistence over the shared pool.
+    // Held in a local (not just the AppState field) so the boot-time
+    // reconcile below (#284) can run against it before serving.
+    let incident_store = Arc::new(xiaoguai_api::incident_store::SqliteIncidentStore::new(
+        pool.clone(),
+    ));
+
     let state = AppState {
         sessions: pg_session_repo.clone(),
         messages: pg_message_repo.clone(),
@@ -811,11 +818,10 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
             .as_ref()
             .map(|sink| crate::hotl_bridge::SqliteHotlAuditSink::arc(sink.clone())),
         // T6 self-healing (GLUE-1): incident persistence over the shared
-        // pool. Ingest audit reuses the team_audit chain adapter above
+        // pool (constructed above so the #284 boot reconcile can reuse
+        // it). Ingest audit reuses the team_audit chain adapter above
         // (the sink is feature-generic; entries are `incident.*`).
-        incidents: Some(Arc::new(
-            xiaoguai_api::incident_store::SqliteIncidentStore::new(pool.clone()),
-        )),
+        incidents: Some(incident_store.clone()),
         // Sprint-12 S12-4: shared with the gate adapter constructed
         // above. The registry is built once around line 378; both halves
         // see the same DashMap so resolves from the route handler reach
@@ -852,6 +858,55 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     }
     let mut state = state;
     state.loops = Some(loop_controller);
+
+    // #284: incident boot reconcile — the analyze/approve agent turns run
+    // inside the HTTP request, so a crash or dropped handler future
+    // strands incidents on `analyzing`/`repairing` forever (no
+    // `analyzing → analyzing` retry exists). Mirror the loop boot-replay
+    // posture above: reconcile BEFORE the server accepts requests —
+    // `analyzing → open` (retryable), `repairing → failed` (the Executor
+    // may have applied partial mutations; surface, don't retry) — and
+    // audit each move through the same chain as the other `incident.*`
+    // entries. Best-effort: a reconcile failure must not block serving.
+    match xiaoguai_api::incident_store::IncidentStore::reconcile_interrupted(&*incident_store).await
+    {
+        Ok(reconciled) => {
+            if !reconciled.is_empty() {
+                tracing::warn!(
+                    count = reconciled.len(),
+                    "incidents: reconciled interrupted incidents at boot"
+                );
+            }
+            if let Some(sink) = state.team_audit.clone() {
+                for r in &reconciled {
+                    let entry = xiaoguai_audit::AuditEntry {
+                        ts: chrono::Utc::now(),
+                        tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
+                        actor: "system".to_string(),
+                        action: "incident.reconciled".to_string(),
+                        resource: Some(format!("incident:{}", r.id)),
+                        details: serde_json::json!({
+                            "from": r.from,
+                            "to": r.to,
+                            "reason": "interrupted, reconciled at boot",
+                        }),
+                    };
+                    if let Err(e) = sink.append(entry).await {
+                        tracing::warn!(
+                            error = %e, incident_id = %r.id,
+                            "incidents: boot-reconcile audit append failed (non-blocking)"
+                        );
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "incidents: boot reconcile failed — stranded analyzing/repairing rows may remain"
+            );
+        }
+    }
 
     // v0.7.4: mount the Feishu webhook with a PG-backed history store by
     // default (multi-replica safe). Operators can fall back to the

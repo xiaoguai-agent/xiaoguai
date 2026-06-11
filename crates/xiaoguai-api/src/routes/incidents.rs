@@ -8,7 +8,7 @@
 //! | GET    | `/v1/incidents?status=`             | owner               | List incidents, newest first        |
 //! | GET    | `/v1/incidents/{id}`                | owner               | Incident + RCA + repair history     |
 //! | POST   | `/v1/incidents/{id}/analyze`        | owner               | Analyst consult turn → RCA (T6.3)   |
-//! | POST   | `/v1/incidents/{id}/approve-repair` | owner               | Executor execute turn (T6.4)        |
+//! | POST   | `/v1/incidents/{id}/approve-repair` | owner               | Executor execute turn (T6.4); body `{"rca_id"}` names the approved RCA (#284) |
 //! | GET    | `/v1/incidents/{id}/report`         | owner               | Markdown report (T6.4 GLUE-4)       |
 //!
 //! The analyze/approve handlers `await` the pipeline turn in the request
@@ -126,6 +126,8 @@ fn normalize_for_source(
 /// Manual ingest: the body is already in the [`Incident`] JSON shape.
 /// Schema validation is serde; semantic boundary checks (non-empty id,
 /// title, source) are explicit so garbage fails fast with a clear 400.
+/// The body's `source` value is later overwritten by the handler with the
+/// path `{source}` (#284) — it is validated here only for shape.
 fn normalize_manual(raw: serde_json::Value) -> Result<Incident, NormalizeError> {
     let incident: Incident = serde_json::from_value(raw)
         .map_err(|e| NormalizeError::Malformed(format!("manual incident body: {e}")))?;
@@ -180,7 +182,7 @@ pub async fn ingest_incident(
     }
 
     // Normalize via the existing IncidentSource adapters.
-    let incident = match normalize_for_source(&source, body.clone()) {
+    let mut incident = match normalize_for_source(&source, body.clone()) {
         None => return err_response(StatusCode::NOT_FOUND, format!("unknown source: {source}")),
         Some(Err(NormalizeError::Ignored(action))) => {
             // Known-but-unactionable event (e.g. Sentry "resolved") —
@@ -196,6 +198,12 @@ pub async fn ingest_incident(
         }
         Some(Ok(incident)) => incident,
     };
+    // #284: the path `{source}` is authoritative — never trust a source
+    // claimed inside the body. Without this, a manual ingest carrying
+    // `"source": "sentry"` would poison the sentry dedup slot (suppressing
+    // a later real sentry alert). No-op for sentry/datadog, whose
+    // normalizers already stamp the matching constant.
+    incident.source = source;
 
     match store.ingest(&incident, body).await {
         Ok(outcome) => {
@@ -292,8 +300,12 @@ fn map_pipeline_err(e: PipelineError) -> Response {
         // InvalidTransition → 409 (e.g. analyze while analyzing/resolved,
         // approve while open), Backend → 500.
         PipelineError::Store(e) => map_err(e),
-        // `awaiting_approval` without an RCA — state conflict.
-        PipelineError::NoRca => err_response(StatusCode::CONFLICT, e.to_string()),
+        // `awaiting_approval` without an RCA — state conflict. The stale
+        // `rca_id` rejection (#284) is the same class: the approval
+        // conflicts with the incident's current analysis state.
+        e @ (PipelineError::NoRca | PipelineError::StaleRca { .. }) => {
+            err_response(StatusCode::CONFLICT, e.to_string())
+        }
         // The agent (upstream of this API) errored or broke the RCA
         // contract; the incident was reverted to `open` and is retryable.
         e @ (PipelineError::AnalysisRun(_) | PipelineError::RcaParse(_)) => {
@@ -322,15 +334,39 @@ pub async fn analyze_incident(State(state): State<AppState>, Path(id): Path<Uuid
     }
 }
 
+/// `POST /v1/incidents/{id}/approve-repair` request body (#284): the
+/// approval must name the RCA it was made against, so a stale approval
+/// (e.g. fired from an outdated UI view) can never execute a different
+/// analysis than the one the owner reviewed.
+#[derive(Debug, Deserialize)]
+pub struct ApproveRepairRequest {
+    pub rca_id: Uuid,
+}
+
 /// `POST /v1/incidents/{id}/approve-repair` — the explicit human approval
-/// point (T6.4). 409 unless `awaiting_approval`. A repair that ran but did
-/// not succeed is still 200: the attempt is recorded (`ok: false`) and the
-/// incident lands on `failed`.
-pub async fn approve_repair(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response {
+/// point (T6.4). The body must carry the `rca_id` being approved (#284);
+/// 400 when missing, 409 when it is not the incident's latest RCA. 409
+/// unless `awaiting_approval`. A repair that ran but did not succeed is
+/// still 200: the attempt is recorded (`ok: false`) and the incident lands
+/// on `failed`.
+pub async fn approve_repair(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    body: Option<Json<ApproveRepairRequest>>,
+) -> Response {
     let Some(pipeline) = pipeline_from_state(&state) else {
         return incidents_unavailable();
     };
-    match pipeline.approve_repair(id).await {
+    // #284: `rca_id` is mandatory. `Option<Json<…>>` keeps the 503-store
+    // check above ahead of body validation (matching the ingest handler's
+    // status-code precedence) and turns a missing body into a clear 400.
+    let Some(Json(ApproveRepairRequest { rca_id })) = body else {
+        return err_response(
+            StatusCode::BAD_REQUEST,
+            "request body must be JSON with `rca_id` — the RCA this approval was made against",
+        );
+    };
+    match pipeline.approve_repair(id, rca_id).await {
         Ok(repair) => {
             let status = if repair.ok {
                 IncidentStatus::Resolved

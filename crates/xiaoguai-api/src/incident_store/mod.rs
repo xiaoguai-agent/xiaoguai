@@ -16,8 +16,9 @@
 //! ```
 //!
 //! Dedup: at most one *live* (non-terminal) row per `(source, external_id)`
-//! — a re-fired alert bumps `updated_at` on the existing row instead of
-//! opening a twin ([`IncidentStore::ingest`] reports it via
+//! — a re-fired alert refreshes `raw_payload`/`severity` and bumps
+//! `updated_at` on the existing row instead of opening a twin
+//! ([`IncidentStore::ingest`] reports it via
 //! [`IngestOutcome::was_duplicate`]).
 
 pub mod memory;
@@ -165,6 +166,15 @@ pub struct IngestOutcome {
     pub was_duplicate: bool,
 }
 
+/// One incident moved by [`IncidentStore::reconcile_interrupted`] (#284) —
+/// returned so the caller can audit each reconciliation.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReconciledIncident {
+    pub id: Uuid,
+    pub from: IncidentStatus,
+    pub to: IncidentStatus,
+}
+
 /// [`IncidentStore::get_with_details`] result — incident joined with its
 /// RCA and repair history (each newest first).
 #[derive(Debug, Clone, Serialize)]
@@ -206,7 +216,9 @@ pub type IncidentStoreResult<T> = Result<T, IncidentStoreError>;
 pub trait IncidentStore: Send + Sync {
     /// Dedup-upsert a normalized incident. When a *live* (non-terminal)
     /// row already exists for `(incident.source, incident.id)`, its
-    /// `updated_at` is bumped and it is returned with
+    /// `raw_payload` + `severity` are refreshed from the re-fired alert
+    /// (#284 — an escalated re-send must not be silently dropped),
+    /// `updated_at` is bumped, and it is returned with
     /// `was_duplicate = true`; otherwise a fresh `open` row is inserted.
     async fn ingest(&self, incident: &Incident, raw: Value) -> IncidentStoreResult<IngestOutcome>;
 
@@ -234,6 +246,16 @@ pub trait IncidentStore: Send + Sync {
 
     /// Incident joined with its RCA + repair history (each newest first).
     async fn get_with_details(&self, id: Uuid) -> IncidentStoreResult<IncidentDetails>;
+
+    /// Boot-time reconcile (#284): the analyze/approve agent turns run
+    /// inside the HTTP request, so a client disconnect (handler future
+    /// dropped) or a process crash strands incidents on the transient
+    /// statuses. Moves every `analyzing` row back to `open` (analysis is
+    /// retryable) and every `repairing` row to `failed` (the Executor may
+    /// have already applied partial mutations — surface the interruption,
+    /// never silently retry). Returns the moved rows so the caller can
+    /// write one audit entry per reconciliation.
+    async fn reconcile_interrupted(&self) -> IncidentStoreResult<Vec<ReconciledIncident>>;
 }
 
 // ---------------------------------------------------------------------------
