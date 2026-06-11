@@ -16,8 +16,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  # For the ci-test-crate.sh forensics beacon (gh api → issue #243).
-  GH_TOKEN: ${{ github.token }}
   # Reliability harness: the Test step kept dying on the ~14 GB runner because
   # the workspace's debug artifacts (30 crates × full debuginfo) overflowed the
   # disk mid-`cargo test`. Strip debuginfo and disable incremental in CI —
@@ -38,12 +36,8 @@ env:
 jobs:
   build-test:
     name: Build and test
-    # issues:write is for the ci-test-crate.sh forensics beacon (issue #243):
-    # it PATCHes one issue comment with the box's state while the suspect
-    # crate's tests run, so a runner death can't destroy the evidence.
     permissions:
       contents: read
-      issues: write
     # Cold rebuild with jobs=2 is slower-but-survives; give it headroom over the
     # old 60 (a hung run still fails visibly, not at the 6 h default).
     timeout-minutes: 120
@@ -138,14 +132,6 @@ jobs:
           choom -n 800 -- mold -run
           cargo nextest archive --workspace --locked --build-jobs 1
           --archive-file target/nextest-tests.tar.zst
-      # Hand the archive to the quarantined mcp-exec job (own runner — its
-      # runner-death can't take this job's results with it).
-      - name: Upload test archive for quarantine job
-        uses: actions/upload-artifact@v7
-        with:
-          name: nextest-archive
-          path: target/nextest-tests.tar.zst
-          retention-days: 1
       # Test phase, one step per crate (.github/ci-test-crate.sh = cgroup
       # memory jail + choom + mold). The recurring runner death ~45 min into a
       # monolithic Test step destroys the in-progress step's log — but
@@ -168,11 +154,18 @@ jobs:
         run: .github/ci-test-crate.sh xiaoguai-llm
       - name: Test xiaoguai-mcp
         run: .github/ci-test-crate.sh xiaoguai-mcp
-      # xiaoguai-mcp-exec is QUARANTINED into its own continue-on-error job
-      # below: its test step intermittently takes the whole runner down
-      # (death at +45 min, survives every containment tried — cgroup jail,
-      # swap=0, nested timeouts, file-redirect; hunt log: issue #243). The
-      # other 35 crates must not be held hostage while the hunt continues.
+      # xiaoguai-mcp-exec was QUARANTINED (issue #243): its test run
+      # intermittently took the whole runner down at hang+45 min. Both root
+      # causes are now addressed, so it returns to the gate as a normal
+      # per-crate step: (1) the per-crate RECOMPILE hang → this script runs
+      # from the nextest archive (zero compile); (2) the leading test-exec-hang
+      # theory was a grandchild holding the stdout pipe — #289 dropped the
+      # `sh -c` ulimit wrapper so python is the direct child, and
+      # ci-test-crate.sh sends all output to a FILE + double-timeout +
+      # swap.max=0. If the +45-min runner death recurs, restore the
+      # continue-on-error `test-mcp-exec` job from git history.
+      - name: Test xiaoguai-mcp-exec
+        run: .github/ci-test-crate.sh xiaoguai-mcp-exec
       - name: Test xiaoguai-mcp-exec-js
         run: .github/ci-test-crate.sh xiaoguai-mcp-exec-js
       - name: Test xiaoguai-mcp-exec-wasm
@@ -255,67 +248,6 @@ jobs:
           cargo run -p xiaoguai-cli --locked --
           eval run --suite regression
           --cases-dir crates/xiaoguai-eval/examples/eval/regression
-
-  # QUARANTINE: xiaoguai-mcp-exec's test run intermittently kills the hosted
-  # runner (death at hang+45 min; survives cgroup jail, swap=0, nested
-  # timeouts, file redirect — full hunt log in issue #243). Isolated here so
-  # the main gate stays meaningful; continue-on-error keeps it non-blocking
-  # while it still RUNS on every push and reports. Forensics: poll-don't-wait
-  # (bash never blocks on the work tree) + a git-push beacon (per-run ref —
-  # immune to the issue-comment rate limits that blinded earlier rounds).
-  test-mcp-exec:
-    name: Test xiaoguai-mcp-exec (quarantined)
-    needs: [build-test]
-    continue-on-error: true
-    timeout-minutes: 30
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write # beacon pushes to refs/heads/ci-beacon-<run_id>
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.93.0
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-      - uses: actions/download-artifact@v7
-        with:
-          name: nextest-archive
-          path: target
-      - name: Run quarantined suite (poll-don't-wait + git beacon)
-        run: |
-          set -uo pipefail
-          setsid bash -c 'cargo nextest run \
-            --archive-file target/nextest-tests.tar.zst --workspace-remap . \
-            -E "package(xiaoguai-mcp-exec)" --profile ci --no-tests=pass \
-            > /tmp/q.log 2>&1 < /dev/null; echo $? > /tmp/q.rc' &
-          W=$!
-          git config user.email ci-beacon@localhost
-          git config user.name ci-beacon
-          for i in $(seq 1 60); do
-            kill -0 "$W" 2>/dev/null || break
-            {
-              echo "beat $i $(date -u +%FT%TZ)"
-              echo "—— log tail ——"; tail -c 3000 /tmp/q.log 2>/dev/null
-              echo "—— top rss ——"; ps aux --sort=-rss 2>/dev/null | head -12
-              echo "—— free ——"; free -m 2>/dev/null
-              echo "—— D-state ——"; ps -eo pid,stat,wchan:32,comm 2>/dev/null | awk '$2 ~ /D/' | head -8
-              echo "—— dmesg ——"; sudo dmesg 2>/dev/null | tail -5
-            } > /tmp/beacon.txt || true
-            git add -f /tmp/beacon.txt 2>/dev/null || cp /tmp/beacon.txt beacon.txt && git add beacon.txt
-            git commit -qm "beacon beat $i" >/dev/null 2>&1 || true
-            git push -qf origin "HEAD:refs/heads/ci-beacon-${GITHUB_RUN_ID}" >/dev/null 2>&1 || true
-            sleep 20
-          done
-          # Never `wait` (an unkillable work tree would wedge us) — kill the
-          # whole session group and read the rc file if the suite finished.
-          kill -9 -- -"$W" 2>/dev/null || true
-          echo "—— last 100KB of suite output ——"
-          tail -c 100000 /tmp/q.log 2>/dev/null || echo "(no output)"
-          rc=$(cat /tmp/q.rc 2>/dev/null || echo 124)
-          echo "suite rc=$rc"
-          # Clean up the beacon ref on a healthy finish (best-effort).
-          [ "$rc" = "0" ] && git push -q origin ":refs/heads/ci-beacon-${GITHUB_RUN_ID}" 2>/dev/null || true
-          exit "$rc"
 
   migrations-smoke:
     name: Migrations smoke (embedded SQLite)

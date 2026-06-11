@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # CI test harness: run one crate's prebuilt test suite inside the memory-jail
-# cgroup. (xiaoguai-mcp-exec does NOT go through this script — it is
-# quarantined into its own job in rust.yml; hunt log in issue #243.)
+# cgroup. (xiaoguai-mcp-exec was quarantined out of this path; #289 + the
+# archive/file-output/swap.max=0 containment here brought it back as a normal
+# per-crate step — hunt log in issue #243.)
 #
 # Why per-crate (one workflow step each): a runner death loses the
 # IN-PROGRESS step's log, but completed steps' logs and step metadata
