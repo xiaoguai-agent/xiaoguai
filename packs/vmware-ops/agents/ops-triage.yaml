@@ -4,7 +4,7 @@
 # Input:  a normalized Incident (from the vCenter alarm webhook source).
 # Output: an RcaDraft (rendered via templates/rca.md.j2) + a recommended
 #         change-plan handed to remediation-bridge (NEVER auto-executed).
-# Ported from the C22 Automation Pipeline Analyst (read-only probes only).
+# Context gathering uses read-only probes only.
 
 name: vmware-ops-triage
 kind: llm-agent

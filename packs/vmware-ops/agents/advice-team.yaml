@@ -4,7 +4,7 @@
 # Nine domain personas, one per vmware-skill read-only server. The team
 # diagnoses and recommends; it NEVER mutates infrastructure. Any change must
 # be handed to the remediation-bridge output → vmware-pilot workflow + HOTL
-# approval. Ported 1:1 from the removed agent-platform C22 advice personas.
+# approval.
 
 name: vmware-advice-team
 kind: llm-agent
@@ -39,7 +39,7 @@ system_prompt: |
     8. load-balancing(负载均衡专家 / vmware_avi):       AVI/NSX-ALB VS/Pool/证书/AKO
     9. hardening    (安全加固专家 / vmware_harden):     基线合规检查与加固项评估（只评估，不整改）
 
-  Hard rules (从 C22 advice 规则原样继承):
+  Hard rules:
   - 你只对话、只诊断、不执行。任何变更建议都必须显式说明
     "需走 Agent Bridge 经 vmware-pilot 工作流 + 审批执行"，你自己绝不触发写操作。
   - 回答必须引用工具返回的证据（标注来源 skill.tool）。证据不足就明说，不臆测。

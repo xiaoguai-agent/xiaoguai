@@ -6,14 +6,6 @@ for execution) — it reimplements nothing. Every tool call lands on a
 vmware-skill MCP server whose own `@vmware_tool` layer carries audit /
 sanitize / dry-run / rollback.
 
-## Why this is a pack (not a platform product)
-
-This replaces the removed agent-platform **C22 "Agent Teams 智能运维总控"**.
-Operating VMware = an agent calling vmware-skill tools; orchestration is a
-generic agent capability. So the ops agent-team belongs at the **agent layer
-(xiaoguai)** as a pack, not as an agent-platform product line. Decision +
-判据: agent-platform `docs/architecture/38-2026-06-11-c22-removal-ops-agent-teams-to-xiaoguai.md`.
-
 ## What's in it
 
 | File | Role |
@@ -25,7 +17,7 @@ generic agent capability. So the ops agent-team belongs at the **agent layer
 | `outputs/im-notify.yaml` | IM notification (feishu / dingtalk / wecom). |
 | `templates/*.j2` | RCA + change-plan markdown. |
 
-## Safety model (inherited from C22 + vmware-skill)
+## Safety model
 
 - Advice personas are **read-only** — the runtime denies any tool not tagged
   `[READ]` by the vmware-skill server.

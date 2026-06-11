@@ -3,7 +3,7 @@
 #
 # Turns an approved change_plan / recommendation into a vmware-pilot workflow,
 # behind a HOTL approval gate. This is the ONLY path that mutates VMware
-# infrastructure in this pack. Ported from the C22 AgentBridge:
+# infrastructure in this pack:
 #   design → (HOTL approval BEFORE confirm) → confirm → run → (rollback on fail)
 # Rejected plans stay as un-runnable drafts. Every step is audited.
 
@@ -40,12 +40,11 @@ pilot:
     on_failure: rollback
 
 # Audit: every bridge transition (design / approval / confirm / run / rollback)
-# writes an HMAC-chained audit row via xiaoguai's audit log — same guarantee
-# the C22 SqliteAuditSink gave, now native to xiaoguai.
+# writes an HMAC-chained audit row via xiaoguai's audit log.
 audit:
   attribution: "vmware-ops:bridge:{{ incident.id | default('adhoc') }}"
 
 # Deferred:
-#   - cancel_workflow for rejected drafts (upstream vmware-pilot gap; see
-#     agent-platform note → VMware-Pilot#7). Until then rejected drafts are
-#     left PENDING with workflow_id in the REJECTED audit row for manual cleanup.
+#   - cancel_workflow for rejected drafts (upstream vmware-pilot gap,
+#     VMware-Pilot#7). Until then rejected drafts are left PENDING with
+#     workflow_id in the REJECTED audit row for manual cleanup.

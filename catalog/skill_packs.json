@@ -315,7 +315,7 @@
     {
       "slug": "vmware-ops",
       "name": "VMware Ops",
-      "description": "VMware infrastructure ops agent-team. Consumes the vmware-skill family over MCP (9 read-only diagnostic servers + vmware-pilot for execution) — reimplements nothing. Ships a conversation-only expert team (vSphere, monitoring, vSAN storage, VKS, NSX, NSX-security, Aria, AVI, hardening) plus an incident-triage agent that drafts an RCA and a change-plan from vCenter/Aria alarms. Every change routes through an Agent Bridge to a vmware-pilot workflow with a HOTL approval gate, audit, and rollback — the team never mutates infrastructure autonomously. Replaces the removed agent-platform C22.",
+      "description": "VMware infrastructure ops agent-team. Consumes the vmware-skill family over MCP (9 read-only diagnostic servers + vmware-pilot for execution) — reimplements nothing. Ships a conversation-only expert team (vSphere, monitoring, vSAN storage, VKS, NSX, NSX-security, Aria, AVI, hardening) plus an incident-triage agent that drafts an RCA and a change-plan from vCenter/Aria alarms. Every change routes through an Agent Bridge to a vmware-pilot workflow with a HOTL approval gate, audit, and rollback — the team never mutates infrastructure autonomously.",
       "version": "0.1.0",
       "category": "ops",
       "requires": {

@@ -7,10 +7,6 @@
 # tool call goes to a vmware-skill MCP server, whose own @vmware_tool layer
 # carries audit / sanitize / dry-run / rollback.
 #
-# Replaces the (removed) agent-platform C22 "Agent Teams 智能运维总控":
-# the ops agent-team belongs at the agent layer (xiaoguai), not the platform
-# layer. See agent-platform docs/architecture/38-2026-06-11-c22-removal-*.
-#
 # Install:  xiaoguai pack install packs/vmware-ops/
 # ---------------------------------------------------------------------------
 
