@@ -135,6 +135,27 @@ describe('<MemoryImportExport> import flow', () => {
     expect(onImported).toHaveBeenCalledWith(report);
   });
 
+  it('renders the abort reason when the report carries one (#288)', async () => {
+    const report: MemoryImportReport = {
+      imported: 4,
+      skipped: [{ line: 5, reason: 'store rejected the memory: embedder down' }],
+      aborted: 'aborted at line 24: 20 consecutive store failures',
+    };
+    const client = makeClient({ importMemories: vi.fn(async () => report) });
+    renderToolbar(client);
+
+    const file = new File([JSONL], 'backup.jsonl', { type: 'text/plain' });
+    await userEvent.upload(
+      screen.getByLabelText(/import memories file/i) as HTMLInputElement,
+      file,
+    );
+    await waitFor(() => expect(screen.getByText(/2 lines/)).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: /^import$/i }));
+
+    const aborted = await screen.findByTestId('memory-import-aborted');
+    expect(aborted.textContent).toContain('aborted at line 24');
+  });
+
   it('cancel from the preview discards the pending import', async () => {
     const client = makeClient();
     renderToolbar(client);

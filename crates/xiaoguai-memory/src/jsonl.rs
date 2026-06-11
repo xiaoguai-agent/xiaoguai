@@ -10,6 +10,15 @@
 //! depending on the HTTP crate. The routes own the HTTP shapes; the line
 //! format and the fail-soft import loop are one source of truth.
 //!
+//! ## Import guardrails (#288)
+//!
+//! Both callers (HTTP route + CLI) inherit: a [`MAX_IMPORT_LINES`] cap
+//! (fail-fast before any embedding), per-line content byte cap
+//! ([`crate::types::MAX_CONTENT_BYTES`]), expired-`ttl_at` lines skipped
+//! instead of creating ghost memories, and an early abort after
+//! [`MAX_CONSECUTIVE_STORE_FAILURES`] consecutive store failures so an
+//! embedder outage is not enumerated line by line.
+//!
 //! ## Source-tag convention (§1.2)
 //!
 //! Tags prefixed [`SOURCE_TAG_PREFIX`] (`source:`) record where a memory
@@ -21,15 +30,28 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::error::MemoryResult;
+use crate::error::{MemoryError, MemoryResult};
 use crate::traits::MemoryStore;
-use crate::types::{CreateMemoryRequest, Memory, MemoryKind};
+use crate::types::{validate_content, CreateMemoryRequest, Memory, MemoryKind};
 
 /// Prefix marking provenance tags (`source:imported`, `source:im`, ...).
 pub const SOURCE_TAG_PREFIX: &str = "source:";
 
 /// Auto-added by the import path when no `source:` tag is present.
 pub const SOURCE_IMPORTED_TAG: &str = "source:imported";
+
+/// Hard cap on raw lines (including blank/malformed ones) per import call
+/// (#288). Each valid line costs one serial embedder round-trip, so an
+/// unbounded document could pin a connection for hours. Larger libraries
+/// should be split into multiple `xiaoguai memory import` calls.
+pub const MAX_IMPORT_LINES: usize = 10_000;
+
+/// Consecutive `create_memory` failures after which the import aborts
+/// (#288). When the embedder (e.g. a remote Ollama) is down, every line
+/// fails after a full timeout — without this cut-off, fail-soft would
+/// enumerate the whole outage line by line. A single success resets the
+/// counter, so scattered bad lines never trip it.
+pub const MAX_CONSECUTIVE_STORE_FAILURES: usize = 20;
 
 /// One exported memory line. `created_at` is informational on export and
 /// ignored on import (the store stamps its own).
@@ -74,11 +96,16 @@ pub struct SkippedLine {
 }
 
 /// Outcome of a bulk import: how many memories were created and which lines
-/// were skipped (fail-soft — bad lines never abort the run).
+/// were skipped (fail-soft — bad lines never abort the run). `aborted`
+/// (#288) is `Some(reason)` when the run stopped early after
+/// [`MAX_CONSECUTIVE_STORE_FAILURES`] consecutive store failures; lines
+/// after the abort point were never attempted.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImportReport {
     pub imported: usize,
     pub skipped: Vec<SkippedLine>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aborted: Option<String>,
 }
 
 /// Serialize one memory as a JSONL line (no trailing newline).
@@ -122,7 +149,8 @@ pub async fn export_jsonl_from_store(
 ///
 /// # Errors
 /// Returns a human-readable reason for malformed JSON, unknown kinds
-/// (serde-enforced) and blank content.
+/// (serde-enforced), blank content and oversized content (#288 — checked
+/// here so an oversized line never reaches the embedder).
 pub fn parse_import_line(line: &str) -> Result<Option<ImportRecord>, String> {
     if line.trim().is_empty() {
         return Ok(None);
@@ -132,6 +160,7 @@ pub fn parse_import_line(line: &str) -> Result<Option<ImportRecord>, String> {
     if record.content.trim().is_empty() {
         return Err("content must not be blank".to_string());
     }
+    validate_content(&record.content).map_err(|e| e.to_string())?;
     Ok(Some(record))
 }
 
@@ -155,11 +184,32 @@ pub fn ensure_source_tag(tags: &[String]) -> Vec<String> {
 /// re-embeds the content with the store's embedder. No dedup in v1 —
 /// re-importing an export creates twins (plan §4.2).
 ///
+/// Guardrails (#288):
+/// * documents over [`MAX_IMPORT_LINES`] raw lines are rejected up front
+///   (fail-fast, before any embedder work);
+/// * lines whose `ttl_at` is already in the past are skipped (reason:
+///   expired ttl) instead of creating ghost memories that are invisible to
+///   recall but counted as imported;
+/// * after [`MAX_CONSECUTIVE_STORE_FAILURES`] consecutive store failures
+///   the run aborts ([`ImportReport::aborted`]) so an embedder outage is
+///   not enumerated line by line.
+///
 /// # Errors
-/// Infallible per the fail-soft contract today; kept as `MemoryResult` so a
-/// future pre-flight (e.g. embedder health check) can fail fast.
+/// Returns `InvalidArgument` when the document exceeds [`MAX_IMPORT_LINES`];
+/// otherwise fail-soft (per-line problems go in the report).
 pub async fn import_jsonl(store: &dyn MemoryStore, text: &str) -> MemoryResult<ImportReport> {
+    // #288: pre-flight line cap, before any parse/embed work.
+    let total_lines = text.lines().count();
+    if total_lines > MAX_IMPORT_LINES {
+        return Err(MemoryError::InvalidArgument(format!(
+            "import has {total_lines} lines; the maximum per call is {MAX_IMPORT_LINES} — \
+             split the document into smaller batches"
+        )));
+    }
+
     let mut report = ImportReport::default();
+    let mut consecutive_failures = 0_usize;
+    let now = Utc::now();
     for (idx, line) in text.lines().enumerate() {
         let line_no = idx + 1;
         let record = match parse_import_line(line) {
@@ -173,6 +223,17 @@ pub async fn import_jsonl(store: &dyn MemoryStore, text: &str) -> MemoryResult<I
                 continue;
             }
         };
+        // #288: a past `ttl_at` would create an already-expired "ghost"
+        // memory (filtered out by recall, yet counted as imported) — skip.
+        if let Some(ttl) = record.ttl_at {
+            if ttl <= now {
+                report.skipped.push(SkippedLine {
+                    line: line_no,
+                    reason: format!("expired ttl_at: {ttl} is in the past"),
+                });
+                continue;
+            }
+        }
         let req = CreateMemoryRequest {
             kind: record.kind,
             content: record.content,
@@ -180,11 +241,27 @@ pub async fn import_jsonl(store: &dyn MemoryStore, text: &str) -> MemoryResult<I
             ttl_at: record.ttl_at,
         };
         match store.create_memory(req).await {
-            Ok(_) => report.imported += 1,
-            Err(e) => report.skipped.push(SkippedLine {
-                line: line_no,
-                reason: format!("store rejected the memory: {e}"),
-            }),
+            Ok(_) => {
+                report.imported += 1;
+                consecutive_failures = 0;
+            }
+            Err(e) => {
+                report.skipped.push(SkippedLine {
+                    line: line_no,
+                    reason: format!("store rejected the memory: {e}"),
+                });
+                consecutive_failures += 1;
+                // #288: early stop — when the store/embedder fails this many
+                // times in a row it is almost certainly down, not the data.
+                if consecutive_failures >= MAX_CONSECUTIVE_STORE_FAILURES {
+                    report.aborted = Some(format!(
+                        "aborted at line {line_no}: {MAX_CONSECUTIVE_STORE_FAILURES} consecutive \
+                         store failures (embedder or store likely unavailable); remaining lines \
+                         were not attempted"
+                    ));
+                    break;
+                }
+            }
         }
     }
     Ok(report)
@@ -329,6 +406,155 @@ mod tests {
     fn parse_blank_line_is_silent_none() {
         assert!(parse_import_line("").unwrap().is_none());
         assert!(parse_import_line("   \t").unwrap().is_none());
+    }
+
+    // ─── #288 guardrails ─────────────────────────────────────────────────────
+
+    /// Embedder that always fails — simulates a remote embedder outage.
+    struct FailingEmbedder;
+
+    #[async_trait::async_trait]
+    impl crate::embedder::EmbeddingProvider for FailingEmbedder {
+        async fn embed(&self, _text: &str) -> crate::error::MemoryResult<Vec<f32>> {
+            Err(crate::MemoryError::Embedding(
+                "embedder unavailable".to_string(),
+            ))
+        }
+
+        fn dimensions(&self) -> usize {
+            384
+        }
+    }
+
+    #[tokio::test]
+    async fn import_rejects_documents_over_the_line_cap() {
+        let dst = store();
+        // Pre-flight fires on the raw line count — content never parsed.
+        let text = "x\n".repeat(MAX_IMPORT_LINES + 1);
+        let err = import_jsonl(&dst, &text).await.unwrap_err();
+        assert!(matches!(err, crate::MemoryError::InvalidArgument(_)));
+        let msg = err.to_string();
+        assert!(msg.contains(&MAX_IMPORT_LINES.to_string()), "got: {msg}");
+        // Nothing was created.
+        assert!(dst
+            .list_memories(None, &[], 10, 0)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn import_at_exactly_the_line_cap_is_accepted() {
+        let dst = store();
+        // Blank lines count toward the raw-line cap but import nothing —
+        // cheap way to exercise the boundary without 10k embeds.
+        let mut text = "\n".repeat(MAX_IMPORT_LINES - 1);
+        text.push_str(&line("facts", "boundary ok"));
+        text.push('\n');
+        let report = import_jsonl(&dst, &text).await.unwrap();
+        assert_eq!(report.imported, 1);
+        assert!(report.aborted.is_none());
+    }
+
+    #[tokio::test]
+    async fn import_aborts_after_consecutive_store_failures() {
+        let dst = InMemoryMemoryStore::new(Arc::new(FailingEmbedder));
+        let valid_line = format!("{}\n", line("facts", "will fail"));
+        // More than the cut-off — without early stop all 50 would fail.
+        let text = valid_line.repeat(MAX_CONSECUTIVE_STORE_FAILURES + 30);
+        let report = import_jsonl(&dst, &text).await.unwrap();
+        assert_eq!(report.imported, 0);
+        // Exactly the cut-off number of lines was attempted, then abort.
+        assert_eq!(report.skipped.len(), MAX_CONSECUTIVE_STORE_FAILURES);
+        let aborted = report.aborted.expect("run should have aborted");
+        assert!(aborted.contains("consecutive"), "got: {aborted}");
+        assert!(
+            aborted.contains(&format!("line {MAX_CONSECUTIVE_STORE_FAILURES}")),
+            "got: {aborted}"
+        );
+    }
+
+    /// Embedder that fails only for texts containing "bad" — lets a test
+    /// interleave store failures with successes deterministically.
+    struct SelectiveEmbedder(InMemoryEmbedder);
+
+    #[async_trait::async_trait]
+    impl crate::embedder::EmbeddingProvider for SelectiveEmbedder {
+        async fn embed(&self, text: &str) -> crate::error::MemoryResult<Vec<f32>> {
+            if text.contains("bad") {
+                return Err(crate::MemoryError::Embedding("flaky".to_string()));
+            }
+            self.0.embed(text).await
+        }
+
+        fn dimensions(&self) -> usize {
+            self.0.dimensions()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_success_resets_the_consecutive_failure_counter() {
+        // More store failures in TOTAL than the cut-off, but never that many
+        // in a row — each success resets the counter, so no abort.
+        let dst =
+            InMemoryMemoryStore::new(Arc::new(SelectiveEmbedder(InMemoryEmbedder::default_dim())));
+        let mut text = String::new();
+        for i in 0..(MAX_CONSECUTIVE_STORE_FAILURES + 5) {
+            text.push_str(&line("facts", &format!("bad {i}")));
+            text.push('\n');
+            text.push_str(&line("facts", &format!("good {i}")));
+            text.push('\n');
+        }
+        let report = import_jsonl(&dst, &text).await.unwrap();
+        assert_eq!(report.imported, MAX_CONSECUTIVE_STORE_FAILURES + 5);
+        assert_eq!(report.skipped.len(), MAX_CONSECUTIVE_STORE_FAILURES + 5);
+        assert!(report.aborted.is_none());
+    }
+
+    #[tokio::test]
+    async fn import_skips_oversized_content_before_embedding() {
+        let dst = store();
+        let big = "x".repeat(crate::types::MAX_CONTENT_BYTES + 1);
+        let text = format!("{}\n{}\n", line("facts", &big), line("facts", "small"));
+        let report = import_jsonl(&dst, &text).await.unwrap();
+        assert_eq!(report.imported, 1);
+        assert_eq!(report.skipped.len(), 1);
+        assert_eq!(report.skipped[0].line, 1);
+        assert!(
+            report.skipped[0].reason.contains("bytes"),
+            "got: {}",
+            report.skipped[0].reason
+        );
+    }
+
+    #[tokio::test]
+    async fn import_skips_lines_with_expired_ttl() {
+        let dst = store();
+        let past = Utc::now() - chrono::Duration::hours(1);
+        let future = Utc::now() + chrono::Duration::hours(1);
+        let expired = serde_json::json!({
+            "kind": "facts", "content": "ghost", "ttl_at": past.to_rfc3339()
+        })
+        .to_string();
+        let alive = serde_json::json!({
+            "kind": "facts", "content": "alive", "ttl_at": future.to_rfc3339()
+        })
+        .to_string();
+        let report = import_jsonl(&dst, &format!("{expired}\n{alive}\n"))
+            .await
+            .unwrap();
+        assert_eq!(report.imported, 1);
+        assert_eq!(report.skipped.len(), 1);
+        assert_eq!(report.skipped[0].line, 1);
+        assert!(
+            report.skipped[0].reason.contains("expired ttl_at"),
+            "got: {}",
+            report.skipped[0].reason
+        );
+        // The ghost never landed in the store.
+        let all = dst.list_memories(None, &[], 10, 0).await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].content, "alive");
     }
 
     #[test]

@@ -51,7 +51,8 @@ pub use error::{MemoryError, MemoryResult};
 pub use jsonl::{ImportReport, SkippedLine, SOURCE_IMPORTED_TAG, SOURCE_TAG_PREFIX};
 pub use store::InMemoryMemoryStore;
 pub use traits::MemoryStore;
-pub use types::{Memory, MemoryKind, RecallTrace};
+// #288: content cap + validator re-exported for the API write boundary.
+pub use types::{validate_content, Memory, MemoryKind, RecallTrace, MAX_CONTENT_BYTES};
 
 #[cfg(feature = "openai")]
 pub use embedder::OpenAIEmbedder;

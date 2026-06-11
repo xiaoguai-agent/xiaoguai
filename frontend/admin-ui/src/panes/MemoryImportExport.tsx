@@ -204,6 +204,13 @@ export function MemoryImportExport({
                 </li>
               ))}
             </ul>
+          )}
+          {/* #288: early abort (e.g. embedder outage) — remaining lines
+              were never attempted, so make the reason impossible to miss. */}
+          {imp.report.aborted && (
+            <p className="error" data-testid="memory-import-aborted" style={{ marginTop: '0.4rem' }}>
+              {t('common.failed', { message: imp.report.aborted })}
+            </p>
           )}{' '}
           <button type="button" onClick={resetImport}>
             {t('common.close')}

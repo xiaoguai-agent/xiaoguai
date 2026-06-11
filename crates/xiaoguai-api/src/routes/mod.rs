@@ -19,6 +19,7 @@ pub mod teams;
 pub mod usage;
 pub mod watchers;
 
+use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderValue, Method};
 use axum::routing::{delete, get, post, put};
 use axum::Router;
@@ -175,7 +176,11 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/v1/memories/import",
-            post(memory::import_memories),
+            // #288: explicit 8 MiB body cap (axum defaults to 2 MiB) — see
+            // `memory::IMPORT_BODY_LIMIT_BYTES`. Bigger libraries go through
+            // the CLI (`xiaoguai memory import`), not HTTP.
+            post(memory::import_memories)
+                .layer(DefaultBodyLimit::max(memory::IMPORT_BODY_LIMIT_BYTES)),
         )
         .route(
             "/v1/memories/similar/{id}",

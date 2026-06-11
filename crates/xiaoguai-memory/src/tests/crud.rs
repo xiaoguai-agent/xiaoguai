@@ -176,3 +176,70 @@ async fn list_pagination() {
     let ids2: std::collections::HashSet<_> = page2.iter().map(|m| m.id).collect();
     assert!(ids1.is_disjoint(&ids2));
 }
+
+// ─── #288: content byte cap at the write boundary ───────────────────────────
+
+#[tokio::test]
+async fn create_rejects_content_over_the_byte_cap() {
+    let store = make_store();
+    let big = "x".repeat(crate::types::MAX_CONTENT_BYTES + 1);
+    let err = store
+        .create_memory(CreateMemoryRequest {
+            kind: MemoryKind::Facts,
+            content: big,
+            tags: vec![],
+            ttl_at: None,
+        })
+        .await;
+    assert!(matches!(err, Err(crate::MemoryError::InvalidArgument(_))));
+    // Nothing landed.
+    assert!(store
+        .list_memories(None, &[], 10, 0)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn create_accepts_content_at_exactly_the_byte_cap() {
+    let store = make_store();
+    let max = "x".repeat(crate::types::MAX_CONTENT_BYTES);
+    store
+        .create_memory(CreateMemoryRequest {
+            kind: MemoryKind::Facts,
+            content: max,
+            tags: vec![],
+            ttl_at: None,
+        })
+        .await
+        .expect("content at the cap is allowed");
+}
+
+#[tokio::test]
+async fn update_rejects_content_over_the_byte_cap() {
+    let store = make_store();
+    let created = store
+        .create_memory(CreateMemoryRequest {
+            kind: MemoryKind::Facts,
+            content: "small".to_owned(),
+            tags: vec![],
+            ttl_at: None,
+        })
+        .await
+        .unwrap();
+
+    let err = store
+        .update_memory(
+            created.id,
+            UpdateMemoryRequest {
+                content: Some("x".repeat(crate::types::MAX_CONTENT_BYTES + 1)),
+                tags: None,
+                ttl_at: None,
+            },
+        )
+        .await;
+    assert!(matches!(err, Err(crate::MemoryError::InvalidArgument(_))));
+    // Original content untouched.
+    let fetched = store.get_memory(created.id).await.unwrap();
+    assert_eq!(fetched.content, "small");
+}

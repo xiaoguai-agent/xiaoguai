@@ -7,7 +7,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Sandboxed code-execution MCP server for xiaoguai. Spawns short-lived Python subprocesses behind ulimit + tokio timeout; gating belongs upstream in the agent loop (see HotlGate)."
+description = "Sandboxed code-execution MCP server for xiaoguai. Spawns short-lived Python subprocesses behind in-process rlimits + tokio timeout; gating belongs upstream in the agent loop (see HotlGate)."
 
 [lib]
 name = "xiaoguai_mcp_exec"
@@ -32,8 +32,45 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 
+# #289: in-process `setrlimit(2)` via `pre_exec` (Unix only) — replaces the
+# `/bin/sh -c "ulimit …"` preamble whose semantics diverged under dash
+# (Ubuntu's /bin/sh), silently weakening the SEC-10 caps.
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 
-[lints]
-workspace = true
+# #289: `Command::pre_exec` requires `unsafe`, and the workspace-level
+# `unsafe_code = "forbid"` cannot be relaxed per-module (forbid > allow).
+# This crate therefore opts out of `[lints] workspace = true` and mirrors
+# the workspace table verbatim, with the single change `forbid` → `deny`
+# so the two `setrlimit` call sites in `exec.rs` can carry a scoped,
+# justified `#[allow(unsafe_code)]`. Keep this table in sync with the
+# root `[workspace.lints.*]`.
+[lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+needless_pass_by_value = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+float_cmp = "allow"
+format_push_string = "allow"
+implicit_hasher = "allow"
+manual_let_else = "allow"
+many_single_char_names = "allow"
+match_same_arms = "allow"
+match_wildcard_for_single_variants = "allow"
+too_many_lines = "allow"
+too_many_arguments = "allow"
+should_implement_trait = "allow"
+doc_overindented_list_items = "allow"

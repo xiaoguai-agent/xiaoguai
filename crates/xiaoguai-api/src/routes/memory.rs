@@ -46,6 +46,14 @@ use xiaoguai_memory::{
 
 use crate::state::AppState;
 
+/// Explicit body limit for `POST /v1/memories/import` (#288): 8 MiB
+/// replaces axum's 2 MiB default — large enough for ~10k JSONL lines
+/// (the import loop's own `MAX_IMPORT_LINES` cap) while still bounding a
+/// single request. Libraries bigger than this should go through the CLI
+/// (`xiaoguai memory import`), which talks to the local store directly.
+/// Applied via `DefaultBodyLimit::max` on the route in `routes/mod.rs`.
+pub const IMPORT_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+
 // ─── Shared error helper ─────────────────────────────────────────────────────
 
 fn memory_unavailable() -> impl IntoResponse {
@@ -59,6 +67,16 @@ fn not_found(id: Uuid) -> impl IntoResponse {
     (
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": format!("memory not found: {id}")})),
+    )
+}
+
+/// #288: validation failures from the memory store (`InvalidArgument`,
+/// e.g. the content byte cap) are user errors — surface the message as a
+/// 400 in the `{error}` envelope instead of a generic 500.
+fn bad_request(msg: impl std::fmt::Display) -> impl IntoResponse {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({"error": msg.to_string()})),
     )
 }
 
@@ -228,6 +246,8 @@ pub async fn create_memory(
 
     match store.create_memory(req).await {
         Ok(m) => (StatusCode::CREATED, Json(MemoryResponse { data: m })).into_response(),
+        // #288: content over MAX_CONTENT_BYTES → 400, not 500.
+        Err(xiaoguai_memory::MemoryError::InvalidArgument(m)) => bad_request(m).into_response(),
         Err(e) => internal(e).into_response(),
     }
 }
@@ -251,6 +271,8 @@ pub async fn update_memory(
     match store.update_memory(id, req).await {
         Ok(m) => Json(MemoryResponse { data: m }).into_response(),
         Err(xiaoguai_memory::MemoryError::NotFound(_)) => not_found(id).into_response(),
+        // #288: content over MAX_CONTENT_BYTES → 400, not 500.
+        Err(xiaoguai_memory::MemoryError::InvalidArgument(m)) => bad_request(m).into_response(),
         Err(e) => internal(e).into_response(),
     }
 }
@@ -375,11 +397,16 @@ pub async fn export_memories(
     }
 }
 
-/// `POST /v1/memories/import` — body is a `text/plain` JSONL document.
+/// `POST /v1/memories/import` — body is a `text/plain` JSONL document
+/// (explicitly capped at [`IMPORT_BODY_LIMIT_BYTES`], #288).
 /// Fail-soft per line (blank lines skipped silently, malformed lines
 /// reported); each valid line re-embeds through the store's embedder; a
 /// `source:imported` tag is added unless the line carries a `source:` tag.
-/// Response: `{imported: N, skipped: [{line, reason}]}`.
+/// Guardrails (#288): documents over `jsonl::MAX_IMPORT_LINES` raw lines
+/// are rejected with 400; lines with an already-past `ttl_at` are skipped;
+/// the run aborts early after `jsonl::MAX_CONSECUTIVE_STORE_FAILURES`
+/// consecutive store failures (reported via `aborted`).
+/// Response: `{imported: N, skipped: [{line, reason}], aborted?}`.
 pub async fn import_memories(State(state): State<AppState>, body: String) -> impl IntoResponse {
     let Some(store) = state.memory_store.as_ref() else {
         return memory_unavailable().into_response();
@@ -393,11 +420,14 @@ pub async fn import_memories(State(state): State<AppState>, body: String) -> imp
                 serde_json::json!({
                     "imported": report.imported,
                     "skipped": report.skipped.len(),
+                    "aborted": report.aborted.is_some(),
                 }),
             )
             .await;
             (StatusCode::OK, Json(report)).into_response()
         }
+        // #288: line-cap pre-flight failure is a user error → 400.
+        Err(xiaoguai_memory::MemoryError::InvalidArgument(m)) => bad_request(m).into_response(),
         Err(e) => internal(e).into_response(),
     }
 }

@@ -25,7 +25,7 @@ pub const ACK_UNISOLATED_ENV: &str = "XIAOGUAI_MCP_EXEC_ACK_UNISOLATED";
 static UNISOLATED_WARNED: AtomicBool = AtomicBool::new(false);
 
 /// SEC-09: emit a single, prominent warning that L1 provides *process-level*
-/// containment only (scrubbed env, ulimits, tempdir CWD) — **no** filesystem
+/// containment only (scrubbed env, rlimits, tempdir CWD) — **no** filesystem
 /// or network isolation. Behaviour is unchanged (L1 still runs); this is
 /// operator awareness, not a gate. Silenced via [`ACK_UNISOLATED_ENV`].
 fn warn_unisolated_once() {
@@ -136,7 +136,7 @@ impl ExecBackend for ProcessL1Python {
     fn capability_summary(&self) -> CapabilitySummary {
         CapabilitySummary {
             tier: "L1",
-            // L1 is env-scrubbed + ulimit'd + tempdir-CWD, but does NOT isolate
+            // L1 is env-scrubbed + rlimit'd + tempdir-CWD, but does NOT isolate
             // the network (no netns/seccomp) — be honest so the model / any
             // policy keying on this isn't misled. Deploy under container/netns
             // egress isolation if outbound must be denied.
@@ -146,7 +146,7 @@ impl ExecBackend for ProcessL1Python {
             filesystem: true,
             // The python interpreter itself is the process; `os.system`
             // would fork another child. Reported as `true` so agents
-            // know L1 can shell out (subject to ulimit + tempdir scope).
+            // know L1 can shell out (subject to rlimits + tempdir scope).
             subprocess: true,
             max_memory_mb: self.cfg.memory_mb,
             max_timeout_secs: self.cfg.max_timeout.as_secs(),

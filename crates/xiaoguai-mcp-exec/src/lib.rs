@@ -1,8 +1,9 @@
 //! `xiaoguai-mcp-exec` — sandboxed code-execution MCP server.
 //!
 //! Spawns short-lived `python3` subprocesses behind a per-call wall-clock
-//! deadline, an `ulimit` preamble (SEC-10: best-effort `-v` address-space
-//! cap, enforced `-u` process-count and `-f` file-size caps), a fresh
+//! deadline, in-process rlimits applied via `pre_exec` + `setrlimit(2)`
+//! (SEC-10/#289: best-effort `RLIMIT_AS` address-space cap, enforced
+//! `RLIMIT_NPROC` process-count and `RLIMIT_FSIZE` file-size caps), a fresh
 //! tempdir CWD, and a scrubbed environment. Standard output is captured to
 //! 64 KB; stderr is passed through the workspace PII redactor before return.
 //!
@@ -24,10 +25,14 @@
 //!
 //! ## Operator concerns
 //!
-//! See `docs/runbooks/mcp-exec-sandbox.md` for the threat model, ulimit
+//! See `docs/runbooks/mcp-exec-sandbox.md` for the threat model, rlimit
 //! tuning advice, and the recommended `HotL` policy seed values.
 
-#![forbid(unsafe_code)]
+// #289: `deny` rather than the workspace-wide `forbid` — the sandbox needs
+// exactly two scoped `#[allow(unsafe_code)]` sites in `exec.rs` for the
+// `pre_exec` + `setrlimit(2)` resource caps (shell `ulimit` was unreliable
+// under dash). Any new unsafe must carry its own justified allow.
+#![deny(unsafe_code)]
 
 pub mod exec;
 pub mod runtime;
