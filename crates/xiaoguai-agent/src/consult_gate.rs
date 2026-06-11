@@ -32,11 +32,26 @@ pub const CONSULT_DENY_REASON: &str = "consult mode: write tools are disabled";
 /// Scope prefix the ReAct loop uses for per-tool-call gate checks.
 const TOOL_CALL_SCOPE_PREFIX: &str = "tool_call.";
 
+/// #286: observer invoked once per consult denial, so the governance layer
+/// (the API crate's `HotlAuditSink` → HMAC audit chain) can record a
+/// `consult.denied` entry. Lives here as a minimal trait — `xiaoguai-agent`
+/// must not depend on the audit crates — and is strictly best-effort: the
+/// denial is enforced whether or not the observer (or its sink) succeeds.
+#[async_trait]
+pub trait ConsultDenialObserver: Send + Sync + std::fmt::Debug {
+    /// Called with the denied tool's name (the `tool_call.` scope suffix).
+    /// Implementations must swallow their own errors (log, never panic).
+    async fn on_consult_denied(&self, tool_name: &str);
+}
+
 /// Read-only wrapper around the session's `HotL` gate (T5 Agent Bridge).
 #[derive(Debug)]
 pub struct ConsultGate {
     inner: Option<SharedHotlGate>,
     read_only_tools: HashSet<String>,
+    /// #286: optional `consult.denied` audit hook. `None` keeps the
+    /// pre-#286 behaviour (denial enforced, not audited).
+    denial_observer: Option<std::sync::Arc<dyn ConsultDenialObserver>>,
 }
 
 impl ConsultGate {
@@ -48,25 +63,45 @@ impl ConsultGate {
         Self {
             inner,
             read_only_tools,
+            denial_observer: None,
         }
     }
 
-    /// `Some(reason)` when consult mode must deny this scope outright.
-    fn consult_denial(&self, scope: &str) -> Option<String> {
+    /// #286: attach a denial observer (audit hook). Builder-style — returns
+    /// a new value, the original is consumed.
+    #[must_use]
+    pub fn with_denial_observer(
+        mut self,
+        observer: std::sync::Arc<dyn ConsultDenialObserver>,
+    ) -> Self {
+        self.denial_observer = Some(observer);
+        self
+    }
+
+    /// `Some(tool_name)` when consult mode must deny this scope outright.
+    fn denied_tool<'s>(&self, scope: &'s str) -> Option<&'s str> {
         let tool_name = scope.strip_prefix(TOOL_CALL_SCOPE_PREFIX)?;
         if self.read_only_tools.contains(tool_name) {
             None
         } else {
-            Some(CONSULT_DENY_REASON.to_string())
+            Some(tool_name)
         }
+    }
+
+    /// Notify the observer (#286, best-effort) and build the Deny verdict.
+    async fn deny(&self, tool_name: &str) -> HotlGateVerdict {
+        if let Some(observer) = &self.denial_observer {
+            observer.on_consult_denied(tool_name).await;
+        }
+        HotlGateVerdict::Deny(CONSULT_DENY_REASON.to_string())
     }
 }
 
 #[async_trait]
 impl HotlGate for ConsultGate {
     async fn check(&self, scope: &str, amount: f64) -> HotlGateVerdict {
-        if let Some(reason) = self.consult_denial(scope) {
-            return HotlGateVerdict::Deny(reason);
+        if let Some(tool_name) = self.denied_tool(scope) {
+            return self.deny(tool_name).await;
         }
         match &self.inner {
             Some(gate) => gate.check(scope, amount).await,
@@ -80,8 +115,8 @@ impl HotlGate for ConsultGate {
         amount: f64,
         args: &serde_json::Value,
     ) -> HotlGateVerdict {
-        if let Some(reason) = self.consult_denial(scope) {
-            return HotlGateVerdict::Deny(reason);
+        if let Some(tool_name) = self.denied_tool(scope) {
+            return self.deny(tool_name).await;
         }
         match &self.inner {
             Some(gate) => gate.check_with_args(scope, amount, args).await,
@@ -185,6 +220,45 @@ mod tests {
         let allowed = gate.check_with_args("tool_call.grep", 1.0, &args).await;
         assert_eq!(allowed, HotlGateVerdict::Allow);
         assert_eq!(inner.checks_with_args.load(Ordering::SeqCst), 1);
+    }
+
+    /// #286: records every denied tool name for assertion.
+    #[derive(Debug, Default)]
+    struct RecordingObserver {
+        denied: parking_lot::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl ConsultDenialObserver for RecordingObserver {
+        async fn on_consult_denied(&self, tool_name: &str) {
+            self.denied.lock().push(tool_name.to_string());
+        }
+    }
+
+    #[tokio::test]
+    async fn denial_observer_fires_on_write_tool_only() {
+        // #286: a consult denial must reach the observer (→ audit chain);
+        // allowed read tools and non-tool scopes must not.
+        let observer = Arc::new(RecordingObserver::default());
+        let gate =
+            ConsultGate::new(None, read_set(&["read_file"])).with_denial_observer(observer.clone());
+
+        let denied = gate.check("tool_call.edit_file", 1.0).await;
+        assert_eq!(
+            denied,
+            HotlGateVerdict::Deny(CONSULT_DENY_REASON.to_string())
+        );
+
+        let _ = gate.check("tool_call.read_file", 1.0).await;
+        let _ = gate.check("llm_call", 1.0).await;
+        let _ = gate
+            .check_with_args("tool_call.git_push", 1.0, &json!({}))
+            .await;
+
+        assert_eq!(
+            *observer.denied.lock(),
+            vec!["edit_file".to_string(), "git_push".to_string()]
+        );
     }
 
     #[tokio::test]

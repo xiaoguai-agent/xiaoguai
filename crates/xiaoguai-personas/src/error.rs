@@ -33,15 +33,21 @@ impl PersonaError {
     #[must_use]
     pub fn from_sqlx(err: sqlx::Error) -> Self {
         if let sqlx::Error::Database(ref db_err) = err {
-            let code = db_err
-                .code()
-                .map(std::borrow::Cow::into_owned)
-                .unwrap_or_default();
-            match code.as_str() {
-                // unique_violation
-                "23505" => return Self::DuplicateName(db_err.message().to_string()),
-                // foreign_key_violation
-                "23503" => return Self::ForeignKey(db_err.message().to_string()),
+            // #283: match on sqlx's driver-normalised `kind()` instead of raw
+            // SQLSTATE strings. The previous `"23505"`/`"23503"` arms only
+            // ever matched Postgres; the production backend is SQLite, whose
+            // native extended codes (`"2067"`/`"787"`) fell through to the
+            // generic `Database` arm — surfacing duplicate names as HTTP 500
+            // instead of the documented 409 CONFLICT.
+            match db_err.kind() {
+                sqlx::error::ErrorKind::UniqueViolation => {
+                    return Self::DuplicateName(db_err.message().to_string());
+                }
+                sqlx::error::ErrorKind::ForeignKeyViolation => {
+                    return Self::ForeignKey(db_err.message().to_string());
+                }
+                // `ErrorKind` is #[non_exhaustive]; everything else stays a
+                // generic database error below.
                 _ => {}
             }
         }

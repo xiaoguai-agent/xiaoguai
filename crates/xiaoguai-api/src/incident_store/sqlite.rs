@@ -19,7 +19,7 @@ use crate::incidents::Incident;
 use super::{
     record_from_incident, severity_as_str, severity_parse, IncidentDetails, IncidentRecord,
     IncidentStatus, IncidentStore, IncidentStoreError, IncidentStoreResult, IngestOutcome,
-    RcaRecord, RepairRecord,
+    RcaRecord, ReconciledIncident, RepairRecord,
 };
 
 /// Production [`IncidentStore`] backed by the shared `SQLite` pool.
@@ -187,9 +187,9 @@ impl From<RepairDbRow> for RepairRecord {
 #[async_trait]
 impl IncidentStore for SqliteIncidentStore {
     async fn ingest(&self, incident: &Incident, raw: Value) -> IncidentStoreResult<IngestOutcome> {
-        // Fast path: a live row already holds the dedup slot — bump it.
+        // Fast path: a live row already holds the dedup slot — refresh it.
         if let Some(existing) = self.find_live(&incident.source, &incident.id).await? {
-            return self.bump_duplicate(existing.id).await;
+            return self.bump_duplicate(existing.id, incident, &raw).await;
         }
         let record = record_from_incident(incident, raw);
         let raw_text = serde_json::to_string(&record.raw_payload)
@@ -224,7 +224,10 @@ impl IncidentStore for SqliteIncidentStore {
             // INSERT. Resolve to the duplicate path.
             Err(sqlx::Error::Database(db)) if db.is_unique_violation() => {
                 match self.find_live(&incident.source, &incident.id).await? {
-                    Some(existing) => self.bump_duplicate(existing.id).await,
+                    Some(existing) => {
+                        self.bump_duplicate(existing.id, incident, &record.raw_payload)
+                            .await
+                    }
                     None => Err(IncidentStoreError::Backend(
                         "dedup index violated but no live row found".to_string(),
                     )),
@@ -370,15 +373,68 @@ impl IncidentStore for SqliteIncidentStore {
             repairs: repairs.into_iter().map(RepairRecord::from).collect(),
         })
     }
+
+    async fn reconcile_interrupted(&self) -> IncidentStoreResult<Vec<ReconciledIncident>> {
+        // #284 boot reconcile: collect the stranded rows first so the
+        // caller can audit each, then move them with status-guarded
+        // UPDATEs (same race-safe posture as `set_status`). Both moves
+        // are legal transitions: `analyzing → open` (retryable) and
+        // `repairing → failed` (Executor may have partially mutated).
+        let rows: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, status FROM incidents WHERE status IN ('analyzing', 'repairing')",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let mut reconciled = Vec::with_capacity(rows.len());
+        for (id, status) in rows {
+            let from = IncidentStatus::parse(&status).ok_or_else(|| {
+                IncidentStoreError::Backend(format!("unknown incident status in DB: {status}"))
+            })?;
+            let to = match from {
+                IncidentStatus::Analyzing => IncidentStatus::Open,
+                _ => IncidentStatus::Failed,
+            };
+            let result = sqlx::query(
+                "UPDATE incidents \
+                 SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') \
+                 WHERE id = ? AND status = ?",
+            )
+            .bind(to.as_str())
+            .bind(id)
+            .bind(from.as_str())
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+            if result.rows_affected() > 0 {
+                reconciled.push(ReconciledIncident { id, from, to });
+            }
+        }
+        Ok(reconciled)
+    }
 }
 
 impl SqliteIncidentStore {
-    /// Duplicate path: bump `updated_at` on the live row and return it.
-    async fn bump_duplicate(&self, id: Uuid) -> IncidentStoreResult<IngestOutcome> {
+    /// Duplicate path (#284): refresh `raw_payload` + `severity` from the
+    /// re-fired alert (an escalated re-send must not be silently dropped)
+    /// and bump `updated_at` on the live row, then return it.
+    async fn bump_duplicate(
+        &self,
+        id: Uuid,
+        incident: &Incident,
+        raw: &Value,
+    ) -> IncidentStoreResult<IngestOutcome> {
+        let raw_text = serde_json::to_string(raw)
+            .map_err(|e| IncidentStoreError::InvalidArgument(format!("raw payload: {e}")))?;
         sqlx::query(
-            "UPDATE incidents SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') \
+            "UPDATE incidents \
+             SET raw_payload = ?, severity = ?, \
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') \
              WHERE id = ?",
         )
+        .bind(&raw_text)
+        .bind(severity_as_str(&incident.severity))
         .bind(id)
         .execute(&self.pool)
         .await

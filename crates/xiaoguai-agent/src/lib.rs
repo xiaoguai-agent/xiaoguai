@@ -16,7 +16,7 @@ pub mod react;
 pub mod skill_author_tool;
 pub mod toolbox;
 
-pub use consult_gate::{ConsultGate, CONSULT_DENY_REASON};
+pub use consult_gate::{ConsultDenialObserver, ConsultGate, CONSULT_DENY_REASON};
 pub use event::{AgentEvent, HotlResolution, StopReason};
 pub use hotl_gate::{
     AllowAllGate, DenyAllGate, HotlGate, HotlGateVerdict, ScopeDenyGate, SharedHotlGate,

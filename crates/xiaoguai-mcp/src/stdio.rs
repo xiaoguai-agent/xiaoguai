@@ -36,6 +36,12 @@ const DEFAULT_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 
 pub struct StdioMcpClient {
     service: RunningService<RoleClient, ClientInfo>,
+    /// #286: whether this server's self-declared `readOnlyHint` is honored
+    /// when classifying tools (`MutationHint`). `false` (the default) maps
+    /// every tool to `Write` so consult mode excludes it — an external
+    /// server's word alone is not a read-only guarantee. Operators opt a
+    /// server in via [`Self::with_trusted_read_only_hints`].
+    trust_read_only_hints: bool,
 }
 
 impl std::fmt::Debug for StdioMcpClient {
@@ -45,7 +51,7 @@ impl std::fmt::Debug for StdioMcpClient {
                 "peer",
                 &self.service.peer_info().map(|p| &p.server_info.name),
             )
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -95,7 +101,21 @@ impl StdioMcpClient {
             .serve(transport)
             .await
             .map_err(|e| McpError::Protocol(format!("initialize: {e}")))?;
-        Ok(Self { service })
+        Ok(Self {
+            service,
+            // #286: distrust by default — see `with_trusted_read_only_hints`.
+            trust_read_only_hints: false,
+        })
+    }
+
+    /// #286: opt this server into having its self-declared `readOnlyHint`
+    /// honored. Only set when the operator explicitly trusted the server
+    /// (see `supervisor`'s `XIAOGUAI_MCP_TRUST_READ_ONLY_HINTS` allowlist) —
+    /// a trusted server's `readOnlyHint: true` tools become consult-eligible.
+    #[must_use]
+    pub fn with_trusted_read_only_hints(mut self, trust: bool) -> Self {
+        self.trust_read_only_hints = trust;
+        self
     }
 }
 
@@ -128,7 +148,10 @@ impl McpClient for StdioMcpClient {
         Ok(resp
             .tools
             .into_iter()
-            .map(crate::rmcp_convert::descriptor_from_rmcp_tool)
+            // #286: `readOnlyHint` only survives for operator-trusted servers.
+            .map(|t| {
+                crate::rmcp_convert::descriptor_from_rmcp_tool(t, self.trust_read_only_hints)
+            })
             .collect())
     }
 

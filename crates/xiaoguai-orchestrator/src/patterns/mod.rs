@@ -17,6 +17,6 @@ pub mod triangle;
 
 pub use executive::{
     ExecEvent, ExecutiveConfigError, ExecutiveRunner, MemberOutcome, MemberRunner, MemberSpec,
-    DEFAULT_MAX_MEMBERS,
+    DEFAULT_MAX_MEMBERS, EXECUTIVE_RUN_TIMEOUT,
 };
 pub use triangle::{OrchEvent, SessionId, TriangleRequest, TriangleRunner, TriangleStopReason};

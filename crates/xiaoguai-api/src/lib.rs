@@ -57,8 +57,8 @@ pub use hotl::{
 };
 pub use incident_store::{
     InMemoryIncidentStore, IncidentDetails, IncidentRecord, IncidentStatus, IncidentStore,
-    IncidentStoreError, IncidentStoreResult, IngestOutcome, RcaRecord, RepairRecord,
-    SqliteIncidentStore,
+    IncidentStoreError, IncidentStoreResult, IngestOutcome, RcaRecord, ReconciledIncident,
+    RepairRecord, SqliteIncidentStore,
 };
 pub use incidents::{
     ActionItem, DatadogSource, ImNotification, Incident, IncidentSource, NormalizeError, PrDraft,

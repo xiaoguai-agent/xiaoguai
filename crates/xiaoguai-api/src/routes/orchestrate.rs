@@ -55,12 +55,24 @@ use crate::state::{AppState, TurnGuard};
 /// a dropped one is ignored (best-effort send).
 const SSE_CHANNEL_CAPACITY: usize = 64;
 
+/// #285: effective per-request member cap. [`DEFAULT_MAX_MEMBERS`] is the
+/// engine's hard resource ceiling — a request may LOWER the cap but never
+/// raise it (parallel fan-out stays bounded); the floor is lifted to 1 so
+/// the constructor's cap check stays meaningful. Pure — unit-tested below.
+fn effective_max_members(requested: Option<usize>) -> usize {
+    requested
+        .unwrap_or(DEFAULT_MAX_MEMBERS)
+        .clamp(1, DEFAULT_MAX_MEMBERS)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct OrchestrateRequest {
     pub goal: String,
     /// Explicit team. `None` = auto-route the goal via the suggest scorer.
     pub team_id: Option<Uuid>,
-    /// Per-request member cap; defaults to the engine cap (8).
+    /// Per-request member cap; defaults to the engine cap (8). #285: the
+    /// value is clamped to `1..=DEFAULT_MAX_MEMBERS` — a request can lower
+    /// the cap but never raise it above the engine ceiling.
     pub max_members: Option<usize>,
 }
 
@@ -272,13 +284,10 @@ pub async fn orchestrate_session(
             .into_response();
     };
 
-    // Persist the goal as the user message (shared turn.rs helper).
-    let typed_session_id = SessionId::from(session_id.clone());
-    if let Err(e) = crate::turn::persist_user_message(&state, &typed_session_id, &req.goal).await {
-        return ApiError::Storage(e).into_response();
-    }
-
-    // Build the agent-backed runner + the executive engine.
+    // Build the agent-backed runner + the executive engine. #285: this is
+    // pure construction-time validation (member cap, lead membership) and
+    // runs BEFORE the goal is persisted, so a 422 here leaves no orphan
+    // user message behind.
     let run_id = Uuid::new_v4();
     let actor = session.user_id.to_string();
     let mut persona_map: HashMap<Uuid, Persona> =
@@ -307,11 +316,20 @@ pub async fn orchestrate_session(
         id: lead_persona.id,
         name: lead_persona.name.clone(),
     };
-    let max_members = req.max_members.unwrap_or(DEFAULT_MAX_MEMBERS);
+    // #285: clamp — a request may lower the cap but never raise it above
+    // the engine ceiling (parallel fan-out stays bounded).
+    let max_members = effective_max_members(req.max_members);
     let executive = match ExecutiveRunner::with_max_members(runner, lead, members, max_members) {
         Ok(e) => e,
         Err(e) => return unprocessable(e.to_string()),
     };
+
+    // Persist the goal as the user message (shared turn.rs helper) — only
+    // after all construction-time validation passed (#285).
+    let typed_session_id = SessionId::from(session_id.clone());
+    if let Err(e) = crate::turn::persist_user_message(&state, &typed_session_id, &req.goal).await {
+        return ApiError::Storage(e).into_response();
+    }
 
     audit(
         &state,
@@ -494,6 +512,35 @@ mod tests {
         let teams = vec![t_beta, t_alpha.clone()];
         let picked = pick_team_for_goal("finance", &teams, &[a, b]).expect("both match");
         assert_eq!(picked.id, t_alpha.id, "tie must break by name ascending");
+    }
+
+    // #285: the request cap may lower but never raise the engine ceiling.
+    #[test]
+    fn effective_max_members_defaults_to_engine_cap() {
+        assert_eq!(effective_max_members(None), DEFAULT_MAX_MEMBERS);
+    }
+
+    #[test]
+    fn effective_max_members_clamps_oversized_request_to_engine_cap() {
+        assert_eq!(effective_max_members(Some(1000)), DEFAULT_MAX_MEMBERS);
+        assert_eq!(
+            effective_max_members(Some(DEFAULT_MAX_MEMBERS + 1)),
+            DEFAULT_MAX_MEMBERS
+        );
+    }
+
+    #[test]
+    fn effective_max_members_lifts_zero_to_one() {
+        assert_eq!(effective_max_members(Some(0)), 1);
+    }
+
+    #[test]
+    fn effective_max_members_keeps_in_range_request() {
+        assert_eq!(effective_max_members(Some(3)), 3);
+        assert_eq!(
+            effective_max_members(Some(DEFAULT_MAX_MEMBERS)),
+            DEFAULT_MAX_MEMBERS
+        );
     }
 
     #[test]

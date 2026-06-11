@@ -795,8 +795,10 @@ impl ImNotification {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Truncate `s` to at most `max` characters (character boundary safe).
-fn truncate_str(s: &str, max: usize) -> &str {
+/// Truncate `s` to at most `max` bytes (character boundary safe). Also
+/// used by `incident_pipeline::build_analyst_prompt` to cap the raw
+/// payload injected into the Analyst prompt (#284).
+pub(crate) fn truncate_str(s: &str, max: usize) -> &str {
     if s.len() <= max {
         s
     } else {

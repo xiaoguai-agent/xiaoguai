@@ -58,6 +58,11 @@ pub struct HttpClientConfig {
     /// Extra headers (`X-Tenant-Id`, `X-Org`, …). Keys are case-sensitive
     /// on the wire per HTTP/2.
     pub custom_headers: Vec<(String, String)>,
+    /// #286: whether the server's self-declared `readOnlyHint` is honored
+    /// when classifying tools. `false` (default) maps every tool to
+    /// `MutationHint::Write` so consult mode excludes it — a remote
+    /// server's word alone is not a read-only guarantee.
+    pub trust_read_only_hints: bool,
 }
 
 impl HttpClientConfig {
@@ -67,6 +72,8 @@ impl HttpClientConfig {
             endpoint: endpoint.into(),
             auth_header: None,
             custom_headers: Vec::new(),
+            // #286: distrust by default.
+            trust_read_only_hints: false,
         }
     }
 
@@ -81,10 +88,21 @@ impl HttpClientConfig {
         self.custom_headers.push((name.into(), value.into()));
         self
     }
+
+    /// #286: opt this server into having its self-declared `readOnlyHint`
+    /// honored — only call when the operator explicitly trusts the server.
+    #[must_use]
+    pub fn with_trusted_read_only_hints(mut self, trust: bool) -> Self {
+        self.trust_read_only_hints = trust;
+        self
+    }
 }
 
 pub struct HttpMcpClient {
     service: RunningService<RoleClient, ClientInfo>,
+    /// #286: per-server `readOnlyHint` trust, carried from
+    /// [`HttpClientConfig::trust_read_only_hints`].
+    trust_read_only_hints: bool,
 }
 
 impl std::fmt::Debug for HttpMcpClient {
@@ -94,7 +112,7 @@ impl std::fmt::Debug for HttpMcpClient {
                 "peer",
                 &self.service.peer_info().map(|p| &p.server_info.name),
             )
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -148,6 +166,8 @@ impl HttpMcpClient {
     /// # Errors
     /// Returns an error if the connection or initialization fails.
     pub async fn connect(cfg: HttpClientConfig) -> McpResult<Self> {
+        // #286: capture before `cfg` fields are moved into the transport.
+        let trust_read_only_hints = cfg.trust_read_only_hints;
         let mut transport_cfg = StreamableHttpClientTransportConfig::with_uri(cfg.endpoint);
         if let Some(value) = cfg.auth_header {
             transport_cfg = transport_cfg.auth_header(value);
@@ -173,7 +193,10 @@ impl HttpMcpClient {
             .serve(transport)
             .await
             .map_err(|e| McpError::Protocol(format!("initialize: {e}")))?;
-        Ok(Self { service })
+        Ok(Self {
+            service,
+            trust_read_only_hints,
+        })
     }
 }
 
@@ -206,7 +229,10 @@ impl McpClient for HttpMcpClient {
         Ok(resp
             .tools
             .into_iter()
-            .map(crate::rmcp_convert::descriptor_from_rmcp_tool)
+            // #286: `readOnlyHint` only survives for operator-trusted servers.
+            .map(|t| {
+                crate::rmcp_convert::descriptor_from_rmcp_tool(t, self.trust_read_only_hints)
+            })
             .collect())
     }
 
@@ -285,6 +311,17 @@ mod tests {
         assert_eq!(cfg.auth_header.as_deref(), Some("Bearer abc.def"));
         assert_eq!(cfg.custom_headers.len(), 2);
         assert_eq!(cfg.custom_headers[0], ("X-Tenant".into(), "ten_a".into()));
+        // #286: readOnlyHint trust must default OFF.
+        assert!(!cfg.trust_read_only_hints);
+    }
+
+    #[test]
+    fn read_only_hint_trust_is_opt_in() {
+        // #286: distrust by default; the builder is the explicit opt-in.
+        let cfg = HttpClientConfig::new("https://example.invalid/mcp");
+        assert!(!cfg.trust_read_only_hints);
+        let trusted = cfg.with_trusted_read_only_hints(true);
+        assert!(trusted.trust_read_only_hints);
     }
 
     #[test]

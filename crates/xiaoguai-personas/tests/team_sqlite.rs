@@ -78,10 +78,10 @@ async fn sqlite_team_full_roundtrip() {
         })
         .await
         .unwrap_err();
-    assert!(matches!(
-        dup,
-        PersonaError::DuplicateName(_) | PersonaError::Database(_)
-    ));
+    // #283: must be exactly DuplicateName — the old two-way
+    // `DuplicateName(_) | Database(_)` assertion masked the SQLSTATE-vs-SQLite
+    // code mismatch that turned 409s into 500s at the API layer.
+    assert!(matches!(dup, PersonaError::DuplicateName(_)));
 
     // Partial update keeps unspecified fields.
     let updated = repo
@@ -141,12 +141,48 @@ async fn sqlite_lead_fk_is_enforced() {
         })
         .await
         .unwrap_err();
-    // SQLite reports FK violations as a generic database error (no 23503
-    // code like Postgres) — accept either classification.
-    assert!(matches!(
-        err,
-        PersonaError::ForeignKey(_) | PersonaError::Database(_)
-    ));
+    // #283: must be exactly ForeignKey — `from_sqlx` now classifies via the
+    // driver-normalised `ErrorKind::ForeignKeyViolation`, so SQLite's native
+    // FK code (787) is no longer lumped into the generic Database arm.
+    assert!(matches!(err, PersonaError::ForeignKey(_)));
+}
+
+// ── #283 archive semantics: KNOWN LIMITATION — archived names not yet reusable ─
+
+/// #283 known limitation (deferred): the `0032` table-level `UNIQUE (name)`
+/// spans archived rows, so an archived team's name cannot yet be reused —
+/// diverging from the in-memory repository, which only checks active teams.
+/// The fix (drop the table constraint, add a partial unique index over active
+/// rows) needs a no-transaction table-rebuild migration, which the current
+/// `sqlx::migrate!` setup does not yet support (it always wraps in a
+/// transaction → `PRAGMA foreign_keys` is a no-op and the rebuild's DROP is
+/// blocked by `session_teams`' FK). Tracked in #283; this test pins the
+/// CURRENT behaviour so the divergence is intentional and visible.
+#[tokio::test]
+async fn sqlite_archived_team_name_not_yet_reusable() {
+    let (pool, _guard) = test_setup().await;
+    let repo = SqliteTeamRepository::new(pool.clone());
+    let lead = make_persona(&pool, "Phoenix").await;
+
+    let req = CreateTeamRequest {
+        name: "Reborn Squad".to_string(),
+        description: String::new(),
+        lead_persona_id: lead,
+        member_persona_ids: vec![lead],
+        recommended_pack_slugs: vec![],
+        glossary_md: None,
+    };
+    let first = repo.create(&req).await.unwrap();
+
+    // While active, the name is taken.
+    let dup = repo.create(&req).await.unwrap_err();
+    assert!(matches!(dup, PersonaError::DuplicateName(_)));
+
+    // Archiving does NOT yet free the name (table-level UNIQUE spans archived
+    // rows — see the doc comment above; #283 deferred).
+    repo.archive_team(first.id).await.unwrap();
+    let still_dup = repo.create(&req).await.unwrap_err();
+    assert!(matches!(still_dup, PersonaError::DuplicateName(_)));
 }
 
 // ── T7.1 glossary column round-trip (set / clear / cap) ───────────────────────

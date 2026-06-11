@@ -6,6 +6,12 @@
  * via localStorage (`xiaoguai_chat_mode:<sessionId>`) — per plan §2.5 the
  * mode is a per-turn request flag, so stickiness is purely client-side
  * (acceptable for the single-owner deployment, open question #3).
+ *
+ * #286: because the backend flag is per-turn, the sticky UI must not read
+ * as a session-level read-only guarantee — orchestrate/IM/scheduler/loop
+ * turns always execute. The consult cue copy (`ui.mode.readonly_cue` in
+ * the locale files) spells out that it applies only to the message being
+ * sent.
  */
 
 import type { TurnMode } from '@xiaoguai/shared';

@@ -12,8 +12,11 @@
 //!   the incident back to `open` (retryable) and audits
 //!   `incident.analysis_failed`.
 //! * [`IncidentPipeline::approve_repair`] — the explicit human approval
-//!   point. Moves `awaiting_approval → repairing` (the store transition IS
-//!   the guard — anything else is a 409 at the route), runs the
+//!   point. The request names the RCA being approved (`rca_id`, #284) and
+//!   it must be the incident's latest one — the approval binds to that
+//!   analysis, not to the incident. Moves `awaiting_approval → repairing`
+//!   (the store transition IS the guard — anything else is a 409 at the
+//!   route), runs the
 //!   **Executor** turn in normal execute mode (full toolbox, the
 //!   configured `HotL` gate rides in on `agent_defaults`), records the
 //!   attempt, and lands on `resolved` / `failed` with the matching audit.
@@ -23,6 +26,10 @@
 //! session HTTP, no SSE). The routes `await` the pipeline directly: the
 //! runs are single agent turns, mirroring how the orchestrate handler keeps
 //! the request open for the whole run; nothing here needs a detached task.
+//! The flip side (#284): a client disconnect drops the handler future and
+//! cancels the turn mid-flight, stranding the incident on
+//! `analyzing`/`repairing` — `IncidentStore::reconcile_interrupted` runs at
+//! boot (the `xiaoguai-core` serve path) to recover those rows.
 //!
 //! Attribution: every model call is stamped `incident:<id>` (see
 //! [`incident_attribution_label`]) — disjoint from `sess_*`, `orch:`,
@@ -52,7 +59,7 @@ use crate::incident_store::{
     IncidentDetails, IncidentRecord, IncidentStatus, IncidentStore, IncidentStoreError, RcaRecord,
     RepairRecord,
 };
-use crate::incidents::{render_rca_markdown, Incident, RcaDraft};
+use crate::incidents::{render_rca_markdown, truncate_str, Incident, RcaDraft};
 
 // ---------------------------------------------------------------------------
 // Pure helpers (unit-tested below)
@@ -69,13 +76,28 @@ pub fn incident_attribution_label(incident_id: Uuid) -> String {
     format!("incident:{incident_id}")
 }
 
+/// Max bytes of raw alert payload injected into the Analyst prompt
+/// (#284). The payload is attacker-influenceable (end users of the
+/// monitored app reach error messages / user agents without any webhook
+/// token), so cap it to bound both token blowup and the injection
+/// surface. ~8 KiB keeps every realistic Sentry/Datadog payload intact.
+pub const MAX_RAW_PAYLOAD_PROMPT_BYTES: usize = 8 * 1024;
+
 /// Build the Analyst prompt: the incident's high-signal fields + raw
-/// payload, an investigate-read-only instruction, and the **exact JSON
+/// payload (truncated to [`MAX_RAW_PAYLOAD_PROMPT_BYTES`], #284), an
+/// investigate-read-only instruction, and the **exact JSON
 /// contract [`RcaDraft`] deserializes** (its only parser is serde JSON —
 /// `incidents.rs` has no markdown parser, so the reply contract is a single
 /// JSON object, not headings). Pure.
 #[must_use]
 pub fn build_analyst_prompt(incident: &IncidentRecord) -> String {
+    let raw_full = incident.raw_payload.to_string();
+    let raw_capped = truncate_str(&raw_full, MAX_RAW_PAYLOAD_PROMPT_BYTES);
+    let truncation_note = if raw_capped.len() < raw_full.len() {
+        "\n[payload truncated]"
+    } else {
+        ""
+    };
     format!(
         "You are the incident Analyst. Investigate the incident below using \
          your read-only tools and produce a root-cause analysis. You cannot \
@@ -91,7 +113,7 @@ pub fn build_analyst_prompt(incident: &IncidentRecord) -> String {
          - occurred_at: {occurred_at}\n\
          \n\
          Raw alert payload:\n\
-         {raw}\n\
+         {raw}{truncation_note}\n\
          \n\
          Reply with ONLY one JSON object — no prose before or after, no \
          markdown fences — with exactly these fields:\n\
@@ -112,7 +134,7 @@ pub fn build_analyst_prompt(incident: &IncidentRecord) -> String {
         project = incident.project,
         environment = incident.environment.as_deref().unwrap_or("unknown"),
         occurred_at = incident.occurred_at,
-        raw = incident.raw_payload,
+        raw = raw_capped,
     )
 }
 
@@ -305,6 +327,11 @@ pub enum PipelineError {
     /// state inconsistency (should be impossible through the pipeline).
     #[error("incident has no RCA to execute")]
     NoRca,
+    /// #284: the `rca_id` in the approval request is not the incident's
+    /// *latest* RCA — the owner approved a stale analysis. No state was
+    /// changed; re-read the incident and approve the current RCA.
+    #[error("rca_id {requested} is not the latest RCA ({latest}) for this incident")]
+    StaleRca { requested: Uuid, latest: Uuid },
 }
 
 // ---------------------------------------------------------------------------
@@ -356,8 +383,15 @@ impl IncidentPipeline {
         let label = incident_attribution_label(incident_id);
         // T5 consult layers: read-only toolbox (visibility) + ConsultGate
         // wrap (enforcement) — same composition as run_turn's consult mode.
+        // #286: denials audit as `consult.denied` keyed on the incident's
+        // attribution label (this turn has no chat session id).
         let consult_toolbox = Arc::new(read_only_toolbox(&self.toolbox));
-        let consult_config = consult_agent_config(&self.agent_defaults, &self.toolbox);
+        let consult_config = consult_agent_config(
+            &self.agent_defaults,
+            &self.toolbox,
+            self.team_audit.clone(),
+            &label,
+        );
         let ctx = RuntimeContext::new(self.backend.clone(), consult_toolbox, consult_config)
             .with_attribution(Some(label.clone()), Some("owner".to_string()));
 
@@ -437,17 +471,38 @@ impl IncidentPipeline {
     /// succeed is NOT an `Err` — it is a recorded `ok: false` repair with
     /// the incident on `failed`.
     ///
+    /// #284: the caller must name the RCA being approved (`rca_id`); the
+    /// approval binds to *that analysis*, not to the incident. A mismatch
+    /// against the latest RCA is rejected before any state transition.
+    ///
     /// # Errors
-    /// `Store` for transition/persistence failures (`InvalidTransition`
-    /// unless `awaiting_approval` — 409 at the route); `NoRca` on state
+    /// `StaleRca` when `rca_id` is not the incident's latest RCA (409 at
+    /// the route, nothing transitioned); `Store` for
+    /// transition/persistence failures (`InvalidTransition` unless
+    /// `awaiting_approval` — 409 at the route); `NoRca` on state
     /// inconsistency.
-    pub async fn approve_repair(&self, incident_id: Uuid) -> Result<RepairRecord, PipelineError> {
+    pub async fn approve_repair(
+        &self,
+        incident_id: Uuid,
+        rca_id: Uuid,
+    ) -> Result<RepairRecord, PipelineError> {
+        // #284: validate the approval targets the LATEST RCA before any
+        // transition. No newer RCA can appear afterwards: analyze requires
+        // `open`, which is unreachable from `awaiting_approval`/`repairing`.
+        let details = self.store.get_with_details(incident_id).await?;
+        if let Some(latest) = details.rcas.first() {
+            if latest.id != rca_id {
+                return Err(PipelineError::StaleRca {
+                    requested: rca_id,
+                    latest: latest.id,
+                });
+            }
+        }
         // awaiting_approval → repairing IS the approval guard.
         let incident = self
             .store
             .set_status(incident_id, IncidentStatus::Repairing)
             .await?;
-        let details = self.store.get_with_details(incident_id).await?;
         // Newest RCA first (store contract).
         let Some(rca) = details.rcas.first() else {
             // Inconsistent state — record the failed attempt path so the
@@ -661,6 +716,30 @@ mod tests {
         assert!(prompt.contains("production"));
         // Raw payload is injected for agent context.
         assert!(prompt.contains("\"issue\""));
+    }
+
+    #[test]
+    fn analyst_prompt_truncates_oversized_raw_payload() {
+        // #284: the raw payload is attacker-influenceable — an oversized
+        // one must be capped, with a visible truncation marker.
+        let mut record = fixture_record();
+        // Array keeps serialization order regardless of serde_json's map
+        // representation: the marker is guaranteed to sit past the cap.
+        record.raw_payload = json!([
+            "x".repeat(MAX_RAW_PAYLOAD_PROMPT_BYTES * 2),
+            "SHOULD-NOT-APPEAR",
+        ]);
+        let prompt = build_analyst_prompt(&record);
+        assert!(prompt.contains("[payload truncated]"));
+        assert!(!prompt.contains("SHOULD-NOT-APPEAR"));
+        // The prompt stays bounded: payload cap + fixed template slack.
+        assert!(prompt.len() < MAX_RAW_PAYLOAD_PROMPT_BYTES + 4096);
+
+        // Small payloads pass through whole, no marker.
+        let small = fixture_record();
+        let prompt = build_analyst_prompt(&small);
+        assert!(prompt.contains("\"issue\""));
+        assert!(!prompt.contains("[payload truncated]"));
     }
 
     #[test]

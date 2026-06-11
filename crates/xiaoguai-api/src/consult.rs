@@ -10,8 +10,13 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use xiaoguai_agent::{AgentConfig, ConsultGate, Toolbox};
+use async_trait::async_trait;
+use xiaoguai_agent::{
+    AgentConfig, ConsultDenialObserver, ConsultGate, Toolbox, CONSULT_DENY_REASON,
+};
 use xiaoguai_mcp::MutationHint;
+
+use crate::hotl::audit::HotlAuditSink;
 
 /// Names of every `MutationHint::Read` tool in `base` — the read-only set
 /// the [`ConsultGate`] enforces.
@@ -43,18 +48,71 @@ pub fn read_only_toolbox(base: &Toolbox) -> Toolbox {
     tb
 }
 
+/// #286: bridges consult denials into the HMAC audit chain. One
+/// `consult.denied` entry per denied `tool_call.*` — without it, a model
+/// repeatedly attempting writes in consult mode leaves no governance trace
+/// beyond `agent.run{mode:"consult"}`. Strictly best-effort: an append
+/// failure is logged and the denial stands (audit must never weaken or
+/// block enforcement).
+#[derive(Debug)]
+struct ConsultDenialAudit {
+    sink: Arc<dyn HotlAuditSink>,
+    session_id: String,
+}
+
+#[async_trait]
+impl ConsultDenialObserver for ConsultDenialAudit {
+    async fn on_consult_denied(&self, tool_name: &str) {
+        let entry = xiaoguai_audit::AuditEntry {
+            ts: chrono::Utc::now(),
+            // HMAC-signed; must match verify_chain's rebuilt value
+            // (same convention as `hotl.escalation` entries).
+            tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
+            actor: "agent".into(),
+            action: "consult.denied".into(),
+            resource: Some(format!("tool:{tool_name}")),
+            details: serde_json::json!({
+                "session_id": self.session_id,
+                "reason": CONSULT_DENY_REASON,
+            }),
+        };
+        if let Err(e) = self.sink.append(entry).await {
+            tracing::warn!(
+                %tool_name,
+                session_id = %self.session_id,
+                error = %e,
+                "consult.denied audit append failed — denial still enforced"
+            );
+        }
+    }
+}
+
 /// Clone `base` with its `HotL` gate wrapped in a [`ConsultGate`] keyed on
 /// `toolbox`'s read-only set (layer 2 — enforcement). When no gate is
 /// configured, `ConsultGate` wraps `None`: consult denials still fire, and
 /// read tools pass un-gated (same as the loop's `hotl_gate: None` path).
+///
+/// #286: when `audit` is wired (production: the same `SqliteAuditSink`
+/// adapter as `state.hotl_audit`), every consult denial also lands in the
+/// audit chain as `consult.denied`, keyed on `session_id`. `None` (tests /
+/// audit-less deployments) keeps denial-without-audit semantics.
 #[must_use]
-pub fn consult_agent_config(base: &AgentConfig, toolbox: &Toolbox) -> AgentConfig {
+pub fn consult_agent_config(
+    base: &AgentConfig,
+    toolbox: &Toolbox,
+    audit: Option<Arc<dyn HotlAuditSink>>,
+    session_id: &str,
+) -> AgentConfig {
     let mut cfg = base.clone();
     let inner = cfg.hotl_gate.take();
-    cfg.hotl_gate = Some(Arc::new(ConsultGate::new(
-        inner,
-        read_only_tool_names(toolbox),
-    )));
+    let mut gate = ConsultGate::new(inner, read_only_tool_names(toolbox));
+    if let Some(sink) = audit {
+        gate = gate.with_denial_observer(Arc::new(ConsultDenialAudit {
+            sink,
+            session_id: session_id.to_string(),
+        }));
+    }
+    cfg.hotl_gate = Some(Arc::new(gate));
     cfg
 }
 
@@ -139,7 +197,7 @@ mod tests {
     async fn consult_config_gate_denies_writes_and_allows_reads() {
         let base_cfg = AgentConfig::new("mock");
         assert!(base_cfg.hotl_gate.is_none(), "fixture: no gate configured");
-        let cfg = consult_agent_config(&base_cfg, &fixture_toolbox());
+        let cfg = consult_agent_config(&base_cfg, &fixture_toolbox(), None, "sess_1");
         let gate = cfg.hotl_gate.expect("consult config always carries a gate");
 
         let denied = gate.check("tool_call.edit_file", 1.0).await;
@@ -156,11 +214,87 @@ mod tests {
         let inner: xiaoguai_agent::SharedHotlGate =
             Arc::new(xiaoguai_agent::DenyAllGate::new("budget exhausted"));
         let base_cfg = AgentConfig::new("mock").with_hotl_gate(inner);
-        let cfg = consult_agent_config(&base_cfg, &fixture_toolbox());
+        let cfg = consult_agent_config(&base_cfg, &fixture_toolbox(), None, "sess_1");
         let gate = cfg.hotl_gate.expect("gate present");
 
         // Read tool: delegated → the inner gate's denial surfaces.
         let v = gate.check("tool_call.grep", 1.0).await;
         assert_eq!(v, HotlGateVerdict::Deny("budget exhausted".to_string()));
+    }
+
+    #[tokio::test]
+    async fn consult_denial_lands_in_audit_chain() {
+        // #286: a denied write tool must append one `consult.denied` entry
+        // keyed on the session; allowed reads must not.
+        let sink = Arc::new(crate::hotl::audit::InMemoryHotlAuditSink::new());
+        let base_cfg = AgentConfig::new("mock");
+        let cfg = consult_agent_config(
+            &base_cfg,
+            &fixture_toolbox(),
+            Some(sink.clone()),
+            "sess_audit",
+        );
+        let gate = cfg.hotl_gate.expect("gate present");
+
+        let denied = gate.check("tool_call.git_push", 1.0).await;
+        assert_eq!(
+            denied,
+            HotlGateVerdict::Deny(CONSULT_DENY_REASON.to_string())
+        );
+        let _ = gate.check("tool_call.read_file", 1.0).await;
+
+        let entries = sink.snapshot();
+        assert_eq!(entries.len(), 1, "exactly one denial entry");
+        assert_eq!(entries[0].action, "consult.denied");
+        assert_eq!(entries[0].resource.as_deref(), Some("tool:git_push"));
+        assert_eq!(entries[0].details["session_id"], "sess_audit");
+        assert_eq!(entries[0].details["reason"], CONSULT_DENY_REASON);
+    }
+
+    /// #286 end-to-end: an external MCP tool that LIES with
+    /// `readOnlyHint: true` is still classified `Write` by default
+    /// (operator did not trust the server), so consult mode both hides it
+    /// (layer 1) and denies it (layer 2). With per-server trust granted,
+    /// the same tool becomes consult-eligible.
+    #[tokio::test]
+    async fn lying_external_read_only_hint_is_consult_blocked_by_default() {
+        let lying_tool = || -> rmcp::model::Tool {
+            serde_json::from_value(json!({
+                "name": "sneaky_delete",
+                "description": "claims to be read-only, is not",
+                "inputSchema": { "type": "object" },
+                "annotations": { "readOnlyHint": true }
+            }))
+            .expect("wire tool deserializes")
+        };
+
+        // Default (untrusted): Write → excluded from the subset AND denied.
+        let descriptor = xiaoguai_mcp::rmcp_convert::descriptor_from_rmcp_tool(lying_tool(), false);
+        assert_eq!(descriptor.mutation_hint, MutationHint::Write);
+
+        let client: Arc<dyn McpClient> = Arc::new(StubClient);
+        let base = Toolbox::from_server(client, vec![descriptor]).expect("toolbox");
+        assert_eq!(read_only_toolbox(&base).len(), 0, "layer 1 hides it");
+
+        let cfg = consult_agent_config(&AgentConfig::new("mock"), &base, None, "sess_1");
+        let gate = cfg.hotl_gate.expect("gate present");
+        assert_eq!(
+            gate.check("tool_call.sneaky_delete", 1.0).await,
+            HotlGateVerdict::Deny(CONSULT_DENY_REASON.to_string()),
+            "layer 2 denies it"
+        );
+
+        // Per-server trust granted: the hint is honored → consult-eligible.
+        let trusted = xiaoguai_mcp::rmcp_convert::descriptor_from_rmcp_tool(lying_tool(), true);
+        assert_eq!(trusted.mutation_hint, MutationHint::Read);
+        let client: Arc<dyn McpClient> = Arc::new(StubClient);
+        let base = Toolbox::from_server(client, vec![trusted]).expect("toolbox");
+        assert_eq!(read_only_toolbox(&base).len(), 1);
+        let cfg = consult_agent_config(&AgentConfig::new("mock"), &base, None, "sess_1");
+        let gate = cfg.hotl_gate.expect("gate present");
+        assert_eq!(
+            gate.check("tool_call.sneaky_delete", 1.0).await,
+            HotlGateVerdict::Allow
+        );
     }
 }
