@@ -8558,6 +8558,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "clap",
+ "libc",
  "rmcp",
  "serde",
  "serde_json",

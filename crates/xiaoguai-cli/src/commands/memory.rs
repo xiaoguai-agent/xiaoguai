@@ -44,9 +44,13 @@ pub async fn export(store: &dyn MemoryStore, kind: Option<&str>) -> Result<Strin
 /// Import a JSONL document, fail-soft per line (blank lines silently
 /// skipped, malformed lines reported). Adds `source:imported` unless a line
 /// already carries a `source:` tag; content is re-embedded by the store.
+/// Shares the #288 guardrails with the HTTP route (line cap, expired-ttl
+/// skip, early abort on consecutive store failures — see
+/// `xiaoguai_memory::jsonl`).
 ///
 /// # Errors
-/// Returns store-level failures (per-line problems are reported, not errors).
+/// Returns the line-cap rejection (#288) and store-level failures
+/// (per-line problems are reported, not errors).
 pub async fn import(store: &dyn MemoryStore, content: &str) -> Result<ImportReport> {
     jsonl::import_jsonl(store, content)
         .await
@@ -63,6 +67,11 @@ pub fn format_import_report(report: &ImportReport) -> String {
     );
     for s in &report.skipped {
         out.push_str(&format!("  line {}: {}\n", s.line, s.reason));
+    }
+    // #288: surface an early abort (consecutive store failures) prominently
+    // so the owner knows the remaining lines were never attempted.
+    if let Some(reason) = &report.aborted {
+        out.push_str(&format!("ABORTED: {reason}\n"));
     }
     out
 }
@@ -113,6 +122,19 @@ mod tests {
         let rendered = format_import_report(&report);
         assert!(rendered.contains("imported 1"));
         assert!(rendered.contains("line 1:"));
+    }
+
+    #[test]
+    fn format_import_report_renders_an_abort_reason() {
+        // #288: early-stop reason must reach stdout.
+        let report = ImportReport {
+            imported: 3,
+            skipped: vec![],
+            aborted: Some("aborted at line 23: 20 consecutive store failures".to_string()),
+        };
+        let rendered = format_import_report(&report);
+        assert!(rendered.contains("imported 3"));
+        assert!(rendered.contains("ABORTED: aborted at line 23"));
     }
 
     #[tokio::test]

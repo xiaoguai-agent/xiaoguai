@@ -20,6 +20,28 @@
     <string>serve</string>
   </array>
 
+  <!--
+    #287: launchd agents do NOT inherit your shell's exports — API keys and
+    XIAOGUAI_* settings set in ~/.zshrc are invisible to the service (so
+    `xiaoguai doctor` can pass in your shell while the agent fails).
+    Uncomment and fill in the dict below to pass environment to the service:
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>OLLAMA_HOST</key>
+      <string>http://127.0.0.1:11434</string>
+      <key>XIAOGUAI_AUTH__USERNAME</key>
+      <string>owner</string>
+      <key>XIAOGUAI_AUTH__PASSWORD</key>
+      <string>change-me</string>
+    </dict>
+
+    After editing the installed copy (~/Library/LaunchAgents/dev.xiaoguai.plist),
+    reload it:  launchctl unload ~/Library/LaunchAgents/dev.xiaoguai.plist &&
+                launchctl load -w ~/Library/LaunchAgents/dev.xiaoguai.plist
+    NOTE: re-running `xiaoguai service install` overwrites the installed copy.
+  -->
+
   <key>RunAtLoad</key>
   <true/>
 

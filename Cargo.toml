@@ -104,6 +104,10 @@ prost-build = "0.13"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "uuid", "chrono", "json", "migrate"] }
 
 
+# os (#289: in-process setrlimit for the mcp-exec sandbox — replaces the
+# dash-incompatible shell `ulimit` preamble)
+libc = "0.2"
+
 # auth / crypto
 # (jsonwebtoken + casbin removed in the DEC-033 single-owner pivot — no JWT/RBAC.)
 age = "0.10"

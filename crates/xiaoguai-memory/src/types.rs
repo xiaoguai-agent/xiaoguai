@@ -66,6 +66,29 @@ pub struct Memory {
     pub recall_count: i32,
 }
 
+/// Hard cap on a single memory's `content` in bytes (#288): same 16 KiB
+/// budget as the team glossary cap (`xiaoguai-personas/src/teams/model.rs`,
+/// `MAX_GLOSSARY_BYTES`). Oversized values are rejected at the write
+/// boundary with `InvalidArgument` — truncation is NOT allowed (silently
+/// dropping memory tail would be a correctness hazard).
+pub const MAX_CONTENT_BYTES: usize = 16_384;
+
+/// Validate memory `content` against [`MAX_CONTENT_BYTES`] (#288). Shared
+/// by both store implementations so the API boundary surfaces it as a 400
+/// and the JSONL import path reports it as a skipped line.
+///
+/// # Errors
+/// Returns `InvalidArgument` when the content exceeds the byte cap.
+pub fn validate_content(content: &str) -> crate::error::MemoryResult<()> {
+    if content.len() > MAX_CONTENT_BYTES {
+        return Err(crate::MemoryError::InvalidArgument(format!(
+            "content is {} bytes; the maximum is {MAX_CONTENT_BYTES} bytes (16 KiB)",
+            content.len()
+        )));
+    }
+    Ok(())
+}
+
 /// Request to create a new memory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateMemoryRequest {

@@ -23,7 +23,8 @@ struct Cli {
     #[arg(long, env = "XIAOGUAI_MCP_EXEC__TIMEOUT_SECS", default_value_t = 30)]
     timeout_secs: u64,
 
-    /// Address-space limit (megabytes) per call. Passed to `ulimit -v`.
+    /// Address-space limit (megabytes) per call. Applied best-effort as
+    /// `RLIMIT_AS` via in-process `setrlimit` (#289).
     #[arg(long, env = "XIAOGUAI_MCP_EXEC__MEMORY_MB", default_value_t = 512)]
     memory_mb: u64,
 
