@@ -4,6 +4,17 @@
 > We compete on engineering seriousness, not prompt magic or UI polish.
 > Every tool call has an HMAC-chained audit row; every model interaction has a
 > regression-eval safety net.
+>
+> **Scope note (2026-06-11):** Xiaoguai is the **sole home for horizontal
+> agent-teams** — ops, docs/office, and code alike (executive orchestration,
+> consult/execute Agent Bridge, self-healing, team memory — all shipped in
+> v1.14.0). Vertical domains land as **packs**, not as separate platforms:
+> `packs/vmware-ops/` is the ops vertical (consumes the vmware-skill MCP
+> family). The former agent-platform C22 "Agent Teams 智能运维总控" was removed
+> in favour of this pack — rationale lives in agent-platform
+> `docs/architecture/38-2026-06-11-c22-removal-ops-agent-teams-to-xiaoguai.md`
+> (判据: anything an agent can finish by calling tools is a pack or a skill,
+> never a platform product line).
 
 Cross-references: [CHANGELOG](docs/plans/) · [ADRs](docs/architecture/adr/) ·
 [Compliance docs](docs/compliance/) · [README](README.md)

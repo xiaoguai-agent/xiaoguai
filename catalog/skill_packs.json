@@ -311,6 +311,47 @@
       ],
       "inbound_channels": ["hubspot-webhook", "salesforce-event", "email-thread-ingest"],
       "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/sales-qualification.png"
+    },
+    {
+      "slug": "vmware-ops",
+      "name": "VMware Ops",
+      "description": "VMware infrastructure ops agent-team. Consumes the vmware-skill family over MCP (9 read-only diagnostic servers + vmware-pilot for execution) — reimplements nothing. Ships a conversation-only expert team (vSphere, monitoring, vSAN storage, VKS, NSX, NSX-security, Aria, AVI, hardening) plus an incident-triage agent that drafts an RCA and a change-plan from vCenter/Aria alarms. Every change routes through an Agent Bridge to a vmware-pilot workflow with a HOTL approval gate, audit, and rollback — the team never mutates infrastructure autonomously. Replaces the removed agent-platform C22.",
+      "version": "0.1.0",
+      "category": "ops",
+      "requires": {
+        "feature_flags": [
+          "llm",
+          "scheduler"
+        ],
+        "env_keys": [
+          "VSPHERE_HOST",
+          "VSPHERE_USER",
+          "VSPHERE_PASSWORD"
+        ]
+      },
+      "knobs": {
+        "advice_only": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable the remediation bridge entirely (pure read-only advice/RCA, no pilot execution path)"
+        },
+        "auto_triage_severity": {
+          "type": "string",
+          "enum": [
+            "critical",
+            "high",
+            "never"
+          ],
+          "default": "high",
+          "description": "Minimum vCenter alarm severity that auto-triggers the ops-triage RCA agent"
+        },
+        "context_window_hours": {
+          "type": "integer",
+          "default": 1,
+          "description": "Hours of vCenter events / Aria metrics to gather as RCA context"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/vmware-ops.png"
     }
   ]
 }

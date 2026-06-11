@@ -1,0 +1,59 @@
+---
+# vCenter / Aria alarm webhook source.
+#
+# vCenter Alarm actions (or an Aria Operations notification webhook) POST a
+# JSON alarm payload here. The adapter normalizes it to the common Incident
+# schema and hands it to vmware-ops-triage.
+#
+# Mounting: POST /v1/incidents/inbound/vcenter/{route_id}
+# Auth:     Bearer token from scheduler_webhook_tokens table (per-tenant),
+#           same model as the incident-triage pack's sources.
+
+source: vcenter
+route_prefix: /v1/incidents/inbound/vcenter
+
+normalize:
+  # Optional HMAC validation if the alarm forwarder signs the body.
+  hmac_secret: ${VCENTER_WEBHOOK_SECRET}
+
+  # vCenter/Aria alarm field path -> Incident field
+  field_map:
+    id: alarm.id
+    title: alarm.name
+    severity:
+      source: alarm.status
+      map:
+        red: critical
+        yellow: high
+        orange: high
+        green: low
+        gray: low
+        _default: medium
+    source: _const:vcenter
+    occurred_at: alarm.triggered_at
+    url: alarm.url
+    # vCenter managed-object id of the alarming entity (host/VM/cluster/datastore)
+    project: alarm.entity.moid
+    environment: alarm.entity.type
+    raw: _self
+
+# Alarm statuses that trigger triage. green/gray (cleared/normal) are
+# acknowledged but not processed.
+accepted_alert_types:
+  - red
+  - yellow
+  - orange
+
+# Sample payload — vCenter alarm action JSON (shape used by adapter tests).
+sample_payload: |
+  {
+    "alarm": {
+      "id": "alarm-cpu-42",
+      "name": "Host CPU usage",
+      "status": "red",
+      "triggered_at": "2026-06-11T03:14:00.000Z",
+      "url": "https://vcenter.example/ui/alarm/alarm-cpu-42",
+      "entity": { "moid": "host-128", "type": "HostSystem", "name": "esxi-07" },
+      "object": "host-128"
+    }
+  }

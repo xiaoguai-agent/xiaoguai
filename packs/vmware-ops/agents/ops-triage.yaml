@@ -1,0 +1,105 @@
+---
+# VMware Ops Triage Agent — automatic root-cause analysis for vCenter alarms.
+#
+# Input:  a normalized Incident (from the vCenter alarm webhook source).
+# Output: an RcaDraft (rendered via templates/rca.md.j2) + a recommended
+#         change-plan handed to remediation-bridge (NEVER auto-executed).
+# Ported from the C22 Automation Pipeline Analyst (read-only probes only).
+
+name: vmware-ops-triage
+kind: llm-agent
+
+# Read-only context servers. Execution (vmware_pilot) is the bridge's job,
+# behind a HOTL approval gate — not this agent's.
+mcp_servers:
+  - vmware_aiops     # inventory / VM / host state
+  - vmware_monitor   # alarms / events / health
+  - vmware_aria      # metrics / capacity / RCA signals
+  - vmware_storage   # vSAN/datastore health (when storage-related)
+
+llm:
+  model: ${VMWARE_OPS_LLM_MODEL:-default}
+  temperature: 0.2
+  max_tokens: 4096
+
+# Read-only context gathered before the LLM prompt. Each step is a [READ]-
+# tagged vmware-skill tool; the runtime denies anything else.
+context_steps:
+  - id: object_state
+    description: "Current state of the alarming object (host/VM/cluster)"
+    tool: vmware_aiops.get_object_info
+    params:
+      moid: "{{ incident.raw.object }}"
+  - id: recent_events
+    description: "vCenter events on the object in the 1h window before the alarm"
+    tool: vmware_monitor.list_events
+    params:
+      entity: "{{ incident.raw.object }}"
+      since: "{{ (incident.occurred_at | parse_datetime) - duration('1h') | iso8601 }}"
+      until: "{{ incident.occurred_at }}"
+      limit: 100
+  - id: metrics
+    description: "Aria Operations metrics/anomalies around the alarm time"
+    tool: vmware_aria.get_metrics
+    params:
+      entity: "{{ incident.raw.object }}"
+      window: "1h"
+
+system_prompt: |
+  You are a VMware SRE on-call assistant performing root-cause analysis on a
+  vCenter / Aria alarm. You will be given the alarm plus read-only context
+  (object state, recent vCenter events, Aria metrics). Identify the most
+  likely root cause and draft an RCA. You DO NOT execute anything.
+
+  Rules:
+  - Be factual; cite evidence as skill.tool (e.g. vmware_monitor.list_events).
+    If evidence is insufficient, say so explicitly — do not speculate.
+  - Prefer event/metric evidence over guesses.
+  - Any remediation goes into change_plan as a vmware-pilot workflow DRAFT
+    (intent + steps), to be approved by a human via the Agent Bridge. Never
+    mark it executed.
+  - Respond ONLY with valid JSON matching the schema below.
+
+  Schema:
+  {
+    "summary": "1-2 sentence executive summary",
+    "impact": "what/who is affected and blast radius",
+    "root_cause": "most likely cause with evidence refs",
+    "timeline": [{"time": "ISO-8601", "event": "description"}],
+    "change_plan": {
+      "intent": "what to change (NL, for vmware-pilot design_workflow)",
+      "target": "object/scope",
+      "risk": "low|medium|high",
+      "requires_approval": true
+    },
+    "confidence": "high|medium|low",
+    "evidence_refs": ["vmware_monitor.list_events:...", "vmware_aria.get_metrics:..."]
+  }
+
+user_prompt: |
+  ## 告警
+  - ID: {{ incident.id }}
+  - 来源: {{ incident.source }}
+  - 标题: {{ incident.title }}
+  - 严重度: {{ incident.severity }}
+  - 时间: {{ incident.occurred_at }}
+  - 对象: {{ incident.project }} / {{ incident.environment }}
+
+  ## 对象当前状态
+  {{ context.object_state | truncate(2000) }}
+
+  ## 近 1h vCenter 事件
+  {{ context.recent_events | truncate(2000) }}
+
+  ## Aria 指标 / 异常
+  {{ context.metrics | truncate(1500) }}
+
+  现在产出 RCA JSON（含 change_plan 草稿，不要执行）。
+
+outputs:
+  - outputs/remediation-bridge.yaml
+  - outputs/im-notify.yaml
+
+# Deferred:
+#   - auto-escalation when confidence=high + severity=critical
+#   - storage/network deep-dive sub-agents (currently single triage pass)

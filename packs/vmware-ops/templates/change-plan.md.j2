@@ -1,0 +1,24 @@
+# 变更计划 · {{ recommendation.intent | default(rca.change_plan.intent) }}
+
+> 由 advice-team / ops-triage 产出的变更建议 · 风险 **{{ recommendation.risk | default(rca.change_plan.risk) }}**
+> ⚠️ 未执行。此计划经 Agent Bridge 转 vmware-pilot 工作流，需 HOTL 审批后方可执行；失败自动回滚。
+
+## 意图
+{{ recommendation.intent | default(rca.change_plan.intent) }}
+
+## 对象 / 范围
+{{ recommendation.target | default(rca.change_plan.target) }}
+
+## 理由
+{{ recommendation.rationale | default(rca.root_cause) }}
+
+## 审批与执行路径
+1. `vmware_pilot.design_workflow(intent, target)` → 生成工作流草稿（无副作用）
+2. HOTL 审批门（风险取 max(建议, pilot catalog 推导)；高风险需显式 confirmed_by）
+3. 审批通过 → `vmware_pilot.run_workflow` 执行
+4. 任一步失败 → pilot 自动回滚
+5. 全程 HMAC 链式审计（attribution `vmware-ops:bridge:*`）
+
+## 证据
+{% for ref in (recommendation.evidence_refs | default(rca.evidence_refs)) %}- `{{ ref }}`
+{% endfor %}

@@ -102,7 +102,7 @@ fn delete(uri: &str) -> Request<Body> {
 // ── catalog ─────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn catalog_lists_all_nine_packs() {
+async fn catalog_lists_all_packs() {
     let app = router(build_state(None)); // catalog endpoint never needs the repo
     let resp = app
         .oneshot(
@@ -116,7 +116,7 @@ async fn catalog_lists_all_nine_packs() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     let packs = body["packs"].as_array().unwrap();
-    assert_eq!(packs.len(), 9, "catalog must ship exactly 9 packs");
+    assert_eq!(packs.len(), 10, "catalog must ship exactly 10 packs");
 
     let slugs: Vec<&str> = packs.iter().map(|p| p["slug"].as_str().unwrap()).collect();
     for expected in &[
@@ -129,6 +129,7 @@ async fn catalog_lists_all_nine_packs() {
         "rag-hr",
         "devops-oncall",
         "sales-qualification",
+        "vmware-ops",
     ] {
         assert!(slugs.contains(expected), "missing slug: {expected}");
     }

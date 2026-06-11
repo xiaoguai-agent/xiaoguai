@@ -1,0 +1,23 @@
+---
+# IM notification connector — posts the RCA / advice summary to a chat channel.
+#
+# Notify only (no infra mutation). Uses whichever IM provider the workspace
+# has configured (feishu / dingtalk / wecom). The remediation itself still
+# requires explicit human approval via the remediation-bridge.
+
+output: im-notify
+
+im:
+  # IM channel / chat_id. Override with VMWARE_OPS_IM_CHANNEL.
+  channel: ${VMWARE_OPS_IM_CHANNEL}
+  # Markdown message (≤ 500 chars).
+  message_template: |
+    **[VMware 运维]** {{ incident.title | default(input.question) }}
+    严重度: {{ incident.severity | default('-') | upper }} | 对象: {{ incident.project | default('-') }}
+    根因({{ rca.confidence | default('-') }}): {{ rca.root_cause | default('见诊断') | truncate(140) }}
+    {% if rca.change_plan %}建议变更(风险 {{ rca.change_plan.risk }}): {{ rca.change_plan.intent | truncate(120) }}
+    → 需人工经 Agent Bridge 审批执行，未自动操作。{% endif %}
+
+# Deferred:
+#   - Slack/Teams output (currently feishu/dingtalk/wecom only)
+#   - per-severity channel routing
