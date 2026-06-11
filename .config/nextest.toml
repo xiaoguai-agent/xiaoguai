@@ -3,6 +3,28 @@
 # The per-test terminate is the load-bearing setting: a single hung test used
 # to take the whole runner down ("lost communication", 45 min later). nextest
 # kills the hung test at 3×60 s and NAMES it in the output.
+#
+# #243 structural fix (the lever the 6-round hunt never pulled): run
+# xiaoguai-mcp-exec's tests SERIALLY. Each of those tests spawns a real OS
+# subprocess (a `python3 -I` sandbox); running them one-at-a-time removes
+# concurrent-sandbox interaction as a variable entirely, and — paired with the
+# per-test terminate above and #289's wrapper-free process tree (python is the
+# direct child, so a group SIGKILL reaps cleanly) — means at most ONE sandbox
+# process tree is ever live. `package(xiaoguai-mcp-exec)` matches that crate
+# exactly (NOT -js / -wasm). Cost is negligible (the suite is tiny).
+[test-groups]
+mcp-exec-serial = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(xiaoguai-mcp-exec)'
+test-group = 'mcp-exec-serial'
+
 [profile.ci]
 slow-timeout = { period = "60s", terminate-after = 3 }
 fail-fast = false
+
+# Overrides are per-profile in nextest (ci does not inherit default's), so the
+# serial group is declared on ci too — this is the profile CI actually runs.
+[[profile.ci.overrides]]
+filter = 'package(xiaoguai-mcp-exec)'
+test-group = 'mcp-exec-serial'
