@@ -116,6 +116,98 @@ async fn sqlite_incident_full_roundtrip() {
 }
 
 #[tokio::test]
+async fn sqlite_duplicate_ingest_refreshes_payload_and_severity() {
+    // #284: an escalated re-send must update the live row's raw_payload
+    // and severity through the SQL duplicate path, not be dropped.
+    let (pool, _guard) = test_setup().await;
+    let store = SqliteIncidentStore::new(pool);
+
+    let mut inc = sample_incident("sentry:7");
+    inc.severity = Severity::Low;
+    let first = store.ingest(&inc, json!({"attempt": 1})).await.unwrap();
+    assert_eq!(first.record.severity, Severity::Low);
+
+    let mut escalated = sample_incident("sentry:7");
+    escalated.severity = Severity::Critical;
+    let second = store
+        .ingest(&escalated, json!({"attempt": 2}))
+        .await
+        .unwrap();
+    assert!(second.was_duplicate);
+    assert_eq!(second.record.id, first.record.id);
+    assert_eq!(second.record.severity, Severity::Critical);
+    assert_eq!(second.record.raw_payload, json!({"attempt": 2}));
+
+    // Round-trips through a fresh read.
+    let fetched = store.get(first.record.id).await.unwrap();
+    assert_eq!(fetched.severity, Severity::Critical);
+    assert_eq!(fetched.raw_payload, json!({"attempt": 2}));
+}
+
+#[tokio::test]
+async fn sqlite_reconcile_interrupted_moves_stranded_statuses() {
+    // #284 boot reconcile: `analyzing → open`, `repairing → failed`,
+    // everything else untouched; second pass is a no-op.
+    let (pool, _guard) = test_setup().await;
+    let store = SqliteIncidentStore::new(pool);
+
+    let analyzing = store
+        .ingest(&sample_incident("sentry:a"), json!({}))
+        .await
+        .unwrap()
+        .record
+        .id;
+    store
+        .set_status(analyzing, IncidentStatus::Analyzing)
+        .await
+        .unwrap();
+
+    let repairing = store
+        .ingest(&sample_incident("sentry:b"), json!({}))
+        .await
+        .unwrap()
+        .record
+        .id;
+    for s in [
+        IncidentStatus::Analyzing,
+        IncidentStatus::AwaitingApproval,
+        IncidentStatus::Repairing,
+    ] {
+        store.set_status(repairing, s).await.unwrap();
+    }
+
+    let untouched = store
+        .ingest(&sample_incident("sentry:c"), json!({}))
+        .await
+        .unwrap()
+        .record
+        .id;
+
+    let moved = store.reconcile_interrupted().await.unwrap();
+    assert_eq!(moved.len(), 2);
+    let by_id = |id| moved.iter().find(|m| m.id == id).unwrap();
+    assert_eq!(by_id(analyzing).from, IncidentStatus::Analyzing);
+    assert_eq!(by_id(analyzing).to, IncidentStatus::Open);
+    assert_eq!(by_id(repairing).from, IncidentStatus::Repairing);
+    assert_eq!(by_id(repairing).to, IncidentStatus::Failed);
+
+    assert_eq!(
+        store.get(analyzing).await.unwrap().status,
+        IncidentStatus::Open
+    );
+    assert_eq!(
+        store.get(repairing).await.unwrap().status,
+        IncidentStatus::Failed
+    );
+    assert_eq!(
+        store.get(untouched).await.unwrap().status,
+        IncidentStatus::Open
+    );
+
+    assert!(store.reconcile_interrupted().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn sqlite_terminal_row_frees_the_dedup_slot() {
     let (pool, _guard) = test_setup().await;
     let store = SqliteIncidentStore::new(pool);

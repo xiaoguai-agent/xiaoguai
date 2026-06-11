@@ -358,6 +358,85 @@ async fn orchestrate_rejects_unmatched_goal_with_422() {
     assert!(body.contains("no team matches"), "body: {body}");
 }
 
+// ── #285: max_members clamp + validate-before-persist ────────────────────────
+
+#[tokio::test]
+async fn orchestrate_clamps_oversized_max_members_and_still_runs() {
+    // A huge max_members must NOT raise the engine cap — it is clamped,
+    // and a within-cap team still runs to completion normally.
+    let fx = Fixture::new();
+    let lead = fx.make_persona("Finance Analyst").await;
+    let team_id = fx.make_solo_team("Finance Squad", lead).await;
+    let session_id = fx.make_session("sess_clamp").await;
+
+    let backend: Arc<dyn LlmBackend> = Arc::new(MockBackend::with_script(vec![
+        ScriptStep::text("finding"),
+        ScriptStep::text("clamped answer"),
+    ]));
+    let app = router(fx.state(backend));
+
+    let (status, body) = post_orchestrate(
+        app,
+        &session_id,
+        serde_json::json!({"goal": "analyse the report", "team_id": team_id, "max_members": 1000}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    assert!(body.contains("clamped answer"), "body: {body}");
+}
+
+#[tokio::test]
+async fn orchestrate_oversized_team_rejected_without_orphan_message() {
+    // 9 members > engine cap (8). Even with max_members: 1000 the cap is
+    // clamped, the runner constructor rejects with 422 — and because
+    // validation now precedes persistence (#285), the goal must NOT be
+    // left behind as an orphan user message, and the turn lock must be
+    // released.
+    let fx = Fixture::new();
+    let mut member_ids = Vec::new();
+    for i in 0..9 {
+        member_ids.push(fx.make_persona(&format!("Analyst {i}")).await);
+    }
+    let lead = member_ids[0];
+    let team_id = fx
+        .teams
+        .create(&CreateTeamRequest {
+            name: "Big Squad".to_string(),
+            description: "too many analysts".to_string(),
+            lead_persona_id: lead,
+            member_persona_ids: member_ids,
+            recommended_pack_slugs: vec![],
+            glossary_md: None,
+        })
+        .await
+        .expect("create team")
+        .id;
+    let session_id = fx.make_session("sess_oversize").await;
+
+    let backend: Arc<dyn LlmBackend> = Arc::new(MockBackend::with_response("noop"));
+    let state = fx.state(backend);
+    let app = router(state.clone());
+
+    let (status, body) = post_orchestrate(
+        app,
+        &session_id,
+        serde_json::json!({"goal": "analyse everything", "team_id": team_id, "max_members": 1000}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "body: {body}");
+    assert!(body.contains("too many members"), "body: {body}");
+    // No orphan user message (#285: validation before persistence).
+    assert!(
+        fx.messages.snapshot(&session_id).is_empty(),
+        "422 must not persist the goal"
+    );
+    // The turn lock was released on the early return.
+    assert!(
+        state.cancels.try_begin_turn(&session_id).is_some(),
+        "turn lock must be free after the 422"
+    );
+}
+
 // ── 503 when teams are absent ─────────────────────────────────────────────────
 
 #[tokio::test]

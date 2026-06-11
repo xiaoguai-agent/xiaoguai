@@ -117,7 +117,7 @@
       "toggle_label": "Turn mode",
       "execute": "Execute",
       "consult": "Consult",
-      "readonly_cue": "Consult mode (read-only) — the agent will not change anything"
+      "readonly_cue": "Consult mode (read-only) — the agent will not change anything; applies only to the message you send now, not the whole session"
     },
     "teamrun": {
       "button": "Team run",

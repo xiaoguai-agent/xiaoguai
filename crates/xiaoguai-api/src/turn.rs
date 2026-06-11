@@ -203,8 +203,16 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
     // `ConsultGate` keyed on the FULL base toolbox's read-only set — a
     // hallucinated write-tool name is denied at the gate even though the
     // subset toolbox already hides it.
+    // #286: thread the HMAC audit sink + session id through so every consult
+    // denial lands in the audit chain as `consult.denied` (best-effort —
+    // a missing sink or failed append never weakens the denial).
     let agent_defaults = if mode == TurnMode::Consult {
-        crate::consult::consult_agent_config(&state.agent_defaults, &state.toolbox)
+        crate::consult::consult_agent_config(
+            &state.agent_defaults,
+            &state.toolbox,
+            state.hotl_audit.clone(),
+            &input.session_id,
+        )
     } else {
         state.agent_defaults.clone()
     };

@@ -16,7 +16,8 @@ use crate::incidents::Incident;
 
 use super::{
     record_from_incident, IncidentDetails, IncidentRecord, IncidentStatus, IncidentStore,
-    IncidentStoreError, IncidentStoreResult, IngestOutcome, RcaRecord, RepairRecord,
+    IncidentStoreError, IncidentStoreResult, IngestOutcome, RcaRecord, ReconciledIncident,
+    RepairRecord,
 };
 
 #[derive(Default)]
@@ -48,6 +49,10 @@ impl IncidentStore for InMemoryIncidentStore {
         if let Some(existing) = g.incidents.iter_mut().find(|r| {
             r.source == incident.source && r.external_id == incident.id && !r.status.is_terminal()
         }) {
+            // #284: a re-fired alert refreshes the payload + severity —
+            // an escalated re-send must not be silently dropped.
+            existing.raw_payload = raw;
+            existing.severity = incident.severity.clone();
             existing.updated_at = Utc::now();
             return Ok(IngestOutcome {
                 record: existing.clone(),
@@ -154,6 +159,28 @@ impl IncidentStore for InMemoryIncidentStore {
             repairs,
         })
     }
+
+    async fn reconcile_interrupted(&self) -> IncidentStoreResult<Vec<ReconciledIncident>> {
+        // #284 boot reconcile: `analyzing → open` (retryable),
+        // `repairing → failed` (partial mutations may have landed).
+        let mut g = self.state.lock();
+        let mut reconciled = Vec::new();
+        for record in &mut g.incidents {
+            let to = match record.status {
+                IncidentStatus::Analyzing => IncidentStatus::Open,
+                IncidentStatus::Repairing => IncidentStatus::Failed,
+                _ => continue,
+            };
+            reconciled.push(ReconciledIncident {
+                id: record.id,
+                from: record.status,
+                to,
+            });
+            record.status = to;
+            record.updated_at = Utc::now();
+        }
+        Ok(reconciled)
+    }
 }
 
 #[cfg(test)]
@@ -212,6 +239,93 @@ mod tests {
         assert_eq!(second.record.id, first.record.id);
         assert!(second.record.updated_at >= first.record.updated_at);
         assert_eq!(store.list(None).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn duplicate_ingest_refreshes_payload_and_severity() {
+        // #284: an escalated re-send must update the live row, not be
+        // silently dropped.
+        let store = InMemoryIncidentStore::new();
+        let inc = sample_incident("sentry:123");
+        let first = store.ingest(&inc, json!({"attempt": 1})).await.unwrap();
+        assert_eq!(first.record.severity, Severity::High);
+
+        let mut escalated = sample_incident("sentry:123");
+        escalated.severity = Severity::Critical;
+        let second = store
+            .ingest(&escalated, json!({"attempt": 2}))
+            .await
+            .unwrap();
+        assert!(second.was_duplicate);
+        assert_eq!(second.record.id, first.record.id);
+        assert_eq!(second.record.severity, Severity::Critical);
+        assert_eq!(second.record.raw_payload, json!({"attempt": 2}));
+
+        let fetched = store.get(first.record.id).await.unwrap();
+        assert_eq!(fetched.severity, Severity::Critical);
+        assert_eq!(fetched.raw_payload, json!({"attempt": 2}));
+    }
+
+    #[tokio::test]
+    async fn reconcile_interrupted_reopens_analyzing_and_fails_repairing() {
+        // #284: boot reconcile after a crash / dropped handler future.
+        let store = InMemoryIncidentStore::new();
+        let analyzing = store
+            .ingest(&sample_incident("sentry:a"), json!({}))
+            .await
+            .unwrap()
+            .record
+            .id;
+        store
+            .set_status(analyzing, IncidentStatus::Analyzing)
+            .await
+            .unwrap();
+        let repairing = store
+            .ingest(&sample_incident("sentry:b"), json!({}))
+            .await
+            .unwrap()
+            .record
+            .id;
+        drive_to(
+            &store,
+            repairing,
+            &[
+                IncidentStatus::Analyzing,
+                IncidentStatus::AwaitingApproval,
+                IncidentStatus::Repairing,
+            ],
+        )
+        .await;
+        let untouched = store
+            .ingest(&sample_incident("sentry:c"), json!({}))
+            .await
+            .unwrap()
+            .record
+            .id;
+
+        let moved = store.reconcile_interrupted().await.unwrap();
+        assert_eq!(moved.len(), 2);
+        let by_id = |id| moved.iter().find(|m| m.id == id).unwrap();
+        assert_eq!(by_id(analyzing).from, IncidentStatus::Analyzing);
+        assert_eq!(by_id(analyzing).to, IncidentStatus::Open);
+        assert_eq!(by_id(repairing).from, IncidentStatus::Repairing);
+        assert_eq!(by_id(repairing).to, IncidentStatus::Failed);
+
+        assert_eq!(
+            store.get(analyzing).await.unwrap().status,
+            IncidentStatus::Open
+        );
+        assert_eq!(
+            store.get(repairing).await.unwrap().status,
+            IncidentStatus::Failed
+        );
+        assert_eq!(
+            store.get(untouched).await.unwrap().status,
+            IncidentStatus::Open
+        );
+
+        // Idempotent: a second pass finds nothing to move.
+        assert!(store.reconcile_interrupted().await.unwrap().is_empty());
     }
 
     #[tokio::test]
