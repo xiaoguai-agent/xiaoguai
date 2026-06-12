@@ -55,7 +55,7 @@
 | SEC-25 | ✅ | `safeHref()` 应用于 AiDisclosureBanner / Marketplace 链接 |
 | SEC-26 | ✅ | core 加 CSP + `nosniff`/`X-Frame-Options: DENY`/`Referrer-Policy` 中间件（全响应）；vite 关闭 inline modulepreload polyfill，构建验证无内联脚本 |
 
-**未在本轮改动（有意保留，见各项说明）**：at-rest 数据库字段级加密接线（SEC-08 仅做文件 0600）、强制 L3 wasm（SEC-09 仅警告）、HttpOnly cookie 会话重构（SEC-16 用内存方案）、webhook token 哈希落盘（SEC-19 用前缀脱敏）——均为 owner 选定的 fail-safe 轻量方案，避免破坏现有部署/前后端协议。
+**未在本轮改动（有意保留，见各项说明）**：at-rest 数据库字段级加密接线（SEC-08 本轮仅做文件 0600；**字段加密已于 2026-06-12 补上 `llm_providers.api_key`,见 SEC-08 更新**）、强制 L3 wasm（SEC-09 仅警告）、HttpOnly cookie 会话重构（SEC-16 用内存方案）、webhook token 哈希落盘（SEC-19 用前缀脱敏）——均为 owner 选定的 fail-safe 轻量方案，避免破坏现有部署/前后端协议。
 
 ---
 
@@ -123,6 +123,7 @@
 - **证据**：DB 文件（及 `-wal`/`-shm`）按进程 umask 创建（典型 0644，同机其他本地用户可读）。restore 路径 `crates/xiaoguai-cli/src/commands/backup.rs:641-647` 已显式 chmod `0o600`，说明团队已认知敏感性——但**实时创建路径漏了同样加固**，前后不一致。AES-256-GCM at-rest 原语 `crates/xiaoguai-mcp/src/auth/at_rest.rs` 已实现但**尚未接线**到持久化路径。
 - **风险**：DB 备份泄露 / 主机沦陷 = 全部 provider key + IM token + 对话明文外泄；同机多用户场景下默认权限即可读。
 - **修复**：`db::connect()` 创建后（Unix）对 DB 及 `-wal`/`-shm` `set_permissions(0o600)`，与 restore 路径一致；把已实现的 at-rest 加密接线到 token/provider key 持久化路径。
+- **更新（2026-06-12，分支 `feat/at-rest-provider-key`）**：文件 0600 部分此前已随 v1.15.0（#281）修；**字段级 at-rest 加密本次接线到 `llm_providers.api_key`**。原语提升到 `xiaoguai-types::at_rest`（storage 不能依赖 mcp），storage repo `create/update` 加密、`find/list` 解密、serve 启动 `backfill_encrypt_api_keys` 就地加密遗留明文。**opt-in**：env `XIAOGUAI_AT_REST_KEY`（32-byte base64url，`_PREV` 轮换）未配=明文兼容、配了=加密（信封 `xgenc1:` 前缀区分密文/明文）。**fail-safe**：解不开（key 错/缺/密文损坏）→ 该 key 视为缺失 + `error!`，provider 降为未鉴权，不 brick boot。详见 `docs/runbooks/at-rest-encryption.md`。**仍明文（有意）**：`messages.content`（牵连 RAG/recall/FTS/体积，deferred）、`mcp_oauth_tokens`（仅 `InMemoryTokenStore`，未持久化=无明文落盘）。
 
 ### SEC-09 L1 进程沙箱（`xiaoguai-mcp-exec`）不隔离文件系统与网络
 - **维度**：执行与沙箱

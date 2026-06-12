@@ -4,11 +4,29 @@
 //! every method runs in a plain transaction.
 
 use async_trait::async_trait;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, SqlitePool};
-use xiaoguai_types::{ids::ProviderId, LlmProvider, ProviderKind};
+use xiaoguai_types::{ids::ProviderId, Keyring, LlmProvider, ProviderKind};
 
 use crate::repositories::error::{RepoError, RepoResult};
+
+/// Env var holding the 32-byte base64url AES-256-GCM key used for field
+/// encryption-at-rest (today: the provider `api_key` column). Unset = encryption
+/// disabled — keys are stored and read as cleartext, fully backwards-compatible.
+pub const ENV_AT_REST_KEY: &str = "XIAOGUAI_AT_REST_KEY";
+
+/// Optional previous key for the rotation window. Same encoding as
+/// [`ENV_AT_REST_KEY`]; accepted on decrypt only.
+pub const ENV_AT_REST_KEY_PREV: &str = "XIAOGUAI_AT_REST_KEY_PREV";
+
+/// Discriminator prefix marking a stored `api_key` as a sealed envelope
+/// (`xgenc1:` + base64url-no-pad of the [`Keyring`] envelope). A value without
+/// this prefix is treated as cleartext — that is how opt-in encryption and the
+/// pre-backfill window stay unambiguous. No real API key begins with this
+/// literal, so the discriminator never collides with a cleartext secret.
+const ENC_PREFIX: &str = "xgenc1:";
 
 #[async_trait]
 pub trait LlmProviderRepository: Send + Sync {
@@ -26,12 +44,148 @@ pub trait LlmProviderRepository: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct SqliteLlmProviderRepository {
     pool: SqlitePool,
+    /// When present, `api_key` is sealed before write and opened on read.
+    /// `None` = encryption disabled (cleartext, the pre-existing behaviour).
+    keyring: Option<Keyring>,
 }
 
 impl SqliteLlmProviderRepository {
+    /// Construct a repository with encryption-at-rest **disabled** — api keys
+    /// are stored and read as cleartext. Used by tests and call sites that do
+    /// not load a keyring. Production serve/CLI paths use [`Self::from_env`].
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            keyring: None,
+        }
+    }
+
+    /// Construct a repository with an explicit (optional) keyring. `None`
+    /// behaves exactly like [`Self::new`]. Used by tests that exercise the
+    /// encrypted path without touching process-global env vars.
+    #[must_use]
+    pub fn new_with_keyring(pool: SqlitePool, keyring: Option<Keyring>) -> Self {
+        Self { pool, keyring }
+    }
+
+    /// Construct a repository, loading the at-rest keyring from
+    /// [`ENV_AT_REST_KEY`] / [`ENV_AT_REST_KEY_PREV`]. An unset key disables
+    /// encryption (cleartext, backwards-compatible); a *malformed* key is a
+    /// hard error so the misconfiguration surfaces loudly instead of silently
+    /// writing cleartext.
+    ///
+    /// # Errors
+    /// [`RepoError::Encryption`] when a key env var is present but does not
+    /// decode to a 32-byte base64url value.
+    pub fn from_env(pool: SqlitePool) -> RepoResult<Self> {
+        let keyring = Keyring::from_env_vars(ENV_AT_REST_KEY, ENV_AT_REST_KEY_PREV)
+            .map_err(|e| RepoError::Encryption(e.to_string()))?;
+        Ok(Self { pool, keyring })
+    }
+
+    /// Seal a plaintext api key for storage. Returns the value to write to the
+    /// `api_key` column. `None` and empty stay as-is; an already-sealed value
+    /// passes through unchanged (idempotent); with no keyring the plaintext is
+    /// returned verbatim (opt-in cleartext).
+    fn conceal(&self, plaintext: Option<&str>) -> RepoResult<Option<String>> {
+        match plaintext {
+            Some(pt) if !pt.is_empty() && !pt.starts_with(ENC_PREFIX) => match &self.keyring {
+                Some(kr) => {
+                    let envelope = kr
+                        .encrypt(pt)
+                        .map_err(|e| RepoError::Encryption(e.to_string()))?;
+                    Ok(Some(format!(
+                        "{ENC_PREFIX}{}",
+                        URL_SAFE_NO_PAD.encode(envelope)
+                    )))
+                }
+                None => Ok(Some(pt.to_string())),
+            },
+            other => Ok(other.map(str::to_string)),
+        }
+    }
+
+    /// Reveal a stored api key for use. A value without the [`ENC_PREFIX`] is
+    /// cleartext and returned as-is. A sealed value is decrypted; on any
+    /// failure (no keyring configured, wrong key, corrupt envelope) the key is
+    /// treated as **absent** (`None`) with a loud `error!` — fail-safe, so a
+    /// single unreadable row makes one provider unauthenticated rather than
+    /// bricking boot or leaking ciphertext as a bogus key.
+    fn reveal(&self, stored: Option<String>) -> Option<String> {
+        let raw = stored?;
+        let Some(body) = raw.strip_prefix(ENC_PREFIX) else {
+            return Some(raw);
+        };
+        let Some(kr) = &self.keyring else {
+            tracing::error!(
+                "llm provider api_key is encrypted at rest but {ENV_AT_REST_KEY} is not configured; \
+                 treating the key as absent (provider will be unauthenticated)"
+            );
+            return None;
+        };
+        match URL_SAFE_NO_PAD
+            .decode(body)
+            .map_err(|e| e.to_string())
+            .and_then(|env| kr.decrypt(&env).map_err(|e| e.to_string()))
+        {
+            Ok(plaintext) => Some(plaintext),
+            Err(reason) => {
+                tracing::error!(
+                    reason,
+                    "failed to decrypt llm provider api_key at rest; treating the key as absent \
+                     (provider will be unauthenticated). Check {ENV_AT_REST_KEY}/_PREV."
+                );
+                None
+            }
+        }
+    }
+
+    /// Return a copy of `prov` with its `api_key` decrypted for use (see
+    /// [`Self::reveal`]). Immutable: produces a new value rather than mutating.
+    fn with_revealed_key(&self, prov: LlmProvider) -> LlmProvider {
+        let api_key = self.reveal(prov.api_key);
+        LlmProvider { api_key, ..prov }
+    }
+
+    /// Opt-in encryption-at-rest backfill. When a keyring is configured, seal
+    /// every provider `api_key` still stored in cleartext. No-op (returns `0`)
+    /// when encryption is disabled. Idempotent: already-sealed rows (carrying
+    /// the [`ENC_PREFIX`]) are skipped. Mirrors SEC-19's webhook-token backfill;
+    /// run once at serve startup, non-fatal.
+    ///
+    /// # Errors
+    /// Any error reading or updating the table.
+    pub async fn backfill_encrypt_api_keys(&self) -> RepoResult<usize> {
+        if self.keyring.is_none() {
+            return Ok(0);
+        }
+        let cleartext: Vec<(String, String)> = sqlx::query_as(
+            "SELECT id, api_key FROM llm_providers \
+             WHERE api_key IS NOT NULL AND api_key <> '' AND api_key NOT LIKE 'xgenc1:%'",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+
+        let mut migrated = 0usize;
+        for (id, plaintext) in cleartext {
+            let sealed = self.conceal(Some(&plaintext))?;
+            sqlx::query("UPDATE llm_providers SET api_key = ? WHERE id = ?")
+                .bind(sealed.as_deref())
+                .bind(&id)
+                .execute(&self.pool)
+                .await
+                .map_err(RepoError::from_sqlx)?;
+            migrated += 1;
+        }
+        if migrated > 0 {
+            tracing::info!(
+                count = migrated,
+                "encrypted pre-existing cleartext llm provider api keys at rest"
+            );
+        }
+        Ok(migrated)
     }
 }
 
@@ -91,6 +245,7 @@ impl LlmProviderRepository for SqliteLlmProviderRepository {
     async fn create(&self, prov: &LlmProvider) -> RepoResult<()> {
         let models = serde_json::to_value(&prov.models)?;
         let defaults = serde_json::to_value(&prov.default_for_models)?;
+        let api_key = self.conceal(prov.api_key.as_deref())?;
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         sqlx::query(
             "INSERT INTO llm_providers \
@@ -107,7 +262,7 @@ impl LlmProviderRepository for SqliteLlmProviderRepository {
         .bind(defaults)
         .bind(prov.fallback_order)
         .bind(prov.api_key_env.as_deref())
-        .bind(prov.api_key.as_deref())
+        .bind(api_key.as_deref())
         .bind(prov.created_at)
         .bind(prov.updated_at)
         .bind(prov.cost_per_1k_input_usd)
@@ -129,7 +284,10 @@ impl LlmProviderRepository for SqliteLlmProviderRepository {
         .await
         .map_err(RepoError::from_sqlx)?;
         tx.commit().await.map_err(RepoError::from_sqlx)?;
-        row.map(LlmProviderRow::into_domain).transpose()
+        Ok(row
+            .map(LlmProviderRow::into_domain)
+            .transpose()?
+            .map(|p| self.with_revealed_key(p)))
     }
 
     async fn list(&self) -> RepoResult<Vec<LlmProvider>> {
@@ -142,7 +300,10 @@ impl LlmProviderRepository for SqliteLlmProviderRepository {
         .await
         .map_err(RepoError::from_sqlx)?;
         tx.commit().await.map_err(RepoError::from_sqlx)?;
-        rows.into_iter().map(LlmProviderRow::into_domain).collect()
+        rows.into_iter()
+            .map(LlmProviderRow::into_domain)
+            .map(|r| r.map(|p| self.with_revealed_key(p)))
+            .collect()
     }
 
     async fn delete(&self, id: &str) -> RepoResult<()> {
@@ -159,6 +320,7 @@ impl LlmProviderRepository for SqliteLlmProviderRepository {
     async fn update(&self, prov: &LlmProvider) -> RepoResult<()> {
         let models = serde_json::to_value(&prov.models)?;
         let defaults = serde_json::to_value(&prov.default_for_models)?;
+        let api_key = self.conceal(prov.api_key.as_deref())?;
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         let res = sqlx::query(
             "UPDATE llm_providers SET \
@@ -173,7 +335,7 @@ impl LlmProviderRepository for SqliteLlmProviderRepository {
         .bind(defaults)
         .bind(prov.fallback_order)
         .bind(prov.api_key_env.as_deref())
-        .bind(prov.api_key.as_deref())
+        .bind(api_key.as_deref())
         .bind(prov.updated_at)
         .bind(prov.cost_per_1k_input_usd)
         .bind(prov.cost_per_1k_output_usd)

@@ -24,8 +24,8 @@ pub mod at_rest;
 pub mod oauth2_pkce;
 
 pub use at_rest::{
-    AeadKey, AtRestError, Keyring, ENVELOPE_VERSION, ENV_KEY_CURRENT, ENV_KEY_PREV, KEY_LEN,
-    NONCE_LEN,
+    mcp_keyring_from_env, AeadKey, AtRestError, Keyring, ENVELOPE_VERSION, ENV_KEY_CURRENT,
+    ENV_KEY_PREV, KEY_LEN, NONCE_LEN,
 };
 pub use oauth2_pkce::{
     build_authorize_url, exchange_code, new_pkce_pair, new_state, refresh_pkce, should_refresh,
