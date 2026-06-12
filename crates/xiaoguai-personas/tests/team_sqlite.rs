@@ -147,19 +147,14 @@ async fn sqlite_lead_fk_is_enforced() {
     assert!(matches!(err, PersonaError::ForeignKey(_)));
 }
 
-// ── #283 archive semantics: KNOWN LIMITATION — archived names not yet reusable ─
+// ── #283 archive semantics: archived names are reusable (migration 0035) ──────
 
-/// #283 known limitation (deferred): the `0032` table-level `UNIQUE (name)`
-/// spans archived rows, so an archived team's name cannot yet be reused —
-/// diverging from the in-memory repository, which only checks active teams.
-/// The fix (drop the table constraint, add a partial unique index over active
-/// rows) needs a no-transaction table-rebuild migration, which the current
-/// `sqlx::migrate!` setup does not yet support (it always wraps in a
-/// transaction → `PRAGMA foreign_keys` is a no-op and the rebuild's DROP is
-/// blocked by `session_teams`' FK). Tracked in #283; this test pins the
-/// CURRENT behaviour so the divergence is intentional and visible.
+/// #283: migration 0035 replaced the 0032 table-level `UNIQUE (name)` (which
+/// spanned archived rows) with a PARTIAL UNIQUE index over active rows, so an
+/// archived team's name is freed for a new active team — matching the
+/// in-memory repository, which only ever checked non-archived teams.
 #[tokio::test]
-async fn sqlite_archived_team_name_not_yet_reusable() {
+async fn sqlite_archived_team_name_is_reusable() {
     let (pool, _guard) = test_setup().await;
     let repo = SqliteTeamRepository::new(pool.clone());
     let lead = make_persona(&pool, "Phoenix").await;
@@ -178,11 +173,17 @@ async fn sqlite_archived_team_name_not_yet_reusable() {
     let dup = repo.create(&req).await.unwrap_err();
     assert!(matches!(dup, PersonaError::DuplicateName(_)));
 
-    // Archiving does NOT yet free the name (table-level UNIQUE spans archived
-    // rows — see the doc comment above; #283 deferred).
+    // Archiving frees the name for a new active team (partial unique index).
     repo.archive_team(first.id).await.unwrap();
-    let still_dup = repo.create(&req).await.unwrap_err();
-    assert!(matches!(still_dup, PersonaError::DuplicateName(_)));
+    let second = repo
+        .create(&req)
+        .await
+        .expect("archived name must be reusable (#283, migration 0035)");
+    assert_ne!(second.id, first.id);
+
+    // …but only ONE active team may hold it at a time.
+    let dup_again = repo.create(&req).await.unwrap_err();
+    assert!(matches!(dup_again, PersonaError::DuplicateName(_)));
 }
 
 // ── T7.1 glossary column round-trip (set / clear / cap) ───────────────────────
