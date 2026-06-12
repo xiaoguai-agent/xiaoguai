@@ -284,31 +284,49 @@ jobs:
       - name: Run quarantined suite (poll-don't-wait + git beacon)
         run: |
           set -uo pipefail
+          # Run the suite detached; its rc lands in /tmp/q.rc when it finishes.
           setsid bash -c 'cargo nextest run \
             --archive-file target/nextest-tests.tar.zst --workspace-remap . \
             -E "package(xiaoguai-mcp-exec)" --profile ci --no-tests=pass \
             > /tmp/q.log 2>&1 < /dev/null; echo $? > /tmp/q.rc' &
-          W=$!
           git config user.email ci-beacon@localhost
           git config user.name ci-beacon
-          for i in $(seq 1 60); do
-            kill -0 "$W" 2>/dev/null || break
+          # Beat on a TIMER until the suite writes its rc file. Do NOT gate the
+          # loop on the worker pid: `setsid …` exits immediately after forking,
+          # so the old `kill -0 $!` broke the loop after a SINGLE beat — it only
+          # ever captured job start, never the hang (#243). Each beat now dumps
+          # the kernel stack + wchan + open fds of every busy (R/D) process —
+          # the actual "blocked on which syscall" evidence the 6-round hunt
+          # never got. ~85×20s ≈ 28 min, inside this job's 30-min cap.
+          for i in $(seq 1 85); do
+            [ -f /tmp/q.rc ] && break
             {
               echo "beat $i $(date -u +%FT%TZ)"
-              echo "—— log tail ——"; tail -c 3000 /tmp/q.log 2>/dev/null
-              echo "—— top rss ——"; ps aux --sort=-rss 2>/dev/null | head -12
               echo "—— free ——"; free -m 2>/dev/null
+              echo "—— proc tree (test) ——"
+              ps -eo pid,ppid,stat,wchan:24,etimes,pcpu,rss,comm,args --forest 2>/dev/null \
+                | grep -Ei 'nextest|python3|cargo|main\.py|xg-exec|run-test|deno|node' | grep -v grep
+              echo "—— busy (R/D) kstack + fds ——"
+              for p in $(ps -eo pid,stat,comm 2>/dev/null \
+                  | awk '$2 ~ /[RD]/ && $3 !~ /Runner|docker|containerd|waagent|provjobd|multipathd|php|systemd|kworker/ {print $1}'); do
+                echo "  [pid $p] state=$(awk '/^State/{print $2}' /proc/$p/status 2>/dev/null) wchan=$(cat /proc/$p/wchan 2>/dev/null) cmd=$(tr '\0' ' ' </proc/$p/cmdline 2>/dev/null | cut -c1-120)"
+                sudo cat /proc/$p/stack 2>/dev/null | sed 's/^/    /' | head -20
+                sudo ls -l /proc/$p/fd 2>/dev/null | sed 's/^/    fd /' | head -25
+              done
               echo "—— D-state ——"; ps -eo pid,stat,wchan:32,comm 2>/dev/null | awk '$2 ~ /D/' | head -8
               echo "—— dmesg ——"; sudo dmesg 2>/dev/null | tail -5
-            } > /tmp/beacon.txt || true
-            git add -f /tmp/beacon.txt 2>/dev/null || cp /tmp/beacon.txt beacon.txt && git add beacon.txt
+              echo "—— log tail ——"; tail -c 3000 /tmp/q.log 2>/dev/null
+            } > /tmp/beacon.txt 2>&1 || true
+            cp /tmp/beacon.txt beacon.txt
+            git add -f beacon.txt >/dev/null 2>&1 || true
             git commit -qm "beacon beat $i" >/dev/null 2>&1 || true
             git push -qf origin "HEAD:refs/heads/ci-beacon-${GITHUB_RUN_ID}" >/dev/null 2>&1 || true
             sleep 20
           done
-          # Never `wait` (an unkillable work tree would wedge us) — kill the
-          # whole session group and read the rc file if the suite finished.
-          kill -9 -- -"$W" 2>/dev/null || true
+          # Best-effort sweep of any lingering suite processes (the job timeout
+          # tears the runner down regardless; this keeps a normal finish tidy).
+          pkill -9 -f 'cargo nextest run' 2>/dev/null || true
+          pkill -9 python3 2>/dev/null || true
           echo "—— last 100KB of suite output ——"
           tail -c 100000 /tmp/q.log 2>/dev/null || echo "(no output)"
           rc=$(cat /tmp/q.rc 2>/dev/null || echo 124)
