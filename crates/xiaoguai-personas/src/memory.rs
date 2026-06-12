@@ -78,6 +78,18 @@ impl PersonaRepository for InMemoryPersonaRepository {
 
     async fn update(&self, id: Uuid, req: &UpdatePersonaRequest) -> PersonaResult<Persona> {
         let mut g = self.state.lock();
+        // Match the SQLite UNIQUE(name) constraint: renaming onto another
+        // active persona's name must fail here too. Mirrors the
+        // `InMemoryTeamRepository::update` fix (handoff §3.3).
+        if let Some(new_name) = &req.name {
+            let taken = g
+                .personas
+                .values()
+                .any(|p| p.id != id && p.name == *new_name && !p.archived);
+            if taken {
+                return Err(PersonaError::DuplicateName(new_name.clone()));
+            }
+        }
         let persona = g.personas.get_mut(&id).ok_or(PersonaError::NotFound)?;
         if let Some(name) = &req.name {
             name.clone_into(&mut persona.name);

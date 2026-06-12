@@ -38,7 +38,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
@@ -46,7 +46,9 @@ use uuid::Uuid;
 use crate::error::ApiError;
 use crate::incident_pipeline::{render_incident_report, IncidentPipeline, PipelineError};
 use crate::incident_store::{IncidentStatus, IncidentStoreError};
-use crate::incidents::{DatadogSource, Incident, IncidentSource, NormalizeError, SentrySource};
+use crate::incidents::{
+    DatadogSource, Incident, IncidentSource, NormalizeError, SentrySource, Severity,
+};
 use crate::state::AppState;
 
 /// Same header as the scheduler public webhook route.
@@ -123,26 +125,109 @@ fn normalize_for_source(
     }
 }
 
-/// Manual ingest: the body is already in the [`Incident`] JSON shape.
-/// Schema validation is serde; semantic boundary checks (non-empty id,
-/// title, source) are explicit so garbage fails fast with a clear 400.
-/// The body's `source` value is later overwritten by the handler with the
-/// path `{source}` (#284) — it is validated here only for shape.
+/// Manual ingest (handoff §3.2): humans hand-type these bodies, so only
+/// `title` is required — every other [`Incident`] field falls back to a
+/// sensible default instead of a 400:
+///
+/// * `id` → `manual:<uuid>` — fresh per request, so omitting it never
+///   collides with the `(source, external_id)` dedup slot of an earlier
+///   manual incident;
+/// * `severity` → `medium` (the same fallback the datadog adapter uses
+///   for a missing priority);
+/// * `occurred_at` → now;
+/// * `url` → `""`, `project` → `"unknown"` (the sentry/datadog fallbacks);
+/// * `environment` → `None`;
+/// * `raw` → the entire request body, preserving the [`IncidentSource`]
+///   contract that the agent always sees full context.
+///
+/// Absence (or JSON `null`) defaults; fields that ARE present must still
+/// be well-typed — and `id`/`title` non-blank — so garbage keeps failing
+/// fast with a clear 400. The body's `source` is ignored entirely: this
+/// stamps the `"manual"` constant exactly like the sentry/datadog
+/// normalizers stamp theirs, and the handler re-stamps the path
+/// `{source}` on top (#284).
 fn normalize_manual(raw: serde_json::Value) -> Result<Incident, NormalizeError> {
-    let incident: Incident = serde_json::from_value(raw)
-        .map_err(|e| NormalizeError::Malformed(format!("manual incident body: {e}")))?;
-    for (field, value) in [
-        ("id", &incident.id),
-        ("title", &incident.title),
-        ("source", &incident.source),
-    ] {
-        if value.trim().is_empty() {
-            return Err(NormalizeError::Malformed(format!(
-                "manual incident `{field}` must be non-empty"
-            )));
+    let Some(body) = raw.as_object() else {
+        return Err(NormalizeError::Malformed(
+            "manual incident body must be a JSON object".into(),
+        ));
+    };
+
+    let title = match manual_opt_string(body, "title")? {
+        Some(t) if !t.trim().is_empty() => t,
+        _ => {
+            return Err(NormalizeError::Malformed(
+                "manual incident `title` must be a non-empty string".into(),
+            ));
         }
+    };
+
+    let id = match manual_opt_string(body, "id")? {
+        None => format!("manual:{}", Uuid::new_v4()),
+        Some(s) if s.trim().is_empty() => {
+            return Err(NormalizeError::Malformed(
+                "manual incident `id` must be non-empty".into(),
+            ));
+        }
+        Some(s) => s,
+    };
+
+    let severity = match manual_field(body, "severity") {
+        None => Severity::Medium,
+        Some(v) => serde_json::from_value(v.clone())
+            .map_err(|e| NormalizeError::Malformed(format!("manual incident `severity`: {e}")))?,
+    };
+
+    let occurred_at = match manual_opt_string(body, "occurred_at")? {
+        None => Utc::now(),
+        Some(s) => s.parse::<DateTime<Utc>>().map_err(|e| {
+            NormalizeError::Malformed(format!("manual incident `occurred_at`: {e}"))
+        })?,
+    };
+
+    let url = manual_opt_string(body, "url")?.unwrap_or_default();
+    let project = manual_opt_string(body, "project")?.unwrap_or_else(|| "unknown".to_owned());
+    let environment = manual_opt_string(body, "environment")?;
+    let incident_raw = manual_field(body, "raw")
+        .cloned()
+        .unwrap_or_else(|| raw.clone());
+
+    Ok(Incident {
+        id,
+        title,
+        severity,
+        source: "manual".to_owned(),
+        occurred_at,
+        url,
+        project,
+        environment,
+        raw: incident_raw,
+    })
+}
+
+/// `body[field]` with absence and JSON `null` collapsed to `None` — both
+/// mean "use the manual-ingest default" (handoff §3.2).
+fn manual_field<'a>(
+    body: &'a serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Option<&'a serde_json::Value> {
+    body.get(field).filter(|v| !v.is_null())
+}
+
+/// Optional string field of a manual body: absent/`null` → `Ok(None)`;
+/// present but not a JSON string → `Malformed` (defaults cover absence
+/// only — they never paper over a wrongly-typed field the caller sent).
+fn manual_opt_string(
+    body: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<Option<String>, NormalizeError> {
+    match manual_field(body, field) {
+        None => Ok(None),
+        Some(serde_json::Value::String(s)) => Ok(Some(s.clone())),
+        Some(_) => Err(NormalizeError::Malformed(format!(
+            "manual incident `{field}` must be a string"
+        ))),
     }
-    Ok(incident)
 }
 
 /// `POST /v1/incidents/ingest/{source}` — token-gated alert intake.
@@ -201,8 +286,9 @@ pub async fn ingest_incident(
     // #284: the path `{source}` is authoritative — never trust a source
     // claimed inside the body. Without this, a manual ingest carrying
     // `"source": "sentry"` would poison the sentry dedup slot (suppressing
-    // a later real sentry alert). No-op for sentry/datadog, whose
-    // normalizers already stamp the matching constant.
+    // a later real sentry alert). All three normalizers now stamp their
+    // own constant (manual since handoff §3.2), so this is defense in
+    // depth — keep it anyway.
     incident.source = source;
 
     match store.ingest(&incident, body).await {
@@ -400,5 +486,175 @@ pub async fn incident_report(State(state): State<AppState>, Path(id): Path<Uuid>
         )
             .into_response(),
         Err(e) => map_err(e),
+    }
+}
+
+// ─── Unit tests: normalize_manual (handoff §3.2) ──────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pre-§3.2 full shape must keep working unchanged (scripts that
+    /// already send every field).
+    #[test]
+    fn manual_full_body_normalizes_every_field() {
+        let body = json!({
+            "id": "manual:disk-full-1",
+            "title": "Disk full on backup host",
+            "severity": "high",
+            "source": "manual",
+            "occurred_at": "2026-06-10T03:04:05Z",
+            "url": "https://wiki.internal/runbooks/disk-full",
+            "project": "infra",
+            "environment": "production",
+            "raw": {"note": "from runbook"}
+        });
+        let incident = normalize_manual(body).expect("full body normalizes");
+        assert_eq!(incident.id, "manual:disk-full-1");
+        assert_eq!(incident.title, "Disk full on backup host");
+        assert_eq!(incident.severity, Severity::High);
+        assert_eq!(incident.source, "manual");
+        assert_eq!(
+            incident.occurred_at,
+            "2026-06-10T03:04:05Z".parse::<DateTime<Utc>>().unwrap()
+        );
+        assert_eq!(incident.url, "https://wiki.internal/runbooks/disk-full");
+        assert_eq!(incident.project, "infra");
+        assert_eq!(incident.environment.as_deref(), Some("production"));
+        // An explicit `raw` is honored verbatim (pre-§3.2 behavior).
+        assert_eq!(incident.raw, json!({"note": "from runbook"}));
+    }
+
+    #[test]
+    fn manual_minimal_title_only_body_gets_defaults() {
+        let body = json!({"title": "Disk full on backup host"});
+        let incident = normalize_manual(body.clone()).expect("minimal body normalizes");
+        assert_eq!(incident.title, "Disk full on backup host");
+        assert!(incident.id.starts_with("manual:"), "id: {}", incident.id);
+        assert_eq!(incident.severity, Severity::Medium);
+        assert_eq!(incident.source, "manual");
+        assert_eq!(incident.url, "");
+        assert_eq!(incident.project, "unknown");
+        assert!(incident.environment.is_none());
+        // Missing `raw` defaults to the entire request body.
+        assert_eq!(incident.raw, body);
+        // `occurred_at` defaults to (roughly) now.
+        let drift = (Utc::now() - incident.occurred_at).num_seconds().abs();
+        assert!(drift < 60, "occurred_at drifted {drift}s from now");
+    }
+
+    #[test]
+    fn manual_omitted_id_is_fresh_per_request() {
+        // Two identical minimal bodies must NOT collide in the
+        // (source, external_id) dedup slot — each opens its own incident.
+        let a = normalize_manual(json!({"title": "t"})).unwrap();
+        let b = normalize_manual(json!({"title": "t"})).unwrap();
+        assert_ne!(a.id, b.id);
+    }
+
+    #[test]
+    fn manual_null_fields_default_like_missing_ones() {
+        let body = json!({
+            "title": "t",
+            "id": null,
+            "severity": null,
+            "occurred_at": null,
+            "url": null,
+            "project": null,
+            "environment": null,
+            "raw": null
+        });
+        let incident = normalize_manual(body.clone()).expect("nulls default");
+        assert!(incident.id.starts_with("manual:"), "id: {}", incident.id);
+        assert_eq!(incident.severity, Severity::Medium);
+        assert_eq!(incident.url, "");
+        assert_eq!(incident.project, "unknown");
+        assert!(incident.environment.is_none());
+        assert_eq!(incident.raw, body);
+    }
+
+    #[test]
+    fn manual_body_source_is_ignored_and_stamped_manual() {
+        // #284 belt: even before the handler re-stamps the path source,
+        // the normalizer never trusts a body-claimed source.
+        let incident = normalize_manual(json!({"title": "t", "source": "sentry"})).unwrap();
+        assert_eq!(incident.source, "manual");
+    }
+
+    #[test]
+    fn manual_missing_or_blank_title_is_malformed() {
+        for body in [
+            json!({}),
+            json!({"severity": "high"}),
+            json!({"title": "   "}),
+            json!({"title": null}),
+            json!({"title": 42}),
+        ] {
+            assert!(
+                matches!(
+                    normalize_manual(body.clone()),
+                    Err(NormalizeError::Malformed(_))
+                ),
+                "body should be malformed: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn manual_blank_or_non_string_id_is_malformed() {
+        for body in [
+            json!({"title": "t", "id": "   "}),
+            json!({"title": "t", "id": 7}),
+        ] {
+            assert!(
+                matches!(
+                    normalize_manual(body.clone()),
+                    Err(NormalizeError::Malformed(_))
+                ),
+                "body should be malformed: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn manual_present_but_invalid_fields_are_malformed() {
+        // Defaults cover absence only — a field the caller did send must
+        // still be well-typed.
+        for body in [
+            json!({"title": "t", "severity": "urgent"}),
+            json!({"title": "t", "severity": 3}),
+            json!({"title": "t", "occurred_at": "yesterday"}),
+            json!({"title": "t", "occurred_at": 1_718_000_000}),
+            json!({"title": "t", "url": 1}),
+            json!({"title": "t", "project": ["infra"]}),
+            json!({"title": "t", "environment": {}}),
+        ] {
+            assert!(
+                matches!(
+                    normalize_manual(body.clone()),
+                    Err(NormalizeError::Malformed(_))
+                ),
+                "body should be malformed: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn manual_non_object_body_is_malformed() {
+        for body in [
+            json!("just a string"),
+            json!([1, 2, 3]),
+            json!(null),
+            json!(42),
+        ] {
+            assert!(
+                matches!(
+                    normalize_manual(body.clone()),
+                    Err(NormalizeError::Malformed(_))
+                ),
+                "body should be malformed: {body}"
+            );
+        }
     }
 }

@@ -93,6 +93,86 @@ async fn update_missing_returns_not_found() {
 }
 
 #[tokio::test]
+async fn update_rejects_duplicate_name() {
+    // handoff §3.3: renaming onto another active persona's name must fail
+    // like the SQLite UNIQUE(name) constraint (mirror of the team fix).
+    let repo = InMemoryPersonaRepository::new();
+    repo.create(&make_create("Taken")).await.unwrap();
+    let other = repo.create(&make_create("Renaming")).await.unwrap();
+
+    let err = repo
+        .update(
+            other.id,
+            &UpdatePersonaRequest {
+                name: Some("Taken".to_string()),
+                ..UpdatePersonaRequest::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, PersonaError::DuplicateName(_)));
+
+    // The failed update must not have committed the rename.
+    let fetched = repo.get(other.id).await.unwrap();
+    assert_eq!(fetched.name, "Renaming");
+}
+
+#[tokio::test]
+async fn update_to_fresh_name_succeeds() {
+    // handoff §3.3: only collisions with *other* personas are rejected.
+    let repo = InMemoryPersonaRepository::new();
+    repo.create(&make_create("Neighbour")).await.unwrap();
+    let created = repo.create(&make_create("Old Name")).await.unwrap();
+
+    let updated = repo
+        .update(
+            created.id,
+            &UpdatePersonaRequest {
+                name: Some("New Name".to_string()),
+                ..UpdatePersonaRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.name, "New Name");
+
+    // Re-submitting the persona's own current name is not a collision.
+    let same = repo
+        .update(
+            created.id,
+            &UpdatePersonaRequest {
+                name: Some("New Name".to_string()),
+                ..UpdatePersonaRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(same.name, "New Name");
+}
+
+#[tokio::test]
+async fn update_without_rename_skips_duplicate_check() {
+    // handoff §3.3: a name-less update must succeed even when other
+    // personas exist — the duplicate check only applies to renames.
+    let repo = InMemoryPersonaRepository::new();
+    repo.create(&make_create("Neighbour")).await.unwrap();
+    let created = repo.create(&make_create("Stable")).await.unwrap();
+
+    let updated = repo
+        .update(
+            created.id,
+            &UpdatePersonaRequest {
+                system_prompt: Some("Updated prompt only.".to_string()),
+                ..UpdatePersonaRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.name, "Stable");
+    assert_eq!(updated.system_prompt, "Updated prompt only.");
+}
+
+#[tokio::test]
 async fn archive_hides_from_list() {
     let repo = InMemoryPersonaRepository::new();
     let p = repo.create(&make_create("Retiring")).await.unwrap();
