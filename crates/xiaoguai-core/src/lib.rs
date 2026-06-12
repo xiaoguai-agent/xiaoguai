@@ -630,6 +630,12 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         let token_admin: Arc<dyn xiaoguai_api::scheduler::WebhookTokenAdmin> = Arc::new(
             crate::scheduler_bridge::SqliteWebhookTokenAdmin::new(pool.clone()),
         );
+        // SEC-19: one-time, idempotent — hash any pre-existing plaintext webhook
+        // tokens in place so the store holds only digests. Non-fatal: a failure
+        // just leaves legacy rows plaintext (they still validate) until retried.
+        if let Err(e) = crate::scheduler_bridge::backfill_webhook_token_hashes(&pool).await {
+            tracing::warn!(error = %e, "SEC-19 webhook token hash backfill failed (non-fatal)");
+        }
         (
             Some(handle),
             Some(pusher),
