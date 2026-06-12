@@ -573,12 +573,15 @@ impl SqliteWebhookTokenValidator {
 #[async_trait]
 impl WebhookTokenValidator for SqliteWebhookTokenValidator {
     async fn validate(&self, token: &str, route_id: &str) -> Result<bool, WebhookTokenError> {
-        // The token IS the proof of ownership for the single implicit owner.
+        // SEC-19: the column stores the SHA-256 digest, never the plaintext —
+        // hash the incoming header and match that. The token IS the proof of
+        // ownership for the single implicit owner.
+        let hash = token_hash(token);
         let row: Option<(String,)> = sqlx::query_as(
             "SELECT token FROM scheduler_webhook_tokens
              WHERE token = ? AND route_id = ?",
         )
-        .bind(token)
+        .bind(&hash)
         .bind(route_id)
         .fetch_optional(&self.pool)
         .await
@@ -590,7 +593,7 @@ impl WebhookTokenValidator for SqliteWebhookTokenValidator {
         if let Err(e) = sqlx::query(
             "UPDATE scheduler_webhook_tokens SET last_used_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE token = ?",
         )
-        .bind(token)
+        .bind(&hash)
         .execute(&self.pool)
         .await
         {
@@ -620,6 +623,24 @@ fn generate_webhook_token() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
+/// SEC-19: non-secret display/selection prefix kept alongside the digest so
+/// the UI can show + revoke a token without ever re-exposing the plaintext.
+const TOKEN_PREFIX_LEN: usize = 12;
+
+fn token_prefix(token: &str) -> String {
+    token.chars().take(TOKEN_PREFIX_LEN).collect()
+}
+
+/// SEC-19: SHA-256 hex digest of a token. The store holds only this — a leaked
+/// DB file never exposes a live webhook bearer. Validation hashes the incoming
+/// header and matches the digest.
+fn token_hash(token: &str) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    h.update(token.as_bytes());
+    hex::encode(h.finalize())
+}
+
 #[async_trait]
 impl WebhookTokenAdmin for SqliteWebhookTokenAdmin {
     async fn create(&self, route_id: &str) -> Result<WebhookTokenRecord, WebhookTokenAdminError> {
@@ -630,13 +651,16 @@ impl WebhookTokenAdmin for SqliteWebhookTokenAdmin {
         }
         let token = generate_webhook_token();
         let now = chrono::Utc::now();
+        // SEC-19: persist only the digest + a non-secret prefix; the plaintext
+        // `token` is returned here and shown to the operator exactly once.
         sqlx::query(
-            "INSERT INTO scheduler_webhook_tokens (token, route_id, created_at)
-             VALUES (?, ?, ?)",
+            "INSERT INTO scheduler_webhook_tokens (token, route_id, created_at, token_prefix)
+             VALUES (?, ?, ?, ?)",
         )
-        .bind(&token)
+        .bind(token_hash(&token))
         .bind(route_id)
         .bind(now)
+        .bind(token_prefix(&token))
         .execute(&self.pool)
         .await
         .map_err(|e| WebhookTokenAdminError::Backend(e.to_string()))?;
@@ -656,7 +680,11 @@ impl WebhookTokenAdmin for SqliteWebhookTokenAdmin {
             chrono::DateTime<chrono::Utc>,
             Option<chrono::DateTime<chrono::Utc>>,
         )> = sqlx::query_as(
-            "SELECT token, route_id, created_at, last_used_at
+            // SEC-19: never return the stored digest; surface only the
+            // non-secret prefix. COALESCE covers any legacy row not yet
+            // backfilled (its `token` is still the 32-char plaintext, whose
+            // first 12 chars ARE the prefix).
+            "SELECT COALESCE(token_prefix, substr(token, 1, 12)), route_id, created_at, last_used_at
                  FROM scheduler_webhook_tokens
                  ORDER BY created_at DESC
                  LIMIT ?",
@@ -678,17 +706,61 @@ impl WebhookTokenAdmin for SqliteWebhookTokenAdmin {
             .collect())
     }
 
-    async fn revoke(&self, token: &str) -> Result<(), WebhookTokenAdminError> {
-        let res = sqlx::query("DELETE FROM scheduler_webhook_tokens WHERE token = ?")
-            .bind(token)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| WebhookTokenAdminError::Backend(e.to_string()))?;
+    async fn revoke(&self, selector: &str) -> Result<(), WebhookTokenAdminError> {
+        // SEC-19: the caller passes the non-secret prefix from `list` (the UI
+        // never holds the plaintext after create). Match that prefix, or — for
+        // robustness — the stored digest itself, or the digest of a full
+        // plaintext token if one is passed directly.
+        let res = sqlx::query(
+            "DELETE FROM scheduler_webhook_tokens
+             WHERE token_prefix = ? OR token = ? OR token = ?",
+        )
+        .bind(selector)
+        .bind(selector)
+        .bind(token_hash(selector))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| WebhookTokenAdminError::Backend(e.to_string()))?;
         if res.rows_affected() == 0 {
-            return Err(WebhookTokenAdminError::NotFound(token.into()));
+            return Err(WebhookTokenAdminError::NotFound(selector.into()));
         }
         Ok(())
     }
+}
+
+/// SEC-19 one-time, idempotent backfill: hash any pre-existing PLAINTEXT
+/// webhook tokens in place so the at-rest store holds only SHA-256 digests.
+/// Already-hashed rows have a 64-char digest and are skipped; legacy rows have
+/// a 32-char plaintext token. Existing tokens keep working because
+/// [`SqliteWebhookTokenValidator::validate`] hashes the incoming header. Run
+/// once at serve startup.
+///
+/// # Errors
+/// Returns any error from reading or updating the table.
+pub async fn backfill_webhook_token_hashes(pool: &sqlx::SqlitePool) -> Result<usize, sqlx::Error> {
+    let plaintext: Vec<(String,)> =
+        sqlx::query_as("SELECT token FROM scheduler_webhook_tokens WHERE length(token) <> 64")
+            .fetch_all(pool)
+            .await?;
+    let mut migrated = 0usize;
+    for (tok,) in plaintext {
+        sqlx::query(
+            "UPDATE scheduler_webhook_tokens SET token = ?, token_prefix = ? WHERE token = ?",
+        )
+        .bind(token_hash(&tok))
+        .bind(token_prefix(&tok))
+        .bind(&tok)
+        .execute(pool)
+        .await?;
+        migrated += 1;
+    }
+    if migrated > 0 {
+        tracing::info!(
+            count = migrated,
+            "SEC-19: hashed pre-existing plaintext webhook tokens at rest"
+        );
+    }
+    Ok(migrated)
 }
 
 // ----------------------------------------------------------------------
@@ -1100,6 +1172,68 @@ mod tests {
         assert!(t.chars().all(|c| c.is_ascii_hexdigit()));
         // Two consecutive calls don't collide.
         assert_ne!(t, generate_webhook_token());
+    }
+
+    #[tokio::test]
+    async fn webhook_tokens_are_hashed_at_rest_sec19() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = xiaoguai_storage::db::connect(dir.path().join("t.db").to_str().unwrap(), 5)
+            .await
+            .unwrap();
+        xiaoguai_storage::db::migrate(&pool).await.unwrap();
+        let admin = SqliteWebhookTokenAdmin::new(pool.clone());
+        let validator = SqliteWebhookTokenValidator::new(pool.clone());
+
+        // create returns the PLAINTEXT once; the row stores only the digest +
+        // a non-secret prefix.
+        let rec = admin.create("incidents").await.unwrap();
+        let plaintext = rec.token.clone();
+        assert_eq!(plaintext.len(), 32);
+        let (stored_token, stored_prefix): (String, Option<String>) = sqlx::query_as(
+            "SELECT token, token_prefix FROM scheduler_webhook_tokens WHERE route_id = 'incidents'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_ne!(
+            stored_token, plaintext,
+            "plaintext must NOT be stored at rest"
+        );
+        assert_eq!(stored_token, token_hash(&plaintext));
+        assert_eq!(stored_token.len(), 64);
+        assert_eq!(
+            stored_prefix.as_deref(),
+            Some(token_prefix(&plaintext).as_str())
+        );
+
+        // validate hashes the incoming header; wrong token / wrong route fail.
+        assert!(validator.validate(&plaintext, "incidents").await.unwrap());
+        assert!(!validator.validate("nope", "incidents").await.unwrap());
+        assert!(!validator.validate(&plaintext, "other").await.unwrap());
+
+        // list surfaces only the prefix — never the digest or the plaintext.
+        let listed = admin.list(10).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].token, token_prefix(&plaintext));
+
+        // backfill hashes a legacy PLAINTEXT row in place; it keeps validating.
+        let legacy = "deadbeefdeadbeefdeadbeefdeadbeef"; // 32-char plaintext
+        sqlx::query(
+            "INSERT INTO scheduler_webhook_tokens (token, route_id, created_at) VALUES (?, 'incidents', ?)",
+        )
+        .bind(legacy)
+        .bind(chrono::Utc::now())
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(backfill_webhook_token_hashes(&pool).await.unwrap(), 1);
+        assert!(validator.validate(legacy, "incidents").await.unwrap());
+        // idempotent — already-hashed rows are skipped.
+        assert_eq!(backfill_webhook_token_hashes(&pool).await.unwrap(), 0);
+
+        // revoke by the non-secret prefix removes the token.
+        admin.revoke(&token_prefix(&plaintext)).await.unwrap();
+        assert!(!validator.validate(&plaintext, "incidents").await.unwrap());
     }
 
     #[test]
