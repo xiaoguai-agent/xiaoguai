@@ -1,27 +1,22 @@
 name: mcp-exec forensics (#243)
 
 # Dedicated forensic harness for the intermittent +45-min xiaoguai-mcp-exec
-# runner death (issue #243). Catches the hang IN THE ACT and dumps what the
-# blocked process is waiting on (kernel stack / wchan / open fds / py-spy),
-# pushing each snapshot to a beacon branch so it survives the runner's death.
+# runner death (issue #243). The bug is intermittent and only fires on a fresh
+# single suite run, so we fan out: build the nextest archive ONCE, then run a
+# MATRIX of independent hunt jobs that each run the suite a single time (the
+# real trigger condition) under a TIMER-driven monitor that dumps every busy
+# process's kernel stack / wchan / open fds / py-spy to a per-shard beacon
+# branch — so whichever shard hangs captures the death state, surviving the
+# runner's death (each beat is force-pushed to refs/heads/ci-forensics-<run>-<shard>).
 #
-# Does NOT run on normal pushes/PRs — only this branch + manual dispatch, so it
-# never disrupts the gate. Runs the suite via the SAME path as the quarantine
-# job (raw `nextest run`, no inner timeout) under main's config (PARALLEL — the
-# condition the hang occurs in), so it reproduces the original failure.
-#
-# Beacon-bug fix this harness carries: the old quarantine beacon tracked
-# `setsid`'s PID (which exits immediately after forking the worker), so its
-# `kill -0` loop broke after a single beat — capturing only job-start, never
-# the death. This monitor beats on a plain TIMER and detects completion via a
-# sentinel file, so it keeps capturing all the way to the runner's death.
+# Never runs on the gate — only this branch + manual dispatch.
 on:
   push:
     branches: [ci/mcp-exec-forensics]
   workflow_dispatch:
 
 permissions:
-  contents: write # forensic beacon pushes to refs/heads/ci-forensics-<run_id>
+  contents: write # forensic beacon pushes to refs/heads/ci-forensics-<run>-<shard>
 
 env:
   CARGO_TERM_COLOR: always
@@ -32,9 +27,9 @@ env:
   CARGO_BUILD_JOBS: "2"
 
 jobs:
-  forensics:
-    name: mcp-exec hang forensics
-    timeout-minutes: 115
+  build:
+    name: build nextest archive
+    timeout-minutes: 75
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -44,12 +39,6 @@ jobs:
             /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
             "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}" || true
           sudo docker image prune --all --force 2>/dev/null || true
-          df -h /
-      - name: Add swap
-        run: |
-          sudo fallocate -l 8G /swapfile2 && sudo chmod 600 /swapfile2 \
-            && sudo mkswap /swapfile2 && sudo swapon /swapfile2 || true
-          free -h
       - name: Install mold
         run: sudo apt-get update -qq && sudo apt-get install -y -qq mold
       - uses: dtolnay/rust-toolchain@1.93.0
@@ -57,39 +46,62 @@ jobs:
         with:
           tool: cargo-nextest
       - uses: Swatinem/rust-cache@v2
-      - name: Install py-spy (best-effort; wchan/stack still work without it)
-        run: pip install --user py-spy || pipx install py-spy || true
       - name: Build nextest archive (workspace feature unification, like the gate)
         run: >
           mold -run cargo nextest archive --workspace --locked --build-jobs 1
           --archive-file target/nextest-tests.tar.zst
-      - name: Loop mcp-exec with live forensics
-        timeout-minutes: 100
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nextest-archive
+          path: target/nextest-tests.tar.zst
+          retention-days: 1
+
+  hunt:
+    name: hunt shard ${{ matrix.shard }}
+    needs: build
+    timeout-minutes: 80
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - uses: actions/download-artifact@v7
+        with:
+          name: nextest-archive
+          path: target
+      - name: Install py-spy (best-effort; wchan/stack still work without it)
+        run: pip install --user py-spy || pipx install py-spy || true
+      - name: Run mcp-exec ONCE with live forensics
+        timeout-minutes: 70
         run: |
           set -uo pipefail
           git config user.email forensics@localhost
           git config user.name forensics
-          BEACON="ci-forensics-${GITHUB_RUN_ID}"
+          BEACON="ci-forensics-${GITHUB_RUN_ID}-${{ matrix.shard }}"
           DONE=/tmp/forensics.done
           : > /tmp/suite.log
           export PATH="$HOME/.local/bin:$PATH"
 
-          # Background worker: run mcp-exec up to 6× via raw nextest (NO inner
-          # timeout — let a hang develop fully). Each healthy run is seconds.
+          # Background worker: run mcp-exec ONCE via raw nextest (NO inner
+          # timeout — let a hang develop fully to the +45-min death).
           (
-            for r in $(seq 1 6); do
-              echo "===== suite run $r start $(date -u +%FT%TZ) =====" >> /tmp/suite.log
-              setsid cargo nextest run \
-                --archive-file target/nextest-tests.tar.zst --workspace-remap . \
-                -E 'package(xiaoguai-mcp-exec)' --profile ci --no-tests=pass \
-                >> /tmp/suite.log 2>&1 < /dev/null
-              echo "===== suite run $r rc=$? $(date -u +%FT%TZ) =====" >> /tmp/suite.log
-            done
+            echo "===== suite start $(date -u +%FT%TZ) =====" >> /tmp/suite.log
+            setsid cargo nextest run \
+              --archive-file target/nextest-tests.tar.zst --workspace-remap . \
+              -E 'package(xiaoguai-mcp-exec)' --profile ci --no-tests=pass \
+              >> /tmp/suite.log 2>&1 < /dev/null
+            echo "===== suite rc=$? $(date -u +%FT%TZ) =====" >> /tmp/suite.log
             touch "$DONE"
           ) &
 
           beat() {
-            echo "===== beat $1 $(date -u +%FT%TZ) ====="
+            echo "===== shard ${{ matrix.shard }} beat $1 $(date -u +%FT%TZ) ====="
             echo "-- free --"; free -m
             echo "-- procs (cargo/nextest/python/test tree) --"
             ps -eo pid,ppid,pgid,stat,wchan:28,etimes,pcpu,rss,comm,args --forest 2>/dev/null \
@@ -109,17 +121,21 @@ jobs:
               sudo "$(command -v py-spy)" dump --pid "$pp" 2>&1 | sed 's/^/     /' | head -40
             done
             echo "-- all D-state --"; ps -eo pid,stat,wchan:28,comm 2>/dev/null | awk '$2 ~ /D/' | head
-            echo "-- suite.log tail --"; tail -c 3500 /tmp/suite.log 2>/dev/null
+            echo "-- suite.log tail --"; tail -c 4000 /tmp/suite.log 2>/dev/null
           }
 
-          for i in $(seq 1 190); do
-            if [ -f "$DONE" ]; then echo "ALL 6 SUITE RUNS COMPLETED — no hang captured this job"; break; fi
+          # First beat immediately, then every 30s. A healthy run finishes in
+          # seconds (DONE fires, break after ~1 beat). A hang keeps the monitor
+          # beating — each beat force-pushed so the LAST beat before the runner
+          # dies is preserved on the beacon branch.
+          for i in $(seq 1 130); do
+            if [ -f "$DONE" ]; then echo "SHARD ${{ matrix.shard }}: suite completed — no hang"; break; fi
             beat "$i" > /tmp/beacon.txt 2>&1 || true
             cp /tmp/beacon.txt beacon.txt
             git add -f beacon.txt >/dev/null 2>&1 || true
-            git commit -qm "forensics beat $i $(date -u +%FT%TZ)" >/dev/null 2>&1 || true
+            git commit -qm "shard ${{ matrix.shard }} beat $i $(date -u +%FT%TZ)" >/dev/null 2>&1 || true
             git push -qf origin "HEAD:refs/heads/$BEACON" >/dev/null 2>&1 || true
             sleep 30
           done
-          echo "=== monitor ended; final suite.log tail ==="
-          tail -c 10000 /tmp/suite.log || true
+          echo "=== shard ${{ matrix.shard }} monitor ended; suite.log tail ==="
+          tail -c 8000 /tmp/suite.log || true
