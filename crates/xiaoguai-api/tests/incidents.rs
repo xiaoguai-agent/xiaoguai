@@ -1,7 +1,8 @@
 //! Integration tests for `/v1/incidents` (T6.2 — self-healing GLUE-1).
 //!
 //! Boots the production router with the in-memory incident store and
-//! exercises: token-gated sentry/datadog/manual ingest, dedup, the
+//! exercises: token-gated sentry/datadog/manual ingest (incl. the
+//! handoff §3.2 minimal title-only manual body), dedup, the
 //! `incident.open` audit entry, list/get-with-details, the 503 fallbacks
 //! (store absent, validator absent — the latter mirrors the scheduler
 //! public webhook posture), and 400/404 on garbage.
@@ -285,6 +286,57 @@ async fn manual_ingest_round_trip() {
 }
 
 #[tokio::test]
+async fn manual_ingest_accepts_minimal_title_only_body() {
+    // handoff §3.2: humans hand-type manual bodies — `title` alone must be
+    // enough; the server defaults the rest of the Incident shape.
+    let fx = Fixture::new();
+    let app = router(fx.state());
+
+    let minimal = json!({"title": "Disk full on backup host"});
+    let (status, body) = send(
+        app.clone(),
+        "POST",
+        "/v1/incidents/ingest/manual",
+        Some(TOKEN),
+        Some(minimal.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {body}");
+    let incident = &body["incident"];
+    assert_eq!(incident["source"], "manual");
+    assert_eq!(incident["title"], "Disk full on backup host");
+    assert_eq!(incident["severity"], "medium");
+    assert_eq!(incident["project"], "unknown");
+    assert!(incident["environment"].is_null());
+    assert_eq!(incident["status"], "open");
+    let external_id = incident["external_id"].as_str().unwrap().to_owned();
+    assert!(
+        external_id.starts_with("manual:"),
+        "external_id: {external_id}"
+    );
+    // The full request body is preserved as the stored raw payload.
+    assert_eq!(incident["raw_payload"], minimal);
+
+    // An omitted `id` is generated fresh per request: re-posting the same
+    // minimal body opens a second incident instead of hitting dedup.
+    let (status, second) = send(
+        app,
+        "POST",
+        "/v1/incidents/ingest/manual",
+        Some(TOKEN),
+        Some(minimal),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {second}");
+    assert_eq!(second["was_duplicate"], false);
+    assert_ne!(
+        second["incident"]["external_id"].as_str().unwrap(),
+        external_id
+    );
+    assert_eq!(fx.incidents.list(None).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn manual_ingest_cannot_spoof_another_source() {
     // #284: the path `{source}` is authoritative. A manual body claiming
     // `"source": "sentry"` must NOT land in the sentry dedup slot — that
@@ -414,13 +466,25 @@ async fn malformed_sentry_payload_returns_400() {
 async fn garbage_manual_payload_returns_400() {
     let fx = Fixture::new();
     let app = router(fx.state());
-    // Missing required Incident fields.
+    // Missing `title` — the one field manual ingest still requires
+    // (handoff §3.2: every other field is defaulted server-side).
     let (status, _) = send(
         app.clone(),
         "POST",
         "/v1/incidents/ingest/manual",
         Some(TOKEN),
-        Some(json!({"title": "no id"})),
+        Some(json!({"severity": "high"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Present-but-invalid fields are not papered over by the defaults.
+    let (status, _) = send(
+        app.clone(),
+        "POST",
+        "/v1/incidents/ingest/manual",
+        Some(TOKEN),
+        Some(json!({"title": "t", "severity": "urgent"})),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
