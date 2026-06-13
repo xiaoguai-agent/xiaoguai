@@ -8524,7 +8524,6 @@ dependencies = [
 name = "xiaoguai-mcp"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "anyhow",
  "async-trait",
  "axum 0.8.9",
@@ -8799,6 +8798,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "serde",
  "serde_json",
@@ -8835,8 +8835,11 @@ dependencies = [
 name = "xiaoguai-types"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
+ "base64 0.22.1",
  "chrono",
  "insta",
+ "rand 0.10.1",
  "regex",
  "serde",
  "serde_json",

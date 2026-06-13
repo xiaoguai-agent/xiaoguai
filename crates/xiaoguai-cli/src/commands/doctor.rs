@@ -377,7 +377,19 @@ pub async fn run(settings: &Settings) -> Vec<CheckResult> {
     // 2 + 3. providers / ollama — need the registry, so they ride on the pool.
     let mut ollama_target: Option<(String, String)> = None; // (endpoint, model)
     if let Some(pool) = pool {
-        let repo = SqliteLlmProviderRepository::new(pool);
+        // Decrypt provider keys for the report. A malformed at-rest key is a
+        // real failure (keys become unreadable), so surface it as a row and
+        // fall back to a cleartext read so the rest of the probes still run.
+        let repo = match SqliteLlmProviderRepository::from_env(pool.clone()) {
+            Ok(r) => r,
+            Err(e) => {
+                results.push(CheckResult::fail(
+                    "providers",
+                    format!("XIAOGUAI_AT_REST_KEY is set but invalid: {e}"),
+                ));
+                SqliteLlmProviderRepository::new(pool)
+            }
+        };
         match repo.list().await {
             Ok(rows) => match pick_default_provider(&rows) {
                 Some(default) => {

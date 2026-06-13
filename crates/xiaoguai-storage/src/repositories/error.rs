@@ -22,6 +22,12 @@ pub enum RepoError {
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
 
+    /// Encryption-at-rest failure: a configured key was malformed, or sealing
+    /// a secret field failed. Surfaced loudly rather than silently writing
+    /// cleartext.
+    #[error("encryption error: {0}")]
+    Encryption(String),
+
     /// v1.1.2 — a repo trait method was called on an impl that doesn't
     /// support it. Used by the default `SessionRepository::fork` body
     /// so test mocks compile without an explicit override; only the

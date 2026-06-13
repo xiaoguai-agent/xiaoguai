@@ -1132,7 +1132,7 @@ async fn build_provider_repo(config: Option<&str>) -> Result<SqliteLlmProviderRe
     // `provider` commands work on a brand-new DB without needing `xiaoguai
     // serve` first. Idempotent — a no-op once the store is current.
     migrate(&pool).await.context("apply migrations")?;
-    Ok(SqliteLlmProviderRepository::new(pool))
+    Ok(SqliteLlmProviderRepository::from_env(pool)?)
 }
 
 /// Build the local memory store the way `serve` does: same pool, same
