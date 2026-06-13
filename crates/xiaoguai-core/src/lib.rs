@@ -188,7 +188,18 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // wherever the old `MockBackend` used to live. If the registry is
     // empty we keep the `MockBackend` fallback so that fresh deployments
     // still boot and serve a deterministic response.
-    let provider_repo = SqliteLlmProviderRepository::new(pool.clone());
+    let provider_repo = SqliteLlmProviderRepository::from_env(pool.clone())
+        .context("load at-rest encryption key")?;
+    // Opt-in encryption-at-rest backfill (mirrors the SEC-19 webhook-token
+    // backfill): when XIAOGUAI_AT_REST_KEY is configured, seal any provider
+    // api_key still stored cleartext. Non-fatal — a failure just leaves those
+    // rows cleartext until the next boot.
+    if let Err(e) = provider_repo.backfill_encrypt_api_keys().await {
+        tracing::warn!(
+            error = %e,
+            "llm provider api_key encryption-at-rest backfill failed (non-fatal)"
+        );
+    }
     let mut rows = provider_repo
         .list()
         .await
@@ -933,7 +944,8 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // `/v1/mcp/serve` pattern: gate when auth is set, warn loudly when not.
     let providers_router = {
         let r = xiaoguai_api::routes::providers::build_router(Arc::new(
-            SqliteLlmProviderRepository::new(pool.clone()),
+            SqliteLlmProviderRepository::from_env(pool.clone())
+                .context("load at-rest encryption key")?,
         ));
         if let Some(validator) = state.auth.clone() {
             r.route_layer(axum::middleware::from_fn(move |req, next| {
@@ -1499,7 +1511,7 @@ async fn check_mcp_oauth_keyring(pool: &sqlx::SqlitePool) -> Result<()> {
         );
         return Ok(());
     }
-    match xiaoguai_mcp::auth::Keyring::from_env() {
+    match xiaoguai_mcp::auth::mcp_keyring_from_env() {
         Ok(_) => {
             tracing::info!(
                 rows = count,

@@ -8,6 +8,7 @@
 #![warn(clippy::pedantic, clippy::nursery)]
 #![allow(clippy::module_name_repetitions)]
 
+pub mod at_rest;
 pub mod ids;
 pub mod mcp_server;
 pub mod provider;
@@ -16,6 +17,7 @@ pub mod session;
 pub mod tool_call;
 pub mod user;
 
+pub use at_rest::{AeadKey, AtRestError, Keyring, ENVELOPE_VERSION, KEY_LEN, NONCE_LEN};
 pub use ids::{McpServerInstanceId, MessageId, ProviderId, SessionId, ToolCallId, UserId};
 pub use mcp_server::{McpServer, McpTransport};
 pub use provider::{LlmProvider, ProviderKind};

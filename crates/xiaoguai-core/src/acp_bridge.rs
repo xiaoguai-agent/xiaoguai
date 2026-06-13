@@ -46,7 +46,8 @@ async fn build_runtime_context(settings: &Settings) -> Result<RuntimeContext> {
         .context("acp: db connect")?;
     db::migrate(&pool).await.context("acp: db migrate")?;
 
-    let provider_repo = SqliteLlmProviderRepository::new(pool.clone());
+    let provider_repo = SqliteLlmProviderRepository::from_env(pool.clone())
+        .context("acp: load at-rest encryption key")?;
     let mut rows = provider_repo.list().await.context("acp: list providers")?;
     // Same OLLAMA_HOST repoint as `run_serve`, so a local GPU box is honoured
     // without a SQL change.
