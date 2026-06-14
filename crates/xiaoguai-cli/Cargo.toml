@@ -49,6 +49,7 @@ clap_mangen = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 reqwest = { workspace = true }
+base64 = { workspace = true }
 eventsource-stream = "0.2"
 futures = { workspace = true }
 serde = { workspace = true }

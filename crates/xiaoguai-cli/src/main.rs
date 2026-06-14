@@ -71,6 +71,10 @@ enum Cmd {
     ///
     /// Spelled `xiaoguai cli` (also `xiaoguai start`); `xiaoguai repl` still
     /// works as a back-compat alias.
+    ///
+    /// If the server has the owner auth gate enabled, set
+    /// `XIAOGUAI_AUTH__USERNAME` + `XIAOGUAI_AUTH__PASSWORD` in this shell (the
+    /// same values `serve` uses) — otherwise the server replies `401`.
     #[command(name = "cli", visible_alias = "start", alias = "repl")]
     Repl {
         /// Base URL of the API server.
