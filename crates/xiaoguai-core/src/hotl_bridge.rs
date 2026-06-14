@@ -26,7 +26,10 @@ use xiaoguai_api::hotl::{
         HotlDecisionRecord, HotlDecisionStore, HotlDecisionStoreError, HotlDecisionVerdict,
     },
     enforcer::{HotlEnforcer, HotlVerdict, HotlVerdictResult},
-    policy::{CreateHotlPolicyRequest, HotlPolicy, HotlPolicyStore, HotlPolicyStoreError},
+    policy::{
+        validate_policy_request, CreateHotlPolicyRequest, HotlPolicy, HotlPolicyStore,
+        HotlPolicyStoreError,
+    },
 };
 use xiaoguai_audit::chain::sink::SqliteAuditSink;
 use xiaoguai_audit::AuditEntry;
@@ -114,32 +117,8 @@ impl HotlPolicyStore for SqliteHotlPolicyStore {
         &self,
         req: CreateHotlPolicyRequest,
     ) -> Result<HotlPolicy, HotlPolicyStoreError> {
-        // Mirror the validation in `InMemoryHotlPolicyStore` so the PG
-        // implementation is consistent.
-        if req.window_seconds <= 0 {
-            return Err(HotlPolicyStoreError::InvalidArgument(
-                "window_seconds must be > 0".into(),
-            ));
-        }
-        if req.max_count.is_none() && req.max_usd.is_none() {
-            return Err(HotlPolicyStoreError::InvalidArgument(
-                "at least one of max_count or max_usd must be set".into(),
-            ));
-        }
-        if let Some(c) = req.max_count {
-            if c <= 0 {
-                return Err(HotlPolicyStoreError::InvalidArgument(
-                    "max_count must be > 0".into(),
-                ));
-            }
-        }
-        if let Some(usd) = req.max_usd {
-            if usd < 0.0 {
-                return Err(HotlPolicyStoreError::InvalidArgument(
-                    "max_usd must be >= 0".into(),
-                ));
-            }
-        }
+        // Same invariants as the in-memory store (shared validator).
+        validate_policy_request(&req)?;
 
         let id = Uuid::new_v4();
         // DEC-033: tenant_id column dropped from hotl_policies.
@@ -158,6 +137,39 @@ impl HotlPolicyStore for SqliteHotlPolicyStore {
         .await
         .map_err(pg_err)?;
 
+        Ok(HotlPolicy {
+            id,
+            scope: req.scope,
+            window_seconds: req.window_seconds,
+            max_count: req.max_count,
+            max_usd: req.max_usd,
+            escalate_to: req.escalate_to,
+        })
+    }
+
+    async fn update(
+        &self,
+        id: Uuid,
+        req: CreateHotlPolicyRequest,
+    ) -> Result<HotlPolicy, HotlPolicyStoreError> {
+        validate_policy_request(&req)?;
+        let result = sqlx::query(
+            "UPDATE hotl_policies \
+                SET scope = ?, window_seconds = ?, max_count = ?, max_usd = ?, escalate_to = ? \
+             WHERE id = ?",
+        )
+        .bind(&req.scope)
+        .bind(req.window_seconds)
+        .bind(req.max_count)
+        .bind(req.max_usd)
+        .bind(&req.escalate_to)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(pg_err)?;
+        if result.rows_affected() == 0 {
+            return Err(HotlPolicyStoreError::NotFound(id));
+        }
         Ok(HotlPolicy {
             id,
             scope: req.scope,

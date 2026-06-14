@@ -122,7 +122,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/v1/hotl/policies/{id}",
-            delete(hotl::delete_policy),
+            put(hotl::update_policy).delete(hotl::delete_policy),
         )
         // v1.8.x sprint-11 (S11-3a.1) — HOTL decision-record + raise_policy.
         // 3a.1 does NOT resume any agent loop; response.resumed is always
