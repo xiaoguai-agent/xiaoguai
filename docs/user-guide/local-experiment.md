@@ -206,7 +206,7 @@ If you just want to verify the LLM round-trip works at all:
 docker compose -f deploy/docker-compose.yml exec xiaoguai-core \
   xiaoguai chat \
     --model "${OPENAI_MODEL:-gpt-4o-mini}" \
-    --user "Reply with: smoke-ok-from-xiaoguai"
+    --prompt "Reply with: smoke-ok-from-xiaoguai"
 ```
 
 You should see the model reply with a string containing
