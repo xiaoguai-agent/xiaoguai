@@ -4,6 +4,8 @@
 >
 > *Your Little Agent for Big Work · 小怪不小，能办大事*
 
+**English** · [简体中文](README.zh-CN.md)
+
 **Documentation:** the handbook source lives in [`docs/book/`](docs/book/) — build it locally with `mdbook build docs/book` (see [Documentation](#documentation) below).
 
 Xiaoguai is a self-hostable AI agent platform for technical individuals,
@@ -40,6 +42,22 @@ Verify any of them with `curl http://localhost:7600/healthz` → `ok`, or run
 the built-in self-check `xiaoguai doctor`; keep it running across reboots with
 `xiaoguai service install`. Per-method expected outputs and smoke tests:
 [docs/user-guide/install-and-verify.md](docs/user-guide/install-and-verify.md).
+
+**What each method gives you:**
+
+| Method | Needs toolchain / root | Bundled web UI | Best for |
+|---|---|---|---|
+| **A. pip / pipx** | no | ✗ — API + CLI only | quickest start; scripting; servers you drive by CLI/API |
+| **B. .deb / .rpm / tarball** | root (systemd) | ✓ chat at `/`, admin at `/admin/` | a managed host that should serve the browser UI |
+| **C. from source** | Rust toolchain | ✗ — API + CLI only | development / custom builds |
+| **D. Docker** | Docker | ✓ | the full stack in one command |
+
+> **No web page at `http://localhost:7600/`?** That's *expected* on **pip** and
+> **from-source** installs — they ship the API + CLI only, so `/` returns 404
+> while `/healthz` and `/v1/**` work fine. To get the browser console, install a
+> package or use Docker (B / D), or point a pip install at a bundled UI — see
+> [Web UI](#web-ui) below. Either way you can chat right now from the terminal:
+> `xiaoguai chat --prompt 'hello'`.
 
 ### Option A — pip (no toolchain, no sudo, all platforms) — recommended
 
@@ -133,24 +151,76 @@ Want a multi-turn conversation that keeps history? Use `xiaoguai repl`. Working
 offline or without a server? Stay direct with `xiaoguai chat --mock --prompt 'hello'`
 (or `--ollama-url http://localhost:11434`).
 
-### Upgrading
+### Web UI
+
+A browser console — **chat at `/`, operator admin at `/admin/`** — is bundled
+with the packages, tarball, and Docker image (Options B–D) and served
+automatically. **pip and from-source installs ship the API + CLI only**, so
+`http://localhost:7600/` returns 404 by design (this is the single most common
+"is it broken?" question — it isn't).
+
+To add the web UI to a pip / source install, grab the built UI from a release
+tarball and point `server.static_dir` at it:
 
 ```bash
-pip install -U xiaoguai           # pipx users: pipx upgrade xiaoguai
+# x86_64 shown; use the aarch64 tarball on ARM hosts
+curl -sL https://github.com/xiaoguai-agent/xiaoguai/releases/download/v1.17.0/xiaoguai-v1.17.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+# the bundled UI lives under share/xiaoguai/static (contains chat-ui/ + admin-ui/)
+export XIAOGUAI_SERVER__STATIC_DIR="$PWD/xiaoguai-v1.17.0-x86_64-unknown-linux-gnu/share/xiaoguai/static"
+pkill -f 'xiaoguai serve'; xiaoguai serve   # now http://localhost:7600/ (chat) + /admin/ (console)
 ```
 
-For the native packages (Option B), download the newer `.deb` / `.rpm` / tarball
-from the [latest release](https://github.com/xiaoguai-agent/xiaoguai/releases/latest)
-and reinstall over the top (the systemd unit restarts); for Docker, re-pull and
-`up`. Your `~/.xiaoguai/data.db` is reused as-is — schema migrations run
-automatically on `serve` boot, so existing sessions, providers, and audit
-history carry over.
+Or persist it in `~/.xiaoguai/config.yaml` so you don't re-export each time:
+
+```yaml
+server:
+  static_dir: /absolute/path/to/share/xiaoguai/static
+```
+
+When `static_dir` is unset, `serve` auto-probes `<binary>/static`,
+`<binary>/../share/xiaoguai/static`, and `/usr/(local/)share/xiaoguai/static` —
+which is why the packages and Docker image "just work" with zero config.
+
+### Upgrading
+
+Match the upgrade to how you installed (mixing methods desyncs your package
+manager's bookkeeping):
+
+| Installed via | Upgrade command |
+|---|---|
+| pip | `pip install -U xiaoguai` (run inside the same venv) |
+| pipx | `pipx upgrade xiaoguai` |
+| .deb | download the new `.deb` from the [latest release](https://github.com/xiaoguai-agent/xiaoguai/releases/latest), then `sudo apt install ./xiaoguai-cli_*_amd64.deb` (unit restarts) |
+| .rpm | `sudo rpm -U xiaoguai-cli-*.x86_64.rpm` |
+| tarball / bare binary | `xiaoguai self-update` — downloads + cosign-verifies the latest release and replaces the binary in place (`--check` previews without applying) |
+| from source | `git pull && cargo install --path crates/xiaoguai-cli --locked --force` |
+| Docker | `docker compose -f deploy/docker-compose.yml up --build -d` |
+
+`--force` is required for the source path: `Cargo.toml` stays at `0.1.0` on
+`main` (the release version comes from the git tag), so without it cargo thinks
+the package is already installed and skips the rebuild.
+
+Three things people trip on:
+
+1. **Restart `serve` after upgrading.** A running process keeps the old binary
+   in memory — `pkill -f 'xiaoguai serve'` and start it again, or
+   `systemctl restart xiaoguai-core` for the packaged service.
+2. **`xiaoguai --version` shows `0.1.0`?** Either it's a from-source build (the
+   tag → version substitution only happens in release artifacts, so source
+   builds always report `0.1.0` — confirm by git commit instead), or another
+   `xiaoguai` is shadowing the upgraded one on your `PATH`. Check with
+   `which -a xiaoguai`; a stray `~/.cargo/bin/xiaoguai` left over from
+   `cargo install` is the usual culprit.
+3. **Your data is preserved.** `~/.xiaoguai/data.db` is reused as-is; schema
+   migrations run automatically on `serve` boot, so sessions, providers, and
+   audit history carry over.
 
 > **Behavior change (v1.17.0):** `xiaoguai chat --prompt '...'` now talks to the
 > running `xiaoguai serve` by default — it auto-creates a session and uses your
-> registered providers. The old direct-to-Ollama/Mock one-shot moved behind
-> `--mock` / `--ollama-url`. If you scripted `xiaoguai chat` against Ollama, add
-> `--ollama-url http://localhost:11434` (or `--mock` for the canned backend).
+> registered providers + HotL + audit. The old direct-to-Ollama/Mock one-shot
+> moved behind `--mock` / `--ollama-url`. If you scripted `xiaoguai chat` against
+> Ollama, add `--ollama-url http://localhost:11434` (or `--mock` for the canned
+> backend).
 
 ## Observability (optional)
 
