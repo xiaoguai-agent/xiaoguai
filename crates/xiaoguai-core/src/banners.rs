@@ -9,14 +9,27 @@ use std::net::SocketAddr;
 
 /// Post-bind success banner, printed to **stdout** once the listener is up.
 ///
-/// One ✓ line plus one next-step line (chat UI URL / first-message command).
+/// `has_web_ui` reflects whether a static web UI was actually mounted (the
+/// caller passes `resolve_static_dir(...).is_some()`). It matters: pip and
+/// from-source installs ship the API + CLI only, so `{url}/` 404s — pointing
+/// those users at "the chat UI" is the single most common "is it broken?"
+/// confusion. When there's no UI we steer them to `repl` / `chat` instead.
+///
 /// No auto-open browser — server installs are headless (plan §1 T8.1).
 #[must_use]
-pub fn serve_banner(local: &SocketAddr) -> String {
+pub fn serve_banner(local: &SocketAddr, has_web_ui: bool) -> String {
     let url = display_url(local);
-    format!(
-        "✓ xiaoguai running at {url}\n  Open the chat UI at {url}/ — or send a first message: xiaoguai repl"
-    )
+    if has_web_ui {
+        format!(
+            "✓ xiaoguai running at {url}\n  Open the chat UI at {url}/ — or send a first message: xiaoguai repl"
+        )
+    } else {
+        format!(
+            "✓ xiaoguai running at {url}  (API + CLI only — no web UI bundled)\n  \
+             Chat from your terminal:  xiaoguai repl   (or: xiaoguai chat --prompt \"...\")\n  \
+             Want the browser UI? See the README \"Web UI\" section."
+        )
+    }
 }
 
 /// Actionable message for a failed bind on an already-occupied port,
@@ -80,21 +93,33 @@ mod tests {
     use std::io;
 
     #[test]
-    fn serve_banner_has_check_url_and_next_step() {
+    fn serve_banner_with_ui_points_at_chat_url() {
         let local: SocketAddr = "127.0.0.1:7600".parse().unwrap();
-        let b = serve_banner(&local);
+        let b = serve_banner(&local, true);
         assert!(b.starts_with("✓ xiaoguai running at http://127.0.0.1:7600"));
-        assert!(b.contains("http://127.0.0.1:7600/"));
+        assert!(b.contains("Open the chat UI at http://127.0.0.1:7600/"));
         assert!(b.contains("xiaoguai repl"));
         assert_eq!(b.lines().count(), 2);
     }
 
     #[test]
+    fn serve_banner_without_ui_steers_to_cli_not_a_dead_url() {
+        let local: SocketAddr = "127.0.0.1:7600".parse().unwrap();
+        let b = serve_banner(&local, false);
+        assert!(b.starts_with("✓ xiaoguai running at http://127.0.0.1:7600"));
+        // Must NOT tell an API-only user to open a web page that 404s.
+        assert!(!b.contains("Open the chat UI"));
+        assert!(b.contains("API + CLI only"));
+        assert!(b.contains("xiaoguai repl"));
+        assert!(b.contains("xiaoguai chat"));
+    }
+
+    #[test]
     fn serve_banner_maps_wildcard_to_localhost() {
         let local: SocketAddr = "0.0.0.0:7600".parse().unwrap();
-        assert!(serve_banner(&local).contains("http://localhost:7600"));
+        assert!(serve_banner(&local, true).contains("http://localhost:7600"));
         let v6: SocketAddr = "[::]:7600".parse().unwrap();
-        assert!(serve_banner(&v6).contains("http://localhost:7600"));
+        assert!(serve_banner(&v6, false).contains("http://localhost:7600"));
     }
 
     #[test]

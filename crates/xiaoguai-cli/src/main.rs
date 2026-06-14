@@ -1420,23 +1420,48 @@ async fn handle_init(config: Option<&str>) -> Result<()> {
     // Region-relevant providers (M2): the seeded endpoint may be wrong for the
     // user's account — MiniMax international (api.minimax.io) vs the CN platform,
     // Azure's per-deployment URL, Bedrock's AWS region. A correct key against the
-    // wrong host still 401s, so offer an inline endpoint override (blank keeps
-    // the current value). `UpdateArgs.endpoint` already exists (#213).
-    let endpoint = if matches!(chosen.kind.as_str(), "minimax" | "azure_openai" | "bedrock") {
-        eprint!(
-            "\n{} endpoint (blank to keep {}): ",
-            chosen.name, chosen.endpoint
-        );
-        std::io::stderr().flush().ok();
-        let e = prompt_line()?;
-        let e = e.trim();
-        if e.is_empty() {
-            None
-        } else {
-            Some(e.to_string())
+    // wrong host still 401s. `UpdateArgs.endpoint` already exists (#213).
+    let endpoint = match chosen.kind.as_str() {
+        // MiniMax keys are region-bound and NOT interchangeable. Offer an
+        // explicit region picker rather than a free-form URL, so CN-console
+        // users don't silently keep the international default and 401 — the #1
+        // fresh-install failure we kept hitting in the field.
+        "minimax" => {
+            eprintln!(
+                "\n{} region — your API key is tied to one (the two are NOT interchangeable):",
+                chosen.name
+            );
+            eprintln!("{}", init::MINIMAX_REGION_MENU);
+            loop {
+                eprint!("Pick region [1-2] (blank to keep {}): ", chosen.endpoint);
+                std::io::stderr().flush().ok();
+                let line = prompt_line()?;
+                if line.trim().is_empty() {
+                    break None;
+                }
+                if let Some(ep) = init::minimax_region_endpoint(&line) {
+                    break Some(ep.to_string());
+                }
+                eprintln!("  please enter 1 or 2");
+            }
         }
-    } else {
-        None
+        // Azure (per-deployment URL) / Bedrock (AWS region) still need a
+        // free-form endpoint — there's no small fixed set to pick from.
+        "azure_openai" | "bedrock" => {
+            eprint!(
+                "\n{} endpoint (blank to keep {}): ",
+                chosen.name, chosen.endpoint
+            );
+            std::io::stderr().flush().ok();
+            let e = prompt_line()?;
+            let e = e.trim();
+            if e.is_empty() {
+                None
+            } else {
+                Some(e.to_string())
+            }
+        }
+        _ => None,
     };
 
     eprint!(
