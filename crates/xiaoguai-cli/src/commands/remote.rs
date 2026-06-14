@@ -180,30 +180,56 @@ impl RemoteClient {
         require_2xx_with_body(resp).await
     }
 
+    /// `POST /v1/sessions/:id/messages` using the session's own model. Thin
+    /// wrapper over [`Self::send_message_with_model`] with no override.
+    ///
+    /// # Errors
+    /// See [`Self::send_message_with_model`].
+    pub async fn send_message<F>(
+        &self,
+        session_id: &str,
+        content: &str,
+        on_event: F,
+    ) -> Result<()>
+    where
+        F: FnMut(RemoteEvent) -> Result<()>,
+    {
+        self.send_message_with_model(session_id, content, None, on_event)
+            .await
+    }
+
     /// `POST /v1/sessions/:id/messages` — drain the SSE stream into the
-    /// provided sink. The sink receives one `RemoteEvent` per line and may
-    /// stop the stream by returning `Err`.
+    /// provided sink. `model` overrides the session's model for this one
+    /// message (`None` or empty → the session default); the server honours it
+    /// via `SendMessageRequest.model`. The sink receives one `RemoteEvent` per
+    /// line and may stop the stream by returning `Err`.
     ///
     /// # Errors
     /// Returns an error if the HTTP request fails, the server returns a
     /// non-2xx status, an SSE frame cannot be decoded, or `on_event` returns
     /// an error.
-    pub async fn send_message<F>(
+    pub async fn send_message_with_model<F>(
         &self,
         session_id: &str,
         content: &str,
+        model: Option<&str>,
         mut on_event: F,
     ) -> Result<()>
     where
         F: FnMut(RemoteEvent) -> Result<()>,
     {
+        let mut body = serde_json::Map::new();
+        body.insert("content".into(), JsonValue::String(content.to_string()));
+        if let Some(m) = model.filter(|m| !m.is_empty()) {
+            body.insert("model".into(), JsonValue::String(m.to_string()));
+        }
         let resp = self
             .http
             .post(format!(
                 "{}/v1/sessions/{session_id}/messages",
                 self.base_url
             ))
-            .json(&serde_json::json!({ "content": content }))
+            .json(&JsonValue::Object(body))
             .send()
             .await
             .context("POST messages")?;
