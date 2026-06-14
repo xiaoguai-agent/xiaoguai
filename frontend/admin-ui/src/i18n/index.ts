@@ -30,7 +30,10 @@ void i18n
     detection: {
       order: ['localStorage', 'navigator'],
       caches: ['localStorage'],
-      lookupLocalStorage: 'xiaoguai_admin_lang',
+      // Shared key with chat-ui (its i18n LOCALE_STORAGE_KEY) so the operator's
+      // language choice is GLOBAL across both SPAs — they live on the same
+      // :7600 origin, so one localStorage key keeps chat + admin in sync.
+      lookupLocalStorage: 'xiaoguai.locale',
     },
     interpolation: {
       escapeValue: false,

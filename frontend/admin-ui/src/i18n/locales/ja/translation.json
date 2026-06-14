@@ -23,6 +23,7 @@
   },
   "nav": {
     "title": "Xiaoguai · 管理",
+    "back_to_chat": "← チャット",
     "today": "今日",
     "scheduler": "スケジューラー",
     "eval": "評価",

@@ -23,6 +23,7 @@
   },
   "nav": {
     "title": "小怪 · 管理后台",
+    "back_to_chat": "← 对话",
     "today": "今日",
     "scheduler": "调度器",
     "eval": "评测",
