@@ -60,6 +60,36 @@ pub fn accent(s: &str) -> String {
     paint("35", s)
 }
 
+/// Colour a unified-diff block for readability: added (`+`) lines get a green
+/// background, removed (`-`) lines a red background, `@@` hunk headers cyan.
+/// File headers (`+++`/`---`) and context lines stay plain. Respects
+/// [`enabled`]; non-diff text passes through unchanged.
+#[must_use]
+pub fn diff(text: &str) -> String {
+    diff_with(enabled(), text)
+}
+
+/// Pure core of [`diff`] — `on` gates the SGR codes so it's unit-testable
+/// without a TTY.
+fn diff_with(on: bool, text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if line.starts_with("@@") {
+                paint_if(on, "36", line)
+            } else if line.starts_with("+++") || line.starts_with("---") {
+                line.to_string()
+            } else if line.starts_with('+') {
+                paint_if(on, "42", line) // green background = added / new
+            } else if line.starts_with('-') {
+                paint_if(on, "41", line) // red background = removed / old
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,6 +99,22 @@ mod tests {
         assert_eq!(paint_if(true, "32", "ok"), "\x1b[32mok\x1b[0m");
         assert_eq!(paint_if(false, "32", "ok"), "ok"); // disabled → plain
         assert_eq!(paint_if(true, "32", ""), ""); // empty stays empty (no codes)
+    }
+
+    #[test]
+    fn diff_backgrounds_add_and_remove_lines() {
+        let d = diff_with(
+            true,
+            "@@ -1,2 +1,2 @@\n--- a/x\n+++ b/x\n-old line\n+new line\n unchanged",
+        );
+        assert!(d.contains("\x1b[42m+new line\x1b[0m")); // added → green bg
+        assert!(d.contains("\x1b[41m-old line\x1b[0m")); // removed → red bg
+        assert!(d.contains("\x1b[36m@@ -1,2 +1,2 @@\x1b[0m")); // hunk header → cyan
+        assert!(d.contains("--- a/x")); // file header stays plain
+        assert!(d.contains("+++ b/x"));
+        assert!(d.contains(" unchanged")); // context stays plain
+        // disabled → no codes at all
+        assert_eq!(diff_with(false, "-old\n+new"), "-old\n+new");
     }
 
     #[test]

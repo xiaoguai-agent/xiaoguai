@@ -1951,6 +1951,26 @@ fn render_remote_event(ev: &remote::RemoteEvent) {
                 .unwrap_or(false);
             let line = format!("[tool finish] ok={ok}");
             eprintln!("{}", if ok { style::dim(&line) } else { style::warn(&line) });
+            // Show what the tool did — diffs get red/green backgrounds (removed
+            // old → red, added new → green). Capped so a big result can't flood.
+            if let Some(out) = ev
+                .payload
+                .get("output_text")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                const MAX_LINES: usize = 60;
+                let total = out.lines().count();
+                let shown = out.lines().take(MAX_LINES).collect::<Vec<_>>().join("\n");
+                eprintln!("{}", style::diff(&shown));
+                if total > MAX_LINES {
+                    eprintln!(
+                        "{}",
+                        style::dim(&format!("  … ({} more lines)", total - MAX_LINES))
+                    );
+                }
+            }
         }
         "done" => {
             println!();
