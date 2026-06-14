@@ -111,7 +111,8 @@ fn catalog() -> &'static CatalogFile {
 // Wire types for the installed-packs API
 // ---------------------------------------------------------------------------
 
-/// Installed-pack row as returned by `GET /v1/skills/installed`.
+/// Installed-pack storage row (DB shape). The API presents it as
+/// [`InstalledSkillPackResponse`] via [`to_installed_response`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InstalledPackRow {
     pub id: String,
@@ -120,6 +121,46 @@ pub struct InstalledPackRow {
     /// Operator-supplied knob overrides stored as free-form JSON.
     pub config: serde_json::Value,
     pub installed_at: DateTime<Utc>,
+}
+
+/// Wire shape for `GET /v1/skills/installed` + `POST /v1/skills/install` —
+/// matches the chat-ui/admin-ui `InstalledSkillPackResponse`. `pack_id` is the
+/// stored `pack_slug`; `name`/`description` come from the baked catalog.
+/// `agents`/`inbound_adapters`/`outputs` stay empty until the runtime pack
+/// loader (post-v1.2) parses pack manifests, and `activation_status` is always
+/// `"pending"` until then.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct InstalledSkillPackResponse {
+    pub id: String,
+    pub pack_id: String,
+    pub name: String,
+    pub version: String,
+    pub description: Option<String>,
+    pub agents: Vec<String>,
+    pub inbound_adapters: Vec<String>,
+    pub outputs: Vec<String>,
+    pub recorded_at: DateTime<Utc>,
+    pub activation_status: &'static str,
+}
+
+/// Map a stored row to the API response, enriching `name`/`description` from
+/// the catalog (falling back to the slug when the pack is no longer listed).
+fn to_installed_response(row: InstalledPackRow) -> InstalledSkillPackResponse {
+    let entry = catalog().packs.iter().find(|p| p.slug == row.pack_slug);
+    InstalledSkillPackResponse {
+        id: row.id,
+        name: entry
+            .map(|e| e.name.clone())
+            .unwrap_or_else(|| row.pack_slug.clone()),
+        description: entry.map(|e| e.description.clone()),
+        pack_id: row.pack_slug,
+        version: row.version,
+        agents: Vec::new(),
+        inbound_adapters: Vec::new(),
+        outputs: Vec::new(),
+        recorded_at: row.installed_at,
+        activation_status: "pending",
+    }
 }
 
 /// Repository trait — production impl will be a `SqliteSkillPackRepository` in
@@ -218,15 +259,18 @@ pub async fn list_catalog() -> ApiResult<Json<CatalogFile>> {
 /// Returns an error if the repository fails.
 pub async fn list_installed(
     State(state): State<AppState>,
-) -> ApiResult<Json<Vec<InstalledPackRow>>> {
+) -> ApiResult<Json<Vec<InstalledSkillPackResponse>>> {
     let repo = skill_repo(&state)?;
     let rows = repo.list().await.map_err(skill_err_to_api)?;
-    Ok(Json(rows))
+    Ok(Json(rows.into_iter().map(to_installed_response).collect()))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct InstallRequest {
-    pub pack_slug: String,
+    /// Pack identifier (catalog slug). Accepts the legacy `pack_slug` key too,
+    /// so older clients keep working.
+    #[serde(alias = "pack_slug")]
+    pub pack_id: String,
     /// Operator-supplied knob overrides. Validated against the catalog schema
     /// in a best-effort manner — unknown keys are accepted (forward compat).
     #[serde(default)]
@@ -240,19 +284,19 @@ pub struct InstallRequest {
 pub async fn install_pack(
     State(state): State<AppState>,
     Json(req): Json<InstallRequest>,
-) -> ApiResult<Json<InstalledPackRow>> {
+) -> ApiResult<Json<InstalledSkillPackResponse>> {
     let repo = skill_repo(&state)?;
 
     // Verify the slug is in the catalog so we don't record phantom installs.
     let entry = catalog()
         .packs
         .iter()
-        .find(|p| p.slug == req.pack_slug)
+        .find(|p| p.slug == req.pack_id)
         .ok_or(ApiError::NotFound)?;
 
     let row = InstalledPackRow {
         id: Uuid::new_v4().to_string(),
-        pack_slug: req.pack_slug,
+        pack_slug: req.pack_id,
         version: entry.version.clone(),
         config: req.config,
         installed_at: Utc::now(),
@@ -263,7 +307,7 @@ pub async fn install_pack(
         other => skill_err_to_api(other),
     })?;
 
-    Ok(Json(saved))
+    Ok(Json(to_installed_response(saved)))
 }
 
 /// `DELETE /v1/skills/install/:id`
