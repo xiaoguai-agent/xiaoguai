@@ -55,7 +55,7 @@ pub fn format_next_steps(port: u16) -> String {
     format!(
         "Next steps:\n\
          \x20 1. start the server:    xiaoguai serve\n\
-         \x20 2. say hello:           open http://localhost:{port}/ — or run: xiaoguai repl"
+         \x20 2. say hello:           open http://localhost:{port}/ — or run: xiaoguai cli"
     )
 }
 
@@ -119,7 +119,7 @@ mod tests {
         let s = format_next_steps(7601);
         assert!(s.contains("xiaoguai serve"));
         assert!(s.contains("http://localhost:7601/"));
-        assert!(s.contains("xiaoguai repl"));
+        assert!(s.contains("xiaoguai cli"));
         assert_eq!(s.lines().count(), 3);
     }
     use xiaoguai_types::{LlmProvider, ProviderId, ProviderKind};
