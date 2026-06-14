@@ -113,6 +113,16 @@ pub trait OutcomesReader: Send + Sync {
         kind: Option<&str>,
         range: OutcomeRange,
     ) -> Result<Aggregate, OutcomesApiError>;
+
+    /// Return raw outcome records (newest first), filtered by optional `kind`
+    /// and time `range`, capped at `limit`. Backs the Outcomes pane list tab
+    /// (`GET /v1/outcomes`).
+    async fn list(
+        &self,
+        kind: Option<&str>,
+        range: OutcomeRange,
+        limit: i64,
+    ) -> Result<Vec<OutcomeRecord>, OutcomesApiError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +205,25 @@ impl OutcomesReader for InMemoryOutcomesBackend {
             .await
             .map_err(OutcomesApiError::from)
     }
+
+    async fn list(
+        &self,
+        kind: Option<&str>,
+        range: OutcomeRange,
+        limit: i64,
+    ) -> Result<Vec<OutcomeRecord>, OutcomesApiError> {
+        let mut filtered: Vec<OutcomeRecord> = self
+            .inner
+            .snapshot()
+            .into_iter()
+            .filter(|r| kind.is_none_or(|k| r.kind == k))
+            .filter(|r| range.since.is_none_or(|s| r.attributed_at >= s))
+            .filter(|r| range.until.is_none_or(|u| r.attributed_at <= u))
+            .collect();
+        filtered.sort_by(|a, b| b.attributed_at.cmp(&a.attributed_at));
+        filtered.truncate(usize::try_from(limit.max(0)).unwrap_or(0));
+        Ok(filtered)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -230,6 +259,27 @@ mod tests {
         assert!((agg.sum - 800.0).abs() < f64::EPSILON);
         assert_eq!(agg.count, 2);
         assert!((agg.avg - 400.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn list_filters_by_kind_and_caps_limit() {
+        let b = InMemoryOutcomesBackend::new();
+        b.record(req("revenue_usd", 100.0)).await.unwrap();
+        b.record(req("hours_saved", 5.0)).await.unwrap();
+        b.record(req("revenue_usd", 200.0)).await.unwrap();
+
+        let all = b.list(None, OutcomeRange::default(), 100).await.unwrap();
+        assert_eq!(all.len(), 3, "no filter returns every record");
+
+        let rev = b
+            .list(Some("revenue_usd"), OutcomeRange::default(), 100)
+            .await
+            .unwrap();
+        assert_eq!(rev.len(), 2);
+        assert!(rev.iter().all(|r| r.kind == "revenue_usd"));
+
+        let capped = b.list(None, OutcomeRange::default(), 1).await.unwrap();
+        assert_eq!(capped.len(), 1, "limit caps the page");
     }
 
     #[tokio::test]

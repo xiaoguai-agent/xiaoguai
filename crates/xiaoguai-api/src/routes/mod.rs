@@ -135,7 +135,10 @@ pub fn router(state: AppState) -> Router {
         // pending escalations, incl. /loop ticks with no SSE consumer.
         .route("/v1/hotl/pending", get(hotl_decisions::list_pending))
         // v1.2.4 — outcome telemetry (revenue-not-time ROI tracking).
-        .route("/v1/outcomes", post(outcomes::record_outcome))
+        .route(
+            "/v1/outcomes",
+            get(outcomes::list_outcomes).post(outcomes::record_outcome),
+        )
         .route("/v1/outcomes/summary", get(outcomes::outcomes_summary))
         .route("/v1/outcomes/timeseries", get(outcomes::outcomes_timeseries))
         // v1.2.28 — skill pack marketplace.
