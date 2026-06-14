@@ -58,6 +58,7 @@ pub mod memory;
 pub mod outcomes;
 pub mod provider;
 pub mod remote;
+pub mod repl;
 pub mod schedule;
 pub mod self_update;
 pub mod service;

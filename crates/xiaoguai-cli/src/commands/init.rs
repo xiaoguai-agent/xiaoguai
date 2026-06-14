@@ -78,6 +78,25 @@ pub fn minimax_region_endpoint(input: &str) -> Option<&'static str> {
     }
 }
 
+/// Mask an API key for an on-screen confirmation line: keep the last 4
+/// characters, bullet out the rest, and note the length — enough to confirm
+/// "yes, that's the key I pasted" without dumping the secret into terminal
+/// scrollback. Keys of 4 chars or fewer are fully masked.
+#[must_use]
+pub fn mask_key(key: &str) -> String {
+    let n = key.chars().count();
+    if n == 0 {
+        return "(empty)".to_string();
+    }
+    let tail: String = if n <= 4 {
+        String::new()
+    } else {
+        key.chars().skip(n - 4).collect()
+    };
+    let bullets = "•".repeat(n - tail.chars().count());
+    format!("{bullets}{tail} ({n} chars)")
+}
+
 /// Parse a yes/no answer. Empty input returns `default_yes`; `y`/`yes` → true,
 /// `n`/`no` → false; anything else falls back to `default_yes`.
 #[must_use]
@@ -150,6 +169,19 @@ mod tests {
     fn minimax_region_menu_names_both_hosts() {
         assert!(MINIMAX_REGION_MENU.contains("api.minimax.io"));
         assert!(MINIMAX_REGION_MENU.contains("api.minimaxi.com"));
+    }
+
+    #[test]
+    fn mask_key_shows_tail_and_length_without_leaking() {
+        assert_eq!(mask_key(""), "(empty)");
+        // long key: last 4 visible, rest bulleted, length noted
+        let m = mask_key("sk-abcdefghij6789");
+        assert!(m.ends_with("6789 (17 chars)"), "got {m}");
+        assert!(m.starts_with('•'));
+        assert!(!m.contains("abcde")); // body not leaked
+        // short key fully masked
+        assert_eq!(mask_key("abcd"), "•••• (4 chars)");
+        assert_eq!(mask_key("xy"), "•• (2 chars)");
     }
 
     #[test]
