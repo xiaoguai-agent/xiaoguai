@@ -13,6 +13,29 @@ fn cli_chat_mock_prints_canned_response() {
 }
 
 #[test]
+fn cli_chat_help_defaults_to_local_server() {
+    // `chat` now targets a running server by default (mock/ollama behind flags),
+    // so --server must be present and default to :7600.
+    let mut cmd = Command::cargo_bin("xiaoguai").expect("binary");
+    cmd.args(["chat", "--help"]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("--server"))
+        .stdout(predicate::str::contains("http://localhost:7600"));
+}
+
+#[test]
+fn cli_remote_server_flag_has_default() {
+    // `remote --server` is no longer required — it defaults to :7600.
+    let mut cmd = Command::cargo_bin("xiaoguai").expect("binary");
+    cmd.args(["remote", "--help"]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("--server"))
+        .stdout(predicate::str::contains("http://localhost:7600"));
+}
+
+#[test]
 fn cli_help_lists_all_subcommands() {
     let mut cmd = Command::cargo_bin("xiaoguai").expect("binary");
     cmd.arg("--help");
