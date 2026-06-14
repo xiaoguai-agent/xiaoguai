@@ -19,7 +19,7 @@ use std::net::SocketAddr;
 #[must_use]
 pub fn serve_banner(local: &SocketAddr, has_web_ui: bool) -> String {
     let url = display_url(local);
-    if has_web_ui {
+    let mut out = if has_web_ui {
         format!(
             "✓ xiaoguai running at {url}\n  Open the chat UI at {url}/ — or send a first message: xiaoguai cli"
         )
@@ -29,7 +29,14 @@ pub fn serve_banner(local: &SocketAddr, has_web_ui: bool) -> String {
              Chat from your terminal:  xiaoguai cli   (or: xiaoguai chat --prompt \"...\")\n  \
              Want the browser UI? See the README \"Web UI\" section."
         )
+    };
+    // Bound to a non-loopback interface (e.g. `serve --host 0.0.0.0`): the
+    // printed URL maps to localhost for clickability, but it's reachable across
+    // the LAN — point the operator at their real address.
+    if !local.ip().is_loopback() {
+        out.push_str("\n  Reachable on your LAN — find this host's IP with `hostname -I`.");
     }
+    out
 }
 
 /// Actionable message for a failed bind on an already-occupied port,
@@ -120,6 +127,18 @@ mod tests {
         assert!(serve_banner(&local, true).contains("http://localhost:7600"));
         let v6: SocketAddr = "[::]:7600".parse().unwrap();
         assert!(serve_banner(&v6, false).contains("http://localhost:7600"));
+    }
+
+    #[test]
+    fn serve_banner_hints_lan_only_for_non_loopback() {
+        // Non-loopback bind (--host 0.0.0.0) → LAN reachability hint.
+        let lan: SocketAddr = "0.0.0.0:7600".parse().unwrap();
+        assert!(serve_banner(&lan, true).contains("LAN"));
+        // Loopback bind → no LAN hint (stays the 2-line local banner).
+        let lo: SocketAddr = "127.0.0.1:7600".parse().unwrap();
+        let b = serve_banner(&lo, true);
+        assert!(!b.contains("LAN"));
+        assert_eq!(b.lines().count(), 2);
     }
 
     #[test]
