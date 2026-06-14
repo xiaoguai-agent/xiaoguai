@@ -41,7 +41,7 @@ xiaoguai is a `✓` with a note, not an error.
 
    ```text
    ✓ xiaoguai running at http://localhost:7600
-     Open the chat UI at http://localhost:7600/ — or send a first message: xiaoguai repl
+     Open the chat UI at http://localhost:7600/ — or send a first message: xiaoguai cli
    ```
 
    If the port is taken you get three remedies (check `healthz` for an

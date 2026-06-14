@@ -58,7 +58,7 @@ On a successful start `xiaoguai serve` also prints its own confirmation:
 
 ```text
 ✓ xiaoguai running at http://localhost:7600
-  Open the chat UI at http://localhost:7600/ — or send a first message: xiaoguai repl
+  Open the chat UI at http://localhost:7600/ — or send a first message: xiaoguai cli
 ```
 
 For a fuller self-check (database, providers, Ollama, port — with per-method

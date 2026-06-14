@@ -21,12 +21,12 @@ pub fn serve_banner(local: &SocketAddr, has_web_ui: bool) -> String {
     let url = display_url(local);
     if has_web_ui {
         format!(
-            "✓ xiaoguai running at {url}\n  Open the chat UI at {url}/ — or send a first message: xiaoguai repl"
+            "✓ xiaoguai running at {url}\n  Open the chat UI at {url}/ — or send a first message: xiaoguai cli"
         )
     } else {
         format!(
             "✓ xiaoguai running at {url}  (API + CLI only — no web UI bundled)\n  \
-             Chat from your terminal:  xiaoguai repl   (or: xiaoguai chat --prompt \"...\")\n  \
+             Chat from your terminal:  xiaoguai cli   (or: xiaoguai chat --prompt \"...\")\n  \
              Want the browser UI? See the README \"Web UI\" section."
         )
     }
@@ -98,7 +98,7 @@ mod tests {
         let b = serve_banner(&local, true);
         assert!(b.starts_with("✓ xiaoguai running at http://127.0.0.1:7600"));
         assert!(b.contains("Open the chat UI at http://127.0.0.1:7600/"));
-        assert!(b.contains("xiaoguai repl"));
+        assert!(b.contains("xiaoguai cli"));
         assert_eq!(b.lines().count(), 2);
     }
 
@@ -110,7 +110,7 @@ mod tests {
         // Must NOT tell an API-only user to open a web page that 404s.
         assert!(!b.contains("Open the chat UI"));
         assert!(b.contains("API + CLI only"));
-        assert!(b.contains("xiaoguai repl"));
+        assert!(b.contains("xiaoguai cli"));
         assert!(b.contains("xiaoguai chat"));
     }
 

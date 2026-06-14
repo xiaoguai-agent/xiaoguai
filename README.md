@@ -154,9 +154,10 @@ xiaoguai chat --prompt 'introduce yourself in three sentences'
 > Authorization`. If you hit that, re-run `init` and choose China, or:
 > `xiaoguai provider update --id <id> --endpoint https://api.minimaxi.com`.
 
-Want a multi-turn conversation that keeps history? Use `xiaoguai repl`. Working
-offline or without a server? Stay direct with `xiaoguai chat --mock --prompt 'hello'`
-(or `--ollama-url http://localhost:11434`).
+Want a multi-turn conversation that keeps history? Use `xiaoguai cli` (also
+`xiaoguai start`; `xiaoguai repl` still works). Working offline or without a
+server? Stay direct with `xiaoguai chat --mock --prompt 'hello'` (or
+`--ollama-url http://localhost:11434`).
 
 ### Web UI
 

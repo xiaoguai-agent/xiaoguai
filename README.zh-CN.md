@@ -110,7 +110,7 @@ xiaoguai chat --prompt 'introduce yourself in three sentences'
 
 > **MiniMax 用户 —— 选对区域。** `xiaoguai init` 会让你选国际站（`api.minimax.io`）还是国内站（`api.minimaxi.com`）。两个区域 host 不同、API key **不通用** —— 用国内站的 key 去打国际站会返回 `400 / Missing Authorization`。遇到这个就重跑 `init` 选国内站，或：`xiaoguai provider update --id <id> --endpoint https://api.minimaxi.com`。
 
-想要保留历史的多轮对话？用 `xiaoguai repl`。离线工作或没有服务器？保持直连模式 `xiaoguai chat --mock --prompt 'hello'`（或 `--ollama-url http://localhost:11434`）。
+想要保留历史的多轮对话？用 `xiaoguai cli`（也可 `xiaoguai start`；`xiaoguai repl` 仍可用）。离线工作或没有服务器？保持直连模式 `xiaoguai chat --mock --prompt 'hello'`（或 `--ollama-url http://localhost:11434`）。
 
 ### Web UI
 

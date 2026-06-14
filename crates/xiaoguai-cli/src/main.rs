@@ -54,9 +54,13 @@ enum Cmd {
     /// authority.
     Acp,
 
-    /// Interactive chat REPL against a running server. Multi-turn (keeps the
-    /// session's history) and uses your registered providers (`MiniMax`, etc.).
-    /// Reads prompts from stdin; `/exit` or Ctrl-D quits.
+    /// Start an interactive chat session against a running server. Multi-turn
+    /// (keeps history) and uses your registered providers (`MiniMax`, etc.).
+    /// Reads prompts from stdin; `/help` for commands, `/exit` or Ctrl-D quits.
+    ///
+    /// Spelled `xiaoguai cli` (also `xiaoguai start`); `xiaoguai repl` still
+    /// works as a back-compat alias.
+    #[command(name = "cli", visible_alias = "start", alias = "repl")]
     Repl {
         /// Base URL of the API server.
         #[arg(long, default_value = "http://localhost:7600")]
@@ -1891,6 +1895,14 @@ fn render_remote_event(ev: &remote::RemoteEvent) {
 /// and loops: read a line from stdin → stream the reply. `/exit`, `/quit`, or
 /// EOF (Ctrl-D) quits. The prompt marker goes to stderr so the assistant's
 /// stdout text stays pipe-clean.
+/// The xiaoguai mascot + wordmark printed when the interactive CLI starts.
+const CLI_LOGO: &str = r"
+    \\   //
+   ( o   o )    xiaoguai · 小怪
+    \  -  /     Your Little Agent for Big Work
+     \___/      小怪不小，能办大事
+";
+
 async fn handle_repl(server: String, user_id: String, model: String) -> Result<()> {
     use std::io::Write as _;
     let client = remote::RemoteClient::new(server.clone());
@@ -1907,8 +1919,9 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
             title: None,
         })
         .await?;
+    eprintln!("{CLI_LOGO}");
     eprintln!(
-        "xiaoguai repl — session {} (type /help for commands, /exit or Ctrl-D to quit)",
+        "session {} — type /help for commands, /exit or Ctrl-D to quit",
         session.id
     );
 
