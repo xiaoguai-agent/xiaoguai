@@ -91,19 +91,34 @@ enum Cmd {
         action: ServiceCmd,
     },
 
-    /// Send a one-shot prompt to the agent and print the response.
+    /// Send a one-shot prompt and stream the reply.
+    ///
+    /// By default this talks to a running `xiaoguai serve` over HTTP: it
+    /// auto-creates a session, sends the prompt, and streams the reply using
+    /// your registered providers (`MiniMax`, etc.), `HotL` gating, and audit —
+    /// no manual session id to juggle. Pass `--mock` or `--ollama-url` to
+    /// bypass the server and hit a backend directly (offline / dev).
     Chat {
         /// User prompt.
         #[arg(long)]
         prompt: String,
-        /// Use the deterministic mock backend (no network).
+        /// Base URL of the API server (server mode; ignored with
+        /// `--mock` / `--ollama-url`).
+        #[arg(long, default_value = "http://localhost:7600")]
+        server: String,
+        /// User id for the auto-created session (server mode).
+        #[arg(long, default_value = "usr_dev")]
+        user_id: String,
+        /// Bypass the server: use the deterministic mock backend (no network).
         #[arg(long, conflicts_with = "ollama_url")]
         mock: bool,
-        /// Override Ollama base URL (default <http://localhost:11434>).
+        /// Bypass the server: hit Ollama directly at this base URL
+        /// (default <http://localhost:11434>).
         #[arg(long)]
         ollama_url: Option<String>,
-        /// LLM model name (default `qwen2.5-coder`).
-        #[arg(long, default_value = "qwen2.5-coder")]
+        /// Model name. Empty (the default) lets the server pick its default
+        /// model in server mode, or falls back to `qwen2.5-coder` for Ollama.
+        #[arg(long, default_value = "")]
         model: String,
     },
 
@@ -132,7 +147,7 @@ enum Cmd {
     /// Talk to a running `xiaoguai-api` over HTTP/SSE.
     Remote {
         /// Base URL of the API server, e.g. `http://localhost:7600`.
-        #[arg(long)]
+        #[arg(long, default_value = "http://localhost:7600")]
         server: String,
         #[command(subcommand)]
         action: RemoteCmd,
@@ -1220,18 +1235,53 @@ async fn handle_stats(
 
 async fn handle_chat(
     prompt: String,
+    server: String,
+    user_id: String,
     mock: bool,
     ollama_url: Option<String>,
     model: String,
 ) -> Result<()> {
-    let answer = chat::run(chat::ChatArgs {
-        prompt,
-        mock,
-        ollama_url,
-        model,
-    })
-    .await?;
-    println!("{answer}");
+    // Direct-backend mode: `--mock` / `--ollama-url` bypass the server entirely
+    // (offline / dev). Empty `--model` falls back to the Ollama default here.
+    if mock || ollama_url.is_some() {
+        let answer = chat::run(chat::ChatArgs {
+            prompt,
+            mock,
+            ollama_url,
+            model: if model.is_empty() {
+                "qwen2.5-coder".to_string()
+            } else {
+                model
+            },
+        })
+        .await?;
+        println!("{answer}");
+        return Ok(());
+    }
+
+    // Default: one-shot against the running server — same wire path as
+    // `remote chat`, but auto-creates the session so there's no id to juggle.
+    let client = remote::RemoteClient::new(server.clone());
+    client.healthz().await.with_context(|| {
+        format!(
+            "could not reach the server at {server} — start it with `xiaoguai serve`, \
+             or pass --mock / --ollama-url for a direct backend"
+        )
+    })?;
+    let session = client
+        .create_session(&remote::CreateSessionRequest {
+            user_id,
+            model,
+            title: None,
+        })
+        .await?;
+    eprintln!("session: {}", session.id);
+    client
+        .send_message(&session.id, &prompt, |ev| {
+            render_remote_event(&ev);
+            Ok(())
+        })
+        .await?;
     Ok(())
 }
 
@@ -2399,10 +2449,12 @@ async fn main() -> Result<()> {
         }
         Cmd::Chat {
             prompt,
+            server,
+            user_id,
             mock,
             ollama_url,
             model,
-        } => handle_chat(prompt, mock, ollama_url, model).await,
+        } => handle_chat(prompt, server, user_id, mock, ollama_url, model).await,
         Cmd::Provider { action } => handle_provider(cfg, action).await,
         Cmd::Init => handle_init(cfg).await,
         Cmd::Doctor => {
