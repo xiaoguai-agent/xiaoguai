@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { RecentOutcomesPanel } from './RecentOutcomesPanel';
+import { XiaoguaiLogo } from './XiaoguaiLogo';
 import { useI18n } from './i18n/I18nProvider';
 
 interface Props {
@@ -23,7 +24,7 @@ export function SessionList({ sessions, children }: Props) {
 
   return (
     <aside className="sidebar">
-      <h2>Xiaoguai</h2>
+      <XiaoguaiLogo />
       <button onClick={() => navigate('/')}>{t.ui.new_chat}</button>
 
       {/* v1.2.28 — Skills pane nav entry */}
