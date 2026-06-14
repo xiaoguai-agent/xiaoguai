@@ -65,5 +65,6 @@ pub mod self_update;
 pub mod service;
 pub mod skills;
 pub mod stats;
+pub mod style;
 pub mod tasks;
 pub mod watch;
