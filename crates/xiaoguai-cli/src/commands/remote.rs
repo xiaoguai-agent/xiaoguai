@@ -213,7 +213,7 @@ impl RemoteClient {
         session_id: &str,
         content: &str,
         model: Option<&str>,
-        mut on_event: F,
+        on_event: F,
     ) -> Result<()>
     where
         F: FnMut(RemoteEvent) -> Result<()>,
@@ -234,24 +234,79 @@ impl RemoteClient {
             .await
             .context("POST messages")?;
         require_2xx(&resp)?;
-
-        let mut stream = resp.bytes_stream().eventsource();
-        while let Some(ev) = stream.next().await {
-            let ev = ev.context("sse event")?;
-            let data: JsonValue = serde_json::from_str(&ev.data)
-                .with_context(|| format!("decode sse data: {}", ev.data))?;
-            let remote = RemoteEvent {
-                name: ev.event,
-                payload: data,
-            };
-            let stop = matches!(remote.name.as_str(), "done" | "error");
-            on_event(remote)?;
-            if stop {
-                break;
-            }
-        }
-        Ok(())
+        drain_sse(resp, &["done", "error"], on_event).await
     }
+
+    /// `POST /v1/sessions/:id/orchestrate` — run `goal` through an expert team
+    /// (members run in parallel, the lead synthesizes one answer) and drain the
+    /// `OrchestrateEvent` SSE stream into `on_event`, stopping after the
+    /// terminal `final` event.
+    ///
+    /// # Errors
+    /// Returns a teaching error when the request fails or the server returns a
+    /// non-2xx status (404 unknown session, 409 a turn is already in flight,
+    /// 422 no team matches the goal, 503 orchestration unwired — the body
+    /// carries the reason), or an SSE frame can't be decoded.
+    pub async fn orchestrate<F>(
+        &self,
+        session_id: &str,
+        req: &OrchestrateRequest,
+        on_event: F,
+    ) -> Result<()>
+    where
+        F: FnMut(RemoteEvent) -> Result<()>,
+    {
+        let resp = self
+            .http
+            .post(format!(
+                "{}/v1/sessions/{session_id}/orchestrate",
+                self.base_url
+            ))
+            .json(req)
+            .send()
+            .await
+            .context("POST orchestrate")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let detail = serde_json::from_str::<JsonValue>(&body)
+                .ok()
+                .and_then(|v| {
+                    v.get("message")
+                        .or_else(|| v.get("error"))
+                        .and_then(JsonValue::as_str)
+                        .map(ToOwned::to_owned)
+                })
+                .unwrap_or(body);
+            bail!("orchestrate returned {status}: {detail}");
+        }
+        drain_sse(resp, &["final", "error"], on_event).await
+    }
+}
+
+/// Drain an SSE response into `on_event`, stopping after an event whose name is
+/// in `terminal` (or at stream end). Shared by `send_message_with_model`
+/// (terminal `done`/`error`) and `orchestrate` (terminal `final`/`error`).
+async fn drain_sse<F>(resp: reqwest::Response, terminal: &[&str], mut on_event: F) -> Result<()>
+where
+    F: FnMut(RemoteEvent) -> Result<()>,
+{
+    let mut stream = resp.bytes_stream().eventsource();
+    while let Some(ev) = stream.next().await {
+        let ev = ev.context("sse event")?;
+        let data: JsonValue = serde_json::from_str(&ev.data)
+            .with_context(|| format!("decode sse data: {}", ev.data))?;
+        let remote = RemoteEvent {
+            name: ev.event,
+            payload: data,
+        };
+        let stop = terminal.contains(&remote.name.as_str());
+        on_event(remote)?;
+        if stop {
+            break;
+        }
+    }
+    Ok(())
 }
 
 fn require_2xx(resp: &reqwest::Response) -> Result<()> {
@@ -337,6 +392,17 @@ pub struct CreateSessionRequest {
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+}
+
+/// Body for `POST /v1/sessions/:id/orchestrate`. `team_id` omitted auto-routes
+/// the goal to the best-matching active team; `max_members` caps fan-out (1–8).
+#[derive(Debug, Serialize)]
+pub struct OrchestrateRequest {
+    pub goal: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_members: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

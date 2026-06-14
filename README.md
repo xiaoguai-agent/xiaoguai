@@ -230,6 +230,46 @@ Three things people trip on:
 > Ollama, add `--ollama-url http://localhost:11434` (or `--mock` for the canned
 > backend).
 
+## Agent teams — for complex tasks worth several perspectives
+
+When one pass isn't enough — a security audit, a design with trade-offs, a
+multi-angle research question — run the task through an **expert team** instead
+of a single chat turn. The team's **members are sub-agents** (each with its own
+persona and a scoped toolbox) that work the goal **in parallel**; a **lead**
+then synthesizes their findings into one answer, surfacing disagreements rather
+than averaging them away. Independent perspectives plus an explicit synthesis
+step catch what a single agent misses — and every member and synthesis turn
+still flows through the same HotL approval gate and HMAC audit chain, so the
+extra horsepower stays governed.
+
+How a complex task is scheduled: you give a **goal**; it routes to a team
+(pass `--team <id>`, or omit it to auto-route to the best-matching team); the
+orchestrator fans out to the members in parallel, applies a per-run HotL budget,
+and the lead composes the final answer. Member failures don't abort the run —
+the lead synthesizes from the survivors.
+
+Three ways to run one:
+
+```bash
+# CLI — auto-route a goal to the best-matching team (or pass --team <id>)
+xiaoguai remote orchestrate --user-id you --goal "Audit auth/ for security bugs"
+```
+
+- **Web UI:** attach a team in the chat-ui Expert picker, then click the
+  **team-run** button beside the composer (execute mode).
+- **API:** `POST /v1/sessions/{id}/orchestrate` streams `OrchestrateEvent`s
+  (`run_started → member_completed* → synthesis_started → final`).
+
+Create and manage teams (a lead + members, plus an optional shared glossary) in
+the admin console or via `/v1/teams`. Full guide:
+[`docs/user-guide/expert-center.md`](docs/user-guide/expert-center.md).
+
+> **Sub-agents for your own work, too:** the same "fan out independent workers,
+> then synthesize / adversarially verify" pattern is how you get higher-quality
+> results out of any agent — decompose a big task, run workers in parallel,
+> have a reviewer pass judge the outputs. Agent teams make that pattern a
+> first-class, audited workflow inside xiaoguai.
+
 ## Observability (optional)
 
 Telemetry is opt-in. Build with the `observability` cargo feature to expose
@@ -365,9 +405,11 @@ feedback, then prioritise."* The candidate backlog, per
 - Browser-walked screenshots + per-pane visual QA on chat-ui and
   admin-ui — every UI-affecting tag from v0.8.1 onward was tuned by
   reading, not eyeballing.
-- Conversation fork, public-cloud LLM provider configs, `/usage`
-  endpoint, multi-agent orchestration — see the roadmap §3 v1.0+
-  section.
+- Conversation fork, public-cloud LLM provider configs, the `/usage`
+  endpoint, and multi-agent orchestration have since **shipped** (fork
+  v1.1.2; Bedrock / Azure / Mistral / Groq / MiniMax providers in Wave 3;
+  **agent teams** — see the [Agent teams](#agent-teams--for-complex-tasks-worth-several-perspectives)
+  section above). Remaining roadmap items are in the roadmap §3 v1.0+ section.
 
 ## License
 
