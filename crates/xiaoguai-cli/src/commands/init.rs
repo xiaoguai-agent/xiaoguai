@@ -59,6 +59,25 @@ pub fn format_next_steps(port: u16) -> String {
     )
 }
 
+/// The region picker shown for `MiniMax` during `init`. `MiniMax` runs two
+/// separate regions whose API keys are **not interchangeable**, so a correct
+/// key against the wrong host 401s — the #1 fresh-install failure for CN users.
+pub const MINIMAX_REGION_MENU: &str = "\
+  1) International  — api.minimax.io    (console: minimax.io)\n\
+  \x20 2) China / 国内   — api.minimaxi.com  (console: platform.minimaxi.com)";
+
+/// Map a 1-based `MiniMax` region choice to its API base URL (the backend
+/// appends `/v1/chat/completions`). Returns `None` for unrecognised input so
+/// the caller can re-prompt.
+#[must_use]
+pub fn minimax_region_endpoint(input: &str) -> Option<&'static str> {
+    match input.trim() {
+        "1" => Some("https://api.minimax.io"),
+        "2" => Some("https://api.minimaxi.com"),
+        _ => None,
+    }
+}
+
 /// Parse a yes/no answer. Empty input returns `default_yes`; `y`/`yes` → true,
 /// `n`/`no` → false; anything else falls back to `default_yes`.
 #[must_use]
@@ -113,6 +132,24 @@ mod tests {
         assert_eq!(parse_selection("4", 3), None);
         assert_eq!(parse_selection("x", 3), None);
         assert_eq!(parse_selection("", 3), None);
+    }
+
+    #[test]
+    fn minimax_region_maps_choice_to_host() {
+        assert_eq!(minimax_region_endpoint("1"), Some("https://api.minimax.io"));
+        assert_eq!(
+            minimax_region_endpoint(" 2 "),
+            Some("https://api.minimaxi.com")
+        );
+        assert_eq!(minimax_region_endpoint("3"), None);
+        assert_eq!(minimax_region_endpoint(""), None);
+        assert_eq!(minimax_region_endpoint("intl"), None);
+    }
+
+    #[test]
+    fn minimax_region_menu_names_both_hosts() {
+        assert!(MINIMAX_REGION_MENU.contains("api.minimax.io"));
+        assert!(MINIMAX_REGION_MENU.contains("api.minimaxi.com"));
     }
 
     #[test]

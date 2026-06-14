@@ -998,8 +998,12 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     };
     tracing::info!(%local, "serve: api listening");
     // T8.1: post-bind operator banner on stdout (the tracing line above is
-    // telemetry; this is the human-facing "it worked, do this next").
-    println!("{}", banners::serve_banner(&local));
+    // telemetry; this is the human-facing "it worked, do this next"). Resolve
+    // the static dir the same way the mount path does so the banner only
+    // promises a web UI when one is actually served — pip / source installs are
+    // API-only and `{url}/` 404s (recomputing is a few cheap path stats).
+    let has_web_ui = resolve_static_dir(settings.server.static_dir.as_deref()).is_some();
+    println!("{}", banners::serve_banner(&local, has_web_ui));
 
     // v1.1.6.2: notify systemd that all subsystems are up (Type=notify).
     // This also spawns the watchdog ping task when WATCHDOG_USEC is set;

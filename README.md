@@ -147,6 +147,13 @@ xiaoguai init                     # pick a provider, paste its API key, set defa
 xiaoguai chat --prompt 'introduce yourself in three sentences'
 ```
 
+> **MiniMax users — pick your region.** `xiaoguai init` asks International
+> (`api.minimax.io`) vs China (`api.minimaxi.com`). The two regions use
+> different hosts and their API keys are **not interchangeable** — a
+> China-console key against the international host returns `400 / Missing
+> Authorization`. If you hit that, re-run `init` and choose China, or:
+> `xiaoguai provider update --id <id> --endpoint https://api.minimaxi.com`.
+
 Want a multi-turn conversation that keeps history? Use `xiaoguai repl`. Working
 offline or without a server? Stay direct with `xiaoguai chat --mock --prompt 'hello'`
 (or `--ollama-url http://localhost:11434`).
