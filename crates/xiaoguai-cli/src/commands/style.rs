@@ -113,7 +113,7 @@ mod tests {
         assert!(d.contains("--- a/x")); // file header stays plain
         assert!(d.contains("+++ b/x"));
         assert!(d.contains(" unchanged")); // context stays plain
-        // disabled → no codes at all
+                                           // disabled → no codes at all
         assert_eq!(diff_with(false, "-old\n+new"), "-old\n+new");
     }
 

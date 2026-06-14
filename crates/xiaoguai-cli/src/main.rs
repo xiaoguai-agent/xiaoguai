@@ -1886,11 +1886,17 @@ fn render_orchestrate_event(ev: &remote::RemoteEvent) {
     let p = &ev.payload;
     match ev.name.as_str() {
         "run_started" => {
-            let n = p.get("members").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            let n = p
+                .get("members")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
             eprintln!("\n▶ team run — {n} member(s) working in parallel");
         }
         "member_completed" => {
-            let id = p.get("id").and_then(serde_json::Value::as_str).unwrap_or("?");
+            let id = p
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("?");
             let ok = p
                 .get("ok")
                 .and_then(serde_json::Value::as_bool)
@@ -1954,7 +1960,14 @@ fn render_remote_event(ev: &remote::RemoteEvent) {
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
             let line = format!("[tool finish] ok={ok}");
-            eprintln!("{}", if ok { style::dim(&line) } else { style::warn(&line) });
+            eprintln!(
+                "{}",
+                if ok {
+                    style::dim(&line)
+                } else {
+                    style::warn(&line)
+                }
+            );
             // Show what the tool did — diffs get red/green backgrounds (removed
             // old → red, added new → green). Capped so a big result can't flood.
             if let Some(out) = ev
@@ -2071,10 +2084,9 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
                             lang_directive = cli_config::language_directive(&cfg.language);
                         }
                         match cli_config::save(&cfg) {
-                            Ok(()) => eprintln!(
-                                "{}",
-                                style::ok(&format!("  ✓ {key} → {}", value.trim()))
-                            ),
+                            Ok(()) => {
+                                eprintln!("{}", style::ok(&format!("  ✓ {key} → {}", value.trim())))
+                            }
                             Err(e) => eprintln!(
                                 "{}",
                                 style::warn(&format!(

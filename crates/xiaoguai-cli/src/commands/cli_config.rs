@@ -97,10 +97,7 @@ pub fn apply_set(cfg: &CliConfig, key: &str, value: &str) -> Result<CliConfig, S
         }
         "language" | "lang" => {
             if !LANGUAGES.contains(&v) {
-                return Err(format!(
-                    "language must be one of: {}",
-                    LANGUAGES.join(", ")
-                ));
+                return Err(format!("language must be one of: {}", LANGUAGES.join(", ")));
             }
             Ok(CliConfig {
                 language: v.to_string(),

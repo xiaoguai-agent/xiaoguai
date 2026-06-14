@@ -213,12 +213,7 @@ impl RemoteClient {
     ///
     /// # Errors
     /// See [`Self::send_message_with_model`].
-    pub async fn send_message<F>(
-        &self,
-        session_id: &str,
-        content: &str,
-        on_event: F,
-    ) -> Result<()>
+    pub async fn send_message<F>(&self, session_id: &str, content: &str, on_event: F) -> Result<()>
     where
         F: FnMut(RemoteEvent) -> Result<()>,
     {
