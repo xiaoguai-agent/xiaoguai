@@ -179,7 +179,7 @@ mod tests {
         assert!(m.ends_with("6789 (17 chars)"), "got {m}");
         assert!(m.starts_with('•'));
         assert!(!m.contains("abcde")); // body not leaked
-        // short key fully masked
+                                       // short key fully masked
         assert_eq!(mask_key("abcd"), "•••• (4 chars)");
         assert_eq!(mask_key("xy"), "•• (2 chars)");
     }

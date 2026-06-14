@@ -55,9 +55,7 @@ pub enum HotlPolicyStoreError {
 /// # Errors
 /// Returns `InvalidArgument` when `window_seconds <= 0`, neither limit is set,
 /// `max_count <= 0`, or `max_usd < 0`.
-pub fn validate_policy_request(
-    req: &CreateHotlPolicyRequest,
-) -> Result<(), HotlPolicyStoreError> {
+pub fn validate_policy_request(req: &CreateHotlPolicyRequest) -> Result<(), HotlPolicyStoreError> {
     if req.window_seconds <= 0 {
         return Err(HotlPolicyStoreError::InvalidArgument(
             "window_seconds must be > 0".into(),
