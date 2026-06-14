@@ -110,6 +110,48 @@ If that errors (`unknown shorthand flag: 'f'`), the plugin is missing: install
 backward-compat). For real LLM providers, MCP registration, the admin console,
 and config details, see [`docs/user-guide/quickstart.md`](docs/user-guide/quickstart.md).
 
+### First chat — talk to your running server
+
+Out of the box `xiaoguai serve` boots on a built-in `MockBackend`, so the
+round-trip works the moment the server is up:
+
+```bash
+xiaoguai chat --prompt 'hello'    # talks to the :7600 server you just started
+```
+
+`chat` auto-creates a session, streams the reply, and routes through your
+registered providers + HotL + audit — no session id to juggle. Register a real
+provider to get real answers (interactive, writes to the local DB):
+
+```bash
+xiaoguai init                     # pick a provider, paste its API key, set default
+# restart `xiaoguai serve`, then:
+xiaoguai chat --prompt 'introduce yourself in three sentences'
+```
+
+Want a multi-turn conversation that keeps history? Use `xiaoguai repl`. Working
+offline or without a server? Stay direct with `xiaoguai chat --mock --prompt 'hello'`
+(or `--ollama-url http://localhost:11434`).
+
+### Upgrading
+
+```bash
+pip install -U xiaoguai           # pipx users: pipx upgrade xiaoguai
+```
+
+For the native packages (Option B), download the newer `.deb` / `.rpm` / tarball
+from the [latest release](https://github.com/xiaoguai-agent/xiaoguai/releases/latest)
+and reinstall over the top (the systemd unit restarts); for Docker, re-pull and
+`up`. Your `~/.xiaoguai/data.db` is reused as-is — schema migrations run
+automatically on `serve` boot, so existing sessions, providers, and audit
+history carry over.
+
+> **Behavior change (v1.17.0):** `xiaoguai chat --prompt '...'` now talks to the
+> running `xiaoguai serve` by default — it auto-creates a session and uses your
+> registered providers. The old direct-to-Ollama/Mock one-shot moved behind
+> `--mock` / `--ollama-url`. If you scripted `xiaoguai chat` against Ollama, add
+> `--ollama-url http://localhost:11434` (or `--mock` for the canned backend).
+
 ## Observability (optional)
 
 Telemetry is opt-in. Build with the `observability` cargo feature to expose
