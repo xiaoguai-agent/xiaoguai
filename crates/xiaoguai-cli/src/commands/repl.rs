@@ -16,6 +16,13 @@ pub enum ReplAction {
     /// Switch the active model to this name for subsequent messages; the
     /// caller updates its state and confirms.
     SetModel(String),
+    /// Clear the terminal screen (`/clear`).
+    Clear,
+    /// Show the persistent CLI config (`/config`).
+    ConfigShow,
+    /// Set a persistent CLI config key (`/config set <key> <value>`); the
+    /// caller validates, persists, and applies it.
+    ConfigSet { key: String, value: String },
     /// Not a command — send this text to the model as a prompt.
     Send(String),
 }
@@ -24,11 +31,13 @@ pub enum ReplAction {
 #[must_use]
 pub fn help_text() -> String {
     "commands:\n\
-     \x20 /help            show this list\n\
-     \x20 /model           show the model this session is using\n\
-     \x20 /model <name>    use a different model from now on (e.g. /model MiniMax-M2.5)\n\
-     \x20 /models          how to see which models are configured\n\
-     \x20 /exit, /quit     leave (Ctrl-D also works)"
+     \x20 /help                     show this list\n\
+     \x20 /model [name]             show or switch the model (e.g. /model MiniMax-M2.5)\n\
+     \x20 /models                   how to see which models are configured\n\
+     \x20 /config                   show persistent settings (prompt, language)\n\
+     \x20 /config set <key> <val>   change a setting (e.g. /config set language zh)\n\
+     \x20 /clear                    clear the screen\n\
+     \x20 /exit, /quit              leave (Ctrl-D also works)"
         .to_string()
 }
 
@@ -49,6 +58,29 @@ pub fn parse_command(input: &str, current_model: &str) -> ReplAction {
     match cmd {
         "/exit" | "/quit" => ReplAction::Quit,
         "/help" | "/?" => ReplAction::Notice(help_text()),
+        "/clear" | "/cls" => ReplAction::Clear,
+        "/config" => {
+            // Accept `/config`, `/config set <key> <value>`, and the shorthand
+            // `/config <key> <value>`. Bare `/config` or `/config set` → show.
+            let rest = if arg == "set" {
+                ""
+            } else if let Some(r) = arg.strip_prefix("set ") {
+                r.trim()
+            } else {
+                arg
+            };
+            if rest.is_empty() {
+                return ReplAction::ConfigShow;
+            }
+            let mut kv = rest.splitn(2, char::is_whitespace);
+            let key = kv.next().unwrap_or("").trim().to_string();
+            let value = kv.next().unwrap_or("").trim().to_string();
+            if key.is_empty() {
+                ReplAction::ConfigShow
+            } else {
+                ReplAction::ConfigSet { key, value }
+            }
+        }
         "/models" => ReplAction::Notice(
             "configured models depend on your provider — list them with:  \
              xiaoguai provider list\n  then switch with:  /model <name>"
@@ -122,6 +154,34 @@ mod tests {
         assert!(h.contains("/model"));
         assert!(h.contains("/exit"));
         assert!(h.contains("/help"));
+    }
+
+    #[test]
+    fn config_show_and_set_parse() {
+        assert_eq!(parse_command("/config", ""), ReplAction::ConfigShow);
+        // both `set key value` and `key value` forms; value keeps its spaces
+        assert_eq!(
+            parse_command("/config set prompt My agent>", ""),
+            ReplAction::ConfigSet {
+                key: "prompt".into(),
+                value: "My agent>".into()
+            }
+        );
+        assert_eq!(
+            parse_command("/config language zh", ""),
+            ReplAction::ConfigSet {
+                key: "language".into(),
+                value: "zh".into()
+            }
+        );
+        // `/config set` with nothing → show
+        assert_eq!(parse_command("/config set", ""), ReplAction::ConfigShow);
+    }
+
+    #[test]
+    fn clear_parses() {
+        assert_eq!(parse_command("/clear", ""), ReplAction::Clear);
+        assert_eq!(parse_command("/cls", ""), ReplAction::Clear);
     }
 
     #[test]
