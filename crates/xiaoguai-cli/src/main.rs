@@ -761,6 +761,25 @@ enum RemoteCmd {
         #[arg(long)]
         session: String,
     },
+    /// Run a complex goal through an expert team — members work in parallel,
+    /// the lead synthesizes one answer — against a fresh session, streaming
+    /// progress and the final result. The team-based version of `chat`, for
+    /// tasks worth several perspectives.
+    Orchestrate {
+        #[arg(long)]
+        user_id: String,
+        /// The goal/task to hand the team.
+        #[arg(long)]
+        goal: String,
+        /// Team id to use. Omit to auto-route the goal to the best-matching
+        /// active team (422 if none matches — create one in the admin console
+        /// or chat-ui Expert picker first).
+        #[arg(long)]
+        team: Option<String>,
+        /// Cap how many members run in parallel (the server clamps to 1–8).
+        #[arg(long)]
+        max_members: Option<usize>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1856,6 +1875,57 @@ async fn handle_mcp(config: Option<&str>, action: McpCmd) -> Result<()> {
 /// Render one streamed `RemoteEvent` to the terminal: assistant text to stdout
 /// (so it pipes cleanly), tool/done/error markers to stderr. Shared by
 /// `remote chat` and `repl`.
+/// Render one `OrchestrateEvent` SSE frame: member/synthesis progress to
+/// stderr, the synthesized answer to stdout (so it stays pipe-clean).
+fn render_orchestrate_event(ev: &remote::RemoteEvent) {
+    use std::io::Write as _;
+    let p = &ev.payload;
+    match ev.name.as_str() {
+        "run_started" => {
+            let n = p.get("members").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            eprintln!("\n▶ team run — {n} member(s) working in parallel");
+        }
+        "member_completed" => {
+            let id = p.get("id").and_then(serde_json::Value::as_str).unwrap_or("?");
+            let ok = p
+                .get("ok")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            eprintln!("  {} {id}", if ok { "✓" } else { "✗" });
+        }
+        "synthesis_started" => {
+            let n = p
+                .get("ok_members")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            eprintln!("▶ lead synthesizing from {n} member result(s)…");
+        }
+        "final" => {
+            if let Some(text) = p.get("text").and_then(serde_json::Value::as_str) {
+                println!("{text}");
+                std::io::stdout().flush().ok();
+            }
+            let ok = p
+                .get("ok")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let failed = p
+                .get("failed_members")
+                .and_then(serde_json::Value::as_array)
+                .map_or(0, Vec::len);
+            eprintln!("[done] ok={ok}, failed_members={failed}");
+        }
+        "error" => {
+            let msg = p
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("?");
+            eprintln!("[error] {msg}");
+        }
+        _ => {}
+    }
+}
+
 fn render_remote_event(ev: &remote::RemoteEvent) {
     use std::io::Write as _;
     match ev.name.as_str() {
@@ -2055,6 +2125,35 @@ async fn handle_remote(server: String, action: RemoteCmd) -> Result<()> {
         RemoteCmd::Cancel { session } => {
             let cancelled = client.cancel(&session).await?;
             println!("cancelled={cancelled}");
+        }
+        RemoteCmd::Orchestrate {
+            user_id,
+            goal,
+            team,
+            max_members,
+        } => {
+            let session = client
+                .create_session(&remote::CreateSessionRequest {
+                    user_id,
+                    model: String::new(),
+                    title: None,
+                })
+                .await?;
+            eprintln!("session: {}", session.id);
+            client
+                .orchestrate(
+                    &session.id,
+                    &remote::OrchestrateRequest {
+                        goal,
+                        team_id: team,
+                        max_members,
+                    },
+                    |ev| {
+                        render_orchestrate_event(&ev);
+                        Ok(())
+                    },
+                )
+                .await?;
         }
     }
     Ok(())

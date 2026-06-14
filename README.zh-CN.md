@@ -159,6 +159,26 @@ server:
 
 > **行为变更（v1.17.0）：** `xiaoguai chat --prompt '...'` 现在默认与运行中的 `xiaoguai serve` 对话 —— 它会自动创建会话，并使用你已注册的提供方 + HotL + 审计。旧的直连 Ollama/Mock 的一次性模式已移到 `--mock` / `--ollama-url` 之后。如果你曾把 `xiaoguai chat` 脚本化为对接 Ollama，请加上 `--ollama-url http://localhost:11434`（或用 `--mock` 走预置后端）。
 
+## Agent 团队 —— 值得多方视角的复杂任务
+
+当一遍不够时——安全审计、有取舍的设计、多角度的研究问题——把任务交给一个**专家团队**，而不是单次对话。团队的**成员是 sub-agent**（各有自己的 persona 和受限工具集），**并行**处理目标；然后一个 **lead** 把它们的结论**综合**成一个答案，并把分歧显式呈现而不是抹平。独立视角 + 显式综合，能抓住单个 agent 漏掉的东西——而每个成员和综合回合仍走同一套 HotL 审批闸 + HMAC 审计链，额外算力始终受治理。
+
+复杂任务怎么调度：你给一个**目标**；它路由到某个团队（传 `--team <id>`，或省略以自动路由到最匹配的团队）；编排器把成员并行铺开、套用每次运行的 HotL 预算，lead 组装最终答案。成员失败不会中止整轮——lead 会从存活成员里综合。
+
+三种跑法：
+
+```bash
+# CLI —— 把目标自动路由到最匹配的团队（或传 --team <id>）
+xiaoguai remote orchestrate --user-id you --goal "审计 auth/ 的安全漏洞"
+```
+
+- **Web UI：** 在 chat-ui 的 Expert picker 里挂上一个团队，然后点 composer 旁的 **team-run** 按钮（execute 模式）。
+- **API：** `POST /v1/sessions/{id}/orchestrate` 流式返回 `OrchestrateEvent`（`run_started → member_completed* → synthesis_started → final`）。
+
+在 admin 控制台或 `/v1/teams` 创建/管理团队（一个 lead + 若干成员，加可选的共享术语表）。完整指南：[`docs/user-guide/expert-center.md`](docs/user-guide/expert-center.md)。
+
+> **sub-agent 也能用在你自己的工作上：** 同样的「铺开独立 worker、再综合 / 对抗式验证」模式，是从任何 agent 榨出更高质量结果的办法——拆解大任务、并行跑 worker、用一个 reviewer 回合评判输出。Agent 团队把这个模式做成了 xiaoguai 内部一等的、可审计的工作流。
+
 ## 可观测性（可选）
 
 遥测是按需开启的。用 `observability` 这个 cargo feature 构建以暴露 `/metrics`（Prometheus）+ OTLP trace 导出 —— 默认关闭。要拉起本地的 Prometheus/Grafana/OTel-collector 栈，叠加可选的 compose 文件：
