@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
     anomaly, audit_bundle, audit_export, backup, chat, code, completions, doctor, eval, hotl, init,
-    manpages, mcp, memory, outcomes, provider, r#loop, remote, schedule, self_update, service,
-    skills, stats, tasks, watch,
+    manpages, mcp, memory, outcomes, provider, r#loop, remote, repl, schedule, self_update,
+    service, skills, stats, tasks, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -69,10 +69,16 @@ enum Cmd {
         model: String,
     },
 
-    /// Interactive setup wizard: pick a provider, enter its API key (hidden),
-    /// and optionally make it the default model. Writes to the local DB; no web
+    /// Interactive setup wizard: pick a provider, enter its API key, and
+    /// optionally make it the default model. Writes to the local DB; no web
     /// UI needed. Restart `xiaoguai serve` afterwards.
-    Init,
+    Init {
+        /// Show the API key as you type it instead of hiding it. Off by
+        /// default (the key is hidden like a password prompt); either way a
+        /// masked confirmation is echoed so you can verify what was captured.
+        #[arg(long)]
+        plaintext: bool,
+    },
 
     /// Self-check the local install: database writable, providers + default
     /// key, Ollama reachability/model (when an Ollama provider is default),
@@ -1379,7 +1385,7 @@ async fn prompt_hidden() -> Result<String> {
 /// `xiaoguai init` — interactive setup wizard. Picks a provider from the local
 /// registry, takes its API key (hidden), optionally makes it the default model,
 /// and persists via the (already-tested) `provider::update`.
-async fn handle_init(config: Option<&str>) -> Result<()> {
+async fn handle_init(config: Option<&str>, plaintext: bool) -> Result<()> {
     use std::io::Write as _;
     let repo = build_provider_repo(config).await?;
     let providers = repo.list().await?;
@@ -1403,11 +1409,19 @@ async fn handle_init(config: Option<&str>) -> Result<()> {
     let chosen = &providers[idx];
 
     eprint!(
-        "\n{} API key (hidden — leave blank to keep the current one): ",
-        chosen.name
+        "\n{} API key ({} — leave blank to keep the current one): ",
+        chosen.name,
+        if plaintext { "shown" } else { "hidden" }
     );
     std::io::stderr().flush().ok();
-    let key_raw = prompt_hidden().await?;
+    // `--plaintext` reads with echo on (the user sees the key as they type);
+    // the default hides it like a password prompt. Either way we echo a masked
+    // confirmation below so "did my paste land?" is always answerable.
+    let key_raw = if plaintext {
+        prompt_line()?
+    } else {
+        prompt_hidden().await?
+    };
     let key = {
         let k = key_raw.trim();
         if k.is_empty() {
@@ -1416,6 +1430,9 @@ async fn handle_init(config: Option<&str>) -> Result<()> {
             Some(k.to_string())
         }
     };
+    if let Some(k) = &key {
+        eprintln!("  ✓ key captured: {}", init::mask_key(k));
+    }
 
     // Region-relevant providers (M2): the seeded endpoint may be wrong for the
     // user's account — MiniMax international (api.minimax.io) vs the CN platform,
@@ -1880,6 +1897,9 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
     client.healthz().await.with_context(|| {
         format!("could not reach the server at {server} — start it with `xiaoguai serve`")
     })?;
+    // The session is created with `model`; `current_model` tracks the live
+    // choice so `/model <name>` can switch it per-message without a reconnect.
+    let mut current_model = model.clone();
     let session = client
         .create_session(&remote::CreateSessionRequest {
             user_id,
@@ -1888,7 +1908,7 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
         })
         .await?;
     eprintln!(
-        "xiaoguai repl — session {} (type /exit or Ctrl-D to quit)",
+        "xiaoguai repl — session {} (type /help for commands, /exit or Ctrl-D to quit)",
         session.id
     );
 
@@ -1901,22 +1921,29 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
             eprintln!();
             break; // EOF / Ctrl-D
         }
-        let prompt = line.trim();
-        if prompt.is_empty() {
-            continue;
-        }
-        if matches!(prompt, "/exit" | "/quit") {
-            break;
-        }
-        if let Err(e) = client
-            .send_message(&session.id, prompt, |ev| {
-                render_remote_event(&ev);
-                Ok(())
-            })
-            .await
-        {
-            // Keep the REPL alive on a per-turn error (network blip, etc.).
-            eprintln!("[error] {e:#}");
+        match repl::parse_command(&line, &current_model) {
+            repl::ReplAction::Quit => break,
+            repl::ReplAction::Notice(msg) => eprintln!("{msg}"),
+            repl::ReplAction::SetModel(m) => {
+                current_model = m;
+                eprintln!("  ✓ model → {current_model}");
+            }
+            repl::ReplAction::Send(prompt) => {
+                if prompt.is_empty() {
+                    continue;
+                }
+                let model_override = (!current_model.is_empty()).then_some(current_model.as_str());
+                if let Err(e) = client
+                    .send_message_with_model(&session.id, &prompt, model_override, |ev| {
+                        render_remote_event(&ev);
+                        Ok(())
+                    })
+                    .await
+                {
+                    // Keep the REPL alive on a per-turn error (network blip, etc.).
+                    eprintln!("[error] {e:#}");
+                }
+            }
         }
     }
     eprintln!("bye");
@@ -2481,7 +2508,7 @@ async fn main() -> Result<()> {
             model,
         } => handle_chat(prompt, server, user_id, mock, ollama_url, model).await,
         Cmd::Provider { action } => handle_provider(cfg, action).await,
-        Cmd::Init => handle_init(cfg).await,
+        Cmd::Init { plaintext } => handle_init(cfg, plaintext).await,
         Cmd::Doctor => {
             let settings = load_settings(cfg)?;
             let results = doctor::run(&settings).await;
