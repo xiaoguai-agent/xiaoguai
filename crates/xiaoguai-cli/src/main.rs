@@ -4,9 +4,9 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
-    anomaly, audit_bundle, audit_export, backup, chat, code, completions, doctor, eval, hotl, init,
-    manpages, mcp, memory, outcomes, provider, r#loop, remote, repl, schedule, self_update,
-    service, skills, stats, tasks, watch,
+    anomaly, audit_bundle, audit_export, backup, chat, cli_config, code, completions, doctor, eval,
+    hotl, init, manpages, mcp, memory, outcomes, provider, r#loop, remote, repl, schedule,
+    self_update, service, skills, stats, tasks, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -1912,6 +1912,12 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
     // The session is created with `model`; `current_model` tracks the live
     // choice so `/model <name>` can switch it per-message without a reconnect.
     let mut current_model = model.clone();
+    // Persistent CLI prefs (~/.xiaoguai/cli.json): the prompt marker + default
+    // reply language, remembered across restarts. Mutable in-session via /config.
+    let mut cfg = cli_config::load();
+    // When a language is configured, prepend a one-time directive to the first
+    // user turn so the agent replies in it (CLI-side; no server change needed).
+    let mut lang_directive: Option<&'static str> = cli_config::language_directive(&cfg.language);
     let session = client
         .create_session(&remote::CreateSessionRequest {
             user_id,
@@ -1921,13 +1927,13 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
         .await?;
     eprintln!("{CLI_LOGO}");
     eprintln!(
-        "session {} — type /help for commands, /exit or Ctrl-D to quit",
+        "session {} — type /help for commands (/config to customise), /exit or Ctrl-D to quit",
         session.id
     );
 
     let stdin = std::io::stdin();
     loop {
-        eprint!("\n> ");
+        eprint!("\n{} ", cfg.prompt);
         std::io::stderr().flush().ok();
         let mut line = String::new();
         if stdin.read_line(&mut line).context("read stdin")? == 0 {
@@ -1937,17 +1943,47 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
         match repl::parse_command(&line, &current_model) {
             repl::ReplAction::Quit => break,
             repl::ReplAction::Notice(msg) => eprintln!("{msg}"),
+            repl::ReplAction::Clear => {
+                // ANSI: clear screen + home the cursor.
+                print!("\x1b[2J\x1b[H");
+                std::io::stdout().flush().ok();
+            }
             repl::ReplAction::SetModel(m) => {
                 current_model = m;
                 eprintln!("  ✓ model → {current_model}");
+            }
+            repl::ReplAction::ConfigShow => eprintln!("{}", cli_config::render(&cfg)),
+            repl::ReplAction::ConfigSet { key, value } => {
+                match cli_config::apply_set(&cfg, &key, &value) {
+                    Ok(next) => {
+                        cfg = next;
+                        // A language change re-arms the directive for the next turn.
+                        if key == "language" || key == "lang" {
+                            lang_directive = cli_config::language_directive(&cfg.language);
+                        }
+                        match cli_config::save(&cfg) {
+                            Ok(()) => eprintln!("  ✓ {key} → {}", value.trim()),
+                            Err(e) => {
+                                eprintln!("  ! applied in-session but could not persist: {e:#}");
+                            }
+                        }
+                    }
+                    Err(msg) => eprintln!("  ! {msg}"),
+                }
             }
             repl::ReplAction::Send(prompt) => {
                 if prompt.is_empty() {
                     continue;
                 }
+                // One-time language directive prepended to the first turn so the
+                // agent adopts the configured reply language.
+                let content = match lang_directive.take() {
+                    Some(d) => format!("{d}\n\n{prompt}"),
+                    None => prompt,
+                };
                 let model_override = (!current_model.is_empty()).then_some(current_model.as_str());
                 if let Err(e) = client
-                    .send_message_with_model(&session.id, &prompt, model_override, |ev| {
+                    .send_message_with_model(&session.id, &content, model_override, |ev| {
                         render_remote_event(&ev);
                         Ok(())
                     })
