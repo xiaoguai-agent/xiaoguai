@@ -6,7 +6,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use xiaoguai_cli::commands::{
     anomaly, audit_bundle, audit_export, backup, chat, cli_config, code, completions, doctor, eval,
     hotl, init, manpages, mcp, memory, outcomes, provider, r#loop, remote, repl, schedule,
-    self_update, service, skills, stats, tasks, watch,
+    self_update, service, skills, stats, style, tasks, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -1860,7 +1860,7 @@ fn render_remote_event(ev: &remote::RemoteEvent) {
                 .get("name")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("?");
-            eprintln!("\n[tool start] {name}");
+            eprintln!("{}", style::dim(&format!("\n[tool start] {name}")));
         }
         "tool_call_finished" => {
             let ok = ev
@@ -1868,7 +1868,8 @@ fn render_remote_event(ev: &remote::RemoteEvent) {
                 .get("ok")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
-            eprintln!("[tool finish] ok={ok}");
+            let line = format!("[tool finish] ok={ok}");
+            eprintln!("{}", if ok { style::dim(&line) } else { style::warn(&line) });
         }
         "done" => {
             println!();
@@ -1877,7 +1878,7 @@ fn render_remote_event(ev: &remote::RemoteEvent) {
                 .get("stop_reason")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("?");
-            eprintln!("[done] {reason}");
+            eprintln!("{}", style::ok(&format!("[done] {reason}")));
         }
         "error" => {
             let msg = ev
@@ -1885,7 +1886,7 @@ fn render_remote_event(ev: &remote::RemoteEvent) {
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("?");
-            eprintln!("[error] {msg}");
+            eprintln!("{}", style::err(&format!("[error] {msg}")));
         }
         _ => {}
     }
@@ -1925,15 +1926,18 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
             title: None,
         })
         .await?;
-    eprintln!("{CLI_LOGO}");
+    eprintln!("{}", style::accent(CLI_LOGO));
     eprintln!(
-        "session {} — type /help for commands (/config to customise), /exit or Ctrl-D to quit",
-        session.id
+        "{}",
+        style::dim(&format!(
+            "session {} — type /help for commands (/config to customise), /exit or Ctrl-D to quit",
+            session.id
+        ))
     );
 
     let stdin = std::io::stdin();
     loop {
-        eprint!("\n{} ", cfg.prompt);
+        eprint!("\n{} ", style::prompt(&cfg.prompt));
         std::io::stderr().flush().ok();
         let mut line = String::new();
         if stdin.read_line(&mut line).context("read stdin")? == 0 {
@@ -1950,7 +1954,7 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
             }
             repl::ReplAction::SetModel(m) => {
                 current_model = m;
-                eprintln!("  ✓ model → {current_model}");
+                eprintln!("{}", style::ok(&format!("  ✓ model → {current_model}")));
             }
             repl::ReplAction::ConfigShow => eprintln!("{}", cli_config::render(&cfg)),
             repl::ReplAction::ConfigSet { key, value } => {
@@ -1962,13 +1966,19 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
                             lang_directive = cli_config::language_directive(&cfg.language);
                         }
                         match cli_config::save(&cfg) {
-                            Ok(()) => eprintln!("  ✓ {key} → {}", value.trim()),
-                            Err(e) => {
-                                eprintln!("  ! applied in-session but could not persist: {e:#}");
-                            }
+                            Ok(()) => eprintln!(
+                                "{}",
+                                style::ok(&format!("  ✓ {key} → {}", value.trim()))
+                            ),
+                            Err(e) => eprintln!(
+                                "{}",
+                                style::warn(&format!(
+                                    "  ! applied in-session but could not persist: {e:#}"
+                                ))
+                            ),
                         }
                     }
-                    Err(msg) => eprintln!("  ! {msg}"),
+                    Err(msg) => eprintln!("{}", style::warn(&format!("  ! {msg}"))),
                 }
             }
             repl::ReplAction::Send(prompt) => {
@@ -1990,7 +2000,7 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
                     .await
                 {
                     // Keep the REPL alive on a per-turn error (network blip, etc.).
-                    eprintln!("[error] {e:#}");
+                    eprintln!("{}", style::err(&format!("[error] {e:#}")));
                 }
             }
         }
