@@ -37,7 +37,18 @@ enum Cmd {
     /// `DATABASE_URL` / `XIAOGUAI_AUDIT_SIGNING_KEY` / `OLLAMA_HOST`
     /// environment. The legacy `xiaoguai-core` binary is now a thin shim
     /// over the same library entry point.
-    Serve,
+    Serve {
+        /// Bind address (overrides config/env). Default `127.0.0.1` (local
+        /// only). Use `--host 0.0.0.0` to reach it from your LAN — that needs
+        /// owner auth (set `XIAOGUAI_AUTH__USERNAME` + `XIAOGUAI_AUTH__PASSWORD`)
+        /// per SEC-01, or the explicit `XIAOGUAI_ALLOW_UNAUTHENTICATED_NONLOOPBACK=1`.
+        /// Find your LAN IP with `hostname -I`.
+        #[arg(long)]
+        host: Option<String>,
+        /// Port to bind (overrides config/env). Default `7600`.
+        #[arg(long)]
+        port: Option<u16>,
+    },
 
     /// Bootstrap-time round-trip check (PG + cache + JWT + RBAC + audit).
     ///
@@ -2543,9 +2554,17 @@ async fn main() -> Result<()> {
     }
     let cfg = cli.config.as_deref();
     match cli.command {
-        Cmd::Serve => {
-            let settings = xiaoguai_core::load_settings(cfg.map(std::path::Path::new))
+        Cmd::Serve { host, port } => {
+            let mut settings = xiaoguai_core::load_settings(cfg.map(std::path::Path::new))
                 .context("load settings for serve")?;
+            // Flag > env > config: CLI flags override the already-merged settings
+            // for a one-step `xiaoguai serve --host 0.0.0.0` LAN launch.
+            if let Some(h) = host {
+                settings.server.host = h;
+            }
+            if let Some(p) = port {
+                settings.server.port = p;
+            }
             xiaoguai_core::run_serve(&settings).await
         }
         Cmd::Smoke => {

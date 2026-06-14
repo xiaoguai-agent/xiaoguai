@@ -47,6 +47,18 @@ fn cli_help_lists_all_subcommands() {
 }
 
 #[test]
+fn cli_serve_help_has_host_and_port_flags() {
+    // One-step LAN launch: `xiaoguai serve --host 0.0.0.0`.
+    let mut cmd = Command::cargo_bin("xiaoguai").expect("binary");
+    cmd.args(["serve", "--help"]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("--host"))
+        .stdout(predicate::str::contains("--port"))
+        .stdout(predicate::str::contains("0.0.0.0"));
+}
+
+#[test]
 fn cli_mcp_register_help_describes_required_flags() {
     let mut cmd = Command::cargo_bin("xiaoguai").expect("binary");
     cmd.args(["mcp", "register", "--help"]);
