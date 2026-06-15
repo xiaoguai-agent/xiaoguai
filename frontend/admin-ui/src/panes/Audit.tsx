@@ -5,6 +5,7 @@ import { client as defaultClient } from '../client';
 import { ChainBadge } from '../components/ChainBadge';
 import { AuditReplay } from '../components/AuditReplay';
 import { RequireScope } from '../components/RequireScope';
+import { PaneIntro } from '../components/PaneIntro';
 
 /**
  * v0.6.4: live audit log pane. Requires a tenant id; the chain is
@@ -90,6 +91,11 @@ export function AuditPane({ client }: AuditPaneProps = {}): JSX.Element {
   return (
     <>
       <h1>{t('pane.audit.title')}</h1>
+      <PaneIntro
+        purpose={t('pane.audit.intro.purpose')}
+        usage={t('pane.audit.intro.usage')}
+        usageLabel={t('pane.audit.intro.usage_label')}
+      />
       <div className="toolbar">
         <label>
           {t('pane.audit.label_tenant_id')}

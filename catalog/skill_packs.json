@@ -352,6 +352,186 @@
         }
       },
       "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/vmware-ops.png"
+    },
+    {
+      "slug": "code-review",
+      "name": "Code Review Assistant",
+      "description": "General-purpose code review across any repository: explains a diff in plain language, flags style and complexity smells, suggests refactors, and checks for missing tests or docs. Language-agnostic and editor-friendly — drop a diff or a PR URL and get an actionable review.",
+      "version": "1.0.0",
+      "category": "dev",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": []
+      },
+      "knobs": {
+        "strictness": {
+          "type": "string",
+          "enum": ["lenient", "balanced", "strict"],
+          "default": "balanced",
+          "description": "How aggressively to flag style and complexity issues"
+        },
+        "suggest_refactors": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include concrete refactor suggestions, not just findings"
+        },
+        "max_diff_lines": {
+          "type": "integer",
+          "default": 800,
+          "description": "Skip review if the diff exceeds this many changed lines"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/code-review.png"
+    },
+    {
+      "slug": "doc-qa",
+      "name": "Document Q&A",
+      "description": "Ask natural-language questions over your own documents and get grounded answers with citations. Works on any indexed collection — wikis, PDFs, runbooks, product docs. The assistant declines to answer when the corpus has no supporting passage, so answers stay trustworthy.",
+      "version": "1.0.0",
+      "category": "rag",
+      "requires": {
+        "feature_flags": ["rag"],
+        "env_keys": []
+      },
+      "knobs": {
+        "collection_id": {
+          "type": "string",
+          "default": "docs",
+          "description": "RAG collection slug to search (must be indexed first)"
+        },
+        "top_k": {
+          "type": "integer",
+          "default": 6,
+          "description": "Number of chunks to retrieve per query"
+        },
+        "answer_style": {
+          "type": "string",
+          "enum": ["concise", "detailed", "bullet_points"],
+          "default": "concise",
+          "description": "Shape of the generated answer"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/doc-qa.png"
+    },
+    {
+      "slug": "sql-assistant",
+      "name": "SQL Assistant",
+      "description": "Turn plain-English questions into SQL, explain existing queries, and suggest index or join optimizations. Reads a schema description to ground its output; every generated statement is read-only by default and write statements are HOTL-gated before they run.",
+      "version": "1.0.0",
+      "category": "dev",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": ["DB_SCHEMA_URL"]
+      },
+      "knobs": {
+        "sql_dialect": {
+          "type": "string",
+          "enum": ["postgres", "mysql", "sqlite", "bigquery", "snowflake"],
+          "default": "postgres",
+          "description": "Target SQL dialect for generated queries"
+        },
+        "read_only": {
+          "type": "boolean",
+          "default": true,
+          "description": "Generate SELECT-only statements unless explicitly overridden"
+        },
+        "explain_plans": {
+          "type": "boolean",
+          "default": false,
+          "description": "Attach an EXPLAIN plan summary to each generated query"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/sql-assistant.png"
+    },
+    {
+      "slug": "customer-support",
+      "name": "Customer Support Assistant",
+      "description": "Drafts replies to inbound support tickets grounded in your help-center articles and past resolutions. Classifies intent, proposes a tone-matched response, and suggests an escalation path for anything it can't confidently answer. All outbound replies are HOTL-gated.",
+      "version": "1.0.0",
+      "category": "support",
+      "requires": {
+        "feature_flags": ["rag"],
+        "env_keys": ["SUPPORT_INBOX_TOKEN"]
+      },
+      "knobs": {
+        "reply_tone": {
+          "type": "string",
+          "enum": ["friendly", "professional", "empathetic"],
+          "default": "friendly",
+          "description": "Tone for drafted support replies"
+        },
+        "auto_escalate_negative_sentiment": {
+          "type": "boolean",
+          "default": true,
+          "description": "Escalate tickets with strongly negative sentiment to a human"
+        },
+        "kb_collection_id": {
+          "type": "string",
+          "default": "support",
+          "description": "RAG collection of help-center articles to ground answers in"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/customer-support.png"
+    },
+    {
+      "slug": "meeting-notes",
+      "name": "Meeting Notes & Action Items",
+      "description": "Turns a raw meeting transcript into a structured summary: key decisions, discussion highlights, and a tracked list of action items with owners and due dates. Optionally posts the summary to a channel and files follow-ups.",
+      "version": "1.0.0",
+      "category": "ops",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": []
+      },
+      "knobs": {
+        "summary_length": {
+          "type": "string",
+          "enum": ["brief", "standard", "detailed"],
+          "default": "standard",
+          "description": "How much detail to keep in the meeting summary"
+        },
+        "extract_action_items": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pull out owner + due-date action items from the transcript"
+        },
+        "include_decisions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Surface an explicit list of decisions made"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/meeting-notes.png"
+    },
+    {
+      "slug": "release-notes",
+      "name": "Release Notes Generator",
+      "description": "Generates human-readable release notes from a range of commits or merged pull requests. Groups changes by type (features / fixes / chores), writes a one-line summary per entry, and drafts a highlights section for the top of the changelog.",
+      "version": "1.0.0",
+      "category": "dev",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": ["GITHUB_TOKEN"]
+      },
+      "knobs": {
+        "grouping": {
+          "type": "string",
+          "enum": ["by_type", "by_scope", "flat"],
+          "default": "by_type",
+          "description": "How to organise entries in the changelog"
+        },
+        "include_contributors": {
+          "type": "boolean",
+          "default": true,
+          "description": "Append a thank-you list of contributors"
+        },
+        "include_breaking_changes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Call out breaking changes in a dedicated section"
+        }
+      },
+      "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/release-notes.png"
     }
   ]
 }

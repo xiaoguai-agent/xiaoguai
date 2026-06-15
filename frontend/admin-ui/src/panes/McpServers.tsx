@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { McpServerResponse } from '@xiaoguai/shared';
 import { client } from '../client';
+import { PaneIntro } from '../components/PaneIntro';
 
 export function McpServersPane() {
   const { t } = useTranslation();
@@ -26,6 +27,11 @@ export function McpServersPane() {
   return (
     <>
       <h1>{t('pane.mcp_servers.title')}</h1>
+      <PaneIntro
+        purpose={t('pane.mcp_servers.intro.purpose')}
+        usage={t('pane.mcp_servers.intro.usage')}
+        usageLabel={t('pane.mcp_servers.intro.usage_label')}
+      />
       {error && <div className="error">{error}</div>}
       {!rows ? (
         <div className="empty">{t('pane.mcp_servers.empty_loading')}</div>

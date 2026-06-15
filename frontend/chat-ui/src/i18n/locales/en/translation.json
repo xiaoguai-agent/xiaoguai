@@ -92,6 +92,11 @@
       "analyze_cve": "Analyze the latest CVE feed",
       "explain_codebase": "Explain how a codebase works"
     },
+    "session": {
+      "rename": "Rename",
+      "delete": "Delete",
+      "delete_confirm": "Delete this session from history?"
+    },
     "expert": {
       "pick_label": "Expert",
       "chip_title": "Expert for this session",
@@ -117,6 +122,7 @@
       "toggle_label": "Turn mode",
       "execute": "Execute",
       "consult": "Consult",
+      "execute_hint": "Execute mode — the agent can call tools and actually perform actions (edit files, run commands, etc.).",
       "readonly_cue": "Consult mode (read-only) — the agent will not change anything; applies only to the message you send now, not the whole session"
     },
     "teamrun": {
@@ -129,6 +135,27 @@
       "done": "Team run completed.",
       "failed": "Team run produced no answer (failed members: {{failed}})",
       "error": "Team run failed: {{message}}"
+    },
+    "skills_page": {
+      "title": "Skill Packs",
+      "subtitle": "Browse and install pre-built skill packs for your workspace. Packs extend the agent with domain-specific tools, prompts, and RAG indexes.",
+      "tenant_label": "Tenant",
+      "tenant_placeholder": "tenant id",
+      "loading": "Loading…",
+      "error": "Error: {{message}}",
+      "empty": "No skill packs available.",
+      "install": "Install",
+      "uninstall": "Uninstall",
+      "configure": "Configure",
+      "less": "Less",
+      "busy": "…",
+      "installed_badge": "Installed ✓",
+      "requires_flag": "flag: {{flag}}",
+      "requires_env": "env: {{env}}",
+      "toast_installed": "{{name}} installed",
+      "toast_install_failed": "Install failed: {{message}}",
+      "toast_uninstalled": "{{name}} uninstalled",
+      "toast_uninstall_failed": "Uninstall failed: {{message}}"
     }
   }
 }

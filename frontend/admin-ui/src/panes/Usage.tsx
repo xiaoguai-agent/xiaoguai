@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { UsageGroupBy, UsageReport } from '@xiaoguai/shared';
 import { client } from '../client';
+import { PaneIntro } from '../components/PaneIntro';
 import { formatCents } from '../utils/cost';
 
 const GROUP_BY_OPTIONS: UsageGroupBy[] = ['day', 'provider', 'model'];
@@ -115,6 +116,12 @@ export function UsagePane(): JSX.Element {
           </button>
         </div>
       </header>
+
+      <PaneIntro
+        purpose={t('pane.usage.intro.purpose')}
+        usage={t('pane.usage.intro.usage')}
+        usageLabel={t('pane.usage.intro.usage_label')}
+      />
 
       <div className="today-filters" role="group" aria-label={t('pane.usage.filter_aria')}>
         <label>

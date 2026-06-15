@@ -116,7 +116,7 @@ async fn catalog_lists_all_packs() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     let packs = body["packs"].as_array().unwrap();
-    assert_eq!(packs.len(), 10, "catalog must ship exactly 10 packs");
+    assert_eq!(packs.len(), 16, "catalog must ship exactly 16 packs");
 
     let slugs: Vec<&str> = packs.iter().map(|p| p["slug"].as_str().unwrap()).collect();
     for expected in &[
@@ -130,6 +130,12 @@ async fn catalog_lists_all_packs() {
         "devops-oncall",
         "sales-qualification",
         "vmware-ops",
+        "code-review",
+        "doc-qa",
+        "sql-assistant",
+        "customer-support",
+        "meeting-notes",
+        "release-notes",
     ] {
         assert!(slugs.contains(expected), "missing slug: {expected}");
     }

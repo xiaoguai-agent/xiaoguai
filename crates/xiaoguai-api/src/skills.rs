@@ -366,6 +366,12 @@ mod tests {
             "rag-legal",
             "rag-finance",
             "rag-hr",
+            "code-review",
+            "doc-qa",
+            "sql-assistant",
+            "customer-support",
+            "meeting-notes",
+            "release-notes",
         ] {
             assert!(slugs.contains(expected), "catalog missing slug: {expected}");
         }
