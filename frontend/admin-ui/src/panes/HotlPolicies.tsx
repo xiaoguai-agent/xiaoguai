@@ -28,6 +28,7 @@ import type {
   HotlVerdict,
 } from '@xiaoguai/shared';
 import { ApiError } from '@xiaoguai/shared';
+import { PaneIntro } from '../components/PaneIntro';
 import { client } from '../client';
 import { TrustTiers } from '../components/TrustTiers';
 import { fmtWindow } from '../utils/window';
@@ -703,6 +704,17 @@ export function HotlPoliciesPane(): JSX.Element {
           </button>
         </div>
       </header>
+
+      <PaneIntro
+        purpose={t('pane.hotl_policies.intro.purpose')}
+        usage={t('pane.hotl_policies.intro.usage')}
+        usageLabel={t('pane.hotl_policies.intro.usage_label')}
+        examplesLabel={t('pane.hotl_policies.intro.examples_label')}
+        examples={[
+          t('pane.hotl_policies.intro.example_1'),
+          t('pane.hotl_policies.intro.example_2'),
+        ]}
+      />
 
       {/* 503 graceful banner */}
       {loadState.kind === 'unavailable' && (

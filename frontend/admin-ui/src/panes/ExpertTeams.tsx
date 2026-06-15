@@ -35,6 +35,7 @@ import type {
 import { ApiError } from '@xiaoguai/shared';
 import { client as defaultClient } from '../client';
 import { RequireScope } from '../components/RequireScope';
+import { PaneIntro } from '../components/PaneIntro';
 import { fmtDate, inferRoleTag, roleClassName } from './Personas';
 
 // ---------------------------------------------------------------------------
@@ -301,8 +302,15 @@ export function ExpertTeamsPane({
     <section aria-labelledby="expert-teams-title" className="pane">
       <header>
         <h1 id="expert-teams-title">{t('pane.expert_teams.title')}</h1>
-        <p className="muted">{t('pane.expert_teams.subtitle')}</p>
       </header>
+
+      <PaneIntro
+        purpose={t('pane.expert_teams.intro.purpose')}
+        usage={t('pane.expert_teams.intro.usage')}
+        usageLabel={t('pane.expert_teams.intro.usage_label')}
+        examplesLabel={t('pane.expert_teams.intro.examples_label')}
+        examples={[t('pane.expert_teams.intro.example_1')]}
+      />
 
       <div className="toolbar" role="search" aria-label="teams filters">
         <input

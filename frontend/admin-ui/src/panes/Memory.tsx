@@ -19,6 +19,7 @@ import type {
 } from '@xiaoguai/shared';
 import { MEMORY_KINDS } from '@xiaoguai/shared';
 import { client } from '../client';
+import { PaneIntro } from '../components/PaneIntro';
 import { MemoryImportExport } from './MemoryImportExport';
 
 type TabId = 'list' | 'recall' | 'neighbors';
@@ -789,6 +790,12 @@ export function MemoryPane(): JSX.Element {
       <header className="today-header">
         <h1>{t('pane.memory.title')}</h1>
       </header>
+
+      <PaneIntro
+        purpose={t('pane.memory.intro.purpose')}
+        usage={t('pane.memory.intro.usage')}
+        usageLabel={t('pane.memory.intro.usage_label')}
+      />
 
       {/* T7.3 — JSONL import/export toolbar (shared /v1/memories routes).
           #288: onImported wires the post-import list refresh. */}

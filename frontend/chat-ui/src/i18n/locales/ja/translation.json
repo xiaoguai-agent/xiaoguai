@@ -92,6 +92,11 @@
       "analyze_cve": "最新の CVE 情報を分析して",
       "explain_codebase": "コードベースの仕組みを説明して"
     },
+    "session": {
+      "rename": "名前を変更",
+      "delete": "削除",
+      "delete_confirm": "この会話を履歴から削除しますか？"
+    },
     "expert": {
       "pick_label": "エキスパート",
       "chip_title": "このセッションのエキスパート",
@@ -117,6 +122,7 @@
       "toggle_label": "ターンモード",
       "execute": "実行",
       "consult": "相談",
+      "execute_hint": "実行モード — エージェントがツールを使って実際に操作を実行します（ファイル編集、コマンド実行など）。",
       "readonly_cue": "相談モード（読み取り専用）— アシスタントは変更を行いません。今回送信するメッセージにのみ適用され、セッション全体には適用されません"
     },
     "teamrun": {
@@ -129,6 +135,27 @@
       "done": "チーム実行が完了しました。",
       "failed": "チーム実行は結果を生成できませんでした（失敗メンバー：{{failed}}）",
       "error": "チーム実行に失敗しました：{{message}}"
+    },
+    "skills_page": {
+      "title": "スキルパック",
+      "subtitle": "ワークスペース向けの事前構築済みスキルパックを閲覧・インストールします。パックはエージェントに領域固有のツール・プロンプト・RAG インデックスを追加します。",
+      "tenant_label": "テナント",
+      "tenant_placeholder": "テナント ID",
+      "loading": "読み込み中…",
+      "error": "エラー：{{message}}",
+      "empty": "利用可能なスキルパックがありません。",
+      "install": "インストール",
+      "uninstall": "アンインストール",
+      "configure": "設定",
+      "less": "閉じる",
+      "busy": "…",
+      "installed_badge": "インストール済み ✓",
+      "requires_flag": "フラグ：{{flag}}",
+      "requires_env": "環境変数：{{env}}",
+      "toast_installed": "{{name}} をインストールしました",
+      "toast_install_failed": "インストールに失敗しました：{{message}}",
+      "toast_uninstalled": "{{name}} をアンインストールしました",
+      "toast_uninstall_failed": "アンインストールに失敗しました：{{message}}"
     }
   }
 }

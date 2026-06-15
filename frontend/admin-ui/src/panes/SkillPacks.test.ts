@@ -10,7 +10,11 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import type { InstalledSkillPackResponse, InstallSkillPackResponse } from '@xiaoguai/shared';
+import type {
+  InstalledSkillPackResponse,
+  InstallSkillPackResponse,
+  SkillCatalogResponse,
+} from '@xiaoguai/shared';
 import { XiaoguaiClient } from '@xiaoguai/shared';
 
 // ---------------------------------------------------------------------------
@@ -201,6 +205,36 @@ describe('XiaoguaiClient skill pack install flow', () => {
     const result = await c.listInstalledSkillPacks();
 
     expect(result).toEqual([]);
+  });
+
+  it('listSkillCatalog GETs /v1/skills/catalog and returns the catalog', async () => {
+    const mockCatalog: SkillCatalogResponse = {
+      version: 1,
+      packs: [
+        {
+          slug: 'code-review',
+          name: 'Code Review Assistant',
+          description: 'Reviews diffs.',
+          version: '1.0.0',
+          category: 'dev',
+        },
+      ],
+    };
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockCatalog,
+    });
+
+    const c = new XiaoguaiClient({ baseUrl: 'http://localhost:8080', fetchImpl: mockFetch });
+    const result = await c.listSkillCatalog();
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:8080/v1/skills/catalog',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(result.version).toBe(1);
+    expect(result.packs[0]?.slug).toBe('code-review');
   });
 });
 

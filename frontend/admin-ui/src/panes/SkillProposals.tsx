@@ -29,6 +29,7 @@ import type {
 import { ApiError } from '@xiaoguai/shared';
 import { client as defaultClient } from '../client';
 import { RequireScope } from '../components/RequireScope';
+import { PaneIntro } from '../components/PaneIntro';
 import { SkillManifestPreview } from '../components/SkillManifestPreview';
 
 // ---------------------------------------------------------------------------
@@ -262,8 +263,13 @@ export function SkillProposalsPane({
         <h1 id="skill-proposals-title">
           {t('pane.skill_proposals.title')}
         </h1>
-        <p className="muted">{t('pane.skill_proposals.subtitle')}</p>
       </header>
+
+      <PaneIntro
+        purpose={t('pane.skill_proposals.intro.purpose')}
+        usage={t('pane.skill_proposals.intro.usage')}
+        usageLabel={t('pane.skill_proposals.intro.usage_label')}
+      />
 
       <div className="toast-stack" aria-live="polite">
         {toasts.map((tt) => (

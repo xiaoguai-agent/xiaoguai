@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TodayItem, TodayKind, ListTodayQuery, UsageReport } from '@xiaoguai/shared';
 import { client } from '../client';
+import { PaneIntro } from '../components/PaneIntro';
 
 type DateRange = 'last_24h' | 'last_7d' | 'all';
 
@@ -151,6 +152,12 @@ export function TodayPane() {
           </button>
         </div>
       </header>
+
+      <PaneIntro
+        purpose={t('pane.today.intro.purpose')}
+        usage={t('pane.today.intro.usage')}
+        usageLabel={t('pane.today.intro.usage_label')}
+      />
 
       <div className="today-filters">
         <div className="pills">

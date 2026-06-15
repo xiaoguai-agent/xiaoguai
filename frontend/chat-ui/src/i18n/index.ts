@@ -55,6 +55,12 @@ interface TranslationShape {
       analyze_cve: string;
       explain_codebase: string;
     };
+    /** Sidebar session-row actions (rename / delete + confirm prompt). */
+    session: {
+      rename: string;
+      delete: string;
+      delete_confirm: string;
+    };
     /** T3.5 — expert picker (header chip + popover). */
     expert: {
       pick_label: string;
@@ -82,6 +88,7 @@ interface TranslationShape {
       toggle_label: string;
       execute: string;
       consult: string;
+      execute_hint: string;
       readonly_cue: string;
     };
     /** T5.2 — team parallel run entry (T4 orchestrate, deferred UI). */
@@ -95,6 +102,28 @@ interface TranslationShape {
       done: string;
       failed: string;
       error: string;
+    };
+    /** Skills pane (skill-pack catalog browser + install/uninstall). */
+    skills_page: {
+      title: string;
+      subtitle: string;
+      tenant_label: string;
+      tenant_placeholder: string;
+      loading: string;
+      error: string;
+      empty: string;
+      install: string;
+      uninstall: string;
+      configure: string;
+      less: string;
+      busy: string;
+      installed_badge: string;
+      requires_flag: string;
+      requires_env: string;
+      toast_installed: string;
+      toast_install_failed: string;
+      toast_uninstalled: string;
+      toast_uninstall_failed: string;
     };
   };
   chat: {

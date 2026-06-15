@@ -89,6 +89,28 @@ struct CreateProviderRequest {
     api_key_env: Option<String>,
 }
 
+/// Body for `PUT /v1/admin/providers/{id}` — every field optional; only the
+/// provided fields change. `api_key` sets/replaces the stored key when present
+/// and non-empty (omit it or send empty to KEEP the existing key — so editing
+/// the endpoint/models never wipes the stored secret).
+#[derive(Deserialize)]
+struct UpdateProviderRequest {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    endpoint: Option<String>,
+    #[serde(default)]
+    models: Option<Vec<String>>,
+    #[serde(default)]
+    default_for_models: Option<Vec<String>>,
+    #[serde(default)]
+    fallback_order: Option<i32>,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    api_key_env: Option<String>,
+}
+
 const fn default_fallback_order() -> i32 {
     100
 }
@@ -99,7 +121,7 @@ pub fn build_router(repo: Repo) -> Router {
         .route("/v1/admin/providers", get(list).post(create))
         .route(
             "/v1/admin/providers/{id}",
-            axum::routing::delete(delete_provider),
+            axum::routing::put(update).delete(delete_provider),
         )
         .with_state(repo)
 }
@@ -158,6 +180,77 @@ async fn create(State(repo): State<Repo>, Json(req): Json<CreateProviderRequest>
         Ok(()) => (StatusCode::CREATED, Json(ProviderView::from(prov))).into_response(),
         // A duplicate name is a client error, not a 500 — and don't echo the raw
         // DB message back to the caller.
+        Err(RepoError::DuplicateKey(_)) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("a provider named '{}' already exists", prov.name) })),
+        )
+            .into_response(),
+        Err(e) => server_error(&e),
+    }
+}
+
+/// `PUT /v1/admin/providers/{id}` — edit an existing provider: paste a
+/// `MiniMax` API key onto the seeded row, or switch its endpoint to the China
+/// base URL (`https://api.minimaxi.com`). Only the fields present in the body
+/// change; an omitted/empty `api_key` keeps the stored secret. Like create, the
+/// running `LlmRouter` only picks up the change after a server restart.
+async fn update(
+    State(repo): State<Repo>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateProviderRequest>,
+) -> Response {
+    let Some(mut prov) = (match repo.find_by_id(&id).await {
+        Ok(p) => p,
+        Err(e) => return server_error(&e),
+    }) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "provider not found" })),
+        )
+            .into_response();
+    };
+
+    if let Some(name) = req.name {
+        if name.trim().is_empty() {
+            return bad_request("name must not be empty");
+        }
+        prov.name = name.trim().to_string();
+    }
+    if let Some(endpoint) = req.endpoint {
+        let e = endpoint.trim().to_string();
+        if e.is_empty() && prov.kind != ProviderKind::Bedrock {
+            return bad_request("endpoint is required (a local URL or a hosted API base URL)");
+        }
+        if !e.is_empty()
+            && prov.kind != ProviderKind::Bedrock
+            && !(e.starts_with("http://") || e.starts_with("https://"))
+        {
+            return bad_request("endpoint must be an http(s) URL");
+        }
+        prov.endpoint = e;
+    }
+    if let Some(models) = req.models {
+        prov.models = models;
+    }
+    if let Some(dfm) = req.default_for_models {
+        prov.default_for_models = dfm;
+    }
+    if let Some(fo) = req.fallback_order {
+        prov.fallback_order = fo;
+    }
+    // api_key: set only when a non-empty value is sent; omit/empty = keep.
+    if let Some(key) = req.api_key {
+        if !key.trim().is_empty() {
+            prov.api_key = Some(key.trim().to_string());
+        }
+    }
+    if let Some(env) = req.api_key_env {
+        prov.api_key_env = Some(env.trim().to_string()).filter(|s| !s.is_empty());
+    }
+    prov.updated_at = Utc::now();
+
+    match repo.update(&prov).await {
+        Ok(()) => (StatusCode::OK, Json(ProviderView::from(prov))).into_response(),
         Err(RepoError::DuplicateKey(_)) => (
             StatusCode::CONFLICT,
             Json(json!({ "error": format!("a provider named '{}' already exists", prov.name) })),
@@ -328,5 +421,86 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::CREATED);
         let v = body_json(resp).await;
         assert_eq!(v["has_api_key"], false);
+    }
+
+    #[tokio::test]
+    async fn update_sets_key_and_switches_endpoint() {
+        let repo: Repo = Arc::new(MemRepo::default());
+        let app = build_router(repo);
+
+        // Seed a keyless minimax provider (mirrors the bundled seed row).
+        let created = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/providers")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"name":"minimax","kind":"minimax","endpoint":"https://api.minimax.io","models":["MiniMax-M2"]}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let id = body_json(created).await["id"].as_str().unwrap().to_string();
+
+        // Paste a key + switch to the China domestic endpoint via PUT.
+        let updated = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/v1/admin/providers/{id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"endpoint":"https://api.minimaxi.com","api_key":"sk-cn-123"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.status(), StatusCode::OK);
+        let v = body_json(updated).await;
+        assert_eq!(v["endpoint"], "https://api.minimaxi.com");
+        assert_eq!(v["has_api_key"], true);
+        assert!(
+            !v.to_string().contains("sk-cn-123"),
+            "key must stay server-side"
+        );
+
+        // A later edit that omits api_key must KEEP the stored key.
+        let models_only = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/v1/admin/providers/{id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"models":["MiniMax-M2","MiniMax-M2.1"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(models_only.status(), StatusCode::OK);
+        assert_eq!(body_json(models_only).await["has_api_key"], true);
+    }
+
+    #[tokio::test]
+    async fn update_unknown_id_is_404() {
+        let repo: Repo = Arc::new(MemRepo::default());
+        let app = build_router(repo);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/admin/providers/does-not-exist")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"api_key":"x"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }

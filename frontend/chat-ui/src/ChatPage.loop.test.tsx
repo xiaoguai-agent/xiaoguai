@@ -16,6 +16,7 @@ import { I18nProvider } from './i18n/I18nProvider';
 vi.mock('./client', () => ({
   client: {
     listMessages: vi.fn(),
+    listProviders: vi.fn(() => Promise.resolve([])),
     createSession: vi.fn(),
     sendMessage: vi.fn(),
     cancel: vi.fn(),
