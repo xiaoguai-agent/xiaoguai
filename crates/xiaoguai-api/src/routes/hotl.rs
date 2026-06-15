@@ -6,6 +6,7 @@
 //! |--------|------------------------------|------------------------------|
 //! | GET    | `/v1/hotl/policies`          | List policies                |
 //! | POST   | `/v1/hotl/policies`          | Create a new policy          |
+//! | PUT    | `/v1/hotl/policies/:id`      | Update a policy by id        |
 //! | DELETE | `/v1/hotl/policies/:id`      | Remove a policy by id        |
 
 use axum::extract::{Path, Query, State};
@@ -62,6 +63,28 @@ pub async fn create_policy(
         .ok_or_else(|| ApiError::ServiceUnavailable("HOTL policy store not wired".into()))?;
     let policy = store.create(req).await.map_err(map_store_err)?;
     Ok((StatusCode::CREATED, Json(policy)))
+}
+
+/// `PUT /v1/hotl/policies/:id`
+///
+/// Body: [`CreateHotlPolicyRequest`] (same shape as create). Replaces the
+/// policy's mutable fields and returns `200 OK` with the updated
+/// [`HotlPolicy`]; `404 Not Found` when the id is unknown.
+///
+/// # Errors
+/// Returns an error if the policy store is not wired, the id is unknown, or
+/// the request fails validation.
+pub async fn update_policy(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<CreateHotlPolicyRequest>,
+) -> ApiResult<Json<HotlPolicy>> {
+    let store = state
+        .hotl_policy_store
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("HOTL policy store not wired".into()))?;
+    let policy = store.update(id, req).await.map_err(map_store_err)?;
+    Ok(Json(policy))
 }
 
 /// `DELETE /v1/hotl/policies/:id`

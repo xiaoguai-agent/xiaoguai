@@ -174,8 +174,9 @@ async fn install_then_list_then_uninstall() {
     assert_eq!(install_resp.status(), StatusCode::OK);
     let installed = body_json(install_resp.into_body()).await;
     let id = installed["id"].as_str().unwrap().to_string();
-    assert_eq!(installed["pack_slug"], "rag-hr");
+    assert_eq!(installed["pack_id"], "rag-hr");
     assert_eq!(installed["version"], "1.0.0");
+    assert_eq!(installed["activation_status"], "pending");
 
     // List — must see the installed row.
     let after_install_resp = app
@@ -193,7 +194,8 @@ async fn install_then_list_then_uninstall() {
     let arr = listed.as_array().unwrap();
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["id"], id);
-    assert_eq!(arr[0]["config"]["top_k"], 10);
+    assert_eq!(arr[0]["pack_id"], "rag-hr");
+    assert_eq!(arr[0]["activation_status"], "pending");
 
     // Uninstall
     let del_resp = app

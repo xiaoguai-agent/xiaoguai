@@ -14,11 +14,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 use xiaoguai_api::outcomes::{
     OutcomeWriter, OutcomesApiError, OutcomesReader, RecordOutcomeRequest,
 };
-use xiaoguai_audit::outcomes::{Aggregate, OutcomeDay, OutcomeRange, OutcomeSummary};
+use xiaoguai_audit::outcomes::{
+    Aggregate, OutcomeDay, OutcomeRange, OutcomeRecord, OutcomeSummary,
+};
 
 // ── backend struct ────────────────────────────────────────────────────────────
 
@@ -107,6 +110,18 @@ struct TimeseriesRow {
     cnt: i64,
 }
 
+#[derive(sqlx::FromRow)]
+struct OutcomeRow {
+    session_id: Option<String>,
+    agent_name: String,
+    kind: String,
+    value: f64,
+    unit: Option<String>,
+    description: Option<String>,
+    attributed_at: String,
+    metadata: Option<String>,
+}
+
 #[async_trait]
 impl OutcomesReader for SqliteOutcomesBackend {
     async fn summary(&self, range: OutcomeRange) -> Result<OutcomeSummary, OutcomesApiError> {
@@ -182,6 +197,59 @@ impl OutcomesReader for SqliteOutcomesBackend {
                 kind: r.kind,
                 sum: r.total,
                 count: u64::try_from(r.cnt.max(0)).unwrap_or(0),
+            })
+            .collect())
+    }
+
+    async fn list(
+        &self,
+        kind: Option<&str>,
+        range: OutcomeRange,
+        limit: i64,
+    ) -> Result<Vec<OutcomeRecord>, OutcomesApiError> {
+        if let (Some(since), Some(until)) = (range.since, range.until) {
+            if since > until {
+                return Err(OutcomesApiError::InvalidArgument(
+                    "since must be <= until".into(),
+                ));
+            }
+        }
+        // kind/since/until each referenced once; limit caps the page.
+        let rows: Vec<OutcomeRow> = sqlx::query_as(
+            "SELECT session_id, agent_name, kind, value, unit, description, \
+                    attributed_at, metadata \
+             FROM agent_outcomes \
+             WHERE (?1 IS NULL OR kind = ?1) \
+               AND (?2 IS NULL OR attributed_at >= ?2) \
+               AND (?3 IS NULL OR attributed_at <= ?3) \
+             ORDER BY attributed_at DESC \
+             LIMIT ?4",
+        )
+        .bind(kind)
+        .bind(range.since)
+        .bind(range.until)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(pg_err)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| OutcomeRecord {
+                session_id: r.session_id,
+                agent_name: r.agent_name,
+                kind: r.kind,
+                value: r.value,
+                unit: r.unit,
+                description: r.description,
+                // attributed_at is stored as RFC3339 text (migration 0012:
+                // strftime('%Y-%m-%dT%H:%M:%SZ', 'now')).
+                attributed_at: DateTime::parse_from_rfc3339(&r.attributed_at)
+                    .map_or_else(|_| Utc::now(), |d| d.with_timezone(&Utc)),
+                metadata: r
+                    .metadata
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or(serde_json::Value::Null),
             })
             .collect())
     }

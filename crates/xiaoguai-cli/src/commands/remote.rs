@@ -17,11 +17,39 @@ pub struct RemoteClient {
     http: reqwest::Client,
 }
 
+/// Build the HTTP client used for every remote call. When both
+/// `XIAOGUAI_AUTH__USERNAME` and `XIAOGUAI_AUTH__PASSWORD` are set (the same
+/// env vars the server reads for its SEC-01 Basic-auth gate), attach an owner
+/// `Authorization: Basic …` default header so `xiaoguai cli`/`chat`/`remote`
+/// can reach a server that has auth enabled. Unset ⇒ an unauthenticated client
+/// (loopback / no-auth deployments are unaffected). A `--server` URL that
+/// embeds `user:pass@host` also works — reqwest applies that per-request.
+fn build_http_client() -> reqwest::Client {
+    use base64::Engine as _;
+    let user = std::env::var("XIAOGUAI_AUTH__USERNAME").unwrap_or_default();
+    let pass = std::env::var("XIAOGUAI_AUTH__PASSWORD").unwrap_or_default();
+    if user.is_empty() || pass.is_empty() {
+        return reqwest::Client::new();
+    }
+    let token = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"));
+    let mut value = match reqwest::header::HeaderValue::from_str(&format!("Basic {token}")) {
+        Ok(v) => v,
+        Err(_) => return reqwest::Client::new(),
+    };
+    value.set_sensitive(true);
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(reqwest::header::AUTHORIZATION, value);
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 impl RemoteClient {
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
-            http: reqwest::Client::new(),
+            http: build_http_client(),
         }
     }
 
@@ -185,12 +213,7 @@ impl RemoteClient {
     ///
     /// # Errors
     /// See [`Self::send_message_with_model`].
-    pub async fn send_message<F>(
-        &self,
-        session_id: &str,
-        content: &str,
-        on_event: F,
-    ) -> Result<()>
+    pub async fn send_message<F>(&self, session_id: &str, content: &str, on_event: F) -> Result<()>
     where
         F: FnMut(RemoteEvent) -> Result<()>,
     {
