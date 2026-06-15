@@ -8,6 +8,7 @@ import type {
   UpdateProviderRequest,
 } from '@xiaoguai/shared';
 import { client } from '../client';
+import { PaneIntro } from '../components/PaneIntro';
 
 /** Selectable provider kinds (local-URL kinds first). */
 const KINDS: ProviderKind[] = [
@@ -189,8 +190,11 @@ export function ProvidersPane() {
   return (
     <>
       <h1>{t('pane.providers.title')}</h1>
-      <p className="hint">{t('pane.providers.hint')}</p>
-      <p className="hint">{t('pane.providers.restart_hint')}</p>
+      <PaneIntro
+        purpose={t('pane.providers.intro.purpose')}
+        usage={t('pane.providers.intro.usage')}
+        usageLabel={t('pane.providers.intro.usage_label')}
+      />
       {error && <div className="error">{error}</div>}
 
       {/* Shared endpoint suggestions for both the add and edit forms. */}
