@@ -38,6 +38,7 @@ import type {
 import { ApiError } from '@xiaoguai/shared';
 import { useTranslation } from 'react-i18next';
 import { client } from '../client';
+import { PaneIntro } from '../components/PaneIntro';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -527,6 +528,12 @@ export function AnomalyPane(): JSX.Element {
           </button>
         </div>
       </header>
+
+      <PaneIntro
+        purpose={t('pane.anomaly.intro.purpose')}
+        usage={t('pane.anomaly.intro.usage')}
+        usageLabel={t('pane.anomaly.intro.usage_label')}
+      />
 
       {/* Endpoint-absent placeholder — shown when REST surface is not yet live */}
       {endpointAbsent && (

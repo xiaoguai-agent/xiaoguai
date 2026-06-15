@@ -91,6 +91,63 @@ tr:last-child td { border-bottom: none; }
   font-size: 12px;
 }
 
+/* -------------------------------------------------- pane intro (purpose/usage) */
+
+/* PaneIntro: the "what is this / how to use" blurb under each pane's <h1>.
+   Reuses the muted .hint treatment + theme variables; left accent rule sets it
+   apart from page chrome without a heavy card. */
+.pane-intro {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0 0 20px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--border);
+  background: var(--surface, #ffffff);
+  border-radius: 0 6px 6px 0;
+}
+
+.pane-intro p {
+  margin: 0 0 6px;
+}
+
+.pane-intro p:last-child {
+  margin-bottom: 0;
+}
+
+.pane-intro__purpose {
+  color: var(--fg-soft, var(--fg));
+}
+
+.pane-intro__label {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.pane-intro__examples {
+  margin-top: 4px;
+}
+
+.pane-intro__examples ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.pane-intro__examples li {
+  margin-bottom: 4px;
+}
+
+.pane-intro__examples li:last-child {
+  margin-bottom: 0;
+}
+
+.pane-intro code {
+  background: var(--row-hover);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
 .marketplace-section {
   margin-bottom: 32px;
 }

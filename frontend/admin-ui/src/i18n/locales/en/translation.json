@@ -84,7 +84,12 @@
       "detail_reason_proactive": "Reason (proactive)",
       "detail_output_preview": "Output preview",
       "detail_error": "Error",
-      "no_messages_yet": "(no messages yet)"
+      "no_messages_yet": "(no messages yet)",
+      "intro": {
+        "purpose": "Live operations overview — a real-time snapshot of what your agent is doing right now: in-flight sessions, recent activity, token spend and the health of background workers.",
+        "usage": "Leave it open as a dashboard. It auto-refreshes on a timer; tick “Pause auto-refresh” to freeze the view, or use Refresh to pull the latest immediately.",
+        "usage_label": "How to use"
+      }
     },
     "usage": {
       "title": "Token Usage",
@@ -109,7 +114,12 @@
       "col_input_tokens": "Input tokens",
       "col_output_tokens": "Output tokens",
       "col_cost_usd": "Cost (USD)",
-      "row_total": "Total"
+      "row_total": "Total",
+      "intro": {
+        "purpose": "Token spend report — how many tokens (and roughly how much) each model, session and channel has consumed, so you can see where your LLM budget is going.",
+        "usage": "Pick a time range and optional filters, then read the totals and per-model breakdown. Pair it with HotL Policies to cap the lines that cost the most.",
+        "usage_label": "How to use"
+      }
     },
     "scheduler": {
       "title": "Scheduler",
@@ -203,7 +213,12 @@
       "btn_exporting": "Exporting…",
       "export_done": "Export downloaded.",
       "export_failed": "Export failed: {{message}}",
-      "empty_for_tenant": "No audit rows for tenant {{tenant}}."
+      "empty_for_tenant": "No audit rows for tenant {{tenant}}.",
+      "intro": {
+        "purpose": "Audit log — an append-only, tamper-evident trail of every governed action (who/what/when), with a hash chain so you can prove the record was not altered.",
+        "usage": "Filter by tenant to narrow the trail, then expand a row to inspect details or replay the action's hash-chain verification.",
+        "usage_label": "How to use"
+      }
     },
     "mcp_servers": {
       "title": "MCP Servers",
@@ -214,7 +229,12 @@
       "col_transport": "Transport",
       "col_scope": "Scope",
       "col_command_endpoint": "Command / Endpoint",
-      "scope_global": "global"
+      "scope_global": "global",
+      "intro": {
+        "purpose": "MCP servers — the external tool servers (Model Context Protocol) currently wired into your agent, giving it capabilities like file access, search or office-doc conversion.",
+        "usage": "This is a read-only inventory of registered servers and their transport. To add servers, install from the MCP Marketplace pane.",
+        "usage_label": "How to use"
+      }
     },
     "marketplace": {
       "title": "MCP Marketplace",
@@ -257,7 +277,12 @@
       "key_stored": "✓ stored",
       "preset_minimax_intl": "MiniMax (international)",
       "preset_minimax_cn": "MiniMax (China)",
-      "preset_ollama": "Ollama (local)"
+      "preset_ollama": "Ollama (local)",
+      "intro": {
+        "purpose": "LLM providers — register the models your agent can call: a local server (Ollama / OpenAI-compatible) or a hosted API (MiniMax, Zhipu, OpenAI, DeepSeek…). API keys are stored server-side and never shown again.",
+        "usage": "Add a provider with its base URL, key and model, or edit an existing one. Changes take effect after the server restarts, since the model router is built at boot.",
+        "usage_label": "How to use"
+      }
     },
     "outcomes": {
       "title": "Outcomes",
@@ -305,7 +330,12 @@
       "agent_table_title": "Per-agent attribution",
       "agent_table_label": "Per-agent outcomes",
       "error_503": "Outcomes backend unavailable (PgOutcomeRecorder not wired — run with a Postgres DB to enable).",
-      "nav_outcomes": "Outcomes"
+      "nav_outcomes": "Outcomes",
+      "intro": {
+        "purpose": "Business outcomes ledger — records the concrete results your agent produced (deals closed, tickets resolved, dollars earned/saved), linked back to the session that produced them.",
+        "usage": "Filter by tenant, kind, session or agent to find an outcome, then click a row to drill into the originating session and its provenance chain.",
+        "usage_label": "How to use"
+      }
     },
     "hotl_policies": {
       "title": "HotL Policies",
@@ -329,7 +359,15 @@
       "empty": "No HotL policies yet.",
       "unavailable_title": "Policy store not available.",
       "unavailable_body": "PgHotlPolicyStore is not yet wired — the API returned 503. This is expected in dev mode without Postgres. Check bridges status:",
-      "unavailable_link": "Bridges status →"
+      "unavailable_link": "Bridges status →",
+      "intro": {
+        "purpose": "Human-on-the-Loop (HotL) policies — budget and rate limits on governed actions. When an action exceeds a policy's bounds it is escalated to a human (or denied) instead of running unchecked, keeping the agent safe and affordable.",
+        "usage": "Create a policy with a `scope` (which action it guards), a `window_seconds` time window, and the ceilings `max_count` (how many times) and/or `max_usd` (how much spend) allowed in that window; set `escalate_to` to the channel that gets notified on breach. Use Test policy to dry-run a hypothetical action against your rules.",
+        "usage_label": "How to use",
+        "examples_label": "Examples",
+        "example_1": "Cap `llm_call`: at most 10 calls per 60 seconds (`window_seconds: 60`, `max_count: 10`); on breach `escalate_to: ops` so the ops channel is pinged.",
+        "example_2": "Cap `tool_call.git_push`: at most 5 per day (`window_seconds: 86400`, `max_count: 5`) so the agent can't push in a loop."
+      }
     },
     "anomaly": {
       "title": "Anomaly Detectors",
@@ -372,7 +410,12 @@
       "apply_ok": "Tuning applied successfully.",
       "sparkline_section_title": "14-Day Fire Rate",
       "sparkline_aria": "Fire rate sparkline for {{id}}",
-      "sparkline_label": "14-day fire rate"
+      "sparkline_label": "14-day fire rate",
+      "intro": {
+        "purpose": "Anomaly detection — surfaces unusual spikes in token spend, error rate or activity that may signal a runaway loop, misconfiguration or abuse.",
+        "usage": "Scan the flagged signals, open one to see its sparkline and tune the per-signal thresholds so normal traffic stops alerting.",
+        "usage_label": "How to use"
+      }
     },
     "memory": {
       "title": "Memory",
@@ -438,7 +481,12 @@
       "btn_import_confirm": "Import",
       "btn_import_cancel": "Cancel",
       "import_result": "Imported {{imported}}, skipped {{skipped}}.",
-      "import_skipped_line": "line {{line}}: {{reason}}"
+      "import_skipped_line": "line {{line}}: {{reason}}",
+      "intro": {
+        "purpose": "Long-term memory store — the facts and notes your agent has saved and can recall in future sessions. This is the agent's persistent knowledge, editable by hand.",
+        "usage": "Browse or search recalled memories, edit or delete entries inline, and use the import/export toolbar to move memory in or out as JSONL.",
+        "usage_label": "How to use"
+      }
     },
     "personas": {
       "title": "Personas",
@@ -472,7 +520,12 @@
       "delete_confirm_body": "Archiving prevents this persona from being attached to new sessions. Existing sessions keep their persona attachment.",
       "empty": "No personas defined yet.",
       "loading": "Loading personas…",
-      "unavailable": "Personas repository not configured (HTTP 503). Wire `xiaoguai-personas::pg::PgPersonaRepository` in the API host."
+      "unavailable": "Personas repository not configured (HTTP 503). Wire `xiaoguai-personas::pg::PgPersonaRepository` in the API host.",
+      "intro": {
+        "purpose": "Personas — named role profiles (a system prompt plus a style) that you can attach to a chat to give the agent a specific voice and behavior, e.g. a planner, a worker or a critic.",
+        "usage": "Create a persona with its role, prompt and style here, then bind it to a conversation from the chat UI's persona selector. Personas are also the building blocks of Expert Teams.",
+        "usage_label": "How to use"
+      }
     },
     "expert_teams": {
       "title": "Expert Teams",
@@ -510,7 +563,14 @@
       "field_glossary": "Team glossary (markdown — injected into every team session turn)",
       "placeholder_glossary": "# Terminology, constraints, procedures…",
       "glossary_cap_hint": "Up to 16 KiB of markdown.",
-      "glossary_over_cap": "Glossary is {{bytes}} bytes — over the 16 KiB limit ({{max}} bytes). The server will reject the save."
+      "glossary_over_cap": "Glossary is {{bytes}} bytes — over the 16 KiB limit ({{max}} bytes). The server will reject the save.",
+      "intro": {
+        "purpose": "Expert Teams — a named group of personas with one designated lead. Bound to a conversation, the members collaborate (in parallel as orchestration lands) and the lead synthesizes their work into one answer.",
+        "usage": "First create the roles you need in Personas, then here create a team, pick its members and choose a lead. Finally bind the team from the chat UI's Expert selector.",
+        "usage_label": "How to use",
+        "examples_label": "Examples",
+        "example_1": "A “code-review squad”: members `security-reviewer` + `performance-reviewer` + `style-reviewer`, lead = `tech-lead`, which gathers each reviewer's notes and produces one consolidated review."
+      }
     },
     "skill_proposals": {
       "title": "Skill Proposals",
@@ -542,7 +602,12 @@
       "reject_reason_placeholder": "e.g. tool allowlist overlaps with a restricted scope",
       "reject_reason_required": "A reason is required so the agent can learn from the rejection.",
       "toast_approved": "Approved \"{{name}}\".",
-      "toast_rejected": "Rejected \"{{name}}\"."
+      "toast_rejected": "Rejected \"{{name}}\".",
+      "intro": {
+        "purpose": "Skill proposals — a review queue for skills the agent has drafted for itself (DEC-014). Nothing is installed until you approve it, keeping the agent governable.",
+        "usage": "Open a proposal to inspect its manifest. Approving writes the skill to disk and marks it installed; rejecting records a reason that is sent back to the agent.",
+        "usage_label": "How to use"
+      }
     },
     "skill_packs": {
       "title": "Skill Packs",
@@ -591,7 +656,12 @@
       "detail_inbound": "Inbound adapters",
       "detail_outputs": "Outputs",
       "detail_activation_status": "Activation status",
-      "detail_activation_note": "runtime loader not yet wired; pack is recorded but inactive."
+      "detail_activation_note": "runtime loader not yet wired; pack is recorded but inactive.",
+      "intro": {
+        "purpose": "Skill packs — bundles of reusable agent skills you can install from the catalog to extend what your agent knows how to do.",
+        "usage": "Browse the catalog and click Install to add a pack. Newly installed packs become active after the next agent run.",
+        "usage_label": "How to use"
+      }
     }
   }
 }

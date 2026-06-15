@@ -31,6 +31,7 @@ import type {
 import { ApiError } from '@xiaoguai/shared';
 import { client as defaultClient } from '../client';
 import { RequireScope } from '../components/RequireScope';
+import { PaneIntro } from '../components/PaneIntro';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -271,8 +272,13 @@ export function PersonasPane({ client }: PersonasPaneProps = {}): JSX.Element {
     <section aria-labelledby="personas-title" className="pane">
       <header>
         <h1 id="personas-title">{t('pane.personas.title')}</h1>
-        <p className="muted">{t('pane.personas.subtitle')}</p>
       </header>
+
+      <PaneIntro
+        purpose={t('pane.personas.intro.purpose')}
+        usage={t('pane.personas.intro.usage')}
+        usageLabel={t('pane.personas.intro.usage_label')}
+      />
 
       <div className="toolbar" role="search" aria-label="personas filters">
         <input

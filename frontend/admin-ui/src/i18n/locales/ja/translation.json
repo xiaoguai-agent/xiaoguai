@@ -84,7 +84,12 @@
       "detail_reason_proactive": "理由（能動的）",
       "detail_output_preview": "出力プレビュー",
       "detail_error": "エラー",
-      "no_messages_yet": "（メッセージなし）"
+      "no_messages_yet": "（メッセージなし）",
+      "intro": {
+        "purpose": "リアルタイム運用概要 —— エージェントが今何をしているかを一目で把握:進行中のセッション、最近のアクティビティ、トークン消費、バックグラウンドワーカーの状態。",
+        "usage": "ダッシュボードとして開いたままにします。タイマーで自動更新されます。「自動更新を一時停止」で表示を固定するか、「更新」で即座に最新を取得します。",
+        "usage_label": "使い方"
+      }
     },
     "usage": {
       "title": "トークン使用量",
@@ -109,7 +114,12 @@
       "col_input_tokens": "入力トークン",
       "col_output_tokens": "出力トークン",
       "col_cost_usd": "コスト（USD）",
-      "row_total": "合計"
+      "row_total": "合計",
+      "intro": {
+        "purpose": "トークン消費レポート —— 各モデル・セッション・チャネルが消費したトークン量(と概算コスト)を表示し、LLM 予算の使い道を可視化します。",
+        "usage": "期間と任意のフィルターを選び、合計とモデル別内訳を確認します。「HotL ポリシー」と併用して、コストの高い項目に上限を設定できます。",
+        "usage_label": "使い方"
+      }
     },
     "scheduler": {
       "title": "スケジューラー",
@@ -203,7 +213,12 @@
       "btn_exporting": "エクスポート中…",
       "export_done": "エクスポートをダウンロードしました。",
       "export_failed": "エクスポートに失敗しました：{{message}}",
-      "empty_for_tenant": "テナント {{tenant}} の監査レコードがありません。"
+      "empty_for_tenant": "テナント {{tenant}} の監査レコードがありません。",
+      "intro": {
+        "purpose": "監査ログ —— すべての統制対象アクション(誰が/何を/いつ)の追記専用・改ざん検知可能な証跡。ハッシュチェーン付きで記録が改変されていないことを証明できます。",
+        "usage": "テナントで絞り込んで証跡を狭め、行を展開して詳細を確認、またはアクションのハッシュチェーン検証を再生します。",
+        "usage_label": "使い方"
+      }
     },
     "mcp_servers": {
       "title": "MCP サーバー",
@@ -214,7 +229,12 @@
       "col_transport": "トランスポート",
       "col_scope": "スコープ",
       "col_command_endpoint": "コマンド / エンドポイント",
-      "scope_global": "グローバル"
+      "scope_global": "グローバル",
+      "intro": {
+        "purpose": "MCP サーバー —— 現在エージェントに接続されている外部ツールサーバー(Model Context Protocol)。ファイルアクセス・検索・Office 文書変換などの機能を提供します。",
+        "usage": "これは登録済みサーバーとそのトランスポートの読み取り専用一覧です。サーバーを追加するには「MCP マーケットプレイス」ペインからインストールします。",
+        "usage_label": "使い方"
+      }
     },
     "marketplace": {
       "title": "MCP マーケット",
@@ -257,7 +277,12 @@
       "key_stored": "✓ 保存済み",
       "preset_minimax_intl": "MiniMax（国際）",
       "preset_minimax_cn": "MiniMax（中国）",
-      "preset_ollama": "Ollama（ローカル）"
+      "preset_ollama": "Ollama（ローカル）",
+      "intro": {
+        "purpose": "LLM プロバイダー —— エージェントが呼び出せるモデルを登録:ローカルサーバー(Ollama / OpenAI 互換)またはホスト型 API(MiniMax、Zhipu、OpenAI、DeepSeek…)。API キーはサーバー側に保存され、再表示されません。",
+        "usage": "base URL・キー・モデルを入力してプロバイダーを追加するか、既存のものを編集します。モデルルーターは起動時に構築されるため、変更はサーバー再起動後に反映されます。",
+        "usage_label": "使い方"
+      }
     },
     "outcomes": {
       "title": "成果",
@@ -305,7 +330,12 @@
       "agent_table_title": "エージェント別帰属",
       "agent_table_label": "エージェント別成果",
       "error_503": "成果バックエンドが利用できません（PgOutcomeRecorder が未接続です — Postgres DB に接続してください）。",
-      "nav_outcomes": "成果"
+      "nav_outcomes": "成果",
+      "intro": {
+        "purpose": "ビジネス成果台帳 —— エージェントが生み出した具体的な結果(成約、チケット解決、獲得/節約した金額)を記録し、生成元のセッションに紐付けます。",
+        "usage": "テナント・種別・セッション・エージェントで絞り込んで成果を探し、行をクリックすると生成元セッションとその来歴チェーンに展開できます。",
+        "usage_label": "使い方"
+      }
     },
     "hotl_policies": {
       "title": "HotL ポリシー",
@@ -329,7 +359,15 @@
       "empty": "HotL ポリシーがありません。",
       "unavailable_title": "ポリシーストアが利用できません。",
       "unavailable_body": "PgHotlPolicyStore がまだ接続されていません — API が 503 を返しました。Postgres なしの開発モードでは想定内です。ブリッジの状態を確認してください：",
-      "unavailable_link": "ブリッジ状態 →"
+      "unavailable_link": "ブリッジ状態 →",
+      "intro": {
+        "purpose": "Human-on-the-Loop(HotL)ポリシー —— 統制対象アクションに予算・頻度の境界を設定します。アクションがポリシーの上限を超えると、無制限に実行する代わりに人間へエスカレーション(または拒否)し、エージェントを安全かつ低コストに保ちます。",
+        "usage": "ポリシー作成時に `scope`(守るアクション)・`window_seconds`(時間枠)、その枠内で許可する上限 `max_count`(回数)や `max_usd`(コスト)を指定し、超過時に通知する宛先を `escalate_to` に設定します。「ポリシーをテスト」で仮想アクションをルールにドライランできます。",
+        "usage_label": "使い方",
+        "examples_label": "例",
+        "example_1": "`llm_call` を制限:60 秒で最大 10 回(`window_seconds: 60`、`max_count: 10`)。超過時は `escalate_to: ops` で ops チャネルへ通知。",
+        "example_2": "`tool_call.git_push` を制限:1 日最大 5 回(`window_seconds: 86400`、`max_count: 5`)。ループ push を防止します。"
+      }
     },
     "anomaly": {
       "title": "異常検知ダッシュボード",
@@ -372,7 +410,12 @@
       "apply_ok": "調整が正常に適用されました。",
       "sparkline_section_title": "14 日間の発火率",
       "sparkline_aria": "{{id}} の発火率スパークライン",
-      "sparkline_label": "14 日間の発火率"
+      "sparkline_label": "14 日間の発火率",
+      "intro": {
+        "purpose": "異常検知 —— トークン消費・エラー率・アクティビティの異常な急増を表面化し、暴走ループ・設定ミス・不正利用の兆候を捉えます。",
+        "usage": "フラグ付きシグナルを確認し、開いてスパークラインを見て、シグナルごとのしきい値を調整して通常トラフィックで誤報が出ないようにします。",
+        "usage_label": "使い方"
+      }
     },
     "memory": {
       "title": "記憶",
@@ -438,7 +481,12 @@
       "btn_import_confirm": "インポート",
       "btn_import_cancel": "キャンセル",
       "import_result": "{{imported}} 件をインポート、{{skipped}} 件をスキップしました。",
-      "import_skipped_line": "{{line}} 行目: {{reason}}"
+      "import_skipped_line": "{{line}} 行目: {{reason}}",
+      "intro": {
+        "purpose": "長期記憶ストア —— エージェントが保存し、今後のセッションで想起できる事実やメモ。エージェントの永続的な知識で、手動編集できます。",
+        "usage": "想起された記憶を閲覧・検索し、エントリをインラインで編集・削除します。インポート/エクスポートのツールバーで JSONL として記憶を出し入れできます。",
+        "usage_label": "使い方"
+      }
     },
     "personas": {
       "title": "ペルソナ",
@@ -472,7 +520,12 @@
       "delete_confirm_body": "アーカイブ後は新しいセッションに付加できなくなります。既存セッションはそのまま使用されます。",
       "empty": "ペルソナがまだ定義されていません。",
       "loading": "読み込み中…",
-      "unavailable": "Personas リポジトリが未構成です（HTTP 503）。`xiaoguai-personas::pg::PgPersonaRepository` を API ホストに接続してください。"
+      "unavailable": "Personas リポジトリが未構成です（HTTP 503）。`xiaoguai-personas::pg::PgPersonaRepository` を API ホストに接続してください。",
+      "intro": {
+        "purpose": "ペルソナ —— 名前付きの役割プロファイル(システムプロンプト+スタイル)。チャットに紐付けてエージェントに特定の口調や振る舞いを与えます(プランナー・ワーカー・批評者など)。",
+        "usage": "ここで役割・プロンプト・スタイルを指定してペルソナを作成し、チャット UI のペルソナ選択から会話に紐付けます。ペルソナは「エキスパートチーム」の構成要素でもあります。",
+        "usage_label": "使い方"
+      }
     },
     "expert_teams": {
       "title": "エキスパートチーム",
@@ -510,7 +563,14 @@
       "field_glossary": "チーム用語集（Markdown — チームセッションの各ターンに注入されます）",
       "placeholder_glossary": "# 用語・制約・手順…",
       "glossary_cap_hint": "Markdown は最大 16 KiB まで。",
-      "glossary_over_cap": "用語集は {{bytes}} バイトで、16 KiB の上限（{{max}} バイト）を超えています。サーバーは保存を拒否します。"
+      "glossary_over_cap": "用語集は {{bytes}} バイトで、16 KiB の上限（{{max}} バイト）を超えています。サーバーは保存を拒否します。",
+      "intro": {
+        "purpose": "エキスパートチーム —— リードを 1 名指定した名前付きペルソナ群。会話に紐付けるとメンバーが協働し(オーケストレーション実装後は並列)、リードが各自の成果を 1 つの回答にまとめます。",
+        "usage": "まず「ペルソナ」で必要な役割を作成し、ここでチームを作ってメンバーを選び、リードを指定します。最後にチャット UI の Expert セレクターでチームを紐付けます。",
+        "usage_label": "使い方",
+        "examples_label": "例",
+        "example_1": "「コードレビュー班」:メンバー `security-reviewer` + `performance-reviewer` + `style-reviewer`、リード = `tech-lead`。各レビューを集約して 1 つの統合レビューを生成します。"
+      }
     },
     "skill_proposals": {
       "title": "スキル提案",
@@ -542,7 +602,12 @@
       "reject_reason_placeholder": "例: ツール許可リストが制限スコープと重複している",
       "reject_reason_required": "Agent が却下から学習できるよう、理由を入力してください。",
       "toast_approved": "「{{name}}」を承認しました。",
-      "toast_rejected": "「{{name}}」を却下しました。"
+      "toast_rejected": "「{{name}}」を却下しました。",
+      "intro": {
+        "purpose": "スキル提案 —— エージェントが自分のために起草したスキルのレビューキュー(DEC-014)。承認するまで何もインストールされず、エージェントを統制下に保ちます。",
+        "usage": "提案を開いてマニフェストを確認します。承認するとスキルがディスクに書き込まれ「インストール済み」になります。却下すると理由が記録されエージェントに返されます。",
+        "usage_label": "使い方"
+      }
     },
     "skill_packs": {
       "title": "スキルパック",
@@ -591,7 +656,12 @@
       "detail_inbound": "インバウンドアダプター",
       "detail_outputs": "出力",
       "detail_activation_status": "アクティベーションステータス",
-      "detail_activation_note": "ランタイムローダーはまだ接続されていません。パックは記録済みですが非アクティブです。"
+      "detail_activation_note": "ランタイムローダーはまだ接続されていません。パックは記録済みですが非アクティブです。",
+      "intro": {
+        "purpose": "スキルパック —— カタログからインストールできる再利用可能なエージェントスキルの束で、エージェントの能力を拡張します。",
+        "usage": "カタログを閲覧し「インストール」をクリックしてパックを追加します。新しく入れたパックは次回のエージェント実行後に有効になります。",
+        "usage_label": "使い方"
+      }
     }
   }
 }

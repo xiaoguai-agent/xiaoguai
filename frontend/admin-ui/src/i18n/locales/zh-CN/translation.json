@@ -84,7 +84,12 @@
       "detail_reason_proactive": "主动触发原因",
       "detail_output_preview": "输出预览",
       "detail_error": "错误",
-      "no_messages_yet": "（暂无消息）"
+      "no_messages_yet": "（暂无消息）",
+      "intro": {
+        "purpose": "实时运行概览 —— 一眼看清 agent 此刻在做什么:进行中的会话、近期活动、token 消耗和后台 worker 健康状况。",
+        "usage": "当作仪表盘常开即可。它会定时自动刷新;勾选“暂停自动刷新”可冻结画面,或点“刷新”立即拉取最新数据。",
+        "usage_label": "用法"
+      }
     },
     "usage": {
       "title": "Token 用量",
@@ -109,7 +114,12 @@
       "col_input_tokens": "输入 Token",
       "col_output_tokens": "输出 Token",
       "col_cost_usd": "费用（美元）",
-      "row_total": "合计"
+      "row_total": "合计",
+      "intro": {
+        "purpose": "Token 消耗报表 —— 每个模型、会话、渠道分别消耗了多少 token(以及大致花费),让你看清 LLM 预算花在了哪里。",
+        "usage": "选择时间范围和可选过滤条件,查看总量与按模型的明细。配合「HotL 策略」给花费最高的环节设上限。",
+        "usage_label": "用法"
+      }
     },
     "scheduler": {
       "title": "调度器",
@@ -203,7 +213,12 @@
       "btn_exporting": "导出中…",
       "export_done": "导出已下载。",
       "export_failed": "导出失败：{{message}}",
-      "empty_for_tenant": "租户 {{tenant}} 暂无审计记录。"
+      "empty_for_tenant": "租户 {{tenant}} 暂无审计记录。",
+      "intro": {
+        "purpose": "审计日志 —— 对每一个受治理动作(谁/做了什么/何时)的只追加、防篡改记录,带哈希链,可证明记录未被改动。",
+        "usage": "按租户过滤以缩小范围,展开某行查看详情,或重放该动作的哈希链校验。",
+        "usage_label": "用法"
+      }
     },
     "mcp_servers": {
       "title": "MCP 服务器",
@@ -214,7 +229,12 @@
       "col_transport": "传输方式",
       "col_scope": "作用域",
       "col_command_endpoint": "命令 / 端点",
-      "scope_global": "全局"
+      "scope_global": "全局",
+      "intro": {
+        "purpose": "MCP 服务器 —— 当前接入 agent 的外部工具服务器(Model Context Protocol),为它提供文件访问、搜索、Office 文档转换等能力。",
+        "usage": "这是已注册服务器及其传输方式的只读清单。要新增服务器,请到「MCP 市场」页安装。",
+        "usage_label": "用法"
+      }
     },
     "marketplace": {
       "title": "MCP 市场",
@@ -257,7 +277,12 @@
       "key_stored": "✓ 已存储",
       "preset_minimax_intl": "MiniMax（国际）",
       "preset_minimax_cn": "MiniMax（国内）",
-      "preset_ollama": "Ollama（本地）"
+      "preset_ollama": "Ollama（本地）",
+      "intro": {
+        "purpose": "LLM 提供方 —— 注册 agent 可调用的模型:本地服务(Ollama / 兼容 OpenAI)或托管 API(MiniMax、智谱、OpenAI、DeepSeek…)。API key 仅存于服务端,保存后不再显示。",
+        "usage": "填入 base URL、key 和模型来新增提供方,或编辑已有项。改动在服务器重启后生效(模型路由在启动时构建)。",
+        "usage_label": "用法"
+      }
     },
     "outcomes": {
       "title": "成果",
@@ -305,7 +330,12 @@
       "agent_table_title": "按智能体归因",
       "agent_table_label": "各智能体成果",
       "error_503": "成果后端不可用（PgOutcomeRecorder 未接入——请连接 Postgres 数据库后重试）。",
-      "nav_outcomes": "成果"
+      "nav_outcomes": "成果",
+      "intro": {
+        "purpose": "业务成果台账 —— 记录 agent 产出的具体结果(成交、工单解决、赚到/省下的金额),并回链到产生它的会话。",
+        "usage": "按租户、类型、会话或 agent 过滤找到某条成果,点击行可下钻到来源会话及其溯源链。",
+        "usage_label": "用法"
+      }
     },
     "hotl_policies": {
       "title": "HotL 策略",
@@ -329,7 +359,15 @@
       "empty": "暂无 HotL 策略。",
       "unavailable_title": "策略存储不可用。",
       "unavailable_body": "PgHotlPolicyStore 尚未接入——API 返回了 503。在没有 Postgres 的开发模式下属正常情况。请查看桥接状态：",
-      "unavailable_link": "桥接状态 →"
+      "unavailable_link": "桥接状态 →",
+      "intro": {
+        "purpose": "Human-on-the-Loop(HotL)策略 —— 对受治理动作设预算与频率边界。当某动作超出策略上限时,会升级给人类(或直接拒绝),而不是无约束地执行,从而让 agent 既安全又可控成本。",
+        "usage": "创建策略时指定 `scope`(守护哪个动作)、`window_seconds`(时间窗口),以及该窗口内允许的上限 `max_count`(次数)和/或 `max_usd`(花费);把 `escalate_to` 设为超限时通知的渠道。用「测试策略」对假想动作做一次 dry-run 验证规则。",
+        "usage_label": "用法",
+        "examples_label": "示例",
+        "example_1": "限制 `llm_call`:60 秒内最多 10 次(`window_seconds: 60`、`max_count: 10`);超了 `escalate_to: ops`,即升级到 ops 频道。",
+        "example_2": "限制 `tool_call.git_push`:每天最多 5 次(`window_seconds: 86400`、`max_count: 5`),防止 agent 循环 push。"
+      }
     },
     "anomaly": {
       "title": "异常检测器",
@@ -372,7 +410,12 @@
       "apply_ok": "调优已成功应用。",
       "sparkline_section_title": "14 天触发频率",
       "sparkline_aria": "{{id}} 的触发频率趋势图",
-      "sparkline_label": "14 天触发频率"
+      "sparkline_label": "14 天触发频率",
+      "intro": {
+        "purpose": "异常检测 —— 暴露 token 消耗、错误率或活动量的异常飙升,这些往往预示着失控循环、配置错误或滥用。",
+        "usage": "浏览被标记的信号,点开某个查看其迷你折线图,并调整单信号阈值,让正常流量不再误报。",
+        "usage_label": "用法"
+      }
     },
     "memory": {
       "title": "记忆",
@@ -438,7 +481,12 @@
       "btn_import_confirm": "导入",
       "btn_import_cancel": "取消",
       "import_result": "已导入 {{imported}} 条，跳过 {{skipped}} 条。",
-      "import_skipped_line": "第 {{line}} 行：{{reason}}"
+      "import_skipped_line": "第 {{line}} 行：{{reason}}",
+      "intro": {
+        "purpose": "长期记忆库 —— agent 已保存、并能在后续会话中回忆起的事实与笔记。这是 agent 的持久知识,可手动编辑。",
+        "usage": "浏览或搜索已回忆的记忆,就地编辑或删除条目,用导入/导出工具栏以 JSONL 形式批量进出记忆。",
+        "usage_label": "用法"
+      }
     },
     "personas": {
       "title": "角色档案",
@@ -472,7 +520,12 @@
       "delete_confirm_body": "归档后将不能附着到新会话；已使用此档案的会话继续保留。",
       "empty": "尚未定义任何角色档案。",
       "loading": "加载中…",
-      "unavailable": "Personas 仓储未配置（HTTP 503）。请在 API 主机中接入 `xiaoguai-personas::pg::PgPersonaRepository`。"
+      "unavailable": "Personas 仓储未配置（HTTP 503）。请在 API 主机中接入 `xiaoguai-personas::pg::PgPersonaRepository`。",
+      "intro": {
+        "purpose": "Persona(角色档案)—— 命名的角色档案(系统提示词 + 风格),可绑定到对话,赋予 agent 特定的口吻与行为,如规划者、执行者、评审者。",
+        "usage": "在这里用角色、提示词和风格创建 persona,然后在 chat 界面的 persona 选择器里绑定到某个对话。persona 也是「专家团队」的基本单元。",
+        "usage_label": "用法"
+      }
     },
     "expert_teams": {
       "title": "专家团队",
@@ -510,7 +563,14 @@
       "field_glossary": "团队术语表（Markdown，注入到该团队会话的每一轮对话）",
       "placeholder_glossary": "# 术语、约束、流程……",
       "glossary_cap_hint": "最多 16 KiB Markdown 文本。",
-      "glossary_over_cap": "术语表为 {{bytes}} 字节，超过 16 KiB 上限（{{max}} 字节）。服务器将拒绝保存。"
+      "glossary_over_cap": "术语表为 {{bytes}} 字节，超过 16 KiB 上限（{{max}} 字节）。服务器将拒绝保存。",
+      "intro": {
+        "purpose": "专家团队 —— 一组命名的 persona,并指定一个 lead。绑定到对话后,成员协作(随编排能力落地将并行),由 lead 把各自的产出综合成一个答案。",
+        "usage": "先在「Personas」建好需要的角色,再到这里创建团队、选成员、指定 lead;最后在 chat 界面的 Expert 选择器里绑定该团队。",
+        "usage_label": "用法",
+        "examples_label": "示例",
+        "example_1": "一个“代码评审小队”:成员 `security-reviewer` + `performance-reviewer` + `style-reviewer`,lead = `tech-lead`,汇总各评审意见并产出一份合并评审。"
+      }
     },
     "skill_proposals": {
       "title": "技能提案",
@@ -542,7 +602,12 @@
       "reject_reason_placeholder": "例如：工具白名单触及受限范围",
       "reject_reason_required": "请填写原因，以便 Agent 从拒绝中学习。",
       "toast_approved": "已批准“{{name}}”。",
-      "toast_rejected": "已拒绝“{{name}}”。"
+      "toast_rejected": "已拒绝“{{name}}”。",
+      "intro": {
+        "purpose": "技能提案 —— agent 为自己起草的技能的审核队列(DEC-014)。未经你批准不会安装,保持 agent 可治理。",
+        "usage": "点开提案查看其 manifest。批准会把技能写入磁盘并标记为已安装;拒绝会记录一条理由并回传给 agent。",
+        "usage_label": "用法"
+      }
     },
     "skill_packs": {
       "title": "技能包",
@@ -591,7 +656,12 @@
       "detail_inbound": "入站适配器",
       "detail_outputs": "输出",
       "detail_activation_status": "激活状态",
-      "detail_activation_note": "运行时加载器尚未接入；技能包已记录但未激活。"
+      "detail_activation_note": "运行时加载器尚未接入；技能包已记录但未激活。",
+      "intro": {
+        "purpose": "技能包 —— 可从目录安装的可复用 agent 技能集合,用来扩展 agent 会做的事。",
+        "usage": "浏览目录,点击「安装」添加技能包。新装的技能包在下一次 agent 运行后生效。",
+        "usage_label": "用法"
+      }
     }
   }
 }

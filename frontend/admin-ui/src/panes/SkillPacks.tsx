@@ -22,6 +22,7 @@ import type {
   SkillCatalogEntry,
 } from '@xiaoguai/shared';
 import { client } from '../client';
+import { PaneIntro } from '../components/PaneIntro';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -397,6 +398,11 @@ export function SkillPacksPane(): JSX.Element {
   return (
     <>
       <h1>{t('pane.skill_packs.title')}</h1>
+      <PaneIntro
+        purpose={t('pane.skill_packs.intro.purpose')}
+        usage={t('pane.skill_packs.intro.usage')}
+        usageLabel={t('pane.skill_packs.intro.usage_label')}
+      />
 
       {/* Activation-pending notice — always visible */}
       <div className="skill-activation-notice" role="note">
