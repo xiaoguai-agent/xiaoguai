@@ -1283,3 +1283,117 @@ tr:last-child td { border-bottom: none; }
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+/* ---------------------------------------------------------- providers pane */
+
+.provider-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 24px;
+  max-width: 720px;
+}
+
+.provider-form input,
+.provider-form select {
+  flex: 1 1 180px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.provider-form button {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.provider-form button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.provider-row-actions {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.provider-row-actions button {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.provider-row-actions button:hover {
+  background: var(--row-hover);
+}
+
+.provider-row-actions button.danger {
+  color: #991b1b;
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.provider-edit-row td {
+  background: var(--row-hover);
+}
+
+.provider-edit-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.provider-edit-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.provider-edit-form input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--fg);
+}
+
+.provider-edit-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.provider-edit-actions button {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.provider-edit-actions button[type='submit'] {
+  border: none;
+  background: var(--accent);
+  color: #fff;
+}
+
+.provider-edit-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

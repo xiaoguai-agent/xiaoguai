@@ -1333,6 +1333,20 @@ export interface CreateProviderRequest {
   api_key_env?: string;
 }
 
+/** Request body for `PUT /v1/admin/providers/{id}`. Every field is optional;
+ *  only the supplied fields change. An omitted or empty `api_key` KEEPS the
+ *  stored secret (the server never returns the key), so editing the endpoint or
+ *  models never wipes it. */
+export interface UpdateProviderRequest {
+  name?: string;
+  endpoint?: string;
+  models?: string[];
+  default_for_models?: string[];
+  fallback_order?: number;
+  api_key?: string;
+  api_key_env?: string;
+}
+
 /** Exponential backoff schedule for sendMessage retries (ms), capped at 30 s. */
 const RECONNECT_BACKOFF_MS: readonly number[] = [1000, 2000, 4000, 8000, 16000];
 
@@ -1449,6 +1463,18 @@ export class XiaoguaiClient {
    *  Takes effect on the next server restart (the router is built at boot). */
   createProvider(req: CreateProviderRequest): Promise<LlmProviderView> {
     return this.request<LlmProviderView>('POST', '/v1/admin/providers', req);
+  }
+
+  /** Edit an existing provider — e.g. paste an API key onto a seeded row or
+   *  switch its endpoint. Only the supplied fields change; an omitted/empty
+   *  `api_key` keeps the stored secret. Takes effect on the next server restart
+   *  (the router is built at boot). */
+  updateProvider(id: string, req: UpdateProviderRequest): Promise<LlmProviderView> {
+    return this.request<LlmProviderView>(
+      'PUT',
+      `/v1/admin/providers/${encodeURIComponent(id)}`,
+      req,
+    );
   }
 
   /** Delete a provider by id. */
