@@ -59,7 +59,10 @@ interface DisplayBubble {
 
 const DEV_USER_ID = 'usr_dev';
 const DEV_TENANT_ID = 'ten_dev';
-const DEFAULT_MODEL = 'qwen2.5-coder';
+// Fallback model when no provider is configured or the providers list can't be
+// fetched. The model picker (populated from the registered providers) normally
+// supplies the real choice; empty → the server applies its own default model.
+const DEFAULT_MODEL = '';
 
 /**
  * L2b — defaults the chat-ui surfaces in the /loop confirmation bubble. They
@@ -86,6 +89,16 @@ export function ChatPage({ onSessionCreated }: Props) {
   const [bubbles, setBubbles] = useState<DisplayBubble[]>([]);
   const [draft, setDraft] = useState('');
   const [streaming, setStreaming] = useState(false);
+  // Model picker — aggregated from the registered providers' model lists, so
+  // the operator can pick the model instead of it being hard-coded.
+  const [models, setModels] = useState<string[]>([]);
+  const [model, setModel] = useState<string>(() => {
+    try {
+      return localStorage.getItem('xiaoguai.chat.model') ?? '';
+    } catch {
+      return '';
+    }
+  });
   /**
    * T5.2 — consult/execute turn mode. Sticky per session via localStorage
    * (re-loaded on session switch); a sessionless draft starts in execute.
@@ -180,6 +193,30 @@ export function ChatPage({ onSessionCreated }: Props) {
     autoGrow(textareaRef.current);
   }, [draft]);
 
+  // Populate the model picker from the configured providers (aggregate +
+  // de-dupe their model lists). Falls back silently to the server default.
+  useEffect(() => {
+    void client
+      .listProviders()
+      .then((ps) => {
+        const all = [...new Set(ps.flatMap((p) => p.models))];
+        setModels(all);
+        setModel((cur) => cur || all[0] || '');
+      })
+      .catch(() => {
+        /* providers endpoint unavailable — keep the server default. */
+      });
+  }, []);
+
+  // Persist the operator's model choice across reloads.
+  useEffect(() => {
+    try {
+      if (model) localStorage.setItem('xiaoguai.chat.model', model);
+    } catch {
+      /* best effort */
+    }
+  }, [model]);
+
   async function send(textOverride?: string) {
     const text = (textOverride ?? draft).trim();
     if (!text || streaming || orchestrating) return;
@@ -199,7 +236,7 @@ export function ChatPage({ onSessionCreated }: Props) {
       try {
         const session = await client.createSession({
           user_id: DEV_USER_ID,
-          model: DEFAULT_MODEL,
+          model: model || DEFAULT_MODEL,
           title: text.slice(0, 40),
         });
         sid = session.id;
@@ -587,8 +624,25 @@ export function ChatPage({ onSessionCreated }: Props) {
     void client.cancel(sessionId).catch((err) => {
       setStatus(`cancel failed: ${(err as Error).message}`);
     });
+    // A user-initiated abort cuts the SSE stream client-side and does NOT fire
+    // the stream's `done`/error callbacks — so reset the turn state here.
+    // Without this, `streaming` stays true, the Send button never returns, and
+    // the composer is stuck (you can't send the next message after Stop).
     abortRef.current?.();
+    abortRef.current = null;
     setReconnect(null);
+    setStreaming(false);
+    // Finalize the trailing assistant bubble so its "thinking" dots stop
+    // (mirrors the normal done/error path).
+    setBubbles((bs) => {
+      const last = bs[bs.length - 1];
+      if (last && last.streaming) {
+        const next = bs.slice();
+        next[next.length - 1] = { ...last, streaming: false };
+        return next;
+      }
+      return bs;
+    });
   }
 
   async function fork(messageId: string) {
@@ -753,6 +807,21 @@ export function ChatPage({ onSessionCreated }: Props) {
           )}
         </div>
         <div className="composer-meta">
+          {models.length > 0 && (
+            <select
+              className="model-picker"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              aria-label="model"
+              title="model"
+            >
+              {models.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          )}
           {/* T5.2 — consult/execute toggle + read-only cue in consult mode. */}
           <ModeToggle mode={mode} onChange={changeMode} />
           {mode === 'consult' && (
