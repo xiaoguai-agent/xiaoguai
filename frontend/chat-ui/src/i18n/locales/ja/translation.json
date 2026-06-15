@@ -92,6 +92,11 @@
       "analyze_cve": "最新の CVE 情報を分析して",
       "explain_codebase": "コードベースの仕組みを説明して"
     },
+    "session": {
+      "rename": "名前を変更",
+      "delete": "削除",
+      "delete_confirm": "この会話を履歴から削除しますか？"
+    },
     "expert": {
       "pick_label": "エキスパート",
       "chip_title": "このセッションのエキスパート",

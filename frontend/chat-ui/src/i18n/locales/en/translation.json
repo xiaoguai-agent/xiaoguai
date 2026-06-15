@@ -92,6 +92,11 @@
       "analyze_cve": "Analyze the latest CVE feed",
       "explain_codebase": "Explain how a codebase works"
     },
+    "session": {
+      "rename": "Rename",
+      "delete": "Delete",
+      "delete_confirm": "Delete this session from history?"
+    },
     "expert": {
       "pick_label": "Expert",
       "chip_title": "Expert for this session",

@@ -151,7 +151,27 @@ html,
   color: var(--accent);
 }
 
+/* Each history entry is a row: the navigating link fills the space, the
+   rename/delete actions sit on the right and fade in on hover. */
+.sidebar .session-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-md);
+  transition: background 120ms ease;
+}
+
+.sidebar .session-row:hover {
+  background: var(--border-soft);
+}
+
+.sidebar .session-row.active {
+  background: var(--accent-soft);
+}
+
 .sidebar .session {
+  flex: 1;
+  min-width: 0;
   display: block;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
@@ -162,18 +182,55 @@ html,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: background 120ms ease;
+  transition: color 120ms ease;
 }
 
-.sidebar .session:hover {
-  background: var(--border-soft);
+.sidebar .session-row:hover .session {
   color: var(--fg);
 }
 
 .sidebar .session.active {
-  background: var(--accent-soft);
   color: var(--accent);
   font-weight: 500;
+}
+
+/* Hover-revealed action cluster (rename / delete). */
+.sidebar .session-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: var(--space-1);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.sidebar .session-row:hover .session-actions,
+.sidebar .session-row:focus-within .session-actions {
+  opacity: 1;
+}
+
+.sidebar .session-action {
+  /* Override the sidebar's full-width default button styling. */
+  width: auto;
+  margin: 0;
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.sidebar .session-action:hover {
+  background: var(--surface);
+  border-color: transparent;
+  color: var(--fg);
+}
+
+.sidebar .session-action--delete:hover {
+  color: var(--tool-error-fg);
 }
 
 /* --------------------------------------------------------------- main pane */
@@ -184,6 +241,14 @@ html,
   flex-direction: column;
   overflow: hidden;
   background: var(--bg);
+}
+
+/* Top-right utility bar above the message stream — holds the theme toggle. */
+.topbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: var(--space-3) var(--space-5);
 }
 
 .messages {
