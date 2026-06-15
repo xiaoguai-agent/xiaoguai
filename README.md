@@ -153,6 +153,9 @@ xiaoguai chat --prompt 'introduce yourself in three sentences'
 > China-console key against the international host returns `400 / Missing
 > Authorization`. If you hit that, re-run `init` and choose China, or:
 > `xiaoguai provider update --id <id> --endpoint https://api.minimaxi.com`.
+> With the web console you can instead do this in **Admin → Providers → Edit**
+> (the endpoint field offers the `api.minimaxi.com` preset; paste the key there)
+> — no CLI required.
 
 Want a multi-turn conversation that keeps history? Use `xiaoguai cli` (also
 `xiaoguai start`; `xiaoguai repl` still works). Working offline or without a
@@ -167,14 +170,24 @@ automatically. **pip and from-source installs ship the API + CLI only**, so
 `http://localhost:7600/` returns 404 by design (this is the single most common
 "is it broken?" question — it isn't).
 
+The chat surface (`/`) has a **model picker** (choose any model your registered
+providers expose), persisted **session history** in the sidebar (rename / delete;
+it survives navigating to the admin console and back), and a **Consult**
+(read-only) vs **Execute** turn toggle. The operator console (`/admin/`) manages
+providers, scheduler, HotL policies, skill packs, audit, memory, and more — each
+pane carries an inline "what is this / how to use it" intro. You can set or
+change a provider's **API key and endpoint directly in the Providers pane**
+(Edit → the endpoint field suggests presets including MiniMax China
+`api.minimaxi.com`), so no CLI is needed to point the web UI at a working model.
+
 To add the web UI to a pip / source install, grab the built UI from a release
 tarball and point `server.static_dir` at it:
 
 ```bash
 # x86_64 shown; use the aarch64 tarball on ARM hosts
-curl -sL https://github.com/xiaoguai-agent/xiaoguai/releases/download/v1.17.0/xiaoguai-v1.17.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+curl -sL https://github.com/xiaoguai-agent/xiaoguai/releases/download/v1.22.0/xiaoguai-v1.22.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
 # the bundled UI lives under share/xiaoguai/static (contains chat-ui/ + admin-ui/)
-export XIAOGUAI_SERVER__STATIC_DIR="$PWD/xiaoguai-v1.17.0-x86_64-unknown-linux-gnu/share/xiaoguai/static"
+export XIAOGUAI_SERVER__STATIC_DIR="$PWD/xiaoguai-v1.22.0-x86_64-unknown-linux-gnu/share/xiaoguai/static"
 pkill -f 'xiaoguai serve'; xiaoguai serve   # now http://localhost:7600/ (chat) + /admin/ (console)
 ```
 
@@ -339,6 +352,12 @@ bridge (trait in `xiaoguai-api` or `xiaoguai-scheduler`, impl in
 v1 is feature-complete as of 2026-05-24. Thirteen tags landed in the
 final sprint on top of v0.10.0; `cargo test --workspace` reports
 **443 passed / 0 failed / 66 ignored**; clippy and fmt are clean.
+
+Releases have continued since — latest is **v1.22.0** (2026-06-15; PyPI + GitHub
+Releases + deb/rpm/tarball). v1.21.0 and v1.22.0 focused on web-console
+usability: a chat model picker, persisted session history with rename/delete,
+in-pane "purpose / how to use" docs, and setting provider keys + endpoints
+(including the MiniMax China host) straight from the Providers pane.
 
 | Tag | Headline | Plan doc |
 |---|---|---|
