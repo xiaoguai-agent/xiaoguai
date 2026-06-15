@@ -149,9 +149,7 @@ fn to_installed_response(row: InstalledPackRow) -> InstalledSkillPackResponse {
     let entry = catalog().packs.iter().find(|p| p.slug == row.pack_slug);
     InstalledSkillPackResponse {
         id: row.id,
-        name: entry
-            .map(|e| e.name.clone())
-            .unwrap_or_else(|| row.pack_slug.clone()),
+        name: entry.map_or_else(|| row.pack_slug.clone(), |e| e.name.clone()),
         description: entry.map(|e| e.description.clone()),
         pack_id: row.pack_slug,
         version: row.version,
