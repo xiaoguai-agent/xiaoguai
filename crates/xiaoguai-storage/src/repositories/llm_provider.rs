@@ -39,6 +39,13 @@ pub trait LlmProviderRepository: Send + Sync {
     /// `prov.id`. `id`, `name`, and `created_at` are left unchanged. Returns
     /// [`RepoError::NotFound`] when no row matches the id.
     async fn update(&self, prov: &LlmProvider) -> RepoResult<()>;
+    /// Persist ONLY the connectivity-probe result set (`verified_models`),
+    /// touching no other column. The probe endpoint uses this instead of
+    /// [`Self::update`] so it never round-trips the secret `api_key` through
+    /// reveal→conceal — a full-row rewrite would overwrite the stored key with
+    /// `NULL` if it currently can't be decrypted (rotated at-rest key). Returns
+    /// [`RepoError::NotFound`] when no row matches the id.
+    async fn update_verified_models(&self, id: &str, verified: &[String]) -> RepoResult<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -361,6 +368,29 @@ impl LlmProviderRepository for SqliteLlmProviderRepository {
         .bind(prov.cost_per_1k_input_usd)
         .bind(prov.cost_per_1k_output_usd)
         .bind(prov.id.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+        if res.rows_affected() == 0 {
+            return Err(RepoError::NotFound);
+        }
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
+        Ok(())
+    }
+
+    async fn update_verified_models(&self, id: &str, verified: &[String]) -> RepoResult<()> {
+        // Narrow write: only `verified_models` (+ `updated_at`). Deliberately
+        // does NOT touch `api_key`, so a probe can't clobber a stored secret it
+        // couldn't decrypt. `verified` is always a concrete array (possibly
+        // empty = "probed, nothing reachable"), never NULL.
+        let json = serde_json::to_value(verified)?;
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
+        let res = sqlx::query(
+            "UPDATE llm_providers SET verified_models = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(json)
+        .bind(Utc::now())
+        .bind(id)
         .execute(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;

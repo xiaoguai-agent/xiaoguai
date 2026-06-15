@@ -218,6 +218,12 @@ async fn update(
             .into_response();
     };
 
+    // Track edits that change what a probe would measure (endpoint / model list
+    // / key). Any of these invalidates a prior `verified_models` result, so we
+    // clear it below — otherwise the chat picker would keep offering a stale set
+    // (hiding a just-added model, or still offering a removed/now-401 one).
+    let mut connectivity_changed = false;
+
     if let Some(name) = req.name {
         if name.trim().is_empty() {
             return bad_request("name must not be empty");
@@ -235,9 +241,15 @@ async fn update(
         {
             return bad_request("endpoint must be an http(s) URL");
         }
+        if e != prov.endpoint {
+            connectivity_changed = true;
+        }
         prov.endpoint = e;
     }
     if let Some(models) = req.models {
+        if models != prov.models {
+            connectivity_changed = true;
+        }
         prov.models = models;
     }
     if let Some(dfm) = req.default_for_models {
@@ -250,7 +262,13 @@ async fn update(
     if let Some(key) = req.api_key {
         if !key.trim().is_empty() {
             prov.api_key = Some(key.trim().to_string());
+            connectivity_changed = true;
         }
+    }
+    // A changed endpoint/models/key makes any prior probe result stale — drop it
+    // so the picker falls back to advertised models until the next probe.
+    if connectivity_changed {
+        prov.verified_models = None;
     }
     if let Some(env) = req.api_key_env {
         prov.api_key_env = Some(env.trim().to_string()).filter(|s| !s.is_empty());
@@ -287,7 +305,7 @@ struct ProbeResponse {
 /// This issues real (tiny) LLM calls, so it's an explicit operator action, not
 /// something run on every save.
 async fn probe(State(repo): State<Repo>, Path(id): Path<String>) -> Response {
-    let Some(mut prov) = (match repo.find_by_id(&id).await {
+    let Some(prov) = (match repo.find_by_id(&id).await {
         Ok(p) => p,
         Err(e) => return server_error(&e),
     }) else {
@@ -305,9 +323,10 @@ async fn probe(State(repo): State<Repo>, Path(id): Path<String>) -> Response {
         .map(|r| r.model.clone())
         .collect();
 
-    prov.verified_models = Some(verified.clone());
-    prov.updated_at = Utc::now();
-    if let Err(e) = repo.update(&prov).await {
+    // Narrow write: persist ONLY the verified set — never re-write api_key (a
+    // full update() would re-conceal the revealed key and could NULL it out if
+    // it currently can't be decrypted).
+    if let Err(e) = repo.update_verified_models(&id, &verified).await {
         return server_error(&e);
     }
 
@@ -384,6 +403,14 @@ mod tests {
                 return Err(RepoError::NotFound);
             };
             *slot = prov.clone();
+            Ok(())
+        }
+        async fn update_verified_models(&self, id: &str, verified: &[String]) -> RepoResult<()> {
+            let mut g = self.rows.lock().unwrap();
+            let Some(slot) = g.iter_mut().find(|p| p.id.as_str() == id) else {
+                return Err(RepoError::NotFound);
+            };
+            slot.verified_models = Some(verified.to_vec());
             Ok(())
         }
     }

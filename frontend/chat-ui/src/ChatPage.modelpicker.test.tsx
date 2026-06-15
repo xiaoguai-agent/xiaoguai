@@ -137,6 +137,28 @@ describe('ChatPage model picker', () => {
     expect(options).toEqual(['MiniMax-M2', 'MiniMax-M3']);
   });
 
+  it('falls back to advertised models when a keyed provider probe found nothing', async () => {
+    // A probe that reached zero models (transient outage) persists [] — that
+    // must NOT empty the picker for a KEYED provider, or chat becomes unusable.
+    mockedClient.listProviders.mockResolvedValue([
+      { ...PROVIDERS[1], models: ['MiniMax-M2', 'MiniMax-M3'], verified_models: [] },
+    ]);
+    await renderChat();
+    const select = (await screen.findByLabelText('model')) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(['MiniMax-M2', 'MiniMax-M3']);
+  });
+
+  it('offers a key-less local provider only once a probe verifies a model', async () => {
+    // Ollama (key-less, local) is hidden until a probe confirms a reachable
+    // model — then exactly the verified ones appear.
+    mockedClient.listProviders.mockResolvedValue([
+      { ...PROVIDERS[0], verified_models: ['llama3.2'] },
+    ]);
+    await renderChat();
+    const select = (await screen.findByLabelText('model')) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(['llama3.2']);
+  });
+
   it('carries the auto-selected model in the send body', async () => {
     await renderChat();
     await screen.findByLabelText('model');

@@ -397,8 +397,9 @@ export function ProvidersPane() {
                         type="button"
                         onClick={() => void probe(p.id)}
                         disabled={probingId === p.id}
-                        // Only meaningful once a key is configured; key-less
-                        // providers would just fail every model.
+                        // Useful for any provider — keyed or a local key-less
+                        // server (Ollama). The probe records which models
+                        // actually respond; the chat picker then offers those.
                         title={t('pane.providers.test_models')}
                       >
                         {probingId === p.id

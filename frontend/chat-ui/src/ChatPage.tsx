@@ -4,6 +4,7 @@ import type {
   AgentEvent,
   ContentBlock,
   HotlResolvedEvent,
+  LlmProviderView,
   LoopResponse,
   Message,
   OrchestrateEvent,
@@ -199,23 +200,27 @@ export function ChatPage({ onSessionCreated }: Props) {
     void client
       .listProviders()
       .then((ps) => {
-        // Only surface models from providers that have credentials configured.
-        // Key-less providers (unconfigured hosted seeds) would just 401, so
-        // they must not appear in the picker at all. For a provider that's been
-        // connectivity-probed (`verified_models` set), offer ONLY the models
-        // that actually responded; otherwise fall back to everything it
-        // advertises. This is what makes the picker show "only models that
-        // connect" once the operator has run a probe in the admin Providers pane.
-        const keyed = ps.filter((p) => p.has_api_key);
-        const all = [...new Set(keyed.flatMap((p) => p.verified_models ?? p.models))];
+        // Which models to offer for one provider:
+        //  - probed with >=1 reachable model -> exactly that proven subset (this
+        //    is what makes the picker show "only models that connect" after the
+        //    operator runs a probe in the admin Providers pane);
+        //  - keyed but not yet probed (or a probe that found nothing — usually a
+        //    transient failure) -> its advertised models, so the picker never
+        //    silently empties out on a bad probe;
+        //  - key-less and unverified -> nothing. A key-less provider is either an
+        //    unconfigured hosted seed (would 401) or a local server (Ollama) that
+        //    may not be running; trust it only once a probe confirms a model.
+        const offered = (p: LlmProviderView): string[] => {
+          if (p.verified_models && p.verified_models.length > 0) return p.verified_models;
+          if (p.has_api_key) return p.models;
+          return [];
+        };
+        const all = [...new Set(ps.flatMap(offered))];
         setModels(all);
-        // Default to a keyed provider's declared default model when it's still
-        // on offer, else the first offered model. Drop a stale persisted choice
-        // that's no longer offered.
+        // Default to a provider's declared default model when it's still on
+        // offer, else the first offered model. Drop a stale persisted choice.
         const preferred =
-          keyed.flatMap((p) => p.default_for_models).find((m) => all.includes(m)) ??
-          all[0] ??
-          '';
+          ps.flatMap((p) => p.default_for_models).find((m) => all.includes(m)) ?? all[0] ?? '';
         setModel((cur) => (cur && all.includes(cur) ? cur : preferred));
       })
       .catch(() => {
