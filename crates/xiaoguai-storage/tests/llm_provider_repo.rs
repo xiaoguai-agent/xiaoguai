@@ -21,6 +21,7 @@ fn sample_provider(name: &str) -> LlmProvider {
         endpoint: "https://api.deepseek.com/v1".to_string(),
         models: vec!["deepseek-chat".into(), "deepseek-coder".into()],
         default_for_models: vec!["deepseek-chat".into()],
+        verified_models: None,
         fallback_order: 10,
         api_key_env: Some("DEEPSEEK_API_KEY".into()),
         api_key: None,

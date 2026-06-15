@@ -282,6 +282,7 @@ mod tests {
             endpoint: endpoint.to_string(),
             models: defaults.iter().map(|m| (*m).to_string()).collect(),
             default_for_models: defaults.iter().map(|m| (*m).to_string()).collect(),
+            verified_models: None,
             fallback_order: order,
             api_key_env: api_key_env.map(str::to_string),
             api_key: None,

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
   CreateProviderRequest,
   LlmProviderView,
+  ModelProbe,
   ProviderKind,
   UpdateProviderRequest,
 } from '@xiaoguai/shared';
@@ -90,6 +91,12 @@ export function ProvidersPane() {
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState<EditDraft | null>(null);
   const [editBusy, setEditBusy] = useState(false);
+
+  // Connectivity probe: which row is being probed + its last results (shown
+  // in an expandable panel under that row).
+  const [probingId, setProbingId] = useState<string | null>(null);
+  const [probeFor, setProbeFor] = useState<string | null>(null);
+  const [probeResults, setProbeResults] = useState<ModelProbe[]>([]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -184,6 +191,26 @@ export function ProvidersPane() {
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  // Fire a live connectivity probe at every model this provider advertises and
+  // persist the reachable set (server-side `verified_models`). Reloading the
+  // list then surfaces the per-row "✓ N/M" badge and trims the chat picker.
+  const probe = async (id: string) => {
+    setError(null);
+    setProbingId(id);
+    setProbeFor(id);
+    setProbeResults([]);
+    try {
+      const res = await client.probeProvider(id);
+      setProbeResults(res.results);
+      await load();
+    } catch (e) {
+      setProbeFor(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProbingId(null);
     }
   };
 
@@ -338,31 +365,93 @@ export function ProvidersPane() {
                   </td>
                 </tr>
               ) : (
-                <tr key={p.id}>
-                  <td>{p.name}</td>
-                  <td>{p.kind}</td>
-                  <td>{p.endpoint}</td>
-                  <td>{p.models.join(', ')}</td>
-                  <td>
-                    {p.has_api_key
-                      ? t('pane.providers.key_stored')
-                      : p.api_key_env
-                        ? `env:${p.api_key_env}`
-                        : '—'}
-                  </td>
-                  <td className="provider-row-actions">
-                    <button type="button" onClick={() => startEdit(p)}>
-                      {t('pane.providers.edit')}
-                    </button>
-                    <button
-                      type="button"
-                      className="danger"
-                      onClick={() => void remove(p.id)}
-                    >
-                      {t('pane.providers.delete')}
-                    </button>
-                  </td>
-                </tr>
+                <Fragment key={p.id}>
+                  <tr>
+                    <td>{p.name}</td>
+                    <td>{p.kind}</td>
+                    <td>{p.endpoint}</td>
+                    <td>
+                      {p.models.join(', ')}
+                      {p.verified_models && (
+                        <span
+                          className="verified-badge"
+                          title={p.verified_models.join(', ')}
+                        >
+                          {' '}
+                          {t('pane.providers.verified_badge', {
+                            ok: p.verified_models.length,
+                            total: p.models.length,
+                          })}
+                        </span>
+                      )}
+                    </td>
+                    <td>
+                      {p.has_api_key
+                        ? t('pane.providers.key_stored')
+                        : p.api_key_env
+                          ? `env:${p.api_key_env}`
+                          : '—'}
+                    </td>
+                    <td className="provider-row-actions">
+                      <button
+                        type="button"
+                        onClick={() => void probe(p.id)}
+                        disabled={probingId === p.id}
+                        // Only meaningful once a key is configured; key-less
+                        // providers would just fail every model.
+                        title={t('pane.providers.test_models')}
+                      >
+                        {probingId === p.id
+                          ? t('pane.providers.testing')
+                          : t('pane.providers.test_models')}
+                      </button>
+                      <button type="button" onClick={() => startEdit(p)}>
+                        {t('pane.providers.edit')}
+                      </button>
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => void remove(p.id)}
+                      >
+                        {t('pane.providers.delete')}
+                      </button>
+                    </td>
+                  </tr>
+                  {probeFor === p.id && (
+                    <tr className="provider-probe-row">
+                      <td colSpan={6}>
+                        <strong>{t('pane.providers.probe_results_title')}</strong>
+                        {probingId === p.id ? (
+                          <span> {t('pane.providers.testing')}</span>
+                        ) : (
+                          <>
+                            <ul className="provider-probe-results">
+                              {probeResults.map((r) => (
+                                <li
+                                  key={r.model}
+                                  className={r.ok ? 'probe-ok' : 'probe-fail'}
+                                >
+                                  {r.ok ? '✅' : '❌'} {r.model}
+                                  {r.ok
+                                    ? ` · ${r.latency_ms}ms`
+                                    : r.error
+                                      ? ` · ${r.error}`
+                                      : ''}
+                                </li>
+                              ))}
+                            </ul>
+                            {probeResults.length > 0 &&
+                              !probeResults.some((r) => r.ok) && (
+                                <div className="error">
+                                  {t('pane.providers.probe_all_failed')}
+                                </div>
+                              )}
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>

@@ -199,9 +199,24 @@ export function ChatPage({ onSessionCreated }: Props) {
     void client
       .listProviders()
       .then((ps) => {
-        const all = [...new Set(ps.flatMap((p) => p.models))];
+        // Only surface models from providers that have credentials configured.
+        // Key-less providers (unconfigured hosted seeds) would just 401, so
+        // they must not appear in the picker at all. For a provider that's been
+        // connectivity-probed (`verified_models` set), offer ONLY the models
+        // that actually responded; otherwise fall back to everything it
+        // advertises. This is what makes the picker show "only models that
+        // connect" once the operator has run a probe in the admin Providers pane.
+        const keyed = ps.filter((p) => p.has_api_key);
+        const all = [...new Set(keyed.flatMap((p) => p.verified_models ?? p.models))];
         setModels(all);
-        setModel((cur) => cur || all[0] || '');
+        // Default to a keyed provider's declared default model when it's still
+        // on offer, else the first offered model. Drop a stale persisted choice
+        // that's no longer offered.
+        const preferred =
+          keyed.flatMap((p) => p.default_for_models).find((m) => all.includes(m)) ??
+          all[0] ??
+          '';
+        setModel((cur) => (cur && all.includes(cur) ? cur : preferred));
       })
       .catch(() => {
         /* providers endpoint unavailable — keep the server default. */
@@ -263,8 +278,13 @@ export function ChatPage({ onSessionCreated }: Props) {
 
     abortRef.current = client.sendMessage(
       sid,
-      // T5.2 — execute is the backend default; only consult goes on the wire.
-      mode === 'consult' ? { content: text, mode: 'consult' } : { content: text },
+      // Carry the picked model as model_override so the picker applies to EVERY
+      // turn — including an existing session whose stored model differs (the
+      // picker used to only affect session creation). Only consult goes on the
+      // wire; execute is the backend default.
+      mode === 'consult'
+        ? { content: text, model: model || undefined, mode: 'consult' }
+        : { content: text, model: model || undefined },
       (ev) =>
         applyEvent(
           ev,

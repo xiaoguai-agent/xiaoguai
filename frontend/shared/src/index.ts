@@ -1335,9 +1335,28 @@ export interface LlmProviderView {
   endpoint: string;
   models: string[];
   default_for_models: string[];
+  /** Models confirmed to actually respond via a live probe, or `null` when
+   *  never probed. The chat model picker prefers this over `models` so it only
+   *  offers models that connect. Populated by `probeProvider`. */
+  verified_models: string[] | null;
   fallback_order: number;
   api_key_env: string | null;
   has_api_key: boolean;
+}
+
+/** One model's outcome from a connectivity probe (`probeProvider`). */
+export interface ModelProbe {
+  model: string;
+  ok: boolean;
+  error?: string;
+  latency_ms: number;
+}
+
+/** Response of `probeProvider` — one result per advertised model plus the
+ *  subset that connected (now persisted to the provider's `verified_models`). */
+export interface ProbeResponse {
+  results: ModelProbe[];
+  verified: string[];
 }
 
 /** Request body for `POST /v1/admin/providers`. Supply `api_key` for a hosted
@@ -1494,6 +1513,18 @@ export class XiaoguaiClient {
       'PUT',
       `/v1/admin/providers/${encodeURIComponent(id)}`,
       req,
+    );
+  }
+
+  /** Live connectivity probe — fire a minimal chat request at each model this
+   *  provider advertises and persist the set that responded to its
+   *  `verified_models`. Issues real (tiny) LLM calls, so it's an explicit
+   *  operator action. Returns the per-model results. */
+  probeProvider(id: string): Promise<ProbeResponse> {
+    return this.request<ProbeResponse>(
+      'POST',
+      `/v1/admin/providers/${encodeURIComponent(id)}/probe`,
+      {},
     );
   }
 

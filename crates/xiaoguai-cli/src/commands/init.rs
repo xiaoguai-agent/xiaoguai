@@ -133,6 +133,7 @@ mod tests {
             endpoint: "https://x/v1".into(),
             models: models.into_iter().map(Into::into).collect(),
             default_for_models: vec![],
+            verified_models: None,
             fallback_order: 100,
             api_key_env: None,
             api_key: api_key.map(Into::into),
