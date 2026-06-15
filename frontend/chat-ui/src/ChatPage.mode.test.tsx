@@ -23,6 +23,7 @@ import { I18nProvider } from './i18n/I18nProvider';
 vi.mock('./client', () => ({
   client: {
     listMessages: vi.fn(),
+    listProviders: vi.fn(() => Promise.resolve([])),
     createSession: vi.fn(),
     sendMessage: vi.fn(),
     cancel: vi.fn(),
@@ -101,13 +102,15 @@ describe('ChatPage consult/execute mode toggle', () => {
     expect(screen.queryByTestId('consult-cue')).not.toBeInTheDocument();
   });
 
-  it('switching to consult persists to localStorage and shows the cue', async () => {
+  it('switching to consult persists to localStorage', async () => {
     await renderChat();
     fireEvent.click(screen.getByTestId('mode-consult'));
 
     expect(localStorage.getItem('xiaoguai_chat_mode:sess-1')).toBe('consult');
     expect(screen.getByTestId('mode-consult')).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByTestId('consult-cue')).toBeInTheDocument();
+    // The read-only explanation is now a hover tooltip on the consult button
+    // (the old inline cue overflowed the composer), so there is no cue element.
+    expect(screen.queryByTestId('consult-cue')).not.toBeInTheDocument();
   });
 
   it('a consult send includes mode: consult in the request body', async () => {
@@ -134,7 +137,6 @@ describe('ChatPage consult/execute mode toggle', () => {
     localStorage.setItem('xiaoguai_chat_mode:sess-1', 'consult');
     await renderChat();
     expect(screen.getByTestId('mode-consult')).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByTestId('consult-cue')).toBeInTheDocument();
   });
 });
 

@@ -824,11 +824,6 @@ export function ChatPage({ onSessionCreated }: Props) {
           )}
           {/* T5.2 — consult/execute toggle + read-only cue in consult mode. */}
           <ModeToggle mode={mode} onChange={changeMode} />
-          {mode === 'consult' && (
-            <span className="consult-cue" data-testid="consult-cue">
-              {t.ui.mode.readonly_cue}
-            </span>
-          )}
           <div className="composer-hint">{t.ui.composer_hint}</div>
         </div>
       </div>

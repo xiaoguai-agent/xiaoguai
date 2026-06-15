@@ -117,6 +117,7 @@
       "toggle_label": "Turn mode",
       "execute": "Execute",
       "consult": "Consult",
+      "execute_hint": "Execute mode — the agent can call tools and actually perform actions (edit files, run commands, etc.).",
       "readonly_cue": "Consult mode (read-only) — the agent will not change anything; applies only to the message you send now, not the whole session"
     },
     "teamrun": {

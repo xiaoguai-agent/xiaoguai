@@ -61,6 +61,7 @@ export function ModeToggle({ mode, onChange }: ModeToggleProps) {
         type="button"
         className={`mode-toggle__btn${mode === 'execute' ? ' mode-toggle__btn--active' : ''}`}
         aria-pressed={mode === 'execute'}
+        title={t.ui.mode.execute_hint}
         onClick={() => onChange('execute')}
         data-testid="mode-execute"
       >
@@ -70,6 +71,7 @@ export function ModeToggle({ mode, onChange }: ModeToggleProps) {
         type="button"
         className={`mode-toggle__btn${mode === 'consult' ? ' mode-toggle__btn--active' : ''}`}
         aria-pressed={mode === 'consult'}
+        title={t.ui.mode.readonly_cue}
         onClick={() => onChange('consult')}
         data-testid="mode-consult"
       >

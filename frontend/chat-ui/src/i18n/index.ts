@@ -82,6 +82,7 @@ interface TranslationShape {
       toggle_label: string;
       execute: string;
       consult: string;
+      execute_hint: string;
       readonly_cue: string;
     };
     /** T5.2 — team parallel run entry (T4 orchestrate, deferred UI). */
