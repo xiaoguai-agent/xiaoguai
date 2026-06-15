@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
+import './i18n'; // initialise i18next before first render (explicit, not relying on a transitive component import)
 import { App } from './App';
 import { AuthGate } from './auth/AuthGate';
 import { ScopeProvider } from './hooks/useScopes';

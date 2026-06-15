@@ -23,6 +23,7 @@
   },
   "nav": {
     "title": "Xiaoguai · Admin",
+    "back_to_chat": "← Chat",
     "today": "Today",
     "scheduler": "Scheduler",
     "eval": "Eval",

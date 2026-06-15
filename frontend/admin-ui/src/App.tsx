@@ -28,6 +28,11 @@ export function App() {
     <div className="layout">
       <nav className="nav">
         <h2>{t('nav.title')}</h2>
+        {/* Cross-SPA link back to chat-ui at `/` (admin-ui is mounted at /admin/, a
+            separate SPA — react-router can't cross the boundary, so use a plain <a>). */}
+        <a className="nav-back-to-chat" href="/">
+          {t('nav.back_to_chat')}
+        </a>
         <NavLink to="/today" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.today')}
         </NavLink>
