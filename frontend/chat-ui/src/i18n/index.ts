@@ -55,6 +55,12 @@ interface TranslationShape {
       analyze_cve: string;
       explain_codebase: string;
     };
+    /** Sidebar session-row actions (rename / delete + confirm prompt). */
+    session: {
+      rename: string;
+      delete: string;
+      delete_confirm: string;
+    };
     /** T3.5 — expert picker (header chip + popover). */
     expert: {
       pick_label: string;

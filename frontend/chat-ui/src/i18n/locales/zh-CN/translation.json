@@ -92,6 +92,11 @@
       "analyze_cve": "分析最新的 CVE 漏洞情报",
       "explain_codebase": "讲讲一个代码库是怎么运作的"
     },
+    "session": {
+      "rename": "重命名",
+      "delete": "删除",
+      "delete_confirm": "从历史中删除这个会话？"
+    },
     "expert": {
       "pick_label": "选择专家",
       "chip_title": "本会话的专家",

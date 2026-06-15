@@ -85,21 +85,47 @@ export function App() {
   const addSession = (s: StoredSession) =>
     setSessions((xs) => (xs.some((x) => x.id === s.id) ? xs : [s, ...xs]));
 
+  // Rename a session in the list (immutable — replace just the matching row).
+  const renameSession = (id: string, title: string) =>
+    setSessions((xs) => xs.map((x) => (x.id === id ? { ...x, title } : x)));
+
+  // Remove a session from the list. If it was the remembered last-active
+  // session, forget it too so a future blank load doesn't try to restore it.
+  const removeSession = (id: string) => {
+    setSessions((xs) => xs.filter((x) => x.id !== id));
+    try {
+      if (localStorage.getItem(LAST_SESSION_KEY) === id) {
+        localStorage.removeItem(LAST_SESSION_KEY);
+      }
+    } catch {
+      /* localStorage unavailable (private mode) — best effort. */
+    }
+  };
+
   return (
     <div className="layout">
-      <SessionList sessions={sessions}>
-        {/* Sidebar footer (bottom-left): admin console link + language +
-            theme. admin-ui is served by the backend at /admin/ (a separate
-            SPA), so a plain link navigates there. */}
+      <SessionList
+        sessions={sessions}
+        onRename={renameSession}
+        onDelete={removeSession}
+      >
+        {/* Sidebar footer (bottom-left): admin console link + language.
+            admin-ui is served by the backend at /admin/ (a separate SPA), so
+            a plain link navigates there. The theme toggle now lives in the
+            main-area topbar (top-right). */}
         <a className="nav-link admin-link" href="/admin/">
           {t.ui.admin}
         </a>
         <div className="sidebar-footer-row">
           <LanguageToggle />
-          <ThemeToggle />
         </div>
       </SessionList>
       <main className="main">
+        {/* Top-right utility bar — currently just the light/dark/system
+            theme switch, sitting above the scrolling message area. */}
+        <div className="topbar">
+          <ThemeToggle />
+        </div>
         <Routes>
           <Route path="/" element={<ChatPage onSessionCreated={addSession} />} />
           <Route
