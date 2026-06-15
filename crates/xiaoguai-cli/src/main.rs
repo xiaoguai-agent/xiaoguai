@@ -2085,7 +2085,10 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
                         }
                         match cli_config::save(&cfg) {
                             Ok(()) => {
-                                eprintln!("{}", style::ok(&format!("  ✓ {key} → {}", value.trim())))
+                                eprintln!(
+                                    "{}",
+                                    style::ok(&format!("  ✓ {key} → {}", value.trim()))
+                                );
                             }
                             Err(e) => eprintln!(
                                 "{}",

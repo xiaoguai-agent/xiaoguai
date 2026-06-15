@@ -245,8 +245,7 @@ impl OutcomesReader for SqliteOutcomesBackend {
                 // attributed_at is stored as RFC3339 text (migration 0012:
                 // strftime('%Y-%m-%dT%H:%M:%SZ', 'now')).
                 attributed_at: DateTime::parse_from_rfc3339(&r.attributed_at)
-                    .map(|d| d.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_or_else(|_| Utc::now(), |d| d.with_timezone(&Utc)),
                 metadata: r
                     .metadata
                     .and_then(|s| serde_json::from_str(&s).ok())

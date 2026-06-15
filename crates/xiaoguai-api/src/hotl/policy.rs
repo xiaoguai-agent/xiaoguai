@@ -50,7 +50,7 @@ pub enum HotlPolicyStoreError {
 }
 
 /// Shared validation for `create`/`update` request bodies — keeps the
-/// in-memory and SQLite stores enforcing identical invariants.
+/// in-memory and `SQLite` stores enforcing identical invariants.
 ///
 /// # Errors
 /// Returns `InvalidArgument` when `window_seconds <= 0`, neither limit is set,
