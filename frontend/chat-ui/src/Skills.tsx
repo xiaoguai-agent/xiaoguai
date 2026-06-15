@@ -14,6 +14,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { client } from './client';
+import { useI18n } from './i18n/I18nProvider';
+import { interpolate } from './i18n';
 
 // ── wire types ----------------------------------------------------------------
 
@@ -197,6 +199,8 @@ interface SkillCardProps {
 }
 
 function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) {
+  const { t } = useI18n();
+  const sp = t.ui.skills_page;
   const [expanded, setExpanded] = useState(false);
   const [config, setConfig] = useState<Record<string, unknown>>(() => defaultConfig(pack.knobs));
   const [busy, setBusy] = useState(false);
@@ -230,7 +234,7 @@ function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) 
           <span className="skill-card__name">{pack.name}</span>
           <span className="skill-card__category">{pack.category}</span>
           <span className="skill-card__version">v{pack.version}</span>
-          {installed && <span className="skill-card__badge">Installed ✓</span>}
+          {installed && <span className="skill-card__badge">{sp.installed_badge}</span>}
         </div>
         <div className="skill-card__actions">
           {hasKnobs && (
@@ -239,7 +243,7 @@ function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) 
               onClick={() => setExpanded((x) => !x)}
               aria-expanded={expanded}
             >
-              {expanded ? 'Less' : 'Configure'}
+              {expanded ? sp.less : sp.configure}
             </button>
           )}
           {installed ? (
@@ -248,7 +252,7 @@ function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) 
               onClick={handleUninstall}
               disabled={busy}
             >
-              {busy ? '…' : 'Uninstall'}
+              {busy ? sp.busy : sp.uninstall}
             </button>
           ) : (
             <button
@@ -256,7 +260,7 @@ function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) 
               onClick={handleInstall}
               disabled={busy}
             >
-              {busy ? '…' : 'Install'}
+              {busy ? sp.busy : sp.install}
             </button>
           )}
         </div>
@@ -270,12 +274,12 @@ function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) 
         <div className="skill-card__requires">
           {pack.requires.feature_flags.map((f) => (
             <span key={f} className="skill-tag skill-tag--flag">
-              flag: {f}
+              {interpolate(sp.requires_flag, { flag: f })}
             </span>
           ))}
           {pack.requires.env_keys.map((e) => (
             <span key={e} className="skill-tag skill-tag--env">
-              env: {e}
+              {interpolate(sp.requires_env, { env: e })}
             </span>
           ))}
         </div>
@@ -294,6 +298,8 @@ function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) 
 const DEFAULT_TENANT = 'default';
 
 export function SkillsPage() {
+  const { t } = useI18n();
+  const sp = t.ui.skills_page;
   const [catalog, setCatalog] = useState<SkillPackEntry[]>([]);
   const [installed, setInstalled] = useState<InstalledPackRow[]>([]);
   const [tenantId, setTenantId] = useState(DEFAULT_TENANT);
@@ -333,9 +339,9 @@ export function SkillsPage() {
     try {
       const row = await apiInstall(tenantId, pack.slug, config);
       setInstalled((prev) => [...prev, row]);
-      pushToast(`${pack.name} installed`, 'success');
+      pushToast(interpolate(sp.toast_installed, { name: pack.name }), 'success');
     } catch (err) {
-      pushToast(`Install failed: ${(err as Error).message}`, 'error');
+      pushToast(interpolate(sp.toast_install_failed, { message: (err as Error).message }), 'error');
     }
   }
 
@@ -344,9 +350,15 @@ export function SkillsPage() {
     try {
       await apiUninstall(row.id);
       setInstalled((prev) => prev.filter((r) => r.id !== row.id));
-      pushToast(`${pack?.name ?? row.pack_slug} uninstalled`, 'success');
+      pushToast(
+        interpolate(sp.toast_uninstalled, { name: pack?.name ?? row.pack_slug }),
+        'success',
+      );
     } catch (err) {
-      pushToast(`Uninstall failed: ${(err as Error).message}`, 'error');
+      pushToast(
+        interpolate(sp.toast_uninstall_failed, { message: (err as Error).message }),
+        'error',
+      );
     }
   }
 
@@ -364,32 +376,33 @@ export function SkillsPage() {
       {/* header */}
       <div className="skills-header">
         <div>
-          <h1 className="skills-title">Skill Packs</h1>
-          <p className="skills-subtitle">
-            Browse and install pre-built skill packs for your workspace. Packs extend the
-            agent with domain-specific tools, prompts, and RAG indexes.
-          </p>
+          <h1 className="skills-title">{sp.title}</h1>
+          <p className="skills-subtitle">{sp.subtitle}</p>
         </div>
         <div className="skills-tenant-control">
           <label htmlFor="tenant-input" className="skills-tenant-label">
-            Tenant
+            {sp.tenant_label}
           </label>
           <input
             id="tenant-input"
             className="skills-tenant-input"
             value={tenantId}
             onChange={(e) => setTenantId(e.target.value.trim() || DEFAULT_TENANT)}
-            placeholder="tenant id"
+            placeholder={sp.tenant_placeholder}
           />
         </div>
       </div>
 
       {/* body */}
-      {loading && <p className="skills-status">Loading…</p>}
-      {error && <p className="skills-status skills-status--error">Error: {error}</p>}
+      {loading && <p className="skills-status">{sp.loading}</p>}
+      {error && (
+        <p className="skills-status skills-status--error">
+          {interpolate(sp.error, { message: error })}
+        </p>
+      )}
 
       {!loading && !error && categories.length === 0 && (
-        <p className="skills-status">No skill packs available.</p>
+        <p className="skills-status">{sp.empty}</p>
       )}
 
       {!loading &&

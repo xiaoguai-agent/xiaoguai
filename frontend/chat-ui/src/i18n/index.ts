@@ -103,6 +103,28 @@ interface TranslationShape {
       failed: string;
       error: string;
     };
+    /** Skills pane (skill-pack catalog browser + install/uninstall). */
+    skills_page: {
+      title: string;
+      subtitle: string;
+      tenant_label: string;
+      tenant_placeholder: string;
+      loading: string;
+      error: string;
+      empty: string;
+      install: string;
+      uninstall: string;
+      configure: string;
+      less: string;
+      busy: string;
+      installed_badge: string;
+      requires_flag: string;
+      requires_env: string;
+      toast_installed: string;
+      toast_install_failed: string;
+      toast_uninstalled: string;
+      toast_uninstall_failed: string;
+    };
   };
   chat: {
     sse: {

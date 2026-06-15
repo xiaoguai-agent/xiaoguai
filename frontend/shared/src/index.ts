@@ -496,6 +496,26 @@ export interface InstallSkillPackResponse {
   activation_status: 'pending';
 }
 
+/**
+ * One entry in the skill-pack catalog as returned by `GET /v1/skills/catalog`.
+ * Mirrors `xiaoguai_api::skills::SkillPackEntry`. `knobs` / `requires` are
+ * carried verbatim for the chat-ui Skills pane; admin-ui only needs the
+ * identity + grouping fields to offer a pick-from-catalog install.
+ */
+export interface SkillCatalogEntry {
+  slug: string;
+  name: string;
+  description: string;
+  version: string;
+  category: string;
+}
+
+/** Response shape for `GET /v1/skills/catalog`. */
+export interface SkillCatalogResponse {
+  version: number;
+  packs: SkillCatalogEntry[];
+}
+
 // ---- v1.3.x — HotL policy types -----------------------------------------
 
 /**
@@ -1678,6 +1698,15 @@ export class XiaoguaiClient {
   }
 
   // ---- v1.3.x — skill pack browser ----------------------------------------
+
+  /**
+   * List the static skill-pack catalog baked into the binary via
+   * `GET /v1/skills/catalog`. Lets the admin pick a pack to install
+   * instead of typing a raw pack id.
+   */
+  listSkillCatalog(): Promise<SkillCatalogResponse> {
+    return this.request<SkillCatalogResponse>('GET', '/v1/skills/catalog');
+  }
 
   /** List all recorded (installed) skill packs via `GET /v1/skills/installed`. */
   listInstalledSkillPacks(): Promise<InstalledSkillPackResponse[]> {

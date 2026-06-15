@@ -135,6 +135,27 @@
       "done": "チーム実行が完了しました。",
       "failed": "チーム実行は結果を生成できませんでした（失敗メンバー：{{failed}}）",
       "error": "チーム実行に失敗しました：{{message}}"
+    },
+    "skills_page": {
+      "title": "スキルパック",
+      "subtitle": "ワークスペース向けの事前構築済みスキルパックを閲覧・インストールします。パックはエージェントに領域固有のツール・プロンプト・RAG インデックスを追加します。",
+      "tenant_label": "テナント",
+      "tenant_placeholder": "テナント ID",
+      "loading": "読み込み中…",
+      "error": "エラー：{{message}}",
+      "empty": "利用可能なスキルパックがありません。",
+      "install": "インストール",
+      "uninstall": "アンインストール",
+      "configure": "設定",
+      "less": "閉じる",
+      "busy": "…",
+      "installed_badge": "インストール済み ✓",
+      "requires_flag": "フラグ：{{flag}}",
+      "requires_env": "環境変数：{{env}}",
+      "toast_installed": "{{name}} をインストールしました",
+      "toast_install_failed": "インストールに失敗しました：{{message}}",
+      "toast_uninstalled": "{{name}} をアンインストールしました",
+      "toast_uninstall_failed": "アンインストールに失敗しました：{{message}}"
     }
   }
 }

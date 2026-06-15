@@ -135,6 +135,27 @@
       "done": "团队执行已完成。",
       "failed": "团队执行未能产出结果（失败成员：{{failed}}）",
       "error": "团队执行失败：{{message}}"
+    },
+    "skills_page": {
+      "title": "技能包",
+      "subtitle": "浏览并安装预置的技能包。技能包为助手扩展领域专属的工具、提示词和 RAG 索引。",
+      "tenant_label": "租户",
+      "tenant_placeholder": "租户 ID",
+      "loading": "加载中…",
+      "error": "错误：{{message}}",
+      "empty": "暂无可用的技能包。",
+      "install": "安装",
+      "uninstall": "卸载",
+      "configure": "配置",
+      "less": "收起",
+      "busy": "…",
+      "installed_badge": "已安装 ✓",
+      "requires_flag": "特性开关：{{flag}}",
+      "requires_env": "环境变量：{{env}}",
+      "toast_installed": "{{name}} 已安装",
+      "toast_install_failed": "安装失败：{{message}}",
+      "toast_uninstalled": "{{name}} 已卸载",
+      "toast_uninstall_failed": "卸载失败：{{message}}"
     }
   }
 }
