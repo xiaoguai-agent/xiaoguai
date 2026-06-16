@@ -1,0 +1,102 @@
+===== shard 3 beat 1 2026-06-16T14:02:45Z =====
+-- free --
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1316       11317          46        3741       14672
+Swap:           3071           0        3071
+-- procs (cargo/nextest/python/test tree) --
+     37       2       0 I    -                                 52  0.0     0  \_ kworker/3:0  \_ [kworker/3:0-inode_switch_wbs]
+     56       2       0 I    -                                 52  0.5     0  \_ kworker/3:1  \_ [kworker/3:1-inode_switch_wbs]
+   1092       2       0 I    -                                 41  0.0     0  \_ kworker/3:5  \_ [kworker/3:5-inode_switch_wbs]
+   1093       2       0 I    -                                 41  0.0     0  \_ kworker/3:6  \_ [kworker/3:6-inode_switch_wbs]
+   1097       2       0 I    -                                 41  0.0     0  \_ kworker/3:7  \_ [kworker/3:7-inode_switch_wbs]
+   1098       2       0 I    -                                 41  0.0     0  \_ kworker/3:8  \_ [kworker/3:8-inode_switch_wbs]
+   1099       2       0 I    -                                 41  0.0     0  \_ kworker/3:9  \_ [kworker/3:9-inode_switch_wbs]
+    981       1     981 Ss   -                                 42  0.2 21240 networkd-dispat /usr/bin/python3 /usr/bin/networkd-dispatcher --run-startup-triggers
+   1014       1    1014 Ss   -                                 42  0.6 31264 python3         /usr/bin/python3 -u /usr/sbin/waagent -daemon
+   1387    1014    1014 Sl   -                                 41  2.1 36072  \_ python3      \_ /usr/bin/python3 -u bin/WALinuxAgent-2.15.2.1-py3.12.egg -run-exthandlers
+   2511    2508    2511 Rsl  -                                  0  100 25644             car              |   \_ cargo nextest run --archive-file target/nextest-tests.tar.zst --workspace-remap . -E package(xiaoguai-mcp-exec) --profile ci --no-tests=pass
+-- busy (R/D) process kstacks + fds --
+  [pid 2511] state=R name=cargo wchan=0
+   cmd: cargo nextest run --archive-file target/nextest-tests.tar.zst --workspace-remap . -E package(xiaoguai-mcp-exec) --profile ci --no-tests=pass 
+   kstack:
+     [<0>] poll_schedule_timeout.constprop.0+0x41/0x90
+     [<0>] do_poll.constprop.0+0x2e5/0x350
+     [<0>] do_sys_poll+0x19f/0x270
+     [<0>] __x64_sys_poll+0xbd/0x140
+     [<0>] x64_sys_call+0x1328/0x20d0
+     [<0>] do_syscall_64+0x7b/0xb80
+     [<0>] entry_SYSCALL_64_after_hwframe+0x76/0x7e
+   fds:
+     total 0
+     lr-x------ 1 runner runner 64 Jun 16 14:02 0 -> /dev/null
+     l-wx------ 1 runner runner 64 Jun 16 14:02 1 -> /tmp/suite.log
+     lr-x------ 1 runner runner 64 Jun 16 14:02 142 -> pipe:[13224]
+     l-wx------ 1 runner runner 64 Jun 16 14:02 145 -> pipe:[13225]
+     l-wx------ 1 runner runner 64 Jun 16 14:02 2 -> /tmp/suite.log
+     lrwx------ 1 runner runner 64 Jun 16 14:02 3 -> anon_inode:[eventpoll]
+     lrwx------ 1 runner runner 64 Jun 16 14:02 4 -> anon_inode:[eventfd]
+     lrwx------ 1 runner runner 64 Jun 16 14:02 5 -> anon_inode:[eventpoll]
+     lrwx------ 1 runner runner 64 Jun 16 14:02 6 -> socket:[19264]
+     lrwx------ 1 runner runner 64 Jun 16 14:02 8 -> socket:[19265]
+  [pid 2522] state= name= wchan=
+/home/runner/work/_temp/61b111a7-5318-4064-b623-0ab4365dfa26.sh: line 32: /proc/2522/cmdline: No such file or directory
+   cmd: 
+   kstack:
+   fds:
+-- py-spy on python3 (if installed) --
+  [py 1014] /usr/bin/python3 -u /usr/sbin/waagent -daemon 
+     Process 1014: /usr/bin/python3 -u /usr/sbin/waagent -daemon
+     Python v3.12.3 (/usr/bin/python3.12)
+     
+     Thread 1014 (idle): "Daemon"
+         run_latest (azurelinuxagent/ga/update.py:262)
+         daemon (azurelinuxagent/daemon/main.py:179)
+         run (azurelinuxagent/daemon/main.py:83)
+         daemon (azurelinuxagent/agent.py:146)
+         main (azurelinuxagent/agent.py:344)
+         <module> (waagent:39)
+  [py 1387] /usr/bin/python3 -u bin/WALinuxAgent-2.15.2.1-py3.12.egg -run-exthandlers 
+     Process 1387: /usr/bin/python3 -u bin/WALinuxAgent-2.15.2.1-py3.12.egg -run-exthandlers
+     Python v3.12.3 (/usr/bin/python3.12)
+     
+     Thread 1387 (idle): "ExtHandler"
+         run (update.py:478)
+         run_exthandlers (agent.py:199)
+         main (agent.py:374)
+         <module> (__main__.py:20)
+         _run_code (<frozen runpy>:88)
+         _run_module_as_main (<frozen runpy>:198)
+     Thread 1810 (idle): "MonitorHandler"
+         sleep_until_next_operation (periodic_operation.py:80)
+         daemon (monitor.py:315)
+         run (threading.py:1010)
+         _bootstrap_inner (threading.py:1073)
+         _bootstrap (threading.py:1030)
+     Thread 1811 (idle): "EnvHandler"
+         sleep_until_next_operation (periodic_operation.py:80)
+         daemon (env.py:303)
+         run (threading.py:1010)
+         _bootstrap_inner (threading.py:1073)
+         _bootstrap (threading.py:1030)
+     Thread 1812 (idle): "SendTelemetryHandler"
+         wait (threading.py:359)
+         get (queue.py:180)
+         _wait_for_event_in_queue (send_telemetry_events.py:116)
+         _process_telemetry_thread (send_telemetry_events.py:131)
+         run (threading.py:1010)
+         _bootstrap_inner (threading.py:1073)
+         _bootstrap (threading.py:1030)
+     Thread 1813 (idle): "TelemetryEventsCollector"
+         sleep_until_next_operation (periodic_operation.py:80)
+         daemon (collect_telemetry_events.py:634)
+         run (threading.py:1010)
+         _bootstrap_inner (threading.py:1073)
+         _bootstrap (threading.py:1030)
+     Thread 1814 (idle): "CollectLogsHandler"
+         daemon (collect_logs.py:155)
+         run (threading.py:1010)
+         _bootstrap_inner (threading.py:1073)
+-- all D-state --
+-- suite.log tail --
+===== suite start 2026-06-16T14:02:45Z =====
+info: syncing channel updates for 1.93.0-x86_64-unknown-linux-gnu
