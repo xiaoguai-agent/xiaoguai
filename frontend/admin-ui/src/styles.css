@@ -1454,3 +1454,33 @@ tr:last-child td { border-bottom: none; }
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+/* Connectivity-probe results (the "Test models" action). */
+.verified-badge {
+  font-size: 0.8em;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.provider-probe-row td {
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  padding: 0.5rem 0.75rem;
+}
+
+.provider-probe-results {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  font-size: 0.85em;
+}
+
+.provider-probe-results .probe-ok {
+  color: #2e7d32;
+}
+
+.provider-probe-results .probe-fail {
+  color: #c62828;
+}

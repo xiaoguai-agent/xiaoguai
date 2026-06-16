@@ -55,6 +55,14 @@ impl LlmProviderRepository for MemoryRepo {
         rows.insert(prov.id.as_str().to_string(), prov.clone());
         Ok(())
     }
+    async fn update_verified_models(&self, id: &str, verified: &[String]) -> RepoResult<()> {
+        let mut rows = self.rows.lock();
+        let Some(row) = rows.get_mut(id) else {
+            return Err(RepoError::NotFound);
+        };
+        row.verified_models = Some(verified.to_vec());
+        Ok(())
+    }
 }
 
 fn args_ok(name: &str) -> RegisterArgs {

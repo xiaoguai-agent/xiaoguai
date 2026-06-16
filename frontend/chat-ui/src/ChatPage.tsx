@@ -4,6 +4,7 @@ import type {
   AgentEvent,
   ContentBlock,
   HotlResolvedEvent,
+  LlmProviderView,
   LoopResponse,
   Message,
   OrchestrateEvent,
@@ -199,9 +200,28 @@ export function ChatPage({ onSessionCreated }: Props) {
     void client
       .listProviders()
       .then((ps) => {
-        const all = [...new Set(ps.flatMap((p) => p.models))];
+        // Which models to offer for one provider:
+        //  - probed with >=1 reachable model -> exactly that proven subset (this
+        //    is what makes the picker show "only models that connect" after the
+        //    operator runs a probe in the admin Providers pane);
+        //  - keyed but not yet probed (or a probe that found nothing — usually a
+        //    transient failure) -> its advertised models, so the picker never
+        //    silently empties out on a bad probe;
+        //  - key-less and unverified -> nothing. A key-less provider is either an
+        //    unconfigured hosted seed (would 401) or a local server (Ollama) that
+        //    may not be running; trust it only once a probe confirms a model.
+        const offered = (p: LlmProviderView): string[] => {
+          if (p.verified_models && p.verified_models.length > 0) return p.verified_models;
+          if (p.has_api_key) return p.models;
+          return [];
+        };
+        const all = [...new Set(ps.flatMap(offered))];
         setModels(all);
-        setModel((cur) => cur || all[0] || '');
+        // Default to a provider's declared default model when it's still on
+        // offer, else the first offered model. Drop a stale persisted choice.
+        const preferred =
+          ps.flatMap((p) => p.default_for_models).find((m) => all.includes(m)) ?? all[0] ?? '';
+        setModel((cur) => (cur && all.includes(cur) ? cur : preferred));
       })
       .catch(() => {
         /* providers endpoint unavailable — keep the server default. */
@@ -263,8 +283,13 @@ export function ChatPage({ onSessionCreated }: Props) {
 
     abortRef.current = client.sendMessage(
       sid,
-      // T5.2 — execute is the backend default; only consult goes on the wire.
-      mode === 'consult' ? { content: text, mode: 'consult' } : { content: text },
+      // Carry the picked model as model_override so the picker applies to EVERY
+      // turn — including an existing session whose stored model differs (the
+      // picker used to only affect session creation). Only consult goes on the
+      // wire; execute is the backend default.
+      mode === 'consult'
+        ? { content: text, model: model || undefined, mode: 'consult' }
+        : { content: text, model: model || undefined },
       (ev) =>
         applyEvent(
           ev,

@@ -31,6 +31,7 @@ pub mod mistral;
 pub mod mock;
 pub mod ollama;
 pub mod openai_compat;
+pub mod probe;
 pub mod router;
 pub mod token_count;
 pub mod types;
@@ -49,6 +50,7 @@ pub use mistral::MistralBackend;
 pub use mock::MockBackend;
 pub use ollama::OllamaBackend;
 pub use openai_compat::OpenAiCompatBackend;
+pub use probe::{probe_provider, ModelProbe};
 pub use router::{LlmRouter, ResolveCtx, RouterConfig};
 pub use token_count::{estimate_message_tokens, estimate_tokens};
 pub use types::{

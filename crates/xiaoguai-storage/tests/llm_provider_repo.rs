@@ -21,6 +21,7 @@ fn sample_provider(name: &str) -> LlmProvider {
         endpoint: "https://api.deepseek.com/v1".to_string(),
         models: vec!["deepseek-chat".into(), "deepseek-coder".into()],
         default_for_models: vec!["deepseek-chat".into()],
+        verified_models: None,
         fallback_order: 10,
         api_key_env: Some("DEEPSEEK_API_KEY".into()),
         api_key: None,
@@ -268,4 +269,42 @@ async fn update_reseals_api_key() {
         .expect("q")
         .expect("present");
     assert_eq!(found.api_key.as_deref(), Some("sk-second"));
+}
+
+#[tokio::test]
+async fn update_verified_models_persists_set_and_preserves_api_key() {
+    // The probe path writes verified_models via this narrow method precisely so
+    // it never round-trips (and risks NULLing) the stored api_key. Assert both:
+    // the set lands, and the key is untouched — even under at-rest encryption.
+    let (pool, _guard) = test_setup().await;
+    let repo = SqliteLlmProviderRepository::new_with_keyring(pool.clone(), Some(keyring(0x09)));
+    let prov = provider_with_key("probe-target", "sk-keep-me");
+    repo.create(&prov).await.expect("create");
+
+    repo.update_verified_models(prov.id.as_str(), &["m-a".into(), "m-b".into()])
+        .await
+        .expect("update verified");
+
+    let found = repo
+        .find_by_id(prov.id.as_str())
+        .await
+        .expect("q")
+        .expect("present");
+    assert_eq!(
+        found.verified_models,
+        Some(vec!["m-a".to_string(), "m-b".to_string()])
+    );
+    // The critical invariant for fix: the secret survived the narrow write.
+    assert_eq!(found.api_key.as_deref(), Some("sk-keep-me"));
+}
+
+#[tokio::test]
+async fn update_verified_models_unknown_id_is_not_found() {
+    let (pool, _guard) = test_setup().await;
+    let repo = SqliteLlmProviderRepository::new(pool);
+    let err = repo
+        .update_verified_models("prov_missing", &[])
+        .await
+        .expect_err("must be NotFound");
+    assert!(matches!(err, RepoError::NotFound));
 }
