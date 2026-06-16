@@ -39,6 +39,13 @@ pub trait LlmProviderRepository: Send + Sync {
     /// `prov.id`. `id`, `name`, and `created_at` are left unchanged. Returns
     /// [`RepoError::NotFound`] when no row matches the id.
     async fn update(&self, prov: &LlmProvider) -> RepoResult<()>;
+    /// Persist ONLY the connectivity-probe result set (`verified_models`),
+    /// touching no other column. The probe endpoint uses this instead of
+    /// [`Self::update`] so it never round-trips the secret `api_key` through
+    /// reveal→conceal — a full-row rewrite would overwrite the stored key with
+    /// `NULL` if it currently can't be decrypted (rotated at-rest key). Returns
+    /// [`RepoError::NotFound`] when no row matches the id.
+    async fn update_verified_models(&self, id: &str, verified: &[String]) -> RepoResult<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -197,6 +204,10 @@ struct LlmProviderRow {
     endpoint: String,
     models: serde_json::Value,
     default_for_models: serde_json::Value,
+    /// JSON array of probe-confirmed models, or NULL when never probed. Added
+    /// in migration 0038; `#[sqlx(default)]` keeps pre-migration reads safe.
+    #[sqlx(default)]
+    verified_models: Option<serde_json::Value>,
     fallback_order: i32,
     api_key_env: Option<String>,
     /// Directly-stored API key (web-UI providers); NULL for env-var /
@@ -218,6 +229,10 @@ impl LlmProviderRow {
         })?;
         let models: Vec<String> = serde_json::from_value(self.models)?;
         let default_for_models: Vec<String> = serde_json::from_value(self.default_for_models)?;
+        let verified_models: Option<Vec<String>> = self
+            .verified_models
+            .map(serde_json::from_value)
+            .transpose()?;
         Ok(LlmProvider {
             id: ProviderId::from(self.id),
             name: self.name,
@@ -225,6 +240,7 @@ impl LlmProviderRow {
             endpoint: self.endpoint,
             models,
             default_for_models,
+            verified_models,
             fallback_order: self.fallback_order,
             api_key_env: self.api_key_env,
             api_key: self.api_key,
@@ -237,7 +253,7 @@ impl LlmProviderRow {
 }
 
 const SELECT_COLUMNS: &str = "id, name, kind, endpoint, models, default_for_models, \
-     fallback_order, api_key_env, api_key, created_at, updated_at, \
+     verified_models, fallback_order, api_key_env, api_key, created_at, updated_at, \
      cost_per_1k_input_usd, cost_per_1k_output_usd";
 
 #[async_trait]
@@ -245,14 +261,19 @@ impl LlmProviderRepository for SqliteLlmProviderRepository {
     async fn create(&self, prov: &LlmProvider) -> RepoResult<()> {
         let models = serde_json::to_value(&prov.models)?;
         let defaults = serde_json::to_value(&prov.default_for_models)?;
+        let verified = prov
+            .verified_models
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
         let api_key = self.conceal(prov.api_key.as_deref())?;
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         sqlx::query(
             "INSERT INTO llm_providers \
              (id, name, kind, endpoint, models, default_for_models, \
-              fallback_order, api_key_env, api_key, created_at, updated_at, \
+              verified_models, fallback_order, api_key_env, api_key, created_at, updated_at, \
               cost_per_1k_input_usd, cost_per_1k_output_usd) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(prov.id.as_str())
         .bind(&prov.name)
@@ -260,6 +281,7 @@ impl LlmProviderRepository for SqliteLlmProviderRepository {
         .bind(&prov.endpoint)
         .bind(models)
         .bind(defaults)
+        .bind(verified)
         .bind(prov.fallback_order)
         .bind(prov.api_key_env.as_deref())
         .bind(api_key.as_deref())
@@ -320,19 +342,25 @@ impl LlmProviderRepository for SqliteLlmProviderRepository {
     async fn update(&self, prov: &LlmProvider) -> RepoResult<()> {
         let models = serde_json::to_value(&prov.models)?;
         let defaults = serde_json::to_value(&prov.default_for_models)?;
+        let verified = prov
+            .verified_models
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
         let api_key = self.conceal(prov.api_key.as_deref())?;
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         let res = sqlx::query(
             "UPDATE llm_providers SET \
              kind = ?, endpoint = ?, models = ?, default_for_models = ?, \
-             fallback_order = ?, api_key_env = ?, api_key = ?, updated_at = ?, \
-             cost_per_1k_input_usd = ?, cost_per_1k_output_usd = ? \
+             verified_models = ?, fallback_order = ?, api_key_env = ?, api_key = ?, \
+             updated_at = ?, cost_per_1k_input_usd = ?, cost_per_1k_output_usd = ? \
              WHERE id = ?",
         )
         .bind(prov.kind.as_str())
         .bind(&prov.endpoint)
         .bind(models)
         .bind(defaults)
+        .bind(verified)
         .bind(prov.fallback_order)
         .bind(prov.api_key_env.as_deref())
         .bind(api_key.as_deref())
@@ -340,6 +368,29 @@ impl LlmProviderRepository for SqliteLlmProviderRepository {
         .bind(prov.cost_per_1k_input_usd)
         .bind(prov.cost_per_1k_output_usd)
         .bind(prov.id.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+        if res.rows_affected() == 0 {
+            return Err(RepoError::NotFound);
+        }
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
+        Ok(())
+    }
+
+    async fn update_verified_models(&self, id: &str, verified: &[String]) -> RepoResult<()> {
+        // Narrow write: only `verified_models` (+ `updated_at`). Deliberately
+        // does NOT touch `api_key`, so a probe can't clobber a stored secret it
+        // couldn't decrypt. `verified` is always a concrete array (possibly
+        // empty = "probed, nothing reachable"), never NULL.
+        let json = serde_json::to_value(verified)?;
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
+        let res = sqlx::query(
+            "UPDATE llm_providers SET verified_models = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(json)
+        .bind(Utc::now())
+        .bind(id)
         .execute(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;

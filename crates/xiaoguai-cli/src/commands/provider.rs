@@ -64,6 +64,7 @@ pub async fn register(repo: &dyn LlmProviderRepository, args: RegisterArgs) -> R
         endpoint: args.endpoint,
         models: args.models,
         default_for_models: args.default_for,
+        verified_models: None,
         fallback_order: args.fallback_order,
         api_key_env: args.api_key_env,
         // `--api-key-env` keeps the key out of the DB; `--api-key-stdin` stores

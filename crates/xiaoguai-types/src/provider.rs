@@ -96,6 +96,12 @@ pub struct LlmProvider {
     pub endpoint: String,
     pub models: Vec<String>,
     pub default_for_models: Vec<String>,
+    /// Models confirmed to actually respond via a live connectivity probe
+    /// (`POST /v1/admin/providers/{id}/probe`). `None` = never probed; the chat
+    /// model picker then falls back to advertising the full `models` list.
+    /// `Some(list)` is exactly the models that connected — the picker shows
+    /// only these, so an operator never picks a model that 401s/404s.
+    pub verified_models: Option<Vec<String>>,
     pub fallback_order: i32,
     /// Name of the env var holding the API key. None for unauthenticated
     /// endpoints (e.g. local Ollama).

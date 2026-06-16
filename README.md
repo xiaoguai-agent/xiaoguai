@@ -92,6 +92,18 @@ After install the systemd unit starts automatically; open `http://<host>:7600/`
 | RHEL / Fedora / Rocky (amd64) | Download `xiaoguai-cli-*.x86_64.rpm` from the same release and `sudo rpm -i xiaoguai-cli-*.x86_64.rpm` |
 | Bare-metal tarball (amd64 / arm64, glibc 2.35+) | Download `xiaoguai-vX.Y.Z-<arch>-unknown-linux-gnu.tar.gz`, extract, and `sudo bash scripts/install.sh` (systemd) |
 
+**One-step (any Linux, no sudo, no systemd):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xiaoguai-agent/xiaoguai/main/scripts/quickstart-linux.sh | bash
+```
+
+Detects your CPU arch, downloads + checksum-verifies the latest tarball into
+`~/.xiaoguai` (web UI bundled), runs the setup wizard (provider + API key,
+including the MiniMax China / international region picker), and starts `:7600`
+with the browser console. Pin a release with `XIAOGUAI_VERSION=vX.Y.Z`; answer
+the LAN prompt to bind `0.0.0.0` (it collects owner credentials per SEC-01).
+
 ### Option C — from source (needs a Rust toolchain)
 
 ```bash
@@ -170,15 +182,20 @@ automatically. **pip and from-source installs ship the API + CLI only**, so
 `http://localhost:7600/` returns 404 by design (this is the single most common
 "is it broken?" question — it isn't).
 
-The chat surface (`/`) has a **model picker** (choose any model your registered
-providers expose), persisted **session history** in the sidebar (rename / delete;
-it survives navigating to the admin console and back), and a **Consult**
+The chat surface (`/`) has a **model picker** that lists only models from
+providers with an API key configured — and, once you've run a connectivity
+probe (below), only the models that actually responded — so you never pick one
+that 401s. It also has persisted **session history** in the sidebar (rename /
+delete; it survives navigating to the admin console and back), and a **Consult**
 (read-only) vs **Execute** turn toggle. The operator console (`/admin/`) manages
 providers, scheduler, HotL policies, skill packs, audit, memory, and more — each
 pane carries an inline "what is this / how to use it" intro. You can set or
 change a provider's **API key and endpoint directly in the Providers pane**
 (Edit → the endpoint field suggests presets including MiniMax China
 `api.minimaxi.com`), so no CLI is needed to point the web UI at a working model.
+Each provider row also has a **Test models** button: it fires a minimal request
+at every model the provider advertises and records the set that connected, which
+is exactly what the chat picker then offers.
 
 To add the web UI to a pip / source install, grab the built UI from a release
 tarball and point `server.static_dir` at it:

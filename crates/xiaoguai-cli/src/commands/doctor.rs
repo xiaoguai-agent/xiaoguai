@@ -550,6 +550,7 @@ mod tests {
             endpoint: "http://localhost:11434".into(),
             models: vec!["qwen2.5-coder".into()],
             default_for_models: vec![],
+            verified_models: None,
             fallback_order,
             api_key_env: api_key_env.map(Into::into),
             api_key: api_key.map(Into::into),

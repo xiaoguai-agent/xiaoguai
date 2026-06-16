@@ -26,6 +26,7 @@ use axum::{Json, Router};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use xiaoguai_llm::ModelProbe;
 use xiaoguai_storage::repositories::error::RepoError;
 use xiaoguai_storage::repositories::LlmProviderRepository;
 use xiaoguai_types::{LlmProvider, ProviderId, ProviderKind};
@@ -46,6 +47,10 @@ struct ProviderView {
     endpoint: String,
     models: Vec<String>,
     default_for_models: Vec<String>,
+    /// Probe-confirmed models, or `null` when never probed. The chat model
+    /// picker prefers this over `models` so it can offer only models that
+    /// actually connect. Populated by `POST /v1/admin/providers/{id}/probe`.
+    verified_models: Option<Vec<String>>,
     fallback_order: i32,
     api_key_env: Option<String>,
     has_api_key: bool,
@@ -60,6 +65,7 @@ impl From<LlmProvider> for ProviderView {
             endpoint: p.endpoint,
             models: p.models,
             default_for_models: p.default_for_models,
+            verified_models: p.verified_models,
             fallback_order: p.fallback_order,
             api_key_env: p.api_key_env,
             has_api_key: p.api_key.as_deref().is_some_and(|k| !k.is_empty()),
@@ -123,6 +129,7 @@ pub fn build_router(repo: Repo) -> Router {
             "/v1/admin/providers/{id}",
             axum::routing::put(update).delete(delete_provider),
         )
+        .route("/v1/admin/providers/{id}/probe", axum::routing::post(probe))
         .with_state(repo)
 }
 
@@ -167,6 +174,7 @@ async fn create(State(repo): State<Repo>, Json(req): Json<CreateProviderRequest>
         endpoint: trimmed_endpoint,
         models: req.models,
         default_for_models: req.default_for_models,
+        verified_models: None,
         fallback_order: req.fallback_order,
         api_key_env: req.api_key_env.filter(|k| !k.trim().is_empty()),
         api_key: req.api_key.filter(|k| !k.trim().is_empty()),
@@ -210,6 +218,12 @@ async fn update(
             .into_response();
     };
 
+    // Track edits that change what a probe would measure (endpoint / model list
+    // / key). Any of these invalidates a prior `verified_models` result, so we
+    // clear it below — otherwise the chat picker would keep offering a stale set
+    // (hiding a just-added model, or still offering a removed/now-401 one).
+    let mut connectivity_changed = false;
+
     if let Some(name) = req.name {
         if name.trim().is_empty() {
             return bad_request("name must not be empty");
@@ -227,9 +241,15 @@ async fn update(
         {
             return bad_request("endpoint must be an http(s) URL");
         }
+        if e != prov.endpoint {
+            connectivity_changed = true;
+        }
         prov.endpoint = e;
     }
     if let Some(models) = req.models {
+        if models != prov.models {
+            connectivity_changed = true;
+        }
         prov.models = models;
     }
     if let Some(dfm) = req.default_for_models {
@@ -242,7 +262,13 @@ async fn update(
     if let Some(key) = req.api_key {
         if !key.trim().is_empty() {
             prov.api_key = Some(key.trim().to_string());
+            connectivity_changed = true;
         }
+    }
+    // A changed endpoint/models/key makes any prior probe result stale — drop it
+    // so the picker falls back to advertised models until the next probe.
+    if connectivity_changed {
+        prov.verified_models = None;
     }
     if let Some(env) = req.api_key_env {
         prov.api_key_env = Some(env.trim().to_string()).filter(|s| !s.is_empty());
@@ -258,6 +284,53 @@ async fn update(
             .into_response(),
         Err(e) => server_error(&e),
     }
+}
+
+/// Response body for `POST /v1/admin/providers/{id}/probe`.
+#[derive(Serialize)]
+struct ProbeResponse {
+    /// One entry per advertised model, in declared order.
+    results: Vec<ModelProbe>,
+    /// The subset of `results` that connected — persisted to the provider's
+    /// `verified_models` and what the chat picker will offer.
+    verified: Vec<String>,
+}
+
+/// `POST /v1/admin/providers/{id}/probe` — live connectivity check. Fires a
+/// minimal chat request at each model this provider advertises (straight at the
+/// provider, not the fallback chain) and persists the set that responded to
+/// `verified_models`, so the chat model picker can offer only models that
+/// actually connect. Returns the per-model results (incl. failure reasons).
+///
+/// This issues real (tiny) LLM calls, so it's an explicit operator action, not
+/// something run on every save.
+async fn probe(State(repo): State<Repo>, Path(id): Path<String>) -> Response {
+    let Some(prov) = (match repo.find_by_id(&id).await {
+        Ok(p) => p,
+        Err(e) => return server_error(&e),
+    }) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "provider not found" })),
+        )
+            .into_response();
+    };
+
+    let results = xiaoguai_llm::probe_provider(&prov).await;
+    let verified: Vec<String> = results
+        .iter()
+        .filter(|r| r.ok)
+        .map(|r| r.model.clone())
+        .collect();
+
+    // Narrow write: persist ONLY the verified set — never re-write api_key (a
+    // full update() would re-conceal the revealed key and could NULL it out if
+    // it currently can't be decrypted).
+    if let Err(e) = repo.update_verified_models(&id, &verified).await {
+        return server_error(&e);
+    }
+
+    Json(ProbeResponse { results, verified }).into_response()
 }
 
 async fn delete_provider(State(repo): State<Repo>, Path(id): Path<String>) -> Response {
@@ -332,6 +405,14 @@ mod tests {
             *slot = prov.clone();
             Ok(())
         }
+        async fn update_verified_models(&self, id: &str, verified: &[String]) -> RepoResult<()> {
+            let mut g = self.rows.lock().unwrap();
+            let Some(slot) = g.iter_mut().find(|p| p.id.as_str() == id) else {
+                return Err(RepoError::NotFound);
+            };
+            slot.verified_models = Some(verified.to_vec());
+            Ok(())
+        }
     }
 
     async fn body_json(resp: Response) -> serde_json::Value {
@@ -379,6 +460,80 @@ mod tests {
         // The secret must never be serialised.
         assert!(v[0].get("api_key").is_none());
         assert!(!v.to_string().contains("secret-xyz"));
+    }
+
+    #[tokio::test]
+    async fn probe_persists_verified_models_and_reports_per_model() {
+        let repo: Repo = Arc::new(MemRepo::default());
+        let app = build_router(repo);
+
+        // Point at an unroutable port so every model probe fails fast — this
+        // exercises the route + persistence without reaching the network.
+        let create = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/providers")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"name":"Unreachable","kind":"openai_compat","endpoint":"http://127.0.0.1:1","models":["m-a","m-b"],"api_key":"k"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::CREATED);
+        let id = body_json(create).await["id"].as_str().unwrap().to_string();
+
+        let probe = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/admin/providers/{id}/probe"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(probe.status(), StatusCode::OK);
+        let v = body_json(probe).await;
+        // One result per advertised model, all failed, none verified.
+        assert_eq!(v["results"].as_array().unwrap().len(), 2);
+        assert_eq!(v["results"][0]["ok"], false);
+        assert!(v["results"][0]["error"].is_string());
+        assert_eq!(v["verified"].as_array().unwrap().len(), 0);
+
+        // The (empty) verified set is persisted and surfaced on the list view.
+        let list = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/admin/providers")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let lv = body_json(list).await;
+        assert_eq!(lv[0]["verified_models"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn probe_unknown_provider_is_404() {
+        let repo: Repo = Arc::new(MemRepo::default());
+        let app = build_router(repo);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/providers/nope/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
