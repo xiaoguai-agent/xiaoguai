@@ -1,0 +1,95 @@
+===== shard 12 beat 1 2026-06-16T14:02:52Z =====
+-- free --
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1218       11619          46        3536       14771
+Swap:           3071           0        3071
+-- procs (cargo/nextest/python/test tree) --
+    977       1     977 Ss   -                                 86  0.1 20940 networkd-dispat /usr/bin/python3 /usr/bin/networkd-dispatcher --run-startup-triggers
+   1010       1    1010 Ss   -                                 86  0.3 31992 python3         /usr/bin/python3 -u /usr/sbin/waagent -daemon
+   1328    1010    1010 Sl   -                                 85  1.1 36980  \_ python3      \_ /usr/bin/python3 -u bin/WALinuxAgent-2.15.2.1-py3.12.egg -run-exthandlers
+   2498    2495    2498 Rsl  -                                  0  0.0 25828             car              |   \_ cargo nextest run --archive-file target/nextest-tests.tar.zst --workspace-remap . -E package(xiaoguai-mcp-exec) --profile ci --no-tests=pass
+-- busy (R/D) process kstacks + fds --
+  [pid 2498] state=R name=cargo wchan=0
+   cmd: cargo nextest run --archive-file target/nextest-tests.tar.zst --workspace-remap . -E package(xiaoguai-mcp-exec) --profile ci --no-tests=pass 
+   kstack:
+     [<0>] poll_schedule_timeout.constprop.0+0x41/0x90
+     [<0>] do_poll.constprop.0+0x2e5/0x350
+     [<0>] do_sys_poll+0x19f/0x270
+     [<0>] __x64_sys_poll+0xbd/0x140
+     [<0>] x64_sys_call+0x1328/0x20d0
+     [<0>] do_syscall_64+0x7b/0xb80
+     [<0>] entry_SYSCALL_64_after_hwframe+0x76/0x7e
+   fds:
+     total 0
+     lr-x------ 1 runner runner 64 Jun 16 14:02 0 -> /dev/null
+     l-wx------ 1 runner runner 64 Jun 16 14:02 1 -> /tmp/suite.log
+     lr-x------ 1 runner runner 64 Jun 16 14:02 142 -> pipe:[13159]
+     l-wx------ 1 runner runner 64 Jun 16 14:02 145 -> pipe:[13160]
+     l-wx------ 1 runner runner 64 Jun 16 14:02 2 -> /tmp/suite.log
+     lrwx------ 1 runner runner 64 Jun 16 14:02 3 -> anon_inode:[eventpoll]
+     lrwx------ 1 runner runner 64 Jun 16 14:02 4 -> anon_inode:[eventfd]
+     lrwx------ 1 runner runner 64 Jun 16 14:02 5 -> anon_inode:[eventpoll]
+     lrwx------ 1 runner runner 64 Jun 16 14:02 6 -> socket:[18992]
+     lrwx------ 1 runner runner 64 Jun 16 14:02 8 -> socket:[18993]
+  [pid 2509] state= name= wchan=
+/home/runner/work/_temp/fd1b9138-db7c-4a40-be27-231740d13a59.sh: line 32: /proc/2509/cmdline: No such file or directory
+   cmd: 
+   kstack:
+   fds:
+-- py-spy on python3 (if installed) --
+  [py 1010] /usr/bin/python3 -u /usr/sbin/waagent -daemon 
+     Process 1010: /usr/bin/python3 -u /usr/sbin/waagent -daemon
+     Python v3.12.3 (/usr/bin/python3.12)
+     
+     Thread 1010 (idle): "Daemon"
+         run_latest (azurelinuxagent/ga/update.py:262)
+         daemon (azurelinuxagent/daemon/main.py:179)
+         run (azurelinuxagent/daemon/main.py:83)
+         daemon (azurelinuxagent/agent.py:146)
+         main (azurelinuxagent/agent.py:344)
+         <module> (waagent:39)
+  [py 1328] /usr/bin/python3 -u bin/WALinuxAgent-2.15.2.1-py3.12.egg -run-exthandlers 
+     Process 1328: /usr/bin/python3 -u bin/WALinuxAgent-2.15.2.1-py3.12.egg -run-exthandlers
+     Python v3.12.3 (/usr/bin/python3.12)
+     
+     Thread 1328 (idle): "ExtHandler"
+         run (update.py:478)
+         run_exthandlers (agent.py:199)
+         main (agent.py:374)
+         <module> (__main__.py:20)
+         _run_code (<frozen runpy>:88)
+         _run_module_as_main (<frozen runpy>:198)
+     Thread 1792 (idle): "MonitorHandler"
+         sleep_until_next_operation (periodic_operation.py:80)
+         daemon (monitor.py:315)
+         run (threading.py:1010)
+         _bootstrap_inner (threading.py:1073)
+         _bootstrap (threading.py:1030)
+     Thread 1793 (idle): "EnvHandler"
+         sleep_until_next_operation (periodic_operation.py:80)
+         daemon (env.py:303)
+         run (threading.py:1010)
+         _bootstrap_inner (threading.py:1073)
+         _bootstrap (threading.py:1030)
+     Thread 1794 (idle): "SendTelemetryHandler"
+         wait (threading.py:359)
+         get (queue.py:180)
+         _wait_for_event_in_queue (send_telemetry_events.py:116)
+         _process_telemetry_thread (send_telemetry_events.py:131)
+         run (threading.py:1010)
+         _bootstrap_inner (threading.py:1073)
+         _bootstrap (threading.py:1030)
+     Thread 1795 (idle): "TelemetryEventsCollector"
+         sleep_until_next_operation (periodic_operation.py:80)
+         daemon (collect_telemetry_events.py:634)
+         run (threading.py:1010)
+         _bootstrap_inner (threading.py:1073)
+         _bootstrap (threading.py:1030)
+     Thread 1796 (idle): "CollectLogsHandler"
+         daemon (collect_logs.py:155)
+         run (threading.py:1010)
+         _bootstrap_inner (threading.py:1073)
+-- all D-state --
+-- suite.log tail --
+===== suite start 2026-06-16T14:02:52Z =====
+info: syncing channel updates for 1.93.0-x86_64-unknown-linux-gnu
