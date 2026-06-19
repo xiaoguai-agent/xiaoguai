@@ -31,6 +31,11 @@ admin API, route id `incidents`). Sentry/Datadog payloads are normalized by
 the built-in adapters; `manual` accepts the normalized incident JSON directly
 (`id`, `title`, `severity`, `source`, `occurred_at`, …).
 
+The admin-ui **Incidents pane** files owner-initiated incidents through an
+**owner-authed `POST /v1/incidents`** (same `manual` contract — only `title`
+is required) rather than the token webhook: it already sits behind owner auth,
+so no `X-Xiaoguai-Token` is minted into the browser (DEC-040).
+
 Duplicate alerts (same `source` + `external_id`, incident not yet terminal)
 are deduplicated: the route answers 200 with `was_duplicate: true` instead of
 opening a twin.
@@ -60,19 +65,26 @@ not an HTTP error).
 
 ## 4. Report & visibility
 
+- **Admin-ui Incidents pane** (DEC-040) — the owner review board: a
+  status-filtered list, a detail drawer (incident + RCAs + repairs), and the
+  operator actions (Analyze, Approve repair, Dismiss, View report) plus a
+  manual "New incident" form. Diagram:
+  `docs/architecture/diagrams/incident-pane-flow.md`.
 - `GET /v1/incidents` (filter by `?status=`), `GET /v1/incidents/{id}`
   (incident + RCAs + repairs).
 - `GET /v1/incidents/{id}/report` → `text/markdown` RCA report (summary,
   impact, root cause, timeline, action items, repairs).
 - Audit chain actions: `incident.open`, `incident.analyzed`,
-  `incident.analysis_failed`, `incident.repaired`, `incident.repair_failed`.
+  `incident.analysis_failed`, `incident.repaired`, `incident.repair_failed`,
+  `incident.dismissed`.
 
 ## 5. Status machine
 
 `open → analyzing → awaiting_approval → repairing → resolved | failed`;
 analysis failure returns to `open`; any non-terminal incident can be
-`dismissed`. Terminal incidents free the dedup slot (a recurring alert opens
-a fresh incident).
+`dismissed` (`POST /v1/incidents/{id}/dismiss` — the pane's Dismiss action).
+Terminal incidents free the dedup slot (a recurring alert opens a fresh
+incident).
 
 ## 6. Boundaries (v1)
 
@@ -80,4 +92,5 @@ a fresh incident).
   auto path for low-severity incidents is a possible follow-up).
 - Watch/anomaly subsystems aren't auto-wired yet — anything that can POST
   JSON can feed `ingest/manual`.
-- No admin-ui pane yet; REST + `curl`/CLI first.
+- The admin-ui **Incidents pane** (DEC-040) is the owner surface; REST +
+  `curl`/CLI remain for automation and external (Sentry/Datadog) ingest.
