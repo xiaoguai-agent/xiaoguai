@@ -364,6 +364,87 @@ pub async fn get_incident(State(state): State<AppState>, Path(id): Path<Uuid>) -
     }
 }
 
+// ─── Owner-authed writes (admin pane) ───────────────────────────────────────────
+
+/// `POST /v1/incidents` — owner-authed manual incident creation. The admin
+/// pane files incidents through this instead of the token-gated
+/// `ingest/manual` webhook: the route already sits behind owner-auth, so no
+/// webhook token is needed. It reuses the exact `normalize_manual` contract
+/// (`title` required, the rest defaulted) and the same dedup-upsert + audit
+/// as `ingest_incident`, so a manual create and a manual webhook produce
+/// identical rows.
+pub async fn create_incident(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let Some(store) = state.incidents.clone() else {
+        return incidents_unavailable();
+    };
+    // `normalize_manual` stamps `source = "manual"` itself and only ever
+    // returns `Malformed` (never `Ignored`) — surface it as a 400.
+    let incident = match normalize_manual(body.clone()) {
+        Ok(incident) => incident,
+        Err(e) => return err_response(StatusCode::BAD_REQUEST, e.to_string()),
+    };
+    match store.ingest(&incident, body).await {
+        Ok(outcome) => {
+            let status = if outcome.was_duplicate {
+                StatusCode::OK
+            } else {
+                audit(
+                    &state,
+                    "incident.open",
+                    format!("incident:{}", outcome.record.id),
+                    json!({
+                        "source": outcome.record.source,
+                        "external_id": outcome.record.external_id,
+                        "title": outcome.record.title,
+                        "severity": outcome.record.severity,
+                    }),
+                )
+                .await;
+                StatusCode::CREATED
+            };
+            (
+                status,
+                Json(json!({
+                    "incident": outcome.record,
+                    "was_duplicate": outcome.was_duplicate,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => map_err(e),
+    }
+}
+
+/// `POST /v1/incidents/{id}/dismiss` — owner-authed soft close (admin pane
+/// "Dismiss"): the operator looked at the incident and chose not to act.
+/// Moves any non-terminal incident to `dismissed`; the store rejects an
+/// already-terminal incident as an illegal transition → 409, and a missing
+/// incident → 404.
+pub async fn dismiss_incident(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response {
+    let Some(store) = state.incidents.clone() else {
+        return incidents_unavailable();
+    };
+    match store.set_status(id, IncidentStatus::Dismissed).await {
+        Ok(record) => {
+            audit(
+                &state,
+                "incident.dismissed",
+                format!("incident:{id}"),
+                json!({
+                    "source": record.source,
+                    "external_id": record.external_id,
+                }),
+            )
+            .await;
+            (StatusCode::OK, Json(record)).into_response()
+        }
+        Err(e) => map_err(e),
+    }
+}
+
 // ─── Pipeline (T6.3/T6.4) ─────────────────────────────────────────────────────
 
 /// Build the pipeline from existing `AppState` fields. `None` only when the

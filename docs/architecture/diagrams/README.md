@@ -1,7 +1,7 @@
-# Architecture Diagrams — Wave 3
+# Architecture Diagrams
 
-Mermaid diagrams covering the subsystems introduced in wave 3
-(v1.2.x / v1.3.x-prep). Each file contains a short prose context,
+Mermaid diagrams covering key subsystems (wave 3 onward). Each file
+contains a short prose context,
 the Mermaid code block, and a Related section pointing to the
 relevant ADR and source crate.
 
@@ -12,6 +12,7 @@ relevant ADR and source crate.
 | [pack-install-lifecycle.md](pack-install-lifecycle.md) | State | Skill pack states from catalog through install → DB row → (v1.3) loader activation → live → uninstall → archived; v1.2 no-op caveat annotated |
 | [rate-limit-decision-path.md](rate-limit-decision-path.md) | Flowchart | Request → auth → rate-class lookup → in-mem / Valkey backend → allow / 429; relationship to HotL layer |
 | [wave3-system-overview.md](wave3-system-overview.md) | C4 Component | All wave-3 subsystems and their connections to core runtime, scheduler, audit, IM adapters, RAG, and cloud LLMs |
+| [incident-pane-flow.md](incident-pane-flow.md) | Flow + State + Sequence | Incident self-healing **admin pane**: owner-authed create/analyze/approve/dismiss/report vs token-gated ingest; lifecycle status machine; create→analyze→approve sequence (DEC-040) |
 
 ## Rendering
 
