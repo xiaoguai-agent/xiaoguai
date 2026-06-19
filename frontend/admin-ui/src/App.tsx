@@ -16,6 +16,7 @@ import { AnomalyPane } from './panes/Anomaly';
 import { MemoryPane } from './panes/Memory';
 import { PersonasPane } from './panes/Personas';
 import { ExpertTeamsPane } from './panes/ExpertTeams';
+import { IncidentsPane } from './panes/Incidents';
 import { SkillProposalsPane } from './panes/SkillProposals';
 
 /**
@@ -88,6 +89,10 @@ export function App() {
         <NavLink to="/expert-teams" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.expert_teams')}
         </NavLink>
+        {/* DEC-040: Incidents — self-healing review board (T6 backend). */}
+        <NavLink to="/incidents" className={({ isActive }) => (isActive ? 'active' : '')}>
+          {t('nav.incidents')}
+        </NavLink>
         {/* v1.8.0 (sprint-10b S10b-3): Skill Proposals — review agent-authored skills. */}
         <NavLink
           to="/skill-proposals"
@@ -115,6 +120,7 @@ export function App() {
           <Route path="/memory" element={<MemoryPane />} />
           <Route path="/personas" element={<PersonasPane />} />
           <Route path="/expert-teams" element={<ExpertTeamsPane />} />
+          <Route path="/incidents" element={<IncidentsPane />} />
           <Route path="/skill-proposals" element={<SkillProposalsPane />} />
         </Routes>
       </main>
