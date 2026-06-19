@@ -1014,6 +1014,103 @@ export interface SessionTeam {
   attached_at: string;
 }
 
+// ---- T6 self-healing incidents (admin pane, DEC-040) ---------------------
+
+/** Incident lifecycle states. Mirrors `IncidentStatus` (incident_store). */
+export type IncidentStatus =
+  | 'open'
+  | 'analyzing'
+  | 'awaiting_approval'
+  | 'repairing'
+  | 'resolved'
+  | 'failed'
+  | 'dismissed';
+
+/** Normalized severity. Mirrors `Severity` (incidents.rs). */
+export type IncidentSeverity = 'critical' | 'high' | 'medium' | 'low';
+
+/** One persisted incident. Mirrors `IncidentRecord` (incident_store/mod.rs). */
+export interface IncidentRecord {
+  id: string;
+  source: string;
+  external_id: string;
+  title: string;
+  severity: IncidentSeverity;
+  project: string;
+  environment: string | null;
+  occurred_at: string;
+  /** Full raw payload preserved for agent context. */
+  raw_payload: unknown;
+  status: IncidentStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One Analyst RCA pass. Mirrors `RcaRecord`. */
+export interface RcaRecord {
+  id: string;
+  incident_id: string;
+  session_id: string;
+  summary: string;
+  root_cause: string;
+  confidence: number;
+  /** JSON array of action items (the `RcaDraft` contract). */
+  action_items: unknown;
+  raw_markdown: string;
+  created_at: string;
+}
+
+/** One Executor repair attempt. Mirrors `RepairRecord`. */
+export interface RepairRecord {
+  id: string;
+  incident_id: string;
+  rca_id: string;
+  session_id: string;
+  ok: boolean;
+  summary: string;
+  created_at: string;
+}
+
+/** Incident joined with its RCA + repair history (each newest first). */
+export interface IncidentDetails {
+  incident: IncidentRecord;
+  rcas: RcaRecord[];
+  repairs: RepairRecord[];
+}
+
+/**
+ * Owner-authed manual create body (`POST /v1/incidents`). Only `title` is
+ * required; the server defaults the rest (`normalize_manual`). This is NOT
+ * the token-gated `ingest/{source}` webhook.
+ */
+export interface CreateIncidentRequest {
+  title: string;
+  severity?: IncidentSeverity;
+  project?: string;
+  environment?: string;
+  url?: string;
+  occurred_at?: string;
+  raw?: unknown;
+}
+
+/** `POST /v1/incidents` response (mirrors the ingest envelope). */
+export interface CreateIncidentResponse {
+  incident: IncidentRecord;
+  was_duplicate: boolean;
+}
+
+/** `POST /v1/incidents/{id}/analyze` response. */
+export interface AnalyzeIncidentResponse {
+  rca: RcaRecord;
+  status: IncidentStatus;
+}
+
+/** `POST /v1/incidents/{id}/approve-repair` response. */
+export interface ApproveRepairResponse {
+  repair: RepairRecord;
+  status: IncidentStatus;
+}
+
 /** One ranked entry from `POST /v1/experts/suggest`. */
 export interface ExpertSuggestion {
   kind: 'persona' | 'team';
@@ -2366,6 +2463,71 @@ export class XiaoguaiClient {
     return this.request<SuggestExpertsResponse>('POST', '/v1/experts/suggest', {
       goal,
     });
+  }
+
+  // ---- T6 self-healing incidents (admin pane, DEC-040) -------------------
+
+  /** All incidents, newest first; optional status filter. */
+  listIncidents(status?: IncidentStatus): Promise<IncidentRecord[]> {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+    return this.request<IncidentRecord[]>('GET', `/v1/incidents${qs}`);
+  }
+
+  /** One incident joined with its RCA + repair history. */
+  getIncident(id: string): Promise<IncidentDetails> {
+    return this.request<IncidentDetails>(
+      'GET',
+      `/v1/incidents/${encodeURIComponent(id)}`,
+    );
+  }
+
+  /**
+   * Owner-authed manual incident create (NOT the token-gated ingest
+   * webhook). Only `title` is required; the server defaults the rest.
+   */
+  createIncident(req: CreateIncidentRequest): Promise<CreateIncidentResponse> {
+    return this.request<CreateIncidentResponse>('POST', '/v1/incidents', req);
+  }
+
+  /** Run the Analyst consult turn → RCA. 409 unless the incident is `open`. */
+  analyzeIncident(id: string): Promise<AnalyzeIncidentResponse> {
+    return this.request<AnalyzeIncidentResponse>(
+      'POST',
+      `/v1/incidents/${encodeURIComponent(id)}/analyze`,
+    );
+  }
+
+  /**
+   * Approve the repair for an `awaiting_approval` incident. `rcaId` names
+   * the RCA the owner reviewed (#284); a stale id is rejected with 409.
+   */
+  approveRepair(id: string, rcaId: string): Promise<ApproveRepairResponse> {
+    return this.request<ApproveRepairResponse>(
+      'POST',
+      `/v1/incidents/${encodeURIComponent(id)}/approve-repair`,
+      { rca_id: rcaId },
+    );
+  }
+
+  /** Soft-close: any non-terminal incident → `dismissed`. 409 if terminal. */
+  dismissIncident(id: string): Promise<IncidentRecord> {
+    return this.request<IncidentRecord>(
+      'POST',
+      `/v1/incidents/${encodeURIComponent(id)}/dismiss`,
+    );
+  }
+
+  /** The composed markdown incident report (text/markdown, not JSON). */
+  async incidentReport(id: string): Promise<string> {
+    const resp = await this.fetchImpl(
+      `${this.baseUrl}/v1/incidents/${encodeURIComponent(id)}/report`,
+      { method: 'GET', headers: this.headers() },
+    );
+    if (!resp.ok) {
+      if (resp.status === 401) this.onUnauthorized?.();
+      throw await this.parseErrorResponse(resp);
+    }
+    return await resp.text();
   }
 
   /**
