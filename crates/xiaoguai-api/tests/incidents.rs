@@ -285,6 +285,132 @@ async fn manual_ingest_round_trip() {
     assert_eq!(body["incident"]["external_id"], "manual:disk-full-1");
 }
 
+// ── Owner-authed admin-pane writes (Phase 0: create + dismiss) ───────────────
+//
+// These hit the owner-auth `/v1` surface with NO webhook token. `auth: None`
+// in the fixture disables owner auth (SEC-11), so the routes are reachable —
+// the point under test is the handlers, not the auth layer (covered elsewhere).
+
+#[tokio::test]
+async fn owner_create_manual_incident_title_only() {
+    let fx = Fixture::new();
+    let app = router(fx.state());
+
+    let (status, body) = send(
+        app,
+        "POST",
+        "/v1/incidents",
+        None,
+        Some(json!({"title": "Disk full on backup host"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {body}");
+    assert_eq!(body["was_duplicate"], false);
+    let incident = &body["incident"];
+    assert_eq!(incident["source"], "manual");
+    assert_eq!(incident["title"], "Disk full on backup host");
+    assert_eq!(incident["severity"], "medium");
+    assert_eq!(incident["status"], "open");
+    assert!(incident["external_id"]
+        .as_str()
+        .unwrap()
+        .starts_with("manual:"));
+
+    // The open is audited exactly like a webhook ingest.
+    let entries = fx.audit.snapshot();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].action, "incident.open");
+}
+
+#[tokio::test]
+async fn owner_create_rejects_missing_title() {
+    let fx = Fixture::new();
+    let app = router(fx.state());
+    let (status, _body) = send(app, "POST", "/v1/incidents", None, Some(json!({}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(fx.incidents.list(None).await.unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn owner_create_then_list_shows_it() {
+    let fx = Fixture::new();
+    let app = router(fx.state());
+    let (status, created) = send(
+        app.clone(),
+        "POST",
+        "/v1/incidents",
+        None,
+        Some(json!({"title": "noisy neighbor"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {created}");
+
+    let (status, list) = send(app, "GET", "/v1/incidents", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let arr = list.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["id"], created["incident"]["id"]);
+}
+
+#[tokio::test]
+async fn dismiss_open_incident_moves_it_to_dismissed_and_audits() {
+    let fx = Fixture::new();
+    let app = router(fx.state());
+
+    let (_, created) = send(
+        app.clone(),
+        "POST",
+        "/v1/incidents",
+        None,
+        Some(json!({"title": "won't fix"})),
+    )
+    .await;
+    let id = created["incident"]["id"].as_str().unwrap();
+
+    let (status, body) = send(
+        app,
+        "POST",
+        &format!("/v1/incidents/{id}/dismiss"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    assert_eq!(body["status"], "dismissed");
+    assert_eq!(body["id"], id);
+
+    // create audited `incident.open`; dismiss audited `incident.dismissed`.
+    let entries = fx.audit.snapshot();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].action, "incident.open");
+    assert_eq!(entries[1].action, "incident.dismissed");
+}
+
+#[tokio::test]
+async fn dismiss_already_terminal_incident_returns_409() {
+    // `dismissed` is terminal; dismissing it a second time is an illegal
+    // transition (the store guards the status machine).
+    let fx = Fixture::new();
+    let app = router(fx.state());
+
+    let (_, created) = send(
+        app.clone(),
+        "POST",
+        "/v1/incidents",
+        None,
+        Some(json!({"title": "double dismiss"})),
+    )
+    .await;
+    let id = created["incident"]["id"].as_str().unwrap();
+    let uri = format!("/v1/incidents/{id}/dismiss");
+
+    let (first, _) = send(app.clone(), "POST", &uri, None, None).await;
+    assert_eq!(first, StatusCode::OK);
+
+    let (second, _) = send(app, "POST", &uri, None, None).await;
+    assert_eq!(second, StatusCode::CONFLICT);
+}
+
 #[tokio::test]
 async fn manual_ingest_accepts_minimal_title_only_body() {
     // handoff §3.2: humans hand-type manual bodies — `title` alone must be

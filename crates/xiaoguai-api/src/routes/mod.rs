@@ -239,10 +239,15 @@ pub fn router(state: AppState) -> Router {
                 .put(teams::attach_team)
                 .delete(teams::detach_team),
         )
-        // T6 self-healing (GLUE-1) — incident visibility for UI/CLI. The
-        // token-gated ingest POST lives in `public_v1` below, outside the
-        // owner-auth layer.
-        .route("/v1/incidents", get(incidents::list_incidents))
+        // T6 self-healing (GLUE-1) — incident visibility + owner-authed
+        // writes for the admin pane. The token-gated ingest POST
+        // (`/v1/incidents/ingest/{source}`) lives in `public_v1` below,
+        // outside the owner-auth layer; `POST /v1/incidents` here is the
+        // owner-authed manual-create path the UI uses instead.
+        .route(
+            "/v1/incidents",
+            get(incidents::list_incidents).post(incidents::create_incident),
+        )
         .route("/v1/incidents/{id}", get(incidents::get_incident))
         // T6.3/T6.4 — Analyst (consult) / approval-gated Executor (execute)
         // turns + composed markdown report. Owner-auth like the GETs above.
@@ -253,6 +258,12 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/incidents/{id}/approve-repair",
             post(incidents::approve_repair),
+        )
+        // Owner-authed soft close (admin pane "Dismiss"): any non-terminal
+        // incident → `dismissed`.
+        .route(
+            "/v1/incidents/{id}/dismiss",
+            post(incidents::dismiss_incident),
         )
         .route(
             "/v1/incidents/{id}/report",
