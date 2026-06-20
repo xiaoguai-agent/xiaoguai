@@ -16,6 +16,7 @@ import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MemoryImportReport, XiaoguaiClient } from '@xiaoguai/shared';
 import { client as defaultClient } from '../client';
+import { ErrorBanner } from '../components/ErrorBanner';
 
 export const EXPORT_FILENAME = 'memories.jsonl';
 
@@ -145,7 +146,7 @@ export function MemoryImportExport({
         />
       </div>
 
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
 
       {imp.kind === 'preview' && (
         <div
