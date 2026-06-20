@@ -1,10 +1,9 @@
 name: Pip wheel
 
-# Fires on the same `v*` tag pattern as release.yml so wheel builds
-# land alongside the container image + SBOM. Sibling worktrees C7
-# (tarball) and C9 (CI security) also hook into v* tags via their
-# own dedicated workflow files — keep changes scoped to this file
-# only to avoid cross-worktree merge conflicts.
+# Fires on the same `v*` tag pattern as the sibling release workflows
+# (release-tarball.yml, release-packages.yml) so the PyPI wheels publish
+# alongside the GitHub Release assets. Each pipeline lives in its own
+# workflow file so a failure in one doesn't gate the others.
 
 on:
   push:
