@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod audit;
+pub mod audit_util;
 pub mod auth;
 pub mod consult;
 pub mod convert;

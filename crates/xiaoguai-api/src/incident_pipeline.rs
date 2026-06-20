@@ -613,19 +613,7 @@ impl IncidentPipeline {
     /// Best-effort audit append — same posture as the T6.2 route helper:
     /// failures are logged, never propagated.
     async fn audit(&self, action: &str, resource: String, details: serde_json::Value) {
-        if let Some(sink) = &self.team_audit {
-            let entry = xiaoguai_audit::AuditEntry {
-                ts: Utc::now(),
-                tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
-                actor: "owner".to_string(),
-                action: action.to_string(),
-                resource: Some(resource),
-                details,
-            };
-            if let Err(e) = sink.append(entry).await {
-                tracing::warn!(error = %e, action, "incident pipeline: audit append failed");
-            }
-        }
+        crate::audit_util::audit_event(&self.team_audit, action, resource, details).await;
     }
 }
 
