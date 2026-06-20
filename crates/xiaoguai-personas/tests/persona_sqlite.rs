@@ -10,7 +10,8 @@
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 use xiaoguai_personas::{
-    model::CreatePersonaRequest, PersonaError, PersonaRepository, SqlitePersonaRepository,
+    model::{CreatePersonaRequest, UpdatePersonaRequest},
+    PersonaError, PersonaRepository, SqlitePersonaRepository,
 };
 use xiaoguai_storage::db;
 
@@ -60,4 +61,43 @@ async fn sqlite_archived_persona_name_is_reusable() {
     // …but only ONE active persona may hold it at a time.
     let dup_again = repo.create(&req).await.unwrap_err();
     assert!(matches!(dup_again, PersonaError::DuplicateName(_)));
+}
+
+/// The active-only uniqueness rule also governs the `update` rename path:
+/// renaming onto another ACTIVE persona's name collides, but renaming onto an
+/// ARCHIVED name is allowed (the partial unique index ignores archived rows).
+#[tokio::test]
+async fn sqlite_update_rename_respects_active_only_uniqueness() {
+    let (pool, _guard) = test_setup().await;
+    let repo = SqlitePersonaRepository::new(pool.clone());
+
+    let keeper = repo.create(&persona_req("Keeper")).await.unwrap();
+    let mover = repo.create(&persona_req("Mover")).await.unwrap();
+
+    // Renaming onto another ACTIVE persona's name collides via the partial index.
+    let clash = repo
+        .update(
+            mover.id,
+            &UpdatePersonaRequest {
+                name: Some("Keeper".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(clash, PersonaError::DuplicateName(_)));
+
+    // Archiving the keeper frees its name; the rename now succeeds.
+    repo.archive_persona(keeper.id).await.unwrap();
+    let renamed = repo
+        .update(
+            mover.id,
+            &UpdatePersonaRequest {
+                name: Some("Keeper".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("rename onto an archived name must succeed (migration 0039)");
+    assert_eq!(renamed.name, "Keeper");
 }
