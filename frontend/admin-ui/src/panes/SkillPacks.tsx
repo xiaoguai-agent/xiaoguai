@@ -179,7 +179,7 @@ function CatalogInstall({
       )}
 
       {catalog.kind === 'error' && (
-        <div className="error">
+        <div className="error" role="alert">
           {t('pane.skill_packs.catalog_failed', { message: catalog.message })}
         </div>
       )}
@@ -435,7 +435,7 @@ export function SkillPacksPane(): JSX.Element {
         )}
 
         {loadState.kind === 'error' && (
-          <div className="error">
+          <div className="error" role="alert">
             {t('pane.skill_packs.installed_failed', { message: loadState.message })}
           </div>
         )}

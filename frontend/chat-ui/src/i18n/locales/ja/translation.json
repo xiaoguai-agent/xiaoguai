@@ -26,7 +26,9 @@
     "sse": {
       "reconnecting": "再接続中（{{attempt}} 回目、{{secs}} 秒後に再試行）…",
       "cancel_reconnect": "キャンセル",
-      "gave_up": "接続が失われました — {{attempts}} 回の試行後に中止しました"
+      "gave_up": "接続が失われました — {{attempts}} 回の試行後に中止しました",
+      "load_failed": "読み込みに失敗しました：{{message}}",
+      "stream_error": "ストリームエラー：{{message}}"
     },
     "hotl": {
       "title": "人間の承認が必要です",

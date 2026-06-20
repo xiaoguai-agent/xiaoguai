@@ -10,6 +10,7 @@ import type {
 } from '@xiaoguai/shared';
 import { client } from '../client';
 import { PaneIntro } from '../components/PaneIntro';
+import { ErrorBanner } from '../components/ErrorBanner';
 
 /** Selectable provider kinds (local-URL kinds first). */
 const KINDS: ProviderKind[] = [
@@ -222,7 +223,7 @@ export function ProvidersPane() {
         usage={t('pane.providers.intro.usage')}
         usageLabel={t('pane.providers.intro.usage_label')}
       />
-      {error && <div className="error">{error}</div>}
+      <ErrorBanner message={error} />
 
       {/* Shared endpoint suggestions for both the add and edit forms. */}
       <datalist id={ENDPOINT_LIST_ID}>

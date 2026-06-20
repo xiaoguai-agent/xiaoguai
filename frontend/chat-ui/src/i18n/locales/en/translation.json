@@ -26,7 +26,9 @@
     "sse": {
       "reconnecting": "Reconnecting (attempt {{attempt}}, retrying in {{secs}}s)…",
       "cancel_reconnect": "Cancel",
-      "gave_up": "Connection lost — gave up after {{attempts}} attempts"
+      "gave_up": "Connection lost — gave up after {{attempts}} attempts",
+      "load_failed": "Load failed: {{message}}",
+      "stream_error": "Stream error: {{message}}"
     },
     "hotl": {
       "title": "Human approval required",

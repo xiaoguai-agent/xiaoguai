@@ -10,6 +10,7 @@
   "common": {
     "loading": "Loading…",
     "refresh": "Refresh",
+    "retry": "Retry",
     "failed": "Failed: {{message}}",
     "noData": "No data.",
     "all_tenants": "(all tenants)",

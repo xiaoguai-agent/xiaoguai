@@ -10,6 +10,7 @@
   "common": {
     "loading": "加载中…",
     "refresh": "刷新",
+    "retry": "重试",
     "failed": "失败：{{message}}",
     "noData": "暂无数据。",
     "all_tenants": "（全部租户）",

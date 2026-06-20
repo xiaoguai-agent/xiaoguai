@@ -1,28 +1,17 @@
-import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { McpServerResponse } from '@xiaoguai/shared';
 import { client } from '../client';
 import { PaneIntro } from '../components/PaneIntro';
+import { ErrorBanner } from '../components/ErrorBanner';
+import { useAsyncState } from '../hooks/useAsyncState';
 
 export function McpServersPane() {
   const { t } = useTranslation();
-  const [rows, setRows] = useState<McpServerResponse[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const data = await client.listMcpServers();
-        if (!cancelled) setRows(data);
-      } catch (err) {
-        if (!cancelled) setError((err as Error).message);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // DEC-041 (frontend half): shared async-state + error banner replace the
+  // bespoke `useState<T | null>` + `useState<error>` + `useEffect` boilerplate.
+  const { data: rows, error, loading, reload } = useAsyncState(
+    () => client.listMcpServers(),
+    [],
+  );
 
   return (
     <>
@@ -32,12 +21,10 @@ export function McpServersPane() {
         usage={t('pane.mcp_servers.intro.usage')}
         usageLabel={t('pane.mcp_servers.intro.usage_label')}
       />
-      {error && <div className="error">{error}</div>}
-      {!rows ? (
+      <ErrorBanner message={error} onRetry={reload} />
+      {loading && !rows ? (
         <div className="empty">{t('pane.mcp_servers.empty_loading')}</div>
-      ) : rows.length === 0 ? (
-        <div className="empty">{t('pane.mcp_servers.empty_none')}</div>
-      ) : (
+      ) : rows && rows.length > 0 ? (
         <table>
           <thead>
             <tr>
@@ -68,7 +55,9 @@ export function McpServersPane() {
             ))}
           </tbody>
         </table>
-      )}
+      ) : !error ? (
+        <div className="empty">{t('pane.mcp_servers.empty_none')}</div>
+      ) : null}
     </>
   );
 }

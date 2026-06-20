@@ -35,6 +35,7 @@ import type {
   SessionResponse,
 } from '@xiaoguai/shared';
 import { client } from '../client';
+import { ErrorBanner } from '../components/ErrorBanner';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -335,7 +336,7 @@ function ListView({ onDrillIn }: ListViewProps): JSX.Element {
         </button>
       </div>
 
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
 
       {!loading && filtered.length === 0 && !error && (
         <div className="empty">{t('pane.outcomes.empty_no_records')}</div>
@@ -513,7 +514,7 @@ function SessionView({ initialSessionId }: SessionViewProps): JSX.Element {
       </div>
 
       {loading && <div className="empty">{t('common.loading')}</div>}
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
 
       {chain && (
         <section aria-label={t('pane.outcomes.chain_label')} role="tree" style={{ marginTop: '1rem' }}>
@@ -608,7 +609,7 @@ function SummaryView(): JSX.Element {
         </button>
       </div>
 
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
 
       {summaryEntries.length > 0 && (
         <div className="outcomes-cards" aria-label={t('pane.outcomes.summary_cards_label')}>

@@ -483,10 +483,12 @@ export interface InstalledSkillPackResponse {
 
 /** Body for `POST /v1/skills/install`. */
 export interface InstallSkillPackRequest {
-  /** The pack identifier (e.g. "community/web-monitor@1.0.0"). */
+  /** The pack identifier (catalog slug). */
   pack_id: string;
   /** Optional display name override. */
   name?: string;
+  /** Operator-supplied knob overrides (validated best-effort server-side). */
+  config?: Record<string, unknown>;
 }
 
 export interface InstallSkillPackResponse {
@@ -497,10 +499,29 @@ export interface InstallSkillPackResponse {
 }
 
 /**
+ * Feature-flag / env-var prerequisites for a catalog pack. Mirrors
+ * `xiaoguai_api::skills::PackRequires`.
+ */
+export interface SkillPackRequires {
+  feature_flags: string[];
+  env_keys: string[];
+}
+
+/**
+ * One operator-tuneable knob from the catalog (JSON-schema-lite). Mirrors the
+ * serde-tagged `xiaoguai_api::skills::KnobSchema` union (`type` discriminant).
+ */
+export type SkillKnobSchema =
+  | { type: 'integer'; default: number; description: string }
+  | { type: 'number'; default: number; description: string }
+  | { type: 'boolean'; default: boolean; description: string }
+  | { type: 'string'; enum?: string[]; default: string; description: string };
+
+/**
  * One entry in the skill-pack catalog as returned by `GET /v1/skills/catalog`.
- * Mirrors `xiaoguai_api::skills::SkillPackEntry`. `knobs` / `requires` are
- * carried verbatim for the chat-ui Skills pane; admin-ui only needs the
- * identity + grouping fields to offer a pick-from-catalog install.
+ * Mirrors `xiaoguai_api::skills::SkillPackEntry`. `requires` / `knobs` /
+ * `screenshot_url` are carried verbatim for the chat-ui Skills pane; admin-ui
+ * only needs the identity + grouping fields.
  */
 export interface SkillCatalogEntry {
   slug: string;
@@ -508,6 +529,9 @@ export interface SkillCatalogEntry {
   description: string;
   version: string;
   category: string;
+  requires?: SkillPackRequires;
+  knobs?: Record<string, SkillKnobSchema>;
+  screenshot_url?: string | null;
 }
 
 /** Response shape for `GET /v1/skills/catalog`. */
@@ -1848,6 +1872,14 @@ export class XiaoguaiClient {
    */
   installSkillPack(req: InstallSkillPackRequest): Promise<InstallSkillPackResponse> {
     return this.request<InstallSkillPackResponse>('POST', '/v1/skills/install', req);
+  }
+
+  /** Uninstall (soft-delete) a recorded pack via `DELETE /v1/skills/install/:id`. */
+  uninstallSkillPack(id: string): Promise<void> {
+    return this.request<{ deleted: string }>(
+      'DELETE',
+      `/v1/skills/install/${encodeURIComponent(id)}`,
+    ).then(() => undefined);
   }
 
   // ---- v1.2.4 Outcomes --------------------------------------------------

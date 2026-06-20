@@ -24,6 +24,7 @@ import type {
   WebhookToken,
 } from '@xiaoguai/shared';
 import { client } from '../client';
+import { ErrorBanner } from '../components/ErrorBanner';
 
 type Tab = 'jobs' | 'create';
 
@@ -112,7 +113,7 @@ function JobsTab(): JSX.Element {
         </button>
         {fireMsg && <span className="muted">{fireMsg}</span>}
       </div>
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
       {jobs === null ? (
         <div className="empty">{t('pane.scheduler.jobs_empty_loading')}</div>
       ) : jobs.length === 0 ? (
@@ -258,7 +259,7 @@ function TokensSection(): JSX.Element {
           </button>
         </div>
       )}
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
       {tokens === null ? (
         <div className="empty">{t('pane.scheduler.tokens_empty_loading')}</div>
       ) : tokens.length === 0 ? (
@@ -385,7 +386,7 @@ function CreateTab(): JSX.Element {
         </button>
         {saveMsg && <span className="muted">{saveMsg}</span>}
       </div>
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
       {preview && (
         <div className="scheduler-preview">
           <p className="muted">{preview.rationale}</p>
