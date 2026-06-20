@@ -26,7 +26,6 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use chrono::Utc;
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -89,19 +88,7 @@ async fn validate_members_active(
 /// Append a `team.*` audit entry. Failures are logged and discarded — the
 /// operation is already persisted and must not be rolled back over telemetry.
 async fn audit(state: &AppState, action: &str, resource: String, details: serde_json::Value) {
-    if let Some(sink) = &state.team_audit {
-        let entry = xiaoguai_audit::AuditEntry {
-            ts: Utc::now(),
-            tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
-            actor: "owner".to_string(),
-            action: action.to_string(),
-            resource: Some(resource),
-            details,
-        };
-        if let Err(e) = sink.append(entry).await {
-            tracing::warn!(error = %e, action, "teams: audit append failed (non-blocking)");
-        }
-    }
+    crate::audit_util::audit_event(&state.team_audit, action, resource, details).await;
 }
 
 // ─── Query / body types ───────────────────────────────────────────────────────
