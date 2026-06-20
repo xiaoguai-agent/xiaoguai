@@ -44,6 +44,7 @@ use xiaoguai_memory::{
     MemoryKind,
 };
 
+use crate::error::ApiError;
 use crate::state::AppState;
 
 /// Explicit body limit for `POST /v1/memories/import` (#288): 8 MiB
@@ -56,38 +57,26 @@ pub const IMPORT_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 
 // ─── Shared error helper ─────────────────────────────────────────────────────
 
-fn memory_unavailable() -> impl IntoResponse {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(serde_json::json!({"error": "memory_store not configured"})),
-    )
+// DEC-041: memory handlers map store errors onto the single canonical
+// crate::error::ApiError ({code,message} envelope) — no per-module envelope.
+fn memory_unavailable() -> ApiError {
+    ApiError::ServiceUnavailable("memory_store not configured".into())
 }
 
-fn not_found(id: Uuid) -> impl IntoResponse {
-    (
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": format!("memory not found: {id}")})),
-    )
+fn not_found(id: Uuid) -> ApiError {
+    ApiError::NotFoundMsg(format!("memory not found: {id}"))
 }
 
 /// #288: validation failures from the memory store (`InvalidArgument`,
-/// e.g. the content byte cap) are user errors — surface the message as a
-/// 400 in the `{error}` envelope instead of a generic 500.
-fn bad_request(msg: impl std::fmt::Display) -> impl IntoResponse {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({"error": msg.to_string()})),
-    )
+/// e.g. the content byte cap) are user errors → 400, not a generic 500.
+fn bad_request(msg: impl std::fmt::Display) -> ApiError {
+    ApiError::BadRequest(msg.to_string())
 }
 
-fn internal(msg: impl std::fmt::Display) -> impl IntoResponse {
-    // SEC-07: log detail server-side, return a generic 5xx so backend internals
-    // don't leak to the client (mirrors the centralised `ApiError` mapping).
-    tracing::error!(error = %msg, "memory endpoint internal error");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({"error": "internal error"})),
-    )
+fn internal(msg: impl std::fmt::Display) -> ApiError {
+    // SEC-07: ApiError::Internal logs the detail server-side and returns a
+    // generic 5xx body, so backend internals never reach the client.
+    ApiError::Internal(anyhow::anyhow!("memory endpoint: {msg}"))
 }
 
 // ─── Query params ─────────────────────────────────────────────────────────────
@@ -183,11 +172,7 @@ pub async fn list_memories(
         match k.parse::<MemoryKind>() {
             Ok(kind) => Some(kind),
             Err(_) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({"error": format!("unknown kind: {k}")})),
-                )
-                    .into_response();
+                return ApiError::BadRequest(format!("unknown kind: {k}")).into_response();
             }
         }
     } else {
@@ -229,11 +214,7 @@ pub async fn create_memory(
     let kind = match body.kind.parse::<MemoryKind>() {
         Ok(k) => k,
         Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": format!("unknown kind: {}", body.kind)})),
-            )
-                .into_response();
+            return ApiError::BadRequest(format!("unknown kind: {}", body.kind)).into_response();
         }
     };
 
@@ -306,11 +287,7 @@ pub async fn recall_memories(
         match k.parse::<MemoryKind>() {
             Ok(kind) => Some(kind),
             Err(_) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({"error": format!("unknown kind filter: {k}")})),
-                )
-                    .into_response();
+                return ApiError::BadRequest(format!("unknown kind filter: {k}")).into_response();
             }
         }
     } else {
@@ -371,11 +348,7 @@ pub async fn export_memories(
         match k.parse::<MemoryKind>() {
             Ok(kind) => Some(kind),
             Err(_) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({"error": format!("unknown kind: {k}")})),
-                )
-                    .into_response();
+                return ApiError::BadRequest(format!("unknown kind: {k}")).into_response();
             }
         }
     } else {

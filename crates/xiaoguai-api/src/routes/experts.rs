@@ -31,6 +31,7 @@ use uuid::Uuid;
 use xiaoguai_personas::teams::model::Team;
 use xiaoguai_personas::Persona;
 
+use crate::error::ApiError;
 use crate::state::AppState;
 
 // ─── Tokenizer ────────────────────────────────────────────────────────────────
@@ -116,12 +117,9 @@ struct SuggestResponse {
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
+// DEC-041: map to the canonical crate::error::ApiError ({code,message}).
 fn unavailable(what: &str) -> Response {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(serde_json::json!({"error": format!("{what} repository not configured")})),
-    )
-        .into_response()
+    ApiError::ServiceUnavailable(format!("{what} repository not configured")).into_response()
 }
 
 pub async fn suggest_experts(
@@ -134,21 +132,13 @@ pub async fn suggest_experts(
 
     let goal = tokenize(&body.goal);
     if goal.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "goal must not be blank"})),
-        )
-            .into_response();
+        return ApiError::BadRequest("goal must not be blank".into()).into_response();
     }
 
     let personas = match personas_repo.list().await {
         Ok(ps) => ps,
         Err(e) => {
-            tracing::error!(error = %e, "experts: persona list failed");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "internal error"})),
-            )
+            return ApiError::Internal(anyhow::anyhow!("experts: persona list failed: {e}"))
                 .into_response();
         }
     };

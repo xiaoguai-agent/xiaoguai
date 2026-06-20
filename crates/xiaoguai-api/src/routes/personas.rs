@@ -25,48 +25,36 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use uuid::Uuid;
 
 use xiaoguai_personas::{CreatePersonaRequest, PersonaError, UpdatePersonaRequest};
 
+use crate::error::ApiError;
 use crate::state::AppState;
 
 // ─── Shared error helpers ────────────────────────────────────────────────────
 
+// DEC-041: route handlers map repository errors onto the single canonical
+// `crate::error::ApiError` (uniform `{code, message}` envelope) — no per-module
+// error struct or envelope.
 fn personas_unavailable() -> Response {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(serde_json::json!({"error": "personas repository not configured"})),
-    )
-        .into_response()
-}
-
-#[derive(Debug, Serialize)]
-struct ApiError {
-    error: String,
-}
-
-fn err_response(status: StatusCode, msg: impl Into<String>) -> Response {
-    (status, Json(ApiError { error: msg.into() })).into_response()
+    ApiError::ServiceUnavailable("personas repository not configured".into()).into_response()
 }
 
 fn map_err(e: PersonaError) -> Response {
     match e {
-        PersonaError::NotFound => err_response(StatusCode::NOT_FOUND, "not found"),
+        PersonaError::NotFound => ApiError::NotFound,
         PersonaError::DuplicateName(n) => {
-            err_response(StatusCode::CONFLICT, format!("duplicate persona name: {n}"))
+            ApiError::Conflict(format!("duplicate persona name: {n}"))
         }
-        PersonaError::Archived => err_response(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "persona is archived and cannot be attached",
-        ),
-        PersonaError::InvalidArgument(msg) => err_response(StatusCode::BAD_REQUEST, msg),
-        other => {
-            tracing::error!(error = %other, "personas: repository error");
-            err_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+        PersonaError::Archived => {
+            ApiError::Unprocessable("persona is archived and cannot be attached".into())
         }
+        PersonaError::InvalidArgument(msg) => ApiError::BadRequest(msg),
+        other => ApiError::Internal(anyhow::anyhow!("persona repository error: {other}")),
     }
+    .into_response()
 }
 
 // ─── Query / body types ───────────────────────────────────────────────────────

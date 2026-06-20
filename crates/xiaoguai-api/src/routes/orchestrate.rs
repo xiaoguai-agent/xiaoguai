@@ -28,7 +28,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -79,20 +78,14 @@ pub struct OrchestrateRequest {
 // ─── Error helpers (teams.rs conventions; 409/503 reuse ApiError so the
 //     wire shape matches send_message exactly) ───────────────────────────────
 
+// DEC-041: helpers map onto the canonical crate::error::ApiError (same
+// {code,message} wire shape as send_message), matching the rest of this file.
 fn unavailable(what: &str) -> Response {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(serde_json::json!({"error": format!("{what} repository not configured")})),
-    )
-        .into_response()
+    ApiError::ServiceUnavailable(format!("{what} repository not configured")).into_response()
 }
 
 fn unprocessable(msg: impl Into<String>) -> Response {
-    (
-        StatusCode::UNPROCESSABLE_ENTITY,
-        Json(serde_json::json!({"error": msg.into()})),
-    )
-        .into_response()
+    ApiError::Unprocessable(msg.into()).into_response()
 }
 
 // ─── Best-effort audit (team_audit sink pattern, teams.rs) ───────────────────
