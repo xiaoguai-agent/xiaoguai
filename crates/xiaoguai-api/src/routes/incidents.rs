@@ -92,19 +92,7 @@ fn map_err(e: IncidentStoreError) -> Response {
 /// sink is the feature-generic HMAC-chained append adapter (entries differ
 /// only by action namespace), so no new audit plumbing is added here.
 async fn audit(state: &AppState, action: &str, resource: String, details: serde_json::Value) {
-    if let Some(sink) = &state.team_audit {
-        let entry = xiaoguai_audit::AuditEntry {
-            ts: Utc::now(),
-            tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
-            actor: "owner".to_string(),
-            action: action.to_string(),
-            resource: Some(resource),
-            details,
-        };
-        if let Err(e) = sink.append(entry).await {
-            tracing::warn!(error = %e, action, "incidents: audit append failed (non-blocking)");
-        }
-    }
+    crate::audit_util::audit_event(&state.team_audit, action, resource, details).await;
 }
 
 // ─── Ingest ───────────────────────────────────────────────────────────────────
