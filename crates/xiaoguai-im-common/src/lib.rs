@@ -1,7 +1,7 @@
 //! Shared primitives for the `xiaoguai-im-*` webhook adapters (Phase D / DEC-041).
 //!
 //! These were copy-pasted across the feishu / dingtalk / discord / slack /
-//! wecom / telegram adapters. They are **security-sensitive** (constant-time
+//! wecom / telegram / mattermost adapters. They are **security-sensitive** (constant-time
 //! signature comparison + SEC-05 replay window), so a single audited
 //! implementation is the whole point: one place to get the timing-safe compare
 //! and the freshness check right, rather than N slightly-different copies.
