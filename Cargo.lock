@@ -8369,6 +8369,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "xiaoguai-im-common",
  "xiaoguai-im-gateway",
  "xiaoguai-types",
 ]
@@ -8443,6 +8444,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "xiaoguai-im-common",
  "xiaoguai-im-gateway",
 ]
 
@@ -8487,6 +8489,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "xiaoguai-im-common",
  "xiaoguai-im-gateway",
  "xiaoguai-types",
 ]
@@ -8513,6 +8516,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "xiaoguai-im-common",
  "xiaoguai-im-gateway",
  "xiaoguai-types",
 ]

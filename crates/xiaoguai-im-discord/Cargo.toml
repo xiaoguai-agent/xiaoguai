@@ -11,6 +11,7 @@ description = "Discord IM adapter — Ed25519 signature verification + Interacti
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-im-gateway = { path = "../xiaoguai-im-gateway" }
+xiaoguai-im-common = { path = "../xiaoguai-im-common" }
 async-trait = { workspace = true }
 ed25519-dalek = { workspace = true }
 hex = { workspace = true }

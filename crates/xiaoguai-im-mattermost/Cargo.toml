@@ -10,6 +10,7 @@ description = "Mattermost IM adapter — outgoing webhook + slash command + REST
 
 [dependencies]
 xiaoguai-im-gateway = { path = "../xiaoguai-im-gateway" }
+xiaoguai-im-common = { path = "../xiaoguai-im-common" }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
