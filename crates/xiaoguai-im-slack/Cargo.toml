@@ -11,6 +11,7 @@ description = "Slack IM adapter — Events API signature verification + parser +
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-im-gateway = { path = "../xiaoguai-im-gateway" }
+xiaoguai-im-common = { path = "../xiaoguai-im-common" }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }

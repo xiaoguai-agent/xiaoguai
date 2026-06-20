@@ -73,16 +73,9 @@ type HmacSha256 = Hmac<Sha256>;
 /// `timestamp` parameter and the current wall clock. Because the DingTalk
 /// signature does not cover the body, this freshness window is the only
 /// replay defence — mirrors Slack's 5-minute guidance.
-pub const TIMESTAMP_TOLERANCE_SECS: i64 = 300;
+pub use xiaoguai_im_common::TIMESTAMP_TOLERANCE_SECS;
 
-/// Current Unix time in seconds. Falls back to 0 when the system clock
-/// reports a pre-epoch time, which pushes every inbound timestamp outside
-/// the replay window (fail-closed).
-fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
-}
+use xiaoguai_im_common::{constant_time_eq, now_unix, timestamp_within_tolerance};
 
 #[derive(Clone)]
 pub struct DingTalkProvider {
@@ -189,7 +182,7 @@ fn verify(webhook: &Webhook, app_secret: &str, now_unix: i64) -> Result<(), Prov
     // is rejected (fail-closed).
     let ts_millis: i64 = timestamp.parse().map_err(|_| ProviderError::BadSignature)?;
     let ts_secs = ts_millis / 1000;
-    if (ts_secs - now_unix).abs() > TIMESTAMP_TOLERANCE_SECS {
+    if !timestamp_within_tolerance(ts_secs, now_unix) {
         return Err(ProviderError::BadSignature);
     }
 
@@ -229,17 +222,6 @@ fn read_sig_pair(webhook: &Webhook) -> Option<(String, String)> {
         }
     }
     Some((ts?, sig?))
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }
 
 #[derive(Deserialize)]

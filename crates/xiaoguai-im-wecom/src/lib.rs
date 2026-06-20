@@ -64,23 +64,16 @@ pub use crypto::{WecomCrypto, WecomCryptoError};
 /// SEC-05/SEC-12: maximum clock skew (seconds) allowed between WeCom's
 /// `timestamp` parameter and the current wall clock — the replay window.
 /// Mirrors the Slack adapter's 5-minute tolerance.
-pub const TIMESTAMP_TOLERANCE_SECS: i64 = 300;
+pub use xiaoguai_im_common::TIMESTAMP_TOLERANCE_SECS;
 
-/// Current Unix time in seconds. Falls back to 0 when the system clock
-/// reports a pre-epoch time, which pushes every inbound timestamp outside
-/// the replay window (fail-closed).
-fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
-}
+use xiaoguai_im_common::{constant_time_eq, now_unix, timestamp_within_tolerance};
 
 /// SEC-05/SEC-12 replay protection shared by the plain-text and encrypted
 /// verification paths. WeCom timestamps are **seconds** since the Unix
 /// epoch; unparsable or stale values are rejected (fail-closed).
 fn check_timestamp_freshness(timestamp: &str, now_unix: i64) -> Result<(), ProviderError> {
     let ts: i64 = timestamp.parse().map_err(|_| ProviderError::BadSignature)?;
-    if (ts - now_unix).abs() > TIMESTAMP_TOLERANCE_SECS {
+    if !timestamp_within_tolerance(ts, now_unix) {
         return Err(ProviderError::BadSignature);
     }
     Ok(())
@@ -296,17 +289,6 @@ fn hex_digit(b: u8) -> Option<u8> {
         b'A'..=b'F' => Some(10 + b - b'A'),
         _ => None,
     }
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }
 
 /// XML envelope WeCom delivers. Only the fields we consume are

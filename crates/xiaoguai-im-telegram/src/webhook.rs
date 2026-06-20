@@ -17,21 +17,10 @@
 //!   - `ImEvent::Message` (callback) — `callback_query` button press
 
 use serde_json::Value as JsonValue;
+use xiaoguai_im_common::constant_time_eq;
 use xiaoguai_im_gateway::{ImEvent, IncomingMessage, ProviderError, Webhook};
 
 use crate::types::{CallbackQuery, Message, Update};
-
-/// Constant-time byte-slice equality. Avoids early-exit timing leak.
-pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
 
 /// Verify the `X-Telegram-Bot-Api-Secret-Token` header against the configured
 /// `secret_token`. Returns `Ok(())` when the token matches.
@@ -372,24 +361,5 @@ mod tests {
     fn send_message_body_markdownv2() {
         let body = send_message_body("1", r"\_escaped\_", Some(ParseMode::MarkdownV2));
         assert_eq!(body["parse_mode"], "MarkdownV2");
-    }
-
-    // ------------------------------------------------------------------
-    // constant_time_eq property
-    // ------------------------------------------------------------------
-
-    #[test]
-    fn constant_time_eq_same() {
-        assert!(constant_time_eq(b"hello", b"hello"));
-    }
-
-    #[test]
-    fn constant_time_eq_diff_content() {
-        assert!(!constant_time_eq(b"hello", b"world"));
-    }
-
-    #[test]
-    fn constant_time_eq_diff_length() {
-        assert!(!constant_time_eq(b"hi", b"hix"));
     }
 }

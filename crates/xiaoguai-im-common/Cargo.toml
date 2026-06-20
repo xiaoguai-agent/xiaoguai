@@ -1,0 +1,15 @@
+[package]
+name = "xiaoguai-im-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Shared IM-adapter primitives — constant-time compare + SEC-05 replay-window timestamp checks."
+
+[dependencies]
+# std-only: these are tiny security primitives with no external surface.
+
+[lints]
+workspace = true

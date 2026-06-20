@@ -21,6 +21,7 @@ members = [
     "crates/xiaoguai-core",
     "crates/xiaoguai-acp",
     "crates/xiaoguai-im-gateway",
+    "crates/xiaoguai-im-common",
     "crates/xiaoguai-im-feishu",
     "crates/xiaoguai-im-dingtalk",
     "crates/xiaoguai-im-wecom",
