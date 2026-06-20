@@ -82,10 +82,18 @@ pub enum ApiError {
     InvalidRequest(String),
     #[error("conflict: {0}")]
     Conflict(String),
+    /// 422 — semantically invalid request (e.g. acting on an archived
+    /// resource). Distinct from 400 `BadRequest` (malformed) per RFC 9110.
+    #[error("unprocessable: {0}")]
+    Unprocessable(String),
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
     #[error("payload too large: {0}")]
     PayloadTooLarge(String),
+    /// 502 — an upstream dependency (e.g. an agent/LLM call this request
+    /// orchestrates) failed or returned a contract-breaking response.
+    #[error("bad gateway: {0}")]
+    BadGateway(String),
     #[error("gateway timeout: {0}")]
     GatewayTimeout(String),
     #[error("internal: {0}")]
@@ -211,6 +219,11 @@ impl IntoResponse for ApiError {
                         other.to_string(),
                     ),
                     Self::Conflict(_) => (StatusCode::CONFLICT, "conflict", other.to_string()),
+                    Self::Unprocessable(_) => (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "unprocessable_entity",
+                        other.to_string(),
+                    ),
                     Self::ServiceUnavailable(_) => (
                         StatusCode::SERVICE_UNAVAILABLE,
                         "service_unavailable",
@@ -221,6 +234,9 @@ impl IntoResponse for ApiError {
                         "payload_too_large",
                         other.to_string(),
                     ),
+                    Self::BadGateway(_) => {
+                        (StatusCode::BAD_GATEWAY, "bad_gateway", other.to_string())
+                    }
                     Self::GatewayTimeout(_) => (
                         StatusCode::GATEWAY_TIMEOUT,
                         "gateway_timeout",
@@ -500,5 +516,11 @@ mod tests {
         let resp = err.into_response();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert!(resp.headers().get(header::WWW_AUTHENTICATE).is_none());
+    }
+
+    #[test]
+    fn unprocessable_renders_422() {
+        let resp = ApiError::Unprocessable("archived".into()).into_response();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 }

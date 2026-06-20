@@ -22,6 +22,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Deserialize;
 
+use crate::error::ApiError;
 use crate::state::AppState;
 use crate::watchers::WatcherError;
 
@@ -30,28 +31,18 @@ pub struct ListWatchersQuery {
     pub session_id: String,
 }
 
+// DEC-041: map to the canonical crate::error::ApiError ({code,message}).
 fn watchers_unavailable() -> Response {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(serde_json::json!({"error": "watcher introspector not configured"})),
-    )
-        .into_response()
+    ApiError::ServiceUnavailable("watcher introspector not configured".into()).into_response()
 }
 
 fn map_err(e: WatcherError) -> Response {
     match e {
-        WatcherError::NotFound(id) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": format!("watcher not found: {id}")})),
-        )
-            .into_response(),
+        WatcherError::NotFound(id) => {
+            ApiError::NotFoundMsg(format!("watcher not found: {id}")).into_response()
+        }
         WatcherError::Backend(msg) => {
-            tracing::error!(error = %msg, "watcher backend error");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "internal error"})),
-            )
-                .into_response()
+            ApiError::Internal(anyhow::anyhow!("watcher backend: {msg}")).into_response()
         }
     }
 }

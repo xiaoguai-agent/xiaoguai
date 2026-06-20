@@ -27,50 +27,35 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use xiaoguai_personas::teams::model::{CreateTeamRequest, Team, UpdateTeamRequest};
 use xiaoguai_personas::{PersonaError, PersonaRepository};
 
+use crate::error::ApiError;
 use crate::state::AppState;
 
 // ─── Shared error helpers ────────────────────────────────────────────────────
 
+// DEC-041: map repository errors onto the single canonical
+// `crate::error::ApiError` (uniform `{code, message}` envelope).
 fn teams_unavailable() -> Response {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(serde_json::json!({"error": "teams repository not configured"})),
-    )
-        .into_response()
-}
-
-#[derive(Debug, Serialize)]
-struct ApiError {
-    error: String,
-}
-
-fn err_response(status: StatusCode, msg: impl Into<String>) -> Response {
-    (status, Json(ApiError { error: msg.into() })).into_response()
+    ApiError::ServiceUnavailable("teams repository not configured".into()).into_response()
 }
 
 fn map_err(e: PersonaError) -> Response {
     match e {
-        PersonaError::NotFound => err_response(StatusCode::NOT_FOUND, "not found"),
-        PersonaError::DuplicateName(n) => {
-            err_response(StatusCode::CONFLICT, format!("duplicate team name: {n}"))
+        PersonaError::NotFound => ApiError::NotFound,
+        PersonaError::DuplicateName(n) => ApiError::Conflict(format!("duplicate team name: {n}")),
+        PersonaError::Archived => {
+            ApiError::Unprocessable("team is archived and cannot be attached".into())
         }
-        PersonaError::Archived => err_response(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "team is archived and cannot be attached",
-        ),
-        PersonaError::InvalidArgument(msg) => err_response(StatusCode::BAD_REQUEST, msg),
-        other => {
-            tracing::error!(error = %other, "teams: repository error");
-            err_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
-        }
+        PersonaError::InvalidArgument(msg) => ApiError::BadRequest(msg),
+        other => ApiError::Internal(anyhow::anyhow!("team repository error: {other}")),
     }
+    .into_response()
 }
 
 // ─── Boundary validation ──────────────────────────────────────────────────────
@@ -90,10 +75,10 @@ async fn validate_members_active(
     };
     for id in member_ids {
         if !active.contains(id) {
-            return Err(err_response(
-                StatusCode::BAD_REQUEST,
-                format!("member persona {id} does not exist or is archived"),
-            ));
+            return Err(ApiError::BadRequest(format!(
+                "member persona {id} does not exist or is archived"
+            ))
+            .into_response());
         }
     }
     Ok(())

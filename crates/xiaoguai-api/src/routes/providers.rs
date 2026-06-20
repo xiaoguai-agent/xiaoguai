@@ -25,11 +25,12 @@ use axum::routing::get;
 use axum::{Json, Router};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use xiaoguai_llm::ModelProbe;
 use xiaoguai_storage::repositories::error::RepoError;
 use xiaoguai_storage::repositories::LlmProviderRepository;
 use xiaoguai_types::{LlmProvider, ProviderId, ProviderKind};
+
+use crate::error::ApiError;
 
 type Repo = Arc<dyn LlmProviderRepository>;
 
@@ -188,11 +189,10 @@ async fn create(State(repo): State<Repo>, Json(req): Json<CreateProviderRequest>
         Ok(()) => (StatusCode::CREATED, Json(ProviderView::from(prov))).into_response(),
         // A duplicate name is a client error, not a 500 — and don't echo the raw
         // DB message back to the caller.
-        Err(RepoError::DuplicateKey(_)) => (
-            StatusCode::CONFLICT,
-            Json(json!({ "error": format!("a provider named '{}' already exists", prov.name) })),
-        )
-            .into_response(),
+        Err(RepoError::DuplicateKey(_)) => {
+            ApiError::Conflict(format!("a provider named '{}' already exists", prov.name))
+                .into_response()
+        }
         Err(e) => server_error(&e),
     }
 }
@@ -211,11 +211,7 @@ async fn update(
         Ok(p) => p,
         Err(e) => return server_error(&e),
     }) else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "provider not found" })),
-        )
-            .into_response();
+        return ApiError::NotFoundMsg("provider not found".into()).into_response();
     };
 
     // Track edits that change what a probe would measure (endpoint / model list
@@ -277,11 +273,10 @@ async fn update(
 
     match repo.update(&prov).await {
         Ok(()) => (StatusCode::OK, Json(ProviderView::from(prov))).into_response(),
-        Err(RepoError::DuplicateKey(_)) => (
-            StatusCode::CONFLICT,
-            Json(json!({ "error": format!("a provider named '{}' already exists", prov.name) })),
-        )
-            .into_response(),
+        Err(RepoError::DuplicateKey(_)) => {
+            ApiError::Conflict(format!("a provider named '{}' already exists", prov.name))
+                .into_response()
+        }
         Err(e) => server_error(&e),
     }
 }
@@ -309,11 +304,7 @@ async fn probe(State(repo): State<Repo>, Path(id): Path<String>) -> Response {
         Ok(p) => p,
         Err(e) => return server_error(&e),
     }) else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "provider not found" })),
-        )
-            .into_response();
+        return ApiError::NotFoundMsg("provider not found".into()).into_response();
     };
 
     let results = xiaoguai_llm::probe_provider(&prov).await;
@@ -340,20 +331,15 @@ async fn delete_provider(State(repo): State<Repo>, Path(id): Path<String>) -> Re
     }
 }
 
+// DEC-041: provider handlers map repo errors onto the canonical ApiError.
 fn bad_request(msg: &str) -> Response {
-    (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+    ApiError::BadRequest(msg.to_string()).into_response()
 }
 
 fn server_error(e: &impl std::fmt::Display) -> Response {
-    // SEC-07: log the real error server-side but return a generic message so
-    // DB/backend internals (table names, SQL fragments, paths) never reach the
-    // client. Mirrors the centralised `ApiError` 5xx mapping.
-    tracing::error!(error = %e, "provider endpoint internal error");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": "internal error" })),
-    )
-        .into_response()
+    // SEC-07: ApiError::Internal logs the real error server-side and returns a
+    // generic body so DB/backend internals never reach the client.
+    ApiError::Internal(anyhow::anyhow!("provider endpoint: {e}")).into_response()
 }
 
 #[cfg(test)]
