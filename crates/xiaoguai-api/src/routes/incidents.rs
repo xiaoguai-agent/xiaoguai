@@ -60,31 +60,28 @@ pub const INCIDENTS_WEBHOOK_ROUTE_ID: &str = "incidents";
 
 // ─── Shared error helpers (teams.rs conventions) ─────────────────────────────
 
+// DEC-041: incident handlers map store/pipeline errors onto the single
+// canonical crate::error::ApiError ({code,message} envelope).
 fn incidents_unavailable() -> Response {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(json!({"error": "incident store not configured"})),
-    )
-        .into_response()
+    ApiError::ServiceUnavailable("incident store not configured".into()).into_response()
 }
 
-fn err_response(status: StatusCode, msg: impl Into<String>) -> Response {
-    (status, Json(json!({"error": msg.into()}))).into_response()
+/// Map an incident-store error onto the canonical `ApiError`.
+fn store_api_err(e: IncidentStoreError) -> ApiError {
+    match e {
+        IncidentStoreError::NotFound => ApiError::NotFound,
+        IncidentStoreError::InvalidTransition { from, to } => {
+            ApiError::Conflict(format!("illegal status transition: {from} → {to}"))
+        }
+        IncidentStoreError::InvalidArgument(msg) => ApiError::BadRequest(msg),
+        IncidentStoreError::Backend(msg) => {
+            ApiError::Internal(anyhow::anyhow!("incident store: {msg}"))
+        }
+    }
 }
 
 fn map_err(e: IncidentStoreError) -> Response {
-    match e {
-        IncidentStoreError::NotFound => err_response(StatusCode::NOT_FOUND, "not found"),
-        IncidentStoreError::InvalidTransition { from, to } => err_response(
-            StatusCode::CONFLICT,
-            format!("illegal status transition: {from} → {to}"),
-        ),
-        IncidentStoreError::InvalidArgument(msg) => err_response(StatusCode::BAD_REQUEST, msg),
-        IncidentStoreError::Backend(msg) => {
-            tracing::error!(error = %msg, "incidents: store error");
-            err_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
-        }
-    }
+    store_api_err(e).into_response()
 }
 
 // ─── Best-effort audit ────────────────────────────────────────────────────────
@@ -268,7 +265,7 @@ pub async fn ingest_incident(
 
     // Normalize via the existing IncidentSource adapters.
     let mut incident = match normalize_for_source(&source, body.clone()) {
-        None => return err_response(StatusCode::NOT_FOUND, format!("unknown source: {source}")),
+        None => return ApiError::NotFoundMsg(format!("unknown source: {source}")).into_response(),
         Some(Err(NormalizeError::Ignored(action))) => {
             // Known-but-unactionable event (e.g. Sentry "resolved") —
             // 200 no-op per the IncidentSource contract.
@@ -279,7 +276,7 @@ pub async fn ingest_incident(
                 .into_response();
         }
         Some(Err(NormalizeError::Malformed(msg))) => {
-            return err_response(StatusCode::BAD_REQUEST, msg);
+            return ApiError::BadRequest(msg).into_response();
         }
         Some(Ok(incident)) => incident,
     };
@@ -343,7 +340,7 @@ pub async fn list_incidents(
         Some(s) => match IncidentStatus::parse(s) {
             Some(parsed) => Some(parsed),
             None => {
-                return err_response(StatusCode::BAD_REQUEST, format!("unknown status: {s}"));
+                return ApiError::BadRequest(format!("unknown status: {s}")).into_response();
             }
         },
     };
@@ -384,7 +381,7 @@ pub async fn create_incident(
     // returns `Malformed` (never `Ignored`) — surface it as a 400.
     let incident = match normalize_manual(body.clone()) {
         Ok(incident) => incident,
-        Err(e) => return err_response(StatusCode::BAD_REQUEST, e.to_string()),
+        Err(e) => return ApiError::BadRequest(e.to_string()).into_response(),
     };
     match store.ingest(&incident, body).await {
         Ok(outcome) => {
@@ -466,19 +463,20 @@ fn map_pipeline_err(e: PipelineError) -> Response {
         // Same table as the T6.2 handlers: NotFound → 404,
         // InvalidTransition → 409 (e.g. analyze while analyzing/resolved,
         // approve while open), Backend → 500.
-        PipelineError::Store(e) => map_err(e),
+        PipelineError::Store(e) => store_api_err(e),
         // `awaiting_approval` without an RCA — state conflict. The stale
         // `rca_id` rejection (#284) is the same class: the approval
         // conflicts with the incident's current analysis state.
         e @ (PipelineError::NoRca | PipelineError::StaleRca { .. }) => {
-            err_response(StatusCode::CONFLICT, e.to_string())
+            ApiError::Conflict(e.to_string())
         }
         // The agent (upstream of this API) errored or broke the RCA
         // contract; the incident was reverted to `open` and is retryable.
         e @ (PipelineError::AnalysisRun(_) | PipelineError::RcaParse(_)) => {
-            err_response(StatusCode::BAD_GATEWAY, e.to_string())
+            ApiError::BadGateway(e.to_string())
         }
     }
+    .into_response()
 }
 
 /// `POST /v1/incidents/{id}/analyze` — run the Analyst consult turn
@@ -528,10 +526,11 @@ pub async fn approve_repair(
     // check above ahead of body validation (matching the ingest handler's
     // status-code precedence) and turns a missing body into a clear 400.
     let Some(Json(ApproveRepairRequest { rca_id })) = body else {
-        return err_response(
-            StatusCode::BAD_REQUEST,
-            "request body must be JSON with `rca_id` — the RCA this approval was made against",
-        );
+        return ApiError::BadRequest(
+            "request body must be JSON with `rca_id` — the RCA this approval was made against"
+                .into(),
+        )
+        .into_response();
     };
     match pipeline.approve_repair(id, rca_id).await {
         Ok(repair) => {

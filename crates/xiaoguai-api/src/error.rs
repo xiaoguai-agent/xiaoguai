@@ -90,6 +90,10 @@ pub enum ApiError {
     ServiceUnavailable(String),
     #[error("payload too large: {0}")]
     PayloadTooLarge(String),
+    /// 502 — an upstream dependency (e.g. an agent/LLM call this request
+    /// orchestrates) failed or returned a contract-breaking response.
+    #[error("bad gateway: {0}")]
+    BadGateway(String),
     #[error("gateway timeout: {0}")]
     GatewayTimeout(String),
     #[error("internal: {0}")]
@@ -230,6 +234,9 @@ impl IntoResponse for ApiError {
                         "payload_too_large",
                         other.to_string(),
                     ),
+                    Self::BadGateway(_) => {
+                        (StatusCode::BAD_GATEWAY, "bad_gateway", other.to_string())
+                    }
                     Self::GatewayTimeout(_) => (
                         StatusCode::GATEWAY_TIMEOUT,
                         "gateway_timeout",

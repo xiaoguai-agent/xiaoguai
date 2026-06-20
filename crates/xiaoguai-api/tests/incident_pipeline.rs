@@ -457,7 +457,7 @@ async fn unparseable_analyst_reply_reverts_to_open_and_audits_failure() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_GATEWAY, "body: {body}");
-    assert!(body["error"]
+    assert!(body["message"]
         .as_str()
         .unwrap()
         .contains("did not match the RCA contract"));
@@ -513,7 +513,7 @@ async fn analyze_on_already_analyzing_incident_returns_409() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "body: {body}");
-    assert!(body["error"]
+    assert!(body["message"]
         .as_str()
         .unwrap()
         .contains("illegal status transition"));
@@ -565,7 +565,7 @@ async fn approve_repair_with_stale_rca_id_returns_409_and_changes_nothing() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "body: {body}");
     assert!(
-        body["error"].as_str().unwrap().contains("latest RCA"),
+        body["message"].as_str().unwrap().contains("latest RCA"),
         "body: {body}"
     );
 
@@ -603,7 +603,7 @@ async fn approve_repair_without_rca_id_returns_400() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
-    assert!(body["error"].as_str().unwrap().contains("rca_id"));
+    assert!(body["message"].as_str().unwrap().contains("rca_id"));
     // Still awaiting approval — nothing moved.
     let details = fx.incidents.get_with_details(id).await.unwrap();
     assert_eq!(details.incident.status, IncidentStatus::AwaitingApproval);
