@@ -82,6 +82,10 @@ pub enum ApiError {
     InvalidRequest(String),
     #[error("conflict: {0}")]
     Conflict(String),
+    /// 422 — semantically invalid request (e.g. acting on an archived
+    /// resource). Distinct from 400 `BadRequest` (malformed) per RFC 9110.
+    #[error("unprocessable: {0}")]
+    Unprocessable(String),
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
     #[error("payload too large: {0}")]
@@ -211,6 +215,11 @@ impl IntoResponse for ApiError {
                         other.to_string(),
                     ),
                     Self::Conflict(_) => (StatusCode::CONFLICT, "conflict", other.to_string()),
+                    Self::Unprocessable(_) => (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "unprocessable_entity",
+                        other.to_string(),
+                    ),
                     Self::ServiceUnavailable(_) => (
                         StatusCode::SERVICE_UNAVAILABLE,
                         "service_unavailable",
@@ -500,5 +509,11 @@ mod tests {
         let resp = err.into_response();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert!(resp.headers().get(header::WWW_AUTHENTICATE).is_none());
+    }
+
+    #[test]
+    fn unprocessable_renders_422() {
+        let resp = ApiError::Unprocessable("archived".into()).into_response();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 }

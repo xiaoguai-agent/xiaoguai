@@ -423,7 +423,7 @@ async fn team_glossary_set_clear_and_cap_through_routes() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(
-        err["error"].as_str().unwrap().contains("16384"),
+        err["message"].as_str().unwrap().contains("16384"),
         "error names the cap: {err}"
     );
     // Value untouched after the rejected update.
@@ -472,7 +472,7 @@ async fn duplicate_team_name_returns_409_on_sqlite_backend() {
     let (status, err) = send(app, "POST", "/v1/teams", Some(body)).await;
     assert_eq!(status, StatusCode::CONFLICT, "expected 409, got: {err}");
     assert!(
-        err["error"]
+        err["message"]
             .as_str()
             .unwrap()
             .contains("duplicate team name"),
@@ -499,5 +499,5 @@ async fn create_team_over_glossary_cap_returns_400() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "got: {err}");
-    assert!(err["error"].as_str().unwrap().contains("glossary_md"));
+    assert!(err["message"].as_str().unwrap().contains("glossary_md"));
 }
