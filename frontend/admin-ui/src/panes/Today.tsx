@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next';
 import type { TodayItem, TodayKind, ListTodayQuery, UsageReport } from '@xiaoguai/shared';
 import { client } from '../client';
 import { PaneIntro } from '../components/PaneIntro';
+import { ErrorBanner } from '../components/ErrorBanner';
 
 type DateRange = 'last_24h' | 'last_7d' | 'all';
 
@@ -212,7 +213,7 @@ export function TodayPane() {
         </div>
       )}
 
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
 
       {visible === null ? (
         <div className="empty">{t('pane.today.empty_loading')}</div>

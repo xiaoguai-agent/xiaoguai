@@ -20,6 +20,7 @@ import type {
 import { MEMORY_KINDS } from '@xiaoguai/shared';
 import { client } from '../client';
 import { PaneIntro } from '../components/PaneIntro';
+import { ErrorBanner } from '../components/ErrorBanner';
 import { MemoryImportExport } from './MemoryImportExport';
 
 type TabId = 'list' | 'recall' | 'neighbors';
@@ -156,7 +157,7 @@ function MemoryModal({ existing, onClose, onSaved }: MemoryFormProps): JSX.Eleme
           {isNew ? t('pane.memory.modal_title_new') : t('pane.memory.modal_title_edit')}
         </h2>
 
-        {error && <div className="error">{t('common.failed', { message: error })}</div>}
+        <ErrorBanner message={error} />
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <label>
@@ -288,7 +289,7 @@ function DeleteConfirmModal({ record, onCancel, onConfirmed }: DeleteConfirmProp
         >
           {record.id}
         </code>
-        {error && <div className="error">{t('common.failed', { message: error })}</div>}
+        <ErrorBanner message={error} />
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
           <button onClick={onCancel}>{t('common.close')}</button>
           <button
@@ -408,7 +409,7 @@ function ListView({ refreshToken = 0 }: ListViewProps): JSX.Element {
         </button>
       </div>
 
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
 
       <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0.5rem 0 0.75rem' }}>
         {t('pane.memory.list_count', { count: records.length, total: records.length })}
@@ -578,7 +579,7 @@ function RecallView(): JSX.Element {
         </button>
       </div>
 
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
 
       {hits && (
         <section aria-label={t('pane.memory.recall_results_aria')}>
@@ -696,7 +697,7 @@ function NeighborsView(): JSX.Element {
         </button>
       </div>
 
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
 
       {anchor && (
         <div

@@ -1,102 +1,34 @@
 /**
- * Skills pane — v1.2.28
+ * Skills pane — v1.2.28 (DEC-041 consolidation).
  *
  * Lists available skill packs from the catalog, shows install state, and lets
- * the operator install / uninstall packs for a tenant. Knob configuration is
- * JSON-schema–driven: the catalog carries `knobs` metadata and the pane
- * renders a typed form (int slider, bool toggle, string / enum select).
+ * the operator install / uninstall packs. Knob configuration is JSON-schema–
+ * driven: the catalog carries `knobs` metadata and the pane renders a typed
+ * form (int/number slider, bool toggle, string / enum select).
+ *
+ * DEC-041: now goes through the typed shared `XiaoguaiClient` instead of raw
+ * `fetch`, so requests carry owner auth (the raw fetches dropped the
+ * Authorization header — a 401 when auth is enabled) and use the canonical
+ * catalog/installed wire types. This also fixes the prior installed-detection
+ * bug: `GET /v1/skills/installed` returns `pack_id`, but the old code keyed its
+ * map by `pack_slug` (absent → always undefined → never showed "Installed ✓").
+ * The per-tenant input is gone — single-owner (DEC-033) ignores tenant.
  *
  * State flow:
- *   catalog (static, from GET /v1/skills/catalog)
- *   + installed (per-tenant, from GET /v1/skills/installed?tenant=...)
+ *   catalog   (static, from GET /v1/skills/catalog)
+ *   + installed (from GET /v1/skills/installed)
  *   → merged view in SkillCard (shows "Installed ✓" badge or Install button)
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import type {
+  InstalledSkillPackResponse,
+  SkillCatalogEntry,
+  SkillKnobSchema,
+} from '@xiaoguai/shared';
 import { client } from './client';
 import { useI18n } from './i18n/I18nProvider';
 import { interpolate } from './i18n';
-
-// ── wire types ----------------------------------------------------------------
-
-interface PackRequires {
-  feature_flags: string[];
-  env_keys: string[];
-}
-
-type KnobSchema =
-  | { type: 'integer'; default: number; description: string }
-  | { type: 'boolean'; default: boolean; description: string }
-  | { type: 'string'; enum: string[]; default: string; description: string };
-
-interface SkillPackEntry {
-  slug: string;
-  name: string;
-  description: string;
-  version: string;
-  category: string;
-  requires: PackRequires;
-  knobs: Record<string, KnobSchema>;
-  screenshot_url?: string | null;
-}
-
-interface CatalogResponse {
-  version: number;
-  packs: SkillPackEntry[];
-}
-
-interface InstalledPackRow {
-  id: string;
-  tenant_id: string;
-  pack_slug: string;
-  version: string;
-  config: Record<string, unknown>;
-  installed_at: string;
-}
-
-// ── minimal API helpers -------------------------------------------------------
-
-async function fetchCatalog(): Promise<CatalogResponse> {
-  const resp = await fetch(`${(client as unknown as { baseUrl: string }).baseUrl}/v1/skills/catalog`);
-  if (!resp.ok) throw new Error(`catalog: HTTP ${resp.status}`);
-  return (await resp.json()) as CatalogResponse;
-}
-
-async function fetchInstalled(tenantId: string): Promise<InstalledPackRow[]> {
-  const resp = await fetch(
-    `${(client as unknown as { baseUrl: string }).baseUrl}/v1/skills/installed?tenant=${encodeURIComponent(tenantId)}`,
-  );
-  if (!resp.ok) throw new Error(`installed: HTTP ${resp.status}`);
-  return (await resp.json()) as InstalledPackRow[];
-}
-
-async function apiInstall(
-  tenantId: string,
-  packSlug: string,
-  config: Record<string, unknown>,
-): Promise<InstalledPackRow> {
-  const resp = await fetch(
-    `${(client as unknown as { baseUrl: string }).baseUrl}/v1/skills/install`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tenant_id: tenantId, pack_slug: packSlug, config }),
-    },
-  );
-  if (!resp.ok) {
-    const body = (await resp.json().catch(() => ({}))) as { message?: string };
-    throw new Error(body.message ?? `install: HTTP ${resp.status}`);
-  }
-  return (await resp.json()) as InstalledPackRow;
-}
-
-async function apiUninstall(id: string): Promise<void> {
-  const baseUrl = (client as unknown as { baseUrl: string }).baseUrl;
-  const resp = await fetch(`${baseUrl}/v1/skills/install/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  });
-  if (!resp.ok) throw new Error(`uninstall: HTTP ${resp.status}`);
-}
 
 // ── toast notification --------------------------------------------------------
 
@@ -121,7 +53,7 @@ function useToasts() {
 
 // ── knob form ----------------------------------------------------------------
 
-function defaultConfig(knobs: Record<string, KnobSchema>): Record<string, unknown> {
+function defaultConfig(knobs: Record<string, SkillKnobSchema>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, schema] of Object.entries(knobs)) {
     out[key] = schema.default;
@@ -130,7 +62,7 @@ function defaultConfig(knobs: Record<string, KnobSchema>): Record<string, unknow
 }
 
 interface KnobFormProps {
-  knobs: Record<string, KnobSchema>;
+  knobs: Record<string, SkillKnobSchema>;
   values: Record<string, unknown>;
   onChange: (values: Record<string, unknown>) => void;
 }
@@ -155,9 +87,10 @@ function KnobForm({ knobs, values, onChange }: KnobFormProps) {
               checked={Boolean(values[key] ?? schema.default)}
               onChange={(e) => set(key, e.target.checked)}
             />
-          ) : schema.type === 'integer' ? (
+          ) : schema.type === 'integer' || schema.type === 'number' ? (
             <input
               type="number"
+              step={schema.type === 'number' ? 'any' : 1}
               value={Number(values[key] ?? schema.default)}
               onChange={(e) => set(key, Number(e.target.value))}
               className="knob-input"
@@ -192,17 +125,20 @@ function KnobForm({ knobs, values, onChange }: KnobFormProps) {
 // ── skill card ----------------------------------------------------------------
 
 interface SkillCardProps {
-  pack: SkillPackEntry;
-  installed: InstalledPackRow | undefined;
-  onInstall: (pack: SkillPackEntry, config: Record<string, unknown>) => Promise<void>;
-  onUninstall: (row: InstalledPackRow) => Promise<void>;
+  pack: SkillCatalogEntry;
+  installed: InstalledSkillPackResponse | undefined;
+  onInstall: (pack: SkillCatalogEntry, config: Record<string, unknown>) => Promise<void>;
+  onUninstall: (row: InstalledSkillPackResponse) => Promise<void>;
 }
 
 function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) {
   const { t } = useI18n();
   const sp = t.ui.skills_page;
+  const knobs = pack.knobs ?? {};
+  const featureFlags = pack.requires?.feature_flags ?? [];
+  const envKeys = pack.requires?.env_keys ?? [];
   const [expanded, setExpanded] = useState(false);
-  const [config, setConfig] = useState<Record<string, unknown>>(() => defaultConfig(pack.knobs));
+  const [config, setConfig] = useState<Record<string, unknown>>(() => defaultConfig(knobs));
   const [busy, setBusy] = useState(false);
 
   async function handleInstall() {
@@ -224,7 +160,7 @@ function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) 
     }
   }
 
-  const hasKnobs = Object.keys(pack.knobs).length > 0;
+  const hasKnobs = Object.keys(knobs).length > 0;
 
   return (
     <div className={`skill-card${installed ? ' skill-card--installed' : ''}`}>
@@ -270,14 +206,14 @@ function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) 
       <p className="skill-card__desc">{pack.description}</p>
 
       {/* prerequisite tags */}
-      {(pack.requires.feature_flags.length > 0 || pack.requires.env_keys.length > 0) && (
+      {(featureFlags.length > 0 || envKeys.length > 0) && (
         <div className="skill-card__requires">
-          {pack.requires.feature_flags.map((f) => (
+          {featureFlags.map((f) => (
             <span key={f} className="skill-tag skill-tag--flag">
               {interpolate(sp.requires_flag, { flag: f })}
             </span>
           ))}
-          {pack.requires.env_keys.map((e) => (
+          {envKeys.map((e) => (
             <span key={e} className="skill-tag skill-tag--env">
               {interpolate(sp.requires_env, { env: e })}
             </span>
@@ -287,7 +223,7 @@ function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) 
 
       {/* expandable knob configurator */}
       {expanded && hasKnobs && (
-        <KnobForm knobs={pack.knobs} values={config} onChange={setConfig} />
+        <KnobForm knobs={knobs} values={config} onChange={setConfig} />
       )}
     </div>
   );
@@ -295,14 +231,11 @@ function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) 
 
 // ── main pane ----------------------------------------------------------------
 
-const DEFAULT_TENANT = 'default';
-
 export function SkillsPage() {
   const { t } = useI18n();
   const sp = t.ui.skills_page;
-  const [catalog, setCatalog] = useState<SkillPackEntry[]>([]);
-  const [installed, setInstalled] = useState<InstalledPackRow[]>([]);
-  const [tenantId, setTenantId] = useState(DEFAULT_TENANT);
+  const [catalog, setCatalog] = useState<SkillCatalogEntry[]>([]);
+  const [installed, setInstalled] = useState<InstalledSkillPackResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { toasts, push: pushToast } = useToasts();
@@ -310,50 +243,49 @@ export function SkillsPage() {
   // Group packs by category for rendering.
   const categories = Array.from(new Set(catalog.map((p) => p.category))).sort();
 
-  const installedMap = Object.fromEntries(installed.map((r) => [r.pack_slug, r]));
+  // Installed lookup keyed by pack_id (== catalog slug server-side). The old
+  // code keyed by `pack_slug`, which the API response doesn't carry — so the
+  // "Installed ✓" badge never showed. DEC-041 fix.
+  const installedMap = Object.fromEntries(installed.map((r) => [r.pack_id, r]));
 
-  // Fetch catalog once; fetch installed whenever tenantId changes.
-  useEffect(() => {
-    let cancelled = false;
+  const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
-    Promise.all([fetchCatalog(), fetchInstalled(tenantId)])
-      .then(([cat, inst]) => {
-        if (!cancelled) {
-          setCatalog(cat.packs);
-          setInstalled(inst);
-        }
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tenantId]);
-
-  async function handleInstall(pack: SkillPackEntry, config: Record<string, unknown>) {
     try {
-      const row = await apiInstall(tenantId, pack.slug, config);
-      setInstalled((prev) => [...prev, row]);
+      const [cat, inst] = await Promise.all([
+        client.listSkillCatalog(),
+        client.listInstalledSkillPacks(),
+      ]);
+      setCatalog(cat.packs);
+      setInstalled(inst);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  async function handleInstall(pack: SkillCatalogEntry, config: Record<string, unknown>) {
+    try {
+      await client.installSkillPack({ pack_id: pack.slug, config });
+      // Re-fetch so the row carries the full installed shape (the install
+      // response is a narrower projection).
+      setInstalled(await client.listInstalledSkillPacks());
       pushToast(interpolate(sp.toast_installed, { name: pack.name }), 'success');
     } catch (err) {
       pushToast(interpolate(sp.toast_install_failed, { message: (err as Error).message }), 'error');
     }
   }
 
-  async function handleUninstall(row: InstalledPackRow) {
-    const pack = catalog.find((p) => p.slug === row.pack_slug);
+  async function handleUninstall(row: InstalledSkillPackResponse) {
     try {
-      await apiUninstall(row.id);
+      await client.uninstallSkillPack(row.id);
       setInstalled((prev) => prev.filter((r) => r.id !== row.id));
-      pushToast(
-        interpolate(sp.toast_uninstalled, { name: pack?.name ?? row.pack_slug }),
-        'success',
-      );
+      pushToast(interpolate(sp.toast_uninstalled, { name: row.name }), 'success');
     } catch (err) {
       pushToast(
         interpolate(sp.toast_uninstall_failed, { message: (err as Error).message }),
@@ -379,24 +311,12 @@ export function SkillsPage() {
           <h1 className="skills-title">{sp.title}</h1>
           <p className="skills-subtitle">{sp.subtitle}</p>
         </div>
-        <div className="skills-tenant-control">
-          <label htmlFor="tenant-input" className="skills-tenant-label">
-            {sp.tenant_label}
-          </label>
-          <input
-            id="tenant-input"
-            className="skills-tenant-input"
-            value={tenantId}
-            onChange={(e) => setTenantId(e.target.value.trim() || DEFAULT_TENANT)}
-            placeholder={sp.tenant_placeholder}
-          />
-        </div>
       </div>
 
       {/* body */}
       {loading && <p className="skills-status">{sp.loading}</p>}
       {error && (
-        <p className="skills-status skills-status--error">
+        <p className="skills-status skills-status--error" role="alert">
           {interpolate(sp.error, { message: error })}
         </p>
       )}

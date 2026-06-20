@@ -23,6 +23,7 @@ import type {
 } from '@xiaoguai/shared';
 import { client } from '../client';
 import { CopyButton } from '../components/CopyButton';
+import { ErrorBanner } from '../components/ErrorBanner';
 
 type RightTab = 'run' | 'convert';
 
@@ -68,7 +69,7 @@ export function EvalPane() {
               {t('common.refresh')}
             </button>
           </div>
-          {suitesError && <div className="error">{t('common.failed', { message: suitesError })}</div>}
+          <ErrorBanner message={suitesError} />
           {suites === null ? (
             <div className="empty">{t('pane.eval.suites_empty_loading')}</div>
           ) : suites.length === 0 ? (
@@ -205,7 +206,7 @@ function RunSuiteTab({ suiteName }: { suiteName: string | null }): JSX.Element {
         )}
       </div>
 
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
 
       {report && (
         <div className="run-report">
@@ -325,7 +326,7 @@ function ConvertFromSessionTab(): JSX.Element {
           {loading ? <Spinner /> : t('pane.eval.convert_btn')}
         </button>
       </div>
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
       {resp && (
         <div className="convert-output">
           <div className="convert-meta">

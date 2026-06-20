@@ -11,11 +11,13 @@
  * users audit a single JSON file.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { safeHref } from '@xiaoguai/shared';
 import type { MarketplaceEntry } from '@xiaoguai/shared';
 import { client } from '../client';
+import { ErrorBanner } from '../components/ErrorBanner';
+import { useAsyncState } from '../hooks/useAsyncState';
 
 type Status =
   | { kind: 'idle' }
@@ -25,28 +27,13 @@ type Status =
 
 export function MarketplacePane() {
   const { t } = useTranslation();
-  const [entries, setEntries] = useState<MarketplaceEntry[] | null>(null);
-  const [version, setVersion] = useState<number | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const r = await client.listMarketplace();
-        if (!cancelled) {
-          setEntries(r.entries);
-          setVersion(r.version);
-        }
-      } catch (err) {
-        if (!cancelled) setLoadError((err as Error).message);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // DEC-041 (frontend half): shared async-state replaces the bespoke
+  // entries/version/loadError + useEffect load.
+  const { data, error: loadError } = useAsyncState(() => client.listMarketplace(), []);
+  const entries = data?.entries ?? null;
+  const version = data?.version ?? null;
 
   const grouped = useMemo(() => {
     if (!entries) return null;
@@ -78,7 +65,7 @@ export function MarketplacePane() {
         })}
       </p>
 
-      {loadError && <div className="error">{t('common.failed', { message: loadError })}</div>}
+      <ErrorBanner message={loadError} />
 
       {grouped === null ? (
         <div className="empty">{t('pane.marketplace.empty_loading')}</div>

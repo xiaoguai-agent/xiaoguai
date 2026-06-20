@@ -179,7 +179,7 @@ export function ChatPage({ onSessionCreated }: Props) {
         const msgs = await client.listMessages(routeId);
         setBubbles(msgs.flatMap(messageToBubbles));
       } catch (err) {
-        setStatus(`load failed: ${(err as Error).message}`);
+        setStatus(interpolate(t.chat.sse.load_failed, { message: (err as Error).message }));
       }
     })();
   }, [routeId]);
@@ -300,7 +300,7 @@ export function ChatPage({ onSessionCreated }: Props) {
           setReconnect,
         ),
       (err) => {
-        setStatus(`stream error: ${err.message}`);
+        setStatus(interpolate(t.chat.sse.stream_error, { message: err.message }));
         setStreaming(false);
         setReconnect(null);
       },

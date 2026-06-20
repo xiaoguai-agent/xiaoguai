@@ -131,6 +131,8 @@ interface TranslationShape {
       reconnecting: string;
       cancel_reconnect: string;
       gave_up: string;
+      load_failed: string;
+      stream_error: string;
     };
     hotl: {
       title: string;

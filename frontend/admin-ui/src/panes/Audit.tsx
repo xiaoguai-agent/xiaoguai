@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { AuditEntryView, XiaoguaiClient } from '@xiaoguai/shared';
+import type { XiaoguaiClient } from '@xiaoguai/shared';
 import { client as defaultClient } from '../client';
 import { ChainBadge } from '../components/ChainBadge';
 import { AuditReplay } from '../components/AuditReplay';
 import { RequireScope } from '../components/RequireScope';
 import { PaneIntro } from '../components/PaneIntro';
+import { ErrorBanner } from '../components/ErrorBanner';
+import { useAsyncState } from '../hooks/useAsyncState';
 
 /**
  * v0.6.4: live audit log pane. Requires a tenant id; the chain is
@@ -30,26 +32,20 @@ export function AuditPane({ client }: AuditPaneProps = {}): JSX.Element {
   const c = client ?? defaultClient;
   const { t } = useTranslation();
   const [tenantId, setTenantId] = useState('ten_dev');
-  const [rows, setRows] = useState<AuditEntryView[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [view, setView] = useState<'table' | 'replay'>('table');
 
-  async function load(tid: string): Promise<void> {
-    setLoading(true);
-    setError(null);
-    try {
-      const got = await c.listAudit({ tenant_id: tid, limit: 100 });
-      setRows(got);
-    } catch (err) {
-      setRows(null);
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
+  // DEC-041 (frontend half): shared async-state replaces the bespoke
+  // rows/error/loading + load() machine. `reload()` re-fetches the current
+  // tenant (the loader closes over `tenantId`); typing alone doesn't refetch —
+  // the Refresh button does, matching the original behaviour.
+  const {
+    data: rows,
+    error,
+    loading,
+    reload,
+  } = useAsyncState(() => c.listAudit({ tenant_id: tenantId, limit: 100 }), []);
 
   async function onExport(): Promise<void> {
     if (exporting || !tenantId) return;
@@ -82,12 +78,6 @@ export function AuditPane({ client }: AuditPaneProps = {}): JSX.Element {
     }
   }
 
-  useEffect(() => {
-    void load(tenantId);
-    // Intentionally only on mount; further reloads happen on Refresh.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   return (
     <>
       <h1>{t('pane.audit.title')}</h1>
@@ -105,7 +95,7 @@ export function AuditPane({ client }: AuditPaneProps = {}): JSX.Element {
             placeholder="ten_dev"
           />
         </label>
-        <button onClick={() => void load(tenantId)} disabled={loading || !tenantId}>
+        <button onClick={() => reload()} disabled={loading || !tenantId}>
           {loading ? t('common.loading') : t('common.refresh')}
         </button>
         <button
@@ -125,7 +115,7 @@ export function AuditPane({ client }: AuditPaneProps = {}): JSX.Element {
         </RequireScope>
       </div>
 
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
       {exportError && (
         <div className="error" role="alert">
           {t('pane.audit.export_failed', { message: exportError })}
