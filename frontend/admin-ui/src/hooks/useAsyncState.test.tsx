@@ -43,4 +43,19 @@ describe('useAsyncState', () => {
     fireEvent.click(screen.getByText('reload'));
     await waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
   });
+
+  it('clears stale data when a reload fails', async () => {
+    // First load succeeds, the reload rejects.
+    let call = 0;
+    const loader = () => {
+      call += 1;
+      return call === 1 ? Promise.resolve('first') : Promise.reject(new Error('boom'));
+    };
+    render(<Harness loader={loader} />);
+    await waitFor(() => expect(screen.getByTestId('data')).toHaveTextContent('first'));
+    fireEvent.click(screen.getByText('reload'));
+    await waitFor(() => expect(screen.getByTestId('error')).toHaveTextContent('boom'));
+    // Regression guard: the now-stale 'first' must not linger under the banner.
+    expect(screen.getByTestId('data')).toHaveTextContent('');
+  });
 });

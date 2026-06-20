@@ -14,7 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
  * established "load on mount" panes. Stale loads are dropped via a cancel flag.
  */
 export interface UseAsyncResult<T> {
-  /** Loaded value, or `null` before the first successful load. */
+  /** Loaded value, or `null` before the first successful load or after a failed (re)load. */
   data: T | null;
   /** Error message from the most recent failed load, else `null`. */
   error: string | null;
@@ -48,6 +48,10 @@ export function useAsyncState<T>(
         }
       } catch (err) {
         if (!cancelled) {
+          // Drop any stale value so a failed (re)load never renders old data
+          // under the error banner — matches the hand-rolled panes this hook
+          // replaced (Usage/Audit cleared their data on error).
+          setData(null);
           setError((err as Error).message);
           setLoading(false);
         }
