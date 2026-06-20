@@ -3,9 +3,9 @@ name: Release — bare-metal tarball
 # v1.1.6: ships the bare-metal install target.
 # v1.1.6.3: adds cosign keyless signing + SLSA L3 provenance attestations.
 #
-# Lives separately from release.yml (which builds the container image + SBOM)
-# so a failure in either pipeline doesn't gate the other. Both fire on the
-# same `v*` tag push.
+# Lives separately from the other `v*`-tag release workflows
+# (release-packages.yml = .deb/.rpm, pip-wheel.yml = PyPI wheels) so a failure
+# in one pipeline doesn't gate the others. All fire on the same `v*` tag push.
 #
 # Job graph:
 #   build (matrix: x86_64, aarch64)
