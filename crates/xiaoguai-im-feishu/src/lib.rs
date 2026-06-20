@@ -37,16 +37,9 @@ pub use api::{FeishuClient, HttpFeishuClient, TokenCache, TokenResponse, DEFAULT
 /// SEC-05/SEC-12: maximum clock skew (seconds) allowed between
 /// `X-Lark-Request-Timestamp` and the current wall clock — the replay
 /// window. Mirrors the Slack adapter's 5-minute tolerance.
-pub const TIMESTAMP_TOLERANCE_SECS: i64 = 300;
+pub use xiaoguai_im_common::TIMESTAMP_TOLERANCE_SECS;
 
-/// Current Unix time in seconds. Falls back to 0 when the system clock
-/// reports a pre-epoch time, which pushes every inbound timestamp outside
-/// the replay window (fail-closed).
-fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
-}
+use xiaoguai_im_common::{constant_time_eq, now_unix, timestamp_within_tolerance};
 
 #[derive(Clone)]
 pub struct FeishuProvider {
@@ -148,7 +141,7 @@ fn verify(webhook: &Webhook, encrypt_key: &str, now_unix: i64) -> Result<(), Pro
     // since the Unix epoch. Unparsable or stale timestamps are rejected
     // (fail-closed).
     let ts: i64 = timestamp.parse().map_err(|_| ProviderError::BadSignature)?;
-    if (ts - now_unix).abs() > TIMESTAMP_TOLERANCE_SECS {
+    if !timestamp_within_tolerance(ts, now_unix) {
         return Err(ProviderError::BadSignature);
     }
 
@@ -165,17 +158,6 @@ fn verify(webhook: &Webhook, encrypt_key: &str, now_unix: i64) -> Result<(), Pro
     } else {
         Err(ProviderError::BadSignature)
     }
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }
 
 #[derive(Deserialize)]
