@@ -11,6 +11,7 @@ description = "WeCom (企业微信) IM adapter — webhook signature verificatio
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-im-gateway = { path = "../xiaoguai-im-gateway" }
+xiaoguai-im-common = { path = "../xiaoguai-im-common" }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 parking_lot = { workspace = true }

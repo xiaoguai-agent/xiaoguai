@@ -17,7 +17,8 @@ use xiaoguai_im_gateway::{ProviderError, Webhook};
 
 /// Maximum clock skew (seconds) we allow between the Slack timestamp and
 /// the current wall clock. Slack's own guidance is 5 minutes.
-pub const TIMESTAMP_TOLERANCE_SECS: i64 = 5 * 60;
+pub use xiaoguai_im_common::TIMESTAMP_TOLERANCE_SECS;
+use xiaoguai_im_common::{constant_time_eq, timestamp_within_tolerance};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -40,7 +41,7 @@ pub fn verify(webhook: &Webhook, signing_secret: &str, now_unix: i64) -> Result<
     let ts: i64 = ts_str.parse().map_err(|_| ProviderError::BadSignature)?;
 
     // Replay protection.
-    if (ts - now_unix).abs() > TIMESTAMP_TOLERANCE_SECS {
+    if !timestamp_within_tolerance(ts, now_unix) {
         return Err(ProviderError::BadSignature);
     }
 
@@ -57,18 +58,6 @@ pub fn verify(webhook: &Webhook, signing_secret: &str, now_unix: i64) -> Result<
     } else {
         Err(ProviderError::BadSignature)
     }
-}
-
-/// Constant-time byte-slice comparison to prevent timing side-channels.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }
 
 #[cfg(test)]

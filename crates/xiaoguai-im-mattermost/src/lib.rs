@@ -125,55 +125,14 @@ impl ImProvider for MattermostProvider {
     }
 }
 
-/// Constant-time byte slice comparison.
-///
-/// Used by [`incoming`] and [`slash`] to verify the shared secret token
-/// without leaking timing information on partial matches.
-///
-/// # Safety invariants
-///
-/// * Returns `false` immediately (without timing leakage on length) when
-///   slices differ in length — length is public information (the caller
-///   chose the expected length).
-/// * Accumulates XOR differences to avoid early exit on mismatch.
-pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
+/// Re-export of the audited constant-time comparison from
+/// [`xiaoguai_im_common`]; used by [`incoming`] and [`slash`] to verify the
+/// shared secret token without leaking timing information on partial matches.
+pub(crate) use xiaoguai_im_common::constant_time_eq;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ------------------------------------------------------------------ //
-    //  constant_time_eq                                                    //
-    // ------------------------------------------------------------------ //
-
-    #[test]
-    fn constant_time_eq_identical() {
-        assert!(constant_time_eq(b"secret", b"secret"));
-    }
-
-    #[test]
-    fn constant_time_eq_different_values() {
-        assert!(!constant_time_eq(b"secret", b"Secret"));
-    }
-
-    #[test]
-    fn constant_time_eq_different_lengths() {
-        assert!(!constant_time_eq(b"abc", b"abcd"));
-    }
-
-    #[test]
-    fn constant_time_eq_empty_slices() {
-        assert!(constant_time_eq(b"", b""));
-    }
 
     // ------------------------------------------------------------------ //
     //  MattermostProvider — parse() path                                  //

@@ -49,6 +49,7 @@ use cbc::{Decryptor, Encryptor};
 use cipher::{block_padding::NoPadding, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use rand::Rng;
 use sha1::{Digest, Sha1};
+use xiaoguai_im_common::constant_time_eq;
 
 /// A permissive base64 engine that ignores non-zero padding bits (as
 /// Python's `b64decode` and the WeCom SDK do).  WeCom's 43-char
@@ -293,18 +294,6 @@ fn hex_lower(bytes: &[u8]) -> String {
         out.push(HEX[(b & 0xf) as usize] as char);
     }
     out
-}
-
-/// Constant-time byte-slice equality.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }
 
 /// PKCS#7 pad `data` to a multiple of `block_size`.

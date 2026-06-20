@@ -11,6 +11,7 @@ description = "Telegram Bot API adapter — webhook + long-poll + outbound messa
 [dependencies]
 xiaoguai-types = { path = "../xiaoguai-types" }
 xiaoguai-im-gateway = { path = "../xiaoguai-im-gateway" }
+xiaoguai-im-common = { path = "../xiaoguai-im-common" }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
