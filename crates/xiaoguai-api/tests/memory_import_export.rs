@@ -316,7 +316,10 @@ async fn import_rejects_documents_over_the_line_cap_with_400() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
     let err: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert!(
-        err["error"].as_str().unwrap().contains("maximum per call"),
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("maximum per call"),
         "body: {body}"
     );
 
@@ -360,7 +363,7 @@ async fn create_memory_rejects_oversized_content_with_400() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "body: {text}");
     let err: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert!(err["error"].as_str().unwrap().contains("bytes"));
+    assert!(err["message"].as_str().unwrap().contains("bytes"));
 
     let (_, listed) = send(app, "GET", "/v1/memories", None).await;
     let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
