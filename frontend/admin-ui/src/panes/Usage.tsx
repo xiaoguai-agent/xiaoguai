@@ -9,11 +9,13 @@
  * No charts in this tag — v1.1.1.1 adds a Recharts bar chart.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { UsageGroupBy, UsageReport } from '@xiaoguai/shared';
+import type { UsageGroupBy } from '@xiaoguai/shared';
 import { client } from '../client';
 import { PaneIntro } from '../components/PaneIntro';
+import { ErrorBanner } from '../components/ErrorBanner';
+import { useAsyncState } from '../hooks/useAsyncState';
 import { formatCents } from '../utils/cost';
 
 const GROUP_BY_OPTIONS: UsageGroupBy[] = ['day', 'provider', 'model'];
@@ -70,32 +72,24 @@ export function UsagePane(): JSX.Element {
   const [since, setSince] = useState<string>(defaultSince());
   const [until, setUntil] = useState<string>(defaultUntil());
   const [groupBy, setGroupBy] = useState<UsageGroupBy>('day');
-  const [report, setReport] = useState<UsageReport | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
+  // DEC-041 (frontend half): shared async-state replaces the bespoke
+  // report/error/loading + refresh useCallback. Re-fetches whenever the
+  // filters change; `reload()` backs the Refresh button.
+  const {
+    data: report,
+    error,
+    loading,
+    reload,
+  } = useAsyncState(
+    () =>
       // tenant_id omitted: the backend defaults the single owner.
-      const r = await client.getUsage({
+      client.getUsage({
         since: since ? toIsoStart(since) : undefined,
         until: until ? toIsoEnd(until) : undefined,
         group_by: groupBy,
-      });
-      setReport(r);
-    } catch (e) {
-      setError((e as Error).message);
-      setReport(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [since, until, groupBy]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+      }),
+    [since, until, groupBy],
+  );
 
   const totalRow = useMemo(() => {
     if (!report) return null;
@@ -111,7 +105,7 @@ export function UsagePane(): JSX.Element {
       <header className="today-header">
         <h1>{t('pane.usage.title')}</h1>
         <div className="today-meta">
-          <button onClick={() => void refresh()} disabled={loading}>
+          <button onClick={() => reload()} disabled={loading}>
             {loading ? t('common.loading') : t('common.refresh')}
           </button>
         </div>
@@ -148,7 +142,7 @@ export function UsagePane(): JSX.Element {
         </label>
       </div>
 
-      {error && <div className="error">{t('common.failed', { message: error })}</div>}
+      <ErrorBanner message={error} />
 
       {totalRow && (
         <div className="timeline-card timeline-card-chat" aria-label={t('pane.usage.totals_label')}>
