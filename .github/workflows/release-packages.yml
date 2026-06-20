@@ -26,6 +26,16 @@ on:
     tags:
       - 'v*'
 
+# Serialize with release-tarball.yml — both attach to the SAME GitHub Release on
+# the same `v*` tag and would otherwise race to create it (one wins, the other
+# creates a stray draft and dies at finalize with `already_exists / tag_name`;
+# hit on v1.22.2). The `group:` string MUST match the one in release-tarball.yml.
+# See that file's comment for the full rationale. cancel-in-progress: false so
+# the queued run waits rather than being cancelled.
+concurrency:
+  group: gh-release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
   # Both package tools need the release binary; build once and reuse.

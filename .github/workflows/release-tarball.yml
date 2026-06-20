@@ -20,6 +20,23 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# Serialize with the OTHER GitHub-Release-attaching workflow (release-packages.yml).
+# Both fire on the same `v*` tag and both create-or-update the SAME release — this
+# one via the SLSA provenance job (`upload-assets: true`) AND the publish job
+# (softprops/action-gh-release); the packages one via its own softprops publish.
+# Run concurrently, whichever reaches the release first while the tag isn't yet
+# "discoverable" creates a SECOND (draft) release and then dies at finalize with
+# `Validation Failed … already_exists / tag_name` (hit on v1.22.2, 2026-06-20 —
+# the .deb/.rpm landed on a stray draft while the published release had only
+# tarballs; recovered by hand). A shared concurrency group (the SAME `group:`
+# string in both workflows) forces them to run one-at-a-time per tag;
+# cancel-in-progress: false so the queued workflow WAITS instead of being killed.
+# Releases are infrequent, so the lost build parallelism (~10 min) is an
+# acceptable cost for a race-free attach.
+concurrency:
+  group: gh-release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
 
