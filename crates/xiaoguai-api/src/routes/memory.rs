@@ -35,7 +35,6 @@ use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use xiaoguai_memory::{
@@ -318,19 +317,8 @@ pub struct ExportQuery {
 /// Best-effort `memory.*` audit entry through the generic `team_audit` sink
 /// (the same one incidents use). Failure is logged, never blocks.
 async fn audit_memory(state: &AppState, action: &str, details: serde_json::Value) {
-    if let Some(sink) = &state.team_audit {
-        let entry = xiaoguai_audit::AuditEntry {
-            ts: Utc::now(),
-            tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
-            actor: "owner".to_string(),
-            action: action.to_string(),
-            resource: Some("memories".to_string()),
-            details,
-        };
-        if let Err(e) = sink.append(entry).await {
-            tracing::warn!(error = %e, action, "memory: audit append failed (non-blocking)");
-        }
-    }
+    crate::audit_util::audit_event(&state.team_audit, action, "memories".to_string(), details)
+        .await;
 }
 
 /// `GET /v1/memories/export?kind=` — the whole store (or one kind) as a
