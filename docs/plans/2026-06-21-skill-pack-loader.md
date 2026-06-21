@@ -36,9 +36,13 @@ There are **two disconnected systems**. They share neither code nor data.
 - The local `WatchRegistry` / anomaly-registry types and `register_*` are
   **no-op stubs** ("registration calls are no-ops until the watch and anomaly
   registries land with F1 and F2").
-- `packs/` holds **~40 rich manifests** (e.g. `packs/ar-collections/pack.yaml`)
+- `packs/` holds **44 manifests** (e.g. `packs/ar-collections/pack.yaml`)
   declaring migrations + watch specs + anomaly specs + agent definitions +
-  dashboards.
+  dashboards. ⚠️ They are **not schema-uniform** — e.g.
+  `packs/incident-triage/pack.yaml` uses a different shape (`depends` /
+  `sources` / `outputs` / `feature_flag`, with no `migrations` / `watches` /
+  `anomalies`). `PackManifest` (every field `#[serde(default)]`) would *parse*
+  it but silently drop those keys — see the Phase-1 risk in §4.
 
 ### What is missing to actually *execute* a pack
 
@@ -47,7 +51,7 @@ There are **two disconnected systems**. They share neither code nor data.
 | `migrations[]` (SQL) | the one embedded SQLite | **touches DEC-033**; no apply mechanism, no ledger, no rollback |
 | `watches[]` (WatchSpec yaml) | `xiaoguai-watch` | crate has `WatchRunner` + `WatchEvent` but **no `WatchRegistry`** and no live driver wired into `serve` |
 | `anomalies[]` (AnomalySpec yaml) | `xiaoguai-anomaly` | `AnomalyRegistry` exists, but **no scheduler poll-loop consumer** drives `observe()` |
-| `agents[]` (agent yaml) | — | **no agent-execution registry exists** |
+| `agents[]` (agent yaml) | `xiaoguai-orchestrator` | an `AgentRegistry` (`registry/mod.rs:177`) + `CapabilityRouter` exist but are **test-only** — never built in the serving path — and nothing binds pack `agents[]` to them |
 | `dashboards[]` | admin-ui | "not wired yet" (manifest comment) |
 
 Plus **no activation entry point**: the `pack.yaml` comment shows
@@ -88,8 +92,12 @@ PackLoader.
 3. **Watch/anomaly runtime.** Appetite to wire a live, scheduler-resident
    poll-loop driver that runs registered watches/anomalies? Without it,
    registration is inert.
-4. **Agent execution.** Pack `agents[]` need an execution model (persona-like? a
-   new registry?). Largest unknown — likely out of scope for loader v1.
+4. **Agent execution.** Pack `agents[]` need an execution model. A candidate
+   target exists — `xiaoguai-orchestrator`'s `AgentRegistry` + `CapabilityRouter`
+   (`registry/mod.rs:177`) — but it is **test-only** today (never built in the
+   serving path), so this means *both* wiring that registry into `serve` *and*
+   loading pack `agents[]` into it. Largest unknown — likely out of scope for
+   loader v1.
 
 ---
 
@@ -100,6 +108,10 @@ PackLoader.
   PackLoader parses, checks `requires.features` against the running build, and
   lists what *would* be registered. No side effects. Unblocks authoring/CI of
   the `packs/*` manifests. Low risk, zero DEC-033 exposure.
+  **Risk:** the 44 `packs/*` manifests are not schema-uniform (§1) — Phase 1
+  must either converge them on `PackManifest` or teach the loader the variant
+  shapes, and `validate` should *reject* unknown keys rather than silently drop
+  them (today every field is `#[serde(default)]`).
 - **Phase 2 — anomaly/watch registration + a live driver.** Wire
   `register_anomalies` → real `AnomalyRegistry` + a scheduler-resident poll
   loop; same for watches via `WatchRunner`. This is where registration becomes
@@ -135,4 +147,7 @@ PackLoader.
   `WatchRegistry`).
 - `crates/xiaoguai-anomaly/src/registry.rs` (`AnomalyRegistry`; no live poll
   consumer found in scheduler/runtime).
-- No `xiaoguai pack` CLI; no agent-execution registry (grep-verified absent).
+- No `xiaoguai pack` CLI. `xiaoguai-orchestrator` *does* define an
+  `AgentRegistry` (`registry/mod.rs:177`) + `CapabilityRouter`, but both are
+  test-only — never constructed in the serving path, and no pack-`agents[]`
+  binding exists (grep-verified).
