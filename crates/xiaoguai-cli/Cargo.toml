@@ -32,7 +32,9 @@ xiaoguai-mcp = { path = "../xiaoguai-mcp" }
 # library entry point (the legacy `xiaoguai-core` binary remains a thin shim
 # over the same function, for backward compatibility with existing systemd
 # units and packaging).
-xiaoguai-core = { path = "../xiaoguai-core" }
+# `packs` feature: enables xiaoguai_core::packs (PackLoader) for the offline
+# `xiaoguai pack validate` command — parse + path-validate only, no registration.
+xiaoguai-core = { path = "../xiaoguai-core", features = ["packs"] }
 # `xiaoguai schedule` — job model + repositories + cron validation.
 xiaoguai-scheduler = { path = "../xiaoguai-scheduler" }
 # T7.2: `xiaoguai memory import/export` — JSONL codec + MemoryStore.
