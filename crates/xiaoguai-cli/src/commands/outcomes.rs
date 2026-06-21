@@ -2,13 +2,15 @@
 //!
 //! Talks to `POST /v1/outcomes`, `GET /v1/outcomes`, `GET /v1/outcomes/summary`,
 //! and `GET /v1/outcomes/timeseries`.  On HTTP 503 prints a friendly message
-//! explaining that the Pg bridge ships in v1.3.
+//! noting the outcome-telemetry subsystem is not enabled on the server.
 
 use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use serde_json::Value as JsonValue;
 
-const ERR_503: &str = "Endpoint returns 503 — Pg bridge ships in v1.3. Check /healthz.";
+const ERR_503: &str = "Endpoint returned 503 — the outcome-telemetry subsystem is not enabled on \
+                       this server. Check that `xiaoguai serve` is running and outcome telemetry \
+                       is configured.";
 
 async fn require_ok(resp: reqwest::Response) -> Result<reqwest::Response> {
     let status = resp.status();
