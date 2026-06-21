@@ -105,18 +105,21 @@ pub struct PackRequires {
 
 /// A relative path reference within the pack directory.
 ///
-/// Tolerant of two equivalent YAML idioms the `packs/*` manifests use
-/// interchangeably — a bare string or a `{ path: ... }` mapping:
+/// Tolerant of the three equivalent YAML idioms the `packs/*` manifests use
+/// interchangeably — a bare string, a `{ path: ... }` mapping, or a
+/// `{ ref: ... }` mapping:
 ///
 /// ```yaml
 /// migrations:
-///   - migrations/0001.sql      # bare string
-///   - path: migrations/0002.sql # mapping
+///   - migrations/0001.sql       # bare string
+///   - path: migrations/0002.sql # `path` mapping
+/// agents:
+///   - ref: agents/foo.yaml      # `ref` mapping
 /// ```
 ///
-/// Both deserialize to the same `PackPath`. (~45% of the shipped manifests use
-/// the bare-string form; accepting it lets the loader validate them without a
-/// schema-conversion pass — see `docs/plans/2026-06-21-skill-pack-loader.md` §4.)
+/// All three deserialize to the same `PackPath`. Accepting every idiom lets the
+/// loader validate the whole shipped corpus without a schema-conversion pass —
+/// see `docs/plans/2026-06-21-skill-pack-loader.md` §4.
 #[derive(Debug, Clone)]
 pub struct PackPath {
     pub path: String,
@@ -131,10 +134,16 @@ impl<'de> Deserialize<'de> for PackPath {
         #[serde(untagged)]
         enum Raw {
             Bare(String),
-            Mapping { path: String },
+            Path {
+                path: String,
+            },
+            Ref {
+                #[serde(rename = "ref")]
+                ref_path: String,
+            },
         }
         let path = match Raw::deserialize(deserializer)? {
-            Raw::Bare(path) | Raw::Mapping { path } => path,
+            Raw::Bare(path) | Raw::Path { path } | Raw::Ref { ref_path: path } => path,
         };
         Ok(PackPath { path })
     }

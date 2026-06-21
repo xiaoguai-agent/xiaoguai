@@ -74,6 +74,78 @@ pub async fn validate(dir: &Path) -> Result<String> {
     Ok(render_report(&manifest, &unknown_keys, &unknown_features))
 }
 
+/// Returns `true` when `path` is a single pack — a `pack.yaml` file, or a
+/// directory that directly contains one — rather than a parent directory of
+/// many packs.
+#[must_use]
+pub fn is_single_pack(path: &Path) -> bool {
+    path.is_file() || path.join("pack.yaml").exists()
+}
+
+/// Combined outcome of validating every pack under a parent directory.
+pub struct BatchOutcome {
+    /// Multi-line report: one `✓`/`✗` line per pack, then a summary.
+    pub report: String,
+    /// How many packs failed to validate.
+    pub failed: usize,
+    /// How many packs were checked.
+    pub total: usize,
+}
+
+/// Validate every immediate `<parent>/<name>/pack.yaml` and return a combined
+/// report. Each pack is checked independently — one failure does not abort the
+/// rest — so a CI gate surfaces every problem in a single pass.
+///
+/// # Errors
+/// Errors only when `parent` cannot be read or holds no packs; a pack that
+/// fails to validate is recorded in the report (and `failed`), not propagated.
+pub async fn validate_all(parent: &Path) -> Result<BatchOutcome> {
+    use std::fmt::Write as _;
+
+    let mut packs: Vec<PathBuf> = Vec::new();
+    let mut entries = tokio::fs::read_dir(parent)
+        .await
+        .with_context(|| format!("read packs directory {}", parent.display()))?;
+    while let Some(entry) = entries.next_entry().await? {
+        let p = entry.path();
+        if p.join("pack.yaml").exists() {
+            packs.push(p);
+        }
+    }
+    packs.sort();
+    anyhow::ensure!(
+        !packs.is_empty(),
+        "no packs found under {} (expected <subdir>/pack.yaml)",
+        parent.display()
+    );
+
+    let mut report = String::new();
+    let mut failed = 0;
+    for pack in &packs {
+        let name = pack.file_name().map_or_else(
+            || pack.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        match validate(pack).await {
+            Ok(_) => {
+                let _ = writeln!(report, "✓ {name}");
+            }
+            Err(e) => {
+                failed += 1;
+                let reason = format!("{e:#}").replace('\n', "; ");
+                let _ = writeln!(report, "✗ {name}: {reason}");
+            }
+        }
+    }
+    let total = packs.len();
+    let _ = writeln!(report, "\n{}/{total} pack(s) valid", total - failed);
+    Ok(BatchOutcome {
+        report,
+        failed,
+        total,
+    })
+}
+
 /// Resolve `dir` to `(base_dir, manifest_rel_path)`, accepting either a
 /// directory holding `pack.yaml` or the `pack.yaml` file directly.
 fn resolve_manifest(dir: &Path) -> Result<(PathBuf, PathBuf)> {
