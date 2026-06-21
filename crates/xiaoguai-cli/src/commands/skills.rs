@@ -2,8 +2,8 @@
 //!
 //! Talks to `GET /v1/skills/catalog`, `GET /v1/skills/installed`,
 //! `POST /v1/skills/install`, and `DELETE /v1/skills/install/:id`.
-//! On HTTP 503 prints a friendly message explaining that the Pg bridge ships
-//! in v1.3.
+//! On HTTP 503 prints a friendly message noting the skill-packs subsystem is
+//! not enabled on the server.
 //!
 //! `install-from-file` is planned for v1.3; calling it currently exits with
 //! an informative error.
@@ -12,7 +12,9 @@ use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use serde_json::Value as JsonValue;
 
-const ERR_503: &str = "Endpoint returns 503 — Pg bridge ships in v1.3. Check /healthz.";
+const ERR_503: &str = "Endpoint returned 503 — the skill-packs subsystem is not enabled on this \
+                       server. Check that `xiaoguai serve` is running and skill packs are \
+                       configured.";
 
 async fn require_ok(resp: reqwest::Response) -> Result<reqwest::Response> {
     let status = resp.status();

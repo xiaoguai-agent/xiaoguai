@@ -139,7 +139,7 @@ async fn hotl_check_returns_verdict() {
 }
 
 #[tokio::test]
-async fn hotl_503_gives_pg_bridge_message() {
+async fn hotl_503_gives_helpful_message() {
     let mut server = Server::new_async().await;
     let _m = server
         .mock("GET", Matcher::Regex(r"/v1/hotl/policies.*".into()))
@@ -155,8 +155,8 @@ async fn hotl_503_gives_pg_bridge_message() {
     .expect_err("should fail");
 
     assert!(
-        err.to_string().contains("503") || err.to_string().contains("Pg bridge"),
-        "got: {err}"
+        err.to_string().contains("not enabled"),
+        "503 should explain the subsystem is not enabled; got: {err}"
     );
 }
 
@@ -313,7 +313,7 @@ async fn outcomes_timeseries_queries_timeseries_endpoint() {
 }
 
 #[tokio::test]
-async fn outcomes_503_gives_pg_bridge_message() {
+async fn outcomes_503_gives_helpful_message() {
     let mut server = Server::new_async().await;
     let _m = server
         .mock("POST", "/v1/outcomes")
@@ -334,8 +334,8 @@ async fn outcomes_503_gives_pg_bridge_message() {
     .expect_err("should fail");
 
     assert!(
-        err.to_string().contains("503") || err.to_string().contains("Pg bridge"),
-        "got: {err}"
+        err.to_string().contains("not enabled"),
+        "503 should explain the subsystem is not enabled; got: {err}"
     );
 }
 
@@ -478,7 +478,7 @@ async fn skills_uninstall_sends_delete() {
 }
 
 #[tokio::test]
-async fn skills_503_gives_pg_bridge_message() {
+async fn skills_503_gives_helpful_message() {
     let mut server = Server::new_async().await;
     let _m = server
         .mock("GET", "/v1/skills/catalog")
@@ -495,8 +495,8 @@ async fn skills_503_gives_pg_bridge_message() {
     .expect_err("should fail");
 
     assert!(
-        err.to_string().contains("503") || err.to_string().contains("Pg bridge"),
-        "got: {err}"
+        err.to_string().contains("not enabled"),
+        "503 should explain the subsystem is not enabled; got: {err}"
     );
 }
 
@@ -591,7 +591,7 @@ async fn watch_test_posts_to_test_endpoint() {
 }
 
 #[tokio::test]
-async fn watch_503_gives_pg_bridge_message() {
+async fn watch_503_gives_helpful_message() {
     let mut server = Server::new_async().await;
     let _m = server
         .mock("GET", "/v1/watch")
@@ -606,8 +606,8 @@ async fn watch_503_gives_pg_bridge_message() {
     .expect_err("should fail");
 
     assert!(
-        err.to_string().contains("503") || err.to_string().contains("Pg bridge"),
-        "got: {err}"
+        err.to_string().contains("not enabled"),
+        "503 should explain the subsystem is not enabled; got: {err}"
     );
 }
 
