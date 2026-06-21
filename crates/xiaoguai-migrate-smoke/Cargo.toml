@@ -7,9 +7,10 @@ license.workspace = true
 publish = false
 
 # Phase-1 (DEC-033) migration gate. This crate exists ONLY to apply the ported
-# SQLite migrations to a fresh database and assert the schema is correct, WITHOUT
-# depending on xiaoguai-storage (whose repository layer is still PgPool-typed
-# until the Phase-2 retype). See docs/HANDOFF-2026-06-02-phase1-sqlite.md.
+# SQLite migrations to a fresh database and assert the schema is correct, kept
+# deliberately dependency-light (it does not pull in xiaoguai-storage). The
+# repository layer is SQLite-typed (the Phase-2 retype landed) — under DEC-033
+# there is no Postgres. See docs/HANDOFF-2026-06-02-phase1-sqlite.md.
 
 [lib]
 path = "src/lib.rs"
