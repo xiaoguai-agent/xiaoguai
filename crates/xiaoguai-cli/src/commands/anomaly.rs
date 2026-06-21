@@ -2,14 +2,18 @@
 //! API.
 //!
 //! Talks to `POST /v1/anomaly/run` and `POST /v1/anomaly/test`.
-//! On HTTP 503 prints a friendly message explaining that the Pg bridge ships
-//! in v1.3.
+//! `test` back-tests a spec against a CSV and works offline. `run` (live KPI
+//! evaluation) needs an external time-series data source, which the
+//! single-binary embedded-SQLite build does not wire up (DEC-033) and returns
+//! `503`; this maps that to a friendly hint.
 
 use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use serde_json::Value as JsonValue;
 
-const ERR_503: &str = "Endpoint returns 503 — Pg bridge ships in v1.3. Check /healthz.";
+const ERR_503: &str = "Live `anomaly run` needs an external data source, not available in this \
+                       single-binary build. Use `xiaoguai anomaly test` to back-test a spec \
+                       against a CSV.";
 
 async fn require_ok(resp: reqwest::Response) -> Result<reqwest::Response> {
     let status = resp.status();
