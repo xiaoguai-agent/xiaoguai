@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use xiaoguai_cli::commands::{
     anomaly, audit_bundle, audit_export, backup, chat, cli_config, code, completions, doctor, eval,
-    hotl, init, manpages, mcp, memory, outcomes, provider, r#loop, remote, repl, schedule,
+    hotl, init, manpages, mcp, memory, outcomes, pack, provider, r#loop, remote, repl, schedule,
     self_update, service, skills, stats, style, tasks, watch,
 };
 use xiaoguai_config::Settings;
@@ -1428,6 +1428,18 @@ async fn handle_anomaly(api_base: String, output: String, action: AnomalyCmd) ->
     Ok(())
 }
 
+async fn handle_pack(action: PackCmd) -> Result<()> {
+    match action {
+        PackCmd::Validate { dir } => {
+            // On success print the report; on a load/validation failure the `?`
+            // propagates the error so the process exits non-zero (CI-friendly).
+            let report = pack::validate(std::path::Path::new(&dir)).await?;
+            print!("{report}");
+        }
+    }
+    Ok(())
+}
+
 async fn handle_tasks(api_base: String, action: TasksCmd) -> Result<()> {
     let client = tasks::TasksClient::new(api_base);
     match action {
@@ -1700,6 +1712,8 @@ async fn main() -> Result<()> {
             output,
             action,
         } => handle_anomaly(api_base, output, action).await,
+        // Skill-pack manifest tooling (offline; Phase 1 = validate).
+        Cmd::Pack { action } => handle_pack(action).await,
         // v1.4 — Kanban task board
         Cmd::Tasks { api_base, action } => handle_tasks(api_base, action).await,
         // T5 (Tier-3) — compliance export.

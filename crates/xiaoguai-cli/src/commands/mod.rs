@@ -57,6 +57,7 @@ pub mod manpages;
 pub mod mcp;
 pub mod memory;
 pub mod outcomes;
+pub mod pack;
 pub mod provider;
 pub mod remote;
 pub mod repl;

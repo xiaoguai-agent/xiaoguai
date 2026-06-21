@@ -85,11 +85,12 @@ futures = { workspace = true }
 uuid = { workspace = true }
 hex = "0.4"
 sha2 = { workspace = true } # SEC-19: hash webhook tokens at rest
-# v1.3.1-prep: pack loader — YAML manifest parsing + Jinja template rendering.
-# Both are feature-gated (`cfg(feature = "packs")`) so existing builds are
-# unaffected until the feature flag is explicitly enabled.
+# v1.3.1-prep: pack loader — YAML manifest parsing, feature-gated
+# (`cfg(feature = "packs")`) so existing builds are unaffected until the flag is
+# enabled. Template rendering (tera) was dropped from the feature as
+# currently-unused in packs.rs; re-add when a later phase needs it. (tera stays
+# a dev-dependency below for the ar-collections integration test.)
 serde_yaml = { workspace = true, optional = true }
-tera = { workspace = true, optional = true }
 # serde with derive is needed by packs.rs (feature-gated) for PackManifest
 # deserialization. Pulled in explicitly so the proc-macro path is unambiguous
 # even when rmcp re-exports its own serde namespace.
@@ -109,10 +110,10 @@ xiaoguai-observability = { path = "../xiaoguai-observability", optional = true }
 [features]
 # Activate Prometheus + OTLP telemetry layers.
 observability = ["dep:xiaoguai-observability"]
-# v1.3.1-prep: pack loader (declarative skill pack manifest + template engine).
-# Enable with: cargo build --features packs
-# Will be enabled by default once F1/F2/F3 are merged.
-packs = ["dep:serde_yaml", "dep:tera", "dep:serde"]
+# v1.3.1-prep: pack loader (declarative skill-pack manifest parsing + path
+# validation). Enable with: cargo build --features packs. The CLI enables it for
+# `xiaoguai pack validate`. Will be on by default once registration lands.
+packs = ["dep:serde_yaml", "dep:serde"]
 
 [dev-dependencies]
 parking_lot = { workspace = true }

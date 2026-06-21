@@ -396,6 +396,12 @@ pub enum Cmd {
         action: AnomalyCmd,
     },
 
+    /// Validate skill-pack manifests (offline; parse + path checks, no side effects).
+    Pack {
+        #[command(subcommand)]
+        action: PackCmd,
+    },
+
     /// Kanban task board management (v1.4-ready — requires /v1/tasks backend).
     Tasks {
         /// Base URL of the API server, e.g. `http://localhost:7600`.
@@ -699,6 +705,20 @@ pub enum AnomalyCmd {
         /// Value column name.
         #[arg(long, default_value = "value")]
         val_col: String,
+    },
+}
+
+/// `xiaoguai pack ...` — skill-pack manifest tooling (Phase 1: validate only).
+#[derive(Subcommand)]
+pub enum PackCmd {
+    /// Parse + validate a pack manifest (offline, no side effects).
+    ///
+    /// Loads `pack.yaml`, confirms every declared migration/watch/anomaly/agent
+    /// path exists, and reports what would register. Exits non-zero if the pack
+    /// would fail to load.
+    Validate {
+        /// Path to the pack directory (containing `pack.yaml`) or the file itself.
+        dir: String,
     },
 }
 
