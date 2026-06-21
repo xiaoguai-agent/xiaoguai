@@ -62,6 +62,7 @@
     clippy::missing_panics_doc
 )]
 
+pub mod backtest;
 pub mod baseline;
 pub mod detector;
 pub mod registry;
@@ -69,6 +70,7 @@ pub mod series;
 pub mod spec;
 
 // Re-export the most commonly needed types at the crate root.
+pub use backtest::{backtest, build_detector, BacktestError};
 pub use detector::{Anomaly, Detector, EwmaDetector, ZScoreDetector};
 pub use registry::{AnomalyRegistry, AnomalyStore, InMemoryStore};
 pub use series::TimeSeries;

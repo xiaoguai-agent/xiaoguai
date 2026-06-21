@@ -28,6 +28,9 @@ xiaoguai-orchestrator = { path = "../xiaoguai-orchestrator" }
 # v0.11.2: eval pane endpoints reuse the EvalRunner / EvalSuite types
 # straight from xiaoguai-eval so the wire shape stays one source of truth.
 xiaoguai-eval = { path = "../xiaoguai-eval" }
+# Anomaly back-test endpoint (POST /v1/anomaly/test) reuses the detector +
+# backtest engine straight from the anomaly crate (one source of truth).
+xiaoguai-anomaly = { path = "../xiaoguai-anomaly" }
 # v0.9.1: serve our own Toolbox as an MCP server at /v1/mcp/serve.
 rmcp = { workspace = true, features = ["server", "transport-streamable-http-server", "transport-streamable-http-server-session"] }
 axum = { workspace = true }

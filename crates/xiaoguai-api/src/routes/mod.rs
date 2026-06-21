@@ -1,6 +1,7 @@
 //! HTTP route handlers.
 
 pub mod admin;
+pub mod anomaly;
 pub mod audit_exports;
 pub mod experts;
 pub mod hotl;
@@ -291,7 +292,12 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/watchers/{id}/resume",
             post(watchers::resume_watcher),
-        );
+        )
+        // Anomaly monitors (xiaoguai-anomaly) — offline back-test of a spec
+        // against inline CSV data. `/run` (live KPI eval) returns 503: it needs
+        // an external time-series source, deliberately not wired under DEC-033.
+        .route("/v1/anomaly/run", post(anomaly::run))
+        .route("/v1/anomaly/test", post(anomaly::backtest));
 
     // Layer order (inner → outer, since `route_layer` adds outward):
     //   handler → require_auth
