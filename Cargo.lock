@@ -8116,6 +8116,7 @@ dependencies = [
  "tracing",
  "uuid",
  "xiaoguai-agent",
+ "xiaoguai-anomaly",
  "xiaoguai-audit",
  "xiaoguai-eval",
  "xiaoguai-llm",
