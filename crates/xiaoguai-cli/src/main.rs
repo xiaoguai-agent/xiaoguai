@@ -1431,10 +1431,23 @@ async fn handle_anomaly(api_base: String, output: String, action: AnomalyCmd) ->
 async fn handle_pack(action: PackCmd) -> Result<()> {
     match action {
         PackCmd::Validate { dir } => {
-            // On success print the report; on a load/validation failure the `?`
-            // propagates the error so the process exits non-zero (CI-friendly).
-            let report = pack::validate(std::path::Path::new(&dir)).await?;
-            print!("{report}");
+            let path = std::path::Path::new(&dir);
+            // A single pack (a pack.yaml, or a dir holding one) prints its report;
+            // a load/validation failure propagates via `?` → non-zero exit.
+            if pack::is_single_pack(path) {
+                print!("{}", pack::validate(path).await?);
+            } else {
+                // Otherwise treat `dir` as a parent of many packs: validate each
+                // and exit non-zero if any failed (a CI gate over the corpus).
+                let outcome = pack::validate_all(path).await?;
+                print!("{}", outcome.report);
+                anyhow::ensure!(
+                    outcome.failed == 0,
+                    "{} of {} pack(s) failed validation",
+                    outcome.failed,
+                    outcome.total
+                );
+            }
         }
     }
     Ok(())

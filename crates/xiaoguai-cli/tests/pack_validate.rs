@@ -121,3 +121,54 @@ async fn validate_real_ar_collections_pack() {
     assert!(report.contains("ar-collections"), "{report}");
     assert!(report.contains("manifest valid"), "{report}");
 }
+
+#[tokio::test]
+async fn validate_accepts_ref_idiom() {
+    // ~30% of shipped manifests reference declared files with `{ ref: ... }`
+    // rather than `{ path: ... }` or a bare string; the loader treats all three
+    // identically.
+    let dir = pack_dir("name: refpack\nversion: \"1.0.0\"\nagents:\n  - ref: a/x.yaml\n");
+    std::fs::create_dir_all(dir.path().join("a")).unwrap();
+    std::fs::write(dir.path().join("a/x.yaml"), "id: x\n").unwrap();
+    let report = pack::validate(dir.path()).await.expect("ref idiom valid");
+    assert!(report.contains("1 agent(s)"), "{report}");
+}
+
+#[tokio::test]
+async fn validate_all_batches_a_directory_of_packs() {
+    // Parent dir holding two valid packs and one broken (missing migration).
+    let parent = tempfile::tempdir().expect("tmpdir");
+    for name in ["good-a", "good-b"] {
+        let d = parent.path().join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("pack.yaml"), "name: x\nversion: \"1.0.0\"\n").unwrap();
+    }
+    let bad = parent.path().join("broken");
+    std::fs::create_dir_all(&bad).unwrap();
+    std::fs::write(
+        bad.join("pack.yaml"),
+        "name: b\nversion: \"1.0.0\"\nmigrations:\n  - nope.sql\n",
+    )
+    .unwrap();
+
+    // The parent has no pack.yaml of its own → batch mode.
+    assert!(!pack::is_single_pack(parent.path()));
+    let outcome = pack::validate_all(parent.path()).await.expect("batch ran");
+    assert_eq!(outcome.total, 3);
+    assert_eq!(outcome.failed, 1);
+    assert!(outcome.report.contains("✓ good-a"), "{}", outcome.report);
+    assert!(outcome.report.contains("✗ broken"), "{}", outcome.report);
+    assert!(
+        outcome.report.contains("2/3 pack(s) valid"),
+        "{}",
+        outcome.report
+    );
+}
+
+#[tokio::test]
+async fn is_single_pack_detects_pack_dir_vs_parent() {
+    let single = pack_dir("name: s\nversion: \"1.0.0\"\n");
+    assert!(pack::is_single_pack(single.path()));
+    let empty = tempfile::tempdir().unwrap();
+    assert!(!pack::is_single_pack(empty.path()));
+}
