@@ -1,8 +1,10 @@
-//! Skill Pack loader — v1.3.1-prep stub.
+//! Skill Pack loader — manifest parsing + path validation.
 //!
-//! Parses a `pack.yaml` manifest, validates required xiaoguai features,
-//! and registers the declared watches + anomalies into their respective
-//! registries.
+//! Parses a `pack.yaml` manifest and validates that its declared
+//! migration / watch / anomaly / agent paths exist on disk. Registration into
+//! the live registries is a later, owner-gated phase (see
+//! `docs/plans/2026-06-21-skill-pack-loader.md`); today this is parse + validate
+//! only, used by `xiaoguai pack validate`.
 //!
 //! ## Status
 //!
@@ -37,14 +39,14 @@
 //! # }
 //! ```
 
-#![cfg(feature = "packs")]
-
+// Module-gated via `#[cfg(feature = "packs")]` on `pub mod packs;` in lib.rs;
+// no inner `#![cfg]` (would duplicate the attribute).
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 // Explicit re-import via `::serde` to avoid collision with `rmcp::serde`
 // which is in scope through xiaoguai-core's rmcp dependency.
-use ::serde::Deserialize;
+use ::serde::{Deserialize, Deserializer};
 
 // ---------------------------------------------------------------------------
 // Pack manifest schema
@@ -56,7 +58,7 @@ pub struct PackManifest {
     /// Unique pack identifier (kebab-case, e.g. `ar-collections`).
     pub name: String,
 
-    /// SemVer pack version.
+    /// `SemVer` pack version.
     pub version: String,
 
     /// Human-readable description of the pack.
@@ -102,9 +104,40 @@ pub struct PackRequires {
 }
 
 /// A relative path reference within the pack directory.
-#[derive(Debug, Clone, Deserialize)]
+///
+/// Tolerant of two equivalent YAML idioms the `packs/*` manifests use
+/// interchangeably — a bare string or a `{ path: ... }` mapping:
+///
+/// ```yaml
+/// migrations:
+///   - migrations/0001.sql      # bare string
+///   - path: migrations/0002.sql # mapping
+/// ```
+///
+/// Both deserialize to the same `PackPath`. (~45% of the shipped manifests use
+/// the bare-string form; accepting it lets the loader validate them without a
+/// schema-conversion pass — see `docs/plans/2026-06-21-skill-pack-loader.md` §4.)
+#[derive(Debug, Clone)]
 pub struct PackPath {
     pub path: String,
+}
+
+impl<'de> Deserialize<'de> for PackPath {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bare(String),
+            Mapping { path: String },
+        }
+        let path = match Raw::deserialize(deserializer)? {
+            Raw::Bare(path) | Raw::Mapping { path } => path,
+        };
+        Ok(PackPath { path })
+    }
 }
 
 /// Minimal dashboard definition (wired by a future admin-ui surface).
@@ -168,7 +201,7 @@ impl PackLoader {
             .unwrap_or_else(|| Path::new("."))
             .to_owned();
 
-        self.validate(&manifest, &pack_dir)
+        Self::validate(&manifest, &pack_dir)
             .with_context(|| format!("validate pack '{}'", manifest.name))?;
 
         tracing::info!(
@@ -185,7 +218,7 @@ impl PackLoader {
     }
 
     /// Validate that all referenced paths exist within the pack directory.
-    fn validate(&self, manifest: &PackManifest, pack_dir: &Path) -> Result<()> {
+    fn validate(manifest: &PackManifest, pack_dir: &Path) -> Result<()> {
         for entry in &manifest.migrations {
             let p = pack_dir.join(&entry.path);
             anyhow::ensure!(p.exists(), "migration path does not exist: {}", p.display());
@@ -366,7 +399,7 @@ agents:
 
         let loader = PackLoader::with_base(tmp.path());
         let result = loader.load("pack.yaml").await;
-        assert!(result.is_ok(), "validation should pass: {:?}", result);
+        assert!(result.is_ok(), "validation should pass: {result:?}");
     }
 
     #[tokio::test]
