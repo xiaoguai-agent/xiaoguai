@@ -39,8 +39,8 @@ use crate::state::AppState;
 ///   - CORS restricted to loopback origins (or `XIAOGUAI_CORS_ALLOWED_ORIGINS`)
 ///     — SEC-06, replacing the old `permissive()` layer
 ///   - optional username/password (HTTP Basic) auth on `/v1/**` when
-///     `state.auth = Some(...)`. `/healthz` and `/v1/openapi.json` are always
-///     public. Under DEC-033 there is no RBAC layer — every authenticated
+///     `state.auth = Some(...)`. `/healthz` is always public. Under DEC-033
+///     there is no RBAC layer — every authenticated
 ///     request is the single static owner.
 #[allow(clippy::too_many_lines)]
 pub fn router(state: AppState) -> Router {
