@@ -709,7 +709,7 @@ async fn anomaly_backtest_posts_to_test_endpoint() {
 }
 
 #[tokio::test]
-async fn anomaly_503_gives_pg_bridge_message() {
+async fn anomaly_503_gives_helpful_message() {
     let mut server = Server::new_async().await;
     let _m = server
         .mock("POST", "/v1/anomaly/run")
@@ -733,8 +733,8 @@ async fn anomaly_503_gives_pg_bridge_message() {
     .expect_err("should fail");
 
     assert!(
-        err.to_string().contains("503") || err.to_string().contains("Pg bridge"),
-        "got: {err}"
+        err.to_string().contains("anomaly test"),
+        "503 from /run should point the user to the back-test command; got: {err}"
     );
 }
 
