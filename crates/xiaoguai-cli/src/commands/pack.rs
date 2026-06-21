@@ -40,6 +40,13 @@ const KNOWN_KEYS: &[&str] = &[
     "anomalies",
     "agents",
     "dashboards",
+    // Conventional metadata the loader intentionally ignores — every shipped
+    // pack carries these, so listing them keeps the "unknown key" warning
+    // meaningful: it then fires only on genuinely-unmodeled *structural* keys
+    // (e.g. `sources` / `outputs` / `depends` in the divergent manifests).
+    "author",
+    "license",
+    "schema",
 ];
 
 /// Parse + validate the pack manifest at `dir` (a directory containing

@@ -1,8 +1,10 @@
-//! Skill Pack loader — v1.3.1-prep stub.
+//! Skill Pack loader — manifest parsing + path validation.
 //!
-//! Parses a `pack.yaml` manifest, validates required xiaoguai features,
-//! and registers the declared watches + anomalies into their respective
-//! registries.
+//! Parses a `pack.yaml` manifest and validates that its declared
+//! migration / watch / anomaly / agent paths exist on disk. Registration into
+//! the live registries is a later, owner-gated phase (see
+//! `docs/plans/2026-06-21-skill-pack-loader.md`); today this is parse + validate
+//! only, used by `xiaoguai pack validate`.
 //!
 //! ## Status
 //!

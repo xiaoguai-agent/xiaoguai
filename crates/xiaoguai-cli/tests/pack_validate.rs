@@ -67,16 +67,18 @@ async fn validate_fails_on_missing_declared_path() {
 
 #[tokio::test]
 async fn validate_warns_on_unknown_keys() {
-    // `author`/`license`/`depends` are not modeled by PackManifest — surfaced,
+    // `depends` is a real structural key the loader does not model — surfaced,
     // not silently dropped (the packs/* manifests are not schema-uniform).
-    let dir = pack_dir(
-        "name: extra\nversion: \"1.0.0\"\nauthor: someone\nlicense: MIT\ndepends:\n  - other\n",
-    );
+    // `author` is conventional metadata in KNOWN_KEYS and must NOT be flagged,
+    // so the warning stays meaningful (fires only on unmodeled structure).
+    let dir = pack_dir("name: extra\nversion: \"1.0.0\"\nauthor: someone\ndepends:\n  - other\n");
     let report = pack::validate(dir.path()).await.expect("still valid");
     assert!(report.contains("ignored unknown manifest key"), "{report}");
-    assert!(report.contains("author"), "{report}");
     assert!(report.contains("depends"), "{report}");
-    assert!(report.contains("license"), "{report}");
+    assert!(
+        !report.contains("author"),
+        "known metadata not flagged: {report}"
+    );
 }
 
 #[tokio::test]
