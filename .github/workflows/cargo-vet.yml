@@ -33,7 +33,7 @@ jobs:
       CARGO_VET_VERSION: "0.10.0"
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@1.93.0
 
