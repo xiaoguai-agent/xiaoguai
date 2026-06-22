@@ -39,6 +39,8 @@ const KNOWN_KEYS: &[&str] = &[
     "watches",
     "anomalies",
     "agents",
+    "sources",
+    "outputs",
     "dashboards",
     // Conventional metadata the loader intentionally ignores — every shipped
     // pack carries these, so listing them keeps the "unknown key" warning
@@ -68,10 +70,34 @@ pub async fn validate(dir: &Path) -> Result<String> {
         .with_context(|| format!("validate pack at {}", dir.display()))?;
 
     let manifest_path = base.join(&rel);
+    let pack_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let unknown_keys = unknown_top_level_keys(&manifest_path).await?;
     let unknown_features = unrecognised_features(&manifest);
+    let missing_adapters = missing_adapter_files(&manifest, pack_dir);
 
-    Ok(render_report(&manifest, &unknown_keys, &unknown_features))
+    Ok(render_report(
+        &manifest,
+        &unknown_keys,
+        &unknown_features,
+        &missing_adapters,
+    ))
+}
+
+/// Declared `sources` / `outputs` adapter paths whose files don't exist on disk.
+///
+/// Soft signal, not a hard error: many shipped packs are scaffold — they
+/// declare inbound sources + output adapters whose YAML files were never
+/// written. `PackLoader::load` deliberately does NOT validate these (only
+/// migrations/watches/anomalies/agents are hard-checked), so `pack validate`
+/// surfaces the gap as a warning while still passing the pack.
+fn missing_adapter_files(manifest: &PackManifest, pack_dir: &Path) -> Vec<String> {
+    manifest
+        .sources
+        .iter()
+        .chain(manifest.outputs.iter())
+        .filter(|p| !pack_dir.join(&p.path).exists())
+        .map(|p| p.path.clone())
+        .collect()
 }
 
 /// Returns `true` when `path` is a single pack — a `pack.yaml` file, or a
@@ -206,6 +232,7 @@ fn render_report(
     manifest: &PackManifest,
     unknown_keys: &[String],
     unknown_features: &[String],
+    missing_adapters: &[String],
 ) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -219,11 +246,14 @@ fn render_report(
     }
     let _ = writeln!(
         out,
-        "  would register: {} migration(s), {} watch(es), {} anomaly(ies), {} agent(s)",
+        "  would register: {} migration(s), {} watch(es), {} anomaly(ies), {} agent(s); \
+         declares {} source(s) + {} output(s)",
         manifest.migrations.len(),
         manifest.watches.len(),
         manifest.anomalies.len(),
-        manifest.agents.len()
+        manifest.agents.len(),
+        manifest.sources.len(),
+        manifest.outputs.len()
     );
     if !manifest.requires.xiaoguai_version.is_empty() {
         let _ = writeln!(
@@ -251,6 +281,14 @@ fn render_report(
             out,
             "  ⚠ ignored unknown manifest key(s) (parsed but not loaded): {}",
             unknown_keys.join(", ")
+        );
+    }
+    if !missing_adapters.is_empty() {
+        let _ = writeln!(
+            out,
+            "  ⚠ {} declared source/output file(s) not found — pack is scaffold: {}",
+            missing_adapters.len(),
+            missing_adapters.join(", ")
         );
     }
     out
