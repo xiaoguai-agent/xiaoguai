@@ -41,7 +41,16 @@
 #![warn(clippy::pedantic)]
 
 /// The ACP wire schema, re-exported so call sites use one canonical path.
-pub use agent_client_protocol_schema as acp;
+///
+/// Upstream v0.14 moved the per-method message types under a `v1` module
+/// (`v2` is feature-gated). We flatten `v1` here — together with the
+/// crate-root `ProtocolVersion` newtype, which lives outside the version
+/// modules — so call sites keep the flat `acp::Foo` path and the wire
+/// contract stays pinned to one upstream version in this one place.
+pub mod acp {
+    pub use agent_client_protocol_schema::v1::*;
+    pub use agent_client_protocol_schema::ProtocolVersion;
+}
 
 pub mod delegate;
 pub mod jsonrpc;
