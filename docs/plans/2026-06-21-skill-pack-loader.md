@@ -1,8 +1,11 @@
 # Skill Pack Runtime Loader — Design & Phasing (DEFERRED)
 
-**Status:** DEFERRED — owner decision 2026-06-21 ("暂缓 + 写设计文档"). No code is
-being written now. This document captures the *verified* current state and a
-phased plan so a future sprint can pick it up without re-investigating.
+**Status:** SUPERSEDED for execution by
+[`2026-06-23-skill-pack-loader-phase2.md`](2026-06-23-skill-pack-loader-phase2.md).
+**Phase 1 (`xiaoguai pack validate`) has SHIPPED** (#336/#338/#344). The owner
+**ratified the §3 decisions on 2026-06-23** and the Phase 2 technical design
+(watch/anomaly drivers) now lives in that newer doc. This doc remains the verified
+current-state + phasing record that the Phase 2 design builds on.
 
 **Backlog origin:** "Skill runtime loader — install only records, doesn't
 execute." On investigation that one-liner conflates two separate systems and
@@ -104,7 +107,7 @@ PackLoader.
 ## 4. Suggested phasing (each its own PR, TDD)
 
 - **Phase 0 (this doc)** — capture state + decisions. ✅
-- **Phase 1 — parse + validate + dry-run CLI.** `xiaoguai pack validate <dir>`:
+- **Phase 1 — parse + validate + dry-run CLI.** ✅ **SHIPPED** (#336/#338/#344). `xiaoguai pack validate <dir>`:
   PackLoader parses, checks `requires.features` against the running build, and
   lists what *would* be registered. No side effects. Unblocks authoring/CI of
   the `packs/*` manifests. Low risk, zero DEC-033 exposure.
