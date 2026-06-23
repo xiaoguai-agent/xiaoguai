@@ -172,3 +172,30 @@ async fn is_single_pack_detects_pack_dir_vs_parent() {
     let empty = tempfile::tempdir().unwrap();
     assert!(!pack::is_single_pack(empty.path()));
 }
+
+#[tokio::test]
+async fn validate_soft_warns_missing_adapter_file() {
+    // sources/outputs are parsed + counted but NOT hard-validated by the loader
+    // (so the pack still passes); a declared adapter whose file is absent — e.g.
+    // a work-in-progress pack — is surfaced as a soft warning, not a load error.
+    let dir =
+        pack_dir("name: wip\nversion: \"1.0.0\"\nsources:\n  - inbound/not-written-yet.yaml\n");
+    let report = pack::validate(dir.path())
+        .await
+        .expect("still valid (soft)");
+    assert!(report.contains("declares 1 source(s)"), "{report}");
+    assert!(report.contains("not found"), "{report}");
+    assert!(report.contains("inbound/not-written-yet.yaml"), "{report}");
+}
+
+#[tokio::test]
+async fn validate_existing_adapter_not_warned() {
+    let dir = pack_dir("name: ok\nversion: \"1.0.0\"\noutputs:\n  - out/a.yaml\n");
+    std::fs::create_dir_all(dir.path().join("out")).unwrap();
+    std::fs::write(dir.path().join("out/a.yaml"), "id: a\n").unwrap();
+    let report = pack::validate(dir.path()).await.expect("valid");
+    assert!(report.contains("1 output(s)"), "{report}");
+    assert!(!report.contains("not found"), "no false warning: {report}");
+    // sources/outputs are modeled now → NOT flagged as unknown keys.
+    assert!(!report.contains("ignored unknown manifest key"), "{report}");
+}
