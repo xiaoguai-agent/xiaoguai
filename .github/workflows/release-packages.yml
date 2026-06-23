@@ -58,7 +58,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # The workspace Cargo.toml stays at 0.1.0; the release version is the git
       # tag (cargo-dist was dropped — see the Cargo.toml note). Inject the tag
@@ -124,7 +124,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # cargo-deb reads the package version from Cargo.toml — inject the tag
       # version so the .deb is named for the release, not the static 0.1.0.
@@ -190,7 +190,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # cargo-generate-rpm reads the package version from Cargo.toml — inject
       # the tag version so the .rpm is named for the release, not 0.1.0.
@@ -251,7 +251,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download .deb
         uses: actions/download-artifact@v8
@@ -278,7 +278,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download .rpm
         uses: actions/download-artifact@v8
