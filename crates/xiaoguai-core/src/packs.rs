@@ -85,6 +85,17 @@ pub struct PackManifest {
     #[serde(default)]
     pub agents: Vec<PackPath>,
 
+    /// Inbound source adapters (webhooks / pollers) the pack declares.
+    /// Parsed but **not** hard-validated by [`PackLoader::load`] — many shipped
+    /// packs are scaffold and reference adapter files that don't exist yet, so
+    /// the CLI surfaces missing ones as a soft warning rather than a load error.
+    #[serde(default)]
+    pub sources: Vec<PackPath>,
+
+    /// Output adapters the pack declares. Same soft-validation as [`Self::sources`].
+    #[serde(default)]
+    pub outputs: Vec<PackPath>,
+
     /// Dashboard layout definitions (admin-ui surface — not wired yet).
     #[serde(default)]
     pub dashboards: Vec<DashboardDef>,
