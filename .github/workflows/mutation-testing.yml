@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest-4-cores
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # full history required for --in-diff origin/main
 
