@@ -720,6 +720,12 @@ pub enum PackCmd {
         /// Path to the pack directory (containing `pack.yaml`) or the file itself.
         dir: String,
     },
+    /// Install a pack: validate it, then record it (enabled) in the embedded
+    /// store so the next `serve` boot wires its anomaly specs as scheduled jobs.
+    Install {
+        /// Path to the pack directory (containing `pack.yaml`).
+        dir: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

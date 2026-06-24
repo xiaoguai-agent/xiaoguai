@@ -1,0 +1,23 @@
+# Watch spec — oversized-llm-request (canonical Phase-2 reference)
+# ---------------------------------------------------------------------------
+# Fires when a single LLM call records an unusually large token count — a
+# runaway prompt, a context-stuffing bug, or abuse. Each matching row is
+# deduplicated by id within the cache TTL, so a given request alerts once.
+#
+# SQLite-native, single-owner (no tenant column). Matches xiaoguai-watch's
+# WatchSpec (internally-tagged `kind:` source + schedule — the form the watcher
+# JSON-schema validator accepts), so it parses and pack.watch runs it as-is.
+# ---------------------------------------------------------------------------
+id: oversized-llm-request
+source:
+  kind: sql
+  query: >
+    SELECT id, model, total_tokens
+    FROM token_usage
+    WHERE total_tokens > 50000
+schedule:
+  kind: interval_secs
+  secs: 3600
+on_match:
+  action: notify
+  target: ops

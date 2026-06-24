@@ -31,6 +31,8 @@ pub mod hotl_bridge;
 pub mod memory_bridge;
 pub mod outcomes_bridge;
 #[cfg(feature = "packs")]
+pub mod pack_runtime;
+#[cfg(feature = "packs")]
 pub mod packs;
 mod scheduler_bridge;
 mod sd_notify_bridge;
@@ -536,12 +538,96 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
             Arc::new(xiaoguai_rag::InMemoryRagClient::new());
         let rag_executor: Arc<dyn xiaoguai_scheduler::JobExecutor> =
             Arc::new(crate::scheduler_bridge::RagReindexExecutor::new(rag_client));
-        let executor: Arc<dyn xiaoguai_scheduler::JobExecutor> = Arc::new(
-            xiaoguai_scheduler::CompositeExecutor::new(runtime_executor)
-                .register("rag_reindex", rag_executor),
-        );
+        // Phase 2 (packs): a shared, stateful anomaly registry — built empty
+        // here and populated by the boot-scan below. The executor holds the
+        // same Arc, so jobs see the populated registry when they fire (the
+        // runner spawns later). In-memory store ⇒ baselines re-warm after a
+        // restart (accepted for v1, see the Phase 2 design doc).
+        #[cfg(feature = "packs")]
+        let pack_anomaly_registry = std::sync::Arc::new(std::sync::Mutex::new(
+            xiaoguai_anomaly::AnomalyRegistry::new(Box::new(
+                xiaoguai_anomaly::InMemoryStore::default(),
+            )),
+        ));
+        #[cfg_attr(not(feature = "packs"), allow(unused_mut))]
+        let mut composite = xiaoguai_scheduler::CompositeExecutor::new(runtime_executor)
+            .register("rag_reindex", rag_executor);
+        #[cfg(feature = "packs")]
+        {
+            composite = composite
+                .register(
+                    crate::pack_runtime::PACK_ANOMALY_KIND,
+                    std::sync::Arc::new(crate::pack_runtime::PackAnomalyExecutor::new(
+                        pack_anomaly_registry.clone(),
+                        pool.clone(),
+                    )),
+                )
+                .register(
+                    crate::pack_runtime::PACK_WATCH_KIND,
+                    std::sync::Arc::new(crate::pack_runtime::PackWatchExecutor::new(
+                        // Shared, TTL-evicting dedup so a watch row alerts once
+                        // per day; the cache is internally concurrent (no Mutex).
+                        std::sync::Arc::new(xiaoguai_watch::DedupCache::new(
+                            10_000,
+                            std::time::Duration::from_secs(86_400),
+                        )),
+                        pool.clone(),
+                    )),
+                );
+        }
+        let executor: Arc<dyn xiaoguai_scheduler::JobExecutor> = Arc::new(composite);
         let pg_jobs = Arc::new(xiaoguai_scheduler::SqliteJobRepository::new(pool.clone()));
         let jobs: Arc<dyn xiaoguai_scheduler::JobRepository> = pg_jobs.clone();
+        // Phase 2 (packs): wire enabled packs' anomaly specs into the shared
+        // registry and persist their pack.anomaly jobs (idempotent by id).
+        // Non-fatal — a bad pack must never stop the server from booting.
+        #[cfg(feature = "packs")]
+        {
+            match crate::pack_runtime::scan_enabled_pack_anomalies(&pool, &pack_anomaly_registry)
+                .await
+            {
+                Ok(pack_jobs) => {
+                    let n = pack_jobs.len();
+                    for job in &pack_jobs {
+                        if let Err(e) = jobs.upsert(job).await {
+                            tracing::warn!(job_id = %job.id, error = %e, "serve: pack anomaly job upsert failed");
+                        }
+                    }
+                    if n > 0 {
+                        tracing::info!(
+                            count = n,
+                            "serve: wired {n} pack anomaly job(s) from enabled packs"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "serve: pack anomaly boot-scan failed (non-fatal)");
+                }
+            }
+        }
+        // Phase 2 (packs): same for watch specs — persist their pack.watch jobs.
+        #[cfg(feature = "packs")]
+        {
+            match crate::pack_runtime::scan_enabled_pack_watches(&pool).await {
+                Ok(watch_jobs) => {
+                    let n = watch_jobs.len();
+                    for job in &watch_jobs {
+                        if let Err(e) = jobs.upsert(job).await {
+                            tracing::warn!(job_id = %job.id, error = %e, "serve: pack watch job upsert failed");
+                        }
+                    }
+                    if n > 0 {
+                        tracing::info!(
+                            count = n,
+                            "serve: wired {n} pack watch job(s) from enabled packs"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "serve: pack watch boot-scan failed (non-fatal)");
+                }
+            }
+        }
         let runs: Arc<dyn xiaoguai_scheduler::JobRunRepository> = Arc::new(
             xiaoguai_scheduler::SqliteJobRunRepository::new(pool.clone()),
         );

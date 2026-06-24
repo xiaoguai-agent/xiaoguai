@@ -67,6 +67,31 @@ impl Default for DetectorKind {
     }
 }
 
+// ── AnomalySchedule ──────────────────────────────────────────────────────────
+
+/// How often the scheduler observes this anomaly's KPI.
+///
+/// Mirrors `xiaoguai-watch`'s `WatchSchedule` so pack authors use one mental
+/// model for both. The cadence matters for correctness: a daily KPI must be
+/// observed once per day, otherwise the same accumulating value is fed to the
+/// detector many times and pollutes the rolling baseline. The host maps this
+/// to a `xiaoguai_scheduler::Trigger` at install/boot time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AnomalySchedule {
+    /// 6-field cron expression (sec min h dom mon dow), UTC.
+    Cron { expr: String },
+    /// Fixed interval in seconds.
+    IntervalSecs { secs: u64 },
+}
+
+impl Default for AnomalySchedule {
+    /// Hourly — a safe cadence for most KPIs that don't declare one.
+    fn default() -> Self {
+        Self::IntervalSecs { secs: 3600 }
+    }
+}
+
 // ── AnomalySpec ────────────────────────────────────────────────────────────
 
 /// Complete declarative spec for one anomaly monitor.
@@ -87,6 +112,10 @@ pub struct AnomalySpec {
     pub cool_off: Duration,
     /// What to do when an anomaly fires.
     pub on_anomaly: ActionRef,
+    /// How often the scheduler observes the KPI. Defaults to hourly when the
+    /// spec omits it (back-compatible with pre-Phase-2 specs).
+    #[serde(default)]
+    pub schedule: AnomalySchedule,
 }
 
 // ── Duration serde helper ──────────────────────────────────────────────────
@@ -125,6 +154,7 @@ mod tests {
                 session: "ops-agent".to_string(),
                 prompt_template: "Anomaly detected: {anomaly}".to_string(),
             },
+            schedule: AnomalySchedule::default(),
         };
 
         let json = serde_json::to_string(&spec).expect("serialize");
@@ -149,6 +179,7 @@ mod tests {
             on_anomaly: ActionRef::Notify {
                 channel: "feishu:#ops-alert".to_string(),
             },
+            schedule: AnomalySchedule::default(),
         };
         let json = serde_json::to_string(&spec).unwrap();
         let back: AnomalySpec = serde_json::from_str(&json).unwrap();

@@ -27,6 +27,7 @@ fn orders_spec(id: &str, detector: DetectorKind, cool_off: Duration) -> AnomalyS
             session: "ops-agent".to_string(),
             prompt_template: "Order anomaly: {anomaly}".to_string(),
         },
+        schedule: xiaoguai_anomaly::spec::AnomalySchedule::default(),
     }
 }
 

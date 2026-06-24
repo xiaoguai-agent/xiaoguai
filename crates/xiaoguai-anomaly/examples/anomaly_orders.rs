@@ -40,6 +40,7 @@ fn main() {
                 "Order-rate anomaly detected at {ts}. Score={score:.2}. Investigate immediately."
                     .to_string(),
         },
+        schedule: xiaoguai_anomaly::spec::AnomalySchedule::default(),
     };
 
     let mut registry = AnomalyRegistry::new(Box::new(InMemoryStore::default()));
