@@ -5,16 +5,18 @@
 # deduplicated by id within the cache TTL, so a given request alerts once.
 #
 # SQLite-native, single-owner (no tenant column). Matches xiaoguai-watch's
-# WatchSpec exactly (externally-tagged `!sql` source + `!interval_secs`
-# schedule), so it parses and the pack.watch executor runs it as-is.
+# WatchSpec (internally-tagged `kind:` source + schedule — the form the watcher
+# JSON-schema validator accepts), so it parses and pack.watch runs it as-is.
 # ---------------------------------------------------------------------------
 id: oversized-llm-request
-source: !sql
+source:
+  kind: sql
   query: >
     SELECT id, model, total_tokens
     FROM token_usage
     WHERE total_tokens > 50000
-schedule: !interval_secs
+schedule:
+  kind: interval_secs
   secs: 3600
 on_match:
   action: notify

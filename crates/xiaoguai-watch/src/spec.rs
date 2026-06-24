@@ -38,7 +38,7 @@ pub struct ActionRef {
 
 /// Where to poll for matches.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WatchSourceSpec {
     /// Run a SQL SELECT; each result row is a potential match.
     ///
@@ -74,7 +74,7 @@ fn default_method() -> String {
 
 /// How often the watcher ticks.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WatchSchedule {
     /// ISO 8601 cron expression (6-field: sec min h dom mon dow).
     Cron { expr: String },
@@ -238,7 +238,8 @@ mod tests {
     fn http_source_defaults() {
         let yaml = r#"
 id: http-test
-source: !http
+source:
+  kind: http
   url: "https://example.com/api"
 on_match:
   action: notify
