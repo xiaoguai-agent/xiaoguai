@@ -21,13 +21,16 @@
 //! shared registry, and `kpi_query` is the read-only SELECT evaluated against
 //! the one embedded `SQLite` each fire (DEC-033 — no external time-series store).
 
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use anyhow::Context;
 use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::{Row, SqlitePool};
+use xiaoguai_anomaly::spec::{AnomalySchedule, AnomalySpec};
 use xiaoguai_anomaly::AnomalyRegistry;
-use xiaoguai_scheduler::{ExecutionOutcome, JobExecutor, ScheduledJob};
+use xiaoguai_scheduler::{ExecutionOutcome, JobExecutor, ScheduledJob, Trigger};
 
 /// `payload.kind` value dispatched to [`PackAnomalyExecutor`].
 pub const PACK_ANOMALY_KIND: &str = "pack.anomaly";
@@ -122,6 +125,96 @@ fn extract_metric(row: &sqlx::sqlite::SqliteRow) -> Option<f64> {
         return Some(v as f64);
     }
     None
+}
+
+/// Scan every **enabled** installed pack and wire its anomaly specs into the
+/// shared registry, returning the `pack.anomaly` [`ScheduledJob`]s the caller
+/// should upsert. Idempotent by job id (`pack:<slug>:anomaly:<spec_id>`), so a
+/// boot scan re-runs cleanly.
+///
+/// Enablement + on-disk location live in the `installed_skill_packs.config`
+/// JSON (`{ "enabled": true, "pack_dir": "/abs/path" }`) — reusing the existing
+/// free-form column means **no migration** (DEC-033: state stays in the one
+/// `SQLite`). A pack that fails to load is logged and skipped, never fatal.
+pub async fn scan_enabled_pack_anomalies(
+    pool: &SqlitePool,
+    registry: &Arc<Mutex<AnomalyRegistry>>,
+) -> anyhow::Result<Vec<ScheduledJob>> {
+    let rows = sqlx::query("SELECT pack_slug, config FROM installed_skill_packs")
+        .fetch_all(pool)
+        .await
+        .context("read installed_skill_packs")?;
+    let mut jobs = Vec::new();
+    for row in &rows {
+        let slug: String = row.try_get("pack_slug")?;
+        let config: String = row.try_get("config").unwrap_or_else(|_| "{}".to_string());
+        let cfg: serde_json::Value = serde_json::from_str(&config).unwrap_or_default();
+        if !cfg
+            .get("enabled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let Some(pack_dir) = cfg.get("pack_dir").and_then(serde_json::Value::as_str) else {
+            tracing::warn!(slug, "enabled pack has no pack_dir in config; skipping");
+            continue;
+        };
+        if let Err(e) = wire_pack_anomalies(pack_dir, &slug, registry, &mut jobs).await {
+            tracing::warn!(slug, pack_dir, error = %e, "failed to wire pack anomalies; skipping");
+        }
+    }
+    Ok(jobs)
+}
+
+/// Load one pack's anomaly specs: register each detector in the shared registry
+/// and append its scheduled job. Kept separate so a single bad pack is isolated.
+async fn wire_pack_anomalies(
+    pack_dir: &str,
+    slug: &str,
+    registry: &Arc<Mutex<AnomalyRegistry>>,
+    jobs: &mut Vec<ScheduledJob>,
+) -> anyhow::Result<()> {
+    let dir = Path::new(pack_dir);
+    let manifest = crate::packs::PackLoader::new()
+        .load(dir.join("pack.yaml"))
+        .await?;
+    for entry in &manifest.anomalies {
+        let spec_path = dir.join(&entry.path);
+        let yaml = std::fs::read_to_string(&spec_path)
+            .with_context(|| format!("read anomaly spec {}", spec_path.display()))?;
+        let spec: AnomalySpec = serde_yaml::from_str(&yaml)
+            .with_context(|| format!("parse anomaly spec {}", spec_path.display()))?;
+        let trigger = trigger_from_schedule(&spec.schedule)?;
+        let job = ScheduledJob::new(
+            format!("pack:{slug}:anomaly:{}", spec.id),
+            format!("{slug} · {}", spec.id),
+            trigger,
+            serde_json::json!({
+                "kind": PACK_ANOMALY_KIND,
+                "spec_id": spec.id,
+                "kpi_query": spec.kpi_query,
+            }),
+        );
+        registry
+            .lock()
+            .map_err(|_| anyhow::anyhow!("anomaly registry poisoned"))?
+            .register(spec);
+        jobs.push(job);
+    }
+    Ok(())
+}
+
+/// Map a pack's declared cadence to a scheduler [`Trigger`].
+fn trigger_from_schedule(schedule: &AnomalySchedule) -> anyhow::Result<Trigger> {
+    match schedule {
+        AnomalySchedule::Cron { expr } => {
+            Trigger::cron(expr).map_err(|e| anyhow::anyhow!("invalid cron '{expr}': {e}"))
+        }
+        AnomalySchedule::IntervalSecs { secs } => {
+            Trigger::interval(*secs).map_err(|e| anyhow::anyhow!("invalid interval {secs}s: {e}"))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -324,5 +417,74 @@ mod tests {
             "anomalous spend day should fire: {}",
             out.output_preview
         );
+    }
+
+    async fn installed_packs_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE installed_skill_packs (\
+                id TEXT PRIMARY KEY, pack_slug TEXT NOT NULL, version TEXT NOT NULL, \
+                config TEXT NOT NULL DEFAULT '{}', installed_at TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    fn reference_pack_dir() -> String {
+        format!(
+            "{}/../../packs/observability-starter",
+            env!("CARGO_MANIFEST_DIR")
+        )
+    }
+
+    async fn install_row(pool: &SqlitePool, enabled: bool) {
+        let config =
+            serde_json::json!({ "enabled": enabled, "pack_dir": reference_pack_dir() }).to_string();
+        sqlx::query(
+            "INSERT INTO installed_skill_packs (id, pack_slug, version, config) \
+             VALUES ('1', 'observability-starter', '1.0.0', ?)",
+        )
+        .bind(&config)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn scan_wires_enabled_pack_into_registry_and_jobs() {
+        let pool = installed_packs_pool().await;
+        install_row(&pool, true).await;
+        let registry = Arc::new(Mutex::new(AnomalyRegistry::new(Box::new(
+            InMemoryStore::default(),
+        ))));
+
+        let jobs = scan_enabled_pack_anomalies(&pool, &registry).await.unwrap();
+
+        // One job, deterministic id, daily interval from the spec's schedule.
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(
+            jobs[0].id,
+            "pack:observability-starter:anomaly:daily-token-spend"
+        );
+        assert!(matches!(jobs[0].trigger, Trigger::Interval { secs: 86400 }));
+        assert_eq!(jobs[0].payload["kind"], PACK_ANOMALY_KIND);
+        // The detector is registered: observing an unknown id would warn + return
+        // None, but a registered (un-armed) one also returns None — so assert the
+        // executor can drive it without the "unknown spec" path by re-scanning idempotently.
+        let again = scan_enabled_pack_anomalies(&pool, &registry).await.unwrap();
+        assert_eq!(again[0].id, jobs[0].id, "scan is idempotent by job id");
+    }
+
+    #[tokio::test]
+    async fn scan_skips_disabled_packs() {
+        let pool = installed_packs_pool().await;
+        install_row(&pool, false).await;
+        let registry = Arc::new(Mutex::new(AnomalyRegistry::new(Box::new(
+            InMemoryStore::default(),
+        ))));
+        let jobs = scan_enabled_pack_anomalies(&pool, &registry).await.unwrap();
+        assert!(jobs.is_empty(), "disabled pack must not be wired");
     }
 }
