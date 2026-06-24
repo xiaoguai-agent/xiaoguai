@@ -165,6 +165,15 @@
             "expression": { "type": "string", "minLength": 1 },
             "timezone": { "type": "string" }
           }
+        },
+        {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": true,
+          "description": "Canonical Rust internally-tagged form ({kind: interval_secs, secs} | {kind: cron, expr}).",
+          "properties": {
+            "kind": { "type": "string", "enum": ["cron", "interval_secs"] }
+          }
         }
       ]
     },

@@ -334,6 +334,7 @@ mod tests {
             on_anomaly: xiaoguai_anomaly::ActionRef::Notify {
                 channel: "ops".into(),
             },
+            schedule: xiaoguai_anomaly::spec::AnomalySchedule::default(),
         };
         assert_eq!(
             summarize(&spec, 100, 3),

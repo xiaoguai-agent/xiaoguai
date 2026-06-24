@@ -170,7 +170,8 @@ fn dsl_02_http_watcher_with_json_selector_validates() {
 fn dsl_03_http_defaults_round_trip() {
     let yaml = r#"
 id: http-defaults
-source: !http
+source:
+  kind: http
   url: "https://example.com/api/events"
 on_match:
   action: create_task
@@ -705,9 +706,11 @@ fn dsl_23_interval_shorthand_string_5s_parses() {
     // `interval_secs: 5`, not `interval: "5s"`.
     let yaml = r#"
 id: shorthand-test
-source: !sql
+source:
+  kind: sql
   query: "SELECT 1"
-schedule: !interval_secs
+schedule:
+  kind: interval_secs
   secs: "5s"
 on_match:
   action: notify

@@ -193,6 +193,7 @@ mod tests {
             on_anomaly: ActionRef::Notify {
                 channel: "test".to_string(),
             },
+            schedule: crate::spec::AnomalySchedule::default(),
         }
     }
 

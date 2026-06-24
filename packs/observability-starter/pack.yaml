@@ -1,0 +1,25 @@
+# observability-starter — canonical Phase-2 reference pack
+# ---------------------------------------------------------------------------
+# The first skill pack authored *against the real crate schema and the live
+# embedded SQLite* (single-owner, DEC-033). Unlike the pre-pivot domain packs
+# (which assume Postgres + multi-tenant and are validate-only), this pack's
+# anomaly spec actually runs: `xiaoguai pack install` registers it as a
+# scheduled job and the `pack.anomaly` executor evaluates it each fire.
+#
+# Use it as the template when authoring new runnable packs.
+# ---------------------------------------------------------------------------
+name: observability-starter
+version: "1.0.0"
+description: >
+  Reference pack — a daily LLM token-spend anomaly over the embedded
+  token_usage table. SQLite-native, single-owner; the canonical example the
+  pack.anomaly executor runs end-to-end.
+requires:
+  xiaoguai_version: ">=1.25.0"
+  features:
+    - anomaly
+    - watch
+anomalies:
+  - path: anomalies/daily-token-spend.yaml
+watches:
+  - path: watches/oversized-llm-request.yaml
