@@ -128,7 +128,7 @@ fn extract_metric(row: &sqlx::sqlite::SqliteRow) -> Option<f64> {
 mod tests {
     use super::*;
     use chrono::Duration;
-    use xiaoguai_anomaly::spec::{ActionRef, AnomalySpec, DetectorKind};
+    use xiaoguai_anomaly::spec::{ActionRef, AnomalySchedule, AnomalySpec, DetectorKind};
     use xiaoguai_anomaly::InMemoryStore;
     use xiaoguai_scheduler::Trigger;
 
@@ -154,6 +154,7 @@ mod tests {
             on_anomaly: ActionRef::Notify {
                 channel: "ops".to_string(),
             },
+            schedule: AnomalySchedule::default(),
         }
     }
 

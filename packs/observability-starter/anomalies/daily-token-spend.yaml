@@ -22,3 +22,6 @@ cool_off: 86400        # at most one alert per day (seconds)
 on_anomaly:
   kind: notify
   channel: ops
+schedule:
+  kind: interval_secs
+  secs: 86400          # observe once per day (one sample = one day's spend)

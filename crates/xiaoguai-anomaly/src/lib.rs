@@ -25,7 +25,7 @@
 //! use xiaoguai_anomaly::{
 //!     detector::ZScoreDetector,
 //!     registry::{AnomalyRegistry, InMemoryStore},
-//!     spec::{ActionRef, AnomalySpec, DetectorKind},
+//!     spec::{ActionRef, AnomalySchedule, AnomalySpec, DetectorKind},
 //! };
 //!
 //! let spec = AnomalySpec {
@@ -35,6 +35,7 @@
 //!     detector: DetectorKind::ZScore { sigma_threshold: 3.0, min_count: 10 },
 //!     cool_off: Duration::minutes(5),
 //!     on_anomaly: ActionRef::Notify { channel: "ops".to_string() },
+//!     schedule: AnomalySchedule::IntervalSecs { secs: 3600 },
 //! };
 //!
 //! let mut registry = AnomalyRegistry::new(Box::new(InMemoryStore::default()));
