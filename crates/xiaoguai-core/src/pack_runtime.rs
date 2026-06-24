@@ -6,10 +6,13 @@
 //! existing [`xiaoguai_scheduler`]; this module supplies the matching
 //! [`JobExecutor`]s that the `CompositeExecutor` dispatches by `payload.kind`.
 //!
-//! This slice ships the **anomaly** path only. The detector baseline is
-//! stateful and must survive across fires, so the [`AnomalyRegistry`] is shared
-//! (`Arc<Mutex<_>>`) and populated once at boot/install — the executor only
-//! `observe()`s, it never re-registers (which would reset the baseline).
+//! Two executors ship here:
+//! - **`pack.anomaly`** — stateful z-score / EWMA detection. The detector
+//!   baseline must survive across fires, so the [`AnomalyRegistry`] is shared
+//!   (`Arc<Mutex<_>>`) and populated once at boot; the executor only
+//!   `observe()`s, never re-registers (which would reset the baseline).
+//! - **`pack.watch`** — SELECT-poll + dedup via a shared, TTL-evicting
+//!   [`DedupCache`], so a matching row alerts once within its window.
 //!
 //! ## Payload contract (`payload.kind == "pack.anomaly"`)
 //!
@@ -31,6 +34,9 @@ use sqlx::{Row, SqlitePool};
 use xiaoguai_anomaly::spec::{AnomalySchedule, AnomalySpec};
 use xiaoguai_anomaly::AnomalyRegistry;
 use xiaoguai_scheduler::{ExecutionOutcome, JobExecutor, ScheduledJob, Trigger};
+use xiaoguai_watch::{
+    DedupCache, SqlSource, WatchSchedule, WatchSource, WatchSourceSpec, WatchSpec,
+};
 
 /// `payload.kind` value dispatched to [`PackAnomalyExecutor`].
 pub const PACK_ANOMALY_KIND: &str = "pack.anomaly";
@@ -114,6 +120,78 @@ impl JobExecutor for PackAnomalyExecutor {
     }
 }
 
+/// `payload.kind` value dispatched to [`PackWatchExecutor`].
+pub const PACK_WATCH_KIND: &str = "pack.watch";
+
+/// Evaluates one pack watch spec per fire: run its SELECT against the embedded
+/// `SQLite`, dedup result rows against the shared cache, and report how many
+/// *new* matches fired (the `on_match` dispatch). The [`DedupCache`] is shared
+/// (and internally concurrent) so a match doesn't re-fire across ticks within
+/// its TTL.
+pub struct PackWatchExecutor {
+    dedup: Arc<DedupCache>,
+    pool: SqlitePool,
+}
+
+impl PackWatchExecutor {
+    /// Build an executor over a shared dedup cache and the embedded `SQLite`
+    /// pool used to evaluate watch queries.
+    #[must_use]
+    pub fn new(dedup: Arc<DedupCache>, pool: SqlitePool) -> Self {
+        Self { dedup, pool }
+    }
+}
+
+#[async_trait]
+impl JobExecutor for PackWatchExecutor {
+    async fn execute(&self, job: &ScheduledJob, _attempt: u32) -> Result<ExecutionOutcome, String> {
+        let spec_id = job
+            .payload
+            .get("spec_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("pack.watch payload missing 'spec_id'")?;
+        let query = job
+            .payload
+            .get("query")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("pack.watch payload missing 'query'")?;
+
+        // SqlSource validates the SELECT itself; reuse it for the poll.
+        let source = SqlSource::new(
+            self.pool.clone(),
+            &WatchSourceSpec::Sql {
+                query: query.to_string(),
+            },
+        )
+        .map_err(|e| format!("pack.watch '{spec_id}': invalid source: {e}"))?;
+        let matches = source
+            .poll()
+            .await
+            .map_err(|e| format!("pack.watch '{spec_id}' poll failed: {e}"))?;
+
+        let mut fresh = 0_usize;
+        for m in &matches {
+            if !self.dedup.is_duplicate(spec_id, m).await {
+                self.dedup.record(spec_id, m).await;
+                fresh += 1;
+            }
+        }
+
+        let preview = if fresh > 0 {
+            format!(
+                "pack.watch '{spec_id}' FIRED: {fresh} new match(es) of {} row(s)",
+                matches.len()
+            )
+        } else {
+            format!("pack.watch '{spec_id}': {} row(s), none new", matches.len())
+        };
+        Ok(ExecutionOutcome {
+            output_preview: preview,
+            session_id: None,
+        })
+    }
+}
+
 /// Pull the metric value from the first column of a `SQLite` row, tolerating both
 /// `REAL` and `INTEGER` storage classes.
 fn extract_metric(row: &sqlx::sqlite::SqliteRow) -> Option<f64> {
@@ -140,27 +218,9 @@ pub async fn scan_enabled_pack_anomalies(
     pool: &SqlitePool,
     registry: &Arc<Mutex<AnomalyRegistry>>,
 ) -> anyhow::Result<Vec<ScheduledJob>> {
-    let rows = sqlx::query("SELECT pack_slug, config FROM installed_skill_packs")
-        .fetch_all(pool)
-        .await
-        .context("read installed_skill_packs")?;
     let mut jobs = Vec::new();
-    for row in &rows {
-        let slug: String = row.try_get("pack_slug")?;
-        let config: String = row.try_get("config").unwrap_or_else(|_| "{}".to_string());
-        let cfg: serde_json::Value = serde_json::from_str(&config).unwrap_or_default();
-        if !cfg
-            .get("enabled")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
-        {
-            continue;
-        }
-        let Some(pack_dir) = cfg.get("pack_dir").and_then(serde_json::Value::as_str) else {
-            tracing::warn!(slug, "enabled pack has no pack_dir in config; skipping");
-            continue;
-        };
-        if let Err(e) = wire_pack_anomalies(pack_dir, &slug, registry, &mut jobs).await {
+    for (slug, pack_dir) in enabled_pack_dirs(pool).await? {
+        if let Err(e) = wire_pack_anomalies(&pack_dir, &slug, registry, &mut jobs).await {
             tracing::warn!(slug, pack_dir, error = %e, "failed to wire pack anomalies; skipping");
         }
     }
@@ -212,6 +272,101 @@ fn trigger_from_schedule(schedule: &AnomalySchedule) -> anyhow::Result<Trigger> 
             Trigger::cron(expr).map_err(|e| anyhow::anyhow!("invalid cron '{expr}': {e}"))
         }
         AnomalySchedule::IntervalSecs { secs } => {
+            Trigger::interval(*secs).map_err(|e| anyhow::anyhow!("invalid interval {secs}s: {e}"))
+        }
+    }
+}
+
+/// `(slug, pack_dir)` for every **enabled** installed pack, read from the
+/// `installed_skill_packs.config` JSON. Shared by the anomaly + watch scans.
+async fn enabled_pack_dirs(pool: &SqlitePool) -> anyhow::Result<Vec<(String, String)>> {
+    let rows = sqlx::query("SELECT pack_slug, config FROM installed_skill_packs")
+        .fetch_all(pool)
+        .await
+        .context("read installed_skill_packs")?;
+    let mut out = Vec::new();
+    for row in &rows {
+        let slug: String = row.try_get("pack_slug")?;
+        let config: String = row.try_get("config").unwrap_or_else(|_| "{}".to_string());
+        let cfg: serde_json::Value = serde_json::from_str(&config).unwrap_or_default();
+        if !cfg
+            .get("enabled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if let Some(dir) = cfg.get("pack_dir").and_then(serde_json::Value::as_str) {
+            out.push((slug, dir.to_string()));
+        } else {
+            tracing::warn!(slug, "enabled pack has no pack_dir in config; skipping");
+        }
+    }
+    Ok(out)
+}
+
+/// Scan every enabled pack and build its `pack.watch` [`ScheduledJob`]s
+/// (id `pack:<slug>:watch:<spec_id>`, `Trigger` from the watch's schedule).
+/// Watch dedup is runtime (the executor's shared cache), so this needs no
+/// registry. SQL watches only — HTTP sources are out of scope for v1.
+pub async fn scan_enabled_pack_watches(pool: &SqlitePool) -> anyhow::Result<Vec<ScheduledJob>> {
+    let mut jobs = Vec::new();
+    for (slug, pack_dir) in enabled_pack_dirs(pool).await? {
+        if let Err(e) = wire_pack_watches(&pack_dir, &slug, &mut jobs).await {
+            tracing::warn!(slug, pack_dir, error = %e, "failed to wire pack watches; skipping");
+        }
+    }
+    Ok(jobs)
+}
+
+/// Load one pack's watch specs and append a `pack.watch` job per SQL watch.
+async fn wire_pack_watches(
+    pack_dir: &str,
+    slug: &str,
+    jobs: &mut Vec<ScheduledJob>,
+) -> anyhow::Result<()> {
+    let dir = Path::new(pack_dir);
+    let manifest = crate::packs::PackLoader::new()
+        .load(dir.join("pack.yaml"))
+        .await?;
+    for entry in &manifest.watches {
+        let spec_path = dir.join(&entry.path);
+        let yaml = std::fs::read_to_string(&spec_path)
+            .with_context(|| format!("read watch spec {}", spec_path.display()))?;
+        let spec: WatchSpec = serde_yaml::from_str(&yaml)
+            .with_context(|| format!("parse watch spec {}", spec_path.display()))?;
+        let query = match &spec.source {
+            WatchSourceSpec::Sql { query } => query.clone(),
+            WatchSourceSpec::Http { .. } => {
+                tracing::warn!(slug, id = %spec.id, "pack.watch HTTP source unsupported in v1; skipping");
+                continue;
+            }
+        };
+        let trigger = trigger_from_watch_schedule(&spec.schedule)?;
+        let job = ScheduledJob::new(
+            format!("pack:{slug}:watch:{}", spec.id),
+            format!("{slug} · {}", spec.id),
+            trigger,
+            serde_json::json!({
+                "kind": PACK_WATCH_KIND,
+                "spec_id": spec.id,
+                "query": query,
+            }),
+        );
+        jobs.push(job);
+    }
+    Ok(())
+}
+
+/// Map a watch's declared cadence to a scheduler [`Trigger`]. xiaoguai-watch's
+/// own cron is a 60s-fallback stub, so routing through the scheduler's `Trigger`
+/// is what makes a watch's declared cron actually honoured.
+fn trigger_from_watch_schedule(schedule: &WatchSchedule) -> anyhow::Result<Trigger> {
+    match schedule {
+        WatchSchedule::Cron { expr } => {
+            Trigger::cron(expr).map_err(|e| anyhow::anyhow!("invalid cron '{expr}': {e}"))
+        }
+        WatchSchedule::IntervalSecs { secs } => {
             Trigger::interval(*secs).map_err(|e| anyhow::anyhow!("invalid interval {secs}s: {e}"))
         }
     }
@@ -486,5 +641,65 @@ mod tests {
         ))));
         let jobs = scan_enabled_pack_anomalies(&pool, &registry).await.unwrap();
         assert!(jobs.is_empty(), "disabled pack must not be wired");
+    }
+
+    #[tokio::test]
+    async fn watch_fires_on_new_matches_then_dedups() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE token_usage (id INTEGER PRIMARY KEY, model TEXT, total_tokens INTEGER)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO token_usage (id, model, total_tokens) \
+             VALUES (1, 'big', 60000), (2, 'big', 70000), (3, 'small', 100)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let dedup = Arc::new(DedupCache::new(100, std::time::Duration::from_secs(3600)));
+        let exec = PackWatchExecutor::new(dedup, pool.clone());
+        let job = ScheduledJob::new(
+            "w",
+            "w",
+            Trigger::interval(3600).unwrap(),
+            serde_json::json!({
+                "kind": PACK_WATCH_KIND,
+                "spec_id": "oversized",
+                "query": "SELECT id, model, total_tokens FROM token_usage WHERE total_tokens > 50000",
+            }),
+        );
+
+        // First fire: the two oversized rows are new.
+        let out = exec.execute(&job, 1).await.unwrap();
+        assert!(
+            out.output_preview.contains("2 new match"),
+            "first fire should report 2 new: {}",
+            out.output_preview
+        );
+        // Second fire: same rows, all deduped.
+        let out2 = exec.execute(&job, 1).await.unwrap();
+        assert!(
+            out2.output_preview.contains("none new"),
+            "re-fire should dedup: {}",
+            out2.output_preview
+        );
+    }
+
+    #[tokio::test]
+    async fn scan_wires_watch_jobs_from_enabled_pack() {
+        let pool = installed_packs_pool().await;
+        install_row(&pool, true).await;
+        let jobs = scan_enabled_pack_watches(&pool).await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(
+            jobs[0].id,
+            "pack:observability-starter:watch:oversized-llm-request"
+        );
+        assert!(matches!(jobs[0].trigger, Trigger::Interval { secs: 3600 }));
+        assert_eq!(jobs[0].payload["kind"], PACK_WATCH_KIND);
     }
 }

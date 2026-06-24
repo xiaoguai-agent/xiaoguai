@@ -8302,6 +8302,7 @@ dependencies = [
  "xiaoguai-storage",
  "xiaoguai-tasks",
  "xiaoguai-types",
+ "xiaoguai-watch",
 ]
 
 [[package]]

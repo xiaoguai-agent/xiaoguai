@@ -18,5 +18,8 @@ requires:
   xiaoguai_version: ">=1.25.0"
   features:
     - anomaly
+    - watch
 anomalies:
   - path: anomalies/daily-token-spend.yaml
+watches:
+  - path: watches/oversized-llm-request.yaml
