@@ -572,6 +572,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                             std::time::Duration::from_secs(86_400),
                         )),
                         pool.clone(),
+                        reqwest::Client::new(),
                     )),
                 );
         }
