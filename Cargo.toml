@@ -154,7 +154,7 @@ async-openai = "0.41"
 eventsource-stream = "0.2"
 
 # mcp
-rmcp = { version = "1.7", default-features = false, features = ["client", "transport-child-process", "transport-async-rw", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "reqwest", "macros"] }
+rmcp = { version = "1.8", default-features = false, features = ["client", "transport-child-process", "transport-async-rw", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "reqwest", "macros"] }
 
 # scheduler
 cron = "0.17"
