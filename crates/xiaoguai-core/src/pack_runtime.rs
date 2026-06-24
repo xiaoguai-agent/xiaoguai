@@ -259,4 +259,69 @@ mod tests {
         );
         assert!(exec.execute(&job, 1).await.is_err());
     }
+
+    /// End-to-end: the **shipped** canonical reference pack parses as a real
+    /// `AnomalySpec` and its actual `SQLite` KPI query drives the executor to
+    /// fire on an anomalous day. This is the "a pack actually runs" proof.
+    #[tokio::test]
+    async fn reference_pack_daily_token_spend_runs_end_to_end() {
+        let yaml =
+            include_str!("../../../packs/observability-starter/anomalies/daily-token-spend.yaml");
+        let spec: AnomalySpec = serde_yaml::from_str(yaml).expect("reference anomaly spec parses");
+        assert_eq!(spec.id, "daily-token-spend");
+
+        // Stand up the real token_usage columns the KPI query reads.
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE token_usage (\
+                id INTEGER PRIMARY KEY AUTOINCREMENT, \
+                ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')), \
+                total_tokens INTEGER)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut reg = AnomalyRegistry::new(Box::new(InMemoryStore::default()));
+        reg.register(spec.clone());
+        let exec = PackAnomalyExecutor::new(Arc::new(Mutex::new(reg)), pool.clone());
+        let job = job_for(&spec);
+
+        // Each "day": reset + write that day's spend (the query sums "today"),
+        // then fire. A long tight baseline arms the detector and stays nominal.
+        for i in 0..24 {
+            sqlx::query("DELETE FROM token_usage")
+                .execute(&pool)
+                .await
+                .unwrap();
+            let day_total = 10_000 + (i % 5) * 150; // ~10k, tight spread
+            sqlx::query("INSERT INTO token_usage (total_tokens) VALUES (?)")
+                .bind(day_total)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let out = exec.execute(&job, 1).await.unwrap();
+            assert!(
+                out.output_preview.contains("nominal"),
+                "baseline day {i}: {}",
+                out.output_preview
+            );
+        }
+
+        // A ~4× spend day is clearly anomalous against the established baseline.
+        sqlx::query("DELETE FROM token_usage")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO token_usage (total_tokens) VALUES (40000)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let out = exec.execute(&job, 1).await.unwrap();
+        assert!(
+            out.output_preview.contains("FIRED"),
+            "anomalous spend day should fire: {}",
+            out.output_preview
+        );
+    }
 }

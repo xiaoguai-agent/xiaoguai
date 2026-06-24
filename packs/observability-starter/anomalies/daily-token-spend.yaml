@@ -1,0 +1,24 @@
+# Anomaly spec — daily token-spend (canonical Phase-2 reference)
+# ---------------------------------------------------------------------------
+# Observes the embedded `token_usage` table once per scheduled day. The
+# z-score detector builds a rolling baseline of daily totals and alerts when a
+# day's total LLM token spend deviates sharply from it — catching a runaway
+# /loop, a misconfigured model, or an abuse spike before the bill does.
+#
+# SQLite-native (strftime/COALESCE/SUM) and single-owner — no tenant column.
+# Matches xiaoguai-anomaly's AnomalySpec exactly, so it parses + runs as-is.
+# ---------------------------------------------------------------------------
+id: daily-token-spend
+kpi_query: >
+  SELECT COALESCE(SUM(total_tokens), 0)
+  FROM token_usage
+  WHERE ts >= strftime('%Y-%m-%dT00:00:00Z', 'now')
+window: 1209600        # 14-day rolling buffer (seconds)
+detector:
+  kind: z_score
+  sigma_threshold: 3.0
+  min_count: 7         # one week of daily samples before arming
+cool_off: 86400        # at most one alert per day (seconds)
+on_anomaly:
+  kind: notify
+  channel: ops
