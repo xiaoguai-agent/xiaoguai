@@ -110,7 +110,9 @@ impl std::fmt::Debug for HttpMcpClient {
         f.debug_struct("HttpMcpClient")
             .field(
                 "peer",
-                &self.service.peer_info().map(|p| &p.server_info.name),
+                // rmcp 1.8: peer_info() returns an owned Option<ServerInfo>, so
+                // clone the name rather than borrow the closure-local value.
+                &self.service.peer_info().map(|p| p.server_info.name.clone()),
             )
             .finish_non_exhaustive()
     }
