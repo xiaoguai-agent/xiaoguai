@@ -113,6 +113,9 @@ xiaoguai-anomaly = { path = "../xiaoguai-anomaly", optional = true }
 # Phase 2 (skill-pack runtime): the `pack.watch` job executor needs the real
 # SqlSource + DedupCache. Optional + gated by `packs`.
 xiaoguai-watch = { path = "../xiaoguai-watch", optional = true }
+# Phase 2 follow-up: pack.watch HTTP sources need a reqwest client (the
+# SqlSource path doesn't). Optional + gated by `packs`.
+reqwest = { workspace = true, optional = true }
 
 [features]
 # Activate Prometheus + OTLP telemetry layers.
@@ -120,7 +123,7 @@ observability = ["dep:xiaoguai-observability"]
 # v1.3.1-prep: pack loader (declarative skill-pack manifest parsing + path
 # validation). Enable with: cargo build --features packs. The CLI enables it for
 # `xiaoguai pack validate`. Will be on by default once registration lands.
-packs = ["dep:serde_yaml", "dep:serde", "dep:xiaoguai-anomaly", "dep:xiaoguai-watch"]
+packs = ["dep:serde_yaml", "dep:serde", "dep:xiaoguai-anomaly", "dep:xiaoguai-watch", "dep:reqwest"]
 
 [dev-dependencies]
 parking_lot = { workspace = true }
