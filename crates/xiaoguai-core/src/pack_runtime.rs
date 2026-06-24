@@ -24,13 +24,14 @@
 //! shared registry, and `kpi_query` is the read-only SELECT evaluated against
 //! the one embedded `SQLite` each fire (DEC-033 — no external time-series store).
 //!
-//! ## Alert dispatch (v1 scope)
+//! ## Alert dispatch
 //!
 //! A FIRED anomaly / new watch match is surfaced in the **job-run record**
-//! (`output_preview`) and the audit chain — visible in the Scheduler console.
-//! Routing it onward to the spec's declared `on_anomaly` / `on_match` channel
-//! (the job's push sinks are left empty here) is a deliberate follow-up, not
-//! wired in v1.
+//! (`output_preview`) and the audit chain. In addition, a spec whose action is
+//! `notify` has its **channel mapped to the job's push sinks** at wire time, so
+//! the scheduler delivers the preview to a configured push sink with that id
+//! (e.g. an IM channel). `WakeSession` / `Webhook` actions use other mechanisms
+//! that are not wired yet and contribute no sinks.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -43,7 +44,7 @@ use xiaoguai_anomaly::spec::{AnomalySchedule, AnomalySpec};
 use xiaoguai_anomaly::AnomalyRegistry;
 use xiaoguai_scheduler::{ExecutionOutcome, JobExecutor, ScheduledJob, Trigger};
 use xiaoguai_watch::{
-    DedupCache, SqlSource, WatchSchedule, WatchSource, WatchSourceSpec, WatchSpec,
+    DedupCache, HttpSource, SqlSource, WatchSchedule, WatchSource, WatchSourceSpec, WatchSpec,
 };
 
 /// `payload.kind` value dispatched to [`PackAnomalyExecutor`].
@@ -52,7 +53,7 @@ pub const PACK_ANOMALY_KIND: &str = "pack.anomaly";
 /// Evaluates one pack anomaly spec per fire: run its KPI query against the
 /// embedded `SQLite`, feed the latest value to the shared detector, and surface
 /// any alert in the job-run record + audit chain (queryable in the Scheduler
-/// console). Routing the alert to the spec's `on_anomaly` channel is deferred —
+/// console). A `Notify` action additionally routes to the job's push sinks —
 /// see the module-level dispatch note.
 pub struct PackAnomalyExecutor {
     registry: Arc<Mutex<AnomalyRegistry>>,
@@ -133,22 +134,23 @@ impl JobExecutor for PackAnomalyExecutor {
 /// `payload.kind` value dispatched to [`PackWatchExecutor`].
 pub const PACK_WATCH_KIND: &str = "pack.watch";
 
-/// Evaluates one pack watch spec per fire: run its SELECT against the embedded
-/// `SQLite`, dedup result rows against the shared cache, and report how many
-/// *new* matches fired (the `on_match` dispatch). The [`DedupCache`] is shared
-/// (and internally concurrent) so a match doesn't re-fire across ticks within
-/// its TTL.
+/// Evaluates one pack watch spec per fire: poll its source — a read-only
+/// `SQLite` SELECT or an HTTP endpoint — dedup result rows against the shared
+/// cache, and report how many *new* matches fired (the `on_match` dispatch).
+/// The [`DedupCache`] is shared (and internally concurrent) so a match doesn't
+/// re-fire across ticks within its TTL.
 pub struct PackWatchExecutor {
     dedup: Arc<DedupCache>,
     pool: SqlitePool,
+    http: reqwest::Client,
 }
 
 impl PackWatchExecutor {
-    /// Build an executor over a shared dedup cache and the embedded `SQLite`
-    /// pool used to evaluate watch queries.
+    /// Build an executor over a shared dedup cache, the embedded `SQLite` pool
+    /// (SQL watches), and an HTTP client (HTTP watches).
     #[must_use]
-    pub fn new(dedup: Arc<DedupCache>, pool: SqlitePool) -> Self {
-        Self { dedup, pool }
+    pub fn new(dedup: Arc<DedupCache>, pool: SqlitePool, http: reqwest::Client) -> Self {
+        Self { dedup, pool, http }
     }
 }
 
@@ -160,28 +162,34 @@ impl JobExecutor for PackWatchExecutor {
             .get("spec_id")
             .and_then(serde_json::Value::as_str)
             .ok_or("pack.watch payload missing 'spec_id'")?;
-        let query = job
+        let source_spec: WatchSourceSpec = job
             .payload
-            .get("query")
-            .and_then(serde_json::Value::as_str)
-            .ok_or("pack.watch payload missing 'query'")?;
+            .get("source")
+            .ok_or("pack.watch payload missing 'source'")
+            .and_then(|v| {
+                serde_json::from_value(v.clone())
+                    .map_err(|_| "pack.watch payload 'source' is malformed")
+            })?;
 
-        // Boundary: the watch query is operator-authored but must be a read-only
-        // SELECT. `SqlSource::new` does NOT validate this (it only clones the
-        // query), so guard it here — mirroring the anomaly path.
-        let trimmed = query.trim();
-        if !trimmed.to_ascii_uppercase().starts_with("SELECT") {
-            return Err(format!(
-                "pack.watch query must be a SELECT statement (spec '{spec_id}')"
-            ));
+        // Boundary: SQL watches are operator-authored but must be read-only
+        // SELECTs (`SqlSource` does not validate). HTTP watches carry no SQL.
+        if let WatchSourceSpec::Sql { query } = &source_spec {
+            if !query.trim().to_ascii_uppercase().starts_with("SELECT") {
+                return Err(format!(
+                    "pack.watch SQL query must be a SELECT statement (spec '{spec_id}')"
+                ));
+            }
         }
-        let source = SqlSource::new(
-            self.pool.clone(),
-            &WatchSourceSpec::Sql {
-                query: trimmed.to_string(),
-            },
-        )
-        .map_err(|e| format!("pack.watch '{spec_id}': invalid source: {e}"))?;
+        let source: Box<dyn WatchSource> = match &source_spec {
+            WatchSourceSpec::Sql { .. } => Box::new(
+                SqlSource::new(self.pool.clone(), &source_spec)
+                    .map_err(|e| format!("pack.watch '{spec_id}': invalid SQL source: {e}"))?,
+            ),
+            WatchSourceSpec::Http { .. } => Box::new(
+                HttpSource::new(self.http.clone(), &source_spec)
+                    .map_err(|e| format!("pack.watch '{spec_id}': invalid HTTP source: {e}"))?,
+            ),
+        };
         let matches = source
             .poll()
             .await
@@ -268,16 +276,20 @@ async fn wire_pack_anomalies(
         let spec: AnomalySpec = serde_yaml::from_str(&yaml)
             .with_context(|| format!("parse anomaly spec {}", spec_path.display()))?;
         let trigger = trigger_from_schedule(&spec.schedule)?;
-        let job = ScheduledJob::new(
-            format!("pack:{slug}:anomaly:{}", spec.id),
-            format!("{slug} · {}", spec.id),
-            trigger,
-            serde_json::json!({
-                "kind": PACK_ANOMALY_KIND,
-                "spec_id": spec.id,
-                "kpi_query": spec.kpi_query,
-            }),
-        );
+        let sinks = anomaly_sinks(&spec.on_anomaly);
+        let job = ScheduledJob {
+            sinks,
+            ..ScheduledJob::new(
+                format!("pack:{slug}:anomaly:{}", spec.id),
+                format!("{slug} · {}", spec.id),
+                trigger,
+                serde_json::json!({
+                    "kind": PACK_ANOMALY_KIND,
+                    "spec_id": spec.id,
+                    "kpi_query": spec.kpi_query,
+                }),
+            )
+        };
         registry
             .lock()
             .map_err(|_| anyhow::anyhow!("anomaly registry poisoned"))?
@@ -296,6 +308,27 @@ fn trigger_from_schedule(schedule: &AnomalySchedule) -> anyhow::Result<Trigger> 
         AnomalySchedule::IntervalSecs { secs } => {
             Trigger::interval(*secs).map_err(|e| anyhow::anyhow!("invalid interval {secs}s: {e}"))
         }
+    }
+}
+
+/// Push-sink ids for a pack anomaly's declared action. `Notify { channel }`
+/// routes to a configured push sink with that id (the scheduler delivers the
+/// FIRED preview there); `WakeSession`/`Webhook` use other mechanisms that
+/// aren't wired yet, so they contribute no sinks.
+fn anomaly_sinks(action: &xiaoguai_anomaly::spec::ActionRef) -> Vec<String> {
+    match action {
+        xiaoguai_anomaly::spec::ActionRef::Notify { channel } => vec![channel.clone()],
+        _ => Vec::new(),
+    }
+}
+
+/// Push-sink ids for a pack watch's `on_match`. A `notify` action routes to a
+/// configured push sink named by its `target`; other actions contribute none.
+fn watch_sinks(action: &xiaoguai_watch::ActionRef) -> Vec<String> {
+    if action.action == "notify" {
+        action.target.clone().into_iter().collect()
+    } else {
+        Vec::new()
     }
 }
 
@@ -347,7 +380,8 @@ pub async fn scan_enabled_pack_watches(pool: &SqlitePool) -> anyhow::Result<Vec<
     Ok(jobs)
 }
 
-/// Load one pack's watch specs and append a `pack.watch` job per SQL watch.
+/// Load one pack's watch specs and append a `pack.watch` job per watch (SQL or
+/// HTTP source — the full source spec rides in the job payload).
 async fn wire_pack_watches(
     pack_dir: &str,
     slug: &str,
@@ -363,24 +397,23 @@ async fn wire_pack_watches(
             .with_context(|| format!("read watch spec {}", spec_path.display()))?;
         let spec: WatchSpec = serde_yaml::from_str(&yaml)
             .with_context(|| format!("parse watch spec {}", spec_path.display()))?;
-        let query = match &spec.source {
-            WatchSourceSpec::Sql { query } => query.clone(),
-            WatchSourceSpec::Http { .. } => {
-                tracing::warn!(slug, id = %spec.id, "pack.watch HTTP source unsupported in v1; skipping");
-                continue;
-            }
-        };
+        let source = serde_json::to_value(&spec.source)
+            .with_context(|| format!("serialize watch source for '{}'", spec.id))?;
         let trigger = trigger_from_watch_schedule(&spec.schedule)?;
-        let job = ScheduledJob::new(
-            format!("pack:{slug}:watch:{}", spec.id),
-            format!("{slug} · {}", spec.id),
-            trigger,
-            serde_json::json!({
-                "kind": PACK_WATCH_KIND,
-                "spec_id": spec.id,
-                "query": query,
-            }),
-        );
+        let sinks = watch_sinks(&spec.on_match);
+        let job = ScheduledJob {
+            sinks,
+            ..ScheduledJob::new(
+                format!("pack:{slug}:watch:{}", spec.id),
+                format!("{slug} · {}", spec.id),
+                trigger,
+                serde_json::json!({
+                    "kind": PACK_WATCH_KIND,
+                    "spec_id": spec.id,
+                    "source": source,
+                }),
+            )
+        };
         jobs.push(job);
     }
     Ok(())
@@ -653,6 +686,8 @@ mod tests {
         );
         assert!(matches!(jobs[0].trigger, Trigger::Interval { secs: 86400 }));
         assert_eq!(jobs[0].payload["kind"], PACK_ANOMALY_KIND);
+        // on_anomaly: notify channel=ops → routed to the job's push sinks.
+        assert_eq!(jobs[0].sinks, vec!["ops".to_string()]);
         // The detector is registered: observing an unknown id would warn + return
         // None, but a registered (un-armed) one also returns None — so assert the
         // executor can drive it without the "unknown spec" path by re-scanning idempotently.
@@ -689,7 +724,7 @@ mod tests {
         .unwrap();
 
         let dedup = Arc::new(DedupCache::new(100, std::time::Duration::from_secs(3600)));
-        let exec = PackWatchExecutor::new(dedup, pool.clone());
+        let exec = PackWatchExecutor::new(dedup, pool.clone(), reqwest::Client::new());
         let job = ScheduledJob::new(
             "w",
             "w",
@@ -697,7 +732,10 @@ mod tests {
             serde_json::json!({
                 "kind": PACK_WATCH_KIND,
                 "spec_id": "oversized",
-                "query": "SELECT id, model, total_tokens FROM token_usage WHERE total_tokens > 50000",
+                "source": {
+                    "kind": "sql",
+                    "query": "SELECT id, model, total_tokens FROM token_usage WHERE total_tokens > 50000",
+                },
             }),
         );
 
@@ -723,6 +761,7 @@ mod tests {
         let exec = PackWatchExecutor::new(
             Arc::new(DedupCache::new(10, std::time::Duration::from_secs(60))),
             pool,
+            reqwest::Client::new(),
         );
         let job = ScheduledJob::new(
             "w",
@@ -731,11 +770,42 @@ mod tests {
             serde_json::json!({
                 "kind": PACK_WATCH_KIND,
                 "spec_id": "x",
-                "query": "DELETE FROM token_usage",
+                "source": { "kind": "sql", "query": "DELETE FROM token_usage" },
             }),
         );
         let err = exec.execute(&job, 1).await.unwrap_err();
         assert!(err.contains("SELECT"), "expected SELECT guard, got: {err}");
+    }
+
+    #[tokio::test]
+    async fn watch_http_source_is_dispatched() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let exec = PackWatchExecutor::new(
+            Arc::new(DedupCache::new(10, std::time::Duration::from_secs(60))),
+            pool,
+            client,
+        );
+        // An unreachable HTTP source: the HTTP path is taken and poll() fails on
+        // connect — proving dispatch (not the SQL guard / missing-source paths).
+        let job = ScheduledJob::new(
+            "w",
+            "w",
+            Trigger::interval(60).unwrap(),
+            serde_json::json!({
+                "kind": PACK_WATCH_KIND,
+                "spec_id": "h",
+                "source": { "kind": "http", "url": "http://127.0.0.1:9/", "jsonpath": "$[*]", "method": "GET" },
+            }),
+        );
+        let err = exec.execute(&job, 1).await.unwrap_err();
+        assert!(
+            err.contains("poll failed"),
+            "expected HTTP poll error, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -750,5 +820,7 @@ mod tests {
         );
         assert!(matches!(jobs[0].trigger, Trigger::Interval { secs: 3600 }));
         assert_eq!(jobs[0].payload["kind"], PACK_WATCH_KIND);
+        // on_match: notify target=ops → routed to the job's push sinks.
+        assert_eq!(jobs[0].sinks, vec!["ops".to_string()]);
     }
 }
