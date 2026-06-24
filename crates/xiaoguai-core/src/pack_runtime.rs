@@ -23,6 +23,14 @@
 //! The job is self-describing: `spec_id` addresses the live detector in the
 //! shared registry, and `kpi_query` is the read-only SELECT evaluated against
 //! the one embedded `SQLite` each fire (DEC-033 — no external time-series store).
+//!
+//! ## Alert dispatch (v1 scope)
+//!
+//! A FIRED anomaly / new watch match is surfaced in the **job-run record**
+//! (`output_preview`) and the audit chain — visible in the Scheduler console.
+//! Routing it onward to the spec's declared `on_anomaly` / `on_match` channel
+//! (the job's push sinks are left empty here) is a deliberate follow-up, not
+//! wired in v1.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -43,7 +51,9 @@ pub const PACK_ANOMALY_KIND: &str = "pack.anomaly";
 
 /// Evaluates one pack anomaly spec per fire: run its KPI query against the
 /// embedded `SQLite`, feed the latest value to the shared detector, and surface
-/// any alert as the run's output preview (which the scheduler's sinks push).
+/// any alert in the job-run record + audit chain (queryable in the Scheduler
+/// console). Routing the alert to the spec's `on_anomaly` channel is deferred —
+/// see the module-level dispatch note.
 pub struct PackAnomalyExecutor {
     registry: Arc<Mutex<AnomalyRegistry>>,
     pool: SqlitePool,
@@ -156,11 +166,19 @@ impl JobExecutor for PackWatchExecutor {
             .and_then(serde_json::Value::as_str)
             .ok_or("pack.watch payload missing 'query'")?;
 
-        // SqlSource validates the SELECT itself; reuse it for the poll.
+        // Boundary: the watch query is operator-authored but must be a read-only
+        // SELECT. `SqlSource::new` does NOT validate this (it only clones the
+        // query), so guard it here — mirroring the anomaly path.
+        let trimmed = query.trim();
+        if !trimmed.to_ascii_uppercase().starts_with("SELECT") {
+            return Err(format!(
+                "pack.watch query must be a SELECT statement (spec '{spec_id}')"
+            ));
+        }
         let source = SqlSource::new(
             self.pool.clone(),
             &WatchSourceSpec::Sql {
-                query: query.to_string(),
+                query: trimmed.to_string(),
             },
         )
         .map_err(|e| format!("pack.watch '{spec_id}': invalid source: {e}"))?;
@@ -214,6 +232,10 @@ fn extract_metric(row: &sqlx::sqlite::SqliteRow) -> Option<f64> {
 /// JSON (`{ "enabled": true, "pack_dir": "/abs/path" }`) — reusing the existing
 /// free-form column means **no migration** (DEC-033: state stays in the one
 /// `SQLite`). A pack that fails to load is logged and skipped, never fatal.
+///
+/// **Call once per process** (at boot): it `register`s each detector, which
+/// overwrites — re-running against an already-populated registry would reset
+/// every baseline. `run_serve` calls it once against a freshly-empty registry.
 pub async fn scan_enabled_pack_anomalies(
     pool: &SqlitePool,
     registry: &Arc<Mutex<AnomalyRegistry>>,
@@ -288,7 +310,13 @@ async fn enabled_pack_dirs(pool: &SqlitePool) -> anyhow::Result<Vec<(String, Str
     for row in &rows {
         let slug: String = row.try_get("pack_slug")?;
         let config: String = row.try_get("config").unwrap_or_else(|_| "{}".to_string());
-        let cfg: serde_json::Value = serde_json::from_str(&config).unwrap_or_default();
+        let cfg: serde_json::Value = match serde_json::from_str(&config) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(slug, error = %e, "installed pack has unparseable config JSON; skipping");
+                continue;
+            }
+        };
         if !cfg
             .get("enabled")
             .and_then(serde_json::Value::as_bool)
@@ -687,6 +715,27 @@ mod tests {
             "re-fire should dedup: {}",
             out2.output_preview
         );
+    }
+
+    #[tokio::test]
+    async fn watch_non_select_query_is_rejected() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let exec = PackWatchExecutor::new(
+            Arc::new(DedupCache::new(10, std::time::Duration::from_secs(60))),
+            pool,
+        );
+        let job = ScheduledJob::new(
+            "w",
+            "w",
+            Trigger::interval(60).unwrap(),
+            serde_json::json!({
+                "kind": PACK_WATCH_KIND,
+                "spec_id": "x",
+                "query": "DELETE FROM token_usage",
+            }),
+        );
+        let err = exec.execute(&job, 1).await.unwrap_err();
+        assert!(err.contains("SELECT"), "expected SELECT guard, got: {err}");
     }
 
     #[tokio::test]
