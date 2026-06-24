@@ -1428,7 +1428,7 @@ async fn handle_anomaly(api_base: String, output: String, action: AnomalyCmd) ->
     Ok(())
 }
 
-async fn handle_pack(action: PackCmd) -> Result<()> {
+async fn handle_pack(config: Option<&str>, action: PackCmd) -> Result<()> {
     match action {
         PackCmd::Validate { dir } => {
             let path = std::path::Path::new(&dir);
@@ -1448,6 +1448,15 @@ async fn handle_pack(action: PackCmd) -> Result<()> {
                     outcome.total
                 );
             }
+        }
+        PackCmd::Install { dir } => {
+            let path = std::path::Path::new(&dir);
+            let settings = load_settings(config)?;
+            let pool = connect(&settings.database.url, settings.database.max_connections)
+                .await
+                .context("open SQLite store")?;
+            migrate(&pool).await.context("apply migrations")?;
+            print!("{}", pack::install(&pool, path).await?);
         }
     }
     Ok(())
@@ -1726,7 +1735,7 @@ async fn main() -> Result<()> {
             action,
         } => handle_anomaly(api_base, output, action).await,
         // Skill-pack manifest tooling (offline; Phase 1 = validate).
-        Cmd::Pack { action } => handle_pack(action).await,
+        Cmd::Pack { action } => handle_pack(cfg, action).await,
         // v1.4 — Kanban task board
         Cmd::Tasks { api_base, action } => handle_tasks(api_base, action).await,
         // T5 (Tier-3) — compliance export.

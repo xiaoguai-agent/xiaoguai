@@ -83,6 +83,50 @@ pub async fn validate(dir: &Path) -> Result<String> {
     ))
 }
 
+/// Install the pack at `dir`: validate it, then record it as **enabled** in
+/// `installed_skill_packs` (with its absolute on-disk path stored in the row's
+/// `config` JSON) so the next `serve` boot wires its anomaly specs as scheduled
+/// jobs. Idempotent on the pack slug — re-installing updates version + config.
+///
+/// # Errors
+/// Returns an error when the pack fails to validate (see [`validate`]) or the
+/// store write fails.
+pub async fn install(pool: &sqlx::SqlitePool, dir: &Path) -> Result<String> {
+    // Validate first — a pack that wouldn't load must not be recorded.
+    let report = validate(dir).await?;
+
+    let (base, rel) = resolve_manifest(dir)?;
+    let manifest = PackLoader::with_base(&base).load(&rel).await?;
+    let pack_dir = base.canonicalize().unwrap_or_else(|_| base.clone());
+    let config = serde_json::json!({
+        "enabled": true,
+        "pack_dir": pack_dir.to_string_lossy(),
+    })
+    .to_string();
+
+    sqlx::query(
+        "INSERT INTO installed_skill_packs (id, pack_slug, version, config) \
+         VALUES (?, ?, ?, ?) \
+         ON CONFLICT(pack_slug) DO UPDATE SET \
+            version = excluded.version, config = excluded.config",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&manifest.name)
+    .bind(&manifest.version)
+    .bind(&config)
+    .execute(pool)
+    .await
+    .context("record installed pack")?;
+
+    Ok(format!(
+        "{}\n✓ installed '{}' v{} (enabled) — its {} anomaly spec(s) wire on the next `serve` boot",
+        report.trim_end(),
+        manifest.name,
+        manifest.version,
+        manifest.anomalies.len()
+    ))
+}
+
 /// Declared `sources` / `outputs` adapter paths whose files don't exist on disk.
 ///
 /// Soft signal, not a hard error: many shipped packs are scaffold — they
