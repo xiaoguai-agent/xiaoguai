@@ -8280,6 +8280,7 @@ dependencies = [
  "uuid",
  "xiaoguai-acp",
  "xiaoguai-agent",
+ "xiaoguai-anomaly",
  "xiaoguai-api",
  "xiaoguai-audit",
  "xiaoguai-auth",
