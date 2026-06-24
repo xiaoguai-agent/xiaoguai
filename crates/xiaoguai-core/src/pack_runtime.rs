@@ -24,13 +24,14 @@
 //! shared registry, and `kpi_query` is the read-only SELECT evaluated against
 //! the one embedded `SQLite` each fire (DEC-033 — no external time-series store).
 //!
-//! ## Alert dispatch (v1 scope)
+//! ## Alert dispatch
 //!
 //! A FIRED anomaly / new watch match is surfaced in the **job-run record**
-//! (`output_preview`) and the audit chain — visible in the Scheduler console.
-//! Routing it onward to the spec's declared `on_anomaly` / `on_match` channel
-//! (the job's push sinks are left empty here) is a deliberate follow-up, not
-//! wired in v1.
+//! (`output_preview`) and the audit chain. In addition, a spec whose action is
+//! `notify` has its **channel mapped to the job's push sinks** at wire time, so
+//! the scheduler delivers the preview to a configured push sink with that id
+//! (e.g. an IM channel). `WakeSession` / `Webhook` actions use other mechanisms
+//! that are not wired yet and contribute no sinks.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -52,7 +53,7 @@ pub const PACK_ANOMALY_KIND: &str = "pack.anomaly";
 /// Evaluates one pack anomaly spec per fire: run its KPI query against the
 /// embedded `SQLite`, feed the latest value to the shared detector, and surface
 /// any alert in the job-run record + audit chain (queryable in the Scheduler
-/// console). Routing the alert to the spec's `on_anomaly` channel is deferred —
+/// console). A `Notify` action additionally routes to the job's push sinks —
 /// see the module-level dispatch note.
 pub struct PackAnomalyExecutor {
     registry: Arc<Mutex<AnomalyRegistry>>,
@@ -268,16 +269,20 @@ async fn wire_pack_anomalies(
         let spec: AnomalySpec = serde_yaml::from_str(&yaml)
             .with_context(|| format!("parse anomaly spec {}", spec_path.display()))?;
         let trigger = trigger_from_schedule(&spec.schedule)?;
-        let job = ScheduledJob::new(
-            format!("pack:{slug}:anomaly:{}", spec.id),
-            format!("{slug} · {}", spec.id),
-            trigger,
-            serde_json::json!({
-                "kind": PACK_ANOMALY_KIND,
-                "spec_id": spec.id,
-                "kpi_query": spec.kpi_query,
-            }),
-        );
+        let sinks = anomaly_sinks(&spec.on_anomaly);
+        let job = ScheduledJob {
+            sinks,
+            ..ScheduledJob::new(
+                format!("pack:{slug}:anomaly:{}", spec.id),
+                format!("{slug} · {}", spec.id),
+                trigger,
+                serde_json::json!({
+                    "kind": PACK_ANOMALY_KIND,
+                    "spec_id": spec.id,
+                    "kpi_query": spec.kpi_query,
+                }),
+            )
+        };
         registry
             .lock()
             .map_err(|_| anyhow::anyhow!("anomaly registry poisoned"))?
@@ -296,6 +301,27 @@ fn trigger_from_schedule(schedule: &AnomalySchedule) -> anyhow::Result<Trigger> 
         AnomalySchedule::IntervalSecs { secs } => {
             Trigger::interval(*secs).map_err(|e| anyhow::anyhow!("invalid interval {secs}s: {e}"))
         }
+    }
+}
+
+/// Push-sink ids for a pack anomaly's declared action. `Notify { channel }`
+/// routes to a configured push sink with that id (the scheduler delivers the
+/// FIRED preview there); `WakeSession`/`Webhook` use other mechanisms that
+/// aren't wired yet, so they contribute no sinks.
+fn anomaly_sinks(action: &xiaoguai_anomaly::spec::ActionRef) -> Vec<String> {
+    match action {
+        xiaoguai_anomaly::spec::ActionRef::Notify { channel } => vec![channel.clone()],
+        _ => Vec::new(),
+    }
+}
+
+/// Push-sink ids for a pack watch's `on_match`. A `notify` action routes to a
+/// configured push sink named by its `target`; other actions contribute none.
+fn watch_sinks(action: &xiaoguai_watch::ActionRef) -> Vec<String> {
+    if action.action == "notify" {
+        action.target.clone().into_iter().collect()
+    } else {
+        Vec::new()
     }
 }
 
@@ -371,16 +397,20 @@ async fn wire_pack_watches(
             }
         };
         let trigger = trigger_from_watch_schedule(&spec.schedule)?;
-        let job = ScheduledJob::new(
-            format!("pack:{slug}:watch:{}", spec.id),
-            format!("{slug} · {}", spec.id),
-            trigger,
-            serde_json::json!({
-                "kind": PACK_WATCH_KIND,
-                "spec_id": spec.id,
-                "query": query,
-            }),
-        );
+        let sinks = watch_sinks(&spec.on_match);
+        let job = ScheduledJob {
+            sinks,
+            ..ScheduledJob::new(
+                format!("pack:{slug}:watch:{}", spec.id),
+                format!("{slug} · {}", spec.id),
+                trigger,
+                serde_json::json!({
+                    "kind": PACK_WATCH_KIND,
+                    "spec_id": spec.id,
+                    "query": query,
+                }),
+            )
+        };
         jobs.push(job);
     }
     Ok(())
@@ -653,6 +683,8 @@ mod tests {
         );
         assert!(matches!(jobs[0].trigger, Trigger::Interval { secs: 86400 }));
         assert_eq!(jobs[0].payload["kind"], PACK_ANOMALY_KIND);
+        // on_anomaly: notify channel=ops → routed to the job's push sinks.
+        assert_eq!(jobs[0].sinks, vec!["ops".to_string()]);
         // The detector is registered: observing an unknown id would warn + return
         // None, but a registered (un-armed) one also returns None — so assert the
         // executor can drive it without the "unknown spec" path by re-scanning idempotently.
@@ -750,5 +782,7 @@ mod tests {
         );
         assert!(matches!(jobs[0].trigger, Trigger::Interval { secs: 3600 }));
         assert_eq!(jobs[0].payload["kind"], PACK_WATCH_KIND);
+        // on_match: notify target=ops → routed to the job's push sinks.
+        assert_eq!(jobs[0].sinks, vec!["ops".to_string()]);
     }
 }
