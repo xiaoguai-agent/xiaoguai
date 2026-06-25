@@ -85,6 +85,12 @@ pub struct PackManifest {
     #[serde(default)]
     pub agents: Vec<PackPath>,
 
+    /// Optional name of the agent that leads the derived team (Phase 4). When
+    /// absent or not a conversational agent, the first conversational agent
+    /// leads. See `docs/plans/2026-06-25-skill-pack-loader-phase4.md` §G.2.
+    #[serde(default)]
+    pub lead_agent: Option<String>,
+
     /// Inbound source adapters (webhooks / pollers) the pack declares.
     /// Parsed but **not** hard-validated by [`PackLoader::load`] — many shipped
     /// packs are scaffold and reference adapter files that don't exist yet, so
