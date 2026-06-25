@@ -24,8 +24,10 @@ import { I18nProvider } from './i18n/I18nProvider';
 import {
   filterByQuery,
   formatScore,
+  readableMemberName,
   sortSuggestions,
   selectablePersonas,
+  teamForPackSlug,
 } from './expertPickerHelpers';
 
 // Mock the client module so nothing hits the network.
@@ -469,5 +471,30 @@ describe('pure helpers', () => {
     const active = makePersona({ id: 'p1' });
     const archived = makePersona({ id: 'p2', archived: true });
     expect(selectablePersonas([active, archived])).toEqual([active]);
+  });
+
+  // Phase 4c — deep-link resolution: pack slug → activated team.
+  it('teamForPackSlug matches the first non-archived team carrying the slug', () => {
+    const t1 = makeTeam({ id: 't1', recommended_pack_slugs: ['observability-starter'] });
+    const t2 = makeTeam({ id: 't2', recommended_pack_slugs: ['app-store-reviews'] });
+    expect(teamForPackSlug([t1, t2], 'app-store-reviews')).toBe(t2);
+    expect(teamForPackSlug([t1, t2], '  observability-starter ')).toBe(t1);
+  });
+
+  it('teamForPackSlug returns undefined on no match / blank slug / archived-only', () => {
+    const t1 = makeTeam({ id: 't1', recommended_pack_slugs: ['x'] });
+    const archived = makeTeam({ id: 't2', recommended_pack_slugs: ['y'], archived: true });
+    expect(teamForPackSlug([t1], 'missing')).toBeUndefined();
+    expect(teamForPackSlug([t1], '   ')).toBeUndefined();
+    // An archived team that carries the slug is not offered.
+    expect(teamForPackSlug([archived], 'y')).toBeUndefined();
+  });
+
+  // Phase 4c — namespaced member names render readably.
+  it('readableMemberName drops the pack-slug prefix and humanizes the agent id', () => {
+    expect(readableMemberName('app-store-reviews/sentiment-analyst')).toBe('Sentiment Analyst');
+    expect(readableMemberName('release_captain')).toBe('Release Captain');
+    expect(readableMemberName('ops')).toBe('Ops');
+    expect(readableMemberName('')).toBe('');
   });
 });

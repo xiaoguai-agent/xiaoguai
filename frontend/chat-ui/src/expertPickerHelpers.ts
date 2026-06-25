@@ -26,6 +26,45 @@ export function selectableTeams(teams: readonly Team[]): Team[] {
 }
 
 /**
+ * Phase 4c — resolve the team a skill pack activated, by matching the pack
+ * slug against each team's `recommended_pack_slugs`. Boot-scan stamps the
+ * derived team with the pack's slug, so this is the deep-link bridge from a
+ * Skills card ("Use in chat") to the team the chat picker should select.
+ *
+ * Returns the first non-archived match (teams are 1:1 with a pack in practice),
+ * or `undefined` when nothing matches — the caller then falls back to a hint.
+ */
+export function teamForPackSlug(
+  teams: readonly Team[],
+  slug: string,
+): Team | undefined {
+  const wanted = slug.trim();
+  if (!wanted) return undefined;
+  return teams.find(
+    (t) => !t.archived && t.recommended_pack_slugs.includes(wanted),
+  );
+}
+
+/**
+ * Phase 4c — render a namespaced member name (`slug/agent`) readably: drop the
+ * pack-slug prefix and turn the agent id into a spaced, capitalized label.
+ * A name without a `/` is title-cased as-is. Pure / never mutates.
+ *
+ *   "app-store-reviews/sentiment-analyst" → "Sentiment Analyst"
+ *   "release_captain"                     → "Release Captain"
+ */
+export function readableMemberName(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return trimmed;
+  const tail = trimmed.includes('/') ? trimmed.slice(trimmed.lastIndexOf('/') + 1) : trimmed;
+  return tail
+    .split(/[-_\s]+/)
+    .filter((w) => w.length > 0)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+/**
  * Case-insensitive substring filter on `name` (and `description` when the
  * item carries one). An empty / whitespace-only query keeps everything.
  */
