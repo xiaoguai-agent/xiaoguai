@@ -66,6 +66,14 @@ function parseModels(raw: string): string[] {
     .filter(Boolean);
 }
 
+/** "Configured" = has a stored API key. Drives list ordering (configured
+ *  first; key-less providers — including a key-less Ollama — sink to the
+ *  bottom) and whether the "Test models" button shows: probing a key-less
+ *  provider only ever fails, so the button is hidden until a key is added. */
+function isConfigured(p: LlmProviderView): boolean {
+  return p.has_api_key;
+}
+
 /**
  * Providers pane — register an LLM provider pointing at a local model URL
  * (Ollama / any OpenAI-compatible server) or a hosted API (MiniMax, Zhipu,
@@ -288,7 +296,9 @@ export function ProvidersPane() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((p) => {
+            {[...rows]
+              .sort((a, b) => Number(isConfigured(b)) - Number(isConfigured(a)))
+              .map((p) => {
               const isEditing = editId === p.id && draft !== null;
               return isEditing ? (
                 <tr key={p.id} className="provider-edit-row">
@@ -394,19 +404,21 @@ export function ProvidersPane() {
                           : '—'}
                     </td>
                     <td className="provider-row-actions">
-                      <button
-                        type="button"
-                        onClick={() => void probe(p.id)}
-                        disabled={probingId === p.id}
-                        // Useful for any provider — keyed or a local key-less
-                        // server (Ollama). The probe records which models
-                        // actually respond; the chat picker then offers those.
-                        title={t('pane.providers.test_models')}
-                      >
-                        {probingId === p.id
-                          ? t('pane.providers.testing')
-                          : t('pane.providers.test_models')}
-                      </button>
+                      {/* Only show "Test models" once a key is stored — probing
+                          a key-less provider (a seeded hosted provider, or a
+                          key-less Ollama) only ever fails, so it's noise. */}
+                      {isConfigured(p) && (
+                        <button
+                          type="button"
+                          onClick={() => void probe(p.id)}
+                          disabled={probingId === p.id}
+                          title={t('pane.providers.test_models')}
+                        >
+                          {probingId === p.id
+                            ? t('pane.providers.testing')
+                            : t('pane.providers.test_models')}
+                        </button>
+                      )}
                       <button type="button" onClick={() => startEdit(p)}>
                         {t('pane.providers.edit')}
                       </button>
@@ -436,9 +448,7 @@ export function ProvidersPane() {
                                   {r.ok ? '✅' : '❌'} {r.model}
                                   {r.ok
                                     ? ` · ${r.latency_ms}ms`
-                                    : r.error
-                                      ? ` · ${r.error}`
-                                      : ''}
+                                    : ` · ${t('pane.providers.probe_failed')}`}
                                 </li>
                               ))}
                             </ul>

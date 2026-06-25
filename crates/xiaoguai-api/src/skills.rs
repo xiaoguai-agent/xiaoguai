@@ -74,16 +74,36 @@ pub struct PackRequires {
     pub env_keys: Vec<String>,
 }
 
+/// IA tiers for the Skills page (the `tier` field). `"general"` packs —
+/// broadly-useful skills like document authoring or `superpowers` — render
+/// first; `"specialized"` packs — domain scenario teams — sit behind a tab.
+fn default_tier() -> String {
+    "specialized".to_string()
+}
+
 /// One entry in `catalog/skill_packs.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SkillPackEntry {
     pub slug: String,
     pub name: String,
+    /// Chinese display name. The UI prefers this when the locale is Chinese,
+    /// falling back to `name`. Optional so a half-localized catalog still
+    /// parses; the `all_entries_have_required_fields` test keeps it filled.
+    #[serde(default)]
+    pub name_zh: Option<String>,
     pub description: String,
+    /// Chinese description, same fallback contract as `name_zh`.
+    #[serde(default)]
+    pub description_zh: Option<String>,
     pub version: String,
     /// Grouping hint for the UI: `"finance"`, `"ops"`, `"dev"`, `"hr"`,
-    /// `"rag"`, etc.
+    /// `"rag"`, `"documents"`, etc.
     pub category: String,
+    /// IA tier — `"general"` (shown first) or `"specialized"` (behind a tab).
+    /// Defaults to `"specialized"` so an un-tagged entry never crowds the
+    /// general list. See [`default_tier`].
+    #[serde(default = "default_tier")]
+    pub tier: String,
     #[serde(default)]
     pub requires: PackRequires,
     /// Operator-tuneable knobs — the UI renders these as a typed form.
@@ -406,6 +426,25 @@ mod tests {
                 !p.category.is_empty(),
                 "category must not be empty: {}",
                 p.slug
+            );
+            // Bilingual contract: every entry MUST carry a non-empty Chinese
+            // name + description so the Skills page never falls back to English
+            // under a Chinese locale (the regression this catalog fixes).
+            assert!(
+                p.name_zh.as_deref().is_some_and(|s| !s.is_empty()),
+                "name_zh must be present and non-empty: {}",
+                p.slug
+            );
+            assert!(
+                p.description_zh.as_deref().is_some_and(|s| !s.is_empty()),
+                "description_zh must be present and non-empty: {}",
+                p.slug
+            );
+            assert!(
+                p.tier == "general" || p.tier == "specialized",
+                "tier must be \"general\" or \"specialized\": {} (got {:?})",
+                p.slug,
+                p.tier
             );
         }
     }

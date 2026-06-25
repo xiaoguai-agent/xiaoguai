@@ -157,7 +157,10 @@
       "toast_installed": "{{name}} をインストールしました",
       "toast_install_failed": "インストールに失敗しました：{{message}}",
       "toast_uninstalled": "{{name}} をアンインストールしました",
-      "toast_uninstall_failed": "アンインストールに失敗しました：{{message}}"
+      "toast_uninstall_failed": "アンインストールに失敗しました：{{message}}",
+      "tab_general": "汎用",
+      "tab_specialized": "シナリオ",
+      "disclaimer": "これらはスキルのテンプレートです。インストールは設定を記録するだけで、実際に動かすにはデータソースまたは MCP サーバーへの接続が必要です。"
     }
   }
 }
