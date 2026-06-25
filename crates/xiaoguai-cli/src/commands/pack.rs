@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use xiaoguai_core::pack_agents::{plan_pack_agents, PackAgentPlan};
 use xiaoguai_core::packs::{PackLoader, PackManifest};
 
 /// Platform features this build recognises in a pack's `requires.features`.
@@ -39,6 +40,7 @@ const KNOWN_KEYS: &[&str] = &[
     "watches",
     "anomalies",
     "agents",
+    "lead_agent",
     "sources",
     "outputs",
     "dashboards",
@@ -74,12 +76,14 @@ pub async fn validate(dir: &Path) -> Result<String> {
     let unknown_keys = unknown_top_level_keys(&manifest_path).await?;
     let unknown_features = unrecognised_features(&manifest);
     let missing_adapters = missing_adapter_files(&manifest, pack_dir);
+    let agent_plan = plan_pack_agents(&manifest, pack_dir).await;
 
     Ok(render_report(
         &manifest,
         &unknown_keys,
         &unknown_features,
         &missing_adapters,
+        &agent_plan,
     ))
 }
 
@@ -277,6 +281,7 @@ fn render_report(
     unknown_keys: &[String],
     unknown_features: &[String],
     missing_adapters: &[String],
+    agent_plan: &PackAgentPlan,
 ) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -335,5 +340,39 @@ fn render_report(
             missing_adapters.join(", ")
         );
     }
+    render_agent_plan(&mut out, agent_plan);
     out
+}
+
+/// Append the Phase-4 agent-team activation plan to a validate report: the
+/// team that would be created, and an honest list of what won't activate in v1
+/// (event-triggered workers + inline tool bodies).
+fn render_agent_plan(out: &mut String, plan: &PackAgentPlan) {
+    use std::fmt::Write as _;
+    if let Some(team) = &plan.team {
+        let members = if team.members.is_empty() {
+            " (lead only)".to_string()
+        } else {
+            format!(", members: {}", team.members.join(", "))
+        };
+        let _ = writeln!(
+            out,
+            "  agent team (Phase 4): would activate '{}' — lead '{}'{} → {} persona(s)",
+            team.name,
+            team.lead,
+            members,
+            plan.personas.len()
+        );
+    }
+    if !plan.skipped_reactive.is_empty() {
+        let _ = writeln!(
+            out,
+            "  ⚠ {} event-triggered agent(s) not activated in v1 (Phase 4b): {}",
+            plan.skipped_reactive.len(),
+            plan.skipped_reactive.join(", ")
+        );
+    }
+    for w in &plan.warnings {
+        let _ = writeln!(out, "  ⚠ {w}");
+    }
 }

@@ -31,6 +31,8 @@ pub mod hotl_bridge;
 pub mod memory_bridge;
 pub mod outcomes_bridge;
 #[cfg(feature = "packs")]
+pub mod pack_agents;
+#[cfg(feature = "packs")]
 pub mod pack_runtime;
 #[cfg(feature = "packs")]
 pub mod packs;
