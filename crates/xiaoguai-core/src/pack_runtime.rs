@@ -42,6 +42,8 @@ use chrono::Utc;
 use sqlx::{Row, SqlitePool};
 use xiaoguai_anomaly::spec::{AnomalySchedule, AnomalySpec};
 use xiaoguai_anomaly::AnomalyRegistry;
+// Phase 4b: pack agent-team activation upserts personas + a team.
+use xiaoguai_personas::{PersonaRepository, TeamRepository};
 use xiaoguai_scheduler::{ExecutionOutcome, JobExecutor, ScheduledJob, Trigger};
 use xiaoguai_watch::{
     DedupCache, HttpSource, SqlSource, WatchSchedule, WatchSource, WatchSourceSpec, WatchSpec,
@@ -433,6 +435,166 @@ fn trigger_from_watch_schedule(schedule: &WatchSchedule) -> anyhow::Result<Trigg
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4b — conversational agent-team activation
+// ---------------------------------------------------------------------------
+
+/// Scan every enabled pack and activate its conversational agent **team** so the
+/// existing `/orchestrate` path can run it: upsert one managed [`Persona`] per
+/// conversational agent and a [`Team`] linking them. Reactive (event-triggered)
+/// agents and inline pack tools are **not** activated in v1 — see the Phase 4
+/// design (`docs/plans/2026-06-25-skill-pack-loader-phase4.md`).
+///
+/// Idempotent: personas/teams are keyed by their namespaced name, so a re-scan
+/// on every boot is a no-op once a pack is active. Per-pack failures are
+/// isolated + logged so one bad pack never blocks boot. Returns the slugs whose
+/// team is (re)confirmed active, for the boot log.
+///
+/// # Errors
+/// Propagates only a failure to read `installed_skill_packs`; per-pack errors
+/// are swallowed (logged) so boot is never blocked.
+pub async fn scan_enabled_pack_agents(
+    pool: &SqlitePool,
+    personas: &dyn PersonaRepository,
+    teams: &dyn TeamRepository,
+) -> anyhow::Result<Vec<String>> {
+    let mut activated = Vec::new();
+    for (slug, pack_dir) in enabled_pack_dirs(pool).await? {
+        match activate_pack_team(pool, &pack_dir, &slug, personas, teams).await {
+            Ok(true) => activated.push(slug),
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(slug, pack_dir, error = %e, "failed to activate pack agent team; skipping");
+            }
+        }
+    }
+    Ok(activated)
+}
+
+/// Activate one pack's conversational team. `Ok(true)` when a team was upserted,
+/// `Ok(false)` when the pack declares no conversational agents (only reactive,
+/// or none) — there is nothing to run through `/orchestrate`.
+async fn activate_pack_team(
+    pool: &SqlitePool,
+    pack_dir: &str,
+    slug: &str,
+    personas: &dyn PersonaRepository,
+    teams: &dyn TeamRepository,
+) -> anyhow::Result<bool> {
+    let dir = Path::new(pack_dir);
+    let manifest = crate::packs::PackLoader::new()
+        .load(dir.join("pack.yaml"))
+        .await?;
+    let plan = crate::pack_agents::plan_pack_agents(&manifest, dir).await;
+    let Some(team) = plan.team else {
+        return Ok(false);
+    };
+
+    // Upsert one persona per derived persona, building a namespaced-name → id
+    // map. Create-if-missing keeps this idempotent across boots (and reuses any
+    // operator persona that happens to share the slug-namespaced name).
+    let mut by_name: std::collections::HashMap<String, uuid::Uuid> = personas
+        .list()
+        .await
+        .map_err(|e| anyhow::anyhow!("list personas: {e}"))?
+        .into_iter()
+        .map(|p| (p.name, p.id))
+        .collect();
+    for dp in &plan.personas {
+        if by_name.contains_key(&dp.name) {
+            continue;
+        }
+        let req = xiaoguai_personas::CreatePersonaRequest {
+            name: dp.name.clone(),
+            system_prompt: dp.system_prompt.clone(),
+            default_model: if dp.model.is_empty() {
+                None
+            } else {
+                Some(dp.model.clone())
+            },
+            // Unrestricted = the platform toolbox. Inline pack tools are
+            // v1-deferred (Phase 4b), so the agent reasons with platform tools.
+            tool_allowlist: None,
+            escalation_tier: None,
+        };
+        let created = personas
+            .create(&req)
+            .await
+            .map_err(|e| anyhow::anyhow!("create persona {}: {e}", dp.name))?;
+        by_name.insert(created.name, created.id);
+    }
+
+    let lead_id = *by_name
+        .get(&team.lead)
+        .ok_or_else(|| anyhow::anyhow!("derived lead persona '{}' missing", team.lead))?;
+    // `Team.member_persona_ids` is non-empty and must include the lead.
+    let mut member_ids = vec![lead_id];
+    for m in &team.members {
+        if let Some(id) = by_name.get(m) {
+            member_ids.push(*id);
+        }
+    }
+
+    // Upsert the team by name (= pack slug). Create-if-missing — idempotent.
+    let team_exists = teams
+        .list()
+        .await
+        .map_err(|e| anyhow::anyhow!("list teams: {e}"))?
+        .into_iter()
+        .any(|t| t.name == team.name);
+    if !team_exists {
+        let req = xiaoguai_personas::CreateTeamRequest {
+            name: team.name.clone(),
+            description: team.description.clone(),
+            lead_persona_id: lead_id,
+            member_persona_ids: member_ids,
+            recommended_pack_slugs: vec![slug.to_string()],
+            glossary_md: None,
+        };
+        teams
+            .create(&req)
+            .await
+            .map_err(|e| anyhow::anyhow!("create team {}: {e}", team.name))?;
+    }
+
+    // Record the activated agent names in the pack's config so the marketplace
+    // API flips activation_status → "active" and lists them (Phase 4 §C5).
+    let agents: Vec<String> = std::iter::once(team.lead.clone())
+        .chain(team.members.iter().cloned())
+        .collect();
+    record_activated_agents(pool, slug, &agents).await?;
+    Ok(true)
+}
+
+/// Merge the activated agent names into the pack's `installed_skill_packs.config`
+/// JSON (additive — preserves `enabled` / `pack_dir`). Read back by the
+/// marketplace API to surface `activation_status` + the agent list.
+async fn record_activated_agents(
+    pool: &SqlitePool,
+    slug: &str,
+    agents: &[String],
+) -> anyhow::Result<()> {
+    let Some(row) = sqlx::query("SELECT config FROM installed_skill_packs WHERE pack_slug = ?")
+        .bind(slug)
+        .fetch_optional(pool)
+        .await?
+    else {
+        return Ok(());
+    };
+    let config: String = row.try_get("config").unwrap_or_else(|_| "{}".to_string());
+    let mut cfg: serde_json::Value =
+        serde_json::from_str(&config).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(obj) = cfg.as_object_mut() {
+        obj.insert("agents".to_string(), serde_json::json!(agents));
+    }
+    sqlx::query("UPDATE installed_skill_packs SET config = ? WHERE pack_slug = ?")
+        .bind(cfg.to_string())
+        .bind(slug)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,6 +828,115 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    // --- Phase 4b: agent-team activation ------------------------------------
+
+    fn app_store_reviews_pack_dir() -> String {
+        format!(
+            "{}/../../packs/app-store-reviews",
+            env!("CARGO_MANIFEST_DIR")
+        )
+    }
+
+    async fn install_named_row(pool: &SqlitePool, slug: &str, pack_dir: &str) {
+        let config = serde_json::json!({ "enabled": true, "pack_dir": pack_dir }).to_string();
+        sqlx::query(
+            "INSERT INTO installed_skill_packs (id, pack_slug, version, config) \
+             VALUES (?, ?, '1.0.0', ?)",
+        )
+        .bind(slug)
+        .bind(slug)
+        .bind(&config)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn scan_activates_conversational_pack_team() {
+        let pool = installed_packs_pool().await;
+        install_named_row(&pool, "app-store-reviews", &app_store_reviews_pack_dir()).await;
+        let personas = xiaoguai_personas::InMemoryPersonaRepository::new();
+        let teams = xiaoguai_personas::InMemoryTeamRepository::new();
+
+        let activated = scan_enabled_pack_agents(&pool, &personas, &teams)
+            .await
+            .unwrap();
+        assert_eq!(activated, vec!["app-store-reviews".to_string()]);
+
+        // Conversational agents → namespaced personas (all slug-prefixed).
+        let ps = personas.list().await.unwrap();
+        assert!(
+            ps.len() >= 2,
+            "expected a multi-agent team, got {}",
+            ps.len()
+        );
+        assert!(ps.iter().all(|p| p.name.starts_with("app-store-reviews/")));
+
+        // One team named after the pack; the lead is a member; tagged w/ slug.
+        let ts = teams.list().await.unwrap();
+        assert_eq!(ts.len(), 1);
+        let team = &ts[0];
+        assert_eq!(team.name, "app-store-reviews");
+        assert_eq!(
+            team.recommended_pack_slugs,
+            vec!["app-store-reviews".to_string()]
+        );
+        assert!(team.member_persona_ids.contains(&team.lead_persona_id));
+
+        // config records the activated agents → drives activation_status:active.
+        let cfg: String = sqlx::query(
+            "SELECT config FROM installed_skill_packs WHERE pack_slug = 'app-store-reviews'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .try_get("config")
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&cfg).unwrap();
+        assert!(v["agents"].as_array().is_some_and(|a| !a.is_empty()));
+        assert_eq!(
+            v["enabled"],
+            serde_json::json!(true),
+            "additive write must preserve enabled/pack_dir"
+        );
+    }
+
+    #[tokio::test]
+    async fn scan_agents_is_idempotent() {
+        let pool = installed_packs_pool().await;
+        install_named_row(&pool, "app-store-reviews", &app_store_reviews_pack_dir()).await;
+        let personas = xiaoguai_personas::InMemoryPersonaRepository::new();
+        let teams = xiaoguai_personas::InMemoryTeamRepository::new();
+
+        scan_enabled_pack_agents(&pool, &personas, &teams)
+            .await
+            .unwrap();
+        let n_p = personas.list().await.unwrap().len();
+        let n_t = teams.list().await.unwrap().len();
+        // Re-scan must not duplicate personas or the team.
+        scan_enabled_pack_agents(&pool, &personas, &teams)
+            .await
+            .unwrap();
+        assert_eq!(personas.list().await.unwrap().len(), n_p);
+        assert_eq!(teams.list().await.unwrap().len(), n_t);
+    }
+
+    #[tokio::test]
+    async fn scan_skips_pack_without_conversational_agents() {
+        // observability-starter is anomaly/watch only — no conversational agents.
+        let pool = installed_packs_pool().await;
+        install_row(&pool, true).await;
+        let personas = xiaoguai_personas::InMemoryPersonaRepository::new();
+        let teams = xiaoguai_personas::InMemoryTeamRepository::new();
+
+        let activated = scan_enabled_pack_agents(&pool, &personas, &teams)
+            .await
+            .unwrap();
+        assert!(activated.is_empty());
+        assert!(personas.list().await.unwrap().is_empty());
+        assert!(teams.list().await.unwrap().is_empty());
     }
 
     #[tokio::test]
