@@ -1740,6 +1740,8 @@ html,
   font-size: 12px;
   font-weight: 500;
   color: var(--accent);
+}
+
 /* ---------------------------------------- AI disclosure banner (v1.3.x) */
 
 /* Persistent notice at the top of the chat column — above HotlBanner.
@@ -1781,6 +1783,8 @@ html,
 
 .outcomes-panel__audit-link:hover {
   opacity: 0.8;
+}
+
 .ai-disclosure-banner__link:hover {
   opacity: 0.75;
 }
@@ -1803,6 +1807,8 @@ html,
 
 .ai-disclosure-banner__dismiss:hover {
   opacity: 1;
+}
+
 /* ---------------------------------------------------------- chat header (v1.3.x) */
 
 /* Hosts AiDisclosureBanner, HotlBanner, WatchIndicator in a right-aligned row.
