@@ -1134,6 +1134,49 @@ html,
   line-height: 1.5;
 }
 
+.skills-disclaimer {
+  margin: var(--space-2) 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 540px;
+  line-height: 1.5;
+}
+
+/* Tier selector — a segmented control over the general/specialized split. */
+.skills-tiers {
+  display: inline-flex;
+  gap: 2px;
+  margin: var(--space-4) 0 var(--space-3);
+  padding: 3px;
+  background: var(--status-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.skills-tier-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 5px 14px;
+  border-radius: calc(var(--radius-md) - 2px);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.skills-tier-tab:hover {
+  color: var(--fg);
+}
+
+.skills-tier-tab--active {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
 .skills-tenant-control {
   display: flex;
   flex-direction: column;

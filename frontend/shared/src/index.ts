@@ -526,9 +526,18 @@ export type SkillKnobSchema =
 export interface SkillCatalogEntry {
   slug: string;
   name: string;
+  /** Chinese display name; the UI prefers this under a Chinese locale, falling
+   *  back to `name`. */
+  name_zh?: string | null;
   description: string;
+  /** Chinese description; same fallback contract as `name_zh`. */
+  description_zh?: string | null;
   version: string;
   category: string;
+  /** IA tier: `"general"` (broadly-useful skills, shown first) or
+   *  `"specialized"` (domain scenario packs, behind a tab). Always present —
+   *  the server defaults it to `"specialized"`. */
+  tier: string;
   requires?: SkillPackRequires;
   knobs?: Record<string, SkillKnobSchema>;
   screenshot_url?: string | null;

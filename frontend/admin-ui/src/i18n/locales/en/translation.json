@@ -282,6 +282,7 @@
       "probe_results_title": "Connectivity results",
       "verified_badge": "✓ {{ok}}/{{total}} reachable",
       "probe_all_failed": "No models connected — check the API key, endpoint, and model names.",
+      "probe_failed": "unreachable",
       "preset_minimax_intl": "MiniMax (international)",
       "preset_minimax_cn": "MiniMax (China)",
       "preset_ollama": "Ollama (local)",
@@ -683,6 +684,10 @@
     },
     "skill_packs": {
       "title": "Skill Packs",
+      "template_disclaimer": "These are skill templates — installing records your configuration; running a skill needs its data source or an MCP server.",
+      "tier_tabs_aria": "Skill tiers",
+      "tier_general": "General",
+      "tier_specialized": "Scenarios",
       "activation_notice_title": "Activation pending for all packs:",
       "activation_notice_body": "The runtime skill loader is not yet wired. Recording a pack registers it in the database; it will not run until a future release activates the loader.",
       "catalog_heading": "Install from catalog",

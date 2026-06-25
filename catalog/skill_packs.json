@@ -4,9 +4,12 @@
     {
       "slug": "ar-collections",
       "name": "AR Collections Assistant",
+      "name_zh": "应收账款催收助手",
       "description": "Automates accounts-receivable collections workflows: overdue invoice detection, reminder drafting, escalation routing, and payment reconciliation. Integrates with ERP systems via MCP tools. Requires AR_ERP_URL and AR_ERP_TOKEN environment variables.",
+      "description_zh": "自动化应收账款催收流程：识别逾期发票、起草催款提醒、升级路由以及收款对账。通过 MCP 工具与 ERP 系统集成。需要配置 AR_ERP_URL 与 AR_ERP_TOKEN 环境变量。",
       "version": "1.0.0",
       "category": "finance",
+      "tier": "specialized",
       "requires": {
         "feature_flags": ["rag", "scheduler"],
         "env_keys": ["AR_ERP_URL", "AR_ERP_TOKEN"]
@@ -34,9 +37,12 @@
     {
       "slug": "incident-triage",
       "name": "Incident Triage",
+      "name_zh": "事件分诊",
       "description": "On-call incident triage assistant: classifies severity, correlates related alerts, drafts runbooks, and pages the right team. Connects to PagerDuty, Opsgenie, or webhooks. Reduces mean-time-to-acknowledge by surfacing context from past incidents.",
+      "description_zh": "值班事件分诊助手：判定严重级别、关联相关告警、起草运行手册并呼叫对应团队。可对接 PagerDuty、Opsgenie 或 webhook。通过呈现历史事件的上下文，缩短平均确认时间（MTTA）。",
       "version": "1.0.0",
       "category": "ops",
+      "tier": "specialized",
       "requires": {
         "feature_flags": ["rag", "scheduler"],
         "env_keys": ["PAGERDUTY_TOKEN"]
@@ -65,9 +71,12 @@
     {
       "slug": "pr-review",
       "name": "PR Review Assistant",
+      "name_zh": "PR 评审助手",
       "description": "Automated pull-request review: checks for style violations, security anti-patterns, missing tests, and documentation gaps. Posts inline comments via the GitHub or GitLab API. Configurable checklist per repository.",
+      "description_zh": "自动化的拉取请求（PR）评审：检查代码风格违规、安全反模式、缺失的测试以及文档缺口。通过 GitHub 或 GitLab API 发布行内评论。可按仓库配置检查清单。",
       "version": "1.0.0",
       "category": "dev",
+      "tier": "specialized",
       "requires": {
         "feature_flags": [],
         "env_keys": ["GITHUB_TOKEN"]
@@ -100,9 +109,12 @@
     {
       "slug": "hr-onboarding",
       "name": "HR Onboarding",
+      "name_zh": "人力资源入职引导",
       "description": "Guided employee onboarding assistant: answers policy questions, schedules orientation meetings, tracks completion of required readings, and generates personalised 30/60/90-day plans. Integrates with HRIS and calendar systems.",
+      "description_zh": "引导式员工入职助手：解答政策问题、安排入职培训会议、跟踪必读材料的完成情况，并生成个性化的 30/60/90 天计划。可与 HRIS 及日历系统集成。",
       "version": "1.0.0",
       "category": "hr",
+      "tier": "specialized",
       "requires": {
         "feature_flags": ["rag", "scheduler"],
         "env_keys": ["HRIS_API_KEY", "CALENDAR_API_KEY"]
@@ -130,9 +142,12 @@
     {
       "slug": "rag-legal",
       "name": "Legal Document RAG",
+      "name_zh": "法律文档 RAG",
       "description": "Retrieval-augmented Q&A over a legal document corpus: contracts, policies, court opinions, and regulatory filings. Answers questions with source citations and confidence scores. Index your documents via the CLI before enabling.",
+      "description_zh": "面向法律文档语料库的检索增强问答（RAG）：涵盖合同、政策、法院判决意见和监管申报文件。回答问题时附带来源引用和置信度评分。启用前请先通过 CLI 为文档建立索引。",
       "version": "1.0.0",
       "category": "rag",
+      "tier": "specialized",
       "requires": {
         "feature_flags": ["rag"],
         "env_keys": []
@@ -160,9 +175,12 @@
     {
       "slug": "rag-finance",
       "name": "Finance Document RAG",
+      "name_zh": "财务文档 RAG",
       "description": "Retrieval-augmented Q&A over financial documents: annual reports, earnings calls, 10-K/10-Q filings, analyst notes, and internal finance policies. Ideal for FP&A teams doing research across large document sets.",
+      "description_zh": "面向财务文档的检索增强问答（RAG）：涵盖年报、财报电话会议、10-K/10-Q 申报文件、分析师笔记以及内部财务政策。非常适合需要在海量文档集中开展研究的 FP&A 团队。",
       "version": "1.0.0",
       "category": "rag",
+      "tier": "specialized",
       "requires": {
         "feature_flags": ["rag"],
         "env_keys": []
@@ -189,9 +207,12 @@
     {
       "slug": "devops-oncall",
       "name": "DevOps On-Call",
+      "name_zh": "DevOps 值班",
       "description": "Real-time alert triage and runbook automation for on-call engineers. Classifies incoming alerts (P1/P2/P3), maps them to suspected components, looks up matching runbook steps, and attaches an observability snapshot (metrics + log excerpts) before paging the engineer. Distinct from incident-triage, which handles post-incident RCA. Supports PagerDuty, Opsgenie, and Alertmanager inbound sources.",
+      "description_zh": "面向值班工程师的实时告警分诊与运行手册自动化。对接入告警进行分级（P1/P2/P3），映射到疑似故障组件，查找匹配的运行手册步骤，并在呼叫工程师前附上一份可观测性快照（指标 + 日志摘录）。与负责事后根因分析（RCA）的 incident-triage 不同。支持 PagerDuty、Opsgenie 和 Alertmanager 入站来源。",
       "version": "0.1.0",
       "category": "ops",
+      "tier": "specialized",
       "requires": {
         "feature_flags": ["scheduler"],
         "env_keys": ["ONCALL_SLACK_TOKEN", "ONCALL_SLACK_CHANNEL", "ONCALL_OBSERVABILITY_URL", "ONCALL_OBSERVABILITY_TOKEN"]
@@ -223,9 +244,12 @@
     {
       "slug": "rag-hr",
       "name": "HR Policy RAG",
+      "name_zh": "人力资源政策 RAG",
       "description": "Retrieval-augmented Q&A over HR documents: employee handbook, benefits guides, PTO policy, code of conduct, and org charts. Employees ask natural-language questions; the assistant cites the exact policy paragraph.",
+      "description_zh": "面向人力资源文档的检索增强问答（RAG）：涵盖员工手册、福利指南、带薪休假（PTO）政策、行为准则和组织架构图。员工以自然语言提问，助手会引用确切的政策段落作答。",
       "version": "1.0.0",
       "category": "rag",
+      "tier": "specialized",
       "requires": {
         "feature_flags": ["rag"],
         "env_keys": []
@@ -252,9 +276,12 @@
     {
       "slug": "sales-qualification",
       "name": "Sales Qualification (BANT + MEDDIC)",
+      "name_zh": "销售线索资质评估（BANT + MEDDIC）",
       "description": "Multi-agent lead qualification using BANT (Budget/Authority/Need/Timeline) and MEDDIC (Metrics/Economic Buyer/Decision Criteria/Decision Process/Identify Pain/Champion) frameworks. Ingests leads from HubSpot webhooks, Salesforce platform events, or email threads. Outputs structured qualification scores, evidence quotes, MEDDIC completeness checklists, and next-action recommendations. All CRM write-backs are HOTL-gated.",
+      "description_zh": "采用 BANT（预算/决策权/需求/时间线）和 MEDDIC（指标/经济买家/决策标准/决策流程/识别痛点/内部支持者）框架的多智能体销售线索资质评估。可从 HubSpot webhook、Salesforce 平台事件或邮件会话中接入线索。输出结构化的资质评分、证据引文、MEDDIC 完整度检查清单以及下一步行动建议。所有对 CRM 的写回操作均经 HOTL（人在回路）审批。",
       "version": "1.0.0",
       "category": "sales",
+      "tier": "specialized",
       "requires": {
         "feature_flags": ["llm", "outcome-telemetry", "web-search"],
         "env_keys": [
@@ -315,9 +342,12 @@
     {
       "slug": "vmware-ops",
       "name": "VMware Ops",
+      "name_zh": "VMware 运维",
       "description": "VMware infrastructure ops agent-team. Consumes the vmware-skill family over MCP (9 read-only diagnostic servers + vmware-pilot for execution) — reimplements nothing. Ships a conversation-only expert team (vSphere, monitoring, vSAN storage, VKS, NSX, NSX-security, Aria, AVI, hardening) plus an incident-triage agent that drafts an RCA and a change-plan from vCenter/Aria alarms. Every change routes through an Agent Bridge to a vmware-pilot workflow with a HOTL approval gate, audit, and rollback — the team never mutates infrastructure autonomously.",
+      "description_zh": "VMware 基础设施运维智能体团队。通过 MCP 复用 vmware-skill 家族（9 个只读诊断服务 + 负责执行的 vmware-pilot），不重复造轮子。提供一个纯对话式专家团队（vSphere、监控、vSAN 存储、VKS、NSX、NSX 安全、Aria、AVI、安全加固），外加一个事件分诊智能体，可基于 vCenter/Aria 告警起草根因分析（RCA）和变更方案。每一项变更都经由 Agent Bridge 路由到 vmware-pilot 工作流，并配有 HOTL 审批关卡、审计与回滚——该团队绝不会自主变更基础设施。",
       "version": "0.1.0",
       "category": "ops",
+      "tier": "specialized",
       "requires": {
         "feature_flags": [
           "llm",
@@ -356,9 +386,12 @@
     {
       "slug": "code-review",
       "name": "Code Review Assistant",
+      "name_zh": "代码评审助手",
       "description": "General-purpose code review across any repository: explains a diff in plain language, flags style and complexity smells, suggests refactors, and checks for missing tests or docs. Language-agnostic and editor-friendly — drop a diff or a PR URL and get an actionable review.",
+      "description_zh": "适用于任意仓库的通用代码评审：用通俗语言解释 diff，标记代码风格和复杂度坏味道，提出重构建议，并检查缺失的测试或文档。与语言无关、对编辑器友好——只需提供一个 diff 或 PR 链接，即可获得可落地的评审意见。",
       "version": "1.0.0",
       "category": "dev",
+      "tier": "specialized",
       "requires": {
         "feature_flags": [],
         "env_keys": []
@@ -386,9 +419,12 @@
     {
       "slug": "doc-qa",
       "name": "Document Q&A",
+      "name_zh": "文档问答",
       "description": "Ask natural-language questions over your own documents and get grounded answers with citations. Works on any indexed collection — wikis, PDFs, runbooks, product docs. The assistant declines to answer when the corpus has no supporting passage, so answers stay trustworthy.",
+      "description_zh": "针对你自己的文档以自然语言提问，获得有据可依、附带引用的答案。适用于任何已建索引的集合——wiki、PDF、运行手册、产品文档。当语料库中没有支撑性段落时，助手会拒绝作答，从而保证答案的可信度。",
       "version": "1.0.0",
       "category": "rag",
+      "tier": "specialized",
       "requires": {
         "feature_flags": ["rag"],
         "env_keys": []
@@ -416,9 +452,12 @@
     {
       "slug": "sql-assistant",
       "name": "SQL Assistant",
+      "name_zh": "SQL 助手",
       "description": "Turn plain-English questions into SQL, explain existing queries, and suggest index or join optimizations. Reads a schema description to ground its output; every generated statement is read-only by default and write statements are HOTL-gated before they run.",
+      "description_zh": "将通俗的自然语言问题转换为 SQL，解释现有查询，并提出索引或连接（join）优化建议。它会读取库表结构描述来确保输出贴合实际；默认生成的每条语句均为只读，写入类语句在执行前需经 HOTL 审批。",
       "version": "1.0.0",
       "category": "dev",
+      "tier": "specialized",
       "requires": {
         "feature_flags": [],
         "env_keys": ["DB_SCHEMA_URL"]
@@ -446,9 +485,12 @@
     {
       "slug": "customer-support",
       "name": "Customer Support Assistant",
+      "name_zh": "客户支持助手",
       "description": "Drafts replies to inbound support tickets grounded in your help-center articles and past resolutions. Classifies intent, proposes a tone-matched response, and suggests an escalation path for anything it can't confidently answer. All outbound replies are HOTL-gated.",
+      "description_zh": "基于你的帮助中心文章和历史解决方案，为接入的支持工单起草回复。它会识别意图、给出语气贴合的回复建议，并为无法有把握回答的问题给出升级路径。所有对外发出的回复均经 HOTL 审批。",
       "version": "1.0.0",
       "category": "support",
+      "tier": "specialized",
       "requires": {
         "feature_flags": ["rag"],
         "env_keys": ["SUPPORT_INBOX_TOKEN"]
@@ -476,9 +518,12 @@
     {
       "slug": "meeting-notes",
       "name": "Meeting Notes & Action Items",
+      "name_zh": "会议纪要与行动项",
       "description": "Turns a raw meeting transcript into a structured summary: key decisions, discussion highlights, and a tracked list of action items with owners and due dates. Optionally posts the summary to a channel and files follow-ups.",
+      "description_zh": "将原始会议转录文本转化为结构化摘要：关键决策、讨论要点，以及一份带负责人和截止日期、可跟踪的行动项清单。可选择将摘要发布到指定频道并登记后续待办。",
       "version": "1.0.0",
       "category": "ops",
+      "tier": "specialized",
       "requires": {
         "feature_flags": [],
         "env_keys": []
@@ -506,9 +551,12 @@
     {
       "slug": "release-notes",
       "name": "Release Notes Generator",
+      "name_zh": "发布说明生成器",
       "description": "Generates human-readable release notes from a range of commits or merged pull requests. Groups changes by type (features / fixes / chores), writes a one-line summary per entry, and drafts a highlights section for the top of the changelog.",
+      "description_zh": "从一段提交记录或已合并的拉取请求中生成易读的发布说明。按类型（功能 / 修复 / 杂项）对变更分组，为每一条目撰写一行摘要，并在变更日志顶部起草一段亮点综述。",
       "version": "1.0.0",
       "category": "dev",
+      "tier": "specialized",
       "requires": {
         "feature_flags": [],
         "env_keys": ["GITHUB_TOKEN"]
@@ -532,6 +580,326 @@
         }
       },
       "screenshot_url": "https://placeholder.xiaoguai.ai/screenshots/release-notes.png"
+    },
+    {
+      "slug": "pptx",
+      "name": "PPTX / Slide Decks",
+      "name_zh": "PPTX / 幻灯片演示",
+      "description": "Generate and edit PowerPoint decks from an outline or structured data: build slides, apply layouts and themes, insert charts and tables, and tidy up speaker notes. This is a skill template — installing records configuration; producing an actual deck requires the host agent and the pptx tooling to be wired in.",
+      "description_zh": "根据大纲或结构化数据生成与编辑 PowerPoint 演示文稿：创建幻灯片、套用版式与主题、插入图表和表格，并整理演讲者备注。这是一个技能模板——安装仅记录配置；要真正产出演示文稿，仍需接入宿主智能体及 pptx 工具链。",
+      "version": "1.0.0",
+      "category": "documents",
+      "tier": "general",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": []
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "docx",
+      "name": "DOCX / Word Documents",
+      "name_zh": "DOCX / Word 文档",
+      "description": "Author and edit Word documents: apply templates and styles, run mail-merge over a data set, manage headings and tables of contents, and perform find-and-replace. This is a skill template — installing records configuration; generating a real document requires the host agent and the docx tooling to be wired in.",
+      "description_zh": "撰写与编辑 Word 文档：套用模板与样式、基于数据集执行邮件合并、管理标题和目录，并进行查找替换。这是一个技能模板——安装仅记录配置；要真正生成文档，仍需接入宿主智能体及 docx 工具链。",
+      "version": "1.0.0",
+      "category": "documents",
+      "tier": "general",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": []
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "xlsx",
+      "name": "XLSX / Spreadsheets",
+      "name_zh": "XLSX / 电子表格",
+      "description": "Read and write Excel workbooks: build and evaluate formulas, create charts, and produce pivot-style summaries over tabular data. This is a skill template — installing records configuration; operating on a real workbook requires the host agent and the xlsx tooling to be wired in.",
+      "description_zh": "读写 Excel 工作簿：构建并计算公式、创建图表，以及对表格数据生成数据透视式汇总。这是一个技能模板——安装仅记录配置；要真正操作工作簿，仍需接入宿主智能体及 xlsx 工具链。",
+      "version": "1.0.0",
+      "category": "documents",
+      "tier": "general",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": []
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "pdf",
+      "name": "PDF Toolkit",
+      "name_zh": "PDF 工具箱",
+      "description": "Work with PDF files: extract text and tables, fill form fields, and merge or split documents. This is a skill template — installing records configuration; processing a real PDF requires the host agent and the pdf tooling to be wired in.",
+      "description_zh": "处理 PDF 文件：提取文本和表格、填写表单字段，以及合并或拆分文档。这是一个技能模板——安装仅记录配置；要真正处理 PDF，仍需接入宿主智能体及 pdf 工具链。",
+      "version": "1.0.0",
+      "category": "documents",
+      "tier": "general",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": []
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "superpowers",
+      "name": "Superpowers",
+      "name_zh": "Superpowers 技能框架",
+      "description": "A composable agent-skill framework that breaks complex work into chained subskills — brainstorm, plan, implement, and review — so the agent follows a disciplined workflow instead of improvising. This is a skill template — installing records configuration; running the workflow requires the host agent to drive the subskills.",
+      "description_zh": "一套可组合的智能体技能框架，将复杂工作拆解为链式子技能——头脑风暴、规划、实现与评审——让智能体遵循规范化的工作流，而非临场发挥。这是一个技能模板——安装仅记录配置；要真正运行该工作流，需由宿主智能体来驱动各子技能。",
+      "version": "1.0.0",
+      "category": "general",
+      "tier": "general",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": []
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "web-research",
+      "name": "Web Research",
+      "name_zh": "网络调研",
+      "description": "Search the web and answer questions with citations to the sources used. This is a skill template — installing records configuration; live search requires a search provider (e.g. an MCP server or a configured search API) to be wired in.",
+      "description_zh": "搜索网络并在回答问题时附上所引用来源的出处。这是一个技能模板——安装仅记录配置；要进行实时搜索，需接入一个搜索提供方（例如 MCP 服务器或已配置的搜索 API）。",
+      "version": "1.0.0",
+      "category": "general",
+      "tier": "general",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": []
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "data-analysis",
+      "name": "Data Analysis",
+      "name_zh": "数据分析",
+      "description": "Analyze CSV and tabular data: compute summary statistics, group and aggregate, and draw charts to surface trends. This is a skill template — installing records configuration; analysing your data requires the host agent and a data source to be wired in.",
+      "description_zh": "分析 CSV 和表格数据：计算汇总统计量、分组与聚合，并绘制图表以揭示趋势。这是一个技能模板——安装仅记录配置；要真正分析你的数据，仍需接入宿主智能体和数据源。",
+      "version": "1.0.0",
+      "category": "general",
+      "tier": "general",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": []
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "diagramming",
+      "name": "Diagramming",
+      "name_zh": "图表绘制",
+      "description": "Produce Mermaid and SVG diagrams — flowcharts, architecture diagrams, and sequence diagrams — from a text description. This is a skill template — installing records configuration; rendering inside your environment requires the host agent to be wired in.",
+      "description_zh": "根据文字描述生成 Mermaid 和 SVG 图表——流程图、架构图和时序图。这是一个技能模板——安装仅记录配置；要在你的环境中渲染，仍需接入宿主智能体。",
+      "version": "1.0.0",
+      "category": "general",
+      "tier": "general",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": []
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "mcp-builder",
+      "name": "MCP Builder",
+      "name_zh": "MCP 构建器",
+      "description": "Scaffold a Model Context Protocol (MCP) server from a spec — generating tool and resource definitions, handler stubs, and project structure. This is a skill template — installing records configuration; the generated server still needs implementation and the host agent to drive scaffolding.",
+      "description_zh": "根据规格说明搭建一个 Model Context Protocol（MCP）服务器脚手架——生成工具与资源定义、处理函数桩代码以及项目结构。这是一个技能模板——安装仅记录配置；生成的服务器仍需补充实现，且脚手架搭建需由宿主智能体驱动。",
+      "version": "1.0.0",
+      "category": "dev",
+      "tier": "general",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": []
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "doc-translation",
+      "name": "Document Translation",
+      "name_zh": "文档翻译",
+      "description": "Translate documents between languages while preserving the original layout, formatting, and structure. This is a skill template — installing records configuration; translating a real document requires the host agent and the relevant document tooling to be wired in.",
+      "description_zh": "在不同语言之间翻译文档，同时保留原有的版式、格式和结构。这是一个技能模板——安装仅记录配置；要真正翻译文档，仍需接入宿主智能体及相应的文档工具链。",
+      "version": "1.0.0",
+      "category": "general",
+      "tier": "general",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": []
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "vmware-vsphere",
+      "name": "vSphere Diagnostics",
+      "name_zh": "vSphere 诊断",
+      "description": "Read-only vSphere diagnostics: inventory vCenter and ESXi, and inspect the state of VMs, hosts, and clusters. Part of the vmware-skill diagnostic family. This is a skill template — installing records configuration; live queries require a reachable vCenter and the vSphere MCP tooling to be wired in. Read-only: it never mutates infrastructure.",
+      "description_zh": "只读的 vSphere 诊断：盘点 vCenter 和 ESXi 清单，并查看虚拟机、主机和集群的状态。属于 vmware-skill 诊断家族的一部分。这是一个技能模板——安装仅记录配置；要进行实时查询，需要可达的 vCenter 以及已接入的 vSphere MCP 工具链。只读：绝不变更基础设施。",
+      "version": "1.0.0",
+      "category": "ops",
+      "tier": "specialized",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": ["VSPHERE_HOST", "VSPHERE_USER", "VSPHERE_PASSWORD"]
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "vmware-monitoring",
+      "name": "vSphere Monitoring",
+      "name_zh": "vSphere 监控",
+      "description": "Read-only vSphere monitoring: surface performance metrics, active alarms, and capacity headroom across vCenter. Part of the vmware-skill diagnostic family. This is a skill template — installing records configuration; live metrics require a reachable vCenter and the vSphere MCP tooling to be wired in. Read-only: it never mutates infrastructure.",
+      "description_zh": "只读的 vSphere 监控：在 vCenter 范围内呈现性能指标、活动告警和容量余量。属于 vmware-skill 诊断家族的一部分。这是一个技能模板——安装仅记录配置；要获取实时指标，需要可达的 vCenter 以及已接入的 vSphere MCP 工具链。只读：绝不变更基础设施。",
+      "version": "1.0.0",
+      "category": "ops",
+      "tier": "specialized",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": ["VSPHERE_HOST", "VSPHERE_USER", "VSPHERE_PASSWORD"]
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "vmware-vsan",
+      "name": "vSAN Storage",
+      "name_zh": "vSAN 存储",
+      "description": "Read-only vSAN diagnostics: check cluster health, capacity, resync activity, and disk-group status. Part of the vmware-skill diagnostic family. This is a skill template — installing records configuration; live queries require a reachable vCenter and the vSAN MCP tooling to be wired in. Read-only: it never mutates infrastructure.",
+      "description_zh": "只读的 vSAN 诊断：检查集群健康状况、容量、重新同步（resync）活动以及磁盘组状态。属于 vmware-skill 诊断家族的一部分。这是一个技能模板——安装仅记录配置；要进行实时查询，需要可达的 vCenter 以及已接入的 vSAN MCP 工具链。只读：绝不变更基础设施。",
+      "version": "1.0.0",
+      "category": "ops",
+      "tier": "specialized",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": ["VSPHERE_HOST", "VSPHERE_USER", "VSPHERE_PASSWORD"]
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "vmware-vks",
+      "name": "VKS / Kubernetes",
+      "name_zh": "VKS / Kubernetes",
+      "description": "Read-only diagnostics for VMware Kubernetes Service (Tanzu): inspect cluster, node, and workload state on supervisor and guest clusters. Part of the vmware-skill diagnostic family. This is a skill template — installing records configuration; live queries require a reachable vCenter and the VKS MCP tooling to be wired in. Read-only: it never mutates infrastructure.",
+      "description_zh": "面向 VMware Kubernetes Service（Tanzu）的只读诊断：查看 supervisor 集群和 guest 集群上的集群、节点及工作负载状态。属于 vmware-skill 诊断家族的一部分。这是一个技能模板——安装仅记录配置；要进行实时查询，需要可达的 vCenter 以及已接入的 VKS MCP 工具链。只读：绝不变更基础设施。",
+      "version": "1.0.0",
+      "category": "ops",
+      "tier": "specialized",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": ["VSPHERE_HOST", "VSPHERE_USER", "VSPHERE_PASSWORD"]
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "vmware-nsx",
+      "name": "NSX Networking",
+      "name_zh": "NSX 网络",
+      "description": "Read-only NSX-T networking diagnostics: inspect logical switching and routing, segments, and the state of network services. Part of the vmware-skill diagnostic family. This is a skill template — installing records configuration; live queries require a reachable NSX manager and the NSX MCP tooling to be wired in. Read-only: it never mutates infrastructure.",
+      "description_zh": "只读的 NSX-T 网络诊断：查看逻辑交换与路由、网段（segment）以及网络服务的状态。属于 vmware-skill 诊断家族的一部分。这是一个技能模板——安装仅记录配置；要进行实时查询，需要可达的 NSX manager 以及已接入的 NSX MCP 工具链。只读：绝不变更基础设施。",
+      "version": "1.0.0",
+      "category": "ops",
+      "tier": "specialized",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": ["VSPHERE_HOST", "VSPHERE_USER", "VSPHERE_PASSWORD"]
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "vmware-nsx-security",
+      "name": "NSX Security",
+      "name_zh": "NSX 安全",
+      "description": "Read-only NSX security review: inspect the distributed firewall and micro-segmentation policy, and audit rule coverage between workloads. Part of the vmware-skill diagnostic family. This is a skill template — installing records configuration; live queries require a reachable NSX manager and the NSX MCP tooling to be wired in. Read-only: it never mutates infrastructure.",
+      "description_zh": "只读的 NSX 安全审查：查看分布式防火墙和微分段（micro-segmentation）策略，并审计工作负载之间的规则覆盖情况。属于 vmware-skill 诊断家族的一部分。这是一个技能模板——安装仅记录配置；要进行实时查询，需要可达的 NSX manager 以及已接入的 NSX MCP 工具链。只读：绝不变更基础设施。",
+      "version": "1.0.0",
+      "category": "ops",
+      "tier": "specialized",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": ["VSPHERE_HOST", "VSPHERE_USER", "VSPHERE_PASSWORD"]
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "vmware-aria",
+      "name": "Aria Operations",
+      "name_zh": "Aria Operations",
+      "description": "Read-only Aria Operations (vROps) diagnostics: review cluster and workload health, optimization recommendations, and automation insights. Part of the vmware-skill diagnostic family. This is a skill template — installing records configuration; live queries require a reachable Aria Operations instance and the Aria MCP tooling to be wired in. Read-only: it never mutates infrastructure.",
+      "description_zh": "只读的 Aria Operations（vROps）诊断：查看集群和工作负载健康状况、优化建议以及自动化洞察。属于 vmware-skill 诊断家族的一部分。这是一个技能模板——安装仅记录配置；要进行实时查询，需要可达的 Aria Operations 实例以及已接入的 Aria MCP 工具链。只读：绝不变更基础设施。",
+      "version": "1.0.0",
+      "category": "ops",
+      "tier": "specialized",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": ["VSPHERE_HOST", "VSPHERE_USER", "VSPHERE_PASSWORD"]
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "vmware-avi",
+      "name": "AVI Load Balancing",
+      "name_zh": "AVI 负载均衡",
+      "description": "Read-only NSX ALB / Avi diagnostics: inspect virtual services, pools, and back-end health, and review load-balancing configuration. Part of the vmware-skill diagnostic family. This is a skill template — installing records configuration; live queries require a reachable Avi controller and the Avi MCP tooling to be wired in. Read-only: it never mutates infrastructure.",
+      "description_zh": "只读的 NSX ALB / Avi 诊断：查看虚拟服务（virtual service）、服务器池（pool）和后端健康状况，并审阅负载均衡配置。属于 vmware-skill 诊断家族的一部分。这是一个技能模板——安装仅记录配置；要进行实时查询，需要可达的 Avi controller 以及已接入的 Avi MCP 工具链。只读：绝不变更基础设施。",
+      "version": "1.0.0",
+      "category": "ops",
+      "tier": "specialized",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": ["VSPHERE_HOST", "VSPHERE_USER", "VSPHERE_PASSWORD"]
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "vmware-hardening",
+      "name": "vSphere Hardening",
+      "name_zh": "vSphere 安全加固",
+      "description": "Read-only vSphere hardening review: evaluate the environment against a security baseline and report compliance gaps and misconfigurations. Part of the vmware-skill diagnostic family. This is a skill template — installing records configuration; live checks require a reachable vCenter and the vSphere MCP tooling to be wired in. Read-only: it reports findings but never changes configuration.",
+      "description_zh": "只读的 vSphere 安全加固审查：依据安全基线评估环境，并报告合规缺口与配置错误。属于 vmware-skill 诊断家族的一部分。这是一个技能模板——安装仅记录配置；要进行实时检查，需要可达的 vCenter 以及已接入的 vSphere MCP 工具链。只读：仅报告发现项，绝不更改配置。",
+      "version": "1.0.0",
+      "category": "ops",
+      "tier": "specialized",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": ["VSPHERE_HOST", "VSPHERE_USER", "VSPHERE_PASSWORD"]
+      },
+      "knobs": {},
+      "screenshot_url": null
+    },
+    {
+      "slug": "vmware-pilot",
+      "name": "vmware-pilot (Execution)",
+      "name_zh": "vmware-pilot（执行）",
+      "description": "The change-execution pilot for the vmware-skill family — and the only member that mutates infrastructure. Every change is HOTL-gated: it routes through an explicit approval step and ships with audit and rollback. This is a skill template — installing records configuration; executing changes requires a reachable vCenter, the pilot MCP tooling, and an approver to be wired in.",
+      "description_zh": "vmware-skill 家族中负责变更执行的 pilot——也是唯一会变更基础设施的成员。每一项变更都经 HOTL 审批：必须经过显式的审批步骤，并配有审计与回滚。这是一个技能模板——安装仅记录配置；要真正执行变更，需要可达的 vCenter、pilot MCP 工具链以及一名已接入的审批人。",
+      "version": "1.0.0",
+      "category": "ops",
+      "tier": "specialized",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": ["VSPHERE_HOST", "VSPHERE_USER", "VSPHERE_PASSWORD"]
+      },
+      "knobs": {},
+      "screenshot_url": null
     }
   ]
 }

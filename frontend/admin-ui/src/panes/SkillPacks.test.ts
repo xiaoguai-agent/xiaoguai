@@ -217,6 +217,7 @@ describe('XiaoguaiClient skill pack install flow', () => {
           description: 'Reviews diffs.',
           version: '1.0.0',
           category: 'dev',
+          tier: 'general',
         },
       ],
     };

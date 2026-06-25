@@ -282,6 +282,7 @@
       "probe_results_title": "接続テスト結果",
       "verified_badge": "✓ {{ok}}/{{total}} 利用可",
       "probe_all_failed": "接続できたモデルがありません — API キー・エンドポイント・モデル名を確認してください。",
+      "probe_failed": "接続不可",
       "preset_minimax_intl": "MiniMax（国際）",
       "preset_minimax_cn": "MiniMax（中国）",
       "preset_ollama": "Ollama（ローカル）",
@@ -683,6 +684,10 @@
     },
     "skill_packs": {
       "title": "スキルパック",
+      "template_disclaimer": "これらはスキルテンプレートです。インストールは設定を記録するだけで、実際に動作させるには対応するデータソースまたは MCP サーバーへの接続が必要です。",
+      "tier_tabs_aria": "スキル分類",
+      "tier_general": "全般",
+      "tier_specialized": "シナリオ別",
       "activation_notice_title": "すべてのパックがアクティベーション保留中です：",
       "activation_notice_body": "ランタイムのスキルローダーはまだ接続されていません。パックを記録するとデータベースに登録されますが、将来のリリースでローダーが有効化されるまで実行されません。",
       "catalog_heading": "カタログからインストール",

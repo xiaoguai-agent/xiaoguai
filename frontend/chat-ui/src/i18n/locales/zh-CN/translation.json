@@ -157,7 +157,10 @@
       "toast_installed": "{{name}} 已安装",
       "toast_install_failed": "安装失败：{{message}}",
       "toast_uninstalled": "{{name}} 已卸载",
-      "toast_uninstall_failed": "卸载失败：{{message}}"
+      "toast_uninstall_failed": "卸载失败：{{message}}",
+      "tab_general": "通用",
+      "tab_specialized": "专用场景",
+      "disclaimer": "以下为技能模板：安装仅记录配置，实际运行需对接对应的数据源或 MCP 服务。"
     }
   }
 }

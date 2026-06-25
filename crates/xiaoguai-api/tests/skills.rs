@@ -116,10 +116,19 @@ async fn catalog_lists_all_packs() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     let packs = body["packs"].as_array().unwrap();
-    assert_eq!(packs.len(), 16, "catalog must ship exactly 16 packs");
+    // The catalog grows over time (the i18n work added bilingual "general"
+    // skills + a vmware-family "specialized" tier), so assert a floor rather
+    // than an exact count — the per-slug checks below verify the known packs
+    // are actually served over the wire.
+    assert!(
+        packs.len() >= 16,
+        "catalog should ship at least the 16 baseline packs, got {}",
+        packs.len()
+    );
 
     let slugs: Vec<&str> = packs.iter().map(|p| p["slug"].as_str().unwrap()).collect();
     for expected in &[
+        // baseline scenario packs
         "ar-collections",
         "incident-triage",
         "pr-review",
@@ -136,6 +145,10 @@ async fn catalog_lists_all_packs() {
         "customer-support",
         "meeting-notes",
         "release-notes",
+        // general + vmware-family additions (bilingual catalog)
+        "pptx",
+        "superpowers",
+        "vmware-vsphere",
     ] {
         assert!(slugs.contains(expected), "missing slug: {expected}");
     }

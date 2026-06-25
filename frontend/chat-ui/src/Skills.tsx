@@ -30,6 +30,37 @@ import { client } from './client';
 import { useI18n } from './i18n/I18nProvider';
 import { interpolate } from './i18n';
 
+// ── tier (IA split) -----------------------------------------------------------
+
+/** Catalog `tier` values. The server always supplies one, defaulting to
+ *  `"specialized"` (DEC: general skills are surfaced first, scenarios behind a
+ *  tab). Kept as string-literal constants so the toggle and filter agree. */
+const TIER_GENERAL = 'general';
+const TIER_SPECIALIZED = 'specialized';
+type Tier = typeof TIER_GENERAL | typeof TIER_SPECIALIZED;
+
+// ── bilingual rendering -------------------------------------------------------
+
+/** First non-empty string, else `''`. Treats null / undefined / blank alike. */
+function firstNonEmpty(...vals: Array<string | null | undefined>): string {
+  for (const v of vals) {
+    if (v != null && v.trim() !== '') return v;
+  }
+  return '';
+}
+
+/** Card name in the active locale: Chinese name under a zh locale (falling back
+ *  to the English `name` when `name_zh` is null / empty), English otherwise. */
+function localizedName(pack: SkillCatalogEntry, isZh: boolean): string {
+  return isZh ? firstNonEmpty(pack.name_zh, pack.name) : pack.name;
+}
+
+/** Card description in the active locale; same fallback contract as
+ *  {@link localizedName}. */
+function localizedDesc(pack: SkillCatalogEntry, isZh: boolean): string {
+  return isZh ? firstNonEmpty(pack.description_zh, pack.description) : pack.description;
+}
+
 // ── toast notification --------------------------------------------------------
 
 interface Toast {
@@ -127,11 +158,13 @@ function KnobForm({ knobs, values, onChange }: KnobFormProps) {
 interface SkillCardProps {
   pack: SkillCatalogEntry;
   installed: InstalledSkillPackResponse | undefined;
+  /** True under a Chinese locale → prefer `name_zh` / `description_zh`. */
+  isZh: boolean;
   onInstall: (pack: SkillCatalogEntry, config: Record<string, unknown>) => Promise<void>;
   onUninstall: (row: InstalledSkillPackResponse) => Promise<void>;
 }
 
-function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) {
+function SkillCard({ pack, installed, isZh, onInstall, onUninstall }: SkillCardProps) {
   const { t } = useI18n();
   const sp = t.ui.skills_page;
   const knobs = pack.knobs ?? {};
@@ -167,7 +200,7 @@ function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) 
       {/* summary row */}
       <div className="skill-card__header">
         <div className="skill-card__meta">
-          <span className="skill-card__name">{pack.name}</span>
+          <span className="skill-card__name">{localizedName(pack, isZh)}</span>
           <span className="skill-card__category">{pack.category}</span>
           <span className="skill-card__version">v{pack.version}</span>
           {installed && <span className="skill-card__badge">{sp.installed_badge}</span>}
@@ -203,7 +236,7 @@ function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) 
       </div>
 
       {/* description */}
-      <p className="skill-card__desc">{pack.description}</p>
+      <p className="skill-card__desc">{localizedDesc(pack, isZh)}</p>
 
       {/* prerequisite tags */}
       {(featureFlags.length > 0 || envKeys.length > 0) && (
@@ -232,16 +265,23 @@ function SkillCard({ pack, installed, onInstall, onUninstall }: SkillCardProps) 
 // ── main pane ----------------------------------------------------------------
 
 export function SkillsPage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const sp = t.ui.skills_page;
+  const isZh = locale === 'zh-CN';
   const [catalog, setCatalog] = useState<SkillCatalogEntry[]>([]);
   const [installed, setInstalled] = useState<InstalledSkillPackResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // IA split: general skills first (default tab), scenario packs behind a tab.
+  const [selectedTier, setSelectedTier] = useState<Tier>(TIER_GENERAL);
   const { toasts, push: pushToast } = useToasts();
 
-  // Group packs by category for rendering.
-  const categories = Array.from(new Set(catalog.map((p) => p.category))).sort();
+  // Restrict to the selected tier, then group that subset by category. Any tier
+  // value other than "general" is treated as specialized so no pack is dropped.
+  const tierPacks = catalog.filter((p) =>
+    selectedTier === TIER_GENERAL ? p.tier === TIER_GENERAL : p.tier !== TIER_GENERAL,
+  );
+  const categories = Array.from(new Set(tierPacks.map((p) => p.category))).sort();
 
   // Installed lookup keyed by pack_id (== catalog slug server-side). The old
   // code keyed by `pack_slug`, which the API response doesn't carry — so the
@@ -275,7 +315,7 @@ export function SkillsPage() {
       // Re-fetch so the row carries the full installed shape (the install
       // response is a narrower projection).
       setInstalled(await client.listInstalledSkillPacks());
-      pushToast(interpolate(sp.toast_installed, { name: pack.name }), 'success');
+      pushToast(interpolate(sp.toast_installed, { name: localizedName(pack, isZh) }), 'success');
     } catch (err) {
       pushToast(interpolate(sp.toast_install_failed, { message: (err as Error).message }), 'error');
     }
@@ -310,7 +350,35 @@ export function SkillsPage() {
         <div>
           <h1 className="skills-title">{sp.title}</h1>
           <p className="skills-subtitle">{sp.subtitle}</p>
+          {/* honest note: packs are templates — install records config only. */}
+          <p className="skills-disclaimer">{sp.disclaimer}</p>
         </div>
+      </div>
+
+      {/* IA tier toggle (general vs specialized scenarios) */}
+      <div className="skills-tiers" role="tablist" aria-label={sp.title}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={selectedTier === TIER_GENERAL}
+          className={`skills-tier-tab${
+            selectedTier === TIER_GENERAL ? ' skills-tier-tab--active' : ''
+          }`}
+          onClick={() => setSelectedTier(TIER_GENERAL)}
+        >
+          {sp.tab_general}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={selectedTier === TIER_SPECIALIZED}
+          className={`skills-tier-tab${
+            selectedTier === TIER_SPECIALIZED ? ' skills-tier-tab--active' : ''
+          }`}
+          onClick={() => setSelectedTier(TIER_SPECIALIZED)}
+        >
+          {sp.tab_specialized}
+        </button>
       </div>
 
       {/* body */}
@@ -331,13 +399,14 @@ export function SkillsPage() {
           <section key={cat} className="skills-category">
             <h2 className="skills-category-title">{cat}</h2>
             <div className="skills-grid">
-              {catalog
+              {tierPacks
                 .filter((p) => p.category === cat)
                 .map((pack) => (
                   <SkillCard
                     key={pack.slug}
                     pack={pack}
                     installed={installedMap[pack.slug]}
+                    isZh={isZh}
                     onInstall={handleInstall}
                     onUninstall={handleUninstall}
                   />
