@@ -167,17 +167,35 @@ pub struct InstalledSkillPackResponse {
 /// the catalog (falling back to the slug when the pack is no longer listed).
 fn to_installed_response(row: InstalledPackRow) -> InstalledSkillPackResponse {
     let entry = catalog().packs.iter().find(|p| p.slug == row.pack_slug);
+    // Phase 4b: the serve boot-scan records the activated agent names in the
+    // pack's `config` when it upserts the conversational team. Their presence
+    // flips the pack to "active" and lists them; absence ⇒ still "pending".
+    let agents: Vec<String> = row
+        .config
+        .get("agents")
+        .and_then(serde_json::Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let activation_status = if agents.is_empty() {
+        "pending"
+    } else {
+        "active"
+    };
     InstalledSkillPackResponse {
         id: row.id,
         name: entry.map_or_else(|| row.pack_slug.clone(), |e| e.name.clone()),
         description: entry.map(|e| e.description.clone()),
         pack_id: row.pack_slug,
         version: row.version,
-        agents: Vec::new(),
+        agents,
         inbound_adapters: Vec::new(),
         outputs: Vec::new(),
         recorded_at: row.installed_at,
-        activation_status: "pending",
+        activation_status,
     }
 }
 

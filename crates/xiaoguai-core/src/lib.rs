@@ -935,6 +935,31 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         decision_registry: decision_registry.clone(),
     };
 
+    // Phase 4b (skill-pack loader): activate each enabled pack's conversational
+    // agent team — upsert its personas + a Team so the existing /orchestrate
+    // path can run it. Non-fatal: a bad pack must never stop boot. Reactive
+    // (event-triggered) agents + inline pack tools are v1-deferred
+    // (docs/plans/2026-06-25-skill-pack-loader-phase4.md).
+    #[cfg(feature = "packs")]
+    if let (Some(personas_repo), Some(teams_repo)) = (state.personas.as_ref(), state.teams.as_ref())
+    {
+        match crate::pack_runtime::scan_enabled_pack_agents(&pool, &**personas_repo, &**teams_repo)
+            .await
+        {
+            Ok(slugs) if !slugs.is_empty() => {
+                tracing::info!(
+                    packs = ?slugs,
+                    "serve: activated {} pack agent team(s) from enabled packs",
+                    slugs.len()
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "serve: pack agent boot-scan failed (non-fatal)");
+            }
+        }
+    }
+
     // /loop L1 (DEC-039): wire the LoopController over the `loops` table.
     // It captures the AppState exactly as built above (`loops = None`), so
     // a tick's `run_turn` runs through the same pipeline as a chat turn
