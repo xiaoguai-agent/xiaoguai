@@ -91,6 +91,41 @@ tr:last-child td { border-bottom: none; }
   font-size: 12px;
 }
 
+/* Skill-pack tier selector — segmented control (general / specialized). */
+.skill-tier-tabs {
+  display: inline-flex;
+  gap: 2px;
+  margin: 0 0 16px;
+  padding: 3px;
+  background: var(--row-hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.skill-tier-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 5px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.skill-tier-tab:hover {
+  color: var(--fg);
+}
+
+.skill-tier-tab--active {
+  background: #fff;
+  color: var(--fg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
 /* -------------------------------------------------- pane intro (purpose/usage) */
 
 /* PaneIntro: the "what is this / how to use" blurb under each pane's <h1>.

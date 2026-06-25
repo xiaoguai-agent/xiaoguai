@@ -157,7 +157,10 @@
       "toast_installed": "{{name}} installed",
       "toast_install_failed": "Install failed: {{message}}",
       "toast_uninstalled": "{{name}} uninstalled",
-      "toast_uninstall_failed": "Uninstall failed: {{message}}"
+      "toast_uninstall_failed": "Uninstall failed: {{message}}",
+      "tab_general": "General",
+      "tab_specialized": "Scenarios",
+      "disclaimer": "These are skill templates — installing records your configuration; running a skill needs its data source or an MCP server."
     }
   }
 }

@@ -282,6 +282,7 @@
       "probe_results_title": "连通测试结果",
       "verified_badge": "✓ {{ok}}/{{total}} 可用",
       "probe_all_failed": "没有模型能连通——请检查 API key、endpoint 和模型名。",
+      "probe_failed": "无效",
       "preset_minimax_intl": "MiniMax（国际）",
       "preset_minimax_cn": "MiniMax（国内）",
       "preset_ollama": "Ollama（本地）",
@@ -683,6 +684,10 @@
     },
     "skill_packs": {
       "title": "技能包",
+      "template_disclaimer": "以下为技能模板:安装仅记录配置,实际运行需对接对应的数据源或 MCP 服务。",
+      "tier_tabs_aria": "技能分类",
+      "tier_general": "通用",
+      "tier_specialized": "专用场景",
       "activation_notice_title": "所有技能包均处于「待激活」状态：",
       "activation_notice_body": "运行时技能加载器尚未接入。记录技能包只是将其写入数据库；在后续版本激活加载器之前不会实际运行。",
       "catalog_heading": "从目录安装",

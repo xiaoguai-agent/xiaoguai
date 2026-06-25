@@ -124,6 +124,11 @@ interface TranslationShape {
       toast_install_failed: string;
       toast_uninstalled: string;
       toast_uninstall_failed: string;
+      /** IA tier tabs (general vs specialized scenarios). */
+      tab_general: string;
+      tab_specialized: string;
+      /** Honest note: packs are templates; running needs data source / MCP. */
+      disclaimer: string;
     };
   };
   chat: {

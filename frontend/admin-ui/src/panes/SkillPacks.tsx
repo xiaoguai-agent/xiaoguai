@@ -25,6 +25,22 @@ import { client } from '../client';
 import { PaneIntro } from '../components/PaneIntro';
 
 // ---------------------------------------------------------------------------
+// IA tiers — catalog packs split into "general" (broadly-useful, shown first)
+// and "specialized" (domain scenario packs, behind a tab). `tier` is always
+// present on the catalog entry; anything that isn't "general" lives under the
+// specialized tab.
+// ---------------------------------------------------------------------------
+
+type Tier = 'general' | 'specialized';
+
+const TIER_GENERAL: Tier = 'general';
+const TIER_SPECIALIZED: Tier = 'specialized';
+
+function tierOf(entry: SkillCatalogEntry): Tier {
+  return entry.tier === TIER_GENERAL ? TIER_GENERAL : TIER_SPECIALIZED;
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -63,6 +79,35 @@ function fmtDate(iso: string): string {
 
 function commaSep(items: string[]): string {
   return items.length === 0 ? '—' : items.join(', ');
+}
+
+// ---------------------------------------------------------------------------
+// Bilingual rendering — under a Chinese locale prefer the `*_zh` fields,
+// falling back to the canonical English when null/empty. Mirrors the contract
+// documented on `SkillCatalogEntry`.
+// ---------------------------------------------------------------------------
+
+function isChinese(locale: string): boolean {
+  return locale.startsWith('zh');
+}
+
+/** Pick the locale-appropriate string, falling back when the localized value
+ *  is null / empty / whitespace. */
+function pickLocalized(
+  primary: string | null | undefined,
+  fallback: string,
+  chinese: boolean,
+): string {
+  if (chinese && primary != null && primary.trim() !== '') return primary;
+  return fallback;
+}
+
+function localizedName(entry: SkillCatalogEntry, chinese: boolean): string {
+  return pickLocalized(entry.name_zh, entry.name, chinese);
+}
+
+function localizedDescription(entry: SkillCatalogEntry, chinese: boolean): string {
+  return pickLocalized(entry.description_zh, entry.description, chinese);
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +199,8 @@ interface CatalogInstallProps {
   catalog: CatalogState;
   installedSlugs: Set<string>;
   busy: boolean;
+  tier: Tier;
+  onTierChange: (tier: Tier) => void;
   onInstall: (slug: string) => void;
 }
 
@@ -161,10 +208,23 @@ function CatalogInstall({
   catalog,
   installedSlugs,
   busy,
+  tier,
+  onTierChange,
   onInstall,
 }: CatalogInstallProps): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const chinese = isChinese(i18n.language);
   const [selected, setSelected] = useState('');
+
+  // Only the active tier's packs are offered. Reset a stale selection when the
+  // operator switches tiers so the install button never targets a hidden pack.
+  const entries = catalog.kind === 'ok' ? catalog.entries.filter((e) => tierOf(e) === tier) : [];
+
+  function handleTier(next: Tier) {
+    if (next === tier) return;
+    setSelected('');
+    onTierChange(next);
+  }
 
   const alreadyInstalled = selected !== '' && installedSlugs.has(selected);
   const canInstall = selected !== '' && !alreadyInstalled && !busy;
@@ -173,6 +233,28 @@ function CatalogInstall({
     <section className="skill-install-section">
       <h2 className="skill-install-heading">{t('pane.skill_packs.catalog_heading')}</h2>
       <p className="hint">{t('pane.skill_packs.catalog_hint')}</p>
+
+      {/* IA tier tabs — general (default) vs specialized scenarios */}
+      <div className="skill-tier-tabs" role="tablist" aria-label={t('pane.skill_packs.tier_tabs_aria')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tier === TIER_GENERAL}
+          className={`skill-tier-tab${tier === TIER_GENERAL ? ' skill-tier-tab--active' : ''}`}
+          onClick={() => handleTier(TIER_GENERAL)}
+        >
+          {t('pane.skill_packs.tier_general')}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tier === TIER_SPECIALIZED}
+          className={`skill-tier-tab${tier === TIER_SPECIALIZED ? ' skill-tier-tab--active' : ''}`}
+          onClick={() => handleTier(TIER_SPECIALIZED)}
+        >
+          {t('pane.skill_packs.tier_specialized')}
+        </button>
+      </div>
 
       {catalog.kind === 'loading' && (
         <div className="empty">{t('pane.skill_packs.catalog_loading')}</div>
@@ -184,11 +266,11 @@ function CatalogInstall({
         </div>
       )}
 
-      {catalog.kind === 'ok' && catalog.entries.length === 0 && (
+      {catalog.kind === 'ok' && entries.length === 0 && (
         <div className="empty">{t('pane.skill_packs.catalog_empty')}</div>
       )}
 
-      {catalog.kind === 'ok' && catalog.entries.length > 0 && (
+      {catalog.kind === 'ok' && entries.length > 0 && (
         <div className="skill-catalog-form">
           <label className="skill-catalog-label" htmlFor="skill-catalog-select">
             {t('pane.skill_packs.catalog_select_label')}
@@ -201,9 +283,9 @@ function CatalogInstall({
             disabled={busy}
           >
             <option value="">{t('pane.skill_packs.catalog_select_placeholder')}</option>
-            {catalog.entries.map((entry) => (
+            {entries.map((entry) => (
               <option key={entry.slug} value={entry.slug}>
-                {entry.name} ({entry.category}) ·{' '}
+                {localizedName(entry, chinese)} ({entry.category}) ·{' '}
                 {t('pane.skill_packs.catalog_version', { version: entry.version })}
                 {installedSlugs.has(entry.slug)
                   ? ` — ${t('pane.skill_packs.catalog_already_installed')}`
@@ -224,6 +306,15 @@ function CatalogInstall({
           </button>
         </div>
       )}
+
+      {/* Selected-pack description, localized to the active locale */}
+      {catalog.kind === 'ok' &&
+        selected !== '' &&
+        (() => {
+          const picked = entries.find((e) => e.slug === selected);
+          const desc = picked ? localizedDescription(picked, chinese) : '';
+          return desc !== '' ? <p className="skill-catalog-desc hint">{desc}</p> : null;
+        })()}
     </section>
   );
 }
@@ -318,6 +409,8 @@ export function SkillPacksPane(): JSX.Element {
   const [installState, setInstallState] = useState<InstallState>({ kind: 'idle' });
   const [catalogBusy, setCatalogBusy] = useState(false);
   const [selected, setSelected] = useState<InstalledSkillPackResponse | null>(null);
+  // Active IA tier — general packs are shown first.
+  const [tier, setTier] = useState<Tier>(TIER_GENERAL);
   // Remember packId across confirm/install cycle
   const pendingPackId = useRef<string>('');
 
@@ -404,6 +497,9 @@ export function SkillPacksPane(): JSX.Element {
         usageLabel={t('pane.skill_packs.intro.usage_label')}
       />
 
+      {/* Honest disclaimer — these are templates; installing only records config */}
+      <p className="hint skill-template-disclaimer">{t('pane.skill_packs.template_disclaimer')}</p>
+
       {/* Activation-pending notice — always visible */}
       <div className="skill-activation-notice" role="note">
         <strong>{t('pane.skill_packs.activation_notice_title')}</strong>{' '}
@@ -414,6 +510,8 @@ export function SkillPacksPane(): JSX.Element {
         catalog={catalogState}
         installedSlugs={installedSlugs}
         busy={catalogBusy}
+        tier={tier}
+        onTierChange={setTier}
         onInstall={(slug) => void handleCatalogInstall(slug)}
       />
 
