@@ -32,6 +32,7 @@ pub mod serve;
 pub mod sessions_ext;
 pub mod skill_proposals;
 pub mod skills;
+pub mod skills_rescan;
 pub mod sse;
 pub mod state;
 pub mod static_ui;
@@ -90,6 +91,7 @@ pub use skills::{
     CatalogFile, InMemorySkillPackRepository, InstalledPackRow, KnobSchema, PackRequires,
     SkillPackEntry, SkillPackError, SkillPackRepository,
 };
+pub use skills_rescan::{PackRescanError, PackRescanner, RescanResponse};
 pub use state::{AppState, CancelRegistry, TurnGuard};
 pub use today::{StaticTodayReader, TodayError, TodayItem, TodayKind, TodayQuery, TodayReader};
 pub use turn::{run_turn, TurnCompletion, TurnError, TurnHandle, TurnInput, TurnMode};

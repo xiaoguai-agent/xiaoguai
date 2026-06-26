@@ -29,6 +29,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::skill_proposals;
 use crate::skills;
+use crate::skills_rescan;
 use crate::workspaces;
 
 use crate::auth::require_auth;
@@ -149,6 +150,13 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/skills/install/{id}",
             delete(skills::uninstall_pack),
+        )
+        // Phase 5 (skill-pack loader): hot-activate installed conversational
+        // pack agent teams without a serve restart. Owner-authed (under
+        // /v1/admin/*); 503 when no pack rescanner is wired.
+        .route(
+            "/v1/admin/skills/rescan",
+            post(skills_rescan::rescan_skills),
         )
         // v1.5.x — Tier-2 D.1: agent-authored skill proposals.
         .route(

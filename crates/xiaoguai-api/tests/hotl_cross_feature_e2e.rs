@@ -224,6 +224,7 @@ fn build_state(
         incidents: None,
         team_audit: None,
         decision_registry: registry,
+        pack_rescanner: None,
     }
 }
 

@@ -1056,6 +1056,24 @@ tr:last-child td { border-bottom: none; }
   border: 1px solid #fcd34d;
 }
 
+.skill-badge-active {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #86efac;
+}
+
+.skill-installed-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .skill-install-section {
   background: #ffffff;
   border: 1px solid var(--border);
