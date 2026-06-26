@@ -152,6 +152,7 @@ fn build_fixture(backend: Arc<dyn LlmBackend>) -> Fixture {
         incidents: None,
         team_audit: None,
         decision_registry: Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
+        pack_rescanner: None,
     };
     Fixture {
         state,

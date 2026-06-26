@@ -144,6 +144,7 @@ fn fixture(backend: Arc<RecordingBackend>) -> Fixture {
         watchers: None,
         loops: None,
         decision_registry: Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
+        pack_rescanner: None,
     };
     Fixture {
         state,

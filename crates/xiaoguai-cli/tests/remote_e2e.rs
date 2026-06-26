@@ -69,6 +69,7 @@ async fn spawn_server(steps: Vec<ScriptStep>) -> String {
         decision_registry: std::sync::Arc::new(
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
+        pack_rescanner: None,
     };
     let (local, fut) = serve_with_state("127.0.0.1:0".parse().unwrap(), state)
         .await
