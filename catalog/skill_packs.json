@@ -900,6 +900,22 @@
       },
       "knobs": {},
       "screenshot_url": null
+    },
+    {
+      "slug": "release-notes-team",
+      "name": "Release Notes Team",
+      "name_zh": "发布说明团队",
+      "description": "A runnable conversational agent team that turns a raw changeset (merged PRs, commit subjects, or a pasted git log) into publish-ready, bilingual (English + Chinese) release notes. The changelog-curator groups changes under Keep-a-Changelog headings, the breaking-change-auditor flags backward-incompatible changes and recommends a semver bump with upgrade steps, the bilingual-localizer renders it in Simplified Chinese, and the release-editor lead synthesizes the final document. Unlike the domain template packs, it needs no external data source — its agents reason over the text you provide plus the platform toolbox, so it activates as a real /orchestrate team end to end.",
+      "description_zh": "一个可直接运行的对话式 Agent 团队，把原始变更集（已合并的 PR、commit 标题，或粘贴的 git log）整理成可发布的中英双语发布说明。changelog-curator 按 Keep-a-Changelog 标题对变更分组，breaking-change-auditor 标记不向后兼容的变更并给出语义化版本号建议与升级步骤，bilingual-localizer 渲染简体中文版本，release-editor 作为 lead 汇总成最终文档。与领域模板包不同，它无需任何外部数据源——各 Agent 仅依据你提供的文本加平台工具箱进行推理，因此可作为真正的 /orchestrate 团队端到端激活。",
+      "version": "0.1.0",
+      "category": "dev",
+      "tier": "general",
+      "requires": {
+        "feature_flags": [],
+        "env_keys": []
+      },
+      "knobs": {},
+      "screenshot_url": null
     }
   ]
 }

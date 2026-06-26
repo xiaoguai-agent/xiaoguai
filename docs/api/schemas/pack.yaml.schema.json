@@ -44,6 +44,11 @@
       "type": "string",
       "description": "Environment variable name that gates the pack's routes. Set to 'true' to activate."
     },
+    "lead_agent": {
+      "type": "string",
+      "description": "Phase 4: name of the agent that leads the derived team. Defaults to the first conversational agent when omitted; must match an agent's `name`.",
+      "minLength": 1
+    },
     "requires": {
       "type": "object",
       "description": "Platform requirements for this pack.",
