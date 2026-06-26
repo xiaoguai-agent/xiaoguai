@@ -1,0 +1,40 @@
+---
+# Release Notes Team — canonical runnable conversational agent pack.
+#
+# Unlike the domain template packs (which query operator data xiaoguai does not
+# host), every agent here reasons over text the user provides in the chat —
+# merged PR titles, commit subjects, or a pasted `git log` — plus general
+# knowledge of conventional commits and semantic versioning. NO foreign-schema
+# dependency, NO external data source.
+#
+# All four agents are conversational (no `triggers`), so the Phase-4b boot scan
+# derives four personas + one team that `/orchestrate` runs unchanged: the three
+# members analyse the changeset in parallel, and the `release-editor` lead
+# synthesizes one publish-ready, bilingual release-notes document.
+#
+# This is the "observability-starter equivalent for agent teams": install →
+# boot-scan → a team that actually runs, end to end.
+
+name: release-notes-team
+version: "0.1.0"
+description: >
+  An agent team that turns a raw changeset (merged PRs, commit subjects, or a
+  pasted git log) into publish-ready, bilingual (English + 中文) release notes.
+  The changelog-curator groups changes under Keep-a-Changelog headings, the
+  breaking-change-auditor flags backward-incompatible changes and recommends a
+  semver bump with upgrade steps, the bilingual-localizer renders it in
+  Simplified Chinese, and the release-editor lead synthesizes a final document.
+  Reasons only over the text you provide plus the platform toolbox — no external
+  data source required.
+
+# The lead persona that synthesizes the members' outputs. Must name one of the
+# conversational agents below; the orchestrate engine uses it as the team lead.
+lead_agent: release-editor
+
+# Conversational agent definitions (none declare `triggers`, so all four become
+# team members / personas in Phase 4b). Bare-string path idiom.
+agents:
+  - agents/changelog-curator.yaml
+  - agents/breaking-change-auditor.yaml
+  - agents/bilingual-localizer.yaml
+  - agents/release-editor.yaml
