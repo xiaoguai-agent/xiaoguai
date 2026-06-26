@@ -174,7 +174,7 @@ opentelemetry-semantic-conventions = "0.32"
 tracing-opentelemetry = "0.33"
 
 # document loaders (RAG)
-pdf-extract = "0.10"
+pdf-extract = "0.12"
 # Sprint-8 S8-6 (DEC-023.2): byte-deterministic PDF writer for
 # compliance bundle export. Plan adjustment: typst 0.14 library API
 # proved heavy for a one-template path; pdf-writer gives us deterministic
