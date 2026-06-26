@@ -41,6 +41,8 @@ mod sd_notify_bridge;
 mod sessions_bridge;
 pub mod skill_author_bridge;
 pub mod skills_bridge;
+#[cfg(feature = "packs")]
+pub mod skills_rescan_bridge;
 mod today_bridge;
 mod usage_bridge;
 pub mod workspace_bridge;
@@ -770,6 +772,24 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         pool.clone(),
     ));
 
+    // Phase 5 (skill-pack loader): hot-activate pack agent teams without a
+    // serve restart. The bridge closes over the embedded pool + fresh
+    // persona/team repos over that SAME pool (so a hot rescan upserts into the
+    // stores the live `/orchestrate` reads) and delegates to the boot scan's
+    // `scan_enabled_pack_agents`. Only built under the `packs` feature — a
+    // non-pack binary has no runtime to call, so the route returns 503.
+    #[cfg(feature = "packs")]
+    let pack_rescanner: Option<Arc<dyn xiaoguai_api::skills_rescan::PackRescanner>> =
+        Some(crate::skills_rescan_bridge::SqlitePackRescanner::arc(
+            pool.clone(),
+            Arc::new(xiaoguai_personas::SqlitePersonaRepository::new(
+                pool.clone(),
+            )),
+            Arc::new(xiaoguai_personas::SqliteTeamRepository::new(pool.clone())),
+        ));
+    #[cfg(not(feature = "packs"))]
+    let pack_rescanner: Option<Arc<dyn xiaoguai_api::skills_rescan::PackRescanner>> = None;
+
     let state = AppState {
         sessions: pg_session_repo.clone(),
         messages: pg_message_repo.clone(),
@@ -933,6 +953,9 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // see the same DashMap so resolves from the route handler reach
         // the gate's waiters.
         decision_registry: decision_registry.clone(),
+        // Phase 5 (skill-pack loader): hot-rescan bridge computed above
+        // (Some under `packs`, None otherwise).
+        pack_rescanner,
     };
 
     // Phase 4b (skill-pack loader): activate each enabled pack's conversational

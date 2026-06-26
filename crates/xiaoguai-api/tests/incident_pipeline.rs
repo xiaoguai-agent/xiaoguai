@@ -214,6 +214,7 @@ impl Fixture {
             decision_registry: Arc::new(
                 xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
             ),
+            pack_rescanner: None,
         }
     }
 
