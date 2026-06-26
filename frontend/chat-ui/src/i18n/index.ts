@@ -78,6 +78,11 @@ interface TranslationShape {
       suggest_button: string;
       suggest_searching: string;
       suggest_empty: string;
+      /** Phase 4c — first-run hint explaining where teams come from. */
+      firstrun_hint: string;
+      /** Phase 4c — deep-link landing: team auto-attached / needs a session. */
+      deeplink_attached: string;
+      deeplink_need_session: string;
       error_load: string;
       error_attach: string;
       error_detach: string;
@@ -102,6 +107,8 @@ interface TranslationShape {
       done: string;
       failed: string;
       error: string;
+      /** Phase 4c — seeded example goal hint under the team-run entry. */
+      example_goal: string;
     };
     /** Skills pane (skill-pack catalog browser + install/uninstall). */
     skills_page: {
@@ -129,6 +136,19 @@ interface TranslationShape {
       tab_specialized: string;
       /** Honest note: packs are templates; running needs data source / MCP. */
       disclaimer: string;
+      /** Phase 4c — feature intro: scenario packs carry an agent team. */
+      team_intro_title: string;
+      team_intro_body: string;
+      /** Phase 4c — activation badge + deep-link on an active pack card. */
+      team_active_badge: string;
+      team_active_title: string;
+      use_in_chat: string;
+      use_in_chat_title: string;
+      /** Phase 4c — inline 3-step onboarding (install → active → use). */
+      onboarding_title: string;
+      onboarding_step1: string;
+      onboarding_step2: string;
+      onboarding_step3: string;
     };
   };
   chat: {

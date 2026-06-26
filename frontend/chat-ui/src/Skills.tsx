@@ -21,6 +21,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type {
   InstalledSkillPackResponse,
   SkillCatalogEntry,
@@ -59,6 +60,19 @@ function localizedName(pack: SkillCatalogEntry, isZh: boolean): string {
  *  {@link localizedName}. */
 function localizedDesc(pack: SkillCatalogEntry, isZh: boolean): string {
   return isZh ? firstNonEmpty(pack.description_zh, pack.description) : pack.description;
+}
+
+// ── Phase 4c — pack-team activation -------------------------------------------
+
+/**
+ * True when an installed pack's agent team has been activated by the serve
+ * boot-scan (Phase 4b flips `activation_status` from `"pending"` to
+ * `"active"`). Read through a string coercion so this compiles regardless of
+ * whether the shared `activation_status` union has been widened to include
+ * `"active"` yet — the wire already carries it. Never throws on a null row.
+ */
+function isPackTeamActive(installed: InstalledSkillPackResponse | undefined): boolean {
+  return (installed?.activation_status as string | undefined) === 'active';
 }
 
 // ── toast notification --------------------------------------------------------
@@ -155,6 +169,20 @@ function KnobForm({ knobs, values, onChange }: KnobFormProps) {
 
 // ── skill card ----------------------------------------------------------------
 
+/** localStorage key holding the chat-ui's last-active session id (set by
+ *  App.tsx). The deep-link lands there so ExpertPicker has a session to attach
+ *  the team to; absent → land on a fresh chat (`/`). */
+const LAST_SESSION_KEY = 'xiaoguai.chat.lastSession';
+
+/** Read the remembered last-active session id, tolerant of disabled storage. */
+function lastSessionId(): string | null {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage.getItem(LAST_SESSION_KEY) : null;
+  } catch {
+    return null;
+  }
+}
+
 interface SkillCardProps {
   pack: SkillCatalogEntry;
   installed: InstalledSkillPackResponse | undefined;
@@ -162,11 +190,14 @@ interface SkillCardProps {
   isZh: boolean;
   onInstall: (pack: SkillCatalogEntry, config: Record<string, unknown>) => Promise<void>;
   onUninstall: (row: InstalledSkillPackResponse) => Promise<void>;
+  /** Phase 4c — open chat with this pack's team pre-selected via `?team=`. */
+  onUseInChat: (slug: string) => void;
 }
 
-function SkillCard({ pack, installed, isZh, onInstall, onUninstall }: SkillCardProps) {
+function SkillCard({ pack, installed, isZh, onInstall, onUninstall, onUseInChat }: SkillCardProps) {
   const { t } = useI18n();
   const sp = t.ui.skills_page;
+  const teamActive = isPackTeamActive(installed);
   const knobs = pack.knobs ?? {};
   const featureFlags = pack.requires?.feature_flags ?? [];
   const envKeys = pack.requires?.env_keys ?? [];
@@ -204,8 +235,27 @@ function SkillCard({ pack, installed, isZh, onInstall, onUninstall }: SkillCardP
           <span className="skill-card__category">{pack.category}</span>
           <span className="skill-card__version">v{pack.version}</span>
           {installed && <span className="skill-card__badge">{sp.installed_badge}</span>}
+          {/* Phase 4c — pack-team activation (Phase 4b flips this on boot). */}
+          {teamActive && (
+            <span
+              className="skill-card__badge skill-card__badge--team"
+              title={sp.team_active_title}
+            >
+              {sp.team_active_badge}
+            </span>
+          )}
         </div>
         <div className="skill-card__actions">
+          {/* Phase 4c — deep-link to chat with this pack's team pre-selected. */}
+          {teamActive && (
+            <button
+              className="skill-card__usechat-btn"
+              onClick={() => onUseInChat(pack.slug)}
+              title={sp.use_in_chat_title}
+            >
+              {sp.use_in_chat}
+            </button>
+          )}
           {hasKnobs && (
             <button
               className="skill-card__detail-btn"
@@ -266,6 +316,7 @@ function SkillCard({ pack, installed, isZh, onInstall, onUninstall }: SkillCardP
 
 export function SkillsPage() {
   const { t, locale } = useI18n();
+  const navigate = useNavigate();
   const sp = t.ui.skills_page;
   const isZh = locale === 'zh-CN';
   const [catalog, setCatalog] = useState<SkillCatalogEntry[]>([]);
@@ -334,6 +385,19 @@ export function SkillsPage() {
     }
   }
 
+  /**
+   * Phase 4c — "Use in chat": navigate to the last-active session (so the
+   * ExpertPicker has a session to attach to) carrying `?team=<slug>`. With no
+   * remembered session we land on a fresh chat — ChatPage then hints to send a
+   * message first before the team can attach. The team itself lives in the
+   * teams repo (Phase 4b boot-scan); ExpertPicker resolves the slug → team.
+   */
+  function handleUseInChat(slug: string) {
+    const sid = lastSessionId();
+    const query = `?team=${encodeURIComponent(slug)}`;
+    navigate(sid ? `/sessions/${sid}${query}` : `/${query}`);
+  }
+
   return (
     <div className="skills-page">
       {/* toast stack */}
@@ -354,6 +418,21 @@ export function SkillsPage() {
           <p className="skills-disclaimer">{sp.disclaimer}</p>
         </div>
       </div>
+
+      {/* Phase 4c — feature intro + 3-step onboarding: a 专用场景 pack carries
+          an agent team that, once active, runs complex tasks in the chat. */}
+      <section className="skills-team-intro" aria-label={sp.team_intro_title}>
+        <h2 className="skills-team-intro__title">{sp.team_intro_title}</h2>
+        <p className="skills-team-intro__body">{sp.team_intro_body}</p>
+        <div className="skills-team-intro__steps">
+          <span className="skills-team-intro__steps-title">{sp.onboarding_title}</span>
+          <ol className="skills-onboarding">
+            <li>{sp.onboarding_step1}</li>
+            <li>{sp.onboarding_step2}</li>
+            <li>{sp.onboarding_step3}</li>
+          </ol>
+        </div>
+      </section>
 
       {/* IA tier toggle (general vs specialized scenarios) */}
       <div className="skills-tiers" role="tablist" aria-label={sp.title}>
@@ -409,6 +488,7 @@ export function SkillsPage() {
                     isZh={isZh}
                     onInstall={handleInstall}
                     onUninstall={handleUninstall}
+                    onUseInChat={handleUseInChat}
                   />
                 ))}
             </div>
