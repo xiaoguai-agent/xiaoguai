@@ -77,6 +77,7 @@ fn build_state_with_auth() -> AppState {
         decision_registry: std::sync::Arc::new(
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
+        pack_rescanner: None,
     }
 }
 

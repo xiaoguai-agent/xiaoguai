@@ -91,6 +91,7 @@ fn build_state(opts: StateOptions) -> AppState {
         decision_registry: opts
             .decision_registry
             .unwrap_or_else(|| std::sync::Arc::new(DecisionRegistry::new())),
+        pack_rescanner: None,
     }
 }
 

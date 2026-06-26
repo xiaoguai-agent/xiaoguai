@@ -118,6 +118,7 @@ fn build_state(forker: Option<Arc<dyn SessionForker>>) -> (AppState, Arc<InMemor
         decision_registry: std::sync::Arc::new(
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
+        pack_rescanner: None,
     };
     (state, sessions)
 }

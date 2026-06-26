@@ -34,6 +34,7 @@ use crate::scheduler::{
 };
 use crate::sessions_ext::SessionForker;
 use crate::skills::SkillPackRepository;
+use crate::skills_rescan::PackRescanner;
 use crate::today::TodayReader;
 use crate::usage::UsageReader;
 use crate::workspaces::WorkspaceRepository;
@@ -330,6 +331,15 @@ pub struct AppState {
     /// clone captured BEFORE this field is set, so it never re-enters
     /// itself).
     pub loops: Option<Arc<crate::loops::LoopController>>,
+    /// Phase 5 (skill-pack loader): hot-activate an installed conversational
+    /// pack's agent team without rebooting `serve` — backs
+    /// `POST /v1/admin/skills/rescan`. `None` makes that route return 503
+    /// (a non-`packs` build, or a deployment without the persona/team repos);
+    /// production wires a bridge in `xiaoguai_core::run_serve` that closes over
+    /// the `SQLite` pool + the live persona/team repos and calls
+    /// `pack_runtime::scan_enabled_pack_agents`. The boot scan still covers
+    /// anomaly/watch specs — only the conversational team is hot-rescanned.
+    pub pack_rescanner: Option<Arc<dyn PackRescanner>>,
 }
 
 impl std::fmt::Debug for AppState {

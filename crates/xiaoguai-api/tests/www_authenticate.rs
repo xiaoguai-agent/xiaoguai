@@ -100,6 +100,7 @@ fn build_state_with_webhook_validator(token: &str, route_id: &str) -> AppState {
         decision_registry: std::sync::Arc::new(
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
+        pack_rescanner: None,
     }
 }
 

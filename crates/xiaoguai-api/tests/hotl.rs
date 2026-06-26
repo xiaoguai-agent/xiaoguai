@@ -72,6 +72,7 @@ fn build_state(store: Option<Arc<dyn HotlPolicyStore>>) -> AppState {
         decision_registry: std::sync::Arc::new(
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
+        pack_rescanner: None,
     }
 }
 
