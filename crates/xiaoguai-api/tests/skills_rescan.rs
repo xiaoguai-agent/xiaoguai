@@ -7,7 +7,7 @@
 //!   * 500 when the rescan reports a backend failure.
 //!
 //! The handler is store-agnostic (it only depends on the `PackRescanner`
-//! trait), so a stub rescanner stands in for the `xiaoguai-core` SQLite bridge.
+//! trait), so a stub rescanner stands in for the `xiaoguai-core` `SQLite` bridge.
 //! The bridge's real behaviour (activating `app-store-reviews`' conversational
 //! team into the live persona/team repos, idempotently) is covered by
 //! `xiaoguai-core::skills_rescan_bridge` unit tests.
@@ -29,7 +29,7 @@ use xiaoguai_llm::{LlmBackend, MockBackend};
 
 use common::{InMemoryMessageRepo, InMemorySessionRepo};
 
-/// A stub rescanner returning a fixed result — stands in for the SQLite bridge.
+/// A stub rescanner returning a fixed result — stands in for the `SQLite` bridge.
 struct StubRescanner(Result<Vec<String>, PackRescanError>);
 
 #[async_trait]
@@ -151,8 +151,9 @@ async fn rescan_empty_when_no_conversational_packs() {
 
 #[tokio::test]
 async fn rescan_500_on_backend_error() {
-    let rescanner: Arc<dyn PackRescanner> =
-        Arc::new(StubRescanner(Err(PackRescanError::Backend("db down".into()))));
+    let rescanner: Arc<dyn PackRescanner> = Arc::new(StubRescanner(Err(PackRescanError::Backend(
+        "db down".into(),
+    ))));
     let app = router(build_state(Some(rescanner)));
 
     let resp = app.oneshot(post("/v1/admin/skills/rescan")).await.unwrap();

@@ -460,8 +460,10 @@ export type OutcomesRange = '24h' | '7d' | '30d';
 
 /**
  * One installed skill pack as returned by `GET /v1/skills/installed`.
- * The `activation_status` is always `"pending"` until the runtime loader
- * is wired (planned for a future release).
+ * `activation_status` is `"active"` once the pack's conversational agent team
+ * has been activated — at `serve` boot (Phase 4b) or on demand via
+ * `POST /v1/admin/skills/rescan` (Phase 5). Packs with no conversational
+ * agents stay `"pending"`.
  */
 export interface InstalledSkillPackResponse {
   id: string;
@@ -477,8 +479,8 @@ export interface InstalledSkillPackResponse {
   outputs: string[];
   /** ISO-8601 timestamp when this record was created. */
   recorded_at: string;
-  /** Always "pending" — loader activation is not yet wired. */
-  activation_status: 'pending';
+  /** `"active"` once the conversational agent team is live; otherwise `"pending"`. */
+  activation_status: 'pending' | 'active';
 }
 
 /** Body for `POST /v1/skills/install`. */
@@ -547,6 +549,15 @@ export interface SkillCatalogEntry {
 export interface SkillCatalogResponse {
   version: number;
   packs: SkillCatalogEntry[];
+}
+
+/**
+ * Response shape for `POST /v1/admin/skills/rescan` (Phase 5 hot-activate).
+ * Mirrors `xiaoguai_api::skills_rescan::RescanResponse`.
+ */
+export interface RescanSkillPacksResponse {
+  /** Slugs whose conversational agent team is now active. */
+  activated: string[];
 }
 
 // ---- v1.3.x — HotL policy types -----------------------------------------
@@ -1889,6 +1900,15 @@ export class XiaoguaiClient {
       'DELETE',
       `/v1/skills/install/${encodeURIComponent(id)}`,
     ).then(() => undefined);
+  }
+
+  /**
+   * Hot-activate installed conversational packs' agent teams without rebooting
+   * `serve` via `POST /v1/admin/skills/rescan` (Phase 5). Returns the slugs whose
+   * team is now active. Rejects (503) on a build without the pack runtime.
+   */
+  rescanSkillPacks(): Promise<RescanSkillPacksResponse> {
+    return this.request<RescanSkillPacksResponse>('POST', '/v1/admin/skills/rescan');
   }
 
   // ---- v1.2.4 Outcomes --------------------------------------------------

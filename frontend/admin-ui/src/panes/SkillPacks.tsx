@@ -1,18 +1,20 @@
 /**
  * v1.3.x — Skill Pack Browser pane.
  *
- * Surfaces three APIs:
- *   GET  /v1/skills/catalog    — list the static catalog baked into the binary
- *   GET  /v1/skills/installed  — list recorded packs
- *   POST /v1/skills/install    — record a new pack by ID
+ * Surfaces these APIs:
+ *   GET  /v1/skills/catalog       — list the static catalog baked into the binary
+ *   GET  /v1/skills/installed     — list recorded packs
+ *   POST /v1/skills/install       — record a new pack by ID
+ *   POST /v1/admin/skills/rescan  — hot-activate installed packs' agent teams
  *
  * The operator can install in two ways:
  *   1. Pick a pre-built pack from the catalog dropdown (friendly path).
  *   2. Record an arbitrary pack id via the manual input (escape hatch).
  *
- * Runtime loader activation is NOT yet wired server-side.  All installed
- * packs show an "Activation pending" badge and a prose notice is rendered
- * at the top of the page so operators are not misled.
+ * Packs with conversational agents are activated into a runnable agent team —
+ * at `serve` boot (Phase 4b) or on demand via `POST /v1/admin/skills/rescan`
+ * (Phase 5, the "Rescan & activate" button here). Such packs then show an
+ * "Active" badge; packs with no conversational agents stay "Activation pending".
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -59,6 +61,12 @@ type InstallState =
   | { kind: 'confirming'; packId: string }
   | { kind: 'installing' }
   | { kind: 'done'; name: string }
+  | { kind: 'error'; message: string };
+
+type RescanState =
+  | { kind: 'idle' }
+  | { kind: 'running' }
+  | { kind: 'done'; activated: string[] }
   | { kind: 'error'; message: string };
 
 // ---------------------------------------------------------------------------
@@ -156,7 +164,15 @@ function DetailDrawer({ pack, onClose }: DetailDrawerProps): JSX.Element {
         </header>
 
         <div className="skill-drawer-body">
-          <span className="skill-badge-pending">{t('pane.skill_packs.status_pending')}</span>
+          <span
+            className={
+              pack.activation_status === 'active' ? 'skill-badge-active' : 'skill-badge-pending'
+            }
+          >
+            {pack.activation_status === 'active'
+              ? t('pane.skill_packs.status_active')
+              : t('pane.skill_packs.status_pending')}
+          </span>
 
           {pack.description && <p className="skill-drawer-desc">{pack.description}</p>}
 
@@ -180,9 +196,19 @@ function DetailDrawer({ pack, onClose }: DetailDrawerProps): JSX.Element {
 
             <dt>{t('pane.skill_packs.detail_activation_status')}</dt>
             <dd>
-              <span className="skill-badge-pending">{t('pane.skill_packs.badge_pending')}</span>
-              {' — '}
-              {t('pane.skill_packs.detail_activation_note')}
+              {pack.activation_status === 'active' ? (
+                <>
+                  <span className="skill-badge-active">{t('pane.skill_packs.badge_active')}</span>
+                  {' — '}
+                  {t('pane.skill_packs.detail_activation_note_active')}
+                </>
+              ) : (
+                <>
+                  <span className="skill-badge-pending">{t('pane.skill_packs.badge_pending')}</span>
+                  {' — '}
+                  {t('pane.skill_packs.detail_activation_note')}
+                </>
+              )}
             </dd>
           </dl>
         </div>
@@ -411,6 +437,7 @@ export function SkillPacksPane(): JSX.Element {
   const [selected, setSelected] = useState<InstalledSkillPackResponse | null>(null);
   // Active IA tier — general packs are shown first.
   const [tier, setTier] = useState<Tier>(TIER_GENERAL);
+  const [rescanState, setRescanState] = useState<RescanState>({ kind: 'idle' });
   // Remember packId across confirm/install cycle
   const pendingPackId = useRef<string>('');
 
@@ -486,6 +513,17 @@ export function SkillPacksPane(): JSX.Element {
     setInstallState({ kind: 'idle' });
   }
 
+  async function handleRescan(): Promise<void> {
+    setRescanState({ kind: 'running' });
+    try {
+      const resp = await client.rescanSkillPacks();
+      setRescanState({ kind: 'done', activated: resp.activated });
+      await reloadInstalled();
+    } catch (err) {
+      setRescanState({ kind: 'error', message: (err as Error).message });
+    }
+  }
+
   const packs = loadState.kind === 'ok' ? loadState.packs : [];
 
   return (
@@ -523,10 +561,40 @@ export function SkillPacksPane(): JSX.Element {
       />
 
       <section aria-label={t('pane.skill_packs.installed_heading')}>
-        <h2 className="skill-section-heading">
-          {t('pane.skill_packs.installed_heading')}
-          {loadState.kind === 'ok' && <span className="skill-count">({packs.length})</span>}
-        </h2>
+        <div className="skill-installed-header">
+          <h2 className="skill-section-heading">
+            {t('pane.skill_packs.installed_heading')}
+            {loadState.kind === 'ok' && <span className="skill-count">({packs.length})</span>}
+          </h2>
+          <button
+            className="skill-install-btn"
+            onClick={() => void handleRescan()}
+            disabled={rescanState.kind === 'running'}
+            title={t('pane.skill_packs.rescan_hint')}
+          >
+            {rescanState.kind === 'running'
+              ? t('pane.skill_packs.rescan_running')
+              : t('pane.skill_packs.rescan_btn')}
+          </button>
+        </div>
+
+        {rescanState.kind === 'done' && (
+          <div className="skill-install-done">
+            ✓{' '}
+            {rescanState.activated.length > 0
+              ? t('pane.skill_packs.rescan_done', {
+                  count: rescanState.activated.length,
+                  slugs: rescanState.activated.join(', '),
+                })
+              : t('pane.skill_packs.rescan_noop')}
+          </div>
+        )}
+
+        {rescanState.kind === 'error' && (
+          <div className="error" role="alert">
+            {t('pane.skill_packs.rescan_failed', { message: rescanState.message })}
+          </div>
+        )}
 
         {loadState.kind === 'loading' && (
           <div className="empty">{t('pane.skill_packs.installed_loading')}</div>
@@ -575,9 +643,15 @@ export function SkillPacksPane(): JSX.Element {
                     )}
                   </td>
                   <td>
-                    <span className="skill-badge-pending">
-                      {t('pane.skill_packs.status_pending')}
-                    </span>
+                    {pack.activation_status === 'active' ? (
+                      <span className="skill-badge-active">
+                        {t('pane.skill_packs.status_active')}
+                      </span>
+                    ) : (
+                      <span className="skill-badge-pending">
+                        {t('pane.skill_packs.status_pending')}
+                      </span>
+                    )}
                   </td>
                   <td style={{ fontSize: '12px', color: 'var(--muted)' }}>
                     {fmtDate(pack.recorded_at)}
