@@ -27,9 +27,11 @@ import {
   formatScore,
   isExpertsUnavailable,
   isNotAttached,
+  readableMemberName,
   selectablePersonas,
   selectableTeams,
   sortSuggestions,
+  teamForPackSlug,
 } from './expertPickerHelpers';
 import type { ActiveExpert } from './expertPickerHelpers';
 
@@ -41,9 +43,25 @@ interface ExpertPickerProps {
    * attached without re-fetching `getSessionTeam` itself.
    */
   onActiveChange?: (active: ActiveExpert | null) => void;
+  /**
+   * Phase 4c — a pack slug carried from the Skills "Use in chat" deep-link
+   * (chat-ui route `?team=<slug>`). On arrival the picker opens, resolves the
+   * slug to the pack's activated team, and — when a session exists — attaches
+   * it (otherwise shows a "send a message first" hint). Kept as a prop (not a
+   * router hook) so ExpertPicker stays router-free and unit-testable.
+   */
+  deepLinkTeamSlug?: string | null;
+  /** Phase 4c — fired once the deep-link has been consumed, so the parent can
+   *  clear the `?team=` param and not re-trigger on every render. */
+  onDeepLinkConsumed?: () => void;
 }
 
-export function ExpertPicker({ sessionId, onActiveChange }: ExpertPickerProps) {
+export function ExpertPicker({
+  sessionId,
+  onActiveChange,
+  deepLinkTeamSlug,
+  onDeepLinkConsumed,
+}: ExpertPickerProps) {
   const { t } = useI18n();
   const [active, setActiveState] = useState<ActiveExpert | null>(null);
 
@@ -64,6 +82,10 @@ export function ExpertPicker({ sessionId, onActiveChange }: ExpertPickerProps) {
   const [suggesting, setSuggesting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Phase 4c — transient note shown inside the popover after a Skills
+   * deep-link: either "team attached" or "send a message first to attach". */
+  const [deepLinkHint, setDeepLinkHint] = useState<string | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
   // On session switch: reset panel state and load the active expert.
@@ -75,6 +97,7 @@ export function ExpertPicker({ sessionId, onActiveChange }: ExpertPickerProps) {
     setSuggestions(null);
     setGoal('');
     setFilter('');
+    setDeepLinkHint(null);
     if (!sessionId) return;
     let cancelled = false;
     void (async () => {
@@ -120,26 +143,81 @@ export function ExpertPicker({ sessionId, onActiveChange }: ExpertPickerProps) {
     return () => document.removeEventListener('mousedown', handleOutside);
   }, [open]);
 
-  if (!sessionId || unavailable) return null;
+  /**
+   * Lazy-load the persona/team catalog (once). Returns the freshly-selectable
+   * teams so a caller that needs them immediately (the deep-link) doesn't race
+   * the `teams` state update. Idempotent: a second call is a no-op + re-returns
+   * whatever is in state. Surfaces 503 as "unavailable", other errors inline.
+   */
+  async function loadCatalog(): Promise<Team[] | null> {
+    if (personas !== null) return teams;
+    try {
+      const [ps, ts] = await Promise.all([client.listPersonas(), client.listTeams()]);
+      const selTeams = selectableTeams(ts);
+      setPersonas(selectablePersonas(ps));
+      setTeams(selTeams);
+      return selTeams;
+    } catch (err) {
+      if (isExpertsUnavailable(err)) {
+        setUnavailable(true);
+        return null;
+      }
+      setError(
+        interpolate(t.ui.expert.error_load, { message: (err as Error).message }),
+      );
+      return null;
+    }
+  }
+
+  // Phase 4c — Skills deep-link ("Use in chat"): open the picker, resolve the
+  // pack slug to its activated team, and attach it when a session exists
+  // (otherwise prompt the operator to start one). Consumed exactly once so the
+  // parent can drop the `?team=` param without re-firing.
+  useEffect(() => {
+    const slug = deepLinkTeamSlug?.trim();
+    if (!slug || unavailable) return;
+    let cancelled = false;
+    void (async () => {
+      setOpen(true);
+      setError(null);
+      const loaded = await loadCatalog();
+      if (cancelled) return;
+      const team = loaded ? teamForPackSlug(loaded, slug) : undefined;
+      if (team) {
+        if (sessionId) {
+          await attach('team', team.id, team.name);
+          if (cancelled) return;
+          setDeepLinkHint(interpolate(t.ui.expert.deeplink_attached, { team: team.name }));
+        } else {
+          // No session to attach to yet — pre-filter so the team is visible
+          // and tell the operator how to finish the flow.
+          setFilter(team.name);
+          setDeepLinkHint(
+            interpolate(t.ui.expert.deeplink_need_session, { team: team.name }),
+          );
+        }
+      }
+      onDeepLinkConsumed?.();
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only re-run when the deep-link slug or the session identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkTeamSlug, sessionId]);
+
+  if (!sessionId || unavailable) {
+    // Even with no session we must signal "consumed" so the parent clears the
+    // deep-link param; the team can't be attached until a session exists.
+    return null;
+  }
 
   /** Toggle the popover; lazy-load the persona/team catalog on first open. */
   async function togglePanel() {
     const opening = !open;
     setOpen(opening);
-    if (!opening || personas !== null) return;
-    try {
-      const [ps, ts] = await Promise.all([client.listPersonas(), client.listTeams()]);
-      setPersonas(selectablePersonas(ps));
-      setTeams(selectableTeams(ts));
-    } catch (err) {
-      if (isExpertsUnavailable(err)) {
-        setUnavailable(true);
-        return;
-      }
-      setError(
-        interpolate(t.ui.expert.error_load, { message: (err as Error).message }),
-      );
-    }
+    if (!opening) return;
+    await loadCatalog();
   }
 
   /** Attach a persona or team to the session; team also attaches its lead. */
@@ -269,6 +347,17 @@ export function ExpertPicker({ sessionId, onActiveChange }: ExpertPickerProps) {
             </div>
           )}
 
+          {/* Phase 4c — Skills deep-link outcome (attached / needs a session). */}
+          {deepLinkHint && (
+            <div
+              className="expert-popover__deeplink"
+              role="status"
+              data-testid="expert-deeplink-hint"
+            >
+              {deepLinkHint}
+            </div>
+          )}
+
           {/* "一句话找专家" — describe a goal, get ranked experts. */}
           <div className="expert-popover__suggest">
             <label className="expert-popover__suggest-label" htmlFor="expert-goal-input">
@@ -358,6 +447,11 @@ export function ExpertPicker({ sessionId, onActiveChange }: ExpertPickerProps) {
           </div>
 
           <div className="expert-popover__group-title">{t.ui.expert.group_teams}</div>
+          {/* Phase 4c — first-run guidance: where teams come from + what a team
+              run does. Shown above the team rows so it reads as a lead-in. */}
+          <div className="expert-popover__firstrun" data-testid="expert-firstrun-hint">
+            {t.ui.expert.firstrun_hint}
+          </div>
           <div className="expert-popover__list">
             {visibleTeams.length === 0 ? (
               <div className="expert-popover__hint">{t.ui.expert.empty_group}</div>
@@ -366,14 +460,22 @@ export function ExpertPicker({ sessionId, onActiveChange }: ExpertPickerProps) {
                 <button
                   key={team.id}
                   type="button"
-                  className="expert-popover__row"
+                  className="expert-popover__row expert-popover__row--team"
                   onClick={() => void attach('team', team.id, team.name)}
                   disabled={busy}
                   data-testid="expert-team-row"
                 >
                   <span className="expert-popover__name">{team.name}</span>
-                  {team.description && (
+                  {team.description ? (
                     <span className="expert-popover__desc">{team.description}</span>
+                  ) : (
+                    // No description → show the team's members readably so a
+                    // pack-derived team (slug/agent ids) is still legible.
+                    team.member_persona_ids.length > 0 && (
+                      <span className="expert-popover__desc">
+                        {team.member_persona_ids.map(readableMemberName).join(' · ')}
+                      </span>
+                    )
                   )}
                 </button>
               ))

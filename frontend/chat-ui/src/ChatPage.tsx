@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type {
   AgentEvent,
   ContentBlock,
@@ -86,6 +86,12 @@ export function ChatPage({ onSessionCreated }: Props) {
   const { t } = useI18n();
   const { id: routeId } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // Phase 4c — Skills "Use in chat" deep-link carries the activated pack slug
+  // as `?team=<slug>`; ExpertPicker resolves it to the pack's team and attaches
+  // it. We clear the param once consumed so a reload / session switch doesn't
+  // re-trigger the attach.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkTeamSlug = searchParams.get('team');
   const [sessionId, setSessionId] = useState<string | undefined>(routeId);
   const [bubbles, setBubbles] = useState<DisplayBubble[]>([]);
   const [draft, setDraft] = useState('');
@@ -236,6 +242,30 @@ export function ChatPage({ onSessionCreated }: Props) {
       /* best effort */
     }
   }, [model]);
+
+  // Phase 4c — a Skills deep-link with no active session can't attach a team
+  // (attach needs a session). The ExpertPicker chip isn't even mounted yet, so
+  // surface a one-line hint in the status bar telling the operator to send a
+  // message first, then pick the team. Cleared once a session exists (the
+  // ExpertPicker then auto-attaches via `deepLinkTeamSlug`).
+  useEffect(() => {
+    if (deepLinkTeamSlug && !sessionId) {
+      setStatus(interpolate(t.ui.expert.deeplink_need_session, { team: deepLinkTeamSlug }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkTeamSlug, sessionId]);
+
+  /** Phase 4c — drop the consumed `?team=` param (keep other params intact). */
+  function clearDeepLink() {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('team');
+        return next;
+      },
+      { replace: true },
+    );
+  }
 
   async function send(textOverride?: string) {
     const text = (textOverride ?? draft).trim();
@@ -734,6 +764,10 @@ export function ChatPage({ onSessionCreated }: Props) {
           sessionId={sessionId}
           // T5.2 — track whether a team is attached (gates the team-run entry).
           onActiveChange={(a) => setTeamId(a?.kind === 'team' ? a.id : null)}
+          // Phase 4c — Skills deep-link: pre-select the pack's team (when a
+          // session exists), then drop the `?team=` param.
+          deepLinkTeamSlug={deepLinkTeamSlug}
+          onDeepLinkConsumed={clearDeepLink}
         />
         <WatchIndicator sessionId={sessionId} />
       </div>
@@ -774,6 +808,25 @@ export function ChatPage({ onSessionCreated }: Props) {
         )}
       </div>
       {status && <div className="status">{status}</div>}
+      {/* Phase 4c — onboarding cue when a team is attached but the composer is
+          empty: a team is ready, hand it a complex goal. The seeded example
+          fills the draft on click so the operator can run it (or edit first). */}
+      {teamId && !draft.trim() && !streaming && !orchestrating && mode !== 'consult' && (
+        <div className="teamrun-hint" data-testid="teamrun-hint">
+          <span className="teamrun-hint__lead">{t.ui.teamrun.button_title}</span>
+          <button
+            type="button"
+            className="teamrun-hint__example"
+            onClick={() => {
+              setDraft(t.ui.teamrun.example_goal);
+              textareaRef.current?.focus();
+            }}
+            title={t.ui.teamrun.example_goal}
+          >
+            {t.ui.teamrun.example_goal}
+          </button>
+        </div>
+      )}
       <div className="composer">
         <div className={`composer-box${mode === 'consult' ? ' composer-box--consult' : ''}`}>
           <textarea

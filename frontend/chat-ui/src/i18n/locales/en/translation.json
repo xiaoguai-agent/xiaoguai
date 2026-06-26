@@ -115,6 +115,9 @@
       "suggest_button": "Suggest",
       "suggest_searching": "Searching…",
       "suggest_empty": "No matching expert — pick one from the list below.",
+      "firstrun_hint": "Teams come from activated 专用场景 (scenario) packs. Pick a team, then type a complex goal to run it through the whole team — members work in parallel and the lead synthesizes one answer.",
+      "deeplink_attached": "Team \"{{team}}\" is attached — type a complex goal and hand it to the team.",
+      "deeplink_need_session": "Send any message first to start a session, then pick the team \"{{team}}\" here.",
       "error_load": "Failed to load experts: {{message}}",
       "error_attach": "Failed to attach expert: {{message}}",
       "error_detach": "Failed to remove expert: {{message}}",
@@ -136,7 +139,8 @@
       "synthesizing": "Synthesizing {{ok}} member results…",
       "done": "Team run completed.",
       "failed": "Team run produced no answer (failed members: {{failed}})",
-      "error": "Team run failed: {{message}}"
+      "error": "Team run failed: {{message}}",
+      "example_goal": "e.g. \"Audit our latest release for security and reliability risks and propose fixes.\""
     },
     "skills_page": {
       "title": "Skill Packs",
@@ -160,7 +164,17 @@
       "toast_uninstall_failed": "Uninstall failed: {{message}}",
       "tab_general": "General",
       "tab_specialized": "Scenarios",
-      "disclaimer": "These are skill templates — installing records your configuration; running a skill needs its data source or an MCP server."
+      "disclaimer": "These are skill templates — installing records your configuration; running a skill needs its data source or an MCP server.",
+      "team_intro_title": "Scenario packs carry an agent team",
+      "team_intro_body": "A 专用场景 (scenario) pack bundles an agent team. Once installed and active it shows up in the chat 专家选择器 (expert picker) — hand the whole team a complex task and its members run in parallel while the lead synthesizes one answer.",
+      "team_active_badge": "Team active ✓",
+      "team_active_title": "This pack's agent team is active and selectable in chat",
+      "use_in_chat": "Use in chat →",
+      "use_in_chat_title": "Open chat and select this pack's team",
+      "onboarding_title": "How to get started",
+      "onboarding_step1": "Install a scenario pack below.",
+      "onboarding_step2": "Wait for the \"Team active ✓\" badge — its agent team is now ready.",
+      "onboarding_step3": "Click \"Use in chat →\", pick the team in the 专家选择器, type a complex goal, and hand it to the team."
     }
   }
 }

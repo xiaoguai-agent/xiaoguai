@@ -115,6 +115,9 @@
       "suggest_button": "推荐",
       "suggest_searching": "匹配中…",
       "suggest_empty": "没有匹配的专家，请从下方列表中选择。",
+      "firstrun_hint": "团队来自已激活的「专用场景」技能包。选中一个团队后，输入一个复杂目标即可交给整个团队执行 —— 成员并行工作，组长汇总成一份答案。",
+      "deeplink_attached": "已绑定团队「{{team}}」—— 输入一个复杂目标，把它交给团队。",
+      "deeplink_need_session": "先发送任意一条消息开启会话，然后在这里选择团队「{{team}}」。",
       "error_load": "加载专家失败：{{message}}",
       "error_attach": "绑定专家失败：{{message}}",
       "error_detach": "移除专家失败：{{message}}",
@@ -136,7 +139,8 @@
       "synthesizing": "正在汇总 {{ok}} 名成员的结果…",
       "done": "团队执行已完成。",
       "failed": "团队执行未能产出结果（失败成员：{{failed}}）",
-      "error": "团队执行失败：{{message}}"
+      "error": "团队执行失败：{{message}}",
+      "example_goal": "例如：「审查我们最新版本的安全与可靠性风险，并给出修复建议。」"
     },
     "skills_page": {
       "title": "技能包",
@@ -160,7 +164,17 @@
       "toast_uninstall_failed": "卸载失败：{{message}}",
       "tab_general": "通用",
       "tab_specialized": "专用场景",
-      "disclaimer": "以下为技能模板：安装仅记录配置，实际运行需对接对应的数据源或 MCP 服务。"
+      "disclaimer": "以下为技能模板：安装仅记录配置，实际运行需对接对应的数据源或 MCP 服务。",
+      "team_intro_title": "专用场景技能包自带一支智能体团队",
+      "team_intro_body": "「专用场景」技能包内置一支智能体团队。安装并激活后，它会出现在聊天的「专家选择器」里 —— 把复杂任务交给整个团队，成员并行工作，组长汇总成一份答案。",
+      "team_active_badge": "团队已激活 ✓",
+      "team_active_title": "该技能包的智能体团队已激活，可在聊天中选用",
+      "use_in_chat": "去聊天使用 →",
+      "use_in_chat_title": "打开聊天并选用该技能包的团队",
+      "onboarding_title": "如何上手",
+      "onboarding_step1": "在下方安装一个「专用场景」技能包。",
+      "onboarding_step2": "等待出现「团队已激活 ✓」标记 —— 其智能体团队已就绪。",
+      "onboarding_step3": "点击「去聊天使用 →」，在「专家选择器」里选中该团队，输入一个复杂目标，交给团队执行。"
     }
   }
 }
