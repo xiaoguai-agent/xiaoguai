@@ -45,7 +45,7 @@ test.describe('admin-ui navigation — all panes', () => {
 
   test('Usage pane renders heading and controls', async ({ page }) => {
     await navigateAndExpectHeading(page, '/usage', /usage/i);
-    // The tenant filter and group-by selects should appear.
+    // The group-by select and date-range control should appear.
     await expect(page.locator('select, input[type="date"]').first()).toBeVisible({
       timeout: 5_000,
     });

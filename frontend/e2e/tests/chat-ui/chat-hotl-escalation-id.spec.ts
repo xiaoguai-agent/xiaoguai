@@ -43,7 +43,6 @@ async function mockSessionCreate(page: Page): Promise<void> {
         contentType: 'application/json',
         body: JSON.stringify({
           id: SESSION_ID,
-          tenant_id: 'ten_dev',
           user_id: 'usr_dev',
           title: 'HotL rename e2e',
           created_at: new Date().toISOString(),
