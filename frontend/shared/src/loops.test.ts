@@ -101,6 +101,36 @@ describe('XiaoguaiClient /loop methods', () => {
     expect(init?.method).toBe('DELETE');
   });
 
+  it('resumeLoop POSTs /v1/loops/:id/resume and returns the re-armed row', async () => {
+    const resumed: LoopResponse = { ...LOOP, status: 'active' };
+    const fetchImpl = vi
+      .fn<(...a: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockResolvedValue(jsonResponse(resumed));
+    const client = clientWith(fetchImpl as unknown as typeof fetch);
+
+    const row = await client.resumeLoop(LOOP.id);
+
+    expect(row.status).toBe('active');
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(url).toBe(`http://x/v1/loops/${encodeURIComponent(LOOP.id)}/resume`);
+    expect(init?.method).toBe('POST');
+  });
+
+  it('resumeLoop surfaces a 409 (not paused) as an ApiError', async () => {
+    const fetchImpl = vi
+      .fn<(...a: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
+      .mockResolvedValue(
+        jsonResponse({ code: 'conflict', message: 'loop is not paused' }, 409),
+      );
+    const client = clientWith(fetchImpl as unknown as typeof fetch);
+
+    await expect(client.resumeLoop(LOOP.id)).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 409,
+      code: 'conflict',
+    });
+  });
+
   it('createLoop surfaces a 409 as an ApiError carrying code + message', async () => {
     const fetchImpl = vi
       .fn<(...a: Parameters<typeof fetch>) => ReturnType<typeof fetch>>()
