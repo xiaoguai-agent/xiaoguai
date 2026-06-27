@@ -44,7 +44,6 @@ const KNOWN_SCOPES = ['llm_call', 'email_send', 'webhook_invoke'];
 // ---------------------------------------------------------------------------
 
 interface FormState {
-  tenant_id: string;
   scope: string;
   window_seconds: string;
   max_count: string;
@@ -53,7 +52,6 @@ interface FormState {
 }
 
 interface FormErrors {
-  tenant_id?: string;
   scope?: string;
   window_seconds?: string;
   limits?: string;
@@ -89,7 +87,6 @@ type LoadState =
 
 function buildFormErrors(f: FormState): FormErrors {
   const errs: FormErrors = {};
-  if (!f.tenant_id.trim()) errs.tenant_id = 'Tenant ID is required';
   if (!f.scope.trim()) errs.scope = 'Scope is required';
   const w = Number(f.window_seconds);
   if (!f.window_seconds.trim() || isNaN(w) || w <= 0) {
@@ -117,7 +114,6 @@ function buildFormErrors(f: FormState): FormErrors {
 
 function formToRequest(f: FormState): HotlPolicyCreateRequest {
   return {
-    tenant_id: f.tenant_id.trim(),
     scope: f.scope.trim(),
     window_seconds: Number(f.window_seconds),
     max_count: f.max_count.trim() !== '' ? Number(f.max_count) : null,
@@ -128,7 +124,6 @@ function formToRequest(f: FormState): HotlPolicyCreateRequest {
 
 function policyToForm(p: HotlPolicy): FormState {
   return {
-    tenant_id: p.tenant_id,
     scope: p.scope,
     window_seconds: String(p.window_seconds),
     max_count: p.max_count !== null ? String(p.max_count) : '',
@@ -138,7 +133,6 @@ function policyToForm(p: HotlPolicy): FormState {
 }
 
 const EMPTY_FORM: FormState = {
-  tenant_id: '',
   scope: '',
   window_seconds: '',
   max_count: '',
@@ -198,23 +192,6 @@ function PolicyForm({
 
   return (
     <form onSubmit={handleSubmit} noValidate>
-      <div style={{ marginBottom: '0.75rem' }}>
-        <label htmlFor="hotl-tenant-id">
-          <strong>Tenant ID</strong> <span style={{ color: 'var(--danger)' }}>*</span>
-        </label>
-        <input
-          id="hotl-tenant-id"
-          type="text"
-          value={form.tenant_id}
-          onChange={(e) => set('tenant_id', e.target.value)}
-          placeholder="11111111-1111-1111-1111-111111111111"
-          disabled={saving}
-          className="search"
-          style={{ width: '100%' }}
-        />
-        {showErr('tenant_id')}
-      </div>
-
       <div style={{ marginBottom: '0.75rem' }}>
         <label htmlFor="hotl-scope">
           <strong>Scope</strong> <span style={{ color: 'var(--danger)' }}>*</span>
@@ -450,12 +427,10 @@ function DeleteDialog({ state, onConfirm, onCancel, deleting }: DeleteDialogProp
 // ---------------------------------------------------------------------------
 
 interface TestDrawerProps {
-  defaultTenantId: string;
   onClose: () => void;
 }
 
-function TestDrawer({ defaultTenantId, onClose }: TestDrawerProps): JSX.Element {
-  const [tenantId, setTenantId] = useState(defaultTenantId);
+function TestDrawer({ onClose }: TestDrawerProps): JSX.Element {
   const [scope, setScope] = useState('');
   const [amount, setAmount] = useState('1.0');
   const [checkState, setCheckState] = useState<CheckState>({ kind: 'idle' });
@@ -473,7 +448,6 @@ function TestDrawer({ defaultTenantId, onClose }: TestDrawerProps): JSX.Element 
   async function handleCheck(e: React.FormEvent) {
     e.preventDefault();
     const req: HotlCheckRequest = {
-      tenant_id: tenantId.trim(),
       scope: scope.trim(),
       amount: Number(amount),
     };
@@ -510,21 +484,9 @@ function TestDrawer({ defaultTenantId, onClose }: TestDrawerProps): JSX.Element 
         <div className="skill-drawer-body">
           <p style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '1rem' }}>
             Calls <code>POST /v1/hotl/check</code>. This records the action in the
-            usage log — use a test tenant ID to avoid polluting production data.
+            usage log — use a test scope to avoid polluting production data.
           </p>
           <form onSubmit={(e) => void handleCheck(e)}>
-            <div style={{ marginBottom: '0.75rem' }}>
-              <label htmlFor="test-tenant">Tenant ID</label>
-              <input
-                id="test-tenant"
-                type="text"
-                value={tenantId}
-                onChange={(e) => setTenantId(e.target.value)}
-                className="search"
-                style={{ width: '100%' }}
-                required
-              />
-            </div>
             <div style={{ marginBottom: '0.75rem' }}>
               <label htmlFor="test-scope">Scope</label>
               <input
@@ -564,7 +526,7 @@ function TestDrawer({ defaultTenantId, onClose }: TestDrawerProps): JSX.Element 
             <button
               type="submit"
               className="skill-install-btn"
-              disabled={checkState.kind === 'running' || !tenantId.trim() || !scope.trim()}
+              disabled={checkState.kind === 'running' || !scope.trim()}
             >
               {checkState.kind === 'running' ? 'Checking…' : 'Check'}
             </button>
@@ -616,18 +578,11 @@ export function HotlPoliciesPane(): JSX.Element {
   const [showTestDrawer, setShowTestDrawer] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Infer a default tenant ID from the first loaded policy for the test drawer.
-  const firstTenantId =
-    loadState.kind === 'ok' && loadState.policies.length > 0
-      ? loadState.policies[0]!.tenant_id
-      : '';
-
   const load = useCallback(async () => {
     setLoadState({ kind: 'loading' });
     try {
-      // List without tenant_id filter — admin-level view; backend accepts no filter for system admins.
-      // If the API requires tenant_id we'll show the empty state and let the user filter.
-      const policies = await client.listHotlPolicies({ tenant_id: '' });
+      // Single owner (DEC-033): list every policy — no scope filter.
+      const policies = await client.listHotlPolicies();
       setLoadState({ kind: 'ok', policies });
     } catch (err) {
       if (is503(err)) {
@@ -848,7 +803,6 @@ export function HotlPoliciesPane(): JSX.Element {
       {/* Test drawer */}
       {showTestDrawer && (
         <TestDrawer
-          defaultTenantId={firstTenantId}
           onClose={() => setShowTestDrawer(false)}
         />
       )}

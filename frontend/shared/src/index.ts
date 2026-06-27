@@ -29,7 +29,6 @@ export type SessionStatus = 'active' | 'archived';
 
 export interface SessionResponse {
   id: string;
-  tenant_id: string;
   user_id: string;
   title: string | null;
   model: string;
@@ -45,8 +44,6 @@ export interface SessionResponse {
 
 export interface CreateSessionRequest {
   user_id: string;
-  /** DEC-033: optional — the backend defaults it to the single owner. */
-  tenant_id?: string;
   model: string;
   title?: string;
 }
@@ -115,14 +112,12 @@ export interface McpServerResponse {
   args: string[];
   env_keys: string[];
   endpoint: string | null;
-  tenant_id: string | null;
 }
 
 /** v0.6.4 — HMAC-chained audit row served by `GET /v1/admin/audit`. */
 export interface AuditEntryView {
   id: number;
   ts: string;
-  tenant_id: string;
   actor: string;
   action: string;
   resource: string | null;
@@ -135,7 +130,6 @@ export interface AuditEntryView {
 
 /** Query knobs accepted by `GET /v1/admin/audit`. */
 export interface ListAuditQuery {
-  tenant_id: string;
   limit?: number;
   /** RFC 3339, inclusive lower bound. */
   since?: string;
@@ -151,7 +145,6 @@ export interface ListAuditQuery {
  * is no async + SSE progress path — this is a single round-trip.
  */
 export interface CreateAuditExportRequest {
-  tenant_id: string;
   framework: 'soc2' | 'gdpr' | 'hipaa';
   /** Defaults to `"json"` on the backend. PDF currently returns 501. */
   format?: 'json' | 'csv' | 'pdf';
@@ -181,7 +174,6 @@ export type TodayItem =
       kind: 'chat';
       ts: string;
       session_id: string;
-      tenant_id: string;
       user_id: string;
       started_at: string;
       last_message_preview: string | null;
@@ -192,7 +184,6 @@ export type TodayItem =
       kind: 'im';
       ts: string;
       session_id: string;
-      tenant_id: string;
       provider: string;
       chat_id: string;
       started_at: string;
@@ -203,7 +194,6 @@ export type TodayItem =
       kind: 'scheduled';
       ts: string;
       job_id: string;
-      tenant_id: string | null;
       run_id: number;
       attempt: number;
       status: string;
@@ -228,7 +218,6 @@ export interface ListTodayQuery {
 export type UsageGroupBy = 'day' | 'provider' | 'model';
 
 export interface UsageQuery {
-  tenant_id?: string;
   /** RFC 3339, inclusive lower bound on the underlying `ts`. */
   since?: string;
   /** RFC 3339, inclusive upper bound on the underlying `ts`. */
@@ -326,7 +315,6 @@ export interface MarketplaceResponse {
 
 export interface InstallMarketplaceRequest {
   slug: string;
-  tenant_id?: string;
 }
 
 export interface InstallMarketplaceResponse {
@@ -340,7 +328,6 @@ export interface InstallMarketplaceResponse {
 /** Mirror of `xiaoguai_api::scheduler::ScheduledJobSummary`. */
 export interface ScheduledJobSummary {
   id: string;
-  tenant_id: string | null;
   name: string;
   trigger_summary: string;
   enabled: boolean;
@@ -351,7 +338,6 @@ export interface ScheduledJobSummary {
 /** Mirror of `xiaoguai_api::scheduler::WebhookTokenRecord`. */
 export interface WebhookToken {
   token: string;
-  tenant_id: string;
   route_id: string;
   created_at: string;
   last_used_at?: string | null;
@@ -359,7 +345,6 @@ export interface WebhookToken {
 
 export interface CompileScheduledJobRequest {
   description: string;
-  tenant_id?: string;
 }
 
 export interface CompileScheduledJobResponse {
@@ -385,7 +370,6 @@ export type OutcomeKind =
 
 /** Body for `POST /v1/outcomes`. */
 export interface RecordOutcomeRequest {
-  tenant_id: string;
   session_id?: string | null;
   agent_name: string;
   kind: string;
@@ -404,7 +388,6 @@ export interface RecordOutcomeResponse {
  * Mirrors the `agent_outcomes` row / `OutcomeRecord` Rust struct.
  */
 export interface OutcomeRecord {
-  tenant_id: string;
   session_id: string | null;
   agent_name: string;
   kind: string;
@@ -417,8 +400,6 @@ export interface OutcomeRecord {
 
 /** Query knobs accepted by `GET /v1/outcomes`. */
 export interface ListOutcomesQuery {
-  /** Optional under the single-user pivot — the backend defaults the owner. */
-  tenant_id?: string;
   range?: OutcomesRange;
   kind?: string;
 }
@@ -432,7 +413,6 @@ export interface OutcomeAggregate {
 
 /** `GET /v1/outcomes/summary` response. */
 export interface OutcomesSummaryResponse {
-  tenant_id: string;
   range: string;
   summary: {
     by_kind: Record<string, OutcomeAggregate>;
@@ -449,7 +429,6 @@ export interface OutcomeDay {
 
 /** `GET /v1/outcomes/timeseries` response. */
 export interface OutcomesTimeseriesResponse {
-  tenant_id: string;
   range: string;
   days: OutcomeDay[];
 }
@@ -568,7 +547,6 @@ export interface RescanSkillPacksResponse {
  */
 export interface HotlPolicy {
   id: string;
-  tenant_id: string;
   /** Action category (e.g. `"llm_call"`, `"email_send"`, `"webhook_invoke"`). */
   scope: string;
   /** Rolling window width in seconds. Must be > 0. */
@@ -586,7 +564,6 @@ export interface HotlPolicy {
  * At least one of `max_count` / `max_usd` must be non-null.
  */
 export interface HotlPolicyCreateRequest {
-  tenant_id: string;
   scope: string;
   window_seconds: number;
   max_count?: number | null;
@@ -596,7 +573,6 @@ export interface HotlPolicyCreateRequest {
 
 /** Body for `POST /v1/hotl/check`. */
 export interface HotlCheckRequest {
-  tenant_id: string;
   scope: string;
   /** Increment to record. Use 1.0 for count budget; pass USD cost for cost budget. */
   amount: number;
@@ -847,12 +823,11 @@ export interface OutcomeRecordedEvent {
 
 /**
  * Extended API response for `GET /v1/outcomes/summary?session_id=<id>`.
- * The base `OutcomesSummaryResponse` is tenant-scoped; this variant adds
+ * The base `OutcomesSummaryResponse` is owner-wide; this variant adds
  * per-session fields and a recent-events list.
  */
 export interface SessionOutcomesSummary {
   session_id: string;
-  tenant_id: string;
   /** Counts + aggregates by outcome kind. */
   by_kind: Record<string, { count: number; sum: number; unit: string | null }>;
   /** The 5 most recent outcome events recorded in this session, newest first. */
@@ -868,13 +843,13 @@ export interface SessionOutcomesSummary {
 // ---- v1.3.x — AI disclosure banner (EU AI Act Art. 50(1)) ---------------
 
 /**
- * Per-tenant configuration for the AI disclosure banner.
+ * Global configuration for the AI disclosure banner.
  *
- * Backend endpoint (required follow-up, separate task):
- *   GET /v1/tenants/:id/config  →  field `ai_disclosure_banner: AiDisclosureConfig`
- *
- * Until the backend field is wired, the client falls back to the defaults
+ * DEC-033 (single owner): there is no per-tenant config endpoint. Until a
+ * global config surface is wired, the client falls back to the defaults
  * documented below (enabled=true, dismissible=true, no text_override, no link).
+ * Operators who want to override the banner can pass the optional `config`
+ * prop on `<AiDisclosureBanner>`.
  */
 export interface AiDisclosureConfig {
   /** When false the banner is hidden entirely. Default: true. */
@@ -886,7 +861,7 @@ export interface AiDisclosureConfig {
   text_override?: string | null;
   /**
    * When false the dismiss button is hidden and the banner is always
-   * visible — intended for regulated tenants (e.g. financial services
+   * visible — intended for regulated operators (e.g. financial services
    * subject to stricter AI Act obligations). Default: true.
    */
   dismissible: boolean;
@@ -905,15 +880,13 @@ const AI_DISCLOSURE_CONFIG_DEFAULTS: AiDisclosureConfig = {
 /**
  * Resolve the AI disclosure banner config.
  *
- * DEC-033: the per-tenant `GET /v1/tenants/:id/config` endpoint was removed
- * with multi-tenancy, so this now simply returns the built-in defaults
- * (banner enabled + dismissible). The signature is kept for call-site
- * stability; the args are accepted but unused. Operators who want to
+ * DEC-033: there is no per-owner config endpoint, so this returns the
+ * built-in defaults (banner enabled + dismissible). The `opts` arg is
+ * accepted for call-site stability but unused. Operators who want to
  * override the banner can do so via the optional `config` prop on
  * `<AiDisclosureBanner>` instead.
  */
 export async function getAiDisclosureConfig(
-  _tenantId?: string,
   _opts?: { baseUrl?: string; fetchImpl?: typeof fetch },
 ): Promise<AiDisclosureConfig> {
   return AI_DISCLOSURE_CONFIG_DEFAULTS;
@@ -1211,7 +1184,7 @@ export type OrchestrateEvent =
  * ever carries these five fields. Reviewers can trust the shape.
  */
 export interface SkillManifest {
-  /** Skill identifier (kebab-case, unique per tenant). */
+  /** Skill identifier (kebab-case, unique). */
   name: string;
   /** One-sentence description for the catalog. */
   description: string;
@@ -1239,7 +1212,6 @@ export type SkillProposalStatus =
  */
 export interface SkillProposal {
   id: string;
-  tenant_id: string;
   proposed_by: string;
   manifest: SkillManifest;
   status: SkillProposalStatus;
@@ -1252,8 +1224,6 @@ export interface SkillProposal {
 
 /** Query options for `GET /v1/skills/proposals`. */
 export interface ListSkillProposalsQuery {
-  /** Required — backend rejects the call without it. */
-  tenant_id: string;
   /** Defaults to "all" when omitted. */
   status?: SkillProposalStatus;
 }
@@ -1680,13 +1650,14 @@ export class XiaoguaiClient {
     }
   }
 
-  /** v0.6.4 — HMAC-chained audit rows for a single tenant. */
-  listAudit(q: ListAuditQuery): Promise<AuditEntryView[]> {
-    const params = new URLSearchParams({ tenant_id: q.tenant_id });
+  /** v0.6.4 — HMAC-chained audit rows. */
+  listAudit(q: ListAuditQuery = {}): Promise<AuditEntryView[]> {
+    const params = new URLSearchParams();
     if (q.limit !== undefined) params.set('limit', String(q.limit));
     if (q.since) params.set('since', q.since);
     if (q.until) params.set('until', q.until);
-    return this.request<AuditEntryView[]>('GET', `/v1/admin/audit?${params.toString()}`);
+    const qs = params.toString();
+    return this.request<AuditEntryView[]>('GET', `/v1/admin/audit${qs ? `?${qs}` : ''}`);
   }
 
   /**
@@ -1697,7 +1668,7 @@ export class XiaoguaiClient {
    * response body is binary; matches the `ApiError` shape used by
    * `request<T>` for non-2xx responses. On 2xx the filename is parsed
    * from `Content-Disposition`, falling back to a synthesised name keyed
-   * off tenant id + ts + format extension.
+   * off ts + format extension.
    */
   async createAuditExport(req: CreateAuditExportRequest): Promise<AuditExportBlob> {
     const format = req.format ?? 'json';
@@ -1722,7 +1693,7 @@ export class XiaoguaiClient {
     const contentType =
       resp.headers.get('content-type') ?? blob.type ?? 'application/octet-stream';
     const disposition = resp.headers.get('content-disposition');
-    const filename = parseContentDispositionFilename(disposition) ?? defaultExportFilename(req.tenant_id, format);
+    const filename = parseContentDispositionFilename(disposition) ?? defaultExportFilename(format);
     return { blob, filename, contentType };
   }
 
@@ -1745,7 +1716,6 @@ export class XiaoguaiClient {
    */
   getUsage(q?: UsageQuery): Promise<UsageReport> {
     const params = new URLSearchParams();
-    if (q?.tenant_id) params.set('tenant_id', q.tenant_id);
     if (q?.since) params.set('since', q.since);
     if (q?.until) params.set('until', q.until);
     if (q?.group_by) params.set('group_by', q.group_by);
@@ -1820,13 +1790,11 @@ export class XiaoguaiClient {
     );
   }
 
-  /** List per-tenant webhook tokens. */
+  /** List webhook tokens. */
   listWebhookTokens(opts?: {
-    tenant_id?: string;
     limit?: number;
   }): Promise<WebhookToken[]> {
     const params = new URLSearchParams();
-    if (opts?.tenant_id) params.set('tenant_id', opts.tenant_id);
     if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
     const qs = params.toString();
     return this.request<WebhookToken[]>(
@@ -1835,9 +1803,8 @@ export class XiaoguaiClient {
     );
   }
 
-  /** Mint a new webhook token bound to `(tenant_id, route_id)`. */
+  /** Mint a new webhook token bound to a `route_id`. */
   createWebhookToken(req: {
-    tenant_id: string;
     route_id: string;
   }): Promise<WebhookToken> {
     return this.request<WebhookToken>(
@@ -1920,12 +1887,9 @@ export class XiaoguaiClient {
 
   /** ROI summary cards — aggregated by kind. */
   getOutcomesSummary(opts: {
-    /** Optional under the single-user pivot — the backend defaults the owner. */
-    tenant_id?: string;
     range?: OutcomesRange;
   } = {}): Promise<OutcomesSummaryResponse> {
     const params = new URLSearchParams();
-    if (opts.tenant_id) params.set('tenant_id', opts.tenant_id);
     if (opts.range) params.set('range', opts.range);
     const qs = params.toString();
     return this.request<OutcomesSummaryResponse>(
@@ -2096,13 +2060,10 @@ export class XiaoguaiClient {
 
   /** Daily time-series — bar chart data. */
   getOutcomesTimeseries(opts: {
-    /** Optional under the single-user pivot — the backend defaults the owner. */
-    tenant_id?: string;
     range?: OutcomesRange;
     kind?: string;
   } = {}): Promise<OutcomesTimeseriesResponse> {
     const params = new URLSearchParams();
-    if (opts.tenant_id) params.set('tenant_id', opts.tenant_id);
     if (opts.range) params.set('range', opts.range);
     if (opts.kind) params.set('kind', opts.kind);
     const qs = params.toString();
@@ -2115,13 +2076,14 @@ export class XiaoguaiClient {
   // ---- v1.3.x HotL policies -----------------------------------------------
 
   /**
-   * List HOTL policies for a tenant. Returns 503 when `PgHotlPolicyStore`
+   * List HOTL policies. Returns 503 when `PgHotlPolicyStore`
    * is not yet wired (store bridge pending).
    */
-  listHotlPolicies(opts: { tenant_id: string; scope?: string }): Promise<HotlPolicy[]> {
-    const params = new URLSearchParams({ tenant_id: opts.tenant_id });
+  listHotlPolicies(opts: { scope?: string } = {}): Promise<HotlPolicy[]> {
+    const params = new URLSearchParams();
     if (opts.scope) params.set('scope', opts.scope);
-    return this.request<HotlPolicy[]>('GET', `/v1/hotl/policies?${params.toString()}`);
+    const qs = params.toString();
+    return this.request<HotlPolicy[]>('GET', `/v1/hotl/policies${qs ? `?${qs}` : ''}`);
   }
 
   /** Create a new HOTL policy. Returns 201 with the persisted row. */
@@ -2179,7 +2141,7 @@ export class XiaoguaiClient {
   }
 
   /**
-   * Check budget for `(tenant_id, scope)` and record the action.
+   * Check budget for a `scope` and record the action.
    * Returns `allow` / `escalate` / `deny` verdict.
    */
   checkHotlPolicy(req: HotlCheckRequest): Promise<HotlVerdict> {
@@ -2206,12 +2168,11 @@ export class XiaoguaiClient {
   // ---- Streaming ----------------------------------------------------------
 
   /**
-   * v1.3.x — raw list of outcome records for a tenant.
+   * v1.3.x — raw list of outcome records.
    * Backs the List view in the Outcomes browser pane.
    */
   listOutcomes(q: ListOutcomesQuery = {}): Promise<OutcomeRecord[]> {
     const params = new URLSearchParams();
-    if (q.tenant_id) params.set('tenant_id', q.tenant_id);
     if (q.range) params.set('range', q.range);
     if (q.kind) params.set('kind', q.kind);
     const qs = params.toString();
@@ -2661,19 +2622,19 @@ export class XiaoguaiClient {
   // ---- v1.8.0 (sprint-10b S10b-3) — Skill Proposals -------------------
 
   /**
-   * List agent-authored skill proposals. `tenant_id` is required by the
-   * backend; the optional `status` filter defaults to "all" when omitted.
+   * List agent-authored skill proposals. The optional `status` filter
+   * defaults to "all" when omitted.
    *
    * The backend returns 503 when the proposal repository is not wired —
    * the caller should render a "feature unavailable" banner in that case.
    */
-  listSkillProposals(q: ListSkillProposalsQuery): Promise<SkillProposal[]> {
+  listSkillProposals(q: ListSkillProposalsQuery = {}): Promise<SkillProposal[]> {
     const params = new URLSearchParams();
-    params.set('tenant_id', q.tenant_id);
     if (q.status) params.set('status', q.status);
+    const qs = params.toString();
     return this.request<SkillProposal[]>(
       'GET',
-      `/v1/skills/proposals?${params.toString()}`,
+      `/v1/skills/proposals${qs ? `?${qs}` : ''}`,
     );
   }
 
@@ -2900,10 +2861,10 @@ function parseContentDispositionFilename(header: string | null): string | null {
 }
 
 /** Synthesise a download filename when the backend omits Content-Disposition. */
-function defaultExportFilename(tenantId: string, format: string): string {
+function defaultExportFilename(format: string): string {
   const ext = format.toLowerCase();
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  return `audit-${tenantId}-${ts}.${ext}`;
+  return `audit-${ts}.${ext}`;
 }
 
 /** One parsed SSE frame: the decoded event plus its `id:` field (if any). */

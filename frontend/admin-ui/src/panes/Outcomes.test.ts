@@ -220,7 +220,6 @@ describe('503 fallback — PgOutcomeRecorder not wired', () => {
     // Compile-time check embedded as runtime assertion.
     // If the type changes, tsc --noEmit will fail before this runs.
     const rec: OutcomeRecord = {
-      tenant_id: 'tenant_acme',
       session_id: 'sess_abc123',
       agent_name: 'sales-bot',
       kind: 'revenue_usd',
@@ -230,13 +229,11 @@ describe('503 fallback — PgOutcomeRecorder not wired', () => {
       attributed_at: '2026-05-25T12:34:56Z',
       metadata: { deal_id: 'D-4471' },
     };
-    expect(rec.tenant_id).toBe('tenant_acme');
     expect(rec.value).toBe(1250.0);
   });
 
   it('OutcomeRecord allows nullable session_id, unit, description', () => {
     const rec: OutcomeRecord = {
-      tenant_id: 't',
       session_id: null,
       agent_name: 'bot',
       kind: 'custom',
@@ -252,7 +249,6 @@ describe('503 fallback — PgOutcomeRecorder not wired', () => {
 
   it('summary response wire shape accepted', () => {
     const resp = {
-      tenant_id: 'tenant_a',
       range: '7d',
       summary: {
         by_kind: {
@@ -272,7 +268,6 @@ describe('503 fallback — PgOutcomeRecorder not wired', () => {
 
 function makeRecord(agent: string, kind: string, value: number): OutcomeRecord {
   return {
-    tenant_id: 'tenant_test',
     session_id: null,
     agent_name: agent,
     kind,
@@ -287,7 +282,6 @@ function makeRecord(agent: string, kind: string, value: number): OutcomeRecord {
 function makeSession(id: string, parentId: string | undefined): SessionResponse {
   return {
     id,
-    tenant_id: 'tenant_test',
     user_id: 'user_1',
     title: `Session ${id}`,
     model: 'claude-3-5-haiku',

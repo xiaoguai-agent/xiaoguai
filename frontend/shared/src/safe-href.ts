@@ -3,7 +3,7 @@
  * (SEC-24 / SEC-25).
  *
  * RAG citation `source_uri`s, marketplace catalog `source_url`s, and the
- * per-tenant `link_to_disclosure` config all flow into `<a href>`. Those
+ * `link_to_disclosure` config all flow into `<a href>`. Those
  * values are backend/LLM-influenced, so a crafted `javascript:` / `data:` /
  * unknown-scheme URL there is an XSS or phishing primitive. This helper
  * parses the candidate with `new URL()` — which canonicalises scheme case,

@@ -2,9 +2,9 @@
  * v1.1.1 — Token Usage pane.
  *
  * Wraps `GET /v1/usage`. Two controls: since/until date pickers (default
- * = last 30 days) and a group_by select (Day / Provider / Model). Under
- * the single-user pivot the backend defaults the owner tenant, so there
- * is no tenant selector. Renders a total card and a row table.
+ * = last 30 days) and a group_by select (Day / Provider / Model). DEC-033
+ * (single owner): usage is owner-wide, so there is no scope selector.
+ * Renders a total card and a row table.
  *
  * No charts in this tag — v1.1.1.1 adds a Recharts bar chart.
  */
@@ -82,7 +82,7 @@ export function UsagePane(): JSX.Element {
     reload,
   } = useAsyncState(
     () =>
-      // tenant_id omitted: the backend defaults the single owner.
+      // Single owner (DEC-033): no scope key — the backend serves the owner.
       client.getUsage({
         since: since ? toIsoStart(since) : undefined,
         until: until ? toIsoEnd(until) : undefined,

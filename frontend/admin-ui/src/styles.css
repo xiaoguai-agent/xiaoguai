@@ -462,11 +462,6 @@ tr:last-child td { border-bottom: none; }
   color: var(--muted);
 }
 
-.timeline-card-row .tenant {
-  font-family: 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 11px;
-}
-
 .timeline-card-row .ts {
   margin-left: auto;
 }

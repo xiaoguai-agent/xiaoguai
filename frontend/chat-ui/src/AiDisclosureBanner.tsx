@@ -5,16 +5,16 @@
  *  - Shown at the top of every new session (above HotlBanner when present).
  *  - Dismissible per-session via localStorage with a session-scoped key so
  *    it resurfaces on every new browser session / tab.
- *  - Operator-configurable per tenant via AiDisclosureConfig:
+ *  - Operator-configurable via AiDisclosureConfig:
  *      enabled        — hide the banner entirely (default true)
  *      dismissible    — show the dismiss button (default true; set false for
- *                       regulated tenants where the banner must always be visible)
+ *                       regulated operators where the banner must always be visible)
  *      text_override  — replace the default translated text
  *      link_to_disclosure — render a "Learn more" link
  *
- * The config is fetched once on mount from /v1/tenants/:id/config.
- * If the endpoint is absent (not yet wired) getAiDisclosureConfig gracefully
- * falls back to defaults (enabled=true, dismissible=true).
+ * DEC-033 (single owner): there is no per-owner config endpoint, so
+ * getAiDisclosureConfig returns the built-in global defaults (enabled=true,
+ * dismissible=true). Pass the optional `config` prop to override.
  */
 
 import { useEffect, useState } from 'react';
@@ -26,8 +26,6 @@ import { getTranslations } from './i18n';
 const DISMISS_KEY = 'xiaoguai.ai_disclosure.dismissed';
 
 interface Props {
-  /** Tenant ID used to fetch per-tenant config overrides. */
-  tenantId: string;
   /** Base URL for the API client (optional; defaults to same origin). */
   baseUrl?: string;
   /**
@@ -37,7 +35,7 @@ interface Props {
   config?: AiDisclosureConfig;
 }
 
-export function AiDisclosureBanner({ tenantId, baseUrl, config: propConfig }: Props) {
+export function AiDisclosureBanner({ baseUrl, config: propConfig }: Props) {
   const [config, setConfig] = useState<AiDisclosureConfig | null>(propConfig ?? null);
   const [dismissed, setDismissed] = useState<boolean>(() => {
     try {
@@ -47,11 +45,11 @@ export function AiDisclosureBanner({ tenantId, baseUrl, config: propConfig }: Pr
     }
   });
 
-  // Fetch per-tenant config once on mount (skipped when propConfig is provided).
+  // Fetch the global config once on mount (skipped when propConfig is provided).
   useEffect(() => {
     if (propConfig !== undefined) return;
-    void getAiDisclosureConfig(tenantId, { baseUrl }).then(setConfig);
-  }, [tenantId, baseUrl, propConfig]);
+    void getAiDisclosureConfig({ baseUrl }).then(setConfig);
+  }, [baseUrl, propConfig]);
 
   function handleDismiss() {
     try {

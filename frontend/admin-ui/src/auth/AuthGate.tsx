@@ -1,8 +1,9 @@
 /**
  * AuthGate — single-owner HTTP Basic login (DEC-033).
  *
- * The backend has no OIDC/JWT/tenants; access (when the owner has configured
- * one) is a single username + password via HTTP Basic. This gate registers a
+ * The backend has no OIDC/JWT and no multi-owner model; access (when the
+ * owner has configured one) is a single username + password via HTTP Basic.
+ * This gate registers a
  * 401 handler on the shared client so that whenever any request returns
  * `401 Unauthorized` a login modal appears. When the backend runs open (no
  * credential), nothing ever 401s and this is invisible.

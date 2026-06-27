@@ -145,8 +145,6 @@
     "skills_page": {
       "title": "技能包",
       "subtitle": "浏览并安装预置的技能包。技能包为助手扩展领域专属的工具、提示词和 RAG 索引。",
-      "tenant_label": "租户",
-      "tenant_placeholder": "租户 ID",
       "loading": "加载中…",
       "error": "错误：{{message}}",
       "empty": "暂无可用的技能包。",

@@ -35,7 +35,6 @@ import {
 function makeProposal(overrides: Partial<SkillProposal> = {}): SkillProposal {
   return {
     id: 'prop-001',
-    tenant_id: 'ten_demo',
     proposed_by: 'agent:planner-default',
     manifest: {
       name: 'github-search',
@@ -89,7 +88,6 @@ beforeEach(() => {
   __resetFailOpenWarned();
   if (typeof localStorage !== 'undefined') {
     localStorage.clear();
-    localStorage.setItem('xiaoguai_admin_proposals_tenant', 'ten_demo');
   }
 });
 
@@ -183,7 +181,6 @@ describe('<SkillProposalsPane>', () => {
     renderPane(client);
     await waitFor(() => expect(list).toHaveBeenCalled());
     const firstArg = list.mock.calls[0]![0];
-    expect(firstArg.tenant_id).toBe('ten_demo');
     expect(firstArg.status).toBe('pending');
   });
 

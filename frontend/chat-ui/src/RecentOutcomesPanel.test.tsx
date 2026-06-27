@@ -29,7 +29,6 @@ const mockClient = client as unknown as { getSessionOutcomesSummary: ReturnType<
 
 const sampleSummary: SessionOutcomesSummary = {
   session_id: 'ses-001',
-  tenant_id: 'ten_dev',
   by_kind: {
     tickets_resolved: { count: 3, sum: 3, unit: null },
     hours_saved: { count: 1, sum: 2.5, unit: 'h' },

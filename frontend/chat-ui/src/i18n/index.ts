@@ -114,8 +114,6 @@ interface TranslationShape {
     skills_page: {
       title: string;
       subtitle: string;
-      tenant_label: string;
-      tenant_placeholder: string;
       loading: string;
       error: string;
       empty: string;
