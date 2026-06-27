@@ -59,7 +59,6 @@ interface DisplayBubble {
 }
 
 const DEV_USER_ID = 'usr_dev';
-const DEV_TENANT_ID = 'ten_dev';
 // Fallback model when no provider is configured or the providers list can't be
 // fetched. The model picker (populated from the registered providers) normally
 // supplies the real choice; empty → the server applies its own default model.
@@ -754,7 +753,7 @@ export function ChatPage({ onSessionCreated }: Props) {
         />
       )}
       {/* AI disclosure banner (EU AI Act Art. 50(1)) — always above HotlBanner */}
-      <AiDisclosureBanner tenantId={DEV_TENANT_ID} />
+      <AiDisclosureBanner />
       {/* Chat header — order: AiDisclosureBanner > HotlBanner > WatchIndicator */}
       <div className="chat-header">
         {/* AiDisclosureBanner placeholder — wired by feat/chat-ui-ai-disclosure branch */}

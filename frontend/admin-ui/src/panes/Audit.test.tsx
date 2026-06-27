@@ -26,7 +26,6 @@ function makeEntry(overrides: Partial<AuditEntryView> = {}): AuditEntryView {
   return {
     id: 1,
     ts: '2026-05-29T12:00:00Z',
-    tenant_id: 'ten_dev',
     actor: 'actor_1',
     action: 'session.message',
     resource: 'sess_1',
@@ -141,7 +140,6 @@ describe('<AuditPane>', () => {
 
     await waitFor(() => expect(createExport).toHaveBeenCalledTimes(1));
     const req = createExport.mock.calls[0]?.[0];
-    expect(req?.tenant_id).toBe('ten_dev');
     expect(req?.framework).toBe('soc2');
     expect(req?.from).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(req?.to).toMatch(/^\d{4}-\d{2}-\d{2}T/);

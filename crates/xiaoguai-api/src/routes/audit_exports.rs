@@ -86,9 +86,9 @@ pub async fn export_audit(
 
     let result = exporter
         .export(ExportRequest {
-            // Single implicit owner: the audit chain HMAC is signed/verified
-            // with the audit-crate OWNER value, so the export tenant must match.
-            tenant_id: xiaoguai_audit::OWNER_TENANT_ID.to_string(),
+            // Single implicit owner: the audit chain HMAC is signed/verified with
+            // the audit-crate OWNER value; the exporter resolves the owner
+            // internally, so no wire tenant is threaded here.
             framework: req.framework,
             format: req.format,
             from: req.from,

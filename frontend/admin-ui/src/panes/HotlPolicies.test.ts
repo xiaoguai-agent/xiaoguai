@@ -15,7 +15,6 @@ import { ApiError, XiaoguaiClient } from '@xiaoguai/shared';
 // ---------------------------------------------------------------------------
 
 interface FormState {
-  tenant_id: string;
   scope: string;
   window_seconds: string;
   max_count: string;
@@ -24,7 +23,6 @@ interface FormState {
 }
 
 interface FormErrors {
-  tenant_id?: string;
   scope?: string;
   window_seconds?: string;
   limits?: string;
@@ -34,7 +32,6 @@ interface FormErrors {
 
 function buildFormErrors(f: FormState): FormErrors {
   const errs: FormErrors = {};
-  if (!f.tenant_id.trim()) errs.tenant_id = 'Tenant ID is required';
   if (!f.scope.trim()) errs.scope = 'Scope is required';
   const w = Number(f.window_seconds);
   if (!f.window_seconds.trim() || isNaN(w) || w <= 0) {
@@ -68,7 +65,6 @@ function fmtWindow(seconds: number): string {
 
 function formToRequest(f: FormState) {
   return {
-    tenant_id: f.tenant_id.trim(),
     scope: f.scope.trim(),
     window_seconds: Number(f.window_seconds),
     max_count: f.max_count.trim() !== '' ? Number(f.max_count) : null,
@@ -87,7 +83,6 @@ function is503(err: unknown): boolean {
 
 describe('buildFormErrors — required fields', () => {
   const base: FormState = {
-    tenant_id: 'tid',
     scope: 'llm_call',
     window_seconds: '3600',
     max_count: '10',
@@ -108,11 +103,6 @@ describe('buildFormErrors — required fields', () => {
   it('returns no errors when both max_count and max_usd are set', () => {
     const errs = buildFormErrors({ ...base, max_usd: '2.50' });
     expect(Object.keys(errs)).toHaveLength(0);
-  });
-
-  it('requires tenant_id', () => {
-    const errs = buildFormErrors({ ...base, tenant_id: '' });
-    expect(errs.tenant_id).toBeTruthy();
   });
 
   it('requires scope', () => {
@@ -143,7 +133,6 @@ describe('buildFormErrors — required fields', () => {
 describe('buildFormErrors — business rule: at least one limit', () => {
   it('flags limits error when both max_count and max_usd are empty', () => {
     const errs = buildFormErrors({
-      tenant_id: 'tid',
       scope: 'llm_call',
       window_seconds: '60',
       max_count: '',
@@ -156,7 +145,6 @@ describe('buildFormErrors — business rule: at least one limit', () => {
 
   it('accepts max_count=1 alone (no limits error)', () => {
     const errs = buildFormErrors({
-      tenant_id: 'tid',
       scope: 'llm_call',
       window_seconds: '60',
       max_count: '1',
@@ -168,7 +156,6 @@ describe('buildFormErrors — business rule: at least one limit', () => {
 
   it('accepts max_usd=0 alone (no limits error)', () => {
     const errs = buildFormErrors({
-      tenant_id: 'tid',
       scope: 'llm_call',
       window_seconds: '60',
       max_count: '',
@@ -180,7 +167,6 @@ describe('buildFormErrors — business rule: at least one limit', () => {
 
   it('flags max_count error when value is 0 (not > 0)', () => {
     const errs = buildFormErrors({
-      tenant_id: 'tid',
       scope: 'llm_call',
       window_seconds: '60',
       max_count: '0',
@@ -192,7 +178,6 @@ describe('buildFormErrors — business rule: at least one limit', () => {
 
   it('flags max_count error when value is fractional', () => {
     const errs = buildFormErrors({
-      tenant_id: 'tid',
       scope: 'llm_call',
       window_seconds: '60',
       max_count: '1.5',
@@ -204,7 +189,6 @@ describe('buildFormErrors — business rule: at least one limit', () => {
 
   it('flags max_usd error when value is negative', () => {
     const errs = buildFormErrors({
-      tenant_id: 'tid',
       scope: 'llm_call',
       window_seconds: '60',
       max_count: '',
@@ -243,14 +227,12 @@ describe('fmtWindow', () => {
 describe('formToRequest', () => {
   it('maps trimmed fields to the correct request shape', () => {
     const req = formToRequest({
-      tenant_id: '  tid  ',
       scope: 'llm_call',
       window_seconds: '3600',
       max_count: '100',
       max_usd: '',
       escalate_to: 'ops@example.com',
     });
-    expect(req.tenant_id).toBe('tid');
     expect(req.window_seconds).toBe(3600);
     expect(req.max_count).toBe(100);
     expect(req.max_usd).toBeNull();
@@ -259,7 +241,6 @@ describe('formToRequest', () => {
 
   it('maps empty escalate_to to null', () => {
     const req = formToRequest({
-      tenant_id: 'tid',
       scope: 'email_send',
       window_seconds: '60',
       max_count: '',
@@ -302,7 +283,6 @@ describe('HotlPolicy shape', () => {
   it('accepts the expected wire shape', () => {
     const p: HotlPolicy = {
       id: 'aaa-bbb',
-      tenant_id: '111-222',
       scope: 'llm_call',
       window_seconds: 3600,
       max_count: 100,
@@ -316,7 +296,6 @@ describe('HotlPolicy shape', () => {
   it('allows null max_count and null escalate_to', () => {
     const p: HotlPolicy = {
       id: 'id1',
-      tenant_id: 'tid1',
       scope: 'email_send',
       window_seconds: 60,
       max_count: null,
@@ -334,7 +313,6 @@ describe('HotlPolicy shape', () => {
 
 const SAMPLE_POLICY: HotlPolicy = {
   id: 'pol-001',
-  tenant_id: 'ten-001',
   scope: 'llm_call',
   window_seconds: 3600,
   max_count: 100,
@@ -347,19 +325,18 @@ describe('XiaoguaiClient HotL list + create', () => {
     vi.restoreAllMocks();
   });
 
-  it('listHotlPolicies GETs /v1/hotl/policies with tenant_id param', async () => {
+  it('listHotlPolicies GETs /v1/hotl/policies', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [SAMPLE_POLICY],
     });
     const c = new XiaoguaiClient({ baseUrl: 'http://localhost:8080', fetchImpl: mockFetch });
 
-    const result = await c.listHotlPolicies({ tenant_id: 'ten-001' });
+    const result = await c.listHotlPolicies();
 
     expect(mockFetch).toHaveBeenCalledOnce();
     const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toContain('/v1/hotl/policies');
-    expect(url).toContain('tenant_id=ten-001');
     expect(result).toHaveLength(1);
     expect(result[0]?.scope).toBe('llm_call');
   });
@@ -371,7 +348,7 @@ describe('XiaoguaiClient HotL list + create', () => {
     });
     const c = new XiaoguaiClient({ baseUrl: 'http://localhost:8080', fetchImpl: mockFetch });
 
-    await c.listHotlPolicies({ tenant_id: 'ten-001', scope: 'email_send' });
+    await c.listHotlPolicies({ scope: 'email_send' });
 
     const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toContain('scope=email_send');
@@ -385,7 +362,6 @@ describe('XiaoguaiClient HotL list + create', () => {
     const c = new XiaoguaiClient({ baseUrl: 'http://localhost:8080', fetchImpl: mockFetch });
 
     const result = await c.createHotlPolicy({
-      tenant_id: 'ten-001',
       scope: 'llm_call',
       window_seconds: 3600,
       max_count: 100,
@@ -413,7 +389,6 @@ describe('XiaoguaiClient HotL update + delete', () => {
     const c = new XiaoguaiClient({ baseUrl: 'http://localhost:8080', fetchImpl: mockFetch });
 
     const result = await c.updateHotlPolicy('pol-001', {
-      tenant_id: 'ten-001',
       scope: 'llm_call',
       window_seconds: 3600,
       max_count: 200,
@@ -470,7 +445,6 @@ describe('XiaoguaiClient HotL check', () => {
     const c = new XiaoguaiClient({ baseUrl: 'http://localhost:8080', fetchImpl: mockFetch });
 
     const result = await c.checkHotlPolicy({
-      tenant_id: 'ten-001',
       scope: 'llm_call',
       amount: 1.0,
     });
@@ -479,7 +453,6 @@ describe('XiaoguaiClient HotL check', () => {
     expect(url).toBe('http://localhost:8080/v1/hotl/check');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toEqual({
-      tenant_id: 'ten-001',
       scope: 'llm_call',
       amount: 1.0,
     });
@@ -499,7 +472,6 @@ describe('XiaoguaiClient HotL check', () => {
     const c = new XiaoguaiClient({ baseUrl: 'http://localhost:8080', fetchImpl: mockFetch });
 
     const result = await c.checkHotlPolicy({
-      tenant_id: 'ten-001',
       scope: 'llm_call',
       amount: 1.0,
     });
@@ -520,7 +492,6 @@ describe('XiaoguaiClient HotL check', () => {
     const c = new XiaoguaiClient({ baseUrl: 'http://localhost:8080', fetchImpl: mockFetch });
 
     const result = await c.checkHotlPolicy({
-      tenant_id: 'ten-001',
       scope: 'llm_call',
       amount: 0.0025,
     });
@@ -538,7 +509,6 @@ describe('XiaoguaiClient HotL check', () => {
     const c = new XiaoguaiClient({ baseUrl: 'http://localhost:8080', fetchImpl: mockFetch });
 
     const err = await c.checkHotlPolicy({
-      tenant_id: 'ten-001',
       scope: 'llm_call',
       amount: 1.0,
     }).catch((e: unknown) => e);
@@ -566,7 +536,7 @@ describe('503 fallback — listHotlPolicies', () => {
     });
     const c = new XiaoguaiClient({ baseUrl: 'http://localhost:8080', fetchImpl: mockFetch });
 
-    const err = await c.listHotlPolicies({ tenant_id: 'ten-001' }).catch((e: unknown) => e);
+    const err = await c.listHotlPolicies().catch((e: unknown) => e);
     expect(is503(err)).toBe(true);
   });
 
@@ -577,7 +547,7 @@ describe('503 fallback — listHotlPolicies', () => {
     });
     const c = new XiaoguaiClient({ baseUrl: 'http://localhost:8080', fetchImpl: mockFetch });
 
-    const result = await c.listHotlPolicies({ tenant_id: 'ten-001' });
+    const result = await c.listHotlPolicies();
     expect(result).toEqual([]);
   });
 });

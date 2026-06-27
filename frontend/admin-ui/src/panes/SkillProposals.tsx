@@ -8,9 +8,7 @@
  * fails open when `/v1/admin/me/scopes` is absent, so older deployments
  * keep working.
  *
- * Tenant scoping: like the Personas pane, the backend requires a
- * `tenant_id` query param on the list call. The pane remembers the
- * operator's last choice in `localStorage`.
+ * DEC-033 (single owner): the list call carries no scope key.
  *
  * Backend gap (DEC-014): the Rust `approve_proposal_handler` does NOT
  * accept an optional reviewer comment — only `decided_by` is recognised.
@@ -92,7 +90,6 @@ export function statusClassName(status: SkillProposalStatus): string {
 // Component
 // ---------------------------------------------------------------------------
 
-const TENANT_STORAGE_KEY = 'xiaoguai_admin_proposals_tenant';
 /**
  * The backend records `decided_by` to audit who approved/rejected. The
  * frontend doesn't yet have a logged-in user identity wired through, so
@@ -115,10 +112,6 @@ export function SkillProposalsPane({
   const c = client ?? defaultClient;
   const { t } = useTranslation();
 
-  const [tenantId, setTenantId] = useState<string>(() => {
-    if (typeof localStorage === 'undefined') return '';
-    return localStorage.getItem(TENANT_STORAGE_KEY) ?? '';
-  });
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending');
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
   const [modal, setModal] = useState<ModalState>({ kind: 'closed' });
@@ -128,20 +121,10 @@ export function SkillProposalsPane({
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  useEffect(() => {
-    if (typeof localStorage === 'undefined') return;
-    if (tenantId) localStorage.setItem(TENANT_STORAGE_KEY, tenantId);
-  }, [tenantId]);
-
   const refresh = useCallback(async () => {
-    if (!tenantId.trim()) {
-      setLoad({ kind: 'ok', proposals: [] });
-      return;
-    }
     setLoad({ kind: 'loading' });
     try {
       const proposals = await c.listSkillProposals({
-        tenant_id: tenantId.trim(),
         status: statusToQuery(statusFilter),
       });
       setLoad({ kind: 'ok', proposals });
@@ -155,7 +138,7 @@ export function SkillProposalsPane({
         message: err instanceof Error ? err.message : String(err),
       });
     }
-  }, [c, tenantId, statusFilter]);
+  }, [c, statusFilter]);
 
   useEffect(() => {
     void refresh();
@@ -280,16 +263,6 @@ export function SkillProposalsPane({
       </div>
 
       <div className="toolbar" role="search" aria-label="proposals filters">
-        <label>
-          <span>{t('pane.skill_proposals.tenant_id_label')}</span>
-          <input
-            type="text"
-            value={tenantId}
-            placeholder={t('pane.skill_proposals.tenant_id_placeholder')}
-            onChange={(e) => setTenantId(e.target.value)}
-            aria-label={t('pane.skill_proposals.tenant_id_label')}
-          />
-        </label>
         <label>
           <span>{t('pane.skill_proposals.filter_status_label')}</span>
           <select

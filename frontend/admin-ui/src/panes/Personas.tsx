@@ -2,7 +2,7 @@
  * v1.8.0 (sprint-10b S10b-2) — Personas pane.
  *
  * CRUD against `/v1/personas` (mounted by S10b-1 Phase A). The pane:
- *   - Shows a filterable table of personas (single owner — no tenant scope).
+ *   - Shows a filterable table of personas (single owner — no scope axis).
  *   - Colour-codes the role tag (sprint-9 DEC-021 triangle): planner /
  *     worker / critic. The persona's role is inferred from a
  *     `role/<name>` token in the system prompt (the DTO has no

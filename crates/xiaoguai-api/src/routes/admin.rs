@@ -67,7 +67,7 @@ pub async fn verify_audit(State(state): State<AppState>) -> ApiResult<Json<Verif
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("audit verifier not wired".into()))?;
     let report = verifier
-        .verify_tenant(xiaoguai_audit::OWNER_TENANT_ID)
+        .verify()
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("audit verify: {e}")))?;
     let body = match report {
@@ -135,7 +135,7 @@ pub async fn list_audit(
         .ok_or_else(|| ApiError::ServiceUnavailable("audit reader not wired".into()))?;
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let rows = reader
-        .list(xiaoguai_audit::OWNER_TENANT_ID, q.since, q.until, limit)
+        .list(q.since, q.until, limit)
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("audit list: {e}")))?;
     Ok(Json(rows))

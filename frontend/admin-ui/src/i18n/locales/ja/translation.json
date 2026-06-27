@@ -13,9 +13,6 @@
     "retry": "再試行",
     "failed": "失敗：{{message}}",
     "noData": "データがありません。",
-    "all_tenants": "（全テナント）",
-    "tenant_id": "テナント ID",
-    "tenant": "テナント",
     "copy": "コピー",
     "copied": "コピー済み！",
     "copied_aria": "クリップボードにコピーしました",
@@ -32,7 +29,6 @@
     "usage": "使用量",
     "manage": "管理",
     "anomaly": "異常検知",
-    "tenants": "テナント",
     "providers": "LLM プロバイダー",
     "mcp_servers": "MCP サーバー",
     "marketplace": "MCP マーケット",
@@ -54,7 +50,7 @@
       "title": "今日",
       "pause_auto_refresh": "自動更新を一時停止",
       "refreshed_ago": "{{relative}}前に更新",
-      "filter_placeholder": "プレビューまたはテナントで絞り込み…",
+      "filter_placeholder": "プレビューで絞り込み…",
       "range_last_24h": "過去 24 時間",
       "range_last_7d": "過去 7 日間",
       "range_all": "全期間",
@@ -69,7 +65,6 @@
       "kind_im": "IM",
       "kind_scheduled": "スケジュール",
       "detail_timestamp": "タイムスタンプ",
-      "detail_tenant": "テナント",
       "detail_session": "セッション",
       "detail_user": "ユーザー",
       "detail_started": "開始日時",
@@ -96,8 +91,6 @@
     "usage": {
       "title": "トークン使用量",
       "filter_aria": "使用量フィルター",
-      "label_tenant": "テナント",
-      "placeholder_all_tenants": "（全テナント）",
       "label_since": "開始日",
       "label_until": "終了日",
       "label_group_by": "グループ化",
@@ -109,7 +102,7 @@
       "cost_not_configured": "コスト：— （レートが未設定）",
       "cost": "コスト：{{amount}}",
       "empty_loading": "読み込み中…",
-      "empty_no_rows": "この期間の使用量データがありません。日付範囲を広げるか別のテナントを選択してください。",
+      "empty_no_rows": "この期間の使用量データがありません。日付範囲を広げてください。",
       "col_date": "日付",
       "col_provider": "プロバイダー",
       "col_model": "モデル",
@@ -142,15 +135,12 @@
       "btn_firing": "実行中…",
       "fired_ok": "{{id}} を実行しました。まもなく処理されます。",
       "tokens_title": "Webhook トークン",
-      "tokens_description": "公開 Webhook エンドポイント POST /v1/scheduler/webhooks/:route_id 用のテナントトークン。X-Xiaoguai-Token ヘッダーで渡してください。",
-      "tokens_placeholder_tenant": "tenant_id",
+      "tokens_description": "公開 Webhook エンドポイント POST /v1/scheduler/webhooks/:route_id 用のトークン。X-Xiaoguai-Token ヘッダーで渡してください。",
       "tokens_placeholder_route": "route_id",
-      "tokens_placeholder_filter": "tenant_id で絞り込み",
       "tokens_btn_mint": "トークン発行",
       "tokens_new_token": "新しいトークン（今すぐ保存してください — 再表示されません）：",
       "tokens_btn_dismiss": "閉じる",
       "tokens_col_token": "トークン",
-      "tokens_col_tenant": "テナント",
       "tokens_col_route": "ルート",
       "tokens_col_created": "作成日時",
       "tokens_col_last_used": "最終使用",
@@ -159,8 +149,6 @@
       "tokens_empty_none": "トークンがありません。",
       "create_label_description": "説明",
       "create_placeholder_description": "例：毎日 8 時に r/LocalLLaMA + HN をスキャンし結果を Telegram に送信",
-      "create_label_tenant": "テナント（任意）",
-      "create_placeholder_tenant": "tenant_id",
       "create_btn_compile": "コンパイル",
       "create_btn_compiling": "コンパイル中…",
       "create_btn_save": "保存",
@@ -196,7 +184,6 @@
     },
     "audit": {
       "title": "監査ログ",
-      "label_tenant_id": "テナント ID",
       "col_id": "ID",
       "col_timestamp": "タイムスタンプ",
       "col_actor": "操作者",
@@ -215,12 +202,12 @@
       "btn_exporting": "エクスポート中…",
       "export_done": "エクスポートをダウンロードしました。",
       "export_failed": "エクスポートに失敗しました：{{message}}",
-      "empty_for_tenant": "テナント {{tenant}} の監査レコードがありません。",
       "intro": {
         "purpose": "監査ログ —— すべての統制対象アクション(誰が/何を/いつ)の追記専用・改ざん検知可能な証跡。ハッシュチェーン付きで記録が改変されていないことを証明できます。",
-        "usage": "テナントで絞り込んで証跡を狭め、行を展開して詳細を確認、またはアクションのハッシュチェーン検証を再生します。",
+        "usage": "行を展開して詳細を確認、またはアクションのハッシュチェーン検証を再生します。",
         "usage_label": "使い方"
-      }
+      },
+      "empty": "監査レコードがありません。"
     },
     "mcp_servers": {
       "title": "MCP サーバー",
@@ -229,9 +216,7 @@
       "col_name": "名前",
       "col_version": "バージョン",
       "col_transport": "トランスポート",
-      "col_scope": "スコープ",
       "col_command_endpoint": "コマンド / エンドポイント",
-      "scope_global": "グローバル",
       "intro": {
         "purpose": "MCP サーバー —— 現在エージェントに接続されている外部ツールサーバー(Model Context Protocol)。ファイルアクセス・検索・Office 文書変換などの機能を提供します。",
         "usage": "これは登録済みサーバーとそのトランスポートの読み取り専用一覧です。サーバーを追加するには「MCP マーケットプレイス」ペインからインストールします。",
@@ -248,10 +233,6 @@
       "btn_installing": "インストール中…",
       "btn_installed": "✓ インストール済み",
       "btn_retry": "再試行"
-    },
-    "tenants": {
-      "title": "テナント",
-      "placeholder": "テナント管理エンドポイント（/v1/admin/tenants）は v0.6.1 バックログにあります — リリース後にこのペインでテナントの一覧表示・作成・アーカイブが可能になります。"
     },
     "providers": {
       "title": "LLM プロバイダー",
@@ -299,7 +280,6 @@
       "tab_session": "セッションチェーン",
       "tab_summary": "サマリー",
       "filters_label": "成果フィルター",
-      "tenant_placeholder": "（テナント ID を入力）",
       "range_label": "期間",
       "kind_label": "種別",
       "kind_placeholder": "例: revenue_usd",
@@ -307,7 +287,6 @@
       "session_placeholder": "session_id で絞り込み",
       "agent_label": "エージェント",
       "agent_placeholder": "エージェント名で絞り込み",
-      "empty_no_tenant": "テナント ID を入力して成果を読み込んでください。",
       "empty_no_records": "この期間に成果の記録はありません。",
       "records_count": "件",
       "list_label": "成果レコード",
@@ -341,7 +320,7 @@
       "nav_outcomes": "成果",
       "intro": {
         "purpose": "ビジネス成果台帳 —— エージェントが生み出した具体的な結果(成約、チケット解決、獲得/節約した金額)を記録し、生成元のセッションに紐付けます。",
-        "usage": "テナント・種別・セッション・エージェントで絞り込んで成果を探し、行をクリックすると生成元セッションとその来歴チェーンに展開できます。",
+        "usage": "種別・セッション・エージェントで絞り込んで成果を探し、行をクリックすると生成元セッションとその来歴チェーンに展開できます。",
         "usage_label": "使い方"
       }
     },
@@ -648,8 +627,6 @@
     "skill_proposals": {
       "title": "スキル提案",
       "subtitle": "Agent が作成したスキルマニフェストを審査します（DEC-014）。承認するとマニフェストがディスクに書き込まれ、状態は `installed` に遷移します。却下すると理由が Agent に返されます。",
-      "tenant_id_label": "テナント",
-      "tenant_id_placeholder": "ten_demo",
       "filter_status_label": "ステータス",
       "filter_status_pending": "保留中",
       "filter_status_all": "すべて",
