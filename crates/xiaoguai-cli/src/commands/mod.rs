@@ -48,6 +48,7 @@ pub mod chat;
 pub mod cli_config;
 pub mod code;
 pub mod completions;
+pub mod demo_seed;
 pub mod doctor;
 pub mod eval;
 pub mod hotl;

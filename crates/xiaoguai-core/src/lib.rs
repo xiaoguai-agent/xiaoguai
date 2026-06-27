@@ -24,6 +24,9 @@ pub mod acp_bridge;
 mod audit_bridge;
 pub mod banners;
 pub mod coding_bridge;
+// Demo-only consult/execute tool pair (`demo_read_note` / `demo_write_note`),
+// registered into the agent toolbox when `XIAOGUAI_DEMO_TOOLS` is truthy.
+pub mod demo_tools;
 mod eval_bridge;
 pub mod hotl_bridge;
 // T7.2: pub so the CLI (`xiaoguai memory import/export`) reuses
@@ -415,6 +418,24 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                 Arc::new(Toolbox::new())
             }
         }
+    };
+
+    // Demo consult/execute tools (`demo_read_note` / `demo_write_note`),
+    // opt-in via `XIAOGUAI_DEMO_TOOLS`. Registered AFTER the coding tools so a
+    // live demo of the read-only (consult) split works without depending on the
+    // model to pick a write tool: `demo_write_note` is `MutationHint::Write`, so
+    // consult mode hides it (layer 1) and the ConsultGate denies + audits it
+    // (layer 2). Off by default — no demo surface in production.
+    let toolbox = if crate::demo_tools::demo_tools_enabled() {
+        let extended = crate::demo_tools::with_demo_tools(&toolbox);
+        tracing::info!(
+            tools = extended.len(),
+            "serve: demo consult/execute tools registered (XIAOGUAI_DEMO_TOOLS) — \
+             demo_read_note (read) + demo_write_note (write)"
+        );
+        Arc::new(extended)
+    } else {
+        toolbox
     };
 
     // Tier-2 prereq: build the HOTL enforcer once, share between

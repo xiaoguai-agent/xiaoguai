@@ -2,6 +2,7 @@ import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { TodayPane } from './panes/Today';
 import { SchedulerPane } from './panes/Scheduler';
+import { LoopsPane } from './panes/Loops';
 import { EvalPane } from './panes/Eval';
 import { McpServersPane } from './panes/McpServers';
 import { MarketplacePane } from './panes/Marketplace';
@@ -39,6 +40,11 @@ export function App() {
         </NavLink>
         <NavLink to="/scheduler" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.scheduler')}
+        </NavLink>
+        {/* feat(single-owner-ux): Loops — runtime view of the agent's self-driving
+            /loop heartbeat (status + cancel/resume), sits beside the Scheduler. */}
+        <NavLink to="/loops" className={({ isActive }) => (isActive ? 'active' : '')}>
+          {t('nav.loops')}
         </NavLink>
         <NavLink to="/eval" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.eval')}
@@ -107,6 +113,7 @@ export function App() {
           <Route path="/" element={<Navigate to="/today" replace />} />
           <Route path="/today" element={<TodayPane />} />
           <Route path="/scheduler" element={<SchedulerPane />} />
+          <Route path="/loops" element={<LoopsPane />} />
           <Route path="/eval" element={<EvalPane />} />
           <Route path="/usage" element={<UsagePane />} />
           <Route path="/outcomes" element={<OutcomesPane />} />

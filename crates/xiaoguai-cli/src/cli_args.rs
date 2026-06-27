@@ -48,6 +48,23 @@ pub enum Cmd {
     /// a systemd `ExecStartPre=` or container healthcheck.
     Smoke,
 
+    /// Seed the local store with lifelike sample data so every admin/chat pane
+    /// has something to show in a live demo.
+    ///
+    /// Writes to the SAME `SQLite` store `xiaoguai serve` reads, through the
+    /// real HMAC audit chain (so the activity-history verify badge is green).
+    /// Seeds a few sessions+messages, two scheduled jobs, a flat `token_usage`
+    /// baseline with one tail spike (so an anomaly fires), and one incident +
+    /// RCA. Idempotent — re-running clears prior demo rows first. Needs an
+    /// audit signing key in `XIAOGUAI_AUDIT_SIGNING_KEY` (same as `serve`).
+    DemoSeed {
+        /// Clear all previously-seeded demo data and stop (leaves the store
+        /// demo-free). The append-only audit chain is not deleted — see the
+        /// printed note.
+        #[arg(long)]
+        reset: bool,
+    },
+
     /// Serve the Agent Client Protocol (ACP) over stdio for IDE integration.
     ///
     /// Speaks newline-delimited JSON-RPC on stdin/stdout (logs go to stderr);
