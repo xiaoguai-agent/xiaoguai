@@ -1,0 +1,51 @@
+# Standalone Cargo project for the Xiaoguai Floater desktop thin-client.
+#
+# This intentionally declares its own empty `[workspace]` so it is NOT pulled
+# into the root 38-crate workspace. Rationale (DEC-033 — single binary):
+#   * The main workspace builds ONE server binary; the floater is a separate
+#     thin client that only talks to a running `xiaoguai serve` over HTTP.
+#   * Tauri drags in heavy native deps (tao/wry/webkit2gtk on Linux) and a
+#     `[profile]` of its own — keeping it out of the root workspace avoids
+#     bloating the server build and the `rust.yml` CI matrix.
+[package]
+name = "xiaoguai-floater"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight floating-window chat client for a local xiaoguai serve."
+authors = ["Xiaoguai Maintainers"]
+license = "Apache-2.0"
+repository = "https://github.com/xiaoguai-agent/xiaoguai"
+
+# Detach from the parent workspace (the root Cargo.toml).
+[workspace]
+
+[lib]
+# Tauri v2 mobile-ready layout: the app lives in a lib so the same code can be
+# reused by a (future) mobile entrypoint. The desktop binary just calls run().
+name = "xiaoguai_floater_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# reqwest does the HTTP from the Rust side (NOT the webview) so we bypass the
+# serve's CORS allow-list — a Tauri webview origin (`tauri://localhost`) is not
+# a loopback origin, so a webview `fetch` to :7600 would be CORS-blocked.
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls",
+  "stream",
+  "json",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+futures-util = "0.3"
+thiserror = "2"
+base64 = "0.22"
+
+[features]
+# Default Tauri custom-protocol gate used by `tauri build` for production.
+custom-protocol = ["tauri/custom-protocol"]
