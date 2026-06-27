@@ -13,7 +13,6 @@ function makeEntry(overrides: Partial<AuditEntryView> = {}): AuditEntryView {
   return {
     id: 1,
     ts: '2026-06-05T12:00:00Z',
-    tenant_id: 'ten_local_owner',
     actor: 'agent',
     action: 'session.message',
     resource: null,

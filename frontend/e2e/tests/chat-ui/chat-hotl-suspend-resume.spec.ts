@@ -38,7 +38,6 @@ async function mockSessionCreate(page: Page): Promise<void> {
         contentType: 'application/json',
         body: JSON.stringify({
           id: SESSION_ID,
-          tenant_id: 'ten_dev',
           user_id: 'usr_dev',
           title: 'HotL e2e',
           created_at: new Date().toISOString(),
@@ -604,7 +603,6 @@ test.describe('chat-ui HotL suspend/resume e2e (sprint-12 S12-10 — §4.3.2)', 
             contentType: 'application/json',
             body: JSON.stringify({
               id: sharedSessionId,
-              tenant_id: 'ten_dev',
               user_id: 'usr_dev',
               title: 'sibling',
               created_at: new Date().toISOString(),

@@ -12,7 +12,6 @@ import { TrustTiers, classifyTier } from './TrustTiers';
 function makePolicy(overrides: Partial<HotlPolicy> = {}): HotlPolicy {
   return {
     id: 'pol_1',
-    tenant_id: 'ten_local_owner',
     scope: 'llm_call',
     window_seconds: 3600,
     max_count: 10,

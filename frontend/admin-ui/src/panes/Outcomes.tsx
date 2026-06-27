@@ -254,7 +254,7 @@ function ListView({ onDrillIn }: ListViewProps): JSX.Element {
     setError(null);
     setPage(0);
     try {
-      // tenant_id omitted: the backend defaults the single owner.
+      // Single owner (DEC-033): no scope key — the backend serves the owner.
       const rows = await client.listOutcomes({
         range,
         kind: kindFilter.trim() || undefined,
@@ -461,7 +461,7 @@ function SessionView({ initialSessionId }: SessionViewProps): JSX.Element {
 
         // Best-effort: fetch outcomes for the target session only.
         // The row-click path passes session_id; we piggyback on listOutcomes
-        // with a wide range. tenant_id is omitted — the backend defaults the owner.
+        // with a wide range. Single owner (DEC-033): no scope key.
         try {
           const rows = await client.listOutcomes({ range: '30d' });
           const bySession = new Map<string, OutcomeRecord[]>();
@@ -553,7 +553,7 @@ function SummaryView(): JSX.Element {
     setLoading(true);
     setError(null);
     try {
-      // tenant_id omitted: the backend defaults the single owner.
+      // Single owner (DEC-033): no scope key — the backend serves the owner.
       const [s, ts, raw] = await Promise.all([
         client.getOutcomesSummary({ range }),
         client.getOutcomesTimeseries({ range }),

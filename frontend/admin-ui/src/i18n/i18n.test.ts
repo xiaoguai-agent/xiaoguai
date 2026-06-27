@@ -90,9 +90,10 @@ describe('interpolation', () => {
     expect(result).toContain('network error');
   });
 
-  it('interpolates tenant in pane.audit.empty_for_tenant', () => {
-    const result = i18n.t('pane.audit.empty_for_tenant', { tenant: 'ten_acme' });
-    expect(result).toContain('ten_acme');
+  it('resolves pane.audit.empty without interpolation', () => {
+    const result = i18n.t('pane.audit.empty');
+    expect(result).toBeTruthy();
+    expect(result).not.toBe('pane.audit.empty');
   });
 });
 
@@ -111,7 +112,6 @@ describe('locale completeness', () => {
     'pane.audit.title',
     'pane.mcp_servers.title',
     'pane.marketplace.title',
-    'pane.tenants.title',
     'pane.providers.title',
   ] as const;
 

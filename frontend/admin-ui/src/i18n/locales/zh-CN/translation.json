@@ -13,9 +13,6 @@
     "retry": "重试",
     "failed": "失败：{{message}}",
     "noData": "暂无数据。",
-    "all_tenants": "（全部租户）",
-    "tenant_id": "租户 ID",
-    "tenant": "租户",
     "copy": "复制",
     "copied": "已复制！",
     "copied_aria": "已复制到剪贴板",
@@ -32,7 +29,6 @@
     "usage": "用量",
     "manage": "管理",
     "anomaly": "异常检测",
-    "tenants": "租户",
     "providers": "LLM 提供商",
     "mcp_servers": "MCP 服务器",
     "marketplace": "MCP 市场",
@@ -54,7 +50,7 @@
       "title": "今日",
       "pause_auto_refresh": "暂停自动刷新",
       "refreshed_ago": "{{relative}}前刷新",
-      "filter_placeholder": "按预览或租户筛选…",
+      "filter_placeholder": "按预览筛选…",
       "range_last_24h": "最近 24 小时",
       "range_last_7d": "最近 7 天",
       "range_all": "全部时间",
@@ -69,7 +65,6 @@
       "kind_im": "即时通讯",
       "kind_scheduled": "定时任务",
       "detail_timestamp": "时间戳",
-      "detail_tenant": "租户",
       "detail_session": "会话",
       "detail_user": "用户",
       "detail_started": "开始时间",
@@ -96,8 +91,6 @@
     "usage": {
       "title": "Token 用量",
       "filter_aria": "用量筛选",
-      "label_tenant": "租户",
-      "placeholder_all_tenants": "（全部租户）",
       "label_since": "开始日期",
       "label_until": "截止日期",
       "label_group_by": "分组方式",
@@ -109,7 +102,7 @@
       "cost_not_configured": "费用：— （费率尚未配置）",
       "cost": "费用：{{amount}}",
       "empty_loading": "加载中…",
-      "empty_no_rows": "该时间范围内无用量数据，请扩大日期范围或选择其他租户。",
+      "empty_no_rows": "该时间范围内无用量数据，请扩大日期范围。",
       "col_date": "日期",
       "col_provider": "提供商",
       "col_model": "模型",
@@ -142,15 +135,12 @@
       "btn_firing": "运行中…",
       "fired_ok": "已触发 {{id}}，即将执行。",
       "tokens_title": "Webhook 令牌",
-      "tokens_description": "用于公共 Webhook 端点 POST /v1/scheduler/webhooks/:route_id 的租户级令牌，通过 X-Xiaoguai-Token 请求头传递。",
-      "tokens_placeholder_tenant": "tenant_id",
+      "tokens_description": "用于公共 Webhook 端点 POST /v1/scheduler/webhooks/:route_id 的令牌，通过 X-Xiaoguai-Token 请求头传递。",
       "tokens_placeholder_route": "route_id",
-      "tokens_placeholder_filter": "按 tenant_id 筛选",
       "tokens_btn_mint": "生成令牌",
       "tokens_new_token": "新令牌（请立即保存——此后不再显示）：",
       "tokens_btn_dismiss": "关闭",
       "tokens_col_token": "令牌",
-      "tokens_col_tenant": "租户",
       "tokens_col_route": "路由",
       "tokens_col_created": "创建时间",
       "tokens_col_last_used": "最近使用",
@@ -159,8 +149,6 @@
       "tokens_empty_none": "暂无令牌。",
       "create_label_description": "描述",
       "create_placeholder_description": "例：每天早上 8 点扫描 r/LocalLLaMA + HN，结果推送到 Telegram",
-      "create_label_tenant": "租户（可选）",
-      "create_placeholder_tenant": "tenant_id",
       "create_btn_compile": "编译",
       "create_btn_compiling": "编译中…",
       "create_btn_save": "保存",
@@ -196,7 +184,6 @@
     },
     "audit": {
       "title": "审计日志",
-      "label_tenant_id": "租户 ID",
       "col_id": "ID",
       "col_timestamp": "时间戳",
       "col_actor": "操作者",
@@ -215,12 +202,12 @@
       "btn_exporting": "导出中…",
       "export_done": "导出已下载。",
       "export_failed": "导出失败：{{message}}",
-      "empty_for_tenant": "租户 {{tenant}} 暂无审计记录。",
       "intro": {
         "purpose": "审计日志 —— 对每一个受治理动作(谁/做了什么/何时)的只追加、防篡改记录,带哈希链,可证明记录未被改动。",
-        "usage": "按租户过滤以缩小范围,展开某行查看详情,或重放该动作的哈希链校验。",
+        "usage": "展开某行查看详情,或重放该动作的哈希链校验。",
         "usage_label": "用法"
-      }
+      },
+      "empty": "暂无审计记录。"
     },
     "mcp_servers": {
       "title": "MCP 服务器",
@@ -229,9 +216,7 @@
       "col_name": "名称",
       "col_version": "版本",
       "col_transport": "传输方式",
-      "col_scope": "作用域",
       "col_command_endpoint": "命令 / 端点",
-      "scope_global": "全局",
       "intro": {
         "purpose": "MCP 服务器 —— 当前接入 agent 的外部工具服务器(Model Context Protocol),为它提供文件访问、搜索、Office 文档转换等能力。",
         "usage": "这是已注册服务器及其传输方式的只读清单。要新增服务器,请到「MCP 市场」页安装。",
@@ -248,10 +233,6 @@
       "btn_installing": "安装中…",
       "btn_installed": "✓ 已安装",
       "btn_retry": "重试"
-    },
-    "tenants": {
-      "title": "租户",
-      "placeholder": "租户管理端点（/v1/admin/tenants）列入 v0.6.1 计划——上线后本页面将支持查看、创建和归档租户。"
     },
     "providers": {
       "title": "LLM 提供商",
@@ -299,7 +280,6 @@
       "tab_session": "会话链",
       "tab_summary": "汇总",
       "filters_label": "成果筛选",
-      "tenant_placeholder": "（输入租户 ID）",
       "range_label": "时间范围",
       "kind_label": "类型",
       "kind_placeholder": "如 revenue_usd",
@@ -307,7 +287,6 @@
       "session_placeholder": "按 session_id 筛选",
       "agent_label": "智能体",
       "agent_placeholder": "按智能体名称筛选",
-      "empty_no_tenant": "请输入租户 ID 以加载成果数据。",
       "empty_no_records": "此时间范围内无成果记录。",
       "records_count": "条记录",
       "list_label": "成果记录",
@@ -341,7 +320,7 @@
       "nav_outcomes": "成果",
       "intro": {
         "purpose": "业务成果台账 —— 记录 agent 产出的具体结果(成交、工单解决、赚到/省下的金额),并回链到产生它的会话。",
-        "usage": "按租户、类型、会话或 agent 过滤找到某条成果,点击行可下钻到来源会话及其溯源链。",
+        "usage": "按类型、会话或 agent 过滤找到某条成果,点击行可下钻到来源会话及其溯源链。",
         "usage_label": "用法"
       }
     },
@@ -648,8 +627,6 @@
     "skill_proposals": {
       "title": "技能提案",
       "subtitle": "审查 Agent 提交的技能清单（DEC-014）。批准会将清单写入磁盘并将状态翻转为 `installed`；拒绝则记录原因反馈给 Agent。",
-      "tenant_id_label": "租户",
-      "tenant_id_placeholder": "ten_demo",
       "filter_status_label": "状态",
       "filter_status_pending": "待审查",
       "filter_status_all": "全部",

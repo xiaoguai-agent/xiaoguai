@@ -10,9 +10,8 @@ import { ErrorBanner } from '../components/ErrorBanner';
 import { useAsyncState } from '../hooks/useAsyncState';
 
 /**
- * v0.6.4: live audit log pane. Requires a tenant id; the chain is
- * per-tenant. We default to "ten_dev" for the unauthed dev mode and let
- * the operator override via the input box.
+ * v0.6.4: live audit log pane. DEC-033 (single owner): the HMAC chain is
+ * owner-wide — there is no scope selector.
  *
  * v1.8.x (sprint-11 S11-1c): adds a `<ChainBadge>` column and a
  * compliance Export button. The export does a single binary POST to
@@ -31,31 +30,28 @@ const DEFAULT_EXPORT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export function AuditPane({ client }: AuditPaneProps = {}): JSX.Element {
   const c = client ?? defaultClient;
   const { t } = useTranslation();
-  const [tenantId, setTenantId] = useState('ten_dev');
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [view, setView] = useState<'table' | 'replay'>('table');
 
   // DEC-041 (frontend half): shared async-state replaces the bespoke
-  // rows/error/loading + load() machine. `reload()` re-fetches the current
-  // tenant (the loader closes over `tenantId`); typing alone doesn't refetch —
-  // the Refresh button does, matching the original behaviour.
+  // rows/error/loading + load() machine. `reload()` re-fetches the
+  // owner-wide chain; the Refresh button drives it.
   const {
     data: rows,
     error,
     loading,
     reload,
-  } = useAsyncState(() => c.listAudit({ tenant_id: tenantId, limit: 100 }), []);
+  } = useAsyncState(() => c.listAudit({ limit: 100 }), []);
 
   async function onExport(): Promise<void> {
-    if (exporting || !tenantId) return;
+    if (exporting) return;
     setExporting(true);
     setExportError(null);
     try {
       const now = new Date();
       const from = new Date(now.getTime() - DEFAULT_EXPORT_WINDOW_MS);
       const result = await c.createAuditExport({
-        tenant_id: tenantId,
         framework: 'soc2',
         from: from.toISOString(),
         to: now.toISOString(),
@@ -87,15 +83,7 @@ export function AuditPane({ client }: AuditPaneProps = {}): JSX.Element {
         usageLabel={t('pane.audit.intro.usage_label')}
       />
       <div className="toolbar">
-        <label>
-          {t('pane.audit.label_tenant_id')}
-          <input
-            value={tenantId}
-            onChange={(e) => setTenantId(e.target.value)}
-            placeholder="ten_dev"
-          />
-        </label>
-        <button onClick={() => reload()} disabled={loading || !tenantId}>
+        <button onClick={() => reload()} disabled={loading}>
           {loading ? t('common.loading') : t('common.refresh')}
         </button>
         <button
@@ -107,7 +95,7 @@ export function AuditPane({ client }: AuditPaneProps = {}): JSX.Element {
         <RequireScope name="audit.export">
           <button
             onClick={() => void onExport()}
-            disabled={exporting || !tenantId}
+            disabled={exporting}
             data-testid="audit-export-btn"
           >
             {exporting ? t('pane.audit.btn_exporting') : t('pane.audit.btn_export')}
@@ -123,7 +111,7 @@ export function AuditPane({ client }: AuditPaneProps = {}): JSX.Element {
       )}
 
       {rows && rows.length === 0 && (
-        <div className="empty">{t('pane.audit.empty_for_tenant', { tenant: tenantId })}</div>
+        <div className="empty">{t('pane.audit.empty')}</div>
       )}
 
       {rows && rows.length > 0 && view === 'replay' && <AuditReplay rows={rows} />}

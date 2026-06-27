@@ -23,10 +23,9 @@
  *   - Test 2 aborts the first POST, then serves a complete stream on the
  *     retry, asserting the reconnect banner appears and then clears.
  *
- * Note: these tests mock the backend via `page.route()`, so they are hermetic
- * — single-owner has no tenants; the `ten_dev` echoed in the mocked session
- * response is the chat-ui's `DEV_USER_ID`/`DEV_TENANT_ID` dev identity and is
- * never validated by the UI.
+ * Note: these tests mock the backend via `page.route()`, so they are hermetic.
+ * Single-owner has no tenants; the mocked session response carries only the
+ * `usr_dev` dev identity, never validated by the UI.
  */
 
 import { test, expect, type Page, type Route } from '@playwright/test';
@@ -49,7 +48,6 @@ async function mockSessionCreate(page: Page): Promise<void> {
         contentType: 'application/json',
         body: JSON.stringify({
           id: SESSION_ID,
-          tenant_id: 'ten_dev',
           user_id: 'usr_dev',
           title: 'SSE e2e',
           created_at: new Date().toISOString(),

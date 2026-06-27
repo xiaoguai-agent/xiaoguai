@@ -31,7 +31,6 @@ export function McpServersPane() {
               <th>{t('pane.mcp_servers.col_name')}</th>
               <th>{t('pane.mcp_servers.col_version')}</th>
               <th>{t('pane.mcp_servers.col_transport')}</th>
-              <th>{t('pane.mcp_servers.col_scope')}</th>
               <th>{t('pane.mcp_servers.col_command_endpoint')}</th>
             </tr>
           </thead>
@@ -43,7 +42,6 @@ export function McpServersPane() {
                 <td>
                   <span className="tag">{r.transport}</span>
                 </td>
-                <td>{r.tenant_id ?? <em>{t('pane.mcp_servers.scope_global')}</em>}</td>
                 <td>
                   <code>
                     {r.transport === 'stdio'

@@ -9,9 +9,9 @@
  *   built-in defaults `{ enabled: true, dismissible: true }` and makes NO HTTP
  *   call at all. The old per-tenant mock was therefore dead, and the
  *   "mandatory mode" the chat-ui ships is no longer reachable from config
- *   (ChatPage renders `<AiDisclosureBanner tenantId={DEV_TENANT_ID} />` with no
- *   `config` override prop). This suite asserts the ACTUAL single-owner
- *   default behaviour instead.
+ *   (ChatPage renders `<AiDisclosureBanner />` with no `config` override
+ *   prop). This suite asserts the ACTUAL single-owner default behaviour
+ *   instead.
  *
  * Behaviour under test (frontend/chat-ui/src/AiDisclosureBanner.tsx):
  *   - Banner renders on first session view (enabled by default).

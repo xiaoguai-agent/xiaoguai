@@ -1,6 +1,6 @@
 //! v0.6.4 — audit log read surface for the admin endpoint.
 //!
-//! `GET /v1/admin/audit` lists tamper-evident audit rows for a tenant.
+//! `GET /v1/admin/audit` lists tamper-evident audit rows for the owner.
 //! To keep `xiaoguai-api` decoupled from the concrete persistence layer
 //! (`SqliteAuditSink` lives in `xiaoguai-audit`, which is *not* an api dep
 //! today), we define an `AuditReader` trait here and ship a thin bridge
@@ -27,7 +27,6 @@ pub enum AuditError {
 pub struct AuditEntryView {
     pub id: i64,
     pub ts: DateTime<Utc>,
-    pub tenant_id: String,
     pub actor: String,
     pub action: String,
     pub resource: Option<String>,
@@ -42,7 +41,6 @@ pub struct AuditEntryView {
 pub trait AuditReader: Send + Sync {
     async fn list(
         &self,
-        tenant_id: &str,
         since: Option<DateTime<Utc>>,
         until: Option<DateTime<Utc>>,
         limit: i64,
@@ -56,10 +54,10 @@ pub trait AuditReader: Send + Sync {
 /// `xiaoguai-audit::SqliteAuditSink` implementation.
 #[async_trait]
 pub trait AuditVerifier: Send + Sync {
-    async fn verify_tenant(&self, tenant_id: &str) -> Result<VerifyReport, AuditError>;
+    async fn verify(&self) -> Result<VerifyReport, AuditError>;
 }
 
-/// Outcome of a chain-integrity walk for one tenant.
+/// Outcome of a chain-integrity walk over the single-owner chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerifyReport {
     /// All rows verified; `verified_count` rows were walked.
@@ -93,7 +91,6 @@ pub trait AuditChainExporter: Send + Sync {
 /// Request shape for an audit-chain export call.
 #[derive(Debug, Clone)]
 pub struct ExportRequest {
-    pub tenant_id: String,
     /// Short framework name — `"soc2"`, `"gdpr"`, `"hipaa"`.
     pub framework: String,
     /// Short format name — `"json"`, `"csv"`, `"pdf"`.
@@ -146,7 +143,6 @@ impl StaticAuditReader {
 impl AuditReader for StaticAuditReader {
     async fn list(
         &self,
-        tenant_id: &str,
         since: Option<DateTime<Utc>>,
         until: Option<DateTime<Utc>>,
         limit: i64,
@@ -158,7 +154,6 @@ impl AuditReader for StaticAuditReader {
         Ok(self
             .rows
             .iter()
-            .filter(|r| r.tenant_id == tenant_id)
             .filter(|r| since.is_none_or(|s| r.ts >= s))
             .filter(|r| until.is_none_or(|u| r.ts <= u))
             .take(take)
@@ -167,50 +162,46 @@ impl AuditReader for StaticAuditReader {
     }
 }
 
-/// In-memory `AuditVerifier` for tests. Holds a fixed verdict per tenant
-/// so route tests can exercise both the success and broken-chain branches
-/// without a database.
-#[derive(Debug, Default, Clone)]
+/// In-memory `AuditVerifier` for tests. Holds a fixed verdict so route
+/// tests can exercise both the success and broken-chain branches without
+/// a database.
+#[derive(Debug, Clone)]
 pub struct StaticAuditVerifier {
-    pub verdicts: std::collections::HashMap<String, VerifyReport>,
+    pub verdict: VerifyReport,
+}
+
+impl Default for StaticAuditVerifier {
+    fn default() -> Self {
+        Self {
+            verdict: VerifyReport::Ok { verified_count: 0 },
+        }
+    }
 }
 
 impl StaticAuditVerifier {
     #[must_use]
-    pub fn with_verdict(tenant_id: impl Into<String>, report: VerifyReport) -> Self {
-        let mut v = Self::default();
-        v.verdicts.insert(tenant_id.into(), report);
-        v
-    }
-
-    #[must_use]
-    pub fn add(mut self, tenant_id: impl Into<String>, report: VerifyReport) -> Self {
-        self.verdicts.insert(tenant_id.into(), report);
-        self
+    pub fn with_verdict(report: VerifyReport) -> Self {
+        Self { verdict: report }
     }
 }
 
 #[async_trait]
 impl AuditVerifier for StaticAuditVerifier {
-    async fn verify_tenant(&self, tenant_id: &str) -> Result<VerifyReport, AuditError> {
-        Ok(self
-            .verdicts
-            .get(tenant_id)
-            .cloned()
-            .unwrap_or(VerifyReport::Ok { verified_count: 0 }))
+    async fn verify(&self) -> Result<VerifyReport, AuditError> {
+        Ok(self.verdict.clone())
     }
 }
 
 /// In-memory `AuditChainExporter` for route tests.
 ///
-/// Holds pre-canned responses keyed by `(tenant_id, framework, format)`.
+/// Holds pre-canned responses keyed by `(framework, format)`.
 /// Route tests construct one with the bytes they want returned and verify
 /// the HTTP path without standing up the full Pg adapter.
 #[derive(Default)]
 pub struct StaticAuditChainExporter {
     /// `Ok(bytes)` is returned verbatim; `Err(...)` is propagated.
-    pub responses:
-        std::collections::HashMap<(String, String, String), Result<Vec<u8>, ExportError>>,
+    /// Keyed by `(framework, format)`.
+    pub responses: std::collections::HashMap<(String, String), Result<Vec<u8>, ExportError>>,
 }
 
 impl std::fmt::Debug for StaticAuditChainExporter {
@@ -227,19 +218,16 @@ impl StaticAuditChainExporter {
         Self::default()
     }
 
-    /// Register a pre-canned response. Keys are `(tenant_id, framework, format)`.
+    /// Register a pre-canned response. Keys are `(framework, format)`.
     #[must_use]
     pub fn with(
         mut self,
-        tenant_id: impl Into<String>,
         framework: impl Into<String>,
         format: impl Into<String>,
         response: Result<Vec<u8>, ExportError>,
     ) -> Self {
-        self.responses.insert(
-            (tenant_id.into(), framework.into(), format.into()),
-            response,
-        );
+        self.responses
+            .insert((framework.into(), format.into()), response);
         self
     }
 }
@@ -247,11 +235,7 @@ impl StaticAuditChainExporter {
 #[async_trait]
 impl AuditChainExporter for StaticAuditChainExporter {
     async fn export(&self, req: ExportRequest) -> Result<Vec<u8>, ExportError> {
-        let key = (
-            req.tenant_id.clone(),
-            req.framework.clone(),
-            req.format.clone(),
-        );
+        let key = (req.framework.clone(), req.format.clone());
         match self.responses.get(&key) {
             Some(Ok(b)) => Ok(b.clone()),
             Some(Err(e)) => Err(e.clone()),
@@ -266,11 +250,10 @@ impl AuditChainExporter for StaticAuditChainExporter {
 mod tests {
     use super::*;
 
-    fn row(id: i64, tenant: &str, ts: DateTime<Utc>) -> AuditEntryView {
+    fn row(id: i64, ts: DateTime<Utc>) -> AuditEntryView {
         AuditEntryView {
             id,
             ts,
-            tenant_id: tenant.into(),
             actor: "system".into(),
             action: "test".into(),
             resource: None,
@@ -281,28 +264,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn static_reader_filters_by_tenant() {
+    async fn static_reader_lists_all_rows() {
         let t0 = Utc::now();
-        let reader = StaticAuditReader::with_rows(vec![
-            row(1, "t-a", t0),
-            row(2, "t-b", t0),
-            row(3, "t-a", t0),
-        ]);
-        let got = reader.list("t-a", None, None, 100).await.unwrap();
-        assert_eq!(got.len(), 2);
-        assert!(got.iter().all(|r| r.tenant_id == "t-a"));
+        let reader = StaticAuditReader::with_rows(vec![row(1, t0), row(2, t0), row(3, t0)]);
+        let got = reader.list(None, None, 100).await.unwrap();
+        assert_eq!(got.len(), 3);
     }
 
     #[tokio::test]
     async fn static_reader_respects_limit_and_time_bounds() {
         let t0 = Utc::now();
         let t1 = t0 + chrono::Duration::seconds(60);
-        let reader = StaticAuditReader::with_rows(vec![row(1, "t-a", t0), row(2, "t-a", t1)]);
-        let only_first = reader.list("t-a", None, Some(t0), 100).await.unwrap();
+        let reader = StaticAuditReader::with_rows(vec![row(1, t0), row(2, t1)]);
+        let only_first = reader.list(None, Some(t0), 100).await.unwrap();
         assert_eq!(only_first.len(), 1);
         assert_eq!(only_first[0].id, 1);
 
-        let capped = reader.list("t-a", None, None, 1).await.unwrap();
+        let capped = reader.list(None, None, 1).await.unwrap();
         assert_eq!(capped.len(), 1);
     }
 }

@@ -5,7 +5,7 @@
  *
  * 1. **Jobs** — `GET /v1/admin/scheduler/jobs` table with id / name /
  *    trigger / enabled / last_fire_at / next_fire_at / Run-now button.
- *    Includes a small "Tokens" subsection: per-tenant webhook tokens
+ *    Includes a small "Tokens" subsection: webhook tokens
  *    (list + create + revoke).
  *
  * 2. **Create from description** — `POST /v1/admin/scheduler/jobs/compile`
@@ -169,43 +169,36 @@ function TokensSection(): JSX.Element {
   const { t } = useTranslation();
   const [tokens, setTokens] = useState<WebhookToken[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tenantFilter, setTenantFilter] = useState('');
-  const [createTenant, setCreateTenant] = useState('');
   const [createRoute, setCreateRoute] = useState('');
   const [createdToken, setCreatedToken] = useState<WebhookToken | null>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const opts = tenantFilter.trim()
-        ? { tenant_id: tenantFilter.trim() }
-        : undefined;
-      const got = await client.listWebhookTokens(opts);
+      const got = await client.listWebhookTokens();
       setTokens(got);
     } catch (err) {
       setError((err as Error).message);
     }
-  }, [tenantFilter]);
+  }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   const create = useCallback(async () => {
-    if (!createTenant.trim() || !createRoute.trim()) return;
+    if (!createRoute.trim()) return;
     try {
       const row = await client.createWebhookToken({
-        tenant_id: createTenant.trim(),
         route_id: createRoute.trim(),
       });
       setCreatedToken(row);
-      setCreateTenant('');
       setCreateRoute('');
       await refresh();
     } catch (err) {
       setError((err as Error).message);
     }
-  }, [createTenant, createRoute, refresh]);
+  }, [createRoute, refresh]);
 
   const revoke = useCallback(
     async (tok: string) => {
@@ -226,12 +219,6 @@ function TokensSection(): JSX.Element {
       <div className="tokens-create">
         <input
           type="text"
-          placeholder={t('pane.scheduler.tokens_placeholder_tenant')}
-          value={createTenant}
-          onChange={(e) => setCreateTenant(e.target.value)}
-        />
-        <input
-          type="text"
           placeholder={t('pane.scheduler.tokens_placeholder_route')}
           value={createRoute}
           onChange={(e) => setCreateRoute(e.target.value)}
@@ -239,16 +226,10 @@ function TokensSection(): JSX.Element {
         <button
           type="button"
           onClick={() => void create()}
-          disabled={!createTenant.trim() || !createRoute.trim()}
+          disabled={!createRoute.trim()}
         >
           {t('pane.scheduler.tokens_btn_mint')}
         </button>
-        <input
-          type="text"
-          placeholder={t('pane.scheduler.tokens_placeholder_filter')}
-          value={tenantFilter}
-          onChange={(e) => setTenantFilter(e.target.value)}
-        />
       </div>
       {createdToken && (
         <div className="token-mint">
@@ -269,7 +250,6 @@ function TokensSection(): JSX.Element {
           <thead>
             <tr>
               <th>{t('pane.scheduler.tokens_col_token')}</th>
-              <th>{t('pane.scheduler.tokens_col_tenant')}</th>
               <th>{t('pane.scheduler.tokens_col_route')}</th>
               <th>{t('pane.scheduler.tokens_col_created')}</th>
               <th>{t('pane.scheduler.tokens_col_last_used')}</th>
@@ -282,7 +262,6 @@ function TokensSection(): JSX.Element {
                 <td>
                   <code>{shortToken(tok.token)}</code>
                 </td>
-                <td>{tok.tenant_id}</td>
                 <td>
                   <code>{tok.route_id}</code>
                 </td>
@@ -307,7 +286,6 @@ function TokensSection(): JSX.Element {
 function CreateTab(): JSX.Element {
   const { t } = useTranslation();
   const [description, setDescription] = useState('');
-  const [tenant, setTenant] = useState('');
   const [preview, setPreview] = useState<CompileScheduledJobResponse | null>(
     null,
   );
@@ -324,7 +302,6 @@ function CreateTab(): JSX.Element {
     try {
       const resp = await client.compileScheduledJob({
         description: description.trim(),
-        tenant_id: tenant.trim() ? tenant.trim() : undefined,
       });
       setPreview(resp);
     } catch (err) {
@@ -332,7 +309,7 @@ function CreateTab(): JSX.Element {
     } finally {
       setBusy(null);
     }
-  }, [description, tenant]);
+  }, [description]);
 
   const save = useCallback(async () => {
     if (preview === null) return;
@@ -358,15 +335,6 @@ function CreateTab(): JSX.Element {
           onChange={(e) => setDescription(e.target.value)}
           rows={4}
           placeholder={t('pane.scheduler.create_placeholder_description')}
-        />
-      </label>
-      <label>
-        {t('pane.scheduler.create_label_tenant')}
-        <input
-          type="text"
-          value={tenant}
-          onChange={(e) => setTenant(e.target.value)}
-          placeholder={t('pane.scheduler.create_placeholder_tenant')}
         />
       </label>
       <div className="scheduler-create-actions">

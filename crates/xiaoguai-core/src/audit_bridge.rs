@@ -18,7 +18,7 @@ use xiaoguai_api::audit::{
 use xiaoguai_audit::chain::sink::SqliteAuditSink;
 use xiaoguai_audit::{
     export_bundle as audit_export_bundle, render as audit_render, ChainError, ExportError,
-    ExportWindow, Format, Framework,
+    ExportWindow, Format, Framework, OWNER_TENANT_ID,
 };
 
 pub struct SqliteAuditAdapter {
@@ -44,14 +44,13 @@ fn chain_err(e: ChainError) -> AuditError {
 impl AuditReader for SqliteAuditAdapter {
     async fn list(
         &self,
-        tenant_id: &str,
         since: Option<DateTime<Utc>>,
         until: Option<DateTime<Utc>>,
         limit: i64,
     ) -> Result<Vec<AuditEntryView>, AuditError> {
         let rows = self
             .sink
-            .list(tenant_id, since, until, limit)
+            .list(OWNER_TENANT_ID, since, until, limit)
             .await
             .map_err(chain_err)?;
         Ok(rows
@@ -59,7 +58,6 @@ impl AuditReader for SqliteAuditAdapter {
             .map(|s| AuditEntryView {
                 id: s.id,
                 ts: s.entry.ts,
-                tenant_id: s.entry.tenant_id,
                 actor: s.entry.actor,
                 action: s.entry.action,
                 resource: s.entry.resource,
@@ -72,8 +70,8 @@ impl AuditReader for SqliteAuditAdapter {
 }
 
 /// Bound on the row count pulled per export. Streaming export is out of
-/// scope for T5 — see the runbook for the rationale. Production tenants
-/// with >100k events in a window should request shorter windows.
+/// scope for T5 — see the runbook for the rationale. A window with >100k
+/// events should be split into shorter windows.
 const EXPORT_ROW_CAP: i64 = 100_000;
 
 #[async_trait]
@@ -93,14 +91,25 @@ impl AuditChainExporter for SqliteAuditAdapter {
 
         let rows = self
             .sink
-            .list(&req.tenant_id, Some(req.from), Some(req.to), EXPORT_ROW_CAP)
+            .list(
+                OWNER_TENANT_ID,
+                Some(req.from),
+                Some(req.to),
+                EXPORT_ROW_CAP,
+            )
             .await
             .map_err(|e| ApiExportError::Backend {
                 message: e.to_string(),
             })?;
 
-        let bundle = audit_export_bundle(framework, req.tenant_id, rows, window, self.sink.chain())
-            .map_err(map_export_err)?;
+        let bundle = audit_export_bundle(
+            framework,
+            OWNER_TENANT_ID.to_string(),
+            rows,
+            window,
+            self.sink.chain(),
+        )
+        .map_err(map_export_err)?;
 
         audit_render(&bundle, format).map_err(map_export_err)
     }
@@ -122,13 +131,13 @@ fn map_export_err(e: ExportError) -> ApiExportError {
 
 #[async_trait]
 impl AuditVerifier for SqliteAuditAdapter {
-    async fn verify_tenant(&self, tenant_id: &str) -> Result<VerifyReport, AuditError> {
+    async fn verify(&self) -> Result<VerifyReport, AuditError> {
         // We need a row count for the success case; pull the same list
-        // (`verify_tenant` would walk it twice otherwise). For broken
+        // (a separate count walk would traverse it twice otherwise). For broken
         // chains we surface the offending row id from the error variant.
         let entries = self
             .sink
-            .list(tenant_id, None, None, i64::MAX)
+            .list(OWNER_TENANT_ID, None, None, i64::MAX)
             .await
             .map_err(chain_err)?;
         let verified_count = u64::try_from(entries.len()).unwrap_or(u64::MAX);

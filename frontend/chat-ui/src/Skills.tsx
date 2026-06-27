@@ -12,7 +12,7 @@
  * catalog/installed wire types. This also fixes the prior installed-detection
  * bug: `GET /v1/skills/installed` returns `pack_id`, but the old code keyed its
  * map by `pack_slug` (absent → always undefined → never showed "Installed ✓").
- * The per-tenant input is gone — single-owner (DEC-033) ignores tenant.
+ * The pre-pivot scope input is gone — single-owner (DEC-033).
  *
  * State flow:
  *   catalog   (static, from GET /v1/skills/catalog)

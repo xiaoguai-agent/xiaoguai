@@ -118,12 +118,8 @@ async fn returns_503_when_exporter_not_wired() {
 #[tokio::test]
 async fn happy_path_returns_bundle_bytes_with_correct_content_type() {
     let canned = br#"{"header":{"framework":"soc2-cc72"},"rows":[]}"#.to_vec();
-    let exporter = Arc::new(StaticAuditChainExporter::new().with(
-        xiaoguai_audit::OWNER_TENANT_ID,
-        "soc2",
-        "json",
-        Ok(canned.clone()),
-    ));
+    let exporter =
+        Arc::new(StaticAuditChainExporter::new().with("soc2", "json", Ok(canned.clone())));
     let app = router(build_state(Some(exporter)));
     let (status, body, ct) = post(app, request_body()).await;
     assert_eq!(status, StatusCode::OK);
@@ -134,12 +130,8 @@ async fn happy_path_returns_bundle_bytes_with_correct_content_type() {
 #[tokio::test]
 async fn csv_response_uses_text_csv_content_type() {
     let canned = b"# bundle-header: {}\r\nid,ts,actor,action,resource,details_summary\r\n".to_vec();
-    let exporter = Arc::new(StaticAuditChainExporter::new().with(
-        xiaoguai_audit::OWNER_TENANT_ID,
-        "soc2",
-        "csv",
-        Ok(canned.clone()),
-    ));
+    let exporter =
+        Arc::new(StaticAuditChainExporter::new().with("soc2", "csv", Ok(canned.clone())));
     let app = router(build_state(Some(exporter)));
     let mut body = request_body();
     body["format"] = json!("csv");
@@ -153,7 +145,6 @@ async fn csv_response_uses_text_csv_content_type() {
 async fn chain_broken_returns_409_with_structured_body() {
     let broken_ts = Utc.with_ymd_and_hms(2026, 2, 15, 12, 30, 0).unwrap();
     let exporter = Arc::new(StaticAuditChainExporter::new().with(
-        xiaoguai_audit::OWNER_TENANT_ID,
         "soc2",
         "json",
         Err(ApiExportError::ChainBroken {
@@ -173,7 +164,6 @@ async fn chain_broken_returns_409_with_structured_body() {
 #[tokio::test]
 async fn pdf_format_returns_501_not_implemented() {
     let exporter = Arc::new(StaticAuditChainExporter::new().with(
-        xiaoguai_audit::OWNER_TENANT_ID,
         "soc2",
         "pdf",
         Err(ApiExportError::PdfUnimplemented),
@@ -191,12 +181,8 @@ async fn pdf_format_returns_501_not_implemented() {
 async fn export_uses_owner_tenant() {
     // DEC-033 single-owner: the export always runs against the owner tenant
     // (no wire `tenant_id`); the route keys the exporter by the audit OWNER.
-    let exporter = Arc::new(StaticAuditChainExporter::new().with(
-        xiaoguai_audit::OWNER_TENANT_ID,
-        "soc2",
-        "json",
-        Ok(b"{}".to_vec()),
-    ));
+    let exporter =
+        Arc::new(StaticAuditChainExporter::new().with("soc2", "json", Ok(b"{}".to_vec())));
     let app = router(build_state(Some(exporter)));
     let body = request_body();
     let (status, _body, _ct) = post(app, body).await;

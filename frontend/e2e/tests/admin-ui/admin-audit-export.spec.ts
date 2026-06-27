@@ -17,12 +17,9 @@
 
 import { test, expect, type Page, type Route } from '@playwright/test';
 
-const TENANT_ID = 'ten_dev';
-
 interface MockAuditEntry {
   id: number;
   ts: string;
-  tenant_id: string;
   actor: string;
   action: string;
   resource: string | null;
@@ -36,7 +33,6 @@ function makeEntry(seq: number): MockAuditEntry {
   return {
     id: seq,
     ts: new Date(Date.UTC(2026, 4, seq, 12, 0, 0)).toISOString(),
-    tenant_id: TENANT_ID,
     actor: `actor_${seq}`,
     action: 'session.message',
     resource: `sess_${seq}`,
@@ -77,35 +73,6 @@ test.describe('admin-ui Audit pane — rows render with HMAC column', () => {
     await expect(
       page.locator('table.audit-table td.mono').first(),
     ).toBeVisible();
-  });
-
-  test('changing tenant id triggers a refresh', async ({ page }) => {
-    let lastTenant = '';
-    await page.route('**/v1/admin/me/scopes', async (route: Route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ scopes: ['audit.export'] }),
-      });
-    });
-    await page.route('**/v1/admin/audit**', async (route: Route) => {
-      const url = new URL(route.request().url());
-      lastTenant = url.searchParams.get('tenant_id') ?? '';
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify([]),
-      });
-    });
-
-    await page.goto('/audit');
-    await page.waitForLoadState('networkidle');
-    // Override the tenant id and click refresh.
-    const tenantInput = page.locator('input[placeholder="ten_dev"]');
-    await tenantInput.fill('ten_other');
-    await page.locator('button', { hasText: /loading|refresh/i }).click();
-    // Eventually the mock should see the updated tenant.
-    await expect.poll(() => lastTenant, { timeout: 5_000 }).toBe('ten_other');
   });
 });
 
@@ -159,8 +126,8 @@ test.describe('admin-ui Audit pane — compliance export', () => {
     const downloadPromise = page.waitForEvent('download');
     await page.locator('[data-testid="audit-export-btn"]').click();
     const download = await downloadPromise;
-    // Filename is `audit-<tenant>-<timestamp>.<ext>` — assert the structural
-    // shape, not a fixed `audit.zip`, so format/timestamp changes don't break.
+    // Filename is `audit-<timestamp>.<ext>` — assert the structural shape,
+    // not a fixed `audit.zip`, so format/timestamp changes don't break.
     expect(download.suggestedFilename()).toMatch(/^audit-.*\.(json|zip|csv)$/);
   });
 });

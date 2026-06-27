@@ -34,14 +34,14 @@ afterEach(() => {
 
 describe('AiDisclosureBanner', () => {
   it('renders the disclosure text by default', () => {
-    render(<AiDisclosureBanner tenantId="ten_test" config={defaultConfig} />);
+    render(<AiDisclosureBanner config={defaultConfig} />);
     expect(
       screen.getByText(/You are interacting with an AI assistant/i),
     ).toBeInTheDocument();
   });
 
   it('hides after the dismiss button is clicked within the same session', () => {
-    render(<AiDisclosureBanner tenantId="ten_test" config={defaultConfig} />);
+    render(<AiDisclosureBanner config={defaultConfig} />);
     const btn = screen.getByRole('button', { name: /dismiss/i });
     expect(btn).toBeInTheDocument();
     fireEvent.click(btn);
@@ -55,7 +55,7 @@ describe('AiDisclosureBanner', () => {
   it('re-renders in a new session (sessionStorage cleared)', () => {
     // First session: dismiss.
     const { unmount } = render(
-      <AiDisclosureBanner tenantId="ten_test" config={defaultConfig} />,
+      <AiDisclosureBanner config={defaultConfig} />,
     );
     fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));
     expect(
@@ -66,7 +66,7 @@ describe('AiDisclosureBanner', () => {
     // Simulate a new browser session by clearing sessionStorage.
     sessionStorage.clear();
 
-    render(<AiDisclosureBanner tenantId="ten_test" config={defaultConfig} />);
+    render(<AiDisclosureBanner config={defaultConfig} />);
     expect(
       screen.getByText(/You are interacting with an AI assistant/i),
     ).toBeInTheDocument();
@@ -74,7 +74,7 @@ describe('AiDisclosureBanner', () => {
 
   it('does not render a dismiss button when dismissible=false', () => {
     const cfg: AiDisclosureConfig = { enabled: true, dismissible: false };
-    render(<AiDisclosureBanner tenantId="ten_test" config={cfg} />);
+    render(<AiDisclosureBanner config={cfg} />);
     expect(
       screen.getByText(/You are interacting with an AI assistant/i),
     ).toBeInTheDocument();
@@ -85,7 +85,7 @@ describe('AiDisclosureBanner', () => {
 
   it('remains visible after attempt to dismiss when dismissible=false', () => {
     const cfg: AiDisclosureConfig = { enabled: true, dismissible: false };
-    render(<AiDisclosureBanner tenantId="ten_test" config={cfg} />);
+    render(<AiDisclosureBanner config={cfg} />);
     // No button — banner must still be present.
     expect(
       screen.getByRole('note'),
@@ -94,7 +94,7 @@ describe('AiDisclosureBanner', () => {
 
   it('renders nothing when enabled=false', () => {
     const cfg: AiDisclosureConfig = { enabled: false, dismissible: true };
-    render(<AiDisclosureBanner tenantId="ten_test" config={cfg} />);
+    render(<AiDisclosureBanner config={cfg} />);
     expect(screen.queryByRole('note')).not.toBeInTheDocument();
   });
 
@@ -104,7 +104,7 @@ describe('AiDisclosureBanner', () => {
       dismissible: true,
       text_override: 'Custom operator disclosure text.',
     };
-    render(<AiDisclosureBanner tenantId="ten_test" config={cfg} />);
+    render(<AiDisclosureBanner config={cfg} />);
     expect(screen.getByText(/Custom operator disclosure text\./i)).toBeInTheDocument();
     expect(
       screen.queryByText(/You are interacting with an AI assistant/i),
@@ -117,7 +117,7 @@ describe('AiDisclosureBanner', () => {
       dismissible: true,
       link_to_disclosure: 'https://example.com/ai-transparency',
     };
-    render(<AiDisclosureBanner tenantId="ten_test" config={cfg} />);
+    render(<AiDisclosureBanner config={cfg} />);
     const link = screen.getByRole('link', { name: /learn more/i });
     expect(link).toBeInTheDocument();
     expect(link).toHaveAttribute('href', 'https://example.com/ai-transparency');

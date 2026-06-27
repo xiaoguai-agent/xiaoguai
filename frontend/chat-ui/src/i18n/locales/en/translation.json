@@ -145,8 +145,6 @@
     "skills_page": {
       "title": "Skill Packs",
       "subtitle": "Browse and install pre-built skill packs for your workspace. Packs extend the agent with domain-specific tools, prompts, and RAG indexes.",
-      "tenant_label": "Tenant",
-      "tenant_placeholder": "tenant id",
       "loading": "Loading…",
       "error": "Error: {{message}}",
       "empty": "No skill packs available.",

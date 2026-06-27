@@ -19,8 +19,8 @@
  *
  * Single-owner notes (DEC-033): this spec is chromium-only (PR #240). The
  * mint endpoint is `/v1/admin/scheduler/tokens` and is keyed on `route_id`;
- * `tenant_id` is a vestigial column the backend still echoes but no longer
- * scopes on. When the mint endpoint is unwired the test skips gracefully.
+ * there is no tenant axis. When the mint endpoint is unwired the test skips
+ * gracefully.
  */
 
 import { test, expect } from '@playwright/test';
@@ -84,10 +84,9 @@ test.describe('Scheduler webhook-route flow', () => {
             updated_at: nowIso,
           },
         });
-        // Mint endpoint is POST /v1/admin/scheduler/tokens keyed on route_id
-        // (tenant_id is a vestigial echoed column, see header note).
+        // Mint endpoint is POST /v1/admin/scheduler/tokens keyed on route_id.
         const resp = await request.post(`${BASE_URL}/v1/admin/scheduler/tokens`, {
-          data: { tenant_id: 'ten_dev', route_id: routeId },
+          data: { route_id: routeId },
         });
         if (resp.ok()) {
           const body = (await resp.json()) as { token: string; route_id: string };

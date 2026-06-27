@@ -7,7 +7,7 @@
  * audit comes first, chat is a side door.
  *
  * Auto-refresh 30s. Three kind pills (multi-select). Date-range preset.
- * Free-text search filters client-side on preview + tenant_id;
+ * Free-text search filters client-side on the message preview;
  * server-side text search is deferred to v0.11.2 (eval pane work).
  */
 
@@ -112,7 +112,7 @@ export function TodayPane() {
     return items.filter((it) => {
       if (!selectedKinds.has(it.kind)) return false;
       if (!needle) return true;
-      const haystack = previewText(it).toLowerCase() + ' ' + (tenantOf(it) ?? '').toLowerCase();
+      const haystack = previewText(it).toLowerCase();
       return haystack.includes(needle);
     });
   }, [items, search, selectedKinds]);
@@ -249,7 +249,6 @@ function TimelineCard({
       <button className="timeline-card-body" onClick={onOpen} type="button">
         <div className="timeline-card-row">
           <span className={`kind-tag kind-tag-${item.kind}`}>{kindLabel(item.kind, t)}</span>
-          <span className="tenant">{tenantOf(item) ?? '—'}</span>
           <time className="ts">{formatAbsolute(item.ts)}</time>
         </div>
         <div className="timeline-card-headline">{headline(item, t)}</div>
@@ -321,11 +320,6 @@ function kindLabel(k: TodayKind, t: TFunction): string {
   }
 }
 
-function tenantOf(it: TodayItem): string | null {
-  if (it.kind === 'scheduled') return it.tenant_id ?? null;
-  return it.tenant_id;
-}
-
 function previewText(it: TodayItem): string {
   switch (it.kind) {
     case 'chat':
@@ -365,7 +359,6 @@ function subline(it: TodayItem): string {
 function detailRows(it: TodayItem, t: TFunction): Array<[string, string | null]> {
   const base: Array<[string, string | null]> = [
     [t('pane.today.detail_timestamp'), formatAbsolute(it.ts)],
-    [t('pane.today.detail_tenant'), tenantOf(it)],
   ];
   switch (it.kind) {
     case 'chat':

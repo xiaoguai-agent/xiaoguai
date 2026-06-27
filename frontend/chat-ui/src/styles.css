@@ -1177,38 +1177,6 @@ html,
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
-.skills-tenant-control {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.skills-tenant-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.skills-tenant-input {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  font: inherit;
-  font-size: 14px;
-  background: var(--surface);
-  color: var(--fg);
-  min-width: 180px;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
-}
-
-.skills-tenant-input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: var(--shadow-focus);
-}
-
 .skills-status {
   color: var(--muted);
   font-size: 14px;
@@ -1829,7 +1797,7 @@ html,
 /* Persistent notice at the top of the chat column — above HotlBanner.
  * Uses a warm amber palette that reads as "informational, not alarming"
  * while still standing out from the neutral surface.
- * Regulated-tenant variant (dismissible=false) keeps the same style;
+ * Regulated variant (dismissible=false) keeps the same style;
  * the button is simply absent. */
 
 .ai-disclosure-banner {

@@ -161,7 +161,6 @@ async fn admin_audit_returns_rows() {
     let mk = |id: i64| AuditEntryView {
         id,
         ts: now,
-        tenant_id: xiaoguai_audit::OWNER_TENANT_ID.into(),
         actor: "system".into(),
         action: "session.create".into(),
         resource: Some(format!("sess_{id}")),
@@ -210,10 +209,9 @@ async fn admin_audit_503s_when_reader_not_wired() {
 #[tokio::test]
 async fn admin_audit_verify_returns_ok_for_unbroken_chain() {
     use xiaoguai_api::{AuditVerifier, StaticAuditVerifier, VerifyReport};
-    let v: Arc<dyn AuditVerifier> = Arc::new(StaticAuditVerifier::with_verdict(
-        xiaoguai_audit::OWNER_TENANT_ID,
-        VerifyReport::Ok { verified_count: 7 },
-    ));
+    let v: Arc<dyn AuditVerifier> = Arc::new(StaticAuditVerifier::with_verdict(VerifyReport::Ok {
+        verified_count: 7,
+    }));
     let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
     state.audit_verifier = Some(v);
     let app = router(state);
@@ -237,10 +235,10 @@ async fn admin_audit_verify_returns_ok_for_unbroken_chain() {
 #[tokio::test]
 async fn admin_audit_verify_reports_broken_chain() {
     use xiaoguai_api::{AuditVerifier, StaticAuditVerifier, VerifyReport};
-    let v: Arc<dyn AuditVerifier> = Arc::new(StaticAuditVerifier::with_verdict(
-        xiaoguai_audit::OWNER_TENANT_ID,
-        VerifyReport::Broken { broken_at: 42 },
-    ));
+    let v: Arc<dyn AuditVerifier> =
+        Arc::new(StaticAuditVerifier::with_verdict(VerifyReport::Broken {
+            broken_at: 42,
+        }));
     let mut state = build_state(InMemorySessionRepo::arc(), None, None, None);
     state.audit_verifier = Some(v);
     let app = router(state);
