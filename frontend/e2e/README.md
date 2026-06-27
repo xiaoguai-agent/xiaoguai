@@ -12,7 +12,6 @@ frontend/e2e/
 └── tests/
     ├── chat-ui/
     │   ├── golden-path.spec.ts            # Chat input → send → structural bubble + session assertions, Branch fork
-    │   ├── chat-ai-disclosure.spec.ts     # AI disclosure banner: default render / dismiss / persist
     │   ├── chat-hotl-suspend-resume.spec.ts  # HotL banner mount/clear + approve/deny/sibling (mocked SSE)
     │   ├── chat-hotl-escalation-id.spec.ts   # escalation_id wire-shape regression (mocked SSE)
     │   └── chat-sse-reconnect.spec.ts        # partial preserved on drop + reconnect banner (mocked SSE)

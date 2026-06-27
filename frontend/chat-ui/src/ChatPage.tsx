@@ -16,7 +16,6 @@ import { CopyButton } from './codeblock';
 import { MarkdownBody } from './markdown';
 import { HotlBanner } from './HotlBanner';
 import type { HotlPendingState } from './HotlBanner';
-import { AiDisclosureBanner } from './AiDisclosureBanner';
 import { SseReconnectBanner } from './SseReconnectBanner';
 import { WatchIndicator } from './WatchIndicator';
 import { ExpertPicker } from './ExpertPicker';
@@ -752,11 +751,8 @@ export function ChatPage({ onSessionCreated }: Props) {
           onCancel={cancel}
         />
       )}
-      {/* AI disclosure banner (EU AI Act Art. 50(1)) — always above HotlBanner */}
-      <AiDisclosureBanner />
-      {/* Chat header — order: AiDisclosureBanner > HotlBanner > WatchIndicator */}
+      {/* Chat header — order: HotlBanner > WatchIndicator */}
       <div className="chat-header">
-        {/* AiDisclosureBanner placeholder — wired by feat/chat-ui-ai-disclosure branch */}
         {/* HotlBanner placeholder — wired by feat/chat-ui-hotl-banner branch */}
         {/* T3.5 — expert picker chip for the active session */}
         <ExpertPicker

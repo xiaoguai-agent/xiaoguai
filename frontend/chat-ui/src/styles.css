@@ -1792,76 +1792,13 @@ html,
   color: var(--accent);
 }
 
-/* ---------------------------------------- AI disclosure banner (v1.3.x) */
-
-/* Persistent notice at the top of the chat column — above HotlBanner.
- * Uses a warm amber palette that reads as "informational, not alarming"
- * while still standing out from the neutral surface.
- * Regulated variant (dismissible=false) keeps the same style;
- * the button is simply absent. */
-
-.ai-disclosure-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-4);
-  background: #fffbeb;
-  border-bottom: 1px solid #fde68a;
-  font-size: 13px;
-  color: #78350f;
-  flex-shrink: 0;
-}
-
-[data-theme='dark'] .ai-disclosure-banner {
-  background: #1a1407;
-  border-bottom-color: #3a2c0e;
-  color: #fcd34d;
-}
-
-.ai-disclosure-banner__text {
-  flex: 1;
-  line-height: 1.45;
-}
-
-.ai-disclosure-banner__link {
-  color: inherit;
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
 .outcomes-panel__audit-link:hover {
   opacity: 0.8;
 }
 
-.ai-disclosure-banner__link:hover {
-  opacity: 0.75;
-}
-
-.ai-disclosure-banner__dismiss {
-  appearance: none;
-  background: transparent;
-  border: 1px solid currentColor;
-  border-radius: var(--radius-sm);
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  opacity: 0.7;
-  padding: 1px 10px;
-  flex-shrink: 0;
-  transition: opacity 120ms ease;
-}
-
-.ai-disclosure-banner__dismiss:hover {
-  opacity: 1;
-}
-
 /* ---------------------------------------------------------- chat header (v1.3.x) */
 
-/* Hosts AiDisclosureBanner, HotlBanner, WatchIndicator in a right-aligned row.
+/* Hosts HotlBanner, WatchIndicator in a right-aligned row.
    Renders nothing visible when all children are null (zero-count watchers). */
 .chat-header {
   display: flex;
