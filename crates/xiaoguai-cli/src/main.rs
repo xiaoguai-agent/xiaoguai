@@ -4,9 +4,9 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use xiaoguai_cli::commands::{
-    anomaly, audit_bundle, audit_export, backup, chat, cli_config, code, completions, doctor, eval,
-    hotl, init, manpages, mcp, memory, outcomes, pack, provider, r#loop, remote, repl, schedule,
-    self_update, service, skills, stats, style, tasks, watch,
+    anomaly, audit_bundle, audit_export, backup, chat, cli_config, code, completions, demo_seed,
+    doctor, eval, hotl, init, manpages, mcp, memory, outcomes, pack, provider, r#loop, remote,
+    repl, schedule, self_update, service, skills, stats, style, tasks, watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -623,6 +623,37 @@ async fn handle_schedule(config: Option<&str>, action: ScheduleCmd) -> Result<()
             );
         }
     }
+    Ok(())
+}
+
+/// `xiaoguai demo-seed [--reset]` — populate (or clear) lifelike sample data in
+/// the same `SQLite` store `serve` reads. Uses the same DB-connect + HMAC audit
+/// seam as `handle_schedule` so demo audit rows verify in the server's chain.
+async fn handle_demo_seed(config: Option<&str>, reset: bool) -> Result<()> {
+    use xiaoguai_audit::chain::sink::SqliteAuditSink;
+
+    let settings = load_settings(config)?;
+    let pool = connect(&settings.database.url, settings.database.max_connections)
+        .await
+        .context("open SQLite store")?;
+    // Idempotent migrate-on-connect (same as `handle_schedule`) so `demo-seed`
+    // works on a brand-new DB before the first `serve`.
+    migrate(&pool).await.context("apply migrations")?;
+
+    if reset {
+        demo_seed::clear_demo(&pool).await?;
+        println!("✓ demo 数据已清除（审计链 append-only，未删除已签名的审计行）。");
+        return Ok(());
+    }
+
+    // SEC-15: fail-closed — never sign the audit chain with the published dev
+    // key (same key resolution as `xiaoguai schedule` / `xiaoguai code`).
+    let key = xiaoguai_cli::commands::resolve_audit_signing_key(&settings)?;
+    let audit = SqliteAuditSink::new(pool.clone(), key);
+    let report = demo_seed::seed(&pool, &audit, chrono::Utc::now())
+        .await
+        .context("seed demo data")?;
+    print!("{}", demo_seed::format_guide(&report));
     Ok(())
 }
 
@@ -1592,6 +1623,7 @@ async fn main() -> Result<()> {
                 .context("load settings for smoke")?;
             xiaoguai_core::run_smoke(&settings).await
         }
+        Cmd::DemoSeed { reset } => handle_demo_seed(cfg, reset).await,
         Cmd::Acp => {
             let settings = xiaoguai_core::load_settings(cfg.map(std::path::Path::new))
                 .context("load settings for acp")?;
