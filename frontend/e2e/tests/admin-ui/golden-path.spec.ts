@@ -73,8 +73,9 @@ test.describe('admin-ui navigation — all panes', () => {
     ).toBeVisible({ timeout: 10_000 });
   });
 
-  test('Audit pane renders heading', async ({ page }) => {
-    await navigateAndExpectHeading(page, '/audit', /audit/i);
+  test('Audit (activity) pane renders heading', async ({ page }) => {
+    // Single-owner: the Audit Log was reframed as the "Activity" history pane.
+    await navigateAndExpectHeading(page, '/audit', /activity/i);
   });
 
   test('Providers pane renders LLM Providers heading', async ({ page }) => {

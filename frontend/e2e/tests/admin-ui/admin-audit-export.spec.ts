@@ -60,7 +60,7 @@ async function installAuditMocks(page: Page, entries: MockAuditEntry[]): Promise
   });
 }
 
-test.describe('admin-ui Audit pane — rows render with HMAC column', () => {
+test.describe('admin-ui Audit pane — rows render with verify badge', () => {
   test('rows render against mocked /v1/admin/audit', async ({ page }) => {
     await installAuditMocks(page, [makeEntry(1), makeEntry(2), makeEntry(3)]);
 
@@ -69,10 +69,34 @@ test.describe('admin-ui Audit pane — rows render with HMAC column', () => {
 
     // Three rows in tbody.
     await expect(page.locator('table.audit-table tbody tr')).toHaveCount(3);
-    // Truncated HMAC visible.
+    // Each row folds the HMAC into a single tamper-check badge (the standalone
+    // HMAC column was dropped in the single-owner activity view; the last-8 of
+    // the HMAC moved into the row `title`).
     await expect(
-      page.locator('table.audit-table td.mono').first(),
+      page.locator('table.audit-table [data-testid="chain-badge"]').first(),
     ).toBeVisible();
+  });
+});
+
+test.describe('admin-ui Audit pane — filter & search', () => {
+  test('category filter and search narrow the activity list', async ({ page }) => {
+    await installAuditMocks(page, [
+      { ...makeEntry(1), action: 'session.create' },
+      { ...makeEntry(2), action: 'tool.invoke', resource: 'shell' },
+      { ...makeEntry(3), action: 'session.delete' },
+    ]);
+    await page.goto('/audit');
+    await expect(page.locator('table.audit-table tbody tr')).toHaveCount(3);
+
+    // Category → Tools: only the tool.invoke row survives the client-side filter.
+    await page.locator('[data-testid="audit-category-filter"]').selectOption('tool');
+    await expect(page.locator('table.audit-table tbody tr')).toHaveCount(1);
+
+    // Back to all, then free-text search by resource.
+    await page.locator('[data-testid="audit-category-filter"]').selectOption('all');
+    await expect(page.locator('table.audit-table tbody tr')).toHaveCount(3);
+    await page.locator('[data-testid="audit-search"]').fill('shell');
+    await expect(page.locator('table.audit-table tbody tr')).toHaveCount(1);
   });
 });
 
