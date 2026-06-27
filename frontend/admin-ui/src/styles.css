@@ -1574,3 +1574,146 @@ tr:last-child td { border-bottom: none; }
 .audit-category-tag {
   vertical-align: middle;
 }
+
+/* ---------------------------------------------------- loops (single-owner-ux) */
+
+.loops-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.loops-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.loops-row-actions {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.loops-cancel-btn {
+  color: #b91c1c;
+}
+
+/* Loop status badges reuse the .status-badge base; one colour per lifecycle. */
+.loop-status-active {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.loop-status-paused {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.loop-status-done {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.loop-status-failed {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.loop-status-ended {
+  background: var(--row-hover);
+  color: var(--muted);
+}
+
+/* -------------------------------------------------- anomaly (single-owner-ux) */
+
+.anomaly-form,
+.anomaly-result,
+.anomaly-live {
+  margin-top: 20px;
+}
+
+.anomaly-form h2,
+.anomaly-result p,
+.anomaly-live h2 {
+  margin: 0 0 12px;
+}
+
+.anomaly-form h2,
+.anomaly-live h2 {
+  font-size: 15px;
+}
+
+.anomaly-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.anomaly-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.anomaly-form-grid input,
+.anomaly-form-grid select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.anomaly-samples {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.anomaly-csv-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
+.anomaly-csv-label textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.anomaly-run-btn {
+  background: var(--accent);
+  color: #ffffff;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 18px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.anomaly-run-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.anomaly-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

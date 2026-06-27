@@ -759,6 +759,88 @@ export interface AnomalyFireRateBucket {
   count: number;
 }
 
+// ---- Anomaly back-test (POST /v1/anomaly/test) -------------------------
+//
+// Unlike the (planned) detections/detectors surface above, `POST
+// /v1/anomaly/test` IS live: it back-tests a full `AnomalySpec` against an
+// inline CSV time-series and returns every anomaly the configured detector
+// fires. Fully offline + deterministic — see
+// `crates/xiaoguai-api/src/routes/anomaly.rs`. The detector union is the
+// same `AnomalyDetectorKind` the tuning panel uses (`z_score` / `ewma`,
+// snake_case to match serde `rename_all`).
+
+/**
+ * What to do when an anomaly fires. Mirrors `ActionRef` in
+ * `crates/xiaoguai-anomaly/src/spec.rs` (`#[serde(tag = "kind")]`,
+ * snake_case). Only the shape matters for a back-test — the action never
+ * runs — but the backend requires a complete spec, so a value is sent.
+ */
+export type AnomalyActionRef =
+  | { kind: 'wake_session'; session: string; prompt_template: string }
+  | { kind: 'notify'; channel: string }
+  | { kind: 'webhook'; route_id: string };
+
+/** How often the live scheduler observes the KPI. Mirrors `AnomalySchedule`. */
+export type AnomalySchedule =
+  | { kind: 'cron'; expr: string }
+  | { kind: 'interval_secs'; secs: number };
+
+/**
+ * Complete declarative anomaly-monitor spec. Mirrors `AnomalySpec` in
+ * `crates/xiaoguai-anomaly/src/spec.rs` on the wire (durations are integer
+ * seconds; `schedule` is optional and defaults to hourly server-side).
+ */
+export interface AnomalySpec {
+  /** Unique monitor name. */
+  id: string;
+  /** KPI query string — opaque to the back-test (data comes from the CSV). */
+  kpi_query: string;
+  /** Rolling baseline window, in seconds. */
+  window: number;
+  detector: AnomalyDetectorKind;
+  /** Cooldown between successive alerts, in seconds. */
+  cool_off: number;
+  on_anomaly: AnomalyActionRef;
+  /** Optional observation cadence (live detection only). */
+  schedule?: AnomalySchedule;
+}
+
+/** Body for `POST /v1/anomaly/test`. */
+export interface AnomalyBacktestRequest {
+  /** The monitor spec to evaluate. */
+  spec: AnomalySpec;
+  /** Raw CSV text with a header row. */
+  csv: string;
+  /** Header name of the timestamp column. */
+  ts_col: string;
+  /** Header name of the numeric value column. */
+  val_col: string;
+}
+
+/** One detected anomaly row, in the shape the backend returns. */
+export interface AnomalyBacktestRow {
+  /** RFC 3339 timestamp of the anomalous observation. */
+  ts: string;
+  /** The observed value. */
+  value: number;
+  /** Baseline mean at detection time. */
+  mean: number;
+  /** Baseline std-dev at detection time. */
+  std: number;
+  /** Signed deviation score. */
+  score: number;
+  /** Human-readable description. */
+  description: string;
+}
+
+/** Successful body of `POST /v1/anomaly/test`. */
+export interface AnomalyBacktestResponse {
+  /** Anomalies in observation order. */
+  anomalies: AnomalyBacktestRow[];
+  /** One-line human summary. */
+  summary: string;
+}
+
 // ---- v1.3.x — HotL (Human-on-the-Loop) policy --------------------------
 
 /**
@@ -2195,6 +2277,15 @@ export class XiaoguaiClient {
   }
 
   /**
+   * Back-test an anomaly spec against inline CSV data.
+   * Endpoint: POST /v1/anomaly/test (live; offline + deterministic).
+   * Throws `ApiError(400)` on a malformed CSV or spec.
+   */
+  anomalyBacktest(req: AnomalyBacktestRequest): Promise<AnomalyBacktestResponse> {
+    return this.request<AnomalyBacktestResponse>('POST', '/v1/anomaly/test', req);
+  }
+
+  /**
    * Pause a watcher by id. Returns silently when endpoint absent (404/503).
    */
   async pauseWatcher(watcherId: string): Promise<void> {
@@ -2641,6 +2732,18 @@ export class XiaoguaiClient {
    */
   cancelLoop(id: string): Promise<LoopResponse> {
     return this.request<LoopResponse>('DELETE', `/v1/loops/${encodeURIComponent(id)}`);
+  }
+
+  /**
+   * Resume a paused loop (undo `loop_pause`). `POST /v1/loops/:id/resume` →
+   * 200 with the re-armed row. Throws `ApiError(409)` when the loop is not
+   * paused, `404` when unknown, `503` when loops are unwired.
+   */
+  resumeLoop(id: string): Promise<LoopResponse> {
+    return this.request<LoopResponse>(
+      'POST',
+      `/v1/loops/${encodeURIComponent(id)}/resume`,
+    );
   }
 
   /**
