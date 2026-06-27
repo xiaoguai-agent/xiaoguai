@@ -1,10 +1,4 @@
 {
-  "ai_disclosure": {
-    "banner_text": "You are interacting with an AI assistant. Responses may be inaccurate; verify important information.",
-    "dismiss_label": "Dismiss",
-    "learn_more_label": "Learn more",
-    "banner_aria_label": "AI transparency notice"
-  },
   "watch": {
     "badge_label": "{{count}} active watcher",
     "badge_label_plural": "{{count}} active watchers",

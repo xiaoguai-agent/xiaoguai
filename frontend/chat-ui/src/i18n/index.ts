@@ -23,12 +23,6 @@ export const AVAILABLE_LOCALES: ReadonlyArray<{ code: Locale; label: string }> =
 const LOCALE_STORAGE_KEY = 'xiaoguai.locale';
 
 interface TranslationShape {
-  ai_disclosure: {
-    banner_text: string;
-    dismiss_label: string;
-    learn_more_label: string;
-    banner_aria_label: string;
-  };
   /** Main chat-ui surface strings (sidebar, welcome, composer). */
   ui: {
     new_chat: string;

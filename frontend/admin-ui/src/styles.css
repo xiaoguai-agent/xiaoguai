@@ -1532,3 +1532,45 @@ tr:last-child td { border-bottom: none; }
 .provider-probe-results .probe-fail {
   color: #c62828;
 }
+
+/* ---------------------------------------------------------- activity pane (single-owner) */
+
+/* Filter + search toolbar above the activity history. Lays the controls
+   out in a single wrapping row and gives the native select/search inputs
+   the same bordered look as the provider form. */
+.audit-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.audit-toolbar select,
+.audit-toolbar input[type='search'] {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--fg);
+  background: #ffffff;
+}
+
+.audit-toolbar input[type='search'] {
+  flex: 1 1 200px;
+  min-width: 160px;
+}
+
+.audit-toolbar select:focus,
+.audit-toolbar input[type='search']:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Action cell: the friendly verb plus a muted category tag. */
+.audit-action-label {
+  margin-right: 8px;
+}
+
+.audit-category-tag {
+  vertical-align: middle;
+}

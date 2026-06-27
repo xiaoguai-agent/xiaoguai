@@ -840,58 +840,6 @@ export interface SessionOutcomesSummary {
   }>;
 }
 
-// ---- v1.3.x — AI disclosure banner (EU AI Act Art. 50(1)) ---------------
-
-/**
- * Global configuration for the AI disclosure banner.
- *
- * DEC-033 (single owner): there is no per-tenant config endpoint. Until a
- * global config surface is wired, the client falls back to the defaults
- * documented below (enabled=true, dismissible=true, no text_override, no link).
- * Operators who want to override the banner can pass the optional `config`
- * prop on `<AiDisclosureBanner>`.
- */
-export interface AiDisclosureConfig {
-  /** When false the banner is hidden entirely. Default: true. */
-  enabled: boolean;
-  /**
-   * Custom locale text for the banner body. When omitted the built-in
-   * translated strings from the i18n locale files are used.
-   */
-  text_override?: string | null;
-  /**
-   * When false the dismiss button is hidden and the banner is always
-   * visible — intended for regulated operators (e.g. financial services
-   * subject to stricter AI Act obligations). Default: true.
-   */
-  dismissible: boolean;
-  /**
-   * URL to the operator's full transparency note / AI disclosure page.
-   * When provided a "Learn more" link is rendered at the end of the banner.
-   */
-  link_to_disclosure?: string | null;
-}
-
-const AI_DISCLOSURE_CONFIG_DEFAULTS: AiDisclosureConfig = {
-  enabled: true,
-  dismissible: true,
-};
-
-/**
- * Resolve the AI disclosure banner config.
- *
- * DEC-033: there is no per-owner config endpoint, so this returns the
- * built-in defaults (banner enabled + dismissible). The `opts` arg is
- * accepted for call-site stability but unused. Operators who want to
- * override the banner can do so via the optional `config` prop on
- * `<AiDisclosureBanner>` instead.
- */
-export async function getAiDisclosureConfig(
-  _opts?: { baseUrl?: string; fetchImpl?: typeof fetch },
-): Promise<AiDisclosureConfig> {
-  return AI_DISCLOSURE_CONFIG_DEFAULTS;
-}
-
 // ---- v1.3.x — watch event indicators ------------------------------------
 
 /** Status values a watcher can be in. */
