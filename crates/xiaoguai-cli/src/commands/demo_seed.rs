@@ -304,7 +304,7 @@ async fn seed_jobs(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
     // trigger / payload / retry_policy are TEXT-JSON columns (see
     // 0007_scheduled_jobs.sql + the scheduler's serde model). We write the
     // canonical shapes the JobRunner deserializes.
-    let retry = json!({ "max_attempts": 3, "backoff_secs": 30 }).to_string();
+    let retry = json!({ "max_attempts": 3, "initial_backoff_secs": 30, "multiplier": 2.0, "max_backoff_secs": 3600 }).to_string();
     let next_fire = ts(now + Duration::hours(8));
 
     // Daily 09:00 UTC cron — dashboard health check.
@@ -772,6 +772,29 @@ mod tests {
         sink.verify_tenant(OWNER_TENANT_ID)
             .await
             .expect("seeded audit chain must verify");
+    }
+
+    #[tokio::test]
+    async fn seed_jobs_retry_policy_deserializes_into_scheduler_model() {
+        // Regression: a demo job's `retry_policy` JSON must match the
+        // scheduler's `RetryPolicy` serde model, or the JobRunner tick fails to
+        // deserialize it (the original `backoff_secs` vs `initial_backoff_secs`/
+        // `max_backoff_secs` field-name bug). Seed, then round-trip every demo
+        // job's policy through the real type.
+        let (pool, sink, _dir) = fixture().await;
+        seed(&pool, &sink, fixed_now()).await.expect("seed");
+        let policies: Vec<String> = sqlx::query_scalar(
+            "SELECT retry_policy FROM scheduled_jobs WHERE id LIKE 'demo_job_%'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(policies.len(), 2, "two demo jobs");
+        for rp in policies {
+            serde_json::from_str::<xiaoguai_scheduler::RetryPolicy>(&rp).unwrap_or_else(|e| {
+                panic!("demo retry_policy must deserialize into scheduler RetryPolicy: {e}\n{rp}")
+            });
+        }
     }
 
     #[tokio::test]
