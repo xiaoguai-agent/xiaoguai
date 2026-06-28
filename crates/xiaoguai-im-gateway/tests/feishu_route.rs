@@ -1,9 +1,11 @@
 //! End-to-end coverage for `POST /v1/im/feishu/webhook` — verifies the
-//! signed-challenge handshake, signed-message routing, and 401 on missing
-//! signature.
+//! signed-challenge handshake, signed-message routing, 401 on missing
+//! signature, and that a real signed webhook drives the production
+//! `OpenAPI` reply path (token cache → `send_text_message`) end-to-end.
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use axum::body::{to_bytes, Body};
 use axum::http::{header, Method, Request, StatusCode};
 use parking_lot::Mutex;
@@ -12,8 +14,8 @@ use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 use xiaoguai_agent::{AgentConfig, Toolbox};
 use xiaoguai_api::{AppState, CancelRegistry};
-use xiaoguai_im_feishu::FeishuProvider;
-use xiaoguai_im_gateway::{mount_feishu, ImProvider, OutgoingReply};
+use xiaoguai_im_feishu::{FeishuClient, FeishuProvider, TokenResponse};
+use xiaoguai_im_gateway::{mount_feishu, ImProvider, OutgoingReply, ProviderError};
 use xiaoguai_llm::mock::ScriptStep;
 use xiaoguai_llm::{LlmBackend, MockBackend};
 
@@ -32,10 +34,18 @@ fn sign(body: &str, ts: &str, nonce: &str) -> String {
 }
 
 fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
+    let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
+    build_app_with_provider(provider, vec![ScriptStep::text("noop")])
+}
+
+/// Build the webhook app around an arbitrary provider + agent script. Lets
+/// each test pick its reply sink (recording vs the real `OpenAPI` path via
+/// `with_api_sink`) and the scripted assistant output, without duplicating
+/// the (large) `AppState` wiring.
+fn build_app_with_provider(provider: Arc<dyn ImProvider>, script: Vec<ScriptStep>) -> axum::Router {
     let sessions = InMemorySessionRepo::arc();
     let messages = InMemoryMessageRepo::arc();
-    let backend: Arc<dyn LlmBackend> =
-        Arc::new(MockBackend::with_script(vec![ScriptStep::text("noop")]));
+    let backend: Arc<dyn LlmBackend> = Arc::new(MockBackend::with_script(script));
     let state = AppState {
         sessions,
         messages,
@@ -85,7 +95,6 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
         ),
         pack_rescanner: None,
     };
-    let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));
     mount_feishu(state, provider)
 }
 
@@ -158,6 +167,98 @@ async fn message_event_is_accepted_and_reply_dispatched() {
     // v0.7.1: the reply text is the MockBackend's scripted output, not
     // an echo of the user's input. The script returns "noop".
     assert_eq!(buf[0].text, "noop");
+}
+
+/// Fake `FeishuClient` that records every outbound call so a test can
+/// assert the provider drove the real `OpenAPI` reply path (token fetch +
+/// `send_text_message`) without touching the network.
+#[derive(Default)]
+struct RecordingFeishuClient {
+    token_calls: Mutex<u32>,
+    send_calls: Mutex<Vec<(String, String, String)>>,
+}
+
+#[async_trait]
+impl FeishuClient for RecordingFeishuClient {
+    async fn fetch_tenant_access_token(
+        &self,
+        _app_id: &str,
+        _app_secret: &str,
+    ) -> Result<TokenResponse, ProviderError> {
+        *self.token_calls.lock() += 1;
+        Ok(TokenResponse {
+            token: "t_demo".into(),
+            expire_in_secs: 7200,
+        })
+    }
+
+    async fn send_text_message(
+        &self,
+        token: &str,
+        chat_id: &str,
+        text: &str,
+    ) -> Result<Value, ProviderError> {
+        self.send_calls
+            .lock()
+            .push((token.to_string(), chat_id.to_string(), text.to_string()));
+        Ok(json!({ "code": 0, "msg": "ok" }))
+    }
+}
+
+/// Demo-critical path: a *real* signed message webhook must drive the
+/// production `OpenAPI` reply chain — `tenant_access_token` fetch (through
+/// the cache) followed by `send_text_message(chat_id, agent_output)`.
+///
+/// The existing `message_event_is_accepted_and_reply_dispatched` only
+/// exercises the recording sink; this one proves the
+/// `FeishuProvider::with_api_sink` path that `serve` actually wires when
+/// `XIAOGUAI_IM_FEISHU__APP_ID` / `__APP_SECRET` are configured. Uses a
+/// fake `FeishuClient`, so no network is touched.
+#[tokio::test]
+async fn message_event_drives_api_reply_path() {
+    let client: Arc<RecordingFeishuClient> = Arc::new(RecordingFeishuClient::default());
+    let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_api_sink(
+        KEY,
+        client.clone() as Arc<dyn FeishuClient>,
+        "cli_demo_app",
+        "demo_secret",
+    ));
+    // The reply text is the agent's scripted output, not an echo.
+    let app = build_app_with_provider(provider, vec![ScriptStep::text("从飞书来的回复")]);
+
+    let body = json!({
+        "header": {"event_id": "evt-api-1", "tenant_key": "ten_x"},
+        "event": {
+            "sender": {"sender_id": {"open_id": "ou_bob"}, "tenant_key": "ten_x"},
+            "message": {"chat_id": "oc_demo", "content": "{\"text\":\"在吗\"}"}
+        }
+    })
+    .to_string();
+    let resp = app.oneshot(signed_request(&body)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_json(resp.into_body()).await;
+    assert_eq!(v["status"], "accepted");
+
+    // The reply is dispatched from a background spawn; give it a beat to
+    // run the (mock) agent and call through to the fake OpenAPI client.
+    for _ in 0..40 {
+        if !client.send_calls.lock().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    let sends = client.send_calls.lock();
+    assert_eq!(sends.len(), 1, "exactly one OpenAPI send should fire");
+    let (token, chat_id, text) = &sends[0];
+    assert_eq!(token, "t_demo", "send must use the cached tenant token");
+    assert_eq!(chat_id, "oc_demo", "reply must target the inbound chat_id");
+    assert_eq!(text, "从飞书来的回复", "reply text is the agent's output");
+    assert_eq!(
+        *client.token_calls.lock(),
+        1,
+        "token is fetched once and cached"
+    );
 }
 
 #[tokio::test]
