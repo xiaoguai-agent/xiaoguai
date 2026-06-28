@@ -113,6 +113,7 @@
       "firstrun_hint": "团队来自已激活的「专用场景」技能包。选中一个团队后，输入一个复杂目标即可交给整个团队执行 —— 成员并行工作，组长汇总成一份答案。",
       "deeplink_attached": "已绑定团队「{{team}}」—— 输入一个复杂目标，把它交给团队。",
       "deeplink_need_session": "先发送任意一条消息开启会话，然后在这里选择团队「{{team}}」。",
+      "teamrun_discover": "已绑定该团队。在消息框输入一个复杂目标，再点击旁边的「团队并行执行」按钮，即可交给整个团队并行处理。",
       "error_load": "加载专家失败：{{message}}",
       "error_attach": "绑定专家失败：{{message}}",
       "error_detach": "移除专家失败：{{message}}",
@@ -140,6 +141,11 @@
     "skills_page": {
       "title": "技能包",
       "subtitle": "浏览并安装预置的技能包。技能包为助手扩展领域专属的工具、提示词和 RAG 索引。",
+      "center_subtitle": "你的能力中心 —— 助手当前可用的技能。在这里安装或移除技能包；完整的目录管理在「管理后台」。",
+      "active_title": "你的能力",
+      "active_empty": "还没有安装任何技能 —— 展开下方的「浏览全部技能」来添加。",
+      "browse_title": "浏览全部技能",
+      "browse_hint": "从完整目录安装更多",
       "loading": "加载中…",
       "error": "错误：{{message}}",
       "empty": "暂无可用的技能包。",
@@ -168,6 +174,16 @@
       "onboarding_step1": "在下方安装一个「专用场景」技能包。",
       "onboarding_step2": "等待出现「团队已激活 ✓」标记 —— 其智能体团队已就绪。",
       "onboarding_step3": "点击「去聊天使用 →」，在「专家选择器」里选中该团队，输入一个复杂目标，交给团队执行。"
+    },
+    "mcp_tools": {
+      "title": "本会话可用的工具",
+      "intro": "这些是助手可以调用的外部 MCP 工具 —— 已连接的服务器在内置工具之外提供更多操作能力。",
+      "manage_note": "此处仅供查看。新增、编辑或移除服务器请前往「管理后台」。",
+      "loading": "正在加载工具…",
+      "error": "无法加载 MCP 工具：{{message}}",
+      "empty": "尚未配置任何 MCP 服务器。在「管理后台」连接一个，即可为助手扩展外部工具。",
+      "transport_title": "传输方式：{{transport}}",
+      "env_label": "环境变量："
     }
   },
   "sidebar": {

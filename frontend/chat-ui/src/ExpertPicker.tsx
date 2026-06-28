@@ -358,6 +358,26 @@ export function ExpertPicker({
             </div>
           )}
 
+          {/* Feature ⑭ — Team Run discoverability: when a team is the active
+              expert, point the operator at the Team Run entry by the composer
+              and seed an example goal. The orchestrate run itself lives in the
+              composer (always execute mode — hence the consult caveat); this is
+              a read-only "here's how to run the team" affordance. */}
+          {active?.kind === 'team' && (
+            <div className="expert-popover__teamrun" data-testid="expert-teamrun-hint">
+              <span className="expert-popover__teamrun-lead">{t.ui.teamrun.button}</span>
+              <span className="expert-popover__teamrun-body">
+                {t.ui.expert.teamrun_discover}
+              </span>
+              <span className="expert-popover__teamrun-example" title={t.ui.teamrun.example_goal}>
+                {t.ui.teamrun.example_goal}
+              </span>
+              <span className="expert-popover__teamrun-consult">
+                {t.ui.teamrun.disabled_consult}
+              </span>
+            </div>
+          )}
+
           {/* "一句话找专家" — describe a goal, get ranked experts. */}
           <div className="expert-popover__suggest">
             <label className="expert-popover__suggest-label" htmlFor="expert-goal-input">

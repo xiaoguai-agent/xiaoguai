@@ -79,6 +79,8 @@ interface TranslationShape {
       /** Phase 4c — deep-link landing: team auto-attached / needs a session. */
       deeplink_attached: string;
       deeplink_need_session: string;
+      /** Feature ⑭ — Team Run discoverability hint (shown when a team is active). */
+      teamrun_discover: string;
       error_load: string;
       error_attach: string;
       error_detach: string;
@@ -110,6 +112,12 @@ interface TranslationShape {
     skills_page: {
       title: string;
       subtitle: string;
+      /** Feature ④ — ability-center reframe (installed-first consumer view). */
+      center_subtitle: string;
+      active_title: string;
+      active_empty: string;
+      browse_title: string;
+      browse_hint: string;
       loading: string;
       error: string;
       empty: string;
@@ -143,6 +151,17 @@ interface TranslationShape {
       onboarding_step1: string;
       onboarding_step2: string;
       onboarding_step3: string;
+    };
+    /** Feature ④ — read-only "tools available to this session" (MCP) view. */
+    mcp_tools: {
+      title: string;
+      intro: string;
+      manage_note: string;
+      loading: string;
+      error: string;
+      empty: string;
+      transport_title: string;
+      env_label: string;
     };
   };
   /** Feature ②/⑤ — enriched sidebar widgets (audit link, token stat,
