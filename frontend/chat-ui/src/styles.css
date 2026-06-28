@@ -1591,6 +1591,96 @@ html,
   color: var(--accent);
 }
 
+/* --------------------------------------------- enriched sidebar (Feature ②/⑤) */
+
+/* The lower nav cluster: Skills link + activity deep-link + token stat. Pushed
+   toward the bottom (above the footer) so the session list owns the top. */
+.sidebar-extras {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-soft);
+}
+
+/* Muted one-liner showing today's token spend. */
+.sidebar-token-stat {
+  margin: var(--space-1) 0 0;
+  padding: 0 var(--space-3);
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.sidebar-token-stat--skeleton {
+  opacity: 0.5;
+}
+
+/* Per-session working-directory editor. */
+.working-dir {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.working-dir__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.working-dir__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.working-dir__input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.working-dir__input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Override the sidebar's full-width default button styling for the compact
+   save button. */
+.working-dir__save {
+  width: auto;
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.working-dir__save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.working-dir__error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--tool-error-fg);
+}
+
 /* ---------------------------------------------------------- HotL banner (v1.3.x) */
 
 /**

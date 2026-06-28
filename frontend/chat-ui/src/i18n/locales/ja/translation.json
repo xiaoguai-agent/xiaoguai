@@ -169,5 +169,13 @@
       "onboarding_step2": "「チーム有効 ✓」の表示を待ちます — エージェントチームの準備が整います。",
       "onboarding_step3": "「チャットで使う →」をクリックし、「エキスパート選択」でチームを選び、複雑なゴールを入力してチームに任せます。"
     }
+  },
+  "sidebar": {
+    "audit": "アクティビティ",
+    "today_tokens": "本日 ~{{count}} トークン",
+    "today_tokens_title": "本日 UTC 00:00 以降の入力 + 出力トークン合計",
+    "working_dir": "作業ディレクトリ",
+    "working_dir_save": "保存",
+    "working_dir_placeholder": "/作業領域/絶対/パス"
   }
 }

@@ -169,5 +169,13 @@
       "onboarding_step2": "等待出现「团队已激活 ✓」标记 —— 其智能体团队已就绪。",
       "onboarding_step3": "点击「去聊天使用 →」，在「专家选择器」里选中该团队，输入一个复杂目标，交给团队执行。"
     }
+  },
+  "sidebar": {
+    "audit": "活动",
+    "today_tokens": "今日 ~{{count}} tokens",
+    "today_tokens_title": "今日 UTC 00:00 起的输入 + 输出 token 总量",
+    "working_dir": "工作目录",
+    "working_dir_save": "保存",
+    "working_dir_placeholder": "/工作区/绝对/路径"
   }
 }

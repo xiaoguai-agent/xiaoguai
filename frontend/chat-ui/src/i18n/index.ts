@@ -145,6 +145,22 @@ interface TranslationShape {
       onboarding_step3: string;
     };
   };
+  /** Feature ②/⑤ — enriched sidebar widgets (audit link, token stat,
+   *  per-session working-dir control). */
+  sidebar: {
+    /** Audit / activity deep-link label → /admin/audit. */
+    audit: string;
+    /** "今日 ~{{count}} tokens" — `{{count}}` is the humanized total. */
+    today_tokens: string;
+    /** Tooltip for the token stat line. */
+    today_tokens_title: string;
+    /** Working-dir control label. */
+    working_dir: string;
+    /** Working-dir save button. */
+    working_dir_save: string;
+    /** Working-dir input placeholder (an example absolute path). */
+    working_dir_placeholder: string;
+  };
   chat: {
     sse: {
       reconnecting: string;

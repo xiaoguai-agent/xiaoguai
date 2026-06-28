@@ -169,5 +169,13 @@
       "onboarding_step2": "Wait for the \"Team active ✓\" badge — its agent team is now ready.",
       "onboarding_step3": "Click \"Use in chat →\", pick the team in the 专家选择器, type a complex goal, and hand it to the team."
     }
+  },
+  "sidebar": {
+    "audit": "Activity",
+    "today_tokens": "~{{count}} tokens today",
+    "today_tokens_title": "Total input + output tokens used since 00:00 UTC today",
+    "working_dir": "Working directory",
+    "working_dir_save": "Save",
+    "working_dir_placeholder": "/abs/path/to/workspace"
   }
 }

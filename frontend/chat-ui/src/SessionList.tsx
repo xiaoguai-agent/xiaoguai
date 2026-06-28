@@ -2,11 +2,14 @@ import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { RecentOutcomesPanel } from './RecentOutcomesPanel';
 import { XiaoguaiLogo } from './XiaoguaiLogo';
+import { AuditLink, TodayTokenStat, WorkingDirControl } from './SidebarExtras';
 import { useI18n } from './i18n/I18nProvider';
 
 interface StoredSession {
   id: string;
   title: string;
+  /** Feature ⑤ — per-session coding workspace root (undefined = unset). */
+  working_dir?: string;
 }
 
 interface Props {
@@ -15,12 +18,30 @@ interface Props {
   onRename?: (id: string, title: string) => void;
   /** Delete a session by id (confirmed via `window.confirm`). */
   onDelete?: (id: string) => void;
+  /** Feature ② — today's token spend (input + output), `null` while loading
+   *  or when the usage endpoint is unavailable. */
+  todayTokens?: number | null;
+  /** Feature ② — true while the first usage fetch is in flight. */
+  tokensLoading?: boolean;
+  /** Feature ⑤ — the active session's stored working_dir (undefined = unset). */
+  activeWorkingDir?: string;
+  /** Feature ⑤ — persist a new working_dir for the active session. */
+  onSaveWorkingDir?: (sessionId: string, workingDir: string) => Promise<void>;
   /** Optional footer slot — used to slot the theme toggle into the
    *  sidebar's lower edge without coupling SessionList to the toggle. */
   children?: ReactNode;
 }
 
-export function SessionList({ sessions, onRename, onDelete, children }: Props) {
+export function SessionList({
+  sessions,
+  onRename,
+  onDelete,
+  todayTokens = null,
+  tokensLoading = false,
+  activeWorkingDir,
+  onSaveWorkingDir,
+  children,
+}: Props) {
   const location = useLocation();
   const navigate = useNavigate();
   const { t } = useI18n();
@@ -36,11 +57,6 @@ export function SessionList({ sessions, onRename, onDelete, children }: Props) {
       <XiaoguaiLogo />
       <button onClick={() => navigate('/')}>{t.ui.new_chat}</button>
 
-      {/* v1.2.28 — Skills pane nav entry */}
-      <Link to="/skills" className={`nav-link${onSkills ? ' active' : ''}`}>
-        {t.ui.skills}
-      </Link>
-
       {sessions.length === 0 ? (
         <p style={{ color: 'var(--muted)', fontSize: 12 }}>{t.ui.no_sessions}</p>
       ) : (
@@ -55,8 +71,29 @@ export function SessionList({ sessions, onRename, onDelete, children }: Props) {
         ))
       )}
 
+      {/* Feature ⑤ — per-session working-directory control, scoped to the
+          active session (renders nothing when no session is open). */}
+      {onSaveWorkingDir && (
+        <WorkingDirControl
+          sessionId={activeSessionId}
+          value={activeWorkingDir}
+          onSave={onSaveWorkingDir}
+        />
+      )}
+
       {/* v1.3.x — session-scoped outcome summary panel */}
       <RecentOutcomesPanel sessionId={activeSessionId} />
+
+      {/* Feature ② — Skills nav now sits BELOW the session list, above the
+          admin footer, alongside the activity deep-link + today's token stat. */}
+      <div className="sidebar-extras">
+        <Link to="/skills" className={`nav-link${onSkills ? ' active' : ''}`}>
+          <span aria-hidden="true">🧩 </span>
+          {t.ui.skills}
+        </Link>
+        <AuditLink />
+        <TodayTokenStat total={todayTokens} loading={tokensLoading} />
+      </div>
 
       {children && <div className="sidebar-footer">{children}</div>}
     </aside>

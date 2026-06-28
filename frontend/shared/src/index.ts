@@ -40,12 +40,43 @@ export interface SessionResponse {
   parent_session_id?: string;
   /** v1.1.2 — companion to {@link parent_session_id}. */
   forked_from_message_id?: string;
+  /**
+   * Feature ⑤ — per-session coding workspace root (absolute server path).
+   * Omitted (undefined) when unset; the session then falls back to the global
+   * `XIAOGUAI_CODING_WORKSPACE` default. Set/cleared via {@link XiaoguaiClient.updateSession}.
+   */
+  working_dir?: string;
 }
 
 export interface CreateSessionRequest {
   user_id: string;
   model: string;
   title?: string;
+  /** Feature ⑤ — optional per-session coding workspace root. */
+  working_dir?: string;
+}
+
+/**
+ * Query knobs accepted by `GET /v1/sessions`. `user_id` is required server-side
+ * but falls back to the authenticated owner's `Claims.sub` when omitted — so an
+ * owner-authed client can list its own sessions without supplying one.
+ */
+export interface ListSessionsQuery {
+  user_id?: string;
+  /** Defaults server-side; clamped to `[1, 1000]`. */
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Feature ⑤ — partial update body for `PATCH /v1/sessions/{id}`. PATCH
+ * semantics: an omitted field keeps its stored value. For `working_dir`, an
+ * empty string clears the per-session override (falls back to the global
+ * default).
+ */
+export interface UpdateSessionRequest {
+  title?: string;
+  working_dir?: string;
 }
 
 /**
@@ -1613,6 +1644,44 @@ export class XiaoguaiClient {
 
   getSession(id: string): Promise<SessionResponse> {
     return this.request<SessionResponse>('GET', `/v1/sessions/${encodeURIComponent(id)}`);
+  }
+
+  /**
+   * List the owner's sessions, most-recently-updated first. `user_id` is
+   * required server-side but the backend falls back to the authenticated
+   * owner's `Claims.sub` when omitted — so an owner-authed client can call
+   * `listSessions()` with no argument. The chat-ui sidebar surfaces the top
+   * few rows here so server-side history is visible (not just localStorage).
+   */
+  listSessions(q?: ListSessionsQuery): Promise<SessionResponse[]> {
+    const params = new URLSearchParams();
+    if (q?.user_id) params.set('user_id', q.user_id);
+    if (q?.limit !== undefined) params.set('limit', String(q.limit));
+    if (q?.offset !== undefined) params.set('offset', String(q.offset));
+    const qs = params.toString();
+    return this.request<SessionResponse[]>('GET', `/v1/sessions${qs ? `?${qs}` : ''}`);
+  }
+
+  /**
+   * Feature ⑤ — partial update of a session's mutable metadata
+   * (`PATCH /v1/sessions/{id}`). Omitted fields keep their stored value; an
+   * empty `working_dir` clears the per-session workspace override. Returns the
+   * refreshed row.
+   */
+  updateSession(id: string, req: UpdateSessionRequest): Promise<SessionResponse> {
+    return this.request<SessionResponse>(
+      'PATCH',
+      `/v1/sessions/${encodeURIComponent(id)}`,
+      req,
+    );
+  }
+
+  /**
+   * Feature ⑤ convenience — set (or clear, with `''`) the active session's
+   * coding workspace root. Thin wrapper over {@link updateSession}.
+   */
+  setWorkingDir(id: string, working_dir: string): Promise<SessionResponse> {
+    return this.updateSession(id, { working_dir });
   }
 
   listMessages(sessionId: string): Promise<Message[]> {
