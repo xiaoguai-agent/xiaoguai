@@ -184,6 +184,23 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
     } else {
         input.mode
     };
+    // Feature ⑤ (per-session working dir) — WIRING SEAM, NOT YET LIVE.
+    //
+    // `session.working_dir` is the absolute server path this session's coding
+    // tools should use as their workspace root. The pure resolver
+    // `xiaoguai_core::coding_bridge::coding_workspace_root_for_session(
+    //     session.working_dir.as_deref())` already prefers it over the global
+    // `XIAOGUAI_CODING_WORKSPACE` default.
+    //
+    // To honour it per-turn the coding toolbox must be REBUILT here with that
+    // root (today `state.toolbox` bakes the *global* root at boot, in
+    // `xiaoguai-core::run_serve`). That rebuild needs three inputs that
+    // `AppState` does not currently expose: the concrete
+    // `Arc<SqliteAuditSink>`, the egress opt-in flag, and the base
+    // (non-coding) toolbox to layer onto. Plumbing those onto `AppState` +
+    // `run_serve` is out of this change's file ownership, so the override is
+    // resolved + persisted (PATCH endpoint) but the toolbox swap is deferred.
+    // FLAGGED FOR REVIEW.
     let (toolbox, loop_intent) = if input.loop_id.is_some() {
         let (tb, sink) =
             crate::loop_tools::with_loop_tools(&state.toolbox, input.loop_dynamic_pacing);

@@ -150,6 +150,7 @@ impl Fixture {
             status: SessionStatus::Active,
             parent_session_id: None,
             forked_from_message_id: None,
+            working_dir: None,
         };
         self.sessions
             .create(&session)

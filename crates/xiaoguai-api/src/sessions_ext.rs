@@ -95,6 +95,7 @@ mod tests {
             status: SessionStatus::Active,
             parent_session_id: Some(SessionId::from("parent".to_string())),
             forked_from_message_id: Some(xiaoguai_types::MessageId::from("msg".to_string())),
+            working_dir: None,
         }
     }
 

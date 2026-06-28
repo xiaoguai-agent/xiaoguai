@@ -381,6 +381,9 @@ impl ScheduledSessionWriter for SqliteScheduledSessionWriter {
             status: SessionStatus::Active,
             parent_session_id: None,
             forked_from_message_id: None,
+            // Feature ⑤: scheduled-job sessions use the global coding
+            // workspace default (no per-session override).
+            working_dir: None,
         };
         self.sessions
             .create(&session)

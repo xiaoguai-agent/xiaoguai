@@ -108,6 +108,19 @@ fn get(uri: &str) -> Request<Body> {
         .unwrap()
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "test helper — caller owns the Value"
+)]
+fn json_patch(uri: &str, body: Value) -> Request<Body> {
+    Request::builder()
+        .method(Method::PATCH)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
 #[tokio::test]
 async fn healthz_returns_ok() {
     let (state, _) = build_state(vec![ScriptStep::text("noop")]);
@@ -150,6 +163,41 @@ async fn get_session_returns_404_for_unknown() {
     let (state, _) = build_state(vec![ScriptStep::text("noop")]);
     let app = router(state);
     let resp = app.oneshot(get("/v1/sessions/sess_missing")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn patch_session_sets_working_dir_and_returns_updated_body() {
+    // Feature ⑤: PATCH /v1/sessions/{id} sets the per-session working_dir
+    // and echoes the refreshed row. Title is omitted ⇒ left untouched.
+    let (state, _) = build_state(vec![ScriptStep::text("noop")]);
+    let app = router(state);
+    let (app, sid) = create_and_get_session_id(app).await;
+
+    let resp = app
+        .oneshot(json_patch(
+            &format!("/v1/sessions/{sid}"),
+            json!({ "working_dir": "/srv/work/sess-1" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_to_value(resp.into_body()).await;
+    assert_eq!(v["id"], sid);
+    assert_eq!(v["working_dir"], "/srv/work/sess-1");
+}
+
+#[tokio::test]
+async fn patch_session_returns_404_for_unknown() {
+    let (state, _) = build_state(vec![ScriptStep::text("noop")]);
+    let app = router(state);
+    let resp = app
+        .oneshot(json_patch(
+            "/v1/sessions/sess_missing",
+            json!({ "working_dir": "/srv/x" }),
+        ))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 

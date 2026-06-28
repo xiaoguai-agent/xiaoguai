@@ -53,7 +53,10 @@ pub fn router(state: AppState) -> Router {
             "/v1/sessions",
             get(sessions::list_sessions).post(sessions::create_session),
         )
-        .route("/v1/sessions/{id}", get(sessions::get_session))
+        .route(
+            "/v1/sessions/{id}",
+            get(sessions::get_session).patch(sessions::update_session),
+        )
         .route(
             "/v1/sessions/{id}/messages",
             get(sessions::list_messages).post(sessions::send_message),

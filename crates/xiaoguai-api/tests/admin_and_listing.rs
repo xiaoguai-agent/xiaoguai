@@ -95,6 +95,7 @@ fn fixture_session(user_id: &str, _tenant: &str, model: &str) -> Session {
         status: SessionStatus::Active,
         parent_session_id: None,
         forked_from_message_id: None,
+        working_dir: None,
     }
 }
 

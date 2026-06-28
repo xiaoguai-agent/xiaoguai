@@ -169,6 +169,28 @@ pub fn coding_workspace_root() -> Option<std::path::PathBuf> {
         .filter(|p| !p.as_os_str().is_empty())
 }
 
+/// Feature ⑤ — resolve the coding workspace root for a single turn, honouring
+/// the session's per-session override.
+///
+/// When `session_working_dir` is `Some(path)` and non-empty, that absolute
+/// server path is the workspace root for this turn (the coding tools'
+/// file-write / output base). Otherwise we fall back to the global default
+/// resolved by [`coding_workspace_root`] (`XIAOGUAI_CODING_WORKSPACE`), so a
+/// session that pins no directory behaves exactly as before.
+///
+/// This only changes **which root** is used; the opt-in gating and security
+/// model are unchanged — when the global default is also unset the result is
+/// `None` and no coding tools are registered, exactly as today.
+#[must_use]
+pub fn coding_workspace_root_for_session(
+    session_working_dir: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    match session_working_dir.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(dir) => Some(std::path::PathBuf::from(dir)),
+        None => coding_workspace_root(),
+    }
+}
+
 /// Whether the **egress** coding tools (`git_push`, `open_pr`) are exposed —
 /// off unless `XIAOGUAI_CODING_ALLOW_EGRESS` is truthy (`1`/`true`/`yes`). They
 /// leave the local machine and cannot be rolled back, so they require a second,
@@ -239,5 +261,39 @@ mod tests {
             gate.decide("tool_call.edit_file").await,
             GateDecision::Deny(_)
         ));
+    }
+
+    #[test]
+    fn session_working_dir_override_wins() {
+        // A non-empty per-session dir is used verbatim — that's the whole
+        // point of Feature ⑤.
+        let root = coding_workspace_root_for_session(Some("/srv/work/sess-1"));
+        assert_eq!(
+            root.as_deref(),
+            Some(std::path::Path::new("/srv/work/sess-1"))
+        );
+    }
+
+    #[test]
+    fn session_working_dir_trims_and_treats_blank_as_unset() {
+        // Surrounding whitespace is trimmed; a blank override is treated as
+        // "no override" and falls through to the global default. With no
+        // XIAOGUAI_CODING_WORKSPACE set in the test env that default is None.
+        assert_eq!(
+            coding_workspace_root_for_session(Some("   ")),
+            coding_workspace_root()
+        );
+        let trimmed = coding_workspace_root_for_session(Some("  /srv/x  "));
+        assert_eq!(trimmed.as_deref(), Some(std::path::Path::new("/srv/x")));
+    }
+
+    #[test]
+    fn no_session_dir_falls_back_to_global_default() {
+        // None override ⇒ identical to the global resolver (opt-in gating
+        // unchanged: still None when the env var is unset).
+        assert_eq!(
+            coding_workspace_root_for_session(None),
+            coding_workspace_root()
+        );
     }
 }

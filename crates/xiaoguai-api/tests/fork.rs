@@ -135,6 +135,7 @@ async fn seed_parent(sessions: &InMemorySessionRepo, id: &str) {
         status: SessionStatus::Active,
         parent_session_id: None,
         forked_from_message_id: None,
+        working_dir: None,
     };
     sessions.create(&s).await.unwrap();
 }
@@ -151,6 +152,7 @@ fn forked_session(parent_id: &str, from_message_id: &str) -> Session {
         status: SessionStatus::Active,
         parent_session_id: Some(SessionId::from(parent_id.to_string())),
         forked_from_message_id: Some(xiaoguai_types::MessageId::from(from_message_id.to_string())),
+        working_dir: None,
     }
 }
 

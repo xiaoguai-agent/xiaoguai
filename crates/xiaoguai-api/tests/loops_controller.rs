@@ -126,6 +126,7 @@ async fn create_session(state: &AppState, id: &str) {
             status: SessionStatus::Active,
             parent_session_id: None,
             forked_from_message_id: None,
+            working_dir: None,
         })
         .await
         .expect("create session");
