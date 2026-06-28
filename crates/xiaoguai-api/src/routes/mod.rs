@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod anomaly;
 pub mod audit_exports;
+pub mod branding;
 pub mod experts;
 pub mod hotl;
 pub mod hotl_decisions;

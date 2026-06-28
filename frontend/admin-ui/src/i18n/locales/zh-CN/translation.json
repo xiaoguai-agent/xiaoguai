@@ -38,7 +38,8 @@
     "memory": "记忆",
     "personas": "角色档案",
     "expert_teams": "专家团队",
-    "skill_proposals": "技能提案"
+    "skill_proposals": "技能提案",
+    "branding": "个性化"
   },
   "language": {
     "label": "语言",
@@ -786,6 +787,16 @@
         "usage": "浏览目录,点击「安装」添加技能包。新装的技能包在下一次 agent 运行后生效。",
         "usage_label": "用法"
       }
+    },
+    "branding": {
+      "title": "个性化 / 品牌",
+      "intro": "设置助手在对话界面显示的名字(logo、欢迎语、输入框)。留空则用内置默认名。",
+      "name_label": "助手名称",
+      "name_placeholder": "例如:Acme 个人助手",
+      "hint": "下次刷新对话页生效,最多 64 个字符。",
+      "save": "保存",
+      "saving": "保存中…",
+      "saved": "已保存"
     }
   }
 }

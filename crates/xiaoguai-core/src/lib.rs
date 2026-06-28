@@ -173,7 +173,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     use xiaoguai_observability;
     use xiaoguai_storage::repositories::{
         LlmProviderRepository, SqliteLlmProviderRepository, SqliteMcpServerRepository,
-        SqliteMessageRepository, SqliteSessionRepository,
+        SqliteMessageRepository, SqliteSessionRepository, SqliteSettingsRepository,
     };
 
     use crate::audit_bridge::SqliteAuditAdapter;
@@ -1119,11 +1119,28 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
             r
         }
     };
+    // White-label branding (the assistant's display name shown across the chat
+    // UI). Self-contained router like `providers`; re-apply the owner gate so an
+    // unauthenticated caller can't rewrite the name when auth is configured.
+    let branding_router = {
+        let r = xiaoguai_api::routes::branding::build_router(Arc::new(
+            SqliteSettingsRepository::new(pool.clone()),
+        ));
+        if let Some(validator) = state.auth.clone() {
+            r.route_layer(axum::middleware::from_fn(move |req, next| {
+                let v = validator.clone();
+                async move { xiaoguai_api::auth::require_auth(v, req, next).await }
+            }))
+        } else {
+            r
+        }
+    };
     let im_router = merge_routers(vec![
         build_feishu_gateway(&state, im_history.clone()),
         build_dingtalk_gateway(&state, im_history.clone()),
         build_wecom_gateway(&state, im_history.clone()),
         Some(providers_router),
+        Some(branding_router),
     ]);
 
     let addr: SocketAddr = format!("{}:{}", settings.server.host, settings.server.port)

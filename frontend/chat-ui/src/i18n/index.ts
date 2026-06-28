@@ -30,6 +30,8 @@ interface TranslationShape {
     admin: string;
     language_label: string;
     no_sessions: string;
+    /** Default assistant display name when no white-label branding is set. */
+    assistant_name: string;
     welcome_title: string;
     welcome_subtitle: string;
     composer_placeholder: string;

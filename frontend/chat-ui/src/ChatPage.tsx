@@ -22,6 +22,7 @@ import { ExpertPicker } from './ExpertPicker';
 import { ModeToggle, getStoredChatMode, setStoredChatMode } from './ModeToggle';
 import { useI18n } from './i18n/I18nProvider';
 import { interpolate } from './i18n';
+import { useBrandName } from './branding';
 import { isLoopLive, parseLoopCommand, shortLoopId } from './loopCommands';
 import type { LoopCommand } from './loopCommands';
 
@@ -82,6 +83,8 @@ function autoGrow(ta: HTMLTextAreaElement | null) {
 
 export function ChatPage({ onSessionCreated }: Props) {
   const { t } = useI18n();
+  // White-label assistant name (owner-set), falling back to the locale default.
+  const brandName = useBrandName() || t.ui.assistant_name;
   const { id: routeId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   // Phase 4c — Skills "Use in chat" deep-link carries the activated pack slug
@@ -769,7 +772,9 @@ export function ChatPage({ onSessionCreated }: Props) {
       <div className={`messages${bubbles.length === 0 ? ' messages-empty' : ''}`} ref={scrollRef}>
         {bubbles.length === 0 ? (
           <div className="welcome">
-            <h1 className="welcome-title">{t.ui.welcome_title}</h1>
+            <h1 className="welcome-title">
+              {interpolate(t.ui.welcome_title, { name: brandName })}
+            </h1>
             <p className="welcome-subtitle">{t.ui.welcome_subtitle}</p>
             <div className="welcome-chips">
               {[
@@ -836,7 +841,7 @@ export function ChatPage({ onSessionCreated }: Props) {
                 void send();
               }
             }}
-            placeholder={t.ui.composer_placeholder}
+            placeholder={interpolate(t.ui.composer_placeholder, { name: brandName })}
           />
           {/* T5.2 — team parallel run: only when a team is attached. Always
               execute mode, so consult disables it (tooltip explains). */}

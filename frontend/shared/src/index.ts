@@ -245,6 +245,15 @@ export interface UsageReport {
   cost_cents: number | null;
 }
 
+// ---- white-label branding (GET/PUT /v1/branding) ------------------------
+
+/** Owner-settable branding. `assistant_name` empty ⇒ the UI substitutes its
+ *  built-in default name ("Xiaoguai" / "小怪"). Mirrors the Rust
+ *  `BrandingSettings`. */
+export interface BrandingSettings {
+  assistant_name: string;
+}
+
 // ---- v0.11.2 — eval pane endpoints ------------------------------------
 
 /** Suite list-item returned by `GET /v1/admin/eval/suites`. */
@@ -1751,6 +1760,17 @@ export class XiaoguaiClient {
     if (q?.group_by) params.set('group_by', q.group_by);
     const qs = params.toString();
     return this.request<UsageReport>('GET', `/v1/usage${qs ? `?${qs}` : ''}`);
+  }
+
+  /** White-label branding — the assistant's display name. Empty name = the UI
+   *  uses its built-in default ("Xiaoguai" / "小怪"). */
+  getBranding(): Promise<BrandingSettings> {
+    return this.request<BrandingSettings>('GET', '/v1/branding');
+  }
+
+  /** Set the assistant's display name (owner-gated). Returns the stored value. */
+  setBranding(body: BrandingSettings): Promise<BrandingSettings> {
+    return this.request<BrandingSettings>('PUT', '/v1/branding', body);
   }
 
   /** v0.9.4 — curated MCP server catalog. */

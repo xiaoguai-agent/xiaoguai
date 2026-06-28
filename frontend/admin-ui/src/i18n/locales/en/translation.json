@@ -38,7 +38,8 @@
     "memory": "Memory",
     "personas": "Personas",
     "expert_teams": "Expert Teams",
-    "skill_proposals": "Skill Proposals"
+    "skill_proposals": "Skill Proposals",
+    "branding": "Branding"
   },
   "language": {
     "label": "Language",
@@ -786,6 +787,16 @@
         "usage": "Browse the catalog and click Install to add a pack. Newly installed packs become active after the next agent run.",
         "usage_label": "How to use"
       }
+    },
+    "branding": {
+      "title": "Branding",
+      "intro": "Set the assistant's display name shown across the chat UI (logo, welcome line, message box). Leave empty to use the built-in default.",
+      "name_label": "Assistant name",
+      "name_placeholder": "e.g. Acme Assistant",
+      "hint": "Takes effect on the next chat reload. Up to 64 characters.",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "Saved"
     }
   }
 }
