@@ -16,6 +16,9 @@
 //!   tail spike so an anomaly `fire-now` / back-test detects a z-score outlier.
 //! * **Incident + RCA** — one resolved-loop incident with a root-cause
 //!   analysis row for the Incidents pane.
+//! * **Expert team + personas** — three demo personas and one team (with a
+//!   designated lead) referencing them, so the admin "Expert Teams" pane and
+//!   the chat `ExpertPicker` are not blank.
 //!
 //! Idempotent: every run first clears prior demo rows (so re-running doesn't
 //! pile up duplicates), then re-seeds. `--reset` clears and stops (leaves the
@@ -52,6 +55,26 @@ const DEMO_USAGE_REQUEST_ID: &str = "demo-seed";
 /// chain is append-only and is NOT cleared by `--reset`; see `clear_demo`).
 const DEMO_AUDIT_ACTOR: &str = "cli:demo-seed";
 
+/// `personas.tags` JSON value stamped on every demo persona, and the
+/// `expert_teams.recommended_pack_slugs` marker stamped on the demo team, so
+/// `clear_demo` removes exactly the demo rows without touching real personas /
+/// teams. `personas.id` and `expert_teams.id` are TEXT columns but the
+/// repositories decode them through `Uuid::parse_str` (a non-UUID id silently
+/// becomes `Uuid::nil()` and breaks the read path), so demo ids are real
+/// deterministic v5 UUIDs (see `demo_persona_id` / `demo_team_id`) — the
+/// tag/slug markers are what makes the delete precise, not an id prefix.
+const DEMO_PERSONA_TAG: &str = "demo-seed";
+/// Seed strings for the three demo personas' deterministic v5 UUID ids. Stable
+/// across runs so re-seeding (clear-then-insert) never duplicates a persona,
+/// and `clear_demo` can target them whether or not the tag marker is present.
+const DEMO_PERSONA_SEEDS: &[&str] = &[
+    "xiaoguai-demo-persona-lead",
+    "xiaoguai-demo-persona-sre",
+    "xiaoguai-demo-persona-security",
+];
+/// Seed string for the demo team's deterministic v5 UUID id.
+const DEMO_TEAM_SEED: &str = "xiaoguai-demo-team-incident-response";
+
 /// Provider id the demo `token_usage` + audit cost rows attribute to. The
 /// migrations seed a key-less `minimax` provider, so this resolves on a fresh
 /// DB; the value is only a label here (no live call is made).
@@ -82,6 +105,8 @@ pub struct SeedReport {
     pub jobs: usize,
     pub usage_rows: usize,
     pub incidents: usize,
+    pub personas: usize,
+    pub teams: usize,
     pub baseline_tokens: i64,
     pub spike_tokens: i64,
 }
@@ -110,6 +135,9 @@ pub async fn seed(
         .await
         .context("seed token_usage")?;
     let incidents = seed_incident(pool, now).await.context("seed incident")?;
+    let (personas, teams) = seed_expert_team(pool, now)
+        .await
+        .context("seed expert team")?;
     let audit_rows = seed_audit(audit, owner_user_id, now)
         .await
         .context("seed audit chain")?;
@@ -121,6 +149,8 @@ pub async fn seed(
         jobs,
         usage_rows,
         incidents,
+        personas,
+        teams,
         baseline_tokens: BASELINE_TOKENS,
         spike_tokens: SPIKE_TOKENS,
     })
@@ -161,6 +191,39 @@ pub async fn clear_demo(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await
         .context("delete demo incidents")?;
+
+    // Expert team + personas. `expert_teams.lead_persona_id` has a real FK to
+    // `personas`, and `session_teams` / `session_personas` reference both, so
+    // delete in dependency order: session attachments → team → personas. The
+    // demo ids are deterministic v5 UUIDs (same seeds the inserter uses), so we
+    // target them exactly without disturbing real teams / personas.
+    let team_id = demo_team_id().to_string();
+    let persona_ids: Vec<String> = demo_persona_ids().iter().map(Uuid::to_string).collect();
+
+    sqlx::query("DELETE FROM session_teams WHERE team_id = ?1")
+        .bind(&team_id)
+        .execute(pool)
+        .await
+        .context("delete demo session_teams")?;
+    sqlx::query("DELETE FROM expert_teams WHERE id = ?1")
+        .bind(&team_id)
+        .execute(pool)
+        .await
+        .context("delete demo expert_team")?;
+    for pid in &persona_ids {
+        sqlx::query("DELETE FROM session_personas WHERE persona_id = ?1")
+            .bind(pid)
+            .execute(pool)
+            .await
+            .context("delete demo session_personas")?;
+    }
+    for pid in &persona_ids {
+        sqlx::query("DELETE FROM personas WHERE id = ?1")
+            .bind(pid)
+            .execute(pool)
+            .await
+            .context("delete demo persona")?;
+    }
 
     // token_usage demo rows (marked by request_id).
     sqlx::query("DELETE FROM token_usage WHERE request_id = ?1")
@@ -545,6 +608,119 @@ async fn seed_incident(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
 }
 
 // ---------------------------------------------------------------------------
+// Expert team + personas
+// ---------------------------------------------------------------------------
+
+/// Deterministic v5 UUID for the demo team — stable across runs so re-seeding
+/// (clear-then-insert) never duplicates it and `clear_demo` can target it.
+fn demo_team_id() -> Uuid {
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, DEMO_TEAM_SEED.as_bytes())
+}
+
+/// Deterministic v5 UUIDs for the three demo personas, in member order
+/// (index 0 is the lead). Same seeds the inserter and `clear_demo` both use.
+fn demo_persona_ids() -> Vec<Uuid> {
+    DEMO_PERSONA_SEEDS
+        .iter()
+        .map(|s| Uuid::new_v5(&Uuid::NAMESPACE_OID, s.as_bytes()))
+        .collect()
+}
+
+/// One scripted demo persona: name + system prompt + an optional role/domain
+/// tag list (on top of the always-present `demo-seed` marker tag).
+struct DemoPersona {
+    name: &'static str,
+    system_prompt: &'static str,
+    role_tag: &'static str,
+}
+
+/// Three demo personas forming an incident-response team. Index 0 is the lead
+/// (incident commander); the others are specialist members. Names are stable
+/// so the active-name partial-unique index is satisfied across re-seeds (the
+/// clear-then-insert in `seed` removes the prior rows first).
+const DEMO_PERSONAS: &[DemoPersona] = &[
+    DemoPersona {
+        name: "[demo] 事件指挥官",
+        system_prompt: "你是事件响应的总指挥（lead）。负责拉起团队、统一时间线、\
+            协调 SRE 与安全专家，并在 HotL 审批后下达回滚/止血指令。输出要点清晰、可执行。",
+        role_tag: "role/planner",
+    },
+    DemoPersona {
+        name: "[demo] SRE 值班专家",
+        system_prompt: "你是 SRE 值班工程师。负责定位故障根因：查指标、看日志、\
+            判断容量与依赖抖动，给出止血与恢复方案，并标注影响面与回滚风险。",
+        role_tag: "role/worker",
+    },
+    DemoPersona {
+        name: "[demo] 安全审计专家",
+        system_prompt: "你是安全与合规审计专家。负责复核处置是否越权、是否需要在 \
+            consult 模式下拦截写操作，并确认审计链（HMAC）完整、证据可导出。",
+        role_tag: "role/critic",
+    },
+];
+
+/// Seed three demo personas + one team referencing them (lead = first persona)
+/// so the admin Expert Teams pane and the chat `ExpertPicker` have content.
+/// Returns `(personas, teams)` counts.
+///
+/// `personas.id` / `expert_teams.id` are TEXT columns the repositories decode
+/// through `Uuid::parse_str`, so we bind UUID-formatted strings (deterministic
+/// v5 ids). The team's `member_persona_ids` is a JSON array of those same id
+/// strings, ordered with the lead first — exactly the shape `text_to_uuids`
+/// reads back.
+async fn seed_expert_team(pool: &SqlitePool, now: DateTime<Utc>) -> Result<(usize, usize)> {
+    let persona_ids = demo_persona_ids();
+    // `personas.tags` is TEXT holding a JSON array (migration 0025); the
+    // `demo-seed` marker rides alongside the role tag so the rows are
+    // identifiable, and the role tags follow the repo's role/* convention.
+    let created = ts(now - Duration::hours(6));
+    for (def, id) in DEMO_PERSONAS.iter().zip(persona_ids.iter()) {
+        let tags = json!([DEMO_PERSONA_TAG, def.role_tag]).to_string();
+        sqlx::query(
+            "INSERT INTO personas \
+                (id, name, system_prompt, default_model, tool_allowlist, \
+                 escalation_tier, created_at, archived, tags) \
+             VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, 0, ?6)",
+        )
+        .bind(id.to_string())
+        .bind(def.name)
+        .bind(def.system_prompt)
+        .bind(DEMO_MODEL)
+        .bind(&created)
+        .bind(&tags)
+        .execute(pool)
+        .await
+        .with_context(|| format!("insert demo persona {}", def.name))?;
+    }
+
+    // The team: lead = first persona, members = all three (lead first, the
+    // ordered+deduplicated shape the repository expects). `recommended_pack_slugs`
+    // carries the `demo-seed` marker plus a display-hint slug.
+    let team_id = demo_team_id();
+    let member_ids = json!(persona_ids.iter().map(Uuid::to_string).collect::<Vec<_>>()).to_string();
+    let pack_slugs = json!([DEMO_PERSONA_TAG, "observability-starter"]).to_string();
+    sqlx::query(
+        "INSERT INTO expert_teams \
+            (id, name, description, lead_persona_id, member_persona_ids, \
+             recommended_pack_slugs, glossary_md, created_at, archived) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)",
+    )
+    .bind(team_id.to_string())
+    .bind("[demo] 事件响应团队")
+    .bind("演示用专家团队：指挥官 + SRE + 安全审计，一句话即可让团队介入线上事件。")
+    .bind(persona_ids[0].to_string())
+    .bind(&member_ids)
+    .bind(&pack_slugs)
+    .bind("术语表：P99=99 分位延迟；HotL=人在回路审批；consult=只读模式（写工具被拦截）。")
+    .bind(&created)
+    .execute(pool)
+    .await
+    .context("insert demo expert team")?;
+
+    Ok((DEMO_PERSONAS.len(), 1))
+}
+
+// ---------------------------------------------------------------------------
 // Audit chain — through the real HMAC sink so verify stays green
 // ---------------------------------------------------------------------------
 
@@ -707,6 +883,11 @@ pub fn format_guide(report: &SeedReport) -> String {
         "  · 事件/RCA    {:>3} 个事件（含根因分析，状态 resolved）",
         report.incidents
     );
+    let _ = writeln!(
+        out,
+        "  · 专家团队    {:>3} 个团队 / {} 个 persona（指挥官 + SRE + 安全审计）",
+        report.teams, report.personas
+    );
     let _ = writeln!(out);
     let _ = writeln!(out, "现场看哪些 pane：");
     let _ = writeln!(
@@ -728,6 +909,10 @@ pub fn format_guide(report: &SeedReport) -> String {
     let _ = writeln!(
         out,
         "  · 事件 / Incidents      → checkout-api 错误率事件 + RCA"
+    );
+    let _ = writeln!(
+        out,
+        "  · 专家团队 / Experts    → [demo] 事件响应团队（指挥官领衔，可在对话页选用）"
     );
     let _ = writeln!(
         out,
@@ -786,6 +971,8 @@ mod tests {
             "usage rows = baseline + spike"
         );
         assert_eq!(report.incidents, 1, "incident count");
+        assert_eq!(report.personas, 3, "persona count");
+        assert_eq!(report.teams, 1, "team count");
 
         // Cross-check actual table contents.
         let n_sessions: i64 =
@@ -810,6 +997,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(n_rca, 1);
+        let n_personas: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM personas WHERE tags LIKE '%\"demo-seed\"%'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(n_personas, 3);
+        let n_teams: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM expert_teams")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n_teams, 1);
     }
 
     #[tokio::test]
@@ -872,6 +1071,71 @@ mod tests {
         assert_eq!(
             rca.1, inc.0,
             "rca.incident_id must reference the incident id"
+        );
+    }
+
+    #[tokio::test]
+    async fn seed_team_and_personas_ids_decode_as_uuid() {
+        // Regression (mirrors `seed_incident_ids_decode_as_uuid`): `personas.id`
+        // and `expert_teams.id` / `lead_persona_id` are TEXT columns, but the
+        // `SqlitePersonaRepository` / `SqliteTeamRepository` decode them via
+        // `id: String` then `Uuid::parse_str(..).unwrap_or(Uuid::nil())`. A
+        // non-UUID id (e.g. "demo_team_001") would silently become `Uuid::nil()`
+        // there and break the pane / orchestration. `member_persona_ids` is a
+        // JSON array of those id strings, read back the same way (`text_to_uuids`
+        // filters out anything that won't parse). Read every seeded id exactly
+        // the way those repos do and confirm none degrades to nil and the team's
+        // lead + members reference the three seeded personas.
+        let (pool, sink, _dir) = fixture().await;
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
+
+        // Personas: read each id as TEXT, parse as the repo does — must equal the
+        // deterministic v5 ids the seeder wrote (so none is nil/garbage).
+        let persona_id_texts: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM personas WHERE tags LIKE '%\"demo-seed\"%' ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .expect("read demo persona ids");
+        assert_eq!(persona_id_texts.len(), 3, "three demo personas");
+        let mut parsed_persona_ids: Vec<Uuid> = persona_id_texts
+            .iter()
+            .map(|s| Uuid::parse_str(s).expect("persona id must be a valid UUID string, not nil"))
+            .collect();
+        parsed_persona_ids.sort();
+        let mut expected = demo_persona_ids();
+        expected.sort();
+        assert_eq!(
+            parsed_persona_ids, expected,
+            "persona ids round-trip as the deterministic UUIDs"
+        );
+
+        // Team: id, lead_persona_id (TEXT, parsed via Uuid) + member_persona_ids
+        // (TEXT JSON array, parsed via the repo's text_to_uuids shape).
+        let (id_text, lead_text, members_json): (String, String, String) = sqlx::query_as(
+            "SELECT id, lead_persona_id, member_persona_ids FROM expert_teams",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read demo team");
+        assert_eq!(
+            Uuid::parse_str(&id_text).expect("team id is a UUID string"),
+            demo_team_id(),
+            "team id round-trips"
+        );
+        let lead = Uuid::parse_str(&lead_text).expect("lead id is a UUID string");
+        let members: Vec<Uuid> = serde_json::from_str::<Vec<String>>(&members_json)
+            .expect("member_persona_ids is a JSON array")
+            .iter()
+            .map(|s| Uuid::parse_str(s).expect("member id is a UUID string, not nil"))
+            .collect();
+        let lead_expected = demo_persona_ids()[0];
+        assert_eq!(lead, lead_expected, "lead is the first demo persona");
+        assert_eq!(members, demo_persona_ids(), "members in lead-first order");
+        assert!(
+            !members.iter().any(|m| *m == Uuid::nil()),
+            "no member decoded to nil (would mean a non-UUID id was stored)"
         );
     }
 
@@ -992,8 +1256,10 @@ mod tests {
             .expect("second seed");
 
         // Non-audit data is cleared+reseeded, so counts are identical (no
-        // duplicate sessions/jobs/usage/incidents).
+        // duplicate sessions/jobs/usage/incidents/personas/teams).
         assert_eq!(r1.sessions, r2.sessions);
+        assert_eq!(r1.personas, r2.personas);
+        assert_eq!(r1.teams, r2.teams);
         let n_sessions: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id LIKE 'demo_sess_%'")
                 .fetch_one(&pool)
@@ -1011,6 +1277,17 @@ mod tests {
             BASELINE_POINTS + 1,
             "re-seed must not duplicate usage"
         );
+        let n_teams: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM expert_teams")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n_teams, 1, "re-seed must not duplicate the team");
+        let n_personas: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM personas WHERE tags LIKE '%\"demo-seed\"%'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(n_personas, 3, "re-seed must not duplicate personas");
     }
 
     #[tokio::test]
@@ -1038,6 +1315,11 @@ mod tests {
                 "token_usage",
                 "SELECT COUNT(*) FROM token_usage WHERE request_id = 'demo-seed'",
             ),
+            ("expert_teams", "SELECT COUNT(*) FROM expert_teams"),
+            (
+                "personas",
+                "SELECT COUNT(*) FROM personas WHERE tags LIKE '%\"demo-seed\"%'",
+            ),
         ] {
             let n: i64 = sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap();
             assert_eq!(n, 0, "{table} demo rows must be cleared by reset");
@@ -1063,11 +1345,21 @@ mod tests {
             jobs: 2,
             usage_rows: 15,
             incidents: 1,
+            personas: 3,
+            teams: 1,
             baseline_tokens: BASELINE_TOKENS,
             spike_tokens: SPIKE_TOKENS,
         };
         let guide = format_guide(&report);
-        for needle in ["活动历史", "会话", "定时任务", "异常", "Incidents", "spike"] {
+        for needle in [
+            "活动历史",
+            "会话",
+            "定时任务",
+            "异常",
+            "Incidents",
+            "spike",
+            "专家团队",
+        ] {
             assert!(guide.contains(needle), "guide should mention {needle}");
         }
     }
