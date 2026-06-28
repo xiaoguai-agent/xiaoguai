@@ -19,10 +19,13 @@ const listeners = new Set<(name: string) => void>();
 async function load(): Promise<string> {
   if (cache !== null) return cache;
   if (!inflight) {
-    inflight = client
-      .getBranding()
+    // Wrap the call in a resolved promise so a missing/throwing `getBranding`
+    // (e.g. an older client or a partial test mock) is caught by `.catch`
+    // rather than surfacing as an unhandled rejection.
+    inflight = Promise.resolve()
+      .then(() => client.getBranding())
       .then((b) => (b.assistant_name ?? '').trim())
-      .catch(() => ''); // backend unreachable / unauthed → built-in default
+      .catch(() => ''); // backend unreachable / unauthed / unsupported → default
   }
   const name = await inflight;
   cache = name;
