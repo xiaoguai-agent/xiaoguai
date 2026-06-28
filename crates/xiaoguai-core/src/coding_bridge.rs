@@ -135,6 +135,30 @@ pub async fn build_coding_toolbox(
     root: &Path,
     include_egress: bool,
 ) -> Result<Toolbox> {
+    // All-or-nothing: build into a fresh toolbox so a mid-loop collision can
+    // never leave a half-exposed coding surface (security-review M1).
+    build_coding_toolbox_onto(Toolbox::new(), sink, root, include_egress).await
+}
+
+/// Like [`build_coding_toolbox`] but layers the governed coding tools onto a
+/// caller-supplied `base` toolbox (its non-coding tools are preserved). Used by
+/// the Feature ⑤ per-session rebuild so a session-rooted toolbox keeps every
+/// non-coding tool the boot toolbox had.
+///
+/// The coding tool names are fixed (`code.*` / `git.*` style), so the only
+/// possible collision is `base` already containing coding tools — which never
+/// happens here because `base` is the boot toolbox *before* coding tools were
+/// added.
+///
+/// # Errors
+/// Returns an error if the workspace cannot be opened/initialised, or if a
+/// coding tool name collides with one already in `base`.
+pub async fn build_coding_toolbox_onto(
+    base: Toolbox,
+    sink: Arc<SqliteAuditSink>,
+    root: &Path,
+    include_egress: bool,
+) -> Result<Toolbox> {
     let workspace = Workspace::open_or_create(root)
         .await
         .with_context(|| format!("open coding workspace at {}", root.display()))?;
@@ -144,9 +168,7 @@ pub async fn build_coding_toolbox(
         AuditStepRecorder::new(sink),
     );
     let client: Arc<dyn McpClient> = Arc::new(CodingMcpClient::new(tools, include_egress));
-    // All-or-nothing: build into a fresh toolbox so a mid-loop collision can
-    // never leave a half-exposed coding surface (security-review M1).
-    let mut toolbox = Toolbox::new();
+    let mut toolbox = base;
     for descriptor in coding_tool_descriptors(include_egress) {
         let name = descriptor.name.clone();
         toolbox
@@ -154,6 +176,60 @@ pub async fn build_coding_toolbox(
             .with_context(|| format!("register coding tool {name}"))?;
     }
     Ok(toolbox)
+}
+
+/// Feature ⑤ — concrete [`CodingToolboxFactory`] wired into `AppState` by
+/// `run_serve` ONLY when coding is enabled at boot. Captures everything a
+/// per-session rebuild needs: the audit sink, the egress opt-in flag, the
+/// base (non-coding) toolbox to layer onto, and the global default root.
+///
+/// `rebuild_for` reproduces the exact boot-time governed coding surface
+/// (HotL-gated, checkpointed, audited, egress-gated by the same flag) — only
+/// the workspace root differs. The base toolbox is cloned per call (cheap —
+/// it is a `HashMap` of `Arc`-backed entries), so a turn's rebuild never
+/// mutates shared state.
+pub struct CodingToolboxFactoryImpl {
+    sink: Arc<SqliteAuditSink>,
+    include_egress: bool,
+    base: Toolbox,
+    global_root: std::path::PathBuf,
+}
+
+impl CodingToolboxFactoryImpl {
+    /// `base` MUST be the toolbox BEFORE coding tools were layered on, and
+    /// `global_root` the root those boot-time coding tools were built with.
+    #[must_use]
+    pub fn new(
+        sink: Arc<SqliteAuditSink>,
+        include_egress: bool,
+        base: Toolbox,
+        global_root: std::path::PathBuf,
+    ) -> Self {
+        Self {
+            sink,
+            include_egress,
+            base,
+            global_root,
+        }
+    }
+}
+
+#[async_trait]
+impl xiaoguai_api::coding_toolbox::CodingToolboxFactory for CodingToolboxFactoryImpl {
+    async fn rebuild_for(&self, root: &Path) -> Result<Arc<Toolbox>> {
+        let tb = build_coding_toolbox_onto(
+            self.base.clone(),
+            self.sink.clone(),
+            root,
+            self.include_egress,
+        )
+        .await?;
+        Ok(Arc::new(tb))
+    }
+
+    fn global_root(&self) -> Option<&Path> {
+        Some(&self.global_root)
+    }
 }
 
 /// The coding workspace root, or `None` when coding is **not enabled**.

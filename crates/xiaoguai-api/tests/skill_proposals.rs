@@ -103,6 +103,7 @@ fn build_fixture() -> Fixture {
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     };
     Fixture {
         state,

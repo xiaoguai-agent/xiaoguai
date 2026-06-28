@@ -299,6 +299,41 @@ fn turn_error_to_api(err: TurnError) -> ApiError {
     }
 }
 
+/// Feature ⑥ — whether an agent turn is currently running server-side for a
+/// session. A turn keeps running on the server when the SSE client navigates
+/// away / reloads / switches session (the run is decoupled from the stream and
+/// the finalize task persists its output), so the chat-ui needs a cheap read
+/// to show "still working…" on a session the user returns to.
+#[derive(Debug, Serialize)]
+pub struct SessionStatusResponse {
+    /// `true` while a turn holds the per-session turn lock (run + finalize),
+    /// `false` once the result is persisted and the lock releases.
+    pub in_flight: bool,
+}
+
+/// `GET /v1/sessions/{id}/status` — is a turn in flight for this session?
+///
+/// Reads the per-session turn lock ([`crate::state::CancelRegistry`]), the
+/// single source of truth for "a turn is running" (the same lock that refuses
+/// a concurrent `POST .../messages` with 409). 404 when the session does not
+/// exist so a stale client id is distinguishable from an idle session.
+///
+/// # Errors
+/// Returns an error if the session is not found or the session store fails.
+pub async fn session_status(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<SessionStatusResponse>> {
+    state
+        .sessions
+        .find_by_id(&session_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    Ok(Json(SessionStatusResponse {
+        in_flight: state.cancels.is_active(&session_id),
+    }))
+}
+
 #[derive(Debug, Serialize)]
 pub struct CancelResponse {
     pub cancelled: bool,

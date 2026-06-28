@@ -94,6 +94,7 @@ fn build_app_with_provider(provider: Arc<dyn ImProvider>, script: Vec<ScriptStep
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     };
     mount_feishu(state, provider)
 }
@@ -354,6 +355,7 @@ async fn conversation_history_accumulates_per_chat() {
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     };
     let sink = Arc::new(Mutex::new(Vec::new()));
     let provider: Arc<dyn ImProvider> = Arc::new(FeishuProvider::with_recording_sink(KEY, sink));

@@ -375,7 +375,16 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // the server's CWD (H1); unset signing key ⇒ no ungoverned coding. The
     // egress tools (`git_push`/`open_pr`) need a further `XIAOGUAI_CODING_ALLOW_
     // EGRESS` opt-in (C1).
-    let toolbox = {
+    // The boot toolbox starts EMPTY — coding tools are the first thing added,
+    // so an empty `Toolbox` is the "base (non-coding)" toolbox the Feature ⑤
+    // per-session factory layers session-rooted coding tools onto. The factory
+    // is `Some` ONLY when coding actually registered at boot, so a session's
+    // `working_dir` never enables coding where the operator hadn't (the opt-in
+    // posture is unchanged).
+    let (toolbox, coding_toolbox_factory): (
+        Arc<Toolbox>,
+        Option<Arc<dyn xiaoguai_api::coding_toolbox::CodingToolboxFactory>>,
+    ) = {
         match (
             &pg_audit_sink,
             crate::coding_bridge::coding_workspace_root(),
@@ -392,14 +401,25 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                             egress = allow_egress,
                             "serve: governed coding tools registered into the agent toolbox"
                         );
-                        Arc::new(tb)
+                        // Feature ⑤: capture the inputs to rebuild this surface
+                        // at a per-session working_dir. Base = empty toolbox
+                        // (coding tools are the first added at boot).
+                        let factory: Arc<
+                            dyn xiaoguai_api::coding_toolbox::CodingToolboxFactory,
+                        > = Arc::new(crate::coding_bridge::CodingToolboxFactoryImpl::new(
+                            sink.clone(),
+                            allow_egress,
+                            Toolbox::new(),
+                            root.clone(),
+                        ));
+                        (Arc::new(tb), Some(factory))
                     }
                     Err(e) => {
                         tracing::warn!(
                             error = %e,
                             "serve: failed to build coding toolbox — agent runs without coding tools"
                         );
-                        Arc::new(Toolbox::new())
+                        (Arc::new(Toolbox::new()), None)
                     }
                 }
             }
@@ -408,14 +428,14 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                     "serve: coding workspace set but audit signing key unset — coding tools \
                      NOT registered (no ungoverned coding)"
                 );
-                Arc::new(Toolbox::new())
+                (Arc::new(Toolbox::new()), None)
             }
             _ => {
                 tracing::info!(
                     "serve: coding tools disabled (set XIAOGUAI_CODING_WORKSPACE to a directory \
                      to enable governed in-loop coding)"
                 );
-                Arc::new(Toolbox::new())
+                (Arc::new(Toolbox::new()), None)
             }
         }
     };
@@ -977,6 +997,9 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // Phase 5 (skill-pack loader): hot-rescan bridge computed above
         // (Some under `packs`, None otherwise).
         pack_rescanner,
+        // Feature ⑤ (per-session coding workspace root): computed alongside
+        // the boot toolbox above — `Some` only when coding registered at boot.
+        coding_toolbox_factory,
     };
 
     // Phase 4b (skill-pack loader): activate each enabled pack's conversational

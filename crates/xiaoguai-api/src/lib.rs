@@ -10,6 +10,7 @@
 pub mod audit;
 pub mod audit_util;
 pub mod auth;
+pub mod coding_toolbox;
 pub mod consult;
 pub mod convert;
 pub mod error;
@@ -84,6 +85,7 @@ pub use scheduler::{
     StaticWebhookTokenValidator, WebhookPushError, WebhookPusher, WebhookTokenAdmin,
     WebhookTokenAdminError, WebhookTokenError, WebhookTokenRecord, WebhookTokenValidator,
 };
+pub use coding_toolbox::CodingToolboxFactory;
 pub use serve::serve_with_state;
 pub use sessions_ext::{SessionForkError, SessionForker};
 pub use skill_proposals::{ApproveRequest, ListProposalsQuery, ProposalRowResponse, RejectRequest};

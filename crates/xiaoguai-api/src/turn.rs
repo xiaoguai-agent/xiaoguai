@@ -184,36 +184,30 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
     } else {
         input.mode
     };
-    // Feature ⑤ (per-session working dir) — WIRING SEAM, NOT YET LIVE.
+    // Feature ⑤ (per-session working dir) — LIVE.
     //
     // `session.working_dir` is the absolute server path this session's coding
-    // tools should use as their workspace root. The pure resolver
-    // `xiaoguai_core::coding_bridge::coding_workspace_root_for_session(
-    //     session.working_dir.as_deref())` already prefers it over the global
-    // `XIAOGUAI_CODING_WORKSPACE` default.
+    // tools should use as their workspace root. At boot `state.toolbox` bakes
+    // the *global* `XIAOGUAI_CODING_WORKSPACE` root into the coding tools; when
+    // a session pins a *different* dir we rebuild the toolbox for THIS turn
+    // with the coding tools rooted there (`state.coding_toolbox_factory`,
+    // wired by `xiaoguai-core::run_serve` only when coding is enabled). All
+    // gating/security is unchanged — the factory reproduces the same governed
+    // surface, only the root differs. Resolved once here so the loop/consult
+    // branches below layer onto the right base toolbox.
     //
-    // To honour it per-turn the coding toolbox must be REBUILT here with that
-    // root (today `state.toolbox` bakes the *global* root at boot, in
-    // `xiaoguai-core::run_serve`). That rebuild needs three inputs that
-    // `AppState` does not currently expose: the concrete
-    // `Arc<SqliteAuditSink>`, the egress opt-in flag, and the base
-    // (non-coding) toolbox to layer onto. Plumbing those onto `AppState` +
-    // `run_serve` is out of this change's file ownership, so the override is
-    // resolved + persisted (PATCH endpoint) but the toolbox swap is deferred.
-    // FLAGGED FOR REVIEW.
+    // Common path is byte-identical: no `working_dir`, no factory, or a dir
+    // equal to the global root ⇒ `base` is just `state.toolbox` (no rebuild).
+    let base = resolve_turn_base_toolbox(state, session.working_dir.as_deref()).await;
     let (toolbox, loop_intent) = if input.loop_id.is_some() {
-        let (tb, sink) =
-            crate::loop_tools::with_loop_tools(&state.toolbox, input.loop_dynamic_pacing);
+        let (tb, sink) = crate::loop_tools::with_loop_tools(&base, input.loop_dynamic_pacing);
         messages.insert(0, LlmMessage::system(LOOP_TICK_SYSTEM_NOTE));
         (Arc::new(tb), Some(sink))
     } else if mode == TurnMode::Consult {
         // Layer 1 (plan §2.2): the model only sees read tools.
-        (
-            Arc::new(crate::consult::read_only_toolbox(&state.toolbox)),
-            None,
-        )
+        (Arc::new(crate::consult::read_only_toolbox(&base)), None)
     } else {
-        (state.toolbox.clone(), None)
+        (base, None)
     };
 
     // Layer 2 (plan §2.3): in consult mode, wrap the configured HotL gate in
@@ -541,6 +535,52 @@ fn agent_run_details(
 }
 
 // -- helpers ------------------------------------------------------------
+
+/// Feature ⑤ — resolve the base toolbox for one turn, honouring the session's
+/// per-session coding workspace root.
+///
+/// Returns `state.toolbox` unchanged (the common path) unless ALL of:
+///   * the session pins a non-blank `working_dir`,
+///   * a [`crate::coding_toolbox::CodingToolboxFactory`] is wired (coding is
+///     enabled at boot), AND
+///   * that dir differs from the factory's global root.
+///
+/// Only then is the toolbox rebuilt with the coding tools rooted at the
+/// session dir. A rebuild error is logged and falls back to `state.toolbox`:
+/// a bad per-session dir must never break the turn (the operator still sees
+/// the audit/gate-governed default tools).
+async fn resolve_turn_base_toolbox(
+    state: &AppState,
+    session_working_dir: Option<&str>,
+) -> Arc<xiaoguai_agent::Toolbox> {
+    let Some(factory) = state.coding_toolbox_factory.as_ref() else {
+        return state.toolbox.clone();
+    };
+    let Some(dir) = session_working_dir
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return state.toolbox.clone();
+    };
+    let session_root = std::path::Path::new(dir);
+    // A session that pins the global root needs no rebuild — the boot toolbox
+    // is already rooted there.
+    if factory.global_root() == Some(session_root) {
+        return state.toolbox.clone();
+    }
+    match factory.rebuild_for(session_root).await {
+        Ok(tb) => tb,
+        Err(err) => {
+            tracing::warn!(
+                %err,
+                working_dir = %dir,
+                "feature ⑤: failed to rebuild coding toolbox for session working_dir; \
+                 falling back to the boot toolbox"
+            );
+            state.toolbox.clone()
+        }
+    }
+}
 
 /// Persist one inbound user message. `pub(crate)` since T4.2: the
 /// orchestrate route stores the goal as the session's user message through

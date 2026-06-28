@@ -73,6 +73,7 @@ fn build_state(steps: Vec<ScriptStep>) -> (AppState, Arc<InMemoryMessageRepo>) {
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     };
     (state, messages)
 }

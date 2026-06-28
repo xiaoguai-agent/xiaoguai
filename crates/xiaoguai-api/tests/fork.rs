@@ -119,6 +119,7 @@ fn build_state(forker: Option<Arc<dyn SessionForker>>) -> (AppState, Arc<InMemor
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     };
     (state, sessions)
 }

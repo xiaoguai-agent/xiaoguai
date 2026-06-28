@@ -62,6 +62,8 @@ pub fn router(state: AppState) -> Router {
             get(sessions::list_messages).post(sessions::send_message),
         )
         .route("/v1/sessions/{id}/cancel", post(sessions::cancel_session))
+        // Feature ⑥ — is a turn still running server-side for this session?
+        .route("/v1/sessions/{id}/status", get(sessions::session_status))
         .route("/v1/mcp/servers", get(mcp::list_servers))
         .route(
             "/v1/mcp/marketplace",

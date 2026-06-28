@@ -108,6 +108,7 @@ async fn build_state_with_backend(
         team_audit: None,
         decision_registry: Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     };
     (state, loop_store, pool, dir)
 }

@@ -104,6 +104,7 @@ fn build_state_with_toolbox(toolbox: Toolbox, publish: bool) -> AppState {
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     }
 }
 
