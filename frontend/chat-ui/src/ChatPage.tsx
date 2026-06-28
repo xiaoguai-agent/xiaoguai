@@ -754,9 +754,9 @@ export function ChatPage({ onSessionCreated }: Props) {
           onCancel={cancel}
         />
       )}
-      {/* Chat header — order: HotlBanner > WatchIndicator */}
+      {/* Chat header — the HotlBanner is rendered above (top of the fragment),
+          not in the header; below are the expert picker + watch indicator. */}
       <div className="chat-header">
-        {/* HotlBanner placeholder — wired by feat/chat-ui-hotl-banner branch */}
         {/* T3.5 — expert picker chip for the active session */}
         <ExpertPicker
           sessionId={sessionId}
