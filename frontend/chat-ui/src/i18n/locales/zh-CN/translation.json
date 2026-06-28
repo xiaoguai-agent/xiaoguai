@@ -17,6 +17,8 @@
     "source_manual": "手动"
   },
   "chat": {
+    "remote_running": "任务运行中…",
+    "remote_running_title": "该会话在服务器上仍有一轮任务正在运行。完成后结果会显示在这里 — 无需保持此页面打开。",
     "sse": {
       "reconnecting": "正在重连（第 {{attempt}} 次尝试，{{secs}} 秒后重试）…",
       "cancel_reconnect": "取消",

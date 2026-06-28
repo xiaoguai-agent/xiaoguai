@@ -17,6 +17,8 @@
     "source_manual": "手動"
   },
   "chat": {
+    "remote_running": "タスク実行中…",
+    "remote_running_title": "このセッションではサーバー側でまだターンが実行中です。完了すると結果がここに表示されます — このタブを開いたままにしておく必要はありません。",
     "sse": {
       "reconnecting": "再接続中（{{attempt}} 回目、{{secs}} 秒後に再試行）…",
       "cancel_reconnect": "キャンセル",

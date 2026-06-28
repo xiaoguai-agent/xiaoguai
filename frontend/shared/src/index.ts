@@ -57,6 +57,15 @@ export interface CreateSessionRequest {
 }
 
 /**
+ * Feature ⑥ — response of `GET /v1/sessions/{id}/status`. A turn now runs
+ * server-side independent of any SSE client, so `in_flight` is `true` while a
+ * turn is still executing for this session (even if no tab is streaming it).
+ */
+export interface SessionStatusResponse {
+  in_flight: boolean;
+}
+
+/**
  * Query knobs accepted by `GET /v1/sessions`. `user_id` is required server-side
  * but falls back to the authenticated owner's `Claims.sub` when omitted — so an
  * owner-authed client can list its own sessions without supplying one.
@@ -1686,6 +1695,21 @@ export class XiaoguaiClient {
 
   listMessages(sessionId: string): Promise<Message[]> {
     return this.request<Message[]>('GET', `/v1/sessions/${encodeURIComponent(sessionId)}/messages`);
+  }
+
+  /**
+   * Feature ⑥ — read whether a turn is still running server-side for this
+   * session. The backend decouples a running turn from its SSE client: the
+   * turn keeps going when the user switches sessions or reloads, and its
+   * result is persisted on completion. The chat-ui calls this on session load
+   * to show a "task still running" indicator when this tab is not actively
+   * streaming the turn. Mirrors `GET /v1/sessions/{id}/status`.
+   */
+  getSessionStatus(id: string): Promise<SessionStatusResponse> {
+    return this.request<SessionStatusResponse>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(id)}/status`,
+    );
   }
 
   cancel(sessionId: string): Promise<{ cancelled: boolean }> {

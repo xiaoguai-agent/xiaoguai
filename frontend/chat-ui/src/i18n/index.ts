@@ -181,6 +181,10 @@ interface TranslationShape {
     working_dir_placeholder: string;
   };
   chat: {
+    /** Feature ⑥ — non-blocking "a turn is still running server-side" cue. */
+    remote_running: string;
+    /** Feature ⑥ — tooltip explaining the remote-running indicator. */
+    remote_running_title: string;
     sse: {
       reconnecting: string;
       cancel_reconnect: string;

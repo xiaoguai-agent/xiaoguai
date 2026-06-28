@@ -2789,3 +2789,52 @@ html,
   color: var(--muted);
   font-size: 11px;
 }
+
+/* ------------------------------------ remote running indicator (Feature ⑥) */
+
+/* Non-blocking pill in the chat header: a turn is still running server-side
+   for this session while this tab isn't streaming it. Reuses the watch-badge
+   amber palette so it reads as an in-progress, attention-light cue. */
+.remote-running {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 10px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+
+[data-theme='dark'] .remote-running {
+  background: #422006;
+  color: #fbbf24;
+  border-color: #92400e;
+}
+
+.remote-running__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: remote-running-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes remote-running-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .remote-running__dot {
+    animation: none;
+  }
+}

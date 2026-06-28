@@ -17,6 +17,8 @@
     "source_manual": "manual"
   },
   "chat": {
+    "remote_running": "Task still running…",
+    "remote_running_title": "A turn is still running on the server for this session. Its result will appear here when it finishes — you don't need to keep this tab open.",
     "sse": {
       "reconnecting": "Reconnecting (attempt {{attempt}}, retrying in {{secs}}s)…",
       "cancel_reconnect": "Cancel",
