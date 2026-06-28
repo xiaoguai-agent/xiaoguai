@@ -650,7 +650,7 @@ async fn handle_demo_seed(config: Option<&str>, reset: bool) -> Result<()> {
     // key (same key resolution as `xiaoguai schedule` / `xiaoguai code`).
     let key = xiaoguai_cli::commands::resolve_audit_signing_key(&settings)?;
     let audit = SqliteAuditSink::new(pool.clone(), key);
-    let report = demo_seed::seed(&pool, &audit, chrono::Utc::now())
+    let report = demo_seed::seed(&pool, &audit, &settings.auth.username, chrono::Utc::now())
         .await
         .context("seed demo data")?;
     print!("{}", demo_seed::format_guide(&report));

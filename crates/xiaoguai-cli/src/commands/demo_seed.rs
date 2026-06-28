@@ -26,8 +26,10 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 use sqlx::SqlitePool;
+use uuid::Uuid;
 use xiaoguai_audit::chain::sink::SqliteAuditSink;
 use xiaoguai_audit::{AuditEntry, OWNER_TENANT_ID};
+use xiaoguai_types::ContentBlock;
 
 // ---------------------------------------------------------------------------
 // Stable demo markers — every seeded row carries one of these so `clear_demo`
@@ -38,9 +40,10 @@ use xiaoguai_audit::{AuditEntry, OWNER_TENANT_ID};
 const DEMO_SESSION_PREFIX: &str = "demo_sess_";
 /// Prefix on every demo scheduled-job id.
 const DEMO_JOB_PREFIX: &str = "demo_job_";
-/// Prefix on every demo incident id.
-const DEMO_INCIDENT_PREFIX: &str = "demo_inc_";
 /// `incidents.source` value used for demo rows (also matches the audit actor).
+/// Demo incidents are keyed on this marker (their `id` is a real UUID, not a
+/// text prefix), so `clear_demo` removes them precisely without touching real
+/// incidents.
 const DEMO_INCIDENT_SOURCE: &str = "demo";
 /// `token_usage.request_id` marker so demo usage rows are removable without
 /// disturbing real provider telemetry.
@@ -94,17 +97,22 @@ pub struct SeedReport {
 pub async fn seed(
     pool: &SqlitePool,
     audit: &SqliteAuditSink,
+    owner_user_id: &str,
     now: DateTime<Utc>,
 ) -> Result<SeedReport> {
     clear_demo(pool).await.context("clear prior demo data")?;
 
-    let (sessions, messages) = seed_sessions(pool, now).await.context("seed sessions")?;
+    let (sessions, messages) = seed_sessions(pool, owner_user_id, now)
+        .await
+        .context("seed sessions")?;
     let jobs = seed_jobs(pool, now).await.context("seed scheduled jobs")?;
-    let usage_rows = seed_token_usage(pool, now)
+    let usage_rows = seed_token_usage(pool, owner_user_id, now)
         .await
         .context("seed token_usage")?;
     let incidents = seed_incident(pool, now).await.context("seed incident")?;
-    let audit_rows = seed_audit(audit, now).await.context("seed audit chain")?;
+    let audit_rows = seed_audit(audit, owner_user_id, now)
+        .await
+        .context("seed audit chain")?;
 
     Ok(SeedReport {
         audit_rows,
@@ -132,18 +140,23 @@ pub async fn seed(
 pub async fn clear_demo(pool: &SqlitePool) -> Result<()> {
     // Order matters only where FKs cascade; we delete children first anyway so
     // the intent is explicit and the function is FK-pragma-agnostic.
-    let inc_like = format!("{DEMO_INCIDENT_PREFIX}%");
     let sess_like = format!("{DEMO_SESSION_PREFIX}%");
     let job_like = format!("{DEMO_JOB_PREFIX}%");
 
-    // Incident children (RCAs / repairs) then incidents.
-    sqlx::query("DELETE FROM incident_rcas WHERE incident_id LIKE ?1")
-        .bind(&inc_like)
-        .execute(pool)
-        .await
-        .context("delete demo incident_rcas")?;
-    sqlx::query("DELETE FROM incidents WHERE id LIKE ?1 OR source = ?2")
-        .bind(&inc_like)
+    // Incident children (RCAs) then incidents. The incident `id` is a real UUID
+    // (BLOB), not a text prefix, so demo rows are keyed on `source = 'demo'`;
+    // RCAs carry no source column, so they're matched via their parent incident
+    // and deleted first (while the parent still exists), making this correct
+    // whether or not SQLite FK-cascade is enabled.
+    sqlx::query(
+        "DELETE FROM incident_rcas \
+         WHERE incident_id IN (SELECT id FROM incidents WHERE source = ?1)",
+    )
+    .bind(DEMO_INCIDENT_SOURCE)
+    .execute(pool)
+    .await
+    .context("delete demo incident_rcas")?;
+    sqlx::query("DELETE FROM incidents WHERE source = ?1")
         .bind(DEMO_INCIDENT_SOURCE)
         .execute(pool)
         .await
@@ -239,7 +252,15 @@ const OPS_MSGS: &[DemoMessage] = &[
 ];
 
 /// Two demo chats with a handful of messages each. Returns (sessions, messages).
-async fn seed_sessions(pool: &SqlitePool, now: DateTime<Utc>) -> Result<(usize, usize)> {
+///
+/// `owner_user_id` is the authed owner (the basic-auth username) so the seeded
+/// chats match real chats and surface in `GET /v1/sessions` (which filters by
+/// the caller's identity) — not a synthetic id the session list never returns.
+async fn seed_sessions(
+    pool: &SqlitePool,
+    owner_user_id: &str,
+    now: DateTime<Utc>,
+) -> Result<(usize, usize)> {
     let chats: &[DemoChat] = &[
         DemoChat {
             id: "demo_sess_governance",
@@ -263,7 +284,7 @@ async fn seed_sessions(pool: &SqlitePool, now: DateTime<Utc>) -> Result<(usize, 
              VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?6)",
         )
         .bind(sid)
-        .bind("usr_owner")
+        .bind(owner_user_id)
         .bind(chat.title)
         .bind(DEMO_MODEL)
         .bind(&created)
@@ -276,6 +297,14 @@ async fn seed_sessions(pool: &SqlitePool, now: DateTime<Utc>) -> Result<(usize, 
         for (idx, m) in chat.messages.iter().enumerate() {
             // Deterministic per-message id so re-seeding is clean.
             let mid = format!("{sid}_msg_{idx:02}");
+            // `messages.content` is read back as `Json<Vec<ContentBlock>>`, so a
+            // plain string fails to decode (`/v1/sessions/{id}/messages` 500).
+            // Serialize through the real `ContentBlock` type so the on-disk
+            // shape can never drift from the read path.
+            let content = serde_json::to_string(&[ContentBlock::Text {
+                text: m.content.to_string(),
+            }])
+            .with_context(|| format!("serialize demo message content {mid}"))?;
             sqlx::query(
                 "INSERT INTO messages (id, session_id, role, content, created_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -283,7 +312,7 @@ async fn seed_sessions(pool: &SqlitePool, now: DateTime<Utc>) -> Result<(usize, 
             .bind(&mid)
             .bind(sid)
             .bind(m.role)
-            .bind(m.content)
+            .bind(&content)
             .bind(ts(now - Duration::minutes(m.mins_ago)))
             .execute(pool)
             .await
@@ -363,7 +392,11 @@ async fn seed_jobs(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
 
 /// Lay down a flat token-usage history then one obvious tail spike, so an
 /// anomaly back-test / fire-now flags a z-score outlier. Returns row count.
-async fn seed_token_usage(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
+async fn seed_token_usage(
+    pool: &SqlitePool,
+    owner_user_id: &str,
+    now: DateTime<Utc>,
+) -> Result<usize> {
     let mut rows = 0usize;
     // Baseline: one point every 30 min going back, all ~BASELINE_TOKENS with a
     // tiny ±deterministic wobble so σ is non-zero (a perfectly flat series has
@@ -378,6 +411,7 @@ async fn seed_token_usage(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize
         let completion = total - prompt;
         insert_usage(
             pool,
+            owner_user_id,
             "demo_sess_ops",
             prompt,
             completion,
@@ -392,6 +426,7 @@ async fn seed_token_usage(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize
     let spike_completion = SPIKE_TOKENS - spike_prompt;
     insert_usage(
         pool,
+        owner_user_id,
         "demo_sess_ops",
         spike_prompt,
         spike_completion,
@@ -406,6 +441,7 @@ async fn seed_token_usage(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize
 
 async fn insert_usage(
     pool: &SqlitePool,
+    owner_user_id: &str,
     session_id: &str,
     prompt: i64,
     completion: i64,
@@ -418,7 +454,7 @@ async fn insert_usage(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )
     .bind(ts_str)
-    .bind("usr_owner")
+    .bind(owner_user_id)
     .bind(session_id)
     .bind(DEMO_PROVIDER_ID)
     .bind(DEMO_MODEL)
@@ -439,7 +475,11 @@ async fn insert_usage(
 /// One resolved incident with a root-cause-analysis row, for the Incidents
 /// pane. Returns the incident count (1).
 async fn seed_incident(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
-    let incident_id = format!("{DEMO_INCIDENT_PREFIX}001");
+    // `incidents.id` and `incident_rcas.id`/`incident_id` are read back as
+    // `Uuid` (sqlx decodes a 16-byte BLOB), so a text id like "demo_inc_001"
+    // makes `/v1/incidents` 500 (`decoding column "id": expected 16 bytes`).
+    // Bind real UUIDs; a deterministic v5 id keeps re-seeding stable.
+    let incident_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, b"xiaoguai-demo-incident-001");
     let occurred = ts(now - Duration::hours(3));
     let raw_payload = json!({
         "alert": "HighErrorRate",
@@ -460,7 +500,7 @@ async fn seed_incident(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
             (id, source, external_id, title, severity, project, environment, occurred_at, raw_payload, status, created_at, updated_at) \
          VALUES (?1, ?2, ?3, ?4, 'high', 'checkout-api', 'prod', ?5, ?6, 'resolved', ?7, ?8)",
     )
-    .bind(&incident_id)
+    .bind(incident_id)
     .bind(DEMO_INCIDENT_SOURCE)
     .bind("demo:checkout-error-rate")
     .bind("checkout-api 错误率突增至 13.7%（阈值 2%）")
@@ -472,7 +512,7 @@ async fn seed_incident(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
     .await
     .context("insert demo incident")?;
 
-    let rca_id = format!("{incident_id}_rca_001");
+    let rca_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, b"xiaoguai-demo-rca-001");
     let action_items = json!([
         "回滚 checkout-api 至上一个稳定版本（已通过 HotL 审批执行）",
         "为下游支付超时增加熔断与降级",
@@ -488,8 +528,8 @@ async fn seed_incident(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
             (id, incident_id, session_id, summary, root_cause, confidence, action_items, raw_markdown, created_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )
-    .bind(&rca_id)
-    .bind(&incident_id)
+    .bind(rca_id)
+    .bind(incident_id)
     .bind("demo_sess_ops")
     .bind("新版本对支付网关的同步调用在其抖动时耗尽线程池，引发错误率突增；回滚后恢复。")
     .bind("checkout-api v2026.6.27 同步调用支付网关 + 网关 P99 抖动 → 线程池耗尽")
@@ -511,7 +551,13 @@ async fn seed_incident(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
 /// Append a representative spread of audit events through the HMAC-chained
 /// sink. Each append reads the prior row's hmac and signs over it, so the
 /// chain verifies end-to-end. Returns the number of rows appended.
-async fn seed_audit(audit: &SqliteAuditSink, now: DateTime<Utc>) -> Result<usize> {
+async fn seed_audit(
+    audit: &SqliteAuditSink,
+    owner_user_id: &str,
+    now: DateTime<Utc>,
+) -> Result<usize> {
+    // The owner login row references the same identity the sessions use.
+    let owner_resource = format!("user:{owner_user_id}");
     // (minutes_ago, action, resource, details) — ordered oldest→newest so the
     // appended chain timestamps are monotonically increasing like real life.
     // `append` re-signs over whatever the latest row is, so even interleaving
@@ -520,7 +566,7 @@ async fn seed_audit(audit: &SqliteAuditSink, now: DateTime<Utc>) -> Result<usize
         (
             210,
             "auth.login",
-            "user:usr_owner",
+            owner_resource.as_str(),
             json!({ "method": "owner-basic", "ip": "127.0.0.1" }),
         ),
         (
@@ -726,7 +772,9 @@ mod tests {
     #[tokio::test]
     async fn seed_populates_every_pane() {
         let (pool, sink, _dir) = fixture().await;
-        let report = seed(&pool, &sink, fixed_now()).await.expect("seed");
+        let report = seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
 
         assert_eq!(report.audit_rows, 13, "audit row count");
         assert_eq!(report.sessions, 2, "session count");
@@ -767,7 +815,9 @@ mod tests {
     #[tokio::test]
     async fn audit_chain_verifies_after_seed() {
         let (pool, sink, _dir) = fixture().await;
-        seed(&pool, &sink, fixed_now()).await.expect("seed");
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
         // The whole chain (every appended demo row) must verify.
         sink.verify_tenant(OWNER_TENANT_ID)
             .await
@@ -782,7 +832,9 @@ mod tests {
         // `max_backoff_secs` field-name bug). Seed, then round-trip every demo
         // job's policy through the real type.
         let (pool, sink, _dir) = fixture().await;
-        seed(&pool, &sink, fixed_now()).await.expect("seed");
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
         let policies: Vec<String> = sqlx::query_scalar(
             "SELECT retry_policy FROM scheduled_jobs WHERE id LIKE 'demo_job_%'",
         )
@@ -798,9 +850,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn seed_incident_ids_decode_as_uuid() {
+        // Regression: `incidents.id` and `incident_rcas.id`/`incident_id` are
+        // read back through `Uuid` (a 16-byte BLOB). A text id ("demo_inc_001")
+        // made `/v1/incidents` 500 with `decoding column "id": expected 16
+        // bytes`. Read every demo id through the SAME `Uuid` decode the store
+        // uses — a text id panics here, exactly as the endpoint did.
+        let (pool, sink, _dir) = fixture().await;
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
+
+        let inc: (Uuid,) = sqlx::query_as("SELECT id FROM incidents WHERE source = 'demo'")
+            .fetch_one(&pool)
+            .await
+            .expect("incident id must decode as a 16-byte UUID");
+        let rca: (Uuid, Uuid) = sqlx::query_as("SELECT id, incident_id FROM incident_rcas")
+            .fetch_one(&pool)
+            .await
+            .expect("rca id + incident_id must decode as UUIDs");
+        assert_eq!(
+            rca.1, inc.0,
+            "rca.incident_id must reference the incident id"
+        );
+    }
+
+    #[tokio::test]
+    async fn seed_message_content_decodes_as_content_blocks() {
+        // Regression: `messages.content` is read as `Json<Vec<ContentBlock>>`;
+        // plain-text content made `/v1/sessions/{id}/messages` 500 with
+        // `ColumnDecode "content"`. Decode every seeded message the exact way the
+        // message repository's `MessageRow` does and confirm a Text block
+        // round-trips.
+        use sqlx::types::Json;
+        let (pool, sink, _dir) = fixture().await;
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
+
+        let rows: Vec<(Json<Vec<ContentBlock>>,)> = sqlx::query_as(
+            "SELECT content FROM messages WHERE session_id LIKE 'demo_sess_%' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("every message content must decode as Vec<ContentBlock>");
+        assert_eq!(rows.len(), 6, "all demo messages decode");
+
+        let Json(blocks) = &rows[0].0;
+        match blocks.as_slice() {
+            [ContentBlock::Text { text }] => assert!(!text.is_empty(), "text content present"),
+            other => panic!("expected a single Text block, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn seed_sessions_use_owner_user_id() {
+        // Regression: demo sessions + usage must be stored under the authed owner
+        // id (the basic-auth username), not a synthetic "usr_owner" — else they
+        // never appear in `GET /v1/sessions`, which filters by the caller, and
+        // the chat sidebar / Today pane look empty or inconsistent.
+        let (pool, sink, _dir) = fixture().await;
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
+
+        let session_users: Vec<String> =
+            sqlx::query_scalar("SELECT user_id FROM sessions WHERE id LIKE 'demo_sess_%'")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(session_users.len(), 2, "two demo sessions");
+        assert!(
+            session_users.iter().all(|u| u == "owner"),
+            "demo sessions must use the owner user id, got {session_users:?}"
+        );
+
+        let usage_under_owner: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM token_usage WHERE request_id = 'demo-seed' AND user_id = 'owner'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            usage_under_owner as usize,
+            BASELINE_POINTS + 1,
+            "all demo usage attributes to the owner"
+        );
+    }
+
+    #[tokio::test]
     async fn token_usage_has_detectable_spike() {
         let (pool, sink, _dir) = fixture().await;
-        seed(&pool, &sink, fixed_now()).await.expect("seed");
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
 
         let max: i64 =
             sqlx::query_scalar("SELECT MAX(total_tokens) FROM token_usage WHERE request_id = ?1")
@@ -841,8 +984,12 @@ mod tests {
     #[tokio::test]
     async fn seed_is_idempotent() {
         let (pool, sink, _dir) = fixture().await;
-        let r1 = seed(&pool, &sink, fixed_now()).await.expect("first seed");
-        let r2 = seed(&pool, &sink, fixed_now()).await.expect("second seed");
+        let r1 = seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("first seed");
+        let r2 = seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("second seed");
 
         // Non-audit data is cleared+reseeded, so counts are identical (no
         // duplicate sessions/jobs/usage/incidents).
@@ -869,7 +1016,9 @@ mod tests {
     #[tokio::test]
     async fn reset_clears_demo_data_but_not_audit() {
         let (pool, sink, _dir) = fixture().await;
-        seed(&pool, &sink, fixed_now()).await.expect("seed");
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
         clear_demo(&pool).await.expect("clear");
 
         for (table, sql) in [
