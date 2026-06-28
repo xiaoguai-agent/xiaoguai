@@ -1,0 +1,13 @@
+# Frontend build output (Tauri's frontendDist).
+dist/
+
+# Node deps (this is a standalone pnpm project, not part of the frontend workspace).
+node_modules/
+.pnpm-store/
+*.tsbuildinfo
+
+# Rust / Tauri build artifacts.
+src-tauri/target/
+
+# Tauri codegen (capabilities schemas, etc.) — regenerated on build.
+src-tauri/gen/
