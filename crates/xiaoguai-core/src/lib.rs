@@ -409,7 +409,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                                 sink.clone(),
                                 allow_egress,
                                 Toolbox::new(),
-                                root.clone(),
+                                Some(root.clone()),
                             ));
                         (Arc::new(tb), Some(factory))
                     }
@@ -429,10 +429,33 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                 );
                 (Arc::new(Toolbox::new()), None)
             }
+            (Some(sink), None) => {
+                // #15: audit key set, but no global XIAOGUAI_CODING_WORKSPACE.
+                // The boot toolbox carries NO coding tools (so the agent can
+                // never edit the server's own CWD — security-review H1), yet we
+                // DO wire the Feature ⑤ factory with a `None` global root: any
+                // session that sets a `working_dir` activates the SAME governed
+                // coding surface (consult + HotL + code.* audit + path-jail),
+                // rooted at that dir, built on demand for that turn.
+                let allow_egress = crate::coding_bridge::coding_allow_egress();
+                tracing::info!(
+                    egress = allow_egress,
+                    "serve: coding tools enabled per-session — set a session working_dir to \
+                     activate governed coding (no global workspace; boot toolbox carries none)"
+                );
+                let factory: Arc<dyn xiaoguai_api::coding_toolbox::CodingToolboxFactory> =
+                    Arc::new(crate::coding_bridge::CodingToolboxFactoryImpl::new(
+                        sink.clone(),
+                        allow_egress,
+                        Toolbox::new(),
+                        None,
+                    ));
+                (Arc::new(Toolbox::new()), Some(factory))
+            }
             _ => {
                 tracing::info!(
-                    "serve: coding tools disabled (set XIAOGUAI_CODING_WORKSPACE to a directory \
-                     to enable governed in-loop coding)"
+                    "serve: coding tools disabled — set an audit signing key to enable governed \
+                     coding (then a session working_dir or XIAOGUAI_CODING_WORKSPACE activates it)"
                 );
                 (Arc::new(Toolbox::new()), None)
             }

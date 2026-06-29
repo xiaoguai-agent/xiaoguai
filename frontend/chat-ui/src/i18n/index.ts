@@ -223,6 +223,11 @@ interface TranslationShape {
     working_dir_save: string;
     /** Working-dir input placeholder (an example absolute path). */
     working_dir_placeholder: string;
+    /** Feature ⑤ — muted note shown when a working_dir is set: governed
+     *  file read/edit is active for the session, scoped to that directory. */
+    coding_active: string;
+    /** Tooltip expanding on the coding-active note (execute writes / consult previews). */
+    coding_active_title: string;
   };
   chat: {
     /** Feature ⑥ — non-blocking "a turn is still running server-side" cue. */
