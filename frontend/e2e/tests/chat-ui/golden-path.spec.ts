@@ -34,8 +34,9 @@ const BUBBLE_SELECTOR = '.bubble';
 const USER_BUBBLE_SELECTOR = '.bubble.user';
 const ASSISTANT_BUBBLE_SELECTOR = '.bubble.assistant';
 const BRANCH_BUTTON_SELECTOR = 'button[aria-label="Branch from here"]';
-/** Sidebar is `<aside class="sidebar">`; each session is an `<a class="session">`. */
-const SIDEBAR_SELECTOR = '.sidebar';
+/** The list panel is `<aside class="list-panel">` (Cherry-Studio IA, #18); its
+ *  default 话题/Topics tab renders each session as an `<a class="session">`. */
+const SIDEBAR_SELECTOR = '.list-panel';
 const SESSION_LINK_SELECTOR = 'a.session';
 /** Real backend session id shape: `sess_<uuid-simple>` (hex, no dashes). */
 const SESSION_URL_RE = /\/sessions\/sess_[0-9a-f]+/;

@@ -19,6 +19,8 @@ import type { HotlPendingState } from './HotlBanner';
 import { SseReconnectBanner } from './SseReconnectBanner';
 import { WatchIndicator } from './WatchIndicator';
 import { ExpertPicker } from './ExpertPicker';
+import { MessageToolbar } from './MessageToolbar';
+import { ChatHeaderBar } from './ChatHeaderBar';
 import { ModeToggle, getStoredChatMode, setStoredChatMode } from './ModeToggle';
 import { useI18n } from './i18n/I18nProvider';
 import { interpolate } from './i18n';
@@ -34,6 +36,13 @@ interface Props {
    *  load) — e.g. a stale localStorage entry after a server/DB reset. The shell
    *  prunes it from the sidebar so it stops being clickable. */
   onSessionMissing?: (id: string) => void;
+  /**
+   * Phase 2 (Cherry-Studio IA) — called with the new session id right after
+   * it's created, BEFORE the first turn runs, so the shell can attach the
+   * assistant (persona/team) the operator pre-selected for a new chat. The
+   * shell's implementation is best-effort and never rejects.
+   */
+  onSessionAttached?: (newSessionId: string) => Promise<void>;
 }
 
 interface DisplayBubble {
@@ -85,7 +94,7 @@ function autoGrow(ta: HTMLTextAreaElement | null) {
   ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
 }
 
-export function ChatPage({ onSessionCreated, onSessionMissing }: Props) {
+export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached }: Props) {
   const { t } = useI18n();
   // White-label assistant name (owner-set), falling back to the locale default.
   const brandName = useBrandName() || t.ui.assistant_name;
@@ -408,6 +417,10 @@ export function ChatPage({ onSessionCreated, onSessionMissing }: Props) {
         // T5.2 — carry the pre-session mode choice onto the new session key.
         setStoredChatMode(sid, mode);
         onSessionCreated({ id: sid, title: session.title ?? text.slice(0, 40) });
+        // Phase 2 — attach the assistant (persona/team) the operator pre-picked
+        // in the panel for this new chat, BEFORE the first turn runs so its
+        // system prompt applies from the start. Best-effort (never rejects).
+        if (onSessionAttached) await onSessionAttached(sid);
         // Mark this navigation as self-initiated so the route-change effect
         // does not wipe the in-flight turn state (see selfNavigatedSessionRef).
         selfNavigatedSessionRef.current = sid;
@@ -829,6 +842,165 @@ export function ChatPage({ onSessionCreated, onSessionMissing }: Props) {
     }
   }
 
+  /**
+   * Phase 4b — copy a bubble's text to the clipboard. Best-effort: a clipboard
+   * write can reject (insecure context / denied permission), so surface the
+   * failure in the status line rather than swallowing it.
+   */
+  async function copyBubble(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus(t.ui.message_actions.copied);
+    } catch (err) {
+      setStatus(interpolate(t.ui.message_actions.copy_failed, { message: (err as Error).message }));
+    }
+  }
+
+  /**
+   * Phase 4b — delete one persisted message (confirmed) and drop its bubble.
+   * Only callable when the bubble carries a `messageId` and a session exists.
+   * Best-effort: on failure the bubble stays and the error is surfaced.
+   */
+  async function deleteBubble(messageId: string) {
+    const sid = sessionId;
+    if (!sid || streaming || orchestrating) return;
+    if (!window.confirm(t.ui.message_actions.delete_confirm)) return;
+    try {
+      await client.deleteMessage(sid, messageId);
+      setStatus(null);
+      // Immutable removal: rebuild the list without any bubble carrying this id.
+      setBubbles((bs) => bs.filter((b) => b.messageId !== messageId));
+    } catch (err) {
+      setStatus(
+        interpolate(t.ui.message_actions.delete_failed, { message: (err as Error).message }),
+      );
+    }
+  }
+
+  /**
+   * Phase 4b — regenerate the latest response. Deletes the last assistant
+   * message AND its preceding user message, then re-sends the user text so a
+   * fresh response replaces the last exchange. If either delete fails we abort
+   * WITHOUT resending (surfacing the error), so we never duplicate the turn.
+   * This bounds the deletes to the last exchange only.
+   *
+   * `assistantId` / `userId` are the persisted ids captured at render time on
+   * the last assistant bubble + the user bubble right before it.
+   */
+  async function regenerateLast(assistantId: string, userId: string, userText: string) {
+    const sid = sessionId;
+    if (!sid || streaming || orchestrating) return;
+    try {
+      // Delete the assistant reply first, then the user turn that prompted it.
+      await client.deleteMessage(sid, assistantId);
+      await client.deleteMessage(sid, userId);
+    } catch (err) {
+      setStatus(
+        interpolate(t.ui.message_actions.regenerate_failed, { message: (err as Error).message }),
+      );
+      return;
+    }
+    // Drop the deleted exchange locally before the resend appends fresh bubbles.
+    setBubbles((bs) => bs.filter((b) => b.messageId !== assistantId && b.messageId !== userId));
+    await send(userText);
+  }
+
+  /**
+   * Phase 4b — edit the last user message. Prompts for new text (seeded with
+   * the current text — the chat-ui has no modal layer), deletes that user
+   * message (and the trailing assistant reply if present), then re-sends the
+   * edited text as a fresh turn. Cancel / empty input is a no-op. Aborts on a
+   * delete failure WITHOUT resending, like regenerate.
+   *
+   * `assistantId` is the id of the assistant reply that followed this user
+   * message (when present), so it can be cleared alongside.
+   */
+  async function editLastUser(userId: string, currentText: string, assistantId?: string) {
+    const sid = sessionId;
+    if (!sid || streaming || orchestrating) return;
+    const edited = window.prompt(t.ui.message_actions.edit_prompt, currentText);
+    if (edited === null) return; // cancelled
+    const trimmed = edited.trim();
+    if (!trimmed) return; // empty → no-op
+    try {
+      await client.deleteMessage(sid, userId);
+      if (assistantId) await client.deleteMessage(sid, assistantId);
+    } catch (err) {
+      setStatus(
+        interpolate(t.ui.message_actions.edit_failed, { message: (err as Error).message }),
+      );
+      return;
+    }
+    setBubbles((bs) =>
+      bs.filter((b) => b.messageId !== userId && (!assistantId || b.messageId !== assistantId)),
+    );
+    await send(trimmed);
+  }
+
+  // Phase 4b — derive which bubble (if any) gets the "regenerate" action and
+  // which gets "edit". Both are bounded to the LAST exchange so we never offer
+  // an unbounded "delete everything after". Computed each render from the
+  // current bubble list (cheap; no extra state).
+  //
+  // regenerate: the last assistant bubble that has a persisted id and isn't
+  // mid-stream, but only when the user message right before it also has an id —
+  // both are needed to delete the exchange and replay the user text.
+  const regenInfo = (() => {
+    if (streaming || orchestrating || !sessionId) return undefined;
+    let aIdx = -1;
+    for (let i = bubbles.length - 1; i >= 0; i -= 1) {
+      const b = bubbles[i]!;
+      if (b.kind === 'assistant' && b.messageId && !b.streaming) {
+        aIdx = i;
+        break;
+      }
+    }
+    if (aIdx < 0) return undefined;
+    // Walk back to the nearest preceding user bubble carrying an id.
+    for (let j = aIdx - 1; j >= 0; j -= 1) {
+      const u = bubbles[j]!;
+      if (u.kind === 'user' && u.messageId) {
+        return {
+          assistantIdx: aIdx,
+          assistantId: bubbles[aIdx]!.messageId!,
+          userId: u.messageId,
+          userText: u.text,
+        };
+      }
+    }
+    return undefined;
+  })();
+
+  // edit: the last user bubble that has a persisted id, plus the trailing
+  // assistant reply's id (if any) so the whole exchange clears on resend.
+  const editInfo = (() => {
+    if (streaming || orchestrating || !sessionId) return undefined;
+    let uIdx = -1;
+    for (let i = bubbles.length - 1; i >= 0; i -= 1) {
+      const b = bubbles[i]!;
+      if (b.kind === 'user' && b.messageId) {
+        uIdx = i;
+        break;
+      }
+    }
+    if (uIdx < 0) return undefined;
+    // The reply (if any) is the first assistant bubble after the user message.
+    let replyId: string | undefined;
+    for (let j = uIdx + 1; j < bubbles.length; j += 1) {
+      const r = bubbles[j]!;
+      if (r.kind === 'assistant' && r.messageId) {
+        replyId = r.messageId;
+        break;
+      }
+    }
+    return {
+      userIdx: uIdx,
+      userId: bubbles[uIdx]!.messageId!,
+      userText: bubbles[uIdx]!.text,
+      assistantId: replyId,
+    };
+  })();
+
   return (
     <>
       {/* sprint-12 S12-8 — HotL suspend/resume banner: non-dismissible, shown
@@ -870,35 +1042,45 @@ export function ChatPage({ onSessionCreated, onSessionMissing }: Props) {
           onCancel={cancel}
         />
       )}
-      {/* Chat header — the HotlBanner is rendered above (top of the fragment),
-          not in the header; below are the expert picker + watch indicator. */}
-      <div className="chat-header">
-        {/* T3.5 — expert picker chip for the active session */}
-        <ExpertPicker
-          sessionId={sessionId}
-          // T5.2 — track whether a team is attached (gates the team-run entry).
-          onActiveChange={(a) => setTeamId(a?.kind === 'team' ? a.id : null)}
-          // Phase 4c — Skills deep-link: pre-select the pack's team (when a
-          // session exists), then drop the `?team=` param.
-          deepLinkTeamSlug={deepLinkTeamSlug}
-          onDeepLinkConsumed={clearDeepLink}
-        />
-        {/* Feature ⑥ — non-blocking cue: a turn is still running server-side
-            for this session, but this tab isn't streaming it. Its result is
-            persisted on completion; a history reload then shows it. */}
-        {remoteRunning && !streaming && (
-          <span
-            className="remote-running"
-            role="status"
-            title={t.chat.remote_running_title}
-            data-testid="remote-running"
-          >
-            <span className="remote-running__dot" aria-hidden="true" />
-            {t.chat.remote_running}
-          </span>
-        )}
-        <WatchIndicator sessionId={sessionId} />
-      </div>
+      {/* Phase 3 (Cherry-Studio IA) — chat-area top bar: active-assistant
+          display + prominent model selector + watch / remote-running cues. The
+          HotlBanner is rendered above (top of the fragment), not in the bar.
+          The model selector moved up here from the composer; all state still
+          lives in ChatPage and the `model_override` send wiring is unchanged. */}
+      <ChatHeaderBar
+        models={models}
+        model={model}
+        onModelChange={setModel}
+        assistant={
+          /* T3.5 — expert picker chip for the active session */
+          <ExpertPicker
+            sessionId={sessionId}
+            // T5.2 — track whether a team is attached (gates the team-run entry).
+            onActiveChange={(a) => setTeamId(a?.kind === 'team' ? a.id : null)}
+            // Phase 4c — Skills deep-link: pre-select the pack's team (when a
+            // session exists), then drop the `?team=` param.
+            deepLinkTeamSlug={deepLinkTeamSlug}
+            onDeepLinkConsumed={clearDeepLink}
+          />
+        }
+        remoteRunning={
+          /* Feature ⑥ — non-blocking cue: a turn is still running server-side
+             for this session, but this tab isn't streaming it. Its result is
+             persisted on completion; a history reload then shows it. */
+          remoteRunning && !streaming ? (
+            <span
+              className="remote-running"
+              role="status"
+              title={t.chat.remote_running_title}
+              data-testid="remote-running"
+            >
+              <span className="remote-running__dot" aria-hidden="true" />
+              {t.chat.remote_running}
+            </span>
+          ) : null
+        }
+        watch={<WatchIndicator sessionId={sessionId} />}
+      />
       <div className={`messages${bubbles.length === 0 ? ' messages-empty' : ''}`} ref={scrollRef}>
         {bubbles.length === 0 ? (
           <div className="welcome">
@@ -930,7 +1112,14 @@ export function ChatPage({ onSessionCreated, onSessionMissing }: Props) {
               key={i}
               index={i}
               bubble={b}
+              regenerate={i === regenInfo?.assistantIdx ? regenInfo : undefined}
+              edit={i === editInfo?.userIdx ? editInfo : undefined}
+              canDelete={!streaming && !orchestrating && !!sessionId}
               onFork={fork}
+              onCopy={copyBubble}
+              onDelete={deleteBubble}
+              onRegenerate={regenerateLast}
+              onEdit={editLastUser}
               onLoopArm={armLoop}
               onLoopCancel={dismissLoopConfirm}
             />
@@ -1015,21 +1204,8 @@ export function ChatPage({ onSessionCreated, onSessionMissing }: Props) {
           )}
         </div>
         <div className="composer-meta">
-          {models.length > 0 && (
-            <select
-              className="model-picker"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              aria-label="model"
-              title="model"
-            >
-              {models.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          )}
+          {/* Phase 3 — the model selector moved up to the chat top bar
+              (ChatHeaderBar); the composer meta keeps only the mode toggle. */}
           {/* T5.2 — consult/execute toggle + read-only cue in consult mode. */}
           <ModeToggle mode={mode} onChange={changeMode} />
           <div className="composer-hint">{t.ui.composer_hint}</div>
@@ -1064,16 +1240,49 @@ function StopIcon() {
   );
 }
 
+/** Phase 4b — the last-exchange "regenerate" descriptor passed to the matching bubble. */
+interface RegenInfo {
+  assistantIdx: number;
+  assistantId: string;
+  userId: string;
+  userText: string;
+}
+
+/** Phase 4b — the last-user "edit" descriptor passed to the matching bubble. */
+interface EditInfo {
+  userIdx: number;
+  userId: string;
+  userText: string;
+  assistantId?: string;
+}
+
 function Bubble({
   bubble,
   index,
+  regenerate,
+  edit,
+  canDelete,
   onFork,
+  onCopy,
+  onDelete,
+  onRegenerate,
+  onEdit,
   onLoopArm,
   onLoopCancel,
 }: {
   bubble: DisplayBubble;
   index: number;
+  /** Present only on the bubble that owns the last-exchange regenerate action. */
+  regenerate?: RegenInfo;
+  /** Present only on the bubble that owns the last-user edit action. */
+  edit?: EditInfo;
+  /** Whether delete is currently allowed (no in-flight turn + a session exists). */
+  canDelete: boolean;
   onFork: (messageId: string) => void;
+  onCopy: (text: string) => void;
+  onDelete: (messageId: string) => void;
+  onRegenerate: (assistantId: string, userId: string, userText: string) => void;
+  onEdit: (userId: string, currentText: string, assistantId?: string) => void;
   onLoopArm: (index: number, prompt: string) => void;
   onLoopCancel: (index: number) => void;
 }) {
@@ -1091,23 +1300,38 @@ function Bubble({
   // into shells / issue trackers, so they get the same hover-to-copy
   // affordance code blocks do. Empty / still-streaming bubbles skip it.
   const showCopy = bubble.kind === 'tool' && bubble.text.length > 0;
-  // v1.1.2: branch from here. Only on persisted assistant bubbles
-  // (live-streaming ones have no message id yet, and forking from a
-  // user prompt is just "create a new session").
-  const showFork = bubble.kind === 'assistant' && !!bubble.messageId && !bubble.streaming;
+  // Phase 4b: the per-message hover toolbar (copy / regenerate / edit / branch
+  // / delete) is shown on chat turns only — never on tool output or locally-
+  // generated system bubbles, and not while this bubble is still streaming
+  // (its id isn't persisted yet). messageId-dependent actions stay gated on a
+  // persisted id, mirroring the legacy "Branch from here" affordance.
+  const isChatTurn = bubble.kind === 'user' || bubble.kind === 'assistant';
+  const showToolbar = isChatTurn && bubble.text.length > 0 && !bubble.streaming;
+  const hasId = !!bubble.messageId;
   return (
     <div className={className}>
       {showCopy && <CopyButton text={bubble.text} />}
-      {showFork && bubble.messageId && (
-        <button
-          type="button"
-          className="bubble-action bubble-fork"
-          title={t.ui.branch_title}
-          aria-label={t.ui.branch_label}
-          onClick={() => onFork(bubble.messageId!)}
-        >
-          {t.ui.branch}
-        </button>
+      {showToolbar && (
+        <MessageToolbar
+          onCopy={() => onCopy(bubble.text)}
+          onBranch={
+            // v1.1.2 → Phase 4b: branch keeps its original gate — a persisted
+            // id is required, and forking from a user prompt is just "create a
+            // new session", so it stays assistant-only.
+            bubble.kind === 'assistant' && hasId
+              ? () => onFork(bubble.messageId!)
+              : undefined
+          }
+          onDelete={hasId && canDelete ? () => onDelete(bubble.messageId!) : undefined}
+          onRegenerate={
+            regenerate
+              ? () => onRegenerate(regenerate.assistantId, regenerate.userId, regenerate.userText)
+              : undefined
+          }
+          onEdit={
+            edit ? () => onEdit(edit.userId, edit.userText, edit.assistantId) : undefined
+          }
+        />
       )}
       {renderMarkdown ? <MarkdownBody text={bubble.text} /> : bubble.text}
       {isEmptyStreaming && (
@@ -1186,7 +1410,11 @@ function messageToBubbles(m: Message): DisplayBubble[] {
         // multi-block assistant turn renders as N bubbles, branching
         // from any of them cuts at the same boundary, which is the
         // expected behaviour at the schema level.
-        messageId: m.role === 'assistant' ? m.id : undefined,
+        //
+        // Phase 4b: USER text blocks now also carry their persisted id —
+        // the message toolbar's delete / edit / regenerate actions key off
+        // it. Tool / system bubbles stay id-less (no toolbar id-actions).
+        messageId: m.role === 'user' || m.role === 'assistant' ? m.id : undefined,
       });
       if (m.role !== 'user') lastAssistantIdx = idx;
     } else if (block.type === 'tool_call') {

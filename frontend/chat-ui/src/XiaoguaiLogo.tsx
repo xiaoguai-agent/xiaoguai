@@ -13,7 +13,14 @@
 import { useI18n } from './i18n/I18nProvider';
 import { useBrandName } from './branding';
 
-export function XiaoguaiLogo({ size = 26 }: { size?: number }) {
+export function XiaoguaiLogo({
+  size = 26,
+  iconOnly = false,
+}: {
+  size?: number;
+  /** Phase 2 — render just the monster mark (no wordmark), e.g. in the nav rail. */
+  iconOnly?: boolean;
+}) {
   const { t } = useI18n();
   const name = useBrandName() || t.ui.assistant_name;
   return (
@@ -21,8 +28,8 @@ export function XiaoguaiLogo({ size = 26 }: { size?: number }) {
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 8,
-        padding: '2px 0 8px',
+        gap: iconOnly ? 0 : 8,
+        padding: iconOnly ? 0 : '2px 0 8px',
         fontWeight: 700,
         fontSize: 18,
         lineHeight: 1,
@@ -52,7 +59,7 @@ export function XiaoguaiLogo({ size = 26 }: { size?: number }) {
         <path d="M18.5 31c2 2.4 9 2.4 11 0" />
         <path d="M23.5 32v3" />
       </svg>
-      <span>{name}</span>
+      {!iconOnly && <span>{name}</span>}
     </div>
   );
 }

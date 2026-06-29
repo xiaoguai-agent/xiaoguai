@@ -1,5 +1,5 @@
 /**
- * LanguageToggle — sidebar language switcher (中文 / English / 日本語).
+ * LanguageToggle — sidebar language switcher (中文 / English).
  *
  * Sits in the sidebar footer next to the theme toggle. Changing it persists
  * the choice (localStorage) and re-renders the app in the new language via

@@ -148,4 +148,20 @@ impl MessageRepository for InMemoryMessageRepo {
             .map_or(0, |v| u64::try_from(v.len()).unwrap_or(u64::MAX));
         Ok(removed)
     }
+
+    async fn delete_message(&self, session_id: &str, message_id: &str) -> RepoResult<()> {
+        let mut g = self.inner.lock();
+        let msgs = g.get_mut(session_id).ok_or(RepoError::NotFound)?;
+        let before = msgs.len();
+        let kept: Vec<Message> = msgs
+            .iter()
+            .filter(|m| m.id.as_str() != message_id)
+            .cloned()
+            .collect();
+        if kept.len() == before {
+            return Err(RepoError::NotFound);
+        }
+        *msgs = kept;
+        Ok(())
+    }
 }

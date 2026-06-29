@@ -1,7 +1,7 @@
 /**
  * i18n tests — C19.
  *
- * 1. Each locale (en, zh-CN, ja) has a non-empty translation for a sample key.
+ * 1. Each locale (en, zh-CN) has a non-empty translation for a sample key.
  * 2. Switching locale changes the resolved value.
  * 3. A missing key falls back to the English (fallbackLng) value.
  */
@@ -10,7 +10,6 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import i18n from './index';
 import enTranslation from './locales/en/translation.json';
 import zhCNTranslation from './locales/zh-CN/translation.json';
-import jaTranslation from './locales/ja/translation.json';
 
 // Ensure i18n is initialised before tests run.
 beforeEach(async () => {
@@ -29,12 +28,6 @@ describe('i18n locale loading', () => {
     expect(i18n.t('common.refresh')).toBe(zhCNTranslation.common.refresh);
     expect(i18n.t('common.refresh')).toBeTruthy();
   });
-
-  it('ja locale resolves common.refresh', async () => {
-    await i18n.changeLanguage('ja');
-    expect(i18n.t('common.refresh')).toBe(jaTranslation.common.refresh);
-    expect(i18n.t('common.refresh')).toBeTruthy();
-  });
 });
 
 describe('locale switching', () => {
@@ -45,15 +38,6 @@ describe('locale switching', () => {
     expect(enValue).toBe(enTranslation.nav.today);
     expect(zhValue).toBe(zhCNTranslation.nav.today);
     expect(enValue).not.toBe(zhValue);
-  });
-
-  it('switching from en to ja changes nav.today translation', async () => {
-    const enValue = i18n.t('nav.today');
-    await i18n.changeLanguage('ja');
-    const jaValue = i18n.t('nav.today');
-    expect(enValue).toBe(enTranslation.nav.today);
-    expect(jaValue).toBe(jaTranslation.nav.today);
-    expect(enValue).not.toBe(jaValue);
   });
 
   it('switching back to en restores English strings', async () => {
@@ -115,7 +99,7 @@ describe('locale completeness', () => {
     'pane.providers.title',
   ] as const;
 
-  for (const lang of ['en', 'zh-CN', 'ja'] as const) {
+  for (const lang of ['en', 'zh-CN'] as const) {
     it(`all sample keys resolve non-empty in ${lang}`, async () => {
       await i18n.changeLanguage(lang);
       for (const key of sampleKeys) {

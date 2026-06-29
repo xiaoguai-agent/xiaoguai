@@ -100,35 +100,193 @@ html,
 
 /* ------------------------------------------------------------------ layout */
 
-.layout {
+/* Phase 2 (Cherry-Studio IA) — three-region shell:
+   [narrow icon nav-rail] [assistant/topic list panel] [main chat]. */
+.app-shell {
   display: flex;
   height: 100vh;
   background: var(--bg);
 }
 
-/* ------------------------------------------------------------------ sidebar */
+/* ----------------------------------------------------------------- nav rail */
 
-.sidebar {
-  width: 280px;
+.nav-rail {
+  width: 60px;
+  flex-shrink: 0;
   border-right: 1px solid var(--border);
   background: var(--surface);
-  padding: var(--space-5) var(--space-4);
+  padding: var(--space-3) var(--space-1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.nav-rail__brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1) 0 var(--space-3);
+  color: var(--accent);
+}
+
+.nav-rail__group {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+.nav-rail__group--bottom {
+  margin-top: auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The settings / management icons scroll independently when the rail is
+   shorter than the icon list, so theme + language stay pinned at the bottom. */
+.nav-rail__group--scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+
+/* Hairline separating the primary nav from the settings group. */
+.nav-rail__divider {
+  flex-shrink: 0;
+  width: 60%;
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--border);
+}
+
+.nav-rail__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-2) 0;
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.nav-rail__item:hover {
+  background: var(--border-soft);
+  color: var(--fg);
+}
+
+.nav-rail__item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.nav-rail__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-rail__label {
+  font-size: 10px;
+  line-height: 1.1;
+  font-weight: 500;
+  text-align: center;
+}
+
+/* Utility toggles (theme / language) shrink to fit the narrow rail. */
+.nav-rail__util {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.nav-rail__util .theme-toggle {
+  transform: scale(0.82);
+}
+
+.nav-rail__util .lang-toggle {
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+}
+
+.nav-rail__util .lang-toggle-label {
+  display: none;
+}
+
+.nav-rail__util .lang-toggle-select {
+  max-width: 48px;
+  font-size: 10px;
+  padding: 1px 2px;
+}
+
+/* ----------------------------------------------------------- list panel */
+
+.list-panel {
+  width: 270px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Segmented 助手 | 话题 header. */
+.list-tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.list-tab {
+  flex: 1;
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 500;
+  font-size: 13px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.list-tab:hover {
+  color: var(--fg);
+}
+
+.list-tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ----------------------------------------------------------- topic list */
+
+.topic-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-3) var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
 
-.sidebar h2 {
-  margin: 0 0 var(--space-3);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.sidebar button {
+.topic-list__new {
   width: 100%;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
@@ -138,22 +296,39 @@ html,
   cursor: pointer;
   font: inherit;
   font-weight: 500;
-  margin-bottom: var(--space-3);
+  margin-bottom: var(--space-2);
   transition:
     background 120ms ease,
     border-color 120ms ease,
     color 120ms ease;
 }
 
-.sidebar button:hover {
+.topic-list__new:hover {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent);
 }
 
+.topic-list__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.topic-list__empty {
+  color: var(--muted);
+  font-size: 12px;
+  margin: var(--space-1) 0;
+}
+
+.topic-list__footer {
+  margin-top: auto;
+  padding-top: var(--space-2);
+}
+
 /* Each history entry is a row: the navigating link fills the space, the
    rename/delete actions sit on the right and fade in on hover. */
-.sidebar .session-row {
+.topic-list .session-row {
   display: flex;
   align-items: center;
   gap: var(--space-1);
@@ -161,15 +336,15 @@ html,
   transition: background 120ms ease;
 }
 
-.sidebar .session-row:hover {
+.topic-list .session-row:hover {
   background: var(--border-soft);
 }
 
-.sidebar .session-row.active {
+.topic-list .session-row.active {
   background: var(--accent-soft);
 }
 
-.sidebar .session {
+.topic-list .session {
   flex: 1;
   min-width: 0;
   display: block;
@@ -185,17 +360,17 @@ html,
   transition: color 120ms ease;
 }
 
-.sidebar .session-row:hover .session {
+.topic-list .session-row:hover .session {
   color: var(--fg);
 }
 
-.sidebar .session.active {
+.topic-list .session.active {
   color: var(--accent);
   font-weight: 500;
 }
 
 /* Hover-revealed action cluster (rename / delete). */
-.sidebar .session-actions {
+.topic-list .session-actions {
   display: flex;
   align-items: center;
   gap: 2px;
@@ -204,13 +379,12 @@ html,
   transition: opacity 120ms ease;
 }
 
-.sidebar .session-row:hover .session-actions,
-.sidebar .session-row:focus-within .session-actions {
+.topic-list .session-row:hover .session-actions,
+.topic-list .session-row:focus-within .session-actions {
   opacity: 1;
 }
 
-.sidebar .session-action {
-  /* Override the sidebar's full-width default button styling. */
+.topic-list .session-action {
   width: auto;
   margin: 0;
   padding: 2px 6px;
@@ -223,14 +397,119 @@ html,
   cursor: pointer;
 }
 
-.sidebar .session-action:hover {
+.topic-list .session-action:hover {
   background: var(--surface);
   border-color: transparent;
   color: var(--fg);
 }
 
-.sidebar .session-action--delete:hover {
+.topic-list .session-action--delete:hover {
   color: var(--tool-error-fg);
+}
+
+/* ------------------------------------------------------- assistant pane */
+
+.assistant-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.assistant-search {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.assistant-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+
+.assistant-error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: 12px;
+  color: var(--tool-error-fg);
+  background: var(--tool-error-bg);
+  border: 1px solid var(--tool-error-border);
+  border-radius: var(--radius-md);
+}
+
+.assistant-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.assistant-group-label {
+  margin: var(--space-2) 0 var(--space-1);
+  padding: 0 var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.assistant-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-soft);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.assistant-row:hover {
+  background: var(--border-soft);
+  color: var(--fg);
+}
+
+.assistant-row.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.assistant-row__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-row__check {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.assistant-empty {
+  margin: var(--space-2) 0;
+  padding: 0 var(--space-2);
+  color: var(--muted);
+  font-size: 12px;
 }
 
 /* --------------------------------------------------------------- main pane */
@@ -241,14 +520,6 @@ html,
   flex-direction: column;
   overflow: hidden;
   background: var(--bg);
-}
-
-/* Top-right utility bar above the message stream — holds the theme toggle. */
-.topbar {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  padding: var(--space-3) var(--space-5);
 }
 
 .messages {
@@ -273,6 +544,9 @@ html,
 /* ------------------------------------------------------------------ bubble */
 
 .bubble {
+  /* Positioning context for the absolutely-placed corner overlays
+     (`.copy-btn`, `.message-toolbar`) so they anchor to the bubble. */
+  position: relative;
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-xl);
   white-space: pre-wrap;
@@ -776,27 +1050,6 @@ html,
 
 /* ---------------------------------------------------------- theme toggle */
 
-.sidebar-footer {
-  margin-top: auto;
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border-soft);
-}
-
-/* Footer row holds the language + theme toggles side by side. */
-.sidebar-footer-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-
-/* Admin console link sits above the footer row (styled via .nav-link). */
-.sidebar-footer .admin-link {
-  display: block;
-  margin-bottom: var(--space-2);
-}
-
 .lang-toggle {
   display: inline-flex;
   align-items: center;
@@ -1022,47 +1275,62 @@ html,
   padding-right: calc(var(--space-4) + 56px);
 }
 
-/* v1.1.2 — "Branch from here" action on assistant bubbles. Same
-   hover-reveal pattern as `.copy-btn`, parked next to it in the top
-   right. Lives inside `.bubble.assistant.copy-host` (every assistant
-   bubble is now a copy-host so the hover-reveal trigger area covers
-   the whole bubble). */
-.bubble-action.bubble-fork {
+/* Phase 4b — per-message hover action toolbar (Cherry-Studio style). Same
+   hover-reveal pattern as `.copy-btn` / `.bubble-fork`: parked in the bubble's
+   top-right corner, faded in on hover or keyboard focus within the bubble.
+   Superseding the single `.bubble-fork` button with a small action cluster
+   (copy / regenerate / edit / branch / delete). */
+.message-toolbar {
   position: absolute;
   top: 6px;
   right: 6px;
-  appearance: none;
-  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
   background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  transition: opacity 120ms ease;
+  z-index: 1;
+}
+
+.bubble.copy-host:hover .message-toolbar,
+.message-toolbar:focus-within {
+  opacity: 1;
+}
+
+.message-toolbar__btn {
+  appearance: none;
+  border: none;
+  background: transparent;
   color: var(--fg-soft);
   font: inherit;
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.02em;
-  padding: 2px 8px;
+  line-height: 1;
+  padding: 3px 7px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  opacity: 0;
   transition:
-    opacity 120ms ease,
     background 120ms ease,
-    color 120ms ease,
-    border-color 120ms ease;
-  z-index: 1;
+    color 120ms ease;
 }
 
-.bubble.copy-host:hover .bubble-fork,
-.bubble-fork:focus-visible {
-  opacity: 1;
-}
-
-.bubble-fork:hover {
+.message-toolbar__btn:hover {
   background: var(--accent-soft);
   color: var(--accent);
-  border-color: var(--accent);
 }
 
-.bubble-fork:focus-visible {
+.message-toolbar__btn--danger:hover {
+  background: var(--tool-error-bg);
+  color: var(--tool-error-fg);
+}
+
+.message-toolbar__btn:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
 }
@@ -1568,41 +1836,7 @@ html,
   }
 }
 
-/* skills sidebar nav item */
-
-.sidebar .nav-link {
-  display: block;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  text-decoration: none;
-  color: var(--fg-soft);
-  font-size: 14px;
-  font-weight: 500;
-  transition: background 120ms ease;
-}
-
-.sidebar .nav-link:hover {
-  background: var(--border-soft);
-  color: var(--fg);
-}
-
-.sidebar .nav-link.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
 /* --------------------------------------------- enriched sidebar (Feature ②/⑤) */
-
-/* The lower nav cluster: Skills link + activity deep-link + token stat. Pushed
-   toward the bottom (above the footer) so the session list owns the top. */
-.sidebar-extras {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: var(--space-3);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--border-soft);
-}
 
 /* Muted one-liner showing today's token spend. */
 .sidebar-token-stat {
@@ -1888,23 +2122,81 @@ html,
 
 /* ---------------------------------------------------------- chat header (v1.3.x) */
 
-/* Hosts HotlBanner, WatchIndicator in a right-aligned row.
-   Renders nothing visible when all children are null (zero-count watchers). */
-.chat-header {
+/* Phase 3 (Cherry-Studio IA) — chat-area top bar. Holds the active-assistant
+   display (left), a prominent model selector (center) and the watch /
+   remote-running cues (right). Always present, so it gives the chat a stable
+   header even when no cues are active. */
+.chat-header-bar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding: var(--space-2) var(--space-5);
-  min-height: 0;
+  min-height: 48px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--surface);
-  /* Collapse when all children render null */
-  empty-cells: hide;
 }
 
-.chat-header:empty {
-  display: none;
+/* Active-assistant control (ExpertPicker) sits at the start. */
+.chat-header-bar__assistant {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* Indicators (remote-running, watch) pushed to the end. */
+.chat-header-bar__indicators {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+/* Cherry-style model selector — a styled native <select> with a subtle
+   border, hover and an inline label. Stays prominent and centered. */
+.chat-model-select {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chat-model-select__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+
+.chat-model-select__control {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  background-color: var(--surface);
+  /* Caret drawn as an inline SVG so it themes with currentColor-ish neutral. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-2) center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 5px 28px 5px 12px;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.chat-model-select__control:hover {
+  border-color: var(--accent);
+  background-color: var(--surface-elevated);
+}
+
+.chat-model-select__control:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
 }
 
 /* ---------------------------------------------------------- watch indicator (v1.3.x) */
@@ -2131,13 +2423,41 @@ html,
 /* ------------------------------------------------------------------ small screens */
 
 @media (max-width: 720px) {
-  .layout {
+  /* Stack the shell: nav rail (horizontal strip) over the list panel over the
+     main chat. Each region gives up its fixed width to span full-width. */
+  .app-shell {
     flex-direction: column;
   }
-  .sidebar {
+  .nav-rail {
     width: 100%;
-    height: auto;
-    max-height: 35vh;
+    flex-direction: row;
+    justify-content: space-around;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: var(--space-1) var(--space-2);
+  }
+  .nav-rail__brand {
+    padding: 0 var(--space-2) 0 0;
+  }
+  .nav-rail__group {
+    flex-direction: row;
+    width: auto;
+  }
+  /* In the horizontal (mobile) rail the settings icons scroll sideways. */
+  .nav-rail__group--scroll {
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+  .nav-rail__divider {
+    display: none;
+  }
+  .nav-rail__group--bottom {
+    margin-top: 0;
+    margin-left: auto;
+  }
+  .list-panel {
+    width: 100%;
+    max-height: 38vh;
     border-right: none;
     border-bottom: 1px solid var(--border);
   }

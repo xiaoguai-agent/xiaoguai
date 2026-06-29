@@ -991,6 +991,9 @@ mod tests {
         async fn delete_by_session(&self, _session_id: &str) -> RepoResult<u64> {
             Ok(0)
         }
+        async fn delete_message(&self, _session_id: &str, _message_id: &str) -> RepoResult<()> {
+            Err(RepoError::NotFound)
+        }
     }
 
     fn make_job() -> ScheduledJob {

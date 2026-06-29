@@ -3,8 +3,8 @@
  *
  * Sibling to `frontend/admin-ui/src/i18n/parity.test.ts` (sprint-10b S10b-7).
  * Sprint-11 added `chat.sse.*` (S11-2b) and `chat.hotl.*` (S11-3b) key
- * families across three locales — without a parity guard, a missing zh-CN /
- * ja translation ships silently and i18next falls back to the raw key string,
+ * families across both locales — without a parity guard, a missing zh-CN
+ * translation ships silently and i18next falls back to the raw key string,
  * leaking English internals to non-English operators.
  *
  * The structural contract is identical to admin-ui's: every key present in
@@ -14,7 +14,6 @@
 import { describe, expect, it } from 'vitest';
 import enTranslation from './locales/en/translation.json';
 import zhCNTranslation from './locales/zh-CN/translation.json';
-import jaTranslation from './locales/ja/translation.json';
 
 type TranslationBundle = Record<string, unknown>;
 
@@ -46,7 +45,6 @@ interface LocaleBundle {
 const LOCALES: LocaleBundle[] = [
   { code: 'en', bundle: enTranslation as TranslationBundle },
   { code: 'zh-CN', bundle: zhCNTranslation as TranslationBundle },
-  { code: 'ja', bundle: jaTranslation as TranslationBundle },
 ];
 
 describe('chat-ui i18n key parity', () => {
