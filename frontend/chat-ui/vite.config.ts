@@ -11,12 +11,13 @@ export default defineConfig({
   build: { modulePreload: { polyfill: false } },
   server: {
     port: 5173,
-    proxy: {
-      // Forward `/v1` + `/healthz` to the xiaoguai-api dev server during
-      // `npm run dev`. Override with `VITE_API_URL` for hosted dev.
-      '/v1': 'http://localhost:8080',
-      '/healthz': 'http://localhost:8080',
-    },
+    proxy: (() => {
+      // Forward `/v1` + `/healthz` to the xiaoguai backend during `pnpm dev`.
+      // Defaults to the api dev server (:8080); set `VITE_API_URL` to point at
+      // a running single-binary `serve` (e.g. http://localhost:7600).
+      const target = process.env.VITE_API_URL || 'http://localhost:8080';
+      return { '/v1': target, '/healthz': target };
+    })(),
   },
   test: {
     environment: 'jsdom',
