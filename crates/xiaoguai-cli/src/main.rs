@@ -914,6 +914,10 @@ struct ReplState {
     cfg: cli_config::CliConfig,
     /// One-time reply-language directive prepended to the next user turn.
     lang_directive: Option<&'static str>,
+    /// Whether the session is driven from an interactive terminal. Gates the
+    /// arrow-key `/model` picker: piped/non-tty input (scripts, tests) falls
+    /// back to the plain text menu so it never blocks on a missing TTY.
+    interactive: bool,
 }
 
 /// Outcome of dispatching one input line: keep looping or quit.
@@ -951,18 +955,23 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
         ))
     );
 
+    // Computed once: gates both the rustyline line editor and the arrow-key
+    // `/model` picker. Piped input (scripts, tests) takes the plain path.
+    let interactive = std::io::stdin().is_terminal();
+
     let mut state = ReplState {
         client,
         session_id: session.id,
         current_model: model,
         cfg,
         lang_directive,
+        interactive,
     };
 
     // Use rustyline for arrow-key history + line editing when stdin is an
     // interactive terminal; otherwise fall back to plain stdin so piped input
     // (scripts, tests) still works.
-    if std::io::stdin().is_terminal() {
+    if interactive {
         run_repl_interactive(&mut state).await;
     } else {
         run_repl_plain(&mut state).await?;
@@ -1051,7 +1060,7 @@ async fn dispatch_repl_line(state: &mut ReplState, line: &str) -> ReplFlow {
     match repl::parse_command(line, &state.current_model) {
         repl::ReplAction::Quit => return ReplFlow::Quit,
         repl::ReplAction::Notice(msg) => eprintln!("{msg}"),
-        repl::ReplAction::ListModels => print_model_menu(state).await,
+        repl::ReplAction::ListModels => handle_list_models(state).await,
         repl::ReplAction::Clear => {
             // ANSI: clear screen + home the cursor.
             print!("\x1b[2J\x1b[H");
@@ -1116,18 +1125,15 @@ async fn dispatch_repl_line(state: &mut ReplState, line: &str) -> ReplFlow {
     ReplFlow::Continue
 }
 
-/// Fetch the configured providers from the server the REPL is already talking
-/// to and print a grouped, selectable model menu (`/model` / `/models`).
-/// Degrades gracefully to a static hint if the fetch fails (e.g. admin auth
-/// required, or the server is briefly unreachable).
-async fn print_model_menu(state: &ReplState) {
-    match state.client.list_providers().await {
-        Ok(providers) => {
-            eprintln!(
-                "{}",
-                remote::format_model_menu(&providers, &state.current_model)
-            );
-        }
+/// Handle bare `/model` / `/models`: fetch the configured providers, then —
+/// in an interactive TTY — open an arrow-key picker of the *usable* models
+/// (↑↓ to move, Enter to select) and switch to the chosen one. Outside a TTY
+/// (piped stdin, tests) or when the picker can't init, fall back to the plain
+/// grouped text menu + the `/model <name>` hint. A fetch failure degrades to a
+/// static hint either way.
+async fn handle_list_models(state: &mut ReplState) {
+    let providers = match state.client.list_providers().await {
+        Ok(p) => p,
         Err(e) => {
             eprintln!(
                 "{}",
@@ -1137,8 +1143,67 @@ async fn print_model_menu(state: &ReplState) {
                      then switch with:  /model <name>"
                 ))
             );
+            return;
         }
+    };
+
+    // Non-tty (scripts/tests) → never block on a missing TTY; print the text
+    // menu so piped sessions and assertions keep working.
+    if !state.interactive {
+        eprintln!(
+            "{}",
+            remote::format_model_menu(&providers, &state.current_model)
+        );
+        return;
     }
+
+    // Only models that can actually serve a turn — key-less providers' models
+    // are omitted entirely.
+    let usable = remote::usable_models(&providers);
+    if usable.is_empty() {
+        eprintln!(
+            "{}",
+            style::warn(
+                "  ! no usable model — every configured provider is missing an API key.\n  \
+                 add one in the admin UI or with `xiaoguai provider`, then run /model again."
+            )
+        );
+        return;
+    }
+
+    match pick_model_interactive(&usable, &state.current_model) {
+        Ok(Some(chosen)) => {
+            state.current_model = chosen;
+            eprintln!(
+                "{}",
+                style::ok(&format!("  ✓ model → {}", state.current_model))
+            );
+        }
+        // Esc / Ctrl-C → keep the current model, no change.
+        Ok(None) => eprintln!("{}", style::dim("  (model unchanged)")),
+        // The picker couldn't init (no PTY / unsupported terminal) — degrade to
+        // the text menu + hint rather than failing the command.
+        Err(_) => eprintln!(
+            "{}",
+            remote::format_model_menu(&providers, &state.current_model)
+        ),
+    }
+}
+
+/// Show an arrow-key `Select` of `models` (↑↓ + Enter), pre-highlighting
+/// `current` when it's in the list. Returns `Ok(Some(name))` on Enter,
+/// `Ok(None)` when the user cancels (Esc / Ctrl-C), or `Err` when the
+/// interactive prompt couldn't initialise (no usable terminal) so the caller
+/// can fall back. `models` is assumed non-empty (the caller guards that).
+fn pick_model_interactive(models: &[String], current: &str) -> anyhow::Result<Option<String>> {
+    use dialoguer::{theme::ColorfulTheme, Select};
+    let default = models.iter().position(|m| m == current).unwrap_or(0);
+    let selection = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("pick a model (↑↓ then Enter, Esc to cancel)")
+        .items(models)
+        .default(default)
+        .interact_opt()?; // Ok(None) on Esc/Ctrl-C; Err if no usable terminal
+    Ok(selection.map(|i| models[i].clone()))
 }
 
 /// `~/.xiaoguai/cli_history` — the readline history file, alongside `cli.json`.

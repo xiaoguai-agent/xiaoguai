@@ -37,7 +37,7 @@ pub enum ReplAction {
 pub fn help_text() -> String {
     "commands:\n\
      \x20 /help                     show this list\n\
-     \x20 /model [name]             list configured models, or switch (e.g. /model <name>)\n\
+     \x20 /model [name]             pick a model (arrow-key menu), or switch directly (e.g. /model <name>)\n\
      \x20 /models                   list configured providers + models to pick from\n\
      \x20 /config                   show persistent settings (prompt, language)\n\
      \x20 /config set <key> <val>   change a setting (e.g. /config set language zh)\n\

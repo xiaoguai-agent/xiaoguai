@@ -491,6 +491,39 @@ impl ProviderInfo {
     }
 }
 
+/// Compute the de-duplicated list of *usable* models from the configured
+/// providers, for the interactive `/model` picker. A model is usable when its
+/// provider has a stored key ([`ProviderInfo::is_usable`]); key-less providers
+/// (and all their models) are omitted entirely — not merely marked — so the
+/// picker only ever offers models that can actually serve a turn.
+///
+/// Within a usable provider, prefer its `verified_models` (probe-confirmed)
+/// when that list is non-empty; otherwise fall back to its advertised `models`.
+/// The result keeps first-seen order across providers and drops later
+/// duplicates, so a model offered by two keyed providers appears once.
+///
+/// Pure (no I/O) so the filtering is unit-testable without a TTY or server.
+#[must_use]
+pub fn usable_models(providers: &[ProviderInfo]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for p in providers {
+        if !p.is_usable() {
+            continue;
+        }
+        let candidates = match p.verified_models.as_deref() {
+            Some(v) if !v.is_empty() => v,
+            _ => &p.models,
+        };
+        for m in candidates {
+            if seen.insert(m.clone()) {
+                out.push(m.clone());
+            }
+        }
+    }
+    out
+}
+
 /// Render the configured providers + models as a selectable, grouped menu for
 /// the REPL's `/model`/`/models`. Pure (no I/O) so it's unit-testable. Each
 /// group shows the provider name + a usable/no-key marker; each model line is
@@ -574,5 +607,60 @@ mod menu_tests {
     fn provider_with_no_models_is_noted() {
         let s = format_model_menu(&[prov("bare", &[], true, None)], "");
         assert!(s.contains("(no models listed)"), "got {s}");
+    }
+
+    #[test]
+    fn usable_models_includes_keyed_excludes_keyless() {
+        let providers = vec![
+            prov("minimax-1", &["MiniMax-M2", "MiniMax-M1"], true, None),
+            // key-less provider — none of its models should appear
+            prov("minimax-seed", &["MiniMax-M2.5", "abab6.5-chat"], false, None),
+        ];
+        let models = usable_models(&providers);
+        assert_eq!(models, vec!["MiniMax-M2", "MiniMax-M1"]);
+        assert!(!models.iter().any(|m| m == "MiniMax-M2.5"));
+        assert!(!models.iter().any(|m| m == "abab6.5-chat"));
+    }
+
+    #[test]
+    fn usable_models_prefers_verified_when_present() {
+        // The provider advertises three models but only one is probe-confirmed;
+        // the picker should offer just the verified subset.
+        let providers = vec![prov(
+            "minimax-1",
+            &["MiniMax-M2", "MiniMax-M1", "MiniMax-M3"],
+            true,
+            Some(&["MiniMax-M2"]),
+        )];
+        assert_eq!(usable_models(&providers), vec!["MiniMax-M2"]);
+    }
+
+    #[test]
+    fn usable_models_falls_back_to_models_when_verified_empty() {
+        // An empty verified list means "never probed / nothing confirmed" — not
+        // "nothing usable"; fall back to the advertised models.
+        let providers = vec![prov("minimax-1", &["MiniMax-M2"], true, Some(&[]))];
+        assert_eq!(usable_models(&providers), vec!["MiniMax-M2"]);
+    }
+
+    #[test]
+    fn usable_models_dedupes_across_providers_keeping_first_order() {
+        // Two keyed providers both serve MiniMax-M2; it must appear once, in
+        // first-seen order, with each provider's other models interleaved by
+        // discovery order.
+        let providers = vec![
+            prov("a", &["MiniMax-M2", "MiniMax-M1"], true, None),
+            prov("b", &["MiniMax-M2", "MiniMax-M3"], true, None),
+        ];
+        assert_eq!(
+            usable_models(&providers),
+            vec!["MiniMax-M2", "MiniMax-M1", "MiniMax-M3"]
+        );
+    }
+
+    #[test]
+    fn usable_models_empty_when_all_keyless() {
+        let providers = vec![prov("seed", &["MiniMax-M2.5"], false, None)];
+        assert!(usable_models(&providers).is_empty());
     }
 }
