@@ -81,6 +81,10 @@ export function WorkingDirControl({ sessionId, value, onSave }: WorkingDirContro
   if (!sessionId) return null;
 
   const dirty = draft.trim() !== (value ?? '').trim();
+  // Coding tools (governed file read/edit, Feature ⑤) activate the moment a
+  // session has a non-empty stored working_dir — surface that as a muted note
+  // tied to the saved value (not the in-progress draft).
+  const codingActive = (value ?? '').trim().length > 0;
 
   async function handleSave() {
     if (!sessionId || saving) return;
@@ -129,6 +133,12 @@ export function WorkingDirControl({ sessionId, value, onSave }: WorkingDirContro
           {saving ? '…' : t.sidebar.working_dir_save}
         </button>
       </div>
+      {codingActive && (
+        <p className="working-dir__coding-note" title={t.sidebar.coding_active_title}>
+          <span aria-hidden="true">🛡 </span>
+          {t.sidebar.coding_active}
+        </p>
+      )}
       {error && (
         <p className="working-dir__error" role="alert">
           {error}
