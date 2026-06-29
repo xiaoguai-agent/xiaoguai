@@ -901,25 +901,44 @@ const CLI_LOGO: &str = r"
      \___/      小怪不小，能办大事
 ";
 
+/// Mutable per-session REPL state shared across input lines, threaded through
+/// [`dispatch_repl_line`] so the interactive (rustyline) and non-tty (plain
+/// stdin) input loops share one dispatch path.
+struct ReplState {
+    client: remote::RemoteClient,
+    session_id: String,
+    /// The live model choice; `/model <name>` switches it per-message without a
+    /// reconnect. Empty ⇒ the session default.
+    current_model: String,
+    /// Persistent CLI prefs (`~/.xiaoguai/cli.json`): prompt marker + language.
+    cfg: cli_config::CliConfig,
+    /// One-time reply-language directive prepended to the next user turn.
+    lang_directive: Option<&'static str>,
+}
+
+/// Outcome of dispatching one input line: keep looping or quit.
+#[derive(PartialEq, Eq)]
+enum ReplFlow {
+    Continue,
+    Quit,
+}
+
 async fn handle_repl(server: String, user_id: String, model: String) -> Result<()> {
-    use std::io::Write as _;
+    use std::io::IsTerminal as _;
     let client = remote::RemoteClient::new(server.clone());
     client.healthz().await.with_context(|| {
         format!("could not reach the server at {server} — start it with `xiaoguai serve`")
     })?;
-    // The session is created with `model`; `current_model` tracks the live
-    // choice so `/model <name>` can switch it per-message without a reconnect.
-    let mut current_model = model.clone();
     // Persistent CLI prefs (~/.xiaoguai/cli.json): the prompt marker + default
     // reply language, remembered across restarts. Mutable in-session via /config.
-    let mut cfg = cli_config::load();
+    let cfg = cli_config::load();
     // When a language is configured, prepend a one-time directive to the first
     // user turn so the agent replies in it (CLI-side; no server change needed).
-    let mut lang_directive: Option<&'static str> = cli_config::language_directive(&cfg.language);
+    let lang_directive: Option<&'static str> = cli_config::language_directive(&cfg.language);
     let session = client
         .create_session(&remote::CreateSessionRequest {
             user_id,
-            model,
+            model: model.clone(),
             title: None,
         })
         .await?;
@@ -932,80 +951,203 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
         ))
     );
 
+    let mut state = ReplState {
+        client,
+        session_id: session.id,
+        current_model: model,
+        cfg,
+        lang_directive,
+    };
+
+    // Use rustyline for arrow-key history + line editing when stdin is an
+    // interactive terminal; otherwise fall back to plain stdin so piped input
+    // (scripts, tests) still works.
+    if std::io::stdin().is_terminal() {
+        run_repl_interactive(&mut state).await;
+    } else {
+        run_repl_plain(&mut state).await?;
+    }
+    eprintln!("bye");
+    Ok(())
+}
+
+/// Interactive input loop backed by `rustyline`: Up/Down recalls history,
+/// Left/Right + editing work, Ctrl-C/Ctrl-D quit. History persists to
+/// `~/.xiaoguai/cli_history` when writable (best-effort; in-memory otherwise).
+async fn run_repl_interactive(state: &mut ReplState) {
+    let history_path = cli_history_path();
+    let mut editor = match rustyline::DefaultEditor::new() {
+        Ok(e) => e,
+        Err(e) => {
+            // Couldn't init a line editor (no PTY / unsupported terminal) —
+            // degrade to the plain reader rather than failing the session.
+            eprintln!(
+                "{}",
+                style::warn(&format!("  ! line editor unavailable ({e}); plain input"))
+            );
+            let _ = run_repl_plain(state).await;
+            return;
+        }
+    };
+    if let Some(p) = history_path.as_ref() {
+        let _ = editor.load_history(p); // absent/unreadable history is fine
+    }
+    loop {
+        let prompt = format!("{} ", style::prompt(&state.cfg.prompt));
+        match editor.readline(&prompt) {
+            Ok(line) => {
+                // Record non-blank lines so Up/Down can recall them.
+                if !line.trim().is_empty() {
+                    let _ = editor.add_history_entry(line.as_str());
+                }
+                if dispatch_repl_line(state, &line).await == ReplFlow::Quit {
+                    break;
+                }
+            }
+            // Ctrl-C / Ctrl-D both leave the REPL (matching the prior EOF=quit).
+            Err(
+                rustyline::error::ReadlineError::Interrupted
+                | rustyline::error::ReadlineError::Eof,
+            ) => {
+                eprintln!();
+                break;
+            }
+            Err(e) => {
+                eprintln!("{}", style::err(&format!("[input error] {e}")));
+                break;
+            }
+        }
+    }
+    if let Some(p) = history_path.as_ref() {
+        let _ = editor.save_history(p); // best-effort persistence
+    }
+}
+
+/// Plain-stdin input loop for non-tty input (piped scripts / tests). No history
+/// or line editing — just read a line, dispatch, repeat until EOF.
+async fn run_repl_plain(state: &mut ReplState) -> Result<()> {
+    use std::io::Write as _;
     let stdin = std::io::stdin();
     loop {
-        eprint!("\n{} ", style::prompt(&cfg.prompt));
+        eprint!("\n{} ", style::prompt(&state.cfg.prompt));
         std::io::stderr().flush().ok();
         let mut line = String::new();
         if stdin.read_line(&mut line).context("read stdin")? == 0 {
             eprintln!();
             break; // EOF / Ctrl-D
         }
-        match repl::parse_command(&line, &current_model) {
-            repl::ReplAction::Quit => break,
-            repl::ReplAction::Notice(msg) => eprintln!("{msg}"),
-            repl::ReplAction::Clear => {
-                // ANSI: clear screen + home the cursor.
-                print!("\x1b[2J\x1b[H");
-                std::io::stdout().flush().ok();
-            }
-            repl::ReplAction::SetModel(m) => {
-                current_model = m;
-                eprintln!("{}", style::ok(&format!("  ✓ model → {current_model}")));
-            }
-            repl::ReplAction::ConfigShow => eprintln!("{}", cli_config::render(&cfg)),
-            repl::ReplAction::ConfigSet { key, value } => {
-                match cli_config::apply_set(&cfg, &key, &value) {
-                    Ok(next) => {
-                        cfg = next;
-                        // A language change re-arms the directive for the next turn.
-                        if key == "language" || key == "lang" {
-                            lang_directive = cli_config::language_directive(&cfg.language);
-                        }
-                        match cli_config::save(&cfg) {
-                            Ok(()) => {
-                                eprintln!(
-                                    "{}",
-                                    style::ok(&format!("  ✓ {key} → {}", value.trim()))
-                                );
-                            }
-                            Err(e) => eprintln!(
-                                "{}",
-                                style::warn(&format!(
-                                    "  ! applied in-session but could not persist: {e:#}"
-                                ))
-                            ),
-                        }
+        if dispatch_repl_line(state, &line).await == ReplFlow::Quit {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Interpret + act on one input line. Shared by both input loops so command
+/// dispatch, model switching, config, and streaming behave identically whether
+/// the line came from rustyline or plain stdin.
+async fn dispatch_repl_line(state: &mut ReplState, line: &str) -> ReplFlow {
+    use std::io::Write as _;
+    match repl::parse_command(line, &state.current_model) {
+        repl::ReplAction::Quit => return ReplFlow::Quit,
+        repl::ReplAction::Notice(msg) => eprintln!("{msg}"),
+        repl::ReplAction::ListModels => print_model_menu(state).await,
+        repl::ReplAction::Clear => {
+            // ANSI: clear screen + home the cursor.
+            print!("\x1b[2J\x1b[H");
+            std::io::stdout().flush().ok();
+        }
+        repl::ReplAction::SetModel(m) => {
+            state.current_model = m;
+            eprintln!(
+                "{}",
+                style::ok(&format!("  ✓ model → {}", state.current_model))
+            );
+        }
+        repl::ReplAction::ConfigShow => eprintln!("{}", cli_config::render(&state.cfg)),
+        repl::ReplAction::ConfigSet { key, value } => {
+            match cli_config::apply_set(&state.cfg, &key, &value) {
+                Ok(next) => {
+                    state.cfg = next;
+                    // A language change re-arms the directive for the next turn.
+                    if key == "language" || key == "lang" {
+                        state.lang_directive = cli_config::language_directive(&state.cfg.language);
                     }
-                    Err(msg) => eprintln!("{}", style::warn(&format!("  ! {msg}"))),
+                    match cli_config::save(&state.cfg) {
+                        Ok(()) => {
+                            eprintln!("{}", style::ok(&format!("  ✓ {key} → {}", value.trim())));
+                        }
+                        Err(e) => eprintln!(
+                            "{}",
+                            style::warn(&format!(
+                                "  ! applied in-session but could not persist: {e:#}"
+                            ))
+                        ),
+                    }
                 }
+                Err(msg) => eprintln!("{}", style::warn(&format!("  ! {msg}"))),
             }
-            repl::ReplAction::Send(prompt) => {
-                if prompt.is_empty() {
-                    continue;
-                }
-                // One-time language directive prepended to the first turn so the
-                // agent adopts the configured reply language.
-                let content = match lang_directive.take() {
-                    Some(d) => format!("{d}\n\n{prompt}"),
-                    None => prompt,
-                };
-                let model_override = (!current_model.is_empty()).then_some(current_model.as_str());
-                if let Err(e) = client
-                    .send_message_with_model(&session.id, &content, model_override, |ev| {
-                        render_remote_event(&ev);
-                        Ok(())
-                    })
-                    .await
-                {
-                    // Keep the REPL alive on a per-turn error (network blip, etc.).
-                    eprintln!("{}", style::err(&format!("[error] {e:#}")));
-                }
+        }
+        repl::ReplAction::Send(prompt) => {
+            if prompt.is_empty() {
+                return ReplFlow::Continue;
+            }
+            // One-time language directive prepended to the first turn so the
+            // agent adopts the configured reply language.
+            let content = match state.lang_directive.take() {
+                Some(d) => format!("{d}\n\n{prompt}"),
+                None => prompt,
+            };
+            let model_override =
+                (!state.current_model.is_empty()).then_some(state.current_model.as_str());
+            if let Err(e) = state
+                .client
+                .send_message_with_model(&state.session_id, &content, model_override, |ev| {
+                    render_remote_event(&ev);
+                    Ok(())
+                })
+                .await
+            {
+                // Keep the REPL alive on a per-turn error (network blip, etc.).
+                eprintln!("{}", style::err(&format!("[error] {e:#}")));
             }
         }
     }
-    eprintln!("bye");
-    Ok(())
+    ReplFlow::Continue
+}
+
+/// Fetch the configured providers from the server the REPL is already talking
+/// to and print a grouped, selectable model menu (`/model` / `/models`).
+/// Degrades gracefully to a static hint if the fetch fails (e.g. admin auth
+/// required, or the server is briefly unreachable).
+async fn print_model_menu(state: &ReplState) {
+    match state.client.list_providers().await {
+        Ok(providers) => {
+            eprintln!(
+                "{}",
+                remote::format_model_menu(&providers, &state.current_model)
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "{}",
+                style::warn(&format!(
+                    "  ! couldn't list models from the server ({e}).\n  \
+                     see configured providers with:  xiaoguai provider list\n  \
+                     then switch with:  /model <name>"
+                ))
+            );
+        }
+    }
+}
+
+/// `~/.xiaoguai/cli_history` — the readline history file, alongside `cli.json`.
+/// `None` when no config dir can be resolved (history stays in-memory only).
+fn cli_history_path() -> Option<std::path::PathBuf> {
+    cli_config::config_path()
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|dir| dir.join("cli_history"))
 }
 
 async fn handle_remote(server: String, action: RemoteCmd) -> Result<()> {
