@@ -1,6 +1,6 @@
 /**
  * Tests for the runtime language-switcher persistence layer added alongside
- * the in-app 中/EN/日本語 selector. The base helper only auto-detected the
+ * the in-app 中/EN selector. The base helper only auto-detected the
  * browser locale; an explicit stored choice must now win and round-trip.
  */
 import { afterEach, describe, expect, it } from 'vitest';
@@ -14,8 +14,8 @@ describe('locale persistence', () => {
   it('round-trips an explicit choice through localStorage', () => {
     setStoredLocale('zh-CN');
     expect(getStoredLocale()).toBe('zh-CN');
-    setStoredLocale('ja');
-    expect(getStoredLocale()).toBe('ja');
+    setStoredLocale('en');
+    expect(getStoredLocale()).toBe('en');
   });
 
   it('getTranslations() with no arg follows the stored choice', () => {

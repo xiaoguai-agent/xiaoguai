@@ -13,7 +13,6 @@
 import { describe, expect, it } from 'vitest';
 import enTranslation from './locales/en/translation.json';
 import zhCNTranslation from './locales/zh-CN/translation.json';
-import jaTranslation from './locales/ja/translation.json';
 
 type TranslationBundle = Record<string, unknown>;
 
@@ -45,7 +44,6 @@ interface LocaleBundle {
 const LOCALES: LocaleBundle[] = [
   { code: 'en', bundle: enTranslation as TranslationBundle },
   { code: 'zh-CN', bundle: zhCNTranslation as TranslationBundle },
-  { code: 'ja', bundle: jaTranslation as TranslationBundle },
 ];
 
 describe('i18n key parity', () => {

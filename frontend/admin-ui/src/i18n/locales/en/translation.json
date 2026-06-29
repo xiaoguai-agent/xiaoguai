@@ -44,8 +44,7 @@
   "language": {
     "label": "Language",
     "en": "English",
-    "zh_CN": "中文",
-    "ja": "日本語"
+    "zh_CN": "中文"
   },
   "pane": {
     "today": {

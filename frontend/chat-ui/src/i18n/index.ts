@@ -2,21 +2,19 @@
  * Minimal i18n helper — resolves the browser locale to one of the bundled
  * translation files without pulling in a full i18next dependency.
  *
- * Supported locales: en (default), zh-CN, ja.
+ * Supported locales: en (default), zh-CN.
  * Falls back to en for any locale not in the map.
  */
 
 import en from './locales/en/translation.json';
 import zhCN from './locales/zh-CN/translation.json';
-import ja from './locales/ja/translation.json';
 
-export type Locale = 'en' | 'zh-CN' | 'ja';
+export type Locale = 'en' | 'zh-CN';
 
 /** Locales offered in the language switcher, with native display labels. */
 export const AVAILABLE_LOCALES: ReadonlyArray<{ code: Locale; label: string }> = [
   { code: 'en', label: 'English' },
   { code: 'zh-CN', label: '中文' },
-  { code: 'ja', label: '日本語' },
 ];
 
 /** localStorage key holding the operator's explicit language choice. */
@@ -287,19 +285,17 @@ interface TranslationShape {
 const bundles: Record<Locale, TranslationShape> = {
   en: en as unknown as TranslationShape,
   'zh-CN': zhCN as unknown as TranslationShape,
-  ja: ja as unknown as TranslationShape,
 };
 
 function detectLocale(): Locale {
   const nav = typeof navigator !== 'undefined' ? navigator.language : 'en';
   if (nav === 'zh-CN' || nav.startsWith('zh')) return 'zh-CN';
-  if (nav === 'ja' || nav.startsWith('ja')) return 'ja';
   return 'en';
 }
 
 /** True when `value` is one of the bundled locales. */
 function isLocale(value: string | null): value is Locale {
-  return value === 'en' || value === 'zh-CN' || value === 'ja';
+  return value === 'en' || value === 'zh-CN';
 }
 
 /**

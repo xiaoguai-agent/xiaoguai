@@ -162,7 +162,7 @@ test.describe('admin-ui language switcher (C19 i18n — landed)', () => {
     await page.goto('/today');
     // The `<LanguageSwitcher>` renders a `<select class="lang-select">` in the
     // sidebar nav (admin-ui/src/components/LanguageSwitcher.tsx) populated from
-    // SUPPORTED_LANGUAGES (en / zh-CN / ja).
+    // SUPPORTED_LANGUAGES (en / zh-CN).
     const switcher = page.locator('select.lang-select');
     await expect(switcher).toBeVisible({ timeout: 10_000 });
 
