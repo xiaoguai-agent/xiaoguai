@@ -34,6 +34,13 @@ interface Props {
    *  load) — e.g. a stale localStorage entry after a server/DB reset. The shell
    *  prunes it from the sidebar so it stops being clickable. */
   onSessionMissing?: (id: string) => void;
+  /**
+   * Phase 2 (Cherry-Studio IA) — called with the new session id right after
+   * it's created, BEFORE the first turn runs, so the shell can attach the
+   * assistant (persona/team) the operator pre-selected for a new chat. The
+   * shell's implementation is best-effort and never rejects.
+   */
+  onSessionAttached?: (newSessionId: string) => Promise<void>;
 }
 
 interface DisplayBubble {
@@ -85,7 +92,7 @@ function autoGrow(ta: HTMLTextAreaElement | null) {
   ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
 }
 
-export function ChatPage({ onSessionCreated, onSessionMissing }: Props) {
+export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached }: Props) {
   const { t } = useI18n();
   // White-label assistant name (owner-set), falling back to the locale default.
   const brandName = useBrandName() || t.ui.assistant_name;
@@ -408,6 +415,10 @@ export function ChatPage({ onSessionCreated, onSessionMissing }: Props) {
         // T5.2 — carry the pre-session mode choice onto the new session key.
         setStoredChatMode(sid, mode);
         onSessionCreated({ id: sid, title: session.title ?? text.slice(0, 40) });
+        // Phase 2 — attach the assistant (persona/team) the operator pre-picked
+        // in the panel for this new chat, BEFORE the first turn runs so its
+        // system prompt applies from the start. Best-effort (never rejects).
+        if (onSessionAttached) await onSessionAttached(sid);
         // Mark this navigation as self-initiated so the route-change effect
         // does not wipe the in-flight turn state (see selfNavigatedSessionRef).
         selfNavigatedSessionRef.current = sid;

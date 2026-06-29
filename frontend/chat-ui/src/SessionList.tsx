@@ -1,8 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { RecentOutcomesPanel } from './RecentOutcomesPanel';
-import { XiaoguaiLogo } from './XiaoguaiLogo';
-import { AuditLink, TodayTokenStat, WorkingDirControl } from './SidebarExtras';
+import { TodayTokenStat, WorkingDirControl } from './SidebarExtras';
 import { useI18n } from './i18n/I18nProvider';
 
 interface StoredSession {
@@ -27,11 +26,16 @@ interface Props {
   activeWorkingDir?: string;
   /** Feature ⑤ — persist a new working_dir for the active session. */
   onSaveWorkingDir?: (sessionId: string, workingDir: string) => Promise<void>;
-  /** Optional footer slot — used to slot the theme toggle into the
-   *  sidebar's lower edge without coupling SessionList to the toggle. */
+  /** Optional footer slot — kept for backwards compatibility. */
   children?: ReactNode;
 }
 
+/**
+ * The "话题" (Topics) list — the session history with new-chat, per-session
+ * working-dir, recent-outcomes, and today's token stat. Phase 2 (Cherry-Studio
+ * IA) embeds this inside `AssistantTopicPanel`'s Topics tab; the brand mark +
+ * Skills / Activity / Settings nav now live in the `NavRail`, not here.
+ */
 export function SessionList({
   sessions,
   onRename,
@@ -40,7 +44,6 @@ export function SessionList({
   tokensLoading = false,
   activeWorkingDir,
   onSaveWorkingDir,
-  children,
 }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -49,27 +52,27 @@ export function SessionList({
   // RecentOutcomesPanel can poll for session-scoped outcomes.
   const { id: activeSessionId } = useParams<{ id: string }>();
 
-  // Highlight the Skills nav link when on /skills.
-  const onSkills = location.pathname === '/skills';
-
   return (
-    <aside className="sidebar">
-      <XiaoguaiLogo />
-      <button onClick={() => navigate('/')}>{t.ui.new_chat}</button>
+    <div className="topic-list">
+      <button className="topic-list__new" onClick={() => navigate('/')}>
+        {t.ui.new_chat}
+      </button>
 
-      {sessions.length === 0 ? (
-        <p style={{ color: 'var(--muted)', fontSize: 12 }}>{t.ui.no_sessions}</p>
-      ) : (
-        sessions.map((s) => (
-          <SessionRow
-            key={s.id}
-            session={s}
-            active={location.pathname === `/sessions/${s.id}`}
-            onRename={onRename}
-            onDelete={onDelete}
-          />
-        ))
-      )}
+      <div className="topic-list__rows">
+        {sessions.length === 0 ? (
+          <p className="topic-list__empty">{t.ui.no_sessions}</p>
+        ) : (
+          sessions.map((s) => (
+            <SessionRow
+              key={s.id}
+              session={s}
+              active={location.pathname === `/sessions/${s.id}`}
+              onRename={onRename}
+              onDelete={onDelete}
+            />
+          ))
+        )}
+      </div>
 
       {/* Feature ⑤ — per-session working-directory control, scoped to the
           active session (renders nothing when no session is open). */}
@@ -84,19 +87,12 @@ export function SessionList({
       {/* v1.3.x — session-scoped outcome summary panel */}
       <RecentOutcomesPanel sessionId={activeSessionId} />
 
-      {/* Feature ② — Skills nav now sits BELOW the session list, above the
-          admin footer, alongside the activity deep-link + today's token stat. */}
-      <div className="sidebar-extras">
-        <Link to="/skills" className={`nav-link${onSkills ? ' active' : ''}`}>
-          <span aria-hidden="true">🧩 </span>
-          {t.ui.skills}
-        </Link>
-        <AuditLink />
+      {/* Feature ② — today's token spend (the Skills / Activity nav links
+          moved to the NavRail in Phase 2). */}
+      <div className="topic-list__footer">
         <TodayTokenStat total={todayTokens} loading={tokensLoading} />
       </div>
-
-      {children && <div className="sidebar-footer">{children}</div>}
-    </aside>
+    </div>
   );
 }
 

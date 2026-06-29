@@ -30,6 +30,24 @@ interface TranslationShape {
     admin: string;
     language_label: string;
     no_sessions: string;
+    /** Phase 2 (Cherry-Studio IA) — narrow icon nav-rail labels. */
+    nav: {
+      chat: string;
+      skills: string;
+      activity: string;
+      settings: string;
+    };
+    /** Phase 2 (Cherry-Studio IA) — assistant/topic list-panel strings. */
+    assistant: {
+      tab_assistants: string;
+      tab_topics: string;
+      general: string;
+      group_personas: string;
+      group_teams: string;
+      search_placeholder: string;
+      empty: string;
+      error_load: string;
+    };
     /** Default assistant display name when no white-label branding is set. */
     assistant_name: string;
     welcome_title: string;

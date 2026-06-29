@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { SessionList } from './SessionList';
+import { NavRail } from './NavRail';
+import { AssistantTopicPanel } from './AssistantTopicPanel';
+import type { PendingAssistant } from './AssistantTopicPanel';
 import { ChatPage } from './ChatPage';
 import { SkillsPage } from './Skills';
-import { ThemeToggle } from './ThemeToggle';
-import { LanguageToggle } from './LanguageToggle';
-import { useI18n } from './i18n/I18nProvider';
 import { client } from './client';
 
 interface StoredSession {
@@ -73,7 +72,10 @@ export function App() {
   // Today's token spend (input + output). `null` = unknown (loading or failed).
   const [todayTokens, setTodayTokens] = useState<number | null>(null);
   const [tokensLoading, setTokensLoading] = useState(true);
-  const { t } = useI18n();
+  // Phase 2 (Cherry-Studio IA) — assistant selected for a NEW chat (no active
+  // session yet). Held here so the next-created session can attach it; cleared
+  // once consumed. `null` = no pending selection (defaults to 通用 / no persona).
+  const [pendingAssistant, setPendingAssistant] = useState<PendingAssistant | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const restoredRef = useRef(false);
@@ -212,9 +214,34 @@ export function App() {
     ? sessions.find((s) => s.id === activeSessionId)?.working_dir
     : undefined;
 
+  // Phase 2 — attach the pending assistant to a freshly created session.
+  // Invoked by ChatPage immediately after it creates the session, so a new
+  // chat opened with an assistant pre-selected from the panel actually runs as
+  // that expert. Best-effort: an attach failure leaves the (still usable)
+  // session with the default persona rather than blocking the turn. Always
+  // clears the pending selection so it isn't re-applied to the next session.
+  const attachPendingAssistant = useCallback(
+    async (newSessionId: string) => {
+      const pending = pendingAssistant;
+      setPendingAssistant(null);
+      if (!pending || pending.kind === 'general') return;
+      try {
+        if (pending.kind === 'persona') {
+          await client.attachSessionPersona(newSessionId, pending.id);
+        } else {
+          await client.attachSessionTeam(newSessionId, pending.id);
+        }
+      } catch {
+        /* best-effort: the session still works with the default persona */
+      }
+    },
+    [pendingAssistant],
+  );
+
   return (
-    <div className="layout">
-      <SessionList
+    <div className="app-shell">
+      <NavRail />
+      <AssistantTopicPanel
         sessions={sessions}
         onRename={renameSession}
         onDelete={removeSession}
@@ -222,35 +249,30 @@ export function App() {
         tokensLoading={tokensLoading}
         activeWorkingDir={activeWorkingDir}
         onSaveWorkingDir={saveWorkingDir}
-      >
-        {/* Sidebar footer (bottom-left): admin console link + language.
-            admin-ui is served by the backend at /admin/ (a separate SPA), so
-            a plain link navigates there. The theme toggle now lives in the
-            main-area topbar (top-right). */}
-        <a className="nav-link admin-link" href="/admin/">
-          {t.ui.admin}
-        </a>
-        <div className="sidebar-footer-row">
-          <LanguageToggle />
-        </div>
-      </SessionList>
+        activeSessionId={activeSessionId}
+        pendingAssistant={pendingAssistant}
+        onSelectAssistant={setPendingAssistant}
+      />
       <main className="main">
-        {/* Top-right utility bar — currently just the light/dark/system
-            theme switch, sitting above the scrolling message area. */}
-        <div className="topbar">
-          <ThemeToggle />
-        </div>
         <Routes>
           <Route
             path="/"
             element={
-              <ChatPage onSessionCreated={addSession} onSessionMissing={removeSession} />
+              <ChatPage
+                onSessionCreated={addSession}
+                onSessionMissing={removeSession}
+                onSessionAttached={attachPendingAssistant}
+              />
             }
           />
           <Route
             path="/sessions/:id"
             element={
-              <ChatPage onSessionCreated={addSession} onSessionMissing={removeSession} />
+              <ChatPage
+                onSessionCreated={addSession}
+                onSessionMissing={removeSession}
+                onSessionAttached={attachPendingAssistant}
+              />
             }
           />
           {/* v1.2.28 — skill pack marketplace */}

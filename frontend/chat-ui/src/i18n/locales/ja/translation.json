@@ -72,6 +72,22 @@
     "admin": "管理",
     "language_label": "言語",
     "no_sessions": "セッションがありません。メッセージを送信して作成してください。",
+    "nav": {
+      "chat": "チャット",
+      "skills": "スキル",
+      "activity": "アクティビティ",
+      "settings": "設定"
+    },
+    "assistant": {
+      "tab_assistants": "アシスタント",
+      "tab_topics": "トピック",
+      "general": "汎用",
+      "group_personas": "アシスタント",
+      "group_teams": "チーム",
+      "search_placeholder": "アシスタントを検索…",
+      "empty": "アシスタントがありません",
+      "error_load": "アシスタントの読み込みに失敗しました"
+    },
     "assistant_name": "Xiaoguai",
     "welcome_title": "こんにちは、{{name}} です",
     "welcome_subtitle": "何かお手伝いできることはありますか？",

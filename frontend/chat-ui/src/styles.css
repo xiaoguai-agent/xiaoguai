@@ -100,35 +100,174 @@ html,
 
 /* ------------------------------------------------------------------ layout */
 
-.layout {
+/* Phase 2 (Cherry-Studio IA) — three-region shell:
+   [narrow icon nav-rail] [assistant/topic list panel] [main chat]. */
+.app-shell {
   display: flex;
   height: 100vh;
   background: var(--bg);
 }
 
-/* ------------------------------------------------------------------ sidebar */
+/* ----------------------------------------------------------------- nav rail */
 
-.sidebar {
-  width: 280px;
+.nav-rail {
+  width: 60px;
+  flex-shrink: 0;
   border-right: 1px solid var(--border);
   background: var(--surface);
-  padding: var(--space-5) var(--space-4);
+  padding: var(--space-3) var(--space-1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.nav-rail__brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1) 0 var(--space-3);
+  color: var(--accent);
+}
+
+.nav-rail__group {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+.nav-rail__group--bottom {
+  margin-top: auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.nav-rail__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-2) 0;
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.nav-rail__item:hover {
+  background: var(--border-soft);
+  color: var(--fg);
+}
+
+.nav-rail__item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.nav-rail__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-rail__label {
+  font-size: 10px;
+  line-height: 1.1;
+  font-weight: 500;
+  text-align: center;
+}
+
+/* Utility toggles (theme / language) shrink to fit the narrow rail. */
+.nav-rail__util {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.nav-rail__util .theme-toggle {
+  transform: scale(0.82);
+}
+
+.nav-rail__util .lang-toggle {
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+}
+
+.nav-rail__util .lang-toggle-label {
+  display: none;
+}
+
+.nav-rail__util .lang-toggle-select {
+  max-width: 48px;
+  font-size: 10px;
+  padding: 1px 2px;
+}
+
+/* ----------------------------------------------------------- list panel */
+
+.list-panel {
+  width: 270px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Segmented 助手 | 话题 header. */
+.list-tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.list-tab {
+  flex: 1;
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 500;
+  font-size: 13px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.list-tab:hover {
+  color: var(--fg);
+}
+
+.list-tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ----------------------------------------------------------- topic list */
+
+.topic-list {
+  flex: 1;
   overflow-y: auto;
+  padding: var(--space-3) var(--space-3) var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
 
-.sidebar h2 {
-  margin: 0 0 var(--space-3);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.sidebar button {
+.topic-list__new {
   width: 100%;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
@@ -138,22 +277,39 @@ html,
   cursor: pointer;
   font: inherit;
   font-weight: 500;
-  margin-bottom: var(--space-3);
+  margin-bottom: var(--space-2);
   transition:
     background 120ms ease,
     border-color 120ms ease,
     color 120ms ease;
 }
 
-.sidebar button:hover {
+.topic-list__new:hover {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent);
 }
 
+.topic-list__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.topic-list__empty {
+  color: var(--muted);
+  font-size: 12px;
+  margin: var(--space-1) 0;
+}
+
+.topic-list__footer {
+  margin-top: auto;
+  padding-top: var(--space-2);
+}
+
 /* Each history entry is a row: the navigating link fills the space, the
    rename/delete actions sit on the right and fade in on hover. */
-.sidebar .session-row {
+.topic-list .session-row {
   display: flex;
   align-items: center;
   gap: var(--space-1);
@@ -161,15 +317,15 @@ html,
   transition: background 120ms ease;
 }
 
-.sidebar .session-row:hover {
+.topic-list .session-row:hover {
   background: var(--border-soft);
 }
 
-.sidebar .session-row.active {
+.topic-list .session-row.active {
   background: var(--accent-soft);
 }
 
-.sidebar .session {
+.topic-list .session {
   flex: 1;
   min-width: 0;
   display: block;
@@ -185,17 +341,17 @@ html,
   transition: color 120ms ease;
 }
 
-.sidebar .session-row:hover .session {
+.topic-list .session-row:hover .session {
   color: var(--fg);
 }
 
-.sidebar .session.active {
+.topic-list .session.active {
   color: var(--accent);
   font-weight: 500;
 }
 
 /* Hover-revealed action cluster (rename / delete). */
-.sidebar .session-actions {
+.topic-list .session-actions {
   display: flex;
   align-items: center;
   gap: 2px;
@@ -204,13 +360,12 @@ html,
   transition: opacity 120ms ease;
 }
 
-.sidebar .session-row:hover .session-actions,
-.sidebar .session-row:focus-within .session-actions {
+.topic-list .session-row:hover .session-actions,
+.topic-list .session-row:focus-within .session-actions {
   opacity: 1;
 }
 
-.sidebar .session-action {
-  /* Override the sidebar's full-width default button styling. */
+.topic-list .session-action {
   width: auto;
   margin: 0;
   padding: 2px 6px;
@@ -223,14 +378,119 @@ html,
   cursor: pointer;
 }
 
-.sidebar .session-action:hover {
+.topic-list .session-action:hover {
   background: var(--surface);
   border-color: transparent;
   color: var(--fg);
 }
 
-.sidebar .session-action--delete:hover {
+.topic-list .session-action--delete:hover {
   color: var(--tool-error-fg);
+}
+
+/* ------------------------------------------------------- assistant pane */
+
+.assistant-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.assistant-search {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.assistant-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+
+.assistant-error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: 12px;
+  color: var(--tool-error-fg);
+  background: var(--tool-error-bg);
+  border: 1px solid var(--tool-error-border);
+  border-radius: var(--radius-md);
+}
+
+.assistant-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.assistant-group-label {
+  margin: var(--space-2) 0 var(--space-1);
+  padding: 0 var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.assistant-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-soft);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.assistant-row:hover {
+  background: var(--border-soft);
+  color: var(--fg);
+}
+
+.assistant-row.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.assistant-row__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-row__check {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.assistant-empty {
+  margin: var(--space-2) 0;
+  padding: 0 var(--space-2);
+  color: var(--muted);
+  font-size: 12px;
 }
 
 /* --------------------------------------------------------------- main pane */
@@ -2131,13 +2391,33 @@ html,
 /* ------------------------------------------------------------------ small screens */
 
 @media (max-width: 720px) {
-  .layout {
+  /* Stack the shell: nav rail (horizontal strip) over the list panel over the
+     main chat. Each region gives up its fixed width to span full-width. */
+  .app-shell {
     flex-direction: column;
   }
-  .sidebar {
+  .nav-rail {
     width: 100%;
-    height: auto;
-    max-height: 35vh;
+    flex-direction: row;
+    justify-content: space-around;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: var(--space-1) var(--space-2);
+  }
+  .nav-rail__brand {
+    padding: 0 var(--space-2) 0 0;
+  }
+  .nav-rail__group {
+    flex-direction: row;
+    width: auto;
+  }
+  .nav-rail__group--bottom {
+    margin-top: 0;
+    margin-left: auto;
+  }
+  .list-panel {
+    width: 100%;
+    max-height: 38vh;
     border-right: none;
     border-bottom: 1px solid var(--border);
   }

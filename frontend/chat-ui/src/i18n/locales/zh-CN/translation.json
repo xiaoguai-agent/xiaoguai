@@ -72,6 +72,22 @@
     "admin": "管理",
     "language_label": "语言",
     "no_sessions": "暂无会话。发送消息以创建。",
+    "nav": {
+      "chat": "对话",
+      "skills": "技能",
+      "activity": "活动历史",
+      "settings": "设置"
+    },
+    "assistant": {
+      "tab_assistants": "助手",
+      "tab_topics": "话题",
+      "general": "通用",
+      "group_personas": "助手",
+      "group_teams": "团队",
+      "search_placeholder": "搜索助手…",
+      "empty": "暂无助手",
+      "error_load": "助手加载失败"
+    },
     "assistant_name": "小怪",
     "welcome_title": "你好，我是{{name}}",
     "welcome_subtitle": "有什么可以帮你的？",

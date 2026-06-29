@@ -72,6 +72,22 @@
     "admin": "Admin",
     "language_label": "Language",
     "no_sessions": "No sessions yet. Send a message to create one.",
+    "nav": {
+      "chat": "Chat",
+      "skills": "Skills",
+      "activity": "Activity",
+      "settings": "Settings"
+    },
+    "assistant": {
+      "tab_assistants": "Assistants",
+      "tab_topics": "Topics",
+      "general": "General",
+      "group_personas": "Assistants",
+      "group_teams": "Teams",
+      "search_placeholder": "Search assistants…",
+      "empty": "No assistants yet",
+      "error_load": "Couldn't load assistants"
+    },
     "assistant_name": "Xiaoguai",
     "welcome_title": "Hi, I'm {{name}}",
     "welcome_subtitle": "What can I help you with?",
