@@ -4,16 +4,12 @@
  * App.tsx and is passed down as props, so these stay easy to reason about and
  * never block the sidebar render on a network call.
  *
- *   - <AuditLink>        cross-SPA deep-link into the admin 活动/审核 pane.
  *   - <TodayTokenStat>   a muted "今日 ~X tokens" line (humanized K/M).
  *   - <WorkingDirControl> compact editor for the active session's working_dir.
  */
 
 import { useEffect, useState } from 'react';
 import { useI18n } from './i18n/I18nProvider';
-
-/** Where the admin audit / activity pane lives (separate /admin/ SPA). */
-const ADMIN_AUDIT_HREF = '/admin/audit';
 
 /**
  * Humanize a token count: 1_234 → "1.2K", 4_500_000 → "4.5M". Sub-1000 counts
@@ -25,21 +21,6 @@ export function humanizeTokens(n: number | null | undefined): string {
   if (n < 1000) return String(Math.round(n));
   if (n < 1_000_000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}K`;
   return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-}
-
-/**
- * Plain cross-SPA link into the admin audit/activity pane. Mirrors the existing
- * admin-link pattern (a real `<a href>`, since /admin/ is a separate SPA served
- * by the backend). Owner auth is carried by the browser session.
- */
-export function AuditLink() {
-  const { t } = useI18n();
-  return (
-    <a className="nav-link sidebar-audit-link" href={ADMIN_AUDIT_HREF}>
-      <span aria-hidden="true">🛡 </span>
-      {t.sidebar.audit}
-    </a>
-  );
 }
 
 interface TodayTokenStatProps {

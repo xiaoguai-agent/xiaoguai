@@ -111,9 +111,6 @@
     "stop_generating": "停止生成",
     "send_message": "发送消息",
     "thinking": "思考中",
-    "branch": "分支",
-    "branch_title": "从此处分支出新对话",
-    "branch_label": "从此处分支",
     "message_actions": {
       "toolbar_label": "消息操作",
       "copy": "复制",

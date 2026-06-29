@@ -71,9 +71,6 @@ interface TranslationShape {
     stop_generating: string;
     send_message: string;
     thinking: string;
-    branch: string;
-    branch_title: string;
-    branch_label: string;
     /** Phase 4b — per-message hover action toolbar (copy / regenerate / edit /
      *  branch / delete) + their status / confirm strings. */
     message_actions: {

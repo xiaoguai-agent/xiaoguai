@@ -111,9 +111,6 @@
     "stop_generating": "Stop generating",
     "send_message": "Send message",
     "thinking": "thinking",
-    "branch": "Branch",
-    "branch_title": "Branch a new conversation from this point",
-    "branch_label": "Branch from here",
     "message_actions": {
       "toolbar_label": "Message actions",
       "copy": "Copy",

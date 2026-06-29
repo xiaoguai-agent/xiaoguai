@@ -522,14 +522,6 @@ html,
   background: var(--bg);
 }
 
-/* Top-right utility bar above the message stream — holds the theme toggle. */
-.topbar {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  padding: var(--space-3) var(--space-5);
-}
-
 .messages {
   flex: 1;
   overflow-y: auto;
@@ -1058,27 +1050,6 @@ html,
 
 /* ---------------------------------------------------------- theme toggle */
 
-.sidebar-footer {
-  margin-top: auto;
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border-soft);
-}
-
-/* Footer row holds the language + theme toggles side by side. */
-.sidebar-footer-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-
-/* Admin console link sits above the footer row (styled via .nav-link). */
-.sidebar-footer .admin-link {
-  display: block;
-  margin-bottom: var(--space-2);
-}
-
 .lang-toggle {
   display: inline-flex;
   align-items: center;
@@ -1302,51 +1273,6 @@ html,
    button doesn't sit on top of the first character of `→ name(...)`. */
 .bubble.tool.copy-host {
   padding-right: calc(var(--space-4) + 56px);
-}
-
-/* v1.1.2 — "Branch from here" action on assistant bubbles. Same
-   hover-reveal pattern as `.copy-btn`, parked next to it in the top
-   right. Lives inside `.bubble.assistant.copy-host` (every assistant
-   bubble is now a copy-host so the hover-reveal trigger area covers
-   the whole bubble). */
-.bubble-action.bubble-fork {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  appearance: none;
-  border: 1px solid var(--border);
-  background: var(--surface-elevated);
-  color: var(--fg-soft);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  opacity: 0;
-  transition:
-    opacity 120ms ease,
-    background 120ms ease,
-    color 120ms ease,
-    border-color 120ms ease;
-  z-index: 1;
-}
-
-.bubble.copy-host:hover .bubble-fork,
-.bubble-fork:focus-visible {
-  opacity: 1;
-}
-
-.bubble-fork:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.bubble-fork:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
 }
 
 /* Phase 4b — per-message hover action toolbar (Cherry-Studio style). Same
@@ -1910,41 +1836,7 @@ html,
   }
 }
 
-/* skills sidebar nav item */
-
-.sidebar .nav-link {
-  display: block;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  text-decoration: none;
-  color: var(--fg-soft);
-  font-size: 14px;
-  font-weight: 500;
-  transition: background 120ms ease;
-}
-
-.sidebar .nav-link:hover {
-  background: var(--border-soft);
-  color: var(--fg);
-}
-
-.sidebar .nav-link.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
 /* --------------------------------------------- enriched sidebar (Feature ②/⑤) */
-
-/* The lower nav cluster: Skills link + activity deep-link + token stat. Pushed
-   toward the bottom (above the footer) so the session list owns the top. */
-.sidebar-extras {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: var(--space-3);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--border-soft);
-}
 
 /* Muted one-liner showing today's token spend. */
 .sidebar-token-stat {

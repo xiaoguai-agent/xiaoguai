@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { RecentOutcomesPanel } from './RecentOutcomesPanel';
 import { TodayTokenStat, WorkingDirControl } from './SidebarExtras';
@@ -26,8 +25,6 @@ interface Props {
   activeWorkingDir?: string;
   /** Feature ⑤ — persist a new working_dir for the active session. */
   onSaveWorkingDir?: (sessionId: string, workingDir: string) => Promise<void>;
-  /** Optional footer slot — kept for backwards compatibility. */
-  children?: ReactNode;
 }
 
 /**
