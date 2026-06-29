@@ -16,6 +16,11 @@ pub enum ReplAction {
     /// Switch the active model to this name for subsequent messages; the
     /// caller updates its state and confirms.
     SetModel(String),
+    /// List the configured providers + their models so the user can pick one
+    /// (`/models`, or `/model` with no argument). The listing needs an async
+    /// fetch from the server, so the I/O loop fulfills this action; on failure
+    /// it falls back to a static hint.
+    ListModels,
     /// Clear the terminal screen (`/clear`).
     Clear,
     /// Show the persistent CLI config (`/config`).
@@ -32,23 +37,31 @@ pub enum ReplAction {
 pub fn help_text() -> String {
     "commands:\n\
      \x20 /help                     show this list\n\
-     \x20 /model [name]             show or switch the model (e.g. /model MiniMax-M2.5)\n\
-     \x20 /models                   how to see which models are configured\n\
+     \x20 /model [name]             pick a model (arrow-key menu), or switch directly (e.g. /model <name>)\n\
+     \x20 /models                   list configured providers + models to pick from\n\
      \x20 /config                   show persistent settings (prompt, language)\n\
      \x20 /config set <key> <val>   change a setting (e.g. /config set language zh)\n\
      \x20 /clear                    clear the screen\n\
-     \x20 /exit, /quit              leave (Ctrl-D also works)"
+     \x20 /exit, /quit, exit, quit  leave (Ctrl-D also works)"
         .to_string()
 }
 
-/// Interpret one input line. `current_model` is used to render `/model` with no
-/// argument (empty → the server's default model).
+/// Interpret one input line. `_current_model` is retained for call-site
+/// compatibility; the live model menu (for bare `/model` / `/models`) is now
+/// rendered by the I/O loop after an async fetch, so the pure parser no longer
+/// needs the current model.
 ///
 /// A line that doesn't start with `/` is [`ReplAction::Send`] verbatim (after
 /// trimming) — including the empty string, which the caller skips.
 #[must_use]
-pub fn parse_command(input: &str, current_model: &str) -> ReplAction {
+pub fn parse_command(input: &str, _current_model: &str) -> ReplAction {
     let line = input.trim();
+    // A bare `exit` / `quit` (no slash, case-insensitive) quits — the REPL
+    // convention. Only an EXACT match counts: "exit codes in bash" is still a
+    // message, not a quit.
+    if line.eq_ignore_ascii_case("exit") || line.eq_ignore_ascii_case("quit") {
+        return ReplAction::Quit;
+    }
     if !line.starts_with('/') {
         return ReplAction::Send(line.to_string());
     }
@@ -81,21 +94,12 @@ pub fn parse_command(input: &str, current_model: &str) -> ReplAction {
                 ReplAction::ConfigSet { key, value }
             }
         }
-        "/models" => ReplAction::Notice(
-            "configured models depend on your provider — list them with:  \
-             xiaoguai provider list\n  then switch with:  /model <name>"
-                .to_string(),
-        ),
+        // Both `/models` and bare `/model` ask the I/O loop to fetch + print
+        // the live provider/model menu so the user can choose inline.
+        "/models" => ReplAction::ListModels,
         "/model" => {
             if arg.is_empty() {
-                let shown = if current_model.is_empty() {
-                    "(server default)"
-                } else {
-                    current_model
-                };
-                ReplAction::Notice(format!(
-                    "current model: {shown}\n  switch with: /model <name>  (e.g. /model MiniMax-M2.5)"
-                ))
+                ReplAction::ListModels
             } else {
                 ReplAction::SetModel(arg.to_string())
             }
@@ -120,20 +124,44 @@ mod tests {
 
     #[test]
     fn exit_and_quit_quit() {
+        // Slash forms.
         assert_eq!(parse_command("/exit", ""), ReplAction::Quit);
         assert_eq!(parse_command("/quit", "MiniMax-M2"), ReplAction::Quit);
+        // Bare forms (REPL convention), case-insensitive + whitespace-trimmed.
+        assert_eq!(parse_command("exit", ""), ReplAction::Quit);
+        assert_eq!(parse_command("quit", ""), ReplAction::Quit);
+        assert_eq!(parse_command("  EXIT  ", ""), ReplAction::Quit);
+        assert_eq!(parse_command("Quit", ""), ReplAction::Quit);
     }
 
     #[test]
-    fn model_without_arg_shows_current_or_default() {
-        match parse_command("/model", "MiniMax-M2.5") {
-            ReplAction::Notice(s) => assert!(s.contains("MiniMax-M2.5"), "got {s}"),
-            other => panic!("{other:?}"),
-        }
-        match parse_command("/model", "") {
-            ReplAction::Notice(s) => assert!(s.contains("server default"), "got {s}"),
-            other => panic!("{other:?}"),
-        }
+    fn message_starting_with_exit_is_not_a_quit() {
+        // Only an EXACT bare `exit`/`quit` quits; a sentence that merely starts
+        // with the word is a normal message sent to the model.
+        assert_eq!(
+            parse_command("exit codes in bash", ""),
+            ReplAction::Send("exit codes in bash".into())
+        );
+        assert_eq!(
+            parse_command("quitting smoking tips", ""),
+            ReplAction::Send("quitting smoking tips".into())
+        );
+        assert_eq!(
+            parse_command("how do I exit vim?", ""),
+            ReplAction::Send("how do I exit vim?".into())
+        );
+    }
+
+    #[test]
+    fn model_without_arg_lists_models() {
+        // Bare `/model` and `/models` both ask the I/O loop to fetch + print
+        // the live provider/model menu (independent of the current model).
+        assert_eq!(
+            parse_command("/model", "MiniMax-M2.5"),
+            ReplAction::ListModels
+        );
+        assert_eq!(parse_command("/model", ""), ReplAction::ListModels);
+        assert_eq!(parse_command("/models", ""), ReplAction::ListModels);
     }
 
     #[test]
@@ -154,6 +182,13 @@ mod tests {
         assert!(h.contains("/model"));
         assert!(h.contains("/exit"));
         assert!(h.contains("/help"));
+        // The example must stay a neutral placeholder — not a concrete model
+        // that only the key-less seed serves (it 401s and misleads users).
+        assert!(h.contains("/model <name>"), "got {h}");
+        assert!(
+            !h.contains("MiniMax-M2.5"),
+            "help still hardcodes a 401-only model: {h}"
+        );
     }
 
     #[test]

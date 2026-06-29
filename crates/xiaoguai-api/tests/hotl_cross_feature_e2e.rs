@@ -225,6 +225,7 @@ fn build_state(
         team_audit: None,
         decision_registry: registry,
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     }
 }
 

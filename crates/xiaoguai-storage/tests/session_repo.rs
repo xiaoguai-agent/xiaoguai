@@ -36,6 +36,7 @@ fn fixture_session(user: &UserId, model: &str) -> Session {
         status: SessionStatus::Active,
         parent_session_id: None,
         forked_from_message_id: None,
+        working_dir: None,
     }
 }
 
@@ -172,4 +173,84 @@ async fn duplicate_create_returns_duplicate_key() {
     repo.create(&session).await.expect("first insert");
     let err = repo.create(&session).await.expect_err("dup");
     assert!(matches!(err, RepoError::DuplicateKey(_)));
+}
+
+// -- Feature ⑤: per-session working_dir + update() -----------------------
+
+#[tokio::test]
+async fn create_round_trips_working_dir() {
+    let (pool, _guard) = test_setup().await;
+    let user = seed_user(&pool).await;
+    let repo = SqliteSessionRepository::new(pool.clone());
+
+    let mut session = fixture_session(&user, "gpt-4o-mini");
+    session.working_dir = Some("/srv/work/sess-1".to_string());
+    repo.create(&session).await.expect("create");
+
+    let loaded = repo
+        .find_by_id(session.id.as_str())
+        .await
+        .expect("find")
+        .expect("present");
+    assert_eq!(loaded.working_dir.as_deref(), Some("/srv/work/sess-1"));
+}
+
+#[tokio::test]
+async fn update_sets_working_dir_and_keeps_title_when_none() {
+    let (pool, _guard) = test_setup().await;
+    let user = seed_user(&pool).await;
+    let repo = SqliteSessionRepository::new(pool.clone());
+
+    let session = fixture_session(&user, "gpt-4o-mini");
+    let original_title = session.title.clone();
+    repo.create(&session).await.expect("create");
+
+    // Only set working_dir; title stays untouched (PATCH semantics).
+    repo.update(session.id.as_str(), None, Some("/srv/x".to_string()))
+        .await
+        .expect("update");
+
+    let loaded = repo
+        .find_by_id(session.id.as_str())
+        .await
+        .expect("find")
+        .expect("present");
+    assert_eq!(loaded.working_dir.as_deref(), Some("/srv/x"));
+    assert_eq!(loaded.title, original_title);
+}
+
+#[tokio::test]
+async fn update_title_leaves_working_dir_untouched() {
+    let (pool, _guard) = test_setup().await;
+    let user = seed_user(&pool).await;
+    let repo = SqliteSessionRepository::new(pool.clone());
+
+    let mut session = fixture_session(&user, "gpt-4o-mini");
+    session.working_dir = Some("/keep/me".to_string());
+    repo.create(&session).await.expect("create");
+
+    // Update only the title; working_dir must survive the merge.
+    repo.update(session.id.as_str(), Some("Renamed".to_string()), None)
+        .await
+        .expect("update");
+
+    let loaded = repo
+        .find_by_id(session.id.as_str())
+        .await
+        .expect("find")
+        .expect("present");
+    assert_eq!(loaded.title.as_deref(), Some("Renamed"));
+    assert_eq!(loaded.working_dir.as_deref(), Some("/keep/me"));
+}
+
+#[tokio::test]
+async fn update_missing_session_is_not_found() {
+    let (pool, _guard) = test_setup().await;
+    let repo = SqliteSessionRepository::new(pool.clone());
+
+    let err = repo
+        .update("does-not-exist", Some("x".to_string()), None)
+        .await
+        .expect_err("missing");
+    assert!(matches!(err, RepoError::NotFound));
 }

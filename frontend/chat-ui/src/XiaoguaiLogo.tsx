@@ -5,8 +5,17 @@
  * the project logo, drawn with `currentColor` so it inherits the sidebar's
  * text colour and adapts to light/dark themes. Self-contained (inline styles)
  * so it needs no stylesheet changes.
+ *
+ * The wordmark shows the owner's white-label assistant name when set
+ * (`GET /v1/branding`), falling back to the locale's default ("Xiaoguai" /
+ * "小怪").
  */
+import { useI18n } from './i18n/I18nProvider';
+import { useBrandName } from './branding';
+
 export function XiaoguaiLogo({ size = 26 }: { size?: number }) {
+  const { t } = useI18n();
+  const name = useBrandName() || t.ui.assistant_name;
   return (
     <div
       style={{
@@ -43,7 +52,7 @@ export function XiaoguaiLogo({ size = 26 }: { size?: number }) {
         <path d="M18.5 31c2 2.4 9 2.4 11 0" />
         <path d="M23.5 32v3" />
       </svg>
-      <span>Xiaoguai</span>
+      <span>{name}</span>
     </div>
   );
 }

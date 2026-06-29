@@ -78,6 +78,26 @@ impl SessionRepository for InMemorySessionRepo {
         self.inner.lock().remove(id);
         Ok(())
     }
+
+    async fn update(
+        &self,
+        id: &str,
+        title: Option<String>,
+        working_dir: Option<String>,
+    ) -> RepoResult<()> {
+        let mut g = self.inner.lock();
+        let current = g.get(id).cloned().ok_or(RepoError::NotFound)?;
+        // PATCH-merge into a fresh Session (only Some(_) fields replace),
+        // mirroring the SQLite repo's update().
+        let merged = Session {
+            title: title.or(current.title.clone()),
+            working_dir: working_dir.or(current.working_dir.clone()),
+            updated_at: chrono::Utc::now(),
+            ..current
+        };
+        g.insert(id.to_string(), merged);
+        Ok(())
+    }
 }
 
 #[derive(Default)]

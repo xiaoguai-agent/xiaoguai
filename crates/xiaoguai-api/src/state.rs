@@ -340,6 +340,16 @@ pub struct AppState {
     /// `pack_runtime::scan_enabled_pack_agents`. The boot scan still covers
     /// anomaly/watch specs — only the conversational team is hot-rescanned.
     pub pack_rescanner: Option<Arc<dyn PackRescanner>>,
+    /// Feature ⑤ (per-session coding workspace root): rebuilds the agent
+    /// toolbox with the governed coding tools rooted at a session's
+    /// `working_dir` for a single turn. `None` when coding is not enabled at
+    /// boot (no audit key / no global `XIAOGUAI_CODING_WORKSPACE`), or for any
+    /// `AppState` built without the bridge (every test) — then `run_turn`
+    /// always uses `toolbox` as-is, exactly as before this field existed.
+    /// Production wires `CodingToolboxFactoryImpl` from
+    /// `xiaoguai_core::coding_bridge` only when the boot toolbox already
+    /// carries coding tools, so the opt-in/security posture is unchanged.
+    pub coding_toolbox_factory: Option<Arc<dyn crate::coding_toolbox::CodingToolboxFactory>>,
 }
 
 impl std::fmt::Debug for AppState {

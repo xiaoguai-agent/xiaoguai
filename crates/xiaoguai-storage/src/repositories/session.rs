@@ -51,6 +51,26 @@ pub trait SessionRepository: Send + Sync {
             "SessionRepository::fork not implemented for this backend".into(),
         ))
     }
+
+    /// Feature ⑤ — partial update of a session's mutable metadata. Only the
+    /// `Some(_)` fields are applied; `None` leaves the stored value
+    /// untouched (PATCH semantics — clearing a field is an explicit
+    /// `Some(String::new())`, not omission). Bumps `updated_at`. Returns
+    /// [`RepoError::NotFound`] when no session has `id`.
+    ///
+    /// Default impl returns `Unsupported` so test mocks that don't care
+    /// about updates compile unchanged; only `SqliteSessionRepository`
+    /// overrides this.
+    async fn update(
+        &self,
+        _id: &str,
+        _title: Option<String>,
+        _working_dir: Option<String>,
+    ) -> RepoResult<()> {
+        Err(RepoError::Unsupported(
+            "SessionRepository::update not implemented for this backend".into(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +97,9 @@ struct SessionRow {
     // v1.1.2: fork lineage. Both nullable; only forked rows have them.
     parent_session_id: Option<String>,
     forked_from_message_id: Option<String>,
+    // Feature ⑤: per-session coding workspace root. Nullable; only set when
+    // the operator pins a working directory via `PATCH /v1/sessions/{id}`.
+    working_dir: Option<String>,
 }
 
 impl SessionRow {
@@ -100,12 +123,13 @@ impl SessionRow {
             status,
             parent_session_id: self.parent_session_id.map(SessionId::from),
             forked_from_message_id: self.forked_from_message_id.map(MessageId::from),
+            working_dir: self.working_dir,
         })
     }
 }
 
 const SESSION_COLUMNS: &str = "id, user_id, title, model, status, created_at, updated_at, \
-                               parent_session_id, forked_from_message_id";
+                               parent_session_id, forked_from_message_id, working_dir";
 
 fn status_str(s: SessionStatus) -> &'static str {
     match s {
@@ -119,8 +143,8 @@ impl SessionRepository for SqliteSessionRepository {
     async fn create(&self, session: &Session) -> RepoResult<()> {
         let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
         sqlx::query(
-            "INSERT INTO sessions (id, user_id, title, model, status, created_at, updated_at, parent_session_id, forked_from_message_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sessions (id, user_id, title, model, status, created_at, updated_at, parent_session_id, forked_from_message_id, working_dir)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.as_str())
         .bind(session.user_id.as_str())
@@ -131,6 +155,7 @@ impl SessionRepository for SqliteSessionRepository {
         .bind(session.updated_at)
         .bind(session.parent_session_id.as_ref().map(SessionId::as_str))
         .bind(session.forked_from_message_id.as_ref().map(MessageId::as_str))
+        .bind(session.working_dir.as_deref())
         .execute(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;
@@ -212,6 +237,48 @@ impl SessionRepository for SqliteSessionRepository {
         Ok(())
     }
 
+    /// Feature ⑤ — read-merge-write a session's mutable metadata in one tx.
+    /// Reads the current row, applies only the provided fields, writes the
+    /// merged row, and bumps `updated_at`. A missing row is `NotFound`.
+    async fn update(
+        &self,
+        id: &str,
+        title: Option<String>,
+        working_dir: Option<String>,
+    ) -> RepoResult<()> {
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
+        // Read the current row inside the tx so the merge is consistent with
+        // the write that follows (no read-then-write race).
+        let current: Option<SessionRow> = sqlx::query_as(&format!(
+            "SELECT {SESSION_COLUMNS} FROM sessions WHERE id = ?"
+        ))
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+        let current = current.ok_or(RepoError::NotFound)?;
+
+        // PATCH semantics: only `Some(_)` fields replace the stored value;
+        // `None` keeps what is already there.
+        let new_title = title.or(current.title);
+        let new_working_dir = working_dir.or(current.working_dir);
+
+        sqlx::query(
+            "UPDATE sessions
+             SET title = ?, working_dir = ?,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+             WHERE id = ?",
+        )
+        .bind(new_title.as_deref())
+        .bind(new_working_dir.as_deref())
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
+        Ok(())
+    }
+
     async fn delete(&self, id: &str) -> RepoResult<()> {
         // Idempotent — deleting a non-existent row is not an error. FK CASCADE
         // wipes child messages.
@@ -253,8 +320,8 @@ impl SessionRepository for SqliteSessionRepository {
 
         // (2) Insert the new session row.
         sqlx::query(
-            "INSERT INTO sessions (id, user_id, title, model, status, created_at, updated_at, parent_session_id, forked_from_message_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sessions (id, user_id, title, model, status, created_at, updated_at, parent_session_id, forked_from_message_id, working_dir)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(new_session.id.as_str())
         .bind(new_session.user_id.as_str())
@@ -265,6 +332,7 @@ impl SessionRepository for SqliteSessionRepository {
         .bind(new_session.updated_at)
         .bind(new_session.parent_session_id.as_ref().map(SessionId::as_str))
         .bind(new_session.forked_from_message_id.as_ref().map(MessageId::as_str))
+        .bind(new_session.working_dir.as_deref())
         .execute(&mut *tx)
         .await
         .map_err(RepoError::from_sqlx)?;

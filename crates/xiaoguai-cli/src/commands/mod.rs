@@ -69,4 +69,5 @@ pub mod skills;
 pub mod stats;
 pub mod style;
 pub mod tasks;
+pub mod think_filter;
 pub mod watch;

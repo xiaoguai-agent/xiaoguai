@@ -22,6 +22,7 @@ import { ExpertPicker } from './ExpertPicker';
 import { ModeToggle, getStoredChatMode, setStoredChatMode } from './ModeToggle';
 import { useI18n } from './i18n/I18nProvider';
 import { interpolate } from './i18n';
+import { useBrandName } from './branding';
 import { isLoopLive, parseLoopCommand, shortLoopId } from './loopCommands';
 import type { LoopCommand } from './loopCommands';
 
@@ -29,6 +30,10 @@ type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
 
 interface Props {
   onSessionCreated: (s: { id: string; title: string }) => void;
+  /** Called when an opened session no longer exists server-side (404 on history
+   *  load) — e.g. a stale localStorage entry after a server/DB reset. The shell
+   *  prunes it from the sidebar so it stops being clickable. */
+  onSessionMissing?: (id: string) => void;
 }
 
 interface DisplayBubble {
@@ -80,8 +85,10 @@ function autoGrow(ta: HTMLTextAreaElement | null) {
   ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
 }
 
-export function ChatPage({ onSessionCreated }: Props) {
+export function ChatPage({ onSessionCreated, onSessionMissing }: Props) {
   const { t } = useI18n();
+  // White-label assistant name (owner-set), falling back to the locale default.
+  const brandName = useBrandName() || t.ui.assistant_name;
   const { id: routeId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   // Phase 4c — Skills "Use in chat" deep-link carries the activated pack slug
@@ -137,6 +144,23 @@ export function ChatPage({ onSessionCreated }: Props) {
   const [reconnect, setReconnect] = useState<{ attempt: number; delayMs: number } | null>(
     null,
   );
+  /**
+   * Feature ⑥ — true when the opened session has a turn still running
+   * server-side (`GET /v1/sessions/{id}/status` → `in_flight: true`) but THIS
+   * tab is not locally streaming it. Surfaces a small non-blocking "task still
+   * running" indicator. Cleared when a local turn starts/streams, when status
+   * returns false, or on session change. Best-effort: a failed status fetch
+   * never disrupts the chat.
+   */
+  const [remoteRunning, setRemoteRunning] = useState(false);
+  /** Feature ⑥ — handle for the light ~5s poll that auto-clears the indicator. */
+  const remotePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /**
+   * Feature ⑥ — mirrors `streaming` for use inside the poll's `setInterval`
+   * closure (which would otherwise capture a stale value). The remote
+   * indicator must never show while this tab is itself streaming a turn.
+   */
+  const streamingRef = useRef(false);
   const abortRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -160,6 +184,17 @@ export function ChatPage({ onSessionCreated }: Props) {
    */
   const selfNavigatedSessionRef = useRef<string | null>(null);
 
+  /**
+   * Feature ⑥ — stop any running status poll. Safe to call repeatedly; the
+   * ref is nulled so a later unmount/clear is a no-op.
+   */
+  function clearRemotePoll() {
+    if (remotePollRef.current !== null) {
+      clearInterval(remotePollRef.current);
+      remotePollRef.current = null;
+    }
+  }
+
   // When the route changes (user clicks a different session), reload history.
   useEffect(() => {
     if (routeId && routeId === selfNavigatedSessionRef.current) {
@@ -174,6 +209,10 @@ export function ChatPage({ onSessionCreated }: Props) {
     setHotlPending(null);
     setHotlResolved(null);
     setReconnect(null);
+    // Feature ⑥ — a session switch resets the remote-running indicator; the
+    // status fetch below re-derives it for the newly-opened session.
+    clearRemotePoll();
+    setRemoteRunning(false);
     setSessionId(routeId);
     // T5.2 — restore the session's sticky mode (execute for a fresh draft).
     setMode(routeId ? getStoredChatMode(routeId) : 'execute');
@@ -183,9 +222,25 @@ export function ChatPage({ onSessionCreated }: Props) {
         const msgs = await client.listMessages(routeId);
         setBubbles(msgs.flatMap(messageToBubbles));
       } catch (err) {
-        setStatus(interpolate(t.chat.sse.load_failed, { message: (err as Error).message }));
+        // A 404 means this session no longer exists (commonly a stale
+        // localStorage entry left over after a server/DB reset). Don't show a
+        // scary "load failed" — prune the dead entry and drop to a fresh chat.
+        if ((err as { status?: number }).status === 404) {
+          setBubbles([]);
+          onSessionMissing?.(routeId);
+          navigate('/', { replace: true });
+        } else {
+          setStatus(interpolate(t.chat.sse.load_failed, { message: (err as Error).message }));
+        }
       }
     })();
+    // Feature ⑥ — check whether a turn is still running server-side for this
+    // session and, if so, surface a non-blocking indicator + a light poll that
+    // auto-clears once it finishes. Best-effort: any failure (endpoint absent,
+    // network error) is swallowed so the chat is never disrupted.
+    void checkRemoteRunning(routeId);
+    return clearRemotePoll;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeId]);
 
   useEffect(() => {
@@ -241,6 +296,18 @@ export function ChatPage({ onSessionCreated }: Props) {
     }
   }, [model]);
 
+  // Feature ⑥ — keep the streaming ref in sync for the status poll closure, and
+  // drop the remote-running indicator the moment this tab streams a turn (a
+  // local turn supersedes the "running elsewhere" cue).
+  useEffect(() => {
+    streamingRef.current = streaming;
+    if (streaming) {
+      clearRemotePoll();
+      setRemoteRunning(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streaming]);
+
   // Phase 4c — a Skills deep-link with no active session can't attach a team
   // (attach needs a session). The ExpertPicker chip isn't even mounted yet, so
   // surface a one-line hint in the status bar telling the operator to send a
@@ -252,6 +319,55 @@ export function ChatPage({ onSessionCreated }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLinkTeamSlug, sessionId]);
+
+  /**
+   * Feature ⑥ — best-effort: ask the backend whether a turn is still running
+   * server-side for `id`. When it is (and this tab isn't locally streaming),
+   * raise the `remoteRunning` indicator and start a light ~5s poll that clears
+   * it once the turn finishes (its result is already persisted, so a normal
+   * history reload shows it). Any failure is swallowed — the chat must never
+   * break because the status read failed, and older backends may not expose
+   * the endpoint or the client method at all.
+   */
+  async function checkRemoteRunning(id: string) {
+    const getStatus = client.getSessionStatus?.bind(client);
+    if (!getStatus) return;
+    let inFlight = false;
+    try {
+      const res = await getStatus(id);
+      inFlight = res.in_flight === true;
+    } catch {
+      // Endpoint missing / network error — skip the indicator entirely.
+      return;
+    }
+    // A local turn may have started while the fetch was in flight; never
+    // override the active-streaming UI with the remote indicator.
+    if (!inFlight || streamingRef.current) {
+      setRemoteRunning(false);
+      return;
+    }
+    setRemoteRunning(true);
+    // Light poll: re-read status every ~5s and auto-clear when it finishes or
+    // a local turn starts. Only one poll runs at a time.
+    clearRemotePoll();
+    remotePollRef.current = setInterval(() => {
+      if (streamingRef.current) {
+        clearRemotePoll();
+        setRemoteRunning(false);
+        return;
+      }
+      void getStatus(id)
+        .then((r) => {
+          if (!r.in_flight) {
+            clearRemotePoll();
+            setRemoteRunning(false);
+          }
+        })
+        .catch(() => {
+          // Transient read failure — keep the indicator; the next tick retries.
+        });
+    }, 5000);
+  }
 
   /** Phase 4c — drop the consumed `?team=` param (keep other params intact). */
   function clearDeepLink() {
@@ -497,6 +613,9 @@ export function ChatPage({ onSessionCreated }: Props) {
     setDraft('');
     setStatus(null);
     setOrchestrating(true);
+    // Feature ⑥ — a local team run supersedes the remote-running cue.
+    clearRemotePoll();
+    setRemoteRunning(false);
     setBubbles((bs) => [...bs, { kind: 'user', text: goal }]);
     // Capture the progress bubble's index so events can update it in place.
     let progressIdx = -1;
@@ -751,9 +870,9 @@ export function ChatPage({ onSessionCreated }: Props) {
           onCancel={cancel}
         />
       )}
-      {/* Chat header — order: HotlBanner > WatchIndicator */}
+      {/* Chat header — the HotlBanner is rendered above (top of the fragment),
+          not in the header; below are the expert picker + watch indicator. */}
       <div className="chat-header">
-        {/* HotlBanner placeholder — wired by feat/chat-ui-hotl-banner branch */}
         {/* T3.5 — expert picker chip for the active session */}
         <ExpertPicker
           sessionId={sessionId}
@@ -764,12 +883,28 @@ export function ChatPage({ onSessionCreated }: Props) {
           deepLinkTeamSlug={deepLinkTeamSlug}
           onDeepLinkConsumed={clearDeepLink}
         />
+        {/* Feature ⑥ — non-blocking cue: a turn is still running server-side
+            for this session, but this tab isn't streaming it. Its result is
+            persisted on completion; a history reload then shows it. */}
+        {remoteRunning && !streaming && (
+          <span
+            className="remote-running"
+            role="status"
+            title={t.chat.remote_running_title}
+            data-testid="remote-running"
+          >
+            <span className="remote-running__dot" aria-hidden="true" />
+            {t.chat.remote_running}
+          </span>
+        )}
         <WatchIndicator sessionId={sessionId} />
       </div>
       <div className={`messages${bubbles.length === 0 ? ' messages-empty' : ''}`} ref={scrollRef}>
         {bubbles.length === 0 ? (
           <div className="welcome">
-            <h1 className="welcome-title">{t.ui.welcome_title}</h1>
+            <h1 className="welcome-title">
+              {interpolate(t.ui.welcome_title, { name: brandName })}
+            </h1>
             <p className="welcome-subtitle">{t.ui.welcome_subtitle}</p>
             <div className="welcome-chips">
               {[
@@ -836,7 +971,7 @@ export function ChatPage({ onSessionCreated }: Props) {
                 void send();
               }
             }}
-            placeholder={t.ui.composer_placeholder}
+            placeholder={interpolate(t.ui.composer_placeholder, { name: brandName })}
           />
           {/* T5.2 — team parallel run: only when a team is attached. Always
               execute mode, so consult disables it (tooltip explains). */}

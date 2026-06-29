@@ -28,6 +28,7 @@ import type {
   SkillKnobSchema,
 } from '@xiaoguai/shared';
 import { client } from './client';
+import { McpToolsAvailable } from './McpToolsAvailable';
 import { useI18n } from './i18n/I18nProvider';
 import { interpolate } from './i18n';
 
@@ -325,6 +326,10 @@ export function SkillsPage() {
   const [error, setError] = useState<string | null>(null);
   // IA split: general skills first (default tab), scenario packs behind a tab.
   const [selectedTier, setSelectedTier] = useState<Tier>(TIER_GENERAL);
+  // Feature ④ — this page now LEADS with the owner's installed abilities; the
+  // full catalog browse (which duplicates the admin management surface) is
+  // collapsed by default and opened on demand.
+  const [browseOpen, setBrowseOpen] = useState(false);
   const { toasts, push: pushToast } = useToasts();
 
   // Restrict to the selected tier, then group that subset by category. Any tier
@@ -338,6 +343,15 @@ export function SkillsPage() {
   // code keyed by `pack_slug`, which the API response doesn't carry — so the
   // "Installed ✓" badge never showed. DEC-041 fix.
   const installedMap = Object.fromEntries(installed.map((r) => [r.pack_id, r]));
+
+  // Feature ④ — the installed catalog entries, in install order, so the page
+  // can LEAD with the owner's active abilities (the day-to-day surface) before
+  // the full browse-and-install catalog. An installed row with no matching
+  // catalog entry (pack removed from the catalog) is dropped from this lead
+  // view — it's still uninstallable from the browse section if it re-appears.
+  const installedPacks = installed
+    .map((r) => catalog.find((p) => p.slug === r.pack_id))
+    .filter((p): p is SkillCatalogEntry => p !== undefined);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -409,11 +423,12 @@ export function SkillsPage() {
         ))}
       </div>
 
-      {/* header */}
+      {/* header — Feature ④: framed as the owner's ability center, not a
+          catalog browser (browsing/management is the admin surface). */}
       <div className="skills-header">
         <div>
           <h1 className="skills-title">{sp.title}</h1>
-          <p className="skills-subtitle">{sp.subtitle}</p>
+          <p className="skills-subtitle">{sp.center_subtitle}</p>
           {/* honest note: packs are templates — install records config only. */}
           <p className="skills-disclaimer">{sp.disclaimer}</p>
         </div>
@@ -434,33 +449,7 @@ export function SkillsPage() {
         </div>
       </section>
 
-      {/* IA tier toggle (general vs specialized scenarios) */}
-      <div className="skills-tiers" role="tablist" aria-label={sp.title}>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={selectedTier === TIER_GENERAL}
-          className={`skills-tier-tab${
-            selectedTier === TIER_GENERAL ? ' skills-tier-tab--active' : ''
-          }`}
-          onClick={() => setSelectedTier(TIER_GENERAL)}
-        >
-          {sp.tab_general}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={selectedTier === TIER_SPECIALIZED}
-          className={`skills-tier-tab${
-            selectedTier === TIER_SPECIALIZED ? ' skills-tier-tab--active' : ''
-          }`}
-          onClick={() => setSelectedTier(TIER_SPECIALIZED)}
-        >
-          {sp.tab_specialized}
-        </button>
-      </div>
-
-      {/* body */}
+      {/* loading / error apply to the whole page (catalog + installed). */}
       {loading && <p className="skills-status">{sp.loading}</p>}
       {error && (
         <p className="skills-status skills-status--error" role="alert">
@@ -468,32 +457,105 @@ export function SkillsPage() {
         </p>
       )}
 
-      {!loading && !error && categories.length === 0 && (
-        <p className="skills-status">{sp.empty}</p>
+      {/* ── Feature ④ — LEAD with the owner's active abilities ───────────── */}
+      {!loading && !error && (
+        <section className="skills-active" aria-label={sp.active_title}>
+          <h2 className="skills-section-title">{sp.active_title}</h2>
+          {installedPacks.length === 0 ? (
+            <p className="skills-status skills-active__empty">{sp.active_empty}</p>
+          ) : (
+            <div className="skills-grid">
+              {installedPacks.map((pack) => (
+                <SkillCard
+                  key={pack.slug}
+                  pack={pack}
+                  installed={installedMap[pack.slug]}
+                  isZh={isZh}
+                  onInstall={handleInstall}
+                  onUninstall={handleUninstall}
+                  onUseInChat={handleUseInChat}
+                />
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
-      {!loading &&
-        !error &&
-        categories.map((cat) => (
-          <section key={cat} className="skills-category">
-            <h2 className="skills-category-title">{cat}</h2>
-            <div className="skills-grid">
-              {tierPacks
-                .filter((p) => p.category === cat)
-                .map((pack) => (
-                  <SkillCard
-                    key={pack.slug}
-                    pack={pack}
-                    installed={installedMap[pack.slug]}
-                    isZh={isZh}
-                    onInstall={handleInstall}
-                    onUninstall={handleUninstall}
-                    onUseInChat={handleUseInChat}
-                  />
-                ))}
+      {/* ── External tools the agent can call (read-only MCP view) ────────── */}
+      {!loading && !error && <McpToolsAvailable />}
+
+      {/* ── Browse the full catalog (collapsed — admin is the manage surface) */}
+      {!loading && !error && (
+        <section className="skills-browse" aria-label={sp.browse_title}>
+          <button
+            type="button"
+            className="skills-browse__toggle"
+            aria-expanded={browseOpen}
+            onClick={() => setBrowseOpen((x) => !x)}
+          >
+            <span className="skills-browse__chevron" aria-hidden="true">
+              {browseOpen ? '▾' : '▸'}
+            </span>
+            {sp.browse_title}
+            <span className="skills-browse__hint">{sp.browse_hint}</span>
+          </button>
+
+          {browseOpen && (
+            <div className="skills-browse__body">
+              {/* IA tier toggle (general vs specialized scenarios) */}
+              <div className="skills-tiers" role="tablist" aria-label={sp.browse_title}>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={selectedTier === TIER_GENERAL}
+                  className={`skills-tier-tab${
+                    selectedTier === TIER_GENERAL ? ' skills-tier-tab--active' : ''
+                  }`}
+                  onClick={() => setSelectedTier(TIER_GENERAL)}
+                >
+                  {sp.tab_general}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={selectedTier === TIER_SPECIALIZED}
+                  className={`skills-tier-tab${
+                    selectedTier === TIER_SPECIALIZED ? ' skills-tier-tab--active' : ''
+                  }`}
+                  onClick={() => setSelectedTier(TIER_SPECIALIZED)}
+                >
+                  {sp.tab_specialized}
+                </button>
+              </div>
+
+              {categories.length === 0 ? (
+                <p className="skills-status">{sp.empty}</p>
+              ) : (
+                categories.map((cat) => (
+                  <section key={cat} className="skills-category">
+                    <h2 className="skills-category-title">{cat}</h2>
+                    <div className="skills-grid">
+                      {tierPacks
+                        .filter((p) => p.category === cat)
+                        .map((pack) => (
+                          <SkillCard
+                            key={pack.slug}
+                            pack={pack}
+                            installed={installedMap[pack.slug]}
+                            isZh={isZh}
+                            onInstall={handleInstall}
+                            onUninstall={handleUninstall}
+                            onUseInChat={handleUseInChat}
+                          />
+                        ))}
+                    </div>
+                  </section>
+                ))
+              )}
             </div>
-          </section>
-        ))}
+          )}
+        </section>
+      )}
     </div>
   );
 }

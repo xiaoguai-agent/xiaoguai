@@ -12,6 +12,7 @@ pub mod loops;
 pub mod mcp_server;
 pub mod message;
 pub mod session;
+pub mod settings;
 pub mod token_usage;
 pub mod user;
 
@@ -30,6 +31,7 @@ pub use loops::{LoopRow, LoopStatus, LoopStore, PacingKind, SqliteLoopRepository
 pub use mcp_server::{McpServerRepository, SqliteMcpServerRepository};
 pub use message::{MessageRepository, SqliteMessageRepository};
 pub use session::{SessionRepository, SqliteSessionRepository};
+pub use settings::{SettingsRepository, SqliteSettingsRepository};
 pub use token_usage::{
     SqliteTokenUsageRepository, StoredTokenUsage, TokenUsageEntry, TokenUsageRepository,
 };

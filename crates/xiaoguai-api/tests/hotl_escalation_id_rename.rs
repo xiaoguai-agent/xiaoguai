@@ -80,6 +80,7 @@ fn build_state(decision_store: Arc<dyn HotlDecisionStore>) -> AppState {
         team_audit: None,
         decision_registry: Arc::new(DecisionRegistry::new()),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     }
 }
 

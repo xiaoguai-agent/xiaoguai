@@ -10,6 +10,7 @@
 pub mod audit;
 pub mod audit_util;
 pub mod auth;
+pub mod coding_toolbox;
 pub mod consult;
 pub mod convert;
 pub mod error;
@@ -47,6 +48,7 @@ pub use audit::{
     ExportRequest, StaticAuditChainExporter, StaticAuditReader, StaticAuditVerifier, VerifyReport,
 };
 pub use auth::{Claims, StaticCredentialValidator, StubValidator, TokenValidator};
+pub use coding_toolbox::CodingToolboxFactory;
 pub use error::{ApiError, ApiResult, UnauthorizedReason};
 pub use eval::{
     build_case_yaml, list_suites_in, CaseFromSessionRequest, CaseFromSessionResponse,

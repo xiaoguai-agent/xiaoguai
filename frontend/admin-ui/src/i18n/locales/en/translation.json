@@ -38,7 +38,8 @@
     "memory": "Memory",
     "personas": "Personas",
     "expert_teams": "Expert Teams",
-    "skill_proposals": "Skill Proposals"
+    "skill_proposals": "Skill Proposals",
+    "branding": "Branding"
   },
   "language": {
     "label": "Language",
@@ -606,6 +607,15 @@
       "delete_confirm_title": "Archive team?",
       "delete_confirm_body": "Archiving prevents this team from being attached to new sessions. Existing sessions keep their team attachment.",
       "empty": "No teams defined yet.",
+      "empty_filtered": "No teams match the filter. Clear the search to see all teams.",
+      "cta_title": "Build your first expert team",
+      "cta_body": "A team is a named group of personas with one lead. Once created, you can run it from the chat UI to tackle a task together.",
+      "cta_step_personas_ready": "Pick the roles (personas) you want on the team — you already have some defined.",
+      "cta_step_personas_missing": "First create the roles (personas) you need — a team needs at least one member.",
+      "cta_step_create": "Create a team here: choose its members and a lead.",
+      "cta_step_run": "Open the chat UI, pick the team in the Expert selector, and run a task together.",
+      "cta_create_btn": "Create your first team",
+      "cta_personas_hint": "No active personas yet — head to the Personas page to create one first, then come back.",
       "loading": "Loading teams…",
       "unavailable": "Teams repository not configured (HTTP 503). Wire the teams repository in the API host.",
       "field_glossary": "Team glossary (markdown — injected into every team session turn)",
@@ -722,6 +732,8 @@
     },
     "skill_packs": {
       "title": "Skill Packs",
+      "manage_note_title": "This is the management view.",
+      "manage_note_body": "Day-to-day skill discovery and activation live in the chat \"Skills\" page — the ability center for using skills. Here you manage what's installed: the pack inventory, activation status, and Rescan & activate.",
       "template_disclaimer": "These are skill templates — installing records your configuration; running a skill needs its data source or an MCP server.",
       "tier_tabs_aria": "Skill tiers",
       "tier_general": "General",
@@ -786,6 +798,16 @@
         "usage": "Browse the catalog and click Install to add a pack. Newly installed packs become active after the next agent run.",
         "usage_label": "How to use"
       }
+    },
+    "branding": {
+      "title": "Branding",
+      "intro": "Set the assistant's display name shown across the chat UI (logo, welcome line, message box). Leave empty to use the built-in default.",
+      "name_label": "Assistant name",
+      "name_placeholder": "e.g. Acme Assistant",
+      "hint": "Takes effect on the next chat reload. Up to 64 characters.",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "Saved"
     }
   }
 }

@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod anomaly;
 pub mod audit_exports;
+pub mod branding;
 pub mod experts;
 pub mod hotl;
 pub mod hotl_decisions;
@@ -52,12 +53,17 @@ pub fn router(state: AppState) -> Router {
             "/v1/sessions",
             get(sessions::list_sessions).post(sessions::create_session),
         )
-        .route("/v1/sessions/{id}", get(sessions::get_session))
+        .route(
+            "/v1/sessions/{id}",
+            get(sessions::get_session).patch(sessions::update_session),
+        )
         .route(
             "/v1/sessions/{id}/messages",
             get(sessions::list_messages).post(sessions::send_message),
         )
         .route("/v1/sessions/{id}/cancel", post(sessions::cancel_session))
+        // Feature ⑥ — is a turn still running server-side for this session?
+        .route("/v1/sessions/{id}/status", get(sessions::session_status))
         .route("/v1/mcp/servers", get(mcp::list_servers))
         .route(
             "/v1/mcp/marketplace",
