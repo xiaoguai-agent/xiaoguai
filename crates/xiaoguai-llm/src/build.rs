@@ -107,6 +107,17 @@ fn resolve_required_key(
     String::new()
 }
 
+/// A provider that *requires* an API key (by its `ProviderKind`) but has none
+/// configured (neither a stored `api_key` nor a resolvable `api_key_env`).
+///
+/// Such a provider builds an unauthenticated backend that can only ever return
+/// HTTP 401, so it must be kept out of automatic routing — see [`build_router`]
+/// and bug #17. Local / no-auth kinds (`Ollama`, `OpenAiCompat`) return `false`
+/// even without a key, so legitimate self-hosted providers stay routable.
+fn is_keyless_required(row: &LlmProvider, env: &dyn EnvResolver) -> bool {
+    row.kind.requires_api_key() && resolve_optional_key(row, env).is_none()
+}
+
 /// Build an [`LlmRouter`] from a slice of `LlmProvider` rows.
 ///
 /// Order of operations:
@@ -238,6 +249,23 @@ pub fn build_router(rows: &[LlmProvider], env: &dyn EnvResolver) -> (LlmRouter, 
 
     let mut config = RouterConfig::default();
     for row in &globals {
+        // Bug #17: a provider whose kind *requires* a key but has none
+        // configured can only ever return HTTP 401. Its backend is still built
+        // and kept in `backends` (so an explicit-provider route and the
+        // single-provider connectivity probe still reach it), but it must not
+        // become an automatic routing candidate — neither the default model nor
+        // a fallback link — or it poisons every keyless turn. Skip it from the
+        // candidacy maps with a warning.
+        if is_keyless_required(row, env) {
+            report.warn(format!(
+                "provider {} ({}): {} requires an API key but none is configured; \
+                 excluded from default/fallback routing (configure a key to enable it)",
+                row.name,
+                row.id.as_str(),
+                row.kind.as_str()
+            ));
+            continue;
+        }
         config.fallback_order.push(row.id.clone());
         for model in &row.default_for_models {
             // First-writer wins so the lowest fallback_order takes precedence.
@@ -249,12 +277,17 @@ pub fn build_router(rows: &[LlmProvider], env: &dyn EnvResolver) -> (LlmRouter, 
     }
 
     // Default model for requests that omit one: the first model of the primary
-    // (lowest fallback_order) provider that actually built a backend. A
-    // single-provider deployment then needs no `--model`; promoting a provider
+    // (lowest fallback_order) provider that actually built a backend AND is a
+    // valid routing candidate (not a keyless key-required provider — see #17).
+    // A single-provider deployment then needs no `--model`; promoting a provider
     // (lower fallback_order) makes its model the default.
     config.default_model = globals
         .iter()
-        .find(|row| backends.contains_key(&row.id) && !row.models.is_empty())
+        .find(|row| {
+            backends.contains_key(&row.id)
+                && !row.models.is_empty()
+                && !is_keyless_required(row, env)
+        })
         .and_then(|row| row.models.first().cloned());
 
     (LlmRouter::new(backends, config), report)
@@ -507,6 +540,161 @@ mod tests {
         assert_eq!(
             resolve_optional_key(&row, &resolver),
             Some("from-env".to_string())
+        );
+    }
+
+    /// Build a minimal `ChatRequest` for `model` so tests can drive `resolve`.
+    fn req_for(model: &str) -> crate::types::ChatRequest {
+        crate::types::ChatRequest {
+            model: model.into(),
+            messages: vec![],
+            tools: vec![],
+            tool_choice: crate::ToolChoice::Auto,
+            temperature: None,
+            max_tokens: None,
+            session_id: None,
+            user_id: None,
+            request_id: None,
+        }
+    }
+
+    // ---- Bug #17: keyless key-required providers must not poison routing ----
+
+    #[test]
+    fn keyless_key_required_provider_is_not_a_routing_candidate() {
+        // Mirrors the seeded `minimax-system` row: MiniMax kind, an api_key_env
+        // pointer but no key resolvable, lowest fallback_order so it WOULD be
+        // the default/primary candidate under the old logic.
+        let env = no_env;
+        let keyless = provider(
+            "minimax",
+            ProviderKind::MiniMax,
+            "https://api.minimaxi.com",
+            vec!["MiniMax-M2"],
+            1,
+            Some("MINIMAX_API_KEY"),
+        );
+        let keyless_id = keyless.id.clone();
+        let (router, report) = build_router(&[keyless], &env);
+
+        // (a) excluded from the default model entirely…
+        assert_eq!(
+            router.default_model(),
+            None,
+            "a keyless MiniMax provider must not become the default model (would 401)"
+        );
+        // …and from the fallback/default-for-model resolution.
+        let resolved = router.resolve(crate::ResolveCtx::default(), &req_for("MiniMax-M2"));
+        assert!(
+            !resolved.contains(&keyless_id),
+            "keyless key-required provider must not be a routing candidate, got {resolved:?}"
+        );
+        assert!(
+            report.warnings.iter().any(|w| w.contains("excluded from")),
+            "build should warn that the keyless provider was excluded; warnings={:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn keyless_local_ollama_provider_is_still_a_candidate() {
+        // Correctness guard: Ollama is keyless BY DESIGN (local, no auth). It
+        // must stay a valid default + fallback candidate even with no key.
+        let env = no_env;
+        let ollama = provider(
+            "local",
+            ProviderKind::Ollama,
+            "http://localhost:11434",
+            vec!["llama3"],
+            10,
+            None,
+        );
+        let ollama_id = ollama.id.clone();
+        let (router, _) = build_router(&[ollama], &env);
+
+        assert_eq!(
+            router.default_model(),
+            Some("llama3"),
+            "a keyless local Ollama provider must remain the deployment default"
+        );
+        let resolved = router.resolve(crate::ResolveCtx::default(), &req_for("llama3"));
+        assert_eq!(
+            resolved,
+            vec![ollama_id],
+            "Ollama must still route despite having no API key"
+        );
+    }
+
+    #[test]
+    fn keyed_key_required_provider_routes_as_before() {
+        // A MiniMax provider WITH a stored key behaves exactly as before the
+        // fix: it is the default and a fallback candidate.
+        let env = no_env;
+        let mut keyed = provider(
+            "minimax-web",
+            ProviderKind::MiniMax,
+            "https://api.minimaxi.com",
+            vec!["MiniMax-M2"],
+            1,
+            Some("MINIMAX_API_KEY"),
+        );
+        keyed.api_key = Some("sk-cp-real".to_string());
+        let keyed_id = keyed.id.clone();
+        let (router, report) = build_router(&[keyed], &env);
+
+        assert_eq!(router.default_model(), Some("MiniMax-M2"));
+        let resolved = router.resolve(crate::ResolveCtx::default(), &req_for("MiniMax-M2"));
+        assert_eq!(resolved, vec![keyed_id]);
+        assert!(
+            report.warnings.is_empty(),
+            "a keyed provider should build cleanly with no warnings; got {:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn keyless_required_provider_excluded_but_keyed_peer_still_routes() {
+        // Demo scenario: the keyless seed (lower fallback_order) must NOT win
+        // the default over a real keyed provider sitting behind it.
+        let env = no_env;
+        let keyless_primary = provider(
+            "minimax-system",
+            ProviderKind::MiniMax,
+            "https://api.minimaxi.com",
+            vec!["MiniMax-M1"],
+            1, // lowest order → would be primary/default under old logic
+            Some("MINIMAX_API_KEY"),
+        );
+        let keyless_id = keyless_primary.id.clone();
+        let mut keyed_secondary = provider(
+            "openai-real",
+            ProviderKind::OpenAiCompat,
+            "https://api.openai.com/v1",
+            vec!["gpt-4o-mini"],
+            100,
+            Some("OPENAI_API_KEY"),
+        );
+        keyed_secondary.api_key = Some("sk-real".to_string());
+        let keyed_id = keyed_secondary.id.clone();
+
+        let (router, _) = build_router(&[keyless_primary, keyed_secondary], &env);
+
+        // The keyed (higher-order) provider becomes the default, not the
+        // keyless primary that would otherwise 401.
+        assert_eq!(
+            router.default_model(),
+            Some("gpt-4o-mini"),
+            "default must skip the keyless primary and land on the keyed provider"
+        );
+        let resolved = router.resolve(crate::ResolveCtx::default(), &req_for("MiniMax-M1"));
+        assert!(
+            !resolved.contains(&keyless_id),
+            "keyless primary must be absent from the fallback chain"
+        );
+        assert_eq!(
+            resolved,
+            vec![keyed_id],
+            "only the keyed provider should be a candidate"
         );
     }
 }
