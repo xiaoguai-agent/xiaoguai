@@ -6,7 +6,8 @@ use clap::{CommandFactory, Parser};
 use xiaoguai_cli::commands::{
     anomaly, audit_bundle, audit_export, backup, chat, cli_config, code, completions, demo_seed,
     doctor, eval, hotl, init, manpages, mcp, memory, outcomes, pack, provider, r#loop, remote,
-    repl, schedule, self_update, service, skills, stats, style, tasks, watch,
+    repl, schedule, self_update, service, skills, stats, style, tasks, think_filter::ThinkStripper,
+    watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -168,9 +169,10 @@ async fn handle_chat(
         })
         .await?;
     eprintln!("session: {}", session.id);
+    let mut stripper = ThinkStripper::default();
     client
         .send_message(&session.id, &prompt, |ev| {
-            render_remote_event(&ev);
+            render_remote_event(&ev, &mut stripper);
             Ok(())
         })
         .await?;
@@ -815,13 +817,20 @@ fn render_orchestrate_event(ev: &remote::RemoteEvent) {
     }
 }
 
-fn render_remote_event(ev: &remote::RemoteEvent) {
+/// Render the assistant's streamed reply, filtered through `stripper` so
+/// `<think>` reasoning and control characters never reach the terminal. The
+/// caller owns one `ThinkStripper` per turn (state must persist across the
+/// turn's deltas) and resets it between turns.
+fn render_remote_event(ev: &remote::RemoteEvent, stripper: &mut ThinkStripper) {
     use std::io::Write as _;
     match ev.name.as_str() {
         "text_delta" => {
             if let Some(delta) = ev.payload.get("delta").and_then(serde_json::Value::as_str) {
-                print!("{delta}");
-                std::io::stdout().flush().ok();
+                let visible = stripper.push(delta);
+                if !visible.is_empty() {
+                    print!("{visible}");
+                    std::io::stdout().flush().ok();
+                }
             }
         }
         "tool_call_started" => {
@@ -869,13 +878,18 @@ fn render_remote_event(ev: &remote::RemoteEvent) {
             }
         }
         "done" => {
+            // End the line so the next prompt starts fresh. A normal finish is
+            // SILENT — `[done] completed` is noise in an interactive REPL. Only
+            // a genuinely abnormal stop gets a brief dim note.
             println!();
             let reason = ev
                 .payload
                 .get("stop_reason")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("?");
-            eprintln!("{}", style::ok(&format!("[done] {reason}")));
+            if !matches!(reason, "completed" | "stop" | "ok") {
+                eprintln!("{}", style::dim(&format!("[done] {reason}")));
+            }
         }
         "error" => {
             let msg = ev
@@ -1109,10 +1123,12 @@ async fn dispatch_repl_line(state: &mut ReplState, line: &str) -> ReplFlow {
             };
             let model_override =
                 (!state.current_model.is_empty()).then_some(state.current_model.as_str());
+            // Fresh per-turn filter so `<think>` state never leaks between turns.
+            let mut stripper = ThinkStripper::default();
             if let Err(e) = state
                 .client
                 .send_message_with_model(&state.session_id, &content, model_override, |ev| {
-                    render_remote_event(&ev);
+                    render_remote_event(&ev, &mut stripper);
                     Ok(())
                 })
                 .await
@@ -1236,9 +1252,10 @@ async fn handle_remote(server: String, action: RemoteCmd) -> Result<()> {
                 })
                 .await?;
             eprintln!("session: {}", session.id);
+            let mut stripper = ThinkStripper::default();
             client
                 .send_message(&session.id, &prompt, |ev| {
-                    render_remote_event(&ev);
+                    render_remote_event(&ev, &mut stripper);
                     Ok(())
                 })
                 .await?;

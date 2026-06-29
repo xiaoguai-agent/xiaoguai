@@ -42,7 +42,7 @@ pub fn help_text() -> String {
      \x20 /config                   show persistent settings (prompt, language)\n\
      \x20 /config set <key> <val>   change a setting (e.g. /config set language zh)\n\
      \x20 /clear                    clear the screen\n\
-     \x20 /exit, /quit              leave (Ctrl-D also works)"
+     \x20 /exit, /quit, exit, quit  leave (Ctrl-D also works)"
         .to_string()
 }
 
@@ -56,6 +56,12 @@ pub fn help_text() -> String {
 #[must_use]
 pub fn parse_command(input: &str, _current_model: &str) -> ReplAction {
     let line = input.trim();
+    // A bare `exit` / `quit` (no slash, case-insensitive) quits — the REPL
+    // convention. Only an EXACT match counts: "exit codes in bash" is still a
+    // message, not a quit.
+    if line.eq_ignore_ascii_case("exit") || line.eq_ignore_ascii_case("quit") {
+        return ReplAction::Quit;
+    }
     if !line.starts_with('/') {
         return ReplAction::Send(line.to_string());
     }
@@ -118,8 +124,32 @@ mod tests {
 
     #[test]
     fn exit_and_quit_quit() {
+        // Slash forms.
         assert_eq!(parse_command("/exit", ""), ReplAction::Quit);
         assert_eq!(parse_command("/quit", "MiniMax-M2"), ReplAction::Quit);
+        // Bare forms (REPL convention), case-insensitive + whitespace-trimmed.
+        assert_eq!(parse_command("exit", ""), ReplAction::Quit);
+        assert_eq!(parse_command("quit", ""), ReplAction::Quit);
+        assert_eq!(parse_command("  EXIT  ", ""), ReplAction::Quit);
+        assert_eq!(parse_command("Quit", ""), ReplAction::Quit);
+    }
+
+    #[test]
+    fn message_starting_with_exit_is_not_a_quit() {
+        // Only an EXACT bare `exit`/`quit` quits; a sentence that merely starts
+        // with the word is a normal message sent to the model.
+        assert_eq!(
+            parse_command("exit codes in bash", ""),
+            ReplAction::Send("exit codes in bash".into())
+        );
+        assert_eq!(
+            parse_command("quitting smoking tips", ""),
+            ReplAction::Send("quitting smoking tips".into())
+        );
+        assert_eq!(
+            parse_command("how do I exit vim?", ""),
+            ReplAction::Send("how do I exit vim?".into())
+        );
     }
 
     #[test]
