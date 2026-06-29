@@ -48,6 +48,10 @@ interface TranslationShape {
       empty: string;
       error_load: string;
     };
+    /** Phase 3 (Cherry-Studio IA) — chat-area top bar (model selector). */
+    header: {
+      model_label: string;
+    };
     /** Default assistant display name when no white-label branding is set. */
     assistant_name: string;
     welcome_title: string;

@@ -88,6 +88,9 @@
       "empty": "No assistants yet",
       "error_load": "Couldn't load assistants"
     },
+    "header": {
+      "model_label": "Model"
+    },
     "assistant_name": "Xiaoguai",
     "welcome_title": "Hi, I'm {{name}}",
     "welcome_subtitle": "What can I help you with?",

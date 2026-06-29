@@ -2148,23 +2148,81 @@ html,
 
 /* ---------------------------------------------------------- chat header (v1.3.x) */
 
-/* Hosts HotlBanner, WatchIndicator in a right-aligned row.
-   Renders nothing visible when all children are null (zero-count watchers). */
-.chat-header {
+/* Phase 3 (Cherry-Studio IA) — chat-area top bar. Holds the active-assistant
+   display (left), a prominent model selector (center) and the watch /
+   remote-running cues (right). Always present, so it gives the chat a stable
+   header even when no cues are active. */
+.chat-header-bar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding: var(--space-2) var(--space-5);
-  min-height: 0;
+  min-height: 48px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--surface);
-  /* Collapse when all children render null */
-  empty-cells: hide;
 }
 
-.chat-header:empty {
-  display: none;
+/* Active-assistant control (ExpertPicker) sits at the start. */
+.chat-header-bar__assistant {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* Indicators (remote-running, watch) pushed to the end. */
+.chat-header-bar__indicators {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+/* Cherry-style model selector — a styled native <select> with a subtle
+   border, hover and an inline label. Stays prominent and centered. */
+.chat-model-select {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chat-model-select__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+
+.chat-model-select__control {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  background-color: var(--surface);
+  /* Caret drawn as an inline SVG so it themes with currentColor-ish neutral. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-2) center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 5px 28px 5px 12px;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.chat-model-select__control:hover {
+  border-color: var(--accent);
+  background-color: var(--surface-elevated);
+}
+
+.chat-model-select__control:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
 }
 
 /* ---------------------------------------------------------- watch indicator (v1.3.x) */

@@ -88,6 +88,9 @@
       "empty": "アシスタントがありません",
       "error_load": "アシスタントの読み込みに失敗しました"
     },
+    "header": {
+      "model_label": "モデル"
+    },
     "assistant_name": "Xiaoguai",
     "welcome_title": "こんにちは、{{name}} です",
     "welcome_subtitle": "何かお手伝いできることはありますか？",

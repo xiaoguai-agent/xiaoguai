@@ -19,6 +19,7 @@ import type { HotlPendingState } from './HotlBanner';
 import { SseReconnectBanner } from './SseReconnectBanner';
 import { WatchIndicator } from './WatchIndicator';
 import { ExpertPicker } from './ExpertPicker';
+import { ChatHeaderBar } from './ChatHeaderBar';
 import { ModeToggle, getStoredChatMode, setStoredChatMode } from './ModeToggle';
 import { useI18n } from './i18n/I18nProvider';
 import { interpolate } from './i18n';
@@ -881,35 +882,45 @@ export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached
           onCancel={cancel}
         />
       )}
-      {/* Chat header — the HotlBanner is rendered above (top of the fragment),
-          not in the header; below are the expert picker + watch indicator. */}
-      <div className="chat-header">
-        {/* T3.5 — expert picker chip for the active session */}
-        <ExpertPicker
-          sessionId={sessionId}
-          // T5.2 — track whether a team is attached (gates the team-run entry).
-          onActiveChange={(a) => setTeamId(a?.kind === 'team' ? a.id : null)}
-          // Phase 4c — Skills deep-link: pre-select the pack's team (when a
-          // session exists), then drop the `?team=` param.
-          deepLinkTeamSlug={deepLinkTeamSlug}
-          onDeepLinkConsumed={clearDeepLink}
-        />
-        {/* Feature ⑥ — non-blocking cue: a turn is still running server-side
-            for this session, but this tab isn't streaming it. Its result is
-            persisted on completion; a history reload then shows it. */}
-        {remoteRunning && !streaming && (
-          <span
-            className="remote-running"
-            role="status"
-            title={t.chat.remote_running_title}
-            data-testid="remote-running"
-          >
-            <span className="remote-running__dot" aria-hidden="true" />
-            {t.chat.remote_running}
-          </span>
-        )}
-        <WatchIndicator sessionId={sessionId} />
-      </div>
+      {/* Phase 3 (Cherry-Studio IA) — chat-area top bar: active-assistant
+          display + prominent model selector + watch / remote-running cues. The
+          HotlBanner is rendered above (top of the fragment), not in the bar.
+          The model selector moved up here from the composer; all state still
+          lives in ChatPage and the `model_override` send wiring is unchanged. */}
+      <ChatHeaderBar
+        models={models}
+        model={model}
+        onModelChange={setModel}
+        assistant={
+          /* T3.5 — expert picker chip for the active session */
+          <ExpertPicker
+            sessionId={sessionId}
+            // T5.2 — track whether a team is attached (gates the team-run entry).
+            onActiveChange={(a) => setTeamId(a?.kind === 'team' ? a.id : null)}
+            // Phase 4c — Skills deep-link: pre-select the pack's team (when a
+            // session exists), then drop the `?team=` param.
+            deepLinkTeamSlug={deepLinkTeamSlug}
+            onDeepLinkConsumed={clearDeepLink}
+          />
+        }
+        remoteRunning={
+          /* Feature ⑥ — non-blocking cue: a turn is still running server-side
+             for this session, but this tab isn't streaming it. Its result is
+             persisted on completion; a history reload then shows it. */
+          remoteRunning && !streaming ? (
+            <span
+              className="remote-running"
+              role="status"
+              title={t.chat.remote_running_title}
+              data-testid="remote-running"
+            >
+              <span className="remote-running__dot" aria-hidden="true" />
+              {t.chat.remote_running}
+            </span>
+          ) : null
+        }
+        watch={<WatchIndicator sessionId={sessionId} />}
+      />
       <div className={`messages${bubbles.length === 0 ? ' messages-empty' : ''}`} ref={scrollRef}>
         {bubbles.length === 0 ? (
           <div className="welcome">
@@ -1026,21 +1037,8 @@ export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached
           )}
         </div>
         <div className="composer-meta">
-          {models.length > 0 && (
-            <select
-              className="model-picker"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              aria-label="model"
-              title="model"
-            >
-              {models.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          )}
+          {/* Phase 3 — the model selector moved up to the chat top bar
+              (ChatHeaderBar); the composer meta keeps only the mode toggle. */}
           {/* T5.2 — consult/execute toggle + read-only cue in consult mode. */}
           <ModeToggle mode={mode} onChange={changeMode} />
           <div className="composer-hint">{t.ui.composer_hint}</div>

@@ -88,6 +88,9 @@
       "empty": "暂无助手",
       "error_load": "助手加载失败"
     },
+    "header": {
+      "model_label": "模型"
+    },
     "assistant_name": "小怪",
     "welcome_title": "你好，我是{{name}}",
     "welcome_subtitle": "有什么可以帮你的？",
