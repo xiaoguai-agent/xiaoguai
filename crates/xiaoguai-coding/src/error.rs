@@ -65,6 +65,15 @@ pub enum CodingError {
         value: String,
         reason: String,
     },
+
+    /// The sandboxed JS supervisor (`run_code`, #19a) could not get the runtime
+    /// off the ground — runtime missing from `PATH`, spawn refused, snippet over
+    /// the byte cap, or workdir/IO failure. A *crashing* snippet is NOT this: a
+    /// non-zero exit (or timeout) comes back through the tool's result text, not
+    /// as an error. Carries the underlying reason so the agent can self-correct
+    /// (e.g. "install deno").
+    #[error("sandboxed code execution failed: {reason}")]
+    Exec { reason: String },
 }
 
 impl CodingError {

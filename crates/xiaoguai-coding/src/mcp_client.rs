@@ -22,6 +22,7 @@ use std::path::Path;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use xiaoguai_mcp::{McpClient, McpResult, MutationHint, ServerInfo, ToolDescriptor, ToolResult};
+use xiaoguai_mcp_exec_js::ExecResult;
 
 use crate::{CheckpointId, CodingGate, CommandRun, FileEdit, GovernedTools, StepRecorder};
 
@@ -203,6 +204,22 @@ pub fn coding_tool_descriptors(include_egress: bool, include_exec: bool) -> Vec<
             }),
             MutationHint::Write,
         ));
+        tools.push(descriptor(
+            "run_code",
+            "[WRITE] Run a JavaScript snippet in an ISOLATED sandbox (fresh \
+             tempdir, scrubbed env, no access to your files or working \
+             directory). For computation/transformation that needs no local \
+             files. Args: code (string, required). Deno runtime; needs deno on \
+             PATH.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "code": { "type": "string", "description": "JavaScript snippet to run in the isolated sandbox (Deno)." }
+                },
+                "required": ["code"]
+            }),
+            MutationHint::Write,
+        ));
     }
     tools
 }
@@ -376,10 +393,19 @@ where
                     .map_err(|e| e.to_string())?;
                 Ok(format_command_run(&run))
             }
+            "run_code" => {
+                let code = str_arg(args, "code")?;
+                let result = self
+                    .tools
+                    .run_code(&code)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(format_exec_result(&result))
+            }
             other => Err(format!(
                 "unknown coding tool `{other}`; available: read_file, list_dir, \
                  grep, git_status, edit_file, git_commit, rollback, git_push, \
-                 open_pr, run_command"
+                 open_pr, run_command, run_code"
             )),
         }
     }
@@ -452,6 +478,35 @@ fn format_command_run(run: &CommandRun) -> String {
     } else {
         format!("{status}\n{}", run.stdout_combined)
     }
+}
+
+/// Render an [`ExecResult`] (sandboxed `run_code`) as the tool's text: a status
+/// header (exit code or timeout) plus captured stdout and — when non-empty —
+/// stderr, so the model sees both the outcome and what the snippet printed.
+/// stderr is already PII-redacted by the sandbox (`redact_stderr` default-on).
+fn format_exec_result(result: &ExecResult) -> String {
+    let mut status = if result.timed_out {
+        "[timed out; partial output below]".to_string()
+    } else {
+        match result.exit_code {
+            Some(0) => "[exit 0]".to_string(),
+            Some(code) => format!("[exit {code}]"),
+            None => "[terminated]".to_string(),
+        }
+    };
+    if result.truncated {
+        status.push_str(" [output truncated]");
+    }
+    let mut out = status;
+    if !result.stdout.is_empty() {
+        out.push('\n');
+        out.push_str(&result.stdout);
+    }
+    if !result.stderr.is_empty() {
+        out.push_str("\nstderr:\n");
+        out.push_str(&result.stderr);
+    }
+    out
 }
 
 fn text_result(text: String, is_error: bool) -> ToolResult {
@@ -664,8 +719,9 @@ mod tests {
 
     #[test]
     fn descriptors_gate_exec() {
-        // run_command is absent unless the exec opt-in is on, and it carries the
-        // Write mutation hint (⇒ consult mode auto-blocks it, per option C).
+        // run_command + run_code are absent unless the exec opt-in is on, and
+        // both carry the Write mutation hint (⇒ consult mode auto-blocks them,
+        // per option C). They turn on together under the single exec opt-in.
         let no_exec: Vec<_> = coding_tool_descriptors(false, false)
             .into_iter()
             .map(|d| d.name)
@@ -674,6 +730,10 @@ mod tests {
             !no_exec.contains(&"run_command".to_string()),
             "run_command must not be exposed without the exec opt-in"
         );
+        assert!(
+            !no_exec.contains(&"run_code".to_string()),
+            "run_code must not be exposed without the exec opt-in"
+        );
 
         let with_exec = coding_tool_descriptors(false, true);
         let exec = with_exec
@@ -681,6 +741,12 @@ mod tests {
             .find(|d| d.name == "run_command")
             .expect("run_command present when exec opted in");
         assert_eq!(exec.mutation_hint, MutationHint::Write);
+        // run_code (the sandboxed sibling) appears under the same opt-in, also Write.
+        let code = with_exec
+            .iter()
+            .find(|d| d.name == "run_code")
+            .expect("run_code present when exec opted in");
+        assert_eq!(code.mutation_hint, MutationHint::Write);
         // exec opt-in alone must not pull in the egress tools.
         assert!(!with_exec.iter().any(|d| d.name == "git_push"));
     }

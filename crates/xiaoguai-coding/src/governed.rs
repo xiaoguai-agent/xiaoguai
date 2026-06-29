@@ -15,8 +15,10 @@
 //! approval, immediately before the mutation, exactly as DEC-035 requires.
 
 use std::path::Path;
+use std::time::Duration;
 
 use async_trait::async_trait;
+use xiaoguai_mcp_exec_js::{run_javascript, ExecConfig, ExecResult};
 
 use crate::checkpoint::CheckpointId;
 use crate::error::CodingError;
@@ -27,6 +29,11 @@ use crate::workspace::{CommandRun, Workspace};
 /// so a long one-liner doesn't bloat the audit row (the full command is the
 /// model's tool arg, already on the chain via the surrounding turn).
 const EXEC_SUMMARY_CMD_CAP: usize = 200;
+
+/// Per-call wall-clock deadline requested for a sandboxed `run_code` snippet.
+/// Clamped down by `ExecConfig::max_timeout` (30s) inside `run_javascript`, so
+/// this is the effective ceiling for a JS snippet.
+const RUN_CODE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A resolved gate decision for one mutating coding action.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -301,6 +308,43 @@ impl<G: CodingGate, R: StepRecorder> GovernedTools<G, R> {
         .await;
         Ok(run)
     }
+
+    /// Governed `run_code`: gate `tool_call.run_code` → run the JavaScript
+    /// snippet in an ISOLATED sandbox (fresh tempdir CWD + scrubbed env +
+    /// `ulimit` + wall-clock deadline, all inside
+    /// [`xiaoguai_mcp_exec_js::run_javascript`]) → audit `code.exec_sandboxed`.
+    ///
+    /// This is the lower-risk sibling of [`Self::run_command`]: the sandbox
+    /// cannot touch the session working dir or the owner's files, so there is
+    /// nothing to checkpoint — like the other exec/egress steps it is recorded
+    /// as a non-revertible action. On deny it records `code.exec_sandboxed_denied`
+    /// and proceeds no further.
+    ///
+    /// A *crashing* snippet (non-zero exit, or a timeout) is a successful
+    /// supervision and comes back in the [`ExecResult`]; only the supervisor
+    /// itself failing (runtime missing, snippet over cap, spawn/IO error) maps
+    /// to [`CodingError::Exec`].
+    pub async fn run_code(&self, code: &str) -> Result<ExecResult, CodingError> {
+        self.authorize("tool_call.run_code", "code.exec_sandboxed")
+            .await?;
+        let result = run_javascript(&ExecConfig::default(), code, RUN_CODE_TIMEOUT)
+            .await
+            .map_err(|e| CodingError::Exec {
+                reason: e.to_string(),
+            })?;
+        let outcome = if result.timed_out {
+            "timed out".to_string()
+        } else {
+            format!("exit={}", exit_label(result.exit_code))
+        };
+        self.record_egress(
+            "code.exec_sandboxed",
+            "tool_call.run_code",
+            format!("{} ({outcome})", truncate_command(code)),
+        )
+        .await;
+        Ok(result)
+    }
 }
 
 fn short(sha: &str) -> &str {
@@ -564,6 +608,49 @@ mod tests {
             "denied command must not run"
         );
         assert_eq!(tools.recorder.actions(), vec!["code.exec_denied"]);
+        assert_eq!(tools.recorder.last_checkpoint(), None);
+    }
+
+    #[tokio::test]
+    async fn denied_run_code_does_not_exec_and_audits_denied() {
+        // Deny path needs no JS runtime: the gate refuses BEFORE run_javascript
+        // is ever called, so this is safe to run un-ignored in CI (cf. #243,
+        // which quarantined deno-spawning tests for runner death).
+        let (_dir, ws) = workspace().await;
+        let tools = GovernedTools::new(
+            ws,
+            FixedGate(GateDecision::Deny("consult mode: no sandboxed exec".into())),
+            SpyRecorder::default(),
+        );
+        let err = tools
+            .run_code("console.log('should never run')")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CodingError::Denied { .. }));
+        // exactly one denied row under the sandboxed action name, no checkpoint.
+        assert_eq!(tools.recorder.actions(), vec!["code.exec_sandboxed_denied"]);
+        assert_eq!(tools.recorder.last_checkpoint(), None);
+    }
+
+    /// Allow-path smoke for `run_code`: ACTUALLY spawns deno, so it is
+    /// `#[ignore]`d to keep it out of the default CI path (#243 — deno-spawning
+    /// tests caused runner OOM/death in xiaoguai-mcp-exec). Run locally with
+    /// `cargo test -p xiaoguai-coding -- --ignored run_code_allow` on a box with
+    /// deno on PATH.
+    #[tokio::test]
+    #[ignore = "spawns deno; gated out of CI per #243 runner-death"]
+    async fn allowed_run_code_executes_in_sandbox_and_audits() {
+        let (_dir, ws) = workspace().await;
+        let tools = GovernedTools::new(ws, FixedGate(GateDecision::Allow), SpyRecorder::default());
+        let result = tools
+            .run_code("console.log('hello from sandbox')")
+            .await
+            .expect("supervisor must succeed");
+        assert_eq!(result.exit_code, Some(0), "stderr: {}", result.stderr);
+        assert_eq!(result.stdout.trim(), "hello from sandbox");
+        assert!(!result.timed_out);
+        // one non-revertible sandboxed-exec row, no checkpoint.
+        assert_eq!(tools.recorder.actions(), vec!["code.exec_sandboxed"]);
         assert_eq!(tools.recorder.last_checkpoint(), None);
     }
 
