@@ -533,6 +533,9 @@ html,
 /* ------------------------------------------------------------------ bubble */
 
 .bubble {
+  /* Positioning context for the absolutely-placed corner overlays
+     (`.copy-btn`, `.message-toolbar`) so they anchor to the bubble. */
+  position: relative;
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-xl);
   white-space: pre-wrap;
@@ -1323,6 +1326,66 @@ html,
 }
 
 .bubble-fork:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* Phase 4b — per-message hover action toolbar (Cherry-Studio style). Same
+   hover-reveal pattern as `.copy-btn` / `.bubble-fork`: parked in the bubble's
+   top-right corner, faded in on hover or keyboard focus within the bubble.
+   Superseding the single `.bubble-fork` button with a small action cluster
+   (copy / regenerate / edit / branch / delete). */
+.message-toolbar {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  transition: opacity 120ms ease;
+  z-index: 1;
+}
+
+.bubble.copy-host:hover .message-toolbar,
+.message-toolbar:focus-within {
+  opacity: 1;
+}
+
+.message-toolbar__btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-soft);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.message-toolbar__btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.message-toolbar__btn--danger:hover {
+  background: var(--tool-error-bg);
+  color: var(--tool-error-fg);
+}
+
+.message-toolbar__btn:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
 }

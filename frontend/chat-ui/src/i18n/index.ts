@@ -66,6 +66,23 @@ interface TranslationShape {
     branch: string;
     branch_title: string;
     branch_label: string;
+    /** Phase 4b — per-message hover action toolbar (copy / regenerate / edit /
+     *  branch / delete) + their status / confirm strings. */
+    message_actions: {
+      toolbar_label: string;
+      copy: string;
+      regenerate: string;
+      edit: string;
+      branch: string;
+      delete: string;
+      delete_confirm: string;
+      copied: string;
+      copy_failed: string;
+      delete_failed: string;
+      regenerate_failed: string;
+      edit_failed: string;
+      edit_prompt: string;
+    };
     /** Opening prompts on the welcome screen (Gemini-style chips). */
     suggestions: {
       summarize_doc: string;

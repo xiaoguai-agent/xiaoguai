@@ -104,6 +104,21 @@
     "branch": "Branch",
     "branch_title": "Branch a new conversation from this point",
     "branch_label": "Branch from here",
+    "message_actions": {
+      "toolbar_label": "Message actions",
+      "copy": "Copy",
+      "regenerate": "Regenerate",
+      "edit": "Edit",
+      "branch": "Branch from here",
+      "delete": "Delete",
+      "delete_confirm": "Delete this message?",
+      "copied": "Copied to clipboard",
+      "copy_failed": "Copy failed: {{message}}",
+      "delete_failed": "Delete failed: {{message}}",
+      "regenerate_failed": "Regenerate failed: {{message}}",
+      "edit_failed": "Edit failed: {{message}}",
+      "edit_prompt": "Edit your message, then send again:"
+    },
     "suggestions": {
       "summarize_doc": "Summarize a document for me",
       "write_shell": "Write a shell script",

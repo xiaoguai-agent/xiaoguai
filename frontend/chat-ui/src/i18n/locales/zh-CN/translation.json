@@ -104,6 +104,21 @@
     "branch": "分支",
     "branch_title": "从此处分支出新对话",
     "branch_label": "从此处分支",
+    "message_actions": {
+      "toolbar_label": "消息操作",
+      "copy": "复制",
+      "regenerate": "重新生成",
+      "edit": "编辑",
+      "branch": "分支",
+      "delete": "删除",
+      "delete_confirm": "确定删除这条消息?",
+      "copied": "已复制到剪贴板",
+      "copy_failed": "复制失败:{{message}}",
+      "delete_failed": "删除失败:{{message}}",
+      "regenerate_failed": "重新生成失败:{{message}}",
+      "edit_failed": "编辑失败:{{message}}",
+      "edit_prompt": "编辑你的消息后重新发送:"
+    },
     "suggestions": {
       "summarize_doc": "帮我总结一份文档",
       "write_shell": "写一个 shell 脚本",

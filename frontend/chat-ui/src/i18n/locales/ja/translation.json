@@ -104,6 +104,21 @@
     "branch": "分岐",
     "branch_title": "この時点から新しい会話を分岐",
     "branch_label": "ここから分岐",
+    "message_actions": {
+      "toolbar_label": "メッセージ操作",
+      "copy": "コピー",
+      "regenerate": "再生成",
+      "edit": "編集",
+      "branch": "ここから分岐",
+      "delete": "削除",
+      "delete_confirm": "このメッセージを削除しますか?",
+      "copied": "クリップボードにコピーしました",
+      "copy_failed": "コピーに失敗しました: {{message}}",
+      "delete_failed": "削除に失敗しました: {{message}}",
+      "regenerate_failed": "再生成に失敗しました: {{message}}",
+      "edit_failed": "編集に失敗しました: {{message}}",
+      "edit_prompt": "メッセージを編集して再送信してください:"
+    },
     "suggestions": {
       "summarize_doc": "ドキュメントを要約して",
       "write_shell": "シェルスクリプトを書いて",
