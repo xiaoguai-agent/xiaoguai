@@ -67,6 +67,35 @@ impl ProviderKind {
         }
     }
 
+    /// Whether this provider kind needs an API key (or equivalent credential)
+    /// to make a usable call. Cloud providers (`MiniMax`, `Anthropic`, `Gemini`,
+    /// `Bedrock`, `AzureOpenAi`, `Mistral`, `Groq`) reject unauthenticated
+    /// requests with HTTP 401, so a row of one of these kinds with no key
+    /// configured can never serve a turn.
+    ///
+    /// `Ollama` is local and needs no key. `OpenAiCompat` is treated as
+    /// *not* requiring one because that kind also fronts local / self-hosted
+    /// OpenAI-compatible servers (e.g. vLLM, LM Studio) that run without auth —
+    /// mirroring `build_router`, which builds it with `resolve_optional_key`
+    /// rather than demanding a key.
+    ///
+    /// Used by `build_router` to keep a key-required-but-keyless provider out of
+    /// the routing default / fallback chain so it can't poison routing with a
+    /// guaranteed 401 (bug #17).
+    #[must_use]
+    pub const fn requires_api_key(self) -> bool {
+        match self {
+            Self::Ollama | Self::OpenAiCompat => false,
+            Self::Anthropic
+            | Self::Gemini
+            | Self::Bedrock
+            | Self::AzureOpenAi
+            | Self::Mistral
+            | Self::Groq
+            | Self::MiniMax => true,
+        }
+    }
+
     /// Parse the DB string back into a kind. Returns `None` for unknown values.
     ///
     /// Named `parse` rather than `from_str` to avoid confusion with the
@@ -145,6 +174,25 @@ mod tests {
     #[test]
     fn unknown_kind_returns_none() {
         assert_eq!(ProviderKind::parse("vertexai"), None);
+    }
+
+    #[test]
+    fn cloud_kinds_require_a_key_local_kinds_do_not() {
+        for k in [
+            ProviderKind::Anthropic,
+            ProviderKind::Gemini,
+            ProviderKind::Bedrock,
+            ProviderKind::AzureOpenAi,
+            ProviderKind::Mistral,
+            ProviderKind::Groq,
+            ProviderKind::MiniMax,
+        ] {
+            assert!(k.requires_api_key(), "{} should require a key", k.as_str());
+        }
+        // Ollama is local; OpenAiCompat also fronts unauthenticated local
+        // servers (vLLM/LM Studio), so neither is treated as key-required.
+        assert!(!ProviderKind::Ollama.requires_api_key());
+        assert!(!ProviderKind::OpenAiCompat.requires_api_key());
     }
 
     #[test]
