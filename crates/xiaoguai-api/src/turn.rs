@@ -228,13 +228,41 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
         state.agent_defaults.clone()
     };
 
+    // 2c''. Attached persona (DEC-036 three-tier model — see `glossary.rs`):
+    //       identity (owner, outermost) → team glossary (shared vocabulary) →
+    //       persona `system_prompt` (the session's ROLE, innermost of the
+    //       three so it sits closest to the task). When the session has a
+    //       persona attached and its prompt is non-blank (and the persona is
+    //       not archived), inject it as a System message. Inserted at 0 here,
+    //       BEFORE the glossary/identity inserts below, so each later
+    //       insert-at-0 pushes it down one and the final System order is
+    //       [identity, glossary, persona, loop_note?, ...history]. Applies to
+    //       Execute, Consult AND loop turns — a persona is the session's role
+    //       regardless of mode. Best-effort: a lookup failure is logged and
+    //       the turn proceeds without the persona (context enrichment must
+    //       never block chat). Like identity/glossary, never persisted into
+    //       the session history.
+    if let Some(personas) = &state.personas {
+        match personas.get_session_persona(&input.session_id).await {
+            Ok(Some(persona)) if !persona.archived => {
+                for prompt in xiaoguai_personas::build_system_messages(&persona) {
+                    messages.insert(0, LlmMessage::system(prompt));
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "persona: session-persona lookup failed (skipping)");
+            }
+        }
+    }
+
     // 2c'. Team glossary (T7.1): when the session has a team attached and
     //      that team carries a glossary, inject it as a System message
     //      AFTER the identity message (inserted at 0 below, so identity
     //      stays the outermost frame) and BEFORE the history:
-    //      [identity, glossary, loop_note?, ...history]. Applies to Execute
-    //      AND Consult turns (read-only context either way) and to loop
-    //      ticks — a loop tick belongs to a session like any other turn.
+    //      [identity, glossary, persona?, loop_note?, ...history]. Applies to
+    //      Execute AND Consult turns (read-only context either way) and to
+    //      loop ticks — a loop tick belongs to a session like any other turn.
     //      Best-effort: a repo failure is logged and the turn proceeds
     //      without the glossary (context enrichment must not block chat).
     //      Like identity, never persisted into the session history.
