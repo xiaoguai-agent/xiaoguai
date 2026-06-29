@@ -25,8 +25,27 @@ type Status =
   | { kind: 'installed'; slug: string }
   | { kind: 'error'; slug: string; message: string };
 
+// Bilingual rendering — under a Chinese locale prefer the `*_zh` fields,
+// falling back to the canonical English when null/empty. Mirrors the helper
+// pattern in `SkillPacks.tsx`.
+function isChinese(locale: string): boolean {
+  return locale.startsWith('zh');
+}
+
+/** Pick the locale-appropriate string, falling back when the localized value
+ *  is null / empty / whitespace. */
+function pickLocalized(
+  primary: string | null | undefined,
+  fallback: string,
+  chinese: boolean,
+): string {
+  if (chinese && primary != null && primary.trim() !== '') return primary;
+  return fallback;
+}
+
 export function MarketplacePane() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const chinese = isChinese(i18n.language);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
 
   // DEC-041 (frontend half): shared async-state replaces the bespoke
@@ -81,10 +100,10 @@ export function MarketplacePane() {
                 return (
                 <article key={entry.slug} className="marketplace-card">
                   <header>
-                    <h3>{entry.name}</h3>
+                    <h3>{pickLocalized(entry.name_zh, entry.name, chinese)}</h3>
                     <span className="tag">{entry.transport}</span>
                   </header>
-                  <p>{entry.description}</p>
+                  <p>{pickLocalized(entry.description_zh, entry.description, chinese)}</p>
                   {entry.env_keys && entry.env_keys.length > 0 && (
                     <div className="env-keys">
                       {t('pane.marketplace.required_env')}{' '}

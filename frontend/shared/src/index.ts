@@ -346,7 +346,12 @@ export interface CaseFromSessionResponse {
 export interface MarketplaceEntry {
   slug: string;
   name: string;
+  /** Chinese display name; the UI prefers this under a Chinese locale,
+   *  falling back to `name`. */
+  name_zh?: string | null;
   description: string;
+  /** Chinese description; same fallback contract as `name_zh`. */
+  description_zh?: string | null;
   category: string;
   transport: 'stdio' | 'sse' | 'http';
   version: string;
@@ -1695,6 +1700,20 @@ export class XiaoguaiClient {
 
   listMessages(sessionId: string): Promise<Message[]> {
     return this.request<Message[]>('GET', `/v1/sessions/${encodeURIComponent(sessionId)}/messages`);
+  }
+
+  /**
+   * Delete a single message from a session (chat-ui message toolbar "删除").
+   * Mirrors `DELETE /v1/sessions/{session_id}/messages/{message_id}`: the
+   * backend scopes the delete by both ids, so a missing message — or a
+   * message id paired with the wrong session — answers 404. Resolves void on
+   * 204 No Content.
+   */
+  deleteMessage(sessionId: string, messageId: string): Promise<void> {
+    return this.requestNoContent(
+      'DELETE',
+      `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
+    );
   }
 
   /**

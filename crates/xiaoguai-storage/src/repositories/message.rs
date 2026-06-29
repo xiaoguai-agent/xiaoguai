@@ -26,6 +26,12 @@ pub trait MessageRepository: Send + Sync {
     /// audit chain. If you ever expose it, emit a `message.delete` audit entry
     /// at the call site (see the `agent.run` entry in `routes/sessions.rs`).
     async fn delete_by_session(&self, session_id: &str) -> RepoResult<u64>;
+    /// Delete a single message, scoped by BOTH `session_id` and `message_id`
+    /// so a message can never be deleted across sessions (the route relies on
+    /// this for existence/ownership — there is no separate find). Returns
+    /// [`RepoError::NotFound`] when no row matched so the caller can map a
+    /// missing message (or wrong session) onto a 404.
+    async fn delete_message(&self, session_id: &str, message_id: &str) -> RepoResult<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -151,5 +157,24 @@ impl MessageRepository for SqliteMessageRepository {
             .map_err(RepoError::from_sqlx)?;
         tx.commit().await.map_err(RepoError::from_sqlx)?;
         Ok(result.rows_affected())
+    }
+
+    async fn delete_message(&self, session_id: &str, message_id: &str) -> RepoResult<()> {
+        let mut tx = self.pool.begin().await.map_err(RepoError::from_sqlx)?;
+        // Scope by BOTH ids: a message belongs to exactly one session, so an
+        // id paired with the wrong session matches nothing — that protects
+        // against deleting across sessions and yields NotFound below.
+        let result = sqlx::query("DELETE FROM messages WHERE id = ? AND session_id = ?")
+            .bind(message_id)
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(RepoError::from_sqlx)?;
+        if result.rows_affected() == 0 {
+            // Roll back the (empty) tx rather than committing a no-op.
+            return Err(RepoError::NotFound);
+        }
+        tx.commit().await.map_err(RepoError::from_sqlx)?;
+        Ok(())
     }
 }

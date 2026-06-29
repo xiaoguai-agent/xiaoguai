@@ -5,7 +5,13 @@ import './i18n'; // initialise i18next before first render (explicit, not relyin
 import { App } from './App';
 import { AuthGate } from './auth/AuthGate';
 import { ScopeProvider } from './hooks/useScopes';
+import { applyInitialTheme } from './theme';
 import './styles.css';
+
+// Apply the shared light/dark theme before React mounts so navigating
+// chat → /admin/ keeps the same palette (the toggle lives in the chat rail;
+// admin-ui only reads `localStorage["xiaoguai-theme"]`).
+applyInitialTheme();
 
 // DEC-033: auth is a single-owner HTTP Basic credential. A 401 (the backend
 // has a credential set and we don't have it / it's wrong) is handled by

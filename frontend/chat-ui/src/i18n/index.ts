@@ -2,21 +2,19 @@
  * Minimal i18n helper — resolves the browser locale to one of the bundled
  * translation files without pulling in a full i18next dependency.
  *
- * Supported locales: en (default), zh-CN, ja.
+ * Supported locales: en (default), zh-CN.
  * Falls back to en for any locale not in the map.
  */
 
 import en from './locales/en/translation.json';
 import zhCN from './locales/zh-CN/translation.json';
-import ja from './locales/ja/translation.json';
 
-export type Locale = 'en' | 'zh-CN' | 'ja';
+export type Locale = 'en' | 'zh-CN';
 
 /** Locales offered in the language switcher, with native display labels. */
 export const AVAILABLE_LOCALES: ReadonlyArray<{ code: Locale; label: string }> = [
   { code: 'en', label: 'English' },
   { code: 'zh-CN', label: '中文' },
-  { code: 'ja', label: '日本語' },
 ];
 
 /** localStorage key holding the operator's explicit language choice. */
@@ -30,6 +28,38 @@ interface TranslationShape {
     admin: string;
     language_label: string;
     no_sessions: string;
+    /** Phase 2 (Cherry-Studio IA) — narrow icon nav-rail labels. */
+    nav: {
+      chat: string;
+      skills: string;
+      activity: string;
+      providers: string;
+      usage: string;
+      incidents: string;
+      loops: string;
+      memory: string;
+      hotl: string;
+      branding: string;
+      mcp: string;
+      anomaly: string;
+      scheduler: string;
+      settings: string;
+    };
+    /** Phase 2 (Cherry-Studio IA) — assistant/topic list-panel strings. */
+    assistant: {
+      tab_assistants: string;
+      tab_topics: string;
+      general: string;
+      group_personas: string;
+      group_teams: string;
+      search_placeholder: string;
+      empty: string;
+      error_load: string;
+    };
+    /** Phase 3 (Cherry-Studio IA) — chat-area top bar (model selector). */
+    header: {
+      model_label: string;
+    };
     /** Default assistant display name when no white-label branding is set. */
     assistant_name: string;
     welcome_title: string;
@@ -41,9 +71,23 @@ interface TranslationShape {
     stop_generating: string;
     send_message: string;
     thinking: string;
-    branch: string;
-    branch_title: string;
-    branch_label: string;
+    /** Phase 4b — per-message hover action toolbar (copy / regenerate / edit /
+     *  branch / delete) + their status / confirm strings. */
+    message_actions: {
+      toolbar_label: string;
+      copy: string;
+      regenerate: string;
+      edit: string;
+      branch: string;
+      delete: string;
+      delete_confirm: string;
+      copied: string;
+      copy_failed: string;
+      delete_failed: string;
+      regenerate_failed: string;
+      edit_failed: string;
+      edit_prompt: string;
+    };
     /** Opening prompts on the welcome screen (Gemini-style chips). */
     suggestions: {
       summarize_doc: string;
@@ -238,19 +282,17 @@ interface TranslationShape {
 const bundles: Record<Locale, TranslationShape> = {
   en: en as unknown as TranslationShape,
   'zh-CN': zhCN as unknown as TranslationShape,
-  ja: ja as unknown as TranslationShape,
 };
 
 function detectLocale(): Locale {
   const nav = typeof navigator !== 'undefined' ? navigator.language : 'en';
   if (nav === 'zh-CN' || nav.startsWith('zh')) return 'zh-CN';
-  if (nav === 'ja' || nav.startsWith('ja')) return 'ja';
   return 'en';
 }
 
 /** True when `value` is one of the bundled locales. */
 function isLocale(value: string | null): value is Locale {
-  return value === 'en' || value === 'zh-CN' || value === 'ja';
+  return value === 'en' || value === 'zh-CN';
 }
 
 /**

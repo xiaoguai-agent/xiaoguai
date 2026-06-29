@@ -44,8 +44,7 @@
   "language": {
     "label": "Language",
     "en": "English",
-    "zh_CN": "中文",
-    "ja": "日本語"
+    "zh_CN": "中文"
   },
   "pane": {
     "today": {
@@ -389,6 +388,11 @@
       "col_max_usd": "Max USD",
       "col_window": "Window",
       "col_escalate_to": "Escalate to",
+      "label_scope": "Scope",
+      "label_window": "Window (seconds)",
+      "label_max_count": "Max count",
+      "label_max_usd": "Max USD",
+      "label_escalate": "Escalate to (optional)",
       "empty": "No HotL policies yet.",
       "unavailable_title": "Policy store not available.",
       "unavailable_body": "PgHotlPolicyStore is not yet wired — the API returned 503. This is expected in dev mode without Postgres. Check bridges status:",

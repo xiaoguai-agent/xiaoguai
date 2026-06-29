@@ -166,6 +166,7 @@ function PolicyForm({
   saving,
   serverError,
 }: PolicyFormProps): JSX.Element {
+  const { t } = useTranslation();
   const [form, setForm] = useState<FormState>(initial);
   const [touched, setTouched] = useState(false);
 
@@ -194,7 +195,8 @@ function PolicyForm({
     <form onSubmit={handleSubmit} noValidate>
       <div style={{ marginBottom: '0.75rem' }}>
         <label htmlFor="hotl-scope">
-          <strong>Scope</strong> <span style={{ color: 'var(--danger)' }}>*</span>
+          <strong>{t('pane.hotl_policies.label_scope')}</strong>{' '}
+          <span style={{ color: 'var(--danger)' }}>*</span>
         </label>
         <input
           id="hotl-scope"
@@ -217,7 +219,8 @@ function PolicyForm({
 
       <div style={{ marginBottom: '0.75rem' }}>
         <label htmlFor="hotl-window">
-          <strong>Window (seconds)</strong> <span style={{ color: 'var(--danger)' }}>*</span>
+          <strong>{t('pane.hotl_policies.label_window')}</strong>{' '}
+          <span style={{ color: 'var(--danger)' }}>*</span>
         </label>
         <input
           id="hotl-window"
@@ -242,7 +245,7 @@ function PolicyForm({
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
         <div>
-          <label htmlFor="hotl-max-count">Max count</label>
+          <label htmlFor="hotl-max-count">{t('pane.hotl_policies.label_max_count')}</label>
           <input
             id="hotl-max-count"
             type="number"
@@ -258,7 +261,7 @@ function PolicyForm({
           {showErr('max_count')}
         </div>
         <div>
-          <label htmlFor="hotl-max-usd">Max USD</label>
+          <label htmlFor="hotl-max-usd">{t('pane.hotl_policies.label_max_usd')}</label>
           <input
             id="hotl-max-usd"
             type="number"
@@ -276,7 +279,7 @@ function PolicyForm({
       </div>
 
       <div style={{ marginBottom: '1rem' }}>
-        <label htmlFor="hotl-escalate">Escalate to (optional)</label>
+        <label htmlFor="hotl-escalate">{t('pane.hotl_policies.label_escalate')}</label>
         <input
           id="hotl-escalate"
           type="text"
@@ -431,6 +434,7 @@ interface TestDrawerProps {
 }
 
 function TestDrawer({ onClose }: TestDrawerProps): JSX.Element {
+  const { t } = useTranslation();
   const [scope, setScope] = useState('');
   const [amount, setAmount] = useState('1.0');
   const [checkState, setCheckState] = useState<CheckState>({ kind: 'idle' });
@@ -488,7 +492,7 @@ function TestDrawer({ onClose }: TestDrawerProps): JSX.Element {
           </p>
           <form onSubmit={(e) => void handleCheck(e)}>
             <div style={{ marginBottom: '0.75rem' }}>
-              <label htmlFor="test-scope">Scope</label>
+              <label htmlFor="test-scope">{t('pane.hotl_policies.label_scope')}</label>
               <input
                 id="test-scope"
                 type="text"

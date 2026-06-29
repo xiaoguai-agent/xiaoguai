@@ -9,7 +9,8 @@ use common::test_setup;
 use serde_json::json;
 use sqlx::SqlitePool;
 use xiaoguai_storage::repositories::{
-    MessageRepository, SessionRepository, SqliteMessageRepository, SqliteSessionRepository,
+    MessageRepository, RepoError, SessionRepository, SqliteMessageRepository,
+    SqliteSessionRepository,
 };
 use xiaoguai_types::{
     ContentBlock, Message, MessageId, MessageRole, Session, SessionId, SessionStatus, UserId,
@@ -280,6 +281,102 @@ async fn delete_by_session_returns_rowcount_and_is_idempotent() {
         repo.count_by_session(session_id.as_str())
             .await
             .expect("count"),
+        0
+    );
+}
+
+#[tokio::test]
+async fn delete_message_removes_one_and_is_not_found_on_redelete() {
+    let (pool, _guard) = test_setup().await;
+    let user = seed_user(&pool).await;
+    let session_id = seed_session(&pool, &user).await;
+    let repo = SqliteMessageRepository::new(pool.clone());
+
+    let keep = fixture_message(
+        &session_id,
+        MessageRole::User,
+        vec![ContentBlock::Text {
+            text: "keep me".to_string(),
+        }],
+    );
+    let drop = fixture_message(
+        &session_id,
+        MessageRole::Assistant,
+        vec![ContentBlock::Text {
+            text: "drop me".to_string(),
+        }],
+    );
+    repo.append(&keep).await.expect("append keep");
+    repo.append(&drop).await.expect("append drop");
+
+    // Delete the targeted message; the sibling survives.
+    repo.delete_message(session_id.as_str(), drop.id.as_str())
+        .await
+        .expect("delete message");
+
+    let remaining = repo
+        .list_by_session(session_id.as_str(), 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].id.as_str(), keep.id.as_str());
+
+    // Re-deleting the same id now finds nothing → NotFound (no silent no-op).
+    let err = repo
+        .delete_message(session_id.as_str(), drop.id.as_str())
+        .await
+        .expect_err("re-delete must be NotFound");
+    assert!(
+        matches!(err, RepoError::NotFound),
+        "expected NotFound, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn delete_message_is_scoped_to_session() {
+    let (pool, _guard) = test_setup().await;
+    let user = seed_user(&pool).await;
+    let session_a = seed_session(&pool, &user).await;
+    let session_b = seed_session(&pool, &user).await;
+    let repo = SqliteMessageRepository::new(pool.clone());
+
+    // A real message in session A.
+    let msg = fixture_message(
+        &session_a,
+        MessageRole::User,
+        vec![ContentBlock::Text {
+            text: "in A".to_string(),
+        }],
+    );
+    repo.append(&msg).await.expect("append");
+
+    // Deleting it under the WRONG session (B) must not delete it and must
+    // report NotFound — a message can't be deleted across sessions.
+    let err = repo
+        .delete_message(session_b.as_str(), msg.id.as_str())
+        .await
+        .expect_err("cross-session delete must be NotFound");
+    assert!(
+        matches!(err, RepoError::NotFound),
+        "expected NotFound, got {err:?}"
+    );
+
+    // The message is still present in its own session.
+    assert_eq!(
+        repo.count_by_session(session_a.as_str())
+            .await
+            .expect("count A"),
+        1
+    );
+
+    // Deleting with the correct session succeeds.
+    repo.delete_message(session_a.as_str(), msg.id.as_str())
+        .await
+        .expect("scoped delete");
+    assert_eq!(
+        repo.count_by_session(session_a.as_str())
+            .await
+            .expect("count A after"),
         0
     );
 }

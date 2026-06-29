@@ -44,8 +44,7 @@
   "language": {
     "label": "语言",
     "en": "English",
-    "zh_CN": "中文",
-    "ja": "日本語"
+    "zh_CN": "中文"
   },
   "pane": {
     "today": {
@@ -389,6 +388,11 @@
       "col_max_usd": "最大金额（美元）",
       "col_window": "窗口",
       "col_escalate_to": "上报目标",
+      "label_scope": "范围",
+      "label_window": "时间窗(秒)",
+      "label_max_count": "最大次数",
+      "label_max_usd": "最大金额(美元)",
+      "label_escalate": "升级至(可选)",
       "empty": "暂无 HotL 策略。",
       "unavailable_title": "策略存储不可用。",
       "unavailable_body": "PgHotlPolicyStore 尚未接入——API 返回了 503。在没有 Postgres 的开发模式下属正常情况。请查看桥接状态：",
