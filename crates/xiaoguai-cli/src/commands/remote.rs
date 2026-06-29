@@ -588,7 +588,12 @@ mod menu_tests {
     #[test]
     fn groups_by_provider_and_marks_usability() {
         let providers = vec![
-            prov("minimax-1", &["MiniMax-M2", "MiniMax-M1"], true, Some(&["MiniMax-M2"])),
+            prov(
+                "minimax-1",
+                &["MiniMax-M2", "MiniMax-M1"],
+                true,
+                Some(&["MiniMax-M2"]),
+            ),
             prov("minimax-seed", &["MiniMax-M2.5"], false, None),
         ];
         let s = format_model_menu(&providers, "MiniMax-M2");
@@ -614,7 +619,12 @@ mod menu_tests {
         let providers = vec![
             prov("minimax-1", &["MiniMax-M2", "MiniMax-M1"], true, None),
             // key-less provider — none of its models should appear
-            prov("minimax-seed", &["MiniMax-M2.5", "abab6.5-chat"], false, None),
+            prov(
+                "minimax-seed",
+                &["MiniMax-M2.5", "abab6.5-chat"],
+                false,
+                None,
+            ),
         ];
         let models = usable_models(&providers);
         assert_eq!(models, vec!["MiniMax-M2", "MiniMax-M1"]);

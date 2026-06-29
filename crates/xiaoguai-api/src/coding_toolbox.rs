@@ -86,7 +86,10 @@ mod tests {
         };
         let tb = f.rebuild_for(Path::new("/srv/session-1")).await.unwrap();
         assert_eq!(tb.len(), 0);
-        assert_eq!(f.seen.lock().unwrap().as_slice(), [PathBuf::from("/srv/session-1")]);
+        assert_eq!(
+            f.seen.lock().unwrap().as_slice(),
+            [PathBuf::from("/srv/session-1")]
+        );
         assert_eq!(f.global_root(), Some(Path::new("/srv/global")));
     }
 }

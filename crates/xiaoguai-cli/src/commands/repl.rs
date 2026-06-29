@@ -156,7 +156,10 @@ mod tests {
     fn model_without_arg_lists_models() {
         // Bare `/model` and `/models` both ask the I/O loop to fetch + print
         // the live provider/model menu (independent of the current model).
-        assert_eq!(parse_command("/model", "MiniMax-M2.5"), ReplAction::ListModels);
+        assert_eq!(
+            parse_command("/model", "MiniMax-M2.5"),
+            ReplAction::ListModels
+        );
         assert_eq!(parse_command("/model", ""), ReplAction::ListModels);
         assert_eq!(parse_command("/models", ""), ReplAction::ListModels);
     }
@@ -182,7 +185,10 @@ mod tests {
         // The example must stay a neutral placeholder — not a concrete model
         // that only the key-less seed serves (it 401s and misleads users).
         assert!(h.contains("/model <name>"), "got {h}");
-        assert!(!h.contains("MiniMax-M2.5"), "help still hardcodes a 401-only model: {h}");
+        assert!(
+            !h.contains("MiniMax-M2.5"),
+            "help still hardcodes a 401-only model: {h}"
+        );
     }
 
     #[test]

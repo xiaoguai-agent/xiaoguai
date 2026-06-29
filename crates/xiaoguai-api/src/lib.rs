@@ -48,6 +48,7 @@ pub use audit::{
     ExportRequest, StaticAuditChainExporter, StaticAuditReader, StaticAuditVerifier, VerifyReport,
 };
 pub use auth::{Claims, StaticCredentialValidator, StubValidator, TokenValidator};
+pub use coding_toolbox::CodingToolboxFactory;
 pub use error::{ApiError, ApiResult, UnauthorizedReason};
 pub use eval::{
     build_case_yaml, list_suites_in, CaseFromSessionRequest, CaseFromSessionResponse,
@@ -85,7 +86,6 @@ pub use scheduler::{
     StaticWebhookTokenValidator, WebhookPushError, WebhookPusher, WebhookTokenAdmin,
     WebhookTokenAdminError, WebhookTokenError, WebhookTokenRecord, WebhookTokenValidator,
 };
-pub use coding_toolbox::CodingToolboxFactory;
 pub use serve::serve_with_state;
 pub use sessions_ext::{SessionForkError, SessionForker};
 pub use skill_proposals::{ApproveRequest, ListProposalsQuery, ProposalRowResponse, RejectRequest};

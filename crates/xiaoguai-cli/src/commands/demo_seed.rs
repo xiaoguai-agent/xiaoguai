@@ -997,12 +997,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(n_rca, 1);
-        let n_personas: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM personas WHERE tags LIKE '%\"demo-seed\"%'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let n_personas: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM personas WHERE tags LIKE '%\"demo-seed\"%'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(n_personas, 3);
         let n_teams: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM expert_teams")
             .fetch_one(&pool)
@@ -1093,11 +1092,12 @@ mod tests {
 
         // Personas: read each id as TEXT, parse as the repo does — must equal the
         // deterministic v5 ids the seeder wrote (so none is nil/garbage).
-        let persona_id_texts: Vec<String> =
-            sqlx::query_scalar("SELECT id FROM personas WHERE tags LIKE '%\"demo-seed\"%' ORDER BY id")
-                .fetch_all(&pool)
-                .await
-                .expect("read demo persona ids");
+        let persona_id_texts: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM personas WHERE tags LIKE '%\"demo-seed\"%' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("read demo persona ids");
         assert_eq!(persona_id_texts.len(), 3, "three demo personas");
         let mut parsed_persona_ids: Vec<Uuid> = persona_id_texts
             .iter()
@@ -1113,12 +1113,11 @@ mod tests {
 
         // Team: id, lead_persona_id (TEXT, parsed via Uuid) + member_persona_ids
         // (TEXT JSON array, parsed via the repo's text_to_uuids shape).
-        let (id_text, lead_text, members_json): (String, String, String) = sqlx::query_as(
-            "SELECT id, lead_persona_id, member_persona_ids FROM expert_teams",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("read demo team");
+        let (id_text, lead_text, members_json): (String, String, String) =
+            sqlx::query_as("SELECT id, lead_persona_id, member_persona_ids FROM expert_teams")
+                .fetch_one(&pool)
+                .await
+                .expect("read demo team");
         assert_eq!(
             Uuid::parse_str(&id_text).expect("team id is a UUID string"),
             demo_team_id(),

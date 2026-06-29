@@ -1029,8 +1029,7 @@ async fn run_repl_interactive(state: &mut ReplState) {
             }
             // Ctrl-C / Ctrl-D both leave the REPL (matching the prior EOF=quit).
             Err(
-                rustyline::error::ReadlineError::Interrupted
-                | rustyline::error::ReadlineError::Eof,
+                rustyline::error::ReadlineError::Interrupted | rustyline::error::ReadlineError::Eof,
             ) => {
                 eprintln!();
                 break;

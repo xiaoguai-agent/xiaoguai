@@ -404,14 +404,13 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                         // Feature ⑤: capture the inputs to rebuild this surface
                         // at a per-session working_dir. Base = empty toolbox
                         // (coding tools are the first added at boot).
-                        let factory: Arc<
-                            dyn xiaoguai_api::coding_toolbox::CodingToolboxFactory,
-                        > = Arc::new(crate::coding_bridge::CodingToolboxFactoryImpl::new(
-                            sink.clone(),
-                            allow_egress,
-                            Toolbox::new(),
-                            root.clone(),
-                        ));
+                        let factory: Arc<dyn xiaoguai_api::coding_toolbox::CodingToolboxFactory> =
+                            Arc::new(crate::coding_bridge::CodingToolboxFactoryImpl::new(
+                                sink.clone(),
+                                allow_egress,
+                                Toolbox::new(),
+                                root.clone(),
+                            ));
                         (Arc::new(tb), Some(factory))
                     }
                     Err(e) => {

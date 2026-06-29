@@ -556,10 +556,7 @@ async fn resolve_turn_base_toolbox(
     let Some(factory) = state.coding_toolbox_factory.as_ref() else {
         return state.toolbox.clone();
     };
-    let Some(dir) = session_working_dir
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    else {
+    let Some(dir) = session_working_dir.map(str::trim).filter(|s| !s.is_empty()) else {
         return state.toolbox.clone();
     };
     let session_root = std::path::Path::new(dir);
