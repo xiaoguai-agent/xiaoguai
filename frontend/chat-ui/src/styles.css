@@ -144,6 +144,25 @@ html,
   gap: var(--space-2);
 }
 
+/* The settings / management icons scroll independently when the rail is
+   shorter than the icon list, so theme + language stay pinned at the bottom. */
+.nav-rail__group--scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+
+/* Hairline separating the primary nav from the settings group. */
+.nav-rail__divider {
+  flex-shrink: 0;
+  width: 60%;
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--border);
+}
+
 .nav-rail__item {
   display: flex;
   flex-direction: column;
@@ -2531,6 +2550,14 @@ html,
   .nav-rail__group {
     flex-direction: row;
     width: auto;
+  }
+  /* In the horizontal (mobile) rail the settings icons scroll sideways. */
+  .nav-rail__group--scroll {
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+  .nav-rail__divider {
+    display: none;
   }
   .nav-rail__group--bottom {
     margin-top: 0;

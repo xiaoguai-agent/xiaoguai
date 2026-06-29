@@ -35,6 +35,13 @@ interface TranslationShape {
       chat: string;
       skills: string;
       activity: string;
+      providers: string;
+      usage: string;
+      incidents: string;
+      loops: string;
+      memory: string;
+      hotl: string;
+      branding: string;
       settings: string;
     };
     /** Phase 2 (Cherry-Studio IA) — assistant/topic list-panel strings. */

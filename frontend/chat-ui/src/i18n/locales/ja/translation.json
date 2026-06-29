@@ -76,6 +76,13 @@
       "chat": "チャット",
       "skills": "スキル",
       "activity": "アクティビティ",
+      "providers": "モデル",
+      "usage": "使用量",
+      "incidents": "インシデント",
+      "loops": "ループ",
+      "memory": "メモリ",
+      "hotl": "承認",
+      "branding": "ブランド",
       "settings": "設定"
     },
     "assistant": {

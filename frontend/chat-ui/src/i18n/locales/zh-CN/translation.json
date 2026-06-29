@@ -76,6 +76,13 @@
       "chat": "对话",
       "skills": "技能",
       "activity": "活动历史",
+      "providers": "模型",
+      "usage": "用量",
+      "incidents": "事件",
+      "loops": "循环",
+      "memory": "记忆",
+      "hotl": "审批",
+      "branding": "白标",
       "settings": "设置"
     },
     "assistant": {

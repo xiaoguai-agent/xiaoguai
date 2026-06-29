@@ -76,6 +76,13 @@
       "chat": "Chat",
       "skills": "Skills",
       "activity": "Activity",
+      "providers": "Models",
+      "usage": "Usage",
+      "incidents": "Incidents",
+      "loops": "Loops",
+      "memory": "Memory",
+      "hotl": "Approvals",
+      "branding": "Branding",
       "settings": "Settings"
     },
     "assistant": {
