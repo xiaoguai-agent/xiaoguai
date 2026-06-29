@@ -8331,6 +8331,7 @@ dependencies = [
  "tracing",
  "uuid",
  "xiaoguai-mcp",
+ "xiaoguai-mcp-exec-js",
 ]
 
 [[package]]

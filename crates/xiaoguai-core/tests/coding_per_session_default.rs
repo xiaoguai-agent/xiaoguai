@@ -35,7 +35,7 @@ async fn factory_without_global_root_activates_coding_at_a_session_dir() {
     ));
 
     // audit key present, NO global workspace → factory has a None global root.
-    let factory = CodingToolboxFactoryImpl::new(sink, false, Toolbox::new(), None);
+    let factory = CodingToolboxFactoryImpl::new(sink, false, false, Toolbox::new(), None);
     assert_eq!(
         factory.global_root(),
         None,
@@ -67,6 +67,7 @@ async fn factory_with_global_root_reports_it() {
     let global = tempfile::tempdir().unwrap();
     let factory = CodingToolboxFactoryImpl::new(
         sink,
+        false,
         false,
         Toolbox::new(),
         Some(global.path().to_path_buf()),
