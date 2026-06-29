@@ -163,8 +163,8 @@ pub struct UpdateSessionRequest {
     /// single-owner deployment (DEC-033) where the owner already has full
     /// filesystem access, so any absolute path is allowed. Containment is
     /// enforced downstream — coding tools stay jailed *within* whichever root
-    /// is chosen (see `xiaoguai-coding`'s path checks), so a working_dir cannot
-    /// be used to escape its own tree.
+    /// is chosen (see `xiaoguai-coding`'s path checks), so a `working_dir`
+    /// cannot be used to escape its own tree.
     pub working_dir: Option<String>,
 }
 
