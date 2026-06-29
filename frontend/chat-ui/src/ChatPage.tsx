@@ -18,7 +18,7 @@ import { HotlBanner } from './HotlBanner';
 import type { HotlPendingState } from './HotlBanner';
 import { SseReconnectBanner } from './SseReconnectBanner';
 import { WatchIndicator } from './WatchIndicator';
-import { ExpertPicker } from './ExpertPicker';
+import { teamForPackSlug } from './expertPickerHelpers';
 import { MessageToolbar } from './MessageToolbar';
 import { ChatHeaderBar } from './ChatHeaderBar';
 import { ModeToggle, getStoredChatMode, setStoredChatMode } from './ModeToggle';
@@ -101,9 +101,9 @@ export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached
   const { id: routeId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   // Phase 4c — Skills "Use in chat" deep-link carries the activated pack slug
-  // as `?team=<slug>`; ExpertPicker resolves it to the pack's team and attaches
-  // it. We clear the param once consumed so a reload / session switch doesn't
-  // re-trigger the attach.
+  // as `?team=<slug>`; the deep-link effect below resolves it to the pack's
+  // team and attaches it. We clear the param once consumed so a reload /
+  // session switch doesn't re-trigger the attach.
   const [searchParams, setSearchParams] = useSearchParams();
   const deepLinkTeamSlug = searchParams.get('team');
   const [sessionId, setSessionId] = useState<string | undefined>(routeId);
@@ -128,10 +128,18 @@ export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached
     routeId ? getStoredChatMode(routeId) : 'execute',
   );
   /**
-   * T5.2 — id of the team attached to this session (via ExpertPicker's
-   * onActiveChange), or null. Gates the "team parallel run" entry.
+   * T5.2 — id of the team attached to this session, or null. Derived on
+   * session load/change from `getSessionTeam` (a team attached → its id; none
+   * → null). Gates the "team parallel run" entry.
    */
   const [teamId, setTeamId] = useState<string | null>(null);
+  /**
+   * Read-only active-assistant display name for the header. The assistant is
+   * picked in the list panel's 助手 tab; the header just reflects the attached
+   * team (preferred) / persona, or the localized 通用 fallback when none.
+   * Derived on session load/change alongside `teamId`.
+   */
+  const [assistantName, setAssistantName] = useState<string>(t.ui.assistant.general);
   /** T5.2 — true while an orchestrate run streams; blocks normal sends. */
   const [orchestrating, setOrchestrating] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -305,6 +313,46 @@ export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached
     }
   }, [model]);
 
+  // Derive the active assistant (team preferred over persona) for the header
+  // display AND the team-run gate (`teamId`). The 助手 tab attaches/detaches
+  // server-side; this re-reads the session's attachment on load / session
+  // switch. Best-effort: any failure falls back to the 通用 display + no team
+  // so the chat never breaks (mirrors AssistantTopicPanel's tolerance).
+  useEffect(() => {
+    let alive = true;
+    if (!sessionId) {
+      setTeamId(null);
+      setAssistantName(t.ui.assistant.general);
+      return;
+    }
+    void (async () => {
+      try {
+        const team = await client.getSessionTeam(sessionId);
+        if (!alive) return;
+        if (team) {
+          setTeamId(team.id);
+          setAssistantName(team.name);
+          return;
+        }
+        const persona = await client.getSessionPersona(sessionId);
+        if (!alive) return;
+        setTeamId(null);
+        setAssistantName(persona?.name ?? t.ui.assistant.general);
+      } catch {
+        if (!alive) return;
+        // Experts subsystem unavailable / network error — neutral fallback.
+        setTeamId(null);
+        setAssistantName(t.ui.assistant.general);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // Re-derive whenever the session identity changes. `t` only swaps the
+    // fallback language; reloading on locale change is noise.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
   // Feature ⑥ — keep the streaming ref in sync for the status poll closure, and
   // drop the remote-running indicator the moment this tab streams a turn (a
   // local turn supersedes the "running elsewhere" cue).
@@ -317,15 +365,46 @@ export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streaming]);
 
-  // Phase 4c — a Skills deep-link with no active session can't attach a team
-  // (attach needs a session). The ExpertPicker chip isn't even mounted yet, so
-  // surface a one-line hint in the status bar telling the operator to send a
-  // message first, then pick the team. Cleared once a session exists (the
-  // ExpertPicker then auto-attaches via `deepLinkTeamSlug`).
+  // Phase 4c — Skills "Use in chat" deep-link (`?team=<pack-slug>`). The header
+  // ExpertPicker that used to resolve this was removed (the 助手 tab is now the
+  // selector), so ChatPage handles it directly: with a session, resolve the
+  // slug to the pack's activated team and attach it (then re-derive the header
+  // + team-run gate); with no session yet, show a hint to send a message first,
+  // then pick the team in the 助手 tab. Consumed once (the `?team=` param is
+  // dropped) so a reload / session switch doesn't re-trigger. Best-effort:
+  // any failure falls back to the hint and never breaks the chat.
   useEffect(() => {
-    if (deepLinkTeamSlug && !sessionId) {
-      setStatus(interpolate(t.ui.expert.deeplink_need_session, { team: deepLinkTeamSlug }));
+    const slug = deepLinkTeamSlug?.trim();
+    if (!slug) return;
+    if (!sessionId) {
+      setStatus(interpolate(t.ui.expert.deeplink_need_session, { team: slug }));
+      return;
     }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const teams = await client.listTeams();
+        if (cancelled) return;
+        const team = teamForPackSlug(teams, slug);
+        if (!team) return;
+        await client.attachSessionTeam(sessionId, team.id);
+        if (cancelled) return;
+        setTeamId(team.id);
+        setAssistantName(team.name);
+        setStatus(interpolate(t.ui.expert.deeplink_attached, { team: team.name }));
+      } catch {
+        // Experts subsystem unavailable / attach failed — point the operator
+        // at the 助手 tab instead of failing silently.
+        if (!cancelled) {
+          setStatus(interpolate(t.ui.expert.deeplink_need_session, { team: slug }));
+        }
+      } finally {
+        if (!cancelled) clearDeepLink();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLinkTeamSlug, sessionId]);
 
@@ -1042,27 +1121,14 @@ export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached
           onCancel={cancel}
         />
       )}
-      {/* Phase 3 (Cherry-Studio IA) — chat-area top bar: active-assistant
-          display + prominent model selector + watch / remote-running cues. The
-          HotlBanner is rendered above (top of the fragment), not in the bar.
-          The model selector moved up here from the composer; all state still
-          lives in ChatPage and the `model_override` send wiring is unchanged. */}
+      {/* Phase 3 (Cherry-Studio IA) — chat-area top bar: read-only
+          active-assistant display + watch / remote-running cues. The assistant
+          is now SELECTED in the 助手 tab of the list panel; the header only
+          reflects what's attached (the old ExpertPicker popover rendered hidden
+          here and was redundant with that tab). The model selector lives in the
+          composer meta row (after the mode toggle). */}
       <ChatHeaderBar
-        models={models}
-        model={model}
-        onModelChange={setModel}
-        assistant={
-          /* T3.5 — expert picker chip for the active session */
-          <ExpertPicker
-            sessionId={sessionId}
-            // T5.2 — track whether a team is attached (gates the team-run entry).
-            onActiveChange={(a) => setTeamId(a?.kind === 'team' ? a.id : null)}
-            // Phase 4c — Skills deep-link: pre-select the pack's team (when a
-            // session exists), then drop the `?team=` param.
-            deepLinkTeamSlug={deepLinkTeamSlug}
-            onDeepLinkConsumed={clearDeepLink}
-          />
-        }
+        assistantName={assistantName}
         remoteRunning={
           /* Feature ⑥ — non-blocking cue: a turn is still running server-side
              for this session, but this tab isn't streaming it. Its result is
@@ -1204,10 +1270,30 @@ export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached
           )}
         </div>
         <div className="composer-meta">
-          {/* Phase 3 — the model selector moved up to the chat top bar
-              (ChatHeaderBar); the composer meta keeps only the mode toggle. */}
-          {/* T5.2 — consult/execute toggle + read-only cue in consult mode. */}
+          {/* T5.2 — execute / read-only toggle (read-only cue is a tooltip). */}
           <ModeToggle mode={mode} onChange={changeMode} />
+          {/* Model selector — moved here from the chat top bar so it follows the
+              mode toggle. State / send-path (`model_override`) are unchanged;
+              only the render location moved. Hidden when no models are offered
+              (same rule as before); keeps `aria-label="model"` for the test. */}
+          {models.length > 0 && (
+            <label className="chat-model-select">
+              <span className="chat-model-select__label">{t.ui.header.model_label}</span>
+              <select
+                className="chat-model-select__control"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                aria-label="model"
+                title="model"
+              >
+                {models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <div className="composer-hint">{t.ui.composer_hint}</div>
         </div>
       </div>
