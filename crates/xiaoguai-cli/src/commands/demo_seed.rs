@@ -75,10 +75,11 @@ const DEMO_PERSONA_SEEDS: &[&str] = &[
 /// Seed string for the demo team's deterministic v5 UUID id.
 const DEMO_TEAM_SEED: &str = "xiaoguai-demo-team-incident-response";
 
-/// Provider id the demo `token_usage` + audit cost rows attribute to. The
-/// migrations seed a key-less `minimax` provider, so this resolves on a fresh
-/// DB; the value is only a label here (no live call is made).
-const DEMO_PROVIDER_ID: &str = "minimax";
+/// Provider id the demo `token_usage` + audit cost rows attribute to. Must be
+/// the real seeded provider id (`minimax-system`, from migration 0023) so the
+/// Usage/Stats pane joins these rows cleanly to a provider; the value is only a
+/// label here (no live call is made).
+const DEMO_PROVIDER_ID: &str = "minimax-system";
 const DEMO_MODEL: &str = "MiniMax-Text-01";
 
 /// Baseline token-usage points to lay down before the spike. The default

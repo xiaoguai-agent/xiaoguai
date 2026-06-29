@@ -159,6 +159,12 @@ pub async fn get_session(
 #[derive(Debug, Deserialize, Default)]
 pub struct UpdateSessionRequest {
     pub title: Option<String>,
+    /// Per-session coding-tools root. Intentionally unconstrained: this is a
+    /// single-owner deployment (DEC-033) where the owner already has full
+    /// filesystem access, so any absolute path is allowed. Containment is
+    /// enforced downstream — coding tools stay jailed *within* whichever root
+    /// is chosen (see `xiaoguai-coding`'s path checks), so a working_dir cannot
+    /// be used to escape its own tree.
     pub working_dir: Option<String>,
 }
 
