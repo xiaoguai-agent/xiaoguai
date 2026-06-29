@@ -18,6 +18,7 @@ use thiserror::Error;
 use tokio_stream::wrappers::ReceiverStream;
 use xiaoguai_agent::{AgentEvent, StopReason};
 use xiaoguai_llm::Message as LlmMessage;
+use xiaoguai_mcp::ActiveToolsSource;
 use xiaoguai_runtime::{run_streamed, RuntimeContext, RuntimeError, RuntimeOutcome};
 use xiaoguai_storage::repositories::RepoError;
 use xiaoguai_types::{SessionId, SessionStatus};
@@ -199,6 +200,23 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
     // Common path is byte-identical: no `working_dir`, no factory, or a dir
     // equal to the global root ⇒ `base` is just `state.toolbox` (no rebuild).
     let base = resolve_turn_base_toolbox(state, session.working_dir.as_deref()).await;
+    // MCP live-tools merge — fold every ACTIVE MCP server's tools onto `base`
+    // BEFORE the consult/loop layering below so an MCP tool's `MutationHint`
+    // is honored exactly like a coding tool: a read MCP tool stays available
+    // in consult mode (layer-1 subset), a write MCP tool is hidden/denied by
+    // the `ConsultGate` (layer-2). Done per-turn (not at boot) so a server
+    // installed at runtime is callable without a restart. Best-effort: any
+    // failure logs and proceeds with the un-merged `base` — MCP availability
+    // must never break a chat turn. Common path (no active servers) returns
+    // `base` unchanged with no allocation.
+    let base = merge_active_mcp_tools(
+        base,
+        state
+            .mcp_supervisor
+            .as_deref()
+            .map(|s| s as &dyn ActiveToolsSource),
+    )
+    .await;
     let (toolbox, loop_intent) = if input.loop_id.is_some() {
         let (tb, sink) = crate::loop_tools::with_loop_tools(&base, input.loop_dynamic_pacing);
         messages.insert(0, LlmMessage::system(LOOP_TICK_SYSTEM_NOTE));
@@ -207,7 +225,9 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
         // Layer 1 (plan §2.2): the model only sees read tools.
         (Arc::new(crate::consult::read_only_toolbox(&base)), None)
     } else {
-        (base, None)
+        // Clone the Arc (cheap) rather than move, so `base` stays owned for the
+        // layer-2 consult gate below (the gate keys on the merged `base`).
+        (Arc::clone(&base), None)
     };
 
     // Layer 2 (plan §2.3): in consult mode, wrap the configured HotL gate in
@@ -220,7 +240,12 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
     let agent_defaults = if mode == TurnMode::Consult {
         crate::consult::consult_agent_config(
             &state.agent_defaults,
-            &state.toolbox,
+            // Key the consult gate on the MERGED base (coding ⑤ + active MCP
+            // tools), not the boot `state.toolbox` — otherwise a read-only
+            // coding/MCP tool is visible (layer-1) but fail-closed-denied at
+            // layer-2 because the gate's allowlist lacks it. Write tools stay
+            // denied either way (they're not in the read-only set).
+            &base,
             state.hotl_audit.clone(),
             &input.session_id,
         )
@@ -607,6 +632,49 @@ async fn resolve_turn_base_toolbox(
     }
 }
 
+/// Fold every active MCP server's tools onto `base`, dispatched to the owning
+/// client, for one turn. Returns a NEW `Arc<Toolbox>` only when at least one
+/// MCP tool is actually merged; otherwise `base` is returned unchanged (the
+/// common no-active-server path never allocates a toolbox).
+///
+/// Best-effort and immutable. `source = None` (no supervisor wired) or an
+/// empty active set returns `base` untouched. A name collision with a tool
+/// already in `base` (coding/loop/demo or another MCP server) is SKIPPED with
+/// a `tracing::warn!` — the existing tool is never overwritten and we never
+/// panic. Deterministic: the pre-existing `base` entry always wins.
+///
+/// The merge happens BEFORE the consult/loop layering in [`run_turn`], so the
+/// merged MCP tools' `MutationHint` flows through the consult read-only subset
+/// and the `ConsultGate` exactly like coding tools — a write MCP tool is
+/// hidden+denied in consult mode, a read MCP tool stays available.
+async fn merge_active_mcp_tools(
+    base: Arc<xiaoguai_agent::Toolbox>,
+    source: Option<&dyn ActiveToolsSource>,
+) -> Arc<xiaoguai_agent::Toolbox> {
+    let Some(source) = source else {
+        return base;
+    };
+    let active = source.active_tools().await;
+    if active.is_empty() {
+        // Common path: nothing to merge — return `base` without cloning the
+        // underlying map.
+        return base;
+    }
+    // Clone-on-merge: never mutate the shared boot/base toolbox.
+    let mut merged = (*base).clone();
+    for (client, descriptor) in active {
+        let name = descriptor.name.clone();
+        if let Err(err) = merged.insert(client, descriptor) {
+            tracing::warn!(
+                tool = %name,
+                %err,
+                "mcp tool name collides with an existing toolbox tool; skipping (existing tool kept)",
+            );
+        }
+    }
+    Arc::new(merged)
+}
+
 /// Persist one inbound user message. `pub(crate)` since T4.2: the
 /// orchestrate route stores the goal as the session's user message through
 /// the exact same path as an ordinary turn.
@@ -833,5 +901,211 @@ mod audit_tests {
         assert_eq!(m, TurnMode::Execute);
         assert_eq!(TurnMode::default(), TurnMode::Execute);
         assert_eq!(serde_json::json!(TurnMode::Consult), "consult");
+    }
+}
+
+/// MCP live-tools merge ([`merge_active_mcp_tools`]). A mock
+/// [`ActiveToolsSource`] + mock `McpClient` exercise the merge without
+/// spawning real MCP child processes.
+#[cfg(test)]
+mod mcp_merge_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::{json, Value as JsonValue};
+    use std::collections::HashSet;
+    use xiaoguai_agent::Toolbox;
+    use xiaoguai_mcp::{
+        McpClient, McpResult, MutationHint, ServerInfo, ToolDescriptor, ToolResult,
+    };
+
+    /// A mock MCP client tagged with an id so a test can assert dispatch went
+    /// to the RIGHT client (the merged tools must be dispatched to the MCP
+    /// client, not the base toolbox's client).
+    struct MockClient {
+        id: &'static str,
+    }
+
+    #[async_trait]
+    impl McpClient for MockClient {
+        async fn initialize(&self) -> McpResult<ServerInfo> {
+            Ok(ServerInfo {
+                name: self.id.into(),
+                version: "0".into(),
+            })
+        }
+        async fn list_tools(&self) -> McpResult<Vec<ToolDescriptor>> {
+            Ok(vec![])
+        }
+        async fn call_tool(&self, name: &str, _args: JsonValue) -> McpResult<ToolResult> {
+            // Echo the client id so a dispatch assertion can prove which
+            // client served the call.
+            Ok(ToolResult {
+                text: format!("{}:{name}", self.id),
+                blocks: vec![],
+                is_error: false,
+            })
+        }
+        async fn shutdown(&self) -> McpResult<()> {
+            Ok(())
+        }
+    }
+
+    /// Mock source returning a fixed set. An "errored / unavailable
+    /// supervisor" is modeled as the source already having swallowed the
+    /// failure and returning an empty set (mirrors `McpSupervisor`, which
+    /// swallows `list_tools` failures at start so `active_tools` never errors).
+    struct MockSource {
+        tools: Vec<(Arc<dyn McpClient>, ToolDescriptor)>,
+    }
+
+    #[async_trait]
+    impl ActiveToolsSource for MockSource {
+        async fn active_tools(&self) -> Vec<(Arc<dyn McpClient>, ToolDescriptor)> {
+            self.tools.clone()
+        }
+    }
+
+    fn td(name: &str, hint: MutationHint) -> ToolDescriptor {
+        ToolDescriptor {
+            name: name.into(),
+            description: Some(format!("tool {name}")),
+            input_schema: json!({ "type": "object" }),
+            mutation_hint: hint,
+        }
+    }
+
+    fn names(tb: &Toolbox) -> HashSet<String> {
+        tb.to_specs().into_iter().map(|s| s.name).collect()
+    }
+
+    #[tokio::test]
+    async fn merges_read_and_write_tools_dispatched_to_mcp_client() {
+        let base = Arc::new(Toolbox::new());
+        let mcp: Arc<dyn McpClient> = Arc::new(MockClient { id: "mcp" });
+        let source = MockSource {
+            tools: vec![
+                (mcp.clone(), td("vc_list_vms", MutationHint::Read)),
+                (mcp.clone(), td("vc_power_off", MutationHint::Write)),
+            ],
+        };
+
+        let merged = merge_active_mcp_tools(base, Some(&source)).await;
+        assert_eq!(merged.len(), 2);
+
+        let read = merged.get("vc_list_vms").expect("read tool merged");
+        assert_eq!(read.descriptor.mutation_hint, MutationHint::Read);
+        let write = merged.get("vc_power_off").expect("write tool merged");
+        assert_eq!(write.descriptor.mutation_hint, MutationHint::Write);
+
+        // Both dispatch to the MCP client (echo proves the owning client).
+        let r = read
+            .client
+            .call_tool("vc_list_vms", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(r.text, "mcp:vc_list_vms");
+        let w = write
+            .client
+            .call_tool("vc_power_off", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(w.text, "mcp:vc_power_off");
+    }
+
+    #[tokio::test]
+    async fn merged_write_tool_is_consult_gated() {
+        // The write MCP tool must flow through consult's read-only subset
+        // (hidden) the same as a coding write tool.
+        let base = Arc::new(Toolbox::new());
+        let mcp: Arc<dyn McpClient> = Arc::new(MockClient { id: "mcp" });
+        let source = MockSource {
+            tools: vec![
+                (mcp.clone(), td("vc_list_vms", MutationHint::Read)),
+                (mcp.clone(), td("vc_power_off", MutationHint::Write)),
+            ],
+        };
+        let merged = merge_active_mcp_tools(base, Some(&source)).await;
+
+        let subset = crate::consult::read_only_toolbox(&merged);
+        assert_eq!(names(&subset), HashSet::from(["vc_list_vms".to_string()]));
+    }
+
+    #[tokio::test]
+    async fn collision_with_existing_tool_is_skipped_not_overwritten() {
+        // `base` already owns a tool named `git_status` (its own client).
+        let base_client: Arc<dyn McpClient> = Arc::new(MockClient { id: "coding" });
+        let mut base_tb = Toolbox::new();
+        base_tb
+            .insert(base_client, td("git_status", MutationHint::Read))
+            .unwrap();
+        let base = Arc::new(base_tb);
+
+        // An MCP server advertises a colliding `git_status` plus a fresh tool.
+        let mcp: Arc<dyn McpClient> = Arc::new(MockClient { id: "mcp" });
+        let source = MockSource {
+            tools: vec![
+                (mcp.clone(), td("git_status", MutationHint::Write)),
+                (mcp.clone(), td("vc_list_vms", MutationHint::Read)),
+            ],
+        };
+
+        let merged = merge_active_mcp_tools(base, Some(&source)).await;
+        // Both names present; the fresh MCP tool landed.
+        assert_eq!(
+            names(&merged),
+            HashSet::from(["git_status".to_string(), "vc_list_vms".to_string()])
+        );
+        // The pre-existing `git_status` WINS: still dispatched to the base
+        // client and still its original Read hint (NOT the MCP server's Write).
+        let kept = merged.get("git_status").expect("kept");
+        assert_eq!(kept.descriptor.mutation_hint, MutationHint::Read);
+        let echo = kept
+            .client
+            .call_tool("git_status", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(echo.text, "coding:git_status", "base client kept, not MCP");
+    }
+
+    #[tokio::test]
+    async fn no_active_servers_returns_base_unchanged() {
+        let base_client: Arc<dyn McpClient> = Arc::new(MockClient { id: "coding" });
+        let mut base_tb = Toolbox::new();
+        base_tb
+            .insert(base_client, td("git_status", MutationHint::Read))
+            .unwrap();
+        let base = Arc::new(base_tb);
+        let before = Arc::as_ptr(&base);
+
+        let source = MockSource { tools: vec![] };
+        let merged = merge_active_mcp_tools(base, Some(&source)).await;
+        // Empty active set ⇒ the SAME Arc is returned (no allocation/rebuild).
+        assert_eq!(Arc::as_ptr(&merged), before);
+        assert_eq!(merged.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn no_supervisor_returns_base_unchanged() {
+        let base = Arc::new(Toolbox::new());
+        let before = Arc::as_ptr(&base);
+        let merged = merge_active_mcp_tools(base, None).await;
+        assert_eq!(Arc::as_ptr(&merged), before);
+    }
+
+    #[tokio::test]
+    async fn unavailable_source_is_swallowed_and_base_proceeds() {
+        // A supervisor whose servers all failed `list_tools` at start surfaces
+        // as an empty active set (the supervisor swallowed the error). The
+        // turn must proceed with the un-merged base.
+        let base_client: Arc<dyn McpClient> = Arc::new(MockClient { id: "coding" });
+        let mut base_tb = Toolbox::new();
+        base_tb
+            .insert(base_client, td("git_status", MutationHint::Read))
+            .unwrap();
+        let base = Arc::new(base_tb);
+
+        let source = MockSource { tools: vec![] };
+        let merged = merge_active_mcp_tools(base, Some(&source)).await;
+        assert_eq!(names(&merged), HashSet::from(["git_status".to_string()]));
     }
 }
