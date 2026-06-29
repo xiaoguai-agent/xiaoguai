@@ -192,18 +192,21 @@ pub struct CodingToolboxFactoryImpl {
     sink: Arc<SqliteAuditSink>,
     include_egress: bool,
     base: Toolbox,
-    global_root: std::path::PathBuf,
+    global_root: Option<std::path::PathBuf>,
 }
 
 impl CodingToolboxFactoryImpl {
     /// `base` MUST be the toolbox BEFORE coding tools were layered on, and
-    /// `global_root` the root those boot-time coding tools were built with.
+    /// `global_root` the root those boot-time coding tools were built with —
+    /// `None` when coding is enabled only per-session (#15: an audit key is set
+    /// but no global `XIAOGUAI_CODING_WORKSPACE`, so the boot toolbox carries no
+    /// coding and every session `working_dir` triggers a rebuild).
     #[must_use]
     pub fn new(
         sink: Arc<SqliteAuditSink>,
         include_egress: bool,
         base: Toolbox,
-        global_root: std::path::PathBuf,
+        global_root: Option<std::path::PathBuf>,
     ) -> Self {
         Self {
             sink,
@@ -228,7 +231,7 @@ impl xiaoguai_api::coding_toolbox::CodingToolboxFactory for CodingToolboxFactory
     }
 
     fn global_root(&self) -> Option<&Path> {
-        Some(&self.global_root)
+        self.global_root.as_deref()
     }
 }
 
