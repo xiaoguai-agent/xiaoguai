@@ -27,6 +27,9 @@ import { interpolate } from './i18n';
 import { useBrandName } from './branding';
 import { isLoopLive, parseLoopCommand, shortLoopId } from './loopCommands';
 import type { LoopCommand } from './loopCommands';
+import { VmwareStarter } from './VmwareStarter';
+import { isVmOpsPersonaName } from './vmOps';
+import type { PendingAssistant } from './AssistantTopicPanel';
 
 type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
 
@@ -43,6 +46,13 @@ interface Props {
    * shell's implementation is best-effort and never rejects.
    */
   onSessionAttached?: (newSessionId: string) => Promise<void>;
+  /**
+   * VM-ops surfacing — the assistant pre-selected in the 助手 tab for a NEW
+   * chat (no session yet). Used to detect whether the active assistant is the
+   * VMware-ops persona so the welcome can show the VMware starter card. For an
+   * existing session the persona is fetched via `getSessionPersona` instead.
+   */
+  pendingAssistant?: PendingAssistant | null;
 }
 
 interface DisplayBubble {
@@ -94,7 +104,12 @@ function autoGrow(ta: HTMLTextAreaElement | null) {
   ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
 }
 
-export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached }: Props) {
+export function ChatPage({
+  onSessionCreated,
+  onSessionMissing,
+  onSessionAttached,
+  pendingAssistant,
+}: Props) {
   const { t } = useI18n();
   // White-label assistant name (owner-set), falling back to the locale default.
   const brandName = useBrandName() || t.ui.assistant_name;
@@ -135,6 +150,19 @@ export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached
   /** T5.2 — true while an orchestrate run streams; blocks normal sends. */
   const [orchestrating, setOrchestrating] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  /**
+   * VM-ops surfacing — true when the active assistant is the VMware-ops
+   * persona (detected by persona name). Drives the welcome's VMware starter
+   * card auto-show. Best-effort: a detection failure leaves it false (the
+   * "🖥 VMware 运维" chip still makes the card reachable on demand).
+   */
+  const [vmOpsActive, setVmOpsActive] = useState(false);
+  /**
+   * VM-ops surfacing — true once the operator clicks the "🖥 VMware 运维" chip,
+   * forcing the starter card to show regardless of auto-detection. Reset on
+   * session change (the route effect clears bubbles; this resets alongside).
+   */
+  const [vmOpsCardForced, setVmOpsCardForced] = useState(false);
   /** v1.3.x — non-null while an HotL escalation is pending for this session. */
   const [hotlPending, setHotlPending] = useState<HotlPendingState | null>(null);
   /**
@@ -328,6 +356,43 @@ export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLinkTeamSlug, sessionId]);
+
+  // VM-ops surfacing — resolve whether the active assistant is the VMware-ops
+  // persona so the welcome can auto-show the starter card. For an existing
+  // session, fetch its attached persona; for a fresh chat (no session yet) use
+  // the pending assistant the operator pre-picked in the 助手 tab, resolving its
+  // persona name from the personas list. Best-effort: any failure leaves the
+  // flag false (the welcome chip still reveals the card on demand). Re-run on
+  // session / pending-assistant change; the forced-show flag resets here too so
+  // switching away from a VM-ops chat doesn't keep the card pinned.
+  useEffect(() => {
+    let alive = true;
+    setVmOpsCardForced(false);
+    void (async () => {
+      try {
+        if (sessionId) {
+          const persona = await client.getSessionPersona(sessionId);
+          if (alive) setVmOpsActive(isVmOpsPersonaName(persona?.name));
+          return;
+        }
+        if (pendingAssistant?.kind === 'persona') {
+          const personas = await client.listPersonas();
+          const match = personas.find((p) => p.id === pendingAssistant.id);
+          if (alive) setVmOpsActive(isVmOpsPersonaName(match?.name));
+          return;
+        }
+        if (alive) setVmOpsActive(false);
+      } catch {
+        // Detection is non-essential — leave the flag false; the welcome chip
+        // still surfaces the card when the operator wants it.
+        if (alive) setVmOpsActive(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, pendingAssistant]);
 
   /**
    * Feature ⑥ — best-effort: ask the backend whether a turn is still running
@@ -1088,23 +1153,40 @@ export function ChatPage({ onSessionCreated, onSessionMissing, onSessionAttached
               {interpolate(t.ui.welcome_title, { name: brandName })}
             </h1>
             <p className="welcome-subtitle">{t.ui.welcome_subtitle}</p>
-            <div className="welcome-chips">
-              {[
-                t.ui.suggestions.summarize_doc,
-                t.ui.suggestions.write_shell,
-                t.ui.suggestions.analyze_cve,
-                t.ui.suggestions.explain_codebase,
-              ].map((prompt) => (
+            {/* VM-ops surfacing — show the VMware starter card when the active
+                assistant is the VMware-ops persona (auto-detected) or once the
+                operator reveals it via the "🖥 VMware 运维" chip. Otherwise the
+                welcome keeps the generic chips, with the VMware chip appended so
+                the card is always reachable. */}
+            {vmOpsActive || vmOpsCardForced ? (
+              <VmwareStarter />
+            ) : (
+              <div className="welcome-chips">
+                {[
+                  t.ui.suggestions.summarize_doc,
+                  t.ui.suggestions.write_shell,
+                  t.ui.suggestions.analyze_cve,
+                  t.ui.suggestions.explain_codebase,
+                ].map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    className="suggestion-chip"
+                    onClick={() => void send(prompt)}
+                  >
+                    {prompt}
+                  </button>
+                ))}
                 <button
-                  key={prompt}
                   type="button"
-                  className="suggestion-chip"
-                  onClick={() => void send(prompt)}
+                  className="suggestion-chip suggestion-chip--vmware"
+                  onClick={() => setVmOpsCardForced(true)}
+                  data-testid="vmware-reveal-chip"
                 >
-                  {prompt}
+                  {t.ui.vmware_starter.chip_label}
                 </button>
-              ))}
-            </div>
+              </div>
+            )}
           </div>
         ) : (
           bubbles.map((b, i) => (

@@ -207,6 +207,22 @@ interface TranslationShape {
       transport_title: string;
       env_label: string;
     };
+    /** VM-ops welcome card — lists the VMware MCP skills + one-click install. */
+    vmware_starter: {
+      title: string;
+      subtitle: string;
+      install: string;
+      installed: string;
+      installing: string;
+      install_failed: string;
+      badge_readonly: string;
+      badge_ops: string;
+      prereq_note: string;
+      more_in_marketplace: string;
+      chip_label: string;
+      loading: string;
+      error: string;
+    };
   };
   /** Feature ②/⑤ — enriched sidebar widgets (audit link, token stat,
    *  per-session working-dir control). */
