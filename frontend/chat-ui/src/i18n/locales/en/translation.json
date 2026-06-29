@@ -83,6 +83,9 @@
       "memory": "Memory",
       "hotl": "Approvals",
       "branding": "Branding",
+      "mcp": "MCP",
+      "anomaly": "Anomaly",
+      "scheduler": "Schedule",
       "settings": "Settings"
     },
     "assistant": {

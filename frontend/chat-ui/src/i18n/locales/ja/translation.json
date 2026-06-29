@@ -83,6 +83,9 @@
       "memory": "メモリ",
       "hotl": "承認",
       "branding": "ブランド",
+      "mcp": "MCP",
+      "anomaly": "異常",
+      "scheduler": "スケジュール",
       "settings": "設定"
     },
     "assistant": {

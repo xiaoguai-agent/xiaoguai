@@ -42,6 +42,9 @@ interface TranslationShape {
       memory: string;
       hotl: string;
       branding: string;
+      mcp: string;
+      anomaly: string;
+      scheduler: string;
       settings: string;
     };
     /** Phase 2 (Cherry-Studio IA) — assistant/topic list-panel strings. */

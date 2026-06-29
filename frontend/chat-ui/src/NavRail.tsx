@@ -54,10 +54,13 @@ export function NavRail() {
           Scrolls independently if the rail is shorter than the icon list. */}
       <div className="nav-rail__group nav-rail__group--scroll">
         <NavRailAnchor href="/admin/providers" label={t.ui.nav.providers} icon={<ProvidersIcon />} />
+        <NavRailAnchor href="/admin/mcp-servers" label={t.ui.nav.mcp} icon={<McpIcon />} />
         <NavRailAnchor href="/admin/usage" label={t.ui.nav.usage} icon={<UsageIcon />} />
         <NavRailAnchor href="/admin/audit" label={t.ui.nav.activity} icon={<ActivityIcon />} />
+        <NavRailAnchor href="/admin/anomaly" label={t.ui.nav.anomaly} icon={<AnomalyIcon />} />
         <NavRailAnchor href="/admin/incidents" label={t.ui.nav.incidents} icon={<IncidentsIcon />} />
         <NavRailAnchor href="/admin/loops" label={t.ui.nav.loops} icon={<LoopsIcon />} />
+        <NavRailAnchor href="/admin/scheduler" label={t.ui.nav.scheduler} icon={<SchedulerIcon />} />
         <NavRailAnchor href="/admin/memory" label={t.ui.nav.memory} icon={<MemoryIcon />} />
         <NavRailAnchor href="/admin/hotl-policies" label={t.ui.nav.hotl} icon={<HotlIcon />} />
         <NavRailAnchor href="/admin/branding" label={t.ui.nav.branding} icon={<BrandingIcon />} />
@@ -167,10 +170,38 @@ function ProvidersIcon() {
   );
 }
 
+function McpIcon() {
+  return (
+    <svg {...SVG}>
+      <circle cx="6" cy="6" r="2.4" />
+      <circle cx="18" cy="6" r="2.4" />
+      <circle cx="12" cy="18" r="2.4" />
+      <path d="M7.7 7.7 10.5 16M16.3 7.7 13.5 16M8 6h8" />
+    </svg>
+  );
+}
+
 function UsageIcon() {
   return (
     <svg {...SVG}>
       <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+    </svg>
+  );
+}
+
+function AnomalyIcon() {
+  return (
+    <svg {...SVG}>
+      <path d="M3 13h3l2 5 3-13 3 9 2-3h5" />
+    </svg>
+  );
+}
+
+function SchedulerIcon() {
+  return (
+    <svg {...SVG}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
     </svg>
   );
 }

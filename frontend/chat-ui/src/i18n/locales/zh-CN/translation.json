@@ -83,6 +83,9 @@
       "memory": "记忆",
       "hotl": "审批",
       "branding": "白标",
+      "mcp": "MCP",
+      "anomaly": "异常",
+      "scheduler": "定时",
       "settings": "设置"
     },
     "assistant": {
