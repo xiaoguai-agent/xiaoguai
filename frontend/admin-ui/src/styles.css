@@ -1,14 +1,109 @@
-:root {
-  --bg: #f8fafc;
-  --fg: #0f172a;
-  --muted: #64748b;
-  --accent: #1e293b;
-  --border: #e2e8f0;
-  --row-hover: #f1f5f9;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+/* Xiaoguai admin-ui — Cherry Studio design tokens, ported from chat-ui
+ * (frontend/chat-ui/src/styles.css) so chat → /admin/ feels like one app.
+ *
+ * Light is the default (`:root` + `[data-theme='light']` resolve identically).
+ * The theme *choice* is owned by chat-ui's rail toggle and persisted to
+ * `localStorage["xiaoguai-theme"]`; admin-ui's `theme.ts` reads that key on
+ * boot and sets `data-theme` on <html>, which forks the tokens below.
+ *
+ * Legacy var names admin's rules still reference (`--row-hover`,
+ * `--surface-2`) are kept but remapped to the new palette so existing rules
+ * keep working with the new look.
+ */
+:root,
+[data-theme='light'] {
+  /* Color tokens — neutral first, accent second (chat-ui parity). */
+  --bg: #fafaf9;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --fg: #18181b;
+  --fg-soft: #3f3f46;
+  --muted: #71717a;
+  --border: #e4e4e7;
+  --border-soft: #f4f4f5;
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef2ff;
+  --link: #4f46e5;
+
+  /* Semantic status tokens (error / warn / success), chat-ui parity — used
+     by the error banners and status pills so they recolour in dark mode. */
+  --tool-error-bg: #fef2f2;
+  --tool-error-border: #fecaca;
+  --tool-error-fg: #991b1b;
+  --warn-bg: #fffbeb;
+  --warn-border: #fde68a;
+  --warn-fg: #78350f;
+  --success-bg: #ecfdf5;
+  --success-border: #a7f3d0;
+  --success-fg: #047857;
+  --info-bg: #eff6ff;
+  --info-fg: #1d4ed8;
+  --code-bg: #f4f4f5;
+  --code-fg: #18181b;
+
+  /* Legacy admin aliases, remapped onto the new palette. */
+  --row-hover: var(--border-soft);
+  --surface-2: var(--border-soft);
+
+  /* Spacing scale (4-pt grid). */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* Radii. */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  /* Shadows — soft, layered. */
+  --shadow-sm: 0 1px 2px 0 rgba(24, 24, 27, 0.04);
+  --shadow-md: 0 4px 14px 0 rgba(24, 24, 27, 0.06);
+  --shadow-focus: 0 0 0 3px rgba(79, 70, 229, 0.18);
+
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
   color: var(--fg);
   background: var(--bg);
+}
+
+[data-theme='dark'] {
+  --bg: #0b0c10;
+  --surface: #14161c;
+  --surface-elevated: #1b1e26;
+  --fg: #ececf1;
+  --fg-soft: #c4c5cf;
+  --muted: #8a8f9b;
+  --border: #2a2d36;
+  --border-soft: #1f2229;
+  --accent: #818cf8;
+  --accent-hover: #a5b4fc;
+  --accent-soft: #1f2138;
+  --link: #a5b4fc;
+  --tool-error-bg: #1f1213;
+  --tool-error-border: #4a1d1d;
+  --tool-error-fg: #fca5a5;
+  --warn-bg: #1a1407;
+  --warn-border: #3a2c0e;
+  --warn-fg: #fcd34d;
+  --success-bg: #0c1f17;
+  --success-border: #14432f;
+  --success-fg: #6ee7b7;
+  --info-bg: #15233f;
+  --info-fg: #93c5fd;
+  --code-bg: #0e1015;
+  --code-fg: #e4e4e7;
+  --row-hover: var(--border-soft);
+  --surface-2: var(--border-soft);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px 0 rgba(0, 0, 0, 0.55);
+  --shadow-focus: 0 0 0 3px rgba(129, 140, 248, 0.25);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -19,21 +114,30 @@ body, html, #root { margin: 0; padding: 0; height: 100%; }
 .nav {
   width: 220px;
   border-right: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--surface);
   padding: 16px;
 }
 
-.nav h2 { margin: 0 0 16px; font-size: 16px; color: var(--accent); }
+.nav h2 {
+  margin: 0 0 16px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
 .nav a {
   display: block;
   padding: 8px 12px;
   margin-bottom: 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   text-decoration: none;
-  color: var(--fg);
+  color: var(--fg-soft);
+  font-weight: 500;
+  transition: background 120ms ease, color 120ms ease;
 }
-.nav a:hover { background: var(--row-hover); }
-.nav a.active { background: var(--accent); color: white; }
+.nav a:hover { background: var(--border-soft); color: var(--fg); }
+.nav a.active { background: var(--accent-soft); color: var(--accent); }
 
 .main { flex: 1; padding: 24px 32px; }
 .main h1 { margin: 0 0 16px; font-size: 22px; }
@@ -42,9 +146,9 @@ body, html, #root { margin: 0; padding: 0; height: 100%; }
 table {
   width: 100%;
   border-collapse: collapse;
-  background: #ffffff;
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -54,25 +158,33 @@ th, td {
   border-bottom: 1px solid var(--border);
 }
 
-th { background: #f8fafc; font-weight: 600; font-size: 12px; color: var(--muted); }
+th {
+  background: var(--border-soft);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
 tr:hover td { background: var(--row-hover); }
 tr:last-child td { border-bottom: none; }
 
 .error {
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--tool-error-bg, #fee2e2);
+  color: var(--tool-error-fg, #991b1b);
+  border: 1px solid var(--tool-error-border, #fecaca);
   padding: 12px 16px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   margin-bottom: 16px;
 }
 
 .tag {
   display: inline-block;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 11px;
   font-weight: 600;
-  background: var(--row-hover);
+  background: var(--border-soft);
   color: var(--muted);
 }
 
@@ -121,9 +233,9 @@ tr:last-child td { border-bottom: none; }
 }
 
 .skill-tier-tab--active {
-  background: #fff;
+  background: var(--surface);
   color: var(--fg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-sm);
 }
 
 /* -------------------------------------------------- pane intro (purpose/usage) */
@@ -301,7 +413,7 @@ tr:last-child td { border-bottom: none; }
 
 .install-action .error-msg {
   font-size: 11px;
-  color: #991b1b;
+  color: var(--tool-error-fg);
 }
 
 /* ---------------------------------------------------------- Today (v0.11.1) */
@@ -350,8 +462,9 @@ tr:last-child td { border-bottom: none; }
 .today-meta button {
   padding: 4px 12px;
   border: 1px solid var(--border);
-  background: #ffffff;
-  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
@@ -375,7 +488,7 @@ tr:last-child td { border-bottom: none; }
 .today-filters .pills {
   display: inline-flex;
   gap: 4px;
-  background: #f1f5f9;
+  background: var(--border-soft);
   padding: 3px;
   border-radius: 999px;
 }
@@ -399,9 +512,9 @@ tr:last-child td { border-bottom: none; }
 }
 
 .today-filters .pill.active {
-  background: #ffffff;
+  background: var(--surface);
   color: var(--fg);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-sm);
 }
 
 .today-filters .range,
@@ -410,8 +523,8 @@ tr:last-child td { border-bottom: none; }
   font-size: 13px;
   padding: 5px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #ffffff;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
   color: var(--fg);
 }
 
@@ -431,15 +544,15 @@ tr:last-child td { border-bottom: none; }
 
 .timeline-card {
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #ffffff;
+  border-radius: var(--radius-md);
+  background: var(--surface);
   overflow: hidden;
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .timeline-card:hover {
-  border-color: #cbd5e1;
-  box-shadow: 0 1px 6px rgba(15, 23, 42, 0.05);
+  border-color: var(--muted);
+  box-shadow: var(--shadow-sm);
 }
 
 .timeline-card-body {
@@ -496,19 +609,22 @@ tr:last-child td { border-bottom: none; }
   text-transform: uppercase;
 }
 
+/* Channel tags map onto the dark-aware semantic tokens (chat→accent,
+   im→success, scheduled→warn) so they recolour in dark mode. The 3-px
+   card accent rules below keep their fixed hues (legible on any surface). */
 .kind-tag-chat {
-  background: #eef2ff;
-  color: #4338ca;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .kind-tag-im {
-  background: #ecfdf5;
-  color: #047857;
+  background: var(--success-bg);
+  color: var(--success-fg);
 }
 
 .kind-tag-scheduled {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--warn-bg);
+  color: var(--warn-fg);
 }
 
 .timeline-card-chat {
@@ -536,11 +652,11 @@ tr:last-child td { border-bottom: none; }
 
 .drawer {
   width: min(440px, 92vw);
-  background: #ffffff;
+  background: var(--surface);
   height: 100%;
   overflow-y: auto;
   padding: 20px 24px;
-  box-shadow: -8px 0 24px rgba(15, 23, 42, 0.12);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
 }
 
 .drawer-header {
@@ -616,7 +732,7 @@ tr:last-child td { border-bottom: none; }
 .eval-header code {
   font-family: 'SF Mono', Menlo, Consolas, monospace;
   font-size: 12px;
-  background: #f1f5f9;
+  background: var(--code-bg, var(--border-soft));
   padding: 1px 4px;
   border-radius: 3px;
 }
@@ -636,8 +752,8 @@ tr:last-child td { border-bottom: none; }
 
 .eval-sidebar {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: var(--radius-md);
+  background: var(--surface);
   padding: 12px 12px 14px;
 }
 
@@ -703,6 +819,7 @@ tr:last-child td { border-bottom: none; }
 .eval-suite-list button.active {
   background: var(--accent);
   color: #ffffff;
+  border-radius: var(--radius-sm);
 }
 
 .eval-suite-list .suite-name {
@@ -717,13 +834,13 @@ tr:last-child td { border-bottom: none; }
 }
 
 .eval-suite-list button.active .suite-meta {
-  color: #cbd5e1;
+  color: rgba(255, 255, 255, 0.78);
 }
 
 .eval-detail {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: var(--radius-md);
+  background: var(--surface);
   padding: 16px 18px;
   min-height: 320px;
 }
@@ -768,7 +885,7 @@ tr:last-child td { border-bottom: none; }
 .run-actions code {
   font-family: 'SF Mono', Menlo, Consolas, monospace;
   font-size: 12px;
-  background: #f1f5f9;
+  background: var(--code-bg, var(--border-soft));
   padding: 1px 6px;
   border-radius: 3px;
 }
@@ -789,7 +906,7 @@ tr:last-child td { border-bottom: none; }
 }
 
 .run-btn:hover:not(:disabled) {
-  background: #0f172a;
+  background: var(--accent-hover);
 }
 
 .run-btn:disabled {
@@ -824,14 +941,14 @@ tr:last-child td { border-bottom: none; }
   align-items: baseline;
   gap: 12px;
   padding: 12px 16px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
+  background: var(--tool-error-bg);
+  border: 1px solid var(--tool-error-border);
+  border-radius: var(--radius-sm);
 }
 
 .pass-rate-card.all-pass {
-  background: #ecfdf5;
-  border-color: #a7f3d0;
+  background: var(--success-bg);
+  border-color: var(--success-border);
 }
 
 .pass-rate-card .rate {
@@ -874,14 +991,14 @@ tr:last-child td { border-bottom: none; }
 }
 
 .result-table tr.fail-row td:first-child {
-  color: #991b1b;
+  color: var(--tool-error-fg);
 }
 
 .result-table tr.fail-detail td {
-  background: #fef2f2;
+  background: var(--tool-error-bg);
   padding: 8px 14px;
   font-size: 12px;
-  color: #7f1d1d;
+  color: var(--tool-error-fg);
 }
 
 .result-table tr.fail-detail ul {
@@ -908,13 +1025,13 @@ tr:last-child td { border-bottom: none; }
 }
 
 .status-pass {
-  background: #ecfdf5;
-  color: #047857;
+  background: var(--success-bg);
+  color: var(--success-fg);
 }
 
 .status-fail {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--tool-error-bg);
+  color: var(--tool-error-fg);
 }
 
 .convert-tab .muted {
@@ -942,6 +1059,7 @@ tr:last-child td { border-bottom: none; }
 .convert-input input:focus {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
+  border-color: var(--accent);
 }
 
 .convert-input button {
@@ -977,7 +1095,7 @@ tr:last-child td { border-bottom: none; }
 }
 
 .convert-meta code {
-  background: #f1f5f9;
+  background: var(--code-bg, var(--border-soft));
   padding: 1px 6px;
   border-radius: 3px;
   font-family: 'SF Mono', Menlo, Consolas, monospace;
@@ -1000,13 +1118,15 @@ tr:last-child td { border-bottom: none; }
   line-height: 1.5;
 }
 
+/* Sits on the always-dark .yaml-block, so its colours are fixed (not themed)
+   to stay legible regardless of light/dark page chrome. */
 .copy-btn {
   position: absolute;
   top: 8px;
   right: 8px;
   background: rgba(248, 250, 252, 0.92);
-  border: 1px solid var(--border);
-  color: var(--fg);
+  border: 1px solid #cbd5e1;
+  color: #0f172a;
   padding: 3px 10px;
   font: inherit;
   font-size: 11px;
@@ -1019,24 +1139,24 @@ tr:last-child td { border-bottom: none; }
 }
 
 .error {
-  background: #fef2f2;
-  color: #991b1b;
-  border: 1px solid #fecaca;
+  background: var(--tool-error-bg);
+  color: var(--tool-error-fg);
+  border: 1px solid var(--tool-error-border);
   padding: 8px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
 }
 
 /* ---------------------------------------------------------- Skill Packs (v1.3.x) */
 
 .skill-activation-notice {
-  background: #fffbeb;
-  border: 1px solid #fcd34d;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
   border-left: 4px solid #f59e0b;
   padding: 10px 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
-  color: #78350f;
+  color: var(--warn-fg);
   margin-bottom: 24px;
 }
 
@@ -1046,9 +1166,9 @@ tr:last-child td { border-bottom: none; }
   border-radius: 4px;
   font-size: 11px;
   font-weight: 600;
-  background: #fef3c7;
-  color: #92400e;
-  border: 1px solid #fcd34d;
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  border: 1px solid var(--warn-border);
 }
 
 .skill-badge-active {
@@ -1057,9 +1177,9 @@ tr:last-child td { border-bottom: none; }
   border-radius: 4px;
   font-size: 11px;
   font-weight: 600;
-  background: #dcfce7;
-  color: #166534;
-  border: 1px solid #86efac;
+  background: var(--success-bg);
+  color: var(--success-fg);
+  border: 1px solid var(--success-border);
 }
 
 .skill-installed-header {
@@ -1070,9 +1190,9 @@ tr:last-child td { border-bottom: none; }
 }
 
 .skill-install-section {
-  background: #ffffff;
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 16px 20px;
   margin-bottom: 28px;
 }
@@ -1099,20 +1219,20 @@ tr:last-child td { border-bottom: none; }
   font: inherit;
   font-size: 13px;
   color: var(--fg);
-  background: #f8fafc;
+  background: var(--bg);
 }
 
 .skill-install-input:focus {
-  outline: 2px solid #3b82f6;
+  outline: 2px solid var(--accent);
   outline-offset: -1px;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .skill-install-btn {
   padding: 7px 16px;
-  border-radius: 6px;
-  border: 1px solid #3b82f6;
-  background: #3b82f6;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent);
+  background: var(--accent);
   color: #ffffff;
   font: inherit;
   font-size: 13px;
@@ -1122,8 +1242,8 @@ tr:last-child td { border-bottom: none; }
 }
 
 .skill-install-btn:hover:not(:disabled) {
-  background: #2563eb;
-  border-color: #2563eb;
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .skill-install-btn:disabled {
@@ -1133,9 +1253,9 @@ tr:last-child td { border-bottom: none; }
 
 .skill-cancel-btn {
   padding: 7px 16px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--surface);
   color: var(--fg);
   font: inherit;
   font-size: 13px;
@@ -1149,9 +1269,9 @@ tr:last-child td { border-bottom: none; }
 .skill-confirm {
   margin-top: 14px;
   padding: 12px 16px;
-  background: #f0f9ff;
-  border: 1px solid #bae6fd;
-  border-radius: 6px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   font-size: 13px;
 }
 
@@ -1168,7 +1288,7 @@ tr:last-child td { border-bottom: none; }
 .skill-install-done {
   margin-top: 12px;
   font-size: 13px;
-  color: #166534;
+  color: var(--success-fg);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1195,9 +1315,9 @@ tr:last-child td { border-bottom: none; }
 
 .skill-detail-btn {
   padding: 4px 10px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--surface);
   color: var(--fg);
   font: inherit;
   font-size: 12px;
@@ -1228,11 +1348,11 @@ tr:last-child td { border-bottom: none; }
   width: 420px;
   max-width: 90vw;
   height: 100%;
-  background: #ffffff;
+  background: var(--surface);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  box-shadow: -4px 0 20px rgba(15, 23, 42, 0.08);
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.18);
   overflow: hidden;
 }
 
@@ -1260,8 +1380,8 @@ tr:last-child td { border-bottom: none; }
 .skill-drawer-close {
   padding: 4px 8px;
   border: 1px solid var(--border);
-  border-radius: 5px;
-  background: #ffffff;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
   color: var(--muted);
   font: inherit;
   font-size: 13px;
@@ -1331,11 +1451,11 @@ tr:last-child td { border-bottom: none; }
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  background: #ffffff;
+  background: var(--surface-elevated);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.18);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
   padding: 1.5rem;
 }
 .auth-modal__title {
@@ -1363,14 +1483,15 @@ tr:last-child td { border-bottom: none; }
   font-size: 0.95rem;
 }
 .auth-modal__field input:focus {
-  outline: 2px solid var(--row-hover);
+  outline: none;
   border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
 }
 .auth-modal__error {
-  color: #991b1b;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
+  color: var(--tool-error-fg);
+  background: var(--tool-error-bg);
+  border: 1px solid var(--tool-error-border);
+  border-radius: var(--radius-sm);
   padding: 0.4rem 0.6rem;
   font-size: 0.85rem;
 }
@@ -1432,8 +1553,9 @@ tr:last-child td { border-bottom: none; }
 .provider-row-actions button {
   padding: 4px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #fff;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
   font-size: 12px;
   cursor: pointer;
 }
@@ -1443,9 +1565,9 @@ tr:last-child td { border-bottom: none; }
 }
 
 .provider-row-actions button.danger {
-  color: #991b1b;
-  border-color: #fecaca;
-  background: #fef2f2;
+  color: var(--tool-error-fg);
+  border-color: var(--tool-error-border);
+  background: var(--tool-error-bg);
 }
 
 .provider-edit-row td {
@@ -1471,10 +1593,11 @@ tr:last-child td { border-bottom: none; }
 .provider-edit-form input {
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 400;
   color: var(--fg);
+  background: var(--surface);
 }
 
 .provider-edit-actions {
@@ -1486,8 +1609,9 @@ tr:last-child td { border-bottom: none; }
 .provider-edit-actions button {
   padding: 8px 14px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #fff;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
   font-size: 13px;
   cursor: pointer;
 }
@@ -1526,11 +1650,11 @@ tr:last-child td { border-bottom: none; }
 }
 
 .provider-probe-results .probe-ok {
-  color: #2e7d32;
+  color: var(--success-fg);
 }
 
 .provider-probe-results .probe-fail {
-  color: #c62828;
+  color: var(--tool-error-fg);
 }
 
 /* ---------------------------------------------------------- activity pane (single-owner) */
@@ -1549,10 +1673,10 @@ tr:last-child td { border-bottom: none; }
 .audit-toolbar input[type='search'] {
   padding: 7px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   color: var(--fg);
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .audit-toolbar input[type='search'] {
@@ -1598,28 +1722,30 @@ tr:last-child td { border-bottom: none; }
 }
 
 .loops-cancel-btn {
-  color: #b91c1c;
+  color: var(--tool-error-fg);
 }
 
-/* Loop status badges reuse the .status-badge base; one colour per lifecycle. */
+/* Loop status badges reuse the .status-badge base; one colour per lifecycle.
+   Active/paused/failed map to the dark-aware semantic tokens; "done" (info
+   blue) carries its own light values + a dark override below. */
 .loop-status-active {
-  background: #ecfdf5;
-  color: #047857;
+  background: var(--success-bg);
+  color: var(--success-fg);
 }
 
 .loop-status-paused {
-  background: #fffbeb;
-  color: #b45309;
+  background: var(--warn-bg);
+  color: var(--warn-fg);
 }
 
 .loop-status-done {
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: var(--info-bg, #eff6ff);
+  color: var(--info-fg, #1d4ed8);
 }
 
 .loop-status-failed {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--tool-error-bg);
+  color: var(--tool-error-fg);
 }
 
 .loop-status-ended {
