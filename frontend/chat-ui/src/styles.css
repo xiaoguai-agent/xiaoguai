@@ -1915,6 +1915,15 @@ html,
   color: var(--tool-error-fg);
 }
 
+/* Feature ⑤ — muted "governed file editing is active" note, shown only when
+   the session has a working_dir set (coding tools activation trigger). */
+.working-dir__coding-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
 /* ---------------------------------------------------------- HotL banner (v1.3.x) */
 
 /**

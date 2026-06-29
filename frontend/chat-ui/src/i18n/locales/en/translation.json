@@ -235,6 +235,8 @@
     "today_tokens_title": "Total input + output tokens used since 00:00 UTC today",
     "working_dir": "Working directory",
     "working_dir_save": "Save",
-    "working_dir_placeholder": "/abs/path/to/workspace"
+    "working_dir_placeholder": "/abs/path/to/workspace",
+    "coding_active": "File editing enabled for this session — execute writes (audited), consult previews",
+    "coding_active_title": "The agent can read & edit files under this working directory. Execute mode applies changes (audited); consult mode previews without writing."
   }
 }
