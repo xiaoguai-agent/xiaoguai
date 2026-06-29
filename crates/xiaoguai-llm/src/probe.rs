@@ -56,26 +56,43 @@ const PROBE_MAX_TOKENS: u32 = 16;
 pub async fn probe_provider(provider: &LlmProvider) -> Vec<ModelProbe> {
     let (router, _report) = build_router(std::slice::from_ref(provider), &OsEnvResolver);
     let router = Arc::new(router);
+    // Pin every probe to THIS provider explicitly. A keyless key-required
+    // provider is intentionally kept out of the default/fallback routing maps
+    // (bug #17), so relying on those would make the probe report "no backend
+    // matched" instead of the real upstream error (e.g. 401). The backend is
+    // still registered, so an explicit-provider route reaches it directly and
+    // surfaces the genuine connect result the operator needs to see.
+    let provider_id = provider.id.clone();
 
     futures::stream::iter(provider.models.clone().into_iter().map(|model| {
         let router = Arc::clone(&router);
-        async move { probe_one(&router, model).await }
+        let provider_id = provider_id.clone();
+        async move { probe_one(&router, &provider_id, model).await }
     }))
     .buffered(PROBE_CONCURRENCY)
     .collect()
     .await
 }
 
-/// Probe a single model against an already-built single-provider router.
-async fn probe_one(router: &LlmRouter, model: String) -> ModelProbe {
+/// Probe a single model against an already-built single-provider router,
+/// pinned to `provider_id` so the candidacy filter can't redirect or drop it.
+async fn probe_one(
+    router: &LlmRouter,
+    provider_id: &xiaoguai_types::ProviderId,
+    model: String,
+) -> ModelProbe {
     let start = Instant::now();
     let mut req = ChatRequest::new(model.clone(), vec![Message::user("ping")]);
     req.max_tokens = Some(PROBE_MAX_TOKENS);
+    let ctx = ResolveCtx {
+        explicit_provider: Some(provider_id),
+        ..ResolveCtx::default()
+    };
 
     // Success = the initial call is accepted AND the first chunk isn't an error.
     // A provider that returns HTTP 200 then streams an error event still fails.
     let outcome = tokio::time::timeout(PROBE_TIMEOUT, async {
-        let mut stream = router.chat_stream(ResolveCtx::default(), req).await?;
+        let mut stream = router.chat_stream(ctx, req).await?;
         match stream.next().await {
             Some(Err(e)) => Err(e),
             Some(Ok(_)) | None => Ok(()),
