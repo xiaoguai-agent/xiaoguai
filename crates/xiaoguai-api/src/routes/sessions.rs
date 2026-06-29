@@ -31,6 +31,10 @@ pub struct CreateSessionRequest {
     #[serde(default)]
     pub model: String,
     pub title: Option<String>,
+    /// Feature ⑤ — optional per-session coding workspace root (absolute
+    /// server path). Omitted/`None` lets the session fall back to the global
+    /// default (`XIAOGUAI_CODING_WORKSPACE`).
+    pub working_dir: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -48,6 +52,11 @@ pub struct SessionResponse {
     /// the parent that was copied into this session at fork time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forked_from_message_id: Option<String>,
+    /// Feature ⑤ — per-session coding workspace root (absolute server path).
+    /// Omitted from the response when unset (the session uses the global
+    /// default).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<String>,
 }
 
 impl From<Session> for SessionResponse {
@@ -60,6 +69,7 @@ impl From<Session> for SessionResponse {
             status: s.status,
             parent_session_id: s.parent_session_id.map(|id| id.to_string()),
             forked_from_message_id: s.forked_from_message_id.map(|id| id.to_string()),
+            working_dir: s.working_dir,
         }
     }
 }
@@ -92,6 +102,7 @@ pub async fn create_session(
         status: SessionStatus::Active,
         parent_session_id: None,
         forked_from_message_id: None,
+        working_dir: req.working_dir,
     };
     state.sessions.create(&session).await?;
     Ok((StatusCode::CREATED, Json(session.into())))
@@ -139,6 +150,56 @@ pub async fn get_session(
         .await?
         .ok_or(ApiError::NotFound)?;
     Ok(Json(session.into()))
+}
+
+/// Feature ⑤ — partial update of a session. Only the fields present in the
+/// body are changed (PATCH semantics): omitting `working_dir` keeps the
+/// stored value; sending `""` clears the per-session override so the session
+/// falls back to the global coding workspace default.
+#[derive(Debug, Deserialize, Default)]
+pub struct UpdateSessionRequest {
+    pub title: Option<String>,
+    /// Per-session coding-tools root. Intentionally unconstrained: this is a
+    /// single-owner deployment (DEC-033) where the owner already has full
+    /// filesystem access, so any absolute path is allowed. Containment is
+    /// enforced downstream — coding tools stay jailed *within* whichever root
+    /// is chosen (see `xiaoguai-coding`'s path checks), so a `working_dir`
+    /// cannot be used to escape its own tree.
+    pub working_dir: Option<String>,
+}
+
+/// `PATCH /v1/sessions/:id` — update a session's mutable metadata
+/// (`title`, `working_dir`). 404 when the session does not exist.
+///
+/// # Errors
+/// Returns an error if the session is not found or the session store fails.
+pub async fn update_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<UpdateSessionRequest>,
+) -> ApiResult<Json<SessionResponse>> {
+    // Existence check up front so a missing session is a clean 404 rather
+    // than a silent no-op UPDATE (the repo also guards, but checking here
+    // keeps the contract explicit and lets us return the refreshed row).
+    state
+        .sessions
+        .find_by_id(&session_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    state
+        .sessions
+        .update(&session_id, req.title, req.working_dir)
+        .await
+        .map_err(|e| match e {
+            xiaoguai_storage::repositories::RepoError::NotFound => ApiError::NotFound,
+            other => ApiError::Storage(other),
+        })?;
+    let updated = state
+        .sessions
+        .find_by_id(&session_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    Ok(Json(updated.into()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -242,6 +303,41 @@ fn turn_error_to_api(err: TurnError) -> ApiError {
         }
         TurnError::Repo(e) => ApiError::Storage(e),
     }
+}
+
+/// Feature ⑥ — whether an agent turn is currently running server-side for a
+/// session. A turn keeps running on the server when the SSE client navigates
+/// away / reloads / switches session (the run is decoupled from the stream and
+/// the finalize task persists its output), so the chat-ui needs a cheap read
+/// to show "still working…" on a session the user returns to.
+#[derive(Debug, Serialize)]
+pub struct SessionStatusResponse {
+    /// `true` while a turn holds the per-session turn lock (run + finalize),
+    /// `false` once the result is persisted and the lock releases.
+    pub in_flight: bool,
+}
+
+/// `GET /v1/sessions/{id}/status` — is a turn in flight for this session?
+///
+/// Reads the per-session turn lock ([`crate::state::CancelRegistry`]), the
+/// single source of truth for "a turn is running" (the same lock that refuses
+/// a concurrent `POST .../messages` with 409). 404 when the session does not
+/// exist so a stale client id is distinguishable from an idle session.
+///
+/// # Errors
+/// Returns an error if the session is not found or the session store fails.
+pub async fn session_status(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<SessionStatusResponse>> {
+    state
+        .sessions
+        .find_by_id(&session_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    Ok(Json(SessionStatusResponse {
+        in_flight: state.cancels.is_active(&session_id),
+    }))
 }
 
 #[derive(Debug, Serialize)]

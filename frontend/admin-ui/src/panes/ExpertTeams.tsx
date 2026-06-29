@@ -233,6 +233,14 @@ export function ExpertTeamsPane({
     [personas],
   );
 
+  // Demo-friendly empty state: distinguish "no teams at all" (fresh install —
+  // show a guided call-to-action) from "filter hid every team" (just clear the
+  // filter). When there are also no active personas, the CTA's first step is to
+  // create personas, since a team needs members.
+  const teamCount = load.kind === 'ok' ? load.teams.length : 0;
+  const noTeamsAtAll = teamCount === 0;
+  const noPersonas = activePersonas.length === 0;
+
   const problem = validateTeamForm(form);
 
   function openCreate() {
@@ -340,9 +348,36 @@ export function ExpertTeamsPane({
           {t('common.failed', { message: load.message })}
         </p>
       )}
-      {load.kind === 'ok' && filtered.length === 0 && (
+      {/* Fresh install (no teams at all): a guided call-to-action that explains
+          how to build a team and that it then runs from the chat UI. */}
+      {load.kind === 'ok' && filtered.length === 0 && noTeamsAtAll && (
+        <div className="empty-cta" role="status">
+          <p className="empty-cta-title">{t('pane.expert_teams.cta_title')}</p>
+          <p className="muted">{t('pane.expert_teams.cta_body')}</p>
+          <ol className="empty-cta-steps">
+            <li>
+              {noPersonas
+                ? t('pane.expert_teams.cta_step_personas_missing')
+                : t('pane.expert_teams.cta_step_personas_ready')}
+            </li>
+            <li>{t('pane.expert_teams.cta_step_create')}</li>
+            <li>{t('pane.expert_teams.cta_step_run')}</li>
+          </ol>
+          <RequireScope name="teams.write">
+            <button type="button" onClick={openCreate} disabled={noPersonas}>
+              {t('pane.expert_teams.cta_create_btn')}
+            </button>
+          </RequireScope>
+          {noPersonas && (
+            <p className="muted">{t('pane.expert_teams.cta_personas_hint')}</p>
+          )}
+        </div>
+      )}
+
+      {/* Filter hid every team: distinct, terse message (the teams exist). */}
+      {load.kind === 'ok' && filtered.length === 0 && !noTeamsAtAll && (
         <p role="status" className="muted">
-          {t('pane.expert_teams.empty')}
+          {t('pane.expert_teams.empty_filtered')}
         </p>
       )}
       {load.kind === 'ok' && filtered.length > 0 && (

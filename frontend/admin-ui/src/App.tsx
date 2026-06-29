@@ -19,6 +19,7 @@ import { PersonasPane } from './panes/Personas';
 import { ExpertTeamsPane } from './panes/ExpertTeams';
 import { IncidentsPane } from './panes/Incidents';
 import { SkillProposalsPane } from './panes/SkillProposals';
+import { BrandingPane } from './panes/Branding';
 
 /**
  * v0.11.1 — audit-first console. `Today` becomes the default landing
@@ -52,6 +53,10 @@ export function App() {
         {/* v1.1.1: Usage slots AFTER Eval, BEFORE MCP-related entries. */}
         <NavLink to="/usage" className={({ isActive }) => (isActive ? 'active' : '')}>
           {t('nav.usage')}
+        </NavLink>
+        {/* 特性①: white-label branding — set the assistant's display name. */}
+        <NavLink to="/branding" className={({ isActive }) => (isActive ? 'active' : '')}>
+          {t('nav.branding')}
         </NavLink>
         <div className="nav-section">{t('nav.manage')}</div>
         {/* v1.3.x: Outcomes — list + session chain + summary browser. */}
@@ -116,6 +121,7 @@ export function App() {
           <Route path="/loops" element={<LoopsPane />} />
           <Route path="/eval" element={<EvalPane />} />
           <Route path="/usage" element={<UsagePane />} />
+          <Route path="/branding" element={<BrandingPane />} />
           <Route path="/outcomes" element={<OutcomesPane />} />
           <Route path="/anomaly" element={<AnomalyPane />} />
           <Route path="/marketplace" element={<MarketplacePane />} />

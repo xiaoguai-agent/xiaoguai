@@ -173,7 +173,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     use xiaoguai_observability;
     use xiaoguai_storage::repositories::{
         LlmProviderRepository, SqliteLlmProviderRepository, SqliteMcpServerRepository,
-        SqliteMessageRepository, SqliteSessionRepository,
+        SqliteMessageRepository, SqliteSessionRepository, SqliteSettingsRepository,
     };
 
     use crate::audit_bridge::SqliteAuditAdapter;
@@ -375,7 +375,16 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // the server's CWD (H1); unset signing key ⇒ no ungoverned coding. The
     // egress tools (`git_push`/`open_pr`) need a further `XIAOGUAI_CODING_ALLOW_
     // EGRESS` opt-in (C1).
-    let toolbox = {
+    // The boot toolbox starts EMPTY — coding tools are the first thing added,
+    // so an empty `Toolbox` is the "base (non-coding)" toolbox the Feature ⑤
+    // per-session factory layers session-rooted coding tools onto. The factory
+    // is `Some` ONLY when coding actually registered at boot, so a session's
+    // `working_dir` never enables coding where the operator hadn't (the opt-in
+    // posture is unchanged).
+    let (toolbox, coding_toolbox_factory): (
+        Arc<Toolbox>,
+        Option<Arc<dyn xiaoguai_api::coding_toolbox::CodingToolboxFactory>>,
+    ) = {
         match (
             &pg_audit_sink,
             crate::coding_bridge::coding_workspace_root(),
@@ -392,14 +401,24 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                             egress = allow_egress,
                             "serve: governed coding tools registered into the agent toolbox"
                         );
-                        Arc::new(tb)
+                        // Feature ⑤: capture the inputs to rebuild this surface
+                        // at a per-session working_dir. Base = empty toolbox
+                        // (coding tools are the first added at boot).
+                        let factory: Arc<dyn xiaoguai_api::coding_toolbox::CodingToolboxFactory> =
+                            Arc::new(crate::coding_bridge::CodingToolboxFactoryImpl::new(
+                                sink.clone(),
+                                allow_egress,
+                                Toolbox::new(),
+                                root.clone(),
+                            ));
+                        (Arc::new(tb), Some(factory))
                     }
                     Err(e) => {
                         tracing::warn!(
                             error = %e,
                             "serve: failed to build coding toolbox — agent runs without coding tools"
                         );
-                        Arc::new(Toolbox::new())
+                        (Arc::new(Toolbox::new()), None)
                     }
                 }
             }
@@ -408,14 +427,14 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                     "serve: coding workspace set but audit signing key unset — coding tools \
                      NOT registered (no ungoverned coding)"
                 );
-                Arc::new(Toolbox::new())
+                (Arc::new(Toolbox::new()), None)
             }
             _ => {
                 tracing::info!(
                     "serve: coding tools disabled (set XIAOGUAI_CODING_WORKSPACE to a directory \
                      to enable governed in-loop coding)"
                 );
-                Arc::new(Toolbox::new())
+                (Arc::new(Toolbox::new()), None)
             }
         }
     };
@@ -977,6 +996,9 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // Phase 5 (skill-pack loader): hot-rescan bridge computed above
         // (Some under `packs`, None otherwise).
         pack_rescanner,
+        // Feature ⑤ (per-session coding workspace root): computed alongside
+        // the boot toolbox above — `Some` only when coding registered at boot.
+        coding_toolbox_factory,
     };
 
     // Phase 4b (skill-pack loader): activate each enabled pack's conversational
@@ -1119,11 +1141,28 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
             r
         }
     };
+    // White-label branding (the assistant's display name shown across the chat
+    // UI). Self-contained router like `providers`; re-apply the owner gate so an
+    // unauthenticated caller can't rewrite the name when auth is configured.
+    let branding_router = {
+        let r = xiaoguai_api::routes::branding::build_router(Arc::new(
+            SqliteSettingsRepository::new(pool.clone()),
+        ));
+        if let Some(validator) = state.auth.clone() {
+            r.route_layer(axum::middleware::from_fn(move |req, next| {
+                let v = validator.clone();
+                async move { xiaoguai_api::auth::require_auth(v, req, next).await }
+            }))
+        } else {
+            r
+        }
+    };
     let im_router = merge_routers(vec![
         build_feishu_gateway(&state, im_history.clone()),
         build_dingtalk_gateway(&state, im_history.clone()),
         build_wecom_gateway(&state, im_history.clone()),
         Some(providers_router),
+        Some(branding_router),
     ]);
 
     let addr: SocketAddr = format!("{}:{}", settings.server.host, settings.server.port)

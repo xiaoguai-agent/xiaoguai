@@ -101,6 +101,7 @@ fn build_state_with_webhook_validator(token: &str, route_id: &str) -> AppState {
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     }
 }
 

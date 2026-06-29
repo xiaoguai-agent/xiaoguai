@@ -94,6 +94,7 @@ fn build_app(sink: Arc<Mutex<Vec<OutgoingReply>>>) -> axum::Router {
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     };
     let provider: Arc<dyn ImProvider> = Arc::new(WeComProvider::with_recording_sink(TOKEN, sink));
     mount_wecom(state, provider)

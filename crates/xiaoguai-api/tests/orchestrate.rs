@@ -103,6 +103,7 @@ impl Fixture {
                 xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
             ),
             pack_rescanner: None,
+            coding_toolbox_factory: None,
         }
     }
 
@@ -150,6 +151,7 @@ impl Fixture {
             status: SessionStatus::Active,
             parent_session_id: None,
             forked_from_message_id: None,
+            working_dir: None,
         };
         self.sessions
             .create(&session)

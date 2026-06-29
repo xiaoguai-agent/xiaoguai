@@ -17,6 +17,8 @@
     "source_manual": "手動"
   },
   "chat": {
+    "remote_running": "タスク実行中…",
+    "remote_running_title": "このセッションではサーバー側でまだターンが実行中です。完了すると結果がここに表示されます — このタブを開いたままにしておく必要はありません。",
     "sse": {
       "reconnecting": "再接続中（{{attempt}} 回目、{{secs}} 秒後に再試行）…",
       "cancel_reconnect": "キャンセル",
@@ -70,9 +72,10 @@
     "admin": "管理",
     "language_label": "言語",
     "no_sessions": "セッションがありません。メッセージを送信して作成してください。",
-    "welcome_title": "こんにちは、Xiaoguai です",
+    "assistant_name": "Xiaoguai",
+    "welcome_title": "こんにちは、{{name}} です",
     "welcome_subtitle": "何かお手伝いできることはありますか？",
-    "composer_placeholder": "Xiaoguai にメッセージを送信…",
+    "composer_placeholder": "{{name}} にメッセージを送信…",
     "composer_hint": "Shift+Enter で改行",
     "stop": "停止",
     "send": "送信",
@@ -112,6 +115,7 @@
       "firstrun_hint": "チームは有効化された「専用シナリオ」スキルパックから提供されます。チームを選び、複雑なゴールを入力するとチーム全体で実行できます — メンバーが並列で作業し、リードが一つの回答に統合します。",
       "deeplink_attached": "チーム「{{team}}」を設定しました — 複雑なゴールを入力してチームに任せてください。",
       "deeplink_need_session": "まず任意のメッセージを送信してセッションを開始し、ここでチーム「{{team}}」を選択してください。",
+      "teamrun_discover": "このチームが設定されています。メッセージ欄に複雑なゴールを入力し、隣の「チーム並列実行」ボタンをクリックすると、チーム全体で並列実行できます。",
       "error_load": "エキスパートの読み込みに失敗しました：{{message}}",
       "error_attach": "エキスパートの設定に失敗しました：{{message}}",
       "error_detach": "エキスパートの解除に失敗しました：{{message}}",
@@ -139,6 +143,11 @@
     "skills_page": {
       "title": "スキルパック",
       "subtitle": "ワークスペース向けの事前構築済みスキルパックを閲覧・インストールします。パックはエージェントに領域固有のツール・プロンプト・RAG インデックスを追加します。",
+      "center_subtitle": "あなたのアビリティセンター — エージェントが今すぐ使えるスキルです。ここでパックをインストール・削除できます。カタログ全体の管理は「管理画面」にあります。",
+      "active_title": "あなたのアビリティ",
+      "active_empty": "まだスキルがインストールされていません — 下の「すべてのスキルを見る」を開いて追加してください。",
+      "browse_title": "すべてのスキルを見る",
+      "browse_hint": "カタログ全体から追加でインストール",
       "loading": "読み込み中…",
       "error": "エラー：{{message}}",
       "empty": "利用可能なスキルパックがありません。",
@@ -150,9 +159,9 @@
       "installed_badge": "インストール済み ✓",
       "requires_flag": "フラグ：{{flag}}",
       "requires_env": "環境変数：{{env}}",
-      "toast_installed": "{{name}} をインストールしました",
+      "toast_installed": "{{{name}}} をインストールしました",
       "toast_install_failed": "インストールに失敗しました：{{message}}",
-      "toast_uninstalled": "{{name}} をアンインストールしました",
+      "toast_uninstalled": "{{{name}}} をアンインストールしました",
       "toast_uninstall_failed": "アンインストールに失敗しました：{{message}}",
       "tab_general": "汎用",
       "tab_specialized": "シナリオ",
@@ -167,6 +176,24 @@
       "onboarding_step1": "下から「専用シナリオ」スキルパックをインストールします。",
       "onboarding_step2": "「チーム有効 ✓」の表示を待ちます — エージェントチームの準備が整います。",
       "onboarding_step3": "「チャットで使う →」をクリックし、「エキスパート選択」でチームを選び、複雑なゴールを入力してチームに任せます。"
+    },
+    "mcp_tools": {
+      "title": "このセッションで使えるツール",
+      "intro": "エージェントが呼び出せる外部 MCP ツールです — 接続されたサーバーが、組み込みツール以外の操作を提供します。",
+      "manage_note": "ここでは閲覧のみです。サーバーの追加・編集・削除は「管理画面」で行います。",
+      "loading": "ツールを読み込み中…",
+      "error": "MCP ツールを読み込めませんでした：{{message}}",
+      "empty": "MCP サーバーが未設定です。「管理画面」で接続すると、エージェントに外部ツールを追加できます。",
+      "transport_title": "トランスポート：{{transport}}",
+      "env_label": "環境変数："
     }
+  },
+  "sidebar": {
+    "audit": "アクティビティ",
+    "today_tokens": "本日 ~{{count}} トークン",
+    "today_tokens_title": "本日 UTC 00:00 以降の入力 + 出力トークン合計",
+    "working_dir": "作業ディレクトリ",
+    "working_dir_save": "保存",
+    "working_dir_placeholder": "/作業領域/絶対/パス"
   }
 }

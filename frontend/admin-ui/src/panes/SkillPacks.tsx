@@ -535,6 +535,15 @@ export function SkillPacksPane(): JSX.Element {
         usageLabel={t('pane.skill_packs.intro.usage_label')}
       />
 
+      {/* Management-focused note — day-to-day skill discovery/activation lives in
+          the chat "Skills" page (the consumer ability center). This admin pane is
+          the operator's management surface: installed-pack inventory, rescan and
+          activation status. */}
+      <div className="skill-activation-notice" role="note">
+        <strong>{t('pane.skill_packs.manage_note_title')}</strong>{' '}
+        {t('pane.skill_packs.manage_note_body')}
+      </div>
+
       {/* Honest disclaimer — these are templates; installing only records config */}
       <p className="hint skill-template-disclaimer">{t('pane.skill_packs.template_disclaimer')}</p>
 

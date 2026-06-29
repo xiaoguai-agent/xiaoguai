@@ -71,6 +71,7 @@ fn build_state(workspaces: Option<Arc<dyn WorkspaceRepository>>) -> AppState {
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     }
 }
 

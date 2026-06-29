@@ -214,6 +214,9 @@ impl ImIdentityRepository for SqliteImIdentityRepository {
             status: SessionStatus::Active,
             parent_session_id: None,
             forked_from_message_id: None,
+            // Feature ⑤: IM-bridged sessions use the global coding workspace
+            // default (no per-session override).
+            working_dir: None,
         };
 
         sqlx::query(

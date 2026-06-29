@@ -135,6 +135,30 @@ pub async fn build_coding_toolbox(
     root: &Path,
     include_egress: bool,
 ) -> Result<Toolbox> {
+    // All-or-nothing: build into a fresh toolbox so a mid-loop collision can
+    // never leave a half-exposed coding surface (security-review M1).
+    build_coding_toolbox_onto(Toolbox::new(), sink, root, include_egress).await
+}
+
+/// Like [`build_coding_toolbox`] but layers the governed coding tools onto a
+/// caller-supplied `base` toolbox (its non-coding tools are preserved). Used by
+/// the Feature ⑤ per-session rebuild so a session-rooted toolbox keeps every
+/// non-coding tool the boot toolbox had.
+///
+/// The coding tool names are fixed (`code.*` / `git.*` style), so the only
+/// possible collision is `base` already containing coding tools — which never
+/// happens here because `base` is the boot toolbox *before* coding tools were
+/// added.
+///
+/// # Errors
+/// Returns an error if the workspace cannot be opened/initialised, or if a
+/// coding tool name collides with one already in `base`.
+pub async fn build_coding_toolbox_onto(
+    base: Toolbox,
+    sink: Arc<SqliteAuditSink>,
+    root: &Path,
+    include_egress: bool,
+) -> Result<Toolbox> {
     let workspace = Workspace::open_or_create(root)
         .await
         .with_context(|| format!("open coding workspace at {}", root.display()))?;
@@ -144,9 +168,7 @@ pub async fn build_coding_toolbox(
         AuditStepRecorder::new(sink),
     );
     let client: Arc<dyn McpClient> = Arc::new(CodingMcpClient::new(tools, include_egress));
-    // All-or-nothing: build into a fresh toolbox so a mid-loop collision can
-    // never leave a half-exposed coding surface (security-review M1).
-    let mut toolbox = Toolbox::new();
+    let mut toolbox = base;
     for descriptor in coding_tool_descriptors(include_egress) {
         let name = descriptor.name.clone();
         toolbox
@@ -154,6 +176,60 @@ pub async fn build_coding_toolbox(
             .with_context(|| format!("register coding tool {name}"))?;
     }
     Ok(toolbox)
+}
+
+/// Feature ⑤ — concrete [`CodingToolboxFactory`] wired into `AppState` by
+/// `run_serve` ONLY when coding is enabled at boot. Captures everything a
+/// per-session rebuild needs: the audit sink, the egress opt-in flag, the
+/// base (non-coding) toolbox to layer onto, and the global default root.
+///
+/// `rebuild_for` reproduces the exact boot-time governed coding surface
+/// (HotL-gated, checkpointed, audited, egress-gated by the same flag) — only
+/// the workspace root differs. The base toolbox is cloned per call (cheap —
+/// it is a `HashMap` of `Arc`-backed entries), so a turn's rebuild never
+/// mutates shared state.
+pub struct CodingToolboxFactoryImpl {
+    sink: Arc<SqliteAuditSink>,
+    include_egress: bool,
+    base: Toolbox,
+    global_root: std::path::PathBuf,
+}
+
+impl CodingToolboxFactoryImpl {
+    /// `base` MUST be the toolbox BEFORE coding tools were layered on, and
+    /// `global_root` the root those boot-time coding tools were built with.
+    #[must_use]
+    pub fn new(
+        sink: Arc<SqliteAuditSink>,
+        include_egress: bool,
+        base: Toolbox,
+        global_root: std::path::PathBuf,
+    ) -> Self {
+        Self {
+            sink,
+            include_egress,
+            base,
+            global_root,
+        }
+    }
+}
+
+#[async_trait]
+impl xiaoguai_api::coding_toolbox::CodingToolboxFactory for CodingToolboxFactoryImpl {
+    async fn rebuild_for(&self, root: &Path) -> Result<Arc<Toolbox>> {
+        let tb = build_coding_toolbox_onto(
+            self.base.clone(),
+            self.sink.clone(),
+            root,
+            self.include_egress,
+        )
+        .await?;
+        Ok(Arc::new(tb))
+    }
+
+    fn global_root(&self) -> Option<&Path> {
+        Some(&self.global_root)
+    }
 }
 
 /// The coding workspace root, or `None` when coding is **not enabled**.
@@ -167,6 +243,28 @@ pub fn coding_workspace_root() -> Option<std::path::PathBuf> {
     std::env::var_os("XIAOGUAI_CODING_WORKSPACE")
         .map(std::path::PathBuf::from)
         .filter(|p| !p.as_os_str().is_empty())
+}
+
+/// Feature ⑤ — resolve the coding workspace root for a single turn, honouring
+/// the session's per-session override.
+///
+/// When `session_working_dir` is `Some(path)` and non-empty, that absolute
+/// server path is the workspace root for this turn (the coding tools'
+/// file-write / output base). Otherwise we fall back to the global default
+/// resolved by [`coding_workspace_root`] (`XIAOGUAI_CODING_WORKSPACE`), so a
+/// session that pins no directory behaves exactly as before.
+///
+/// This only changes **which root** is used; the opt-in gating and security
+/// model are unchanged — when the global default is also unset the result is
+/// `None` and no coding tools are registered, exactly as today.
+#[must_use]
+pub fn coding_workspace_root_for_session(
+    session_working_dir: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    match session_working_dir.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(dir) => Some(std::path::PathBuf::from(dir)),
+        None => coding_workspace_root(),
+    }
 }
 
 /// Whether the **egress** coding tools (`git_push`, `open_pr`) are exposed —
@@ -239,5 +337,39 @@ mod tests {
             gate.decide("tool_call.edit_file").await,
             GateDecision::Deny(_)
         ));
+    }
+
+    #[test]
+    fn session_working_dir_override_wins() {
+        // A non-empty per-session dir is used verbatim — that's the whole
+        // point of Feature ⑤.
+        let root = coding_workspace_root_for_session(Some("/srv/work/sess-1"));
+        assert_eq!(
+            root.as_deref(),
+            Some(std::path::Path::new("/srv/work/sess-1"))
+        );
+    }
+
+    #[test]
+    fn session_working_dir_trims_and_treats_blank_as_unset() {
+        // Surrounding whitespace is trimmed; a blank override is treated as
+        // "no override" and falls through to the global default. With no
+        // XIAOGUAI_CODING_WORKSPACE set in the test env that default is None.
+        assert_eq!(
+            coding_workspace_root_for_session(Some("   ")),
+            coding_workspace_root()
+        );
+        let trimmed = coding_workspace_root_for_session(Some("  /srv/x  "));
+        assert_eq!(trimmed.as_deref(), Some(std::path::Path::new("/srv/x")));
+    }
+
+    #[test]
+    fn no_session_dir_falls_back_to_global_default() {
+        // None override ⇒ identical to the global resolver (opt-in gating
+        // unchanged: still None when the env var is unset).
+        assert_eq!(
+            coding_workspace_root_for_session(None),
+            coding_workspace_root()
+        );
     }
 }

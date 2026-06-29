@@ -208,6 +208,25 @@ impl RemoteClient {
         require_2xx_with_body(resp).await
     }
 
+    /// `GET /v1/admin/providers` — list the configured LLM providers (the
+    /// secret key is never returned; each item carries `has_api_key` instead).
+    /// Used by the REPL's `/model`/`/models` to print a selectable model menu.
+    ///
+    /// # Errors
+    /// Returns an error if the request fails, the server returns a non-2xx
+    /// status (e.g. 401 when admin auth is required), or the body cannot be
+    /// decoded.
+    pub async fn list_providers(&self) -> Result<Vec<ProviderInfo>> {
+        let resp = self
+            .http
+            .get(format!("{}/v1/admin/providers", self.base_url))
+            .send()
+            .await
+            .context("GET /v1/admin/providers")?;
+        require_2xx(&resp)?;
+        resp.json().await.context("decode providers body")
+    }
+
     /// `POST /v1/sessions/:id/messages` using the session's own model. Thin
     /// wrapper over [`Self::send_message_with_model`] with no override.
     ///
@@ -445,4 +464,213 @@ pub struct SessionResponse {
 pub struct RemoteEvent {
     pub name: String,
     pub payload: JsonValue,
+}
+
+/// One provider as returned by `GET /v1/admin/providers`. The secret key is
+/// never on the wire — `has_api_key` flags whether one is stored. Extra server
+/// fields are ignored, so this stays forward-compatible.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProviderInfo {
+    pub name: String,
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// Probe-confirmed models, or `null`/absent when never probed.
+    #[serde(default)]
+    pub verified_models: Option<Vec<String>>,
+    #[serde(default)]
+    pub has_api_key: bool,
+}
+
+impl ProviderInfo {
+    /// A provider can actually serve a turn when it has a stored key. (Local
+    /// providers like Ollama may have no key but are reachable; we still flag
+    /// them honestly via `has_api_key`, mirroring the chat picker's rule.)
+    #[must_use]
+    pub fn is_usable(&self) -> bool {
+        self.has_api_key
+    }
+}
+
+/// Compute the de-duplicated list of *usable* models from the configured
+/// providers, for the interactive `/model` picker. A model is usable when its
+/// provider has a stored key ([`ProviderInfo::is_usable`]); key-less providers
+/// (and all their models) are omitted entirely — not merely marked — so the
+/// picker only ever offers models that can actually serve a turn.
+///
+/// Within a usable provider, prefer its `verified_models` (probe-confirmed)
+/// when that list is non-empty; otherwise fall back to its advertised `models`.
+/// The result keeps first-seen order across providers and drops later
+/// duplicates, so a model offered by two keyed providers appears once.
+///
+/// Pure (no I/O) so the filtering is unit-testable without a TTY or server.
+#[must_use]
+pub fn usable_models(providers: &[ProviderInfo]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for p in providers {
+        if !p.is_usable() {
+            continue;
+        }
+        let candidates = match p.verified_models.as_deref() {
+            Some(v) if !v.is_empty() => v,
+            _ => &p.models,
+        };
+        for m in candidates {
+            if seen.insert(m.clone()) {
+                out.push(m.clone());
+            }
+        }
+    }
+    out
+}
+
+/// Render the configured providers + models as a selectable, grouped menu for
+/// the REPL's `/model`/`/models`. Pure (no I/O) so it's unit-testable. Each
+/// group shows the provider name + a usable/no-key marker; each model line is
+/// marked usable only when the provider has a key, and `✓verified` when the
+/// model was probe-confirmed. `current` is highlighted with `→`.
+#[must_use]
+pub fn format_model_menu(providers: &[ProviderInfo], current: &str) -> String {
+    if providers.is_empty() {
+        return "no providers configured — run `xiaoguai serve` once to seed defaults, \
+                then `xiaoguai init` (or the admin UI) to add a key.\n  \
+                switch with: /model <name>"
+            .to_string();
+    }
+    let mut out = String::from("configured models — switch with: /model <name>\n");
+    for p in providers {
+        let status = if p.is_usable() {
+            "[usable]"
+        } else {
+            "[no key — add one in admin UI / `xiaoguai init`]"
+        };
+        out.push_str(&format!("\n  {} {status}\n", p.name));
+        if p.models.is_empty() {
+            out.push_str("    (no models listed)\n");
+            continue;
+        }
+        let verified: &[String] = p.verified_models.as_deref().unwrap_or(&[]);
+        for m in &p.models {
+            let marker = if m == current { "→" } else { " " };
+            // One parenthesised annotation: usability, plus a verified tag when
+            // the model was probe-confirmed.
+            let mut tags = vec![if p.is_usable() { "usable" } else { "no key" }];
+            if verified.iter().any(|v| v == m) {
+                tags.push("✓verified");
+            }
+            out.push_str(&format!("    {marker} {m}  ({})\n", tags.join(", ")));
+        }
+    }
+    out.push_str("\nswitch with: /model <name>");
+    out
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::*;
+
+    fn prov(name: &str, models: &[&str], key: bool, verified: Option<&[&str]>) -> ProviderInfo {
+        ProviderInfo {
+            name: name.to_string(),
+            models: models.iter().map(ToString::to_string).collect(),
+            verified_models: verified.map(|v| v.iter().map(ToString::to_string).collect()),
+            has_api_key: key,
+        }
+    }
+
+    #[test]
+    fn empty_providers_fall_back_to_a_hint() {
+        let s = format_model_menu(&[], "");
+        assert!(s.contains("no providers configured"), "got {s}");
+        assert!(s.contains("/model <name>"));
+    }
+
+    #[test]
+    fn groups_by_provider_and_marks_usability() {
+        let providers = vec![
+            prov(
+                "minimax-1",
+                &["MiniMax-M2", "MiniMax-M1"],
+                true,
+                Some(&["MiniMax-M2"]),
+            ),
+            prov("minimax-seed", &["MiniMax-M2.5"], false, None),
+        ];
+        let s = format_model_menu(&providers, "MiniMax-M2");
+        // provider grouping + status
+        assert!(s.contains("minimax-1 [usable]"), "got {s}");
+        assert!(s.contains("minimax-seed [no key"), "got {s}");
+        // current model highlighted, verified flagged
+        assert!(s.contains("→ MiniMax-M2  (usable, ✓verified)"), "got {s}");
+        // an unverified but usable model carries just the usable tag
+        assert!(s.contains("MiniMax-M1  (usable)"), "got {s}");
+        // keyless provider's model is marked "no key"
+        assert!(s.contains("MiniMax-M2.5  (no key)"), "got {s}");
+    }
+
+    #[test]
+    fn provider_with_no_models_is_noted() {
+        let s = format_model_menu(&[prov("bare", &[], true, None)], "");
+        assert!(s.contains("(no models listed)"), "got {s}");
+    }
+
+    #[test]
+    fn usable_models_includes_keyed_excludes_keyless() {
+        let providers = vec![
+            prov("minimax-1", &["MiniMax-M2", "MiniMax-M1"], true, None),
+            // key-less provider — none of its models should appear
+            prov(
+                "minimax-seed",
+                &["MiniMax-M2.5", "abab6.5-chat"],
+                false,
+                None,
+            ),
+        ];
+        let models = usable_models(&providers);
+        assert_eq!(models, vec!["MiniMax-M2", "MiniMax-M1"]);
+        assert!(!models.iter().any(|m| m == "MiniMax-M2.5"));
+        assert!(!models.iter().any(|m| m == "abab6.5-chat"));
+    }
+
+    #[test]
+    fn usable_models_prefers_verified_when_present() {
+        // The provider advertises three models but only one is probe-confirmed;
+        // the picker should offer just the verified subset.
+        let providers = vec![prov(
+            "minimax-1",
+            &["MiniMax-M2", "MiniMax-M1", "MiniMax-M3"],
+            true,
+            Some(&["MiniMax-M2"]),
+        )];
+        assert_eq!(usable_models(&providers), vec!["MiniMax-M2"]);
+    }
+
+    #[test]
+    fn usable_models_falls_back_to_models_when_verified_empty() {
+        // An empty verified list means "never probed / nothing confirmed" — not
+        // "nothing usable"; fall back to the advertised models.
+        let providers = vec![prov("minimax-1", &["MiniMax-M2"], true, Some(&[]))];
+        assert_eq!(usable_models(&providers), vec!["MiniMax-M2"]);
+    }
+
+    #[test]
+    fn usable_models_dedupes_across_providers_keeping_first_order() {
+        // Two keyed providers both serve MiniMax-M2; it must appear once, in
+        // first-seen order, with each provider's other models interleaved by
+        // discovery order.
+        let providers = vec![
+            prov("a", &["MiniMax-M2", "MiniMax-M1"], true, None),
+            prov("b", &["MiniMax-M2", "MiniMax-M3"], true, None),
+        ];
+        assert_eq!(
+            usable_models(&providers),
+            vec!["MiniMax-M2", "MiniMax-M1", "MiniMax-M3"]
+        );
+    }
+
+    #[test]
+    fn usable_models_empty_when_all_keyless() {
+        let providers = vec![prov("seed", &["MiniMax-M2.5"], false, None)];
+        assert!(usable_models(&providers).is_empty());
+    }
 }

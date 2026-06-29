@@ -73,6 +73,7 @@ fn build_state(usage_reader: Option<Arc<dyn UsageReader>>) -> AppState {
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     }
 }
 

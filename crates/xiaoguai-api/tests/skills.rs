@@ -71,6 +71,7 @@ fn build_state(skill_packs: Option<Arc<dyn SkillPackRepository>>) -> AppState {
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     }
 }
 

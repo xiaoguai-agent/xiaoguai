@@ -30,6 +30,8 @@ interface TranslationShape {
     admin: string;
     language_label: string;
     no_sessions: string;
+    /** Default assistant display name when no white-label branding is set. */
+    assistant_name: string;
     welcome_title: string;
     welcome_subtitle: string;
     composer_placeholder: string;
@@ -77,6 +79,8 @@ interface TranslationShape {
       /** Phase 4c — deep-link landing: team auto-attached / needs a session. */
       deeplink_attached: string;
       deeplink_need_session: string;
+      /** Feature ⑭ — Team Run discoverability hint (shown when a team is active). */
+      teamrun_discover: string;
       error_load: string;
       error_attach: string;
       error_detach: string;
@@ -108,6 +112,12 @@ interface TranslationShape {
     skills_page: {
       title: string;
       subtitle: string;
+      /** Feature ④ — ability-center reframe (installed-first consumer view). */
+      center_subtitle: string;
+      active_title: string;
+      active_empty: string;
+      browse_title: string;
+      browse_hint: string;
       loading: string;
       error: string;
       empty: string;
@@ -142,8 +152,39 @@ interface TranslationShape {
       onboarding_step2: string;
       onboarding_step3: string;
     };
+    /** Feature ④ — read-only "tools available to this session" (MCP) view. */
+    mcp_tools: {
+      title: string;
+      intro: string;
+      manage_note: string;
+      loading: string;
+      error: string;
+      empty: string;
+      transport_title: string;
+      env_label: string;
+    };
+  };
+  /** Feature ②/⑤ — enriched sidebar widgets (audit link, token stat,
+   *  per-session working-dir control). */
+  sidebar: {
+    /** Audit / activity deep-link label → /admin/audit. */
+    audit: string;
+    /** "今日 ~{{count}} tokens" — `{{count}}` is the humanized total. */
+    today_tokens: string;
+    /** Tooltip for the token stat line. */
+    today_tokens_title: string;
+    /** Working-dir control label. */
+    working_dir: string;
+    /** Working-dir save button. */
+    working_dir_save: string;
+    /** Working-dir input placeholder (an example absolute path). */
+    working_dir_placeholder: string;
   };
   chat: {
+    /** Feature ⑥ — non-blocking "a turn is still running server-side" cue. */
+    remote_running: string;
+    /** Feature ⑥ — tooltip explaining the remote-running indicator. */
+    remote_running_title: string;
     sse: {
       reconnecting: string;
       cancel_reconnect: string;

@@ -113,6 +113,7 @@ fn build_state(mcp: Option<Arc<dyn McpServerRepository>>) -> AppState {
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     }
 }
 

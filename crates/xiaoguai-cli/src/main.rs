@@ -6,7 +6,8 @@ use clap::{CommandFactory, Parser};
 use xiaoguai_cli::commands::{
     anomaly, audit_bundle, audit_export, backup, chat, cli_config, code, completions, demo_seed,
     doctor, eval, hotl, init, manpages, mcp, memory, outcomes, pack, provider, r#loop, remote,
-    repl, schedule, self_update, service, skills, stats, style, tasks, watch,
+    repl, schedule, self_update, service, skills, stats, style, tasks, think_filter::ThinkStripper,
+    watch,
 };
 use xiaoguai_config::Settings;
 use xiaoguai_storage::{
@@ -168,9 +169,10 @@ async fn handle_chat(
         })
         .await?;
     eprintln!("session: {}", session.id);
+    let mut stripper = ThinkStripper::default();
     client
         .send_message(&session.id, &prompt, |ev| {
-            render_remote_event(&ev);
+            render_remote_event(&ev, &mut stripper);
             Ok(())
         })
         .await?;
@@ -650,7 +652,7 @@ async fn handle_demo_seed(config: Option<&str>, reset: bool) -> Result<()> {
     // key (same key resolution as `xiaoguai schedule` / `xiaoguai code`).
     let key = xiaoguai_cli::commands::resolve_audit_signing_key(&settings)?;
     let audit = SqliteAuditSink::new(pool.clone(), key);
-    let report = demo_seed::seed(&pool, &audit, chrono::Utc::now())
+    let report = demo_seed::seed(&pool, &audit, &settings.auth.username, chrono::Utc::now())
         .await
         .context("seed demo data")?;
     print!("{}", demo_seed::format_guide(&report));
@@ -815,13 +817,20 @@ fn render_orchestrate_event(ev: &remote::RemoteEvent) {
     }
 }
 
-fn render_remote_event(ev: &remote::RemoteEvent) {
+/// Render the assistant's streamed reply, filtered through `stripper` so
+/// `<think>` reasoning and control characters never reach the terminal. The
+/// caller owns one `ThinkStripper` per turn (state must persist across the
+/// turn's deltas) and resets it between turns.
+fn render_remote_event(ev: &remote::RemoteEvent, stripper: &mut ThinkStripper) {
     use std::io::Write as _;
     match ev.name.as_str() {
         "text_delta" => {
             if let Some(delta) = ev.payload.get("delta").and_then(serde_json::Value::as_str) {
-                print!("{delta}");
-                std::io::stdout().flush().ok();
+                let visible = stripper.push(delta);
+                if !visible.is_empty() {
+                    print!("{visible}");
+                    std::io::stdout().flush().ok();
+                }
             }
         }
         "tool_call_started" => {
@@ -869,13 +878,18 @@ fn render_remote_event(ev: &remote::RemoteEvent) {
             }
         }
         "done" => {
+            // End the line so the next prompt starts fresh. A normal finish is
+            // SILENT — `[done] completed` is noise in an interactive REPL. Only
+            // a genuinely abnormal stop gets a brief dim note.
             println!();
             let reason = ev
                 .payload
                 .get("stop_reason")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("?");
-            eprintln!("{}", style::ok(&format!("[done] {reason}")));
+            if !matches!(reason, "completed" | "stop" | "ok") {
+                eprintln!("{}", style::dim(&format!("[done] {reason}")));
+            }
         }
         "error" => {
             let msg = ev
@@ -901,25 +915,48 @@ const CLI_LOGO: &str = r"
      \___/      小怪不小，能办大事
 ";
 
+/// Mutable per-session REPL state shared across input lines, threaded through
+/// [`dispatch_repl_line`] so the interactive (rustyline) and non-tty (plain
+/// stdin) input loops share one dispatch path.
+struct ReplState {
+    client: remote::RemoteClient,
+    session_id: String,
+    /// The live model choice; `/model <name>` switches it per-message without a
+    /// reconnect. Empty ⇒ the session default.
+    current_model: String,
+    /// Persistent CLI prefs (`~/.xiaoguai/cli.json`): prompt marker + language.
+    cfg: cli_config::CliConfig,
+    /// One-time reply-language directive prepended to the next user turn.
+    lang_directive: Option<&'static str>,
+    /// Whether the session is driven from an interactive terminal. Gates the
+    /// arrow-key `/model` picker: piped/non-tty input (scripts, tests) falls
+    /// back to the plain text menu so it never blocks on a missing TTY.
+    interactive: bool,
+}
+
+/// Outcome of dispatching one input line: keep looping or quit.
+#[derive(PartialEq, Eq)]
+enum ReplFlow {
+    Continue,
+    Quit,
+}
+
 async fn handle_repl(server: String, user_id: String, model: String) -> Result<()> {
-    use std::io::Write as _;
+    use std::io::IsTerminal as _;
     let client = remote::RemoteClient::new(server.clone());
     client.healthz().await.with_context(|| {
         format!("could not reach the server at {server} — start it with `xiaoguai serve`")
     })?;
-    // The session is created with `model`; `current_model` tracks the live
-    // choice so `/model <name>` can switch it per-message without a reconnect.
-    let mut current_model = model.clone();
     // Persistent CLI prefs (~/.xiaoguai/cli.json): the prompt marker + default
     // reply language, remembered across restarts. Mutable in-session via /config.
-    let mut cfg = cli_config::load();
+    let cfg = cli_config::load();
     // When a language is configured, prepend a one-time directive to the first
     // user turn so the agent replies in it (CLI-side; no server change needed).
-    let mut lang_directive: Option<&'static str> = cli_config::language_directive(&cfg.language);
+    let lang_directive: Option<&'static str> = cli_config::language_directive(&cfg.language);
     let session = client
         .create_session(&remote::CreateSessionRequest {
             user_id,
-            model,
+            model: model.clone(),
             title: None,
         })
         .await?;
@@ -932,80 +969,265 @@ async fn handle_repl(server: String, user_id: String, model: String) -> Result<(
         ))
     );
 
+    // Computed once: gates both the rustyline line editor and the arrow-key
+    // `/model` picker. Piped input (scripts, tests) takes the plain path.
+    let interactive = std::io::stdin().is_terminal();
+
+    let mut state = ReplState {
+        client,
+        session_id: session.id,
+        current_model: model,
+        cfg,
+        lang_directive,
+        interactive,
+    };
+
+    // Use rustyline for arrow-key history + line editing when stdin is an
+    // interactive terminal; otherwise fall back to plain stdin so piped input
+    // (scripts, tests) still works.
+    if interactive {
+        run_repl_interactive(&mut state).await;
+    } else {
+        run_repl_plain(&mut state).await?;
+    }
+    eprintln!("bye");
+    Ok(())
+}
+
+/// Interactive input loop backed by `rustyline`: Up/Down recalls history,
+/// Left/Right + editing work, Ctrl-C/Ctrl-D quit. History persists to
+/// `~/.xiaoguai/cli_history` when writable (best-effort; in-memory otherwise).
+async fn run_repl_interactive(state: &mut ReplState) {
+    let history_path = cli_history_path();
+    let mut editor = match rustyline::DefaultEditor::new() {
+        Ok(e) => e,
+        Err(e) => {
+            // Couldn't init a line editor (no PTY / unsupported terminal) —
+            // degrade to the plain reader rather than failing the session.
+            eprintln!(
+                "{}",
+                style::warn(&format!("  ! line editor unavailable ({e}); plain input"))
+            );
+            let _ = run_repl_plain(state).await;
+            return;
+        }
+    };
+    if let Some(p) = history_path.as_ref() {
+        let _ = editor.load_history(p); // absent/unreadable history is fine
+    }
+    loop {
+        let prompt = format!("{} ", style::prompt(&state.cfg.prompt));
+        match editor.readline(&prompt) {
+            Ok(line) => {
+                // Record non-blank lines so Up/Down can recall them.
+                if !line.trim().is_empty() {
+                    let _ = editor.add_history_entry(line.as_str());
+                }
+                if dispatch_repl_line(state, &line).await == ReplFlow::Quit {
+                    break;
+                }
+            }
+            // Ctrl-C / Ctrl-D both leave the REPL (matching the prior EOF=quit).
+            Err(
+                rustyline::error::ReadlineError::Interrupted | rustyline::error::ReadlineError::Eof,
+            ) => {
+                eprintln!();
+                break;
+            }
+            Err(e) => {
+                eprintln!("{}", style::err(&format!("[input error] {e}")));
+                break;
+            }
+        }
+    }
+    if let Some(p) = history_path.as_ref() {
+        let _ = editor.save_history(p); // best-effort persistence
+    }
+}
+
+/// Plain-stdin input loop for non-tty input (piped scripts / tests). No history
+/// or line editing — just read a line, dispatch, repeat until EOF.
+async fn run_repl_plain(state: &mut ReplState) -> Result<()> {
+    use std::io::Write as _;
     let stdin = std::io::stdin();
     loop {
-        eprint!("\n{} ", style::prompt(&cfg.prompt));
+        eprint!("\n{} ", style::prompt(&state.cfg.prompt));
         std::io::stderr().flush().ok();
         let mut line = String::new();
         if stdin.read_line(&mut line).context("read stdin")? == 0 {
             eprintln!();
             break; // EOF / Ctrl-D
         }
-        match repl::parse_command(&line, &current_model) {
-            repl::ReplAction::Quit => break,
-            repl::ReplAction::Notice(msg) => eprintln!("{msg}"),
-            repl::ReplAction::Clear => {
-                // ANSI: clear screen + home the cursor.
-                print!("\x1b[2J\x1b[H");
-                std::io::stdout().flush().ok();
-            }
-            repl::ReplAction::SetModel(m) => {
-                current_model = m;
-                eprintln!("{}", style::ok(&format!("  ✓ model → {current_model}")));
-            }
-            repl::ReplAction::ConfigShow => eprintln!("{}", cli_config::render(&cfg)),
-            repl::ReplAction::ConfigSet { key, value } => {
-                match cli_config::apply_set(&cfg, &key, &value) {
-                    Ok(next) => {
-                        cfg = next;
-                        // A language change re-arms the directive for the next turn.
-                        if key == "language" || key == "lang" {
-                            lang_directive = cli_config::language_directive(&cfg.language);
-                        }
-                        match cli_config::save(&cfg) {
-                            Ok(()) => {
-                                eprintln!(
-                                    "{}",
-                                    style::ok(&format!("  ✓ {key} → {}", value.trim()))
-                                );
-                            }
-                            Err(e) => eprintln!(
-                                "{}",
-                                style::warn(&format!(
-                                    "  ! applied in-session but could not persist: {e:#}"
-                                ))
-                            ),
-                        }
+        if dispatch_repl_line(state, &line).await == ReplFlow::Quit {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Interpret + act on one input line. Shared by both input loops so command
+/// dispatch, model switching, config, and streaming behave identically whether
+/// the line came from rustyline or plain stdin.
+async fn dispatch_repl_line(state: &mut ReplState, line: &str) -> ReplFlow {
+    use std::io::Write as _;
+    match repl::parse_command(line, &state.current_model) {
+        repl::ReplAction::Quit => return ReplFlow::Quit,
+        repl::ReplAction::Notice(msg) => eprintln!("{msg}"),
+        repl::ReplAction::ListModels => handle_list_models(state).await,
+        repl::ReplAction::Clear => {
+            // ANSI: clear screen + home the cursor.
+            print!("\x1b[2J\x1b[H");
+            std::io::stdout().flush().ok();
+        }
+        repl::ReplAction::SetModel(m) => {
+            state.current_model = m;
+            eprintln!(
+                "{}",
+                style::ok(&format!("  ✓ model → {}", state.current_model))
+            );
+        }
+        repl::ReplAction::ConfigShow => eprintln!("{}", cli_config::render(&state.cfg)),
+        repl::ReplAction::ConfigSet { key, value } => {
+            match cli_config::apply_set(&state.cfg, &key, &value) {
+                Ok(next) => {
+                    state.cfg = next;
+                    // A language change re-arms the directive for the next turn.
+                    if key == "language" || key == "lang" {
+                        state.lang_directive = cli_config::language_directive(&state.cfg.language);
                     }
-                    Err(msg) => eprintln!("{}", style::warn(&format!("  ! {msg}"))),
+                    match cli_config::save(&state.cfg) {
+                        Ok(()) => {
+                            eprintln!("{}", style::ok(&format!("  ✓ {key} → {}", value.trim())));
+                        }
+                        Err(e) => eprintln!(
+                            "{}",
+                            style::warn(&format!(
+                                "  ! applied in-session but could not persist: {e:#}"
+                            ))
+                        ),
+                    }
                 }
+                Err(msg) => eprintln!("{}", style::warn(&format!("  ! {msg}"))),
             }
-            repl::ReplAction::Send(prompt) => {
-                if prompt.is_empty() {
-                    continue;
-                }
-                // One-time language directive prepended to the first turn so the
-                // agent adopts the configured reply language.
-                let content = match lang_directive.take() {
-                    Some(d) => format!("{d}\n\n{prompt}"),
-                    None => prompt,
-                };
-                let model_override = (!current_model.is_empty()).then_some(current_model.as_str());
-                if let Err(e) = client
-                    .send_message_with_model(&session.id, &content, model_override, |ev| {
-                        render_remote_event(&ev);
-                        Ok(())
-                    })
-                    .await
-                {
-                    // Keep the REPL alive on a per-turn error (network blip, etc.).
-                    eprintln!("{}", style::err(&format!("[error] {e:#}")));
-                }
+        }
+        repl::ReplAction::Send(prompt) => {
+            if prompt.is_empty() {
+                return ReplFlow::Continue;
+            }
+            // One-time language directive prepended to the first turn so the
+            // agent adopts the configured reply language.
+            let content = match state.lang_directive.take() {
+                Some(d) => format!("{d}\n\n{prompt}"),
+                None => prompt,
+            };
+            let model_override =
+                (!state.current_model.is_empty()).then_some(state.current_model.as_str());
+            // Fresh per-turn filter so `<think>` state never leaks between turns.
+            let mut stripper = ThinkStripper::default();
+            if let Err(e) = state
+                .client
+                .send_message_with_model(&state.session_id, &content, model_override, |ev| {
+                    render_remote_event(&ev, &mut stripper);
+                    Ok(())
+                })
+                .await
+            {
+                // Keep the REPL alive on a per-turn error (network blip, etc.).
+                eprintln!("{}", style::err(&format!("[error] {e:#}")));
             }
         }
     }
-    eprintln!("bye");
-    Ok(())
+    ReplFlow::Continue
+}
+
+/// Handle bare `/model` / `/models`: fetch the configured providers, then —
+/// in an interactive TTY — open an arrow-key picker of the *usable* models
+/// (↑↓ to move, Enter to select) and switch to the chosen one. Outside a TTY
+/// (piped stdin, tests) or when the picker can't init, fall back to the plain
+/// grouped text menu + the `/model <name>` hint. A fetch failure degrades to a
+/// static hint either way.
+async fn handle_list_models(state: &mut ReplState) {
+    let providers = match state.client.list_providers().await {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!(
+                "{}",
+                style::warn(&format!(
+                    "  ! couldn't list models from the server ({e}).\n  \
+                     see configured providers with:  xiaoguai provider list\n  \
+                     then switch with:  /model <name>"
+                ))
+            );
+            return;
+        }
+    };
+
+    // Non-tty (scripts/tests) → never block on a missing TTY; print the text
+    // menu so piped sessions and assertions keep working.
+    if !state.interactive {
+        eprintln!(
+            "{}",
+            remote::format_model_menu(&providers, &state.current_model)
+        );
+        return;
+    }
+
+    // Only models that can actually serve a turn — key-less providers' models
+    // are omitted entirely.
+    let usable = remote::usable_models(&providers);
+    if usable.is_empty() {
+        eprintln!(
+            "{}",
+            style::warn(
+                "  ! no usable model — every configured provider is missing an API key.\n  \
+                 add one in the admin UI or with `xiaoguai provider`, then run /model again."
+            )
+        );
+        return;
+    }
+
+    match pick_model_interactive(&usable, &state.current_model) {
+        Ok(Some(chosen)) => {
+            state.current_model = chosen;
+            eprintln!(
+                "{}",
+                style::ok(&format!("  ✓ model → {}", state.current_model))
+            );
+        }
+        // Esc / Ctrl-C → keep the current model, no change.
+        Ok(None) => eprintln!("{}", style::dim("  (model unchanged)")),
+        // The picker couldn't init (no PTY / unsupported terminal) — degrade to
+        // the text menu + hint rather than failing the command.
+        Err(_) => eprintln!(
+            "{}",
+            remote::format_model_menu(&providers, &state.current_model)
+        ),
+    }
+}
+
+/// Show an arrow-key `Select` of `models` (↑↓ + Enter), pre-highlighting
+/// `current` when it's in the list. Returns `Ok(Some(name))` on Enter,
+/// `Ok(None)` when the user cancels (Esc / Ctrl-C), or `Err` when the
+/// interactive prompt couldn't initialise (no usable terminal) so the caller
+/// can fall back. `models` is assumed non-empty (the caller guards that).
+fn pick_model_interactive(models: &[String], current: &str) -> anyhow::Result<Option<String>> {
+    use dialoguer::{theme::ColorfulTheme, Select};
+    let default = models.iter().position(|m| m == current).unwrap_or(0);
+    let selection = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("pick a model (↑↓ then Enter, Esc to cancel)")
+        .items(models)
+        .default(default)
+        .interact_opt()?; // Ok(None) on Esc/Ctrl-C; Err if no usable terminal
+    Ok(selection.map(|i| models[i].clone()))
+}
+
+/// `~/.xiaoguai/cli_history` — the readline history file, alongside `cli.json`.
+/// `None` when no config dir can be resolved (history stays in-memory only).
+fn cli_history_path() -> Option<std::path::PathBuf> {
+    cli_config::config_path()
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|dir| dir.join("cli_history"))
 }
 
 async fn handle_remote(server: String, action: RemoteCmd) -> Result<()> {
@@ -1029,9 +1251,10 @@ async fn handle_remote(server: String, action: RemoteCmd) -> Result<()> {
                 })
                 .await?;
             eprintln!("session: {}", session.id);
+            let mut stripper = ThinkStripper::default();
             client
                 .send_message(&session.id, &prompt, |ev| {
-                    render_remote_event(&ev);
+                    render_remote_event(&ev, &mut stripper);
                     Ok(())
                 })
                 .await?;

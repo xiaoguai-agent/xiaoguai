@@ -22,6 +22,12 @@ pub struct Session {
     /// from the parent that was copied into this session at fork time.
     #[serde(default)]
     pub forked_from_message_id: Option<MessageId>,
+    /// Feature ⑤ — per-session coding workspace root: an absolute server
+    /// path used as the coding tools' workspace base for this session's
+    /// turns. `None`/empty falls back to the global default
+    /// (`XIAOGUAI_CODING_WORKSPACE`). Settable via `PATCH /v1/sessions/{id}`.
+    #[serde(default)]
+    pub working_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

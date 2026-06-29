@@ -78,6 +78,7 @@ fn build_state(memory_store: Option<Arc<dyn MemoryStore>>) -> AppState {
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     }
 }
 

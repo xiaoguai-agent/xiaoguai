@@ -52,6 +52,13 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 reqwest = { workspace = true }
 base64 = { workspace = true }
+# Interactive REPL line editing: Up/Down history, Left/Right cursor, Ctrl-C/Ctrl-D.
+rustyline = "14"
+# Interactive arrow-key picker for bare `/model` (the Select prompt). Reuses the
+# `console` crate already in the lock for raw-mode ↑↓/Enter; default features off
+# to skip the editor/password prompts we don't use. Entered only transiently for
+# the model selection, so it coexists with rustyline.
+dialoguer = { version = "0.12", default-features = false }
 eventsource-stream = "0.2"
 futures = { workspace = true }
 serde = { workspace = true }

@@ -16,6 +16,9 @@
 //!   tail spike so an anomaly `fire-now` / back-test detects a z-score outlier.
 //! * **Incident + RCA** — one resolved-loop incident with a root-cause
 //!   analysis row for the Incidents pane.
+//! * **Expert team + personas** — three demo personas and one team (with a
+//!   designated lead) referencing them, so the admin "Expert Teams" pane and
+//!   the chat `ExpertPicker` are not blank.
 //!
 //! Idempotent: every run first clears prior demo rows (so re-running doesn't
 //! pile up duplicates), then re-seeds. `--reset` clears and stops (leaves the
@@ -26,8 +29,10 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 use sqlx::SqlitePool;
+use uuid::Uuid;
 use xiaoguai_audit::chain::sink::SqliteAuditSink;
 use xiaoguai_audit::{AuditEntry, OWNER_TENANT_ID};
+use xiaoguai_types::ContentBlock;
 
 // ---------------------------------------------------------------------------
 // Stable demo markers — every seeded row carries one of these so `clear_demo`
@@ -38,9 +43,10 @@ use xiaoguai_audit::{AuditEntry, OWNER_TENANT_ID};
 const DEMO_SESSION_PREFIX: &str = "demo_sess_";
 /// Prefix on every demo scheduled-job id.
 const DEMO_JOB_PREFIX: &str = "demo_job_";
-/// Prefix on every demo incident id.
-const DEMO_INCIDENT_PREFIX: &str = "demo_inc_";
 /// `incidents.source` value used for demo rows (also matches the audit actor).
+/// Demo incidents are keyed on this marker (their `id` is a real UUID, not a
+/// text prefix), so `clear_demo` removes them precisely without touching real
+/// incidents.
 const DEMO_INCIDENT_SOURCE: &str = "demo";
 /// `token_usage.request_id` marker so demo usage rows are removable without
 /// disturbing real provider telemetry.
@@ -49,10 +55,31 @@ const DEMO_USAGE_REQUEST_ID: &str = "demo-seed";
 /// chain is append-only and is NOT cleared by `--reset`; see `clear_demo`).
 const DEMO_AUDIT_ACTOR: &str = "cli:demo-seed";
 
-/// Provider id the demo `token_usage` + audit cost rows attribute to. The
-/// migrations seed a key-less `minimax` provider, so this resolves on a fresh
-/// DB; the value is only a label here (no live call is made).
-const DEMO_PROVIDER_ID: &str = "minimax";
+/// `personas.tags` JSON value stamped on every demo persona, and the
+/// `expert_teams.recommended_pack_slugs` marker stamped on the demo team, so
+/// `clear_demo` removes exactly the demo rows without touching real personas /
+/// teams. `personas.id` and `expert_teams.id` are TEXT columns but the
+/// repositories decode them through `Uuid::parse_str` (a non-UUID id silently
+/// becomes `Uuid::nil()` and breaks the read path), so demo ids are real
+/// deterministic v5 UUIDs (see `demo_persona_id` / `demo_team_id`) — the
+/// tag/slug markers are what makes the delete precise, not an id prefix.
+const DEMO_PERSONA_TAG: &str = "demo-seed";
+/// Seed strings for the three demo personas' deterministic v5 UUID ids. Stable
+/// across runs so re-seeding (clear-then-insert) never duplicates a persona,
+/// and `clear_demo` can target them whether or not the tag marker is present.
+const DEMO_PERSONA_SEEDS: &[&str] = &[
+    "xiaoguai-demo-persona-lead",
+    "xiaoguai-demo-persona-sre",
+    "xiaoguai-demo-persona-security",
+];
+/// Seed string for the demo team's deterministic v5 UUID id.
+const DEMO_TEAM_SEED: &str = "xiaoguai-demo-team-incident-response";
+
+/// Provider id the demo `token_usage` + audit cost rows attribute to. Must be
+/// the real seeded provider id (`minimax-system`, from migration 0023) so the
+/// Usage/Stats pane joins these rows cleanly to a provider; the value is only a
+/// label here (no live call is made).
+const DEMO_PROVIDER_ID: &str = "minimax-system";
 const DEMO_MODEL: &str = "MiniMax-Text-01";
 
 /// Baseline token-usage points to lay down before the spike. The default
@@ -79,6 +106,8 @@ pub struct SeedReport {
     pub jobs: usize,
     pub usage_rows: usize,
     pub incidents: usize,
+    pub personas: usize,
+    pub teams: usize,
     pub baseline_tokens: i64,
     pub spike_tokens: i64,
 }
@@ -94,17 +123,25 @@ pub struct SeedReport {
 pub async fn seed(
     pool: &SqlitePool,
     audit: &SqliteAuditSink,
+    owner_user_id: &str,
     now: DateTime<Utc>,
 ) -> Result<SeedReport> {
     clear_demo(pool).await.context("clear prior demo data")?;
 
-    let (sessions, messages) = seed_sessions(pool, now).await.context("seed sessions")?;
+    let (sessions, messages) = seed_sessions(pool, owner_user_id, now)
+        .await
+        .context("seed sessions")?;
     let jobs = seed_jobs(pool, now).await.context("seed scheduled jobs")?;
-    let usage_rows = seed_token_usage(pool, now)
+    let usage_rows = seed_token_usage(pool, owner_user_id, now)
         .await
         .context("seed token_usage")?;
     let incidents = seed_incident(pool, now).await.context("seed incident")?;
-    let audit_rows = seed_audit(audit, now).await.context("seed audit chain")?;
+    let (personas, teams) = seed_expert_team(pool, now)
+        .await
+        .context("seed expert team")?;
+    let audit_rows = seed_audit(audit, owner_user_id, now)
+        .await
+        .context("seed audit chain")?;
 
     Ok(SeedReport {
         audit_rows,
@@ -113,6 +150,8 @@ pub async fn seed(
         jobs,
         usage_rows,
         incidents,
+        personas,
+        teams,
         baseline_tokens: BASELINE_TOKENS,
         spike_tokens: SPIKE_TOKENS,
     })
@@ -132,22 +171,60 @@ pub async fn seed(
 pub async fn clear_demo(pool: &SqlitePool) -> Result<()> {
     // Order matters only where FKs cascade; we delete children first anyway so
     // the intent is explicit and the function is FK-pragma-agnostic.
-    let inc_like = format!("{DEMO_INCIDENT_PREFIX}%");
     let sess_like = format!("{DEMO_SESSION_PREFIX}%");
     let job_like = format!("{DEMO_JOB_PREFIX}%");
 
-    // Incident children (RCAs / repairs) then incidents.
-    sqlx::query("DELETE FROM incident_rcas WHERE incident_id LIKE ?1")
-        .bind(&inc_like)
-        .execute(pool)
-        .await
-        .context("delete demo incident_rcas")?;
-    sqlx::query("DELETE FROM incidents WHERE id LIKE ?1 OR source = ?2")
-        .bind(&inc_like)
+    // Incident children (RCAs) then incidents. The incident `id` is a real UUID
+    // (BLOB), not a text prefix, so demo rows are keyed on `source = 'demo'`;
+    // RCAs carry no source column, so they're matched via their parent incident
+    // and deleted first (while the parent still exists), making this correct
+    // whether or not SQLite FK-cascade is enabled.
+    sqlx::query(
+        "DELETE FROM incident_rcas \
+         WHERE incident_id IN (SELECT id FROM incidents WHERE source = ?1)",
+    )
+    .bind(DEMO_INCIDENT_SOURCE)
+    .execute(pool)
+    .await
+    .context("delete demo incident_rcas")?;
+    sqlx::query("DELETE FROM incidents WHERE source = ?1")
         .bind(DEMO_INCIDENT_SOURCE)
         .execute(pool)
         .await
         .context("delete demo incidents")?;
+
+    // Expert team + personas. `expert_teams.lead_persona_id` has a real FK to
+    // `personas`, and `session_teams` / `session_personas` reference both, so
+    // delete in dependency order: session attachments → team → personas. The
+    // demo ids are deterministic v5 UUIDs (same seeds the inserter uses), so we
+    // target them exactly without disturbing real teams / personas.
+    let team_id = demo_team_id().to_string();
+    let persona_ids: Vec<String> = demo_persona_ids().iter().map(Uuid::to_string).collect();
+
+    sqlx::query("DELETE FROM session_teams WHERE team_id = ?1")
+        .bind(&team_id)
+        .execute(pool)
+        .await
+        .context("delete demo session_teams")?;
+    sqlx::query("DELETE FROM expert_teams WHERE id = ?1")
+        .bind(&team_id)
+        .execute(pool)
+        .await
+        .context("delete demo expert_team")?;
+    for pid in &persona_ids {
+        sqlx::query("DELETE FROM session_personas WHERE persona_id = ?1")
+            .bind(pid)
+            .execute(pool)
+            .await
+            .context("delete demo session_personas")?;
+    }
+    for pid in &persona_ids {
+        sqlx::query("DELETE FROM personas WHERE id = ?1")
+            .bind(pid)
+            .execute(pool)
+            .await
+            .context("delete demo persona")?;
+    }
 
     // token_usage demo rows (marked by request_id).
     sqlx::query("DELETE FROM token_usage WHERE request_id = ?1")
@@ -239,7 +316,15 @@ const OPS_MSGS: &[DemoMessage] = &[
 ];
 
 /// Two demo chats with a handful of messages each. Returns (sessions, messages).
-async fn seed_sessions(pool: &SqlitePool, now: DateTime<Utc>) -> Result<(usize, usize)> {
+///
+/// `owner_user_id` is the authed owner (the basic-auth username) so the seeded
+/// chats match real chats and surface in `GET /v1/sessions` (which filters by
+/// the caller's identity) — not a synthetic id the session list never returns.
+async fn seed_sessions(
+    pool: &SqlitePool,
+    owner_user_id: &str,
+    now: DateTime<Utc>,
+) -> Result<(usize, usize)> {
     let chats: &[DemoChat] = &[
         DemoChat {
             id: "demo_sess_governance",
@@ -263,7 +348,7 @@ async fn seed_sessions(pool: &SqlitePool, now: DateTime<Utc>) -> Result<(usize, 
              VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?6)",
         )
         .bind(sid)
-        .bind("usr_owner")
+        .bind(owner_user_id)
         .bind(chat.title)
         .bind(DEMO_MODEL)
         .bind(&created)
@@ -276,6 +361,14 @@ async fn seed_sessions(pool: &SqlitePool, now: DateTime<Utc>) -> Result<(usize, 
         for (idx, m) in chat.messages.iter().enumerate() {
             // Deterministic per-message id so re-seeding is clean.
             let mid = format!("{sid}_msg_{idx:02}");
+            // `messages.content` is read back as `Json<Vec<ContentBlock>>`, so a
+            // plain string fails to decode (`/v1/sessions/{id}/messages` 500).
+            // Serialize through the real `ContentBlock` type so the on-disk
+            // shape can never drift from the read path.
+            let content = serde_json::to_string(&[ContentBlock::Text {
+                text: m.content.to_string(),
+            }])
+            .with_context(|| format!("serialize demo message content {mid}"))?;
             sqlx::query(
                 "INSERT INTO messages (id, session_id, role, content, created_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -283,7 +376,7 @@ async fn seed_sessions(pool: &SqlitePool, now: DateTime<Utc>) -> Result<(usize, 
             .bind(&mid)
             .bind(sid)
             .bind(m.role)
-            .bind(m.content)
+            .bind(&content)
             .bind(ts(now - Duration::minutes(m.mins_ago)))
             .execute(pool)
             .await
@@ -363,7 +456,11 @@ async fn seed_jobs(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
 
 /// Lay down a flat token-usage history then one obvious tail spike, so an
 /// anomaly back-test / fire-now flags a z-score outlier. Returns row count.
-async fn seed_token_usage(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
+async fn seed_token_usage(
+    pool: &SqlitePool,
+    owner_user_id: &str,
+    now: DateTime<Utc>,
+) -> Result<usize> {
     let mut rows = 0usize;
     // Baseline: one point every 30 min going back, all ~BASELINE_TOKENS with a
     // tiny ±deterministic wobble so σ is non-zero (a perfectly flat series has
@@ -378,6 +475,7 @@ async fn seed_token_usage(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize
         let completion = total - prompt;
         insert_usage(
             pool,
+            owner_user_id,
             "demo_sess_ops",
             prompt,
             completion,
@@ -392,6 +490,7 @@ async fn seed_token_usage(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize
     let spike_completion = SPIKE_TOKENS - spike_prompt;
     insert_usage(
         pool,
+        owner_user_id,
         "demo_sess_ops",
         spike_prompt,
         spike_completion,
@@ -406,6 +505,7 @@ async fn seed_token_usage(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize
 
 async fn insert_usage(
     pool: &SqlitePool,
+    owner_user_id: &str,
     session_id: &str,
     prompt: i64,
     completion: i64,
@@ -418,7 +518,7 @@ async fn insert_usage(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )
     .bind(ts_str)
-    .bind("usr_owner")
+    .bind(owner_user_id)
     .bind(session_id)
     .bind(DEMO_PROVIDER_ID)
     .bind(DEMO_MODEL)
@@ -439,7 +539,11 @@ async fn insert_usage(
 /// One resolved incident with a root-cause-analysis row, for the Incidents
 /// pane. Returns the incident count (1).
 async fn seed_incident(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
-    let incident_id = format!("{DEMO_INCIDENT_PREFIX}001");
+    // `incidents.id` and `incident_rcas.id`/`incident_id` are read back as
+    // `Uuid` (sqlx decodes a 16-byte BLOB), so a text id like "demo_inc_001"
+    // makes `/v1/incidents` 500 (`decoding column "id": expected 16 bytes`).
+    // Bind real UUIDs; a deterministic v5 id keeps re-seeding stable.
+    let incident_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, b"xiaoguai-demo-incident-001");
     let occurred = ts(now - Duration::hours(3));
     let raw_payload = json!({
         "alert": "HighErrorRate",
@@ -460,7 +564,7 @@ async fn seed_incident(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
             (id, source, external_id, title, severity, project, environment, occurred_at, raw_payload, status, created_at, updated_at) \
          VALUES (?1, ?2, ?3, ?4, 'high', 'checkout-api', 'prod', ?5, ?6, 'resolved', ?7, ?8)",
     )
-    .bind(&incident_id)
+    .bind(incident_id)
     .bind(DEMO_INCIDENT_SOURCE)
     .bind("demo:checkout-error-rate")
     .bind("checkout-api 错误率突增至 13.7%（阈值 2%）")
@@ -472,7 +576,7 @@ async fn seed_incident(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
     .await
     .context("insert demo incident")?;
 
-    let rca_id = format!("{incident_id}_rca_001");
+    let rca_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, b"xiaoguai-demo-rca-001");
     let action_items = json!([
         "回滚 checkout-api 至上一个稳定版本（已通过 HotL 审批执行）",
         "为下游支付超时增加熔断与降级",
@@ -488,8 +592,8 @@ async fn seed_incident(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
             (id, incident_id, session_id, summary, root_cause, confidence, action_items, raw_markdown, created_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )
-    .bind(&rca_id)
-    .bind(&incident_id)
+    .bind(rca_id)
+    .bind(incident_id)
     .bind("demo_sess_ops")
     .bind("新版本对支付网关的同步调用在其抖动时耗尽线程池，引发错误率突增；回滚后恢复。")
     .bind("checkout-api v2026.6.27 同步调用支付网关 + 网关 P99 抖动 → 线程池耗尽")
@@ -505,13 +609,132 @@ async fn seed_incident(pool: &SqlitePool, now: DateTime<Utc>) -> Result<usize> {
 }
 
 // ---------------------------------------------------------------------------
+// Expert team + personas
+// ---------------------------------------------------------------------------
+
+/// Deterministic v5 UUID for the demo team — stable across runs so re-seeding
+/// (clear-then-insert) never duplicates it and `clear_demo` can target it.
+fn demo_team_id() -> Uuid {
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, DEMO_TEAM_SEED.as_bytes())
+}
+
+/// Deterministic v5 UUIDs for the three demo personas, in member order
+/// (index 0 is the lead). Same seeds the inserter and `clear_demo` both use.
+fn demo_persona_ids() -> Vec<Uuid> {
+    DEMO_PERSONA_SEEDS
+        .iter()
+        .map(|s| Uuid::new_v5(&Uuid::NAMESPACE_OID, s.as_bytes()))
+        .collect()
+}
+
+/// One scripted demo persona: name + system prompt + an optional role/domain
+/// tag list (on top of the always-present `demo-seed` marker tag).
+struct DemoPersona {
+    name: &'static str,
+    system_prompt: &'static str,
+    role_tag: &'static str,
+}
+
+/// Three demo personas forming an incident-response team. Index 0 is the lead
+/// (incident commander); the others are specialist members. Names are stable
+/// so the active-name partial-unique index is satisfied across re-seeds (the
+/// clear-then-insert in `seed` removes the prior rows first).
+const DEMO_PERSONAS: &[DemoPersona] = &[
+    DemoPersona {
+        name: "[demo] 事件指挥官",
+        system_prompt: "你是事件响应的总指挥（lead）。负责拉起团队、统一时间线、\
+            协调 SRE 与安全专家，并在 HotL 审批后下达回滚/止血指令。输出要点清晰、可执行。",
+        role_tag: "role/planner",
+    },
+    DemoPersona {
+        name: "[demo] SRE 值班专家",
+        system_prompt: "你是 SRE 值班工程师。负责定位故障根因：查指标、看日志、\
+            判断容量与依赖抖动，给出止血与恢复方案，并标注影响面与回滚风险。",
+        role_tag: "role/worker",
+    },
+    DemoPersona {
+        name: "[demo] 安全审计专家",
+        system_prompt: "你是安全与合规审计专家。负责复核处置是否越权、是否需要在 \
+            consult 模式下拦截写操作，并确认审计链（HMAC）完整、证据可导出。",
+        role_tag: "role/critic",
+    },
+];
+
+/// Seed three demo personas + one team referencing them (lead = first persona)
+/// so the admin Expert Teams pane and the chat `ExpertPicker` have content.
+/// Returns `(personas, teams)` counts.
+///
+/// `personas.id` / `expert_teams.id` are TEXT columns the repositories decode
+/// through `Uuid::parse_str`, so we bind UUID-formatted strings (deterministic
+/// v5 ids). The team's `member_persona_ids` is a JSON array of those same id
+/// strings, ordered with the lead first — exactly the shape `text_to_uuids`
+/// reads back.
+async fn seed_expert_team(pool: &SqlitePool, now: DateTime<Utc>) -> Result<(usize, usize)> {
+    let persona_ids = demo_persona_ids();
+    // `personas.tags` is TEXT holding a JSON array (migration 0025); the
+    // `demo-seed` marker rides alongside the role tag so the rows are
+    // identifiable, and the role tags follow the repo's role/* convention.
+    let created = ts(now - Duration::hours(6));
+    for (def, id) in DEMO_PERSONAS.iter().zip(persona_ids.iter()) {
+        let tags = json!([DEMO_PERSONA_TAG, def.role_tag]).to_string();
+        sqlx::query(
+            "INSERT INTO personas \
+                (id, name, system_prompt, default_model, tool_allowlist, \
+                 escalation_tier, created_at, archived, tags) \
+             VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, 0, ?6)",
+        )
+        .bind(id.to_string())
+        .bind(def.name)
+        .bind(def.system_prompt)
+        .bind(DEMO_MODEL)
+        .bind(&created)
+        .bind(&tags)
+        .execute(pool)
+        .await
+        .with_context(|| format!("insert demo persona {}", def.name))?;
+    }
+
+    // The team: lead = first persona, members = all three (lead first, the
+    // ordered+deduplicated shape the repository expects). `recommended_pack_slugs`
+    // carries the `demo-seed` marker plus a display-hint slug.
+    let team_id = demo_team_id();
+    let member_ids = json!(persona_ids.iter().map(Uuid::to_string).collect::<Vec<_>>()).to_string();
+    let pack_slugs = json!([DEMO_PERSONA_TAG, "observability-starter"]).to_string();
+    sqlx::query(
+        "INSERT INTO expert_teams \
+            (id, name, description, lead_persona_id, member_persona_ids, \
+             recommended_pack_slugs, glossary_md, created_at, archived) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)",
+    )
+    .bind(team_id.to_string())
+    .bind("[demo] 事件响应团队")
+    .bind("演示用专家团队：指挥官 + SRE + 安全审计，一句话即可让团队介入线上事件。")
+    .bind(persona_ids[0].to_string())
+    .bind(&member_ids)
+    .bind(&pack_slugs)
+    .bind("术语表：P99=99 分位延迟；HotL=人在回路审批；consult=只读模式（写工具被拦截）。")
+    .bind(&created)
+    .execute(pool)
+    .await
+    .context("insert demo expert team")?;
+
+    Ok((DEMO_PERSONAS.len(), 1))
+}
+
+// ---------------------------------------------------------------------------
 // Audit chain — through the real HMAC sink so verify stays green
 // ---------------------------------------------------------------------------
 
 /// Append a representative spread of audit events through the HMAC-chained
 /// sink. Each append reads the prior row's hmac and signs over it, so the
 /// chain verifies end-to-end. Returns the number of rows appended.
-async fn seed_audit(audit: &SqliteAuditSink, now: DateTime<Utc>) -> Result<usize> {
+async fn seed_audit(
+    audit: &SqliteAuditSink,
+    owner_user_id: &str,
+    now: DateTime<Utc>,
+) -> Result<usize> {
+    // The owner login row references the same identity the sessions use.
+    let owner_resource = format!("user:{owner_user_id}");
     // (minutes_ago, action, resource, details) — ordered oldest→newest so the
     // appended chain timestamps are monotonically increasing like real life.
     // `append` re-signs over whatever the latest row is, so even interleaving
@@ -520,7 +743,7 @@ async fn seed_audit(audit: &SqliteAuditSink, now: DateTime<Utc>) -> Result<usize
         (
             210,
             "auth.login",
-            "user:usr_owner",
+            owner_resource.as_str(),
             json!({ "method": "owner-basic", "ip": "127.0.0.1" }),
         ),
         (
@@ -661,6 +884,11 @@ pub fn format_guide(report: &SeedReport) -> String {
         "  · 事件/RCA    {:>3} 个事件（含根因分析，状态 resolved）",
         report.incidents
     );
+    let _ = writeln!(
+        out,
+        "  · 专家团队    {:>3} 个团队 / {} 个 persona（指挥官 + SRE + 安全审计）",
+        report.teams, report.personas
+    );
     let _ = writeln!(out);
     let _ = writeln!(out, "现场看哪些 pane：");
     let _ = writeln!(
@@ -682,6 +910,10 @@ pub fn format_guide(report: &SeedReport) -> String {
     let _ = writeln!(
         out,
         "  · 事件 / Incidents      → checkout-api 错误率事件 + RCA"
+    );
+    let _ = writeln!(
+        out,
+        "  · 专家团队 / Experts    → [demo] 事件响应团队（指挥官领衔，可在对话页选用）"
     );
     let _ = writeln!(
         out,
@@ -726,7 +958,9 @@ mod tests {
     #[tokio::test]
     async fn seed_populates_every_pane() {
         let (pool, sink, _dir) = fixture().await;
-        let report = seed(&pool, &sink, fixed_now()).await.expect("seed");
+        let report = seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
 
         assert_eq!(report.audit_rows, 13, "audit row count");
         assert_eq!(report.sessions, 2, "session count");
@@ -738,6 +972,8 @@ mod tests {
             "usage rows = baseline + spike"
         );
         assert_eq!(report.incidents, 1, "incident count");
+        assert_eq!(report.personas, 3, "persona count");
+        assert_eq!(report.teams, 1, "team count");
 
         // Cross-check actual table contents.
         let n_sessions: i64 =
@@ -762,12 +998,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(n_rca, 1);
+        let n_personas: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM personas WHERE tags LIKE '%\"demo-seed\"%'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(n_personas, 3);
+        let n_teams: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM expert_teams")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n_teams, 1);
     }
 
     #[tokio::test]
     async fn audit_chain_verifies_after_seed() {
         let (pool, sink, _dir) = fixture().await;
-        seed(&pool, &sink, fixed_now()).await.expect("seed");
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
         // The whole chain (every appended demo row) must verify.
         sink.verify_tenant(OWNER_TENANT_ID)
             .await
@@ -782,7 +1031,9 @@ mod tests {
         // `max_backoff_secs` field-name bug). Seed, then round-trip every demo
         // job's policy through the real type.
         let (pool, sink, _dir) = fixture().await;
-        seed(&pool, &sink, fixed_now()).await.expect("seed");
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
         let policies: Vec<String> = sqlx::query_scalar(
             "SELECT retry_policy FROM scheduled_jobs WHERE id LIKE 'demo_job_%'",
         )
@@ -798,9 +1049,165 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn seed_incident_ids_decode_as_uuid() {
+        // Regression: `incidents.id` and `incident_rcas.id`/`incident_id` are
+        // read back through `Uuid` (a 16-byte BLOB). A text id ("demo_inc_001")
+        // made `/v1/incidents` 500 with `decoding column "id": expected 16
+        // bytes`. Read every demo id through the SAME `Uuid` decode the store
+        // uses — a text id panics here, exactly as the endpoint did.
+        let (pool, sink, _dir) = fixture().await;
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
+
+        let inc: (Uuid,) = sqlx::query_as("SELECT id FROM incidents WHERE source = 'demo'")
+            .fetch_one(&pool)
+            .await
+            .expect("incident id must decode as a 16-byte UUID");
+        let rca: (Uuid, Uuid) = sqlx::query_as("SELECT id, incident_id FROM incident_rcas")
+            .fetch_one(&pool)
+            .await
+            .expect("rca id + incident_id must decode as UUIDs");
+        assert_eq!(
+            rca.1, inc.0,
+            "rca.incident_id must reference the incident id"
+        );
+    }
+
+    #[tokio::test]
+    async fn seed_team_and_personas_ids_decode_as_uuid() {
+        // Regression (mirrors `seed_incident_ids_decode_as_uuid`): `personas.id`
+        // and `expert_teams.id` / `lead_persona_id` are TEXT columns, but the
+        // `SqlitePersonaRepository` / `SqliteTeamRepository` decode them via
+        // `id: String` then `Uuid::parse_str(..).unwrap_or(Uuid::nil())`. A
+        // non-UUID id (e.g. "demo_team_001") would silently become `Uuid::nil()`
+        // there and break the pane / orchestration. `member_persona_ids` is a
+        // JSON array of those id strings, read back the same way (`text_to_uuids`
+        // filters out anything that won't parse). Read every seeded id exactly
+        // the way those repos do and confirm none degrades to nil and the team's
+        // lead + members reference the three seeded personas.
+        let (pool, sink, _dir) = fixture().await;
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
+
+        // Personas: read each id as TEXT, parse as the repo does — must equal the
+        // deterministic v5 ids the seeder wrote (so none is nil/garbage).
+        let persona_id_texts: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM personas WHERE tags LIKE '%\"demo-seed\"%' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("read demo persona ids");
+        assert_eq!(persona_id_texts.len(), 3, "three demo personas");
+        let mut parsed_persona_ids: Vec<Uuid> = persona_id_texts
+            .iter()
+            .map(|s| Uuid::parse_str(s).expect("persona id must be a valid UUID string, not nil"))
+            .collect();
+        parsed_persona_ids.sort();
+        let mut expected = demo_persona_ids();
+        expected.sort();
+        assert_eq!(
+            parsed_persona_ids, expected,
+            "persona ids round-trip as the deterministic UUIDs"
+        );
+
+        // Team: id, lead_persona_id (TEXT, parsed via Uuid) + member_persona_ids
+        // (TEXT JSON array, parsed via the repo's text_to_uuids shape).
+        let (id_text, lead_text, members_json): (String, String, String) =
+            sqlx::query_as("SELECT id, lead_persona_id, member_persona_ids FROM expert_teams")
+                .fetch_one(&pool)
+                .await
+                .expect("read demo team");
+        assert_eq!(
+            Uuid::parse_str(&id_text).expect("team id is a UUID string"),
+            demo_team_id(),
+            "team id round-trips"
+        );
+        let lead = Uuid::parse_str(&lead_text).expect("lead id is a UUID string");
+        let members: Vec<Uuid> = serde_json::from_str::<Vec<String>>(&members_json)
+            .expect("member_persona_ids is a JSON array")
+            .iter()
+            .map(|s| Uuid::parse_str(s).expect("member id is a UUID string, not nil"))
+            .collect();
+        let lead_expected = demo_persona_ids()[0];
+        assert_eq!(lead, lead_expected, "lead is the first demo persona");
+        assert_eq!(members, demo_persona_ids(), "members in lead-first order");
+        assert!(
+            !members.iter().any(|m| *m == Uuid::nil()),
+            "no member decoded to nil (would mean a non-UUID id was stored)"
+        );
+    }
+
+    #[tokio::test]
+    async fn seed_message_content_decodes_as_content_blocks() {
+        // Regression: `messages.content` is read as `Json<Vec<ContentBlock>>`;
+        // plain-text content made `/v1/sessions/{id}/messages` 500 with
+        // `ColumnDecode "content"`. Decode every seeded message the exact way the
+        // message repository's `MessageRow` does and confirm a Text block
+        // round-trips.
+        use sqlx::types::Json;
+        let (pool, sink, _dir) = fixture().await;
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
+
+        let rows: Vec<(Json<Vec<ContentBlock>>,)> = sqlx::query_as(
+            "SELECT content FROM messages WHERE session_id LIKE 'demo_sess_%' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("every message content must decode as Vec<ContentBlock>");
+        assert_eq!(rows.len(), 6, "all demo messages decode");
+
+        let Json(blocks) = &rows[0].0;
+        match blocks.as_slice() {
+            [ContentBlock::Text { text }] => assert!(!text.is_empty(), "text content present"),
+            other => panic!("expected a single Text block, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn seed_sessions_use_owner_user_id() {
+        // Regression: demo sessions + usage must be stored under the authed owner
+        // id (the basic-auth username), not a synthetic "usr_owner" — else they
+        // never appear in `GET /v1/sessions`, which filters by the caller, and
+        // the chat sidebar / Today pane look empty or inconsistent.
+        let (pool, sink, _dir) = fixture().await;
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
+
+        let session_users: Vec<String> =
+            sqlx::query_scalar("SELECT user_id FROM sessions WHERE id LIKE 'demo_sess_%'")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(session_users.len(), 2, "two demo sessions");
+        assert!(
+            session_users.iter().all(|u| u == "owner"),
+            "demo sessions must use the owner user id, got {session_users:?}"
+        );
+
+        let usage_under_owner: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM token_usage WHERE request_id = 'demo-seed' AND user_id = 'owner'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            usage_under_owner as usize,
+            BASELINE_POINTS + 1,
+            "all demo usage attributes to the owner"
+        );
+    }
+
+    #[tokio::test]
     async fn token_usage_has_detectable_spike() {
         let (pool, sink, _dir) = fixture().await;
-        seed(&pool, &sink, fixed_now()).await.expect("seed");
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
 
         let max: i64 =
             sqlx::query_scalar("SELECT MAX(total_tokens) FROM token_usage WHERE request_id = ?1")
@@ -841,12 +1248,18 @@ mod tests {
     #[tokio::test]
     async fn seed_is_idempotent() {
         let (pool, sink, _dir) = fixture().await;
-        let r1 = seed(&pool, &sink, fixed_now()).await.expect("first seed");
-        let r2 = seed(&pool, &sink, fixed_now()).await.expect("second seed");
+        let r1 = seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("first seed");
+        let r2 = seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("second seed");
 
         // Non-audit data is cleared+reseeded, so counts are identical (no
-        // duplicate sessions/jobs/usage/incidents).
+        // duplicate sessions/jobs/usage/incidents/personas/teams).
         assert_eq!(r1.sessions, r2.sessions);
+        assert_eq!(r1.personas, r2.personas);
+        assert_eq!(r1.teams, r2.teams);
         let n_sessions: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id LIKE 'demo_sess_%'")
                 .fetch_one(&pool)
@@ -864,12 +1277,25 @@ mod tests {
             BASELINE_POINTS + 1,
             "re-seed must not duplicate usage"
         );
+        let n_teams: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM expert_teams")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n_teams, 1, "re-seed must not duplicate the team");
+        let n_personas: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM personas WHERE tags LIKE '%\"demo-seed\"%'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(n_personas, 3, "re-seed must not duplicate personas");
     }
 
     #[tokio::test]
     async fn reset_clears_demo_data_but_not_audit() {
         let (pool, sink, _dir) = fixture().await;
-        seed(&pool, &sink, fixed_now()).await.expect("seed");
+        seed(&pool, &sink, "owner", fixed_now())
+            .await
+            .expect("seed");
         clear_demo(&pool).await.expect("clear");
 
         for (table, sql) in [
@@ -888,6 +1314,11 @@ mod tests {
             (
                 "token_usage",
                 "SELECT COUNT(*) FROM token_usage WHERE request_id = 'demo-seed'",
+            ),
+            ("expert_teams", "SELECT COUNT(*) FROM expert_teams"),
+            (
+                "personas",
+                "SELECT COUNT(*) FROM personas WHERE tags LIKE '%\"demo-seed\"%'",
             ),
         ] {
             let n: i64 = sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap();
@@ -914,11 +1345,21 @@ mod tests {
             jobs: 2,
             usage_rows: 15,
             incidents: 1,
+            personas: 3,
+            teams: 1,
             baseline_tokens: BASELINE_TOKENS,
             spike_tokens: SPIKE_TOKENS,
         };
         let guide = format_guide(&report);
-        for needle in ["活动历史", "会话", "定时任务", "异常", "Incidents", "spike"] {
+        for needle in [
+            "活动历史",
+            "会话",
+            "定时任务",
+            "异常",
+            "Incidents",
+            "spike",
+            "专家团队",
+        ] {
             assert!(guide.contains(needle), "guide should mention {needle}");
         }
     }

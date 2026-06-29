@@ -17,6 +17,8 @@
     "source_manual": "manual"
   },
   "chat": {
+    "remote_running": "Task still running…",
+    "remote_running_title": "A turn is still running on the server for this session. Its result will appear here when it finishes — you don't need to keep this tab open.",
     "sse": {
       "reconnecting": "Reconnecting (attempt {{attempt}}, retrying in {{secs}}s)…",
       "cancel_reconnect": "Cancel",
@@ -70,9 +72,10 @@
     "admin": "Admin",
     "language_label": "Language",
     "no_sessions": "No sessions yet. Send a message to create one.",
-    "welcome_title": "Hi, I'm Xiaoguai",
+    "assistant_name": "Xiaoguai",
+    "welcome_title": "Hi, I'm {{name}}",
     "welcome_subtitle": "What can I help you with?",
-    "composer_placeholder": "Message Xiaoguai…",
+    "composer_placeholder": "Message {{name}}…",
     "composer_hint": "Shift+Enter for newline",
     "stop": "Stop",
     "send": "Send",
@@ -112,6 +115,7 @@
       "firstrun_hint": "Teams come from activated 专用场景 (scenario) packs. Pick a team, then type a complex goal to run it through the whole team — members work in parallel and the lead synthesizes one answer.",
       "deeplink_attached": "Team \"{{team}}\" is attached — type a complex goal and hand it to the team.",
       "deeplink_need_session": "Send any message first to start a session, then pick the team \"{{team}}\" here.",
+      "teamrun_discover": "This team is attached. Type a complex goal in the message box, then click the \"Team run\" button next to it to run it through the whole team in parallel.",
       "error_load": "Failed to load experts: {{message}}",
       "error_attach": "Failed to attach expert: {{message}}",
       "error_detach": "Failed to remove expert: {{message}}",
@@ -139,6 +143,11 @@
     "skills_page": {
       "title": "Skill Packs",
       "subtitle": "Browse and install pre-built skill packs for your workspace. Packs extend the agent with domain-specific tools, prompts, and RAG indexes.",
+      "center_subtitle": "Your ability center — the skills your agent can use right now. Install or remove packs here; full catalog management lives in Admin.",
+      "active_title": "Your abilities",
+      "active_empty": "No skills installed yet — open \"Browse all skills\" below to add one.",
+      "browse_title": "Browse all skills",
+      "browse_hint": "Install more from the full catalog",
       "loading": "Loading…",
       "error": "Error: {{message}}",
       "empty": "No skill packs available.",
@@ -150,9 +159,9 @@
       "installed_badge": "Installed ✓",
       "requires_flag": "flag: {{flag}}",
       "requires_env": "env: {{env}}",
-      "toast_installed": "{{name}} installed",
+      "toast_installed": "{{{name}}} installed",
       "toast_install_failed": "Install failed: {{message}}",
-      "toast_uninstalled": "{{name}} uninstalled",
+      "toast_uninstalled": "{{{name}}} uninstalled",
       "toast_uninstall_failed": "Uninstall failed: {{message}}",
       "tab_general": "General",
       "tab_specialized": "Scenarios",
@@ -167,6 +176,24 @@
       "onboarding_step1": "Install a scenario pack below.",
       "onboarding_step2": "Wait for the \"Team active ✓\" badge — its agent team is now ready.",
       "onboarding_step3": "Click \"Use in chat →\", pick the team in the 专家选择器, type a complex goal, and hand it to the team."
+    },
+    "mcp_tools": {
+      "title": "Tools available to this session",
+      "intro": "These are the external MCP tools your agent can call — connected servers that expose actions beyond the built-in toolset.",
+      "manage_note": "Read-only here. Add, edit, or remove servers in Admin.",
+      "loading": "Loading tools…",
+      "error": "Could not load MCP tools: {{message}}",
+      "empty": "No MCP servers configured. Connect one in Admin to give your agent external tools.",
+      "transport_title": "Transport: {{transport}}",
+      "env_label": "Env:"
     }
+  },
+  "sidebar": {
+    "audit": "Activity",
+    "today_tokens": "~{{count}} tokens today",
+    "today_tokens_title": "Total input + output tokens used since 00:00 UTC today",
+    "working_dir": "Working directory",
+    "working_dir_save": "Save",
+    "working_dir_placeholder": "/abs/path/to/workspace"
   }
 }

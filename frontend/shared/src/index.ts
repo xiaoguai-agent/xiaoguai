@@ -40,12 +40,52 @@ export interface SessionResponse {
   parent_session_id?: string;
   /** v1.1.2 — companion to {@link parent_session_id}. */
   forked_from_message_id?: string;
+  /**
+   * Feature ⑤ — per-session coding workspace root (absolute server path).
+   * Omitted (undefined) when unset; the session then falls back to the global
+   * `XIAOGUAI_CODING_WORKSPACE` default. Set/cleared via {@link XiaoguaiClient.updateSession}.
+   */
+  working_dir?: string;
 }
 
 export interface CreateSessionRequest {
   user_id: string;
   model: string;
   title?: string;
+  /** Feature ⑤ — optional per-session coding workspace root. */
+  working_dir?: string;
+}
+
+/**
+ * Feature ⑥ — response of `GET /v1/sessions/{id}/status`. A turn now runs
+ * server-side independent of any SSE client, so `in_flight` is `true` while a
+ * turn is still executing for this session (even if no tab is streaming it).
+ */
+export interface SessionStatusResponse {
+  in_flight: boolean;
+}
+
+/**
+ * Query knobs accepted by `GET /v1/sessions`. `user_id` is required server-side
+ * but falls back to the authenticated owner's `Claims.sub` when omitted — so an
+ * owner-authed client can list its own sessions without supplying one.
+ */
+export interface ListSessionsQuery {
+  user_id?: string;
+  /** Defaults server-side; clamped to `[1, 1000]`. */
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Feature ⑤ — partial update body for `PATCH /v1/sessions/{id}`. PATCH
+ * semantics: an omitted field keeps its stored value. For `working_dir`, an
+ * empty string clears the per-session override (falls back to the global
+ * default).
+ */
+export interface UpdateSessionRequest {
+  title?: string;
+  working_dir?: string;
 }
 
 /**
@@ -243,6 +283,15 @@ export interface UsageReport {
   total_output_tokens: number;
   /** `null` until per-provider cost rates are wired (v1.1.1 deferral). */
   cost_cents: number | null;
+}
+
+// ---- white-label branding (GET/PUT /v1/branding) ------------------------
+
+/** Owner-settable branding. `assistant_name` empty ⇒ the UI substitutes its
+ *  built-in default name ("Xiaoguai" / "小怪"). Mirrors the Rust
+ *  `BrandingSettings`. */
+export interface BrandingSettings {
+  assistant_name: string;
 }
 
 // ---- v0.11.2 — eval pane endpoints ------------------------------------
@@ -1606,8 +1655,61 @@ export class XiaoguaiClient {
     return this.request<SessionResponse>('GET', `/v1/sessions/${encodeURIComponent(id)}`);
   }
 
+  /**
+   * List the owner's sessions, most-recently-updated first. `user_id` is
+   * required server-side but the backend falls back to the authenticated
+   * owner's `Claims.sub` when omitted — so an owner-authed client can call
+   * `listSessions()` with no argument. The chat-ui sidebar surfaces the top
+   * few rows here so server-side history is visible (not just localStorage).
+   */
+  listSessions(q?: ListSessionsQuery): Promise<SessionResponse[]> {
+    const params = new URLSearchParams();
+    if (q?.user_id) params.set('user_id', q.user_id);
+    if (q?.limit !== undefined) params.set('limit', String(q.limit));
+    if (q?.offset !== undefined) params.set('offset', String(q.offset));
+    const qs = params.toString();
+    return this.request<SessionResponse[]>('GET', `/v1/sessions${qs ? `?${qs}` : ''}`);
+  }
+
+  /**
+   * Feature ⑤ — partial update of a session's mutable metadata
+   * (`PATCH /v1/sessions/{id}`). Omitted fields keep their stored value; an
+   * empty `working_dir` clears the per-session workspace override. Returns the
+   * refreshed row.
+   */
+  updateSession(id: string, req: UpdateSessionRequest): Promise<SessionResponse> {
+    return this.request<SessionResponse>(
+      'PATCH',
+      `/v1/sessions/${encodeURIComponent(id)}`,
+      req,
+    );
+  }
+
+  /**
+   * Feature ⑤ convenience — set (or clear, with `''`) the active session's
+   * coding workspace root. Thin wrapper over {@link updateSession}.
+   */
+  setWorkingDir(id: string, working_dir: string): Promise<SessionResponse> {
+    return this.updateSession(id, { working_dir });
+  }
+
   listMessages(sessionId: string): Promise<Message[]> {
     return this.request<Message[]>('GET', `/v1/sessions/${encodeURIComponent(sessionId)}/messages`);
+  }
+
+  /**
+   * Feature ⑥ — read whether a turn is still running server-side for this
+   * session. The backend decouples a running turn from its SSE client: the
+   * turn keeps going when the user switches sessions or reloads, and its
+   * result is persisted on completion. The chat-ui calls this on session load
+   * to show a "task still running" indicator when this tab is not actively
+   * streaming the turn. Mirrors `GET /v1/sessions/{id}/status`.
+   */
+  getSessionStatus(id: string): Promise<SessionStatusResponse> {
+    return this.request<SessionStatusResponse>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(id)}/status`,
+    );
   }
 
   cancel(sessionId: string): Promise<{ cancelled: boolean }> {
@@ -1751,6 +1853,17 @@ export class XiaoguaiClient {
     if (q?.group_by) params.set('group_by', q.group_by);
     const qs = params.toString();
     return this.request<UsageReport>('GET', `/v1/usage${qs ? `?${qs}` : ''}`);
+  }
+
+  /** White-label branding — the assistant's display name. Empty name = the UI
+   *  uses its built-in default ("Xiaoguai" / "小怪"). */
+  getBranding(): Promise<BrandingSettings> {
+    return this.request<BrandingSettings>('GET', '/v1/branding');
+  }
+
+  /** Set the assistant's display name (owner-gated). Returns the stored value. */
+  setBranding(body: BrandingSettings): Promise<BrandingSettings> {
+    return this.request<BrandingSettings>('PUT', '/v1/branding', body);
   }
 
   /** v0.9.4 — curated MCP server catalog. */

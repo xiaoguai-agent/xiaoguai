@@ -71,6 +71,9 @@ impl SessionForker for SqliteSessionForker {
             forked_from_message_id: Some(xiaoguai_types::MessageId::from(
                 from_message_id.to_string(),
             )),
+            // Feature ⑤: a forked session inherits the parent's coding
+            // workspace so a branched conversation keeps the same directory.
+            working_dir: parent.working_dir.clone(),
         };
 
         self.sessions
@@ -216,6 +219,7 @@ mod tests {
             status: SessionStatus::Active,
             parent_session_id: None,
             forked_from_message_id: None,
+            working_dir: None,
         }
     }
 

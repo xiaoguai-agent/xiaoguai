@@ -1591,6 +1591,96 @@ html,
   color: var(--accent);
 }
 
+/* --------------------------------------------- enriched sidebar (Feature ②/⑤) */
+
+/* The lower nav cluster: Skills link + activity deep-link + token stat. Pushed
+   toward the bottom (above the footer) so the session list owns the top. */
+.sidebar-extras {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-soft);
+}
+
+/* Muted one-liner showing today's token spend. */
+.sidebar-token-stat {
+  margin: var(--space-1) 0 0;
+  padding: 0 var(--space-3);
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.sidebar-token-stat--skeleton {
+  opacity: 0.5;
+}
+
+/* Per-session working-directory editor. */
+.working-dir {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.working-dir__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.working-dir__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.working-dir__input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.working-dir__input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Override the sidebar's full-width default button styling for the compact
+   save button. */
+.working-dir__save {
+  width: auto;
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.working-dir__save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.working-dir__error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--tool-error-fg);
+}
+
 /* ---------------------------------------------------------- HotL banner (v1.3.x) */
 
 /**
@@ -2474,4 +2564,277 @@ html,
   background: var(--accent);
   color: #fff;
   border-style: solid;
+}
+
+/* ── Feature ④ — Skills "ability center" reframe ─────────────────────────── */
+
+/* Shared section heading for the installed-first layout. */
+.skills-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* Leads the page: the owner's installed / active abilities. */
+.skills-active {
+  margin-bottom: var(--space-6);
+}
+
+.skills-active__empty {
+  text-align: left;
+  padding: var(--space-4) 0;
+}
+
+/* Collapsible full-catalog browse (admin is the manage surface). */
+.skills-browse {
+  margin-top: var(--space-5);
+  border-top: 1px solid var(--border-soft);
+  padding-top: var(--space-4);
+}
+
+.skills-browse__toggle {
+  appearance: none;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  padding: var(--space-2) 0;
+}
+
+.skills-browse__toggle:hover {
+  color: var(--accent);
+}
+
+.skills-browse__chevron {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.skills-browse__hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.skills-browse__body {
+  margin-top: var(--space-3);
+}
+
+/* ── Feature ④ — read-only MCP "tools available" view ────────────────────── */
+
+.mcp-tools {
+  margin: var(--space-5) 0 var(--space-6);
+}
+
+.mcp-tools__header {
+  margin-bottom: var(--space-4);
+}
+
+.mcp-tools__title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.mcp-tools__intro {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-soft);
+  line-height: 1.5;
+  max-width: 560px;
+}
+
+.mcp-tools__manage-note {
+  margin: var(--space-1) 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mcp-tools__status {
+  color: var(--muted);
+  font-size: 13px;
+  padding: var(--space-3) 0;
+}
+
+.mcp-tools__status--error {
+  color: var(--tool-error-fg);
+}
+
+.mcp-tools__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-3);
+}
+
+.mcp-tools__card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.mcp-tools__card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.mcp-tools__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.mcp-tools__transport {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+}
+
+.mcp-tools__version {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mcp-tools__target {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: var(--code-fg, var(--fg-soft));
+  background: var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-tools__env {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.mcp-tools__env-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mcp-tools__env-key {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--fg-soft);
+  background: var(--status-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+}
+
+/* ── Feature ⑭ — Team Run discoverability inside the expert popover ───────── */
+
+.expert-popover__teamrun {
+  margin: var(--space-2) var(--space-3) 0;
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 12px;
+  line-height: 1.45;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+}
+
+.expert-popover__teamrun-lead {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.expert-popover__teamrun-body {
+  color: var(--fg-soft);
+}
+
+.expert-popover__teamrun-example {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.expert-popover__teamrun-consult {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* ------------------------------------ remote running indicator (Feature ⑥) */
+
+/* Non-blocking pill in the chat header: a turn is still running server-side
+   for this session while this tab isn't streaming it. Reuses the watch-badge
+   amber palette so it reads as an in-progress, attention-light cue. */
+.remote-running {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 10px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+
+[data-theme='dark'] .remote-running {
+  background: #422006;
+  color: #fbbf24;
+  border-color: #92400e;
+}
+
+.remote-running__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: remote-running-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes remote-running-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .remote-running__dot {
+    animation: none;
+  }
 }

@@ -103,6 +103,7 @@ fn build_state(backend: Arc<dyn LlmBackend>) -> AppState {
         team_audit: None,
         decision_registry: Arc::new(xiaoguai_api::hotl::decision_registry::DecisionRegistry::new()),
         pack_rescanner: None,
+        coding_toolbox_factory: None,
     }
 }
 
@@ -137,11 +138,46 @@ async fn create_session(app: &axum::Router) -> String {
         .to_string()
 }
 
+async fn create_session_with_dir(app: &axum::Router, working_dir: &str) -> String {
+    let resp = app
+        .clone()
+        .oneshot(json_post(
+            "/v1/sessions",
+            &json!({"user_id": "usr_a", "model": "mock-model", "working_dir": working_dir}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    body_to_value(resp.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
 fn send_message(sid: &str, content: &str) -> Request<Body> {
     json_post(
         &format!("/v1/sessions/{sid}/messages"),
         &json!({ "content": content }),
     )
+}
+
+/// Feature ⑤ test double — records the root `run_turn` asks it to rebuild for
+/// and hands back a marker toolbox. Proves the per-session `working_dir` reaches
+/// the coding-toolbox factory.
+struct RecordingFactory {
+    seen: std::sync::Mutex<Vec<std::path::PathBuf>>,
+    global: Option<std::path::PathBuf>,
+}
+
+#[async_trait]
+impl xiaoguai_api::coding_toolbox::CodingToolboxFactory for RecordingFactory {
+    async fn rebuild_for(&self, root: &std::path::Path) -> anyhow::Result<Arc<Toolbox>> {
+        self.seen.lock().unwrap().push(root.to_path_buf());
+        Ok(Arc::new(Toolbox::new()))
+    }
+    fn global_root(&self) -> Option<&std::path::Path> {
+        self.global.as_deref()
+    }
 }
 
 /// Wait until the per-session turn lock releases (the finalize task drops
@@ -248,6 +284,128 @@ async fn concurrent_turn_on_same_session_is_409() {
     assert_eq!(third.status(), StatusCode::OK);
 }
 
+/// Feature ⑥ — a turn must KEEP RUNNING server-side when the SSE client
+/// leaves (navigate away / reload / switch session). The run is decoupled
+/// from the response stream: dropping the SSE body (client disconnect) must
+/// NOT cancel the turn, and the result must still land in the session history
+/// so it is visible on return. Only the explicit `POST .../cancel` endpoint
+/// (Stop) cancels — that is the separate `cancel_works_while_turn_in_flight`
+/// test below.
+#[tokio::test]
+async fn sse_client_disconnect_does_not_cancel_turn() {
+    let gate = Arc::new(Semaphore::new(0));
+    let state = build_state(Arc::new(BlockingBackend { gate: gate.clone() }));
+    let app = router(state.clone());
+    let sid = create_session(&app).await;
+
+    // Start a turn; the run parks inside the backend (no permits yet).
+    let first = app
+        .clone()
+        .oneshot(send_message(&sid, "long-running artifact"))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    assert!(state.cancels.is_active(&sid), "turn lock should be held");
+
+    // The Feature ⑥ status read reflects the in-flight turn.
+    let status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/sessions/{sid}/status"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status.status(), StatusCode::OK);
+    assert_eq!(body_to_value(status.into_body()).await["in_flight"], true);
+
+    // CLIENT DISCONNECT: drop the SSE response body WITHOUT draining it. This
+    // is exactly what axum does when the browser navigates away — the
+    // `ReceiverStream<AgentEvent>` is dropped. This must NOT cancel the run.
+    drop(first.into_body());
+
+    // The turn must still be running (lock still held) right after the drop —
+    // a mere stream-drop does not touch the cancellation token.
+    assert!(
+        state.cancels.is_active(&sid),
+        "dropping the SSE stream must NOT cancel the turn"
+    );
+
+    // Let the parked run complete. The agent loop runs on its own task, so it
+    // keeps going even with no SSE consumer (emit becomes a no-op send).
+    gate.add_permits(8);
+
+    // The detached finalize task persists the output and releases the lock —
+    // with no client still attached.
+    wait_for_lock_release(&state, &sid).await;
+
+    // The assistant reply produced after the client left must be persisted, so
+    // a returning client sees it. (Not a Cancelled stop — the turn ran to
+    // Completed.)
+    let history = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/sessions/{sid}/messages"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(history.status(), StatusCode::OK);
+    let msgs = body_to_value(history.into_body()).await;
+    let contents: Vec<&str> = msgs
+        .as_array()
+        .expect("message list")
+        .iter()
+        .flat_map(|m| m["content"].as_array().into_iter().flatten())
+        .filter_map(|block| block["text"].as_str())
+        .collect();
+    assert!(
+        contents.contains(&"unblocked reply"),
+        "the turn must finish + persist its reply even though the client \
+         disconnected mid-stream, got: {contents:?}"
+    );
+
+    // And the status read now reports idle.
+    let status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/sessions/{sid}/status"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(body_to_value(status.into_body()).await["in_flight"], false);
+}
+
+/// Feature ⑥ companion — `GET /status` is 404 for an unknown session, so a
+/// stale client id is distinguishable from an idle session.
+#[tokio::test]
+async fn status_is_404_for_unknown_session() {
+    let gate = Arc::new(Semaphore::new(0));
+    let state = build_state(Arc::new(BlockingBackend { gate }));
+    let app = router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/sessions/does-not-exist/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn cancel_works_while_turn_in_flight() {
     let gate = Arc::new(Semaphore::new(0));
@@ -282,4 +440,92 @@ async fn cancel_works_while_turn_in_flight() {
     gate.add_permits(8);
     drain_sse(first.into_body()).await;
     wait_for_lock_release(&state, &sid).await;
+}
+
+// -- Feature ⑤: per-session coding workspace root --------------------------
+
+/// Build a router whose `AppState` carries the given coding-toolbox factory.
+fn router_with_factory(
+    backend: Arc<dyn LlmBackend>,
+    factory: Option<Arc<dyn xiaoguai_api::coding_toolbox::CodingToolboxFactory>>,
+) -> (AppState, axum::Router) {
+    let mut state = build_state(backend);
+    state.coding_toolbox_factory = factory;
+    let app = router(state.clone());
+    (state, app)
+}
+
+/// Drive one turn to completion (run + finalize + lock release) so the
+/// factory interaction is fully observed before asserting.
+async fn run_one_turn(app: &axum::Router, state: &AppState, sid: &str, gate: &Arc<Semaphore>) {
+    let resp = app.clone().oneshot(send_message(sid, "go")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    gate.add_permits(8);
+    drain_sse(resp.into_body()).await;
+    wait_for_lock_release(state, sid).await;
+}
+
+#[tokio::test]
+async fn session_working_dir_rebuilds_coding_toolbox_at_that_root() {
+    let gate = Arc::new(Semaphore::new(0));
+    let factory = Arc::new(RecordingFactory {
+        seen: std::sync::Mutex::new(Vec::new()),
+        global: Some(std::path::PathBuf::from("/srv/global")),
+    });
+    let (state, app) = router_with_factory(
+        Arc::new(BlockingBackend { gate: gate.clone() }),
+        Some(factory.clone()),
+    );
+    // Session pins a dir DIFFERENT from the factory's global root → rebuild.
+    let sid = create_session_with_dir(&app, "/srv/session-7").await;
+    run_one_turn(&app, &state, &sid, &gate).await;
+
+    assert_eq!(
+        factory.seen.lock().unwrap().as_slice(),
+        [std::path::PathBuf::from("/srv/session-7")],
+        "the turn must rebuild the coding toolbox rooted at the session's working_dir"
+    );
+}
+
+#[tokio::test]
+async fn session_pinning_global_root_does_not_rebuild() {
+    let gate = Arc::new(Semaphore::new(0));
+    let factory = Arc::new(RecordingFactory {
+        seen: std::sync::Mutex::new(Vec::new()),
+        global: Some(std::path::PathBuf::from("/srv/global")),
+    });
+    let (state, app) = router_with_factory(
+        Arc::new(BlockingBackend { gate: gate.clone() }),
+        Some(factory.clone()),
+    );
+    // Session pins EXACTLY the global root → the boot toolbox already serves
+    // it, no rebuild (common-path preservation).
+    let sid = create_session_with_dir(&app, "/srv/global").await;
+    run_one_turn(&app, &state, &sid, &gate).await;
+
+    assert!(
+        factory.seen.lock().unwrap().is_empty(),
+        "a session pinned to the global root must NOT trigger a rebuild"
+    );
+}
+
+#[tokio::test]
+async fn no_working_dir_does_not_rebuild() {
+    let gate = Arc::new(Semaphore::new(0));
+    let factory = Arc::new(RecordingFactory {
+        seen: std::sync::Mutex::new(Vec::new()),
+        global: Some(std::path::PathBuf::from("/srv/global")),
+    });
+    let (state, app) = router_with_factory(
+        Arc::new(BlockingBackend { gate: gate.clone() }),
+        Some(factory.clone()),
+    );
+    // No working_dir on the session → boot toolbox used as-is, no rebuild.
+    let sid = create_session(&app).await;
+    run_one_turn(&app, &state, &sid, &gate).await;
+
+    assert!(
+        factory.seen.lock().unwrap().is_empty(),
+        "a session with no working_dir must NOT trigger a rebuild"
+    );
 }

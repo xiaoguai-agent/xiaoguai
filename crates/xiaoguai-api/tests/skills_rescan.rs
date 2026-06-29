@@ -90,6 +90,7 @@ fn build_state(pack_rescanner: Option<Arc<dyn PackRescanner>>) -> AppState {
             xiaoguai_api::hotl::decision_registry::DecisionRegistry::new(),
         ),
         pack_rescanner,
+        coding_toolbox_factory: None,
     }
 }
 
