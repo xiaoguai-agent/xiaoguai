@@ -11,7 +11,7 @@ description = "Governed coding workflow — persistent git workspace + checkpoin
 [dependencies]
 async-trait = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["fs", "process", "rt", "macros"] }
+tokio = { workspace = true, features = ["fs", "process", "rt", "macros", "io-util", "time"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
 # `mcp` feature: expose the governed coding tools to the ReAct loop as an
@@ -26,7 +26,7 @@ mcp = ["dep:xiaoguai-mcp", "dep:serde_json"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 serde_json = { workspace = true }
 
 [lints]

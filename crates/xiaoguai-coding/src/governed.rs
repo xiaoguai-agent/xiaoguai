@@ -21,7 +21,12 @@ use async_trait::async_trait;
 use crate::checkpoint::CheckpointId;
 use crate::error::CodingError;
 use crate::tools::{EditSummary, FileEdit};
-use crate::workspace::Workspace;
+use crate::workspace::{CommandRun, Workspace};
+
+/// Length cap on the command string echoed into a `code.exec` audit summary,
+/// so a long one-liner doesn't bloat the audit row (the full command is the
+/// model's tool arg, already on the chain via the surrounding turn).
+const EXEC_SUMMARY_CMD_CAP: usize = 200;
 
 /// A resolved gate decision for one mutating coding action.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -274,10 +279,52 @@ impl<G: CodingGate, R: StepRecorder> GovernedTools<G, R> {
             .await;
         Ok(url)
     }
+
+    /// Governed `run_command`: gate `tool_call.run_command` → run the shell
+    /// command in the workspace root → audit `code.exec`. No checkpoint —
+    /// process side effects are not reversible by the worktree checkpoint chain
+    /// (like `git_push`), so exec is recorded as a non-revertible step. On deny
+    /// it records `code.exec_denied` and proceeds no further.
+    pub async fn run_command(&self, command: &str) -> Result<CommandRun, CodingError> {
+        self.authorize("tool_call.run_command", "code.exec").await?;
+        let run = self.workspace.run_command(command).await?;
+        let outcome = if run.timed_out {
+            "timed out".to_string()
+        } else {
+            format!("exit={}", exit_label(run.exit_code))
+        };
+        self.record_egress(
+            "code.exec",
+            "tool_call.run_command",
+            format!("{} ({outcome})", truncate_command(command)),
+        )
+        .await;
+        Ok(run)
+    }
 }
 
 fn short(sha: &str) -> &str {
     &sha[..sha.len().min(8)]
+}
+
+/// Render an exit code for an audit summary; `None` (signalled/killed) shows
+/// as `signal` since no numeric code is available.
+fn exit_label(code: Option<i32>) -> String {
+    match code {
+        Some(c) => c.to_string(),
+        None => "signal".to_string(),
+    }
+}
+
+/// Truncate a command to [`EXEC_SUMMARY_CMD_CAP`] chars (on a char boundary)
+/// for the audit summary, marking truncation with an ellipsis.
+fn truncate_command(command: &str) -> String {
+    if command.chars().count() <= EXEC_SUMMARY_CMD_CAP {
+        return command.to_string();
+    }
+    let mut out: String = command.chars().take(EXEC_SUMMARY_CMD_CAP).collect();
+    out.push('…');
+    out
 }
 
 #[cfg(test)]
@@ -480,5 +527,53 @@ mod tests {
         let out = tools.git_commit("init").await.unwrap();
         assert_eq!(out.result.len(), 40); // full SHA
         assert_eq!(tools.recorder.actions(), vec!["code.edit", "git.commit"]);
+    }
+
+    #[tokio::test]
+    async fn allowed_run_command_runs_and_audits_code_exec() {
+        let (_dir, ws) = workspace().await;
+        let tools = GovernedTools::new(ws, FixedGate(GateDecision::Allow), SpyRecorder::default());
+        let run = tools.run_command("echo hi").await.unwrap();
+        assert!(run.stdout_combined.contains("hi"), "{run:?}");
+        assert_eq!(run.exit_code, Some(0));
+        // a single `code.exec` row, no checkpoint (exec is not reversible).
+        assert_eq!(tools.recorder.actions(), vec!["code.exec"]);
+        assert_eq!(tools.recorder.last_checkpoint(), None);
+    }
+
+    #[tokio::test]
+    async fn denied_run_command_does_not_run_and_audits_denied() {
+        let (_dir, ws) = workspace().await;
+        let tools = GovernedTools::new(
+            ws,
+            FixedGate(GateDecision::Deny("consult mode: no exec".into())),
+            SpyRecorder::default(),
+        );
+        // A command that would leave a side effect if it ran.
+        let err = tools
+            .run_command("echo ran > should-not-exist.txt")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CodingError::Denied { .. }));
+        assert!(
+            !tools
+                .workspace()
+                .root()
+                .join("should-not-exist.txt")
+                .exists(),
+            "denied command must not run"
+        );
+        assert_eq!(tools.recorder.actions(), vec!["code.exec_denied"]);
+        assert_eq!(tools.recorder.last_checkpoint(), None);
+    }
+
+    #[test]
+    fn truncate_command_caps_long_commands() {
+        let short = "echo hi";
+        assert_eq!(truncate_command(short), short);
+        let long = "x".repeat(EXEC_SUMMARY_CMD_CAP + 50);
+        let out = truncate_command(&long);
+        assert!(out.ends_with('…'));
+        assert_eq!(out.chars().count(), EXEC_SUMMARY_CMD_CAP + 1);
     }
 }

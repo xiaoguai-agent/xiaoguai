@@ -126,6 +126,8 @@ impl CodingGate for HotlCodingGate {
 ///
 /// `include_egress` exposes the network/past-undo tools (`git_push`,
 /// `open_pr`); keep it `false` unless the operator explicitly opts in.
+/// `include_exec` exposes the `run_command` shell-exec tool (its own master
+/// opt-in — see [`coding_allow_exec`]); keep it `false` unless opted in.
 ///
 /// # Errors
 /// Returns an error if the workspace cannot be opened/initialised, or if a tool
@@ -134,10 +136,11 @@ pub async fn build_coding_toolbox(
     sink: Arc<SqliteAuditSink>,
     root: &Path,
     include_egress: bool,
+    include_exec: bool,
 ) -> Result<Toolbox> {
     // All-or-nothing: build into a fresh toolbox so a mid-loop collision can
     // never leave a half-exposed coding surface (security-review M1).
-    build_coding_toolbox_onto(Toolbox::new(), sink, root, include_egress).await
+    build_coding_toolbox_onto(Toolbox::new(), sink, root, include_egress, include_exec).await
 }
 
 /// Like [`build_coding_toolbox`] but layers the governed coding tools onto a
@@ -158,6 +161,7 @@ pub async fn build_coding_toolbox_onto(
     sink: Arc<SqliteAuditSink>,
     root: &Path,
     include_egress: bool,
+    include_exec: bool,
 ) -> Result<Toolbox> {
     let workspace = Workspace::open_or_create(root)
         .await
@@ -167,9 +171,10 @@ pub async fn build_coding_toolbox_onto(
         HotlCodingGate::new(Arc::new(AllowAllGate)),
         AuditStepRecorder::new(sink),
     );
-    let client: Arc<dyn McpClient> = Arc::new(CodingMcpClient::new(tools, include_egress));
+    let client: Arc<dyn McpClient> =
+        Arc::new(CodingMcpClient::new(tools, include_egress, include_exec));
     let mut toolbox = base;
-    for descriptor in coding_tool_descriptors(include_egress) {
+    for descriptor in coding_tool_descriptors(include_egress, include_exec) {
         let name = descriptor.name.clone();
         toolbox
             .insert(client.clone(), descriptor)
@@ -191,6 +196,7 @@ pub async fn build_coding_toolbox_onto(
 pub struct CodingToolboxFactoryImpl {
     sink: Arc<SqliteAuditSink>,
     include_egress: bool,
+    include_exec: bool,
     base: Toolbox,
     global_root: Option<std::path::PathBuf>,
 }
@@ -201,16 +207,21 @@ impl CodingToolboxFactoryImpl {
     /// `None` when coding is enabled only per-session (#15: an audit key is set
     /// but no global `XIAOGUAI_CODING_WORKSPACE`, so the boot toolbox carries no
     /// coding and every session `working_dir` triggers a rebuild).
+    ///
+    /// `include_egress` / `include_exec` are the two master opt-ins captured at
+    /// boot so a per-session rebuild reproduces the exact governed surface.
     #[must_use]
     pub fn new(
         sink: Arc<SqliteAuditSink>,
         include_egress: bool,
+        include_exec: bool,
         base: Toolbox,
         global_root: Option<std::path::PathBuf>,
     ) -> Self {
         Self {
             sink,
             include_egress,
+            include_exec,
             base,
             global_root,
         }
@@ -225,6 +236,7 @@ impl xiaoguai_api::coding_toolbox::CodingToolboxFactory for CodingToolboxFactory
             self.sink.clone(),
             root,
             self.include_egress,
+            self.include_exec,
         )
         .await?;
         Ok(Arc::new(tb))
@@ -277,6 +289,21 @@ pub fn coding_workspace_root_for_session(
 #[must_use]
 pub fn coding_allow_egress() -> bool {
     std::env::var("XIAOGUAI_CODING_ALLOW_EGRESS").is_ok_and(|v| {
+        let v = v.trim().to_ascii_lowercase();
+        v == "1" || v == "true" || v == "yes"
+    })
+}
+
+/// Whether the **shell-exec** coding tool (`run_command`) is exposed — off
+/// unless `XIAOGUAI_CODING_ALLOW_EXEC` is truthy (`1`/`true`/`yes`). It runs
+/// arbitrary commands with the server's privileges and is not
+/// checkpoint-reversible, so — like egress — it requires a second, explicit
+/// master opt-in on top of enabling coding. Governance for `run_command` is
+/// this opt-in + consult-default (its `Write` hint hides it in consult mode) +
+/// the `code.exec` audit chain — there is no per-command prompt or denylist.
+#[must_use]
+pub fn coding_allow_exec() -> bool {
+    std::env::var("XIAOGUAI_CODING_ALLOW_EXEC").is_ok_and(|v| {
         let v = v.trim().to_ascii_lowercase();
         v == "1" || v == "true" || v == "yes"
     })
@@ -374,5 +401,31 @@ mod tests {
             coding_workspace_root_for_session(None),
             coding_workspace_root()
         );
+    }
+
+    #[test]
+    fn coding_allow_exec_reflects_the_env_var() {
+        // `XIAOGUAI_CODING_ALLOW_EXEC` is unique to the exec opt-in and read by
+        // no other test, so mutating it here (and restoring after) is safe.
+        const KEY: &str = "XIAOGUAI_CODING_ALLOW_EXEC";
+        let original = std::env::var_os(KEY);
+
+        std::env::remove_var(KEY);
+        assert!(!coding_allow_exec(), "unset ⇒ exec off");
+
+        for truthy in ["1", "true", "yes", " TRUE ", "Yes"] {
+            std::env::set_var(KEY, truthy);
+            assert!(coding_allow_exec(), "{truthy:?} should enable exec");
+        }
+        for falsy in ["0", "false", "no", "", "maybe"] {
+            std::env::set_var(KEY, falsy);
+            assert!(!coding_allow_exec(), "{falsy:?} should not enable exec");
+        }
+
+        // Restore so we never leak state into sibling tests.
+        match original {
+            Some(v) => std::env::set_var(KEY, v),
+            None => std::env::remove_var(KEY),
+        }
     }
 }

@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use xiaoguai_mcp::{McpClient, McpResult, MutationHint, ServerInfo, ToolDescriptor, ToolResult};
 
-use crate::{CheckpointId, CodingGate, FileEdit, GovernedTools, StepRecorder};
+use crate::{CheckpointId, CodingGate, CommandRun, FileEdit, GovernedTools, StepRecorder};
 
 /// An [`McpClient`] over a [`GovernedTools`] instance bound to one workspace.
 pub struct CodingMcpClient<G, R> {
@@ -32,15 +32,21 @@ pub struct CodingMcpClient<G, R> {
     /// `list_tools`. Dispatch still handles them if called, but the loop only
     /// surfaces what is registered in the toolbox.
     include_egress: bool,
+    /// Whether the `run_command` shell-exec tool is advertised by `list_tools`.
+    /// Master-gated (`XIAOGUAI_CODING_ALLOW_EXEC`): like egress, dispatch still
+    /// handles it if called, but the loop only surfaces what is registered.
+    include_exec: bool,
 }
 
 impl<G, R> CodingMcpClient<G, R> {
     /// Wrap an already-built governed-tools facade. `include_egress` controls
-    /// whether `list_tools` advertises the network/past-undo tools.
-    pub fn new(tools: GovernedTools<G, R>, include_egress: bool) -> Self {
+    /// whether `list_tools` advertises the network/past-undo tools;
+    /// `include_exec` whether it advertises the `run_command` shell-exec tool.
+    pub fn new(tools: GovernedTools<G, R>, include_egress: bool, include_exec: bool) -> Self {
         Self {
             tools,
             include_egress,
+            include_exec,
         }
     }
 }
@@ -52,8 +58,13 @@ impl<G, R> CodingMcpClient<G, R> {
 /// `open_pr`): they leave the local machine and cannot be rolled back, so they
 /// are opt-in — a default deployment exposes only the workspace-contained,
 /// checkpoint-reversible tools.
+///
+/// `include_exec` gates the `run_command` shell-exec tool behind its own master
+/// opt-in (`XIAOGUAI_CODING_ALLOW_EXEC`): it runs arbitrary commands with the
+/// server's privileges and is not checkpoint-reversible, so it is absent from
+/// the catalogue unless explicitly enabled.
 #[must_use]
-pub fn coding_tool_descriptors(include_egress: bool) -> Vec<ToolDescriptor> {
+pub fn coding_tool_descriptors(include_egress: bool, include_exec: bool) -> Vec<ToolDescriptor> {
     let mut tools = vec![
         descriptor(
             "read_file",
@@ -175,6 +186,24 @@ pub fn coding_tool_descriptors(include_egress: bool) -> Vec<ToolDescriptor> {
             MutationHint::Write,
         ));
     }
+    if include_exec {
+        tools.push(descriptor(
+            "run_command",
+            "[WRITE] Run a shell command in the workspace root (cwd = the \
+             session working_dir). Captures stdout+stderr (capped), 120s \
+             timeout. Every run is audited (code.exec). Use for \
+             builds/tests/format/file conversions in the working directory. \
+             Args: command (string, required).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "Shell command to run (via `sh -c`) in the workspace root." }
+                },
+                "required": ["command"]
+            }),
+            MutationHint::Write,
+        ));
+    }
     tools
 }
 
@@ -209,7 +238,10 @@ where
     }
 
     async fn list_tools(&self) -> McpResult<Vec<ToolDescriptor>> {
-        Ok(coding_tool_descriptors(self.include_egress))
+        Ok(coding_tool_descriptors(
+            self.include_egress,
+            self.include_exec,
+        ))
     }
 
     async fn call_tool(&self, name: &str, args: Value) -> McpResult<ToolResult> {
@@ -335,9 +367,19 @@ where
                     .map_err(|e| e.to_string())?;
                 Ok(format!("opened PR: {url}"))
             }
+            "run_command" => {
+                let command = str_arg(args, "command")?;
+                let run = self
+                    .tools
+                    .run_command(&command)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(format_command_run(&run))
+            }
             other => Err(format!(
                 "unknown coding tool `{other}`; available: read_file, list_dir, \
-                 grep, git_status, edit_file, git_commit, rollback, git_push, open_pr"
+                 grep, git_status, edit_file, git_commit, rollback, git_push, \
+                 open_pr, run_command"
             )),
         }
     }
@@ -392,6 +434,26 @@ fn join_or(lines: Vec<String>, empty: &str) -> String {
     }
 }
 
+/// Render a [`CommandRun`] as the tool's text: a status header (exit code or
+/// timeout) followed by the captured output, so the model sees both whether the
+/// command succeeded and what it printed.
+fn format_command_run(run: &CommandRun) -> String {
+    let status = if run.timed_out {
+        "[timed out after 120s; partial output below]".to_string()
+    } else {
+        match run.exit_code {
+            Some(0) => "[exit 0]".to_string(),
+            Some(code) => format!("[exit {code}]"),
+            None => "[terminated by signal]".to_string(),
+        }
+    };
+    if run.stdout_combined.is_empty() {
+        format!("{status} (no output)")
+    } else {
+        format!("{status}\n{}", run.stdout_combined)
+    }
+}
+
 fn text_result(text: String, is_error: bool) -> ToolResult {
     ToolResult {
         text,
@@ -424,7 +486,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ws = Workspace::open_or_create(dir.path()).await.unwrap();
         let tools = GovernedTools::new(ws, AllowGate, NoopRecorder);
-        (CodingMcpClient::new(tools, true), dir)
+        (CodingMcpClient::new(tools, true, true), dir)
     }
 
     #[tokio::test]
@@ -533,7 +595,7 @@ mod tests {
     fn mutation_hints_match_read_write_description_tags() {
         // T5 plan §5.2: the structured hint must agree with the textual
         // [READ]/[WRITE] tag every descriptor already carries.
-        for d in coding_tool_descriptors(true) {
+        for d in coding_tool_descriptors(true, true) {
             let desc = d.description.expect("coding tools are documented");
             let expected = if desc.starts_with("[READ]") {
                 MutationHint::Read
@@ -551,7 +613,7 @@ mod tests {
 
     #[test]
     fn read_tools_are_exactly_the_observation_set() {
-        let mut reads: Vec<String> = coding_tool_descriptors(true)
+        let mut reads: Vec<String> = coding_tool_descriptors(true, true)
             .into_iter()
             .filter(|d| d.mutation_hint == MutationHint::Read)
             .map(|d| d.name)
@@ -562,7 +624,7 @@ mod tests {
 
     #[test]
     fn descriptors_gate_egress() {
-        let no_egress: Vec<_> = coding_tool_descriptors(false)
+        let no_egress: Vec<_> = coding_tool_descriptors(false, false)
             .into_iter()
             .map(|d| d.name)
             .collect();
@@ -588,7 +650,7 @@ mod tests {
             );
         }
         // With egress opted in, the two network tools appear.
-        let with_egress: Vec<_> = coding_tool_descriptors(true)
+        let with_egress: Vec<_> = coding_tool_descriptors(true, false)
             .into_iter()
             .map(|d| d.name)
             .collect();
@@ -598,5 +660,28 @@ mod tests {
             !with_egress.contains(&"git_branch".to_string()),
             "git_branch is ungoverned and must never be exposed"
         );
+    }
+
+    #[test]
+    fn descriptors_gate_exec() {
+        // run_command is absent unless the exec opt-in is on, and it carries the
+        // Write mutation hint (⇒ consult mode auto-blocks it, per option C).
+        let no_exec: Vec<_> = coding_tool_descriptors(false, false)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert!(
+            !no_exec.contains(&"run_command".to_string()),
+            "run_command must not be exposed without the exec opt-in"
+        );
+
+        let with_exec = coding_tool_descriptors(false, true);
+        let exec = with_exec
+            .iter()
+            .find(|d| d.name == "run_command")
+            .expect("run_command present when exec opted in");
+        assert_eq!(exec.mutation_hint, MutationHint::Write);
+        // exec opt-in alone must not pull in the egress tools.
+        assert!(!with_exec.iter().any(|d| d.name == "git_push"));
     }
 }

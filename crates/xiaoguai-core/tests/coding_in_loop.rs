@@ -55,8 +55,9 @@ async fn registered() -> (Toolbox, tempfile::TempDir, Arc<Mutex<Vec<String>>>) {
             actions: actions.clone(),
         },
     );
-    let client: Arc<dyn McpClient> = Arc::new(CodingMcpClient::new(tools, false));
-    let toolbox = Toolbox::from_server(client, coding_tool_descriptors(false)).expect("toolbox");
+    let client: Arc<dyn McpClient> = Arc::new(CodingMcpClient::new(tools, false, false));
+    let toolbox =
+        Toolbox::from_server(client, coding_tool_descriptors(false, false)).expect("toolbox");
     (toolbox, dir, actions)
 }
 

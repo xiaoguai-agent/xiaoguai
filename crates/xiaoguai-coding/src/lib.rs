@@ -29,7 +29,7 @@ pub use governed::{
 #[cfg(feature = "mcp")]
 pub use mcp_client::{coding_tool_descriptors, CodingMcpClient};
 pub use tools::{EditSummary, FileEdit};
-pub use workspace::{Workspace, WorkspaceId};
+pub use workspace::{CommandRun, Workspace, WorkspaceId};
 
 #[cfg(test)]
 mod tests {
