@@ -236,6 +236,9 @@
     "working_dir": "工作目录",
     "working_dir_save": "保存",
     "working_dir_placeholder": "/工作区/绝对/路径",
+    "working_dir_set_cta": "📁 配置目录",
+    "working_dir_edit": "更改",
+    "working_dir_edit_title": "更改工作目录",
     "coding_active": "本会话已启用文件读写 —— 执行落盘(审计),咨询只预览",
     "coding_active_title": "助手可读写该工作目录下的文件。执行模式会真正改动(并审计);咨询模式只预览、不落盘。"
   }

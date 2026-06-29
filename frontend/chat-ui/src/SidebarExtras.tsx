@@ -8,7 +8,7 @@
  *   - <WorkingDirControl> compact editor for the active session's working_dir.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useI18n } from './i18n/I18nProvider';
 
 /**
@@ -60,31 +60,53 @@ interface WorkingDirControlProps {
 }
 
 /**
- * Compact inline editor for the active session's coding workspace root
- * (Feature ⑤). A plain text input — browsers cannot pick a server-side path —
- * plus a small save button. Empty input clears the per-session override.
- * Renders nothing when no session is active.
+ * Button-driven control for the active session's coding workspace root
+ * (Feature ⑤). The working_dir is where the agent writes real output and where
+ * the governed coding/exec tools are rooted, so it needs an obvious control.
+ *
+ * Three faces, all rendered from the same component (no modal layer exists):
+ *   - unset + collapsed → a prominent 「📁 配置目录」 CTA button; clicking it
+ *     expands + focuses the path input.
+ *   - set + collapsed → a compact chip showing the dir (ellipsis, full in
+ *     `title`) with a small ✎「更改」 edit affordance, plus the "coding active"
+ *     note. Clicking edit re-opens the input.
+ *   - expanded → the path input + save button (empty input clears the
+ *     override), the coding note, and any save error.
+ *
+ * Renders nothing when no session is active. The save/clear wiring (`onSave`)
+ * and PATCH plumbing in App.tsx are unchanged.
  */
 export function WorkingDirControl({ sessionId, value, onSave }: WorkingDirControlProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState<string>(value ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Collapse/expand of the inline editor. Collapsed shows the CTA (unset) or
+  // the dir chip (set); expanded shows the input + save.
+  const [editing, setEditing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Re-sync the draft when the active session (or its stored value) changes,
-  // unless the user is mid-save. Immutable: a fresh string per render input.
+  // Re-sync the draft + collapse the editor when the active session (or its
+  // stored value) changes. Immutable: a fresh string per render input.
   useEffect(() => {
     setDraft(value ?? '');
     setError(null);
+    setEditing(false);
   }, [sessionId, value]);
+
+  // Focus the input the moment we expand into edit mode.
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
 
   if (!sessionId) return null;
 
-  const dirty = draft.trim() !== (value ?? '').trim();
+  const saved = (value ?? '').trim();
+  const dirty = draft.trim() !== saved;
   // Coding tools (governed file read/edit, Feature ⑤) activate the moment a
   // session has a non-empty stored working_dir — surface that as a muted note
   // tied to the saved value (not the in-progress draft).
-  const codingActive = (value ?? '').trim().length > 0;
+  const codingActive = saved.length > 0;
 
   async function handleSave() {
     if (!sessionId || saving) return;
@@ -92,6 +114,9 @@ export function WorkingDirControl({ sessionId, value, onSave }: WorkingDirContro
     setError(null);
     try {
       await onSave(sessionId, draft.trim());
+      // The parent re-feeds `value`, which collapses us via the sync effect;
+      // collapse eagerly too so a no-op save (value unchanged) still closes.
+      setEditing(false);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -101,38 +126,71 @@ export function WorkingDirControl({ sessionId, value, onSave }: WorkingDirContro
 
   return (
     <section className="working-dir" aria-label={t.sidebar.working_dir}>
-      <label className="working-dir__label" htmlFor="working-dir-input">
+      <span className="working-dir__label">
         <span aria-hidden="true">📁 </span>
         {t.sidebar.working_dir}
-      </label>
-      <div className="working-dir__row">
-        <input
-          id="working-dir-input"
-          className="working-dir__input"
-          type="text"
-          value={draft}
-          placeholder={t.sidebar.working_dir_placeholder}
-          spellCheck={false}
-          autoComplete="off"
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              void handleSave();
-            }
-          }}
-        />
+      </span>
+
+      {!editing && !codingActive && (
         <button
           type="button"
-          className="working-dir__save"
-          disabled={saving || !dirty}
-          onClick={() => void handleSave()}
-          title={t.sidebar.working_dir_save}
-          aria-label={t.sidebar.working_dir_save}
+          className="working-dir__cta"
+          onClick={() => setEditing(true)}
         >
-          {saving ? '…' : t.sidebar.working_dir_save}
+          {t.sidebar.working_dir_set_cta}
         </button>
-      </div>
+      )}
+
+      {!editing && codingActive && (
+        <div className="working-dir__chip">
+          <code className="working-dir__path" title={saved}>
+            {saved}
+          </code>
+          <button
+            type="button"
+            className="working-dir__edit"
+            onClick={() => setEditing(true)}
+            title={t.sidebar.working_dir_edit_title}
+            aria-label={t.sidebar.working_dir_edit_title}
+          >
+            <span aria-hidden="true">✎ </span>
+            {t.sidebar.working_dir_edit}
+          </button>
+        </div>
+      )}
+
+      {editing && (
+        <div className="working-dir__row">
+          <input
+            id="working-dir-input"
+            ref={inputRef}
+            className="working-dir__input"
+            type="text"
+            value={draft}
+            placeholder={t.sidebar.working_dir_placeholder}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void handleSave();
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="working-dir__save"
+            disabled={saving || !dirty}
+            onClick={() => void handleSave()}
+            title={t.sidebar.working_dir_save}
+            aria-label={t.sidebar.working_dir_save}
+          >
+            {saving ? '…' : t.sidebar.working_dir_save}
+          </button>
+        </div>
+      )}
+
       {codingActive && (
         <p className="working-dir__coding-note" title={t.sidebar.coding_active_title}>
           <span aria-hidden="true">🛡 </span>
