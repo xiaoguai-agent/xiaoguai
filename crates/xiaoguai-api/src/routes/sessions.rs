@@ -230,6 +230,31 @@ pub async fn list_messages(
     Ok(Json(msgs))
 }
 
+/// `DELETE /v1/sessions/{session_id}/messages/{message_id}` — remove a single
+/// message from a session. Owner-authed like the sibling message routes. The
+/// repo delete is scoped by BOTH ids, so existence and session-ownership are
+/// enforced in one statement: a missing message — or a real message id paired
+/// with the wrong session — yields [`RepoError::NotFound`] → 404. Returns
+/// 204 No Content on success.
+///
+/// # Errors
+/// Returns 404 when the session/message pair does not exist, or a storage
+/// error if the delete fails.
+pub async fn delete_message(
+    State(state): State<AppState>,
+    Path((session_id, message_id)): Path<(String, String)>,
+) -> ApiResult<StatusCode> {
+    state
+        .messages
+        .delete_message(&session_id, &message_id)
+        .await
+        .map_err(|e| match e {
+            xiaoguai_storage::repositories::RepoError::NotFound => ApiError::NotFound,
+            other => ApiError::Storage(other),
+        })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SendMessageRequest {
     pub content: String,

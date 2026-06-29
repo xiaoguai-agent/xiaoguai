@@ -61,6 +61,12 @@ pub fn router(state: AppState) -> Router {
             "/v1/sessions/{id}/messages",
             get(sessions::list_messages).post(sessions::send_message),
         )
+        // Delete a single message (chat-ui message toolbar). Session-scoped:
+        // the repo delete keys on both ids, so a wrong session_id is a 404.
+        .route(
+            "/v1/sessions/{session_id}/messages/{message_id}",
+            delete(sessions::delete_message),
+        )
         .route("/v1/sessions/{id}/cancel", post(sessions::cancel_session))
         // Feature ⑥ — is a turn still running server-side for this session?
         .route("/v1/sessions/{id}/status", get(sessions::session_status))

@@ -1698,6 +1698,20 @@ export class XiaoguaiClient {
   }
 
   /**
+   * Delete a single message from a session (chat-ui message toolbar "删除").
+   * Mirrors `DELETE /v1/sessions/{session_id}/messages/{message_id}`: the
+   * backend scopes the delete by both ids, so a missing message — or a
+   * message id paired with the wrong session — answers 404. Resolves void on
+   * 204 No Content.
+   */
+  deleteMessage(sessionId: string, messageId: string): Promise<void> {
+    return this.requestNoContent(
+      'DELETE',
+      `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
+    );
+  }
+
+  /**
    * Feature ⑥ — read whether a turn is still running server-side for this
    * session. The backend decouples a running turn from its SSE client: the
    * turn keeps going when the user switches sessions or reloads, and its
