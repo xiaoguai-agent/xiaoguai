@@ -391,14 +391,21 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         ) {
             (Some(sink), Some(root)) => {
                 let allow_egress = crate::coding_bridge::coding_allow_egress();
-                match crate::coding_bridge::build_coding_toolbox(sink.clone(), &root, allow_egress)
-                    .await
+                let allow_exec = crate::coding_bridge::coding_allow_exec();
+                match crate::coding_bridge::build_coding_toolbox(
+                    sink.clone(),
+                    &root,
+                    allow_egress,
+                    allow_exec,
+                )
+                .await
                 {
                     Ok(tb) => {
                         tracing::info!(
                             workspace = %root.display(),
                             tools = tb.len(),
                             egress = allow_egress,
+                            exec = allow_exec,
                             "serve: governed coding tools registered into the agent toolbox"
                         );
                         // Feature ⑤: capture the inputs to rebuild this surface
@@ -408,6 +415,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                             Arc::new(crate::coding_bridge::CodingToolboxFactoryImpl::new(
                                 sink.clone(),
                                 allow_egress,
+                                allow_exec,
                                 Toolbox::new(),
                                 Some(root.clone()),
                             ));
@@ -438,8 +446,10 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                 // coding surface (consult + HotL + code.* audit + path-jail),
                 // rooted at that dir, built on demand for that turn.
                 let allow_egress = crate::coding_bridge::coding_allow_egress();
+                let allow_exec = crate::coding_bridge::coding_allow_exec();
                 tracing::info!(
                     egress = allow_egress,
+                    exec = allow_exec,
                     "serve: coding tools enabled per-session — set a session working_dir to \
                      activate governed coding (no global workspace; boot toolbox carries none)"
                 );
@@ -447,6 +457,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                     Arc::new(crate::coding_bridge::CodingToolboxFactoryImpl::new(
                         sink.clone(),
                         allow_egress,
+                        allow_exec,
                         Toolbox::new(),
                         None,
                     ));

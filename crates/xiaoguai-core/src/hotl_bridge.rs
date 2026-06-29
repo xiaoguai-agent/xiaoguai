@@ -215,6 +215,7 @@ fn is_high_risk_scope(scope: &str) -> bool {
         "tool_call.apply_patch",
         "tool_call.shell",
         "tool_call.run_command",
+        "tool_call.run_code",
         "tool_call.bash",
         // SEC-02 (review fix): `open_pr` is an egress tool (`gh pr create` pushes
         // workspace code to a remote). `git_push` is already covered by the

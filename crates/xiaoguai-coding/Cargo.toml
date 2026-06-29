@@ -11,13 +11,18 @@ description = "Governed coding workflow — persistent git workspace + checkpoin
 [dependencies]
 async-trait = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["fs", "process", "rt", "macros"] }
+tokio = { workspace = true, features = ["fs", "process", "rt", "macros", "io-util", "time"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
 # `mcp` feature: expose the governed coding tools to the ReAct loop as an
 # in-process MCP client (registered into the agent Toolbox by xiaoguai-core).
 xiaoguai-mcp = { path = "../xiaoguai-mcp", optional = true }
 serde_json = { workspace = true, optional = true }
+# Sandboxed JS execution reused by the governed `run_code` tool (#19a). The lib
+# API (`run_javascript`) embeds the sandbox (fresh tempdir CWD + ulimit +
+# scrubbed env + output cap) in-process — DEC-033 single-binary, no extra
+# process/MCP server. mcp-exec-js does NOT depend on xiaoguai-coding (no cycle).
+xiaoguai-mcp-exec-js = { path = "../xiaoguai-mcp-exec-js" }
 
 [features]
 # Off by default so the base crate (workspace/checkpoint primitive) stays free
@@ -26,7 +31,7 @@ mcp = ["dep:xiaoguai-mcp", "dep:serde_json"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 serde_json = { workspace = true }
 
 [lints]

@@ -20,7 +20,9 @@ use xiaoguai_runtime::RuntimeContext;
 use xiaoguai_storage::db;
 use xiaoguai_storage::repositories::{LlmProviderRepository, SqliteLlmProviderRepository};
 
-use crate::coding_bridge::{build_coding_toolbox, coding_allow_egress, coding_workspace_root};
+use crate::coding_bridge::{
+    build_coding_toolbox, coding_allow_egress, coding_allow_exec, coding_workspace_root,
+};
 
 /// Serve the Agent Client Protocol over stdio until EOF.
 ///
@@ -92,12 +94,14 @@ async fn build_runtime_context(settings: &Settings) -> Result<RuntimeContext> {
         (Some(key), Some(root)) => {
             let sink = Arc::new(SqliteAuditSink::new(pool.clone(), key));
             let allow_egress = coding_allow_egress();
-            match build_coding_toolbox(sink, &root, allow_egress).await {
+            let allow_exec = coding_allow_exec();
+            match build_coding_toolbox(sink, &root, allow_egress, allow_exec).await {
                 Ok(tb) => {
                     tracing::info!(
                         workspace = %root.display(),
                         tools = tb.len(),
                         egress = allow_egress,
+                        exec = allow_exec,
                         "acp: governed coding tools registered into the agent toolbox"
                     );
                     Arc::new(tb)
