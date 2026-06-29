@@ -118,16 +118,39 @@ function localizedDescription(entry: SkillCatalogEntry, chinese: boolean): strin
   return pickLocalized(entry.description_zh, entry.description, chinese);
 }
 
+// Installed-pack rows carry only the canonical English `name` / `description`
+// over the wire (no `*_zh`). To localize the list/table/drawer we look up the
+// matching catalog entry by slug (`pack_id` === catalog `slug`) and prefer its
+// localized strings, falling back to the installed row's own value.
+
+function localizedPackName(
+  pack: InstalledSkillPackResponse,
+  catalogEntry: SkillCatalogEntry | undefined,
+  chinese: boolean,
+): string {
+  return pickLocalized(catalogEntry?.name_zh, pack.name, chinese);
+}
+
+function localizedPackDescription(
+  pack: InstalledSkillPackResponse,
+  catalogEntry: SkillCatalogEntry | undefined,
+  chinese: boolean,
+): string {
+  return pickLocalized(catalogEntry?.description_zh, pack.description ?? '', chinese);
+}
+
 // ---------------------------------------------------------------------------
 // Detail drawer
 // ---------------------------------------------------------------------------
 
 interface DetailDrawerProps {
   pack: InstalledSkillPackResponse;
+  catalogEntry: SkillCatalogEntry | undefined;
+  chinese: boolean;
   onClose: () => void;
 }
 
-function DetailDrawer({ pack, onClose }: DetailDrawerProps): JSX.Element {
+function DetailDrawer({ pack, catalogEntry, chinese, onClose }: DetailDrawerProps): JSX.Element {
   const { t } = useTranslation();
   // Close on Escape key
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -150,7 +173,9 @@ function DetailDrawer({ pack, onClose }: DetailDrawerProps): JSX.Element {
       <div className="skill-drawer-panel">
         <header className="skill-drawer-header">
           <div>
-            <h2 className="skill-drawer-title">{pack.name}</h2>
+            <h2 className="skill-drawer-title">
+              {localizedPackName(pack, catalogEntry, chinese)}
+            </h2>
             <span className="skill-drawer-pack-id">{pack.pack_id}</span>
           </div>
           <button
@@ -174,7 +199,10 @@ function DetailDrawer({ pack, onClose }: DetailDrawerProps): JSX.Element {
               : t('pane.skill_packs.status_pending')}
           </span>
 
-          {pack.description && <p className="skill-drawer-desc">{pack.description}</p>}
+          {(() => {
+            const desc = localizedPackDescription(pack, catalogEntry, chinese);
+            return desc !== '' ? <p className="skill-drawer-desc">{desc}</p> : null;
+          })()}
 
           <dl className="skill-drawer-dl">
             <dt>{t('pane.skill_packs.detail_version')}</dt>
@@ -429,7 +457,8 @@ function InstallForm({ state, onSubmit, onConfirm, onCancel }: InstallFormProps)
 // ---------------------------------------------------------------------------
 
 export function SkillPacksPane(): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const chinese = isChinese(i18n.language);
   const [loadState, setLoadState] = useState<LoadState>({ kind: 'loading' });
   const [catalogState, setCatalogState] = useState<CatalogState>({ kind: 'loading' });
   const [installState, setInstallState] = useState<InstallState>({ kind: 'idle' });
@@ -476,6 +505,12 @@ export function SkillPacksPane(): JSX.Element {
   // Slugs already recorded — used to disable re-installing the same pack.
   const installedSlugs = new Set(
     loadState.kind === 'ok' ? loadState.packs.map((p) => p.pack_id) : [],
+  );
+
+  // slug → catalog entry, so the installed table/drawer can borrow the catalog's
+  // `*_zh` strings (the installed-pack wire shape carries no localized fields).
+  const catalogBySlug = new Map<string, SkillCatalogEntry>(
+    catalogState.kind === 'ok' ? catalogState.entries.map((e) => [e.slug, e]) : [],
   );
 
   async function handleCatalogInstall(slug: string): Promise<void> {
@@ -635,7 +670,7 @@ export function SkillPacksPane(): JSX.Element {
             <tbody>
               {packs.map((pack) => (
                 <tr key={pack.id}>
-                  <td>{pack.name}</td>
+                  <td>{localizedPackName(pack, catalogBySlug.get(pack.pack_id), chinese)}</td>
                   <td>
                     <code>{pack.pack_id}</code>
                   </td>
@@ -681,7 +716,14 @@ export function SkillPacksPane(): JSX.Element {
         )}
       </section>
 
-      {selected !== null && <DetailDrawer pack={selected} onClose={() => setSelected(null)} />}
+      {selected !== null && (
+        <DetailDrawer
+          pack={selected}
+          catalogEntry={catalogBySlug.get(selected.pack_id)}
+          chinese={chinese}
+          onClose={() => setSelected(null)}
+        />
+      )}
     </>
   );
 }

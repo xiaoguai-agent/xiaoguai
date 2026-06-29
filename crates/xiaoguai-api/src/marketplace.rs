@@ -37,6 +37,14 @@ pub struct MarketplaceEntry {
     pub slug: String,
     pub name: String,
     pub description: String,
+    /// Chinese display name; the UI prefers this under a Chinese locale,
+    /// falling back to `name`. `#[serde(default)]` keeps existing-shape
+    /// catalogs + consumers working.
+    #[serde(default)]
+    pub name_zh: Option<String>,
+    /// Chinese description; same fallback contract as `name_zh`.
+    #[serde(default)]
+    pub description_zh: Option<String>,
     /// Free-form one of: `files`, `code`, `notes`, `chat`, `data`,
     /// `email`. UI uses it for grouping.
     pub category: String,

@@ -346,7 +346,12 @@ export interface CaseFromSessionResponse {
 export interface MarketplaceEntry {
   slug: string;
   name: string;
+  /** Chinese display name; the UI prefers this under a Chinese locale,
+   *  falling back to `name`. */
+  name_zh?: string | null;
   description: string;
+  /** Chinese description; same fallback contract as `name_zh`. */
+  description_zh?: string | null;
   category: string;
   transport: 'stdio' | 'sse' | 'http';
   version: string;
