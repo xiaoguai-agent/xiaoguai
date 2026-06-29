@@ -105,7 +105,7 @@
     "welcome_title": "你好，我是{{name}}",
     "welcome_subtitle": "有什么可以帮你的？",
     "composer_placeholder": "给{{name}}发消息…",
-    "composer_hint": "Shift+Enter 换行",
+    "composer_hint": "Shift+Enter 换行 · 输入 /loop 起一个循环任务",
     "stop": "停止",
     "send": "发送",
     "stop_generating": "停止生成",

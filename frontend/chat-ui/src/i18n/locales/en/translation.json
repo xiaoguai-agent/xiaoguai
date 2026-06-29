@@ -105,7 +105,7 @@
     "welcome_title": "Hi, I'm {{name}}",
     "welcome_subtitle": "What can I help you with?",
     "composer_placeholder": "Message {{name}}…",
-    "composer_hint": "Shift+Enter for newline",
+    "composer_hint": "Shift+Enter for newline · type /loop for a recurring task",
     "stop": "Stop",
     "send": "Send",
     "stop_generating": "Stop generating",
