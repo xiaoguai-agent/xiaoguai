@@ -30,6 +30,10 @@ type CitationBlock = Extract<ContentBlock, { type: 'citation' }>;
 
 interface Props {
   onSessionCreated: (s: { id: string; title: string }) => void;
+  /** Called when an opened session no longer exists server-side (404 on history
+   *  load) — e.g. a stale localStorage entry after a server/DB reset. The shell
+   *  prunes it from the sidebar so it stops being clickable. */
+  onSessionMissing?: (id: string) => void;
 }
 
 interface DisplayBubble {
@@ -81,7 +85,7 @@ function autoGrow(ta: HTMLTextAreaElement | null) {
   ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
 }
 
-export function ChatPage({ onSessionCreated }: Props) {
+export function ChatPage({ onSessionCreated, onSessionMissing }: Props) {
   const { t } = useI18n();
   // White-label assistant name (owner-set), falling back to the locale default.
   const brandName = useBrandName() || t.ui.assistant_name;
@@ -218,7 +222,16 @@ export function ChatPage({ onSessionCreated }: Props) {
         const msgs = await client.listMessages(routeId);
         setBubbles(msgs.flatMap(messageToBubbles));
       } catch (err) {
-        setStatus(interpolate(t.chat.sse.load_failed, { message: (err as Error).message }));
+        // A 404 means this session no longer exists (commonly a stale
+        // localStorage entry left over after a server/DB reset). Don't show a
+        // scary "load failed" — prune the dead entry and drop to a fresh chat.
+        if ((err as { status?: number }).status === 404) {
+          setBubbles([]);
+          onSessionMissing?.(routeId);
+          navigate('/', { replace: true });
+        } else {
+          setStatus(interpolate(t.chat.sse.load_failed, { message: (err as Error).message }));
+        }
       }
     })();
     // Feature ⑥ — check whether a turn is still running server-side for this

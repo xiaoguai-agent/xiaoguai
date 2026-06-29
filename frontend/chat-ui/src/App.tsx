@@ -115,26 +115,25 @@ export function App() {
     void refreshServerSessions();
   }, [refreshServerSessions]);
 
-  useEffect(() => {
-    let cancelled = false;
-    setTokensLoading(true);
-    client
-      .getUsage({ since: todayUtcStart(), group_by: 'day' })
-      .then((report) => {
-        if (cancelled) return;
-        setTodayTokens(report.total_input_tokens + report.total_output_tokens);
-      })
-      .catch(() => {
-        // Usage endpoint unavailable — hide the stat rather than break the bar.
-        if (!cancelled) setTodayTokens(null);
-      })
-      .finally(() => {
-        if (!cancelled) setTokensLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+  // Today's token spend. Re-fetched on a light interval so it reflects new
+  // turns without a page reload (the stat is fetch-once otherwise → looks stuck
+  // at the mount value / 0). Best-effort: a failure hides the stat.
+  const refreshTokens = useCallback(async () => {
+    try {
+      const report = await client.getUsage({ since: todayUtcStart(), group_by: 'day' });
+      setTodayTokens(report.total_input_tokens + report.total_output_tokens);
+    } catch {
+      setTodayTokens(null);
+    } finally {
+      setTokensLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshTokens();
+    const handle = setInterval(() => void refreshTokens(), 45_000);
+    return () => clearInterval(handle);
+  }, [refreshTokens]);
 
   // Remember the active session whenever we're viewing one.
   useEffect(() => {
@@ -242,10 +241,17 @@ export function App() {
           <ThemeToggle />
         </div>
         <Routes>
-          <Route path="/" element={<ChatPage onSessionCreated={addSession} />} />
+          <Route
+            path="/"
+            element={
+              <ChatPage onSessionCreated={addSession} onSessionMissing={removeSession} />
+            }
+          />
           <Route
             path="/sessions/:id"
-            element={<ChatPage onSessionCreated={addSession} />}
+            element={
+              <ChatPage onSessionCreated={addSession} onSessionMissing={removeSession} />
+            }
           />
           {/* v1.2.28 — skill pack marketplace */}
           <Route path="/skills" element={<SkillsPage />} />
