@@ -14,8 +14,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      # Run cargo-deny on the runner (not the action's container) so it uses the
+      # repo's pinned toolchain. The EmbarkStudios/cargo-deny-action@v2 image
+      # regressed (2026-07): it can't honor `rust-toolchain.toml`'s 1.93.0 pin
+      # ("override toolchain '1.93.0' is not installed"), reddening every PR.
+      # This mirrors the rust.yml idiom (dtolnay + taiki-e install-action).
+      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: taiki-e/install-action@v2
         with:
-          log-level: warn
-          command: check
-          arguments: --all-features
+          tool: cargo-deny
+      - run: cargo deny --log-level warn check --all-features
