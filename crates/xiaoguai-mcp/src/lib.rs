@@ -36,5 +36,5 @@ pub use client::McpClient;
 pub use error::{McpError, McpResult};
 pub use http::{HttpClientConfig, HttpMcpClient};
 pub use stdio::StdioMcpClient;
-pub use supervisor::{McpKey, McpSupervisor};
+pub use supervisor::{ActiveToolsSource, McpKey, McpSupervisor};
 pub use types::{ContentBlock, MutationHint, ServerInfo, ToolDescriptor, ToolResult};

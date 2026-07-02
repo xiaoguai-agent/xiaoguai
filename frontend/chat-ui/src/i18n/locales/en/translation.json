@@ -229,6 +229,21 @@
       "empty": "No MCP servers configured. Connect one in Admin to give your agent external tools.",
       "transport_title": "Transport: {{transport}}",
       "env_label": "Env:"
+    },
+    "vmware_starter": {
+      "title": "VMware Ops Assistant",
+      "subtitle": "Your assistant for vCenter / ESXi operations. Install the VMware MCP servers you need with one click, then ask in plain language.",
+      "install": "Install",
+      "installed": "Installed ✓",
+      "installing": "Installing…",
+      "install_failed": "Install failed: {{message}}",
+      "badge_readonly": "Read-only · start here",
+      "badge_ops": "Ops · destructive ops need 2 confirmations",
+      "prereq_note": "Installing here registers the server in xiaoguai. It only runs once you have run `uv tool install <package>` on the host AND configured the vCenter connection (`~/.<package>/config.yaml` + `.env`). See the guide: docs/vc-ops-assistant.md",
+      "more_in_marketplace": "More VMware servers are available in the MCP marketplace.",
+      "chip_label": "🖥 VMware Ops",
+      "loading": "Loading VMware skills…",
+      "error": "Could not load VMware skills: {{message}}"
     }
   },
   "sidebar": {
@@ -238,6 +253,9 @@
     "working_dir": "Working directory",
     "working_dir_save": "Save",
     "working_dir_placeholder": "/abs/path/to/workspace",
+    "working_dir_set_cta": "📁 Set working directory",
+    "working_dir_edit": "Change",
+    "working_dir_edit_title": "Change the working directory",
     "coding_active": "File editing enabled for this session — execute writes (audited), consult previews",
     "coding_active_title": "The agent can read & edit files under this working directory. Execute mode applies changes (audited); consult mode previews without writing."
   }

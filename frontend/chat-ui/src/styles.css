@@ -973,6 +973,195 @@ html,
   transform: translateY(1px);
 }
 
+/* VM-ops surfacing — the chip that reveals the VMware starter card spans the
+   full grid width below the generic chips and reads as a primary affordance. */
+.suggestion-chip--vmware {
+  grid-column: 1 / -1;
+  text-align: center;
+  font-weight: 600;
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ------------------------------------------------------- VMware starter card */
+.vmware-starter {
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.vmware-starter__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.vmware-starter__title {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  margin: 0;
+}
+
+.vmware-starter__subtitle {
+  font-size: 14px;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.vmware-starter__loading,
+.vmware-starter__error {
+  font-size: 14px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.vmware-starter__error {
+  color: var(--tool-error-fg);
+}
+
+.vmware-starter__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.vmware-starter__row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.vmware-starter__info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.vmware-starter__name-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.vmware-starter__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.vmware-starter__badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+.vmware-starter__badge--readonly {
+  color: #16a34a;
+  background: #dcfce7;
+}
+
+.vmware-starter__badge--ops {
+  color: #b45309;
+  background: #fef3c7;
+}
+
+[data-theme='dark'] .vmware-starter__badge--readonly {
+  color: #4ade80;
+  background: #052e16;
+}
+
+[data-theme='dark'] .vmware-starter__badge--ops {
+  color: #fcd34d;
+  background: #3a2c0e;
+}
+
+.vmware-starter__desc {
+  font-size: 13px;
+  color: var(--fg-soft);
+  margin: 0;
+  line-height: 1.45;
+}
+
+.vmware-starter__row-error {
+  font-size: 12px;
+  color: var(--tool-error-fg);
+  margin: var(--space-1) 0 0;
+}
+
+.vmware-starter__install {
+  flex-shrink: 0;
+  align-self: center;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    opacity 120ms ease;
+}
+
+.vmware-starter__install:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.vmware-starter__install:disabled {
+  cursor: default;
+}
+
+.vmware-starter__install--done {
+  background: transparent;
+  color: #16a34a;
+  border-color: var(--border);
+}
+
+[data-theme='dark'] .vmware-starter__install--done {
+  color: #4ade80;
+}
+
+.vmware-starter__more {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.vmware-starter__prereq {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--border-soft);
+}
+
 /* ------------------------------------------------------------------ status */
 
 .status {
@@ -1962,6 +2151,65 @@ html,
   font-size: 11px;
   line-height: 1.4;
   color: var(--muted);
+}
+
+/* Feature ⑤ — prominent CTA shown when no working_dir is set yet. Reads as an
+   obvious primary control (the working_dir gates the coding/exec tools). */
+.working-dir__cta {
+  width: 100%;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+}
+
+.working-dir__cta:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Feature ⑤ — compact chip showing the set dir + an edit affordance. */
+.working-dir__chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.working-dir__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--fg);
+}
+
+.working-dir__edit {
+  width: auto;
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.working-dir__edit:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 /* ---------------------------------------------------------- HotL banner (v1.3.x) */
