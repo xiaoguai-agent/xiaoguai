@@ -122,8 +122,8 @@
       "category": "ops",
       "transport": "stdio",
       "version": "1.7.0",
-      "command": "vmware-monitor",
-      "args": ["mcp"],
+      "command": "vmware-monitor-mcp",
+      "args": [],
       "env_keys": [],
       "source_url": "https://github.com/zw008/VMware-Monitor"
     },
@@ -136,8 +136,8 @@
       "category": "ops",
       "transport": "stdio",
       "version": "1.7.0",
-      "command": "vmware-aiops",
-      "args": ["mcp"],
+      "command": "vmware-aiops-mcp",
+      "args": [],
       "env_keys": [],
       "source_url": "https://github.com/zw008/VMware-AIops"
     },
@@ -150,8 +150,8 @@
       "category": "ops",
       "transport": "stdio",
       "version": "1.7.0",
-      "command": "vmware-storage",
-      "args": ["mcp"],
+      "command": "vmware-storage-mcp",
+      "args": [],
       "env_keys": [],
       "source_url": "https://github.com/zw008/VMware-Storage"
     },
@@ -164,8 +164,8 @@
       "category": "ops",
       "transport": "stdio",
       "version": "1.7.0",
-      "command": "vmware-vks",
-      "args": ["mcp"],
+      "command": "vmware-vks-mcp",
+      "args": [],
       "env_keys": [],
       "source_url": "https://github.com/zw008/VMware-VKS"
     },
@@ -178,8 +178,8 @@
       "category": "ops",
       "transport": "stdio",
       "version": "17.0.0",
-      "command": "vmware-nsx",
-      "args": ["mcp"],
+      "command": "vmware-nsx-mcp",
+      "args": [],
       "env_keys": [],
       "source_url": "https://github.com/zw008/VMware-NSX"
     },
@@ -192,8 +192,8 @@
       "category": "ops",
       "transport": "stdio",
       "version": "1.7.0",
-      "command": "vmware-nsx-security",
-      "args": ["mcp"],
+      "command": "vmware-nsx-security-mcp",
+      "args": [],
       "env_keys": [],
       "source_url": "https://github.com/zw008/VMware-NSX-Security"
     },
@@ -206,8 +206,8 @@
       "category": "ops",
       "transport": "stdio",
       "version": "1.7.0",
-      "command": "vmware-aria",
-      "args": ["mcp"],
+      "command": "vmware-aria-mcp",
+      "args": [],
       "env_keys": [],
       "source_url": "https://github.com/zw008/VMware-Aria"
     },
@@ -220,8 +220,8 @@
       "category": "ops",
       "transport": "stdio",
       "version": "1.7.0",
-      "command": "vmware-avi",
-      "args": ["mcp"],
+      "command": "vmware-avi-mcp",
+      "args": [],
       "env_keys": [],
       "source_url": "https://github.com/zw008/VMware-AVI"
     },
@@ -234,8 +234,8 @@
       "category": "ops",
       "transport": "stdio",
       "version": "1.7.0",
-      "command": "vmware-harden",
-      "args": ["mcp"],
+      "command": "vmware-harden-mcp",
+      "args": [],
       "env_keys": [],
       "source_url": "https://github.com/zw008/VMware-Harden"
     }

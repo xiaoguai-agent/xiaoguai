@@ -41,18 +41,21 @@ $EDITOR ~/.vmware-monitor/.env                                 # 填 VMWARE_<TAR
 chmod 600 ~/.vmware-monitor/.env
 
 # 3) 自检:本机直接跑一下 MCP server(stdio)
-vmware-monitor mcp     # 能起来即可(Ctrl-C 退出)
+vmware-monitor-mcp     # 能起来即可(Ctrl-C 退出)
 ```
 
 > `config.yaml` 只存主机/端口/target 引用;**密码只在 `.env`**(`chmod 600`)。
 
 ## 在 xiaoguai 里接入
 
-1. **PATH**:确保运行 `xiaoguai serve` 的进程能找到 `vmware-monitor`(`uv tool` 的 bin 目录在 PATH)。
+1. **PATH**:确保运行 `xiaoguai serve` 的进程能找到 `vmware-monitor-mcp`(`uv tool` 的 bin 目录在 PATH;xiaoguai spawn 时透传 `PATH`+`HOME`,故 `~/.vmware-monitor/` 可解析)。
 2. **安装 MCP**:管理后台 → **MCP / 市场** → 找到 `VMware Monitor (read-only)` → 安装。
-   这会写一行 `mcp_servers`(`command=vmware-monitor args=[mcp]`),supervisor 自动拉起;
+   这会写一行 `mcp_servers`(`command=vmware-monitor-mcp args=[]`),supervisor 自动拉起;
    其工具随即合并进对话工具箱(地基②)。
-3. **绑定助手**:对话页「助手」Tab → 选 **VM 运维助手**(其角色 + 反幻觉 + 安全准则注入,地基①)。
+3. **建并绑定助手**:目前**没有预置** VM 运维 persona —— 在「助手」里**新建**一个名字含「运维」或
+   「vmware」的 persona(这个命名会触发一键启动卡与检测),把「只读优先 + 反幻觉(有就是有)+
+   变更需复述确认」写进它的 `system_prompt`(可参照 zw008 `SKILL.md` 的 Safety Rules);对话页「助手」
+   Tab 选它,其提示词即注入本轮(地基①)。*(预置一个 turnkey VM 运维 persona = v1.34.0 待办。)*
 4. **(可选)配置目录**:侧栏「配置目录」设一个工作目录 → 助手产出的报告会**真实落盘**到那里。
 
 ## 使用
@@ -61,7 +64,9 @@ vmware-monitor mcp     # 能起来即可(Ctrl-C 退出)
   →助手调真实工具→返回真实清单;**未连接则直说『未连接 vCenter』**。
 - **运维变更**(需装 `vmware-aiops`,执行模式):「把 vm-101 关机」→助手先**复述对象+影响+征得同意**,
   且 `vmware-aiops` 自身**二次确认**。
-- **咨询模式**:只读工具可用、写工具被拦截(预览不执行)。
+- **咨询模式**:写工具被拦截(预览不执行)。要让 `vmware-monitor` 的只读工具在咨询模式下**自动放行**,
+  需把它加入只读信任名单 —— 起 serve 时设 `XIAOGUAI_MCP_TRUST_READ_ONLY_HINTS=vmware-monitor`(#286;
+  这些工具在 server 里声明了 `readOnlyHint`)。**不设则保守**:连读工具也当作「可能写」被拦,安全但偏严。
 - **审计**:所有工具调用进 HMAC 审计链;高风险作用域默认 fail-closed(无策略则升级审批)。
 
 ## 严禁幻觉(产品保证)
