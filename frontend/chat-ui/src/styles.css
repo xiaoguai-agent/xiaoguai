@@ -241,7 +241,19 @@ html,
   overflow: hidden;
 }
 
-/* Segmented 助手 | 话题 header. */
+/* White-label brand wordmark above the 助手 | 对话 tabs. */
+.list-brand {
+  padding: var(--space-3) var(--space-3) 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Segmented 助手 | 对话 header. */
 .list-tabs {
   display: flex;
   gap: var(--space-1);
@@ -493,11 +505,39 @@ html,
   font-weight: 500;
 }
 
+/* Name + role/description stacked in a column; the column itself shrinks so
+   long text ellipsizes instead of pushing the checkmark out. */
+.assistant-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
 .assistant-row__name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Muted one-line role/purpose under the assistant name. */
+.assistant-row__desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* Keep the description muted even when the row is the active selection (the
+   active rule recolors the name via the accent + bold weight). */
+.assistant-row.active .assistant-row__desc {
+  color: var(--muted);
+  font-weight: 400;
 }
 
 .assistant-row__check {
@@ -2393,11 +2433,37 @@ html,
   background: var(--surface);
 }
 
-/* Active-assistant control (ExpertPicker) sits at the start. */
+/* Read-only active-assistant display sits at the start. */
 .chat-header-bar__assistant {
   display: flex;
   align-items: center;
   min-width: 0;
+}
+
+/* The attached assistant name + a muted "via 助手" hint. Read-only — the
+   selector lives in the 助手 tab of the list panel. */
+.active-assistant {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.active-assistant__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.active-assistant__hint {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.01em;
 }
 
 /* Indicators (remote-running, watch) pushed to the end. */
