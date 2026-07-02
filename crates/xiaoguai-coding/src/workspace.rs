@@ -222,7 +222,10 @@ impl Workspace {
                 // Deadline hit: kill the child (best-effort) and report what we
                 // captured so far. `start_kill` is non-blocking; the orphaned
                 // `captured` future is dropped, which also drops the pipes.
+                // Reap the killed child so it doesn't linger as a zombie until
+                // the server process exits (tokio's Child does not reap on drop).
                 let _ = child.start_kill();
+                let _ = child.wait().await;
                 Ok(CommandRun {
                     stdout_combined: combine_output(&stdout_buf, &stderr_buf),
                     exit_code: None,

@@ -1191,7 +1191,11 @@ export function ChatPage({
         ) : (
           bubbles.map((b, i) => (
             <Bubble
-              key={i}
+              // Stable key: persisted bubbles key by their message id so a
+              // mid-list delete/reorder can't make React reuse a DOM node for
+              // the wrong bubble; transient (streaming/system) bubbles fall
+              // back to the index.
+              key={b.messageId ?? `temp-${i}`}
               index={i}
               bubble={b}
               regenerate={i === regenInfo?.assistantIdx ? regenInfo : undefined}

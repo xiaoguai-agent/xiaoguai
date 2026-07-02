@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from './i18n/I18nProvider';
+import { interpolate } from './i18n';
 
 /**
  * Humanize a token count: 1_234 → "1.2K", 4_500_000 → "4.5M". Sub-1000 counts
@@ -44,7 +45,7 @@ export function TodayTokenStat({ total, loading }: TodayTokenStatProps) {
   return (
     <p className="sidebar-token-stat" title={t.sidebar.today_tokens_title}>
       <span aria-hidden="true">📊 </span>
-      {t.sidebar.today_tokens.replace('{{count}}', humanizeTokens(total))}
+      {interpolate(t.sidebar.today_tokens, { count: humanizeTokens(total) })}
     </p>
   );
 }
