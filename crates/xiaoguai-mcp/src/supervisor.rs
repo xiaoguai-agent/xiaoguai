@@ -7,11 +7,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use parking_lot::Mutex;
 
 use crate::client::McpClient;
 use crate::error::{McpError, McpResult};
 use crate::stdio::StdioMcpClient;
+use crate::types::ToolDescriptor;
 use xiaoguai_storage::repositories::McpServerRepository;
 use xiaoguai_types::{McpServer, McpTransport};
 
@@ -31,9 +33,21 @@ impl McpKey {
     }
 }
 
+/// One running server: its client plus the tool descriptors captured once at
+/// `start` time. Caching the descriptors at spawn keeps the per-turn merge
+/// (`active_tools`) a cheap lock+clone — it never re-runs `list_tools()`, so
+/// it can't add an MCP round-trip or hang to a chat turn.
+struct ActiveServer {
+    client: Arc<dyn McpClient>,
+    /// Tools the server advertised at `start`. Empty when the one-shot
+    /// `list_tools()` failed (best-effort — a tool-less server never breaks
+    /// registration, it simply contributes nothing to the toolbox).
+    tools: Vec<ToolDescriptor>,
+}
+
 #[derive(Default)]
 pub struct McpSupervisor {
-    clients: Mutex<HashMap<McpKey, Arc<dyn McpClient>>>,
+    clients: Mutex<HashMap<McpKey, ActiveServer>>,
 }
 
 impl std::fmt::Debug for McpSupervisor {
@@ -47,6 +61,18 @@ impl std::fmt::Debug for McpSupervisor {
     }
 }
 
+/// Per-turn seam (testable): the source of every active server's
+/// `(client, descriptor)` pairs the turn pipeline merges into its toolbox.
+/// [`McpSupervisor`] is the production implementation; tests use a mock so the
+/// merge path is exercisable without spawning real MCP child processes.
+#[async_trait]
+pub trait ActiveToolsSource: Send + Sync {
+    /// Snapshot of every active server's tools, each paired with the client
+    /// that dispatches it. Implementations must be cheap and non-blocking on
+    /// the common path — the turn pipeline calls this once per turn.
+    async fn active_tools(&self) -> Vec<(Arc<dyn McpClient>, ToolDescriptor)>;
+}
+
 impl McpSupervisor {
     #[must_use]
     pub fn new() -> Self {
@@ -56,15 +82,39 @@ impl McpSupervisor {
     /// Register a client under `key`. If a client is already registered under
     /// that key it's replaced and best-effort-shutdown.
     ///
+    /// The client's tools are enumerated ONCE here (`list_tools()`) and cached
+    /// so the per-turn [`Self::active_tools`] path stays a cheap lock+clone and
+    /// can never add an MCP round-trip — or hang — to a chat turn. A
+    /// `list_tools()` failure is best-effort: it is logged and the server
+    /// registers with an empty tool set (it just contributes nothing to the
+    /// agent's toolbox) rather than failing the spawn.
+    ///
     /// # Errors
     /// This function currently always returns `Ok(())`. The signature is
     /// `McpResult` for forward-compatibility with richer start logic.
     pub async fn start(&self, key: McpKey, client: Arc<dyn McpClient>) -> McpResult<()> {
-        let prev = self.clients.lock().insert(key, client);
+        // Cache descriptors at spawn time (await BEFORE taking the lock — the
+        // parking_lot guard is not held across the round-trip).
+        let tools = match client.list_tools().await {
+            Ok(tools) => tools,
+            Err(e) => {
+                tracing::warn!(
+                    server = %key.server_name,
+                    version = %key.version,
+                    error = %e,
+                    "mcp supervisor: list_tools at start failed; server registers with no tools",
+                );
+                Vec::new()
+            }
+        };
+        let prev = self
+            .clients
+            .lock()
+            .insert(key, ActiveServer { client, tools });
         if let Some(p) = prev {
             // Best-effort: log on failure but never propagate, since the
             // caller is registering a fresh client.
-            if let Err(e) = p.shutdown().await {
+            if let Err(e) = p.client.shutdown().await {
                 tracing::warn!(error = %e, "displaced MCP client shutdown failed");
             }
         }
@@ -74,7 +124,7 @@ impl McpSupervisor {
     /// Cheap `Arc` clone of the active client for `key`, if any.
     #[must_use]
     pub fn get(&self, key: &McpKey) -> Option<Arc<dyn McpClient>> {
-        self.clients.lock().get(key).cloned()
+        self.clients.lock().get(key).map(|s| s.client.clone())
     }
 
     /// Remove and shut down. Idempotent: missing key is a successful no-op.
@@ -83,8 +133,8 @@ impl McpSupervisor {
     /// Returns `McpError` if the client's shutdown implementation fails.
     pub async fn stop(&self, key: &McpKey) -> McpResult<()> {
         let removed = self.clients.lock().remove(key);
-        if let Some(c) = removed {
-            c.shutdown().await?;
+        if let Some(s) = removed {
+            s.client.shutdown().await?;
         }
         Ok(())
     }
@@ -93,6 +143,23 @@ impl McpSupervisor {
     #[must_use]
     pub fn list_active(&self) -> Vec<McpKey> {
         self.clients.lock().keys().cloned().collect()
+    }
+
+    /// Every active server's cached tools, each paired with the client that
+    /// dispatches it. Cheap: a single lock plus `Arc`/descriptor clones, no
+    /// `list_tools()` round-trip (descriptors were cached at [`Self::start`]).
+    /// Returns an empty `Vec` when no servers are active, so the per-turn
+    /// merge can short-circuit without allocating a toolbox.
+    #[must_use]
+    pub fn active_tools_snapshot(&self) -> Vec<(Arc<dyn McpClient>, ToolDescriptor)> {
+        let guard = self.clients.lock();
+        let mut out = Vec::new();
+        for server in guard.values() {
+            for descriptor in &server.tools {
+                out.push((server.client.clone(), descriptor.clone()));
+            }
+        }
+        out
     }
 
     /// v0.9.4.1: reconcile running clients with the persisted registry.
@@ -165,6 +232,16 @@ impl McpSupervisor {
             }
         }
         Ok(started)
+    }
+}
+
+#[async_trait]
+impl ActiveToolsSource for McpSupervisor {
+    async fn active_tools(&self) -> Vec<(Arc<dyn McpClient>, ToolDescriptor)> {
+        // Pure delegation to the cheap, cached snapshot — no awaiting work,
+        // but the trait is `async` so a future live-fetching source (e.g. an
+        // HTTP supervisor) can satisfy it without an API change.
+        self.active_tools_snapshot()
     }
 }
 

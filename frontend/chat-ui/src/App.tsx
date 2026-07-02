@@ -262,6 +262,7 @@ export function App() {
                 onSessionCreated={addSession}
                 onSessionMissing={removeSession}
                 onSessionAttached={attachPendingAssistant}
+                pendingAssistant={pendingAssistant}
               />
             }
           />
@@ -272,6 +273,7 @@ export function App() {
                 onSessionCreated={addSession}
                 onSessionMissing={removeSession}
                 onSessionAttached={attachPendingAssistant}
+                pendingAssistant={pendingAssistant}
               />
             }
           />

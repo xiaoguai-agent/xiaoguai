@@ -61,6 +61,114 @@ async fn stop_unknown_key_is_noop() {
     sup.stop(&key).await.expect("noop");
 }
 
+/// Caching-at-spawn + the `ActiveToolsSource` seam the turn pipeline merges
+/// from. A mock client lets us pin exact tool counts and force a
+/// `list_tools()` failure without spawning a real child process.
+mod active_tools {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::{json, Value as JsonValue};
+    use xiaoguai_mcp::{
+        ActiveToolsSource, McpError, McpResult, MutationHint, ServerInfo, ToolDescriptor,
+        ToolResult,
+    };
+
+    /// Mock client. `tools` is what `list_tools()` returns at `start` time;
+    /// `fail_list` makes `list_tools()` error so we can verify best-effort
+    /// caching (server registers with no tools, never panics).
+    struct MockClient {
+        tools: Vec<ToolDescriptor>,
+        fail_list: bool,
+    }
+
+    fn td(name: &str, hint: MutationHint) -> ToolDescriptor {
+        ToolDescriptor {
+            name: name.into(),
+            description: Some(format!("tool {name}")),
+            input_schema: json!({ "type": "object" }),
+            mutation_hint: hint,
+        }
+    }
+
+    #[async_trait]
+    impl McpClient for MockClient {
+        async fn initialize(&self) -> McpResult<ServerInfo> {
+            Ok(ServerInfo {
+                name: "mock".into(),
+                version: "0".into(),
+            })
+        }
+        async fn list_tools(&self) -> McpResult<Vec<ToolDescriptor>> {
+            if self.fail_list {
+                return Err(McpError::Protocol("list_tools boom".into()));
+            }
+            Ok(self.tools.clone())
+        }
+        async fn call_tool(&self, _name: &str, _args: JsonValue) -> McpResult<ToolResult> {
+            Ok(ToolResult {
+                text: "ok".into(),
+                blocks: vec![],
+                is_error: false,
+            })
+        }
+        async fn shutdown(&self) -> McpResult<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn no_active_servers_yields_empty() {
+        let sup = McpSupervisor::new();
+        assert!(sup.active_tools_snapshot().is_empty());
+        assert!(ActiveToolsSource::active_tools(&sup).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn caches_descriptors_at_start_for_all_servers() {
+        let sup = McpSupervisor::new();
+        let a: Arc<dyn McpClient> = Arc::new(MockClient {
+            tools: vec![td("read_a", MutationHint::Read)],
+            fail_list: false,
+        });
+        let b: Arc<dyn McpClient> = Arc::new(MockClient {
+            tools: vec![
+                td("read_b", MutationHint::Read),
+                td("write_b", MutationHint::Write),
+            ],
+            fail_list: false,
+        });
+        sup.start(McpKey::new("srv-a", "1"), a).await.unwrap();
+        sup.start(McpKey::new("srv-b", "1"), b).await.unwrap();
+
+        let tools = ActiveToolsSource::active_tools(&sup).await;
+        let mut names: Vec<String> = tools.iter().map(|(_, d)| d.name.clone()).collect();
+        names.sort();
+        assert_eq!(names, ["read_a", "read_b", "write_b"]);
+        // The write tool's hint survives — the turn path relies on this for
+        // consult gating.
+        let write = tools
+            .iter()
+            .find(|(_, d)| d.name == "write_b")
+            .expect("write_b present");
+        assert_eq!(write.1.mutation_hint, MutationHint::Write);
+    }
+
+    #[tokio::test]
+    async fn list_tools_failure_at_start_registers_with_no_tools() {
+        let sup = McpSupervisor::new();
+        let client: Arc<dyn McpClient> = Arc::new(MockClient {
+            tools: vec![],
+            fail_list: true,
+        });
+        // start must NOT propagate the list_tools error (best-effort).
+        sup.start(McpKey::new("flaky", "1"), client).await.unwrap();
+        // Server is registered (reachable for direct dispatch) ...
+        assert_eq!(sup.list_active().len(), 1);
+        // ... but contributes no tools to the toolbox.
+        assert!(sup.active_tools_snapshot().is_empty());
+    }
+}
+
 /// v0.9.4.1: `reload_from_db` picks up newly inserted rows and stops rows
 /// that disappeared since the last reload. Uses an in-memory repository
 /// so the test stays Docker-free; spawn goes through the real

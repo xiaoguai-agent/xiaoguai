@@ -211,6 +211,22 @@ interface TranslationShape {
       transport_title: string;
       env_label: string;
     };
+    /** VM-ops welcome card — lists the VMware MCP skills + one-click install. */
+    vmware_starter: {
+      title: string;
+      subtitle: string;
+      install: string;
+      installed: string;
+      installing: string;
+      install_failed: string;
+      badge_readonly: string;
+      badge_ops: string;
+      prereq_note: string;
+      more_in_marketplace: string;
+      chip_label: string;
+      loading: string;
+      error: string;
+    };
   };
   /** Feature ②/⑤ — enriched sidebar widgets (audit link, token stat,
    *  per-session working-dir control). */
@@ -227,6 +243,14 @@ interface TranslationShape {
     working_dir_save: string;
     /** Working-dir input placeholder (an example absolute path). */
     working_dir_placeholder: string;
+    /** Feature ⑤ — prominent CTA button shown when no working_dir is set yet
+     *  (collapsed state); clicking it reveals + focuses the path input. */
+    working_dir_set_cta: string;
+    /** Feature ⑤ — small "change / edit" affordance on the set-dir chip,
+     *  re-opening the input. */
+    working_dir_edit: string;
+    /** Tooltip for the edit affordance on the set-dir chip. */
+    working_dir_edit_title: string;
     /** Feature ⑤ — muted note shown when a working_dir is set: governed
      *  file read/edit is active for the session, scoped to that directory. */
     coding_active: string;

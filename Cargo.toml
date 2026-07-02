@@ -121,13 +121,13 @@ sha1 = "0.11"
 aes = "0.9"
 # Sprint-8 S8-5: AES-256-GCM for MCP refresh-token encryption at rest.
 # 0.10.x is the stable line; 0.11 is rc as of plan write.
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 cbc = { version = "0.2", features = ["alloc", "block-padding"] }
 cipher = "0.5"
 rand = "0.10"
 urlencoding = "2.1"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
-quick-xml = { version = "0.40", features = ["serialize"] }
+quick-xml = { version = "0.41", features = ["serialize"] }
 
 # config
 config = { version = "0.15", default-features = false, features = ["yaml"] }
@@ -190,8 +190,10 @@ moka = { version = "0.12", features = ["future"] }
 # rate limiting
 governor = "0.10"
 
-# template engine (Jinja2-compatible; used by pack skill templates)
-tera = "1.20"
+# template engine (Jinja2-compatible; exercised by the ar-collections pack
+# integration test — packs/ar-collections/tests/integration.rs). `glob_fs`
+# is opt-in since 2.0 and the test loads templates via a glob.
+tera = { version = "2.0", features = ["glob_fs"] }
 
 # misc
 once_cell = "1.20"
