@@ -378,7 +378,9 @@ fn email_template_renders_1st() {
         .join("templates/*.md.j2")
         .to_string_lossy()
         .into_owned();
-    let tera = Tera::new(&template_glob).expect("Tera failed to load templates");
+    let mut tera = Tera::new();
+    tera.load_from_glob(&template_glob)
+        .expect("Tera failed to load templates");
 
     let ctx = make_invoice_context_1st();
     let rendered = tera
@@ -410,7 +412,9 @@ fn email_template_renders_2nd() {
         .join("templates/*.md.j2")
         .to_string_lossy()
         .into_owned();
-    let tera = Tera::new(&template_glob).expect("Tera failed to load templates");
+    let mut tera = Tera::new();
+    tera.load_from_glob(&template_glob)
+        .expect("Tera failed to load templates");
 
     let ctx = make_invoice_context_2nd();
     let rendered = tera
@@ -436,7 +440,9 @@ fn email_template_renders_final() {
         .join("templates/*.md.j2")
         .to_string_lossy()
         .into_owned();
-    let tera = Tera::new(&template_glob).expect("Tera failed to load templates");
+    let mut tera = Tera::new();
+    tera.load_from_glob(&template_glob)
+        .expect("Tera failed to load templates");
 
     let ctx = make_invoice_context_final();
     let rendered = tera
