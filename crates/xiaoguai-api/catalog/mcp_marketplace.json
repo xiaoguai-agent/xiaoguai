@@ -238,6 +238,34 @@
       "args": [],
       "env_keys": [],
       "source_url": "https://github.com/zw008/VMware-Harden"
+    },
+    {
+      "slug": "vmware-debug",
+      "name": "VMware Debug (read-only)",
+      "description": "Read-only VMware incident correlation: timeline, spikes, root-cause routing (2 MCP tools). Requires `uv tool install vmware-debug` and host-side config (`~/.vmware-debug/config.yaml` + `.env` with vCenter hosts + credentials).",
+      "name_zh": "VMware 故障排查(只读)",
+      "description_zh": "只读 VMware 事故关联分析:时间线、异常尖峰、根因路由(2 个 MCP 工具)。需先 `uv tool install vmware-debug`,并在主机配置 `~/.vmware-debug/config.yaml` + `.env`(vCenter 主机与凭据)。",
+      "category": "ops",
+      "transport": "stdio",
+      "version": "1.6.1",
+      "command": "vmware-debug-mcp",
+      "args": [],
+      "env_keys": [],
+      "source_url": "https://github.com/zw008/VMware-Debug"
+    },
+    {
+      "slug": "vmware-log-insight",
+      "name": "VMware Log Insight (read-only)",
+      "description": "Read-only VMware Aria Operations for Logs (Log Insight): log search + aggregation (7 MCP tools). Requires `uv tool install vmware-log-insight` and host-side config (`~/.vmware-log-insight/config.yaml` + `.env`).",
+      "name_zh": "VMware 日志洞察(只读)",
+      "description_zh": "只读 VMware Aria Operations for Logs(Log Insight):日志搜索与聚合(7 个 MCP 工具)。需先 `uv tool install vmware-log-insight`,并在主机配置 `~/.vmware-log-insight/config.yaml` + `.env`。",
+      "category": "ops",
+      "transport": "stdio",
+      "version": "1.6.1",
+      "command": "vmware-log-insight-mcp",
+      "args": [],
+      "env_keys": [],
+      "source_url": "https://github.com/zw008/VMware-Log-Insight"
     }
   ]
 }
