@@ -217,6 +217,30 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
             .map(|s| s as &dyn ActiveToolsSource),
     )
     .await;
+    // Attached persona — fetched ONCE here (not at the injection site below)
+    // because it now serves two purposes: (a) its `tool_allowlist` narrows the
+    // toolbox, (b) its `system_prompt` is injected as a System message.
+    // Best-effort like every context enrichment: a lookup failure logs and the
+    // turn proceeds persona-less. Archived personas are ignored entirely.
+    let persona = match &state.personas {
+        Some(personas) => match personas.get_session_persona(&input.session_id).await {
+            Ok(Some(p)) if !p.archived => Some(p),
+            Ok(_) => None,
+            Err(e) => {
+                tracing::warn!(error = %e, "persona: session-persona lookup failed (skipping)");
+                None
+            }
+        },
+        None => None,
+    };
+    // Persona `tool_allowlist` (v1.34): narrow the merged base BEFORE the
+    // loop/consult layering so BOTH the visible toolbox (layer 1) and the
+    // consult gate's read-only key (layer 2, keyed on `base` below) honor it.
+    // `None` = unrestricted (common path: same Arc back, no clone);
+    // `Some([])` = deny all tools — the persona author's explicit choice.
+    // Loop control tools are layered AFTER this filter (`with_loop_tools`
+    // below), so an allowlist can never break a loop's done/pause signals.
+    let base = apply_persona_allowlist(base, persona.as_ref());
     let (toolbox, loop_intent) = if input.loop_id.is_some() {
         let (tb, sink) = crate::loop_tools::with_loop_tools(&base, input.loop_dynamic_pacing);
         messages.insert(0, LlmMessage::system(LOOP_TICK_SYSTEM_NOTE));
@@ -263,21 +287,13 @@ pub async fn run_turn(state: &AppState, input: TurnInput) -> Result<TurnHandle, 
     //       insert-at-0 pushes it down one and the final System order is
     //       [identity, glossary, persona, loop_note?, ...history]. Applies to
     //       Execute, Consult AND loop turns — a persona is the session's role
-    //       regardless of mode. Best-effort: a lookup failure is logged and
-    //       the turn proceeds without the persona (context enrichment must
-    //       never block chat). Like identity/glossary, never persisted into
-    //       the session history.
-    if let Some(personas) = &state.personas {
-        match personas.get_session_persona(&input.session_id).await {
-            Ok(Some(persona)) if !persona.archived => {
-                for prompt in xiaoguai_personas::build_system_messages(&persona) {
-                    messages.insert(0, LlmMessage::system(prompt));
-                }
-            }
-            Ok(_) => {}
-            Err(e) => {
-                tracing::warn!(error = %e, "persona: session-persona lookup failed (skipping)");
-            }
+    //       regardless of mode. The persona itself was fetched (best-effort)
+    //       above, before the toolbox layering, so its `tool_allowlist` could
+    //       narrow the toolbox; reused here for the prompt injection. Like
+    //       identity/glossary, never persisted into the session history.
+    if let Some(persona) = &persona {
+        for prompt in xiaoguai_personas::build_system_messages(persona) {
+            messages.insert(0, LlmMessage::system(prompt));
         }
     }
 
@@ -673,6 +689,36 @@ async fn merge_active_mcp_tools(
         }
     }
     Arc::new(merged)
+}
+
+/// Narrow `base` to the persona's `tool_allowlist` (v1.34).
+///
+/// - No persona, or a persona with `tool_allowlist: None` → `base` returned
+///   unchanged (same `Arc`, no clone) — the common path stays free.
+/// - `Some(list)` → a filtered copy keeping only allowlisted tool names.
+///   `Some([])` denies every tool — that is the persona author's explicit
+///   choice (`None` = unrestricted is the "no opinion" spelling).
+///
+/// Runs BEFORE the loop/consult layering in [`run_turn`]: the consult gate is
+/// keyed on the returned toolbox, so a persona-denied read tool is both
+/// hidden (layer 1) and gate-denied (layer 2); loop control tools are layered
+/// on afterwards so an allowlist can never break loop done/pause signalling.
+fn apply_persona_allowlist(
+    base: Arc<xiaoguai_agent::Toolbox>,
+    persona: Option<&xiaoguai_personas::Persona>,
+) -> Arc<xiaoguai_agent::Toolbox> {
+    let Some(persona) = persona else { return base };
+    if persona.tool_allowlist.is_none() {
+        return base;
+    }
+    let filtered = base.filtered(|name| persona.allows_tool(name));
+    tracing::debug!(
+        persona = %persona.name,
+        kept = filtered.len(),
+        total = base.len(),
+        "persona tool_allowlist narrowed the turn toolbox",
+    );
+    Arc::new(filtered)
 }
 
 /// Persist one inbound user message. `pub(crate)` since T4.2: the
@@ -1107,5 +1153,149 @@ mod mcp_merge_tests {
         let source = MockSource { tools: vec![] };
         let merged = merge_active_mcp_tools(base, Some(&source)).await;
         assert_eq!(names(&merged), HashSet::from(["git_status".to_string()]));
+    }
+}
+
+/// Persona `tool_allowlist` narrowing ([`apply_persona_allowlist`], v1.34).
+/// Uses a local no-op client; personas are built directly.
+#[cfg(test)]
+mod persona_allowlist_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::{json, Value as JsonValue};
+    use std::collections::HashSet;
+    use xiaoguai_agent::Toolbox;
+    use xiaoguai_mcp::{
+        McpClient, McpResult, MutationHint, ServerInfo, ToolDescriptor, ToolResult,
+    };
+
+    /// Minimal no-op client — the allowlist filter only touches names.
+    struct NullClient;
+
+    #[async_trait]
+    impl McpClient for NullClient {
+        async fn initialize(&self) -> McpResult<ServerInfo> {
+            Ok(ServerInfo {
+                name: "null".into(),
+                version: "0".into(),
+            })
+        }
+        async fn list_tools(&self) -> McpResult<Vec<ToolDescriptor>> {
+            Ok(vec![])
+        }
+        async fn call_tool(&self, _name: &str, _args: JsonValue) -> McpResult<ToolResult> {
+            Ok(ToolResult {
+                text: String::new(),
+                blocks: vec![],
+                is_error: false,
+            })
+        }
+        async fn shutdown(&self) -> McpResult<()> {
+            Ok(())
+        }
+    }
+
+    fn persona(allowlist: Option<Vec<&str>>) -> xiaoguai_personas::Persona {
+        xiaoguai_personas::Persona {
+            id: uuid::Uuid::new_v4(),
+            name: "VM 运维助手".into(),
+            system_prompt: "只读优先".into(),
+            default_model: None,
+            tool_allowlist: allowlist.map(|l| l.into_iter().map(String::from).collect()),
+            escalation_tier: None,
+            created_at: chrono::Utc::now(),
+            archived: false,
+        }
+    }
+
+    fn toolbox(tools: &[(&str, MutationHint)]) -> Arc<Toolbox> {
+        let client: Arc<dyn McpClient> = Arc::new(NullClient);
+        let mut tb = Toolbox::new();
+        for (name, hint) in tools {
+            tb.insert(
+                Arc::clone(&client),
+                ToolDescriptor {
+                    name: (*name).into(),
+                    description: None,
+                    input_schema: json!({ "type": "object" }),
+                    mutation_hint: *hint,
+                },
+            )
+            .unwrap();
+        }
+        Arc::new(tb)
+    }
+
+    fn names(tb: &Toolbox) -> HashSet<String> {
+        tb.to_specs().into_iter().map(|s| s.name).collect()
+    }
+
+    #[test]
+    fn no_persona_returns_same_arc() {
+        let base = toolbox(&[("vc_list_vms", MutationHint::Read)]);
+        let before = Arc::as_ptr(&base);
+        let out = apply_persona_allowlist(base, None);
+        assert_eq!(Arc::as_ptr(&out), before);
+    }
+
+    #[test]
+    fn allowlist_none_returns_same_arc() {
+        let base = toolbox(&[("vc_list_vms", MutationHint::Read)]);
+        let before = Arc::as_ptr(&base);
+        let out = apply_persona_allowlist(base, Some(&persona(None)));
+        assert_eq!(Arc::as_ptr(&out), before);
+    }
+
+    #[test]
+    fn allowlist_keeps_only_named_tools() {
+        let base = toolbox(&[
+            ("vc_list_vms", MutationHint::Read),
+            ("vc_power_off", MutationHint::Write),
+            ("git_status", MutationHint::Read),
+        ]);
+        let out = apply_persona_allowlist(
+            base,
+            Some(&persona(Some(vec!["vc_list_vms", "vc_power_off"]))),
+        );
+        assert_eq!(
+            names(&out),
+            HashSet::from(["vc_list_vms".to_string(), "vc_power_off".to_string()])
+        );
+    }
+
+    #[test]
+    fn empty_allowlist_denies_all_tools() {
+        let base = toolbox(&[("vc_list_vms", MutationHint::Read)]);
+        let out = apply_persona_allowlist(base, Some(&persona(Some(vec![]))));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn composes_with_consult_read_only_subset() {
+        // An allowlisted WRITE tool must still be stripped by the consult
+        // layer-1 subset — the persona allowlist widens nothing.
+        let base = toolbox(&[
+            ("vc_list_vms", MutationHint::Read),
+            ("vc_power_off", MutationHint::Write),
+        ]);
+        let narrowed = apply_persona_allowlist(
+            base,
+            Some(&persona(Some(vec!["vc_list_vms", "vc_power_off"]))),
+        );
+        let consult = crate::consult::read_only_toolbox(&narrowed);
+        assert_eq!(names(&consult), HashSet::from(["vc_list_vms".to_string()]));
+    }
+
+    #[test]
+    fn loop_tools_survive_an_allowlist() {
+        // with_loop_tools layers loop control tools AFTER the filter — a
+        // persona allowlist must never break loop done/pause signalling.
+        let base = toolbox(&[("vc_list_vms", MutationHint::Read)]);
+        let narrowed = apply_persona_allowlist(base, Some(&persona(Some(vec![]))));
+        let (tb, _sink) = crate::loop_tools::with_loop_tools(&narrowed, false);
+        assert!(
+            tb.get("loop_done").is_some(),
+            "loop_done must exist even under a deny-all allowlist"
+        );
     }
 }

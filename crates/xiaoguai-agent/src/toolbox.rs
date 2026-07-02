@@ -112,6 +112,22 @@ impl Toolbox {
         self.by_name.is_empty()
     }
 
+    /// Return a copy holding only the entries whose tool name passes `keep`.
+    /// Immutable: `self` is untouched; entries are cloned (cheap — the client
+    /// is an `Arc`). Used by the turn pipeline to narrow a toolbox to a
+    /// persona's `tool_allowlist`.
+    #[must_use]
+    pub fn filtered<F: Fn(&str) -> bool>(&self, keep: F) -> Self {
+        Self {
+            by_name: self
+                .by_name
+                .iter()
+                .filter(|(name, _)| keep(name))
+                .map(|(name, entry)| (name.clone(), entry.clone()))
+                .collect(),
+        }
+    }
+
     /// Render the catalogue as `ToolSpec`s the LLM backend can attach to a
     /// `ChatRequest`. Order is unspecified — the agent uses tool name as
     /// dispatch key, so order doesn't affect correctness.
