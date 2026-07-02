@@ -57,6 +57,12 @@ interface TranslationShape {
       search_placeholder: string;
       empty: string;
       error_load: string;
+      /** Locked expert row: "Install first: {{items}}". */
+      locked_hint: string;
+      /** Locked expert row CTA → the Skills page. */
+      locked_cta: string;
+      /** Locked expert row tooltip. */
+      locked_title: string;
     };
     /** Phase 3 (Cherry-Studio IA) — chat-area top bar (model selector). */
     header: {

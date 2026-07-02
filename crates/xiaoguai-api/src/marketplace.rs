@@ -87,6 +87,14 @@ fn catalog() -> &'static CatalogFile {
     })
 }
 
+/// Read-only view of the baked marketplace entries. Other modules (e.g.
+/// `expert_readiness`) resolve slug → entry against this without owning the
+/// catalog shape.
+#[must_use]
+pub fn marketplace_entries() -> &'static [MarketplaceEntry] {
+    &catalog().entries
+}
+
 /// `GET /v1/mcp/marketplace`.
 ///
 /// # Errors

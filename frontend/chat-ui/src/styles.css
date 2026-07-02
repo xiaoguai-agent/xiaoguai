@@ -473,12 +473,21 @@ html,
   color: var(--muted);
 }
 
+/* Wrapper: the selectable main button plus an optional CTA (locked experts). */
 .assistant-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+.assistant-row__main {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   appearance: none;
   border: 1px solid transparent;
   background: transparent;
@@ -494,15 +503,54 @@ html,
     color 120ms ease;
 }
 
-.assistant-row:hover {
+.assistant-row__main:hover {
   background: var(--border-soft);
   color: var(--fg);
 }
 
-.assistant-row.active {
+.assistant-row.active .assistant-row__main {
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 500;
+}
+
+/* Locked (not-ready) expert: inert main, muted, no hover highlight. */
+.assistant-row.locked .assistant-row__main {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.assistant-row.locked .assistant-row__main:hover {
+  background: transparent;
+  color: var(--fg-soft);
+}
+
+.assistant-row__lockhint {
+  color: var(--warn, #b45309);
+}
+
+.assistant-row__lock {
+  flex-shrink: 0;
+}
+
+/* Compact "Set up →" CTA that routes a locked expert to the Skills page. */
+.assistant-row__cta {
+  flex-shrink: 0;
+  appearance: none;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.assistant-row__cta:hover {
+  background: var(--accent-soft);
 }
 
 /* Name + role/description stacked in a column; the column itself shrinks so

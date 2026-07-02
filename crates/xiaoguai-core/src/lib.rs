@@ -1036,20 +1036,18 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         coding_toolbox_factory,
     };
 
-    // v1.34: seed the turnkey 「VMware 运维助手」 persona exactly once
-    // (create-if-never-existed — an owner-archived seed stays gone).
+    // v1.34: seed the curated expert personas exactly once each
+    // (create-if-never-existed — an owner-archived seed stays gone). Their
+    // selectability is gated by xiaoguai-api's expert_prerequisites catalog.
     // Non-fatal: a seed failure must never stop boot.
     if let Some(personas_repo) = state.personas.as_ref() {
-        match crate::persona_seed::ensure_vm_ops_persona(&pool, &**personas_repo).await {
-            Ok(true) => {
-                tracing::info!(
-                    name = crate::persona_seed::VM_OPS_PERSONA_NAME,
-                    "serve: seeded the turnkey VM-ops persona"
-                );
+        match crate::persona_seed::ensure_expert_personas(&pool, &**personas_repo).await {
+            Ok(names) if !names.is_empty() => {
+                tracing::info!(?names, "serve: seeded {} expert persona(s)", names.len());
             }
-            Ok(false) => {}
+            Ok(_) => {}
             Err(e) => {
-                tracing::warn!(error = %e, "serve: VM-ops persona seed failed (non-fatal)");
+                tracing::warn!(error = %e, "serve: expert persona seed failed (non-fatal)");
             }
         }
     }

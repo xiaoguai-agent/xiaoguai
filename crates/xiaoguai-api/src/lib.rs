@@ -15,6 +15,7 @@ pub mod consult;
 pub mod convert;
 pub mod error;
 pub mod eval;
+pub mod expert_readiness;
 pub mod glossary;
 pub mod hotl;
 pub mod identity;
