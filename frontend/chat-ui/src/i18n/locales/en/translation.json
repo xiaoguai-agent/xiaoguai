@@ -90,8 +90,9 @@
     },
     "assistant": {
       "tab_assistants": "Assistants",
-      "tab_topics": "Topics",
+      "tab_topics": "Chats",
       "general": "General",
+      "general_desc": "Default assistant, no special role",
       "group_personas": "Assistants",
       "group_teams": "Teams",
       "search_placeholder": "Search assistants…",
@@ -99,7 +100,8 @@
       "error_load": "Couldn't load assistants"
     },
     "header": {
-      "model_label": "Model"
+      "model_label": "Model",
+      "active_assistant_hint": "via Assistants"
     },
     "assistant_name": "Xiaoguai",
     "welcome_title": "Hi, I'm {{name}}",
@@ -165,9 +167,9 @@
     "mode": {
       "toggle_label": "Turn mode",
       "execute": "Execute",
-      "consult": "Consult",
+      "consult": "Read-only",
       "execute_hint": "Execute mode — the agent can call tools and actually perform actions (edit files, run commands, etc.).",
-      "readonly_cue": "Consult mode (read-only) — the agent will not change anything; applies only to the message you send now, not the whole session"
+      "readonly_cue": "Read-only mode — the agent will not change anything; applies only to the message you send now, not the whole session"
     },
     "teamrun": {
       "button": "Team run",

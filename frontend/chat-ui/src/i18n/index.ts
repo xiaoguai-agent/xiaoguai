@@ -50,6 +50,8 @@ interface TranslationShape {
       tab_assistants: string;
       tab_topics: string;
       general: string;
+      /** Fixed role line for the pinned 通用 row (no persona). */
+      general_desc: string;
       group_personas: string;
       group_teams: string;
       search_placeholder: string;
@@ -59,6 +61,8 @@ interface TranslationShape {
     /** Phase 3 (Cherry-Studio IA) — chat-area top bar (model selector). */
     header: {
       model_label: string;
+      /** Muted hint after the active-assistant name ("via 助手"). */
+      active_assistant_hint: string;
     };
     /** Default assistant display name when no white-label branding is set. */
     assistant_name: string;

@@ -90,8 +90,9 @@
     },
     "assistant": {
       "tab_assistants": "助手",
-      "tab_topics": "话题",
+      "tab_topics": "对话",
       "general": "通用",
+      "general_desc": "默认助手,无特定角色",
       "group_personas": "助手",
       "group_teams": "团队",
       "search_placeholder": "搜索助手…",
@@ -99,7 +100,8 @@
       "error_load": "助手加载失败"
     },
     "header": {
-      "model_label": "模型"
+      "model_label": "模型",
+      "active_assistant_hint": "来自「助手」"
     },
     "assistant_name": "小怪",
     "welcome_title": "你好，我是{{name}}",
@@ -165,9 +167,9 @@
     "mode": {
       "toggle_label": "对话模式",
       "execute": "执行",
-      "consult": "咨询",
+      "consult": "只读",
       "execute_hint": "执行模式 — 助手可调用工具真正执行操作(改文件、跑命令等)。",
-      "readonly_cue": "咨询模式（只读）— 助手不会做任何修改；仅对本次发送的消息生效，不是会话级只读"
+      "readonly_cue": "只读模式 — 助手不会做任何修改；仅对本次发送的消息生效，不是会话级只读"
     },
     "teamrun": {
       "button": "团队并行执行",

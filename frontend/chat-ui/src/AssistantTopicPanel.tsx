@@ -16,7 +16,26 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Persona, Team } from '@xiaoguai/shared';
 import { client } from './client';
 import { SessionList } from './SessionList';
+import { useBrandName } from './branding';
 import { useI18n } from './i18n/I18nProvider';
+
+/** Max characters of a persona's system prompt to show as its role line. */
+const ROLE_DESC_MAX = 80;
+
+/**
+ * Derive a one-line role/description from a persona's system prompt: collapse
+ * all whitespace (so multi-line prompts read as a single line) and truncate to
+ * `ROLE_DESC_MAX` chars with an ellipsis. CSS clamps the rendered line further;
+ * the truncation here just bounds the DOM string. Empty/blank → `null` so the
+ * row simply omits the description rather than showing an empty line.
+ */
+function roleDescFromPrompt(systemPrompt: string): string | null {
+  const collapsed = systemPrompt.replace(/\s+/g, ' ').trim();
+  if (!collapsed) return null;
+  return collapsed.length > ROLE_DESC_MAX
+    ? `${collapsed.slice(0, ROLE_DESC_MAX)}…`
+    : collapsed;
+}
 
 /** The assistant pending attachment for the NEXT-created session (no active
  *  session yet). `null` = explicit 通用 (no persona). */
@@ -64,6 +83,9 @@ export function AssistantTopicPanel({
   onSelectAssistant,
 }: Props) {
   const { t } = useI18n();
+  // White-label wordmark shown above the list tabs, falling back to the locale
+  // default assistant name when no owner branding is set.
+  const brandName = useBrandName() || t.ui.assistant_name;
   const [tab, setTab] = useState<Tab>('topics');
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -197,6 +219,9 @@ export function AssistantTopicPanel({
 
   return (
     <aside className="list-panel">
+      <div className="list-brand" title={brandName}>
+        {brandName}
+      </div>
       <div className="list-tabs" role="tablist" aria-label={t.ui.assistant.tab_topics}>
         <button
           type="button"
@@ -251,6 +276,7 @@ export function AssistantTopicPanel({
             <div className="assistant-group-label">{t.ui.assistant.group_personas}</div>
             <AssistantRow
               label={t.ui.assistant.general}
+              desc={t.ui.assistant.general_desc}
               active={isGeneralActive}
               onClick={() => void selectGeneral()}
             />
@@ -258,6 +284,7 @@ export function AssistantTopicPanel({
               <AssistantRow
                 key={p.id}
                 label={p.name}
+                desc={roleDescFromPrompt(p.system_prompt)}
                 active={isActivePersona(p.id)}
                 onClick={() => void selectPersona(p.id)}
               />
@@ -270,6 +297,7 @@ export function AssistantTopicPanel({
                   <AssistantRow
                     key={tm.id}
                     label={tm.name}
+                    desc={tm.description?.trim() || null}
                     active={isActiveTeam(tm.id)}
                     onClick={() => void selectTeam(tm.id)}
                   />
@@ -287,13 +315,19 @@ export function AssistantTopicPanel({
   );
 }
 
-/** A single selectable assistant/team row with an active-state checkmark. */
+/**
+ * A single selectable assistant/team row: the name, an optional muted role /
+ * purpose line beneath it, and an active-state checkmark. `desc` is `null` when
+ * the assistant has no role text to show (the line is then omitted entirely).
+ */
 function AssistantRow({
   label,
+  desc,
   active,
   onClick,
 }: {
   label: string;
+  desc?: string | null;
   active: boolean;
   onClick: () => void;
 }) {
@@ -303,9 +337,12 @@ function AssistantRow({
       className={`assistant-row${active ? ' active' : ''}`}
       onClick={onClick}
       aria-pressed={active}
-      title={label}
+      title={desc ? `${label} — ${desc}` : label}
     >
-      <span className="assistant-row__name">{label}</span>
+      <span className="assistant-row__text">
+        <span className="assistant-row__name">{label}</span>
+        {desc && <span className="assistant-row__desc">{desc}</span>}
+      </span>
       {active && (
         <span className="assistant-row__check" aria-hidden="true">
           ✓
