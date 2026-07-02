@@ -39,6 +39,7 @@ pub mod pack_agents;
 pub mod pack_runtime;
 #[cfg(feature = "packs")]
 pub mod packs;
+pub mod persona_seed;
 mod scheduler_bridge;
 mod sd_notify_bridge;
 mod sessions_bridge;
@@ -1034,6 +1035,24 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // the boot toolbox above — `Some` only when coding registered at boot.
         coding_toolbox_factory,
     };
+
+    // v1.34: seed the turnkey 「VMware 运维助手」 persona exactly once
+    // (create-if-never-existed — an owner-archived seed stays gone).
+    // Non-fatal: a seed failure must never stop boot.
+    if let Some(personas_repo) = state.personas.as_ref() {
+        match crate::persona_seed::ensure_vm_ops_persona(&pool, &**personas_repo).await {
+            Ok(true) => {
+                tracing::info!(
+                    name = crate::persona_seed::VM_OPS_PERSONA_NAME,
+                    "serve: seeded the turnkey VM-ops persona"
+                );
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "serve: VM-ops persona seed failed (non-fatal)");
+            }
+        }
+    }
 
     // Phase 4b (skill-pack loader): activate each enabled pack's conversational
     // agent team — upsert its personas + a Team so the existing /orchestrate

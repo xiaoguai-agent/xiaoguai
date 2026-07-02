@@ -80,6 +80,7 @@ vmware-monitor-mcp     # 能起来即可(Ctrl-C 退出)
 - **live 端到端运维需要**:(a) 一个**有额度的 LLM key**(驱动 agent 选工具);
   (b) 一个**真实 vCenter** + 已装并配好的 vmware MCP server。这些在你的环境里,本仓库只提供接入。
 - 仅 stdio MCP(HTTP/SSE 待实现)。
-- persona 的 `tool_allowlist` 强制(把助手限定到 vmware 工具子集)在对话轮里尚未接线 —— 待办;
-  当前靠角色提示词 + 可用工具集约束。
+- persona 的 `tool_allowlist` **已在对话轮强制**(v1.34):设了白名单的 persona,本轮工具箱
+  收窄到白名单交集(loop 控制工具不受影响;consult 只读子集在其上再叠加)。`None`=不限制,
+  `Some([])`=禁全部工具。给 VM 运维 persona 配 `vmware-*` 工具名单即可把它限定到 vmware 子集。
 - admin 暂不能在 UI 里填 vCenter 凭据(走 server 的 `config.yaml`/`.env`);UI 凭据录入是后续增强。
