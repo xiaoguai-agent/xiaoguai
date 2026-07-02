@@ -62,7 +62,9 @@ function server(name: string): McpServerResponse {
     transport: 'stdio',
     command: `${name}-mcp`,
     args: [],
-  } as McpServerResponse;
+    env_keys: [],
+    endpoint: null,
+  };
 }
 
 function renderStarter() {
@@ -107,10 +109,11 @@ describe('VmwareStarter', () => {
   it('shows the read-only badge on monitor and the ops badge on aiops', async () => {
     await renderSettled();
     const rows = screen.getAllByRole('listitem');
-    expect(within(rows[0]).getByText(/read-only/i)).toBeTruthy();
-    expect(within(rows[1]).getByText(/destructive ops/i)).toBeTruthy();
+    expect(rows).toHaveLength(3);
+    expect(within(rows[0]!).getByText(/read-only/i)).toBeTruthy();
+    expect(within(rows[1]!).getByText(/destructive ops/i)).toBeTruthy();
     // The tail row carries no badge.
-    expect(rows[2].querySelector('.vmware-starter__badge')).toBeNull();
+    expect(rows[2]!.querySelector('.vmware-starter__badge')).toBeNull();
   });
 
   it('pre-marks already-installed servers (matched by name) as installed', async () => {
