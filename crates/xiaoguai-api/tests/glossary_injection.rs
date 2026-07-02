@@ -171,6 +171,17 @@ impl Fixture {
             .id
     }
 
+    /// Create a persona (whose system prompt is `"You are {name}."`) and
+    /// attach it to `session_id`. Returns the persona's id.
+    async fn attach_persona(&self, session_id: &str, name: &str) -> Uuid {
+        let id = self.make_persona(name).await;
+        self.personas
+            .attach_persona_to_session(session_id, id)
+            .await
+            .expect("attach persona");
+        id
+    }
+
     /// Create a team (with the given glossary) and attach it to `session_id`.
     async fn attach_team(&self, session_id: &str, glossary_md: Option<&str>) {
         let lead = self.make_persona(&format!("Lead-{session_id}")).await;
@@ -326,6 +337,112 @@ async fn team_without_glossary_injects_nothing() {
             .iter()
             .any(|m| m.content.contains("Team glossary")),
         "blank/absent glossary → no injection"
+    );
+}
+
+// ── (d) attached-persona injection into chat turns ─────────────────────────────
+//
+// The attached persona's `system_prompt` is the session's ROLE. It sits
+// AFTER identity + glossary and BEFORE history: [identity, glossary, persona,
+// ...history]. Applies to execute, consult and loop turns; a session with no
+// persona injects nothing and never errors.
+
+const PERSONA_NAME: &str = "VC-Analyst";
+// `make_persona` builds the prompt as `"You are {name}."`.
+const PERSONA_PROMPT: &str = "You are VC-Analyst.";
+
+#[tokio::test]
+async fn execute_turn_injects_persona_after_glossary_before_history() {
+    let fx = fixture(RecordingBackend::new(vec![ScriptStep::text("ok")]));
+    let sid = create_session(&fx.state).await;
+    fx.attach_team(&sid, Some(GLOSSARY_MD)).await;
+    fx.attach_persona(&sid, PERSONA_NAME).await;
+
+    let req = run_one_turn(&fx, turn_input(&sid, TurnMode::Execute)).await;
+
+    let identity = position_of(&req, IDENTITY_TEXT).expect("identity message present");
+    let glossary = position_of(&req, GLOSSARY_MESSAGE).expect("glossary message present");
+    let persona = position_of(&req, PERSONA_PROMPT).expect("persona prompt present");
+    let user = position_of(&req, "hi").expect("user message present");
+    assert!(matches!(req.messages[persona].role, Role::System));
+    assert!(
+        identity < glossary && glossary < persona && persona < user,
+        "expected [identity({identity}) < glossary({glossary}) < persona({persona}) < history({user})]"
+    );
+}
+
+#[tokio::test]
+async fn execute_turn_injects_persona_without_a_team() {
+    // No team attached → no glossary, but the persona still leads the history.
+    let fx = fixture(RecordingBackend::new(vec![ScriptStep::text("ok")]));
+    let sid = create_session(&fx.state).await;
+    fx.attach_persona(&sid, PERSONA_NAME).await;
+
+    let req = run_one_turn(&fx, turn_input(&sid, TurnMode::Execute)).await;
+
+    let identity = position_of(&req, IDENTITY_TEXT).expect("identity message present");
+    let persona = position_of(&req, PERSONA_PROMPT).expect("persona prompt present");
+    let user = position_of(&req, "hi").expect("user message present");
+    assert!(matches!(req.messages[persona].role, Role::System));
+    assert!(
+        identity < persona && persona < user,
+        "expected [identity({identity}) < persona({persona}) < history({user})]"
+    );
+}
+
+#[tokio::test]
+async fn consult_turn_injects_persona_too() {
+    let fx = fixture(RecordingBackend::new(vec![ScriptStep::text("ok")]));
+    let sid = create_session(&fx.state).await;
+    fx.attach_persona(&sid, PERSONA_NAME).await;
+
+    let req = run_one_turn(&fx, turn_input(&sid, TurnMode::Consult)).await;
+
+    let identity = position_of(&req, IDENTITY_TEXT).expect("identity message present");
+    let persona = position_of(&req, PERSONA_PROMPT).expect("persona prompt present");
+    assert!(identity < persona);
+}
+
+#[tokio::test]
+async fn loop_turn_injects_persona_with_identity_outermost() {
+    let fx = fixture(RecordingBackend::new(vec![ScriptStep::text("ok")]));
+    let sid = create_session(&fx.state).await;
+    fx.attach_persona(&sid, PERSONA_NAME).await;
+
+    let mut input = turn_input(&sid, TurnMode::Execute);
+    input.loop_id = Some(Uuid::new_v4());
+    let req = run_one_turn(&fx, input).await;
+
+    let identity = position_of(&req, IDENTITY_TEXT).expect("identity message present");
+    let persona = position_of(&req, PERSONA_PROMPT).expect("persona prompt present");
+    let loop_note = req
+        .messages
+        .iter()
+        .position(|m| m.content.contains("recurring loop"))
+        .expect("loop tick note present");
+    assert!(
+        identity < persona && persona < loop_note,
+        "expected [identity({identity}) < persona({persona}) < loop_note({loop_note})]"
+    );
+}
+
+#[tokio::test]
+async fn no_persona_means_no_extra_system_message_and_no_error() {
+    let fx = fixture(RecordingBackend::new(vec![ScriptStep::text("ok")]));
+    let sid = create_session(&fx.state).await;
+
+    // No persona attached: the turn still runs (no error) and the only
+    // leading System frame is identity — no stray "You are …" persona prompt.
+    let req = run_one_turn(&fx, turn_input(&sid, TurnMode::Execute)).await;
+    assert!(
+        position_of(&req, IDENTITY_TEXT).is_some(),
+        "identity is still injected"
+    );
+    assert!(
+        !req.messages
+            .iter()
+            .any(|m| m.role == Role::System && m.content.starts_with("You are ")),
+        "no persona attached → no persona system message"
     );
 }
 

@@ -229,6 +229,21 @@
       "empty": "尚未配置任何 MCP 服务器。在「管理后台」连接一个，即可为助手扩展外部工具。",
       "transport_title": "传输方式：{{transport}}",
       "env_label": "环境变量："
+    },
+    "vmware_starter": {
+      "title": "VMware 运维助手",
+      "subtitle": "面向 vCenter / ESXi 的运维助手。一键安装你需要的 VMware MCP 服务器，然后用自然语言提问即可。",
+      "install": "一键安装",
+      "installed": "已安装 ✓",
+      "installing": "安装中…",
+      "install_failed": "安装失败：{{message}}",
+      "badge_readonly": "只读 · 推荐先装",
+      "badge_ops": "运维 · 破坏性操作需二次确认",
+      "prereq_note": "在此安装只是把服务器登记到 xiaoguai。它要真正运行，还需先在主机执行 `uv tool install <包名>`，并配置 vCenter 连接（`~/.<包名>/config.yaml` + `.env`）。详见指南：docs/vc-ops-assistant.md",
+      "more_in_marketplace": "更多 VMware 服务器可在 MCP 应用市场中查看。",
+      "chip_label": "🖥 VMware 运维",
+      "loading": "正在加载 VMware 技能…",
+      "error": "无法加载 VMware 技能：{{message}}"
     }
   },
   "sidebar": {
@@ -238,6 +253,9 @@
     "working_dir": "工作目录",
     "working_dir_save": "保存",
     "working_dir_placeholder": "/工作区/绝对/路径",
+    "working_dir_set_cta": "📁 配置目录",
+    "working_dir_edit": "更改",
+    "working_dir_edit_title": "更改工作目录",
     "coding_active": "本会话已启用文件读写 —— 执行落盘(审计),咨询只预览",
     "coding_active_title": "助手可读写该工作目录下的文件。执行模式会真正改动(并审计);咨询模式只预览、不落盘。"
   }

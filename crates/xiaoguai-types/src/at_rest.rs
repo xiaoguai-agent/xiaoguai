@@ -127,7 +127,9 @@ impl AeadKey {
     }
 
     fn as_gcm_key(&self) -> &Key<Aes256Gcm> {
-        Key::<Aes256Gcm>::from_slice(&self.0)
+        // aes-gcm 0.11 (hybrid-array): a fixed-size array ref converts
+        // infallibly; `from_slice` is deprecated.
+        (&self.0).into()
     }
 }
 
@@ -188,10 +190,10 @@ impl Keyring {
         let cipher = Aes256Gcm::new(self.current.as_gcm_key());
         let mut nonce_bytes = [0u8; NONCE_LEN];
         rand::rng().fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
         let ct = cipher
             .encrypt(
-                nonce,
+                &nonce,
                 Payload {
                     msg: plaintext.as_bytes(),
                     aad: b"",
@@ -220,13 +222,18 @@ impl Keyring {
         if envelope[0] != ENVELOPE_VERSION {
             return Err(AtRestError::Envelope("unknown envelope version byte"));
         }
-        let nonce = Nonce::from_slice(&envelope[1..=NONCE_LEN]);
+        // Length is guaranteed by the header check above, so the fixed-size
+        // copy (and the infallible `From`) replaces the deprecated
+        // `Nonce::from_slice`.
+        let mut nonce_bytes = [0u8; NONCE_LEN];
+        nonce_bytes.copy_from_slice(&envelope[1..=NONCE_LEN]);
+        let nonce = Nonce::from(nonce_bytes);
         let ct = &envelope[1 + NONCE_LEN..];
 
         let candidates = std::iter::once(&self.current).chain(self.prev.as_ref());
         for key in candidates {
             let cipher = Aes256Gcm::new(key.as_gcm_key());
-            if let Ok(pt) = cipher.decrypt(nonce, Payload { msg: ct, aad: b"" }) {
+            if let Ok(pt) = cipher.decrypt(&nonce, Payload { msg: ct, aad: b"" }) {
                 return String::from_utf8(pt).map_err(|_| AtRestError::NotUtf8);
             }
         }
