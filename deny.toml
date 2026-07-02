@@ -26,6 +26,10 @@ ignore = [
     { id = "RUSTSEC-2025-0012", reason = "backoff unmaintained; transitive retry dep, no direct use" },
     # compile-time proc-macro via age → i18n-embed-fl. Not in the runtime binary.
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; build-time only via age, not shipped" },
+    # transitive via pdf-extract → lopdf (RAG PDF text extraction of owner-provided
+    # files). Unmaintained flag only — no vulnerability; RustSec offers no safe
+    # upgrade. Revisit when lopdf moves off ttf-parser.
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained; transitive via pdf-extract/lopdf, no fix available" },
 ]
 
 # v1.1.8: gating allow-list. Anything not in this list is denied,
