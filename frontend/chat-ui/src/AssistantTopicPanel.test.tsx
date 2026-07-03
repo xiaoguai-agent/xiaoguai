@@ -128,10 +128,10 @@ describe('AssistantTopicPanel expert gating', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(mc.attachSessionPersona).not.toHaveBeenCalled();
 
-    // The CTA routes to the Skills page.
+    // The CTA deep-links to this expert's prerequisite setup page.
     const cta = within(row).getByText(/Set up|去安装/);
     fireEvent.click(cta);
-    expect(navigateMock).toHaveBeenCalledWith('/skills');
+    expect(navigateMock).toHaveBeenCalledWith('/experts/vmware-ops');
   });
 
   it('a ready expert and an ordinary persona are selectable', async () => {
