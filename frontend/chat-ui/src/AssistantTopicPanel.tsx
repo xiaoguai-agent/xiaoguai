@@ -12,12 +12,14 @@
  * Persona/team fetches are best-effort: a failure shows an inline error and
  * never crashes the shell.
  */
-import { useCallback, useEffect, useState } from 'react';
-import type { Persona, Team } from '@xiaoguai/shared';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import type { ExpertReadiness, Persona, Team } from '@xiaoguai/shared';
 import { client } from './client';
 import { SessionList } from './SessionList';
 import { useBrandName } from './branding';
 import { useI18n } from './i18n/I18nProvider';
+import { interpolate } from './i18n';
 
 /** Max characters of a persona's system prompt to show as its role line. */
 const ROLE_DESC_MAX = 80;
@@ -82,13 +84,18 @@ export function AssistantTopicPanel({
   pendingAssistant,
   onSelectAssistant,
 }: Props) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const isZh = locale === 'zh-CN';
+  const navigate = useNavigate();
   // White-label wordmark shown above the list tabs, falling back to the locale
   // default assistant name when no owner branding is set.
   const brandName = useBrandName() || t.ui.assistant_name;
   const [tab, setTab] = useState<Tab>('topics');
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
+  // v1.34 — expert prerequisites keyed by persona name; a not-ready expert's
+  // row is locked (can't be selected) until its required skills are installed.
+  const [experts, setExperts] = useState<ExpertReadiness[]>([]);
   const [loadError, setLoadError] = useState(false);
   const [query, setQuery] = useState('');
   // The persona/team currently attached to the active session (reflected with a
@@ -102,10 +109,17 @@ export function AssistantTopicPanel({
     let alive = true;
     void (async () => {
       try {
-        const [ps, ts] = await Promise.all([client.listPersonas(), client.listTeams()]);
+        // Experts (prerequisites/readiness) are best-effort and MUST NOT gate
+        // the panel: if the endpoint fails, every persona stays selectable.
+        const [ps, ts, ex] = await Promise.all([
+          client.listPersonas(),
+          client.listTeams(),
+          client.listExperts().catch(() => null),
+        ]);
         if (!alive) return;
         setPersonas(ps.filter((p) => !p.archived));
         setTeams(ts.filter((tm) => !tm.archived));
+        if (ex) setExperts(ex.experts);
         setLoadError(false);
       } catch {
         if (alive) setLoadError(true);
@@ -155,9 +169,38 @@ export function AssistantTopicPanel({
       ? activePersonaId === null
       : pendingAssistant?.kind === 'general' || pendingAssistant == null;
 
+  // v1.34 — expert blueprint by persona name (empty until /v1/experts loads).
+  const expertByName = useMemo(() => {
+    const m = new Map<string, ExpertReadiness>();
+    for (const e of experts) m.set(e.persona_name, e);
+    return m;
+  }, [experts]);
+
+  /**
+   * Lock info for a persona whose expert blueprint isn't ready yet, else null.
+   * `hint` names the unmet required groups so the operator knows what to
+   * install; a persona with no blueprint (an ordinary persona) is never locked.
+   */
+  const lockFor = useCallback(
+    (personaName: string): { hint: string } | null => {
+      const e = expertByName.get(personaName);
+      if (!e || e.ready) return null;
+      const items = e.required
+        .filter((g) => !g.satisfied)
+        .map((g) => (isZh ? (g.label_zh ?? g.label) : g.label))
+        .join(isZh ? '、' : ', ');
+      return { hint: interpolate(t.ui.assistant.locked_hint, { items }) };
+    },
+    [expertByName, isZh, t],
+  );
+
   /** Attach to the active session, or lift to the parent for a new chat. Always
-   *  best-effort on the attach; an error is surfaced inline (loadError reuse). */
+   *  best-effort on the attach; an error is surfaced inline (loadError reuse).
+   *  A locked (not-ready) expert can't be attached — the row disables click,
+   *  and this guards it defensively. */
   async function selectPersona(personaId: string) {
+    const p = personas.find((x) => x.id === personaId);
+    if (p && lockFor(p.name)) return;
     if (activeSessionId) {
       try {
         await client.attachSessionPersona(activeSessionId, personaId);
@@ -280,15 +323,22 @@ export function AssistantTopicPanel({
               active={isGeneralActive}
               onClick={() => void selectGeneral()}
             />
-            {filteredPersonas.map((p) => (
-              <AssistantRow
-                key={p.id}
-                label={p.name}
-                desc={roleDescFromPrompt(p.system_prompt)}
-                active={isActivePersona(p.id)}
-                onClick={() => void selectPersona(p.id)}
-              />
-            ))}
+            {filteredPersonas.map((p) => {
+              const lock = lockFor(p.name);
+              return (
+                <AssistantRow
+                  key={p.id}
+                  label={p.name}
+                  desc={roleDescFromPrompt(p.system_prompt)}
+                  active={isActivePersona(p.id)}
+                  lockHint={lock?.hint ?? null}
+                  lockTitle={t.ui.assistant.locked_title}
+                  ctaLabel={t.ui.assistant.locked_cta}
+                  onInstall={() => navigate('/skills')}
+                  onClick={() => void selectPersona(p.id)}
+                />
+              );
+            })}
 
             {filteredTeams.length > 0 && (
               <>
@@ -319,35 +369,69 @@ export function AssistantTopicPanel({
  * A single selectable assistant/team row: the name, an optional muted role /
  * purpose line beneath it, and an active-state checkmark. `desc` is `null` when
  * the assistant has no role text to show (the line is then omitted entirely).
+ *
+ * v1.34 — when `lockHint` is set the row is a NOT-READY expert: it can't be
+ * selected (the main click is inert + `aria-disabled`), shows the unmet
+ * prerequisites, and offers a compact CTA that routes to the Skills page.
  */
 function AssistantRow({
   label,
   desc,
   active,
   onClick,
+  lockHint = null,
+  lockTitle,
+  ctaLabel,
+  onInstall,
 }: {
   label: string;
   desc?: string | null;
   active: boolean;
   onClick: () => void;
+  lockHint?: string | null;
+  lockTitle?: string;
+  ctaLabel?: string;
+  onInstall?: () => void;
 }) {
+  const locked = lockHint != null;
   return (
-    <button
-      type="button"
-      className={`assistant-row${active ? ' active' : ''}`}
-      onClick={onClick}
-      aria-pressed={active}
-      title={desc ? `${label} — ${desc}` : label}
+    <div
+      className={`assistant-row${active ? ' active' : ''}${locked ? ' locked' : ''}`}
     >
-      <span className="assistant-row__text">
-        <span className="assistant-row__name">{label}</span>
-        {desc && <span className="assistant-row__desc">{desc}</span>}
-      </span>
-      {active && (
-        <span className="assistant-row__check" aria-hidden="true">
-          ✓
+      <button
+        type="button"
+        className="assistant-row__main"
+        onClick={locked ? undefined : onClick}
+        aria-pressed={active}
+        aria-disabled={locked}
+        title={locked ? lockTitle : desc ? `${label} — ${desc}` : label}
+      >
+        <span className="assistant-row__text">
+          <span className="assistant-row__name">
+            {locked && (
+              <span className="assistant-row__lock" aria-hidden="true">
+                🔒{' '}
+              </span>
+            )}
+            {label}
+          </span>
+          {locked ? (
+            <span className="assistant-row__desc assistant-row__lockhint">{lockHint}</span>
+          ) : (
+            desc && <span className="assistant-row__desc">{desc}</span>
+          )}
         </span>
+        {active && !locked && (
+          <span className="assistant-row__check" aria-hidden="true">
+            ✓
+          </span>
+        )}
+      </button>
+      {locked && ctaLabel && onInstall && (
+        <button type="button" className="assistant-row__cta" onClick={onInstall}>
+          {ctaLabel}
+        </button>
       )}
-    </button>
+    </div>
   );
 }

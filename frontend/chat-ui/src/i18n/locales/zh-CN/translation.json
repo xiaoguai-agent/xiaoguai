@@ -97,7 +97,10 @@
       "group_teams": "团队",
       "search_placeholder": "搜索助手…",
       "empty": "暂无助手",
-      "error_load": "助手加载失败"
+      "error_load": "助手加载失败",
+      "locked_hint": "需先安装:{{items}}",
+      "locked_cta": "去安装 →",
+      "locked_title": "此专家未就绪 —— 先安装其必需项才能选用"
     },
     "header": {
       "model_label": "模型",
