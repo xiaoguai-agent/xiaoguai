@@ -223,6 +223,27 @@
       "onboarding_step2": "Wait for the \"Team active ✓\" badge — its agent team is now ready.",
       "onboarding_step3": "Click \"Use in chat →\", pick the team in the 专家选择器, type a complex goal, and hand it to the team."
     },
+    "expert_setup": {
+      "back": "← Back to chat",
+      "loading": "Loading…",
+      "unknown": "Unknown expert",
+      "required_title": "Required",
+      "optional_title": "Optional",
+      "optional_note": "Add these later to extend the expert's capabilities.",
+      "any_of": "any one is enough",
+      "ready_badge": "Ready — selectable",
+      "not_ready_badge": "Not ready",
+      "install": "Install",
+      "installed": "Installed",
+      "installing": "Installing…",
+      "install_failed": "Install failed: {{message}}",
+      "host_install": "Host install",
+      "copy": "Copy",
+      "copied": "Copied",
+      "probe_ok": "ready",
+      "probe_missing": "not found",
+      "offline_label": "Offline deploy:"
+    },
     "mcp_tools": {
       "title": "Tools available to this session",
       "intro": "These are the external MCP tools your agent can call — connected servers that expose actions beyond the built-in toolset.",

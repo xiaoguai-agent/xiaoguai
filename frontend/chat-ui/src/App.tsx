@@ -5,6 +5,7 @@ import { AssistantTopicPanel } from './AssistantTopicPanel';
 import type { PendingAssistant } from './AssistantTopicPanel';
 import { ChatPage } from './ChatPage';
 import { SkillsPage } from './Skills';
+import { ExpertSetup } from './ExpertSetup';
 import { client } from './client';
 
 interface StoredSession {
@@ -279,6 +280,8 @@ export function App() {
           />
           {/* v1.2.28 — skill pack marketplace */}
           <Route path="/skills" element={<SkillsPage />} />
+          {/* v1.34 — per-expert prerequisite setup (from a locked expert row) */}
+          <Route path="/experts/:key" element={<ExpertSetup />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
