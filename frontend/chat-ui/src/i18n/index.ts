@@ -206,6 +206,28 @@ interface TranslationShape {
       onboarding_step2: string;
       onboarding_step3: string;
     };
+    /** v1.34 — per-expert prerequisite checklist (`/experts/:key`). */
+    expert_setup: {
+      back: string;
+      loading: string;
+      unknown: string;
+      required_title: string;
+      optional_title: string;
+      optional_note: string;
+      any_of: string;
+      ready_badge: string;
+      not_ready_badge: string;
+      install: string;
+      installed: string;
+      installing: string;
+      install_failed: string;
+      host_install: string;
+      copy: string;
+      copied: string;
+      probe_ok: string;
+      probe_missing: string;
+      offline_label: string;
+    };
     /** Feature ④ — read-only "tools available to this session" (MCP) view. */
     mcp_tools: {
       title: string;

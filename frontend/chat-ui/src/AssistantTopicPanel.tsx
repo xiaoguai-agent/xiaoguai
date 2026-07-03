@@ -182,14 +182,14 @@ export function AssistantTopicPanel({
    * install; a persona with no blueprint (an ordinary persona) is never locked.
    */
   const lockFor = useCallback(
-    (personaName: string): { hint: string } | null => {
+    (personaName: string): { hint: string; key: string } | null => {
       const e = expertByName.get(personaName);
       if (!e || e.ready) return null;
       const items = e.required
         .filter((g) => !g.satisfied)
         .map((g) => (isZh ? (g.label_zh ?? g.label) : g.label))
         .join(isZh ? '、' : ', ');
-      return { hint: interpolate(t.ui.assistant.locked_hint, { items }) };
+      return { hint: interpolate(t.ui.assistant.locked_hint, { items }), key: e.key };
     },
     [expertByName, isZh, t],
   );
@@ -334,7 +334,7 @@ export function AssistantTopicPanel({
                   lockHint={lock?.hint ?? null}
                   lockTitle={t.ui.assistant.locked_title}
                   ctaLabel={t.ui.assistant.locked_cta}
-                  onInstall={() => navigate('/skills')}
+                  onInstall={lock ? () => navigate(`/experts/${lock.key}`) : undefined}
                   onClick={() => void selectPersona(p.id)}
                 />
               );
