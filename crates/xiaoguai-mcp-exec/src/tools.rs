@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rmcp::model::{Content, Tool, ToolAnnotations};
+use rmcp::model::{ContentBlock, Tool, ToolAnnotations};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -68,7 +68,7 @@ pub struct ExecutePythonArgs {
 }
 
 /// Wire-shape of a successful tool result. Encoded as JSON inside an MCP
-/// `Content::text` block so the LLM gets structured data, not a free-form
+/// `ContentBlock::text` block so the LLM gets structured data, not a free-form
 /// string it has to re-parse.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExecutePythonResultPayload {
@@ -110,7 +110,7 @@ pub async fn execute_python_call(
     backend: &dyn ExecBackend,
     _cfg: &ExecConfig,
     args: ExecutePythonArgs,
-) -> (Vec<Content>, bool) {
+) -> (Vec<ContentBlock>, bool) {
     let requested = args.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);
     let clamped = requested.min(MAX_TIMEOUT_SECS);
     let timeout = Duration::from_secs(clamped);
@@ -120,16 +120,18 @@ pub async fn execute_python_call(
             let payload = ExecutePythonResultPayload::from(result);
             let json_text = serde_json::to_string(&payload)
                 .unwrap_or_else(|e| format!(r#"{{"error":"serialize result: {e}"}}"#));
-            (vec![Content::text(json_text)], false)
+            (vec![ContentBlock::text(json_text)], false)
         }
         Err(ExecError::SnippetTooLarge(n)) => (
-            vec![Content::text(format!(
+            vec![ContentBlock::text(format!(
                 "snippet is {n} bytes; max 65536. Trim it or split into multiple calls."
             ))],
             true,
         ),
         Err(other) => (
-            vec![Content::text(format!("sandbox supervisor error: {other}"))],
+            vec![ContentBlock::text(format!(
+                "sandbox supervisor error: {other}"
+            ))],
             true,
         ),
     }
@@ -163,8 +165,8 @@ mod tests {
         let (contents, is_error) = execute_python_call(&backend, &cfg, args).await;
         assert!(!is_error);
         assert_eq!(contents.len(), 1);
-        let text = match &contents[0].raw {
-            rmcp::model::RawContent::Text(t) => t.text.clone(),
+        let text = match &contents[0] {
+            rmcp::model::ContentBlock::Text(t) => t.text.clone(),
             other => panic!("expected text content, got {other:?}"),
         };
         let payload: ExecutePythonResultPayload =

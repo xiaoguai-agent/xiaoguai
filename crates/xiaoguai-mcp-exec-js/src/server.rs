@@ -86,8 +86,12 @@ impl ServerHandler for ExecServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()
-                .enable_tools_with(ToolsCapability {
-                    list_changed: Some(false),
+                .enable_tools_with({
+                    // rmcp 2.x marks ToolsCapability #[non_exhaustive]: build via
+                    // Default then set the field (struct literals are cross-crate-forbidden).
+                    let mut caps = ToolsCapability::default();
+                    caps.list_changed = Some(false);
+                    caps
                 })
                 .build(),
         )

@@ -22,8 +22,8 @@ use std::sync::Arc;
 
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, Implementation, JsonObject, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolsCapability,
+    CallToolRequestParams, CallToolResult, ContentBlock, Implementation, JsonObject,
+    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolsCapability,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -68,8 +68,12 @@ impl ServerHandler for XiaoguaiMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()
-                .enable_tools_with(ToolsCapability {
-                    list_changed: Some(false),
+                .enable_tools_with({
+                    // rmcp 2.x marks ToolsCapability #[non_exhaustive]: build via
+                    // Default then set the field (struct literals are cross-crate-forbidden).
+                    let mut caps = ToolsCapability::default();
+                    caps.list_changed = Some(false);
+                    caps
                 })
                 .build(),
         )
@@ -124,11 +128,11 @@ impl ServerHandler for XiaoguaiMcpServer {
             .map_err(|e| {
                 McpProtocolError::internal_error(format!("tool {} failed: {e}", request.name), None)
             })?;
-        let content: Vec<Content> = outcome
+        let content: Vec<ContentBlock> = outcome
             .blocks
             .iter()
             .filter_map(|b| match b {
-                xiaoguai_mcp::ContentBlock::Text { text } => Some(Content::text(text.clone())),
+                xiaoguai_mcp::ContentBlock::Text { text } => Some(ContentBlock::text(text.clone())),
                 // Images / resources are deferred for v0.9.1; the chat-ui
                 // path is the next consumer that cares.
                 _ => None,
@@ -136,7 +140,7 @@ impl ServerHandler for XiaoguaiMcpServer {
             .collect();
         // Fall back to the flattened `text` field if blocks are empty.
         let content = if content.is_empty() && !outcome.text.is_empty() {
-            vec![Content::text(outcome.text)]
+            vec![ContentBlock::text(outcome.text)]
         } else {
             content
         };
