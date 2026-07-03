@@ -367,6 +367,57 @@ export interface MarketplaceResponse {
   entries: MarketplaceEntry[];
 }
 
+/** v1.34 — one prerequisite item inside a required group. */
+export interface ExpertItemReadiness {
+  /** `"mcp"` or `"package"`. */
+  kind: string;
+  /** mcp slug or package id. */
+  id: string;
+  label: string;
+  satisfied: boolean;
+  /** Install hint (package) or the marketplace slug to install (mcp). */
+  install: string | null;
+}
+
+/** v1.34 — one required OR-group (satisfied when any item is). */
+export interface ExpertGroupReadiness {
+  label: string;
+  label_zh: string | null;
+  satisfied: boolean;
+  any_of: ExpertItemReadiness[];
+}
+
+/** v1.34 — an optional add-on slug + whether it's installed. */
+export interface ExpertOptionalItem {
+  slug: string;
+  name: string;
+  name_zh: string | null;
+  installed: boolean;
+}
+
+/**
+ * v1.34 — an expert persona's prerequisites joined with live readiness.
+ * The persona (matched by `persona_name`) is only selectable when `ready`.
+ */
+export interface ExpertReadiness {
+  key: string;
+  persona_name: string;
+  name: string;
+  name_zh: string | null;
+  summary: string | null;
+  summary_zh: string | null;
+  ready: boolean;
+  required: ExpertGroupReadiness[];
+  optional: ExpertOptionalItem[];
+}
+
+export interface ExpertReadinessResponse {
+  version: number;
+  offline_hint: string | null;
+  offline_hint_en: string | null;
+  experts: ExpertReadiness[];
+}
+
 export interface InstallMarketplaceRequest {
   slug: string;
 }
@@ -1888,6 +1939,11 @@ export class XiaoguaiClient {
   /** v0.9.4 — curated MCP server catalog. */
   listMarketplace(): Promise<MarketplaceResponse> {
     return this.request<MarketplaceResponse>('GET', '/v1/mcp/marketplace');
+  }
+
+  /** v1.34 — expert prerequisites joined with live readiness (gates selection). */
+  listExperts(): Promise<ExpertReadinessResponse> {
+    return this.request<ExpertReadinessResponse>('GET', '/v1/experts');
   }
 
   /** v0.11.2 — enumerate suites discoverable under the configured suites_dir. */

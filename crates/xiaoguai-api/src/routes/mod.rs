@@ -71,6 +71,7 @@ pub fn router(state: AppState) -> Router {
         // Feature ⑥ — is a turn still running server-side for this session?
         .route("/v1/sessions/{id}/status", get(sessions::session_status))
         .route("/v1/mcp/servers", get(mcp::list_servers))
+        .route("/v1/experts", get(crate::expert_readiness::list_experts))
         .route(
             "/v1/mcp/marketplace",
             get(crate::marketplace::list_marketplace),

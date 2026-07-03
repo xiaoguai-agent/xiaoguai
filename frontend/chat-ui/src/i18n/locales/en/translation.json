@@ -97,7 +97,10 @@
       "group_teams": "Teams",
       "search_placeholder": "Search assistants…",
       "empty": "No assistants yet",
-      "error_load": "Couldn't load assistants"
+      "error_load": "Couldn't load assistants",
+      "locked_hint": "Install first: {{items}}",
+      "locked_cta": "Set up →",
+      "locked_title": "This expert isn't ready — install its prerequisites to select it"
     },
     "header": {
       "model_label": "Model",

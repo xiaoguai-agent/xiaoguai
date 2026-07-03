@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "_note": "Expert enablement prerequisites. An expert persona (matched by persona_name — see xiaoguai-core::persona_seed) is only SELECTABLE once every `required` group is satisfied. A group is satisfied when ANY of its items is: an `mcp` item = a marketplace slug with a live mcp_servers row; a `package` item = a host binary resolvable via `command -v <probe>`. `optional` slugs are add-ons the operator installs later. Offline: packages come from the operator's own index (see offline_hint / XIAOGUAI_MARKETPLACE_OFFLINE_HINT).",
+  "offline_hint": "离线部署:包发布在本地共享盘/内网索引上。安装前设 `UV_INDEX_URL` / `PIP_INDEX_URL` 指向该地址(或把 wheel 放进本地目录用 `uv tool install --find-links <dir>`)。具体地址见运维手册。",
+  "offline_hint_en": "Offline deploy: packages live on a local share / internal index. Point `UV_INDEX_URL` / `PIP_INDEX_URL` at it before installing (or `uv tool install --find-links <dir>` from a local wheel dir).",
+  "experts": [
+    {
+      "key": "vmware-ops",
+      "persona_name": "VMware 运维助手",
+      "name": "VMware Ops Assistant",
+      "name_zh": "VMware 运维助手",
+      "summary": "Day-to-day vCenter/ESXi operations: inventory, alarms, VM lifecycle.",
+      "summary_zh": "vCenter/ESXi 日常运维:资源清单、告警、虚机生命周期。",
+      "required": [
+        {
+          "label": "Policy & audit foundation (host package)",
+          "label_zh": "策略与审计基座(主机包,必装)",
+          "any_of": [
+            { "kind": "package", "id": "vmware-policy", "probe": "vmware-audit", "install": "uv tool install vmware-policy" }
+          ]
+        },
+        {
+          "label": "At least one capability server (read-only monitor OR operations)",
+          "label_zh": "至少一个能力服务器(只读监控 或 运维)",
+          "any_of": [
+            { "kind": "mcp", "slug": "vmware-monitor" },
+            { "kind": "mcp", "slug": "vmware-aiops" }
+          ]
+        }
+      ],
+      "optional": [
+        "vmware-storage", "vmware-vks", "vmware-nsx", "vmware-nsx-security",
+        "vmware-aria", "vmware-avi", "vmware-harden", "vmware-debug", "vmware-log-insight"
+      ]
+    },
+    {
+      "key": "vmware-network",
+      "persona_name": "VMware 网络运维助手",
+      "name": "VMware Network Ops Assistant",
+      "name_zh": "VMware 网络运维助手",
+      "summary": "NSX / NSX-Security / AVI network operations and policy.",
+      "summary_zh": "NSX / NSX 安全 / AVI 的网络运维与策略。",
+      "required": [
+        {
+          "label": "Policy & audit foundation (host package)",
+          "label_zh": "策略与审计基座(主机包,必装)",
+          "any_of": [
+            { "kind": "package", "id": "vmware-policy", "probe": "vmware-audit", "install": "uv tool install vmware-policy" }
+          ]
+        },
+        {
+          "label": "At least one network server (NSX OR NSX-Security)",
+          "label_zh": "至少一个网络服务器(NSX 或 NSX 安全)",
+          "any_of": [
+            { "kind": "mcp", "slug": "vmware-nsx" },
+            { "kind": "mcp", "slug": "vmware-nsx-security" }
+          ]
+        }
+      ],
+      "optional": ["vmware-avi", "vmware-aria", "vmware-monitor"]
+    },
+    {
+      "key": "data-analyst",
+      "persona_name": "数据分析助手",
+      "name": "Data Analyst Assistant",
+      "name_zh": "数据分析助手",
+      "summary": "Query and analyze data over a connected SQL database.",
+      "summary_zh": "连上 SQL 数据库,查询与分析数据。",
+      "required": [
+        {
+          "label": "At least one SQL data source (Postgres OR SQLite)",
+          "label_zh": "至少一个 SQL 数据源(Postgres 或 SQLite)",
+          "any_of": [
+            { "kind": "mcp", "slug": "postgres" },
+            { "kind": "mcp", "slug": "sqlite" }
+          ]
+        }
+      ],
+      "optional": ["filesystem", "fetch", "memory"]
+    }
+  ]
+}
