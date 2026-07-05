@@ -32,4 +32,19 @@ ignore = [
     # proc-macro and never ends up in the shipped runtime binary.
     # Mirrors deny.toml ignore. Drop when `age` updates i18n-embed-fl.
     "RUSTSEC-2024-0370",
+
+    # backoff: unmaintained. Transitive retry helper (feature-gated via
+    # aws/otlp), not directly used. Not vulnerable. Mirrors deny.toml.
+    "RUSTSEC-2025-0012",
+
+    # async-std: discontinued. Transitive via opentelemetry_sdk 0.27,
+    # never constructed directly. Drops with the pending OTel upgrade.
+    # Mirrors deny.toml.
+    "RUSTSEC-2025-0052",
+
+    # ttf-parser: unmaintained. Transitive via pdf-extract → lopdf (RAG
+    # PDF text extraction). Unmaintained flag only — no vulnerability and
+    # RustSec offers no safe upgrade. Mirrors deny.toml; revisit when
+    # lopdf moves off ttf-parser.
+    "RUSTSEC-2026-0192",
 ]
