@@ -19,7 +19,7 @@ use anyhow::Result;
 use clap::Parser;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, Implementation, ListToolsResult,
+    CallToolRequestParams, CallToolResult, ContentBlock, Implementation, ListToolsResult,
     PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolAnnotations, ToolsCapability,
 };
 use rmcp::service::{RequestContext, RoleServer, ServiceExt};
@@ -117,8 +117,11 @@ impl ServerHandler for Server {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()
-                .enable_tools_with(ToolsCapability {
-                    list_changed: Some(false),
+                .enable_tools_with({
+                    // rmcp 2.x marks ToolsCapability #[non_exhaustive].
+                    let mut caps = ToolsCapability::default();
+                    caps.list_changed = Some(false);
+                    caps
                 })
                 .build(),
         )
@@ -165,13 +168,13 @@ impl ServerHandler for Server {
         let (contents, is_error) = match self.backend.run(&args.code, timeout).await {
             Ok(r) => exec_result_to_content(&r),
             Err(ExecError::SnippetTooLarge(n)) => (
-                vec![Content::text(format!(
+                vec![ContentBlock::text(format!(
                     "snippet is {n} bytes; max 65536. Trim it or split into multiple calls."
                 ))],
                 true,
             ),
             Err(other) => (
-                vec![Content::text(format!("L3 supervisor error: {other}"))],
+                vec![ContentBlock::text(format!("L3 supervisor error: {other}"))],
                 true,
             ),
         };
@@ -183,7 +186,7 @@ impl ServerHandler for Server {
     }
 }
 
-fn exec_result_to_content(r: &ExecResult) -> (Vec<Content>, bool) {
+fn exec_result_to_content(r: &ExecResult) -> (Vec<ContentBlock>, bool) {
     let payload = json!({
         "exit_code": r.exit_code,
         "stdout": r.stdout,
@@ -193,7 +196,7 @@ fn exec_result_to_content(r: &ExecResult) -> (Vec<Content>, bool) {
         "timed_out": r.timed_out,
     });
     let text = serde_json::to_string(&payload).unwrap_or_else(|e| format!(r#"{{"error":"{e}"}}"#));
-    (vec![Content::text(text)], false)
+    (vec![ContentBlock::text(text)], false)
 }
 
 #[tokio::main]

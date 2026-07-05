@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, Implementation, ListToolsResult,
+    CallToolRequestParams, CallToolResult, ContentBlock, Implementation, ListToolsResult,
     PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolsCapability,
 };
 use rmcp::service::{RequestContext, RoleServer};
@@ -29,8 +29,10 @@ impl ServerHandler for EchoServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()
-                .enable_tools_with(ToolsCapability {
-                    list_changed: Some(false),
+                .enable_tools_with({
+                    let mut caps = ToolsCapability::default();
+                    caps.list_changed = Some(false);
+                    caps
                 })
                 .build(),
         )
@@ -74,7 +76,7 @@ impl ServerHandler for EchoServer {
             .and_then(|m| m.get("msg"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "echo: {msg}"
         ))]))
     }
