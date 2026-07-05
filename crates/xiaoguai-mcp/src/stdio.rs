@@ -5,8 +5,8 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use rmcp::model::{
-    CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation, RawContent,
-    ResourceContents,
+    CallToolRequestParams, ClientCapabilities, ClientInfo, ContentBlock as RmcpContentBlock,
+    Implementation, ResourceContents,
 };
 use rmcp::service::{RunningService, ServiceExt};
 use rmcp::transport::TokioChildProcess;
@@ -125,6 +125,9 @@ fn resource_uri(rc: &ResourceContents) -> String {
     match rc {
         ResourceContents::TextResourceContents { uri, .. }
         | ResourceContents::BlobResourceContents { uri, .. } => uri.clone(),
+        // rmcp marks `ResourceContents` #[non_exhaustive]; a future variant
+        // without a knowable uri degrades to empty rather than failing.
+        _ => String::new(),
     }
 }
 
@@ -181,21 +184,23 @@ impl McpClient for StdioMcpClient {
         let mut text = String::new();
         let mut blocks: Vec<ContentBlock> = Vec::with_capacity(resp.content.len());
         for c in resp.content {
-            match c.raw {
-                RawContent::Text(t) => {
+            // rmcp 2.x: `content` is `Vec<ContentBlock>` (the block IS the enum;
+            // the 1.x `.raw` wrapper + annotations were flattened away).
+            match c {
+                RmcpContentBlock::Text(t) => {
                     if !text.is_empty() {
                         text.push('\n');
                     }
                     text.push_str(&t.text);
                     blocks.push(ContentBlock::Text { text: t.text });
                 }
-                RawContent::Image(i) => {
+                RmcpContentBlock::Image(i) => {
                     blocks.push(ContentBlock::Image {
                         mime_type: i.mime_type,
                         data_base64: i.data,
                     });
                 }
-                RawContent::Resource(r) => {
+                RmcpContentBlock::Resource(r) => {
                     blocks.push(ContentBlock::Resource {
                         uri: resource_uri(&r.resource),
                     });

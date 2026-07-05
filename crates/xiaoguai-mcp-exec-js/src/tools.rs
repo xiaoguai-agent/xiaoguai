@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rmcp::model::{Content, Tool, ToolAnnotations};
+use rmcp::model::{ContentBlock, Tool, ToolAnnotations};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -68,7 +68,7 @@ pub struct ExecuteJavascriptArgs {
 }
 
 /// Wire-shape of a successful tool result. Encoded as JSON inside an MCP
-/// `Content::text` block so the LLM gets structured data, not a free-form
+/// `ContentBlock::text` block so the LLM gets structured data, not a free-form
 /// string it has to re-parse.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExecuteJavascriptResultPayload {
@@ -108,7 +108,7 @@ pub async fn execute_javascript_call(
     backend: &dyn ExecBackend,
     _cfg: &ExecConfig,
     args: ExecuteJavascriptArgs,
-) -> (Vec<Content>, bool) {
+) -> (Vec<ContentBlock>, bool) {
     let requested = args.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);
     let clamped = requested.min(MAX_TIMEOUT_SECS);
     let timeout = Duration::from_secs(clamped);
@@ -118,16 +118,18 @@ pub async fn execute_javascript_call(
             let payload = ExecuteJavascriptResultPayload::from(result);
             let json_text = serde_json::to_string(&payload)
                 .unwrap_or_else(|e| format!(r#"{{"error":"serialize result: {e}"}}"#));
-            (vec![Content::text(json_text)], false)
+            (vec![ContentBlock::text(json_text)], false)
         }
         Err(ExecError::SnippetTooLarge(n)) => (
-            vec![Content::text(format!(
+            vec![ContentBlock::text(format!(
                 "snippet is {n} bytes; max 65536. Trim it or split into multiple calls."
             ))],
             true,
         ),
         Err(other) => (
-            vec![Content::text(format!("sandbox supervisor error: {other}"))],
+            vec![ContentBlock::text(format!(
+                "sandbox supervisor error: {other}"
+            ))],
             true,
         ),
     }
