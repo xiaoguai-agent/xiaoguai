@@ -126,7 +126,7 @@ cbc = { version = "0.2", features = ["alloc", "block-padding"] }
 cipher = "0.5"
 rand = "0.10"
 urlencoding = "2.1"
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+ed25519-dalek = { version = "3", features = ["rand_core"] }
 quick-xml = { version = "0.41", features = ["serialize"] }
 
 # config
