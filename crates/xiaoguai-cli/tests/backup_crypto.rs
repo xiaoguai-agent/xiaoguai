@@ -234,6 +234,39 @@ fn age_decrypt_rejects_non_age_input() {
     assert!(result.is_err(), "non-age input must error, not panic");
 }
 
+/// Passphrase-encrypted (scrypt) age files are refused: this backup format is
+/// key-based only. age 0.12 surfaces the passphrase case via
+/// `Decryptor::is_scrypt()` rather than the former `Decryptor::Passphrase`
+/// enum variant, so this guards that the rejection survived the migration.
+#[test]
+fn age_decrypt_rejects_passphrase_encrypted_input() {
+    use std::io::Write as _;
+
+    let tmp = TempDir::new().expect("temp dir");
+    let (id_path, _rec) = write_keypair(tmp.path(), "k");
+
+    let mut ciphertext = Vec::new();
+    let encryptor = age::Encryptor::with_user_passphrase(age::secrecy::SecretString::from(
+        "correct horse battery staple".to_owned(),
+    ));
+    {
+        let mut writer = encryptor
+            .wrap_output(&mut ciphertext)
+            .expect("wrap passphrase output");
+        writer.write_all(b"secret payload").expect("write");
+        writer.finish().expect("finish");
+    }
+
+    let msg = format!(
+        "{:?}",
+        age_decrypt(&ciphertext, &id_path).expect_err("passphrase input must be rejected")
+    );
+    assert!(
+        msg.contains("passphrase-encrypted"),
+        "expected passphrase rejection, got: {msg}"
+    );
+}
+
 /// An identity file containing no valid X25519 keys is rejected clearly.
 #[test]
 fn age_decrypt_rejects_identity_file_without_keys() {
