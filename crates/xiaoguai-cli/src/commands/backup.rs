@@ -243,9 +243,6 @@ pub fn build_tar_gz(entries: &[ArchiveEntry]) -> Result<Vec<u8>> {
 /// # Errors
 /// Returns an error if the recipient file cannot be read, parsed, or the
 /// encryption step fails.
-///
-/// # Panics
-/// Panics if the in-memory age encryption writer panics internally.
 pub fn age_encrypt(plaintext: &[u8], recipient_path: &Path) -> Result<Vec<u8>> {
     let recipient_str = std::fs::read_to_string(recipient_path)
         .with_context(|| format!("read recipient file {}", recipient_path.display()))?;
@@ -275,8 +272,14 @@ pub fn age_encrypt(plaintext: &[u8], recipient_path: &Path) -> Result<Vec<u8>> {
     }
 
     let mut ciphertext = Vec::new();
-    let encryptor =
-        age::Encryptor::with_recipients(recipients).expect("at least one recipient present");
+    // age 0.12 borrows the recipients instead of taking them by value, and
+    // reports recipient errors here rather than at wrap_output. The empty
+    // case is already ruled out above.
+    let encryptor = age::Encryptor::with_recipients(
+        recipients.iter().map(|r| r.as_ref() as &dyn age::Recipient),
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))
+    .context("initialise age encryptor")?;
     {
         let mut writer = encryptor
             .wrap_output(&mut ciphertext)
@@ -318,11 +321,13 @@ pub fn age_decrypt(ciphertext: &[u8], identity_path: &Path) -> Result<Vec<u8>> {
         );
     }
 
-    let age::Decryptor::Recipients(decryptor) =
-        age::Decryptor::new(ciphertext).context("create age decryptor")?
-    else {
+    // age 0.12 replaced the Decryptor enum with an opaque struct: passphrase
+    // files are now detected via is_scrypt() instead of matching the former
+    // Decryptor::Passphrase variant.
+    let decryptor = age::Decryptor::new(ciphertext).context("create age decryptor")?;
+    if decryptor.is_scrypt() {
         bail!("passphrase-encrypted age files are not supported; use a key-based recipient");
-    };
+    }
 
     let mut plaintext = Vec::new();
     let mut reader = decryptor
