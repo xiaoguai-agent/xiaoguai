@@ -1,0 +1,17 @@
+# Canonical identity for this repository's owner.
+#
+# History before 2026-07 was authored under two earlier addresses. The commits
+# themselves were rewritten to the canonical identity, but this file is kept as
+# a backstop so that any clone still carrying pre-rewrite objects — and any
+# future commit that slips through with an old address — still resolves to one
+# person in `git log`, `git shortlog`, `git blame` and GitHub's UI.
+#
+# Matching is by email alone, so both "Wei Zhou" and "wei zhou" spellings map.
+wei <zhouwei008@gmail.com> <boyi.liang@gmail.com>
+wei <zhouwei008@gmail.com> <98p@sina.com>
+
+# Normalise the name on the canonical address too. GitHub stamps squash-merge
+# commits with the *account profile* display name ("wei zhou"), not the local
+# git config name, so this recurs on every squash merge regardless of history
+# rewrites. Fixing it at the source means changing the GitHub profile name.
+wei <zhouwei008@gmail.com> <zhouwei008@gmail.com>
