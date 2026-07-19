@@ -111,7 +111,7 @@ libc = "0.2"
 
 # auth / crypto
 # (jsonwebtoken + casbin removed in the DEC-033 single-owner pivot — no JWT/RBAC.)
-age = "0.10"
+age = "0.12"
 ring = "0.17"
 base64 = "0.22"
 hex = "0.4"
