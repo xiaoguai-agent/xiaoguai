@@ -9,23 +9,16 @@ yanked = "deny"
 # must justify itself in writing — review quarterly + drop the ignore as
 # soon as upstream ships a fix.
 ignore = [
-    # dev-dep only (testcontainers → bollard → rustls-pemfile).
-    # Production code never touches Docker. Track upstream replacement.
-    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; dev-only via testcontainers" },
-    # dev-dep only (testcontainers → bollard → tokio-tar).
-    # PAX header smuggling does not affect our use of testcontainers (we control the images).
-    { id = "RUSTSEC-2025-0111", reason = "tokio-tar PAX smuggling; dev-only via testcontainers, no untrusted tar input" },
-    # transitive via sqlx-mysql; we only use Postgres. No upstream fix.
-    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin sidechannel; pulled by unused sqlx-mysql backend, no fix available" },
-    # transitive via notify → notify-types. Low-risk web-time shim.
-    { id = "RUSTSEC-2024-0384", reason = "instant unmaintained; transitive via notify, no fix available" },
-    # transitive via opentelemetry_sdk 0.27 (async-std discontinued). Not used
-    # directly; the pending OTel 0.32 upgrade is expected to drop it.
-    { id = "RUSTSEC-2025-0052", reason = "async-std discontinued; transitive via opentelemetry_sdk 0.27, no direct use" },
-    # transitive retry helper (feature-gated via aws/otlp). Unmaintained, not vulnerable.
-    { id = "RUSTSEC-2025-0012", reason = "backoff unmaintained; transitive retry dep, no direct use" },
-    # compile-time proc-macro via age → i18n-embed-fl. Not in the runtime binary.
-    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; build-time only via age, not shipped" },
+    # transitive via tonic → qdrant-client (RAG vector store), so it IS in the
+    # shipped binary. Unmaintained flag only — no known vulnerability. The old
+    # "dev-only via testcontainers" justification lapsed when testcontainers
+    # left the tree; revisit when tonic moves to rustls-pki-types.
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; transitive via tonic/qdrant-client, no fix available" },
+    # compile-time proc-macro via age 0.12 → i18n-embed-fl. Successor to the
+    # equally-unmaintained proc-macro-error (RUSTSEC-2024-0370, which left the
+    # tree with age 0.10). Never linked into the shipped runtime binary and the
+    # advisory offers no safe upgrade. Revisit when i18n-embed-fl migrates.
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained; build-time only via age/i18n-embed-fl, not shipped" },
     # transitive via pdf-extract → lopdf (RAG PDF text extraction of owner-provided
     # files). Unmaintained flag only — no vulnerability; RustSec offers no safe
     # upgrade. Revisit when lopdf moves off ttf-parser.
