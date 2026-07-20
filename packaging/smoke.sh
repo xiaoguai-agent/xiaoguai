@@ -105,13 +105,29 @@ check "config example installed"  \
 # install dies in a systemd restart loop (v1.34.0 shipped exactly that: a
 # bare `scheduler.sinks:` header parsed as null). Existence is not enough —
 # feed it to the real binary and assert it loads.
+#
 # `timeout` guards the release pipeline: the publish job needs smoke-deb +
 # smoke-rpm, so a doctor invocation that hung (network probe, DB lock) would
 # stall the release rather than fail it. 60s is far above doctor's own 2s
 # probe timeout.
+CONFIG_ERR_RE='load config|invalid type|expected struct|missing.*field'
+BAD_CONFIG=/tmp/xiaoguai-smoke-bad.yaml
+printf 'server:\n  port: definitely-not-a-port\n' > "$BAD_CONFIG"
+
+# Positive control, and it must come first. The real check below is a NEGATIVE
+# assertion ("no parse error in the output"), which passes vacuously if the
+# binary is missing, if `doctor` or the global `--config` flag gets renamed, or
+# if `timeout` is absent — any of which would silently disarm the guard. Proving
+# the detector fires on a known-bad config keeps the next check meaningful.
+check "config parse detector is armed (known-bad config trips it)"  \
+    bash -c 'out=$(timeout 60 /usr/local/bin/xiaoguai --config '"$BAD_CONFIG"' doctor 2>&1 || true); \
+             grep -qiE "'"$CONFIG_ERR_RE"'" <<< "$out"'
+
 check "config example parses (binary can load it)"  \
     bash -c 'out=$(timeout 60 /usr/local/bin/xiaoguai --config /etc/xiaoguai/config.yaml.example doctor 2>&1 || true); \
-             ! grep -qiE "load config|invalid type|expected struct|missing field" <<< "$out"'
+             ! grep -qiE "'"$CONFIG_ERR_RE"'" <<< "$out"'
+
+rm -f "$BAD_CONFIG"
 
 # ---- Docs -------------------------------------------------------------------
 

@@ -87,7 +87,16 @@ pub struct Settings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerSettings {
+    /// `host` and `port` carry field-level defaults, not just the block-level
+    /// `null_as_default`. An env override *inside* a block (the container image
+    /// sets `XIAOGUAI_SERVER__HOST` and `__STATIC_DIR` but not `__PORT`) merges
+    /// into the null block, so it is no longer null and `null_as_default` never
+    /// fires — leaving a partial map that failed with `missing configuration
+    /// field "server.port"`. Defaulting the fields closes that hole whatever
+    /// the layering.
+    #[serde(default = "default_server_host")]
     pub host: String,
+    #[serde(default = "default_server_port")]
     pub port: u16,
     /// Optional directory holding the built web UIs. When set (and it exists),
     /// `xiaoguai-core` serves `chat-ui` at `/` and `admin-ui` at `/admin/`
@@ -102,18 +111,25 @@ pub struct ServerSettings {
     pub static_dir: Option<String>,
 }
 
+/// SEC-01: bind to loopback by default. Binding all interfaces (0.0.0.0) with
+/// the auth gate disabled exposed the whole `/v1/**` surface to the
+/// LAN/internet on a fresh `serve`. A safe default + an explicit
+/// refuse-to-start guard (see `xiaoguai-core::run_serve`) replaces the old
+/// warn-and-continue. Container images opt back into 0.0.0.0 via
+/// `XIAOGUAI_SERVER__HOST` (set in the Dockerfile/compose).
+fn default_server_host() -> String {
+    "127.0.0.1".into()
+}
+
+const fn default_server_port() -> u16 {
+    7600
+}
+
 impl Default for ServerSettings {
     fn default() -> Self {
         Self {
-            // SEC-01: bind to loopback by default. Binding all interfaces
-            // (0.0.0.0) with the auth gate disabled exposed the whole
-            // `/v1/**` surface to the LAN/internet on a fresh `serve`. A
-            // safe default + an explicit refuse-to-start guard (see
-            // `xiaoguai-core::run_serve`) replaces the old warn-and-continue.
-            // Container images opt back into 0.0.0.0 via
-            // `XIAOGUAI_SERVER__HOST` (set in the Dockerfile/compose).
-            host: "127.0.0.1".into(),
-            port: 7600,
+            host: default_server_host(),
+            port: default_server_port(),
             static_dir: None,
         }
     }
@@ -212,6 +228,14 @@ pub const DEV_AUDIT_HMAC_KEY: &str = "dev-only-change-me-32-bytes-min";
 pub struct AuditSettings {
     /// HMAC-SHA256 signing key for the audit chain. **NEVER** check in a real key.
     /// In production load via env or external secrets manager.
+    ///
+    /// Defaults to the well-known dev key for the same reason `server.host`
+    /// does (see there): an env override landing elsewhere in this block would
+    /// otherwise leave a partial map and fail the load. Defaulting is safe
+    /// because the dev key is *detectable* — `xiaoguai-core` sources the
+    /// production chain key from `signing_key_env` and never from here, and
+    /// `commands::mod` refuses to sign with this value (SEC-15).
+    #[serde(default = "default_audit_hmac_key")]
     pub hmac_key: String,
     /// v0.6.5: env-var name to read the production audit signing key from
     /// when wiring `SqliteAuditSink` in `xiaoguai-core`. The dev `hmac_key`
@@ -222,12 +246,16 @@ pub struct AuditSettings {
     pub signing_key_env: String,
 }
 
+/// SEC-15: the dev key is intentionally detectable — callers refuse to sign a
+/// production audit chain with it.
+fn default_audit_hmac_key() -> String {
+    DEV_AUDIT_HMAC_KEY.into()
+}
+
 impl Default for AuditSettings {
     fn default() -> Self {
         Self {
-            // SEC-15: the dev key is intentionally detectable — `run_serve`
-            // refuses to sign a production audit chain with it.
-            hmac_key: DEV_AUDIT_HMAC_KEY.into(),
+            hmac_key: default_audit_hmac_key(),
             signing_key_env: default_signing_key_env(),
         }
     }
@@ -290,8 +318,9 @@ pub struct FileWatchSettings {
     pub enabled: bool,
     /// Static routes. One entry per `(job_id, path)` binding. Empty by
     /// default; operators add entries in `config.yaml` for ops
-    /// scenarios that shouldn't require a DB write.
-    #[serde(default)]
+    /// scenarios that shouldn't require a DB write. A present-but-null
+    /// `routes:` means "none" rather than a parse error.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub routes: Vec<FileWatchRoute>,
     /// When `true` AND `enabled` is true, `xiaoguai-core` scans
     /// `scheduled_jobs` for rows whose trigger type is `file_watch`
@@ -442,12 +471,21 @@ mod humantime_serde_map {
 
     /// Deserialise each value via `humantime_serde::Serde<Duration>`,
     /// accepting human strings like `"24h"` or numeric seconds.
+    ///
+    /// A present-but-null `expiry:` yields an empty map rather than an error.
+    /// The shipped example lists `tool`/`mcp`/`skill` under this key, and
+    /// commenting all three out — the natural way to say "no per-scope
+    /// overrides" — would otherwise reproduce the v1.34.0 boot failure
+    /// verbatim. Same contract as the crate-level `null_as_default`, spelled
+    /// separately because `with = "humantime_serde_map"` owns this field.
     pub fn deserialize<'de, D>(d: D) -> Result<HashMap<String, Duration>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let wrapped: HashMap<String, humantime_serde::Serde<Duration>> = HashMap::deserialize(d)?;
+        let wrapped: Option<HashMap<String, humantime_serde::Serde<Duration>>> =
+            Option::deserialize(d)?;
         Ok(wrapped
+            .unwrap_or_default()
             .into_iter()
             .map(|(k, v)| (k, v.into_inner()))
             .collect())
@@ -577,7 +615,25 @@ impl Settings {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use super::*;
+
+    /// Both loaders layer process env on top of their base, and env is
+    /// process-global while cargo runs these tests as threads in ONE process.
+    /// Without this lock, `load_from_env_applies_nested_overrides` setting
+    /// `XIAOGUAI_SERVER__PORT=9999` leaks into whatever else is mid-load —
+    /// measured 9 failures in 12 runs at `--test-threads=16`. Every test that
+    /// reads or writes env must hold it.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Take [`ENV_LOCK`], ignoring poisoning: a panic in one test must fail
+    /// that test, not cascade into every other one.
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 
     /// Regression: env overrides must reach nested keys. `with_prefix("XIAOGUAI")`
     /// without `prefix_separator("_")` left a leading `_` on the stripped key, so
@@ -587,6 +643,7 @@ mod tests {
     #[test]
     fn load_from_env_applies_nested_overrides() {
         const DB: &str = "sqlite:///tmp/envhost.db";
+        let _env = env_guard();
         std::env::set_var("XIAOGUAI_DATABASE__URL", DB);
         std::env::set_var("XIAOGUAI_SERVER__PORT", "9999");
         let s = Settings::load_from_env().expect("load_from_env");
@@ -619,6 +676,7 @@ mod tests {
     /// nested `#[serde(default)]` on the surrounding blocks.
     #[test]
     fn agent_block_is_optional_and_defaults_apply() {
+        let _env = env_guard();
         // Reuse the env loader path because it constructs Settings from
         // defaults-as-yaml + env, mirroring how production loads when no
         // file is provided.
@@ -634,7 +692,7 @@ mod tests {
     /// opt-out path documented in RELEASE-LOG v1.9.0 still works.
     #[test]
     fn agent_hotl_suspend_on_escalate_yaml_opt_out_works() {
-        use std::io::Write;
+        let _env = env_guard();
         let mut f = tempfile::Builder::new()
             .suffix(".yaml")
             .tempfile()
@@ -658,6 +716,7 @@ mod tests {
     /// test can't drift away from what we actually ship.
     #[test]
     fn shipped_example_config_deserializes() {
+        let _env = env_guard();
         let example = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../deploy/config.example.yaml")
             .canonicalize()
@@ -693,16 +752,19 @@ mod tests {
     /// Every optional block must degrade to its defaults instead.
     #[test]
     fn empty_nested_blocks_fall_back_to_defaults() {
-        use std::io::Write;
+        let _env = env_guard();
         let mut f = tempfile::Builder::new()
             .suffix(".yaml")
             .tempfile()
             .expect("tmpfile");
-        // `sinks:`, `file_watch:`, `hotl:` and `auth:` are all present-but-null
-        // here — the shape an operator produces by commenting a block out.
+        // EVERY block is present-but-null here — the shape an operator produces
+        // by commenting a block's children out. Includes the two the first cut
+        // of this fix missed: `agent.hotl.expiry` (a map behind
+        // `with = "humantime_serde_map"`) and `scheduler.file_watch.routes` (a
+        // sequence), plus `server:`/`audit:`, whose sub-fields had no defaults.
         writeln!(
             f,
-            "server:\n  host: 127.0.0.1\n  port: 7600\ndatabase:\n  url: sqlite:///tmp/n.db\nauth:\naudit:\n  hmac_key: dev-only-change-me-32-bytes-min\nscheduler:\n  enabled: false\n  sinks:\n  file_watch:\nagent:\n  hotl:\nmemory:\n"
+            "server:\ndatabase:\nauth:\naudit:\nscheduler:\n  enabled: false\n  sinks:\n  file_watch:\n    routes:\nagent:\n  hotl:\n    expiry:\nmemory:\n  embedder:\neval:\nim:\n"
         )
         .expect("write tmp yaml");
 
@@ -712,10 +774,73 @@ mod tests {
         assert!(s.scheduler.sinks.feishu.is_none(), "null sinks => no sinks");
         assert!(!s.scheduler.file_watch.enabled);
         assert!(
+            s.scheduler.file_watch.routes.is_empty(),
+            "null routes => none"
+        );
+        assert!(
             s.agent.hotl.suspend_on_escalate,
             "null hotl block must keep the v1.9.0 default-true"
         );
+        assert!(
+            s.agent.hotl.expiry.is_empty(),
+            "null expiry => no overrides"
+        );
         assert!(!s.auth.is_enabled(), "null auth block => gate disabled");
         assert_eq!(s.memory.embedder, EmbedderSettings::InMemory);
+        // A null `server:`/`audit:` must land on the safe defaults, not on
+        // whatever a partially-populated struct would have held.
+        assert_eq!(s.server.host, "127.0.0.1");
+        assert_eq!(s.server.port, 7600);
+        assert_eq!(s.audit.hmac_key, DEV_AUDIT_HMAC_KEY);
+        assert_eq!(s.eval.suites_dir, default_eval_suites_dir());
+    }
+
+    /// Regression for the gap the first cut of this fix left open: an env
+    /// override landing *inside* a null block merges into it, so the block is
+    /// no longer null and `null_as_default` never fires. The container image
+    /// sets `XIAOGUAI_SERVER__HOST` + `__STATIC_DIR` but not `__PORT`, so a
+    /// mounted config with `server:` commented out failed with `missing
+    /// configuration field "server.port"`. Field-level defaults close it.
+    #[test]
+    fn env_override_into_a_null_block_still_loads() {
+        let _env = env_guard();
+        let mut f = tempfile::Builder::new()
+            .suffix(".yaml")
+            .tempfile()
+            .expect("tmpfile");
+        writeln!(f, "server:\ndatabase:\nauth:\naudit:\n").expect("write tmp yaml");
+
+        std::env::set_var("XIAOGUAI_SERVER__HOST", "0.0.0.0");
+        std::env::set_var("XIAOGUAI_SERVER__STATIC_DIR", "/app/static");
+        let loaded = Settings::load_from_file(f.path());
+        std::env::remove_var("XIAOGUAI_SERVER__HOST");
+        std::env::remove_var("XIAOGUAI_SERVER__STATIC_DIR");
+
+        let s = loaded.unwrap_or_else(|e| panic!("env-into-null-block must load, got: {e}"));
+        assert_eq!(s.server.host, "0.0.0.0", "the env override must still win");
+        assert_eq!(s.server.port, 7600, "the unset sibling must default");
+        assert_eq!(s.server.static_dir.as_deref(), Some("/app/static"));
+    }
+
+    /// A block that is entirely ABSENT (not merely null) must still be a hard
+    /// error for the four required blocks — `null_as_default` without
+    /// `#[serde(default)]` tolerates null only. Guards against someone adding
+    /// `default` to these fields and silently booting a misspelled config.
+    #[test]
+    fn missing_required_blocks_are_still_an_error() {
+        let _env = env_guard();
+        let mut f = tempfile::Builder::new()
+            .suffix(".yaml")
+            .tempfile()
+            .expect("tmpfile");
+        // `server:` deliberately absent.
+        writeln!(f, "database:\nauth:\naudit:\n").expect("write tmp yaml");
+
+        let err = Settings::load_from_file(f.path())
+            .expect_err("a config.yaml with no `server:` key must not load");
+        assert!(
+            err.contains("server"),
+            "error must name the missing block, got: {err}"
+        );
     }
 }

@@ -88,8 +88,11 @@ scheduler:
   tick_interval_secs: 30
 
   # Per-sink config. Uncomment + fill in the sink(s) you want.
-  # NOTE: keep the `{}` when every sink below stays commented out — a bare
-  # `sinks:` header with no children parses as null, not as "empty block".
+  #
+  # Keep the `{}` while every sink below stays commented out: a bare `sinks:`
+  # header with no children parses as null, not as an empty block.
+  # When you DO uncomment a sink, delete the `{}` — leaving both is a YAML
+  # syntax error ("did not find expected key").
   sinks: {}
     # feishu:
     #   webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/...
