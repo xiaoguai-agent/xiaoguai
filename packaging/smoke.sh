@@ -95,22 +95,35 @@ check "unit file has [Install] section"  grep -q '^\[Install\]' "${UNIT_PATH:-/d
 check "unit ExecStart references xiaoguai-core" \
     grep -q 'xiaoguai-core' "${UNIT_PATH:-/dev/null}"
 
-# ---- Config example ---------------------------------------------------------
+# ---- Config -----------------------------------------------------------------
 
 check "config example installed"  \
     test -f /etc/xiaoguai/config.yaml.example
 
-# The %post/postinst scriptlets seed /etc/xiaoguai/config.yaml from the
-# example above, so an example the binary cannot parse means every fresh
-# install dies in a systemd restart loop (v1.34.0 shipped exactly that: a
-# bare `scheduler.sinks:` header parsed as null). Existence is not enough —
-# feed it to the real binary and assert it loads.
+# The %post/postinst scriptlets seed this from config.yaml.example on first
+# install, and it is the file the systemd unit passes to `serve` (ExecStart:
+# `xiaoguai serve --config /etc/xiaoguai/config.yaml`). Assert the scriptlet
+# actually ran — without it there is nothing for the next check to validate.
+check "config.yaml seeded by the install scriptlet"  \
+    test -f /etc/xiaoguai/config.yaml
+
+# v1.34.0 installed cleanly and then died in a systemd restart loop because
+# this seeded file could not be loaded (a bare `scheduler.sinks:` header parsed
+# as YAML null). Existence is not enough — feed the real file to the real
+# binary and assert it loads.
+#
+# Point at config.yaml, NOT config.yaml.example: the `config` crate infers
+# format from the file extension, so the `.example` copy fails with "not of a
+# supported file format" no matter how valid its contents are. Checking the
+# example would report a parse failure that does not exist and block the
+# release (it did, on the first v1.34.1 tag). config.yaml is also the more
+# faithful target — it is what the service actually reads.
 #
 # `timeout` guards the release pipeline: the publish job needs smoke-deb +
 # smoke-rpm, so a doctor invocation that hung (network probe, DB lock) would
 # stall the release rather than fail it. 60s is far above doctor's own 2s
 # probe timeout.
-CONFIG_ERR_RE='load config|invalid type|expected struct|missing.*field'
+CONFIG_ERR_RE='load config|invalid type|expected struct|missing.*field|supported file format'
 BAD_CONFIG=/tmp/xiaoguai-smoke-bad.yaml
 printf 'server:\n  port: definitely-not-a-port\n' > "$BAD_CONFIG"
 
@@ -123,9 +136,16 @@ check "config parse detector is armed (known-bad config trips it)"  \
     bash -c 'out=$(timeout 60 /usr/local/bin/xiaoguai --config '"$BAD_CONFIG"' doctor 2>&1 || true); \
              grep -qiE "'"$CONFIG_ERR_RE"'" <<< "$out"'
 
-check "config example parses (binary can load it)"  \
-    bash -c 'out=$(timeout 60 /usr/local/bin/xiaoguai --config /etc/xiaoguai/config.yaml.example doctor 2>&1 || true); \
+check "seeded config.yaml parses (binary can load it)"  \
+    bash -c 'out=$(timeout 60 /usr/local/bin/xiaoguai --config /etc/xiaoguai/config.yaml doctor 2>&1 || true); \
              ! grep -qiE "'"$CONFIG_ERR_RE"'" <<< "$out"'
+
+# The other half of the v1.34.0 outage: the config parsed, then SEC-01 refused
+# the bind. doctor mirrors that verdict, so a passing bind/auth row means
+# `serve` will get past it too.
+check "seeded config.yaml passes the SEC-01 bind/auth guard"  \
+    bash -c 'out=$(timeout 60 /usr/local/bin/xiaoguai --config /etc/xiaoguai/config.yaml doctor 2>&1 || true); \
+             grep -qE "^✓ bind/auth" <<< "$out"'
 
 rm -f "$BAD_CONFIG"
 
