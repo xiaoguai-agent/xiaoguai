@@ -6,6 +6,19 @@
 
 [advisories]
 ignore = [
+    # rsa: Marvin Attack timing sidechannel. Transitive via the sqlx-mysql
+    # backend, which this project never enables — `cargo tree --all-features
+    # -i rsa` prints nothing, so it is never compiled in. No fixed upgrade
+    # exists upstream.
+    #
+    # KEPT HERE ON PURPOSE, and deliberately absent from deny.toml: cargo-audit
+    # scans Cargo.lock verbatim with no feature resolution, so it sees `rsa`
+    # and fails; cargo-deny resolves features and does not, so the same entry
+    # there would be a stale unmatched ignore. This asymmetry is exactly the
+    # "+ extras" clause in the header above — the two files are kept in
+    # lock-step, not made identical. Do not delete this to "sync" them.
+    "RUSTSEC-2023-0071",
+
     # proc-macro-error2: unmaintained. Build-time only, pulled via
     # age 0.12 → i18n-embed-fl → proc-macro-error2. Successor to the equally
     # unmaintained proc-macro-error (RUSTSEC-2024-0370), which left the tree
