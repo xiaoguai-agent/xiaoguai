@@ -88,6 +88,12 @@ sudo $EDITOR /etc/xiaoguai/config.yaml      # set database / cache / hmac
 sudo systemctl start xiaoguai-core
 ```
 
+**Air-gapped hosts**: the same tarball (or the .deb/.rpm) installs with no
+network on the target — see [Offline / air-gapped
+install](../README.md#offline--air-gapped-install) in the root README for the
+download → verify → transfer → configure recipe, including the SEC-01 step that
+`serve` refuses to start without when you bind a non-loopback address.
+
 Build the tarballs locally:
 
 ```bash

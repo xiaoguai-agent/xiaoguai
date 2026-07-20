@@ -43,6 +43,19 @@ for v1.1.7. Build from source instead:
 cargo install --path crates/xiaoguai-cli
 ```
 
+**Offline hosts**: the wheel bundles the native binary, so it installs without
+network on the target. Download it on a connected machine and carry it over:
+
+```bash
+pip download xiaoguai --no-deps --only-binary=:all: \
+  --platform manylinux_2_28_x86_64 --python-version 3.12 -d ./offline
+# transfer ./offline, then on the air-gapped host:
+pip install --no-index ./offline/xiaoguai-*.whl
+```
+
+For the systemd/package route and the SEC-01 credential step, see
+[Offline / air-gapped install](https://github.com/xiaoguai-agent/xiaoguai#offline--air-gapped-install).
+
 ## HTTP client (wave-3)
 
 `pip install 'xiaoguai[client]'` — adds `xiaoguai.client.XiaoguaiClient`, a

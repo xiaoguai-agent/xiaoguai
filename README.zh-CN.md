@@ -92,6 +92,72 @@ docker compose -f deploy/docker-compose.yml up --build
 
 `xiaoguai serve` 是各处通用的规范入口。遗留的 `xiaoguai-core` 垫片仍然可用（.deb 为 systemd 向后兼容而接入了它）。关于真实 LLM 提供方、MCP 注册、admin 控制台以及配置细节，见 [`docs/user-guide/quickstart.md`](docs/user-guide/quickstart.md)。
 
+### 离线 / 内网隔离部署
+
+目标机器不需要联网。单个二进制内含服务端、CLI、web UI、数据库迁移和 catalog 种子，状态存在内嵌 SQLite 文件里。在有网的机器上下载，拷过去，安装。
+
+**1 —— 下载**（从 [latest release](https://github.com/xiaoguai-agent/xiaoguai/releases/latest)）：
+
+| 目标机器 | 需要的文件 |
+|---|---|
+| RHEL / Rocky / Fedora (amd64) | `xiaoguai-cli-*.x86_64.rpm` + `SHA256SUMS-packages` |
+| Debian / Ubuntu (amd64) | `xiaoguai-cli_*_amd64.deb` + `SHA256SUMS-packages` |
+| 任意 glibc 2.35+ Linux (amd64 / arm64) | `xiaoguai-vX.Y.Z-<arch>-unknown-linux-gnu.tar.gz` + `SHA256SUMS` |
+
+**2 —— 先校验，再拷贝**（scp、U 盘，看你的流程允许什么）：
+
+```bash
+sha256sum -c SHA256SUMS-packages --ignore-missing
+```
+
+**3 —— 在离线机器上安装。** 两条路径有一个关键差异：
+
+```bash
+# .rpm / .deb —— 会播种 /etc/xiaoguai/config.yaml 并自动启动 systemd 单元
+sudo rpm -i xiaoguai-cli-*.x86_64.rpm            # RHEL 系
+sudo apt install ./xiaoguai-cli_*_amd64.deb      # Debian 系
+
+# tarball —— 只装 config.example.yaml 并 enable 单元，不会播种 config.yaml、
+# 也不会启动服务。这两步要自己做：
+tar xzf xiaoguai-v*-unknown-linux-gnu.tar.gz && cd xiaoguai-v*/
+sudo bash scripts/install.sh
+sudo cp /etc/xiaoguai/config.example.yaml /etc/xiaoguai/config.yaml
+sudo systemctl start xiaoguai-core
+```
+
+两条路径都落在 `127.0.0.1:7600`，只有本机能访问。
+
+**4 —— 要让其他机器访问**，需绑定所有网卡。SEC-01 会拒绝「非回环绑定 + 未启用鉴权」的组合，所以同一次编辑里必须把 owner 账密一起设上：
+
+```bash
+sudo sed -i -e 's/^  host: 127.0.0.1$/  host: 0.0.0.0/' \
+            -e 's/^  username: ""/  username: "owner"/' \
+            -e 's/^  password: ""/  password: "换成强密码"/' \
+            /etc/xiaoguai/config.yaml
+sudo systemctl restart xiaoguai-core
+```
+
+**5 —— 上线前先确认：**
+
+```bash
+xiaoguai --config /etc/xiaoguai/config.yaml doctor
+```
+
+出现 `✓ bind/auth` 说明 `serve` 能通过 SEC-01 那道闸；首次启动前出现 `! database not created yet` 是正常的。
+
+服务起来后，`/healthz` 对谁都返回 `ok` —— 它被刻意豁免于鉴权，所以**不能**用它判断鉴权是否生效。要验证这个，请打一个走鉴权的路由：
+
+```bash
+curl -o /dev/null -w '%{http_code}\n' http://<host>:7600/v1/sessions
+#   -> 不带凭据: 401
+curl -o /dev/null -w '%{http_code}\n' -u owner:<密码> http://<host>:7600/v1/sessions
+#   -> 带凭据: 200
+```
+
+**升级不会动你的配置。** 软件包的安装脚本**只在首次安装时**播种 `/etc/xiaoguai/config.yaml`，所以 `rpm -U` 和 `apt install` 都不会覆盖你的修改 —— 包括第 4 步设的账密。
+
+**唯一仍然需要模型的环节。** 上面全部无需外网，但「回答一次对话」不行：要么注册一个指向本地 [Ollama](https://ollama.com) 的 provider，要么让这台机器能访问你的 LLM 提供方。没有模型时服务照样启动、web UI 照样能开。
+
 ### 第一次聊天 —— 与你运行中的服务器对话
 
 开箱即用时，`xiaoguai serve` 基于内置的 `MockBackend` 启动，因此服务器一起来往返就能跑通：

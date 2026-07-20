@@ -158,6 +158,11 @@ memory subsystem are a tracked follow-up — today the memory crate's only real
 embedder is OpenAI-backed, so memory/recall in a fully air-gapped deployment
 is pending that work.
 
+For installing onto a host with no network at all — which artifacts to carry
+over, how to verify them, and the owner-credential step SEC-01 requires before
+it will bind a non-loopback address — see the root README's
+[Offline / air-gapped install](https://github.com/xiaoguai-agent/xiaoguai#offline--air-gapped-install).
+
 ## Running as a daemon
 
 `xiaoguai serve` in a terminal dies with the terminal. To keep the server
